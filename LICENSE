@@ -1,6 +1,6 @@
 Business Source License 1.1
 
-Licensor:             Ryan S. Roberts
+Licensor:             1414 Degrees Ltd
 Licensed Work:        Plasm
 Additional Use Grant: You may make non-production use of the Licensed Work.
 Change Date:          2030-04-24
@@ -60,10 +60,10 @@ In consideration of the right to use this License's text and the "Business
 Source License" name and trademark, Licensor covenants to MariaDB, and to all
 other recipients of the licensed work to be provided by Licensor:
 
-1. To specify as the Change License the GPL Version 2.0 or any later version,
-   or a license that is compatible with GPL Version 2.0 or a later version,
+1. To specify as the Change License the Apache License, Version 2.0 or any later version,
+   or a license that is compatible with Apache License, Version 2.0 or a later version,
    where "compatible" means that software provided under the Change License can
-   be included in a program with software provided under GPL Version 2.0 or a
+   be included in a program with software provided under Apache License, Version 2.0 or a
    later version. Licensor may specify additional Change Licenses without
    limitation.
 
