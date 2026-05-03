@@ -120,16 +120,19 @@ async fn spawn_mcp_server() -> Option<(String, tokio::task::JoinHandle<()>, Opti
         incoming_auth: Some(Arc::new(incoming)),
         run_artifacts: Arc::new(plasm_agent::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
+        oss_local_filesystem_defaults: false,
     });
     let storage = Arc::new(MemoryStorage::new());
+    let catalog = Arc::new(OauthLinkCatalog::default());
+    let outbound = Arc::new(AgentOutboundSecretProvider::new(
+        storage.clone(),
+        catalog.clone(),
+    )) as Arc<dyn SecretProvider>;
+    st.oss.auth_storage = Some(storage.clone());
+    st.oss.oauth_link_catalog = Some(catalog);
+    st.oss.outbound_secret_provider = Some(outbound);
     let mut saas = PlasmSaaSHostExtension {
         auth_framework: None,
-        auth_storage: Some(storage.clone()),
-        oauth_link_catalog: Arc::new(OauthLinkCatalog::default()),
-        outbound_secret_provider: Some(Arc::new(AgentOutboundSecretProvider::new(
-            storage.clone(),
-            Arc::new(OauthLinkCatalog::default()),
-        )) as Arc<dyn SecretProvider>),
         mcp_config_repository: None,
         mcp_transport_auth: Some(
             Arc::new(McpApiKeyRegistry::new(storage.clone())) as Arc<dyn McpTransportAuth>

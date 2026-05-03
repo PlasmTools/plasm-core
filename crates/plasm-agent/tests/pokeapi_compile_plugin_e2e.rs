@@ -64,6 +64,7 @@ async fn pokeapi_execute_session_compiles_via_plugin_and_queries_live_api() {
         incoming_auth: None,
         run_artifacts: std::sync::Arc::new(plasm_agent::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
+        oss_local_filesystem_defaults: false,
     });
 
     let app = discovery_execute_router(st);

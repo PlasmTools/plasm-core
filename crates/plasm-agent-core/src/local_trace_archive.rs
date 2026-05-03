@@ -36,9 +36,26 @@ impl LocalTraceArchive {
 
     /// `Some(archive)` when `PLASM_TRACE_ARCHIVE_DIR` is a non-empty path.
     pub fn from_env() -> std::io::Result<Option<ArcLocal>> {
+        Self::from_env_or_oss_default(false)
+    }
+
+    /// Like [`Self::from_env`], or when `oss_local_filesystem_defaults` and OSS local persistence are enabled,
+    /// use [`crate::oss_local_state::resolve_local_state_root`] as the archive root (`{root}/traces/...` layout).
+    pub fn from_env_or_oss_default(
+        oss_local_filesystem_defaults: bool,
+    ) -> std::io::Result<Option<ArcLocal>> {
         match std::env::var("PLASM_TRACE_ARCHIVE_DIR") {
             Ok(s) if !s.trim().is_empty() => Ok(Some(Arc::new(Self::new(s.trim().into())?))),
-            _ => Ok(None),
+            _ => {
+                if oss_local_filesystem_defaults
+                    && crate::oss_local_state::oss_local_persistence_enabled()
+                {
+                    if let Some(root) = crate::oss_local_state::resolve_local_state_root() {
+                        return Ok(Some(Arc::new(Self::new(root)?)));
+                    }
+                }
+                Ok(None)
+            }
         }
     }
 

@@ -3,9 +3,10 @@
 //! from a separate “default schema” field on this struct.
 //!
 //! The surface is split for OSS vs hosted SaaS: [`PlasmOssHostState`] is the data-plane / executor
-//! (discovery, execute, traces, optional incoming-auth for execute identity). When present,
-//! [`PlasmSaaSHostExtension`] holds the Phoenix–facing control-plane and tenant lifecycle pieces
-//! (auth-framework, MCP policy store, API keys, OAuth account linking, tenant binding).
+//! (discovery, execute, traces, optional incoming-auth for execute identity). [`PlasmSaaSHostExtension`]
+//! holds MCP policy sqlx + transport API keys and (when hosted) auth-framework + tenant binding.
+//! OSS `plasm-mcp` may populate **only** the MCP repository + API key registry. Outbound OAuth KV/catalog live on
+//! [`PlasmOssHostState`] so OSS HTTP can expose the same routes without pulling in Phoenix.
 
 use crate::catalog_runtime::CatalogRuntime;
 use crate::execute_session::ExecuteSessionStore;
@@ -34,9 +35,8 @@ pub use crate::catalog_runtime::CatalogBootstrap;
 
 /// Open-source / data-plane state: engine, registry-backed catalog, execute sessions, traces.
 ///
-/// This type intentionally excludes Phoenix control-plane dependencies (MCP config DB, API key
-/// registry, etc.) so OSS-only test and embed builds can use it with [`super::PlasmHostState`]
-/// where `saas` is `None`.
+/// MCP policy rows and API key material are **not** fields here; when enabled they attach via
+/// [`super::PlasmHostState::saas`] (`mcp_config_repository`, `mcp_transport_auth`).
 #[derive(Clone)]
 pub struct PlasmOssHostState {
     pub engine: Arc<ExecutionEngine>,
@@ -67,6 +67,12 @@ pub struct PlasmOssHostState {
     pub local_trace_archive: Option<Arc<LocalTraceArchive>>,
     /// Trace sink read API base URL (defaults to `PLASM_TRACE_SINK_URL` when unset). Highest precedence for durable list/detail.
     pub trace_sink_read_base_url: Option<String>,
+    /// Auth-framework KV store for outbound OAuth pending sessions and `hosted_kv` secrets (optional on OSS).
+    pub auth_storage: Option<Arc<dyn AuthStorage>>,
+    /// OAuth2 catalog for outbound account linking (`/internal/oauth-link/...`, `/oauth/link/callback`).
+    pub oauth_link_catalog: Option<Arc<OauthLinkCatalog>>,
+    /// Hosted KV + catalog outbound resolver for `hosted_kv` in CGS.
+    pub outbound_secret_provider: Option<Arc<dyn SecretProvider>>,
 }
 
 /// Hosted / control-plane state: same process as [`PlasmOssHostState`], but injected after OSS bootstrap.
@@ -74,12 +80,6 @@ pub struct PlasmOssHostState {
 pub struct PlasmSaaSHostExtension {
     /// Initialized in HTTP/MCP mode when the hosted bundle is enabled.
     pub auth_framework: Option<Arc<tokio::sync::Mutex<AuthFramework>>>,
-    /// Shared [`AuthStorage`] for auth-framework, MCP API keys, and encrypted outbound material.
-    pub auth_storage: Option<Arc<dyn AuthStorage>>,
-    /// OAuth2 catalog for outbound account linking (`/internal/oauth-link/...`).
-    pub oauth_link_catalog: Arc<OauthLinkCatalog>,
-    /// Resolves env-backed and auth-framework KV credentials for outbound HTTP (`hosted_kv` in CGS).
-    pub outbound_secret_provider: Option<Arc<dyn SecretProvider>>,
     /// Tenant MCP configuration (sqlx Postgres). When `None`, MCP bind/policy is disabled.
     pub mcp_config_repository: Option<Arc<McpConfigRepository>>,
     /// Streamable HTTP MCP: API key verification (backed by [`AuthStorage`]).
@@ -119,34 +119,31 @@ impl PlasmHostState {
     }
 
     pub fn auth_storage(&self) -> Option<&Arc<dyn AuthStorage>> {
-        self.saas.as_ref()?.auth_storage.as_ref()
+        self.oss.auth_storage.as_ref()
     }
 
     pub fn auth_framework(&self) -> Option<&Arc<tokio::sync::Mutex<AuthFramework>>> {
         self.saas.as_ref()?.auth_framework.as_ref()
     }
 
-    /// OAuth account-linking catalog; only set when a [`PlasmSaaSHostExtension`] is attached.
+    /// OAuth account-linking catalog when outbound OAuth is wired on [`PlasmOssHostState`].
     pub fn oauth_link_catalog(&self) -> Option<&Arc<OauthLinkCatalog>> {
-        self.saas.as_ref().map(|s| &s.oauth_link_catalog)
+        self.oss.oauth_link_catalog.as_ref()
     }
 
     pub fn tenant_binding(&self) -> Option<&Arc<TenantBindingStore>> {
         self.saas.as_ref()?.tenant_binding.as_ref()
     }
 
-    /// Hosted KV + catalog outbound resolver; absent in OSS-only or when not wired.
+    /// Hosted KV + catalog outbound resolver; absent when not wired.
     pub fn outbound_secret_provider(&self) -> Option<&Arc<dyn SecretProvider>> {
-        self.saas.as_ref()?.outbound_secret_provider.as_ref()
+        self.oss.outbound_secret_provider.as_ref()
     }
 
-    /// Outbound HTTP credentials: [`PlasmSaaSHostExtension::outbound_secret_provider`] when the hosted
-    /// layer wired one; otherwise [`EnvSecretProvider`] (env vars only).
+    /// Outbound HTTP credentials: [`PlasmOssHostState::outbound_secret_provider`] when wired; otherwise [`EnvSecretProvider`].
     pub fn effective_outbound_secret_provider(&self) -> Arc<dyn SecretProvider> {
-        if let Some(s) = &self.saas {
-            if let Some(p) = s.outbound_secret_provider.as_ref() {
-                return p.clone();
-            }
+        if let Some(p) = self.oss.outbound_secret_provider.as_ref() {
+            return p.clone();
         }
         Arc::new(EnvSecretProvider) as Arc<dyn SecretProvider>
     }

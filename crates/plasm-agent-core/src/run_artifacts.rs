@@ -921,6 +921,15 @@ fn decode_payload(encoded: &[u8]) -> Result<ArtifactPayload, RunArtifactError> {
     Ok(ArtifactPayload { metadata, bytes })
 }
 
+/// Policy for default local filesystem run-artifact dir when env vars are unset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunArtifactInitPolicy {
+    /// OSS `plasm-agent`: under [`crate::oss_local_state::resolve_local_state_root`] when enabled.
+    OssFilesystemDefaults,
+    /// Hosted `plasm-mcp-app`: in-memory when URL and dir unset (no `~/.plasm` writes).
+    HostedExplicitOnly,
+}
+
 /// Build [`RunArtifactStore`] from environment: **object store** (`PLASM_RUN_ARTIFACTS_URL`) if set,
 /// else **local directory** (`PLASM_RUN_ARTIFACTS_DIR`) if set, else **in-memory** (see module docs for precedence).
 ///
@@ -928,6 +937,13 @@ fn decode_payload(encoded: &[u8]) -> Result<ArtifactPayload, RunArtifactError> {
 /// - **`PLASM_RUN_ARTIFACTS_DIR`**: local directory root (OSS/self-host durable tier when URL unset).
 /// - **`PLASM_RUN_ARTIFACTS_RETENTION_SECS`** / **`PLASM_RUN_ARTIFACTS_GC_INTERVAL_SECS`**: only apply to the object store backend.
 pub fn init_from_env() -> Result<Arc<RunArtifactStore>, String> {
+    init_from_env_with_policy(RunArtifactInitPolicy::HostedExplicitOnly)
+}
+
+/// Same as [`init_from_env`], with optional OSS default directory `{local_state}/run-artifacts`.
+pub fn init_from_env_with_policy(
+    policy: RunArtifactInitPolicy,
+) -> Result<Arc<RunArtifactStore>, String> {
     if let Ok(url_raw) = std::env::var("PLASM_RUN_ARTIFACTS_URL") {
         if !url_raw.trim().is_empty() {
             let url = url::Url::parse(&url_raw)
@@ -963,6 +979,29 @@ pub fn init_from_env() -> Result<Arc<RunArtifactStore>, String> {
                 inner: Arc::new(FsRunArtifactBackend { root }),
             }));
         }
+    }
+    if policy == RunArtifactInitPolicy::OssFilesystemDefaults
+        && crate::oss_local_state::oss_local_persistence_enabled()
+    {
+        if let Some(base) = crate::oss_local_state::resolve_local_state_root() {
+            let root = base.join("run-artifacts");
+            if let Err(e) = std::fs::create_dir_all(&root) {
+                return Err(format!(
+                    "OSS default run-artifacts dir: could not create {root:?}: {e}"
+                ));
+            }
+            tracing::info!(
+                path = %root.display(),
+                "run artifacts: OSS default local filesystem backend (~/.plasm/local/run-artifacts or PLASM_LOCAL_STATE_DIR)"
+            );
+            return Ok(Arc::new(RunArtifactStore {
+                inner: Arc::new(FsRunArtifactBackend { root }),
+            }));
+        }
+        tracing::warn!(
+            target: "plasm_agent::run_artifacts",
+            "OSS default run artifacts requested but HOME/PLASM_LOCAL_STATE_DIR unset; falling back to in-memory store"
+        );
     }
     tracing::warn!(
         target: "plasm_agent::run_artifacts",

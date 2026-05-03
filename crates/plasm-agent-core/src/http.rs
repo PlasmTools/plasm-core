@@ -21,6 +21,8 @@ use crate::execute_session::ExecuteSessionStore;
 use crate::http_discovery::{discovery_routes_protected, get_auth_status, health_response};
 use crate::http_execute::execute_routes;
 use crate::http_incoming_context::incoming_context_routes;
+use crate::http_oauth_link;
+use crate::http_outbound_secrets;
 use crate::http_traces::trace_routes;
 use crate::incoming_auth::incoming_auth_http_middleware;
 use crate::incoming_auth::IncomingAuthVerifier;
@@ -46,6 +48,8 @@ pub struct PlasmHostBootstrap {
     pub incoming_auth: Option<Arc<IncomingAuthVerifier>>,
     pub run_artifacts: Arc<RunArtifactStore>,
     pub session_graph_persistence: Option<Arc<SessionGraphPersistence>>,
+    /// When true, [`LocalTraceArchive::from_env_or_oss_default`] uses `~/.plasm/local` if `PLASM_TRACE_ARCHIVE_DIR` is unset.
+    pub oss_local_filesystem_defaults: bool,
 }
 
 /// Build shared state for HTTP + MCP (registry, engine, session store).
@@ -59,6 +63,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
         incoming_auth,
         run_artifacts,
         session_graph_persistence,
+        oss_local_filesystem_defaults,
     } = bootstrap;
     let sessions = Arc::new(ExecuteSessionStore::new(
         run_artifacts.clone(),
@@ -66,17 +71,18 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
     ));
     let catalog = CatalogRuntime::new(registry, catalog_bootstrap);
     let trace_ingest: Arc<dyn TraceIngestClient> = Arc::new(EnvTraceIngestClient);
-    let local_trace_archive = match LocalTraceArchive::from_env() {
-        Ok(a) => a,
-        Err(e) => {
-            tracing::error!(
-                target: "plasm_agent::http",
-                error = %e,
-                "PLASM_TRACE_ARCHIVE_DIR: invalid path (disabling local trace archive)"
-            );
-            None
-        }
-    };
+    let local_trace_archive =
+        match LocalTraceArchive::from_env_or_oss_default(oss_local_filesystem_defaults) {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::error!(
+                    target: "plasm_agent::http",
+                    error = %e,
+                    "PLASM_TRACE_ARCHIVE_DIR: invalid path (disabling local trace archive)"
+                );
+                None
+            }
+        };
     let trace_hub_requested = TraceHubConfig::from_env();
     let trace_hub = Arc::new(
         TraceHubBuilder::from_config(trace_hub_requested)
@@ -106,6 +112,9 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
                 .or_else(|| std::env::var("PLASM_TRACE_SINK_URL").ok())
                 .map(|s| s.trim_end_matches('/').to_string())
                 .filter(|s| !s.is_empty()),
+            auth_storage: None,
+            oauth_link_catalog: None,
+            outbound_secret_provider: None,
         },
         saas: None,
     }
@@ -151,7 +160,14 @@ pub fn discovery_execute_router(state: PlasmHostState) -> Router {
     // checks would flood logs at `RUST_LOG=tower_http=debug` (or OTLP export noise).
     let health_public = health_public_routes();
 
-    let traced = Router::new()
+    let mut pre_internal = Router::new()
+        .merge(http_oauth_link::oauth_link_routes())
+        .merge(http_outbound_secrets::outbound_secrets_routes());
+    if state.mcp_config_repository().is_some() {
+        pre_internal = pre_internal.merge(crate::http_mcp_config::mcp_config_routes());
+    }
+
+    let traced = pre_internal
         .merge(oss_traced_routes())
         .layer(TraceLayer::new_for_http().make_span_with(tower_http_trace_parent_span));
 
@@ -174,7 +190,10 @@ pub async fn serve_http_listener(
         "  GET  /v1/health   GET /v1/auth/status   GET /v1/registry   GET /v1/registry/:entry_id   GET /v1/registry/:entry_id/tool-model   GET /v1/incoming-auth/context   POST /v1/discover"
     );
     eprintln!(
-        "  (OSS `serve_http_listener` has no /internal/* — use the hosted plasm-saas app for those routes.)"
+        "  GET  /oauth/link/callback   POST /internal/oauth-link/v1/start   POST /internal/outbound-secrets/v1/put   POST /internal/outbound-secrets/v1/delete (when outbound OAuth KV is configured)"
+    );
+    eprintln!(
+        "  When DATABASE_URL / PLASM_MCP_CONFIG_DATABASE_URL is set: POST /internal/mcp-config/v1/upsert (+ MCP API key routes) with X-Plasm-Control-Plane-Secret — same contract as hosted control plane"
     );
     eprintln!(
         "  POST /execute — {{ entry_id, entities }} → 303 Location only → GET that URL for session JSON + DOMAIN prompt"

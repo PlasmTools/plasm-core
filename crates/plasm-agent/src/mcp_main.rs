@@ -1,7 +1,7 @@
-//! `plasm-mcp` entry wiring (HTTP + MCP) — OSS data plane only: discovery, execute, Streamable HTTP
-//! MCP with **unauthenticated** transport in this binary (no `auth-framework`, no tenant policy DB).
-//! The private monorepo’s hosted stack composes `plasm-saas` / `plasm-mcp-app` for control-plane
-//! auth, API keys, and account linking.
+//! `plasm-mcp` entry wiring (HTTP + MCP) — OSS data plane: discovery, execute, Streamable HTTP MCP.
+//! Tenant MCP policy uses `project_mcp_*` when a config DB URL is set; HTTP **`/v1/traces*`** resolves
+//! tenant scope from incoming JWT / API keys ([`plasm_agent_core::incoming_auth`], same env as hosted).
+//! The monorepo hosted stack composes `plasm-saas` / `plasm-mcp-app` for product control-plane routes.
 
 use clap::{Arg, ArgAction, Command};
 use plasm_agent_core::error::AgentError;
@@ -9,7 +9,9 @@ use plasm_agent_core::server_state::CatalogBootstrap;
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_core::{PromptPipelineConfig, PromptRenderMode};
 use plasm_plugin_host::PluginManager;
-use plasm_runtime::{AuthResolver, ExecutionConfig, ExecutionEngine, ExecutionMode};
+use plasm_runtime::{
+    AuthResolver, ExecutionConfig, ExecutionEngine, ExecutionMode, SecretProvider,
+};
 
 async fn shutdown_signal() {
     #[cfg(unix)]
@@ -80,8 +82,8 @@ pub async fn run_mcp_main() -> Result<(), Box<dyn std::error::Error>> {
                 .long("migrate-mcp-config-db")
                 .action(ArgAction::SetTrue)
                 .help(
-                    "Hosted / SaaS: run sqlx migrations for tenant MCP tables, then exit. \
-Not supported in the OSS `plasm-mcp` binary — use the product `plasm-mcp-app` image or tooling from the private repo.",
+                    "Run embedded sqlx migrations for tenant MCP tables (`project_mcp_*`), then exit. \
+Uses PLASM_MCP_CONFIG_DATABASE_URL, else PLASM_AUTH_STORAGE_URL, else DATABASE_URL.",
                 ),
         )
         .ignore_errors(true);
@@ -89,11 +91,20 @@ Not supported in the OSS `plasm-mcp` binary — use the product `plasm-mcp-app` 
     let pre_matches = pre_cmd.get_matches_from(&argv);
 
     if pre_matches.get_flag("migrate_mcp_config_db") {
-        eprintln!(
-            "plasm-mcp: --migrate-mcp-config-db is not available in the open-source `plasm-mcp` build. \
-Use the hosted `plasm-mcp-app` binary (private monorepo) or the deploy scripts that run tenant MCP migrations against Postgres."
-        );
-        std::process::exit(1);
+        let Some(db_url) = plasm_agent_core::mcp_config_repository::mcp_config_database_url()
+        else {
+            eprintln!(
+                "plasm-mcp: --migrate-mcp-config-db requires PLASM_MCP_CONFIG_DATABASE_URL, PLASM_AUTH_STORAGE_URL, or DATABASE_URL"
+            );
+            std::process::exit(1);
+        };
+        plasm_agent_core::mcp_config_repository::McpConfigRepository::connect_and_migrate(&db_url)
+            .await
+            .map_err(|e| -> Box<dyn std::error::Error> {
+                format!("MCP config database migrate failed: {e}").into()
+            })?;
+        tracing::info!("MCP configuration sqlx migrations applied successfully");
+        return Ok(());
     }
 
     let plugin_dir = pre_matches.get_one::<String>("plugin_dir");
@@ -235,23 +246,78 @@ Use the hosted `plasm-mcp-app` binary (private monorepo) or the deploy scripts t
         }
         None => None,
     };
-    let run_artifacts = plasm_agent_core::run_artifacts::init_from_env()
-        .map_err(|e| std::io::Error::other(format!("run artifacts: {e}")))?;
+    let run_artifacts = plasm_agent_core::run_artifacts::init_from_env_with_policy(
+        plasm_agent_core::run_artifacts::RunArtifactInitPolicy::OssFilesystemDefaults,
+    )
+    .map_err(|e| std::io::Error::other(format!("run artifacts: {e}")))?;
     let session_graph_persistence = plasm_agent_core::session_graph_persistence::init_from_env()
         .map_err(|e| std::io::Error::other(format!("session graph persistence: {e}")))?;
-    let app_state = plasm_agent_core::http::build_plasm_host_state(
+
+    let incoming_cfg = plasm_agent_core::incoming_auth::IncomingAuthConfig::from_env();
+    if let Err(e) = incoming_cfg.validate_startup() {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
+    let incoming_verifier = std::sync::Arc::new(
+        plasm_agent_core::incoming_auth::IncomingAuthVerifier::new(incoming_cfg.clone())
+            .map_err(std::io::Error::other)?,
+    );
+    plasm_agent_core::incoming_auth::log_incoming_auth_startup(&incoming_cfg, &incoming_verifier);
+
+    let mut app_state = plasm_agent_core::http::build_plasm_host_state(
         plasm_agent_core::http::PlasmHostBootstrap {
             engine,
             mode,
             registry,
             catalog_bootstrap,
             plugin_manager,
-            incoming_auth: None,
+            incoming_auth: Some(incoming_verifier),
             run_artifacts,
             session_graph_persistence,
+            oss_local_filesystem_defaults: true,
         },
     );
-    // `app_state.saas` stays `None` — no auth-framework, no MCP transport API keys, no tenant DB.
+
+    let outbound_enabled = std::env::var("PLASM_OUTBOUND_OAUTH")
+        .ok()
+        .map(|s| s == "1" || s.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+        || std::env::var("PLASM_AUTH_STORAGE_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .is_some()
+        || std::env::var("DATABASE_URL")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .is_some();
+
+    if outbound_enabled {
+        match plasm_agent_core::auth_framework_host::init_standalone_auth_storage().await {
+            Ok(storage) => {
+                let catalog = std::sync::Arc::new(
+                    plasm_agent_core::oauth_link_catalog::OauthLinkCatalog::from_env(),
+                );
+                let outbound = std::sync::Arc::new(
+                    plasm_agent_core::outbound_secret_provider::AgentOutboundSecretProvider::new(
+                        storage.clone(),
+                        catalog.clone(),
+                    ),
+                );
+                app_state.oss.auth_storage = Some(storage);
+                app_state.oss.oauth_link_catalog = Some(catalog);
+                app_state.oss.outbound_secret_provider =
+                    Some(outbound as std::sync::Arc<dyn SecretProvider>);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "outbound OAuth: auth storage init failed; set PLASM_AUTH_STORAGE_URL or DATABASE_URL, or PLASM_OUTBOUND_OAUTH=1 with a valid storage configuration"
+                );
+            }
+        }
+    }
+
+    maybe_attach_oss_mcp_policy_store(&mut app_state).await;
 
     let mcp_port = match matches.get_one::<u16>("mcp_port").copied() {
         Some(p) => p,
@@ -314,4 +380,58 @@ Use the hosted `plasm-mcp-app` binary (private monorepo) or the deploy scripts t
         }
     }
     Ok(())
+}
+
+/// When `DATABASE_URL` / `PLASM_MCP_CONFIG_DATABASE_URL` / `PLASM_AUTH_STORAGE_URL` resolves, enable
+/// `project_mcp_*` persistence and MCP transport API keys (same handlers as hosted `/internal/*`).
+async fn maybe_attach_oss_mcp_policy_store(
+    app_state: &mut plasm_agent_core::server_state::PlasmHostState,
+) {
+    let Some(db_url) = plasm_agent_core::mcp_config_repository::mcp_config_database_url() else {
+        return;
+    };
+    let repo =
+        match plasm_agent_core::mcp_config_repository::McpConfigRepository::connect_and_migrate(
+            &db_url,
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "OSS plasm-mcp: project_mcp_* connect/migrate failed; tenant MCP policy disabled"
+                );
+                return;
+            }
+        };
+
+    let mcp_keys = if let Some(s) = app_state.oss.auth_storage.clone() {
+        std::sync::Arc::new(plasm_agent_core::mcp_api_key_registry::McpApiKeyRegistry::new(s))
+    } else {
+        match plasm_agent_core::auth_framework_host::init_standalone_auth_storage().await {
+            Ok(s) => {
+                app_state.oss.auth_storage = Some(s.clone());
+                std::sync::Arc::new(
+                    plasm_agent_core::mcp_api_key_registry::McpApiKeyRegistry::new(s),
+                )
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "OSS plasm-mcp: durable auth KV unavailable; MCP API keys are in-memory only until restart (set DATABASE_URL / PLASM_AUTH_STORAGE_URL for durable keys)"
+                );
+                plasm_agent_core::auth_framework_host::mcp_api_key_registry_memory_only()
+            }
+        }
+    };
+    app_state.saas = Some(plasm_agent_core::server_state::PlasmSaaSHostExtension {
+        auth_framework: None,
+        mcp_config_repository: Some(std::sync::Arc::new(repo)),
+        mcp_transport_auth: Some(mcp_keys),
+        tenant_binding: None,
+    });
+    tracing::info!(
+        "OSS plasm-mcp: tenant MCP policy enabled (project_mcp_* + API keys); control-plane routes on HTTP require X-Plasm-Control-Plane-Secret"
+    );
 }

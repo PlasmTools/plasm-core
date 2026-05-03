@@ -3043,7 +3043,7 @@ fn render_prompt_contract(spec: PromptContractSpec) -> String {
         s,
         "- `..` — optional trailing params (`optional params:` lists them); `..` alone means all args optional."
     );
-    s.push_str("\n");
+    s.push('\n');
 
     s
 }

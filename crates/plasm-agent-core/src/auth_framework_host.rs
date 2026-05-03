@@ -42,6 +42,12 @@ enum AuthStorageMode {
 
 /// Prefer `PLASM_AUTH_STORAGE_URL`, then `DATABASE_URL`. Without either, use in-memory storage
 /// (API key hashes and framework KV are not durable across process restarts).
+pub async fn init_standalone_auth_storage(
+) -> Result<Arc<dyn AuthStorage>, auth_framework::AuthError> {
+    let (storage, _) = create_auth_storage().await?;
+    Ok(storage)
+}
+
 async fn create_auth_storage(
 ) -> Result<(Arc<dyn AuthStorage>, AuthStorageMode), auth_framework::AuthError> {
     let in_k8s = std::env::var("KUBERNETES_SERVICE_HOST")
@@ -201,6 +207,12 @@ pub async fn init_plasm_http_auth_bundle() -> Result<
         }
         Err(e) => Err(e),
     }
+}
+
+/// Non-durable MCP API keys — used when Postgres auth KV cannot be opened but `project_mcp_*` DB is configured.
+pub fn mcp_api_key_registry_memory_only() -> Arc<McpApiKeyRegistry> {
+    let storage = Arc::new(MemoryStorage::new()) as Arc<dyn AuthStorage>;
+    Arc::new(McpApiKeyRegistry::new(storage))
 }
 
 /// In-memory shared storage for tests (same `Arc` for framework + MCP API key registry).

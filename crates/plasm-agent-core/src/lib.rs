@@ -1,6 +1,7 @@
 //! `plasm-agent` library: HTTP/MCP SaaS core and schema CLI — built as **`plasm-mcp`** and **`plasm-cgs`**.
 //! Interactive REPL (`plasm-repl`) lives in **`plasm-repl`** (depends on `plasm-eval` / BAML). Integration tests live under `tests/*.rs`.
 
+pub mod appliance_mcp_defaults;
 pub mod auth_framework_host;
 mod auth_framework_postgres_schema;
 pub mod backend_normalize;
@@ -19,6 +20,9 @@ pub mod http;
 pub mod http_discovery;
 pub mod http_execute;
 pub mod http_incoming_context;
+pub mod http_mcp_config;
+pub mod http_oauth_link;
+pub mod http_outbound_secrets;
 pub mod http_problem_util;
 mod http_traces;
 pub mod incoming_auth;
@@ -40,6 +44,7 @@ pub mod oauth_link_session;
 mod oauth_provider_model;
 pub mod oauth_provider_pull;
 mod oauth_runtime_source;
+pub mod oss_local_state;
 pub mod outbound_secret_provider;
 pub mod output;
 pub mod plasm_dag;
