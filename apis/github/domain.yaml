@@ -1,4 +1,4 @@
-version: 22
+version: 23
 http_backend: https://api.github.com
 entities:
   Repository:
@@ -1414,7 +1414,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: affiliation
@@ -1427,7 +1427,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: sort
@@ -1466,7 +1466,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: state
@@ -1553,7 +1553,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: state
@@ -1597,7 +1597,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: q
@@ -1631,7 +1631,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: sha
@@ -1781,7 +1781,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: pull_number
@@ -1840,7 +1840,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: pull_number
@@ -1881,7 +1881,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
   branch_get:
@@ -1902,7 +1902,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
   contributor_query:
@@ -1912,7 +1912,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: anon
@@ -2305,7 +2305,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
   label_get:
@@ -2345,7 +2345,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: state
@@ -2400,7 +2400,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: title
@@ -2458,7 +2458,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
   release_get:
@@ -2496,7 +2496,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: tag_name
@@ -2566,7 +2566,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: issue_number
@@ -2583,7 +2583,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: sort
@@ -2625,7 +2625,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: title
@@ -2797,7 +2797,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: issue_number
@@ -2820,7 +2820,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: body
@@ -2832,7 +2832,7 @@ capabilities:
     description: Delete an issue or pull request timeline comment.
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
   pr_patch:
@@ -2917,7 +2917,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: title
@@ -2956,7 +2956,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: name
@@ -3002,7 +3002,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: path
@@ -3030,7 +3030,7 @@ capabilities:
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
-      value_ref: nv_github_repository_full_name
+      value_ref: nv_github_scope_repository
       required: true
       role: scope
     - name: path
@@ -3689,6 +3689,10 @@ values:
     type: string
     string_semantics: short
     description: Repository identifier in owner/name form.
+  nv_github_scope_repository:
+    type: string
+    string_semantics: short
+    description: Repository owner/name used as HTTP scope for repository-scoped capabilities.
   nv_github_created_at:
     type: date
     value_format: rfc3339
