@@ -63,7 +63,7 @@ expression: prompt
 #
 
 plasm_expr	Meaning
-v12	str · Repository owner/name used as HTTP scope for repository-scoped capabilities
+v12	ref:Repository · int · Repository owner/name used as HTTP scope for repository-scoped capabilities
 v4	str · GitHub user or organization login
 v11	str · Repository name within a GitHub owner account
 v101	str
@@ -77,9 +77,9 @@ p254	v101 · name
 p51	v8 · commit_sha
 p148	v87 · protected
 p54	v9 · html_url
-e1{p57=$}[p41,p56,p254,p51,p148,p54]	returns [e1] · projection · Git branch
+e1{p57=e17(p41=$, p56=$)}[p41,p56,p254,p51,p148,p54]	returns [e1] · projection · Git branch
 e1(p41=$, p56=$, p254=$)	returns e1
-e1{p57=$}	returns [e1]
+e1{p57=e17(p41=$, p56=$)}	returns [e1]
 v88	date
 v100	markdown
 v89	int
@@ -97,17 +97,17 @@ p168	v89 · comment_count
 p197	v89 · stats_additions
 p198	v89 · stats_deletions
 p201	v89 · total_changes
-e2{p57=$, p53=$, p257=$, p233=$, p234=$, p162=$, p165=$}[p41,p56,p53,p225,p54,p269,p152,p153,p168,p197,p198,p201]	returns [e2] · projection · A repository commit with message, times, and relations to author and committer users and to changed files
+e2{p57=e17(p41=$, p56=$), p53=$, p257=$, p233=$, p234=$, p162=$, p165=$}[p41,p56,p53,p225,p54,p269,p152,p153,p168,p197,p198,p201]	returns [e2] · projection · A repository commit with message, times, and relations to author and committer users and to changed files
 e2(p41=$, p56=$, p53=$)	returns e2
-e2{p57=$, p53=$, p257=$, p233=$, p234=$, p162=$, p165=$}	returns [e2] · optional params: p53, p257, p233, p234, p162, p165
+e2{p57=e17(p41=$, p56=$), p53=$, p257=$, p233=$, p234=$, p162=$, p165=$}	returns [e2] · optional params: p53, p257, p233, p234, p162, p165
 e2(p41=$, p56=$, p53=$).p2	relation e2 => e19 · GitHub user for the commit author, when the API provides one
 e2(p41=$, p56=$, p53=$).p3	relation e2 => e19 · GitHub user for the committer, when the API provides one
 v3	bool · Count anonymous contributions too
 p37	v3 · anon
 p39	v4 · login
 p170	v89 · contributions
-e3{p57=$, p37=$}[p39,p170,p41,p56]	returns [e3] · projection · Repository contributor with commit stats
-e3{p57=$, p37=$}	returns [e3] · optional params: p37
+e3{p57=e17(p41=$, p56=$), p37=$}[p39,p170,p41,p56]	returns [e3] · projection · Repository contributor with commit stats
+e3{p57=e17(p41=$, p56=$), p37=$}	returns [e3] · optional params: p37
 v7	date · Timestamp when a GitHub resource was created
 v13	date · Timestamp when a GitHub resource was last updated
 p245	v101 · id
@@ -185,18 +185,18 @@ p199	v89 · sub_issues_completed
 p81	v35 · sub_issues_percent_completed
 p143	v87 · locked
 p48	v6 · closed_at
-e5{p57=$, p214=$, p71=e19($), p248=$, p253=$, p72=$}[p175,p41,p56,p70,p267,p221,p209,p74,p177,p246,p213,p200,p199,p81,p143,p169,p49,p58,p48,p54]	returns [e5] · projection · A GitHub issue in a repository
+e5{p57=e17(p41=$, p56=$), p214=$, p71=e19($), p248=$, p253=$, p72=$}[p175,p41,p56,p70,p267,p221,p209,p74,p177,p246,p213,p200,p199,p81,p143,p169,p49,p58,p48,p54]	returns [e5] · projection · A GitHub issue in a repository
 e5(p41=$, p56=$, p70=$)	returns e5
 e5(p41=$, p56=$, p70=$).m12()	returns () · Delete an issue
 e5(p41=$, p56=$, p70=$).m20()	returns e5 · optional params: p267, p221, p209, p86, p83, p82, p85, p84 · Update an issue
 e5(p41=$, p56=$, p70=$).m8(p62=$, p44=$,..)	returns () · optional params: p60, p59, p61 · Assign Copilot agent to an issue
 e5(p41=$, p56=$, p70=$).m9(p63=[$])	returns () · Add assignees without replacing existing ones
 e5(p41=$, p56=$, p70=$).m10(p64=[$])	returns () · Remove one or more assignees from an issue
-e5.m11(p57=$, p267=$,..)	returns e5 · [scope p57] · optional params: p221, p67, p66, p68 · Open a new issue in a repository
+e5.m11(p57=e17(p41=$, p56=$), p267=$,..)	returns e5 · [scope p57→e17] · optional params: p221, p67, p66, p68 · Open a new issue in a repository
 e5(p41=$, p56=$, p70=$).m16(p76=$,..)	returns () · optional params: p75 · Add an existing issue as a sub-issue of this issue
 e5(p41=$, p56=$, p70=$).m18(p77=$)	returns () · Remove a sub-issue from this parent issue
 e5(p41=$, p56=$, p70=$).m19(p80=$,..)	returns () · optional params: p78, p79 · Reorder a sub-issue within this parent issue
-e5{p57=$, p214=$, p71=e19($), p248=$, p253=$, p72=$}	returns [e5] · optional params: p214, p71, p248, p253, p72
+e5{p57=e17(p41=$, p56=$), p214=$, p71=e19($), p248=$, p253=$, p72=$}	returns [e5] · optional params: p214, p71, p248, p253, p72
 e5{p41=$, p56=$, p69=$}	returns [e5]
 e5~$	returns [e5]
 e5(p41=$, p56=$, p70=$).p10	relation e5 => e19
@@ -208,13 +208,13 @@ v20	date · Only comments updated at or after this time
 v78	date · Only comments updated at or after this time
 p65	v20 · since
 p125	v78 · since
-e6{p57=$, p69=$, p65=$}[p175,p221,p49,p54,p58]	returns [e6] · projection · A comment on a GitHub issue or pull request
-e6.m21(p57=$, p69=$, p221=$)	returns e6 · [scope p57, p69] · Post a comment on an issue or pull request thread
-e6($).m22(p57=$)	returns () · [scope p57] · Delete an issue or pull request timeline comment
-e6($).m24(p57=$, p221=$)	returns e6 · [scope p57] · Update an issue or pull request comment
-e6{p57=$, p69=$, p65=$}	returns [e6] · optional params: p65
-e6{p57=$, p125=$}	returns [e6] · optional params: p125
-e6{p57=$, p69=$, p65=$}.p5	relation e6 => e19
+e6{p57=e17(p41=$, p56=$), p69=$, p65=$}[p175,p221,p49,p54,p58]	returns [e6] · projection · A comment on a GitHub issue or pull request
+e6.m21(p57=e17(p41=$, p56=$), p69=$, p221=$)	returns e6 · [scope p57→e17, p69] · Post a comment on an issue or pull request thread
+e6($).m22(p57=e17(p41=$, p56=$))	returns () · [scope p57→e17] · Delete an issue or pull request timeline comment
+e6($).m24(p57=e17(p41=$, p56=$), p221=$)	returns e6 · [scope p57→e17] · Update an issue or pull request comment
+e6{p57=e17(p41=$, p56=$), p69=$, p65=$}	returns [e6] · optional params: p65
+e6{p57=e17(p41=$, p56=$), p125=$}	returns [e6] · optional params: p125
+e6{p57=e17(p41=$, p56=$), p69=$, p65=$}.p5	relation e6 => e19
 p212	v94 · color
 p141	v87 · is_enabled
 p255	v101 · node_id
@@ -233,19 +233,19 @@ e8{p41=$, p56=$, p69=$}[p254,p41,p56,p175,p223,p235,p136]	returns [e8] · projec
 e8(p41=$, p56=$, p254=$)	returns e8
 e8(p41=$, p56=$, p254=$).m28()	returns () · Delete a label from a repository
 e8(p41=$, p56=$, p254=$).m32()	returns e8 · optional params: p89, p88, p223 · Update a label
-e8.m27(p57=$, p254=$,..)	returns e8 · [scope p57] · optional params: p87, p223 · Create a label in a repository
+e8.m27(p57=e17(p41=$, p56=$), p254=$,..)	returns e8 · [scope p57→e17] · optional params: p87, p223 · Create a label in a repository
 e8{p41=$, p56=$, p69=$}	returns [e8]
-e8{p57=$}	returns [e8]
+e8{p57=e17(p41=$, p56=$)}	returns [e8]
 p181	v89 · number
 p182	v89 · open_issues
 p167	v89 · closed_issues
 p155	v88 · due_on
-e9{p57=$, p214=$}[p181,p41,p56,p175,p267,p223,p209,p182,p167,p155,p49,p58,p48,p54]	returns [e9] · projection · A milestone grouping issues and pull requests
+e9{p57=e17(p41=$, p56=$), p214=$}[p181,p41,p56,p175,p267,p223,p209,p182,p167,p155,p49,p58,p48,p54]	returns [e9] · projection · A milestone grouping issues and pull requests
 e9(p41=$, p56=$, p181=$)	returns e9
 e9(p41=$, p56=$, p181=$).m34()	returns () · Delete a milestone from a repository
 e9(p41=$, p56=$, p181=$).m37()	returns e9 · optional params: p267, p223, p209, p155 · Update milestone
-e9.m33(p57=$, p267=$,..)	returns e9 · [scope p57] · optional params: p223, p209, p155 · Create a milestone in a repository
-e9{p57=$, p214=$}	returns [e9] · optional params: p214
+e9.m33(p57=e17(p41=$, p56=$), p267=$,..)	returns e9 · [scope p57→e17] · optional params: p223, p209, p155 · Create a milestone in a repository
+e9{p57=e17(p41=$, p56=$), p214=$}	returns [e9] · optional params: p214
 v46	date · Only notifications updated at or after this time
 v45	date · Only notifications updated before this time
 p134	v87 · all
@@ -294,14 +294,14 @@ p116	v70 · q
 p118	v72 · number
 p137	v87 · draft
 p158	v88 · merged_at
-e12{p57=$, p214=$, p243=$, p230=$}[p175,p41,p56,p118,p267,p221,p209,p143,p137,p158,p49,p58,p48,p54]	returns [e12] · projection · A pull request in a repository
+e12{p57=e17(p41=$, p56=$), p214=$, p243=$, p230=$}[p175,p41,p56,p118,p267,p221,p209,p143,p137,p158,p49,p58,p48,p54]	returns [e12] · projection · A pull request in a repository
 e12(p41=$, p56=$, p118=$)	returns e12
 e12(p41=$, p56=$, p118=$).m44()	returns () · optional params: p237, p222, p101 · Merge a pull request
 e12(p41=$, p56=$, p118=$).m45()	returns e12 · optional params: p267, p221, p209, p102 · Update a pull request
 e12(p41=$, p56=$, p118=$).m49()	returns () · optional params: p117 · Update a pull request branch from its base branch
-e12.m42(p57=$, p267=$, p98=$, p97=$,..)	returns e12 · [scope p57] · optional params: p221, p137, p100, p99 · Open a PR (head into base)
-e12{p57=$, p214=$, p243=$, p230=$}	returns [e12] · optional params: p214, p243, p230
-e12{p57=$, p116=$}	returns [e12]
+e12.m42(p57=e17(p41=$, p56=$), p267=$, p98=$, p97=$,..)	returns e12 · [scope p57→e17] · optional params: p221, p137, p100, p99 · Open a PR (head into base)
+e12{p57=e17(p41=$, p56=$), p214=$, p243=$, p230=$}	returns [e12] · optional params: p214, p243, p230
+e12{p57=e17(p41=$, p56=$), p116=$}	returns [e12]
 e12~$	returns [e12]
 e12(p41=$, p56=$, p118=$).p19	relation e12 => e19
 e12(p41=$, p56=$, p118=$).p16	relation e12 => [e13]
@@ -331,7 +331,7 @@ p164	v88 · submitted_at
 e14{p41=$, p56=$, p119=$}[p175,p41,p56,p119,p121,p221,p236,p164,p54]	returns [e14] · projection · A review on a pull request
 e14(p41=$, p56=$, p119=$, p175=$)	returns e14
 e14(p41=$, p56=$, p119=$, p175=$).m52()	returns () · Delete a pending pull request review
-e14.m51(p57=$, p119=$,..)	returns e14 · [scope p57, p119] · optional params: p221, p113, p114 · Create or submit a pull request review
+e14.m51(p57=e17(p41=$, p56=$), p119=$,..)	returns e14 · [scope p57→e17, p119] · optional params: p221, p113, p114 · Create or submit a pull request review
 e14(p41=$, p56=$, p119=$, p175=$).m55(p115=$,..)	returns () · optional params: p221 · Submit an existing pending pull request review
 e14{p41=$, p56=$, p119=$}	returns [e14]
 e14(p41=$, p56=$, p119=$, p175=$).p13	relation e14 => e12
@@ -365,7 +365,7 @@ p217	v97 · start_side
 p120	v73 · subject_type
 e15{p41=$, p56=$, p119=$, p112=$}[p175,p41,p56,p221,p257,p224,p236,p119,p189,p178,p216,p196,p217,p120,p54,p49,p58]	returns [e15] · projection · Inline comment on a pull request review diff
 e15(p41=$, p56=$, p175=$)	returns e15
-e15.m56(p57=$, p119=$, p221=$,..)	returns e15 · [scope p57, p119] · optional params: p104, p107, p106, p108, p109, p110, p111, p105 · Add or reply to an inline review comment
+e15.m56(p57=e17(p41=$, p56=$), p119=$, p221=$,..)	returns e15 · [scope p57→e17, p119] · optional params: p104, p107, p106, p108, p109, p110, p111, p105 · Add or reply to an inline review comment
 e15{p41=$, p56=$, p119=$, p112=$}	returns [e15] · optional params: p112
 e15(p41=$, p56=$, p175=$).p12	relation e15 => e19
 v76	str · Branch or commit SHA the release tag points at
@@ -376,12 +376,12 @@ p122	v75 · generate_release_notes
 p264	v101 · tag_name
 p146	v87 · prerelease
 p159	v88 · published_at
-e16{p57=$}[p175,p41,p56,p264,p254,p221,p137,p146,p49,p159,p54]	returns [e16] · projection · A GitHub release with assets and release notes
+e16{p57=e17(p41=$, p56=$)}[p175,p41,p56,p264,p254,p221,p137,p146,p49,p159,p54]	returns [e16] · projection · A GitHub release with assets and release notes
 e16(p41=$, p56=$, p175=$)	returns e16
 e16(p41=$, p56=$, p175=$).m60()	returns () · Delete a release by id in a repository
 e16(p41=$, p56=$, p175=$).m63()	returns e16 · optional params: p264, p254, p221, p137, p146, p266 · Update an existing release
-e16.m59(p57=$, p264=$,..)	returns e16 · [scope p57] · optional params: p254, p221, p137, p146, p123, p122 · Create a GitHub release (tag)
-e16{p57=$}	returns [e16]
+e16.m59(p57=e17(p41=$, p56=$), p264=$,..)	returns e16 · [scope p57→e17] · optional params: p254, p221, p137, p146, p123, p122 · Create a GitHub release (tag)
+e16{p57=e17(p41=$, p56=$)}	returns [e16]
 e16(p41=$, p56=$, p175=$).p21	relation e16 => e19
 v10	str · Repository identifier in owner/name form
 v84	select · public, private, internal
@@ -413,12 +413,12 @@ p131	v84 · visibility
 p160	v88 · pushed_at
 e17[p175,p41,p56,p55,p223,p147,p139,p249,p195,p174,p183,p46,p135,p131,p49,p58,p160,p54]	returns e17 · projection · A GitHub repository
 e17(p41=$, p56=$)	returns e17
-e17(p41=$, p56=$).m67(p57=$, p257=$, p252=$, p53=$,..)	returns () · [scope p57] · optional params: p45 · Delete a file from a repository
-e17(p41=$, p56=$).m68(p57=$, p257=$, p252=$, p127=$,..)	returns () · [scope p57] · optional params: p45, p53 · Create or update a file in a repository
+e17(p41=$, p56=$).m67(p57=e17(p41=$, p56=$), p257=$, p252=$, p53=$,..)	returns () · [scope p57→e17] · optional params: p45 · Delete a file from a repository
+e17(p41=$, p56=$).m68(p57=e17(p41=$, p56=$), p257=$, p252=$, p127=$,..)	returns () · [scope p57→e17] · optional params: p45, p53 · Create or update a file in a repository
 e17{p36=$, p35=$}	returns [e17] · optional params: p36, p35
 e17{p40=$, p95=$}	returns [e17]
 e17{p40=$, p96=$}	returns [e17] · optional params: p96
-e17{p57=$}	returns [e17]
+e17{p57=e17(p41=$, p56=$)}	returns [e17]
 e17{p43=$, p132=$}	returns [e17] · optional params: p132
 e17~$	returns [e17]
 e17(p41=$, p56=$).p22	relation e17 => [e1]
@@ -429,8 +429,8 @@ e17(p41=$, p56=$).p26	relation e17 => [e23]
 e17(p41=$, p56=$).p27	relation e17 => [e20]
 p265	v101 · tarball_url
 p270	v101 · zipball_url
-e18{p57=$}[p254,p51,p41,p56,p265,p270]	returns [e18] · projection · Git tag in a repository (not a GitHub Release)
-e18{p57=$}	returns [e18]
+e18{p57=e17(p41=$, p56=$)}[p254,p51,p41,p56,p265,p270]	returns [e18] · projection · Git tag in a repository (not a GitHub Release)
+e18{p57=e17(p41=$, p56=$)}	returns [e18]
 v47	select · 2fa_disabled, 2fa_insecure, all
 v48	select · all, admin, member
 v77	select · outside, direct, all
@@ -444,7 +444,7 @@ p150	v87 · site_admin
 e19{p40=$, p93=$, p94=$}[p39,p175,p254,p238,p232,p250,p240,p220,p188,p187,p140,p150,p54,p228,p49]	returns [e19] · projection · A GitHub user account
 e19.m75()	returns e19
 e19{p40=$, p93=$, p94=$}	returns [e19] · optional params: p93, p94
-e19{p57=$, p124=$}	returns [e19] · optional params: p124
+e19{p57=e17(p41=$, p56=$), p124=$}	returns [e19] · optional params: p124
 e19~$	returns [e19]
 v110	select · active, deleted, disabled_fork, disabled_inactivity, disabled_manually
 v102	str · Branch, tag, or commit SHA to run the workflow on
