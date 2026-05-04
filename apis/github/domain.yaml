@@ -3723,8 +3723,8 @@ values:
     string_semantics: short
     description: Repository name within a GitHub owner account.
   nv_github_scope_repository:
-    type: string
-    string_semantics: short
+    type: entity_ref
+    target: Repository
     description: Repository owner/name used as HTTP scope for repository-scoped capabilities.
   nv_github_updated_at:
     type: date
