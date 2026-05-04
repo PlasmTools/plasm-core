@@ -1,4 +1,4 @@
-version: 1
+version: 2
 auth:
   scheme: none
 http_backend: https://api.openbrewerydb.org
@@ -50,19 +50,19 @@ capabilities:
     entity: Brewery
     parameters:
     - name: by_city
-      value_ref: nv_brewery_query_by_city
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: by_state
-      value_ref: nv_brewery_query_by_state
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: by_postal
-      value_ref: nv_brewery_query_by_postal
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: by_country
-      value_ref: nv_brewery_query_by_country
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: by_type
@@ -70,15 +70,15 @@ capabilities:
       required: false
       role: filter
     - name: by_name
-      value_ref: nv_brewery_query_by_name
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: by_ids
-      value_ref: nv_brewery_query_by_ids
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: sort
-      value_ref: nv_brewery_query_sort
+      value_ref: nv_wire_str_short
       required: false
       role: sort
   brewery_search:
@@ -87,7 +87,7 @@ capabilities:
     entity: Brewery
     parameters:
     - name: query
-      value_ref: nv_brewery_search_query
+      value_ref: nv_wire_str_short
       required: true
       role: search
   brewery_get:
@@ -113,7 +113,7 @@ capabilities:
     entity: Brewery
     parameters:
     - name: query
-      value_ref: nv_brewery_autocomplete_query
+      value_ref: nv_wire_str_short
       required: true
       role: search
   brewery_random:
@@ -129,14 +129,10 @@ capabilities:
       type: side_effect
       description: Return N random breweries; size controls count
 values:
-  nv_brewery_id:
+  nv_brewery_address_1:
     type: string
     string_semantics: short
-    description: Unique UUID string identifier
-  nv_brewery_name:
-    type: string
-    string_semantics: short
-    description: Brewery name
+    description: Street address
   nv_brewery_brewery_type:
     type: select
     allowed_values:
@@ -151,54 +147,38 @@ values:
     - proprietor
     - closed
     description: Classification (micro, nano, regional, brewpub, large, etc.)
-  nv_brewery_address_1:
-    type: string
-    string_semantics: short
-    description: Street address
   nv_brewery_city:
     type: string
     string_semantics: short
     description: City name
-  nv_brewery_state:
-    type: string
-    string_semantics: short
-    description: US state or international equivalent
-  nv_brewery_postal_code:
-    type: string
-    string_semantics: short
-    description: ZIP or postal code
   nv_brewery_country:
     type: string
     string_semantics: short
     description: Country name
-  nv_brewery_longitude:
+  nv_brewery_id:
     type: string
     string_semantics: short
-    description: Geographic longitude coordinate as string
+    description: Unique UUID string identifier
   nv_brewery_latitude:
     type: string
     string_semantics: short
     description: Geographic latitude coordinate as string
+  nv_brewery_longitude:
+    type: string
+    string_semantics: short
+    description: Geographic longitude coordinate as string
+  nv_brewery_name:
+    type: string
+    string_semantics: short
+    description: Brewery name
   nv_brewery_phone:
     type: string
     string_semantics: short
     description: Contact phone number
-  nv_brewery_website_url:
+  nv_brewery_postal_code:
     type: string
     string_semantics: short
-    description: Official website URL
-  nv_brewery_query_by_city:
-    type: string
-    string_semantics: short
-  nv_brewery_query_by_state:
-    type: string
-    string_semantics: short
-  nv_brewery_query_by_postal:
-    type: string
-    string_semantics: short
-  nv_brewery_query_by_country:
-    type: string
-    string_semantics: short
+    description: ZIP or postal code
   nv_brewery_query_by_type:
     type: select
     allowed_values:
@@ -212,20 +192,16 @@ values:
     - contract
     - proprietor
     - closed
-  nv_brewery_query_by_name:
-    type: string
-    string_semantics: short
-  nv_brewery_query_by_ids:
-    type: string
-    string_semantics: short
-  nv_brewery_query_sort:
-    type: string
-    string_semantics: short
-  nv_brewery_search_query:
-    type: string
-    string_semantics: short
-  nv_brewery_autocomplete_query:
-    type: string
-    string_semantics: short
   nv_brewery_random_size:
     type: integer
+  nv_brewery_state:
+    type: string
+    string_semantics: short
+    description: US state or international equivalent
+  nv_brewery_website_url:
+    type: string
+    string_semantics: short
+    description: Official website URL
+  nv_wire_str_short:
+    type: string
+    string_semantics: short

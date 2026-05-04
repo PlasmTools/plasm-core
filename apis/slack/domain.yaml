@@ -1,4 +1,4 @@
-version: 1
+version: 2
 http_backend: https://slack.com/api
 entities:
   Channel:
@@ -416,7 +416,7 @@ capabilities:
       required: false
       role: filter
     - name: inclusive
-      value_ref: nv_channel_history_inclusive
+      value_ref: nv_wire_bool
       required: false
       role: filter
     provides:
@@ -468,10 +468,10 @@ capabilities:
     entity: Channel
     parameters:
     - name: name
-      value_ref: nv_channel_create_name
+      value_ref: nv_wire_str_short
       required: true
     - name: is_private
-      value_ref: nv_channel_create_is_private
+      value_ref: nv_wire_bool
       required: false
   channel_archive:
     description: Archive a channel
@@ -507,7 +507,7 @@ capabilities:
     entity: Channel
     parameters:
     - name: name
-      value_ref: nv_channel_rename_name
+      value_ref: nv_wire_str_short
       required: true
   channel_set_topic:
     description: Set the topic of a channel
@@ -515,7 +515,7 @@ capabilities:
     entity: Channel
     parameters:
     - name: topic
-      value_ref: nv_channel_set_topic_topic
+      value_ref: nv_wire_str_markdown
       required: true
     output:
       type: side_effect
@@ -526,7 +526,7 @@ capabilities:
     entity: Channel
     parameters:
     - name: purpose
-      value_ref: nv_channel_set_purpose_purpose
+      value_ref: nv_wire_str_markdown
       required: true
     output:
       type: side_effect
@@ -559,7 +559,7 @@ capabilities:
     entity: Channel
     parameters:
     - name: ts
-      value_ref: nv_channel_mark_ts
+      value_ref: nv_wire_str_short
       required: true
     output:
       type: side_effect
@@ -582,7 +582,7 @@ capabilities:
       required: false
       role: sort_direction
     - name: highlight
-      value_ref: nv_message_search_highlight
+      value_ref: nv_wire_bool
       required: false
       role: response_control
   message_post:
@@ -623,7 +623,7 @@ capabilities:
       value_ref: nv_message_update_channel
       required: true
     - name: text
-      value_ref: nv_message_update_text
+      value_ref: nv_wire_str_markdown
       required: false
     - name: blocks
       value_ref: nv_message_update_blocks
@@ -673,7 +673,7 @@ capabilities:
       value_ref: nv_message_react_remove_channel
       required: true
     - name: name
-      value_ref: nv_message_react_remove_name
+      value_ref: nv_wire_str_short
       required: true
     output:
       type: side_effect
@@ -684,7 +684,7 @@ capabilities:
     entity: User
     parameters:
     - name: include_locale
-      value_ref: nv_user_list_include_locale
+      value_ref: nv_wire_bool
       required: false
       role: response_control
     provides:
@@ -715,7 +715,7 @@ capabilities:
     entity: User
     parameters:
     - name: email
-      value_ref: nv_user_lookup_by_email_email
+      value_ref: nv_wire_str_short
       required: true
     output:
       type: side_effect
@@ -749,11 +749,11 @@ capabilities:
       required: false
       role: filter
     - name: ts_from
-      value_ref: nv_file_list_ts_from
+      value_ref: nv_wire_num
       required: false
       role: filter
     - name: ts_to
-      value_ref: nv_file_list_ts_to
+      value_ref: nv_wire_num
       required: false
       role: filter
     provides:
@@ -793,7 +793,7 @@ capabilities:
       value_ref: nv_file_upload_content
       required: false
     - name: filename
-      value_ref: nv_file_upload_filename
+      value_ref: nv_wire_str_short
       required: false
   file_delete:
     description: Delete a file
@@ -812,15 +812,15 @@ capabilities:
     entity: UserGroup
     parameters:
     - name: include_users
-      value_ref: nv_usergroup_list_include_users
+      value_ref: nv_wire_bool
       required: false
       role: response_control
     - name: include_count
-      value_ref: nv_usergroup_list_include_count
+      value_ref: nv_wire_bool
       required: false
       role: response_control
     - name: include_disabled
-      value_ref: nv_usergroup_list_include_disabled
+      value_ref: nv_wire_bool
       required: false
       role: filter
     provides:
@@ -837,13 +837,13 @@ capabilities:
     entity: UserGroup
     parameters:
     - name: name
-      value_ref: nv_usergroup_create_name
+      value_ref: nv_wire_str_short
       required: true
     - name: handle
-      value_ref: nv_usergroup_create_handle
+      value_ref: nv_wire_str_short
       required: false
     - name: description
-      value_ref: nv_usergroup_create_description
+      value_ref: nv_wire_str_markdown
       required: false
   usergroup_update:
     description: Update a user group
@@ -851,13 +851,13 @@ capabilities:
     entity: UserGroup
     parameters:
     - name: name
-      value_ref: nv_usergroup_update_name
+      value_ref: nv_wire_str_short
       required: false
     - name: handle
-      value_ref: nv_usergroup_update_handle
+      value_ref: nv_wire_str_short
       required: false
     - name: description
-      value_ref: nv_usergroup_update_description
+      value_ref: nv_wire_str_markdown
       required: false
   usergroup_enable:
     description: Enable a disabled user group
@@ -883,7 +883,7 @@ capabilities:
       required: true
       role: scope
     - name: include_disabled
-      value_ref: nv_usergroup_member_list_include_disabled
+      value_ref: nv_wire_bool
       required: false
       role: filter
   team_info:
@@ -916,7 +916,7 @@ capabilities:
     entity: Reminder
     parameters:
     - name: text
-      value_ref: nv_reminder_add_text
+      value_ref: nv_wire_str_markdown
       required: true
     - name: time
       value_ref: nv_reminder_add_time
@@ -968,7 +968,7 @@ capabilities:
       value_ref: nv_pin_remove_channel
       required: true
     - name: timestamp
-      value_ref: nv_pin_remove_timestamp
+      value_ref: nv_wire_str_short
       required: false
     output:
       type: side_effect
@@ -1008,7 +1008,7 @@ capabilities:
       value_ref: nv_bookmark_add_channel
       required: true
     - name: title
-      value_ref: nv_bookmark_add_title
+      value_ref: nv_wire_str_short
       required: true
     - name: type
       value_ref: nv_bookmark_add_type
@@ -1017,7 +1017,7 @@ capabilities:
       value_ref: nv_bookmark_add_link
       required: false
     - name: emoji
-      value_ref: nv_bookmark_add_emoji
+      value_ref: nv_wire_str_short
       required: false
   bookmark_edit:
     description: Edit an existing bookmark
@@ -1028,13 +1028,13 @@ capabilities:
       value_ref: nv_bookmark_edit_channel
       required: true
     - name: title
-      value_ref: nv_bookmark_edit_title
+      value_ref: nv_wire_str_short
       required: false
     - name: link
-      value_ref: nv_bookmark_edit_link
+      value_ref: nv_wire_str_short
       required: false
     - name: emoji
-      value_ref: nv_bookmark_edit_emoji
+      value_ref: nv_wire_str_short
       required: false
   bookmark_remove:
     description: Remove a bookmark from a channel
@@ -1092,10 +1092,10 @@ capabilities:
       value_ref: nv_scheduledmessage_create_attachments
       required: false
     - name: unfurl_links
-      value_ref: nv_scheduledmessage_create_unfurl_links
+      value_ref: nv_wire_bool
       required: false
     - name: unfurl_media
-      value_ref: nv_scheduledmessage_create_unfurl_media
+      value_ref: nv_wire_bool
       required: false
     - name: mrkdwn
       value_ref: nv_scheduledmessage_create_mrkdwn
@@ -1472,248 +1472,64 @@ auth:
   scheme: bearer_token
   env: SLACK_BOT_TOKEN
 values:
-  nv_channel_id:
-    type: string
-    string_semantics: short
-    description: Channel identifier (e.g. C012AB3CDX)
-  nv_channel_name:
-    type: string
-    string_semantics: short
-    description: 'Channel name (without the # prefix)'
-  nv_channel_is_channel:
-    type: boolean
-    description: True for public channels
-  nv_channel_is_group:
-    type: boolean
-    description: True for private channels
-  nv_channel_is_im:
-    type: boolean
-    description: True for direct messages
-  nv_channel_is_mpim:
-    type: boolean
-    description: True for multi-party IMs
-  nv_channel_is_private:
-    type: boolean
-    description: True for private channels and DMs
-  nv_channel_is_archived:
-    type: boolean
-    description: True if the channel is archived
-  nv_channel_is_general:
-    type: boolean
-    description: 'True for the default #general channel'
-  nv_channel_is_member:
-    type: boolean
-    description: True if the calling user is a member
-  nv_channel_is_shared:
-    type: boolean
-    description: True if the channel is shared across workspaces
-  nv_channel_num_members:
-    type: integer
-    description: Number of members in the channel
-  nv_channel_topic:
-    type: string
-    string_semantics: markdown
-    description: Channel topic text
-  nv_channel_purpose:
-    type: string
-    string_semantics: markdown
-    description: Channel purpose text
-  nv_channel_created:
-    type: date
-    value_format: unix_sec
-    description: Channel creation Unix timestamp (seconds; Slack Web API)
-  nv_message_ts:
-    type: string
-    string_semantics: short
-    description: Message timestamp (e.g. '1512085950.000216') — unique workspace ID
-  nv_message_type:
-    type: string
-    string_semantics: short
-    description: Event type (message, bot_message, etc.)
-  nv_message_text:
-    type: string
-    string_semantics: markdown
-    description: Plain text content of the message
-  nv_message_subtype:
-    type: string
-    string_semantics: short
-    description: Message subtype for system messages (channel_join, bot_message, etc.)
-  nv_message_thread_ts:
-    type: string
-    string_semantics: short
-    description: Parent thread timestamp for threaded replies
-  nv_message_reply_count:
-    type: integer
-    description: Number of replies in the thread
-  nv_message_latest_reply:
-    type: string
-    string_semantics: short
-    description: Timestamp of the most recent reply
-  nv_message_permalink:
-    type: string
-    string_semantics: short
-    description: Permanent URL to this message
-  nv_message_channel:
+  nv_bookmark_add_channel:
     type: entity_ref
     target: Channel
-    description: Channel ID for this message when the API includes it (e.g. conversations.history)
-  nv_message_user:
+  nv_bookmark_add_link:
+    type: string
+    string_semantics: short
+    description: Required for type link (http or https URL)
+  nv_bookmark_add_type:
+    type: select
+    allowed_values:
+    - link
+    - message
+    - file
+    description: Bookmark resource type (link is the common external-URL case)
+  nv_bookmark_channel_id:
     type: entity_ref
-    target: User
-    description: User who sent the message when the API includes it (`user` on message objects; absent for some bot/system
-      messages)
-  nv_user_id:
-    type: string
-    string_semantics: short
-    description: User identifier (e.g. W012A3CDE)
-  nv_user_name:
-    type: string
-    string_semantics: short
-    description: Username (login handle)
-  nv_user_real_name:
-    type: string
-    string_semantics: short
-    description: Full display name
-  nv_user_display_name:
-    type: string
-    string_semantics: short
-    description: Display name from profile
-  nv_user_email:
-    type: string
-    string_semantics: short
-    description: Email address from profile
-  nv_user_is_bot:
-    type: boolean
-    description: True if this is a bot user
-  nv_user_is_admin:
-    type: boolean
-    description: True if this user is a workspace admin
-  nv_user_is_owner:
-    type: boolean
-    description: True if this user is the workspace owner
-  nv_user_deleted:
-    type: boolean
-    description: True if the user account has been deactivated
-  nv_user_tz:
-    type: string
-    string_semantics: short
-    description: User's timezone identifier
-  nv_user_tz_label:
-    type: string
-    string_semantics: short
-    description: Human-readable timezone label
-  nv_user_updated:
+    target: Channel
+    description: Channel this bookmark belongs to
+  nv_bookmark_date_created:
     type: date
     value_format: unix_sec
-    description: Last profile update Unix timestamp (seconds)
-  nv_file_id:
+    description: Creation time (Unix seconds)
+  nv_bookmark_edit_channel:
+    type: entity_ref
+    target: Channel
+  nv_bookmark_emoji:
     type: string
     string_semantics: short
-    description: File identifier (e.g. F0S43P1CZ)
-  nv_file_name:
+    description: Emoji name for the bookmark icon
+  nv_bookmark_id:
     type: string
     string_semantics: short
-    description: Filename
-  nv_file_title:
+    description: Bookmark identifier (e.g. Bk123ABC4DEF)
+  nv_bookmark_link:
     type: string
     string_semantics: short
-    description: File title
-  nv_file_mimetype:
+    description: URL or Slack deep link
+  nv_bookmark_list_channel:
+    type: entity_ref
+    target: Channel
+  nv_bookmark_rank:
     type: string
     string_semantics: short
-    description: MIME type
-  nv_file_filetype:
+    description: Sort rank key from Slack
+  nv_bookmark_remove_channel:
+    type: entity_ref
+    target: Channel
+  nv_bookmark_title:
     type: string
     string_semantics: short
-    description: Slack file type (gif, png, pdf, etc.)
-  nv_file_size:
-    type: integer
-    description: File size in bytes
-  nv_file_created:
-    type: date
-    value_format: unix_sec
-    description: Upload Unix timestamp (seconds)
-  nv_file_url_private:
+    description: Bookmark title
+  nv_bookmark_type:
     type: string
     string_semantics: short
-    description: Private URL (requires auth to access)
-  nv_file_permalink:
-    type: string
-    string_semantics: short
-    description: Permalink URL
-  nv_file_is_public:
+    description: Bookmark type (e.g. link, message, file)
+  nv_bot_deleted:
     type: boolean
-    description: True if the file is publicly shared
-  nv_file_is_external:
-    type: boolean
-    description: True if this is an externally hosted file
-  nv_user_group_id:
-    type: string
-    string_semantics: short
-    description: UserGroup identifier (e.g. S0614TZR7)
-  nv_user_group_name:
-    type: string
-    string_semantics: short
-    description: Group display name
-  nv_user_group_handle:
-    type: string
-    string_semantics: short
-    description: Group mention handle (without @)
-  nv_user_group_description:
-    type: string
-    string_semantics: markdown
-    description: Group description
-  nv_user_group_is_usergroup:
-    type: boolean
-    description: True for user-created groups (not auto-groups)
-  nv_user_group_is_external:
-    type: boolean
-    description: True if this is an external shared group
-  nv_user_group_date_create:
-    type: date
-    value_format: unix_sec
-    description: Creation Unix timestamp (seconds)
-  nv_user_group_user_count:
-    type: string
-    string_semantics: short
-    description: Number of users in the group (returned as string by Slack)
-  nv_team_id:
-    type: string
-    string_semantics: short
-    description: Team identifier (e.g. T012AB3C4)
-  nv_team_name:
-    type: string
-    string_semantics: short
-    description: Workspace display name
-  nv_team_domain:
-    type: string
-    string_semantics: short
-    description: Slack subdomain (workspace.slack.com)
-  nv_team_email_domain:
-    type: string
-    string_semantics: short
-    description: Domain used for email-based sign-up
-  nv_reminder_id:
-    type: string
-    string_semantics: short
-    description: Reminder identifier
-  nv_reminder_text:
-    type: string
-    string_semantics: markdown
-    description: Reminder message text
-  nv_reminder_recurring:
-    type: boolean
-    description: True if this reminder recurs
-  nv_reminder_time:
-    type: date
-    value_format: unix_sec
-    description: Reminder fire time (Unix timestamp, seconds)
-  nv_reminder_complete_count:
-    type: integer
-    description: Number of times the reminder has fired
-  nv_reminder_completed:
-    type: boolean
-    description: True if the reminder has been completed
+    description: True if the bot has been removed
   nv_bot_id:
     type: string
     string_semantics: short
@@ -1722,73 +1538,57 @@ values:
     type: string
     string_semantics: short
     description: Bot name
-  nv_bot_deleted:
+  nv_channel_created:
+    type: date
+    value_format: unix_sec
+    description: Channel creation Unix timestamp (seconds; Slack Web API)
+  nv_channel_history_channel:
+    type: entity_ref
+    target: Channel
+  nv_channel_history_latest:
+    type: number
+    description: End of time range (Unix timestamp)
+  nv_channel_history_oldest:
+    type: number
+    description: Start of time range (Unix timestamp)
+  nv_channel_id:
+    type: string
+    string_semantics: short
+    description: Channel identifier (e.g. C012AB3CDX)
+  nv_channel_invite_users:
+    type: string
+    string_semantics: short
+    description: Comma-separated user IDs to invite
+  nv_channel_is_archived:
     type: boolean
-    description: True if the bot has been removed
-  nv_pin_id:
-    type: string
-    string_semantics: short
-    description: Pin identifier
-  nv_pin_type:
-    type: string
-    string_semantics: short
-    description: Pinned item type (message, file, etc.)
-  nv_pin_created:
-    type: date
-    value_format: unix_sec
-    description: Pin creation Unix timestamp (seconds)
-  nv_bookmark_id:
-    type: string
-    string_semantics: short
-    description: Bookmark identifier (e.g. Bk123ABC4DEF)
-  nv_bookmark_title:
-    type: string
-    string_semantics: short
-    description: Bookmark title
-  nv_bookmark_link:
-    type: string
-    string_semantics: short
-    description: URL or Slack deep link
-  nv_bookmark_emoji:
-    type: string
-    string_semantics: short
-    description: Emoji name for the bookmark icon
-  nv_bookmark_type:
-    type: string
-    string_semantics: short
-    description: Bookmark type (e.g. link, message, file)
-  nv_bookmark_channel_id:
+    description: True if the channel is archived
+  nv_channel_is_channel:
+    type: boolean
+    description: True for public channels
+  nv_channel_is_general:
+    type: boolean
+    description: 'True for the default #general channel'
+  nv_channel_is_group:
+    type: boolean
+    description: True for private channels
+  nv_channel_is_im:
+    type: boolean
+    description: True for direct messages
+  nv_channel_is_member:
+    type: boolean
+    description: True if the calling user is a member
+  nv_channel_is_mpim:
+    type: boolean
+    description: True for multi-party IMs
+  nv_channel_is_private:
+    type: boolean
+    description: True for private channels and DMs
+  nv_channel_is_shared:
+    type: boolean
+    description: True if the channel is shared across workspaces
+  nv_channel_kick_user:
     type: entity_ref
-    target: Channel
-    description: Channel this bookmark belongs to
-  nv_bookmark_rank:
-    type: string
-    string_semantics: short
-    description: Sort rank key from Slack
-  nv_bookmark_date_created:
-    type: date
-    value_format: unix_sec
-    description: Creation time (Unix seconds)
-  nv_scheduled_message_id:
-    type: string
-    string_semantics: short
-    description: Scheduled message identifier (Slack may return a numeric id in list responses; treat as opaque)
-  nv_scheduled_message_channel_id:
-    type: entity_ref
-    target: Channel
-    description: Target channel for the scheduled send
-  nv_scheduled_message_post_at:
-    type: date
-    value_format: unix_sec
-    description: Unix time when the message will be posted (seconds)
-  nv_scheduled_message_date_created:
-    type: date
-    value_format: unix_sec
-    description: When the schedule was created (Unix seconds)
-  nv_scheduled_message_text:
-    type: string
-    string_semantics: markdown
-    description: Message text (when returned by list)
+    target: User
   nv_channel_list_exclude_archived:
     type: boolean
     description: Set to true to exclude archived channels
@@ -1796,17 +1596,20 @@ values:
     type: string
     string_semantics: short
     description: 'Comma-separated channel types: public_channel,private_channel,mpim,im'
-  nv_channel_history_channel:
+  nv_channel_members_channel:
     type: entity_ref
     target: Channel
-  nv_channel_history_oldest:
-    type: number
-    description: Start of time range (Unix timestamp)
-  nv_channel_history_latest:
-    type: number
-    description: End of time range (Unix timestamp)
-  nv_channel_history_inclusive:
-    type: boolean
+  nv_channel_name:
+    type: string
+    string_semantics: short
+    description: 'Channel name (without the # prefix)'
+  nv_channel_num_members:
+    type: integer
+    description: Number of members in the channel
+  nv_channel_purpose:
+    type: string
+    string_semantics: markdown
+    description: Channel purpose text
   nv_channel_replies_channel:
     type: entity_ref
     target: Channel
@@ -1814,33 +1617,128 @@ values:
     type: string
     string_semantics: short
     description: Timestamp of the parent message (thread identifier)
-  nv_channel_members_channel:
+  nv_channel_topic:
+    type: string
+    string_semantics: markdown
+    description: Channel topic text
+  nv_file_created:
+    type: date
+    value_format: unix_sec
+    description: Upload Unix timestamp (seconds)
+  nv_file_filetype:
+    type: string
+    string_semantics: short
+    description: Slack file type (gif, png, pdf, etc.)
+  nv_file_id:
+    type: string
+    string_semantics: short
+    description: File identifier (e.g. F0S43P1CZ)
+  nv_file_is_external:
+    type: boolean
+    description: True if this is an externally hosted file
+  nv_file_is_public:
+    type: boolean
+    description: True if the file is publicly shared
+  nv_file_list_channel:
     type: entity_ref
     target: Channel
-  nv_channel_create_name:
+  nv_file_list_types:
     type: string
     string_semantics: short
-  nv_channel_create_is_private:
-    type: boolean
-  nv_channel_rename_name:
-    type: string
-    string_semantics: short
-  nv_channel_set_topic_topic:
-    type: string
-    string_semantics: markdown
-  nv_channel_set_purpose_purpose:
-    type: string
-    string_semantics: markdown
-  nv_channel_invite_users:
-    type: string
-    string_semantics: short
-    description: Comma-separated user IDs to invite
-  nv_channel_kick_user:
+    description: 'Comma-separated file types: all, spaces, snippets, images, etc.'
+  nv_file_list_user:
     type: entity_ref
     target: User
-  nv_channel_mark_ts:
+  nv_file_mimetype:
     type: string
     string_semantics: short
+    description: MIME type
+  nv_file_name:
+    type: string
+    string_semantics: short
+    description: Filename
+  nv_file_permalink:
+    type: string
+    string_semantics: short
+    description: Permalink URL
+  nv_file_size:
+    type: integer
+    description: File size in bytes
+  nv_file_title:
+    type: string
+    string_semantics: short
+    description: File title
+  nv_file_upload_channels:
+    type: string
+    string_semantics: short
+    description: Comma-separated channel IDs to share the file
+  nv_file_upload_content:
+    type: string
+    string_semantics: markdown
+    description: File content (for snippet-style uploads)
+  nv_file_url_private:
+    type: string
+    string_semantics: short
+    description: Private URL (requires auth to access)
+  nv_message_channel:
+    type: entity_ref
+    target: Channel
+    description: Channel ID for this message when the API includes it (e.g. conversations.history)
+  nv_message_delete_channel:
+    type: entity_ref
+    target: Channel
+  nv_message_latest_reply:
+    type: string
+    string_semantics: short
+    description: Timestamp of the most recent reply
+  nv_message_permalink:
+    type: string
+    string_semantics: short
+    description: Permanent URL to this message
+  nv_message_permalink_channel:
+    type: entity_ref
+    target: Channel
+  nv_message_post_attachments:
+    type: string
+    string_semantics: json_text
+    description: JSON array of legacy attachments
+  nv_message_post_blocks:
+    type: string
+    string_semantics: json_text
+    description: JSON array of Block Kit blocks (merged into the request body with text and other fields)
+  nv_message_post_channel:
+    type: entity_ref
+    target: Channel
+  nv_message_post_mrkdwn:
+    type: boolean
+    description: When false, disable Slack mrkdwn parsing for the text field
+  nv_message_post_text:
+    type: string
+    string_semantics: markdown
+    description: Plain text message (required if blocks not provided)
+  nv_message_post_thread_ts:
+    type: string
+    string_semantics: short
+    description: Reply in a thread by providing the parent message timestamp
+  nv_message_post_unfurl_links:
+    type: boolean
+    description: Enable URL unfurling for links in the message
+  nv_message_post_unfurl_media:
+    type: boolean
+    description: Enable media unfurling
+  nv_message_react_add_channel:
+    type: entity_ref
+    target: Channel
+  nv_message_react_add_name:
+    type: string
+    string_semantics: short
+    description: Emoji name without colons (e.g. thumbsup)
+  nv_message_react_remove_channel:
+    type: entity_ref
+    target: Channel
+  nv_message_reply_count:
+    type: integer
+    description: Number of replies in the thread
   nv_message_search_query:
     type: string
     string_semantics: short
@@ -1855,138 +1753,42 @@ values:
     allowed_values:
     - asc
     - desc
-  nv_message_search_highlight:
-    type: boolean
-  nv_message_post_channel:
-    type: entity_ref
-    target: Channel
-  nv_message_post_text:
-    type: string
-    string_semantics: markdown
-    description: Plain text message (required if blocks not provided)
-  nv_message_post_thread_ts:
+  nv_message_subtype:
     type: string
     string_semantics: short
-    description: Reply in a thread by providing the parent message timestamp
-  nv_message_post_blocks:
-    type: string
-    string_semantics: json_text
-    description: JSON array of Block Kit blocks (merged into the request body with text and other fields)
-  nv_message_post_attachments:
-    type: string
-    string_semantics: json_text
-    description: JSON array of legacy attachments
-  nv_message_post_unfurl_links:
-    type: boolean
-    description: Enable URL unfurling for links in the message
-  nv_message_post_unfurl_media:
-    type: boolean
-    description: Enable media unfurling
-  nv_message_post_mrkdwn:
-    type: boolean
-    description: When false, disable Slack mrkdwn parsing for the text field
-  nv_message_update_channel:
-    type: entity_ref
-    target: Channel
-  nv_message_update_text:
+    description: Message subtype for system messages (channel_join, bot_message, etc.)
+  nv_message_text:
     type: string
     string_semantics: markdown
-  nv_message_update_blocks:
+    description: Plain text content of the message
+  nv_message_thread_ts:
     type: string
-    string_semantics: json_text
-    description: JSON array of Block Kit blocks
+    string_semantics: short
+    description: Parent thread timestamp for threaded replies
+  nv_message_ts:
+    type: string
+    string_semantics: short
+    description: Message timestamp (e.g. '1512085950.000216') — unique workspace ID
+  nv_message_type:
+    type: string
+    string_semantics: short
+    description: Event type (message, bot_message, etc.)
   nv_message_update_attachments:
     type: string
     string_semantics: json_text
     description: JSON array of legacy attachments
-  nv_message_delete_channel:
-    type: entity_ref
-    target: Channel
-  nv_message_permalink_channel:
-    type: entity_ref
-    target: Channel
-  nv_message_react_add_channel:
-    type: entity_ref
-    target: Channel
-  nv_message_react_add_name:
+  nv_message_update_blocks:
     type: string
-    string_semantics: short
-    description: Emoji name without colons (e.g. thumbsup)
-  nv_message_react_remove_channel:
+    string_semantics: json_text
+    description: JSON array of Block Kit blocks
+  nv_message_update_channel:
     type: entity_ref
     target: Channel
-  nv_message_react_remove_name:
-    type: string
-    string_semantics: short
-  nv_user_list_include_locale:
-    type: boolean
-  nv_user_lookup_by_email_email:
-    type: string
-    string_semantics: short
-  nv_file_list_user:
+  nv_message_user:
     type: entity_ref
     target: User
-  nv_file_list_channel:
-    type: entity_ref
-    target: Channel
-  nv_file_list_types:
-    type: string
-    string_semantics: short
-    description: 'Comma-separated file types: all, spaces, snippets, images, etc.'
-  nv_file_list_ts_from:
-    type: number
-  nv_file_list_ts_to:
-    type: number
-  nv_file_upload_channels:
-    type: string
-    string_semantics: short
-    description: Comma-separated channel IDs to share the file
-  nv_file_upload_content:
-    type: string
-    string_semantics: markdown
-    description: File content (for snippet-style uploads)
-  nv_file_upload_filename:
-    type: string
-    string_semantics: short
-  nv_usergroup_list_include_users:
-    type: boolean
-  nv_usergroup_list_include_count:
-    type: boolean
-  nv_usergroup_list_include_disabled:
-    type: boolean
-  nv_usergroup_create_name:
-    type: string
-    string_semantics: short
-  nv_usergroup_create_handle:
-    type: string
-    string_semantics: short
-  nv_usergroup_create_description:
-    type: string
-    string_semantics: markdown
-  nv_usergroup_update_name:
-    type: string
-    string_semantics: short
-  nv_usergroup_update_handle:
-    type: string
-    string_semantics: short
-  nv_usergroup_update_description:
-    type: string
-    string_semantics: markdown
-  nv_usergroup_member_list_usergroup:
-    type: entity_ref
-    target: UserGroup
-  nv_usergroup_member_list_include_disabled:
-    type: boolean
-  nv_reminder_add_text:
-    type: string
-    string_semantics: markdown
-  nv_reminder_add_time:
-    type: string
-    string_semantics: short
-    description: When to remind (Unix timestamp or natural language like 'in 10 minutes')
-  nv_pin_list_channel:
-    type: entity_ref
-    target: Channel
+    description: User who sent the message when the API includes it (`user` on message objects; absent for some bot/system
+      messages)
   nv_pin_add_channel:
     type: entity_ref
     target: Channel
@@ -1994,64 +1796,83 @@ values:
     type: string
     string_semantics: short
     description: Timestamp of message to pin
+  nv_pin_created:
+    type: date
+    value_format: unix_sec
+    description: Pin creation Unix timestamp (seconds)
+  nv_pin_id:
+    type: string
+    string_semantics: short
+    description: Pin identifier
+  nv_pin_list_channel:
+    type: entity_ref
+    target: Channel
   nv_pin_remove_channel:
     type: entity_ref
     target: Channel
-  nv_pin_remove_timestamp:
+  nv_pin_type:
     type: string
     string_semantics: short
-  nv_bookmark_list_channel:
+    description: Pinned item type (message, file, etc.)
+  nv_reminder_add_time:
+    type: string
+    string_semantics: short
+    description: When to remind (Unix timestamp or natural language like 'in 10 minutes')
+  nv_reminder_complete_count:
+    type: integer
+    description: Number of times the reminder has fired
+  nv_reminder_completed:
+    type: boolean
+    description: True if the reminder has been completed
+  nv_reminder_id:
+    type: string
+    string_semantics: short
+    description: Reminder identifier
+  nv_reminder_recurring:
+    type: boolean
+    description: True if this reminder recurs
+  nv_reminder_text:
+    type: string
+    string_semantics: markdown
+    description: Reminder message text
+  nv_reminder_time:
+    type: date
+    value_format: unix_sec
+    description: Reminder fire time (Unix timestamp, seconds)
+  nv_scheduled_message_channel_id:
     type: entity_ref
     target: Channel
-  nv_bookmark_add_channel:
-    type: entity_ref
-    target: Channel
-  nv_bookmark_add_title:
+    description: Target channel for the scheduled send
+  nv_scheduled_message_date_created:
+    type: date
+    value_format: unix_sec
+    description: When the schedule was created (Unix seconds)
+  nv_scheduled_message_id:
     type: string
     string_semantics: short
-  nv_bookmark_add_type:
-    type: select
-    allowed_values:
-    - link
-    - message
-    - file
-    description: Bookmark resource type (link is the common external-URL case)
-  nv_bookmark_add_link:
+    description: Scheduled message identifier (Slack may return a numeric id in list responses; treat as opaque)
+  nv_scheduled_message_post_at:
+    type: date
+    value_format: unix_sec
+    description: Unix time when the message will be posted (seconds)
+  nv_scheduled_message_text:
     type: string
-    string_semantics: short
-    description: Required for type link (http or https URL)
-  nv_bookmark_add_emoji:
+    string_semantics: markdown
+    description: Message text (when returned by list)
+  nv_scheduledmessage_create_attachments:
     type: string
-    string_semantics: short
-  nv_bookmark_edit_channel:
-    type: entity_ref
-    target: Channel
-  nv_bookmark_edit_title:
+    string_semantics: json_text
+    description: JSON array of legacy attachments
+  nv_scheduledmessage_create_blocks:
     type: string
-    string_semantics: short
-  nv_bookmark_edit_link:
-    type: string
-    string_semantics: short
-  nv_bookmark_edit_emoji:
-    type: string
-    string_semantics: short
-  nv_bookmark_remove_channel:
-    type: entity_ref
-    target: Channel
-  nv_scheduledmessage_list_channel:
-    type: entity_ref
-    target: Channel
-  nv_scheduledmessage_list_oldest:
-    type: string
-    string_semantics: short
-    description: Oldest boundary as Unix timestamp string
-  nv_scheduledmessage_list_latest:
-    type: string
-    string_semantics: short
-    description: Latest boundary as Unix timestamp string
+    string_semantics: json_text
+    description: JSON array of Block Kit blocks (merged into the request body)
   nv_scheduledmessage_create_channel:
     type: entity_ref
     target: Channel
+  nv_scheduledmessage_create_mrkdwn:
+    type: boolean
+    description: When false, disable mrkdwn parsing for text
   nv_scheduledmessage_create_post_at:
     type: integer
     description: Unix time when the message should post (seconds; matches Slack post_at)
@@ -2063,21 +1884,120 @@ values:
     type: string
     string_semantics: short
     description: Post as a thread reply under this parent ts
-  nv_scheduledmessage_create_blocks:
-    type: string
-    string_semantics: json_text
-    description: JSON array of Block Kit blocks (merged into the request body)
-  nv_scheduledmessage_create_attachments:
-    type: string
-    string_semantics: json_text
-    description: JSON array of legacy attachments
-  nv_scheduledmessage_create_unfurl_links:
-    type: boolean
-  nv_scheduledmessage_create_unfurl_media:
-    type: boolean
-  nv_scheduledmessage_create_mrkdwn:
-    type: boolean
-    description: When false, disable mrkdwn parsing for text
   nv_scheduledmessage_delete_channel:
     type: entity_ref
     target: Channel
+  nv_scheduledmessage_list_channel:
+    type: entity_ref
+    target: Channel
+  nv_scheduledmessage_list_latest:
+    type: string
+    string_semantics: short
+    description: Latest boundary as Unix timestamp string
+  nv_scheduledmessage_list_oldest:
+    type: string
+    string_semantics: short
+    description: Oldest boundary as Unix timestamp string
+  nv_team_domain:
+    type: string
+    string_semantics: short
+    description: Slack subdomain (workspace.slack.com)
+  nv_team_email_domain:
+    type: string
+    string_semantics: short
+    description: Domain used for email-based sign-up
+  nv_team_id:
+    type: string
+    string_semantics: short
+    description: Team identifier (e.g. T012AB3C4)
+  nv_team_name:
+    type: string
+    string_semantics: short
+    description: Workspace display name
+  nv_user_deleted:
+    type: boolean
+    description: True if the user account has been deactivated
+  nv_user_display_name:
+    type: string
+    string_semantics: short
+    description: Display name from profile
+  nv_user_email:
+    type: string
+    string_semantics: short
+    description: Email address from profile
+  nv_user_group_date_create:
+    type: date
+    value_format: unix_sec
+    description: Creation Unix timestamp (seconds)
+  nv_user_group_description:
+    type: string
+    string_semantics: markdown
+    description: Group description
+  nv_user_group_handle:
+    type: string
+    string_semantics: short
+    description: Group mention handle (without @)
+  nv_user_group_id:
+    type: string
+    string_semantics: short
+    description: UserGroup identifier (e.g. S0614TZR7)
+  nv_user_group_is_external:
+    type: boolean
+    description: True if this is an external shared group
+  nv_user_group_is_usergroup:
+    type: boolean
+    description: True for user-created groups (not auto-groups)
+  nv_user_group_name:
+    type: string
+    string_semantics: short
+    description: Group display name
+  nv_user_group_user_count:
+    type: string
+    string_semantics: short
+    description: Number of users in the group (returned as string by Slack)
+  nv_user_id:
+    type: string
+    string_semantics: short
+    description: User identifier (e.g. W012A3CDE)
+  nv_user_is_admin:
+    type: boolean
+    description: True if this user is a workspace admin
+  nv_user_is_bot:
+    type: boolean
+    description: True if this is a bot user
+  nv_user_is_owner:
+    type: boolean
+    description: True if this user is the workspace owner
+  nv_user_name:
+    type: string
+    string_semantics: short
+    description: Username (login handle)
+  nv_user_real_name:
+    type: string
+    string_semantics: short
+    description: Full display name
+  nv_user_tz:
+    type: string
+    string_semantics: short
+    description: User's timezone identifier
+  nv_user_tz_label:
+    type: string
+    string_semantics: short
+    description: Human-readable timezone label
+  nv_user_updated:
+    type: date
+    value_format: unix_sec
+    description: Last profile update Unix timestamp (seconds)
+  nv_usergroup_member_list_usergroup:
+    type: entity_ref
+    target: UserGroup
+  nv_wire_bool:
+    type: boolean
+  nv_wire_num:
+    type: number
+  nv_wire_str_markdown:
+    type: string
+    string_semantics: markdown
+  nv_wire_str_short:
+    type: string
+    string_semantics: short

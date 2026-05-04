@@ -7,8 +7,8 @@
 use crate::prompt_render::{
     prompt_surface_stats, render_domain_prompt_bundle_for_exposure,
     render_domain_prompt_bundle_for_exposure_federated, render_prompt_surface_from_bundle,
-    render_prompt_tsv_with_config, render_prompt_with_config, DomainPromptBundle,
-    DomainWaveSurface, PromptRenderMode, PromptSurfaceStats, RenderConfig,
+    render_prompt_tsv_for_single_catalog_exposure, render_prompt_tsv_with_config,
+    DomainPromptBundle, DomainWaveSurface, PromptRenderMode, PromptSurfaceStats, RenderConfig,
 };
 use crate::schema::CGS;
 use crate::symbol_tuning::{
@@ -82,11 +82,7 @@ impl<'exposure, 'cgs> FederatedExposureResolver<'exposure, 'cgs> {
 
 impl PromptPipelineConfig {
     fn render_surface(&self, cgs: &CGS, cfg: RenderConfig<'_>) -> String {
-        if cfg.render_mode.is_tsv() {
-            render_prompt_tsv_with_config(cgs, cfg)
-        } else {
-            render_prompt_with_config(cgs, cfg)
-        }
+        render_prompt_tsv_with_config(cgs, cfg)
     }
 
     fn render_config_for_focus<'a>(&self, focus: FocusSpec<'a>) -> RenderConfig<'a> {
@@ -147,7 +143,7 @@ impl PromptPipelineConfig {
         let symbol_map = self.session_symbol_map(exposure);
         render_prompt_surface_from_bundle(
             bundle,
-            self.render_mode,
+            self.uses_symbols(),
             full_entities,
             symbol_map.as_deref(),
             ident_meta,
@@ -234,17 +230,7 @@ impl PromptPipelineConfig {
             symbol_map_cross_cache,
             ..self.render_config_for_focus(FocusSpec::All)
         };
-        let bundle = render_domain_prompt_bundle_for_exposure(cgs, cfg, exposure, None);
-        let full_entities: Vec<&str> = exposure.entities.iter().map(|s| s.as_str()).collect();
-        let ident_meta = self.build_ident_meta_for_entities(&full_entities, |_| cgs);
-        self.render_domain_bundle_surface(
-            &bundle,
-            &full_entities,
-            exposure,
-            ident_meta.as_ref(),
-            |_| cgs,
-            DomainWaveSurface::InitialTeaching,
-        )
+        render_prompt_tsv_for_single_catalog_exposure(cgs, cfg, exposure)
     }
 
     /// First DOMAIN wave for a **federated** session: one [`CGS`] per registry `entry_id`.

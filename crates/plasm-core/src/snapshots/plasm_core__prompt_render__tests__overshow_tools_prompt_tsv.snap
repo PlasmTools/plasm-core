@@ -2,100 +2,189 @@
 source: plasm-oss/crates/plasm-core/src/prompt_render.rs
 expression: tsv
 ---
-# This defines valid Plasm syntax for this prompt; reply with one valid plasm_program:
+# Follow the grammar and the teaching TSV below; reply with one valid plasm_program:
 #
 # Output:
-# - Single `plasm_expr` iff one lookup/query/search/relation/method/action is the whole answer.
-# - Else one multi-line `plasm_program`: bind → narrow (projection/postfix/bracket-render) → small bare roots—not many one-line tool calls.
+# - Emit only code: either one `plasm_expr`, or one multi-line `plasm_program` with bindings then final roots.
+# - Do not emit prose, JSON wrappers, `return`, Markdown fences, or table rows.
+# - Prefer bind → narrow/project/transform → few final roots when more than one step is needed.
 #
-# Grammar (pseudo-EBNF; DOMAIN rows instantiate `plasm_expr` atoms):
-# plasm_program ::= plasm_roots | binding+ plasm_roots
-# binding       ::= ident "=" plasm_node
-# plasm_roots   ::= plasm_return ("," plasm_return)*
-# plasm_return  ::= node_ref | plasm_expr
-# plasm_node    ::= ( plasm_expr | node_ref ) postfix* bracket_render_tail? | node_ref "=>" plasm_value | node_ref "=>" effect_expr
-# plasm_expr    ::= entity_expr [projection]
+# TSV table semantics:
+# - Header is exactly `plasm_expr<TAB>Meaning`; every following row has exactly one tab delimiter.
+# - Left cell is either executable syntax or metadata. Right cell is selection guidance only; never copy `Meaning` into output.
+# - Executable rows start with an entity surface (`e#`/`Entity`). Copy their left-cell shape, then replace placeholders.
+# - Metadata rows whose left cell is only `v#`/`value domain` define reusable value types. Metadata rows whose left cell is only `p#`/`field` define keyed slots. Metadata rows are never executable roots.
+# - `Meaning` fragments joined by ` · ` stay inside `Meaning`; they are not operators.
+#
+# Symbol and fill rules:
+# - `e#` = entity surface; `m#` = method/action surface; `p#` = keyed field/parameter/relation slot; `v#` = value-domain metadata only.
+# - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.
+# - `$` appears only in taught examples as a required fill placeholder. Replace every `$`; never emit `$`.
+# - `<id>`, `<value>`, `<receiver>`, and `elem` in this contract are meta-variables, not syntax tokens.
+# - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.
+# - If `Meaning` says `optional params: pA, pB`, those keys may be added only as keyed assignments with real values.
+# - Projection rows ending `[p#,…]` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
+# - Relation rows end with `.p#`/`.field`; apply them to any executable receiver row for that same entity type.
+# - `page(sN_pgM)` uses a continuation handle returned by a prior response; copy the handle exactly and optionally add `, limit=N`.
+#
+# Grammar:
+# plasm_program ::= plasm_expr | binding+ roots
+# binding       ::= ident "=" node
+# roots         ::= root ("," root)*
+# root          ::= ident | plasm_expr
+# node          ::= (plasm_expr | ident) postfix* render_tail? | ident "=>" value_or_template
+# plasm_expr    ::= entity_expr [projection] | page
 # entity_expr   ::= query_all | get | query | relation | method | create_action | search
 # query_all     ::= e#
-# get           ::= e#(id) or e#(p#=v, p#=v)
-# query         ::= e#{p#=v, …}
-# relation      ::= e#(id).p#
-# method        ::= e#(id).m#() or e#(id).m#(p#=v,..)
-# create_action ::= e#.m#(args)
+# get           ::= e#(<id>) or e#(p#=<value>, p#=<value>)
+# query         ::= e#{p#=<value>, …}
+# relation      ::= <receiver>.p#
+# method        ::= e#(<id>).m#() or e#(<id>).m#(p#=<value>, …)
+# create_action ::= e#.m#(p#=<value>, …)
 # search        ::= e#~"text"
-# projection    ::= e#(id)[p#,…] | "[" fields "]"
-# postfix       ::= transform | "[" fields "]"
-# bracket_render_tail ::= ( "[" fields "]" )? "<<TAG" heredoc_body "TAG"
-# positive_int  ::= non-zero decimal integer literal
-# agg_func      ::= "sum" | "avg" | "min" | "max"
-# agg_spec      ::= ident "=" ( "count" | agg_func "(" field ")" )
-# agg_specs     ::= agg_spec ("," agg_spec)*
-# sort_dir      ::= omitted | "desc" | "asc" | "ascending" | "descending"
-# transform     ::= ".limit(" positive_int ")" | ".sort(" field ["," sort_dir] ")" | ".aggregate(" agg_specs ")" | ".group_by(" field "," agg_specs ")" | ".singleton()" | ".page_size(" positive_int ")"
+# page          ::= page(sN_pgM) | page(sN_pgM, limit=N)
+# projection    ::= e#(<id>)[p#,…] | "[" fields "]"
+# postfix       ::= ".limit(N)" | ".page_size(N)" | ".sort(field[, dir])" | ".aggregate(specs)" | ".group_by(field, specs)" | ".singleton()" | "[" fields "]"
+# render_tail   ::= ("[" fields "]")? "<<TAG" template_body "TAG"
 # fields        ::= [p#,…]
-# plasm_value   ::= literal | node_ref | node_ref.field | _.field | [v, …]
-# effect_expr   ::= taught write/update/delete/action surface from DOMAIN (same line may template rows)
-# ident/node_ref/field ::= agent-chosen names for bound nodes and fields
-# literal       ::= quoted string | number | bool | null | heredoc
+# specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) [, ...]
+# dir           ::= desc | asc | descending | ascending
+# value_or_template ::= literal | ident | ident.field | _.field | [elem, ...] | heredoc
+# literal       ::= quoted string | number | bool | null
 #
-# Aggregates (examples): `.aggregate(n=count)`, `.aggregate(total=sum(amount), lo=min(price))`, `.group_by(author, n=count)`.
-#
-# Continuation:
-# - Postfix (transforms, `[fields]`, `<<TAG…TAG`) may chain on one surface `plasm_expr`.
-# - `ident.<relation>` only after surface row bindings (get/query/relation); after projection/transform/`=>`, repeat full DOMAIN expr or rebind. Bracket-render = Minijinja `rows`; optional `[fields]` narrows columns → row `{"content":"…"}` — use **`binding.content`** for string/body args.
-#
-# MCP `program` (JSON string):
-# - Literal U+000A between statements (one `ident = …` per line; bare roots last). Spaces never separate statements.
-# - Heredoc: newline after `<<TAG` opener; close line trims to `TAG` / `TAG)` / `TAG,` / `TAG}`; first matching trimmed interior line closes—opaque `TAG` for blobs. Commas inside heredocs never split roots (e.g. `…<<B` / `Hello` / `B` / `), e2`).
-#
-# Discipline:
-# - Plan shape first; small roots unless raw rows requested; bracket-render row-derived text, static `<<TAG` for fixed payloads.
-# - `page(sN_pgM)` continues a chosen list only; DOMAIN is the shape contract—no probe calls.
-#
-# DOMAIN / catalogue:
-# - `plasm_expr` = atoms; `Meaning` = how to pick/fill—never paste `Meaning`. Bare comma-separated roots (no `return`); every symbol taught here.
-# - Projection: minimal non-empty `[p#,…]`; identity row lists full fields once. Leading `p#` rows = slot metadata when method `args:` is insufficient.
-# - e#, m#, p# are session-local aliases — copy them exactly; new prompts supersede old meanings.
-# - Pick by `Meaning`, copy `plasm_expr`, bind keyed slot (`p12=value`) only; never positional or renumbered args.
-# - Instantiate grammar lines from DOMAIN only; keyed `p#=v` never positional. `v=$` in tables is a fill cue.
-# - `e#{p#=v, …}` / `e#` list/filter; `e#(id) or e#(p#=v, p#=v)` fetch one; `e#(id).p#` relate; `e#(id).m#() or e#(id).m#(p#=v,..)` call; `e#.m#(args)` without id; `e#(id)[p#,…]` projects—after `e#(id)`, `.` is relation or taught `m#` only.
-# - Scoped child lists: `X{p#=AnchorEntity(id)}` from the child entity’s DOMAIN rows; never invent `Y(id).p#`.
-# - Arrays in args: `[v, …]` (e.g. `p#=[e#($)]`). Quoted strings: only `\"` and `\\` escapes.
-# - `select` one allowed value; `multiselect` / multi-value lists as `[v, …]`.
+# Composition rules:
+# - Multi-line program strings use literal newlines: one binding per line, final roots last. Spaces never separate statements.
+# - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.
+# - Render tails use Minijinja over `rows`; the render result is one row with `content`. Pass `binding.content` to string/body parameters.
+# - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
+# - Examples: scoped child list `e#{p#=e#(<id>)}`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
 # - `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `m#(..., p#=<<TXT` + newline body + `TXT` newline `)`.
-# - Search `e#~"text"` only where DOMAIN teaches `~` on that entity.
-# - `p#`-only rows declare slots (metadata), not expressions to emit.
-# - `$` marks fill-ins — substitute real values; never send `$`.
-# - `..` — optional trailing params (`optional params:` lists them); `..` alone means all args optional.
 #
 
 plasm_expr	Meaning
-p6	int · id
-p5	select · allowed: ui, ocr, audio, document
-p7	str · text_preview
-e1(p6=$, p5=$)[p6,p5,p7]	returns e1 · One capture pipeline item.
-e1{p3=$, p1=$, p4=$, p2=$}	returns [e1] · args: p3 limit int opt; p1 app_name str opt; p4 start_time date opt; p2 end_time date opt · capture-item-query
-p8	str · id
-p9	bool · screen_capture_running
-e2.m3()	returns e2 · projection [p8,p9] · Capture running or paused. · capture-session-get
-e3{p16=$, p10=$, p15=$, p11=$, p13=$, p12=$, p14=$}	returns [e3] · A detected question with optional answers. · args: p16 unresolved_only bool opt; p10 app_name str opt; p15 speaker_id int opt; p11 include_answers bool opt; p13 min_answer_similarity float opt; p12 limit int opt; p14 offset int opt · detected-question-query
-p25	str · meeting_uuid
-p24	int · meeting_id
-p26	select · allowed: active, ended, cancelled
-p27	markdown · summary
-e4($)[p25,p24,p26,p27]	returns e4 · A detected meeting.
-e4{p23=$, p22=$, p20=$, p21=$}	returns [e4] · args: p23 status sel[active,ended,cancelled] opt; p22 start_date date opt; p20 end_date date opt; p21 limit int opt · query
-e5{p30=$, p31=$, p29=$, p28=$}	returns [e5] · One pipeline bus event. · args: p30 names str opt; p31 sources str opt; p29 min_severity sel[debug,info,warning,error,critical] opt; p28 limit int opt · pipeline-event-query
-p35	str · id
-p36	str · workers
-e6.m8()	returns e6 · projection [p35,p36] · Pipeline health snapshot. · pipeline-snapshot-get
-p40	int · id
-p39	str · display_name
-p41	select · allowed: person, organisation, project
-e7($)[p40,p39,p41]	returns e7 · A person, organisation, or project profile.
-e7{p38=$, p37=$}	returns [e7] · args: p38 profile_type sel[person,organisation,project] opt; p37 limit int opt · query
-e7($).p42	returns [e9] · Content scoped to this profile.
-e8.m11(p47=$,..)	returns () · Action prompt execution result. · args: p47 slug str req; p45 meeting_id int opt; p46 meeting_uuid str opt; p44 meeting_ids array[int] opt; p48 start_time date opt; p43 end_time date opt · prompt-run-create
-e9($).profile_id	returns e7 · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text.
-e9{p54=e7($), p55=$, p52=$, p53=$}	returns [e9] · args: p54 profile_id ref:e7 req; p55 query str opt; p52 limit int opt; p53 mode sel[auto,keyword,natural] opt · Search content scoped to one profile.
-e9~$	returns [e9] · args: p57 content_type sel[all,ocr,audio,ui] opt; p59 limit int opt; p62 offset int opt; p64 start_time date opt; p58 end_time date opt; p56 app_name str opt; p65 window_name str opt; p61 min_length int opt; p60 max_length int opt · Search recorded OCR, transcripts, and UI text.
+v2	int
+v1	select · ui, ocr, audio, document
+v7	str
+v5	int
+v3	str
+v6	date
+v4	date
+p6	v5 · limit
+p4	v3 · app_name
+p7	v6 · start_time
+p5	v4 · end_time
+p3	v2 · id
+p2	v1 · content_type
+p8	v7 · text_preview
+e1[p3,p2,p8]	returns e1 · projection · One capture pipeline item.
+e1(p3=$, p2=$)	returns e1
+e1{p6=$, p4=$, p7=$, p5=$}	returns [e1] · optional params: p6, p4, p7, p5
+v8	str
+v9	bool
+p9	v8 · id
+p10	v9 · screen_capture_running
+e2($)[p9,p10]	returns e2 · projection · Capture running or paused.
+e2.m3()	returns e2
+v17	bool
+v11	str
+v16	int
+v12	bool
+v14	float
+v13	int
+v15	int
+p18	v17 · unresolved_only
+p12	v11 · app_name
+p17	v16 · speaker_id
+p13	v12 · include_answers
+p15	v14 · min_answer_similarity
+p14	v13 · limit
+p16	v15 · offset
+e3{p18=$, p12=$, p17=$, p13=$, p15=$, p14=$, p16=$}	returns [e3] · A detected question with optional answers. · optional params: p18, p12, p17, p13, p15, p14, p16
+v21	str
+v20	int
+v26	select · active, ended, cancelled
+v27	markdown
+v25	select · active, ended, cancelled
+v24	date
+v22	date
+v23	int
+p26	v25 · status
+p25	v24 · start_date
+p23	v22 · end_date
+p24	v23 · limit
+p22	v21 · meeting_uuid
+p21	v20 · meeting_id
+p27	v26 · status
+p28	v27 · summary
+e4[p22,p21,p27,p28]	returns e4 · projection · A detected meeting.
+e4{p26=$, p25=$, p23=$, p24=$}	returns [e4] · optional params: p26, p25, p23, p24
+v32	str
+v33	str
+v31	select · debug, info, warning, error, critical
+v30	int
+p33	v32 · names
+p34	v33 · sources
+p32	v31 · min_severity
+p31	v30 · limit
+e5{p33=$, p34=$, p32=$, p31=$}	returns [e5] · One pipeline bus event. · optional params: p33, p34, p32, p31
+v35	str
+v36	str
+p36	v35 · id
+p37	v36 · workers
+e6($)[p36,p37]	returns e6 · projection · Pipeline health snapshot.
+e6.m8()	returns e6
+v38	int
+v37	str
+v39	select · person, organisation, project
+v41	select · person, organisation, project
+v40	int
+p42	v41 · profile_type
+p41	v40 · limit
+p39	v38 · id
+p38	v37 · display_name
+p40	v39 · profile_type
+e7[p39,p38,p40]	returns e7 · projection · A person, organisation, or project profile.
+e7{p42=$, p41=$}	returns [e7] · optional params: p42, p41
+e7{p42=$, p41=$}.p1	relation e7 => [e9] · Content scoped to this profile.
+v46	str
+v43	int
+v45	str
+v44	array[int]
+v47	date
+v42	date
+p47	v46 · slug
+p45	v43 · meeting_id
+p46	v45 · meeting_uuid
+p44	v44 · meeting_ids
+p48	v47 · start_time
+p43	v42 · end_time
+e8.m11(p47=$,..)	returns () · Action prompt execution result. · optional params: p45, p46, p44, p48, p43 · prompt-run-create
+v58	ref:Profile
+v59	str
+v56	int
+v57	select · auto, keyword, natural
+v61	select · all, ocr, audio, ui
+v63	int
+v66	int
+v68	date
+v62	date
+v60	str
+v69	str
+v65	int
+v64	int
+p59	v58 · profile_id
+p60	v59 · query
+p57	v56 · limit
+p58	v57 · mode
+p62	v61 · content_type
+p64	v63 · limit
+p67	v66 · offset
+p69	v68 · start_time
+p63	v62 · end_time
+p61	v60 · app_name
+p70	v69 · window_name
+p66	v65 · min_length
+p65	v64 · max_length
+e9{p59=e7($), p60=$, p57=$, p58=$}	returns [e9] · optional params: p60, p57, p58
+e9~$	returns [e9] · optional params: p62, p64, p67, p69, p63, p61, p70, p66, p65
+e9{p59=e7($), p60=$, p57=$, p58=$}.profile_id	relation e9 => e7

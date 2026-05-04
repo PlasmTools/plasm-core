@@ -2,77 +2,73 @@
 source: plasm-oss/crates/plasm-core/src/prompt_render.rs
 expression: out
 ---
-# This defines valid Plasm syntax for this prompt; reply with one valid plasm_program:
+# Follow the grammar and the teaching TSV below; reply with one valid plasm_program:
 #
 # Output:
-# - Single `plasm_expr` iff one lookup/query/search/relation/method/action is the whole answer.
-# - Else one multi-line `plasm_program`: bind → narrow (projection/postfix/bracket-render) → small bare roots—not many one-line tool calls.
+# - Emit only code: either one `plasm_expr`, or one multi-line `plasm_program` with bindings then final roots.
+# - Do not emit prose, JSON wrappers, `return`, Markdown fences, or table rows.
+# - Prefer bind → narrow/project/transform → few final roots when more than one step is needed.
 #
-# Grammar (pseudo-EBNF; DOMAIN rows instantiate `plasm_expr` atoms):
-# plasm_program ::= plasm_roots | binding+ plasm_roots
-# binding       ::= ident "=" plasm_node
-# plasm_roots   ::= plasm_return ("," plasm_return)*
-# plasm_return  ::= node_ref | plasm_expr
-# plasm_node    ::= ( plasm_expr | node_ref ) postfix* bracket_render_tail? | node_ref "=>" plasm_value | node_ref "=>" effect_expr
-# plasm_expr    ::= entity_expr [projection]
+# TSV table semantics:
+# - Header is exactly `plasm_expr<TAB>Meaning`; every following row has exactly one tab delimiter.
+# - Left cell is either executable syntax or metadata. Right cell is selection guidance only; never copy `Meaning` into output.
+# - Executable rows start with an entity surface (`e#`/`Entity`). Copy their left-cell shape, then replace placeholders.
+# - Metadata rows whose left cell is only `v#`/`value domain` define reusable value types. Metadata rows whose left cell is only `p#`/`field` define keyed slots. Metadata rows are never executable roots.
+# - `Meaning` fragments joined by ` · ` stay inside `Meaning`; they are not operators.
+#
+# Symbol and fill rules:
+# - `e#` = entity surface; `m#` = method/action surface; `p#` = keyed field/parameter/relation slot; `v#` = value-domain metadata only.
+# - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.
+# - `$` appears only in taught examples as a required fill placeholder. Replace every `$`; never emit `$`.
+# - `<id>`, `<value>`, `<receiver>`, and `elem` in this contract are meta-variables, not syntax tokens.
+# - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.
+# - If `Meaning` says `optional params: pA, pB`, those keys may be added only as keyed assignments with real values.
+# - Projection rows ending `[p#,…]` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
+# - Relation rows end with `.p#`/`.field`; apply them to any executable receiver row for that same entity type.
+# - `page(sN_pgM)` uses a continuation handle returned by a prior response; copy the handle exactly and optionally add `, limit=N`.
+#
+# Grammar:
+# plasm_program ::= plasm_expr | binding+ roots
+# binding       ::= ident "=" node
+# roots         ::= root ("," root)*
+# root          ::= ident | plasm_expr
+# node          ::= (plasm_expr | ident) postfix* render_tail? | ident "=>" value_or_template
+# plasm_expr    ::= entity_expr [projection] | page
 # entity_expr   ::= query_all | get | query | relation | method | create_action
 # query_all     ::= e#
-# get           ::= e#(id) or e#(p#=v, p#=v)
-# query         ::= e#{p#=v, …}
-# relation      ::= e#(id).p#
-# method        ::= e#(id).m#() or e#(id).m#(p#=v,..)
-# create_action ::= e#.m#(args)
-# projection    ::= e#(id)[p#,…] | "[" fields "]"
-# postfix       ::= transform | "[" fields "]"
-# bracket_render_tail ::= ( "[" fields "]" )? "<<TAG" heredoc_body "TAG"
-# positive_int  ::= non-zero decimal integer literal
-# agg_func      ::= "sum" | "avg" | "min" | "max"
-# agg_spec      ::= ident "=" ( "count" | agg_func "(" field ")" )
-# agg_specs     ::= agg_spec ("," agg_spec)*
-# sort_dir      ::= omitted | "desc" | "asc" | "ascending" | "descending"
-# transform     ::= ".limit(" positive_int ")" | ".sort(" field ["," sort_dir] ")" | ".aggregate(" agg_specs ")" | ".group_by(" field "," agg_specs ")" | ".singleton()" | ".page_size(" positive_int ")"
+# get           ::= e#(<id>) or e#(p#=<value>, p#=<value>)
+# query         ::= e#{p#=<value>, …}
+# relation      ::= <receiver>.p#
+# method        ::= e#(<id>).m#() or e#(<id>).m#(p#=<value>, …)
+# create_action ::= e#.m#(p#=<value>, …)
+# page          ::= page(sN_pgM) | page(sN_pgM, limit=N)
+# projection    ::= e#(<id>)[p#,…] | "[" fields "]"
+# postfix       ::= ".limit(N)" | ".page_size(N)" | ".sort(field[, dir])" | ".aggregate(specs)" | ".group_by(field, specs)" | ".singleton()" | "[" fields "]"
+# render_tail   ::= ("[" fields "]")? "<<TAG" template_body "TAG"
 # fields        ::= [p#,…]
-# plasm_value   ::= literal | node_ref | node_ref.field | _.field | [v, …]
-# effect_expr   ::= taught write/update/delete/action surface from DOMAIN (same line may template rows)
-# ident/node_ref/field ::= agent-chosen names for bound nodes and fields
-# literal       ::= quoted string | number | bool | null | heredoc
+# specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) [, ...]
+# dir           ::= desc | asc | descending | ascending
+# value_or_template ::= literal | ident | ident.field | _.field | [elem, ...] | heredoc
+# literal       ::= quoted string | number | bool | null
 #
-# Aggregates (examples): `.aggregate(n=count)`, `.aggregate(total=sum(amount), lo=min(price))`, `.group_by(author, n=count)`.
-#
-# Continuation:
-# - Postfix (transforms, `[fields]`, `<<TAG…TAG`) may chain on one surface `plasm_expr`.
-# - `ident.<relation>` only after surface row bindings (get/query/relation); after projection/transform/`=>`, repeat full DOMAIN expr or rebind. Bracket-render = Minijinja `rows`; optional `[fields]` narrows columns → row `{"content":"…"}` — use **`binding.content`** for string/body args.
-#
-# MCP `program` (JSON string):
-# - Literal U+000A between statements (one `ident = …` per line; bare roots last). Spaces never separate statements.
-# - Heredoc: newline after `<<TAG` opener; close line trims to `TAG` / `TAG)` / `TAG,` / `TAG}`; first matching trimmed interior line closes—opaque `TAG` for blobs. Commas inside heredocs never split roots (e.g. `…<<B` / `Hello` / `B` / `), e2`).
-#
-# Discipline:
-# - Plan shape first; small roots unless raw rows requested; bracket-render row-derived text, static `<<TAG` for fixed payloads.
-# - `page(sN_pgM)` continues a chosen list only; DOMAIN is the shape contract—no probe calls.
-#
-# DOMAIN / catalogue:
-# - `plasm_expr` = atoms; `Meaning` = how to pick/fill—never paste `Meaning`. Bare comma-separated roots (no `return`); every symbol taught here.
-# - Projection: minimal non-empty `[p#,…]`; identity row lists full fields once. Leading `p#` rows = slot metadata when method `args:` is insufficient.
-# - e#, m#, p# are session-local aliases — copy them exactly; new prompts supersede old meanings.
-# - Pick by `Meaning`, copy `plasm_expr`, bind keyed slot (`p12=value`) only; never positional or renumbered args.
-# - Instantiate grammar lines from DOMAIN only; keyed `p#=v` never positional. `v=$` in tables is a fill cue.
-# - `e#{p#=v, …}` / `e#` list/filter; `e#(id) or e#(p#=v, p#=v)` fetch one; `e#(id).p#` relate; `e#(id).m#() or e#(id).m#(p#=v,..)` call; `e#.m#(args)` without id; `e#(id)[p#,…]` projects—after `e#(id)`, `.` is relation or taught `m#` only.
-# - Scoped child lists: `X{p#=AnchorEntity(id)}` from the child entity’s DOMAIN rows; never invent `Y(id).p#`.
-# - Arrays in args: `[v, …]` (e.g. `p#=[e#($)]`). Quoted strings: only `\"` and `\\` escapes.
-# - `select` one allowed value; `multiselect` / multi-value lists as `[v, …]`.
-# - `p#`-only rows declare slots (metadata), not expressions to emit.
-# - `$` marks fill-ins — substitute real values; never send `$`.
-# - `..` — optional trailing params (`optional params:` lists them); `..` alone means all args optional.
+# Composition rules:
+# - Multi-line program strings use literal newlines: one binding per line, final roots last. Spaces never separate statements.
+# - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.
+# - Render tails use Minijinja over `rows`; the render result is one row with `content`. Pass `binding.content` to string/body parameters.
+# - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
+# - Examples: scoped child list `e#{p#=e#(<id>)}`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
 #
 
 plasm_expr	Meaning
-p2	str · Type name (unique key)
-p1	int · Numeric type identifier
-p3	str · API resource URL
-e1($)[p2,p1,p3]	returns e1 · An elemental type (Fire, Water, etc.)
-e1	returns [e1] · List all elemental types
-e1($).p4	returns Generation · Generation this type was introduced
-e1($).p5	returns MoveDamageClass · Default damage class for this type
-e1($).p6	returns [Move] · Moves of this elemental type
-e1($).p7	returns [Pokemon] · Pokémon with this type
+v2	str · Type name (unique key)
+v1	int · Numeric type identifier
+v3	str · API resource URL
+p6	v2 · name · Type name (unique key)
+p5	v1 · id · Numeric type identifier
+p7	v3 · url · API resource URL
+e1[p6,p5,p7]	returns e1 · projection · An elemental type (Fire, Water, etc.)
+e1	returns [e1]
+e1.p1	relation e1 => Generation · Generation this type was introduced
+e1.p2	relation e1 => MoveDamageClass · Default damage class for this type
+e1.p3	relation e1 => [Move] · Moves of this elemental type
+e1.p4	relation e1 => [Pokemon] · Pokémon with this type

@@ -1,4 +1,4 @@
-version: 1
+version: 2
 http_backend: https://your-domain.atlassian.net
 entities:
   Issue:
@@ -7,38 +7,38 @@ entities:
     fields:
       key:
         required: true
-        value_ref: nv_issue_key
+        value_ref: nv_wire_str_short
       id:
         required: true
-        value_ref: nv_issue_id
+        value_ref: nv_wire_str_short
       summary:
         required: false
         path: fields.summary
-        value_ref: nv_issue_summary
+        value_ref: nv_wire_str_short
       description:
         required: false
         path: fields.description
-        value_ref: nv_issue_description
+        value_ref: nv_wire_str_markdown
       status:
         required: false
         path: fields.status.name
-        value_ref: nv_issue_status
+        value_ref: nv_wire_str_short
       status_category:
         required: false
         path: fields.status.statusCategory.name
-        value_ref: nv_issue_status_category
+        value_ref: nv_wire_str_short
       priority:
         required: false
         path: fields.priority.name
-        value_ref: nv_issue_priority
+        value_ref: nv_wire_str_short
       issuetype:
         required: false
         path: fields.issuetype.name
-        value_ref: nv_issue_issuetype
+        value_ref: nv_wire_str_short
       resolution:
         required: false
         path: fields.resolution.name
-        value_ref: nv_issue_resolution
+        value_ref: nv_wire_str_short
       assignee_id:
         required: false
         path: fields.assignee.accountId
@@ -46,7 +46,7 @@ entities:
       assignee_name:
         required: false
         path: fields.assignee.displayName
-        value_ref: nv_issue_assignee_name
+        value_ref: nv_wire_str_short
       reporter_id:
         required: false
         path: fields.reporter.accountId
@@ -54,7 +54,7 @@ entities:
       reporter_name:
         required: false
         path: fields.reporter.displayName
-        value_ref: nv_issue_reporter_name
+        value_ref: nv_wire_str_short
       project_key:
         required: false
         path: fields.project.key
@@ -62,7 +62,7 @@ entities:
       project_name:
         required: false
         path: fields.project.name
-        value_ref: nv_issue_project_name
+        value_ref: nv_wire_str_short
       parent_key:
         required: false
         path: fields.parent.key
@@ -74,19 +74,19 @@ entities:
       duedate:
         required: false
         path: fields.duedate
-        value_ref: nv_issue_duedate
+        value_ref: nv_wire_date_rfc3339
       created:
         required: false
         path: fields.created
-        value_ref: nv_issue_created
+        value_ref: nv_wire_date_rfc3339
       updated:
         required: false
         path: fields.updated
-        value_ref: nv_issue_updated
+        value_ref: nv_wire_date_rfc3339
       resolutiondate:
         required: false
         path: fields.resolutiondate
-        value_ref: nv_issue_resolutiondate
+        value_ref: nv_wire_date_rfc3339
     relations:
       comments:
         target: Comment
@@ -139,33 +139,33 @@ entities:
     fields:
       key:
         required: true
-        value_ref: nv_project_key
+        value_ref: nv_wire_str_short
       id:
         required: true
-        value_ref: nv_project_id
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_project_name
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_project_description
+        value_ref: nv_wire_str_markdown
       projectTypeKey:
         required: false
         value_ref: nv_project_project_type_key
       archived:
         required: false
-        value_ref: nv_project_archived
+        value_ref: nv_wire_bool
       isPrivate:
         required: false
-        value_ref: nv_project_is_private
+        value_ref: nv_wire_bool
       lead_account_id:
         required: false
         path: lead.accountId
-        value_ref: nv_project_lead_account_id
+        value_ref: nv_wire_str_short
       lead_name:
         required: false
         path: lead.displayName
-        value_ref: nv_project_lead_name
+        value_ref: nv_wire_str_short
     relations:
       components:
         target: Component
@@ -180,32 +180,32 @@ entities:
     fields:
       accountId:
         required: true
-        value_ref: nv_user_account_id
+        value_ref: nv_wire_str_short
       displayName:
         required: false
-        value_ref: nv_user_display_name
+        value_ref: nv_wire_str_short
       emailAddress:
         required: false
-        value_ref: nv_user_email_address
+        value_ref: nv_wire_str_short
       active:
         required: false
-        value_ref: nv_user_active
+        value_ref: nv_wire_bool
       timeZone:
         required: false
-        value_ref: nv_user_time_zone
+        value_ref: nv_wire_str_short
       accountType:
         required: false
-        value_ref: nv_user_account_type
+        value_ref: nv_wire_str_short
   Comment:
     id_field: id
     description: A comment on a Jira issue
     fields:
       id:
         required: true
-        value_ref: nv_comment_id
+        value_ref: nv_wire_str_short
       body:
         required: false
-        value_ref: nv_comment_body
+        value_ref: nv_wire_str_markdown
       author_id:
         required: false
         path: author.accountId
@@ -213,78 +213,78 @@ entities:
       author_name:
         required: false
         path: author.displayName
-        value_ref: nv_comment_author_name
+        value_ref: nv_wire_str_short
       created:
         required: false
-        value_ref: nv_comment_created
+        value_ref: nv_wire_date_rfc3339
       updated:
         required: false
-        value_ref: nv_comment_updated
+        value_ref: nv_wire_date_rfc3339
   Priority:
     id_field: id
     description: An issue priority level
     fields:
       id:
         required: true
-        value_ref: nv_priority_id
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_priority_name
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_priority_description
+        value_ref: nv_wire_str_markdown
       isDefault:
         required: false
-        value_ref: nv_priority_is_default
+        value_ref: nv_wire_bool
       statusColor:
         required: false
-        value_ref: nv_priority_status_color
+        value_ref: nv_wire_str_short
   Status:
     id_field: id
     description: An issue workflow status
     fields:
       id:
         required: true
-        value_ref: nv_status_id
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_status_name
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_status_description
+        value_ref: nv_wire_str_markdown
       statusCategory:
         required: false
         path: statusCategory.name
-        value_ref: nv_status_status_category
+        value_ref: nv_wire_str_short
   IssueType:
     id_field: id
     description: An issue type (Bug, Story, Task, Epic, etc.)
     fields:
       id:
         required: true
-        value_ref: nv_issue_type_id
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_issue_type_name
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_issue_type_description
+        value_ref: nv_wire_str_markdown
       subtask:
         required: false
-        value_ref: nv_issue_type_subtask
+        value_ref: nv_wire_bool
       hierarchyLevel:
         required: false
-        value_ref: nv_issue_type_hierarchy_level
+        value_ref: nv_wire_int
   Worklog:
     id_field: id
     description: A time-tracking worklog entry on a Jira issue
     fields:
       id:
         required: true
-        value_ref: nv_worklog_id
+        value_ref: nv_wire_str_short
       issueId:
         required: false
-        value_ref: nv_worklog_issue_id
+        value_ref: nv_wire_str_short
       author_id:
         required: false
         path: author.accountId
@@ -292,32 +292,32 @@ entities:
       author_name:
         required: false
         path: author.displayName
-        value_ref: nv_worklog_author_name
+        value_ref: nv_wire_str_short
       comment:
         required: false
-        value_ref: nv_worklog_comment
+        value_ref: nv_wire_str_markdown
       started:
         required: false
-        value_ref: nv_worklog_started
+        value_ref: nv_wire_date_rfc3339
       timeSpent:
         required: false
-        value_ref: nv_worklog_time_spent
+        value_ref: nv_wire_str_short
       timeSpentSeconds:
         required: false
-        value_ref: nv_worklog_time_spent_seconds
+        value_ref: nv_wire_int
       created:
         required: false
-        value_ref: nv_worklog_created
+        value_ref: nv_wire_date_rfc3339
       updated:
         required: false
-        value_ref: nv_worklog_updated
+        value_ref: nv_wire_date_rfc3339
   Changelog:
     id_field: id
     description: An audit-log entry recording field changes on a Jira issue
     fields:
       id:
         required: true
-        value_ref: nv_changelog_id
+        value_ref: nv_wire_str_short
       author_id:
         required: false
         path: author.accountId
@@ -325,10 +325,10 @@ entities:
       author_name:
         required: false
         path: author.displayName
-        value_ref: nv_changelog_author_name
+        value_ref: nv_wire_str_short
       created:
         required: false
-        value_ref: nv_changelog_created
+        value_ref: nv_wire_date_rfc3339
       items:
         required: false
         value_ref: nv_changelog_items
@@ -338,136 +338,136 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_remote_link_id
+        value_ref: nv_wire_str_short
       globalId:
         required: false
-        value_ref: nv_remote_link_global_id
+        value_ref: nv_wire_str_short
       relationship:
         required: false
-        value_ref: nv_remote_link_relationship
+        value_ref: nv_wire_str_short
       object_title:
         required: false
         path: object.title
-        value_ref: nv_remote_link_object_title
+        value_ref: nv_wire_str_short
       object_url:
         required: false
         path: object.url
-        value_ref: nv_remote_link_object_url
+        value_ref: nv_wire_str_short
       object_summary:
         required: false
         path: object.summary
-        value_ref: nv_remote_link_object_summary
+        value_ref: nv_wire_str_short
       application_name:
         required: false
         path: application.name
-        value_ref: nv_remote_link_application_name
+        value_ref: nv_wire_str_short
       application_type:
         required: false
         path: application.type
-        value_ref: nv_remote_link_application_type
+        value_ref: nv_wire_str_short
   Transition:
     id_field: id
     description: An available workflow transition for a Jira issue
     fields:
       id:
         required: true
-        value_ref: nv_transition_id
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_transition_name
+        value_ref: nv_wire_str_short
       isAvailable:
         required: false
-        value_ref: nv_transition_is_available
+        value_ref: nv_wire_bool
       isConditional:
         required: false
-        value_ref: nv_transition_is_conditional
+        value_ref: nv_wire_bool
       isGlobal:
         required: false
-        value_ref: nv_transition_is_global
+        value_ref: nv_wire_bool
       isInitial:
         required: false
-        value_ref: nv_transition_is_initial
+        value_ref: nv_wire_bool
   Component:
     id_field: id
     description: A project component grouping issues within a Jira project
     fields:
       id:
         required: true
-        value_ref: nv_component_id
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_component_name
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_component_description
+        value_ref: nv_wire_str_markdown
       assigneeType:
         required: false
         value_ref: nv_component_assignee_type
       lead_id:
         required: false
         path: lead.accountId
-        value_ref: nv_component_lead_id
+        value_ref: nv_wire_str_short
       lead_name:
         required: false
         path: lead.displayName
-        value_ref: nv_component_lead_name
+        value_ref: nv_wire_str_short
       project:
         required: false
-        value_ref: nv_component_project
+        value_ref: nv_wire_str_short
   Version:
     id_field: id
     description: A project version (fix version / affects version)
     fields:
       id:
         required: true
-        value_ref: nv_version_id
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_version_name
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_version_description
+        value_ref: nv_wire_str_markdown
       released:
         required: false
-        value_ref: nv_version_released
+        value_ref: nv_wire_bool
       archived:
         required: false
-        value_ref: nv_version_archived
+        value_ref: nv_wire_bool
       releaseDate:
         required: false
-        value_ref: nv_version_release_date
+        value_ref: nv_wire_date_rfc3339
       startDate:
         required: false
-        value_ref: nv_version_start_date
+        value_ref: nv_wire_date_rfc3339
       project:
         required: false
-        value_ref: nv_version_project
+        value_ref: nv_wire_str_short
       overdue:
         required: false
-        value_ref: nv_version_overdue
+        value_ref: nv_wire_bool
   Attachment:
     id_field: id
     description: A file attached to an issue (metadata and download links, not the binary upload itself).
     fields:
       id:
         required: true
-        value_ref: nv_attachment_id
+        value_ref: nv_wire_str_short
       filename:
         required: false
-        value_ref: nv_attachment_filename
+        value_ref: nv_wire_str_short
       mimeType:
         required: false
-        value_ref: nv_attachment_mime_type
+        value_ref: nv_wire_str_short
       size:
         required: false
-        value_ref: nv_attachment_size
+        value_ref: nv_wire_int
       author_id:
         required: false
         path: author.accountId
         value_ref: nv_attachment_author_id
       created:
         required: false
-        value_ref: nv_attachment_created
+        value_ref: nv_wire_date_rfc3339
   IssueVoteState:
     id_field: issue_key
     implicit_request_identity: true
@@ -476,15 +476,15 @@ entities:
     fields:
       issue_key:
         required: true
-        value_ref: nv_issue_vote_state_issue_key
+        value_ref: nv_wire_str_short
       vote_count:
         required: false
         path: votes
-        value_ref: nv_issue_vote_state_vote_count
+        value_ref: nv_wire_int
       has_voted:
         required: false
         path: hasVoted
-        value_ref: nv_issue_vote_state_has_voted
+        value_ref: nv_wire_bool
   IssueEditMeta:
     id_field: issue_key
     implicit_request_identity: true
@@ -493,7 +493,7 @@ entities:
     fields:
       issue_key:
         required: true
-        value_ref: nv_issue_edit_meta_issue_key
+        value_ref: nv_wire_str_short
       fields:
         required: false
         path: fields
@@ -506,7 +506,7 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_issue_create_meta_bundle_id
+        value_ref: nv_wire_str_short
       projects:
         required: false
         path: projects
@@ -517,13 +517,13 @@ entities:
     fields:
       groupId:
         required: false
-        value_ref: nv_group_group_id
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_group_name
+        value_ref: nv_wire_str_short
       self:
         required: false
-        value_ref: nv_group_self
+        value_ref: nv_wire_str_short
   MyPermissionSet:
     id_field: id
     implicit_request_identity: true
@@ -532,7 +532,7 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_my_permission_set_id
+        value_ref: nv_wire_str_short
       permissions:
         required: false
         path: permissions
@@ -543,32 +543,32 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_saved_filter_id
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_saved_filter_name
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_saved_filter_description
+        value_ref: nv_wire_str_markdown
       jql:
         required: false
-        value_ref: nv_saved_filter_jql
+        value_ref: nv_wire_str_short
       favourite:
         required: false
-        value_ref: nv_saved_filter_favourite
+        value_ref: nv_wire_bool
   Dashboard:
     id_field: id
     description: A dashboard layout of gadgets for a team or personal view.
     fields:
       id:
         required: true
-        value_ref: nv_dashboard_id
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_dashboard_name
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_dashboard_description
+        value_ref: nv_wire_str_markdown
   Board:
     id_field: id
     description: A Jira Software board (backlog or sprint view) for a project or filter.
@@ -576,53 +576,53 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_board_id
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_board_name
+        value_ref: nv_wire_str_short
       type:
         required: false
-        value_ref: nv_board_type
+        value_ref: nv_wire_str_short
       self:
         required: false
-        value_ref: nv_board_self
+        value_ref: nv_wire_str_short
   Sprint:
     id_field: id
     description: A time-boxed iteration on a board used for planning and tracking work.
     fields:
       id:
         required: true
-        value_ref: nv_sprint_id
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_sprint_name
+        value_ref: nv_wire_str_short
       state:
         required: false
-        value_ref: nv_sprint_state
+        value_ref: nv_wire_str_short
       startDate:
         required: false
-        value_ref: nv_sprint_start_date
+        value_ref: nv_wire_date_rfc3339
       endDate:
         required: false
-        value_ref: nv_sprint_end_date
+        value_ref: nv_wire_date_rfc3339
       boardId:
         required: false
         path: originBoardId
-        value_ref: nv_sprint_board_id
+        value_ref: nv_wire_int
   Webhook:
     id_field: id
     description: An outbound webhook subscription that delivers Jira events to your app URL.
     fields:
       id:
         required: true
-        value_ref: nv_webhook_id
+        value_ref: nv_wire_str_short
       jql:
         required: false
-        value_ref: nv_webhook_jql
+        value_ref: nv_wire_str_short
       url:
         required: false
         path: url
-        value_ref: nv_webhook_url
+        value_ref: nv_wire_str_short
       events:
         required: false
         value_ref: nv_webhook_events
@@ -757,11 +757,11 @@ capabilities:
     description: List and search projects
     parameters:
     - name: query
-      value_ref: nv_project_query_query
+      value_ref: nv_wire_str_short
       required: false
       role: search
     - name: typeKey
-      value_ref: nv_project_query_type_key
+      value_ref: nv_wire_str_short
       required: false
     - name: status
       value_ref: nv_project_query_status
@@ -780,11 +780,11 @@ capabilities:
       required: true
       role: scope
     - name: query
-      value_ref: nv_project_version_query_query
+      value_ref: nv_wire_str_short
       required: false
       role: search
     - name: status
-      value_ref: nv_project_version_query_status
+      value_ref: nv_wire_str_short
       required: false
     - name: orderBy
       value_ref: nv_project_version_query_order_by
@@ -818,14 +818,14 @@ capabilities:
     description: Search for users by display name or accountId
     parameters:
     - name: query
-      value_ref: nv_user_search_query
+      value_ref: nv_wire_str_short
       required: false
       role: search
     - name: accountId
-      value_ref: nv_user_search_account_id
+      value_ref: nv_wire_str_short
       required: false
     - name: property
-      value_ref: nv_user_search_property
+      value_ref: nv_wire_str_short
       required: false
   comment_create:
     kind: create
@@ -863,7 +863,7 @@ capabilities:
     description: List issue priorities
     parameters:
     - name: priorityName
-      value_ref: nv_priority_query_priority_name
+      value_ref: nv_wire_str_short
       required: false
   priority_get:
     kind: get
@@ -912,10 +912,10 @@ capabilities:
       required: true
       role: scope
     - name: startedAfter
-      value_ref: nv_worklog_query_started_after
+      value_ref: nv_wire_int
       required: false
     - name: startedBefore
-      value_ref: nv_worklog_query_started_before
+      value_ref: nv_wire_int
       required: false
   changelog_query:
     kind: query
@@ -954,7 +954,7 @@ capabilities:
       required: true
       role: scope
     - name: query
-      value_ref: nv_component_query_query
+      value_ref: nv_wire_str_short
       required: false
       role: search
     - name: orderBy
@@ -1066,7 +1066,7 @@ capabilities:
     description: Find groups by name for permission and membership tasks.
     parameters:
     - name: query
-      value_ref: nv_group_query_query
+      value_ref: nv_wire_str_short
       required: false
       role: search
   group_get:
@@ -1093,7 +1093,7 @@ capabilities:
     description: Search saved JQL filters you can use or share.
     parameters:
     - name: filterName
-      value_ref: nv_filter_query_filter_name
+      value_ref: nv_wire_str_short
       required: false
       role: search
   filter_get:
@@ -1112,7 +1112,7 @@ capabilities:
     description: Search dashboards available to you.
     parameters:
     - name: dashboardName
-      value_ref: nv_dashboard_query_dashboard_name
+      value_ref: nv_wire_str_short
       required: false
       role: search
   dashboard_get:
@@ -1146,7 +1146,7 @@ capabilities:
     description: Sprints on a board (active, future, closed).
     parameters:
     - name: boardId
-      value_ref: nv_sprint_query_board_id
+      value_ref: nv_wire_int
       required: true
       role: scope
   sprint_get:
@@ -1399,536 +1399,21 @@ auth:
   header: Authorization
   env: JIRA_AUTH
 values:
-  nv_issue_key:
-    type: string
-    string_semantics: short
-  nv_issue_id:
-    type: string
-    string_semantics: short
-  nv_issue_summary:
-    type: string
-    string_semantics: short
-  nv_issue_description:
-    type: string
-    string_semantics: markdown
-  nv_issue_status:
-    type: string
-    string_semantics: short
-  nv_issue_status_category:
-    type: string
-    string_semantics: short
-  nv_issue_priority:
-    type: string
-    string_semantics: short
-  nv_issue_issuetype:
-    type: string
-    string_semantics: short
-  nv_issue_resolution:
-    type: string
-    string_semantics: short
-  nv_issue_assignee_id:
-    type: entity_ref
-    target: User
-  nv_issue_assignee_name:
-    type: string
-    string_semantics: short
-  nv_issue_reporter_id:
-    type: entity_ref
-    target: User
-  nv_issue_reporter_name:
-    type: string
-    string_semantics: short
-  nv_issue_project_key:
-    type: entity_ref
-    target: Project
-  nv_issue_project_name:
-    type: string
-    string_semantics: short
-  nv_issue_parent_key:
-    type: entity_ref
-    target: Issue
-  nv_issue_labels_item:
-    type: string
-  nv_issue_labels:
-    type: array
-    items:
-      value_ref: nv_issue_labels_item
-  nv_issue_duedate:
-    type: date
-    value_format: rfc3339
-  nv_issue_created:
-    type: date
-    value_format: rfc3339
-  nv_issue_updated:
-    type: date
-    value_format: rfc3339
-  nv_issue_resolutiondate:
-    type: date
-    value_format: rfc3339
-  nv_project_key:
-    type: string
-    string_semantics: short
-  nv_project_id:
-    type: string
-    string_semantics: short
-  nv_project_name:
-    type: string
-    string_semantics: short
-  nv_project_description:
-    type: string
-    string_semantics: markdown
-  nv_project_project_type_key:
-    type: select
-    allowed_values:
-    - software
-    - service_desk
-    - business
-  nv_project_archived:
-    type: boolean
-  nv_project_is_private:
-    type: boolean
-  nv_project_lead_account_id:
-    type: string
-    string_semantics: short
-  nv_project_lead_name:
-    type: string
-    string_semantics: short
-  nv_user_account_id:
-    type: string
-    string_semantics: short
-  nv_user_display_name:
-    type: string
-    string_semantics: short
-  nv_user_email_address:
-    type: string
-    string_semantics: short
-  nv_user_active:
-    type: boolean
-  nv_user_time_zone:
-    type: string
-    string_semantics: short
-  nv_user_account_type:
-    type: string
-    string_semantics: short
-  nv_comment_id:
-    type: string
-    string_semantics: short
-  nv_comment_body:
-    type: string
-    string_semantics: markdown
-  nv_comment_author_id:
-    type: entity_ref
-    target: User
-  nv_comment_author_name:
-    type: string
-    string_semantics: short
-  nv_comment_created:
-    type: date
-    value_format: rfc3339
-  nv_comment_updated:
-    type: date
-    value_format: rfc3339
-  nv_priority_id:
-    type: string
-    string_semantics: short
-  nv_priority_name:
-    type: string
-    string_semantics: short
-  nv_priority_description:
-    type: string
-    string_semantics: markdown
-  nv_priority_is_default:
-    type: boolean
-  nv_priority_status_color:
-    type: string
-    string_semantics: short
-  nv_status_id:
-    type: string
-    string_semantics: short
-  nv_status_name:
-    type: string
-    string_semantics: short
-  nv_status_description:
-    type: string
-    string_semantics: markdown
-  nv_status_status_category:
-    type: string
-    string_semantics: short
-  nv_issue_type_id:
-    type: string
-    string_semantics: short
-  nv_issue_type_name:
-    type: string
-    string_semantics: short
-  nv_issue_type_description:
-    type: string
-    string_semantics: markdown
-  nv_issue_type_subtask:
-    type: boolean
-  nv_issue_type_hierarchy_level:
-    type: integer
-  nv_worklog_id:
-    type: string
-    string_semantics: short
-  nv_worklog_issue_id:
-    type: string
-    string_semantics: short
-  nv_worklog_author_id:
-    type: entity_ref
-    target: User
-  nv_worklog_author_name:
-    type: string
-    string_semantics: short
-  nv_worklog_comment:
-    type: string
-    string_semantics: markdown
-  nv_worklog_started:
-    type: date
-    value_format: rfc3339
-  nv_worklog_time_spent:
-    type: string
-    string_semantics: short
-  nv_worklog_time_spent_seconds:
-    type: integer
-  nv_worklog_created:
-    type: date
-    value_format: rfc3339
-  nv_worklog_updated:
-    type: date
-    value_format: rfc3339
-  nv_changelog_id:
-    type: string
-    string_semantics: short
-  nv_changelog_author_id:
-    type: entity_ref
-    target: User
-  nv_changelog_author_name:
-    type: string
-    string_semantics: short
-  nv_changelog_created:
-    type: date
-    value_format: rfc3339
-  nv_changelog_items_item:
-    type: string
-  nv_changelog_items:
-    type: array
-    items:
-      value_ref: nv_changelog_items_item
-  nv_remote_link_id:
-    type: string
-    string_semantics: short
-  nv_remote_link_global_id:
-    type: string
-    string_semantics: short
-  nv_remote_link_relationship:
-    type: string
-    string_semantics: short
-  nv_remote_link_object_title:
-    type: string
-    string_semantics: short
-  nv_remote_link_object_url:
-    type: string
-    string_semantics: short
-  nv_remote_link_object_summary:
-    type: string
-    string_semantics: short
-  nv_remote_link_application_name:
-    type: string
-    string_semantics: short
-  nv_remote_link_application_type:
-    type: string
-    string_semantics: short
-  nv_transition_id:
-    type: string
-    string_semantics: short
-  nv_transition_name:
-    type: string
-    string_semantics: short
-  nv_transition_is_available:
-    type: boolean
-  nv_transition_is_conditional:
-    type: boolean
-  nv_transition_is_global:
-    type: boolean
-  nv_transition_is_initial:
-    type: boolean
-  nv_component_id:
-    type: string
-    string_semantics: short
-  nv_component_name:
-    type: string
-    string_semantics: short
-  nv_component_description:
-    type: string
-    string_semantics: markdown
-  nv_component_assignee_type:
-    type: select
-    allowed_values:
-    - PROJECT_LEAD
-    - COMPONENT_LEAD
-    - UNASSIGNED
-    - PROJECT_DEFAULT
-  nv_component_lead_id:
-    type: string
-    string_semantics: short
-  nv_component_lead_name:
-    type: string
-    string_semantics: short
-  nv_component_project:
-    type: string
-    string_semantics: short
-  nv_version_id:
-    type: string
-    string_semantics: short
-  nv_version_name:
-    type: string
-    string_semantics: short
-  nv_version_description:
-    type: string
-    string_semantics: markdown
-  nv_version_released:
-    type: boolean
-  nv_version_archived:
-    type: boolean
-  nv_version_release_date:
-    type: date
-    value_format: rfc3339
-  nv_version_start_date:
-    type: date
-    value_format: rfc3339
-  nv_version_project:
-    type: string
-    string_semantics: short
-  nv_version_overdue:
-    type: boolean
-  nv_attachment_id:
-    type: string
-    string_semantics: short
-  nv_attachment_filename:
-    type: string
-    string_semantics: short
-  nv_attachment_mime_type:
-    type: string
-    string_semantics: short
-  nv_attachment_size:
-    type: integer
   nv_attachment_author_id:
     type: entity_ref
     target: User
-  nv_attachment_created:
-    type: date
-    value_format: rfc3339
-  nv_issue_vote_state_issue_key:
-    type: string
-    string_semantics: short
-  nv_issue_vote_state_vote_count:
-    type: integer
-  nv_issue_vote_state_has_voted:
-    type: boolean
-  nv_issue_edit_meta_issue_key:
-    type: string
-    string_semantics: short
-  nv_issue_edit_meta_fields:
-    type: json
-  nv_issue_create_meta_bundle_id:
-    type: string
-    string_semantics: short
-  nv_issue_create_meta_bundle_projects:
-    type: json
-  nv_group_group_id:
-    type: string
-    string_semantics: short
-  nv_group_name:
-    type: string
-    string_semantics: short
-  nv_group_self:
-    type: string
-    string_semantics: short
-  nv_my_permission_set_id:
-    type: string
-    string_semantics: short
-  nv_my_permission_set_permissions:
-    type: json
-  nv_saved_filter_id:
-    type: string
-    string_semantics: short
-  nv_saved_filter_name:
-    type: string
-    string_semantics: short
-  nv_saved_filter_description:
-    type: string
-    string_semantics: markdown
-  nv_saved_filter_jql:
-    type: string
-    string_semantics: short
-  nv_saved_filter_favourite:
-    type: boolean
-  nv_dashboard_id:
-    type: string
-    string_semantics: short
-  nv_dashboard_name:
-    type: string
-    string_semantics: short
-  nv_dashboard_description:
-    type: string
-    string_semantics: markdown
-  nv_board_id:
-    type: string
-    string_semantics: short
-  nv_board_name:
-    type: string
-    string_semantics: short
-  nv_board_type:
-    type: string
-    string_semantics: short
-  nv_board_self:
-    type: string
-    string_semantics: short
-  nv_sprint_id:
-    type: string
-    string_semantics: short
-  nv_sprint_name:
-    type: string
-    string_semantics: short
-  nv_sprint_state:
-    type: string
-    string_semantics: short
-  nv_sprint_start_date:
-    type: date
-    value_format: rfc3339
-  nv_sprint_end_date:
-    type: date
-    value_format: rfc3339
-  nv_sprint_board_id:
-    type: integer
-  nv_webhook_id:
-    type: string
-    string_semantics: short
-  nv_webhook_jql:
-    type: string
-    string_semantics: short
-  nv_webhook_url:
-    type: string
-    string_semantics: short
-  nv_webhook_events_item:
-    type: string
-  nv_webhook_events:
-    type: array
-    items:
-      value_ref: nv_webhook_events_item
-  nv_issue_jql_jql:
-    type: string
-    string_semantics: short
-    description: JQL expression (filters, ordering, and functions such as currentUser()).
-  nv_issue_jql_fields_item:
-    type: string
-  nv_issue_jql_fields:
-    type: array
-    items:
-      value_ref: nv_issue_jql_fields_item
-    description: Issue field ids to include in each issue (e.g. summary, status, assignee). Omit for server defaults; repeat
-      the flag for multiple values (--fields summary --fields status).
-  nv_issue_jql_expand:
-    type: string
-    string_semantics: short
-    description: Names of optional expansions to include (Jira-specific; often comma-separated, e.g. renderedFields or names
-      of entities to hydrate).
-  nv_issue_create_project_key:
+  nv_board_query_project_key_or_id:
     type: entity_ref
     target: Project
-    description: Target project key (e.g. PROJ).
-  nv_issue_create_issue_type:
-    type: string
-    string_semantics: short
-    description: Issue type name as configured in the project (e.g. Task, Bug, Story).
-  nv_issue_create_summary:
-    type: string
-    string_semantics: short
-    description: One-line title for the new issue.
-  nv_issue_create_description:
-    type: string
-    string_semantics: markdown
-    description: Optional plain-text description; Jira Cloud may require Atlassian Document Format instead—if create fails,
-      leave empty and edit in the UI or use issue update.
-  nv_issue_update_summary:
-    type: string
-    string_semantics: short
-    description: New summary/title text.
-  nv_issue_update_description:
-    type: string
-    string_semantics: markdown
-    description: Replacement description; on Cloud this may need to be valid ADF JSON for some sites.
-  nv_issue_update_assignee_id:
-    type: string
-    string_semantics: short
-    description: Account ID to assign; omit to leave assignee unchanged.
-  nv_issue_update_priority_name:
-    type: string
-    string_semantics: short
-    description: Priority name as defined in the project (e.g. High).
-  nv_issue_update_labels_item:
-    type: string
-  nv_issue_update_labels:
-    type: array
-    items:
-      value_ref: nv_issue_update_labels_item
-    description: Full replacement list of label strings (repeat --labels).
-  nv_issue_transition_transition_id:
-    type: string
-    string_semantics: short
-    description: Workflow transition id (numeric string from the transitions list for this issue).
-  nv_project_query_query:
-    type: string
-    string_semantics: short
-  nv_project_query_type_key:
-    type: string
-    string_semantics: short
-  nv_project_query_status:
-    type: multi_select
-    allowed_values:
-    - live
-    - archived
-    - deleted
-  nv_project_query_order_by:
-    type: select
-    allowed_values:
-    - key
-    - -key
-    - name
-    - -name
-    - category
-    - -category
-  nv_project_version_query_project_id_or_key:
+  nv_changelog_author_id:
     type: entity_ref
-    target: Project
-  nv_project_version_query_query:
-    type: string
-    string_semantics: short
-  nv_project_version_query_status:
-    type: string
-    string_semantics: short
-  nv_project_version_query_order_by:
-    type: select
-    allowed_values:
-    - description
-    - -description
-    - name
-    - -name
-    - sequence
-    - -sequence
-    - releaseDate
-    - -releaseDate
-    - startDate
-    - -startDate
-  nv_user_search_query:
-    type: string
-    string_semantics: short
-  nv_user_search_account_id:
-    type: string
-    string_semantics: short
-  nv_user_search_property:
-    type: string
-    string_semantics: short
+    target: User
+  nv_changelog_query_issue_id_or_key:
+    type: entity_ref
+    target: Issue
+  nv_comment_author_id:
+    type: entity_ref
+    target: User
   nv_comment_create_issue_id_or_key:
     type: entity_ref
     target: Issue
@@ -1945,31 +1430,13 @@ values:
     allowed_values:
     - created
     - -created
-  nv_priority_query_priority_name:
-    type: string
-    string_semantics: short
-  nv_worklog_query_issue_id_or_key:
-    type: entity_ref
-    target: Issue
-  nv_worklog_query_started_after:
-    type: integer
-  nv_worklog_query_started_before:
-    type: integer
-  nv_changelog_query_issue_id_or_key:
-    type: entity_ref
-    target: Issue
-  nv_remotelink_query_issue_id_or_key:
-    type: entity_ref
-    target: Issue
-  nv_transition_query_issue_id_or_key:
-    type: entity_ref
-    target: Issue
-  nv_component_query_project_id_or_key:
-    type: entity_ref
-    target: Project
-  nv_component_query_query:
-    type: string
-    string_semantics: short
+  nv_component_assignee_type:
+    type: select
+    allowed_values:
+    - PROJECT_LEAD
+    - COMPONENT_LEAD
+    - UNASSIGNED
+    - PROJECT_DEFAULT
   nv_component_query_order_by:
     type: select
     allowed_values:
@@ -1981,50 +1448,184 @@ values:
     - -lead
     - name
     - -name
-  nv_issue_bulk_fetch_issue_keys_item:
+  nv_component_query_project_id_or_key:
+    type: entity_ref
+    target: Project
+  nv_issue_assignee_id:
+    type: entity_ref
+    target: User
+  nv_issue_create_description:
     type: string
-  nv_issue_bulk_fetch_issue_keys:
-    type: array
-    items:
-      value_ref: nv_issue_bulk_fetch_issue_keys_item
-    description: Issue keys or numeric ids to fetch (repeat flag).
-  nv_issue_watcher_query_issue_id_or_key:
+    string_semantics: markdown
+    description: Optional plain-text description; Jira Cloud may require Atlassian Document Format instead—if create fails,
+      leave empty and edit in the UI or use issue update.
+  nv_issue_create_issue_type:
+    type: string
+    string_semantics: short
+    description: Issue type name as configured in the project (e.g. Task, Bug, Story).
+  nv_issue_create_meta_bundle_projects:
+    type: json
+  nv_issue_create_project_key:
+    type: entity_ref
+    target: Project
+    description: Target project key (e.g. PROJ).
+  nv_issue_create_summary:
+    type: string
+    string_semantics: short
+    description: One-line title for the new issue.
+  nv_issue_edit_meta_fields:
+    type: json
+  nv_issue_jql_expand:
+    type: string
+    string_semantics: short
+    description: Names of optional expansions to include (Jira-specific; often comma-separated, e.g. renderedFields or names
+      of entities to hydrate).
+  nv_issue_jql_jql:
+    type: string
+    string_semantics: short
+    description: JQL expression (filters, ordering, and functions such as currentUser()).
+  nv_issue_parent_key:
     type: entity_ref
     target: Issue
+  nv_issue_project_key:
+    type: entity_ref
+    target: Project
+  nv_issue_reporter_id:
+    type: entity_ref
+    target: User
+  nv_issue_transition_transition_id:
+    type: string
+    string_semantics: short
+    description: Workflow transition id (numeric string from the transitions list for this issue).
+  nv_issue_update_assignee_id:
+    type: string
+    string_semantics: short
+    description: Account ID to assign; omit to leave assignee unchanged.
+  nv_issue_update_description:
+    type: string
+    string_semantics: markdown
+    description: Replacement description; on Cloud this may need to be valid ADF JSON for some sites.
+  nv_issue_update_priority_name:
+    type: string
+    string_semantics: short
+    description: Priority name as defined in the project (e.g. High).
+  nv_issue_update_summary:
+    type: string
+    string_semantics: short
+    description: New summary/title text.
   nv_issue_watcher_add_account_id:
     type: string
     string_semantics: short
     description: Account to add; omit to add the current user.
+  nv_issue_watcher_query_issue_id_or_key:
+    type: entity_ref
+    target: Issue
   nv_issue_watcher_remove_account_id:
     type: string
     string_semantics: short
     description: Account to remove from the watcher list.
-  nv_group_query_query:
-    type: string
-    string_semantics: short
-  nv_filter_query_filter_name:
-    type: string
-    string_semantics: short
-  nv_dashboard_query_dashboard_name:
-    type: string
-    string_semantics: short
-  nv_board_query_project_key_or_id:
+  nv_my_permission_set_permissions:
+    type: json
+  nv_project_project_type_key:
+    type: select
+    allowed_values:
+    - software
+    - service_desk
+    - business
+  nv_project_query_order_by:
+    type: select
+    allowed_values:
+    - key
+    - -key
+    - name
+    - -name
+    - category
+    - -category
+  nv_project_query_status:
+    type: multi_select
+    allowed_values:
+    - live
+    - archived
+    - deleted
+  nv_project_version_query_order_by:
+    type: select
+    allowed_values:
+    - description
+    - -description
+    - name
+    - -name
+    - sequence
+    - -sequence
+    - releaseDate
+    - -releaseDate
+    - startDate
+    - -startDate
+  nv_project_version_query_project_id_or_key:
     type: entity_ref
     target: Project
-  nv_sprint_query_board_id:
-    type: integer
-  nv_webhook_register_url:
-    type: string
-    string_semantics: short
-    description: HTTPS URL that receives Jira event payloads.
+  nv_remotelink_query_issue_id_or_key:
+    type: entity_ref
+    target: Issue
+  nv_transition_query_issue_id_or_key:
+    type: entity_ref
+    target: Issue
   nv_webhook_register_jql_filter:
     type: string
     string_semantics: short
     description: Optional JQL limiting which issues trigger events.
-  nv_webhook_register_events_item:
+  nv_webhook_register_url:
     type: string
+    string_semantics: short
+    description: HTTPS URL that receives Jira event payloads.
+  nv_wire_bool:
+    type: boolean
+  nv_wire_date_rfc3339:
+    type: date
+    value_format: rfc3339
+  nv_wire_int:
+    type: integer
+  nv_wire_str_markdown:
+    type: string
+    string_semantics: markdown
+  nv_wire_str_short:
+    type: string
+    string_semantics: short
+  nv_worklog_author_id:
+    type: entity_ref
+    target: User
+  nv_worklog_query_issue_id_or_key:
+    type: entity_ref
+    target: Issue
+  nv_changelog_items:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_issue_bulk_fetch_issue_keys:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Issue keys or numeric ids to fetch (repeat flag).
+  nv_issue_jql_fields:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Issue field ids to include in each issue (e.g. summary, status, assignee). Omit for server defaults; repeat
+      the flag for multiple values (--fields summary --fields status).
+  nv_issue_labels:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_issue_update_labels:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Full replacement list of label strings (repeat --labels).
+  nv_webhook_events:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
   nv_webhook_register_events:
     type: array
     items:
-      value_ref: nv_webhook_register_events_item
+      value_ref: nv_wire_str_short
     description: Event types to deliver (repeat --events).

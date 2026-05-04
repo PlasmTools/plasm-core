@@ -1,4 +1,4 @@
-version: 1
+version: 2
 http_backend: https://api.tavily.com
 entities:
   SearchResult:
@@ -71,7 +71,7 @@ capabilities:
     description: AI-powered web search. Returns ranked results with optional LLM answer.
     parameters:
     - name: query
-      value_ref: nv_web_search_query
+      value_ref: nv_wire_str_short
       required: true
       role: search
     - name: search_depth
@@ -79,11 +79,11 @@ capabilities:
       required: false
       role: response_control
     - name: chunks_per_source
-      value_ref: nv_web_search_chunks_per_source
+      value_ref: nv_wire_int
       required: false
       role: response_control
     - name: max_results
-      value_ref: nv_web_search_max_results
+      value_ref: nv_wire_int
       required: false
       role: response_control
     - name: topic
@@ -93,25 +93,25 @@ capabilities:
       value_ref: nv_web_search_time_range
       required: false
     - name: start_date
-      value_ref: nv_web_search_start_date
+      value_ref: nv_wire_str_short
       required: false
     - name: end_date
-      value_ref: nv_web_search_end_date
+      value_ref: nv_wire_str_short
       required: false
     - name: include_answer
-      value_ref: nv_web_search_include_answer
+      value_ref: nv_wire_bool
       required: false
       role: response_control
     - name: include_raw_content
-      value_ref: nv_web_search_include_raw_content
+      value_ref: nv_wire_bool
       required: false
       role: response_control
     - name: include_images
-      value_ref: nv_web_search_include_images
+      value_ref: nv_wire_bool
       required: false
       role: response_control
     - name: include_favicon
-      value_ref: nv_web_search_include_favicon
+      value_ref: nv_wire_bool
       required: false
       role: response_control
     - name: include_domains
@@ -121,14 +121,14 @@ capabilities:
       value_ref: nv_web_search_exclude_domains
       required: false
     - name: country
-      value_ref: nv_web_search_country
+      value_ref: nv_wire_str_short
       required: false
     - name: auto_parameters
-      value_ref: nv_web_search_auto_parameters
+      value_ref: nv_wire_bool
       required: false
       role: response_control
     - name: exact_match
-      value_ref: nv_web_search_exact_match
+      value_ref: nv_wire_bool
       required: false
   url_extract:
     kind: query
@@ -139,7 +139,7 @@ capabilities:
       value_ref: nv_url_extract_urls
       required: true
     - name: query
-      value_ref: nv_url_extract_query
+      value_ref: nv_wire_str_short
       required: false
     - name: extract_depth
       value_ref: nv_url_extract_extract_depth
@@ -150,15 +150,15 @@ capabilities:
       required: false
       role: response_control
     - name: chunks_per_source
-      value_ref: nv_url_extract_chunks_per_source
+      value_ref: nv_wire_int
       required: false
       role: response_control
     - name: include_images
-      value_ref: nv_url_extract_include_images
+      value_ref: nv_wire_bool
       required: false
       role: response_control
     - name: include_favicon
-      value_ref: nv_url_extract_include_favicon
+      value_ref: nv_wire_bool
       required: false
       role: response_control
   site_crawl:
@@ -167,30 +167,30 @@ capabilities:
     description: Graph-based website traversal — crawl multiple pages in parallel
     parameters:
     - name: url
-      value_ref: nv_site_crawl_url
+      value_ref: nv_wire_str_short
       required: true
       role: scope
     - name: instructions
-      value_ref: nv_site_crawl_instructions
+      value_ref: nv_wire_str_short
       required: false
     - name: max_depth
-      value_ref: nv_site_crawl_max_depth
+      value_ref: nv_wire_int
       required: false
       role: response_control
     - name: max_breadth
-      value_ref: nv_site_crawl_max_breadth
+      value_ref: nv_wire_int
       required: false
       role: response_control
     - name: limit
-      value_ref: nv_site_crawl_limit
+      value_ref: nv_wire_int
       required: false
       role: response_control
     - name: chunks_per_source
-      value_ref: nv_site_crawl_chunks_per_source
+      value_ref: nv_wire_int
       required: false
       role: response_control
     - name: include_images
-      value_ref: nv_site_crawl_include_images
+      value_ref: nv_wire_bool
       required: false
       role: response_control
   research_create:
@@ -205,7 +205,7 @@ capabilities:
     - model
     parameters:
     - name: input
-      value_ref: nv_research_create_input
+      value_ref: nv_wire_str_short
       required: true
     - name: model
       value_ref: nv_research_create_model
@@ -230,53 +230,39 @@ auth:
   scheme: bearer_token
   env: TAVILY_API_TOKEN
 values:
-  nv_search_result_url:
-    type: string
-    string_semantics: short
-    description: URL of the source page
-  nv_search_result_title:
-    type: string
-    string_semantics: short
-    description: Title of the source page
-  nv_search_result_content:
-    type: string
-    string_semantics: markdown
-    description: Relevance snippet or chunked content from the page
-  nv_search_result_score:
-    type: number
-    description: Relevance score (0–1)
-  nv_search_result_raw_content:
-    type: string
-    string_semantics: markdown
-    description: Full cleaned page content (only when include_raw_content=true)
-  nv_search_result_favicon:
-    type: string
-    string_semantics: short
-    description: Favicon URL for the result's domain
-  nv_extract_result_url:
-    type: string
-    string_semantics: short
-    description: URL of the extracted page
-  nv_extract_result_raw_content:
-    type: string
-    string_semantics: markdown
-    description: Full extracted page content (markdown or plain text)
   nv_extract_result_favicon:
     type: string
     string_semantics: short
     description: Favicon URL for the page's domain
-  nv_research_task_request_id:
+  nv_extract_result_raw_content:
+    type: string
+    string_semantics: markdown
+    description: Full extracted page content (markdown or plain text)
+  nv_extract_result_url:
     type: string
     string_semantics: short
-    description: Unique identifier for the research task (use to poll status)
-  nv_research_task_status:
+    description: URL of the extracted page
+  nv_research_create_citation_format:
     type: select
     allowed_values:
-    - pending
-    - running
-    - completed
-    - failed
-    description: Current execution status of the task
+    - numbered
+    - mla
+    - apa
+    - chicago
+  nv_research_create_model:
+    type: select
+    allowed_values:
+    - mini
+    - pro
+    - auto
+  nv_research_task_content:
+    type: string
+    string_semantics: markdown
+    description: Full research content/report (populated when status=completed)
+  nv_research_task_created_at:
+    type: date
+    value_format: rfc3339
+    description: Timestamp when the task was created
   nv_research_task_input:
     type: string
     string_semantics: short
@@ -288,27 +274,54 @@ values:
     - pro
     - auto
     description: Research agent model used
-  nv_research_task_created_at:
-    type: date
-    value_format: rfc3339
-    description: Timestamp when the task was created
-  nv_research_task_content:
+  nv_research_task_request_id:
     type: string
-    string_semantics: markdown
-    description: Full research content/report (populated when status=completed)
+    string_semantics: short
+    description: Unique identifier for the research task (use to poll status)
   nv_research_task_response_time:
     type: number
     description: Time in seconds for the research task to complete
-  nv_research_task_sources_item:
+  nv_research_task_status:
+    type: select
+    allowed_values:
+    - pending
+    - running
+    - completed
+    - failed
+    description: Current execution status of the task
+  nv_search_result_content:
     type: string
-  nv_research_task_sources:
-    type: array
-    items:
-      value_ref: nv_research_task_sources_item
-    description: Cited sources (populated when status=completed)
-  nv_web_search_query:
+    string_semantics: markdown
+    description: Relevance snippet or chunked content from the page
+  nv_search_result_favicon:
     type: string
     string_semantics: short
+    description: Favicon URL for the result's domain
+  nv_search_result_raw_content:
+    type: string
+    string_semantics: markdown
+    description: Full cleaned page content (only when include_raw_content=true)
+  nv_search_result_score:
+    type: number
+    description: Relevance score (0–1)
+  nv_search_result_title:
+    type: string
+    string_semantics: short
+    description: Title of the source page
+  nv_search_result_url:
+    type: string
+    string_semantics: short
+    description: URL of the source page
+  nv_url_extract_extract_depth:
+    type: select
+    allowed_values:
+    - basic
+    - advanced
+  nv_url_extract_format:
+    type: select
+    allowed_values:
+    - markdown
+    - text
   nv_web_search_search_depth:
     type: select
     allowed_values:
@@ -316,16 +329,6 @@ values:
     - fast
     - ultra-fast
     - advanced
-  nv_web_search_chunks_per_source:
-    type: integer
-  nv_web_search_max_results:
-    type: integer
-  nv_web_search_topic:
-    type: select
-    allowed_values:
-    - general
-    - news
-    - finance
   nv_web_search_time_range:
     type: select
     allowed_values:
@@ -337,93 +340,33 @@ values:
     - w
     - m
     - y
-  nv_web_search_start_date:
+  nv_web_search_topic:
+    type: select
+    allowed_values:
+    - general
+    - news
+    - finance
+  nv_wire_bool:
+    type: boolean
+  nv_wire_int:
+    type: integer
+  nv_wire_str_short:
     type: string
     string_semantics: short
-  nv_web_search_end_date:
-    type: string
-    string_semantics: short
-  nv_web_search_include_answer:
-    type: boolean
-  nv_web_search_include_raw_content:
-    type: boolean
-  nv_web_search_include_images:
-    type: boolean
-  nv_web_search_include_favicon:
-    type: boolean
-  nv_web_search_include_domains_item:
-    type: string
-  nv_web_search_include_domains:
+  nv_research_task_sources:
     type: array
     items:
-      value_ref: nv_web_search_include_domains_item
-  nv_web_search_exclude_domains_item:
-    type: string
-  nv_web_search_exclude_domains:
-    type: array
-    items:
-      value_ref: nv_web_search_exclude_domains_item
-  nv_web_search_country:
-    type: string
-    string_semantics: short
-  nv_web_search_auto_parameters:
-    type: boolean
-  nv_web_search_exact_match:
-    type: boolean
-  nv_url_extract_urls_item:
-    type: string
+      value_ref: nv_wire_str_short
+    description: Cited sources (populated when status=completed)
   nv_url_extract_urls:
     type: array
     items:
-      value_ref: nv_url_extract_urls_item
-  nv_url_extract_query:
-    type: string
-    string_semantics: short
-  nv_url_extract_extract_depth:
-    type: select
-    allowed_values:
-    - basic
-    - advanced
-  nv_url_extract_format:
-    type: select
-    allowed_values:
-    - markdown
-    - text
-  nv_url_extract_chunks_per_source:
-    type: integer
-  nv_url_extract_include_images:
-    type: boolean
-  nv_url_extract_include_favicon:
-    type: boolean
-  nv_site_crawl_url:
-    type: string
-    string_semantics: short
-  nv_site_crawl_instructions:
-    type: string
-    string_semantics: short
-  nv_site_crawl_max_depth:
-    type: integer
-  nv_site_crawl_max_breadth:
-    type: integer
-  nv_site_crawl_limit:
-    type: integer
-  nv_site_crawl_chunks_per_source:
-    type: integer
-  nv_site_crawl_include_images:
-    type: boolean
-  nv_research_create_input:
-    type: string
-    string_semantics: short
-  nv_research_create_model:
-    type: select
-    allowed_values:
-    - mini
-    - pro
-    - auto
-  nv_research_create_citation_format:
-    type: select
-    allowed_values:
-    - numbered
-    - mla
-    - apa
-    - chicago
+      value_ref: nv_wire_str_short
+  nv_web_search_exclude_domains:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_web_search_include_domains:
+    type: array
+    items:
+      value_ref: nv_wire_str_short

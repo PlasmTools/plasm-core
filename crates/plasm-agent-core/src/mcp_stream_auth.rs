@@ -3,7 +3,9 @@
 //! - `Authorization: Bearer <oauth_access_token>` for personal MCP inbound OAuth (dynamic registration)
 //!
 //! When no tenant MCP configurations are loaded, transport requests may omit `Authorization` (open local
-//! dev). Once tenant configs exist, every MCP request must authenticate via API key or OAuth bearer token.
+//! dev) or send `Authorization: Bearer __plasm_mcp_anonymous__` (see [`PLASM_MCP_ANONYMOUS_BEARER_TOKEN`]:
+//! `rust-mcp-sdk` cannot forward an empty bearer secret). Once tenant configs exist, every MCP request must authenticate
+//! via API key or OAuth bearer token.
 
 #![allow(clippy::result_large_err)]
 // Err variants are full HTTP responses; boxing every OAuth helper would be high churn for little gain.
@@ -33,6 +35,12 @@ const OAUTH_REGISTER_PATH: &str = "/oauth/register";
 const OAUTH_AS_METADATA_PATH: &str = "/.well-known/oauth-authorization-server";
 const OAUTH_PROTECTED_RESOURCE_PATH: &str = "/.well-known/oauth-protected-resource/mcp";
 const MCP_OAUTH_PREFIX: &str = "/mcp";
+/// Non-empty bearer value for **anonymous** Streamable HTTP MCP when no tenant configs exist.
+///
+/// `rust-mcp-sdk` trims the full `Authorization` header, then splits on the first ASCII space, so a
+/// header of `Bearer ` (empty secret) becomes `Bearer` and never reaches [`AuthProvider::verify_token`]
+/// with an empty string. Scripts and `curl` should send `Authorization: Bearer <this>` instead.
+pub const PLASM_MCP_ANONYMOUS_BEARER_TOKEN: &str = "__plasm_mcp_anonymous__";
 const OAUTH_SCOPE: &str = "mcp:tools";
 const OAUTH_ACCESS_TOKEN_TTL_SECS: u64 = 3600;
 const OAUTH_REFRESH_TOKEN_TTL_SECS: u64 = 86400 * 30;
@@ -1347,7 +1355,7 @@ impl PlasmMcpApiKeyAuthProvider {
 impl AuthProvider for PlasmMcpApiKeyAuthProvider {
     async fn verify_token(&self, access_token: String) -> Result<AuthInfo, AuthenticationError> {
         let trimmed = access_token.trim();
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || trimmed == PLASM_MCP_ANONYMOUS_BEARER_TOKEN {
             let r = self.verify_anonymous_ok_async().await;
             crate::metrics::record_mcp_transport_auth(
                 if r.is_ok() {

@@ -1,4 +1,4 @@
-version: 1
+version: 2
 auth:
   scheme: none
 http_backend: https://www.themealdb.com
@@ -32,7 +32,7 @@ capabilities:
     entity: Meal
     parameters:
     - name: s
-      value_ref: nv_meal_search_s
+      value_ref: nv_wire_str_short
       required: true
       role: search
   meal_filter:
@@ -41,15 +41,15 @@ capabilities:
     entity: Meal
     parameters:
     - name: c
-      value_ref: nv_meal_filter_c
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: a
-      value_ref: nv_meal_filter_a
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: i
-      value_ref: nv_meal_filter_i
+      value_ref: nv_wire_str_short
       required: false
       role: filter
   meal_get:
@@ -68,18 +68,18 @@ values:
     type: string
     string_semantics: short
     description: Unique numeric string identifier for the meal
-  nv_meal_str_meal:
-    type: string
-    string_semantics: short
-    description: The recipe or dish name
-  nv_meal_str_category:
-    type: string
-    string_semantics: short
-    description: Cuisine category (e.g. Chicken, Seafood, Dessert)
   nv_meal_str_area:
     type: string
     string_semantics: short
     description: Country of origin (e.g. British, Italian, Japanese)
+  nv_meal_str_category:
+    type: string
+    string_semantics: short
+    description: Cuisine category (e.g. Chicken, Seafood, Dessert)
+  nv_meal_str_meal:
+    type: string
+    string_semantics: short
+    description: The recipe or dish name
   nv_meal_str_meal_thumb:
     type: string
     string_semantics: short
@@ -88,15 +88,6 @@ values:
     type: string
     string_semantics: short
     description: Comma-separated tags for the meal
-  nv_meal_search_s:
-    type: string
-    string_semantics: short
-  nv_meal_filter_c:
-    type: string
-    string_semantics: short
-  nv_meal_filter_a:
-    type: string
-    string_semantics: short
-  nv_meal_filter_i:
+  nv_wire_str_short:
     type: string
     string_semantics: short

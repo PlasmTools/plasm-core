@@ -1,4 +1,4 @@
-version: 3
+version: 4
 http_backend: https://graph.microsoft.com
 entities:
   MailFolder:
@@ -7,28 +7,28 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_mail_folder_id
+        value_ref: nv_wire_str_short
       displayName:
         required: false
-        value_ref: nv_mail_folder_display_name
+        value_ref: nv_wire_str_short
       parentFolderId:
         required: false
         value_ref: nv_mail_folder_parent_folder_id
       childFolderCount:
         required: false
-        value_ref: nv_mail_folder_child_folder_count
+        value_ref: nv_wire_int
       unreadItemCount:
         required: false
-        value_ref: nv_mail_folder_unread_item_count
+        value_ref: nv_wire_int
       totalItemCount:
         required: false
-        value_ref: nv_mail_folder_total_item_count
+        value_ref: nv_wire_int
       wellKnownName:
         required: false
-        value_ref: nv_mail_folder_well_known_name
+        value_ref: nv_wire_str_short
       isHidden:
         required: false
-        value_ref: nv_mail_folder_is_hidden
+        value_ref: nv_wire_bool
     relations:
       childFolders:
         target: MailFolder
@@ -50,13 +50,13 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_message_id
+        value_ref: nv_wire_str_short
       subject:
         required: false
-        value_ref: nv_message_subject
+        value_ref: nv_wire_str_short
       bodyPreview:
         required: false
-        value_ref: nv_message_body_preview
+        value_ref: nv_wire_str_short
       bodyContentType:
         required: false
         path: body.contentType
@@ -67,36 +67,36 @@ entities:
         value_ref: nv_message_body_content
       internetMessageId:
         required: false
-        value_ref: nv_message_internet_message_id
+        value_ref: nv_wire_str_short
       conversationId:
         required: false
-        value_ref: nv_message_conversation_id
+        value_ref: nv_wire_str_short
       parentFolderId:
         required: false
         value_ref: nv_message_parent_folder_id
       fromAddress:
         required: false
         path: from.emailAddress.address
-        value_ref: nv_message_from_address
+        value_ref: nv_wire_str_short
       fromName:
         required: false
         path: from.emailAddress.name
-        value_ref: nv_message_from_name
+        value_ref: nv_wire_str_short
       receivedDateTime:
         required: false
-        value_ref: nv_message_received_date_time
+        value_ref: nv_wire_date_rfc3339
       sentDateTime:
         required: false
-        value_ref: nv_message_sent_date_time
+        value_ref: nv_wire_date_rfc3339
       hasAttachments:
         required: false
-        value_ref: nv_message_has_attachments
+        value_ref: nv_wire_bool
       isDraft:
         required: false
-        value_ref: nv_message_is_draft
+        value_ref: nv_wire_bool
       isRead:
         required: false
-        value_ref: nv_message_is_read
+        value_ref: nv_wire_bool
       importance:
         required: false
         value_ref: nv_message_importance
@@ -105,7 +105,7 @@ entities:
         value_ref: nv_message_categories
       webLink:
         required: false
-        value_ref: nv_message_web_link
+        value_ref: nv_wire_str_short
     relations:
       attachments:
         target: Attachment
@@ -120,25 +120,25 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_attachment_id
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_attachment_name
+        value_ref: nv_wire_str_short
       contentType:
         required: false
-        value_ref: nv_attachment_content_type
+        value_ref: nv_wire_str_short
       size:
         required: false
-        value_ref: nv_attachment_size
+        value_ref: nv_wire_int
       isInline:
         required: false
-        value_ref: nv_attachment_is_inline
+        value_ref: nv_wire_bool
       lastModifiedDateTime:
         required: false
-        value_ref: nv_attachment_last_modified_date_time
+        value_ref: nv_wire_date_rfc3339
       contentId:
         required: false
-        value_ref: nv_attachment_content_id
+        value_ref: nv_wire_str_short
       contentBytes:
         required: false
         mime_type_hint: application/octet-stream
@@ -326,123 +326,54 @@ auth:
   scheme: bearer_token
   env: MICROSOFT_GRAPH_ACCESS_TOKEN
 values:
-  nv_mail_folder_id:
-    type: string
-    string_semantics: short
-  nv_mail_folder_display_name:
-    type: string
-    string_semantics: short
+  nv_attachment_content_bytes:
+    type: blob
+  nv_attachment_get_message_id:
+    type: entity_ref
+    target: Message
+    description: Message that owns the attachment.
+  nv_attachment_query_message_id:
+    type: entity_ref
+    target: Message
+    description: Message whose attachments should be listed.
+  nv_mail_folder_child_query_include_hidden_folders:
+    type: boolean
+    description: Include hidden folders in the child folder listing.
+  nv_mail_folder_child_query_mail_folder_id:
+    type: entity_ref
+    target: MailFolder
+    description: Folder whose child folders should be listed.
   nv_mail_folder_parent_folder_id:
     type: entity_ref
     target: MailFolder
-  nv_mail_folder_child_folder_count:
-    type: integer
-  nv_mail_folder_unread_item_count:
-    type: integer
-  nv_mail_folder_total_item_count:
-    type: integer
-  nv_mail_folder_well_known_name:
-    type: string
-    string_semantics: short
-  nv_mail_folder_is_hidden:
+  nv_mail_folder_query_include_hidden_folders:
     type: boolean
-  nv_message_id:
+    description: Include hidden folders in the root folder listing.
+  nv_message_body_content:
     type: string
-    string_semantics: short
-  nv_message_subject:
-    type: string
-    string_semantics: short
-  nv_message_body_preview:
-    type: string
-    string_semantics: short
+    string_semantics: markdown
   nv_message_body_content_type:
     type: select
     allowed_values:
     - text
     - html
-  nv_message_body_content:
-    type: string
-    string_semantics: markdown
-  nv_message_internet_message_id:
-    type: string
-    string_semantics: short
-  nv_message_conversation_id:
-    type: string
-    string_semantics: short
-  nv_message_parent_folder_id:
+  nv_message_folder_query_mail_folder_id:
     type: entity_ref
     target: MailFolder
-  nv_message_from_address:
-    type: string
-    string_semantics: short
-  nv_message_from_name:
-    type: string
-    string_semantics: short
-  nv_message_received_date_time:
-    type: date
-    value_format: rfc3339
-  nv_message_sent_date_time:
-    type: date
-    value_format: rfc3339
-  nv_message_has_attachments:
-    type: boolean
-  nv_message_is_draft:
-    type: boolean
-  nv_message_is_read:
-    type: boolean
+    description: Folder whose messages should be listed.
   nv_message_importance:
     type: select
     allowed_values:
     - low
     - normal
     - high
-  nv_message_categories_item:
-    type: string
-  nv_message_categories:
-    type: array
-    items:
-      value_ref: nv_message_categories_item
-  nv_message_web_link:
-    type: string
-    string_semantics: short
-  nv_attachment_id:
-    type: string
-    string_semantics: short
-  nv_attachment_name:
-    type: string
-    string_semantics: short
-  nv_attachment_content_type:
-    type: string
-    string_semantics: short
-  nv_attachment_size:
-    type: integer
-  nv_attachment_is_inline:
-    type: boolean
-  nv_attachment_last_modified_date_time:
-    type: date
-    value_format: rfc3339
-  nv_attachment_content_id:
-    type: string
-    string_semantics: short
-  nv_attachment_content_bytes:
-    type: blob
-  nv_mail_folder_query_include_hidden_folders:
-    type: boolean
-    description: Include hidden folders in the root folder listing.
-  nv_mail_folder_child_query_mail_folder_id:
+  nv_message_move_destination_folder_id:
     type: entity_ref
     target: MailFolder
-    description: Folder whose child folders should be listed.
-  nv_mail_folder_child_query_include_hidden_folders:
-    type: boolean
-    description: Include hidden folders in the child folder listing.
-  nv_message_folder_query_mail_folder_id:
+    description: Folder that should receive the moved message.
+  nv_message_parent_folder_id:
     type: entity_ref
     target: MailFolder
-    description: Folder whose messages should be listed.
-  nv_message_update_is_read:
-    type: boolean
-    description: Whether the message should be marked read.
   nv_message_update_importance:
     type: select
     allowed_values:
@@ -450,22 +381,25 @@ values:
     - normal
     - high
     description: Importance marker to store on the message.
-  nv_message_update_categories_item:
+  nv_message_update_is_read:
+    type: boolean
+    description: Whether the message should be marked read.
+  nv_wire_bool:
+    type: boolean
+  nv_wire_date_rfc3339:
+    type: date
+    value_format: rfc3339
+  nv_wire_int:
+    type: integer
+  nv_wire_str_short:
     type: string
+    string_semantics: short
+  nv_message_categories:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
   nv_message_update_categories:
     type: array
     items:
-      value_ref: nv_message_update_categories_item
+      value_ref: nv_wire_str_short
     description: Categories to store on the message.
-  nv_message_move_destination_folder_id:
-    type: entity_ref
-    target: MailFolder
-    description: Folder that should receive the moved message.
-  nv_attachment_query_message_id:
-    type: entity_ref
-    target: Message
-    description: Message whose attachments should be listed.
-  nv_attachment_get_message_id:
-    type: entity_ref
-    target: Message
-    description: Message that owns the attachment.

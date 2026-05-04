@@ -2,133 +2,174 @@
 source: plasm-oss/crates/plasm-core/src/prompt_render.rs
 expression: prompt
 ---
-# This defines valid Plasm syntax for this prompt; reply with one valid plasm_program:
+# Follow the grammar and the teaching TSV below; reply with one valid plasm_program:
 #
 # Output:
-# - Single `plasm_expr` iff one lookup/query/search/relation/method/action is the whole answer.
-# - Else one multi-line `plasm_program`: bind → narrow (projection/postfix/bracket-render) → small bare roots—not many one-line tool calls.
+# - Emit only code: either one `plasm_expr`, or one multi-line `plasm_program` with bindings then final roots.
+# - Do not emit prose, JSON wrappers, `return`, Markdown fences, or table rows.
+# - Prefer bind → narrow/project/transform → few final roots when more than one step is needed.
 #
-# Grammar (pseudo-EBNF; DOMAIN rows instantiate `plasm_expr` atoms):
-# plasm_program ::= plasm_roots | binding+ plasm_roots
-# binding       ::= ident "=" plasm_node
-# plasm_roots   ::= plasm_return ("," plasm_return)*
-# plasm_return  ::= node_ref | plasm_expr
-# plasm_node    ::= ( plasm_expr | node_ref ) postfix* bracket_render_tail? | node_ref "=>" plasm_value | node_ref "=>" effect_expr
-# plasm_expr    ::= entity_expr [projection]
+# TSV table semantics:
+# - Header is exactly `plasm_expr<TAB>Meaning`; every following row has exactly one tab delimiter.
+# - Left cell is either executable syntax or metadata. Right cell is selection guidance only; never copy `Meaning` into output.
+# - Executable rows start with an entity surface (`e#`/`Entity`). Copy their left-cell shape, then replace placeholders.
+# - Metadata rows whose left cell is only `v#`/`value domain` define reusable value types. Metadata rows whose left cell is only `p#`/`field` define keyed slots. Metadata rows are never executable roots.
+# - `Meaning` fragments joined by ` · ` stay inside `Meaning`; they are not operators.
+#
+# Symbol and fill rules:
+# - `e#` = entity surface; `m#` = method/action surface; `p#` = keyed field/parameter/relation slot; `v#` = value-domain metadata only.
+# - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.
+# - `$` appears only in taught examples as a required fill placeholder. Replace every `$`; never emit `$`.
+# - `<id>`, `<value>`, `<receiver>`, and `elem` in this contract are meta-variables, not syntax tokens.
+# - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.
+# - If `Meaning` says `optional params: pA, pB`, those keys may be added only as keyed assignments with real values.
+# - Projection rows ending `[p#,…]` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
+# - Relation rows end with `.p#`/`.field`; apply them to any executable receiver row for that same entity type.
+# - `page(sN_pgM)` uses a continuation handle returned by a prior response; copy the handle exactly and optionally add `, limit=N`.
+#
+# Grammar:
+# plasm_program ::= plasm_expr | binding+ roots
+# binding       ::= ident "=" node
+# roots         ::= root ("," root)*
+# root          ::= ident | plasm_expr
+# node          ::= (plasm_expr | ident) postfix* render_tail? | ident "=>" value_or_template
+# plasm_expr    ::= entity_expr [projection] | page
 # entity_expr   ::= query_all | get | query | relation | method | create_action
 # query_all     ::= e#
-# get           ::= e#(id) or e#(p#=v, p#=v)
-# query         ::= e#{p#=v, …}
-# relation      ::= e#(id).p#
-# method        ::= e#(id).m#() or e#(id).m#(p#=v,..)
-# create_action ::= e#.m#(args)
-# projection    ::= e#(id)[p#,…] | "[" fields "]"
-# postfix       ::= transform | "[" fields "]"
-# bracket_render_tail ::= ( "[" fields "]" )? "<<TAG" heredoc_body "TAG"
-# positive_int  ::= non-zero decimal integer literal
-# agg_func      ::= "sum" | "avg" | "min" | "max"
-# agg_spec      ::= ident "=" ( "count" | agg_func "(" field ")" )
-# agg_specs     ::= agg_spec ("," agg_spec)*
-# sort_dir      ::= omitted | "desc" | "asc" | "ascending" | "descending"
-# transform     ::= ".limit(" positive_int ")" | ".sort(" field ["," sort_dir] ")" | ".aggregate(" agg_specs ")" | ".group_by(" field "," agg_specs ")" | ".singleton()" | ".page_size(" positive_int ")"
+# get           ::= e#(<id>) or e#(p#=<value>, p#=<value>)
+# query         ::= e#{p#=<value>, …}
+# relation      ::= <receiver>.p#
+# method        ::= e#(<id>).m#() or e#(<id>).m#(p#=<value>, …)
+# create_action ::= e#.m#(p#=<value>, …)
+# page          ::= page(sN_pgM) | page(sN_pgM, limit=N)
+# projection    ::= e#(<id>)[p#,…] | "[" fields "]"
+# postfix       ::= ".limit(N)" | ".page_size(N)" | ".sort(field[, dir])" | ".aggregate(specs)" | ".group_by(field, specs)" | ".singleton()" | "[" fields "]"
+# render_tail   ::= ("[" fields "]")? "<<TAG" template_body "TAG"
 # fields        ::= [p#,…]
-# plasm_value   ::= literal | node_ref | node_ref.field | _.field | [v, …]
-# effect_expr   ::= taught write/update/delete/action surface from DOMAIN (same line may template rows)
-# ident/node_ref/field ::= agent-chosen names for bound nodes and fields
-# literal       ::= quoted string | number | bool | null | heredoc
+# specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) [, ...]
+# dir           ::= desc | asc | descending | ascending
+# value_or_template ::= literal | ident | ident.field | _.field | [elem, ...] | heredoc
+# literal       ::= quoted string | number | bool | null
 #
-# Aggregates (examples): `.aggregate(n=count)`, `.aggregate(total=sum(amount), lo=min(price))`, `.group_by(author, n=count)`.
-#
-# Continuation:
-# - Postfix (transforms, `[fields]`, `<<TAG…TAG`) may chain on one surface `plasm_expr`.
-# - `ident.<relation>` only after surface row bindings (get/query/relation); after projection/transform/`=>`, repeat full DOMAIN expr or rebind. Bracket-render = Minijinja `rows`; optional `[fields]` narrows columns → row `{"content":"…"}` — use **`binding.content`** for string/body args.
-#
-# MCP `program` (JSON string):
-# - Literal U+000A between statements (one `ident = …` per line; bare roots last). Spaces never separate statements.
-# - Heredoc: newline after `<<TAG` opener; close line trims to `TAG` / `TAG)` / `TAG,` / `TAG}`; first matching trimmed interior line closes—opaque `TAG` for blobs. Commas inside heredocs never split roots (e.g. `…<<B` / `Hello` / `B` / `), e2`).
-#
-# Discipline:
-# - Plan shape first; small roots unless raw rows requested; bracket-render row-derived text, static `<<TAG` for fixed payloads.
-# - `page(sN_pgM)` continues a chosen list only; DOMAIN is the shape contract—no probe calls.
-#
-# DOMAIN / catalogue:
-# - `plasm_expr` = atoms; `Meaning` = how to pick/fill—never paste `Meaning`. Bare comma-separated roots (no `return`); every symbol taught here.
-# - Projection: minimal non-empty `[p#,…]`; identity row lists full fields once. Leading `p#` rows = slot metadata when method `args:` is insufficient.
-# - e#, m#, p# are session-local aliases — copy them exactly; new prompts supersede old meanings.
-# - Pick by `Meaning`, copy `plasm_expr`, bind keyed slot (`p12=value`) only; never positional or renumbered args.
-# - Instantiate grammar lines from DOMAIN only; keyed `p#=v` never positional. `v=$` in tables is a fill cue.
-# - `e#{p#=v, …}` / `e#` list/filter; `e#(id) or e#(p#=v, p#=v)` fetch one; `e#(id).p#` relate; `e#(id).m#() or e#(id).m#(p#=v,..)` call; `e#.m#(args)` without id; `e#(id)[p#,…]` projects—after `e#(id)`, `.` is relation or taught `m#` only.
-# - Scoped child lists: `X{p#=AnchorEntity(id)}` from the child entity’s DOMAIN rows; never invent `Y(id).p#`.
-# - Arrays in args: `[v, …]` (e.g. `p#=[e#($)]`). Quoted strings: only `\"` and `\\` escapes.
-# - `select` one allowed value; `multiselect` / multi-value lists as `[v, …]`.
+# Composition rules:
+# - Multi-line program strings use literal newlines: one binding per line, final roots last. Spaces never separate statements.
+# - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.
+# - Render tails use Minijinja over `rows`; the render result is one row with `content`. Pass `binding.content` to string/body parameters.
+# - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
+# - Examples: scoped child list `e#{p#=e#(<id>)}`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
 # - `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `m#(..., p#=<<TXT` + newline body + `TXT` newline `)`.
-# - `p#`-only rows declare slots (metadata), not expressions to emit.
-# - `$` marks fill-ins — substitute real values; never send `$`.
-# - `..` — optional trailing params (`optional params:` lists them); `..` alone means all args optional.
 #
 
 plasm_expr	Meaning
-p4	uuid · id
-p3	markdown · body
-e1($)[p4,p3]	returns e1 · A comment on an issue.
-e1.m1(p2=e3($), p1=$)	returns e1 · args: p2 issue ref:e3 req; p1 body markdown req · Add a markdown comment on an issue.
-e1	returns [e1] · List comments.
-e1($).p5	returns e3 · Issue this comment belongs to.
-p8	uuid · id
-p9	float · Cycle index within the team (Linear exposes as a number).
-p10	str · Cycle start (ISO-8601 timestamp from the API).
-p7	str · Cycle end (ISO-8601 timestamp from the API).
-e2($)[p8,p9,p10,p7,team]	returns e2 · A time-boxed iteration on a team (sprint / cycle window).
-e2{p6=e6($)}	returns [e2] · args: p6 team ref:e6 req · List iteration cycles for a team (ordered by the API).
-e2($).p11	returns e6 · Team this cycle belongs to.
-p32	uuid · id
-p31	str · Human-visible key (e.g. ENG-42).
-p33	str · title
-p30	markdown · description
-e3($)[p32,p31,p33,p30,parent,team,project,assignee,state,cycle]	returns e3 · A Linear issue (task, bug, or feature).
+v2	uuid
+v33	markdown
+p11	v1 · issue · Issue this comment belongs to.
+p12	v2 · id
+p43	v33 · body
+e1[p12,p43]	returns e1 · projection · A comment on an issue.
+e1.m1(p11=e3($), p43=$)	returns e1 · Add a markdown comment on an issue.
+e1	returns [e1]
+e1.p1	relation e1 => e3 · Issue this comment belongs to.
+v4	uuid
+v5	float · Cycle index within the team (Linear exposes as a number).
+v7	str · Cycle start (ISO-8601 timestamp from the API).
+v3	str · Cycle end (ISO-8601 timestamp from the API).
+p16	v6 · team · Team this cycle belongs to.
+p14	v4 · id
+p15	v5 · number · Cycle index within the team (Linear exposes as a number).
+p17	v7 · startsAt · Cycle start (ISO-8601 timestamp from the API).
+p13	v3 · endsAt · Cycle end (ISO-8601 timestamp from the API).
+e2{p16=e6($)}[p14,p15,p17,p13,team]	returns [e2] · projection · A time-boxed iteration on a team (sprint / cycle window).
+e2{p16=e6($)}	returns [e2]
+e2{p16=e6($)}.p2	relation e2 => e6 · Team this cycle belongs to.
+v16	uuid
+v17	str · Human-visible key (e.g. ENG-42).
+v34	str
+v8	ref:Label
+v18	ref:Label
+p32	v22 · project · Project this issue belongs to.
+p29	v19 · assignee · User assigned to the issue.
+p33	v23 · state · Current workflow state.
+p31	v21 · parent · Parent issue when this issue is a sub-issue (otherwise absent).
+p30	v20 · cycle · Iteration cycle when the issue is scheduled into one.
+p18	v8 · label
+p25	v15 · team · Owning team.
+p23	v13 · project · Project this issue belongs to.
+p20	v10 · assignee · User assigned to the issue.
+p24	v14 · state · Current workflow state.
+p22	v12 · parent · Parent issue when this issue is a sub-issue (otherwise absent).
+p21	v11 · cycle · Iteration cycle when the issue is scheduled into one.
+p28	v18 · label
+p19	v9 · team · Owning team.
+p27	v16 · id
+p26	v17 · identifier · Human-visible key (e.g. ENG-42).
+p49	v34 · title
+p44	v33 · description
+e3[p27,p26,p49,p44,parent,team,project,assignee,state,cycle]	returns e3 · projection · A Linear issue (task, bug, or feature).
 e3($).m9()	returns e3 · Move an issue to trash (recoverable; not a permanent delete).
-e3($).m13()	returns e3 · args: p29 title str opt; p25 description markdown opt; p27 project ref:e5 opt; p23 assignee ref:e7 opt; p28 state ref:e8 opt; p26 parent ref:e3 opt; p24 cycle ref:e2 opt · Update an issue
-e3($).m6(p12=e4($))	returns e3 · args: p12 label ref:e4 req · Attach one label to this issue (existing labels kept).
-e3.m8(p20=e6($), p21=$,..)	returns e3 · args: p20 team ref:e6 req; p21 title str req; p16 description markdown opt; p18 project ref:e5 opt; p14 assignee ref:e7 opt; p19 state ref:e8 opt; p17 parent ref:e3 opt; p15 cycle ref:e2 opt · Create a new issue on a team, optionally in a project, column, cycle, or under a parent issue.
-e3($).m12(p22=e4($))	returns e3 · args: p22 label ref:e4 req · Remove one label from this issue.
-e3{p13=e6($)}	returns [e3] · args: p13 team ref:e6 req · List issues for a specific team.
-e3	returns [e3] · List issues in the workspace.
-e3($).p40	returns e7 · User assigned to the issue.
-e3($).p35	returns [e3] · Sub-issues nested directly under this issue in the work hierarchy.
-e3($).p34	returns e2 · Iteration cycle when the issue is scheduled into one.
-e3($).p37	returns [e4] · Labels on this issue.
-e3($).p36	returns e3 · Parent issue when this issue is a sub-issue (otherwise absent).
-e3($).p38	returns e5 · Project this issue belongs to.
-e3($).p41	returns e8 · Current workflow state.
-e3($).p39	returns e6 · Owning team.
-p50	uuid · id
-p51	str · name
-p49	str · color
-e4($)[p50,p51,p49]	returns e4 · An issue label.
-e4($).m17()	returns e4 · args: p48 name str opt; p46 color str opt; p47 description markdown opt · Update label name, color, or description.
-e4.m14(p44=$,..)	returns e4 · args: p44 name str req; p45 team ref:e6 opt; p42 color str opt; p43 description markdown opt · Create an issue label (optionally scoped to a team; omit team for workspace-wide).
-e4	returns [e4] · List issue labels.
-p55	uuid · id
-p56	str · name
-p57	str · Stable slug for the project within its team.
-e5($)[p55,p56,p57]	returns e5 · A Linear project within a team.
-e5.m18(p53=$, p54=e6($),..)	returns e5 · args: p53 name str req; p54 team ref:e6 req; p52 description markdown opt · Create a project owned by one or more teams.
-e5	returns [e5] · List projects.
-p58	uuid · id
-p60	str · name
-p59	str · Short key (e.g. ENG).
-e6($)[p58,p60,p59]	returns e6 · A Linear team (workspace grouping).
-e6	returns [e6] · List teams.
-p63	uuid · id
-p64	str · name
-p61	str · displayName
-p62	str · email
-e7($)[p63,p64,p61,p62]	returns e7 · A Linear user.
-e7	returns [e7] · List users.
-p72	uuid · id
-p73	str · name
-p75	str · State category (e.g. started, completed).
-p74	float · position
-e8($)[p72,p73,p75,p74]	returns e8 · A workflow column/state for a team (backlog, in progress, done, …).
-e8.m25(p67=$, p70=e6($), p69=$, p65=$,..)	returns e8 · args: p67 name str req; p70 team ref:e6 req; p69 state_type str req; p65 color str req; p66 description markdown opt; p68 position float opt · Create a workflow column on a team.
-e8{p71=e6($)}	returns [e8] · args: p71 team ref:e6 req · List workflow columns for a team—column title, category (e.g. backlog, in progress, done), and …
+e3($).m13()	returns e3 · optional params: p49, p44, p32, p29, p33, p31, p30 · Update an issue
+e3($).m6(p18=e4($))	returns e3 · Attach one label to this issue (existing labels kept).
+e3.m8(p25=e6($), p49=$,..)	returns e3 · optional params: p44, p23, p20, p24, p22, p21 · Create a new issue on a team, optionally in a project, column, cycle, or under a parent issue.
+e3($).m12(p28=e4($))	returns e3 · Remove one label from this issue.
+e3{p19=e6($)}	returns [e3]
+e3	returns [e3]
+e3{p19=e6($)}.p9	relation e3 => e7 · User assigned to the issue.
+e3{p19=e6($)}.p4	relation e3 => [e3] · Sub-issues nested directly under this issue in the work hierarchy.
+e3{p19=e6($)}.p3	relation e3 => e2 · Iteration cycle when the issue is scheduled into one.
+e3{p19=e6($)}.p6	relation e3 => [e4] · Labels on this issue.
+e3{p19=e6($)}.p5	relation e3 => e3 · Parent issue when this issue is a sub-issue (otherwise absent).
+e3{p19=e6($)}.p7	relation e3 => e5 · Project this issue belongs to.
+e3{p19=e6($)}.p10	relation e3 => e8 · Current workflow state.
+e3{p19=e6($)}.p8	relation e3 => e6 · Owning team.
+v26	uuid
+v25	ref:Team · Team to scope the label to; omit for workspace label.
+v24	str · Hex swatch color for the label.
+p35	v25 · team · Team to scope the label to; omit for workspace label.
+p34	v24 · color
+p36	v26 · id
+p48	v34 · name
+p45	v34 · color
+e4[p36,p48,p45]	returns e4 · projection · An issue label.
+e4($).m17()	returns e4 · optional params: p48, p45, p44 · Update label name, color, or description.
+e4.m14(p48=$,..)	returns e4 · optional params: p35, p34, p44 · Create an issue label (optionally scoped to a team; omit team for workspace-wide).
+e4	returns [e4]
+v28	uuid
+v29	str · Stable slug for the project within its team.
+v27	ref:Team · Primary team that owns the new project.
+p37	v27 · team · Primary team that owns the new project.
+p38	v28 · id
+p39	v29 · slugId · Stable slug for the project within its team.
+e5[p38,p48,p39]	returns e5 · projection · A Linear project within a team.
+e5.m18(p48=$, p37=e6($),..)	returns e5 · optional params: p44 · Create a project owned by one or more teams.
+e5	returns [e5]
+v30	uuid
+v31	str · Short key (e.g. ENG).
+p40	v30 · id
+p41	v31 · key · Short key (e.g. ENG).
+e6[p40,p48,p41]	returns e6 · projection · A Linear team (workspace grouping).
+e6	returns [e6]
+v32	uuid
+p42	v32 · id
+p46	v34 · displayName
+p47	v34 · email
+e7[p42,p48,p46,p47]	returns e7 · projection · A Linear user.
+e7	returns [e7]
+v41	ref:Team · Team whose columns to list.
+v39	uuid
+v42	str · State category (e.g. started, completed).
+v40	float
+v38	ref:Team
+v37	str · One of triage, backlog, unstarted, started, completed, canceled, duplicate.
+v35	str · Column header hex color on the board.
+v36	float · Column order within the workflow.
+p56	v41 · team · Team whose columns to list.
+p53	v38 · team · Team whose columns to list.
+p52	v37 · state_type · One of triage, backlog, unstarted, started, completed, canceled, duplicate.
+p50	v35 · color · Column header hex color on the board.
+p51	v36 · position
+p54	v39 · id
+p57	v42 · type · State category (e.g. started, completed).
+p55	v40 · position
+e8{p56=e6($)}[p54,p48,p57,p55]	returns [e8] · projection · A workflow column/state for a team (backlog, in progress, done, …).
+e8.m25(p48=$, p53=e6($), p52=$, p50=$,..)	returns e8 · optional params: p44, p51 · Create a workflow column on a team.
+e8{p56=e6($)}	returns [e8]

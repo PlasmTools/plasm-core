@@ -1,4 +1,4 @@
-version: 1
+version: 2
 http_backend: https://api.musixmatch.com
 entities:
   Artist:
@@ -67,11 +67,11 @@ capabilities:
     entity: Artist
     parameters:
     - name: q_artist
-      value_ref: nv_artist_search_q_artist
+      value_ref: nv_wire_str_short
       required: true
       role: search
     - name: f_artist_id
-      value_ref: nv_artist_search_f_artist_id
+      value_ref: nv_wire_int
       required: false
       role: filter
   artist_get:
@@ -89,7 +89,7 @@ capabilities:
     entity: Artist
     parameters:
     - name: country
-      value_ref: nv_chart_artists_country
+      value_ref: nv_wire_str_short
       required: false
       role: filter
   track_search:
@@ -98,23 +98,23 @@ capabilities:
     entity: Track
     parameters:
     - name: q_track
-      value_ref: nv_track_search_q_track
+      value_ref: nv_wire_str_short
       required: false
       role: search
     - name: q_artist
-      value_ref: nv_track_search_q_artist
+      value_ref: nv_wire_str_short
       required: false
       role: search
     - name: f_artist_id
-      value_ref: nv_track_search_f_artist_id
+      value_ref: nv_wire_int
       required: false
       role: filter
     - name: f_music_genre_id
-      value_ref: nv_track_search_f_music_genre_id
+      value_ref: nv_wire_int
       required: false
       role: filter
     - name: f_has_lyrics
-      value_ref: nv_track_search_f_has_lyrics
+      value_ref: nv_wire_int
       required: false
       role: filter
   track_get:
@@ -133,11 +133,11 @@ capabilities:
     entity: Track
     parameters:
     - name: country
-      value_ref: nv_chart_tracks_country
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: f_has_lyrics
-      value_ref: nv_chart_tracks_f_has_lyrics
+      value_ref: nv_wire_int
       required: false
       role: filter
   track_lyrics_get:
@@ -157,6 +157,10 @@ auth:
   param: apikey
   env: MUSIXMATCH_API_KEY
 values:
+  nv_artist_artist_country:
+    type: string
+    string_semantics: short
+    description: Country of origin for the artist
   nv_artist_artist_id:
     type: integer
     description: Unique Musixmatch artist identifier
@@ -167,30 +171,6 @@ values:
   nv_artist_artist_rating:
     type: integer
     description: Musixmatch popularity rating
-  nv_artist_artist_country:
-    type: string
-    string_semantics: short
-    description: Country of origin for the artist
-  nv_track_track_id:
-    type: integer
-    description: Unique Musixmatch track identifier
-  nv_track_track_name:
-    type: string
-    string_semantics: short
-    description: Title of the track
-  nv_track_artist_id:
-    type: entity_ref
-    target: Artist
-    description: Reference to the track's artist
-  nv_track_track_rating:
-    type: integer
-    description: Musixmatch popularity rating
-  nv_track_has_lyrics:
-    type: integer
-    description: Whether lyrics are available (1=yes, 0=no)
-  nv_lyrics_lyrics_id:
-    type: integer
-    description: Unique Musixmatch lyrics identifier
   nv_lyrics_lyrics_body:
     type: string
     string_semantics: markdown
@@ -199,32 +179,32 @@ values:
     type: string
     string_semantics: short
     description: Copyright notice for the lyrics
+  nv_lyrics_lyrics_id:
+    type: integer
+    description: Unique Musixmatch lyrics identifier
   nv_lyrics_lyrics_language:
     type: string
     string_semantics: short
     description: BCP 47 language code of the lyrics (e.g. 'en', 'es')
-  nv_artist_search_q_artist:
+  nv_track_artist_id:
+    type: entity_ref
+    target: Artist
+    description: Reference to the track's artist
+  nv_track_has_lyrics:
+    type: integer
+    description: Whether lyrics are available (1=yes, 0=no)
+  nv_track_track_id:
+    type: integer
+    description: Unique Musixmatch track identifier
+  nv_track_track_name:
     type: string
     string_semantics: short
-  nv_artist_search_f_artist_id:
+    description: Title of the track
+  nv_track_track_rating:
     type: integer
-  nv_chart_artists_country:
+    description: Musixmatch popularity rating
+  nv_wire_int:
+    type: integer
+  nv_wire_str_short:
     type: string
     string_semantics: short
-  nv_track_search_q_track:
-    type: string
-    string_semantics: short
-  nv_track_search_q_artist:
-    type: string
-    string_semantics: short
-  nv_track_search_f_artist_id:
-    type: integer
-  nv_track_search_f_music_genre_id:
-    type: integer
-  nv_track_search_f_has_lyrics:
-    type: integer
-  nv_chart_tracks_country:
-    type: string
-    string_semantics: short
-  nv_chart_tracks_f_has_lyrics:
-    type: integer

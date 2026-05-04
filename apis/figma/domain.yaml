@@ -1,4 +1,4 @@
-version: 1
+version: 2
 http_backend: https://api.figma.com
 entities:
   User:
@@ -7,16 +7,16 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_user_id
+        value_ref: nv_wire_str_short
       handle:
         required: true
-        value_ref: nv_user_handle
+        value_ref: nv_wire_str_short
       img_url:
         required: true
-        value_ref: nv_user_img_url
+        value_ref: nv_wire_str_short
       email:
         required: false
-        value_ref: nv_user_email
+        value_ref: nv_wire_str_short
   Team:
     id_field: id
     implicit_request_identity: true
@@ -24,10 +24,10 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_team_id
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_team_name
+        value_ref: nv_wire_str_short
     relations:
       projects:
         target: Project
@@ -43,10 +43,10 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_project_id
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_project_name
+        value_ref: nv_wire_str_short
     relations:
       files:
         target: File
@@ -61,31 +61,31 @@ entities:
     fields:
       key:
         required: true
-        value_ref: nv_file_key
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_file_name
+        value_ref: nv_wire_str_short
       role:
         required: false
-        value_ref: nv_file_role
+        value_ref: nv_wire_str_short
       editorType:
         required: false
-        value_ref: nv_file_editor_type
+        value_ref: nv_wire_str_short
       version:
         required: false
-        value_ref: nv_file_version
+        value_ref: nv_wire_str_short
       lastModified:
         required: false
-        value_ref: nv_file_last_modified
+        value_ref: nv_wire_date_rfc3339
       last_modified:
         required: false
-        value_ref: nv_file_last_modified_2
+        value_ref: nv_wire_date_rfc3339
       linkAccess:
         required: false
-        value_ref: nv_file_link_access
+        value_ref: nv_wire_str_short
       mainFileKey:
         required: false
-        value_ref: nv_file_main_file_key
+        value_ref: nv_wire_str_short
       document:
         required: false
         value_ref: nv_file_document
@@ -117,92 +117,92 @@ entities:
     fields:
       key:
         required: true
-        value_ref: nv_file_metadata_key
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_file_metadata_name
+        value_ref: nv_wire_str_short
       folder_name:
         required: false
-        value_ref: nv_file_metadata_folder_name
+        value_ref: nv_wire_str_short
       last_touched_at:
         required: false
-        value_ref: nv_file_metadata_last_touched_at
+        value_ref: nv_wire_date_rfc3339
       editorType:
         required: false
-        value_ref: nv_file_metadata_editor_type
+        value_ref: nv_wire_str_short
       role:
         required: false
-        value_ref: nv_file_metadata_role
+        value_ref: nv_wire_str_short
       link_access:
         required: false
-        value_ref: nv_file_metadata_link_access
+        value_ref: nv_wire_str_short
       url:
         required: false
-        value_ref: nv_file_metadata_url
+        value_ref: nv_wire_str_short
       version:
         required: false
-        value_ref: nv_file_metadata_version
+        value_ref: nv_wire_str_short
       creator_id:
         required: false
         path: creator.id
-        value_ref: nv_file_metadata_creator_id
+        value_ref: nv_wire_str_short
       creator_handle:
         required: false
         path: creator.handle
-        value_ref: nv_file_metadata_creator_handle
+        value_ref: nv_wire_str_short
       creator_img_url:
         required: false
         path: creator.img_url
-        value_ref: nv_file_metadata_creator_img_url
+        value_ref: nv_wire_str_short
       last_touched_by_id:
         required: false
         path: last_touched_by.id
-        value_ref: nv_file_metadata_last_touched_by_id
+        value_ref: nv_wire_str_short
       last_touched_by_handle:
         required: false
         path: last_touched_by.handle
-        value_ref: nv_file_metadata_last_touched_by_handle
+        value_ref: nv_wire_str_short
       last_touched_by_img_url:
         required: false
         path: last_touched_by.img_url
-        value_ref: nv_file_metadata_last_touched_by_img_url
+        value_ref: nv_wire_str_short
   Comment:
     id_field: id
     description: A comment or reply attached to a Figma file.
     fields:
       id:
         required: true
-        value_ref: nv_comment_id
+        value_ref: nv_wire_str_short
       file_key:
         required: true
         value_ref: nv_comment_file_key
       parent_id:
         required: false
-        value_ref: nv_comment_parent_id
+        value_ref: nv_wire_str_short
       user_id:
         required: false
         path: user.id
-        value_ref: nv_comment_user_id
+        value_ref: nv_wire_str_short
       user_handle:
         required: false
         path: user.handle
-        value_ref: nv_comment_user_handle
+        value_ref: nv_wire_str_short
       user_img_url:
         required: false
         path: user.img_url
-        value_ref: nv_comment_user_img_url
+        value_ref: nv_wire_str_short
       created_at:
         required: true
-        value_ref: nv_comment_created_at
+        value_ref: nv_wire_date_rfc3339
       resolved_at:
         required: false
-        value_ref: nv_comment_resolved_at
+        value_ref: nv_wire_date_rfc3339
       message:
         required: true
         value_ref: nv_comment_message
       order_id:
         required: false
-        value_ref: nv_comment_order_id
+        value_ref: nv_wire_str_short
       reactions:
         required: false
         value_ref: nv_comment_reactions
@@ -435,169 +435,55 @@ auth:
   scheme: bearer_token
   env: FIGMA_ACCESS_TOKEN
 values:
-  nv_user_id:
-    type: string
-    string_semantics: short
-  nv_user_handle:
-    type: string
-    string_semantics: short
-  nv_user_img_url:
-    type: string
-    string_semantics: short
-  nv_user_email:
-    type: string
-    string_semantics: short
-  nv_team_id:
-    type: string
-    string_semantics: short
-  nv_team_name:
-    type: string
-    string_semantics: short
-  nv_project_id:
-    type: string
-    string_semantics: short
-  nv_project_name:
-    type: string
-    string_semantics: short
-  nv_file_key:
-    type: string
-    string_semantics: short
-  nv_file_name:
-    type: string
-    string_semantics: short
-  nv_file_role:
-    type: string
-    string_semantics: short
-  nv_file_editor_type:
-    type: string
-    string_semantics: short
-  nv_file_version:
-    type: string
-    string_semantics: short
-  nv_file_last_modified:
-    type: date
-    value_format: rfc3339
-  nv_file_last_modified_2:
-    type: date
-    value_format: rfc3339
-  nv_file_link_access:
-    type: string
-    string_semantics: short
-  nv_file_main_file_key:
-    type: string
-    string_semantics: short
-  nv_file_document:
-    type: json
-    description: Structured document tree for the file or requested slice.
-  nv_file_components:
-    type: json
-    description: Component metadata keyed by node id.
-  nv_file_component_sets:
-    type: json
-    description: Component set metadata keyed by node id.
-  nv_file_styles:
-    type: json
-    description: Style metadata keyed by style id.
-  nv_file_branches:
-    type: json
-    description: Branch metadata returned with the file document.
-  nv_file_metadata_key:
-    type: string
-    string_semantics: short
-  nv_file_metadata_name:
-    type: string
-    string_semantics: short
-  nv_file_metadata_folder_name:
-    type: string
-    string_semantics: short
-  nv_file_metadata_last_touched_at:
-    type: date
-    value_format: rfc3339
-  nv_file_metadata_editor_type:
-    type: string
-    string_semantics: short
-  nv_file_metadata_role:
-    type: string
-    string_semantics: short
-  nv_file_metadata_link_access:
-    type: string
-    string_semantics: short
-  nv_file_metadata_url:
-    type: string
-    string_semantics: short
-  nv_file_metadata_version:
-    type: string
-    string_semantics: short
-  nv_file_metadata_creator_id:
-    type: string
-    string_semantics: short
-  nv_file_metadata_creator_handle:
-    type: string
-    string_semantics: short
-  nv_file_metadata_creator_img_url:
-    type: string
-    string_semantics: short
-  nv_file_metadata_last_touched_by_id:
-    type: string
-    string_semantics: short
-  nv_file_metadata_last_touched_by_handle:
-    type: string
-    string_semantics: short
-  nv_file_metadata_last_touched_by_img_url:
-    type: string
-    string_semantics: short
-  nv_comment_id:
-    type: string
-    string_semantics: short
-  nv_comment_file_key:
-    type: entity_ref
-    target: File
-  nv_comment_parent_id:
-    type: string
-    string_semantics: short
-  nv_comment_user_id:
-    type: string
-    string_semantics: short
-  nv_comment_user_handle:
-    type: string
-    string_semantics: short
-  nv_comment_user_img_url:
-    type: string
-    string_semantics: short
-  nv_comment_created_at:
-    type: date
-    value_format: rfc3339
-  nv_comment_resolved_at:
-    type: date
-    value_format: rfc3339
-  nv_comment_message:
-    type: string
-    string_semantics: markdown
-  nv_comment_order_id:
-    type: string
-    string_semantics: short
-  nv_comment_reactions:
-    type: json
-    description: Reactions recorded on the comment.
-  nv_project_query_team_id:
-    type: entity_ref
-    target: Team
-    description: Team whose projects to list.
-  nv_file_query_project_id:
-    type: entity_ref
-    target: Project
-    description: Project whose files to list.
-  nv_file_query_branch_data:
-    type: boolean
-    description: Include branch summaries for main files that have branches.
-  nv_comment_query_file_key:
-    type: entity_ref
-    target: File
-    description: File whose comments to list.
-  nv_comment_query_as_md:
-    type: boolean
-    description: Return comment text in markdown form when available.
   nv_comment_create_file_key:
     type: entity_ref
     target: File
     description: File where the comment should be created.
+  nv_comment_file_key:
+    type: entity_ref
+    target: File
+  nv_comment_message:
+    type: string
+    string_semantics: markdown
+  nv_comment_query_as_md:
+    type: boolean
+    description: Return comment text in markdown form when available.
+  nv_comment_query_file_key:
+    type: entity_ref
+    target: File
+    description: File whose comments to list.
+  nv_comment_reactions:
+    type: json
+    description: Reactions recorded on the comment.
+  nv_file_branches:
+    type: json
+    description: Branch metadata returned with the file document.
+  nv_file_component_sets:
+    type: json
+    description: Component set metadata keyed by node id.
+  nv_file_components:
+    type: json
+    description: Component metadata keyed by node id.
+  nv_file_document:
+    type: json
+    description: Structured document tree for the file or requested slice.
+  nv_file_query_branch_data:
+    type: boolean
+    description: Include branch summaries for main files that have branches.
+  nv_file_query_project_id:
+    type: entity_ref
+    target: Project
+    description: Project whose files to list.
+  nv_file_styles:
+    type: json
+    description: Style metadata keyed by style id.
+  nv_project_query_team_id:
+    type: entity_ref
+    target: Team
+    description: Team whose projects to list.
+  nv_wire_date_rfc3339:
+    type: date
+    value_format: rfc3339
+  nv_wire_str_short:
+    type: string
+    string_semantics: short

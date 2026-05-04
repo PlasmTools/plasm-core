@@ -1,4 +1,4 @@
-version: 4
+version: 5
 http_backend: https://www.googleapis.com/calendar/v3
 entities:
   Calendar:
@@ -7,40 +7,40 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_calendar_id
+        value_ref: nv_wire_str_short
       summary:
         required: false
-        value_ref: nv_calendar_summary
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_calendar_description
+        value_ref: nv_wire_str_markdown
       timeZone:
         required: false
-        value_ref: nv_calendar_time_zone
+        value_ref: nv_wire_str_short
       location:
         required: false
-        value_ref: nv_calendar_location
+        value_ref: nv_wire_str_short
       backgroundColor:
         required: false
-        value_ref: nv_calendar_background_color
+        value_ref: nv_wire_str_short
       accessRole:
         required: false
         value_ref: nv_calendar_access_role
       foregroundColor:
         required: false
-        value_ref: nv_calendar_foreground_color
+        value_ref: nv_wire_str_short
       summaryOverride:
         required: false
-        value_ref: nv_calendar_summary_override
+        value_ref: nv_wire_str_short
       primary:
         required: false
-        value_ref: nv_calendar_primary
+        value_ref: nv_wire_bool
       selected:
         required: false
-        value_ref: nv_calendar_selected
+        value_ref: nv_wire_bool
       hidden:
         required: false
-        value_ref: nv_calendar_hidden
+        value_ref: nv_wire_bool
     primary_read: calendar_get
     relations:
       events:
@@ -63,16 +63,16 @@ entities:
         value_ref: nv_event_calendar_id
       id:
         required: true
-        value_ref: nv_event_id
+        value_ref: nv_wire_str_short
       summary:
         required: false
-        value_ref: nv_event_summary
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_event_description
+        value_ref: nv_wire_str_markdown
       location:
         required: false
-        value_ref: nv_event_location
+        value_ref: nv_wire_str_short
       status:
         required: false
         value_ref: nv_event_status
@@ -85,55 +85,55 @@ entities:
       start_datetime:
         required: false
         path: start.dateTime
-        value_ref: nv_event_start_datetime
+        value_ref: nv_wire_date_rfc3339
       start_date:
         required: false
         path: start.date
-        value_ref: nv_event_start_date
+        value_ref: nv_wire_str_short
       end_datetime:
         required: false
         path: end.dateTime
-        value_ref: nv_event_end_datetime
+        value_ref: nv_wire_date_rfc3339
       end_date:
         required: false
         path: end.date
-        value_ref: nv_event_end_date
+        value_ref: nv_wire_str_short
       organizer_email:
         required: false
         path: organizer.email
-        value_ref: nv_event_organizer_email
+        value_ref: nv_wire_str_short
       organizer_name:
         required: false
         path: organizer.displayName
-        value_ref: nv_event_organizer_name
+        value_ref: nv_wire_str_short
       creator_email:
         required: false
         path: creator.email
-        value_ref: nv_event_creator_email
+        value_ref: nv_wire_str_short
       recurringEventId:
         required: false
-        value_ref: nv_event_recurring_event_id
+        value_ref: nv_wire_str_short
       iCalUID:
         required: false
-        value_ref: nv_event_i_cal_uid
+        value_ref: nv_wire_str_short
       htmlLink:
         required: false
-        value_ref: nv_event_html_link
+        value_ref: nv_wire_str_short
       etag:
         required: false
-        value_ref: nv_event_etag
+        value_ref: nv_wire_str_short
       colorId:
         required: false
-        value_ref: nv_event_color_id
+        value_ref: nv_wire_str_short
       sequence:
         required: false
-        value_ref: nv_event_sequence
+        value_ref: nv_wire_int
       endTimeUnspecified:
         required: false
-        value_ref: nv_event_end_time_unspecified
+        value_ref: nv_wire_bool
       hangoutLink:
         required: false
-        value_ref: nv_event_hangout_link
+        value_ref: nv_wire_str_short
       attendees:
         required: false
         value_ref: nv_event_attendees
@@ -151,10 +151,10 @@ entities:
         value_ref: nv_event_extended_properties
       created:
         required: false
-        value_ref: nv_event_created
+        value_ref: nv_wire_date_rfc3339
       updated:
         required: false
-        value_ref: nv_event_updated
+        value_ref: nv_wire_date_rfc3339
       eventType:
         required: false
         value_ref: nv_event_event_type
@@ -183,10 +183,10 @@ capabilities:
     description: List all calendars in the authenticated user's calendar list
     parameters:
     - name: showHidden
-      value_ref: nv_calendar_list_show_hidden
+      value_ref: nv_wire_bool
       required: false
     - name: showDeleted
-      value_ref: nv_calendar_list_show_deleted
+      value_ref: nv_wire_bool
       required: false
     - name: minAccessRole
       value_ref: nv_calendar_list_min_access_role
@@ -237,14 +237,14 @@ capabilities:
       required: true
       role: scope
     - name: q
-      value_ref: nv_event_list_q
+      value_ref: nv_wire_str_short
       required: false
       role: search
     - name: timeMin
-      value_ref: nv_event_list_time_min
+      value_ref: nv_wire_date_rfc3339
       required: false
     - name: timeMax
-      value_ref: nv_event_list_time_max
+      value_ref: nv_wire_date_rfc3339
       required: false
     - name: timeZone
       value_ref: nv_event_list_time_zone
@@ -257,13 +257,13 @@ capabilities:
       value_ref: nv_event_list_sync_token
       required: false
     - name: iCalUID
-      value_ref: nv_event_list_i_cal_uid
+      value_ref: nv_wire_str_short
       required: false
     - name: maxAttendees
-      value_ref: nv_event_list_max_attendees
+      value_ref: nv_wire_int
       required: false
     - name: showHiddenInvitations
-      value_ref: nv_event_list_show_hidden_invitations
+      value_ref: nv_wire_bool
       required: false
     - name: privateExtendedProperty
       value_ref: nv_event_list_private_extended_property
@@ -276,10 +276,10 @@ capabilities:
       required: false
       role: sort
     - name: singleEvents
-      value_ref: nv_event_list_single_events
+      value_ref: nv_wire_bool
       required: false
     - name: showDeleted
-      value_ref: nv_event_list_show_deleted
+      value_ref: nv_wire_bool
       required: false
     - name: eventTypes
       value_ref: nv_event_list_event_types
@@ -371,24 +371,6 @@ auth:
   scheme: bearer_token
   env: GCAL_TOKEN
 values:
-  nv_calendar_id:
-    type: string
-    string_semantics: short
-  nv_calendar_summary:
-    type: string
-    string_semantics: short
-  nv_calendar_description:
-    type: string
-    string_semantics: markdown
-  nv_calendar_time_zone:
-    type: string
-    string_semantics: short
-  nv_calendar_location:
-    type: string
-    string_semantics: short
-  nv_calendar_background_color:
-    type: string
-    string_semantics: short
   nv_calendar_access_role:
     type: select
     allowed_values:
@@ -397,117 +379,21 @@ values:
     - reader
     - writer
     - owner
-  nv_calendar_foreground_color:
-    type: string
-    string_semantics: short
-  nv_calendar_summary_override:
-    type: string
-    string_semantics: short
-  nv_calendar_primary:
-    type: boolean
-  nv_calendar_selected:
-    type: boolean
-  nv_calendar_hidden:
-    type: boolean
-  nv_event_calendar_id:
-    type: entity_ref
-    target: Calendar
-  nv_event_id:
-    type: string
-    string_semantics: short
-  nv_event_summary:
-    type: string
-    string_semantics: short
-  nv_event_description:
-    type: string
-    string_semantics: markdown
-  nv_event_location:
-    type: string
-    string_semantics: short
-  nv_event_status:
+  nv_calendar_list_min_access_role:
     type: select
     allowed_values:
-    - confirmed
-    - tentative
-    - cancelled
-  nv_event_visibility:
-    type: select
-    allowed_values:
-    - default
-    - public
-    - private
-    - confidential
-  nv_event_transparency:
-    type: select
-    allowed_values:
-    - opaque
-    - transparent
-  nv_event_start_datetime:
-    type: date
-    value_format: rfc3339
-  nv_event_start_date:
-    type: string
-    string_semantics: short
-  nv_event_end_datetime:
-    type: date
-    value_format: rfc3339
-  nv_event_end_date:
-    type: string
-    string_semantics: short
-  nv_event_organizer_email:
-    type: string
-    string_semantics: short
-  nv_event_organizer_name:
-    type: string
-    string_semantics: short
-  nv_event_creator_email:
-    type: string
-    string_semantics: short
-  nv_event_recurring_event_id:
-    type: string
-    string_semantics: short
-  nv_event_i_cal_uid:
-    type: string
-    string_semantics: short
-  nv_event_html_link:
-    type: string
-    string_semantics: short
-  nv_event_etag:
-    type: string
-    string_semantics: short
-  nv_event_color_id:
-    type: string
-    string_semantics: short
-  nv_event_sequence:
-    type: integer
-  nv_event_end_time_unspecified:
-    type: boolean
-  nv_event_hangout_link:
-    type: string
-    string_semantics: short
+    - freeBusyReader
+    - reader
+    - writer
+    - owner
   nv_event_attendees:
     type: json
     description: Attendee list as returned by the API (omit or truncate when maxAttendees limits response).
-  nv_event_recurrence_item:
-    type: string
-    string_semantics: short
-  nv_event_recurrence:
-    type: array
-    items:
-      value_ref: nv_event_recurrence_item
-    description: RRULE/EXRULE strings for recurring masters.
-  nv_event_reminders:
-    type: json
+  nv_event_calendar_id:
+    type: entity_ref
+    target: Calendar
   nv_event_conference_data:
     type: json
-  nv_event_extended_properties:
-    type: json
-  nv_event_created:
-    type: date
-    value_format: rfc3339
-  nv_event_updated:
-    type: date
-    value_format: rfc3339
   nv_event_event_type:
     type: select
     allowed_values:
@@ -517,29 +403,21 @@ values:
     - fromGmail
     - outOfOffice
     - workingLocation
-  nv_calendar_list_show_hidden:
-    type: boolean
-  nv_calendar_list_show_deleted:
-    type: boolean
-  nv_calendar_list_min_access_role:
-    type: select
-    allowed_values:
-    - freeBusyReader
-    - reader
-    - writer
-    - owner
+  nv_event_extended_properties:
+    type: json
   nv_event_list_calendar_id:
     type: entity_ref
     target: Calendar
-  nv_event_list_q:
+  nv_event_list_order_by:
+    type: select
+    allowed_values:
+    - startTime
+    - updated
+  nv_event_list_sync_token:
     type: string
     string_semantics: short
-  nv_event_list_time_min:
-    type: date
-    value_format: rfc3339
-  nv_event_list_time_max:
-    type: date
-    value_format: rfc3339
+    description: Incremental sync token from a prior list response; cannot combine with several other filters (see API sync
+      guide).
   nv_event_list_time_zone:
     type: string
     string_semantics: short
@@ -548,46 +426,55 @@ values:
     type: date
     value_format: rfc3339
     description: Lower bound (exclusive) on event updated time; enables incremental sync style filters.
-  nv_event_list_sync_token:
-    type: string
-    string_semantics: short
-    description: Incremental sync token from a prior list response; cannot combine with several other filters (see API sync
-      guide).
-  nv_event_list_i_cal_uid:
-    type: string
-    string_semantics: short
-  nv_event_list_max_attendees:
-    type: integer
-  nv_event_list_show_hidden_invitations:
-    type: boolean
-  nv_event_list_private_extended_property_item:
-    type: string
-    string_semantics: short
-  nv_event_list_private_extended_property:
-    type: array
-    items:
-      value_ref: nv_event_list_private_extended_property_item
-    description: Repeated name=value constraints; matches private extended properties.
-  nv_event_list_shared_extended_property_item:
-    type: string
-    string_semantics: short
-  nv_event_list_shared_extended_property:
-    type: array
-    items:
-      value_ref: nv_event_list_shared_extended_property_item
-    description: Repeated name=value constraints; matches shared extended properties.
-  nv_event_list_order_by:
+  nv_event_reminders:
+    type: json
+  nv_event_status:
     type: select
     allowed_values:
-    - startTime
-    - updated
-  nv_event_list_single_events:
+    - confirmed
+    - tentative
+    - cancelled
+  nv_event_transparency:
+    type: select
+    allowed_values:
+    - opaque
+    - transparent
+  nv_event_visibility:
+    type: select
+    allowed_values:
+    - default
+    - public
+    - private
+    - confidential
+  nv_wire_bool:
     type: boolean
-  nv_event_list_show_deleted:
-    type: boolean
-  nv_event_list_event_types_item:
+  nv_wire_date_rfc3339:
+    type: date
+    value_format: rfc3339
+  nv_wire_int:
+    type: integer
+  nv_wire_str_markdown:
     type: string
+    string_semantics: markdown
+  nv_wire_str_short:
+    type: string
+    string_semantics: short
   nv_event_list_event_types:
     type: array
     items:
-      value_ref: nv_event_list_event_types_item
+      value_ref: nv_wire_str_short
+  nv_event_list_private_extended_property:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Repeated name=value constraints; matches private extended properties.
+  nv_event_list_shared_extended_property:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Repeated name=value constraints; matches shared extended properties.
+  nv_event_recurrence:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: RRULE/EXRULE strings for recurring masters.

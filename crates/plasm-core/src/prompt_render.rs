@@ -1,5 +1,9 @@
-//! CGS prompt renderer — TSV **Plasm** many-shot examples (`plasm_expr` + `Meaning`), with `p#`
-//! glosses emitted before first use in symbolic modes.
+//! CGS prompt renderer — TSV **Plasm** many-shot examples: each teaching row is `plasm_expr`, **one tab (U+0009)**,
+//! then `Meaning` (middle-dot ` · ` joins gloss **inside** Meaning only). Synthesis builds structured
+//! [`EntityTeachingBlock`] rows and emits TSV directly ([`render_prompt_tsv_from_bundle`]); synthesis stays structured
+//! (model → [`TeachingExprLine`] / [`TeachingFieldGloss`]) without re-parsing a compact teaching transcript in production.
+//! Symbolic prompts use `p#` / `v#` glosses emitted before first use (`v#` = shared `values:` domain;
+//! each distinct taught `p#` meaning teaches **`v# · wire`** (and optional point-of-use prose) when the slot uses a `value_ref`, with typing on the `v#` row only).
 //!
 //! This is the prompt string for `plasm-eval` / BAML, REPL startup / `:schema`, HTTP execute session `prompt`, and MCP DOMAIN after `plasm_context`.
 //! Build via [`render_prompt_with_config`] or [`render_prompt_tsv_with_config`]. Both now emit the
@@ -15,12 +19,15 @@
 //! any non-`short` [`StringSemantics`](crate::StringSemantics).
 //!
 //! **DOMAIN** is **per-entity blocks** of **valid Plasm expressions only** (CGS-validated before emit).
-//! Each block starts with `e#  ;;  …` (entity semantic gloss), then **four-space** example lines
-//! (`p#` gloss on the line before first use: `type · description` from CGS). Model output must be those expression shapes—not prose.
+//! In the teaching TSV, the entity `description` is attached to the **first projection witness** for that
+//! entity when one exists, otherwise to the **identity** get row; `v#` / `p#` gloss rows precede the first
+//! `e#` teaching line (value domain once, then each distinct `v# · wire` teaching once per shared `p#`).
+//! Model output must be those expression shapes—not prose.
 //! Use [`RenderConfig::focus`] to subset entities.
 //!
-//! **Relations** lines teach `Get(id).relation` when that path **parses and type-checks**. For terminal relation chains, the example
-//! line already ends with `;;  => e#`, so the redundant standalone `p#  ;;  => e# · …` gloss line
+//! **Relations** lines teach `Get(id).relation` when that path **parses and type-checks**. Meaning uses
+//! `relation e#_src => [e#_tgt]` (many) or `relation e#_src => e#_tgt` (one); the full receiver stays in `plasm_expr`.
+//! For terminal relation chains, the example line already carries a **result gloss** (`relation …`), so the redundant standalone `p#` gloss row
 //! before it is omitted (see [`skip_redundant_terminal_relation_sym_gloss`]). For cardinality-many
 //! edges with `materialize` (`from_parent_get`, `query_scoped`, …) the IR is [`Expr::Chain`](crate::Expr);
 //! many-relations without materialization **fail parse** and are omitted from DOMAIN.
@@ -32,7 +39,7 @@
 //!
 //! **Load-time invariant:** [`CGS::validate`](crate::schema::CGS::validate) runs [`crate::cgs_expression_validate`],
 //! which requires every non-abstract entity to produce at least one such line via the same synthesis as
-//! [`collect_entity_domain_block`] (opaque symbol map in **compact**/**tsv** modes, matching eval / REPL) — see [`domain_example_line_count`].
+//! [`collect_entity_teaching_block`] (opaque symbol map in **compact**/**tsv** modes, matching eval / REPL) — see [`domain_example_line_count`].
 
 use crate::{
     cross_entity::{choose_strategy, extract_cross_entity_predicates},
@@ -121,6 +128,92 @@ pub fn split_tsv_domain_contract_and_table(domain_tsv: &str) -> (Option<String>,
     (None, domain_tsv.to_string())
 }
 
+/// Strip a leading markdown fenced block ` ```{fence_info}\\n … \\n``` ` and return inner body.
+pub fn markdown_fence_body_inner<'a>(markdown: &'a str, fence_info: &str) -> Option<&'a str> {
+    let open = format!("```{fence_info}\n");
+    let rest = markdown.strip_prefix(&open)?;
+    let end = rest.find("\n```")?;
+    Some(&rest[..end])
+}
+
+/// DOMAIN TSV table fragment (from [`TSV_DOMAIN_TABLE_HEADER`] onward), dropping optional `#` contract lines inside the fence body.
+pub fn domain_tsv_table_from_wrapped_prompt(prompt: &str, fence_info: &str) -> Option<String> {
+    let inner = markdown_fence_body_inner(prompt, fence_info)?;
+    Some(split_tsv_domain_contract_and_table(inner).1)
+}
+
+/// Invariant for prompts emitted by [`render_prompt_tsv_from_bundle`]: from the `plasm_expr\tMeaning`
+/// header through the end of the table, every non-empty body line that is not a `#` comment uses
+/// **exactly one** tab between the expression column and Meaning ([`DomainTsvEncodedLine::write_line`] only;
+/// middle-dot ` · ` joins gloss fragments **inside** Meaning). Tab U+0009 is emitted solely at that boundary.
+pub(crate) fn validate_domain_tsv_teaching_table(body_from_header: &str) -> Result<(), String> {
+    let mut lines = body_from_header.lines();
+    let header = lines
+        .next()
+        .ok_or_else(|| "empty DOMAIN TSV table".to_string())?;
+    let header = header.strip_suffix('\r').unwrap_or(header);
+    if header != "plasm_expr\tMeaning" {
+        return Err(format!(
+            "expected header `plasm_expr\\tMeaning`, got {:?}",
+            header.chars().take(80).collect::<String>()
+        ));
+    }
+    for (i, raw_line) in lines.enumerate() {
+        let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let tabs = line.bytes().filter(|b| *b == b'\t').count();
+        if tabs != 1 {
+            return Err(format!(
+                "line {}: expected exactly one `\\t` between `plasm_expr` and `Meaning`, got {} tab(s): {:?}",
+                i + 2,
+                tabs,
+                line.chars().take(160).collect::<String>()
+            ));
+        }
+        let (expr, meaning) = line.split_once('\t').expect("one tab implies split_once");
+        if expr.contains('\t') || meaning.contains('\t') {
+            return Err(format!(
+                "line {}: stray tab inside a cell after split",
+                i + 2
+            ));
+        }
+        let expr_trim = expr.trim();
+        let meaning_trim = meaning.trim();
+        if expr != expr_trim {
+            return Err(format!(
+                "line {}: `plasm_expr` cell must not have leading/trailing whitespace (got {:?})",
+                i + 2,
+                expr.chars().take(120).collect::<String>()
+            ));
+        }
+        if meaning != meaning_trim {
+            return Err(format!(
+                "line {}: `Meaning` cell must not have leading/trailing whitespace",
+                i + 2
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[inline]
+fn enforce_domain_tsv_teaching_invariant(prompt: &str) {
+    let Some(idx) = prompt.find(TSV_DOMAIN_TABLE_HEADER) else {
+        return;
+    };
+    let body = &prompt[idx..];
+    if let Err(msg) = validate_domain_tsv_teaching_table(body) {
+        tracing::error!(
+            target: "plasm_core::prompt_render",
+            error = %msg,
+            "DOMAIN TSV teaching table invariant violated"
+        );
+        debug_assert!(false, "DOMAIN TSV: {msg}");
+    }
+}
+
 /// Whether DOMAIN **TSV** output includes the global Plasm contract comment block.
 ///
 /// Execute-session **additive** waves ([`crate::prompt_pipeline::PromptPipelineConfig::render_domain_exposure_delta`])
@@ -134,6 +227,11 @@ pub(crate) enum DomainWaveSurface {
     AdditiveWave,
 }
 
+/// Subset + render mode for DOMAIN / symbol expansion.
+///
+/// Prefer [`DomainPromptSource`] + [`DomainPromptSettings`] with [`render_domain_bundle`] /
+/// [`render_domain_tsv`] for new product integrations; this struct remains the internal carrier
+/// used throughout `plasm-core` and for snapshot tests.
 #[derive(Clone, Copy, Debug)]
 pub struct RenderConfig<'a> {
     /// Subset of entities for DOMAIN / symbol map (see [`FocusSpec`]).
@@ -211,11 +309,107 @@ impl<'a> RenderConfig<'a> {
     }
 }
 
-/// DOMAIN prompt text plus structured execution metadata for tooling / policy (not appended to `;;`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DomainPromptBundle {
-    pub prompt: String,
-    pub model: DomainPromptModel,
+/// Product-facing **where** DOMAIN symbols are seeded from: catalog [`FocusSpec`] vs execute [`DomainExposureSession`].
+#[derive(Clone, Copy, Debug)]
+pub enum DomainPromptSource<'a> {
+    Catalog { focus: FocusSpec<'a> },
+    ExecuteWave { exposure: &'a DomainExposureSession },
+}
+
+/// Product-facing knobs for DOMAIN bundle / TSV (prefer over assembling [`RenderConfig`] at new call sites).
+#[derive(Clone, Copy, Debug)]
+pub struct DomainPromptSettings<'a> {
+    pub include_domain_execution_model: bool,
+    /// When false, DOMAIN uses canonical names (tool explorer / narrow tests); when true, `e#`/`p#`/`m#` symbolic TSV.
+    pub symbolic: bool,
+    pub symbol_map_cross_cache: Option<&'a SymbolMapCrossRequestCache>,
+}
+
+impl<'a> Default for DomainPromptSettings<'a> {
+    fn default() -> Self {
+        Self {
+            include_domain_execution_model: true,
+            symbolic: true,
+            symbol_map_cross_cache: None,
+        }
+    }
+}
+
+/// Render DOMAIN [`DomainPromptBundle`] (structured teaching blocks + execution metadata).
+pub fn render_domain_bundle(
+    cgs: &CGS,
+    source: DomainPromptSource<'_>,
+    settings: DomainPromptSettings<'_>,
+) -> DomainPromptBundle {
+    let render_mode = if settings.symbolic {
+        PromptRenderMode::Tsv
+    } else {
+        PromptRenderMode::Canonical
+    };
+    let include = settings.include_domain_execution_model;
+    let cache = settings.symbol_map_cross_cache;
+    match source {
+        DomainPromptSource::Catalog { focus } => render_domain_prompt_bundle(
+            cgs,
+            RenderConfig {
+                focus,
+                render_mode,
+                include_domain_execution_model: include,
+                symbol_map_cross_cache: cache,
+            },
+        ),
+        DomainPromptSource::ExecuteWave { exposure } => render_domain_prompt_bundle_for_exposure(
+            cgs,
+            RenderConfig {
+                focus: FocusSpec::All,
+                render_mode,
+                include_domain_execution_model: include,
+                symbol_map_cross_cache: cache,
+            },
+            exposure,
+            None,
+        ),
+    }
+}
+
+/// Render DOMAIN as the teaching TSV (`plasm_expr` + `Meaning`), including contract header on first wave.
+pub fn render_domain_tsv(
+    cgs: &CGS,
+    source: DomainPromptSource<'_>,
+    settings: DomainPromptSettings<'_>,
+) -> String {
+    match source {
+        DomainPromptSource::Catalog { focus } => {
+            let render_mode = if settings.symbolic {
+                PromptRenderMode::Tsv
+            } else {
+                PromptRenderMode::Canonical
+            };
+            render_prompt_tsv_with_config(
+                cgs,
+                RenderConfig {
+                    focus,
+                    render_mode,
+                    include_domain_execution_model: settings.include_domain_execution_model,
+                    symbol_map_cross_cache: settings.symbol_map_cross_cache,
+                },
+            )
+        }
+        DomainPromptSource::ExecuteWave { exposure } => {
+            let render_mode = if settings.symbolic {
+                PromptRenderMode::Tsv
+            } else {
+                PromptRenderMode::Canonical
+            };
+            let cfg = RenderConfig {
+                focus: FocusSpec::All,
+                render_mode,
+                include_domain_execution_model: settings.include_domain_execution_model,
+                symbol_map_cross_cache: settings.symbol_map_cross_cache,
+            };
+            render_prompt_tsv_for_single_catalog_exposure(cgs, cfg, exposure)
+        }
+    }
 }
 
 /// Per-entity DOMAIN lines with execution hints parallel to the rendered prompt strings.
@@ -226,6 +420,7 @@ pub struct DomainPromptModel {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityDomainPrompt {
+    /// Canonical CGS entity name (`Issue`, `Zone`, …) — not the session-local `e#` alias.
     pub entity: String,
     pub lines: Vec<DomainLineMeta>,
 }
@@ -253,6 +448,8 @@ pub enum DomainLineKind {
     Search,
     RelationNav,
     Method,
+    /// Legacy bucket; validated projection witness rows are typed as get/query/method from parse.
+    Projection,
     Other,
 }
 
@@ -264,6 +461,7 @@ impl DomainLineKind {
             DomainLineKind::Search => "search",
             DomainLineKind::RelationNav => "relation_nav",
             DomainLineKind::Method => "method",
+            DomainLineKind::Projection => "projection",
             DomainLineKind::Other => "other",
         }
     }
@@ -342,15 +540,9 @@ pub fn render_domain_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> Domai
         "render_domain_prompt_bundle phase=symbol_map"
     );
 
-    let mut out = String::with_capacity(4096);
     if let Some(ref map) = map_opt {
         let t_leg = Instant::now();
         let legend = map.format_legend(cgs);
-        if !legend.is_empty() {
-            tracing::debug!("prompt: format_legend (SYMBOL MAP)");
-            out.push_str(&legend);
-            out.push('\n');
-        }
         tracing::debug!(
             elapsed_ms = t_leg.elapsed().as_millis() as u64,
             legend_chars = legend.len(),
@@ -360,13 +552,14 @@ pub fn render_domain_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> Domai
 
     let t2 = Instant::now();
     tracing::debug!("prompt: render_domain_table");
+    let mut teaching_blocks = Vec::new();
     let mut entities_buf = Vec::new();
     let fill_model = config.include_domain_execution_model;
     render_domain_table(
         cgs,
         &full_entities,
         map_opt.as_ref(),
-        &mut out,
+        &mut teaching_blocks,
         &mut entities_buf,
         fill_model,
         false,
@@ -374,7 +567,7 @@ pub fn render_domain_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> Domai
     );
     tracing::debug!(
         elapsed_ms = t2.elapsed().as_millis() as u64,
-        out_chars = out.len(),
+        teaching_entities = teaching_blocks.len(),
         "render_domain_prompt_bundle phase=domain_table"
     );
     let model = if fill_model {
@@ -386,11 +579,14 @@ pub fn render_domain_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> Domai
     };
 
     tracing::debug!(
-        chars = out.len(),
+        teaching_entities = teaching_blocks.len(),
         total_elapsed_ms = wall.elapsed().as_millis() as u64,
         "render_domain_prompt_bundle done"
     );
-    DomainPromptBundle { prompt: out, model }
+    DomainPromptBundle {
+        teaching_blocks,
+        model,
+    }
 }
 
 /// Like [`render_domain_prompt_bundle_for_exposure`], but each exposed entity is rendered against its
@@ -425,18 +621,8 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
         None
     };
 
-    let mut out = String::with_capacity(4096);
-    if let Some(ref map) = map_opt {
-        if let Some(legend_cgs) = cgs_layers.first().copied() {
-            let legend = map.format_legend(legend_cgs);
-            if !legend.is_empty() {
-                out.push_str(&legend);
-                out.push('\n');
-            }
-        }
-    }
-
     let mut entities_buf = Vec::new();
+    let mut teaching_blocks = Vec::new();
     let fill_model = config.include_domain_execution_model;
     let mut entity_to_entry: HashMap<&str, &str> = HashMap::new();
     for (e, id) in exposure
@@ -460,7 +646,7 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
         &full_entities,
         map_opt.as_deref(),
         Some(exposure),
-        &mut out,
+        &mut teaching_blocks,
         &mut entities_buf,
         fill_model,
         false,
@@ -474,7 +660,10 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
         DomainPromptModel::default()
     };
 
-    DomainPromptBundle { prompt: out, model }
+    DomainPromptBundle {
+        teaching_blocks,
+        model,
+    }
 }
 
 /// DOMAIN bundle using [`crate::symbol_tuning::DomainExposureSession`] (monotonic `e#`/`m#`/`p#`).
@@ -508,15 +697,7 @@ pub fn render_domain_prompt_bundle_for_exposure(
         None
     };
 
-    let mut out = String::with_capacity(4096);
-    if let Some(ref map) = map_opt {
-        let legend = map.format_legend(cgs);
-        if !legend.is_empty() {
-            out.push_str(&legend);
-            out.push('\n');
-        }
-    }
-
+    let mut teaching_blocks = Vec::new();
     let mut entities_buf = Vec::new();
     let fill_model = config.include_domain_execution_model;
     render_domain_table_resolved(
@@ -524,7 +705,7 @@ pub fn render_domain_prompt_bundle_for_exposure(
         &full_entities,
         map_opt.as_deref(),
         Some(exposure),
-        &mut out,
+        &mut teaching_blocks,
         &mut entities_buf,
         fill_model,
         false,
@@ -538,7 +719,10 @@ pub fn render_domain_prompt_bundle_for_exposure(
         DomainPromptModel::default()
     };
 
-    DomainPromptBundle { prompt: out, model }
+    DomainPromptBundle {
+        teaching_blocks,
+        model,
+    }
 }
 
 /// Render the Plasm teaching surface for the given CGS and [`RenderConfig`].
@@ -549,48 +733,73 @@ pub fn render_prompt_with_config(cgs: &CGS, config: RenderConfig<'_>) -> String 
     render_prompt_tsv_with_config(cgs, config)
 }
 
+/// TSV for a **single-catalog** [`DomainExposureSession`]: one [`render_domain_prompt_bundle_for_exposure`]
+/// plus the session’s memoized [`SymbolMap`] / [`DomainExposureSession::ident_metadata_for_exposure_entities`]
+/// so bundle rows and TSV metadata cannot drift.
+pub(crate) fn render_prompt_tsv_for_single_catalog_exposure(
+    cgs: &CGS,
+    config: RenderConfig<'_>,
+    exposure: &DomainExposureSession,
+) -> String {
+    let full_entities: Vec<&str> = exposure.entities.iter().map(|s| s.as_str()).collect();
+    let bundle = render_domain_prompt_bundle_for_exposure(cgs, config, exposure, None);
+    if config.uses_symbols() {
+        let key = config
+            .symbol_map_cross_cache
+            .filter(|c| c.is_enabled())
+            .map(|_| symbol_map_cache_key_single_catalog(cgs, exposure));
+        let (symbol_map_arc, _) = exposure.symbol_map_arc_cross(config.symbol_map_cross_cache, key);
+        let ident_meta = exposure.ident_metadata_for_exposure_entities(&full_entities);
+        render_prompt_tsv_from_bundle(
+            &bundle,
+            &full_entities,
+            Some(symbol_map_arc.as_ref()),
+            Some(&ident_meta),
+            DomainWaveSurface::InitialTeaching,
+            true,
+            |_| cgs,
+        )
+    } else {
+        render_prompt_tsv_from_bundle(
+            &bundle,
+            &full_entities,
+            None,
+            None,
+            DomainWaveSurface::InitialTeaching,
+            false,
+            |_| cgs,
+        )
+    }
+}
+
 /// Render the DOMAIN teaching surface as TSV with stable, Plasm-expression-first rows.
 ///
 /// Columns:
 /// `plasm_expr`, `Meaning`
 pub fn render_prompt_tsv_with_config(cgs: &CGS, config: RenderConfig<'_>) -> String {
-    // Align with [`render_domain_prompt_bundle`]: symbolic modes render entity blocks in
-    // [`DomainExposureSession::entities`] order (sorted for `FocusSpec::All`), while
-    // [`entity_slices_for_render`] preserves YAML insertion order. Indexing TSV blocks by
-    // `full_entities[idx]` must use the same ordering as the bundle or `p#` gloss rows resolve
-    // [`IdentMetadata`] against the wrong entity (e.g. `id` typed as `str` vs `int`).
-    let (full_entity_names, _) = crate::symbol_tuning::resolve_prompt_surface_entities(
-        cgs,
-        config.focus,
-        config.uses_symbols(),
-    );
+    if config.uses_symbols() {
+        let exposure = crate::symbol_tuning::domain_exposure_session_from_focus(cgs, config.focus);
+        return render_prompt_tsv_for_single_catalog_exposure(cgs, config, &exposure);
+    }
+    // Canonical names: 2-hop neighbourhood slice (not execute-parity [`DomainExposureSession`]).
+    let (full_entity_names, _) =
+        crate::symbol_tuning::resolve_prompt_surface_entities(cgs, config.focus, false);
     let full_entities: Vec<&str> = full_entity_names.iter().map(|s| s.as_str()).collect();
     let bundle = render_domain_prompt_bundle(cgs, config);
-    let ident_meta = if config.uses_symbols() {
-        let mut acc = HashMap::new();
-        for &e in &full_entities {
-            acc.extend(crate::symbol_tuning::build_ident_metadata(cgs, &[e]));
-        }
-        Some(acc)
-    } else {
-        None
-    };
-    let symbol_map =
-        crate::symbol_tuning::symbol_map_for_prompt(cgs, config.focus, config.uses_symbols());
     render_prompt_tsv_from_bundle(
         &bundle,
         &full_entities,
-        symbol_map.as_ref(),
-        ident_meta.as_ref(),
+        None,
+        None,
         DomainWaveSurface::InitialTeaching,
-        config.uses_symbols(),
+        false,
         |_| cgs,
     )
 }
 
 pub(crate) fn render_prompt_surface_from_bundle<'b, F>(
     bundle: &DomainPromptBundle,
-    render_mode: PromptRenderMode,
+    symbolic: bool,
     full_entities: &[&str],
     symbol_map: Option<&SymbolMap>,
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
@@ -606,42 +815,196 @@ where
         symbol_map,
         ident_meta,
         wave_surface,
-        render_mode.uses_symbols(),
+        symbolic,
         resolve,
     )
 }
 
-#[derive(Debug, Default)]
-struct ParsedHeading {
-    projection: String,
-    description: String,
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeachingHeading {
+    /// Human prose merged into TSV identity Meaning for this entity block (typically the CGS entity `description`).
+    /// Projection bracket for the heading is inferred from teaching rows, not from this string.
+    pub description: String,
 }
 
-#[derive(Debug)]
-struct ParsedExprLine {
-    expression: String,
-    result_type: String,
+impl TeachingHeading {
+    fn from_entity_banner_description(desc: Option<&str>) -> Self {
+        Self {
+            description: desc
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or("")
+                .to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeachingExprLine {
+    pub expression: String,
+    pub result_type: String,
     /// `[scope …]` fragment when present (DOMAIN / capability-input legend).
-    scope: String,
-    optional_params: String,
+    pub scope: String,
+    pub optional_params: String,
     /// `args: p# wire type req; …` when the compact DOMAIN legend includes it.
-    compact_args: String,
-    description: String,
+    pub compact_args: String,
+    pub description: String,
+    /// Projection witness row: `e#…[p#,…]` whose result gloss includes `· projection`.
+    pub is_projection_teaching: bool,
 }
 
-#[derive(Debug)]
-struct ParsedFieldGloss {
-    symbol: String,
-    field_type: String,
-    allowed_values: String,
-    description: String,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TeachingFieldGloss {
+    pub symbol: String,
+    pub field_type: String,
+    pub allowed_values: String,
+    pub description: String,
+}
+
+/// DOMAIN teaching slices plus structured execution metadata for tooling / HTTP/MCP TSV emission.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DomainPromptBundle {
+    pub teaching_blocks: Vec<EntityTeachingBlock>,
+    pub model: DomainPromptModel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntityTeachingBlock {
+    pub heading: TeachingHeading,
+    pub field_gloss_rows: Vec<TeachingFieldGloss>,
+    pub teaching_rows: Vec<EntityTeachingExprRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EntityTeachingExprRow {
+    /// Synthesized teaching exemplar (not [`crate::expr_parser`] output).
+    #[serde(rename = "parsed")]
+    pub teaching_expr: TeachingExprLine,
+    pub meta: DomainLineMeta,
+    #[serde(skip, default)]
+    dedupe_key: TeachingRowDedupeKey,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Hash)]
+struct TeachingRowDedupeKey {
+    expr: String,
+    gloss: Option<String>,
+    cap: Option<String>,
+}
+
+impl TeachingRowDedupeKey {
+    fn new(expr: &str, gloss: Option<&String>, cap: Option<&String>) -> Self {
+        Self {
+            expr: expr.trim().to_string(),
+            gloss: gloss
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty()),
+            cap: cap.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
+        }
+    }
+}
+
+/// Capability sig / human prose tail after result gloss — shared when assembling [`TeachingExprLine`] tails.
+fn apply_compact_legend_remainder(row: &mut TeachingExprLine, remainder: &str) {
+    let (sig_part, desc_tail) = split_sig_and_human_description(remainder);
+    let (sig_wo, compact) = split_compact_args_from_sig_fragment(sig_part);
+    row.compact_args = compact;
+    let mut orphan = String::new();
+    fill_scope_optional_from_sig(
+        &sig_wo,
+        &mut row.scope,
+        &mut row.optional_params,
+        &mut orphan,
+    );
+    if !desc_tail.is_empty() {
+        row.description = desc_tail.to_string();
+        if !orphan.is_empty() {
+            row.description = format!("{orphan} {}", row.description).trim().to_string();
+        }
+    } else if !orphan.is_empty() {
+        row.description = orphan;
+    }
+}
+
+/// Build [`TeachingExprLine`] from structured gloss layers (model → row; no compact `;;` wire).
+fn teaching_expr_line_from_layers(
+    expr: &str,
+    result_gloss: Option<&str>,
+    cap_legend: Option<&str>,
+) -> TeachingExprLine {
+    let expr = expr.trim().to_string();
+    let gloss = result_gloss.map(str::trim).filter(|s| !s.is_empty());
+    let cap = cap_legend.map(str::trim).filter(|s| !s.is_empty());
+    let legend_present = gloss.is_some() || cap.is_some();
+    if !legend_present {
+        return TeachingExprLine {
+            expression: expr,
+            result_type: String::new(),
+            scope: String::new(),
+            optional_params: String::new(),
+            compact_args: String::new(),
+            description: String::new(),
+            is_projection_teaching: false,
+        };
+    }
+    let is_projection_teaching = gloss.is_some_and(|g| g.contains(PROJECTION_WITNESS_LEGEND_MARK))
+        && parse_trailing_projection_bracket(expr.trim()).is_some();
+    let mut row = TeachingExprLine {
+        expression: expr,
+        result_type: gloss.map(|s| s.to_string()).unwrap_or_default(),
+        scope: String::new(),
+        optional_params: String::new(),
+        compact_args: String::new(),
+        description: String::new(),
+        is_projection_teaching,
+    };
+    apply_compact_legend_remainder(&mut row, cap.unwrap_or(""));
+    row
+}
+
+fn compute_tsv_identity_row_index(teaching_expr_rows: &[&TeachingExprLine]) -> Option<usize> {
+    teaching_expr_rows
+        .iter()
+        .position(|row| {
+            !row.is_projection_teaching
+                && tsv_identity_expr_is_entity_get(&row.expression)
+                && !row.expression.contains('{')
+                && !row.expression.contains('~')
+                && !row.result_type.starts_with('[')
+        })
+        .or_else(|| {
+            teaching_expr_rows.iter().position(|row| {
+                !row.is_projection_teaching
+                    && row.expression.contains('(')
+                    && !row.expression.contains('{')
+                    && !row.expression.contains('~')
+                    && !row.result_type.starts_with('[')
+            })
+        })
+        .or_else(|| {
+            (teaching_expr_rows.len() == 1 && !teaching_expr_rows[0].is_projection_teaching)
+                .then_some(0)
+        })
+}
+
+/// Scalar projection bracket `[p#,…]` from a synthesized projection-teaching row (`TeachingExprLine`).
+fn projection_bracket_from_teaching_rows(rows: &[&TeachingExprLine]) -> Option<String> {
+    for row in rows {
+        if !row.is_projection_teaching {
+            continue;
+        }
+        if let Some(b) = parse_trailing_projection_bracket(row.expression.trim()) {
+            return Some(b);
+        }
+    }
+    None
 }
 
 fn render_prompt_tsv_from_bundle<'b, F>(
     bundle: &DomainPromptBundle,
     full_entities: &[&str],
-    symbol_map: Option<&SymbolMap>,
-    ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
+    _symbol_map: Option<&SymbolMap>,
+    _ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     wave_surface: DomainWaveSurface,
     symbolic: bool,
     mut resolve: F,
@@ -656,236 +1019,342 @@ where
         out.push('\n');
     }
     out.push_str(TSV_DOMAIN_TABLE_HEADER);
-    let prompt_lines: Vec<&str> = bundle.prompt.lines().collect();
-    let blocks = collect_domain_blocks(&prompt_lines);
-    for (idx, (heading, block_lines)) in blocks.into_iter().enumerate() {
-        let canonical_entity = full_entities.get(idx).copied().unwrap_or_default();
-        let catalog_entry_id = resolve(canonical_entity).entry_id.as_deref().unwrap_or("");
-        let field_gloss_rows = parse_field_gloss_rows(
-            &block_lines,
-            canonical_entity,
-            catalog_entry_id,
-            symbol_map,
-            ident_meta,
-        );
-        let mut field_gloss_by_symbol: HashMap<String, ParsedFieldGloss> = HashMap::new();
-        for g in field_gloss_rows {
-            field_gloss_by_symbol.insert(g.symbol.clone(), g);
-        }
-        let parsed_expr_rows = parse_expression_rows(&block_lines);
-        let identity_idx = parsed_expr_rows
+    for block in &bundle.teaching_blocks {
+        let heading = &block.heading;
+        let field_gloss_rows = &block.field_gloss_rows;
+        let teaching_expr_rows: Vec<&TeachingExprLine> = block
+            .teaching_rows
             .iter()
-            .position(|row| {
-                tsv_identity_expr_is_entity_get(&row.expression)
-                    && !row.expression.contains('{')
-                    && !row.expression.contains('~')
-                    && !row.result_type.starts_with('[')
-            })
-            .or_else(|| {
-                parsed_expr_rows.iter().position(|row| {
-                    row.expression.contains('(')
-                        && !row.expression.contains('{')
-                        && !row.expression.contains('~')
-                        && !row.result_type.starts_with('[')
-                })
-            })
-            // Sole teaching row in the block is the entity's definition in-prompt (including query-only
-            // `e#{…}`): merge heading prose via [`TsvRow::identity`]. Skip when multiple rows and no GET,
-            // so we do not pick an arbitrary line as "identity".
-            .or_else(|| (parsed_expr_rows.len() == 1).then_some(0));
-        let mut proj = heading.projection.clone();
+            .map(|r| &r.teaching_expr)
+            .collect();
+        let identity_idx = compute_tsv_identity_row_index(&teaching_expr_rows);
+        let projection_first_idx = teaching_expr_rows
+            .iter()
+            .position(|r| r.is_projection_teaching);
+        let entity_desc_attach_idx = projection_first_idx.or(identity_idx);
+        // Do not read projection from the entity heading: legends may contain unrelated `[…]`
+        // fragments (e.g. `[e1]` in result gloss). Teach projection only via a validated witness row
+        // and/or
+        // a trailing `[p#,…]` on the identity get line.
+        let mut proj =
+            projection_bracket_from_teaching_rows(&teaching_expr_rows).unwrap_or_default();
         if proj.is_empty() {
             if let Some(i) = identity_idx {
-                if let Some(s) = parse_trailing_projection_bracket(&parsed_expr_rows[i].expression)
+                if let Some(s) =
+                    parse_trailing_projection_bracket(teaching_expr_rows[i].expression.trim())
                 {
                     proj = s;
                 }
             }
         }
         let projection_symbols = parse_projection_symbols(&proj);
-        for sym in &projection_symbols {
-            if let Some(gloss) = field_gloss_by_symbol.get(sym.as_str()) {
-                write_tsv_row(&mut out, TsvRow::field_gloss(gloss));
+        let projection_set: HashSet<&str> = projection_symbols.iter().map(|s| s.as_str()).collect();
+        let mut field_gloss_by_symbol: HashMap<String, TeachingFieldGloss> = HashMap::new();
+        let mut value_sym_order: Vec<String> = Vec::new();
+        let mut seen_v: HashSet<String> = HashSet::new();
+        for g in field_gloss_rows {
+            if g.symbol.starts_with('v') && seen_v.insert(g.symbol.clone()) {
+                value_sym_order.push(g.symbol.clone());
+            }
+            field_gloss_by_symbol.insert(g.symbol.clone(), g.clone());
+        }
+        for vs in &value_sym_order {
+            if let Some(gloss) = field_gloss_by_symbol.get(vs) {
+                write_domain_tsv_row(&mut out, DomainTsvRow::FieldGloss(gloss));
             }
         }
-
-        if let Some(idx) = identity_idx {
-            let row = &parsed_expr_rows[idx];
-            write_tsv_row(&mut out, TsvRow::identity(row, &heading));
-        }
-
-        for (idx, row) in parsed_expr_rows.iter().enumerate() {
-            if Some(idx) == identity_idx {
+        // `p#` slots for optional query params / invokes appear in DOMAIN gloss lines but are not part
+        // of the scalar projection bracket — emit them in compact-doc order before projection fields.
+        let mut emitted_p_slot: HashSet<String> = HashSet::new();
+        for g in field_gloss_rows {
+            if !g.symbol.starts_with('p') {
                 continue;
             }
-            write_tsv_row(&mut out, TsvRow::expression(row));
+            if projection_set.contains(g.symbol.as_str()) {
+                continue;
+            }
+            if !emitted_p_slot.insert(g.symbol.clone()) {
+                continue;
+            }
+            write_domain_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
+        }
+        for sym in &projection_symbols {
+            if emitted_p_slot.contains(sym) {
+                continue;
+            }
+            if let Some(gloss) = field_gloss_by_symbol.get(sym.as_str()) {
+                write_domain_tsv_row(&mut out, DomainTsvRow::FieldGloss(gloss));
+                emitted_p_slot.insert(sym.clone());
+            }
+        }
+
+        let mut emit_order: Vec<usize> = (0..teaching_expr_rows.len()).collect();
+        emit_order.sort_by_key(|&i| {
+            let is_proj = teaching_expr_rows[i].is_projection_teaching;
+            (!is_proj, i)
+        });
+        for row_idx in emit_order {
+            let row = teaching_expr_rows[row_idx];
+            let identity_returns_row = Some(row_idx) == identity_idx;
+            let attach_entity_heading = Some(row_idx) == entity_desc_attach_idx;
+            write_domain_tsv_row(
+                &mut out,
+                DomainTsvRow::TeachingExpr {
+                    line: row,
+                    identity_returns_row,
+                    attach_entity_heading,
+                    heading,
+                },
+            );
         }
     }
+    enforce_domain_tsv_teaching_invariant(&out);
     out
 }
 
-struct TsvRow {
-    expression: String,
-    meaning: String,
+const TSV_MEANING_JOIN: &str = " · ";
+
+/// One logical DOMAIN TSV row before wire encoding ([`write_domain_tsv_row`]).
+enum DomainTsvRow<'a> {
+    TeachingExpr {
+        line: &'a TeachingExprLine,
+        /// [`compute_tsv_identity_row_index`] — affects relation vs `returns …` gloss shaping.
+        identity_returns_row: bool,
+        /// Entity banner description at most once: first projection witness, else identity fallback.
+        attach_entity_heading: bool,
+        heading: &'a TeachingHeading,
+    },
+    FieldGloss(&'a TeachingFieldGloss),
 }
 
-fn join_tsv_meaning(parts: impl IntoIterator<Item = String>) -> String {
-    parts
-        .into_iter()
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>()
-        .join(" · ")
+/// Replace raw tabs inside a cell and trim edges (never used as column delimiter).
+fn sanitize_tsv_cell(s: &str) -> String {
+    if !s.contains('\t') {
+        return s.trim().to_string();
+    }
+    s.replace('\t', " ").trim().to_string()
 }
 
-impl TsvRow {
-    fn identity(row: &ParsedExprLine, heading: &ParsedHeading) -> Self {
-        let mut parts = Vec::new();
-        if !row.result_type.is_empty() {
-            parts.push(format!("returns {}", row.result_type));
-        }
-        if !heading.projection.is_empty() {
-            parts.push(format!("projection {}", heading.projection));
-        }
-        if !heading.description.is_empty() {
-            parts.push(heading.description.clone());
-        }
-        // When the identity exemplar is a method or list line (fallback pick), keep per-line legend
-        // (scope / optional / capability gloss) so TSV stays aligned with compact DOMAIN.
-        if !row.scope.is_empty() {
-            parts.push(row.scope.clone());
-        }
-        if !row.optional_params.is_empty() {
-            parts.push(format!("optional params: {}", row.optional_params));
-        }
-        if !row.compact_args.is_empty() {
-            parts.push(format!("args: {}", row.compact_args));
-        }
-        if !row.description.is_empty() {
-            parts.push(row.description.clone());
-        }
-        Self {
-            expression: row.expression.clone(),
-            meaning: join_tsv_meaning(parts),
-        }
-    }
+/// Typed fragment of a teaching-row `Meaning` cell (joined with [`TSV_MEANING_JOIN`], then sanitized as a whole).
+#[derive(Clone, Debug)]
+enum TeachingMeaningAtom {
+    Returns { gloss: String },
+    RelationNav { line: String },
+    EntityHeadingDescription(String),
+    LegendScope(String),
+    LegendOptionalParams(String),
+    LegendCompactArgs(String),
+    LegendDescription(String),
+}
 
-    fn field_gloss(gloss: &ParsedFieldGloss) -> Self {
-        let mut parts = vec![gloss.field_type.clone()];
-        if !gloss.allowed_values.is_empty() {
-            parts.push(format!("allowed: {}", gloss.allowed_values));
-        }
-        if !gloss.description.is_empty() {
-            parts.push(gloss.description.clone());
-        }
-        Self {
-            expression: gloss.symbol.clone(),
-            meaning: join_tsv_meaning(parts),
-        }
-    }
-
-    fn expression(row: &ParsedExprLine) -> Self {
-        let mut parts = Vec::new();
-        if !row.result_type.is_empty() {
-            parts.push(format!("returns {}", row.result_type));
-        }
-        if !row.scope.is_empty() {
-            parts.push(row.scope.clone());
-        }
-        if !row.optional_params.is_empty() {
-            parts.push(format!("optional params: {}", row.optional_params));
-        }
-        if !row.compact_args.is_empty() {
-            parts.push(format!("args: {}", row.compact_args));
-        }
-        if !row.description.is_empty() {
-            parts.push(row.description.clone());
-        }
-        Self {
-            expression: row.expression.clone(),
-            meaning: join_tsv_meaning(parts),
-        }
+impl TeachingMeaningAtom {
+    fn encoded_fragment(&self) -> String {
+        let raw = match self {
+            TeachingMeaningAtom::Returns { gloss } => format!("returns {gloss}"),
+            TeachingMeaningAtom::RelationNav { line } => line.clone(),
+            TeachingMeaningAtom::EntityHeadingDescription(s) => s.clone(),
+            TeachingMeaningAtom::LegendScope(s) => s.clone(),
+            TeachingMeaningAtom::LegendOptionalParams(s) => format!("optional params: {s}"),
+            TeachingMeaningAtom::LegendCompactArgs(s) => format!("args: {s}"),
+            TeachingMeaningAtom::LegendDescription(s) => s.clone(),
+        };
+        sanitize_tsv_cell(&raw)
     }
 }
 
-fn write_tsv_row(out: &mut String, row: TsvRow) {
-    let expression = row.expression.replace('\t', " ");
-    let meaning = row.meaning.replace('\t', " ");
-    let _ = writeln!(out, "{expression}\t{meaning}");
+/// Typed fragment of a field-gloss `Meaning` cell.
+#[derive(Clone, Debug)]
+enum FieldGlossMeaningAtom {
+    FieldType(String),
+    AllowedValues(String),
+    Description(String),
 }
 
-fn collect_domain_blocks<'a>(prompt_lines: &'a [&'a str]) -> Vec<(ParsedHeading, Vec<&'a str>)> {
-    let mut blocks = Vec::new();
-    let mut idx = 0usize;
-    while idx < prompt_lines.len() {
-        let line = prompt_lines[idx];
-        let is_heading = is_entity_heading_line(line);
-        if !is_heading {
-            idx += 1;
-            continue;
-        }
-        let heading = parse_heading_line(line.trim());
-        let mut end_idx = prompt_lines.len();
-        for (scan, next_line) in prompt_lines.iter().enumerate().skip(idx + 1) {
-            let is_next_heading = is_entity_heading_line(next_line);
-            if is_next_heading {
-                end_idx = scan;
-                break;
+impl FieldGlossMeaningAtom {
+    fn encoded_fragment(&self) -> String {
+        let raw = match self {
+            FieldGlossMeaningAtom::FieldType(s) => s.clone(),
+            FieldGlossMeaningAtom::AllowedValues(s) => format!("allowed: {s}"),
+            FieldGlossMeaningAtom::Description(s) => s.clone(),
+        };
+        sanitize_tsv_cell(&raw)
+    }
+}
+
+/// Sanitized `plasm_expr` column for DOMAIN teaching TSV (no literal tabs; trimmed).
+#[derive(Clone, Debug)]
+struct DomainTsvExprCell(String);
+
+impl DomainTsvExprCell {
+    fn from_plasm_expr(expr: &str) -> Self {
+        Self(sanitize_tsv_cell(expr))
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Sanitized `Meaning` column for DOMAIN teaching TSV (no literal tabs; trimmed).
+#[derive(Clone, Debug)]
+struct DomainTsvMeaningCell(String);
+
+impl DomainTsvMeaningCell {
+    fn from_teaching_atoms(atoms: Vec<TeachingMeaningAtom>) -> Self {
+        Self(Self::join_encoded_fragments(
+            atoms.into_iter().map(|a| a.encoded_fragment()),
+        ))
+    }
+
+    fn from_field_gloss_atoms(atoms: Vec<FieldGlossMeaningAtom>) -> Self {
+        Self(Self::join_encoded_fragments(
+            atoms.into_iter().map(|a| a.encoded_fragment()),
+        ))
+    }
+
+    fn join_encoded_fragments(fragments: impl Iterator<Item = String>) -> String {
+        let joined = fragments
+            .filter(|s| !s.is_empty())
+            .collect::<Vec<_>>()
+            .join(TSV_MEANING_JOIN);
+        sanitize_tsv_cell(&joined)
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// One encoded DOMAIN teaching row: sanitized expr, **exactly one** U+0009, sanitized meaning, newline.
+struct DomainTsvEncodedLine {
+    expr: DomainTsvExprCell,
+    meaning: DomainTsvMeaningCell,
+}
+
+impl DomainTsvEncodedLine {
+    fn write_line(self, out: &mut String) {
+        let expr_s = self.expr.as_str();
+        let meaning_s = self.meaning.as_str();
+        debug_assert!(
+            !expr_s.contains('\t'),
+            "expr cell must be tab-free before wire emit"
+        );
+        debug_assert!(
+            !meaning_s.contains('\t'),
+            "meaning cell must be tab-free before wire emit"
+        );
+        out.push_str(expr_s);
+        out.push('\t');
+        out.push_str(meaning_s);
+        out.push('\n');
+    }
+}
+
+fn teaching_expr_meaning_atoms(
+    row: &TeachingExprLine,
+    identity_returns_row: bool,
+    attach_entity_heading: bool,
+    heading: &TeachingHeading,
+) -> Vec<TeachingMeaningAtom> {
+    let mut atoms = Vec::new();
+    push_teaching_meaning_result_atom(&mut atoms, row, identity_returns_row);
+    if attach_entity_heading && !heading.description.is_empty() {
+        atoms.push(TeachingMeaningAtom::EntityHeadingDescription(
+            heading.description.clone(),
+        ));
+    }
+    append_teaching_meaning_legend_tail_atoms(&mut atoms, row);
+    atoms
+}
+
+fn field_gloss_meaning_atoms(g: &TeachingFieldGloss) -> Vec<FieldGlossMeaningAtom> {
+    let mut atoms = vec![FieldGlossMeaningAtom::FieldType(g.field_type.clone())];
+    if !g.allowed_values.is_empty() {
+        atoms.push(FieldGlossMeaningAtom::AllowedValues(
+            g.allowed_values.clone(),
+        ));
+    }
+    if !g.description.is_empty() {
+        atoms.push(FieldGlossMeaningAtom::Description(g.description.clone()));
+    }
+    atoms
+}
+
+fn append_teaching_meaning_legend_tail_atoms(
+    atoms: &mut Vec<TeachingMeaningAtom>,
+    row: &TeachingExprLine,
+) {
+    if !row.scope.is_empty() {
+        atoms.push(TeachingMeaningAtom::LegendScope(row.scope.clone()));
+    }
+    if !row.optional_params.is_empty() {
+        atoms.push(TeachingMeaningAtom::LegendOptionalParams(
+            row.optional_params.clone(),
+        ));
+    }
+    if !row.compact_args.is_empty() {
+        atoms.push(TeachingMeaningAtom::LegendCompactArgs(
+            row.compact_args.clone(),
+        ));
+    }
+    if !row.description.is_empty() {
+        atoms.push(TeachingMeaningAtom::LegendDescription(
+            row.description.clone(),
+        ));
+    }
+}
+
+/// When `identity_row`, always prefix with `returns …` (including relation-nav identity picks).
+fn push_teaching_meaning_result_atom(
+    atoms: &mut Vec<TeachingMeaningAtom>,
+    row: &TeachingExprLine,
+    identity_row: bool,
+) {
+    if row.result_type.is_empty() {
+        return;
+    }
+    if identity_row {
+        atoms.push(TeachingMeaningAtom::Returns {
+            gloss: row.result_type.clone(),
+        });
+    } else if row.result_type.starts_with("relation ") {
+        atoms.push(TeachingMeaningAtom::RelationNav {
+            line: row.result_type.clone(),
+        });
+    } else {
+        atoms.push(TeachingMeaningAtom::Returns {
+            gloss: row.result_type.clone(),
+        });
+    }
+}
+
+fn write_domain_tsv_row(out: &mut String, row: DomainTsvRow<'_>) {
+    match row {
+        DomainTsvRow::TeachingExpr {
+            line,
+            identity_returns_row,
+            attach_entity_heading,
+            heading,
+        } => {
+            DomainTsvEncodedLine {
+                expr: DomainTsvExprCell::from_plasm_expr(&line.expression),
+                meaning: DomainTsvMeaningCell::from_teaching_atoms(teaching_expr_meaning_atoms(
+                    line,
+                    identity_returns_row,
+                    attach_entity_heading,
+                    heading,
+                )),
             }
+            .write_line(out);
         }
-        let mut pre_start = idx;
-        while pre_start > 0 && is_field_gloss_prompt_line(prompt_lines[pre_start - 1]) {
-            pre_start -= 1;
-        }
-        let mut block_lines = Vec::new();
-        block_lines.extend_from_slice(&prompt_lines[pre_start..idx]);
-        block_lines.extend_from_slice(&prompt_lines[idx + 1..end_idx]);
-        blocks.push((heading, block_lines));
-        idx = end_idx;
-    }
-    blocks
-}
-
-fn is_entity_heading_line(line: &str) -> bool {
-    if !line.starts_with("  ") || line.starts_with("    ") {
-        return false;
-    }
-    let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with("- ") {
-        return false;
-    }
-    if let Some((lhs, _)) = trimmed.split_once(CAP_LEGEND_SEP) {
-        return !lhs.trim().is_empty() && !lhs.trim().contains(' ');
-    }
-    !trimmed.contains(' ')
-}
-
-fn is_field_gloss_prompt_line(line: &str) -> bool {
-    let trimmed = line.trim();
-    let Some((lhs, _)) = trimmed.split_once(CAP_LEGEND_SEP) else {
-        return false;
-    };
-    lhs.starts_with('p') && lhs.chars().skip(1).all(|c| c.is_ascii_digit())
-}
-
-fn parse_heading_line(line: &str) -> ParsedHeading {
-    let mut h = ParsedHeading::default();
-    let (_, legend_opt) = match line.split_once(CAP_LEGEND_SEP) {
-        Some((lhs, rhs)) => (lhs.trim(), Some(rhs.trim())),
-        None => (line.trim(), None),
-    };
-    if let Some(legend) = legend_opt {
-        if let Some(start) = legend.find('[') {
-            if let Some(end_rel) = legend[start + 1..].find(']') {
-                h.projection = legend[start..=start + end_rel + 1].to_string();
+        DomainTsvRow::FieldGloss(g) => {
+            DomainTsvEncodedLine {
+                expr: DomainTsvExprCell::from_plasm_expr(&g.symbol),
+                meaning: DomainTsvMeaningCell::from_field_gloss_atoms(field_gloss_meaning_atoms(g)),
             }
-        }
-        if let Some((_, desc)) = legend.split_once(" -  ") {
-            h.description = desc.trim().to_string();
-        } else if !legend.starts_with('[') {
-            h.description = legend.to_string();
+            .write_line(out);
         }
     }
-    h
 }
 
 fn parse_projection_symbols(projection: &str) -> Vec<String> {
@@ -914,75 +1383,114 @@ fn parse_trailing_projection_bracket(expr: &str) -> Option<String> {
     (open + 1 < t.len()).then_some(t[open..].to_string())
 }
 
-fn parse_field_gloss_rows(
-    lines: &[&str],
+fn push_teaching_field_gloss_row(
+    out: &mut Vec<TeachingFieldGloss>,
+    symbol: String,
+    legend_rhs: &str,
     canonical_entity: &str,
     catalog_entry_id: &str,
     symbol_map: Option<&SymbolMap>,
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
-) -> Vec<ParsedFieldGloss> {
-    let mut out = Vec::new();
-    for line in lines {
-        let trimmed = line.trim();
-        let Some((lhs, rhs)) = trimmed.split_once(CAP_LEGEND_SEP) else {
-            continue;
-        };
-        if !lhs.starts_with('p') || !lhs.chars().skip(1).all(|c| c.is_ascii_digit()) {
-            continue;
-        }
-        let symbol = lhs.trim().to_string();
-        let field_name = symbol_map
-            .and_then(|m| m.resolve_ident(symbol.as_str()))
-            .unwrap_or(symbol.as_str())
-            .to_string();
-        let meta = ident_meta.and_then(|m| {
-            m.get(&(
-                catalog_entry_id.to_string(),
-                EntityName::from(canonical_entity.to_string()),
-                field_name.clone(),
-            ))
-        });
-        let legend = rhs.trim();
-        let (mut field_type, legend_tail) = legend
-            .split_once(" · ")
-            .map(|(ty, tail)| (ty.trim().to_string(), tail.trim().to_string()))
-            .unwrap_or_else(|| (legend.to_string(), String::new()));
-        // Prefer CGS-backed typing for this `(entity, wire field)` pair. The compact DOMAIN lines in
-        // `bundle.prompt` can be wrong when the same `p#` token is reused across entities with the
-        // same wire name (e.g. `id`) — the markdown renderer may attach the first-seen legend.
-        if let Some(m) = &meta {
-            let g = m.render_gloss(symbol_map);
-            field_type = g
-                .split_once(" \u{00b7} ")
-                .map(|(a, _)| a.trim().to_string())
-                .unwrap_or_else(|| g.trim().to_string());
-        }
-        let is_enumish = matches!(field_type.as_str(), "select" | "multiselect");
-        let allowed_values = if is_enumish {
-            legend_tail.clone()
-        } else {
-            meta.and_then(|m| m.allowed_values())
-                .filter(|vals| !vals.is_empty())
-                .map(|vals: &Vec<String>| vals.join(", "))
-                .unwrap_or_default()
-        };
-        let mut description = meta
-            .map(|m| m.description().trim().to_string())
-            .filter(|s| !s.is_empty())
-            .unwrap_or_default();
-        // DOMAIN gloss is `type · …` (wire name or CGS prose). CGS `description` may be empty; keep
-        // the tail so TSV `Meaning` stays actionable (parity with compact `p#  ;;  str · owner`).
-        if description.is_empty() && !is_enumish && !legend_tail.is_empty() {
-            description = legend_tail;
-        }
-        out.push(ParsedFieldGloss {
-            symbol,
-            field_type,
-            allowed_values,
-            description,
-        });
+) {
+    let mut cs = symbol.chars();
+    let first = match cs.next() {
+        Some(c @ ('p' | 'v')) => c,
+        _ => return,
+    };
+    let rest: String = cs.collect();
+    if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
+        return;
     }
-    out
+    let field_name = symbol_map
+        .and_then(|m| m.resolve_ident(symbol.as_str()))
+        .unwrap_or(symbol.as_str())
+        .to_string();
+    let meta = ident_meta.and_then(|m| {
+        m.get(&(
+            catalog_entry_id.to_string(),
+            EntityName::from(canonical_entity.to_string()),
+            field_name.clone(),
+        ))
+    });
+    let legend = legend_rhs.trim();
+    if first == 'v' {
+        out.push(TeachingFieldGloss {
+            symbol,
+            field_type: String::new(),
+            allowed_values: String::new(),
+            description: legend.to_string(),
+        });
+        return;
+    }
+    if let Some(sym_m) = symbol_map {
+        if let Some(vsym) = sym_m.value_sym_for_p_sym(symbol.as_str()) {
+            let wire = meta
+                .as_ref()
+                .map(|m| m.wire_name().to_string())
+                .unwrap_or_else(|| field_name.clone());
+            let mut description = format!("{vsym} · {wire}");
+            if let Some(m) = &meta {
+                let d = m.description().trim();
+                if !d.is_empty() {
+                    let t = crate::symbol_tuning::gloss_description_truncated(d);
+                    description = format!("{vsym} · {wire} · {t}");
+                }
+            }
+            out.push(TeachingFieldGloss {
+                symbol,
+                field_type: String::new(),
+                allowed_values: String::new(),
+                description,
+            });
+            return;
+        }
+    }
+    let typing_gloss: String = match (meta.as_ref(), symbol_map) {
+        (Some(m), Some(sym)) => {
+            if let Some(vs) = sym.value_sym_for_p_sym(symbol.as_str()) {
+                sym.value_domain_gloss_for_v_sym(vs)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| m.render_gloss(Some(sym)))
+            } else {
+                m.render_gloss(Some(sym))
+            }
+        }
+        (Some(m), None) => m.render_gloss(None),
+        (None, _) => legend.to_string(),
+    };
+    let (mut field_type, legend_tail) = typing_gloss
+        .split_once(" · ")
+        .map(|(ty, tail)| (ty.trim().to_string(), tail.trim().to_string()))
+        .unwrap_or_else(|| (typing_gloss.trim().to_string(), String::new()));
+    if let Some(m) = &meta {
+        let g = m.render_gloss(symbol_map);
+        field_type = g
+            .split_once(" \u{00b7} ")
+            .map(|(a, _)| a.trim().to_string())
+            .unwrap_or_else(|| g.trim().to_string());
+    }
+    let is_enumish = matches!(field_type.as_str(), "select" | "multiselect");
+    let allowed_values = if is_enumish {
+        legend_tail.clone()
+    } else {
+        meta.and_then(|m| m.allowed_values())
+            .filter(|vals| !vals.is_empty())
+            .map(|vals: &Vec<String>| vals.join(", "))
+            .unwrap_or_default()
+    };
+    let mut description = meta
+        .map(|m| m.description().trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_default();
+    if description.is_empty() && !is_enumish && !legend_tail.is_empty() {
+        description = legend_tail;
+    }
+    out.push(TeachingFieldGloss {
+        symbol,
+        field_type,
+        allowed_values,
+        description,
+    });
 }
 
 /// Returns `(scope_line, rest)` when `sig` begins with a `[scope …]` block; otherwise `("", sig)`.
@@ -1067,57 +1575,6 @@ fn fill_scope_optional_from_sig(
     } else if !tail.is_empty() {
         *orphan = tail.to_string();
     }
-}
-
-fn parse_expression_rows(lines: &[&str]) -> Vec<ParsedExprLine> {
-    let mut out = Vec::new();
-    for line in lines {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('p') && trimmed.contains(CAP_LEGEND_SEP) {
-            continue;
-        }
-        let (expr, legend_opt) = match trimmed.split_once(CAP_LEGEND_SEP) {
-            Some((lhs, rhs)) => (lhs.trim().to_string(), Some(rhs.trim())),
-            None => (trimmed.to_string(), None),
-        };
-        let mut row = ParsedExprLine {
-            expression: expr,
-            result_type: String::new(),
-            scope: String::new(),
-            optional_params: String::new(),
-            compact_args: String::new(),
-            description: String::new(),
-        };
-        if let Some(legend) = legend_opt {
-            let mut remainder = legend.trim().to_string();
-            if let Some(rest) = remainder.strip_prefix("=>") {
-                let rest = rest.trim_start();
-                let end = rest.find("  ").unwrap_or(rest.len());
-                row.result_type = rest[..end].trim().to_string();
-                remainder = rest[end..].trim().to_string();
-            }
-            let (sig_part, desc_tail) = split_sig_and_human_description(&remainder);
-            let (sig_wo, compact) = split_compact_args_from_sig_fragment(sig_part);
-            row.compact_args = compact;
-            let mut orphan = String::new();
-            fill_scope_optional_from_sig(
-                &sig_wo,
-                &mut row.scope,
-                &mut row.optional_params,
-                &mut orphan,
-            );
-            if !desc_tail.is_empty() {
-                row.description = desc_tail.to_string();
-                if !orphan.is_empty() {
-                    row.description = format!("{orphan} {}", row.description).trim().to_string();
-                }
-            } else if !orphan.is_empty() {
-                row.description = orphan;
-            }
-        }
-        out.push(row);
-    }
-    out
 }
 
 /// Character and rough token counts plus prompt surface metrics for a rendered prompt.
@@ -1205,17 +1662,19 @@ fn domain_expression_tool_count_resolved(
     let mut n = 0usize;
     let mut line_valid_cache = HashMap::new();
     for &ename in &full_entities {
-        let mut seen_expr: HashSet<String> = HashSet::new();
-        let block = collect_entity_domain_block(
+        let mut seen_expr: HashSet<TeachingRowDedupeKey> = HashSet::new();
+        let mut gloss_emit_none = None;
+        let block = collect_entity_teaching_block(
             cgs,
             ename,
             map.as_deref(),
             None,
             false,
             &mut line_valid_cache,
+            &mut gloss_emit_none,
         );
-        for line in &block.lines {
-            if seen_expr.insert(line.clone()) {
+        for row in &block.teaching_rows {
+            if seen_expr.insert(row.dedupe_key.clone()) {
                 n += 1;
             }
         }
@@ -1303,11 +1762,272 @@ fn met_sym(m: Option<&SymbolMap>, entity: &str, kebab: &str) -> String {
         .unwrap_or_else(|| kebab.to_string())
 }
 
-const CAP_LEGEND_SEP: &str = "  ;;  ";
-
 /// Human capability / list gloss after `[scope …]` / `optional params:` (emit parity with
 /// [`format_capability_legend_line`]): Unicode em dash U+2014, spaces around it.
 const LEGEND_EM_DESC_SEP: &str = " — ";
+
+const PROJECTION_WITNESS_LEGEND_MARK: &str = "· projection";
+
+/// Ordered receiver bases for DOMAIN dotted calls / relation nav on `ent` (`es` = entity symbol).
+fn nav_receiver_candidates(
+    es: &str,
+    ent: &EntityDef,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    if let Some(cmp) = compound_get_expr_line(es, ent, cgs, map) {
+        if seen.insert(cmp.clone()) {
+            out.push(cmp);
+        }
+    }
+    let mut query_caps: Vec<_> = cgs.find_capabilities(ent.name.as_str(), CapabilityKind::Query);
+    query_caps.sort_by(|a, b| a.name.cmp(&b.name));
+    for cap in &query_caps {
+        for qline in [
+            query_expr_maximal(cap, es, cgs, map),
+            query_expr_scope_only(cap, es, cgs, map),
+            query_expr_filters_only(cap, es, cgs, map),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if seen.insert(qline.clone()) {
+                out.push(qline);
+            }
+        }
+    }
+    let unary = format!("{es}({})", DOMAIN_PARAM_VALUE_PLACEHOLDER);
+    if seen.insert(unary.clone()) {
+        out.push(unary);
+    }
+    let bare = es.to_string();
+    if seen.insert(bare.clone()) {
+        out.push(bare);
+    }
+    out
+}
+
+/// Receiver for relation nav / bare recv: must **parse and type-check alone**.
+fn relation_nav_anchor_expr(
+    es: &str,
+    ent: &EntityDef,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+) -> Option<String> {
+    for recv in nav_receiver_candidates(es, ent, cgs, map) {
+        let work = domain_line_work_string(&recv, map);
+        if domain_line_valid_work(cgs, &work) {
+            return Some(recv);
+        }
+    }
+    None
+}
+
+/// First receiver such that `recv + suffix` is a valid full DOMAIN expression (e.g. `.m#(…)`).
+fn receiver_for_dotted_suffix(
+    es: &str,
+    ent: &EntityDef,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    suffix: &str,
+) -> Option<String> {
+    for recv in nav_receiver_candidates(es, ent, cgs, map) {
+        let full = format!("{recv}{suffix}");
+        let work = domain_line_work_string(&full, map);
+        if domain_line_valid_work(cgs, &work) {
+            return Some(recv);
+        }
+    }
+    None
+}
+
+const MAX_INCOMING_REL_NAV_PROJECTION_BASES: usize = 16;
+
+/// `ParentRecv.rel` expressions that type-check and return `target_ename` (incoming edges).
+fn incoming_relation_nav_bases_to_entity(
+    cgs: &CGS,
+    target_ename: &str,
+    map: Option<&SymbolMap>,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    for (src_key, src_ent) in cgs.entities.iter() {
+        let src_name = src_key.as_str();
+        if src_name == target_ename {
+            continue;
+        }
+        let parent_es = ent_sym(map, src_name);
+        let rel_keys: HashSet<&str> = src_ent.relations.keys().map(|k| k.as_str()).collect();
+        for (rel_k, rel_s) in src_ent.relations.iter() {
+            if rel_s.target_resource.as_str() != target_ename {
+                continue;
+            }
+            if rel_s.cardinality == Cardinality::Many && !many_relation_nav_emittable(rel_s) {
+                continue;
+            }
+            let Some(recv) = relation_nav_anchor_expr(&parent_es, src_ent, cgs, map) else {
+                continue;
+            };
+            let expr = format!("{}.{}", recv, id_sym_rel(map, src_name, rel_k.as_str()));
+            let work = domain_line_work_string(&expr, map);
+            if domain_line_valid_work(cgs, &work) && seen.insert(expr.clone()) {
+                out.push(expr);
+                if out.len() >= MAX_INCOMING_REL_NAV_PROJECTION_BASES {
+                    return out;
+                }
+            }
+        }
+        for (fname, f) in src_ent.fields.iter() {
+            if rel_keys.contains(fname.as_str()) {
+                continue;
+            }
+            let Ok(nv) = cgs.named_value_for_slot(f) else {
+                continue;
+            };
+            let FieldType::EntityRef { target } = &nv.field_type else {
+                continue;
+            };
+            if target.as_str() != target_ename {
+                continue;
+            }
+            let Some(recv) = relation_nav_anchor_expr(&parent_es, src_ent, cgs, map) else {
+                continue;
+            };
+            let expr = format!("{}.{}", recv, id_sym_rel(map, src_name, fname.as_str()));
+            let work = domain_line_work_string(&expr, map);
+            if domain_line_valid_work(cgs, &work) && seen.insert(expr.clone()) {
+                out.push(expr);
+                if out.len() >= MAX_INCOMING_REL_NAV_PROJECTION_BASES {
+                    return out;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Maps parsed projection witness to a capability id for DOMAIN coverage (see [`covered_capabilities`]).
+fn projection_witness_source_capability<'a>(
+    expr: &Expr,
+    witness_cap: Option<&'a crate::CapabilitySchema>,
+    primary_get_cap: Option<&'a crate::CapabilitySchema>,
+    query_caps: &[&'a crate::CapabilitySchema],
+) -> Option<&'a CapabilityName> {
+    match expr {
+        Expr::Get(_) => primary_get_cap.map(|c| &c.name),
+        Expr::Query(_) => witness_cap
+            .map(|c| &c.name)
+            .or_else(|| query_caps.first().map(|c| &c.name)),
+        _ => None,
+    }
+}
+
+/// One validated `base[p#,…]` line teaching scalar projection for this entity type.
+#[allow(clippy::too_many_arguments)]
+fn try_push_projection_witness_row(
+    gloss_emit: &mut Option<GlossScratch<'_>>,
+    teaching_rows: &mut Vec<EntityTeachingExprRow>,
+    collect_meta: bool,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    bracket: &str,
+    ename: &str,
+    es: &str,
+    ent: &EntityDef,
+    primary_get_cap: Option<&crate::CapabilitySchema>,
+    query_caps: &[&crate::CapabilitySchema],
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
+) -> bool {
+    let bracket = bracket.trim();
+    if bracket.is_empty() || !bracket.starts_with('[') {
+        return false;
+    }
+
+    let mut seen_bases: HashSet<String> = HashSet::new();
+    let mut attempts: Vec<(String, Option<&crate::CapabilitySchema>)> = Vec::new();
+
+    let bare = es.to_string();
+    if seen_bases.insert(bare.clone()) {
+        attempts.push((bare, None));
+    }
+    for cap in query_caps {
+        for qline in [
+            query_expr_maximal(cap, es, cgs, map),
+            query_expr_scope_only(cap, es, cgs, map),
+            query_expr_filters_only(cap, es, cgs, map),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if seen_bases.insert(qline.clone()) {
+                attempts.push((qline, Some(cap)));
+            }
+        }
+    }
+    if let Some(cmp) = compound_get_expr_line(es, ent, cgs, map) {
+        if seen_bases.insert(cmp.clone()) {
+            attempts.push((cmp, primary_get_cap));
+        }
+    }
+    for rel_base in incoming_relation_nav_bases_to_entity(cgs, ename, map) {
+        if seen_bases.insert(rel_base.clone()) {
+            attempts.push((rel_base, None));
+        }
+    }
+    // Unary identity get is omitted from projection attempts when list/query exists — teach
+    // `e#{{…}}[p#,…]` instead of `e#($)[p#,…]` (same policy as primary-get emission).
+    if query_caps.is_empty() {
+        let unary = format!("{es}({})", DOMAIN_PARAM_VALUE_PLACEHOLDER);
+        if seen_bases.insert(unary.clone()) {
+            attempts.push((unary, primary_get_cap));
+        }
+    }
+
+    for (base, witness_cap) in attempts {
+        let full = format!("{base}{bracket}");
+        let work = domain_line_work_string(&full, map);
+        let Some(parsed) = domain_line_validate_full(cgs, &work) else {
+            continue;
+        };
+        let gloss_core = witness_cap
+            .and_then(|c| crate::result_gloss::result_gloss_for_capability(c, cgs, map))
+            .or_else(|| {
+                primary_get_cap
+                    .and_then(|c| crate::result_gloss::result_gloss_for_capability(c, cgs, map))
+            })
+            .unwrap_or_else(|| {
+                if base.contains('{') {
+                    crate::result_gloss::result_gloss_for_search_entity(ename, map)
+                } else {
+                    crate::result_gloss::result_gloss_for_get_entity(ename, map)
+                }
+            });
+        let gloss = format!("{gloss_core} · projection");
+        let source_cap = projection_witness_source_capability(
+            &parsed.expr,
+            witness_cap,
+            primary_get_cap,
+            query_caps,
+        );
+        return try_push_teaching_example(
+            gloss_emit,
+            teaching_rows,
+            collect_meta,
+            cgs,
+            map,
+            &full,
+            Some(gloss),
+            None,
+            None,
+            source_cap,
+            false,
+            line_valid_cache,
+        );
+    }
+    false
+}
 
 /// In DOMAIN synthetic lines, bare `$` (and search `~$`) marks a **placeholder** for the real
 /// parameter value — use the corresponding `p#` gloss line; it is not a literal value to send to the API.
@@ -1318,29 +2038,34 @@ fn truncate_inline_desc(s: &str, max: usize) -> String {
     crate::utf8_trunc::truncate_utf8_bytes_with_ellipsis(&t, max)
 }
 
-/// Append ` ;;  …` only: `=> {result}` (when present) plus capability legend — no `=>` outside the comment
-/// (avoids ambiguity with `=` / `>=` in predicates and keeps the expression segment clean).
-fn domain_line_with_layers(
+/// Receiver token for relation-nav teaching: symbolic leading `e#`, else canonical entity name before `(` / `{`.
+fn relation_receiver_teaching_hint(expr: &str, map: Option<&SymbolMap>) -> Option<String> {
+    let t = expr.trim_start();
+    if map.is_some() {
+        if !t.starts_with('e') {
+            return None;
+        }
+        let b = t.as_bytes();
+        let mut end = 1usize;
+        while end < b.len() && b[end].is_ascii_digit() {
+            end += 1;
+        }
+        return (end > 1).then(|| t[..end].to_string());
+    }
+    let delim_idx = t.find(|c| ['(', '{'].contains(&c))?;
+    let head = t[..delim_idx].trim();
+    (!head.is_empty()).then(|| head.to_string())
+}
+
+fn relation_nav_meaning_result_gloss(
     expr: &str,
-    result_gloss: Option<String>,
-    cap_legend: Option<String>,
+    map: Option<&SymbolMap>,
+    target_gloss: String,
 ) -> String {
-    let mut s = expr.to_string();
-    let res = result_gloss.filter(|x| !x.is_empty());
-    let cap = cap_legend.filter(|x| !x.is_empty());
-    if res.is_none() && cap.is_none() {
-        return s;
+    match relation_receiver_teaching_hint(expr, map) {
+        Some(h) => format!("relation {h} => {target_gloss}"),
+        None => target_gloss,
     }
-    s.push_str(CAP_LEGEND_SEP);
-    let mut parts: Vec<String> = Vec::new();
-    if let Some(g) = res {
-        parts.push(format!("=> {}", g.trim()));
-    }
-    if let Some(c) = cap {
-        parts.push(c);
-    }
-    s.push_str(&parts.join("  "));
-    s
 }
 
 /// Compound `Entity(p#=$,…)` when the target has multiple `key_vars` (per-key placeholders are still the string `$`).
@@ -1462,9 +2187,10 @@ fn compound_get_expr_line(
     Some(format!("{es}({})", parts.join(", ")))
 }
 
-fn anchored_receiver_expr(es: &str, ent: &EntityDef, cgs: &CGS, map: Option<&SymbolMap>) -> String {
-    compound_get_expr_line(es, ent, cgs, map)
-        .unwrap_or_else(|| format!("{es}({})", DOMAIN_PARAM_VALUE_PLACEHOLDER))
+/// Single-key GET exemplar `e#(p_id=$)` using the entity [`EntityDef::id_field`] symbol.
+fn simple_entity_id_get_expr_line(es: &str, ent: &EntityDef, map: Option<&SymbolMap>) -> String {
+    let sym = id_sym_entity(map, ent.name.as_str(), ent.id_field.as_str());
+    format!("{es}({sym}={})", DOMAIN_PARAM_VALUE_PLACEHOLDER)
 }
 
 /// Scope predicates + all filter-like parameters (required + optional) with CGS-derived placeholders.
@@ -1665,9 +2391,9 @@ fn domain_line_cache_key(cgs: &CGS, work: &str) -> DomainLineValidCacheKey {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn try_push_domain_example(
-    lines: &mut Vec<String>,
-    line_metas: &mut Vec<DomainLineMeta>,
+fn try_push_teaching_example(
+    gloss_emit: &mut Option<GlossScratch<'_>>,
+    teaching_rows: &mut Vec<EntityTeachingExprRow>,
     collect_meta: bool,
     cgs: &CGS,
     map: Option<&SymbolMap>,
@@ -1676,23 +2402,37 @@ fn try_push_domain_example(
     cap_leg: Option<String>,
     relation: Option<&RelationSchema>,
     source_capability: Option<&CapabilityName>,
+    // When true: strip [`TeachingExprLine::description`] from capability legend (Query/Get/Search);
+    // scope / optional params / compact args remain.
+    omit_capability_prose: bool,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
 ) -> bool {
+    if let Some(gs) = gloss_emit.as_mut() {
+        gs.emit_before_teaching_example(expr, cap_leg.as_deref(), gloss.as_deref());
+    }
     let work = domain_line_work_string(expr, map);
+    let mut teaching_line =
+        teaching_expr_line_from_layers(expr, gloss.as_deref(), cap_leg.as_deref());
+    if omit_capability_prose {
+        teaching_line.description.clear();
+    }
+    let dedupe_key = TeachingRowDedupeKey::new(expr, gloss.as_ref(), cap_leg.as_ref());
 
     if collect_meta {
-        let Some(parsed) = domain_line_validate_full(cgs, &work) else {
+        let Some(parsed_expr) = domain_line_validate_full(cgs, &work) else {
             return false;
         };
-        let rendered = domain_line_with_layers(expr, gloss, cap_leg);
-        lines.push(rendered);
-        line_metas.push(domain_line_execution_meta_from_validated(
-            cgs,
-            work,
-            relation,
-            source_capability,
-            &parsed.expr,
-        ));
+        teaching_rows.push(EntityTeachingExprRow {
+            teaching_expr: teaching_line,
+            meta: domain_line_execution_meta_from_validated(
+                cgs,
+                work,
+                relation,
+                source_capability,
+                &parsed_expr.expr,
+            ),
+            dedupe_key,
+        });
         return true;
     }
 
@@ -1703,8 +2443,17 @@ fn try_push_domain_example(
     if !ok {
         return false;
     }
-    let rendered = domain_line_with_layers(expr, gloss, cap_leg);
-    lines.push(rendered);
+    teaching_rows.push(EntityTeachingExprRow {
+        teaching_expr: teaching_line,
+        meta: DomainLineMeta {
+            expression: work,
+            kind: DomainLineKind::Other,
+            source_capability: None,
+            cross_entity: None,
+            relation_materialization: None,
+        },
+        dedupe_key,
+    });
     true
 }
 
@@ -1753,59 +2502,16 @@ fn field_omitted_from_path_inject(
     field_name == expected
 }
 
-fn collect_capability_compact_arg_glosses(
-    anchor_entity: &str,
-    cap: &crate::CapabilitySchema,
-    map: &SymbolMap,
-    ident_meta: &HashMap<IdentMetaKey, IdentMetadata>,
-    catalog_entry_id: &str,
-) -> Vec<crate::symbol_tuning::CompactArgSlotGloss> {
-    let Some(is) = cap.input_schema.as_ref() else {
-        return Vec::new();
-    };
-    let InputType::Object { fields, .. } = &is.input_type else {
-        return Vec::new();
-    };
-    let en = cap.domain.as_str();
-    let capn = cap.name.as_str();
-    let mut out = Vec::new();
-    for f in fields {
-        if !field_is_filter_like(f) {
-            continue;
-        }
-        if field_omitted_from_path_inject(anchor_entity, cap, f.name.as_str()) {
-            continue;
-        }
-        let sym = map.ident_sym_cap_param(en, capn, f.name.as_str());
-        let mkey = (
-            catalog_entry_id.to_string(),
-            EntityName::from(en.to_string()),
-            f.name.clone(),
-        );
-        let Some(meta) = ident_meta.get(&mkey) else {
-            continue;
-        };
-        out.push(crate::symbol_tuning::build_compact_arg_slot_gloss(
-            &sym,
-            f.name.as_str(),
-            f.required,
-            meta,
-            map,
-        ));
-    }
-    out
-}
-
-/// DOMAIN `;;` suffix: `[scope …]` and, when present, compact `args: p# … req|opt; …` (required slots
-/// before optional). Omits the separate `optional params: p#,…` list whenever `args:` is emitted.
-/// Falls back to `[scope …] optional params: …` only when compact `args:` is unavailable. Then ` — ` + description.
+/// Capability legend after result gloss in teaching rows: `[scope …]` / `optional params: …` only.
+/// Required invoke parameters are implicit from the taught expression; standalone `p#` gloss rows
+/// carry wire names and types.
 fn format_capability_legend_line(
     map: &SymbolMap,
     cgs: &CGS,
     cap: &crate::CapabilitySchema,
-    anchor_entity: &str,
-    ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
-    catalog_entry_id: &str,
+    _anchor_entity: &str,
+    _ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
+    _catalog_entry_id: &str,
 ) -> String {
     const MAX_DESC: usize = 100;
     let kebab = capability_method_label_kebab(cap);
@@ -1815,23 +2521,7 @@ fn format_capability_legend_line(
     } else {
         truncate_inline_desc(raw, MAX_DESC)
     };
-    let sig = if let Some(im) = ident_meta {
-        let frags =
-            collect_capability_compact_arg_glosses(anchor_entity, cap, map, im, catalog_entry_id);
-        if let Some(args_s) = crate::symbol_tuning::join_compact_invocation_arg_fragments(frags) {
-            // `args:` already tags each slot req/opt — omit the redundant `optional params: p#,…` list.
-            let scope_only = map.capability_scope_legend_gloss(cgs, cap);
-            if scope_only.is_empty() {
-                format!("args: {args_s}")
-            } else {
-                format!("{scope_only} · args: {args_s}")
-            }
-        } else {
-            map.capability_input_signature_gloss(cgs, cap)
-        }
-    } else {
-        map.capability_input_signature_gloss(cgs, cap)
-    };
+    let sig = map.capability_input_signature_gloss(cgs, cap);
     if sig.is_empty() {
         gloss
     } else if gloss.is_empty() {
@@ -2050,8 +2740,9 @@ fn format_dotted_call_line(
     let args = build_dotted_call_paren_args(anchor_entity, cap, cgs, map)?;
     let label = capability_method_label_kebab(cap);
     let ms = met_sym(map, cap.domain.as_str(), &label);
-    let recv = anchored_receiver_expr(es, ent, cgs, map);
-    Some(format!("{recv}.{ms}({args})"))
+    let suffix = format!(".{ms}({args})");
+    let recv = receiver_for_dotted_suffix(es, ent, cgs, map, &suffix)?;
+    Some(format!("{recv}{suffix}"))
 }
 
 const MAX_MULTI_ARITY_METHOD_LINES: usize = 48;
@@ -2140,51 +2831,34 @@ fn collect_multi_arity_method_lines(
     out.into_iter().take(MAX_MULTI_ARITY_METHOD_LINES).collect()
 }
 
-/// CGS-synthesized DOMAIN block — one block per entity — ordered expression lines (get, methods, query, search, relations).
-struct EntityDomainBlock {
-    entity_sym: String,
-    /// Full `[p#,…]` / `[field,…]` from primary Get when projection teaching applies (same gate as former indented exemplar).
-    heading_projection_bracket: Option<String>,
-    lines: Vec<String>,
-    /// Parallel to `lines` when `collect_meta` was true at build time; otherwise empty.
-    line_metas: Vec<DomainLineMeta>,
-}
-
-/// Heading body after the outer `  ` indent (entity sym, optional `;;` bracket + description).
-fn format_entity_domain_heading_line(
-    entity_sym: &str,
-    projection_bracket: Option<&str>,
-    desc: Option<&str>,
-) -> String {
-    match (projection_bracket, desc) {
-        (Some(b), Some(d)) => format!("{}{}{b} -  {}", entity_sym, CAP_LEGEND_SEP, d),
-        (Some(b), None) => format!("{}{}{b}", entity_sym, CAP_LEGEND_SEP),
-        (None, Some(d)) => format!("{}{}{}", entity_sym, CAP_LEGEND_SEP, d),
-        (None, None) => entity_sym.to_string(),
-    }
-}
-
-fn collect_entity_domain_block(
+fn collect_entity_teaching_block(
     cgs: &CGS,
     ename: &str,
     map: Option<&SymbolMap>,
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     collect_meta: bool,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
-) -> EntityDomainBlock {
-    let mut lines: Vec<String> = Vec::new();
-    let mut line_metas: Vec<DomainLineMeta> = Vec::new();
+    gloss_emit: &mut Option<GlossScratch<'_>>,
+) -> EntityTeachingBlock {
+    let mut teaching_rows: Vec<EntityTeachingExprRow> = Vec::new();
 
     let Some(ent) = cgs.get_entity(ename) else {
-        return EntityDomainBlock {
-            entity_sym: String::new(),
-            heading_projection_bracket: None,
-            lines,
-            line_metas,
+        return EntityTeachingBlock {
+            heading: TeachingHeading::default(),
+            field_gloss_rows: Vec::new(),
+            teaching_rows,
         };
     };
     let es = ent_sym(map, ename);
     let catalog_entry_id = cgs.entry_id.as_deref().unwrap_or("");
+    let ent_desc_short = {
+        let d = ent.description.as_str().trim();
+        (!d.is_empty()).then(|| truncate_inline_desc(d, 200))
+    };
+    let heading = TeachingHeading::from_entity_banner_description(ent_desc_short.as_deref());
+    if let Some(gs) = gloss_emit.as_mut() {
+        gs.emit_before_teaching_example(&es, ent_desc_short.as_deref(), None);
+    }
 
     let primary_get_projection_bracket: Option<String> =
         cgs.domain_projection_heading_fields(ename, ent).map(|f| {
@@ -2194,7 +2868,6 @@ fn collect_entity_domain_block(
                 .collect();
             format!("[{}]", syms.join(","))
         });
-    let mut inline_bracket_onto_primary_get = false;
 
     let get_caps: Vec<_> = cgs.find_capabilities(ename, CapabilityKind::Get);
     let only_singleton_gets = !get_caps.is_empty()
@@ -2209,6 +2882,35 @@ fn collect_entity_domain_block(
         .collect();
     singleton_get_caps.sort_by(|a, b| a.name.cmp(&b.name));
 
+    let get_gloss = Some(crate::result_gloss::result_gloss_for_get_entity(ename, map));
+    let primary_get_cap = cgs.resolved_primary_get_for_projection(ename, ent);
+
+    let mut query_caps: Vec<_> = cgs.find_capabilities(ename, CapabilityKind::Query);
+    query_caps.sort_by(|a, b| a.name.cmp(&b.name));
+    let query_cap_refs: Vec<&crate::CapabilitySchema> = query_caps.to_vec();
+
+    // Projection witness before other `e#…` lines for this entity (query/get/relation) so the field
+    // narrow `[p#,…]` appears first in DOMAIN.
+    if let Some(bracket) = primary_get_projection_bracket
+        .as_deref()
+        .filter(|b| !b.trim().is_empty())
+    {
+        let _ = try_push_projection_witness_row(
+            gloss_emit,
+            &mut teaching_rows,
+            collect_meta,
+            cgs,
+            map,
+            bracket,
+            ename,
+            &es,
+            ent,
+            primary_get_cap,
+            &query_cap_refs,
+            line_valid_cache,
+        );
+    }
+
     let mut seen_singleton_cap: HashSet<String> = HashSet::new();
     for cap in &singleton_get_caps {
         if !seen_singleton_cap.insert(cap.name.to_string()) {
@@ -2220,9 +2922,9 @@ fn collect_entity_domain_block(
         let result_gloss = crate::result_gloss::result_gloss_for_capability(cap, cgs, map);
         let cap_leg =
             capability_legend_for_domain(map, cgs, cap, ename, ident_meta, catalog_entry_id);
-        try_push_domain_example(
-            &mut lines,
-            &mut line_metas,
+        try_push_teaching_example(
+            gloss_emit,
+            &mut teaching_rows,
             collect_meta,
             cgs,
             map,
@@ -2231,106 +2933,50 @@ fn collect_entity_domain_block(
             cap_leg,
             None,
             Some(&cap.name),
+            true,
             line_valid_cache,
         );
     }
 
-    let get_gloss = Some(crate::result_gloss::result_gloss_for_get_entity(ename, map));
-    let primary_get_cap = cgs.resolved_primary_get_for_projection(ename, ent);
+    let mut emitted_primary_get = false;
     if primary_get_cap.is_some() && !only_singleton_gets {
         let primary_name = primary_get_cap.map(|c| &c.name);
-        let br_suffix: Option<&str> = primary_get_projection_bracket
-            .as_deref()
-            .filter(|b| !b.is_empty());
-        let mut emitted_primary_get = false;
         if let Some(cmp) = compound_get_expr_line(&es, ent, cgs, map) {
-            if let Some(b) = br_suffix {
-                let with_br = format!("{cmp}{b}");
-                if try_push_domain_example(
-                    &mut lines,
-                    &mut line_metas,
-                    collect_meta,
-                    cgs,
-                    map,
-                    &with_br,
-                    get_gloss.clone(),
-                    None,
-                    None,
-                    primary_name,
-                    line_valid_cache,
-                ) {
-                    emitted_primary_get = true;
-                    inline_bracket_onto_primary_get = true;
-                }
-            }
-            if !emitted_primary_get
-                && try_push_domain_example(
-                    &mut lines,
-                    &mut line_metas,
-                    collect_meta,
-                    cgs,
-                    map,
-                    &cmp,
-                    get_gloss.clone(),
-                    None,
-                    None,
-                    primary_name,
-                    line_valid_cache,
-                )
-            {
+            if try_push_teaching_example(
+                gloss_emit,
+                &mut teaching_rows,
+                collect_meta,
+                cgs,
+                map,
+                &cmp,
+                get_gloss.clone(),
+                None,
+                None,
+                primary_name,
+                true,
+                line_valid_cache,
+            ) {
                 emitted_primary_get = true;
             }
         }
-        if !emitted_primary_get {
+        // Unary identity get only when there is no query surface (compound already attempted above).
+        if !emitted_primary_get && query_caps.is_empty() {
             let line_base = format!("{es}({})", DOMAIN_PARAM_VALUE_PLACEHOLDER);
-            let mut line_g = line_base.clone();
-            if let Some(b) = br_suffix {
-                line_g.push_str(b);
-            }
-            if br_suffix.is_some() && line_g != line_base {
-                if try_push_domain_example(
-                    &mut lines,
-                    &mut line_metas,
-                    collect_meta,
-                    cgs,
-                    map,
-                    &line_g,
-                    get_gloss.clone(),
-                    None,
-                    None,
-                    primary_name,
-                    line_valid_cache,
-                ) {
-                    inline_bracket_onto_primary_get = true;
-                } else if try_push_domain_example(
-                    &mut lines,
-                    &mut line_metas,
-                    collect_meta,
-                    cgs,
-                    map,
-                    &line_base,
-                    get_gloss.clone(),
-                    None,
-                    None,
-                    primary_name,
-                    line_valid_cache,
-                ) {
-                    // bracket stays on heading
-                }
-            } else {
-                let _ = try_push_domain_example(
-                    &mut lines,
-                    &mut line_metas,
-                    collect_meta,
-                    cgs,
-                    map,
-                    &line_g,
-                    get_gloss.clone(),
-                    None,
-                    None,
-                    primary_name,
-                    line_valid_cache,
-                );
+            if try_push_teaching_example(
+                gloss_emit,
+                &mut teaching_rows,
+                collect_meta,
+                cgs,
+                map,
+                &line_base,
+                get_gloss.clone(),
+                None,
+                None,
+                primary_name,
+                true,
+                line_valid_cache,
+            ) {
+                emitted_primary_get = true;
             }
         }
     }
@@ -2366,18 +3012,21 @@ fn collect_entity_domain_block(
         for cap in group.iter() {
             let label = capability_method_label_kebab(cap);
             let ms = met_sym(map, ename, &label);
-            let recv = anchored_receiver_expr(&es, ent, cgs, map);
             let expr = if path_vars_empty(cap) {
                 format!("{es}.{ms}()")
             } else {
-                format!("{recv}.{ms}()")
+                let suffix = format!(".{ms}()");
+                let Some(recv) = receiver_for_dotted_suffix(&es, ent, cgs, map, &suffix) else {
+                    continue;
+                };
+                format!("{recv}{suffix}")
             };
             let result_gloss = crate::result_gloss::result_gloss_for_capability(cap, cgs, map);
             let cap_leg =
                 capability_legend_for_domain(map, cgs, cap, ename, ident_meta, catalog_entry_id);
-            try_push_domain_example(
-                &mut lines,
-                &mut line_metas,
+            try_push_teaching_example(
+                gloss_emit,
+                &mut teaching_rows,
                 collect_meta,
                 cgs,
                 map,
@@ -2386,6 +3035,7 @@ fn collect_entity_domain_block(
                 cap_leg,
                 None,
                 Some(&cap.name),
+                false,
                 line_valid_cache,
             );
         }
@@ -2397,9 +3047,9 @@ fn collect_entity_domain_block(
         });
         let gloss =
             cap_ref.and_then(|c| crate::result_gloss::result_gloss_for_capability(c, cgs, map));
-        try_push_domain_example(
-            &mut lines,
-            &mut line_metas,
+        try_push_teaching_example(
+            gloss_emit,
+            &mut teaching_rows,
             collect_meta,
             cgs,
             map,
@@ -2408,12 +3058,10 @@ fn collect_entity_domain_block(
             cap_leg,
             None,
             Some(&cap_name),
+            false,
             line_valid_cache,
         );
     }
-
-    let mut query_caps: Vec<_> = cgs.find_capabilities(ename, CapabilityKind::Query);
-    query_caps.sort_by(|a, b| a.name.cmp(&b.name));
 
     if !query_caps.is_empty() {
         let mut local_seen: HashSet<String> = HashSet::new();
@@ -2428,65 +3076,44 @@ fn collect_entity_domain_block(
                 capability_legend_for_domain(map, cgs, cap, ename, ident_meta, catalog_entry_id);
             let mut added = false;
             if let Some(line) = query_expr_maximal(cap, &es, cgs, map) {
-                let work = domain_line_work_string(&line, map);
-                let parsed_opt = if collect_meta {
-                    domain_line_validate_full(cgs, &work)
-                } else {
-                    None
-                };
-                let passes = if collect_meta {
-                    parsed_opt.is_some()
-                } else {
-                    *line_valid_cache
-                        .entry(domain_line_cache_key(cgs, &work))
-                        .or_insert_with(|| domain_line_valid_work(cgs, &work))
-                };
-                if passes && local_seen.insert(line.clone()) {
-                    let rendered = domain_line_with_layers(&line, qgloss.clone(), cap_leg.clone());
-                    lines.push(rendered.clone());
-                    if collect_meta {
-                        let parsed = parsed_opt.expect("query line passed validation");
-                        line_metas.push(domain_line_execution_meta_from_validated(
-                            cgs,
-                            work,
-                            None,
-                            Some(&cap.name),
-                            &parsed.expr,
-                        ));
-                    }
+                if local_seen.insert(line.clone())
+                    && try_push_teaching_example(
+                        gloss_emit,
+                        &mut teaching_rows,
+                        collect_meta,
+                        cgs,
+                        map,
+                        &line,
+                        qgloss.clone(),
+                        cap_leg.clone(),
+                        None,
+                        Some(&cap.name),
+                        true,
+                        line_valid_cache,
+                    )
+                {
                     added = true;
                     query_line_count += 1;
                 }
             }
             if !added {
                 if let Some(line) = query_expr_scope_only(cap, &es, cgs, map) {
-                    let work = domain_line_work_string(&line, map);
-                    let parsed_opt = if collect_meta {
-                        domain_line_validate_full(cgs, &work)
-                    } else {
-                        None
-                    };
-                    let passes = if collect_meta {
-                        parsed_opt.is_some()
-                    } else {
-                        *line_valid_cache
-                            .entry(domain_line_cache_key(cgs, &work))
-                            .or_insert_with(|| domain_line_valid_work(cgs, &work))
-                    };
-                    if passes && local_seen.insert(line.clone()) {
-                        let rendered =
-                            domain_line_with_layers(&line, qgloss.clone(), cap_leg.clone());
-                        lines.push(rendered.clone());
-                        if collect_meta {
-                            let parsed = parsed_opt.expect("query line passed validation");
-                            line_metas.push(domain_line_execution_meta_from_validated(
-                                cgs,
-                                work,
-                                None,
-                                Some(&cap.name),
-                                &parsed.expr,
-                            ));
-                        }
+                    if local_seen.insert(line.clone())
+                        && try_push_teaching_example(
+                            gloss_emit,
+                            &mut teaching_rows,
+                            collect_meta,
+                            cgs,
+                            map,
+                            &line,
+                            qgloss.clone(),
+                            cap_leg.clone(),
+                            None,
+                            Some(&cap.name),
+                            true,
+                            line_valid_cache,
+                        )
+                    {
                         added = true;
                         query_line_count += 1;
                     }
@@ -2494,38 +3121,51 @@ fn collect_entity_domain_block(
             }
             if !added {
                 if let Some(line) = query_expr_filters_only(cap, &es, cgs, map) {
-                    let work = domain_line_work_string(&line, map);
-                    let parsed_opt = if collect_meta {
-                        domain_line_validate_full(cgs, &work)
-                    } else {
-                        None
-                    };
-                    let passes = if collect_meta {
-                        parsed_opt.is_some()
-                    } else {
-                        *line_valid_cache
-                            .entry(domain_line_cache_key(cgs, &work))
-                            .or_insert_with(|| domain_line_valid_work(cgs, &work))
-                    };
-                    if passes && local_seen.insert(line.clone()) {
-                        let rendered =
-                            domain_line_with_layers(&line, qgloss.clone(), cap_leg.clone());
-                        lines.push(rendered.clone());
-                        if collect_meta {
-                            let parsed = parsed_opt.expect("query line passed validation");
-                            line_metas.push(domain_line_execution_meta_from_validated(
-                                cgs,
-                                work,
-                                None,
-                                Some(&cap.name),
-                                &parsed.expr,
-                            ));
-                        }
+                    if local_seen.insert(line.clone())
+                        && try_push_teaching_example(
+                            gloss_emit,
+                            &mut teaching_rows,
+                            collect_meta,
+                            cgs,
+                            map,
+                            &line,
+                            qgloss.clone(),
+                            cap_leg.clone(),
+                            None,
+                            Some(&cap.name),
+                            true,
+                            line_valid_cache,
+                        )
+                    {
                         query_line_count += 1;
                     }
                 }
             }
         }
+    }
+
+    // Keyed `e#(p_id=$)` after query lines when a list/query exists — avoids bare invalid `e#($)`.
+    if primary_get_cap.is_some()
+        && !only_singleton_gets
+        && !emitted_primary_get
+        && !query_caps.is_empty()
+    {
+        let primary_name = primary_get_cap.map(|c| &c.name);
+        let keyed = simple_entity_id_get_expr_line(&es, ent, map);
+        let _ = try_push_teaching_example(
+            gloss_emit,
+            &mut teaching_rows,
+            collect_meta,
+            cgs,
+            map,
+            &keyed,
+            get_gloss.clone(),
+            None,
+            None,
+            primary_name,
+            true,
+            line_valid_cache,
+        );
     }
 
     if !cgs
@@ -2543,9 +3183,9 @@ fn collect_entity_domain_block(
         let cap_leg = scap.and_then(|cap| {
             capability_legend_for_domain(map, cgs, cap, ename, ident_meta, catalog_entry_id)
         });
-        try_push_domain_example(
-            &mut lines,
-            &mut line_metas,
+        try_push_teaching_example(
+            gloss_emit,
+            &mut teaching_rows,
             collect_meta,
             cgs,
             map,
@@ -2554,6 +3194,7 @@ fn collect_entity_domain_block(
             cap_leg,
             None,
             scap.map(|c| &c.name),
+            true,
             line_valid_cache,
         );
     }
@@ -2598,8 +3239,12 @@ fn collect_entity_domain_block(
         if skip_many_unresolved {
             continue;
         }
-        let recv = anchored_receiver_expr(&es, ent, cgs, map);
-        let rel_expr = format!("{}.{}", recv, id_sym_rel(map, ename, rel.as_str()));
+        let rel_sym = id_sym_rel(map, ename, rel.as_str());
+        let suffix = format!(".{rel_sym}");
+        let Some(recv) = receiver_for_dotted_suffix(&es, ent, cgs, map, &suffix) else {
+            continue;
+        };
+        let rel_expr = format!("{recv}{suffix}");
         let rel_desc = if let Some(rel_schema) = ent.relations.get(rel.as_str()) {
             rel_schema.description.as_str().trim()
         } else if let Some(f) = ent.fields.get(rel.as_str()) {
@@ -2617,14 +3262,15 @@ fn collect_entity_domain_block(
             .get(rel.as_str())
             .map(|r| r.cardinality == Cardinality::Many)
             .unwrap_or(false);
-        let result_gloss = crate::result_gloss::result_gloss_for_relation_nav(
+        let target_gloss = crate::result_gloss::result_gloss_for_relation_nav(
             target_entity.as_str(),
             map,
             cardinality_many,
         );
-        try_push_domain_example(
-            &mut lines,
-            &mut line_metas,
+        let result_gloss = relation_nav_meaning_result_gloss(&rel_expr, map, target_gloss);
+        try_push_teaching_example(
+            gloss_emit,
+            &mut teaching_rows,
             collect_meta,
             cgs,
             map,
@@ -2633,21 +3279,20 @@ fn collect_entity_domain_block(
             rel_desc_opt,
             rel_for_meta,
             None,
+            false,
             line_valid_cache,
         );
     }
 
-    let heading_projection_bracket = if inline_bracket_onto_primary_get {
-        None
-    } else {
-        primary_get_projection_bracket
-    };
+    let field_gloss_rows = gloss_emit
+        .as_mut()
+        .map(|gs| std::mem::take(gs.field_gloss))
+        .unwrap_or_default();
 
-    EntityDomainBlock {
-        entity_sym: es,
-        heading_projection_bracket,
-        lines,
-        line_metas,
+    EntityTeachingBlock {
+        heading,
+        field_gloss_rows,
+        teaching_rows,
     }
 }
 
@@ -2655,16 +3300,38 @@ fn collect_entity_domain_block(
 /// [`crate::cgs_expression_validate`] so `CGS::validate` fails if this is zero.
 pub(crate) fn domain_example_line_count(cgs: &CGS, ename: &str, map: Option<&SymbolMap>) -> usize {
     let mut line_valid_cache = HashMap::new();
-    collect_entity_domain_block(cgs, ename, map, None, false, &mut line_valid_cache)
-        .lines
-        .len()
+    let mut gloss_emit_none = None;
+    collect_entity_teaching_block(
+        cgs,
+        ename,
+        map,
+        None,
+        false,
+        &mut line_valid_cache,
+        &mut gloss_emit_none,
+    )
+    .teaching_rows
+    .len()
 }
 
 /// Raw DOMAIN lines for an entity (for per-capability witness checks).
 #[cfg(test)]
 pub(crate) fn domain_example_lines(cgs: &CGS, ename: &str, map: Option<&SymbolMap>) -> Vec<String> {
     let mut line_valid_cache = HashMap::new();
-    collect_entity_domain_block(cgs, ename, map, None, false, &mut line_valid_cache).lines
+    let mut gloss_emit_none = None;
+    collect_entity_teaching_block(
+        cgs,
+        ename,
+        map,
+        None,
+        false,
+        &mut line_valid_cache,
+        &mut gloss_emit_none,
+    )
+    .teaching_rows
+    .into_iter()
+    .map(|r| r.teaching_expr.expression.clone())
+    .collect()
 }
 
 /// Primary-get projection bracket for the DOMAIN entity heading (when enabled); test-only helper.
@@ -2675,11 +3342,25 @@ fn domain_heading_projection_bracket(
     map: Option<&SymbolMap>,
 ) -> Option<String> {
     let mut line_valid_cache = HashMap::new();
-    collect_entity_domain_block(cgs, ename, map, None, false, &mut line_valid_cache)
-        .heading_projection_bracket
+    let mut gloss_emit_none = None;
+    let block = collect_entity_teaching_block(
+        cgs,
+        ename,
+        map,
+        None,
+        false,
+        &mut line_valid_cache,
+        &mut gloss_emit_none,
+    );
+    let refs: Vec<&TeachingExprLine> = block
+        .teaching_rows
+        .iter()
+        .map(|r| &r.teaching_expr)
+        .collect();
+    projection_bracket_from_teaching_rows(&refs)
 }
 
-/// Full scalar projection list `[p#,…]` (heading or **primary get** line); test-only helper.
+/// Full scalar projection list `[p#,…]` from the projection teaching row or a legacy get suffix.
 #[cfg(test)]
 fn domain_projection_bracket_exemplar(
     cgs: &CGS,
@@ -2690,11 +3371,7 @@ fn domain_projection_bracket_exemplar(
         return Some(b);
     }
     for line in domain_example_lines(cgs, ename, map) {
-        let head = line
-            .split_once(CAP_LEGEND_SEP)
-            .map(|(a, _)| a.trim())
-            .unwrap_or(line.trim());
-        if let Some(b) = parse_trailing_projection_bracket(head) {
+        if let Some(b) = parse_trailing_projection_bracket(line.trim()) {
             return Some(b);
         }
     }
@@ -2718,7 +3395,7 @@ pub(crate) fn query_construct_display(es: &str, scope_variant: &str) -> String {
 
 /// Marker substring for tests; must appear once at the start of the rendered prompt contract.
 pub const DOMAIN_VALID_EXPR_MARKER: &str =
-    "This defines valid Plasm syntax for this prompt; reply with one valid plasm_program:";
+    "Follow the grammar and the teaching TSV below; reply with one valid plasm_program:";
 
 #[derive(Clone, Copy, Debug)]
 struct PromptContractSpec {
@@ -2828,78 +3505,63 @@ fn symbolic_entity_form(symbolic: bool) -> &'static str {
     }
 }
 
-fn symbolic_method_form(symbolic: bool) -> &'static str {
-    if symbolic {
-        "m#"
-    } else {
-        "method"
-    }
-}
-
-fn symbolic_field_form(symbolic: bool) -> &'static str {
-    if symbolic {
-        "p#"
-    } else {
-        "field"
-    }
-}
-
 fn render_prompt_contract(spec: PromptContractSpec) -> String {
+    render_prompt_contract_dense(spec)
+}
+
+fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     let entity = symbolic_entity_form(spec.symbolic);
-    let method = symbolic_method_form(spec.symbolic);
-    let field = symbolic_field_form(spec.symbolic);
     let projection = if spec.symbolic {
         "[p#,…]"
     } else {
         "[field,…]"
     };
     let get_form = if spec.symbolic {
-        "e#(id) or e#(p#=v, p#=v)"
+        "e#(<id>) or e#(p#=<value>, p#=<value>)"
     } else {
-        "Entity(id) or Entity(name=value, name=value)"
+        "Entity(<id>) or Entity(name=<value>, name=<value>)"
     };
     let query_form = if spec.symbolic {
-        "e#{p#=v, …}"
+        "e#{p#=<value>, …}"
     } else {
-        "Entity{name=value, …}"
+        "Entity{name=<value>, …}"
     };
     let query_all_form = entity;
     let nav_form = if spec.symbolic {
-        "e#(id).p#"
+        "<receiver>.p#"
     } else {
-        "Entity(id).field"
+        "<receiver>.field"
     };
     let method_form = if spec.symbolic {
-        "e#(id).m#() or e#(id).m#(p#=v,..)"
+        "e#(<id>).m#() or e#(<id>).m#(p#=<value>, …)"
     } else {
-        "Entity(id).method() or Entity(id).method(name=value,..)"
+        "Entity(<id>).method() or Entity(<id>).method(name=<value>, …)"
     };
     let create_form = if spec.symbolic {
-        "e#.m#(args)"
+        "e#.m#(p#=<value>, …)"
     } else {
-        "Entity.method(args)"
+        "Entity.method(name=<value>, …)"
     };
     let projection_form = if spec.symbolic {
-        "e#(id)[p#,…]"
+        "e#(<id>)[p#,…]"
     } else {
-        "Entity(id)[field,…]"
+        "Entity(<id>)[field,…]"
     };
     let scoped_form = if spec.symbolic {
-        "X{p#=AnchorEntity(id)}"
+        "e#{p#=e#(<id>)}"
     } else {
-        "X{scope_param=AnchorEntity(id)}"
+        "Entity{scope_param=AnchorEntity(<id>)}"
     };
     let array_form = if spec.symbolic {
-        "p#=[e#($)]"
+        "p#=[e#(<id>), …]"
     } else {
-        "name=[Entity($)]"
+        "name=[Entity(<id>), …]"
     };
     let search_form = if spec.symbolic {
         "e#~\"text\""
     } else {
         "Entity~\"text\""
     };
-
     let entity_expr_rhs: &str = if spec.include_search_line {
         "query_all | get | query | relation | method | create_action | search"
     } else {
@@ -2912,23 +3574,55 @@ fn render_prompt_contract(spec: PromptContractSpec) -> String {
 
     s.push_str("Output:\n");
     s.push_str(
-        "- Single `plasm_expr` iff one lookup/query/search/relation/method/action is the whole answer.\n\
-- Else one multi-line `plasm_program`: bind → narrow (projection/postfix/bracket-render) → small bare roots—not many one-line tool calls.\n\n",
+        "- Emit only code: either one `plasm_expr`, or one multi-line `plasm_program` with bindings then final roots.\n\
+- Do not emit prose, JSON wrappers, `return`, Markdown fences, or table rows.\n\
+- Prefer bind → narrow/project/transform → few final roots when more than one step is needed.\n\n",
     );
 
+    s.push_str("TSV table semantics:\n");
+    s.push_str(
+        "- Header is exactly `plasm_expr<TAB>Meaning`; every following row has exactly one tab delimiter.\n\
+- Left cell is either executable syntax or metadata. Right cell is selection guidance only; never copy `Meaning` into output.\n\
+- Executable rows start with an entity surface (`e#`/`Entity`). Copy their left-cell shape, then replace placeholders.\n\
+- Metadata rows whose left cell is only `v#`/`value domain` define reusable value types. Metadata rows whose left cell is only `p#`/`field` define keyed slots. Metadata rows are never executable roots.\n\
+- `Meaning` fragments joined by ` · ` stay inside `Meaning`; they are not operators.\n\n",
+    );
+
+    s.push_str("Symbol and fill rules:\n");
+    if spec.symbolic {
+        s.push_str(
+            "- `e#` = entity surface; `m#` = method/action surface; `p#` = keyed field/parameter/relation slot; `v#` = value-domain metadata only.\n\
+- Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.\n\
+- `$` appears only in taught examples as a required fill placeholder. Replace every `$`; never emit `$`.\n\
+- `<id>`, `<value>`, `<receiver>`, and `elem` in this contract are meta-variables, not syntax tokens.\n\
+- If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.\n\
+- If `Meaning` says `optional params: pA, pB`, those keys may be added only as keyed assignments with real values.\n",
+        );
+    } else {
+        s.push_str(
+            "- Entity names, method names, and field names are literal code tokens when they appear in executable left cells.\n\
+- `$`, `<id>`, `<value>`, `<receiver>`, and `elem` are fill/meta placeholders; replace them before final output.\n\
+- If a copied row contains `..`, remove it or replace it with additional keyed assignments before final output.\n",
+        );
+    }
     let _ = writeln!(
         s,
-        "Grammar (pseudo-EBNF; DOMAIN rows instantiate `plasm_expr` atoms):"
+        "- Projection rows ending `{projection}` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.",
+        projection = projection
     );
-    let _ = writeln!(s, "plasm_program ::= plasm_roots | binding+ plasm_roots");
-    let _ = writeln!(s, "binding       ::= ident \"=\" plasm_node");
-    let _ = writeln!(s, "plasm_roots   ::= plasm_return (\",\" plasm_return)*");
-    let _ = writeln!(s, "plasm_return  ::= node_ref | plasm_expr");
+    s.push_str("- Relation rows end with `.p#`/`.field`; apply them to any executable receiver row for that same entity type.\n");
+    s.push_str("- `page(sN_pgM)` uses a continuation handle returned by a prior response; copy the handle exactly and optionally add `, limit=N`.\n\n");
+
+    s.push_str("Grammar:\n");
+    let _ = writeln!(s, "plasm_program ::= plasm_expr | binding+ roots");
+    let _ = writeln!(s, "binding       ::= ident \"=\" node");
+    let _ = writeln!(s, "roots         ::= root (\",\" root)*");
+    let _ = writeln!(s, "root          ::= ident | plasm_expr");
     let _ = writeln!(
         s,
-        "plasm_node    ::= ( plasm_expr | node_ref ) postfix* bracket_render_tail? | node_ref \"=>\" plasm_value | node_ref \"=>\" effect_expr"
+        "node          ::= (plasm_expr | ident) postfix* render_tail? | ident \"=>\" value_or_template"
     );
-    let _ = writeln!(s, "plasm_expr    ::= entity_expr [projection]");
+    let _ = writeln!(s, "plasm_expr    ::= entity_expr [projection] | page");
     let _ = writeln!(s, "entity_expr   ::= {}", entity_expr_rhs);
     let _ = writeln!(s, "query_all     ::= {}", query_all_form);
     let _ = writeln!(s, "get           ::= {}", get_form);
@@ -2939,138 +3633,49 @@ fn render_prompt_contract(spec: PromptContractSpec) -> String {
     if spec.include_search_line {
         let _ = writeln!(s, "search        ::= {}", search_form);
     }
+    let _ = writeln!(s, "page          ::= page(sN_pgM) | page(sN_pgM, limit=N)");
     let _ = writeln!(
         s,
         "projection    ::= {} | \"[\" fields \"]\"",
         projection_form
     );
-    let _ = writeln!(s, "postfix       ::= transform | \"[\" fields \"]\"");
     let _ = writeln!(
         s,
-        "bracket_render_tail ::= ( \"[\" fields \"]\" )? \"<<TAG\" heredoc_body \"TAG\""
-    );
-    let _ = writeln!(s, "positive_int  ::= non-zero decimal integer literal");
-    let _ = writeln!(s, "agg_func      ::= \"sum\" | \"avg\" | \"min\" | \"max\"");
-    let _ = writeln!(
-        s,
-        "agg_spec      ::= ident \"=\" ( \"count\" | agg_func \"(\" field \")\" )"
-    );
-    let _ = writeln!(s, "agg_specs     ::= agg_spec (\",\" agg_spec)*");
-    let _ = writeln!(
-        s,
-        "sort_dir      ::= omitted | \"desc\" | \"asc\" | \"ascending\" | \"descending\""
+        "postfix       ::= \".limit(N)\" | \".page_size(N)\" | \".sort(field[, dir])\" | \".aggregate(specs)\" | \".group_by(field, specs)\" | \".singleton()\" | \"[\" fields \"]\""
     );
     let _ = writeln!(
         s,
-        "transform     ::= \".limit(\" positive_int \")\" | \".sort(\" field [\",\" sort_dir] \")\" | \".aggregate(\" agg_specs \")\" | \".group_by(\" field \",\" agg_specs \")\" | \".singleton()\" | \".page_size(\" positive_int \")\""
+        "render_tail   ::= (\"[\" fields \"]\")? \"<<TAG\" template_body \"TAG\""
     );
     let _ = writeln!(s, "fields        ::= {}", projection);
     let _ = writeln!(
         s,
-        "plasm_value   ::= literal | node_ref | node_ref.field | _.field | [v, …]"
+        "specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) [, ...]"
     );
+    let _ = writeln!(s, "dir           ::= desc | asc | descending | ascending");
     let _ = writeln!(
         s,
-        "effect_expr   ::= taught write/update/delete/action surface from DOMAIN (same line may template rows)"
+        "value_or_template ::= literal | ident | ident.field | _.field | [elem, ...] | heredoc"
     );
-    let _ = writeln!(
-        s,
-        "ident/node_ref/field ::= agent-chosen names for bound nodes and fields"
-    );
-    let _ = writeln!(
-        s,
-        "literal       ::= quoted string | number | bool | null | heredoc"
-    );
-    s.push_str("\nAggregates (examples): `.aggregate(n=count)`, `.aggregate(total=sum(amount), lo=min(price))`, `.group_by(author, n=count)`.\n\n");
+    let _ = writeln!(s, "literal       ::= quoted string | number | bool | null");
+    s.push('\n');
 
-    s.push_str("Continuation:\n");
+    s.push_str("Composition rules:\n");
     s.push_str(
-        "- Postfix (transforms, `[fields]`, `<<TAG…TAG`) may chain on one surface `plasm_expr`.\n\
-- `ident.<relation>` only after surface row bindings (get/query/relation); after projection/transform/`=>`, repeat full DOMAIN expr or rebind. Bracket-render = Minijinja `rows`; optional `[fields]` narrows columns → row `{\"content\":\"…\"}` — use **`binding.content`** for string/body args.\n\n",
-    );
-
-    s.push_str("MCP `program` (JSON string):\n");
-    s.push_str(
-        "- Literal U+000A between statements (one `ident = …` per line; bare roots last). Spaces never separate statements.\n\
-- Heredoc: newline after `<<TAG` opener; close line trims to `TAG` / `TAG)` / `TAG,` / `TAG}`; first matching trimmed interior line closes—opaque `TAG` for blobs. Commas inside heredocs never split roots (e.g. `…<<B` / `Hello` / `B` / `), e2`).\n\n",
-    );
-
-    s.push_str("Discipline:\n");
-    s.push_str(
-        "- Plan shape first; small roots unless raw rows requested; bracket-render row-derived text, static `<<TAG` for fixed payloads.\n\
-- `page(sN_pgM)` continues a chosen list only; DOMAIN is the shape contract—no probe calls.\n\n",
-    );
-
-    s.push_str("DOMAIN / catalogue:\n");
-    let _ = writeln!(
-        s,
-        "- `plasm_expr` = atoms; `Meaning` = how to pick/fill—never paste `Meaning`. Bare comma-separated roots (no `return`); every symbol taught here."
+        "- Multi-line program strings use literal newlines: one binding per line, final roots last. Spaces never separate statements.\n\
+- Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.\n\
+- Render tails use Minijinja over `rows`; the render result is one row with `content`. Pass `binding.content` to string/body parameters.\n\
+- Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.\n",
     );
     let _ = writeln!(
         s,
-        "- Projection: minimal non-empty `{}`; identity row lists full fields once. Leading `{field}` rows = slot metadata when method `args:` is insufficient.",
-        projection,
-        field = field
+        "- Examples: scoped child list `{scoped_form}`; array argument `{array_form}`. Quoted strings use only `\\\"` and `\\\\` escapes.",
+        scoped_form = scoped_form,
+        array_form = array_form
     );
-
-    if spec.symbolic {
-        s.push_str(
-            "- e#, m#, p# are session-local aliases — copy them exactly; new prompts supersede old meanings.\n\
-- Pick by `Meaning`, copy `plasm_expr`, bind keyed slot (`p12=value`) only; never positional or renumbered args.\n",
-        );
-    } else {
-        s.push_str(
-            "- Entity names, methods, and slots — use exactly as shown; a slot may be field, relation, or parameter by context.\n",
-        );
-    }
-
-    s.push_str(&format!(
-        "- Instantiate grammar lines from DOMAIN only; keyed `{field}=v` never positional. `v=$` in tables is a fill cue.\n\
-- `{query_form}` / `{query_all_form}` list/filter; `{get_form}` fetch one; `{nav_form}` relate; `{method_form}` call; `{create_form}` without id; `{projection_form}` projects—after `{entity}(id)`, `.` is relation or taught `{method}` only.\n",
-        field = field,
-        entity = entity,
-        method = method,
-        query_form = query_form,
-        query_all_form = query_all_form,
-        get_form = get_form,
-        nav_form = nav_form,
-        method_form = method_form,
-        create_form = create_form,
-        projection_form = projection_form,
-    ));
-    let _ = writeln!(
-        s,
-        "- Scoped child lists: `{scoped_form}` from the child entity’s DOMAIN rows; never invent `Y(id).{field}`.",
-        field = field
-    );
-    let _ = writeln!(
-        s,
-        "- Arrays in args: `[v, …]` (e.g. `{array_form}`). Quoted strings: only `\\\"` and `\\\\` escapes."
-    );
-    s.push_str("- `select` one allowed value; `multiselect` / multi-value lists as `[v, …]`.\n");
     if spec.include_rich_string_guidance {
         s.push_str(&render_rich_string_guidance_tsv());
     }
-    if spec.include_search_line {
-        let _ = writeln!(
-            s,
-            "- Search `{search_form}` only where DOMAIN teaches `~` on that entity.",
-            search_form = search_form
-        );
-    }
-    let _ = writeln!(
-        s,
-        "- `{field}`-only rows declare slots (metadata), not expressions to emit.",
-        field = field
-    );
-    let _ = writeln!(
-        s,
-        "- `$` marks fill-ins — substitute real values; never send `$`."
-    );
-    let _ = writeln!(
-        s,
-        "- `..` — optional trailing params (`optional params:` lists them); `..` alone means all args optional."
-    );
     s.push('\n');
 
     s
@@ -3094,62 +3699,148 @@ fn comment_prefix_block(text: &str) -> String {
     out
 }
 
-/// True when `sym` is the **terminal** relation segment (`… .p#`) and the DOMAIN line already carries
-/// a `;;  => …` result gloss — the standalone `p#  ;;  => e# · Target` line would duplicate that.
+/// True when `sym` is the **terminal** relation segment (`… .p#`) and the teaching row already carries
+/// a result gloss — a standalone `p#` gloss row would duplicate relation target typing.
 fn skip_redundant_terminal_relation_sym_gloss(
-    full_line: &str,
+    expr: &str,
     sym: &str,
     meta: &crate::symbol_tuning::IdentMetadata,
+    result_gloss: Option<&str>,
 ) -> bool {
     let relation_like = matches!(meta, crate::symbol_tuning::IdentMetadata::Relation { .. });
     if !relation_like {
         return false;
     }
-    let Some((expr_leg, legend_leg)) = full_line.split_once(CAP_LEGEND_SEP) else {
+    if !matches!(result_gloss, Some(g) if !g.trim().is_empty()) {
         return false;
-    };
-    let expr = crate::symbol_tuning::strip_prompt_expression_annotations(expr_leg.trim());
+    }
+    let expr = crate::symbol_tuning::strip_prompt_expression_annotations(expr.trim());
     let expr = expr.trim_end();
     let Some((_, last_seg)) = expr.rsplit_once('.') else {
         return false;
     };
-    if last_seg != sym {
-        return false;
-    }
-    let legend = legend_leg.trim();
-    legend.starts_with("=>")
+    last_seg == sym
 }
 
-/// Emit `p#  ;;  …` lines for each field symbol’s **first** appearance in `line` (expression + `;;` legend, e.g. `optional params: p18, p19`).
+/// Tracks `p#` / `v#` gloss lines emitted before DOMAIN example rows (first-use only).
+struct FieldGlossEmitState {
+    /// Registry-backed opaque `p#`: compact `v# · wire` teaching string already emitted for this symbol.
+    /// Slots that share one `p#` but differ in point-of-use description keep distinct strings and may re-teach.
+    registry_p_slot_compact_gloss: HashMap<String, String>,
+    /// Relation edges and non-value-domain fallbacks: retain full metadata inequality for re-teach decisions.
+    non_registry_slots: HashMap<String, IdentMetadata>,
+    defined_value_domains: HashSet<String>,
+}
+
+/// Per-entity field gloss rows built directly into [`TeachingFieldGloss`] (no compact transcript).
+struct GlossScratch<'a> {
+    field_gloss: &'a mut Vec<TeachingFieldGloss>,
+    state: &'a mut FieldGlossEmitState,
+    map: &'a SymbolMap,
+    meta: &'a HashMap<IdentMetaKey, IdentMetadata>,
+    catalog_entry_id: &'a str,
+    entity: &'a str,
+}
+
+impl GlossScratch<'_> {
+    fn emit_before_teaching_example(
+        &mut self,
+        expr: &str,
+        cap_legend: Option<&str>,
+        result_gloss: Option<&str>,
+    ) {
+        emit_field_def_lines_before_example(
+            self.field_gloss,
+            expr,
+            cap_legend,
+            result_gloss,
+            self.map,
+            self.entity,
+            self.catalog_entry_id,
+            self.meta,
+            self.state,
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn emit_field_def_lines_before_example(
-    out: &mut String,
-    line: &str,
+    out: &mut Vec<TeachingFieldGloss>,
+    expr: &str,
+    cap_legend: Option<&str>,
+    result_gloss: Option<&str>,
     map: &SymbolMap,
     entity: &str,
     catalog_entry_id: &str,
     ident_meta: &HashMap<IdentMetaKey, IdentMetadata>,
-    defined: &mut HashMap<String, IdentMetadata>,
+    state: &mut FieldGlossEmitState,
 ) {
     let en = EntityName::from(entity.to_string());
     let cid = catalog_entry_id.to_string();
-    for sym in crate::symbol_tuning::field_syms_for_domain_line(line) {
+    for sym in crate::symbol_tuning::field_syms_for_teaching_row(expr, result_gloss, cap_legend) {
         let field_name = map.resolve_ident(&sym).unwrap_or(&sym);
         let meta = map
             .capability_param_key_for_p_sym(&sym)
             .as_ref()
             .and_then(|(dom, w)| ident_meta.get(&(cid.clone(), dom.clone(), w.clone())))
             .or_else(|| ident_meta.get(&(cid.clone(), en.clone(), field_name.to_string())));
-        let should_emit = match (meta, defined.get(&sym)) {
+
+        // Registry-backed `value_ref` slots: `v#` once per value domain; `p#` once per distinct compact gloss.
+        if let (Some(m), Some(vs)) = (meta, map.value_sym_for_p_sym(sym.as_str())) {
+            if let IdentMetadata::RegistryBacked { .. } = m {
+                if let Some(vg) = map.value_domain_gloss_for_v_sym(vs) {
+                    if state.defined_value_domains.insert(vs.to_string()) {
+                        push_teaching_field_gloss_row(
+                            out,
+                            vs.to_string(),
+                            vg,
+                            entity,
+                            catalog_entry_id,
+                            Some(map),
+                            Some(ident_meta),
+                        );
+                    }
+                    let mut compact = format!("{} \u{00b7} {}", vs, m.wire_name());
+                    let d = m.description().trim();
+                    if !d.is_empty() {
+                        let t = crate::symbol_tuning::gloss_description_truncated(d);
+                        compact = format!("{} \u{00b7} {} \u{00b7} {}", vs, m.wire_name(), t);
+                    }
+                    if state
+                        .registry_p_slot_compact_gloss
+                        .get(&sym)
+                        .is_some_and(|prev| prev == &compact)
+                    {
+                        continue;
+                    }
+                    state
+                        .registry_p_slot_compact_gloss
+                        .insert(sym.clone(), compact.clone());
+                    push_teaching_field_gloss_row(
+                        out,
+                        sym.clone(),
+                        &compact,
+                        entity,
+                        catalog_entry_id,
+                        Some(map),
+                        Some(ident_meta),
+                    );
+                    continue;
+                }
+            }
+        }
+
+        let should_emit = match (meta, state.non_registry_slots.get(&sym)) {
             (Some(m), None) => {
-                defined.insert(sym.clone(), m.clone());
+                state.non_registry_slots.insert(sym.clone(), (*m).clone());
                 true
             }
-            (Some(m), Some(prev)) if prev != m => {
-                defined.insert(sym.clone(), m.clone());
+            (Some(m), Some(prev)) if *prev != *m => {
+                state.non_registry_slots.insert(sym.clone(), (*m).clone());
                 true
             }
             (None, None) => {
-                defined.insert(
+                state.non_registry_slots.insert(
                     sym.clone(),
                     crate::symbol_tuning::IdentMetadata::SyntheticUnknown {
                         catalog_entry_id: cid.clone(),
@@ -3163,33 +3854,25 @@ fn emit_field_def_lines_before_example(
             _ => false,
         };
         if should_emit {
-            if let Some(m) = meta {
-                if skip_redundant_terminal_relation_sym_gloss(line, sym.as_str(), m) {
-                    defined.remove(&sym);
+            if let Some(m) = &meta {
+                if skip_redundant_terminal_relation_sym_gloss(expr, sym.as_str(), m, result_gloss) {
+                    state.non_registry_slots.remove(&sym);
                     continue;
-                }
-                if matches!(
-                    m,
-                    crate::symbol_tuning::IdentMetadata::RegistryBacked {
-                        role: crate::symbol_tuning::IdentRegistryRole::CapabilityParam { .. },
-                        ..
-                    }
-                ) {
-                    if let Some(sup) =
-                        crate::symbol_tuning::args_line_suppressible_capability_syms(line)
-                    {
-                        if sup.get(sym.as_str()) == Some(&true) {
-                            defined.remove(&sym);
-                            continue;
-                        }
-                    }
                 }
             }
             let gloss = match meta {
                 Some(m) => m.render_gloss(Some(map)),
                 None => field_name.to_string(),
             };
-            let _ = writeln!(out, "    {}{}{}", sym, CAP_LEGEND_SEP, gloss);
+            push_teaching_field_gloss_row(
+                out,
+                sym.clone(),
+                &gloss,
+                entity,
+                catalog_entry_id,
+                Some(map),
+                Some(ident_meta),
+            );
         }
     }
 }
@@ -3201,7 +3884,7 @@ fn render_domain_table_resolved<'b, F>(
     full_entities: &[&str],
     map: Option<&SymbolMap>,
     exposure_for_ident: Option<&DomainExposureSession>,
-    out: &mut String,
+    teaching_blocks_out: &mut Vec<EntityTeachingBlock>,
     model_out: &mut Vec<EntityDomainPrompt>,
     fill_model: bool,
     _include_contract_preamble: bool,
@@ -3224,7 +3907,11 @@ fn render_domain_table_resolved<'b, F>(
         _ => None,
     };
 
-    let mut defined_field_syms: HashMap<String, IdentMetadata> = HashMap::new();
+    let mut gloss_emit_state = FieldGlossEmitState {
+        registry_p_slot_compact_gloss: HashMap::new(),
+        non_registry_slots: HashMap::new(),
+        defined_value_domains: HashSet::new(),
+    };
     let mut line_valid_cache: HashMap<DomainLineValidCacheKey, bool> = HashMap::with_capacity(8192);
 
     let block_iter: Vec<&str> = if let Some(e) = emit_entity_blocks {
@@ -3235,17 +3922,29 @@ fn render_domain_table_resolved<'b, F>(
 
     for &ename in &block_iter {
         let cgs = resolve(ename);
-        let mut seen_expr: HashSet<String> = HashSet::new();
         let collect_meta = fill_model;
-        let block = collect_entity_domain_block(
+        let mut field_gloss_accum = Vec::new();
+        let mut gloss_emit: Option<GlossScratch<'_>> = match (map, ident_meta.as_ref()) {
+            (Some(m), Some(meta)) => Some(GlossScratch {
+                field_gloss: &mut field_gloss_accum,
+                state: &mut gloss_emit_state,
+                map: m,
+                meta,
+                catalog_entry_id: cgs.entry_id.as_deref().unwrap_or(""),
+                entity: ename,
+            }),
+            _ => None,
+        };
+        let block = collect_entity_teaching_block(
             cgs,
             ename,
             map,
             ident_meta.as_ref(),
             collect_meta,
             &mut line_valid_cache,
+            &mut gloss_emit,
         );
-        if block.lines.is_empty() {
+        if block.teaching_rows.is_empty() {
             debug_assert!(
                 false,
                 "DOMAIN block empty for entity {ename} — CGS::validate should have rejected this via cgs_expression_validate"
@@ -3257,55 +3956,25 @@ fn render_domain_table_resolved<'b, F>(
             );
             continue;
         }
-        let ent_desc = cgs
-            .get_entity(ename)
-            .map(|ent| ent.description.as_str().trim())
-            .filter(|d| !d.is_empty())
-            .map(|d| truncate_inline_desc(d, 200));
-        let heading_line = format_entity_domain_heading_line(
-            &block.entity_sym,
-            block.heading_projection_bracket.as_deref(),
-            ent_desc.as_deref(),
-        );
-        if let (Some(m), Some(meta)) = (map, ident_meta.as_ref()) {
-            let catalog_entry_id = cgs.entry_id.as_deref().unwrap_or("");
-            emit_field_def_lines_before_example(
-                out,
-                &heading_line,
-                m,
-                ename,
-                catalog_entry_id,
-                meta,
-                &mut defined_field_syms,
-            );
-        }
-        let _ = writeln!(out, "  {}", heading_line);
+        let mut seen_expr: HashSet<TeachingRowDedupeKey> = HashSet::new();
         let mut emitted_metas: Vec<DomainLineMeta> = Vec::new();
-        for (i, line) in block.lines.iter().enumerate() {
-            if seen_expr.insert(line.clone()) {
+        let mut kept_rows: Vec<EntityTeachingExprRow> = Vec::new();
+        for row in block.teaching_rows {
+            if seen_expr.insert(row.dedupe_key.clone()) {
                 if collect_meta {
-                    if let Some(m) = block.line_metas.get(i) {
-                        emitted_metas.push(m.clone());
-                    }
+                    emitted_metas.push(row.meta.clone());
                 }
-                if let (Some(m), Some(meta)) = (map, ident_meta.as_ref()) {
-                    let catalog_entry_id = cgs.entry_id.as_deref().unwrap_or("");
-                    emit_field_def_lines_before_example(
-                        out,
-                        line,
-                        m,
-                        ename,
-                        catalog_entry_id,
-                        meta,
-                        &mut defined_field_syms,
-                    );
-                }
-                let _ = writeln!(out, "    {line}");
+                kept_rows.push(row);
             }
         }
+        teaching_blocks_out.push(EntityTeachingBlock {
+            heading: block.heading,
+            field_gloss_rows: block.field_gloss_rows,
+            teaching_rows: kept_rows,
+        });
         if fill_model {
             model_out.push(EntityDomainPrompt {
-                entity: block.entity_sym,
+                entity: ename.to_string(),
                 lines: emitted_metas,
             });
         }
@@ -3318,7 +3987,7 @@ fn render_domain_table(
     cgs: &CGS,
     full_entities: &[&str],
     map: Option<&SymbolMap>,
-    out: &mut String,
+    teaching_blocks_out: &mut Vec<EntityTeachingBlock>,
     model_out: &mut Vec<EntityDomainPrompt>,
     fill_model: bool,
     include_contract_preamble: bool,
@@ -3329,7 +3998,7 @@ fn render_domain_table(
         full_entities,
         map,
         None,
-        out,
+        teaching_blocks_out,
         model_out,
         fill_model,
         include_contract_preamble,
@@ -3340,7 +4009,12 @@ fn render_domain_table(
 /// `p#  ;;  …` field gloss lines (not Plasm expressions).
 #[cfg(test)]
 fn is_field_gloss_line(trimmed: &str) -> bool {
-    let Some(rest) = trimmed.strip_prefix('p') else {
+    let t = trimmed.trim_start();
+    let rest = if let Some(r) = t.strip_prefix('p') {
+        r
+    } else if let Some(r) = t.strip_prefix('v') {
+        r
+    } else {
         return false;
     };
     let mut len = 0usize;
@@ -3405,7 +4079,11 @@ fn example_expressions_from_prompt(prompt: &str) -> Vec<String> {
 #[cfg(test)]
 fn is_tsv_expression_column_slot_def(expr_cell: &str) -> bool {
     let s = expr_cell.trim();
-    let Some(rest) = s.strip_prefix('p') else {
+    let rest = if let Some(r) = s.strip_prefix('p') {
+        r
+    } else if let Some(r) = s.strip_prefix('v') {
+        r
+    } else {
         return false;
     };
     !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit())
@@ -3493,6 +4171,27 @@ mod tests {
     }
 
     #[test]
+    fn plasm_language_contract_is_tsv_first_and_avoids_legacy_terms() {
+        let contract = render_plasm_mcp_language_frontmatter();
+        assert!(
+            contract.contains("TSV table semantics:"),
+            "contract should teach TSV interpretation before catalog rows"
+        );
+        assert!(
+            contract.contains("p#=<value>"),
+            "symbolic value placeholders must use <value>, not bare v"
+        );
+        assert!(
+            contract.contains("page(sN_pgM)"),
+            "page continuation handles are taught by responses and must remain in the contract"
+        );
+        assert!(
+            !contract.contains("DOMAIN") && !contract.contains(";;") && !contract.contains("p#=v"),
+            "contract must not reintroduce legacy DOMAIN/compact separators or bare-v placeholders:\n{contract}"
+        );
+    }
+
+    #[test]
     fn redundant_relation_sym_gloss_skipped_for_terminal_chain_line() {
         use crate::symbol_tuning::IdentMetadata;
         use crate::EntityName;
@@ -3506,14 +4205,16 @@ mod tests {
             target: user.clone(),
         };
         assert!(skip_redundant_terminal_relation_sym_gloss(
-            "e5(p64=$, p80=$, p59=$).p101  ;;  => e18",
+            "e5(p64=$, p80=$, p59=$).p101",
             "p101",
-            &rel_meta
+            &rel_meta,
+            Some("e18"),
         ));
         assert!(!skip_redundant_terminal_relation_sym_gloss(
-            "e5{p101=$, p64=$, p80=$}  ;;  => [e5]",
+            "e5{p101=$, p64=$, p80=$}",
             "p101",
-            &rel_meta
+            &rel_meta,
+            Some("[e5]"),
         ));
         let title_meta = IdentMetadata::SyntheticUnknown {
             catalog_entry_id: String::new(),
@@ -3522,9 +4223,10 @@ mod tests {
             description: String::new(),
         };
         assert!(!skip_redundant_terminal_relation_sym_gloss(
-            "e5(p64=$, p80=$, p59=$)[p96]  ;;  => [p96]",
+            "e5(p64=$, p80=$, p59=$)[p96]",
             "p96",
-            &title_meta
+            &title_meta,
+            Some("[p96]"),
         ));
     }
 
@@ -3545,7 +4247,7 @@ mod tests {
                 let n = domain_example_line_count(&cgs, ename, map.as_ref());
                 assert!(
                     n > 0,
-                    "{}: entity `{ename}` is in full_entities but collect_entity_domain_block emitted no lines",
+                    "{}: entity `{ename}` is in full_entities but collect_entity_teaching_block emitted no teaching rows",
                     p.display()
                 );
             }
@@ -3767,6 +4469,19 @@ mod tests {
         assert_eq!(b, "plasm_expr\tMeaning\na\tb\n");
     }
 
+    #[test]
+    fn rendered_domain_tsv_teaching_rows_single_tab_separator() {
+        let dir = apis_dir("cloudflare");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+        let (_, body) = split_tsv_domain_contract_and_table(&tsv);
+        validate_domain_tsv_teaching_table(&body)
+            .expect("every teaching row must be expr\\tMeaning");
+    }
+
     /// Regression: TSV `p#` gloss rows must use [`IdentMetadata`] for the entity owning the DOMAIN
     /// block, not `full_entities[idx]` by YAML insertion order (symbolic bundle uses sorted
     /// [`DomainExposureSession::entities`]). Overshow has `RecordedContent.id` (string) and
@@ -3797,31 +4512,38 @@ mod tests {
             })
             .collect::<Vec<_>>()
             .join("\n");
-        let id_gloss = first_block
-            .lines()
-            .find(|l| {
-                let mut cols = l.split('\t');
-                let Some(sym) = cols.next() else {
-                    return false;
-                };
-                let Some(meaning) = cols.next() else {
-                    return false;
-                };
-                sym.starts_with('p') && meaning.contains("int")
-            })
-            .unwrap_or_else(|| {
-                panic!(
-                    "expected a p# gloss row for CaptureItem integer `id` in first block, got:\n{first_block}"
-                );
-            });
+        let id_typing_on_v = first_block.lines().any(|l| {
+            let mut cols = l.split('\t');
+            let Some(sym) = cols.next() else {
+                return false;
+            };
+            let Some(meaning) = cols.next() else {
+                return false;
+            };
+            sym.starts_with('v') && meaning.contains("int")
+        });
+        let id_slot_teaches_v = first_block.lines().any(|l| {
+            let mut cols = l.split('\t');
+            let Some(sym) = cols.next() else {
+                return false;
+            };
+            let Some(meaning) = cols.next() else {
+                return false;
+            };
+            sym.starts_with('p')
+                && meaning.starts_with('v')
+                && meaning.contains("id")
+                && meaning.contains(" · id")
+        });
         assert!(
-            id_gloss.contains("int"),
-            "CaptureItem `id` should gloss as int, not str from mis-paired entity: {id_gloss:?}"
+            id_typing_on_v && id_slot_teaches_v,
+            "CaptureItem `id` should type on a v# row (`int`) and the p# row should teach `v# · id`; first block:\n{first_block}"
         );
     }
 
     /// `Profile.recorded_matches` targets `RecordedContent`, which has Search/Query but no Get — DOMAIN
-    /// must still teach `e7($).p#` chain nav for `query_scoped` many relations.
+    /// must still teach chain nav for `query_scoped` many relations using a **validated** receiver
+    /// (query-scoped `e7{…}` preferred over bare `e7($)` when that is the anchor that type-checks).
     #[test]
     fn overshow_tsv_includes_query_scoped_profile_relation_nav() {
         let dir = fixtures_schemas_dir("overshow_tools");
@@ -3831,8 +4553,9 @@ mod tests {
         let cgs = load_schema_dir(&dir).unwrap();
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         assert!(
-            tsv.lines()
-                .any(|l| { l.contains("e7($).p") && l.contains("Content scoped to this profile") }),
+            tsv.lines().any(|l| {
+                l.contains("Content scoped to this profile") && l.contains(".p") && l.contains("e7")
+            }),
             "expected Profile → RecordedContent relation nav line; e7 lines:\n{}",
             tsv.lines()
                 .filter(|l| l.contains("e7"))
@@ -3891,39 +4614,66 @@ mod tests {
             .lines()
             .find(|l| {
                 let cols: Vec<&str> = l.split('\t').collect();
-                cols.len() == 2 && cols[0].starts_with("e5(") && cols[1].contains("GitHub issue")
+                cols.len() == 2
+                    && cols[0].starts_with("e5(")
+                    && !cols[0].contains('[')
+                    && cols[1].starts_with("returns e5")
             })
-            .expect("Issue identity row");
+            .expect("Issue compound identity get row");
         let cols: Vec<&str> = issue_identity.split('\t').collect();
         assert_eq!(cols.len(), 2, "identity row should have 2 columns");
         assert!(cols[0].starts_with("e5("));
         assert!(
-            (cols[0].contains('[') && cols[0].contains(']'))
-                || (cols[1].contains("projection [") && cols[1].contains('p')),
-            "identity row should teach full projection on the plasm_expr get line, or in Meaning if the list is not on the expression: row={issue_identity:?}"
+            !cols[0].contains('['),
+            "Issue identity get should not fuse a projection bracket; row={issue_identity:?}"
         );
-        if cols[0].contains('[') {
-            assert!(
-                !cols[1].contains("projection ["),
-                "do not repeat full projection in Meaning when plasm_expr already carries the list"
-            );
-        }
+        let issue_projection_row = tsv.lines().find(|l| {
+            let c: Vec<&str> = l.split('\t').collect();
+            if c.len() != 2 {
+                return false;
+            }
+            let expr = c[0].trim();
+            expr.starts_with("e5")
+                && c[1].contains("· projection")
+                && parse_trailing_projection_bracket(expr).is_some()
+        });
+        let issue_projection_row =
+            issue_projection_row.expect("expected Issue projection witness TSV row");
         assert!(
-            cols[1].contains("GitHub issue"),
-            "identity row description should carry entity prose"
+            issue_projection_row.contains("GitHub issue"),
+            "projection witness Meaning should carry Issue entity prose once: {issue_projection_row:?}"
         );
-        let select_row = tsv
+        assert!(
+            !cols[1].contains("GitHub issue"),
+            "identity get Meaning should not repeat entity banner prose; row={issue_identity:?}"
+        );
+        let state_slot = tsv
             .lines()
             .find(|l| {
                 let cols: Vec<&str> = l.split('\t').collect();
                 cols.len() == 2
                     && cols[0].starts_with('p')
-                    && cols[1] == "select · allowed: open, closed"
+                    && cols[1].contains("state")
+                    && cols[1].contains('v')
             })
-            .expect("Issue state select field row");
-        let select_cols: Vec<&str> = select_row.split('\t').collect();
-        assert_eq!(select_cols.len(), 2);
-        assert_eq!(select_cols[1], "select · allowed: open, closed");
+            .expect("Issue state field TSV row (compact `v# · state` when select shares values:)");
+        let state_cols: Vec<&str> = state_slot.split('\t').collect();
+        assert_eq!(state_cols.len(), 2);
+        assert!(
+            state_cols[1].starts_with('v') && state_cols[1].contains(" · state"),
+            "expected `v# · wire` Meaning for enum-backed state slot; got {:?}",
+            state_cols[1]
+        );
+        assert!(
+            tsv.lines().any(|l| {
+                let c: Vec<&str> = l.split('\t').collect();
+                c.len() == 2
+                    && c[0].starts_with('v')
+                    && c[1].contains("open")
+                    && c[1].contains("closed")
+            }),
+            "expected a v# row carrying Issue state allowed values; excerpt missing open/closed"
+        );
         let body = tsv
             .lines()
             .skip_while(|line| *line != TSV_DOMAIN_TABLE_HEADER.trim_end())
@@ -3931,20 +4681,20 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(
-            !body.contains(";;") && !body.contains("=>"),
-            "2-column TSV surface should remove compact gloss tokens entirely"
+            !body.contains(";;"),
+            "2-column TSV surface should remove compact `;;` gloss separators"
         );
         let owner_slot_rows: Vec<&str> = tsv
             .lines()
             .filter(|l| {
                 l.split('\t').nth(1).is_some_and(|m| {
-                    m.contains("owner") && (m.contains("str") || m.contains("int"))
+                    m.contains("owner") && m.starts_with('v') && m.contains(" · owner")
                 })
             })
             .collect();
         assert!(
             owner_slot_rows.iter().any(|row| row.starts_with('p')),
-            "expected a p# slot row whose Meaning mentions owner (wire field), got {owner_slot_rows:?}"
+            "expected a p# row `v# · owner` (value-domain symbol then wire), got {owner_slot_rows:?}"
         );
         let issue_comment_create_row = tsv
             .lines()
@@ -3964,10 +4714,10 @@ mod tests {
         let contrib = tsv
             .lines()
             .find(|l| {
-                let m = l.to_lowercase();
-                m.contains("contributors")
-                    && m.contains("commit count")
-                    && (m.contains("repo") || m.contains("repository"))
+                let cols: Vec<&str> = l.split('\t').collect();
+                cols.len() == 2
+                    && (cols[0].to_lowercase().contains("contributor")
+                        || cols[1].to_lowercase().contains("contributor"))
             })
             .expect("Contributor list DOMAIN row");
         assert!(
@@ -3975,8 +4725,269 @@ mod tests {
             "contributor query row should be a brace-query exemplar: {contrib:?}"
         );
         assert!(
-            contrib.contains("args:") && contrib.contains(" opt"),
-            "contributor query Meaning should carry compact args (req/opt), not a duplicate optional list: {contrib:?}"
+            !contrib.contains("args:"),
+            "capability legends omit inline `args:`; contributor row was: {contrib:?}"
+        );
+        assert!(
+            contrib.contains("optional params:") || contrib.contains("[scope"),
+            "contributor query Meaning should carry optionality or scope context: {contrib:?}"
+        );
+    }
+
+    #[test]
+    fn tsv_teaching_emitted_directly_has_no_compact_domain_separator_in_table() {
+        let dir = apis_dir("dnd5e");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+        let Some(idx) = prompt.find(TSV_DOMAIN_TABLE_HEADER) else {
+            panic!(
+                "expected {} in rendered prompt",
+                TSV_DOMAIN_TABLE_HEADER.trim_end()
+            );
+        };
+        let table = &prompt[idx..];
+        validate_domain_tsv_teaching_table(table).expect("TSV teaching invariant");
+        for line in table.lines().skip(1) {
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            assert!(
+                !line.contains(";;"),
+                "direct TSV emission must not leak compact DOMAIN transcript tokens: {line:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn teaching_expr_line_from_layers_splits_result_and_capability_legend() {
+        let row = teaching_expr_line_from_layers(
+            "e2(p20=$, p11=$)",
+            Some("e2 · gloss with no delimiter issue"),
+            Some("[scope p20→e4] — cap desc"),
+        );
+        assert_eq!(row.expression, "e2(p20=$, p11=$)");
+        assert_eq!(row.result_type, "e2 · gloss with no delimiter issue");
+        assert!(
+            row.scope.contains("scope") || row.description.contains("cap"),
+            "expected capability legend in scope/description: scope={:?} desc={:?}",
+            row.scope,
+            row.description
+        );
+    }
+
+    #[test]
+    fn teaching_expr_line_from_layers_preserves_double_spaces_in_result_gloss() {
+        let row = teaching_expr_line_from_layers("e1()", Some("part1  part2"), Some("[scope x]"));
+        assert_eq!(row.result_type, "part1  part2");
+    }
+
+    #[test]
+    fn teaching_expr_line_from_layers_double_space_in_result_before_scope() {
+        let row = teaching_expr_line_from_layers("e1()", Some("e2 · tail  "), Some("[scope x]"));
+        assert_eq!(row.result_type, "e2 · tail");
+        assert!(row.scope.contains("scope") || row.description.contains('['));
+    }
+
+    #[test]
+    fn cloudflare_zone_domain_no_unary_placeholder_relation_or_fake_projection_meaning() {
+        let dir = apis_dir("cloudflare");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
+        let lines = domain_example_lines(&cgs, "Zone", Some(&map));
+        for line in &lines {
+            let head = line.trim();
+            assert!(
+                !(head.contains("($)") && head.contains('.')),
+                "relation/method recv must not use invalid unary identity get `e#($).…`: {head}"
+            );
+        }
+        let mut line_valid_cache = HashMap::new();
+        let mut gloss_emit_none = None;
+        let block = collect_entity_teaching_block(
+            &cgs,
+            "Zone",
+            Some(&map),
+            None,
+            false,
+            &mut line_valid_cache,
+            &mut gloss_emit_none,
+        );
+        let witness_row = block.teaching_rows.iter().find(|r| {
+            r.teaching_expr.is_projection_teaching
+                && parse_trailing_projection_bracket(r.teaching_expr.expression.trim()).is_some()
+        });
+        let Some(row) = witness_row else {
+            panic!("expected a projection witness row for Zone DOMAIN; lines={lines:?}");
+        };
+        let expr = row.teaching_expr.expression.as_str();
+        let legend = DomainTsvMeaningCell::from_teaching_atoms(teaching_expr_meaning_atoms(
+            &row.teaching_expr,
+            false,
+            false,
+            &TeachingHeading::default(),
+        ))
+        .as_str()
+        .to_owned();
+        let work = domain_line_work_string(expr, Some(&map));
+        assert!(
+            domain_line_valid_work(&cgs, &work),
+            "projection witness must parse+typecheck: {expr}"
+        );
+        assert!(
+            !legend.contains("projection [") && !legend.contains("· projection ["),
+            "projection Meaning must not use legacy `projection […]` gloss prefix: {legend:?}"
+        );
+        assert!(
+            !legend.contains("$)["),
+            "projection Meaning must not embed a fake `…($)[…]` exemplar: {legend:?}"
+        );
+    }
+
+    #[test]
+    fn cloudflare_zone_projection_tsv_row_has_exactly_one_machine_tab() {
+        let dir = apis_dir("cloudflare");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
+        let mut line_valid_cache = HashMap::new();
+        let mut gloss_emit_none = None;
+        let block = collect_entity_teaching_block(
+            &cgs,
+            "Zone",
+            Some(&map),
+            None,
+            false,
+            &mut line_valid_cache,
+            &mut gloss_emit_none,
+        );
+        let witness_row = block.teaching_rows.iter().find(|r| {
+            r.teaching_expr.is_projection_teaching
+                && parse_trailing_projection_bracket(r.teaching_expr.expression.trim()).is_some()
+        });
+        let Some(row) = witness_row else {
+            panic!("expected a projection witness row for Zone DOMAIN");
+        };
+        let expr = row.teaching_expr.expression.as_str();
+        let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+        let line = prompt.lines().find(|l| {
+            if l.is_empty() || l.starts_with('#') {
+                return false;
+            }
+            l.split_once('\t').is_some_and(|(e, _)| e == expr)
+        });
+        let Some(line) = line else {
+            panic!("TSV row for witness expr not found: {expr:?}");
+        };
+        assert_eq!(
+            line.bytes().filter(|b| *b == b'\t').count(),
+            1,
+            "DOMAIN row must use exactly one U+0009 column delimiter; line={line:?}"
+        );
+    }
+
+    #[test]
+    fn cloudflare_ruleset_tsv_teaching_semantics() {
+        let dir = apis_dir("cloudflare");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+        assert!(
+            !prompt.contains("List rulesets on a zone"),
+            "ruleset_query capability prose must not leak into TSV Meaning"
+        );
+        let desc = "Rules that control traffic handling for a Cloudflare zone.";
+        assert_eq!(
+            prompt.matches(desc).count(),
+            1,
+            "Ruleset entity description should appear exactly once; excerpt around Ruleset teaching rows should be inspected"
+        );
+        let bundle = render_domain_prompt_bundle(&cgs, RenderConfig::for_eval(None));
+        let (names, _) = resolve_prompt_surface_entities(&cgs, FocusSpec::All, true);
+        let idx = names
+            .iter()
+            .position(|n| n == "Ruleset")
+            .expect("Ruleset in surface");
+        let block = &bundle.teaching_blocks[idx];
+        let rows: Vec<_> = block
+            .teaching_rows
+            .iter()
+            .map(|r| &r.teaching_expr)
+            .collect();
+        let proj_i = rows
+            .iter()
+            .position(|r| r.is_projection_teaching)
+            .expect("Ruleset projection witness");
+        let mut order: Vec<usize> = (0..rows.len()).collect();
+        order.sort_by_key(|&i| (!rows[i].is_projection_teaching, i));
+        assert_eq!(
+            order[0], proj_i,
+            "TSV encoder emits projection witness rows before other teaching rows"
+        );
+        let compound_i = rows.iter().position(|r| {
+            r.expression.contains('(')
+                && r.expression.contains(',')
+                && !r.expression.contains('{')
+                && !r.is_projection_teaching
+        });
+        let query_i = rows
+            .iter()
+            .position(|r| r.expression.contains('{') && !r.is_projection_teaching);
+        if let Some(ci) = compound_i {
+            assert!(
+                proj_i < ci,
+                "projection witness should precede compound get in synthesis order"
+            );
+        }
+        if let Some(qi) = query_i {
+            assert!(
+                proj_i < qi,
+                "projection witness should precede query brace line in synthesis order"
+            );
+        }
+    }
+
+    #[test]
+    fn cloudflare_duplicate_registry_p_slot_gloss_suppressed() {
+        let dir = apis_dir("cloudflare");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+        let Some(idx) = prompt.find(TSV_DOMAIN_TABLE_HEADER) else {
+            panic!("expected DOMAIN TSV header");
+        };
+        fn count_slot_rows(body: &str, prefix: &str) -> usize {
+            body.lines()
+                .filter(|l| {
+                    let l = l.strip_suffix('\r').unwrap_or(l);
+                    !l.is_empty()
+                        && !l.starts_with('#')
+                        && l.split_once('\t').is_some_and(|(cell, _)| cell == prefix)
+                })
+                .count()
+        }
+        let table = &prompt[idx..];
+        assert_eq!(
+            count_slot_rows(table, "p14"),
+            1,
+            "shared p14 id slot must not repeat an identical registry-backed gloss row"
+        );
+        assert_eq!(
+            count_slot_rows(table, "p15"),
+            1,
+            "shared p15 name slot must not repeat an identical registry-backed gloss row"
         );
     }
 
@@ -4214,13 +5225,18 @@ mod tests {
         let raw = render_prompt_with_config(&cgs, RenderConfig::for_eval_canonical(None));
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
         let team_sym = map.entity_sym("Team");
+        let spaces_rel = map.ident_sym_relation("Team", "spaces");
         assert!(
-            raw.contains("Team($).spaces"),
-            "expected canonical Team→spaces relation line (chain materialization)"
+            raw.contains(".spaces")
+                && (raw.contains("Team($)") || raw.contains("Team{"))
+                && raw.contains("Team"),
+            "expected Team→spaces relation line (chain materialization; receiver may be `Team($)` or query-scoped `Team{{…}}`)"
         );
         assert!(
-            sym.contains(&format!("{}($).", team_sym)) && sym.contains("spaces"),
-            "expected symbol-tuned Team→spaces relation line"
+            sym.contains(&format!(".{spaces_rel}"))
+                || sym.contains(&format!("{team_sym}($).{spaces_rel}"))
+                || sym.contains(&format!("{team_sym}{{")),
+            "expected symbol-tuned Team→spaces relation (`.{spaces_rel}` on a `{team_sym}` receiver)"
         );
         assert!(
             raw.contains("Space{") && raw.contains("team_id"),
@@ -4234,7 +5250,8 @@ mod tests {
         );
     }
 
-    /// `team_query` is query-shaped (`e1` in DOMAIN); description + gloss inline after `;;` (no QUERIES table).
+    /// `team_query` is query-shaped (`e1` in DOMAIN); capability prose is intentionally omitted from
+    /// `Meaning` (types teach shape); see `omit_capability_prose` in teaching synthesis.
     #[test]
     fn clickup_domain_gloss_and_symbol_map_queries() {
         let dir = apis_dir("clickup");
@@ -4293,11 +5310,13 @@ mod tests {
         );
         assert!(
             domain_block.lines().any(|line| {
-                line.contains("List all accessible workspaces")
-                    && line.contains(&format!("[{}]", team_sym))
+                line.split_once('\t').is_some_and(|(expr, meaning)| {
+                    expr.starts_with(team_sym.as_str())
+                        && meaning.contains("returns")
+                        && meaning.contains(&format!("[{team_sym}]"))
+                })
             }),
-            "TSV team_query should describe list workspaces returning [{}]",
-            team_sym
+            "TSV team_query should teach collection result gloss for Team (`[{team_sym}]`) without capability prose"
         );
         assert!(
             !domain_block.contains(" -> "),
@@ -4317,8 +5336,8 @@ mod tests {
             "query DOMAIN brace form must not teach concrete ISO datetimes or `>=` date literals"
         );
         assert!(
-            domain_block.contains("List all accessible workspaces"),
-            "TSV Meaning should carry capability description without duplicating m#"
+            !domain_block.contains("List all accessible workspaces"),
+            "query capability long-form description must not surface in TSV Meaning"
         );
     }
 
@@ -4334,20 +5353,13 @@ mod tests {
             &cgs,
             RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
         );
-        let domain_start = sym
-            .find(DOMAIN_VALID_EXPR_MARKER)
-            .expect("valid expressions preamble");
-        let domain_block = &sym[domain_start..];
-        assert!(
-            domain_block.contains("currently authenticated"),
-            "User DOMAIN should describe singleton get-me"
-        );
+        let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
+        let user_sym = map.entity_sym("User");
         assert!(
             sym.lines().any(|l| {
-                l.contains("currently authenticated")
-                    && l.contains(".m")
-                    && l.contains("()")
-                    && !l.contains("(42)")
+                l.split_once('\t').is_some_and(|(expr, _)| {
+                    expr.contains(&format!("{user_sym}.m")) && expr.contains("()")
+                })
             }),
             "User TSV should teach singleton get-me as e#.m#(), not id-based e#(42)"
         );
@@ -4592,9 +5604,9 @@ mod tests {
         );
     }
 
-    /// Same-shaped `id` slots on different entities are distinct opaque `p#` rows (qualified symbols).
+    /// Same-shaped `id` slots on different entities share one opaque `p#`; identical compact gloss is taught once.
     #[test]
-    fn compact_domain_emits_distinct_p_slot_glosses_for_same_shaped_id_fields() {
+    fn compact_domain_dedupes_identical_p_slot_gloss_across_entities() {
         let same = "P_SLOT_REIDENT_SAME";
         let cgs = p_slot_redefinition_fixture_cgs(same, same);
         let prompt = render_prompt_with_config(
@@ -4613,8 +5625,8 @@ mod tests {
             })
             .count();
         assert_eq!(
-            count, 2,
-            "expected two p# gloss rows for the same wire name on two entities; domain excerpt:\n{domain}"
+            count, 1,
+            "expected one p# gloss row when teaching strings match across entities; domain excerpt:\n{domain}"
         );
     }
 

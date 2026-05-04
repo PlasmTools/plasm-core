@@ -1,4 +1,4 @@
-version: 2
+version: 3
 http_backend: https://oauth.reddit.com
 entities:
   Account:
@@ -8,31 +8,31 @@ entities:
     fields:
       id:
         required: false
-        value_ref: nv_account_id
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_account_name
+        value_ref: nv_wire_str_short
       created_utc:
         required: false
-        value_ref: nv_account_created_utc
+        value_ref: nv_wire_int
       link_karma:
         required: false
-        value_ref: nv_account_link_karma
+        value_ref: nv_wire_int
       comment_karma:
         required: false
-        value_ref: nv_account_comment_karma
+        value_ref: nv_wire_int
       is_gold:
         required: false
-        value_ref: nv_account_is_gold
+        value_ref: nv_wire_bool
       is_mod:
         required: false
-        value_ref: nv_account_is_mod
+        value_ref: nv_wire_bool
       has_verified_email:
         required: false
-        value_ref: nv_account_has_verified_email
+        value_ref: nv_wire_bool
       icon_img:
         required: false
-        value_ref: nv_account_icon_img
+        value_ref: nv_wire_str_short
   Subreddit:
     id_field: display_name
     primary_read: subreddit_get
@@ -40,31 +40,31 @@ entities:
     fields:
       display_name:
         required: true
-        value_ref: nv_subreddit_display_name
+        value_ref: nv_wire_str_short
       title:
         required: false
-        value_ref: nv_subreddit_title
+        value_ref: nv_wire_str_short
       public_description:
         required: false
-        value_ref: nv_subreddit_public_description
+        value_ref: nv_wire_str_markdown
       description:
         required: false
-        value_ref: nv_subreddit_description
+        value_ref: nv_wire_str_markdown
       subscribers:
         required: false
-        value_ref: nv_subreddit_subscribers
+        value_ref: nv_wire_int
       active_user_count:
         required: false
-        value_ref: nv_subreddit_active_user_count
+        value_ref: nv_wire_int
       created_utc:
         required: false
-        value_ref: nv_subreddit_created_utc
+        value_ref: nv_wire_int
       over18:
         required: false
-        value_ref: nv_subreddit_over18
+        value_ref: nv_wire_bool
       url:
         required: false
-        value_ref: nv_subreddit_url
+        value_ref: nv_wire_str_short
     relations:
       posts:
         description: Hot, new, top, rising, or controversial posts in this community.
@@ -81,13 +81,13 @@ entities:
     fields:
       name:
         required: true
-        value_ref: nv_post_name
+        value_ref: nv_wire_str_short
       id:
         required: false
-        value_ref: nv_post_id
+        value_ref: nv_wire_str_short
       title:
         required: false
-        value_ref: nv_post_title
+        value_ref: nv_wire_str_short
       author:
         required: false
         value_ref: nv_post_author
@@ -96,52 +96,52 @@ entities:
         value_ref: nv_post_subreddit
       score:
         required: false
-        value_ref: nv_post_score
+        value_ref: nv_wire_int
       ups:
         required: false
-        value_ref: nv_post_ups
+        value_ref: nv_wire_int
       downs:
         required: false
-        value_ref: nv_post_downs
+        value_ref: nv_wire_int
       num_comments:
         required: false
-        value_ref: nv_post_num_comments
+        value_ref: nv_wire_int
       created_utc:
         required: false
-        value_ref: nv_post_created_utc
+        value_ref: nv_wire_num
       url:
         required: false
-        value_ref: nv_post_url
+        value_ref: nv_wire_str_short
       selftext:
         required: false
-        value_ref: nv_post_selftext
+        value_ref: nv_wire_str_markdown
       is_self:
         required: false
-        value_ref: nv_post_is_self
+        value_ref: nv_wire_bool
       permalink:
         required: false
-        value_ref: nv_post_permalink
+        value_ref: nv_wire_str_short
       thumbnail:
         required: false
-        value_ref: nv_post_thumbnail
+        value_ref: nv_wire_str_short
       stickied:
         required: false
-        value_ref: nv_post_stickied
+        value_ref: nv_wire_bool
       locked:
         required: false
-        value_ref: nv_post_locked
+        value_ref: nv_wire_bool
       archived:
         required: false
-        value_ref: nv_post_archived
+        value_ref: nv_wire_bool
       over_18:
         required: false
-        value_ref: nv_post_over_18
+        value_ref: nv_wire_bool
       spoiler:
         required: false
-        value_ref: nv_post_spoiler
+        value_ref: nv_wire_bool
       domain:
         required: false
-        value_ref: nv_post_domain
+        value_ref: nv_wire_str_short
     relations:
       comments:
         description: Top-level comments returned with the post’s comment thread listing.
@@ -160,31 +160,31 @@ entities:
     fields:
       name:
         required: true
-        value_ref: nv_comment_name
+        value_ref: nv_wire_str_short
       id:
         required: false
-        value_ref: nv_comment_id
+        value_ref: nv_wire_str_short
       body:
         required: false
-        value_ref: nv_comment_body
+        value_ref: nv_wire_str_markdown
       author:
         required: false
         value_ref: nv_comment_author
       created_utc:
         required: false
-        value_ref: nv_comment_created_utc
+        value_ref: nv_wire_num
       parent_id:
         required: false
-        value_ref: nv_comment_parent_id
+        value_ref: nv_wire_str_short
       link_id:
         required: false
-        value_ref: nv_comment_link_id
+        value_ref: nv_wire_str_short
       subreddit:
         required: false
-        value_ref: nv_comment_subreddit
+        value_ref: nv_wire_str_short
       score:
         required: false
-        value_ref: nv_comment_score
+        value_ref: nv_wire_int
 capabilities:
   account_me_read:
     kind: action
@@ -238,7 +238,7 @@ capabilities:
       value_ref: nv_post_feed_query_feed
       required: true
     - name: time
-      value_ref: nv_post_feed_query_time
+      value_ref: nv_wire_sel_2fde0f3a716481f3
       required: false
       role: response_control
   post_get:
@@ -271,7 +271,7 @@ capabilities:
     entity: Post
     parameters:
     - name: q
-      value_ref: nv_post_search_query_q
+      value_ref: nv_wire_str_short
       required: true
       role: search
     - name: subreddit
@@ -283,7 +283,7 @@ capabilities:
       required: false
       role: sort
     - name: time
-      value_ref: nv_post_search_query_time
+      value_ref: nv_wire_sel_2fde0f3a716481f3
       required: false
       role: response_control
   subreddit_popular_query:
@@ -294,7 +294,7 @@ capabilities:
     entity: Subreddit
     parameters:
     - name: q
-      value_ref: nv_subreddit_search_query_q
+      value_ref: nv_wire_str_short
       required: true
       role: search
   comment_thread_query:
@@ -307,7 +307,7 @@ capabilities:
       required: true
       role: scope
     - name: article
-      value_ref: nv_comment_thread_query_article
+      value_ref: nv_wire_str_short
       required: true
       role: scope
   comment_get:
@@ -329,7 +329,7 @@ capabilities:
     description: Publishes a top-level comment on this post as the authenticated user.
     parameters:
     - name: text
-      value_ref: nv_post_comment_submit_text
+      value_ref: nv_wire_str_markdown
       required: true
     output:
       type: side_effect
@@ -382,130 +382,15 @@ auth:
   scheme: bearer_token
   env: REDDIT_ACCESS_TOKEN
 values:
-  nv_account_id:
-    type: string
-    string_semantics: short
-  nv_account_name:
-    type: string
-    string_semantics: short
-  nv_account_created_utc:
-    type: integer
-  nv_account_link_karma:
-    type: integer
-  nv_account_comment_karma:
-    type: integer
-  nv_account_is_gold:
-    type: boolean
-  nv_account_is_mod:
-    type: boolean
-  nv_account_has_verified_email:
-    type: boolean
-  nv_account_icon_img:
-    type: string
-    string_semantics: short
-  nv_subreddit_display_name:
-    type: string
-    string_semantics: short
-  nv_subreddit_title:
-    type: string
-    string_semantics: short
-  nv_subreddit_public_description:
-    type: string
-    string_semantics: markdown
-  nv_subreddit_description:
-    type: string
-    string_semantics: markdown
-  nv_subreddit_subscribers:
-    type: integer
-  nv_subreddit_active_user_count:
-    type: integer
-  nv_subreddit_created_utc:
-    type: integer
-  nv_subreddit_over18:
-    type: boolean
-  nv_subreddit_url:
-    type: string
-    string_semantics: short
-  nv_post_name:
-    type: string
-    string_semantics: short
-  nv_post_id:
-    type: string
-    string_semantics: short
-  nv_post_title:
-    type: string
-    string_semantics: short
-  nv_post_author:
-    type: entity_ref
-    target: Account
-  nv_post_subreddit:
-    type: entity_ref
-    target: Subreddit
-  nv_post_score:
-    type: integer
-  nv_post_ups:
-    type: integer
-  nv_post_downs:
-    type: integer
-  nv_post_num_comments:
-    type: integer
-  nv_post_created_utc:
-    type: number
-  nv_post_url:
-    type: string
-    string_semantics: short
-  nv_post_selftext:
-    type: string
-    string_semantics: markdown
-  nv_post_is_self:
-    type: boolean
-  nv_post_permalink:
-    type: string
-    string_semantics: short
-  nv_post_thumbnail:
-    type: string
-    string_semantics: short
-  nv_post_stickied:
-    type: boolean
-  nv_post_locked:
-    type: boolean
-  nv_post_archived:
-    type: boolean
-  nv_post_over_18:
-    type: boolean
-  nv_post_spoiler:
-    type: boolean
-  nv_post_domain:
-    type: string
-    string_semantics: short
-  nv_comment_name:
-    type: string
-    string_semantics: short
-  nv_comment_id:
-    type: string
-    string_semantics: short
-  nv_comment_body:
-    type: string
-    string_semantics: markdown
   nv_comment_author:
     type: entity_ref
     target: Account
-  nv_comment_created_utc:
-    type: number
-  nv_comment_parent_id:
-    type: string
-    string_semantics: short
-  nv_comment_link_id:
-    type: string
-    string_semantics: short
-  nv_comment_subreddit:
-    type: string
-    string_semantics: short
-  nv_comment_score:
-    type: integer
-  nv_post_feed_query_subreddit:
+  nv_comment_thread_query_subreddit:
     type: entity_ref
     target: Subreddit
+  nv_post_author:
+    type: entity_ref
+    target: Account
   nv_post_feed_query_feed:
     type: select
     allowed_values:
@@ -514,19 +399,7 @@ values:
     - top
     - rising
     - controversial
-  nv_post_feed_query_time:
-    type: select
-    allowed_values:
-    - hour
-    - day
-    - week
-    - month
-    - year
-    - all
-  nv_post_search_query_q:
-    type: string
-    string_semantics: short
-  nv_post_search_query_subreddit:
+  nv_post_feed_query_subreddit:
     type: entity_ref
     target: Subreddit
   nv_post_search_query_sort:
@@ -537,24 +410,30 @@ values:
     - top
     - new
     - comments
-  nv_post_search_query_time:
-    type: select
-    allowed_values:
-    - hour
-    - day
-    - week
-    - month
-    - year
-    - all
-  nv_subreddit_search_query_q:
-    type: string
-    string_semantics: short
-  nv_comment_thread_query_subreddit:
+  nv_post_search_query_subreddit:
     type: entity_ref
     target: Subreddit
-  nv_comment_thread_query_article:
-    type: string
-    string_semantics: short
-  nv_post_comment_submit_text:
+  nv_post_subreddit:
+    type: entity_ref
+    target: Subreddit
+  nv_wire_bool:
+    type: boolean
+  nv_wire_int:
+    type: integer
+  nv_wire_num:
+    type: number
+  nv_wire_sel_2fde0f3a716481f3:
+    type: select
+    allowed_values:
+    - all
+    - day
+    - hour
+    - month
+    - week
+    - year
+  nv_wire_str_markdown:
     type: string
     string_semantics: markdown
+  nv_wire_str_short:
+    type: string
+    string_semantics: short

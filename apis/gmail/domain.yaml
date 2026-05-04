@@ -1,4 +1,4 @@
-version: 10
+version: 11
 http_backend: https://gmail.googleapis.com
 entities:
   Message:
@@ -333,7 +333,7 @@ capabilities:
       value_ref: nv_message_send_simple_to
       required: true
     - name: subject
-      value_ref: nv_message_send_simple_subject
+      value_ref: nv_wire_str_short
       required: true
     - name: plainBody
       value_ref: nv_message_send_simple_plain_body
@@ -517,13 +517,13 @@ capabilities:
     entity: Label
     parameters:
     - name: name
-      value_ref: nv_label_create_name
+      value_ref: nv_wire_str_short
       required: true
     - name: messageListVisibility
-      value_ref: nv_label_create_message_list_visibility
+      value_ref: nv_wire_sel_03b11827825981b3
       required: false
     - name: labelListVisibility
-      value_ref: nv_label_create_label_list_visibility
+      value_ref: nv_wire_sel_959d1eda8c7176e2
       required: false
   label_update:
     description: Update an existing label
@@ -531,13 +531,13 @@ capabilities:
     entity: Label
     parameters:
     - name: name
-      value_ref: nv_label_update_name
+      value_ref: nv_wire_str_short
       required: false
     - name: messageListVisibility
-      value_ref: nv_label_update_message_list_visibility
+      value_ref: nv_wire_sel_03b11827825981b3
       required: false
     - name: labelListVisibility
-      value_ref: nv_label_update_label_list_visibility
+      value_ref: nv_wire_sel_959d1eda8c7176e2
       required: false
   label_delete:
     description: Permanently delete a label (removes it from all messages)
@@ -875,131 +875,12 @@ auth:
   scheme: bearer_token
   env: GMAIL_ACCESS_TOKEN
 values:
-  nv_message_id:
-    type: string
-    string_semantics: short
-    description: Immutable message ID
-  nv_message_thread_id:
+  nv_attachment_data:
+    type: blob
+    description: Attachment payload as base64url (wire); treat as opaque bytes, not short text
+  nv_attachment_get_message_id:
     type: entity_ref
-    target: Thread
-    description: ID of the thread this message belongs to
-  nv_message_label_ids_item:
-    type: string
-  nv_message_label_ids:
-    type: array
-    items:
-      value_ref: nv_message_label_ids_item
-    description: Labels applied to this message (INBOX, UNREAD, SENT, SPAM, TRASH, or user label IDs)
-  nv_message_snippet:
-    type: string
-    string_semantics: short
-    description: Short plain text preview of the message body
-  nv_message_history_id:
-    type: string
-    string_semantics: short
-    description: ID of the last history record that modified this message
-  nv_message_internal_date:
-    type: string
-    string_semantics: short
-    description: Message creation timestamp (epoch milliseconds as string)
-  nv_message_size_estimate:
-    type: integer
-    description: Estimated size in bytes
-  nv_message_header_from:
-    type: string
-    string_semantics: short
-    description: From header (from payload.headers when present)
-  nv_message_header_to:
-    type: string
-    string_semantics: short
-    description: To header
-  nv_message_header_subject:
-    type: string
-    string_semantics: short
-    description: Subject header
-  nv_message_header_date:
-    type: string
-    string_semantics: short
-    description: Date header
-  nv_message_header_reply_to:
-    type: string
-    string_semantics: short
-    description: Reply-To header
-  nv_message_header_cc:
-    type: string
-    string_semantics: short
-    description: Cc header
-  nv_message_header_bcc:
-    type: string
-    string_semantics: short
-    description: Bcc header
-  nv_message_header_message_id:
-    type: string
-    string_semantics: short
-    description: Message-Id header (RFC 5322)
-  nv_message_header_references:
-    type: string
-    string_semantics: short
-    description: References header (space-separated Message-Ids)
-  nv_message_header_in_reply_to:
-    type: string
-    string_semantics: short
-    description: In-Reply-To header (parent Message-Id)
-  nv_thread_id:
-    type: string
-    string_semantics: short
-    description: Immutable thread ID (matches the first message's ID)
-  nv_thread_snippet:
-    type: string
-    string_semantics: short
-    description: Short plain text preview of the most recent message
-  nv_thread_history_id:
-    type: string
-    string_semantics: short
-    description: ID of the last history record that modified this thread
-  nv_label_id:
-    type: string
-    string_semantics: short
-    description: Immutable label ID (e.g. INBOX, Label_123456)
-  nv_label_name:
-    type: string
-    string_semantics: short
-    description: Display name of the label
-  nv_label_type:
-    type: select
-    allowed_values:
-    - system
-    - user
-    description: 'Label owner: system (built-in) or user (created)'
-  nv_label_message_list_visibility:
-    type: select
-    allowed_values:
-    - show
-    - hide
-    description: Whether messages with this label appear in the message list
-  nv_label_label_list_visibility:
-    type: select
-    allowed_values:
-    - labelShow
-    - labelShowIfUnread
-    - labelHide
-    description: Whether this label appears in the label list
-  nv_label_messages_total:
-    type: integer
-    description: Total messages with this label
-  nv_label_messages_unread:
-    type: integer
-    description: Unread messages with this label
-  nv_label_threads_total:
-    type: integer
-    description: Total threads with this label
-  nv_label_threads_unread:
-    type: integer
-    description: Unread threads with this label
-  nv_draft_id:
-    type: string
-    string_semantics: short
-    description: Immutable draft ID
+    target: Message
   nv_attachment_id:
     type: string
     string_semantics: short
@@ -1011,54 +892,66 @@ values:
   nv_attachment_size:
     type: integer
     description: Number of bytes in the attachment data
-  nv_attachment_data:
+  nv_draft_create_raw:
     type: blob
-    description: Attachment payload as base64url (wire); treat as opaque bytes, not short text
-  nv_profile_email_address:
+    description: RFC 2822 / MIME message bytes, base64url-encoded on the wire (draft body).
+  nv_draft_create_thread_id:
+    type: entity_ref
+    target: Thread
+    description: Thread to reply into
+  nv_draft_get_format:
+    type: select
+    allowed_values:
+    - full
+    - metadata
+    - minimal
+    - raw
+  nv_draft_id:
     type: string
     string_semantics: short
-    description: User's email address
-  nv_profile_messages_total:
+    description: Immutable draft ID
+  nv_draft_update_raw:
+    type: blob
+    description: RFC 2822 / MIME message bytes, base64url-encoded on the wire (replaces draft body).
+  nv_label_id:
+    type: string
+    string_semantics: short
+    description: Immutable label ID (e.g. INBOX, Label_123456)
+  nv_label_label_list_visibility:
+    type: select
+    allowed_values:
+    - labelShow
+    - labelShowIfUnread
+    - labelHide
+    description: Whether this label appears in the label list
+  nv_label_message_list_visibility:
+    type: select
+    allowed_values:
+    - show
+    - hide
+    description: Whether messages with this label appear in the message list
+  nv_label_messages_total:
     type: integer
-    description: Total number of messages in the mailbox
-  nv_profile_threads_total:
+    description: Total messages with this label
+  nv_label_messages_unread:
     type: integer
-    description: Total number of threads in the mailbox
-  nv_profile_history_id:
+    description: Unread messages with this label
+  nv_label_name:
     type: string
     string_semantics: short
-    description: Current history record ID (used for incremental sync)
-  nv_message_list_q:
-    type: string
-    string_semantics: short
-    description: Gmail search query. Supports from:, to:, subject:, is:unread, has:attachment, label:, etc.
-  nv_message_list_label_ids_item:
-    type: string
-  nv_message_list_label_ids:
-    type: array
-    items:
-      value_ref: nv_message_list_label_ids_item
-    description: Return only messages that have ALL of these label IDs (repeat query param per id). Use system labels such
-      as INBOX, SENT, or user labels — this is mailbox/label filtering
-  nv_message_list_include_spam_trash:
-    type: boolean
-    description: Google boolean only — true or false. When true, the list includes messages in Spam and Trash.
-  nv_message_search_q:
-    type: string
-    string_semantics: short
-    description: Gmail search query (from:, to:, subject:, is:unread, has:attachment, plain keywords, etc.)
-  nv_message_search_label_ids_item:
-    type: string
-  nv_message_search_label_ids:
-    type: array
-    items:
-      value_ref: nv_message_search_label_ids_item
-    description: Return only messages that have ALL of these label IDs (repeat query param per id). Use system labels such
-      as INBOX, SENT, or user labels — this is mailbox/label filtering; it is not the same as includeSpamTrash.
-  nv_message_search_include_spam_trash:
-    type: boolean
-    description: Google boolean only — true or false. When true, the list includes messages in Spam and Trash. Never pass
-      a label name here (e.g. INBOX); use labelIds for that.
+    description: Display name of the label
+  nv_label_threads_total:
+    type: integer
+    description: Total threads with this label
+  nv_label_threads_unread:
+    type: integer
+    description: Unread threads with this label
+  nv_label_type:
+    type: select
+    allowed_values:
+    - system
+    - user
+    description: 'Label owner: system (built-in) or user (created)'
   nv_message_get_format:
     type: select
     allowed_values:
@@ -1069,40 +962,65 @@ values:
     description: full (default) returns body; metadata returns headers only; minimal returns id+labels; raw is the full RFC
       2822. Narrow OAuth grants may only allow format metadata or minimal — use list queries with --summary if you must avoid
       default hydration that calls get with full.
-  nv_message_send_raw:
-    type: blob
-    description: RFC 2822 / MIME message bytes, base64url-encoded on the wire (Gmail `users.messages.send`).
-  nv_message_send_thread_id:
-    type: entity_ref
-    target: Thread
-    description: Thread to reply into
-  nv_message_send_simple_from:
+  nv_message_header_bcc:
     type: string
     string_semantics: short
-    description: RFC 5322 From (must match mailbox or send-as; use profile_get emailAddress when unsure)
-  nv_message_send_simple_to:
+    description: Bcc header
+  nv_message_header_cc:
     type: string
     string_semantics: short
-    description: Primary To address(es); comma-separated if multiple
-  nv_message_send_simple_subject:
+    description: Cc header
+  nv_message_header_date:
     type: string
     string_semantics: short
-  nv_message_send_simple_plain_body:
-    type: string
-    string_semantics: document
-    description: Plain text body (newlines allowed - use HEREDOC)
-  nv_message_send_simple_thread_id:
-    type: entity_ref
-    target: Thread
-    description: Gmail thread to attach the message to (replies)
-  nv_message_send_simple_in_reply_to:
+    description: Date header
+  nv_message_header_from:
     type: string
     string_semantics: short
-    description: Optional In-Reply-To header (parent Message-Id)
-  nv_message_send_simple_references:
+    description: From header (from payload.headers when present)
+  nv_message_header_in_reply_to:
     type: string
     string_semantics: short
-    description: Optional References header (space-separated Message-Ids)
+    description: In-Reply-To header (parent Message-Id)
+  nv_message_header_message_id:
+    type: string
+    string_semantics: short
+    description: Message-Id header (RFC 5322)
+  nv_message_header_references:
+    type: string
+    string_semantics: short
+    description: References header (space-separated Message-Ids)
+  nv_message_header_reply_to:
+    type: string
+    string_semantics: short
+    description: Reply-To header
+  nv_message_header_subject:
+    type: string
+    string_semantics: short
+    description: Subject header
+  nv_message_header_to:
+    type: string
+    string_semantics: short
+    description: To header
+  nv_message_history_id:
+    type: string
+    string_semantics: short
+    description: ID of the last history record that modified this message
+  nv_message_id:
+    type: string
+    string_semantics: short
+    description: Immutable message ID
+  nv_message_internal_date:
+    type: string
+    string_semantics: short
+    description: Message creation timestamp (epoch milliseconds as string)
+  nv_message_list_include_spam_trash:
+    type: boolean
+    description: Google boolean only — true or false. When true, the list includes messages in Spam and Trash.
+  nv_message_list_q:
+    type: string
+    string_semantics: short
+    description: Gmail search query. Supports from:, to:, subject:, is:unread, has:attachment, label:, etc.
   nv_message_reply_from:
     type: string
     string_semantics: short
@@ -1111,60 +1029,78 @@ values:
     type: string
     string_semantics: document
     description: Plain text reply body
-  nv_message_reply_to:
-    type: string
-    string_semantics: short
-    description: Override To (default is Reply-To or From of the message being replied to)
   nv_message_reply_subject:
     type: string
     string_semantics: short
     description: 'Override Subject (default is Re: parent subject)'
-  nv_message_modify_add_label_ids_item:
-    type: string
-  nv_message_modify_add_label_ids:
-    type: array
-    items:
-      value_ref: nv_message_modify_add_label_ids_item
-    description: Label IDs to add
-  nv_message_modify_remove_label_ids_item:
-    type: string
-  nv_message_modify_remove_label_ids:
-    type: array
-    items:
-      value_ref: nv_message_modify_remove_label_ids_item
-    description: Label IDs to remove
-  nv_thread_list_q:
+  nv_message_reply_to:
     type: string
     string_semantics: short
-    description: Gmail search query (same syntax as message_list)
-  nv_thread_list_label_ids_item:
-    type: string
-  nv_thread_list_label_ids:
-    type: array
-    items:
-      value_ref: nv_thread_list_label_ids_item
-    description: Return only threads that have ALL of these label IDs (repeat query param per id). Use system labels such
-      as INBOX, SENT, or user labels — this is mailbox/label filtering; it is not the same as includeSpamTrash.
-  nv_thread_list_include_spam_trash:
+    description: Override To (default is Reply-To or From of the message being replied to)
+  nv_message_search_include_spam_trash:
     type: boolean
-    description: Google boolean only — true or false. When true, the list includes threads in Spam and Trash. Never pass a
-      label name here (e.g. INBOX); use labelIds for that.
-  nv_thread_search_q:
+    description: Google boolean only — true or false. When true, the list includes messages in Spam and Trash. Never pass
+      a label name here (e.g. INBOX); use labelIds for that.
+  nv_message_search_q:
     type: string
     string_semantics: short
-    description: Gmail search query (same syntax as message_search)
-  nv_thread_search_label_ids_item:
+    description: Gmail search query (from:, to:, subject:, is:unread, has:attachment, plain keywords, etc.)
+  nv_message_send_raw:
+    type: blob
+    description: RFC 2822 / MIME message bytes, base64url-encoded on the wire (Gmail `users.messages.send`).
+  nv_message_send_simple_from:
     type: string
-  nv_thread_search_label_ids:
-    type: array
-    items:
-      value_ref: nv_thread_search_label_ids_item
-    description: Return only threads that have ALL of these label IDs (repeat query param per id). Use system labels such
-      as INBOX, SENT, or user labels — this is mailbox/label filtering; it is not the same as includeSpamTrash.
-  nv_thread_search_include_spam_trash:
-    type: boolean
-    description: Google boolean only — true or false. When true, the list includes threads in Spam and Trash. Never pass a
-      label name here (e.g. INBOX); use labelIds for that.
+    string_semantics: short
+    description: RFC 5322 From (must match mailbox or send-as; use profile_get emailAddress when unsure)
+  nv_message_send_simple_in_reply_to:
+    type: string
+    string_semantics: short
+    description: Optional In-Reply-To header (parent Message-Id)
+  nv_message_send_simple_plain_body:
+    type: string
+    string_semantics: document
+    description: Plain text body (newlines allowed - use HEREDOC)
+  nv_message_send_simple_references:
+    type: string
+    string_semantics: short
+    description: Optional References header (space-separated Message-Ids)
+  nv_message_send_simple_thread_id:
+    type: entity_ref
+    target: Thread
+    description: Gmail thread to attach the message to (replies)
+  nv_message_send_simple_to:
+    type: string
+    string_semantics: short
+    description: Primary To address(es); comma-separated if multiple
+  nv_message_send_thread_id:
+    type: entity_ref
+    target: Thread
+    description: Thread to reply into
+  nv_message_size_estimate:
+    type: integer
+    description: Estimated size in bytes
+  nv_message_snippet:
+    type: string
+    string_semantics: short
+    description: Short plain text preview of the message body
+  nv_message_thread_id:
+    type: entity_ref
+    target: Thread
+    description: ID of the thread this message belongs to
+  nv_profile_email_address:
+    type: string
+    string_semantics: short
+    description: User's email address
+  nv_profile_history_id:
+    type: string
+    string_semantics: short
+    description: Current history record ID (used for incremental sync)
+  nv_profile_messages_total:
+    type: integer
+    description: Total number of messages in the mailbox
+  nv_profile_threads_total:
+    type: integer
+    description: Total number of threads in the mailbox
   nv_thread_get_format:
     type: select
     allowed_values:
@@ -1174,65 +1110,94 @@ values:
     description: full returns all messages with bodies; metadata omits bodies; minimal is ids and labels only. Narrow OAuth
       grants may only allow format metadata or minimal — use thread list with --summary if you must avoid default hydration
       that calls get with full.
-  nv_thread_modify_add_label_ids_item:
+  nv_thread_history_id:
     type: string
+    string_semantics: short
+    description: ID of the last history record that modified this thread
+  nv_thread_id:
+    type: string
+    string_semantics: short
+    description: Immutable thread ID (matches the first message's ID)
+  nv_thread_list_include_spam_trash:
+    type: boolean
+    description: Google boolean only — true or false. When true, the list includes threads in Spam and Trash. Never pass a
+      label name here (e.g. INBOX); use labelIds for that.
+  nv_thread_list_q:
+    type: string
+    string_semantics: short
+    description: Gmail search query (same syntax as message_list)
+  nv_thread_search_include_spam_trash:
+    type: boolean
+    description: Google boolean only — true or false. When true, the list includes threads in Spam and Trash. Never pass a
+      label name here (e.g. INBOX); use labelIds for that.
+  nv_thread_search_q:
+    type: string
+    string_semantics: short
+    description: Gmail search query (same syntax as message_search)
+  nv_thread_snippet:
+    type: string
+    string_semantics: short
+    description: Short plain text preview of the most recent message
+  nv_wire_sel_03b11827825981b3:
+    type: select
+    allowed_values:
+    - hide
+    - show
+  nv_wire_sel_959d1eda8c7176e2:
+    type: select
+    allowed_values:
+    - labelHide
+    - labelShow
+    - labelShowIfUnread
+  nv_wire_str_short:
+    type: string
+    string_semantics: short
+  nv_message_label_ids:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Labels applied to this message (INBOX, UNREAD, SENT, SPAM, TRASH, or user label IDs)
+  nv_message_list_label_ids:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Return only messages that have ALL of these label IDs (repeat query param per id). Use system labels such
+      as INBOX, SENT, or user labels — this is mailbox/label filtering
+  nv_message_modify_add_label_ids:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Label IDs to add
+  nv_message_modify_remove_label_ids:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Label IDs to remove
+  nv_message_search_label_ids:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Return only messages that have ALL of these label IDs (repeat query param per id). Use system labels such
+      as INBOX, SENT, or user labels — this is mailbox/label filtering; it is not the same as includeSpamTrash.
+  nv_thread_list_label_ids:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Return only threads that have ALL of these label IDs (repeat query param per id). Use system labels such
+      as INBOX, SENT, or user labels — this is mailbox/label filtering; it is not the same as includeSpamTrash.
   nv_thread_modify_add_label_ids:
     type: array
     items:
-      value_ref: nv_thread_modify_add_label_ids_item
+      value_ref: nv_wire_str_short
     description: Label IDs to add
-  nv_thread_modify_remove_label_ids_item:
-    type: string
   nv_thread_modify_remove_label_ids:
     type: array
     items:
-      value_ref: nv_thread_modify_remove_label_ids_item
+      value_ref: nv_wire_str_short
     description: Label IDs to remove
-  nv_label_create_name:
-    type: string
-    string_semantics: short
-  nv_label_create_message_list_visibility:
-    type: select
-    allowed_values:
-    - show
-    - hide
-  nv_label_create_label_list_visibility:
-    type: select
-    allowed_values:
-    - labelShow
-    - labelShowIfUnread
-    - labelHide
-  nv_label_update_name:
-    type: string
-    string_semantics: short
-  nv_label_update_message_list_visibility:
-    type: select
-    allowed_values:
-    - show
-    - hide
-  nv_label_update_label_list_visibility:
-    type: select
-    allowed_values:
-    - labelShow
-    - labelShowIfUnread
-    - labelHide
-  nv_draft_get_format:
-    type: select
-    allowed_values:
-    - full
-    - metadata
-    - minimal
-    - raw
-  nv_draft_create_raw:
-    type: blob
-    description: RFC 2822 / MIME message bytes, base64url-encoded on the wire (draft body).
-  nv_draft_create_thread_id:
-    type: entity_ref
-    target: Thread
-    description: Thread to reply into
-  nv_draft_update_raw:
-    type: blob
-    description: RFC 2822 / MIME message bytes, base64url-encoded on the wire (replaces draft body).
-  nv_attachment_get_message_id:
-    type: entity_ref
-    target: Message
+  nv_thread_search_label_ids:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Return only threads that have ALL of these label IDs (repeat query param per id). Use system labels such
+      as INBOX, SENT, or user labels — this is mailbox/label filtering; it is not the same as includeSpamTrash.

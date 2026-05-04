@@ -1,4 +1,4 @@
-version: 1
+version: 2
 http_backend: https://api.linkedin.com
 entities:
   OpenIdProfile:
@@ -7,25 +7,25 @@ entities:
     fields:
       sub:
         required: true
-        value_ref: nv_open_id_profile_sub
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_open_id_profile_name
+        value_ref: nv_wire_str_short
       given_name:
         required: false
-        value_ref: nv_open_id_profile_given_name
+        value_ref: nv_wire_str_short
       family_name:
         required: false
-        value_ref: nv_open_id_profile_family_name
+        value_ref: nv_wire_str_short
       picture:
         required: false
-        value_ref: nv_open_id_profile_picture
+        value_ref: nv_wire_str_short
       locale:
         required: false
-        value_ref: nv_open_id_profile_locale
+        value_ref: nv_wire_str_short
       email:
         required: false
-        value_ref: nv_open_id_profile_email
+        value_ref: nv_wire_str_short
       email_verified:
         required: false
         value_ref: nv_open_id_profile_email_verified
@@ -39,16 +39,16 @@ entities:
         value_ref: nv_member_id
       localizedFirstName:
         required: false
-        value_ref: nv_member_localized_first_name
+        value_ref: nv_wire_str_short
       localizedLastName:
         required: false
-        value_ref: nv_member_localized_last_name
+        value_ref: nv_wire_str_short
       localizedHeadline:
         required: false
-        value_ref: nv_member_localized_headline
+        value_ref: nv_wire_str_short
       vanityName:
         required: false
-        value_ref: nv_member_vanity_name
+        value_ref: nv_wire_str_short
     relations:
       feed_posts:
         target: UgcPost
@@ -64,10 +64,10 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_organization_id
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_organization_name
+        value_ref: nv_wire_str_short
     relations:
       feed_posts:
         target: UgcPost
@@ -88,16 +88,16 @@ entities:
         value_ref: nv_ugc_post_author_urn
       lifecycleState:
         required: false
-        value_ref: nv_ugc_post_lifecycle_state
+        value_ref: nv_wire_str_short
       shareCommentaryText:
         required: false
-        value_ref: nv_ugc_post_share_commentary_text
+        value_ref: nv_wire_str_short
       shareMediaCategory:
         required: false
-        value_ref: nv_ugc_post_share_media_category
+        value_ref: nv_wire_str_short
       visibility:
         required: false
-        value_ref: nv_ugc_post_visibility
+        value_ref: nv_wire_str_short
     relations: {}
   MediaUploadRegistration:
     id_field: asset
@@ -105,10 +105,10 @@ entities:
     fields:
       asset:
         required: true
-        value_ref: nv_media_upload_registration_asset
+        value_ref: nv_wire_str_short
       uploadUrl:
         required: false
-        value_ref: nv_media_upload_registration_upload_url
+        value_ref: nv_wire_str_short
     relations: {}
 capabilities:
   openid_userinfo_get:
@@ -148,7 +148,7 @@ capabilities:
       required: true
       role: scope
     - name: sortBy
-      value_ref: nv_ugc_post_query_sort_by
+      value_ref: nv_wire_sel_8874eda015d84434
       required: false
       role: sort
   ugc_post_query_for_member:
@@ -165,7 +165,7 @@ capabilities:
       required: true
       role: scope
     - name: sortBy
-      value_ref: nv_ugc_post_query_for_member_sort_by
+      value_ref: nv_wire_sel_8874eda015d84434
       required: false
       role: sort
   ugc_post_query_for_organization:
@@ -182,7 +182,7 @@ capabilities:
       required: true
       role: scope
     - name: sortBy
-      value_ref: nv_ugc_post_query_for_organization_sort_by
+      value_ref: nv_wire_sel_8874eda015d84434
       required: false
       role: sort
   ugc_post_get:
@@ -211,10 +211,10 @@ capabilities:
     - lifecycleState
     parameters:
     - name: authorUrn
-      value_ref: nv_ugc_post_create_author_urn
+      value_ref: nv_wire_str_short
       required: true
     - name: shareCommentary
-      value_ref: nv_ugc_post_create_share_commentary
+      value_ref: nv_wire_str_short
       required: true
     - name: visibility
       value_ref: nv_ugc_post_create_visibility
@@ -223,16 +223,16 @@ capabilities:
       value_ref: nv_ugc_post_create_share_media_category
       required: true
     - name: articleOriginalUrl
-      value_ref: nv_ugc_post_create_article_original_url
+      value_ref: nv_wire_str_short
       required: false
     - name: articleTitle
-      value_ref: nv_ugc_post_create_article_title
+      value_ref: nv_wire_str_short
       required: false
     - name: articleDescription
-      value_ref: nv_ugc_post_create_article_description
+      value_ref: nv_wire_str_short
       required: false
     - name: imageMediaUrn
-      value_ref: nv_ugc_post_create_image_media_urn
+      value_ref: nv_wire_str_short
       required: false
   media_upload_register:
     kind: action
@@ -240,7 +240,7 @@ capabilities:
     description: Register an image or video upload and return asset/upload URL.
     parameters:
     - name: ownerUrn
-      value_ref: nv_media_upload_register_owner_urn
+      value_ref: nv_wire_str_short
       required: true
     - name: recipe
       value_ref: nv_media_upload_register_recipe
@@ -334,120 +334,21 @@ auth:
   scheme: bearer_token
   env: LINKEDIN_ACCESS_TOKEN
 values:
-  nv_open_id_profile_sub:
-    type: string
-    string_semantics: short
-  nv_open_id_profile_name:
-    type: string
-    string_semantics: short
-  nv_open_id_profile_given_name:
-    type: string
-    string_semantics: short
-  nv_open_id_profile_family_name:
-    type: string
-    string_semantics: short
-  nv_open_id_profile_picture:
-    type: string
-    string_semantics: short
-  nv_open_id_profile_locale:
-    type: string
-    string_semantics: short
-  nv_open_id_profile_email:
-    type: string
-    string_semantics: short
-  nv_open_id_profile_email_verified:
-    type: boolean
+  nv_media_upload_register_recipe:
+    type: select
+    allowed_values:
+    - feedshare-image
+    - feedshare-video
   nv_member_id:
     type: string
     string_semantics: short
     description: LinkedIn person ID for this app.
-  nv_member_localized_first_name:
-    type: string
-    string_semantics: short
-  nv_member_localized_last_name:
-    type: string
-    string_semantics: short
-  nv_member_localized_headline:
-    type: string
-    string_semantics: short
-  nv_member_vanity_name:
-    type: string
-    string_semantics: short
-  nv_organization_id:
-    type: string
-    string_semantics: short
-  nv_organization_name:
-    type: string
-    string_semantics: short
-  nv_ugc_post_id:
-    type: string
-    string_semantics: short
-    description: ugcPost or share URN identifier.
+  nv_open_id_profile_email_verified:
+    type: boolean
   nv_ugc_post_author_urn:
     type: string
     string_semantics: short
     description: Author URN (person or organization).
-  nv_ugc_post_lifecycle_state:
-    type: string
-    string_semantics: short
-  nv_ugc_post_share_commentary_text:
-    type: string
-    string_semantics: short
-  nv_ugc_post_share_media_category:
-    type: string
-    string_semantics: short
-  nv_ugc_post_visibility:
-    type: string
-    string_semantics: short
-  nv_media_upload_registration_asset:
-    type: string
-    string_semantics: short
-  nv_media_upload_registration_upload_url:
-    type: string
-    string_semantics: short
-  nv_ugc_post_query_authors:
-    type: string
-    string_semantics: short
-    description: Rest.li token such as List(urn%3Ali%3Aperson%3A8675309).
-  nv_ugc_post_query_sort_by:
-    type: select
-    allowed_values:
-    - LAST_MODIFIED
-    - CREATED
-  nv_ugc_post_query_for_member_member:
-    type: entity_ref
-    target: Member
-    description: Member id; mapping composes the Rest.li authors finder token.
-  nv_ugc_post_query_for_member_sort_by:
-    type: select
-    allowed_values:
-    - LAST_MODIFIED
-    - CREATED
-  nv_ugc_post_query_for_organization_organization:
-    type: entity_ref
-    target: Organization
-    description: Organization id; mapping composes the Rest.li authors finder token.
-  nv_ugc_post_query_for_organization_sort_by:
-    type: select
-    allowed_values:
-    - LAST_MODIFIED
-    - CREATED
-  nv_ugc_post_get_view_context:
-    type: select
-    allowed_values:
-    - AUTHOR
-    - READER
-  nv_ugc_post_create_author_urn:
-    type: string
-    string_semantics: short
-  nv_ugc_post_create_share_commentary:
-    type: string
-    string_semantics: short
-  nv_ugc_post_create_visibility:
-    type: select
-    allowed_values:
-    - PUBLIC
-    - CONNECTIONS
   nv_ugc_post_create_share_media_category:
     type: select
     allowed_values:
@@ -455,23 +356,37 @@ values:
     - ARTICLE
     - IMAGE
     - VIDEO
-  nv_ugc_post_create_article_original_url:
-    type: string
-    string_semantics: short
-  nv_ugc_post_create_article_title:
-    type: string
-    string_semantics: short
-  nv_ugc_post_create_article_description:
-    type: string
-    string_semantics: short
-  nv_ugc_post_create_image_media_urn:
-    type: string
-    string_semantics: short
-  nv_media_upload_register_owner_urn:
-    type: string
-    string_semantics: short
-  nv_media_upload_register_recipe:
+  nv_ugc_post_create_visibility:
     type: select
     allowed_values:
-    - feedshare-image
-    - feedshare-video
+    - PUBLIC
+    - CONNECTIONS
+  nv_ugc_post_get_view_context:
+    type: select
+    allowed_values:
+    - AUTHOR
+    - READER
+  nv_ugc_post_id:
+    type: string
+    string_semantics: short
+    description: ugcPost or share URN identifier.
+  nv_ugc_post_query_authors:
+    type: string
+    string_semantics: short
+    description: Rest.li token such as List(urn%3Ali%3Aperson%3A8675309).
+  nv_ugc_post_query_for_member_member:
+    type: entity_ref
+    target: Member
+    description: Member id; mapping composes the Rest.li authors finder token.
+  nv_ugc_post_query_for_organization_organization:
+    type: entity_ref
+    target: Organization
+    description: Organization id; mapping composes the Rest.li authors finder token.
+  nv_wire_sel_8874eda015d84434:
+    type: select
+    allowed_values:
+    - CREATED
+    - LAST_MODIFIED
+  nv_wire_str_short:
+    type: string
+    string_semantics: short

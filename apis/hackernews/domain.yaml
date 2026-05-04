@@ -1,4 +1,4 @@
-version: 1
+version: 2
 auth:
   scheme: none
 http_backend: https://hacker-news.firebaseio.com
@@ -137,19 +137,19 @@ capabilities:
     - url
     parameters:
     - name: query
-      value_ref: nv_item_search_query
+      value_ref: nv_wire_str_short
       required: true
       role: search
     - name: tags
-      value_ref: nv_item_search_tags
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: page
-      value_ref: nv_item_search_page
+      value_ref: nv_wire_int
       required: false
       role: response_control
     - name: per_page
-      value_ref: nv_item_search_per_page
+      value_ref: nv_wire_int
       required: false
       role: response_control
   item_search_by_date:
@@ -163,19 +163,19 @@ capabilities:
     - url
     parameters:
     - name: query
-      value_ref: nv_item_search_by_date_query
+      value_ref: nv_wire_str_short
       required: true
       role: search
     - name: tags
-      value_ref: nv_item_search_by_date_tags
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: page
-      value_ref: nv_item_search_by_date_page
+      value_ref: nv_wire_int
       required: false
       role: response_control
     - name: per_page
-      value_ref: nv_item_search_by_date_per_page
+      value_ref: nv_wire_int
       required: false
       role: response_control
   item_feed_query:
@@ -238,17 +238,44 @@ capabilities:
     - about
     - delay
 values:
-  nv_item_id:
-    type: integer
-    description: Numeric item id used in Firebase paths
-  nv_item_type:
-    type: string
-    string_semantics: short
-    description: Wire kind such as story, comment, job, poll, or pollopt
   nv_item_by:
     type: string
     string_semantics: short
     description: Username of the author when present
+  nv_item_dead:
+    type: boolean
+    description: Whether the item is dead
+  nv_item_deleted:
+    type: boolean
+    description: Whether the item was deleted
+  nv_item_descendants:
+    type: integer
+    description: Comment count for stories when known
+  nv_item_feed_query_feed:
+    type: select
+    allowed_values:
+    - top
+    - new
+    - best
+    - ask
+    - show
+    - job
+  nv_item_id:
+    type: integer
+    description: Numeric item id used in Firebase paths
+  nv_item_parent:
+    type: integer
+    description: Parent item id for comments and poll options
+  nv_item_poll:
+    type: integer
+    description: Poll id when this item is a story that hosts a poll
+  nv_item_score:
+    type: integer
+    description: Net votes for stories and jobs when present
+  nv_item_text:
+    type: string
+    string_semantics: markdown
+    description: Comment or story text payload when present
   nv_item_time:
     type: integer
     description: Unix time the item was created
@@ -256,56 +283,14 @@ values:
     type: string
     string_semantics: short
     description: Story or job title when applicable
-  nv_item_text:
+  nv_item_type:
     type: string
-    string_semantics: markdown
-    description: Comment or story text payload when present
+    string_semantics: short
+    description: Wire kind such as story, comment, job, poll, or pollopt
   nv_item_url:
     type: string
     string_semantics: short
     description: Outbound link for link posts when present
-  nv_item_score:
-    type: integer
-    description: Net votes for stories and jobs when present
-  nv_item_descendants:
-    type: integer
-    description: Comment count for stories when known
-  nv_item_parent:
-    type: integer
-    description: Parent item id for comments and poll options
-  nv_item_poll:
-    type: integer
-    description: Poll id when this item is a story that hosts a poll
-  nv_item_parts_item:
-    type: integer
-  nv_item_parts:
-    type: array
-    items:
-      value_ref: nv_item_parts_item
-    description: Poll option item ids when type is poll (empty or absent otherwise)
-  nv_item_deleted:
-    type: boolean
-    description: Whether the item was deleted
-  nv_item_dead:
-    type: boolean
-    description: Whether the item is dead
-  nv_user_id:
-    type: string
-    string_semantics: short
-    description: Unique username
-  nv_user_created:
-    type: integer
-    description: Unix time the account was created
-  nv_user_karma:
-    type: integer
-    description: User karma score
-  nv_user_about:
-    type: string
-    string_semantics: markdown
-    description: Self-description text when set
-  nv_user_delay:
-    type: integer
-    description: Account delay setting when present
   nv_max_item_id_id:
     type: integer
     description: Largest item id currently allocated on HN
@@ -316,32 +301,30 @@ values:
     type: string
     string_semantics: short
     description: Username from the live updates snapshot
-  nv_item_search_query:
+  nv_user_about:
+    type: string
+    string_semantics: markdown
+    description: Self-description text when set
+  nv_user_created:
+    type: integer
+    description: Unix time the account was created
+  nv_user_delay:
+    type: integer
+    description: Account delay setting when present
+  nv_user_id:
     type: string
     string_semantics: short
-  nv_item_search_tags:
+    description: Unique username
+  nv_user_karma:
+    type: integer
+    description: User karma score
+  nv_wire_int:
+    type: integer
+  nv_wire_str_short:
     type: string
     string_semantics: short
-  nv_item_search_page:
-    type: integer
-  nv_item_search_per_page:
-    type: integer
-  nv_item_search_by_date_query:
-    type: string
-    string_semantics: short
-  nv_item_search_by_date_tags:
-    type: string
-    string_semantics: short
-  nv_item_search_by_date_page:
-    type: integer
-  nv_item_search_by_date_per_page:
-    type: integer
-  nv_item_feed_query_feed:
-    type: select
-    allowed_values:
-    - top
-    - new
-    - best
-    - ask
-    - show
-    - job
+  nv_item_parts:
+    type: array
+    items:
+      value_ref: nv_wire_int
+    description: Poll option item ids when type is poll (empty or absent otherwise)

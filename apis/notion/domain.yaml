@@ -18,10 +18,10 @@ entities:
         value_ref: nv_page_public_url
       created_time:
         required: false
-        value_ref: nv_page_created_time
+        value_ref: nv_wire_date_rfc3339
       last_edited_time:
         required: false
-        value_ref: nv_page_last_edited_time
+        value_ref: nv_wire_date_rfc3339
       in_trash:
         required: false
         value_ref: nv_page_in_trash
@@ -56,19 +56,19 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_database_id
+        value_ref: nv_wire_str_short
       url:
         required: false
-        value_ref: nv_database_url
+        value_ref: nv_wire_str_short
       public_url:
         required: false
-        value_ref: nv_database_public_url
+        value_ref: nv_wire_str_short
       created_time:
         required: false
-        value_ref: nv_database_created_time
+        value_ref: nv_wire_date_rfc3339
       last_edited_time:
         required: false
-        value_ref: nv_database_last_edited_time
+        value_ref: nv_wire_date_rfc3339
       in_trash:
         required: false
         value_ref: nv_database_in_trash
@@ -96,16 +96,16 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_user_id
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_user_name
+        value_ref: nv_wire_str_short
       type:
         required: false
         value_ref: nv_user_type
       avatar_url:
         required: false
-        value_ref: nv_user_avatar_url
+        value_ref: nv_wire_str_short
       email:
         required: false
         value_ref: nv_user_email
@@ -115,16 +115,16 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_comment_id
+        value_ref: nv_wire_str_short
       discussion_id:
         required: false
-        value_ref: nv_comment_discussion_id
+        value_ref: nv_wire_str_short
       created_time:
         required: false
-        value_ref: nv_comment_created_time
+        value_ref: nv_wire_date_rfc3339
       last_edited_time:
         required: false
-        value_ref: nv_comment_last_edited_time
+        value_ref: nv_wire_date_rfc3339
     relations:
       created_by:
         target: User
@@ -229,7 +229,7 @@ capabilities:
       required: true
       role: scope
     - name: page_size
-      value_ref: nv_comment_query_page_size
+      value_ref: nv_wire_int
       required: false
       role: response_control
   comment_create:
@@ -254,11 +254,11 @@ capabilities:
       required: false
       role: search
     - name: sort_direction
-      value_ref: nv_page_search_sort_direction
+      value_ref: nv_wire_sel_54ee3732e356907b
       required: false
       role: sort_direction
     - name: page_size
-      value_ref: nv_page_search_page_size
+      value_ref: nv_wire_int
       required: false
       role: response_control
   database_search:
@@ -279,99 +279,27 @@ capabilities:
       required: false
       role: search
     - name: sort_direction
-      value_ref: nv_database_search_sort_direction
+      value_ref: nv_wire_sel_54ee3732e356907b
       required: false
       role: sort_direction
     - name: page_size
-      value_ref: nv_database_search_page_size
+      value_ref: nv_wire_int
       required: false
       role: response_control
-version: 1
+version: 2
 auth:
   scheme: bearer_token
   env: NOTION_API_TOKEN
 values:
-  nv_page_id:
+  nv_comment_query_block_id:
     type: string
     string_semantics: short
-    description: UUIDv4 page identifier
-  nv_page_url:
-    type: string
-    string_semantics: short
-    description: Canonical Notion URL for this page
-  nv_page_public_url:
-    type: string
-    string_semantics: short
-    description: Public web URL if the page is published, otherwise null
-  nv_page_created_time:
-    type: date
-    value_format: rfc3339
-  nv_page_last_edited_time:
-    type: date
-    value_format: rfc3339
-  nv_page_in_trash:
-    type: boolean
-    description: True if this page has been trashed
-  nv_page_archived:
-    type: boolean
-    description: Deprecated alias for in_trash
-  nv_page_markdown:
-    type: string
-    string_semantics: markdown
-    description: Full page content as Enhanced Markdown. Populated by page_get_markdown; absent until that action is invoked.
-  nv_page_truncated:
-    type: boolean
-    description: True if the markdown content was truncated (page exceeded ~20k block limit). Populated by page_get_markdown.
-  nv_database_id:
-    type: string
-    string_semantics: short
-  nv_database_url:
-    type: string
-    string_semantics: short
-  nv_database_public_url:
-    type: string
-    string_semantics: short
-  nv_database_created_time:
-    type: date
-    value_format: rfc3339
-  nv_database_last_edited_time:
-    type: date
-    value_format: rfc3339
+    description: ID of the page whose comments to retrieve
   nv_database_in_trash:
     type: boolean
   nv_database_is_inline:
     type: boolean
     description: True if the database is displayed inline in its parent page
-  nv_user_id:
-    type: string
-    string_semantics: short
-  nv_user_name:
-    type: string
-    string_semantics: short
-  nv_user_type:
-    type: select
-    allowed_values:
-    - person
-    - bot
-  nv_user_avatar_url:
-    type: string
-    string_semantics: short
-  nv_user_email:
-    type: string
-    string_semantics: short
-    description: Only available when integration has user email capabilities
-  nv_comment_id:
-    type: string
-    string_semantics: short
-  nv_comment_discussion_id:
-    type: string
-    string_semantics: short
-  nv_comment_created_time:
-    type: date
-    value_format: rfc3339
-  nv_comment_last_edited_time:
-    type: date
-    value_format: rfc3339
   nv_database_query_database_id:
     type: string
     string_semantics: short
@@ -379,31 +307,58 @@ values:
   nv_database_query_page_size:
     type: integer
     description: Number of results per page (max 100)
-  nv_comment_query_block_id:
-    type: string
-    string_semantics: short
-    description: ID of the page whose comments to retrieve
-  nv_comment_query_page_size:
-    type: integer
-  nv_page_search_query:
-    type: string
-    string_semantics: short
-    description: Title text to search for. Omit to retrieve all accessible pages.
-  nv_page_search_sort_direction:
-    type: select
-    allowed_values:
-    - ascending
-    - descending
-  nv_page_search_page_size:
-    type: integer
   nv_database_search_query:
     type: string
     string_semantics: short
     description: Title text to search for. Omit to retrieve all accessible databases.
-  nv_database_search_sort_direction:
+  nv_page_archived:
+    type: boolean
+    description: Deprecated alias for in_trash
+  nv_page_id:
+    type: string
+    string_semantics: short
+    description: UUIDv4 page identifier
+  nv_page_in_trash:
+    type: boolean
+    description: True if this page has been trashed
+  nv_page_markdown:
+    type: string
+    string_semantics: markdown
+    description: Full page content as Enhanced Markdown. Populated by page_get_markdown; absent until that action is invoked.
+  nv_page_public_url:
+    type: string
+    string_semantics: short
+    description: Public web URL if the page is published, otherwise null
+  nv_page_search_query:
+    type: string
+    string_semantics: short
+    description: Title text to search for. Omit to retrieve all accessible pages.
+  nv_page_truncated:
+    type: boolean
+    description: True if the markdown content was truncated (page exceeded ~20k block limit). Populated by page_get_markdown.
+  nv_page_url:
+    type: string
+    string_semantics: short
+    description: Canonical Notion URL for this page
+  nv_user_email:
+    type: string
+    string_semantics: short
+    description: Only available when integration has user email capabilities
+  nv_user_type:
+    type: select
+    allowed_values:
+    - person
+    - bot
+  nv_wire_date_rfc3339:
+    type: date
+    value_format: rfc3339
+  nv_wire_int:
+    type: integer
+  nv_wire_sel_54ee3732e356907b:
     type: select
     allowed_values:
     - ascending
     - descending
-  nv_database_search_page_size:
-    type: integer
+  nv_wire_str_short:
+    type: string
+    string_semantics: short

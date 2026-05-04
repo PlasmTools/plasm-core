@@ -1,4 +1,4 @@
-version: 1
+version: 2
 http_backend: https://api.nytimes.com
 entities:
   Article:
@@ -36,19 +36,19 @@ capabilities:
     entity: Article
     parameters:
     - name: q
-      value_ref: nv_article_search_q
+      value_ref: nv_wire_str_short
       required: false
       role: search
     - name: fq
-      value_ref: nv_article_search_fq
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: begin_date
-      value_ref: nv_article_search_begin_date
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: end_date
-      value_ref: nv_article_search_end_date
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: sort
@@ -56,7 +56,7 @@ capabilities:
       required: false
       role: sort
     - name: fl
-      value_ref: nv_article_search_fl
+      value_ref: nv_wire_str_short
       required: false
       role: response_control
 auth:
@@ -64,56 +64,44 @@ auth:
   param: api-key
   env: NYTIMES_API_KEY
 values:
-  nv_article_web_url:
-    type: string
-    string_semantics: short
-    description: Canonical URL of the article on nytimes.com
-  nv_article_headline:
-    type: string
-    string_semantics: markdown
-    description: Primary headline text of the article
   nv_article_abstract:
     type: string
     string_semantics: markdown
     description: Short summary paragraph of the article
-  nv_article_pub_date:
-    type: date
-    value_format: iso8601_date
-    description: 'Publication date (Article Search API: YYYY-MM-DD)'
-  nv_article_source:
-    type: string
-    string_semantics: short
-    description: Originating publication source name
-  nv_article_section_name:
-    type: string
-    string_semantics: short
-    description: Editorial section the article belongs to
-  nv_article_news_desk:
-    type: string
-    string_semantics: short
-    description: Newsroom desk that produced the article
   nv_article_document_type:
     type: string
     string_semantics: short
     description: Type of document (article, blog post, etc.)
-  nv_article_search_q:
+  nv_article_headline:
+    type: string
+    string_semantics: markdown
+    description: Primary headline text of the article
+  nv_article_news_desk:
     type: string
     string_semantics: short
-  nv_article_search_fq:
-    type: string
-    string_semantics: short
-  nv_article_search_begin_date:
-    type: string
-    string_semantics: short
-  nv_article_search_end_date:
-    type: string
-    string_semantics: short
+    description: Newsroom desk that produced the article
+  nv_article_pub_date:
+    type: date
+    value_format: iso8601_date
+    description: 'Publication date (Article Search API: YYYY-MM-DD)'
   nv_article_search_sort:
     type: select
     allowed_values:
     - relevance
     - newest
     - oldest
-  nv_article_search_fl:
+  nv_article_section_name:
+    type: string
+    string_semantics: short
+    description: Editorial section the article belongs to
+  nv_article_source:
+    type: string
+    string_semantics: short
+    description: Originating publication source name
+  nv_article_web_url:
+    type: string
+    string_semantics: short
+    description: Canonical URL of the article on nytimes.com
+  nv_wire_str_short:
     type: string
     string_semantics: short

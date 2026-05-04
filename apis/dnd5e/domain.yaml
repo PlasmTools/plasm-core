@@ -1,4 +1,4 @@
-version: 3
+version: 4
 auth:
   scheme: none
 http_backend: https://www.dnd5eapi.co
@@ -841,7 +841,7 @@ capabilities:
       required: true
       role: scope
     - name: class_level
-      value_ref: nv_class_level_features_query_class_level
+      value_ref: nv_wire_int
       required: true
       role: scope
   class_spells_by_slot_query:
@@ -854,7 +854,7 @@ capabilities:
       required: true
       role: scope
     - name: spell_level
-      value_ref: nv_class_spells_by_slot_query_spell_level
+      value_ref: nv_wire_int
       required: true
       role: scope
   class_spellcasting_get:
@@ -934,7 +934,7 @@ capabilities:
     entity: Spell
     parameters:
     - name: level
-      value_ref: nv_spell_query_level
+      value_ref: nv_wire_int
       required: false
       role: filter
     - name: school
@@ -942,11 +942,11 @@ capabilities:
       required: false
       role: filter
     - name: concentration
-      value_ref: nv_spell_query_concentration
+      value_ref: nv_wire_bool
       required: false
       role: filter
     - name: ritual
-      value_ref: nv_spell_query_ritual
+      value_ref: nv_wire_bool
       required: false
       role: filter
   spell_get:
@@ -1042,7 +1042,7 @@ capabilities:
       required: true
       role: scope
     - name: level
-      value_ref: nv_class_spells_level
+      value_ref: nv_wire_int
       required: false
       role: filter
   class_features:
@@ -1194,6 +1194,10 @@ capabilities:
     - subclass_flavor
     - desc
 values:
+  nv_ability_score_full_name:
+    type: string
+    string_semantics: short
+    description: Full name of the ability.
   nv_ability_score_index:
     type: string
     string_semantics: short
@@ -1202,26 +1206,6 @@ values:
     type: string
     string_semantics: short
     description: Short label such as STR or DEX.
-  nv_ability_score_full_name:
-    type: string
-    string_semantics: short
-    description: Full name of the ability.
-  nv_ability_score_desc_item:
-    type: string
-    string_semantics: markdown
-  nv_ability_score_desc:
-    type: array
-    items:
-      value_ref: nv_ability_score_desc_item
-    description: Rules text explaining the ability and typical checks.
-  nv_alignment_index:
-    type: string
-    string_semantics: short
-    description: Kebab-case slug for the alignment.
-  nv_alignment_name:
-    type: string
-    string_semantics: short
-    description: Display name of the alignment.
   nv_alignment_abbreviation:
     type: string
     string_semantics: short
@@ -1230,122 +1214,41 @@ values:
     type: string
     string_semantics: markdown
     description: Narrative summary of how creatures with this alignment behave.
-  nv_damage_type_index:
+  nv_alignment_index:
     type: string
     string_semantics: short
-    description: Kebab-case slug for the damage type.
-  nv_damage_type_name:
+    description: Kebab-case slug for the alignment.
+  nv_alignment_name:
     type: string
     string_semantics: short
-    description: Display name.
-  nv_damage_type_desc_item:
-    type: string
-    string_semantics: markdown
-  nv_damage_type_desc:
-    type: array
-    items:
-      value_ref: nv_damage_type_desc_item
-    description: Rules text for this damage type.
-  nv_equipment_category_index:
+    description: Display name of the alignment.
+  nv_background_index:
     type: string
     string_semantics: short
-    description: Kebab-case slug.
-  nv_equipment_category_name:
+    description: Kebab-case slug uniquely identifying the background.
+  nv_background_name:
     type: string
     string_semantics: short
-    description: Display name.
-  nv_weapon_property_index:
+    description: Human-readable background name.
+  nv_class_features_class_index:
+    type: entity_ref
+    target: Class
+  nv_class_hit_die:
+    type: integer
+    description: Hit die size determining HP gained per level.
+  nv_class_index:
     type: string
     string_semantics: short
-    description: Kebab-case slug.
-  nv_weapon_property_name:
-    type: string
-    string_semantics: short
-    description: Display name.
-  nv_weapon_property_desc_item:
-    type: string
-    string_semantics: markdown
-  nv_weapon_property_desc:
-    type: array
-    items:
-      value_ref: nv_weapon_property_desc_item
-    description: Rules text for how the property works.
-  nv_language_index:
-    type: string
-    string_semantics: short
-    description: Kebab-case slug.
-  nv_language_name:
-    type: string
-    string_semantics: short
-    description: Display name.
-  nv_language_desc_item:
-    type: string
-    string_semantics: markdown
-  nv_language_desc:
-    type: array
-    items:
-      value_ref: nv_language_desc_item
-    description: Typical speakers and script notes.
-  nv_language_type:
-    type: string
-    string_semantics: short
-    description: Broad category such as standard or exotic.
-  nv_language_typical_speakers:
-    type: string
-    string_semantics: markdown
-    description: Narrative list of who commonly speaks the language.
-  nv_proficiency_index:
-    type: string
-    string_semantics: short
-    description: Kebab-case slug.
-  nv_proficiency_name:
-    type: string
-    string_semantics: short
-    description: Display name.
-  nv_proficiency_type:
-    type: string
-    string_semantics: short
-    description: Proficiency category when present on the wire.
-  nv_rule_index:
-    type: string
-    string_semantics: short
-    description: Kebab-case slug.
-  nv_rule_name:
-    type: string
-    string_semantics: short
-    description: Chapter title.
-  nv_rule_desc:
-    type: string
-    string_semantics: markdown
-    description: Short chapter summary when present.
-  nv_rule_section_index:
-    type: string
-    string_semantics: short
-    description: Kebab-case slug.
-  nv_rule_section_name:
-    type: string
-    string_semantics: short
-    description: Section title.
-  nv_rule_section_desc:
-    type: string
-    string_semantics: markdown
-    description: Body text for the subsection.
-  nv_feat_index:
-    type: string
-    string_semantics: short
-    description: Kebab-case slug.
-  nv_feat_name:
-    type: string
-    string_semantics: short
-    description: Feat name.
-  nv_feat_desc_item:
-    type: string
-    string_semantics: markdown
-  nv_feat_desc:
-    type: array
-    items:
-      value_ref: nv_feat_desc_item
-    description: Rules text paragraphs.
+    description: Kebab-case slug uniquely identifying the class.
+  nv_class_level_ability_score_bonuses:
+    type: number
+    description: Total ASI-style bonuses accumulated up to this level.
+  nv_class_level_class_specific:
+    type: json
+    description: Class-specific progression payload (rage dice, slots, etc.).
+  nv_class_level_features_query_class_index:
+    type: entity_ref
+    target: Class
   nv_class_level_index:
     type: string
     string_semantics: short
@@ -1353,19 +1256,16 @@ values:
   nv_class_level_level:
     type: integer
     description: Character level represented by this row.
-  nv_class_level_ability_score_bonuses:
-    type: number
-    description: Total ASI-style bonuses accumulated up to this level.
   nv_class_level_prof_bonus:
     type: integer
     description: Proficiency bonus at this level.
-  nv_class_level_url:
+  nv_class_level_query_class_index:
+    type: entity_ref
+    target: Class
+  nv_class_level_query_subclass:
     type: string
     string_semantics: short
-    description: Canonical API URL for this resource row.
-  nv_class_level_class_specific:
-    type: json
-    description: Class-specific progression payload (rage dice, slots, etc.).
+    description: Optional subclass index to enrich the level list payload.
   nv_class_level_spellcasting:
     type: json
     description: Spells known and slot counts when this class grants spellcasting.
@@ -1373,37 +1273,10 @@ values:
     type: string
     string_semantics: short
     description: Last update timestamp from the provider.
-  nv_subclass_level_index:
+  nv_class_level_url:
     type: string
     string_semantics: short
-    description: Composite index for the subclass level row.
-  nv_subclass_level_level:
-    type: integer
-    description: Character level for this row.
-  nv_subclass_level_prof_bonus:
-    type: integer
-    description: Proficiency bonus at this level.
-  nv_subclass_level_url:
-    type: string
-    string_semantics: short
-    description: Canonical API URL.
-  nv_subclass_level_subclass_specific:
-    type: json
-    description: Subclass-specific progression payload.
-  nv_subclass_level_updated_at:
-    type: string
-    string_semantics: short
-    description: Last update timestamp from the provider.
-  nv_class_spellcasting_index:
-    type: string
-    string_semantics: short
-    description: Class index this spellcasting block belongs to.
-  nv_class_spellcasting_level:
-    type: integer
-    description: Level at which the class begins spellcasting.
-  nv_class_spellcasting_info:
-    type: json
-    description: Structured spellcasting sections (cantrips, slots, ritual casting, etc.).
+    description: Canonical API URL for this resource row.
   nv_class_multiclassing_index:
     type: string
     string_semantics: short
@@ -1417,335 +1290,56 @@ values:
   nv_class_multiclassing_proficiency_choices:
     type: json
     description: Optional proficiency choices offered on multiclass entry.
-  nv_magic_school_index:
-    type: string
-    string_semantics: short
-    description: Kebab-case slug uniquely identifying the magic school.
-  nv_magic_school_name:
-    type: string
-    string_semantics: short
-    description: Human-readable magic school name.
-  nv_magic_school_desc_item:
-    type: string
-    string_semantics: markdown
-  nv_magic_school_desc:
-    type: array
-    items:
-      value_ref: nv_magic_school_desc_item
-    description: Description of the school's thematic focus.
-  nv_class_index:
-    type: string
-    string_semantics: short
-    description: Kebab-case slug uniquely identifying the class.
   nv_class_name:
     type: string
     string_semantics: short
     description: Human-readable class name.
-  nv_class_hit_die:
-    type: integer
-    description: Hit die size determining HP gained per level.
-  nv_subclass_index:
+  nv_class_proficiencies_query_class_index:
+    type: entity_ref
+    target: Class
+  nv_class_spellcasting_index:
     type: string
     string_semantics: short
-    description: Kebab-case slug uniquely identifying the subclass.
-  nv_subclass_name:
-    type: string
-    string_semantics: short
-    description: Human-readable subclass name.
-  nv_subclass_subclass_flavor:
-    type: string
-    string_semantics: short
-    description: Thematic description of the subclass identity.
-  nv_subclass_desc_item:
-    type: string
-    string_semantics: markdown
-  nv_subclass_desc:
-    type: array
-    items:
-      value_ref: nv_subclass_desc_item
-    description: Full text description of the subclass.
-  nv_spell_index:
-    type: string
-    string_semantics: short
-    description: Kebab-case slug uniquely identifying the spell (e.g. 'fireball').
-  nv_spell_name:
-    type: string
-    string_semantics: short
-    description: Human-readable spell name.
-  nv_spell_level:
-    type: integer
-    description: Spell slot level required to cast (0 = cantrip).
-  nv_spell_range:
-    type: string
-    string_semantics: short
-    description: Range of the spell effect (e.g. '60 feet').
-  nv_spell_casting_time:
-    type: string
-    string_semantics: short
-    description: Time required to cast (e.g. '1 action').
-  nv_spell_duration:
-    type: string
-    string_semantics: short
-    description: How long the spell effect lasts.
-  nv_spell_concentration:
-    type: boolean
-    description: Whether the caster must maintain concentration.
-  nv_spell_ritual:
-    type: boolean
-    description: Whether the spell can be cast as a ritual.
-  nv_spell_desc_item:
-    type: string
-    string_semantics: markdown
-  nv_spell_desc:
-    type: array
-    items:
-      value_ref: nv_spell_desc_item
-    description: Full rules text paragraphs for the spell.
-  nv_spell_higher_level_item:
-    type: string
-    string_semantics: markdown
-  nv_spell_higher_level:
-    type: array
-    items:
-      value_ref: nv_spell_higher_level_item
-    description: Additional effects when cast using a higher-level slot.
-  nv_spell_components_item:
-    type: string
-    string_semantics: short
-  nv_spell_components:
-    type: array
-    items:
-      value_ref: nv_spell_components_item
-    description: Verbal, somatic, and material component letters (V, S, M).
-  nv_spell_material:
-    type: string
-    string_semantics: markdown
-    description: Material component description when the spell lists M.
-  nv_spell_attack_type:
-    type: string
-    string_semantics: short
-    description: Attack mode such as ranged or melee when applicable.
-  nv_spell_area_of_effect:
+    description: Class index this spellcasting block belongs to.
+  nv_class_spellcasting_info:
     type: json
-    description: Area template metadata when the spell has a shaped area.
-  nv_spell_damage:
-    type: json
-    description: Damage dice by slot or character level when present.
-  nv_spell_dc:
-    type: json
-    description: Saving throw DC block when the spell allows a save.
-  nv_spell_url:
-    type: string
-    string_semantics: short
-    description: Canonical API URL for this spell.
-  nv_spell_updated_at:
-    type: string
-    string_semantics: short
-    description: Last update timestamp from the provider.
-  nv_monster_index:
-    type: string
-    string_semantics: short
-    description: Kebab-case slug uniquely identifying the monster.
-  nv_monster_name:
-    type: string
-    string_semantics: short
-    description: Human-readable monster name.
-  nv_monster_size:
-    type: select
-    allowed_values:
-    - Tiny
-    - Small
-    - Medium
-    - Large
-    - Huge
-    - Gargantuan
-    description: Physical size category of the monster.
-  nv_monster_type:
-    type: string
-    string_semantics: short
-    description: Creature type (e.g. humanoid, fiend, undead).
-  nv_monster_subtype:
-    type: string
-    string_semantics: short
-    description: Optional subtype line such as goblinoid.
-  nv_monster_alignment:
-    type: string
-    string_semantics: short
-    description: Typical moral alignment of the monster.
-  nv_monster_challenge_rating:
-    type: number
-    description: Difficulty rating used to determine XP reward.
-  nv_monster_hit_points:
+    description: Structured spellcasting sections (cantrips, slots, ritual casting, etc.).
+  nv_class_spellcasting_level:
     type: integer
-    description: Average number of hit points the monster has.
-  nv_monster_hit_dice:
+    description: Level at which the class begins spellcasting.
+  nv_class_spells_by_slot_query_class_index:
+    type: entity_ref
+    target: Class
+  nv_class_spells_class_index:
+    type: entity_ref
+    target: Class
+  nv_class_subclasses_class_index:
+    type: entity_ref
+    target: Class
+  nv_condition_index:
     type: string
     string_semantics: short
-    description: Hit dice expression such as 2d6.
-  nv_monster_hit_points_roll:
+    description: Kebab-case slug uniquely identifying the condition.
+  nv_condition_name:
     type: string
     string_semantics: short
-    description: Rolled HP expression when different from hit_dice.
-  nv_monster_armor_class:
-    type: json
-    description: Armor class entries including armor pieces when present.
-  nv_monster_proficiency_bonus:
-    type: integer
-    description: Proficiency bonus used for attacks and saves.
-  nv_monster_strength:
-    type: integer
-    description: Strength score.
-  nv_monster_dexterity:
-    type: integer
-    description: Dexterity score.
-  nv_monster_constitution:
-    type: integer
-    description: Constitution score.
-  nv_monster_intelligence:
-    type: integer
-    description: Intelligence score.
-  nv_monster_wisdom:
-    type: integer
-    description: Wisdom score.
-  nv_monster_charisma:
-    type: integer
-    description: Charisma score.
-  nv_monster_xp:
-    type: integer
-    description: Experience points awarded for defeating this monster.
-  nv_monster_image:
+    description: Human-readable condition name.
+  nv_damage_type_index:
     type: string
     string_semantics: short
-    description: Relative URL for creature artwork when available.
-  nv_monster_speed:
-    type: json
-    description: Movement modes and distances.
-  nv_monster_senses:
-    type: json
-    description: Passive perception and special senses.
-  nv_monster_languages:
-    type: string
-    string_semantics: markdown
-    description: Languages understood or spoken.
-  nv_monster_proficiencies:
-    type: json
-    description: Saving throws, skills, and gear proficiencies.
-  nv_monster_damage_vulnerabilities_item:
+    description: Kebab-case slug for the damage type.
+  nv_damage_type_name:
     type: string
     string_semantics: short
-  nv_monster_damage_vulnerabilities:
-    type: array
-    items:
-      value_ref: nv_monster_damage_vulnerabilities_item
-    description: Damage types this creature is vulnerable to.
-  nv_monster_damage_resistances_item:
+    description: Display name.
+  nv_equipment_category_index:
     type: string
     string_semantics: short
-  nv_monster_damage_resistances:
-    type: array
-    items:
-      value_ref: nv_monster_damage_resistances_item
-    description: Damage types this creature resists.
-  nv_monster_damage_immunities_item:
+    description: Kebab-case slug.
+  nv_equipment_category_name:
     type: string
     string_semantics: short
-  nv_monster_damage_immunities:
-    type: array
-    items:
-      value_ref: nv_monster_damage_immunities_item
-    description: Damage types this creature ignores.
-  nv_monster_condition_immunities_item:
-    type: string
-    string_semantics: short
-  nv_monster_condition_immunities:
-    type: array
-    items:
-      value_ref: nv_monster_condition_immunities_item
-    description: Conditions that do not apply to this creature.
-  nv_monster_special_abilities:
-    type: json
-    description: Traits such as Nimble Escape or Magic Resistance.
-  nv_monster_actions:
-    type: json
-    description: Actions, attacks, and recharge abilities.
-  nv_monster_legendary_actions:
-    type: json
-    description: Legendary action block when present.
-  nv_monster_reactions:
-    type: json
-    description: Reaction entries when present.
-  nv_monster_url:
-    type: string
-    string_semantics: short
-    description: Canonical API URL.
-  nv_monster_updated_at:
-    type: string
-    string_semantics: short
-    description: Last update timestamp from the provider.
-  nv_race_index:
-    type: string
-    string_semantics: short
-    description: Kebab-case slug uniquely identifying the race.
-  nv_race_name:
-    type: string
-    string_semantics: short
-    description: Human-readable race name.
-  nv_race_speed:
-    type: integer
-    description: Movement speed in feet per turn.
-  nv_race_size:
-    type: select
-    allowed_values:
-    - Tiny
-    - Small
-    - Medium
-    - Large
-    - Huge
-    - Gargantuan
-    description: Physical size category of the race.
-  nv_race_alignment:
-    type: string
-    string_semantics: short
-    description: Typical alignment tendency of the race.
-  nv_race_age:
-    type: string
-    string_semantics: markdown
-    description: Description of typical lifespan and maturity.
-  nv_subrace_index:
-    type: string
-    string_semantics: short
-    description: Kebab-case slug uniquely identifying the subrace.
-  nv_subrace_name:
-    type: string
-    string_semantics: short
-    description: Human-readable subrace name.
-  nv_subrace_desc_item:
-    type: string
-    string_semantics: markdown
-  nv_subrace_desc:
-    type: array
-    items:
-      value_ref: nv_subrace_desc_item
-    description: Description of the subrace and its distinguishing traits.
-  nv_feature_index:
-    type: string
-    string_semantics: short
-    description: Kebab-case slug uniquely identifying the feature.
-  nv_feature_name:
-    type: string
-    string_semantics: short
-    description: Human-readable feature name.
-  nv_feature_level:
-    type: integer
-    description: Character level at which this feature is gained.
-  nv_feature_desc_item:
-    type: string
-    string_semantics: markdown
-  nv_feature_desc:
-    type: array
-    items:
-      value_ref: nv_feature_desc_item
-    description: Full text description of the feature's effect.
+    description: Display name.
   nv_equipment_index:
     type: string
     string_semantics: short
@@ -1757,14 +1351,41 @@ values:
   nv_equipment_weight:
     type: number
     description: Weight of the item in pounds.
-  nv_equipment_desc_item:
+  nv_feat_index:
+    type: string
+    string_semantics: short
+    description: Kebab-case slug.
+  nv_feat_name:
+    type: string
+    string_semantics: short
+    description: Feat name.
+  nv_feature_index:
+    type: string
+    string_semantics: short
+    description: Kebab-case slug uniquely identifying the feature.
+  nv_feature_level:
+    type: integer
+    description: Character level at which this feature is gained.
+  nv_feature_name:
+    type: string
+    string_semantics: short
+    description: Human-readable feature name.
+  nv_language_index:
+    type: string
+    string_semantics: short
+    description: Kebab-case slug.
+  nv_language_name:
+    type: string
+    string_semantics: short
+    description: Display name.
+  nv_language_type:
+    type: string
+    string_semantics: short
+    description: Broad category such as standard or exotic.
+  nv_language_typical_speakers:
     type: string
     string_semantics: markdown
-  nv_equipment_desc:
-    type: array
-    items:
-      value_ref: nv_equipment_desc_item
-    description: Description of the equipment piece.
+    description: Narrative list of who commonly speaks the language.
   nv_magic_item_index:
     type: string
     string_semantics: short
@@ -1773,14 +1394,198 @@ values:
     type: string
     string_semantics: short
     description: Human-readable magic item name.
-  nv_magic_item_desc_item:
+  nv_magic_school_index:
+    type: string
+    string_semantics: short
+    description: Kebab-case slug uniquely identifying the magic school.
+  nv_magic_school_name:
+    type: string
+    string_semantics: short
+    description: Human-readable magic school name.
+  nv_monster_actions:
+    type: json
+    description: Actions, attacks, and recharge abilities.
+  nv_monster_alignment:
+    type: string
+    string_semantics: short
+    description: Typical moral alignment of the monster.
+  nv_monster_armor_class:
+    type: json
+    description: Armor class entries including armor pieces when present.
+  nv_monster_challenge_rating:
+    type: number
+    description: Difficulty rating used to determine XP reward.
+  nv_monster_charisma:
+    type: integer
+    description: Charisma score.
+  nv_monster_constitution:
+    type: integer
+    description: Constitution score.
+  nv_monster_dexterity:
+    type: integer
+    description: Dexterity score.
+  nv_monster_hit_dice:
+    type: string
+    string_semantics: short
+    description: Hit dice expression such as 2d6.
+  nv_monster_hit_points:
+    type: integer
+    description: Average number of hit points the monster has.
+  nv_monster_hit_points_roll:
+    type: string
+    string_semantics: short
+    description: Rolled HP expression when different from hit_dice.
+  nv_monster_image:
+    type: string
+    string_semantics: short
+    description: Relative URL for creature artwork when available.
+  nv_monster_index:
+    type: string
+    string_semantics: short
+    description: Kebab-case slug uniquely identifying the monster.
+  nv_monster_intelligence:
+    type: integer
+    description: Intelligence score.
+  nv_monster_languages:
     type: string
     string_semantics: markdown
-  nv_magic_item_desc:
-    type: array
-    items:
-      value_ref: nv_magic_item_desc_item
-    description: Description of the item's magical properties.
+    description: Languages understood or spoken.
+  nv_monster_legendary_actions:
+    type: json
+    description: Legendary action block when present.
+  nv_monster_name:
+    type: string
+    string_semantics: short
+    description: Human-readable monster name.
+  nv_monster_proficiencies:
+    type: json
+    description: Saving throws, skills, and gear proficiencies.
+  nv_monster_proficiency_bonus:
+    type: integer
+    description: Proficiency bonus used for attacks and saves.
+  nv_monster_query_challenge_rating_item:
+    type: number
+  nv_monster_reactions:
+    type: json
+    description: Reaction entries when present.
+  nv_monster_senses:
+    type: json
+    description: Passive perception and special senses.
+  nv_monster_size:
+    type: select
+    allowed_values:
+    - Tiny
+    - Small
+    - Medium
+    - Large
+    - Huge
+    - Gargantuan
+    description: Physical size category of the monster.
+  nv_monster_special_abilities:
+    type: json
+    description: Traits such as Nimble Escape or Magic Resistance.
+  nv_monster_speed:
+    type: json
+    description: Movement modes and distances.
+  nv_monster_strength:
+    type: integer
+    description: Strength score.
+  nv_monster_subtype:
+    type: string
+    string_semantics: short
+    description: Optional subtype line such as goblinoid.
+  nv_monster_type:
+    type: string
+    string_semantics: short
+    description: Creature type (e.g. humanoid, fiend, undead).
+  nv_monster_updated_at:
+    type: string
+    string_semantics: short
+    description: Last update timestamp from the provider.
+  nv_monster_url:
+    type: string
+    string_semantics: short
+    description: Canonical API URL.
+  nv_monster_wisdom:
+    type: integer
+    description: Wisdom score.
+  nv_monster_xp:
+    type: integer
+    description: Experience points awarded for defeating this monster.
+  nv_proficiency_index:
+    type: string
+    string_semantics: short
+    description: Kebab-case slug.
+  nv_proficiency_name:
+    type: string
+    string_semantics: short
+    description: Display name.
+  nv_proficiency_type:
+    type: string
+    string_semantics: short
+    description: Proficiency category when present on the wire.
+  nv_race_age:
+    type: string
+    string_semantics: markdown
+    description: Description of typical lifespan and maturity.
+  nv_race_alignment:
+    type: string
+    string_semantics: short
+    description: Typical alignment tendency of the race.
+  nv_race_index:
+    type: string
+    string_semantics: short
+    description: Kebab-case slug uniquely identifying the race.
+  nv_race_name:
+    type: string
+    string_semantics: short
+    description: Human-readable race name.
+  nv_race_proficiencies_query_race_index:
+    type: entity_ref
+    target: Race
+  nv_race_size:
+    type: select
+    allowed_values:
+    - Tiny
+    - Small
+    - Medium
+    - Large
+    - Huge
+    - Gargantuan
+    description: Physical size category of the race.
+  nv_race_speed:
+    type: integer
+    description: Movement speed in feet per turn.
+  nv_race_subraces_race_index:
+    type: entity_ref
+    target: Race
+  nv_race_traits_race_index:
+    type: entity_ref
+    target: Race
+  nv_rule_desc:
+    type: string
+    string_semantics: markdown
+    description: Short chapter summary when present.
+  nv_rule_index:
+    type: string
+    string_semantics: short
+    description: Kebab-case slug.
+  nv_rule_name:
+    type: string
+    string_semantics: short
+    description: Chapter title.
+  nv_rule_section_desc:
+    type: string
+    string_semantics: markdown
+    description: Body text for the subsection.
+  nv_rule_section_index:
+    type: string
+    string_semantics: short
+    description: Kebab-case slug.
+  nv_rule_section_name:
+    type: string
+    string_semantics: short
+    description: Section title.
   nv_skill_index:
     type: string
     string_semantics: short
@@ -1789,38 +1594,116 @@ values:
     type: string
     string_semantics: short
     description: Human-readable skill name.
-  nv_skill_desc_item:
+  nv_spell_area_of_effect:
+    type: json
+    description: Area template metadata when the spell has a shaped area.
+  nv_spell_attack_type:
+    type: string
+    string_semantics: short
+    description: Attack mode such as ranged or melee when applicable.
+  nv_spell_casting_time:
+    type: string
+    string_semantics: short
+    description: Time required to cast (e.g. '1 action').
+  nv_spell_concentration:
+    type: boolean
+    description: Whether the caster must maintain concentration.
+  nv_spell_damage:
+    type: json
+    description: Damage dice by slot or character level when present.
+  nv_spell_dc:
+    type: json
+    description: Saving throw DC block when the spell allows a save.
+  nv_spell_duration:
+    type: string
+    string_semantics: short
+    description: How long the spell effect lasts.
+  nv_spell_index:
+    type: string
+    string_semantics: short
+    description: Kebab-case slug uniquely identifying the spell (e.g. 'fireball').
+  nv_spell_level:
+    type: integer
+    description: Spell slot level required to cast (0 = cantrip).
+  nv_spell_material:
     type: string
     string_semantics: markdown
-  nv_skill_desc:
-    type: array
-    items:
-      value_ref: nv_skill_desc_item
-    description: Description of what the skill covers.
-  nv_condition_index:
+    description: Material component description when the spell lists M.
+  nv_spell_name:
     type: string
     string_semantics: short
-    description: Kebab-case slug uniquely identifying the condition.
-  nv_condition_name:
+    description: Human-readable spell name.
+  nv_spell_query_school:
+    type: entity_ref
+    target: MagicSchool
+  nv_spell_range:
     type: string
     string_semantics: short
-    description: Human-readable condition name.
-  nv_condition_desc_item:
-    type: string
-    string_semantics: markdown
-  nv_condition_desc:
-    type: array
-    items:
-      value_ref: nv_condition_desc_item
-    description: Description of the condition's effects on a creature.
-  nv_background_index:
+    description: Range of the spell effect (e.g. '60 feet').
+  nv_spell_ritual:
+    type: boolean
+    description: Whether the spell can be cast as a ritual.
+  nv_spell_updated_at:
     type: string
     string_semantics: short
-    description: Kebab-case slug uniquely identifying the background.
-  nv_background_name:
+    description: Last update timestamp from the provider.
+  nv_spell_url:
     type: string
     string_semantics: short
-    description: Human-readable background name.
+    description: Canonical API URL for this spell.
+  nv_subclass_features_query_subclass_index:
+    type: entity_ref
+    target: Subclass
+  nv_subclass_index:
+    type: string
+    string_semantics: short
+    description: Kebab-case slug uniquely identifying the subclass.
+  nv_subclass_level_index:
+    type: string
+    string_semantics: short
+    description: Composite index for the subclass level row.
+  nv_subclass_level_level:
+    type: integer
+    description: Character level for this row.
+  nv_subclass_level_prof_bonus:
+    type: integer
+    description: Proficiency bonus at this level.
+  nv_subclass_level_query_subclass_index:
+    type: entity_ref
+    target: Subclass
+  nv_subclass_level_subclass_specific:
+    type: json
+    description: Subclass-specific progression payload.
+  nv_subclass_level_updated_at:
+    type: string
+    string_semantics: short
+    description: Last update timestamp from the provider.
+  nv_subclass_level_url:
+    type: string
+    string_semantics: short
+    description: Canonical API URL.
+  nv_subclass_name:
+    type: string
+    string_semantics: short
+    description: Human-readable subclass name.
+  nv_subclass_subclass_flavor:
+    type: string
+    string_semantics: short
+    description: Thematic description of the subclass identity.
+  nv_subrace_index:
+    type: string
+    string_semantics: short
+    description: Kebab-case slug uniquely identifying the subrace.
+  nv_subrace_name:
+    type: string
+    string_semantics: short
+    description: Human-readable subrace name.
+  nv_subrace_proficiencies_query_subrace_index:
+    type: entity_ref
+    target: Subrace
+  nv_subrace_traits_query_subrace_index:
+    type: entity_ref
+    target: Subrace
   nv_trait_index:
     type: string
     string_semantics: short
@@ -1829,79 +1712,131 @@ values:
     type: string
     string_semantics: short
     description: Human-readable trait name.
-  nv_trait_desc_item:
-    type: string
-    string_semantics: markdown
-  nv_trait_desc:
-    type: array
-    items:
-      value_ref: nv_trait_desc_item
-    description: Description of the racial trait's passive effect.
-  nv_class_level_query_class_index:
-    type: entity_ref
-    target: Class
-  nv_class_level_query_subclass:
+  nv_weapon_property_index:
     type: string
     string_semantics: short
-    description: Optional subclass index to enrich the level list payload.
-  nv_class_level_features_query_class_index:
-    type: entity_ref
-    target: Class
-  nv_class_level_features_query_class_level:
-    type: integer
-  nv_class_spells_by_slot_query_class_index:
-    type: entity_ref
-    target: Class
-  nv_class_spells_by_slot_query_spell_level:
-    type: integer
-  nv_class_proficiencies_query_class_index:
-    type: entity_ref
-    target: Class
-  nv_subclass_features_query_subclass_index:
-    type: entity_ref
-    target: Subclass
-  nv_subclass_level_query_subclass_index:
-    type: entity_ref
-    target: Subclass
-  nv_race_proficiencies_query_race_index:
-    type: entity_ref
-    target: Race
-  nv_subrace_proficiencies_query_subrace_index:
-    type: entity_ref
-    target: Subrace
-  nv_subrace_traits_query_subrace_index:
-    type: entity_ref
-    target: Subrace
-  nv_spell_query_level:
-    type: integer
-  nv_spell_query_school:
-    type: entity_ref
-    target: MagicSchool
-  nv_spell_query_concentration:
+    description: Kebab-case slug.
+  nv_weapon_property_name:
+    type: string
+    string_semantics: short
+    description: Display name.
+  nv_wire_bool:
     type: boolean
-  nv_spell_query_ritual:
-    type: boolean
-  nv_monster_query_challenge_rating_item:
-    type: number
+  nv_wire_int:
+    type: integer
+  nv_wire_str_markdown:
+    type: string
+    string_semantics: markdown
+  nv_wire_str_short:
+    type: string
+    string_semantics: short
   nv_monster_query_challenge_rating:
     type: array
     items:
       value_ref: nv_monster_query_challenge_rating_item
     description: Challenge ratings to match; repeat the filter to pass several ratings.
-  nv_class_spells_class_index:
-    type: entity_ref
-    target: Class
-  nv_class_spells_level:
-    type: integer
-  nv_class_features_class_index:
-    type: entity_ref
-    target: Class
-  nv_class_subclasses_class_index:
-    type: entity_ref
-    target: Class
-  nv_race_traits_race_index:
-    type: entity_ref
-    target: Race
-  nv_race_subraces_race_index:
-    type: entity_ref
-    target: Race
+  nv_ability_score_desc:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Rules text explaining the ability and typical checks.
+  nv_condition_desc:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Description of the condition's effects on a creature.
+  nv_damage_type_desc:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Rules text for this damage type.
+  nv_equipment_desc:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Description of the equipment piece.
+  nv_feat_desc:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Rules text paragraphs.
+  nv_feature_desc:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Full text description of the feature's effect.
+  nv_language_desc:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Typical speakers and script notes.
+  nv_magic_item_desc:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Description of the item's magical properties.
+  nv_magic_school_desc:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Description of the school's thematic focus.
+  nv_skill_desc:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Description of what the skill covers.
+  nv_spell_desc:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Full rules text paragraphs for the spell.
+  nv_spell_higher_level:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Additional effects when cast using a higher-level slot.
+  nv_subclass_desc:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Full text description of the subclass.
+  nv_subrace_desc:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Description of the subrace and its distinguishing traits.
+  nv_trait_desc:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Description of the racial trait's passive effect.
+  nv_weapon_property_desc:
+    type: array
+    items:
+      value_ref: nv_wire_str_markdown
+    description: Rules text for how the property works.
+  nv_monster_condition_immunities:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Conditions that do not apply to this creature.
+  nv_monster_damage_immunities:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Damage types this creature ignores.
+  nv_monster_damage_resistances:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Damage types this creature resists.
+  nv_monster_damage_vulnerabilities:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Damage types this creature is vulnerable to.
+  nv_spell_components:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Verbal, somatic, and material component letters (V, S, M).

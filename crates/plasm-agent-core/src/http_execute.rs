@@ -20,10 +20,10 @@ use indexmap::IndexMap;
 use plasm_core::discovery::{CgsCatalog, DiscoveryError};
 use plasm_core::error_render::{render_parse_error_with_feedback, FeedbackStyle};
 use plasm_core::{
+    domain_tsv_table_from_wrapped_prompt,
     expr_parser::{self, ParsedExpr},
-    normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
-    split_tsv_domain_contract_and_table, AuthScheme, CgsContext, PagingHandle, PromptRenderMode,
-    SymbolMap, CGS,
+    normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated, AuthScheme,
+    CgsContext, PagingHandle, PromptRenderMode, SymbolMap, CGS,
 };
 use plasm_runtime::{
     auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
@@ -614,14 +614,6 @@ fn wrap_domain_markdown_literal_block(body: &str, render_mode: PromptRenderMode)
     let t = body.trim_end();
     let fence = render_mode.markdown_fence_info_string();
     format!("```{fence}\n{t}\n```\n")
-}
-
-/// Inner body of a single leading Markdown fenced code block (```{fence_info}\\n … \\n```).
-fn markdown_domain_fence_body<'a>(markdown: &'a str, fence_info: &str) -> Option<&'a str> {
-    let open = format!("```{fence_info}\n");
-    let rest = markdown.strip_prefix(&open)?;
-    let end = rest.find("\n```")?;
-    Some(&rest[..end])
 }
 
 fn cgs_entity_names_sample(names: &[String], max_list: usize) -> String {
@@ -1300,10 +1292,10 @@ pub async fn apply_capability_seeds(
             // (Later expand waves with no new entities omit full DOMAIN replay—see `expand_execute_domain_session`.)
             let mode = st.engine.prompt_pipeline().render_mode;
             if mode.is_tsv() {
-                if let Some(inner) =
-                    markdown_domain_fence_body(&created.prompt, mode.markdown_fence_info_string())
-                {
-                    let (_contract, body_tsv) = split_tsv_domain_contract_and_table(inner);
+                if let Some(body_tsv) = domain_tsv_table_from_wrapped_prompt(
+                    &created.prompt,
+                    mode.markdown_fence_info_string(),
+                ) {
                     let wrapped = wrap_domain_markdown_literal_block(&body_tsv, mode);
                     open_md.push_str("\n\n");
                     open_md.push_str(&wrapped);

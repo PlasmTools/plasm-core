@@ -1,4 +1,4 @@
-version: 23
+version: 24
 http_backend: https://api.github.com
 entities:
   Repository:
@@ -10,7 +10,7 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_repository_id
+        value_ref: nv_wire_int
       owner:
         required: true
         path: owner.login
@@ -24,31 +24,31 @@ entities:
         value_ref: nv_github_repository_full_name
       description:
         required: false
-        value_ref: nv_repository_description
+        value_ref: nv_wire_str_markdown
       private:
         required: true
-        value_ref: nv_repository_private
+        value_ref: nv_wire_bool
       fork:
         required: true
-        value_ref: nv_repository_fork
+        value_ref: nv_wire_bool
       language:
         required: false
-        value_ref: nv_repository_language
+        value_ref: nv_wire_str_short
       stargazers_count:
         required: false
-        value_ref: nv_repository_stargazers_count
+        value_ref: nv_wire_int
       forks_count:
         required: false
-        value_ref: nv_repository_forks_count
+        value_ref: nv_wire_int
       open_issues_count:
         required: false
-        value_ref: nv_repository_open_issues_count
+        value_ref: nv_wire_int
       default_branch:
         required: false
         value_ref: nv_github_branch_name
       archived:
         required: false
-        value_ref: nv_repository_archived
+        value_ref: nv_wire_bool
       visibility:
         required: false
         value_ref: nv_repository_visibility
@@ -60,7 +60,7 @@ entities:
         value_ref: nv_github_updated_at
       pushed_at:
         required: false
-        value_ref: nv_repository_pushed_at
+        value_ref: nv_wire_date_rfc3339
       html_url:
         required: false
         value_ref: nv_github_html_url
@@ -120,7 +120,7 @@ entities:
     fields:
       repository_url:
         required: false
-        value_ref: nv_issue_repository_url
+        value_ref: nv_wire_str_short
       owner:
         derive:
           type: segments_after_prefix
@@ -146,57 +146,57 @@ entities:
         value_ref: nv_issue_number
       id:
         required: true
-        value_ref: nv_issue_id
+        value_ref: nv_wire_int
       title:
         required: true
-        value_ref: nv_issue_title
+        value_ref: nv_wire_str_short
       body:
         required: false
-        value_ref: nv_issue_body
+        value_ref: nv_wire_str_markdown
       state:
         required: true
-        value_ref: nv_issue_state
+        value_ref: nv_wire_sel_668f8e38fed376e3
       state_reason:
         required: false
         value_ref: nv_issue_state_reason
       issue_type_id:
         required: false
         path: type.id
-        value_ref: nv_issue_issue_type_id
+        value_ref: nv_wire_int
       issue_type_node_id:
         required: false
         path: type.node_id
-        value_ref: nv_issue_issue_type_node_id
+        value_ref: nv_wire_str_short
       issue_type_name:
         required: false
         path: type.name
-        value_ref: nv_issue_issue_type_name
+        value_ref: nv_wire_str_short
       issue_type_color:
         required: false
         path: type.color
-        value_ref: nv_issue_issue_type_color
+        value_ref: nv_wire_sel_9a078639e0272e4d
       issue_type_is_enabled:
         required: false
         path: type.is_enabled
-        value_ref: nv_issue_issue_type_is_enabled
+        value_ref: nv_wire_bool
       sub_issues_total:
         required: false
         path: sub_issues_summary.total
-        value_ref: nv_issue_sub_issues_total
+        value_ref: nv_wire_int
       sub_issues_completed:
         required: false
         path: sub_issues_summary.completed
-        value_ref: nv_issue_sub_issues_completed
+        value_ref: nv_wire_int
       sub_issues_percent_completed:
         required: false
         path: sub_issues_summary.percent_completed
         value_ref: nv_issue_sub_issues_percent_completed
       locked:
         required: false
-        value_ref: nv_issue_locked
+        value_ref: nv_wire_bool
       comments:
         required: false
-        value_ref: nv_issue_comments
+        value_ref: nv_wire_int
       created_at:
         required: false
         value_ref: nv_github_created_at
@@ -252,7 +252,7 @@ entities:
     fields:
       repository_url:
         required: false
-        value_ref: nv_pull_request_repository_url
+        value_ref: nv_wire_str_short
       owner:
         derive:
           type: segments_after_prefix
@@ -278,26 +278,26 @@ entities:
         value_ref: nv_pull_request_number
       id:
         required: true
-        value_ref: nv_pull_request_id
+        value_ref: nv_wire_int
       title:
         required: true
-        value_ref: nv_pull_request_title
+        value_ref: nv_wire_str_short
       body:
         required: false
-        value_ref: nv_pull_request_body
+        value_ref: nv_wire_str_markdown
       state:
         required: true
-        value_ref: nv_pull_request_state
+        value_ref: nv_wire_sel_668f8e38fed376e3
       locked:
         required: false
-        value_ref: nv_pull_request_locked
+        value_ref: nv_wire_bool
       draft:
         required: false
-        value_ref: nv_pull_request_draft
+        value_ref: nv_wire_bool
       head_ref:
         required: false
         path: head.ref
-        value_ref: nv_pull_request_head_ref
+        value_ref: nv_wire_str_short
       head_sha:
         required: false
         path: head.sha
@@ -305,20 +305,20 @@ entities:
       base_ref:
         required: false
         path: base.ref
-        value_ref: nv_pull_request_base_ref
+        value_ref: nv_wire_str_short
       base_sha:
         required: false
         path: base.sha
         value_ref: nv_github_git_sha
       mergeable:
         required: false
-        value_ref: nv_pull_request_mergeable
+        value_ref: nv_wire_bool
       mergeable_state:
         required: false
-        value_ref: nv_pull_request_mergeable_state
+        value_ref: nv_wire_str_short
       merged_at:
         required: false
-        value_ref: nv_pull_request_merged_at
+        value_ref: nv_wire_date_rfc3339
       created_at:
         required: false
         value_ref: nv_github_created_at
@@ -391,37 +391,37 @@ entities:
       message:
         required: false
         path: commit.message
-        value_ref: nv_commit_message
+        value_ref: nv_wire_str_markdown
       html_url:
         required: false
         value_ref: nv_github_html_url
       url:
         required: false
-        value_ref: nv_commit_url
+        value_ref: nv_wire_str_short
       authored_at:
         required: false
         path: commit.author.date
-        value_ref: nv_commit_authored_at
+        value_ref: nv_wire_date_rfc3339
       committed_at:
         required: false
         path: commit.committer.date
-        value_ref: nv_commit_committed_at
+        value_ref: nv_wire_date_rfc3339
       comment_count:
         required: false
         path: commit.comment_count
-        value_ref: nv_commit_comment_count
+        value_ref: nv_wire_int
       stats_additions:
         required: false
         path: stats.additions
-        value_ref: nv_commit_stats_additions
+        value_ref: nv_wire_int
       stats_deletions:
         required: false
         path: stats.deletions
-        value_ref: nv_commit_stats_deletions
+        value_ref: nv_wire_int
       total_changes:
         required: false
         path: stats.total
-        value_ref: nv_commit_total_changes
+        value_ref: nv_wire_int
     relations:
       files:
         target: CommitFile
@@ -455,34 +455,34 @@ entities:
     fields:
       filename:
         required: true
-        value_ref: nv_commit_file_filename
+        value_ref: nv_wire_str_short
       sha:
         required: false
         value_ref: nv_github_git_sha
       status:
         required: false
-        value_ref: nv_commit_file_status
+        value_ref: nv_wire_sel_801aab563793550a
       additions:
         required: false
-        value_ref: nv_commit_file_additions
+        value_ref: nv_wire_int
       deletions:
         required: false
-        value_ref: nv_commit_file_deletions
+        value_ref: nv_wire_int
       changes:
         required: false
-        value_ref: nv_commit_file_changes
+        value_ref: nv_wire_int
       patch:
         required: false
-        value_ref: nv_commit_file_patch
+        value_ref: nv_wire_str_markdown
       previous_filename:
         required: false
-        value_ref: nv_commit_file_previous_filename
+        value_ref: nv_wire_str_short
       blob_url:
         required: false
-        value_ref: nv_commit_file_blob_url
+        value_ref: nv_wire_str_short
       raw_url:
         required: false
-        value_ref: nv_commit_file_raw_url
+        value_ref: nv_wire_str_short
   Branch:
     id_field: name
     key_vars:
@@ -499,14 +499,14 @@ entities:
         value_ref: nv_github_repository_name
       name:
         required: true
-        value_ref: nv_branch_name
+        value_ref: nv_wire_str_short
       commit_sha:
         required: false
         path: commit.sha
         value_ref: nv_github_git_sha
       protected:
         required: false
-        value_ref: nv_branch_protected
+        value_ref: nv_wire_bool
       html_url:
         required: false
         value_ref: nv_github_html_url
@@ -530,19 +530,19 @@ entities:
         value_ref: nv_pull_request_number
       id:
         required: true
-        value_ref: nv_pull_request_review_id
+        value_ref: nv_wire_int
       state:
         required: false
         value_ref: nv_pull_request_review_state
       body:
         required: false
-        value_ref: nv_pull_request_review_body
+        value_ref: nv_wire_str_markdown
       commit_id:
         required: false
-        value_ref: nv_pull_request_review_commit_id
+        value_ref: nv_wire_str_short
       submitted_at:
         required: false
-        value_ref: nv_pull_request_review_submitted_at
+        value_ref: nv_wire_date_rfc3339
       html_url:
         required: false
         value_ref: nv_github_html_url
@@ -559,22 +559,22 @@ entities:
     fields:
       filename:
         required: true
-        value_ref: nv_pull_request_file_filename
+        value_ref: nv_wire_str_short
       sha:
         required: false
         value_ref: nv_github_git_sha
       status:
         required: false
-        value_ref: nv_pull_request_file_status
+        value_ref: nv_wire_sel_801aab563793550a
       additions:
         required: false
-        value_ref: nv_pull_request_file_additions
+        value_ref: nv_wire_int
       deletions:
         required: false
-        value_ref: nv_pull_request_file_deletions
+        value_ref: nv_wire_int
       patch:
         required: false
-        value_ref: nv_pull_request_file_patch
+        value_ref: nv_wire_str_markdown
   User:
     id_field: login
     description: A GitHub user account
@@ -584,43 +584,43 @@ entities:
         value_ref: nv_github_account_login
       id:
         required: true
-        value_ref: nv_user_id
+        value_ref: nv_wire_int
       name:
         required: false
-        value_ref: nv_user_name
+        value_ref: nv_wire_str_short
       company:
         required: false
-        value_ref: nv_user_company
+        value_ref: nv_wire_str_short
       blog:
         required: false
-        value_ref: nv_user_blog
+        value_ref: nv_wire_str_short
       location:
         required: false
-        value_ref: nv_user_location
+        value_ref: nv_wire_str_short
       email:
         required: false
-        value_ref: nv_user_email
+        value_ref: nv_wire_str_short
       bio:
         required: false
-        value_ref: nv_user_bio
+        value_ref: nv_wire_str_markdown
       public_repos:
         required: false
-        value_ref: nv_user_public_repos
+        value_ref: nv_wire_int
       public_gists:
         required: false
-        value_ref: nv_user_public_gists
+        value_ref: nv_wire_int
       hireable:
         required: false
-        value_ref: nv_user_hireable
+        value_ref: nv_wire_bool
       site_admin:
         required: false
-        value_ref: nv_user_site_admin
+        value_ref: nv_wire_bool
       html_url:
         required: false
         value_ref: nv_github_html_url
       avatar_url:
         required: false
-        value_ref: nv_user_avatar_url
+        value_ref: nv_wire_str_short
       created_at:
         required: false
         value_ref: nv_github_created_at
@@ -640,19 +640,19 @@ entities:
         value_ref: nv_github_repository_name
       name:
         required: true
-        value_ref: nv_label_name
+        value_ref: nv_wire_str_short
       id:
         required: true
-        value_ref: nv_label_id
+        value_ref: nv_wire_int
       description:
         required: false
-        value_ref: nv_label_description
+        value_ref: nv_wire_str_markdown
       color:
         required: false
-        value_ref: nv_label_color
+        value_ref: nv_wire_str_short
       default:
         required: false
-        value_ref: nv_label_default
+        value_ref: nv_wire_bool
   Milestone:
     key_vars:
     - owner
@@ -669,28 +669,28 @@ entities:
         value_ref: nv_github_repository_name
       number:
         required: true
-        value_ref: nv_milestone_number
+        value_ref: nv_wire_int
       id:
         required: true
-        value_ref: nv_milestone_id
+        value_ref: nv_wire_int
       title:
         required: true
-        value_ref: nv_milestone_title
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_milestone_description
+        value_ref: nv_wire_str_markdown
       state:
         required: true
-        value_ref: nv_milestone_state
+        value_ref: nv_wire_sel_668f8e38fed376e3
       open_issues:
         required: false
-        value_ref: nv_milestone_open_issues
+        value_ref: nv_wire_int
       closed_issues:
         required: false
-        value_ref: nv_milestone_closed_issues
+        value_ref: nv_wire_int
       due_on:
         required: false
-        value_ref: nv_milestone_due_on
+        value_ref: nv_wire_date_rfc3339
       created_at:
         required: false
         value_ref: nv_github_created_at
@@ -719,28 +719,28 @@ entities:
         value_ref: nv_github_repository_name
       id:
         required: true
-        value_ref: nv_release_id
+        value_ref: nv_wire_int
       tag_name:
         required: true
-        value_ref: nv_release_tag_name
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_release_name
+        value_ref: nv_wire_str_short
       body:
         required: false
-        value_ref: nv_release_body
+        value_ref: nv_wire_str_markdown
       draft:
         required: false
-        value_ref: nv_release_draft
+        value_ref: nv_wire_bool
       prerelease:
         required: false
-        value_ref: nv_release_prerelease
+        value_ref: nv_wire_bool
       created_at:
         required: false
         value_ref: nv_github_created_at
       published_at:
         required: false
-        value_ref: nv_release_published_at
+        value_ref: nv_wire_date_rfc3339
       html_url:
         required: false
         value_ref: nv_github_html_url
@@ -754,10 +754,10 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_issue_comment_id
+        value_ref: nv_wire_int
       body:
         required: false
-        value_ref: nv_issue_comment_body
+        value_ref: nv_wire_str_markdown
       created_at:
         required: false
         value_ref: nv_github_created_at
@@ -780,43 +780,43 @@ entities:
         value_ref: nv_github_account_login
       id:
         required: true
-        value_ref: nv_organization_id
+        value_ref: nv_wire_int
       name:
         required: false
-        value_ref: nv_organization_name
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_organization_description
+        value_ref: nv_wire_str_markdown
       blog:
         required: false
-        value_ref: nv_organization_blog
+        value_ref: nv_wire_str_short
       location:
         required: false
-        value_ref: nv_organization_location
+        value_ref: nv_wire_str_short
       email:
         required: false
-        value_ref: nv_organization_email
+        value_ref: nv_wire_str_short
       avatar_url:
         required: false
-        value_ref: nv_organization_avatar_url
+        value_ref: nv_wire_str_short
       url:
         required: false
-        value_ref: nv_organization_url
+        value_ref: nv_wire_str_short
       public_repos:
         required: false
-        value_ref: nv_organization_public_repos
+        value_ref: nv_wire_int
       public_gists:
         required: false
-        value_ref: nv_organization_public_gists
+        value_ref: nv_wire_int
       followers:
         required: false
-        value_ref: nv_organization_followers
+        value_ref: nv_wire_int
       following:
         required: false
-        value_ref: nv_organization_following
+        value_ref: nv_wire_int
       type:
         required: false
-        value_ref: nv_organization_type
+        value_ref: nv_wire_str_short
   IssueType:
     key_vars:
     - org
@@ -829,22 +829,22 @@ entities:
         value_ref: nv_github_account_login
       id:
         required: true
-        value_ref: nv_issue_type_id
+        value_ref: nv_wire_int
       node_id:
         required: true
-        value_ref: nv_issue_type_node_id
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_issue_type_name
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_issue_type_description
+        value_ref: nv_wire_str_markdown
       color:
         required: false
-        value_ref: nv_issue_type_color
+        value_ref: nv_wire_sel_9a078639e0272e4d
       is_enabled:
         required: false
-        value_ref: nv_issue_type_is_enabled
+        value_ref: nv_wire_bool
       created_at:
         required: false
         value_ref: nv_github_created_at
@@ -857,19 +857,19 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_gist_id
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_gist_description
+        value_ref: nv_wire_str_markdown
       html_url:
         required: false
         value_ref: nv_github_html_url
       public:
         required: false
-        value_ref: nv_gist_public
+        value_ref: nv_wire_bool
       comments:
         required: false
-        value_ref: nv_gist_comments
+        value_ref: nv_wire_int
       created_at:
         required: false
         value_ref: nv_github_created_at
@@ -896,19 +896,19 @@ entities:
         value_ref: nv_github_repository_name
       id:
         required: true
-        value_ref: nv_pull_request_review_comment_id
+        value_ref: nv_wire_int
       body:
         required: false
-        value_ref: nv_pull_request_review_comment_body
+        value_ref: nv_wire_str_markdown
       path:
         required: false
-        value_ref: nv_pull_request_review_comment_path
+        value_ref: nv_wire_str_short
       diff_hunk:
         required: false
-        value_ref: nv_pull_request_review_comment_diff_hunk
+        value_ref: nv_wire_str_markdown
       commit_id:
         required: false
-        value_ref: nv_pull_request_review_comment_commit_id
+        value_ref: nv_wire_str_short
       pull_number:
         derive:
           type: segments_after_prefix
@@ -922,37 +922,37 @@ entities:
       review_id:
         required: false
         path: pull_request_review_id
-        value_ref: nv_pull_request_review_comment_review_id
+        value_ref: nv_wire_int
       original_commit_id:
         required: false
-        value_ref: nv_pull_request_review_comment_original_commit_id
+        value_ref: nv_wire_str_short
       position:
         required: false
-        value_ref: nv_pull_request_review_comment_position
+        value_ref: nv_wire_int
       original_position:
         required: false
-        value_ref: nv_pull_request_review_comment_original_position
+        value_ref: nv_wire_int
       line:
         required: false
-        value_ref: nv_pull_request_review_comment_line
+        value_ref: nv_wire_int
       original_line:
         required: false
-        value_ref: nv_pull_request_review_comment_original_line
+        value_ref: nv_wire_int
       side:
         required: false
-        value_ref: nv_pull_request_review_comment_side
+        value_ref: nv_wire_sel_e53c76c5bba3a0f0
       start_line:
         required: false
-        value_ref: nv_pull_request_review_comment_start_line
+        value_ref: nv_wire_int
       start_side:
         required: false
-        value_ref: nv_pull_request_review_comment_start_side
+        value_ref: nv_wire_sel_e53c76c5bba3a0f0
       subject_type:
         required: false
         value_ref: nv_pull_request_review_comment_subject_type
       in_reply_to_id:
         required: false
-        value_ref: nv_pull_request_review_comment_in_reply_to_id
+        value_ref: nv_wire_int
       html_url:
         required: false
         value_ref: nv_github_html_url
@@ -978,17 +978,17 @@ entities:
         value_ref: nv_github_repository_name
       name:
         required: true
-        value_ref: nv_repository_tag_name
+        value_ref: nv_wire_str_short
       commit_sha:
         required: false
         path: commit.sha
         value_ref: nv_github_git_sha
       zipball_url:
         required: false
-        value_ref: nv_repository_tag_zipball_url
+        value_ref: nv_wire_str_short
       tarball_url:
         required: false
-        value_ref: nv_repository_tag_tarball_url
+        value_ref: nv_wire_str_short
   Contributor:
     key_vars:
     - owner
@@ -1008,7 +1008,7 @@ entities:
         value_ref: nv_github_account_login
       contributions:
         required: false
-        value_ref: nv_contributor_contributions
+        value_ref: nv_wire_int
   Workflow:
     key_vars:
     - owner
@@ -1025,16 +1025,16 @@ entities:
         value_ref: nv_github_repository_name
       id:
         required: true
-        value_ref: nv_workflow_id
+        value_ref: nv_wire_int
       node_id:
         required: false
-        value_ref: nv_workflow_node_id
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_workflow_name
+        value_ref: nv_wire_str_short
       path:
         required: false
-        value_ref: nv_workflow_path
+        value_ref: nv_wire_str_short
       state:
         required: false
         value_ref: nv_workflow_state
@@ -1049,7 +1049,7 @@ entities:
         value_ref: nv_github_html_url
       badge_url:
         required: false
-        value_ref: nv_workflow_badge_url
+        value_ref: nv_wire_str_short
     relations:
       runs:
         target: WorkflowRun
@@ -1077,31 +1077,31 @@ entities:
         value_ref: nv_github_repository_name
       id:
         required: true
-        value_ref: nv_workflow_run_id
+        value_ref: nv_wire_int
       name:
         required: false
-        value_ref: nv_workflow_run_name
+        value_ref: nv_wire_str_short
       display_title:
         required: false
-        value_ref: nv_workflow_run_display_title
+        value_ref: nv_wire_str_short
       status:
         required: false
-        value_ref: nv_workflow_run_status
+        value_ref: nv_wire_sel_ecdb4e0a7d7f72ae
       conclusion:
         required: false
-        value_ref: nv_workflow_run_conclusion
+        value_ref: nv_wire_sel_f9da2eb819f6e623
       event:
         required: false
-        value_ref: nv_workflow_run_event
+        value_ref: nv_wire_str_short
       workflow_id:
         required: false
-        value_ref: nv_workflow_run_workflow_id
+        value_ref: nv_wire_int
       run_number:
         required: false
-        value_ref: nv_workflow_run_run_number
+        value_ref: nv_wire_int
       run_attempt:
         required: false
-        value_ref: nv_workflow_run_run_attempt
+        value_ref: nv_wire_int
       head_branch:
         required: false
         value_ref: nv_github_branch_name
@@ -1110,7 +1110,7 @@ entities:
         value_ref: nv_github_git_sha
       path:
         required: false
-        value_ref: nv_workflow_run_path
+        value_ref: nv_wire_str_short
       actor_login:
         required: false
         path: actor.login
@@ -1124,7 +1124,7 @@ entities:
         value_ref: nv_github_html_url
       run_started_at:
         required: false
-        value_ref: nv_workflow_run_run_started_at
+        value_ref: nv_wire_date_rfc3339
       created_at:
         required: false
         value_ref: nv_github_created_at
@@ -1181,37 +1181,37 @@ entities:
         value_ref: nv_github_repository_name
       run_id:
         required: true
-        value_ref: nv_workflow_job_run_id
+        value_ref: nv_wire_int
       id:
         required: true
-        value_ref: nv_workflow_job_id
+        value_ref: nv_wire_int
       run_attempt:
         required: false
-        value_ref: nv_workflow_job_run_attempt
+        value_ref: nv_wire_int
       name:
         required: false
-        value_ref: nv_workflow_job_name
+        value_ref: nv_wire_str_short
       status:
         required: false
-        value_ref: nv_workflow_job_status
+        value_ref: nv_wire_sel_ecdb4e0a7d7f72ae
       conclusion:
         required: false
-        value_ref: nv_workflow_job_conclusion
+        value_ref: nv_wire_sel_f9da2eb819f6e623
       started_at:
         required: false
-        value_ref: nv_workflow_job_started_at
+        value_ref: nv_wire_date_rfc3339
       completed_at:
         required: false
-        value_ref: nv_workflow_job_completed_at
+        value_ref: nv_wire_date_rfc3339
       html_url:
         required: false
         value_ref: nv_github_html_url
       runner_name:
         required: false
-        value_ref: nv_workflow_job_runner_name
+        value_ref: nv_wire_str_short
       runner_group_name:
         required: false
-        value_ref: nv_workflow_job_runner_group_name
+        value_ref: nv_wire_str_short
       labels:
         required: false
         value_ref: nv_workflow_job_labels
@@ -1231,20 +1231,20 @@ entities:
         value_ref: nv_github_repository_name
       id:
         required: true
-        value_ref: nv_workflow_artifact_id
+        value_ref: nv_wire_int
       run_id:
         required: false
         path: workflow_run.id
-        value_ref: nv_workflow_artifact_run_id
+        value_ref: nv_wire_int
       name:
         required: true
-        value_ref: nv_workflow_artifact_name
+        value_ref: nv_wire_str_short
       size_in_bytes:
         required: false
-        value_ref: nv_workflow_artifact_size_in_bytes
+        value_ref: nv_wire_int
       expired:
         required: false
-        value_ref: nv_workflow_artifact_expired
+        value_ref: nv_wire_bool
       created_at:
         required: false
         value_ref: nv_github_created_at
@@ -1253,10 +1253,10 @@ entities:
         value_ref: nv_github_updated_at
       expires_at:
         required: false
-        value_ref: nv_workflow_artifact_expires_at
+        value_ref: nv_wire_date_rfc3339
       archive_download_url:
         required: false
-        value_ref: nv_workflow_artifact_archive_download_url
+        value_ref: nv_wire_str_short
   WorkflowRunUsage:
     key_vars:
     - owner
@@ -1273,60 +1273,60 @@ entities:
         value_ref: nv_github_repository_name
       run_id:
         required: true
-        value_ref: nv_workflow_run_usage_run_id
+        value_ref: nv_wire_int
       run_duration_ms:
         required: false
         path: run_duration_ms
-        value_ref: nv_workflow_run_usage_run_duration_ms
+        value_ref: nv_wire_int
       ubuntu_total_ms:
         required: false
         path: billable.UBUNTU.total_ms
-        value_ref: nv_workflow_run_usage_ubuntu_total_ms
+        value_ref: nv_wire_int
       ubuntu_jobs:
         required: false
         path: billable.UBUNTU.jobs
-        value_ref: nv_workflow_run_usage_ubuntu_jobs
+        value_ref: nv_wire_int
       macos_total_ms:
         required: false
         path: billable.MACOS.total_ms
-        value_ref: nv_workflow_run_usage_macos_total_ms
+        value_ref: nv_wire_int
       macos_jobs:
         required: false
         path: billable.MACOS.jobs
-        value_ref: nv_workflow_run_usage_macos_jobs
+        value_ref: nv_wire_int
       windows_total_ms:
         required: false
         path: billable.WINDOWS.total_ms
-        value_ref: nv_workflow_run_usage_windows_total_ms
+        value_ref: nv_wire_int
       windows_jobs:
         required: false
         path: billable.WINDOWS.jobs
-        value_ref: nv_workflow_run_usage_windows_jobs
+        value_ref: nv_wire_int
   Notification:
     id_field: id
     description: A notification.
     fields:
       id:
         required: true
-        value_ref: nv_notification_id
+        value_ref: nv_wire_str_short
       unread:
         required: false
-        value_ref: nv_notification_unread
+        value_ref: nv_wire_bool
       reason:
         required: false
-        value_ref: nv_notification_reason
+        value_ref: nv_wire_str_short
       updated_at:
         required: false
         value_ref: nv_github_updated_at
       last_read_at:
         required: false
-        value_ref: nv_notification_last_read_at
+        value_ref: nv_wire_date_rfc3339
       url:
         required: false
-        value_ref: nv_notification_url
+        value_ref: nv_wire_str_short
       subscription_url:
         required: false
-        value_ref: nv_notification_subscription_url
+        value_ref: nv_wire_str_short
 capabilities:
   repo_search:
     kind: search
@@ -1342,7 +1342,7 @@ capabilities:
       required: false
       role: sort
     - name: order
-      value_ref: nv_repo_search_order
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   user_repos_query:
@@ -1358,11 +1358,11 @@ capabilities:
       value_ref: nv_user_repos_query_type
       required: false
     - name: sort
-      value_ref: nv_user_repos_query_sort
+      value_ref: nv_wire_sel_8f80b338e6b66401
       required: false
       role: sort
     - name: direction
-      value_ref: nv_user_repos_query_direction
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   auth_user_repos_query:
@@ -1377,11 +1377,11 @@ capabilities:
       value_ref: nv_auth_user_repos_query_affiliation
       required: false
     - name: sort
-      value_ref: nv_auth_user_repos_query_sort
+      value_ref: nv_wire_sel_8f80b338e6b66401
       required: false
       role: sort
     - name: direction
-      value_ref: nv_auth_user_repos_query_direction
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   repo_get:
@@ -1470,16 +1470,16 @@ capabilities:
       required: true
       role: scope
     - name: state
-      value_ref: nv_issue_query_state
+      value_ref: nv_wire_sel_c5a1665707ce30ae
       required: false
     - name: assignee
       value_ref: nv_issue_query_assignee
       required: false
     - name: labels
-      value_ref: nv_issue_query_labels
+      value_ref: nv_wire_str_short
       required: false
     - name: milestone
-      value_ref: nv_issue_query_milestone
+      value_ref: nv_wire_str_short
       required: false
     - name: since
       value_ref: nv_issue_query_since
@@ -1489,7 +1489,7 @@ capabilities:
       required: false
       role: sort
     - name: direction
-      value_ref: nv_issue_query_direction
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   issue_sub_issue_query:
@@ -1516,15 +1516,15 @@ capabilities:
     description: Global issue/PR search.
     parameters:
     - name: q
-      value_ref: nv_issue_search_q
+      value_ref: nv_wire_str_short
       required: true
       role: search
     - name: sort
-      value_ref: nv_issue_search_sort
+      value_ref: nv_wire_sel_cecfba3d4d1c9fbf
       required: false
       role: sort
     - name: order
-      value_ref: nv_issue_search_order
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   pr_get:
@@ -1557,20 +1557,20 @@ capabilities:
       required: true
       role: scope
     - name: state
-      value_ref: nv_pr_query_state
+      value_ref: nv_wire_sel_c5a1665707ce30ae
       required: false
     - name: head
-      value_ref: nv_pr_query_head
+      value_ref: nv_wire_str_short
       required: false
     - name: base
-      value_ref: nv_pr_query_base
+      value_ref: nv_wire_str_short
       required: false
     - name: sort
       value_ref: nv_pr_query_sort
       required: false
       role: sort
     - name: direction
-      value_ref: nv_pr_query_direction
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   pr_search:
@@ -1579,15 +1579,15 @@ capabilities:
     description: Search pull requests globally.
     parameters:
     - name: q
-      value_ref: nv_pr_search_q
+      value_ref: nv_wire_str_short
       required: true
       role: search
     - name: sort
-      value_ref: nv_pr_search_sort
+      value_ref: nv_wire_sel_cecfba3d4d1c9fbf
       required: false
       role: sort
     - name: order
-      value_ref: nv_pr_search_order
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   pr_touching_path_search:
@@ -1604,11 +1604,11 @@ capabilities:
       value_ref: nv_pr_touching_path_search_q
       required: true
     - name: sort
-      value_ref: nv_pr_touching_path_search_sort
+      value_ref: nv_wire_sel_cecfba3d4d1c9fbf
       required: false
       role: sort
     - name: order
-      value_ref: nv_pr_touching_path_search_order
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   commit_query:
@@ -1638,20 +1638,20 @@ capabilities:
       value_ref: nv_github_git_sha
       required: false
     - name: path
-      value_ref: nv_commit_query_path
+      value_ref: nv_wire_str_short
       required: false
     - name: by_author
-      value_ref: nv_commit_query_by_author
+      value_ref: nv_wire_str_short
       required: false
     - name: by_committer
-      value_ref: nv_commit_query_by_committer
+      value_ref: nv_wire_str_short
       required: false
     - name: since
-      value_ref: nv_commit_query_since
+      value_ref: nv_wire_date_rfc3339
       required: false
       role: filter
     - name: until
-      value_ref: nv_commit_query_until
+      value_ref: nv_wire_date_rfc3339
       required: false
       role: filter
   commit_get:
@@ -1789,7 +1789,7 @@ capabilities:
       required: true
       role: scope
     - name: body
-      value_ref: nv_pr_review_create_body
+      value_ref: nv_wire_str_markdown
       required: false
     - name: commit_id
       value_ref: nv_pr_review_create_commit_id
@@ -1806,7 +1806,7 @@ capabilities:
       value_ref: nv_pr_review_submit_event
       required: true
     - name: body
-      value_ref: nv_pr_review_submit_body
+      value_ref: nv_wire_str_markdown
       required: false
     output:
       type: side_effect
@@ -1848,7 +1848,7 @@ capabilities:
       required: true
       role: scope
     - name: body
-      value_ref: nv_pr_review_comment_create_body
+      value_ref: nv_wire_str_markdown
       required: true
     - name: commit_id
       value_ref: nv_pr_review_comment_create_commit_id
@@ -2028,7 +2028,7 @@ capabilities:
       required: true
       role: scope
     - name: workflow_id
-      value_ref: nv_workflow_run_by_workflow_query_workflow_id
+      value_ref: nv_wire_int
       required: true
       role: scope
     - name: branch
@@ -2083,7 +2083,7 @@ capabilities:
       required: true
       role: scope
     - name: run_id
-      value_ref: nv_workflow_job_query_run_id
+      value_ref: nv_wire_int
       required: true
       role: scope
     - name: filter
@@ -2104,7 +2104,7 @@ capabilities:
       required: true
       role: scope
     - name: run_id
-      value_ref: nv_workflow_artifact_query_run_id
+      value_ref: nv_wire_int
       required: true
       role: scope
   workflow_run_usage_get:
@@ -2152,7 +2152,7 @@ capabilities:
     description: Search GitHub users.
     parameters:
     - name: q
-      value_ref: nv_user_search_q
+      value_ref: nv_wire_str_short
       required: true
       role: search
     - name: sort
@@ -2160,7 +2160,7 @@ capabilities:
       required: false
       role: sort
     - name: order
-      value_ref: nv_user_search_order
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   org_get:
@@ -2204,11 +2204,11 @@ capabilities:
       value_ref: nv_org_repos_query_type
       required: false
     - name: sort
-      value_ref: nv_org_repos_query_sort
+      value_ref: nv_wire_sel_8f80b338e6b66401
       required: false
       role: sort
     - name: direction
-      value_ref: nv_org_repos_query_direction
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   org_public_repos_query:
@@ -2224,11 +2224,11 @@ capabilities:
       value_ref: nv_org_public_repos_query_visibility
       required: true
     - name: sort
-      value_ref: nv_org_public_repos_query_sort
+      value_ref: nv_wire_sel_8f80b338e6b66401
       required: false
       role: sort
     - name: direction
-      value_ref: nv_org_public_repos_query_direction
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   org_members_query:
@@ -2268,10 +2268,10 @@ capabilities:
     description: List notification threads for the auth user.
     parameters:
     - name: all
-      value_ref: nv_notification_query_all
+      value_ref: nv_wire_bool
       required: false
     - name: participating
-      value_ref: nv_notification_query_participating
+      value_ref: nv_wire_bool
       required: false
     - name: since
       value_ref: nv_notification_query_since
@@ -2349,14 +2349,14 @@ capabilities:
       required: true
       role: scope
     - name: state
-      value_ref: nv_milestone_query_state
+      value_ref: nv_wire_sel_c5a1665707ce30ae
       required: false
     - name: sort
       value_ref: nv_milestone_query_sort
       required: false
       role: sort
     - name: direction
-      value_ref: nv_milestone_query_direction
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   milestone_get:
@@ -2404,16 +2404,16 @@ capabilities:
       required: true
       role: scope
     - name: title
-      value_ref: nv_milestone_create_title
+      value_ref: nv_wire_str_short
       required: true
     - name: description
-      value_ref: nv_milestone_create_description
+      value_ref: nv_wire_str_markdown
       required: false
     - name: state
-      value_ref: nv_milestone_create_state
+      value_ref: nv_wire_sel_668f8e38fed376e3
       required: false
     - name: due_on
-      value_ref: nv_milestone_create_due_on
+      value_ref: nv_wire_date_rfc3339
       required: false
   milestone_update:
     kind: update
@@ -2436,16 +2436,16 @@ capabilities:
     - html_url
     parameters:
     - name: title
-      value_ref: nv_milestone_update_title
+      value_ref: nv_wire_str_short
       required: false
     - name: description
-      value_ref: nv_milestone_update_description
+      value_ref: nv_wire_str_markdown
       required: false
     - name: state
-      value_ref: nv_milestone_update_state
+      value_ref: nv_wire_sel_668f8e38fed376e3
       required: false
     - name: due_on
-      value_ref: nv_milestone_update_due_on
+      value_ref: nv_wire_date_rfc3339
       required: false
   milestone_delete:
     kind: delete
@@ -2500,19 +2500,19 @@ capabilities:
       required: true
       role: scope
     - name: tag_name
-      value_ref: nv_release_create_tag_name
+      value_ref: nv_wire_str_short
       required: true
     - name: name
-      value_ref: nv_release_create_name
+      value_ref: nv_wire_str_short
       required: false
     - name: body
-      value_ref: nv_release_create_body
+      value_ref: nv_wire_str_markdown
       required: false
     - name: draft
-      value_ref: nv_release_create_draft
+      value_ref: nv_wire_bool
       required: false
     - name: prerelease
-      value_ref: nv_release_create_prerelease
+      value_ref: nv_wire_bool
       required: false
     - name: target_commitish
       value_ref: nv_release_create_target_commitish
@@ -2538,22 +2538,22 @@ capabilities:
     - html_url
     parameters:
     - name: tag_name
-      value_ref: nv_release_update_tag_name
+      value_ref: nv_wire_str_short
       required: false
     - name: name
-      value_ref: nv_release_update_name
+      value_ref: nv_wire_str_short
       required: false
     - name: body
-      value_ref: nv_release_update_body
+      value_ref: nv_wire_str_markdown
       required: false
     - name: draft
-      value_ref: nv_release_update_draft
+      value_ref: nv_wire_bool
       required: false
     - name: prerelease
-      value_ref: nv_release_update_prerelease
+      value_ref: nv_wire_bool
       required: false
     - name: target_commitish
-      value_ref: nv_release_update_target_commitish
+      value_ref: nv_wire_str_short
       required: false
   release_delete:
     kind: delete
@@ -2591,7 +2591,7 @@ capabilities:
       required: false
       role: sort
     - name: direction
-      value_ref: nv_repo_comment_query_direction
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
     - name: since
@@ -2629,10 +2629,10 @@ capabilities:
       required: true
       role: scope
     - name: title
-      value_ref: nv_issue_create_title
+      value_ref: nv_wire_str_short
       required: true
     - name: body
-      value_ref: nv_issue_create_body
+      value_ref: nv_wire_str_markdown
       required: false
     - name: labels
       value_ref: nv_issue_create_labels
@@ -2670,13 +2670,13 @@ capabilities:
     - html_url
     parameters:
     - name: title
-      value_ref: nv_issue_update_title
+      value_ref: nv_wire_str_short
       required: false
     - name: body
-      value_ref: nv_issue_update_body
+      value_ref: nv_wire_str_markdown
       required: false
     - name: state
-      value_ref: nv_issue_update_state
+      value_ref: nv_wire_sel_668f8e38fed376e3
       required: false
     - name: state_reason
       value_ref: nv_issue_update_state_reason
@@ -2805,7 +2805,7 @@ capabilities:
       required: true
       role: scope
     - name: body
-      value_ref: nv_issue_comment_create_body
+      value_ref: nv_wire_str_markdown
       required: true
   issue_comment_update:
     kind: update
@@ -2824,7 +2824,7 @@ capabilities:
       required: true
       role: scope
     - name: body
-      value_ref: nv_issue_comment_update_body
+      value_ref: nv_wire_str_markdown
       required: true
   issue_comment_delete:
     kind: delete
@@ -2856,13 +2856,13 @@ capabilities:
     - html_url
     parameters:
     - name: title
-      value_ref: nv_pr_patch_title
+      value_ref: nv_wire_str_short
       required: false
     - name: body
-      value_ref: nv_pr_patch_body
+      value_ref: nv_wire_str_markdown
       required: false
     - name: state
-      value_ref: nv_pr_patch_state
+      value_ref: nv_wire_sel_668f8e38fed376e3
       required: false
     - name: base
       value_ref: nv_pr_patch_base
@@ -2873,10 +2873,10 @@ capabilities:
     description: Merge a pull request.
     parameters:
     - name: commit_title
-      value_ref: nv_pr_merge_commit_title
+      value_ref: nv_wire_str_short
       required: false
     - name: commit_message
-      value_ref: nv_pr_merge_commit_message
+      value_ref: nv_wire_str_markdown
       required: false
     - name: merge_method
       value_ref: nv_pr_merge_merge_method
@@ -2921,7 +2921,7 @@ capabilities:
       required: true
       role: scope
     - name: title
-      value_ref: nv_pr_create_title
+      value_ref: nv_wire_str_short
       required: true
     - name: head
       value_ref: nv_pr_create_head
@@ -2930,10 +2930,10 @@ capabilities:
       value_ref: nv_pr_create_base
       required: true
     - name: body
-      value_ref: nv_pr_create_body
+      value_ref: nv_wire_str_markdown
       required: false
     - name: draft
-      value_ref: nv_pr_create_draft
+      value_ref: nv_wire_bool
       required: false
     - name: maintainer_can_modify
       value_ref: nv_pr_create_maintainer_can_modify
@@ -2960,13 +2960,13 @@ capabilities:
       required: true
       role: scope
     - name: name
-      value_ref: nv_label_create_name
+      value_ref: nv_wire_str_short
       required: true
     - name: color
       value_ref: nv_label_create_color
       required: false
     - name: description
-      value_ref: nv_label_create_description
+      value_ref: nv_wire_str_markdown
       required: false
   label_update:
     kind: update
@@ -2989,7 +2989,7 @@ capabilities:
       value_ref: nv_label_update_color
       required: false
     - name: description
-      value_ref: nv_label_update_description
+      value_ref: nv_wire_str_markdown
       required: false
   label_delete:
     kind: delete
@@ -3006,10 +3006,10 @@ capabilities:
       required: true
       role: scope
     - name: path
-      value_ref: nv_repo_content_put_path
+      value_ref: nv_wire_str_short
       required: true
     - name: message
-      value_ref: nv_repo_content_put_message
+      value_ref: nv_wire_str_short
       required: true
     - name: content
       value_ref: nv_repo_content_put_content
@@ -3034,10 +3034,10 @@ capabilities:
       required: true
       role: scope
     - name: path
-      value_ref: nv_repo_content_delete_path
+      value_ref: nv_wire_str_short
       required: true
     - name: message
-      value_ref: nv_repo_content_delete_message
+      value_ref: nv_wire_str_short
       required: true
     - name: sha
       value_ref: nv_github_git_sha
@@ -3677,728 +3677,98 @@ auth:
   scheme: bearer_token
   env: GITHUB_TOKEN
 values:
-  nv_github_account_login:
+  nv_auth_user_repos_query_affiliation:
     type: string
     string_semantics: short
-    description: GitHub user or organization login.
-  nv_github_repository_name:
-    type: string
-    string_semantics: short
-    description: Repository name within a GitHub owner account.
-  nv_github_repository_full_name:
-    type: string
-    string_semantics: short
-    description: Repository identifier in owner/name form.
-  nv_github_scope_repository:
-    type: string
-    string_semantics: short
-    description: Repository owner/name used as HTTP scope for repository-scoped capabilities.
-  nv_github_created_at:
-    type: date
-    value_format: rfc3339
-    description: Timestamp when a GitHub resource was created.
-  nv_github_updated_at:
-    type: date
-    value_format: rfc3339
-    description: Timestamp when a GitHub resource was last updated.
-  nv_github_closed_at:
-    type: date
-    value_format: rfc3339
-    description: Timestamp when a GitHub issue, pull request, or milestone was closed.
-  nv_github_html_url:
-    type: string
-    string_semantics: short
-    description: Browser URL for a GitHub resource.
-  nv_github_branch_name:
-    type: string
-    string_semantics: short
-    description: Git branch name or branch ref within a repository.
-  nv_github_git_sha:
-    type: string
-    string_semantics: short
-    description: Git object SHA, such as a commit, tree, or blob identifier.
-  nv_repository_id:
-    type: integer
-  nv_repository_description:
-    type: string
-    string_semantics: markdown
-  nv_repository_private:
-    type: boolean
-  nv_repository_fork:
-    type: boolean
-  nv_repository_language:
-    type: string
-    string_semantics: short
-  nv_repository_stargazers_count:
-    type: integer
-  nv_repository_forks_count:
-    type: integer
-  nv_repository_open_issues_count:
-    type: integer
-  nv_repository_archived:
-    type: boolean
-  nv_repository_visibility:
-    type: select
-    allowed_values:
-    - public
-    - private
-    - internal
-  nv_repository_pushed_at:
-    type: date
-    value_format: rfc3339
-  nv_issue_repository_url:
-    type: string
-    string_semantics: short
-  nv_issue_number:
-    type: integer
-    description: Repository-local issue number.
-  nv_issue_id:
-    type: integer
-  nv_issue_title:
-    type: string
-    string_semantics: short
-  nv_issue_body:
-    type: string
-    string_semantics: markdown
-  nv_issue_state:
-    type: select
-    allowed_values:
-    - open
-    - closed
-  nv_issue_state_reason:
-    type: select
-    allowed_values:
-    - completed
-    - reopened
-    - not_planned
-    - duplicate
-  nv_issue_issue_type_id:
-    type: integer
-  nv_issue_issue_type_node_id:
-    type: string
-    string_semantics: short
-  nv_issue_issue_type_name:
-    type: string
-    string_semantics: short
-  nv_issue_issue_type_color:
-    type: select
-    allowed_values:
-    - gray
-    - blue
-    - green
-    - yellow
-    - orange
-    - red
-    - pink
-    - purple
-  nv_issue_issue_type_is_enabled:
-    type: boolean
-  nv_issue_sub_issues_total:
-    type: integer
-  nv_issue_sub_issues_completed:
-    type: integer
-  nv_issue_sub_issues_percent_completed:
-    type: number
-  nv_issue_locked:
-    type: boolean
-  nv_issue_comments:
-    type: integer
-  nv_pull_request_repository_url:
-    type: string
-    string_semantics: short
-  nv_pull_request_number:
-    type: integer
-    description: Repository-local pull request number.
-  nv_pull_request_id:
-    type: integer
-  nv_pull_request_title:
-    type: string
-    string_semantics: short
-  nv_pull_request_body:
-    type: string
-    string_semantics: markdown
-  nv_pull_request_state:
-    type: select
-    allowed_values:
-    - open
-    - closed
-  nv_pull_request_locked:
-    type: boolean
-  nv_pull_request_draft:
-    type: boolean
-  nv_pull_request_head_ref:
-    type: string
-    string_semantics: short
-  nv_pull_request_base_ref:
-    type: string
-    string_semantics: short
-  nv_pull_request_mergeable:
-    type: boolean
-  nv_pull_request_mergeable_state:
-    type: string
-    string_semantics: short
-  nv_pull_request_merged_at:
-    type: date
-    value_format: rfc3339
-  nv_commit_message:
-    type: string
-    string_semantics: markdown
-  nv_commit_url:
-    type: string
-    string_semantics: short
-  nv_commit_authored_at:
-    type: date
-    value_format: rfc3339
-  nv_commit_committed_at:
-    type: date
-    value_format: rfc3339
-  nv_commit_comment_count:
-    type: integer
-  nv_commit_stats_additions:
-    type: integer
-  nv_commit_stats_deletions:
-    type: integer
-  nv_commit_total_changes:
-    type: integer
-  nv_commit_file_filename:
-    type: string
-    string_semantics: short
-  nv_commit_file_status:
-    type: select
-    allowed_values:
-    - added
-    - removed
-    - modified
-    - renamed
-    - copied
-    - changed
-    - unchanged
-  nv_commit_file_additions:
-    type: integer
-  nv_commit_file_deletions:
-    type: integer
-  nv_commit_file_changes:
-    type: integer
-  nv_commit_file_patch:
-    type: string
-    string_semantics: markdown
-  nv_commit_file_previous_filename:
-    type: string
-    string_semantics: short
-  nv_commit_file_blob_url:
-    type: string
-    string_semantics: short
-  nv_commit_file_raw_url:
-    type: string
-    string_semantics: short
-  nv_branch_name:
-    type: string
-    string_semantics: short
-  nv_branch_protected:
-    type: boolean
-  nv_pull_request_review_id:
-    type: integer
-  nv_pull_request_review_state:
-    type: select
-    allowed_values:
-    - APPROVED
-    - CHANGES_REQUESTED
-    - COMMENTED
-    - DISMISSED
-    - PENDING
-  nv_pull_request_review_body:
-    type: string
-    string_semantics: markdown
-  nv_pull_request_review_commit_id:
-    type: string
-    string_semantics: short
-  nv_pull_request_review_submitted_at:
-    type: date
-    value_format: rfc3339
-  nv_pull_request_file_filename:
-    type: string
-    string_semantics: short
-  nv_pull_request_file_status:
-    type: select
-    allowed_values:
-    - added
-    - removed
-    - modified
-    - renamed
-    - copied
-    - changed
-    - unchanged
-  nv_pull_request_file_additions:
-    type: integer
-  nv_pull_request_file_deletions:
-    type: integer
-  nv_pull_request_file_patch:
-    type: string
-    string_semantics: markdown
-  nv_user_id:
-    type: integer
-  nv_user_name:
-    type: string
-    string_semantics: short
-  nv_user_company:
-    type: string
-    string_semantics: short
-  nv_user_blog:
-    type: string
-    string_semantics: short
-  nv_user_location:
-    type: string
-    string_semantics: short
-  nv_user_email:
-    type: string
-    string_semantics: short
-  nv_user_bio:
-    type: string
-    string_semantics: markdown
-  nv_user_public_repos:
-    type: integer
-  nv_user_public_gists:
-    type: integer
-  nv_user_hireable:
-    type: boolean
-  nv_user_site_admin:
-    type: boolean
-  nv_user_avatar_url:
-    type: string
-    string_semantics: short
-  nv_label_name:
-    type: string
-    string_semantics: short
-  nv_label_id:
-    type: integer
-  nv_label_description:
-    type: string
-    string_semantics: markdown
-  nv_label_color:
-    type: string
-    string_semantics: short
-  nv_label_default:
-    type: boolean
-  nv_milestone_number:
-    type: integer
-  nv_milestone_id:
-    type: integer
-  nv_milestone_title:
-    type: string
-    string_semantics: short
-  nv_milestone_description:
-    type: string
-    string_semantics: markdown
-  nv_milestone_state:
-    type: select
-    allowed_values:
-    - open
-    - closed
-  nv_milestone_open_issues:
-    type: integer
-  nv_milestone_closed_issues:
-    type: integer
-  nv_milestone_due_on:
-    type: date
-    value_format: rfc3339
-  nv_release_id:
-    type: integer
-  nv_release_tag_name:
-    type: string
-    string_semantics: short
-  nv_release_name:
-    type: string
-    string_semantics: short
-  nv_release_body:
-    type: string
-    string_semantics: markdown
-  nv_release_draft:
-    type: boolean
-  nv_release_prerelease:
-    type: boolean
-  nv_release_published_at:
-    type: date
-    value_format: rfc3339
-  nv_issue_comment_id:
-    type: integer
-  nv_issue_comment_body:
-    type: string
-    string_semantics: markdown
-  nv_organization_id:
-    type: integer
-  nv_organization_name:
-    type: string
-    string_semantics: short
-  nv_organization_description:
-    type: string
-    string_semantics: markdown
-  nv_organization_blog:
-    type: string
-    string_semantics: short
-  nv_organization_location:
-    type: string
-    string_semantics: short
-  nv_organization_email:
-    type: string
-    string_semantics: short
-  nv_organization_avatar_url:
-    type: string
-    string_semantics: short
-  nv_organization_url:
-    type: string
-    string_semantics: short
-  nv_organization_public_repos:
-    type: integer
-  nv_organization_public_gists:
-    type: integer
-  nv_organization_followers:
-    type: integer
-  nv_organization_following:
-    type: integer
-  nv_organization_type:
-    type: string
-    string_semantics: short
-  nv_issue_type_id:
-    type: integer
-  nv_issue_type_node_id:
-    type: string
-    string_semantics: short
-  nv_issue_type_name:
-    type: string
-    string_semantics: short
-  nv_issue_type_description:
-    type: string
-    string_semantics: markdown
-  nv_issue_type_color:
-    type: select
-    allowed_values:
-    - gray
-    - blue
-    - green
-    - yellow
-    - orange
-    - red
-    - pink
-    - purple
-  nv_issue_type_is_enabled:
-    type: boolean
-  nv_gist_id:
-    type: string
-    string_semantics: short
-  nv_gist_description:
-    type: string
-    string_semantics: markdown
-  nv_gist_public:
-    type: boolean
-  nv_gist_comments:
-    type: integer
-  nv_pull_request_review_comment_id:
-    type: integer
-  nv_pull_request_review_comment_body:
-    type: string
-    string_semantics: markdown
-  nv_pull_request_review_comment_path:
-    type: string
-    string_semantics: short
-  nv_pull_request_review_comment_diff_hunk:
-    type: string
-    string_semantics: markdown
-  nv_pull_request_review_comment_commit_id:
-    type: string
-    string_semantics: short
-  nv_pull_request_review_comment_review_id:
-    type: integer
-  nv_pull_request_review_comment_original_commit_id:
-    type: string
-    string_semantics: short
-  nv_pull_request_review_comment_position:
-    type: integer
-  nv_pull_request_review_comment_original_position:
-    type: integer
-  nv_pull_request_review_comment_line:
-    type: integer
-  nv_pull_request_review_comment_original_line:
-    type: integer
-  nv_pull_request_review_comment_side:
-    type: select
-    allowed_values:
-    - LEFT
-    - RIGHT
-  nv_pull_request_review_comment_start_line:
-    type: integer
-  nv_pull_request_review_comment_start_side:
-    type: select
-    allowed_values:
-    - LEFT
-    - RIGHT
-  nv_pull_request_review_comment_subject_type:
-    type: select
-    allowed_values:
-    - line
-    - file
-  nv_pull_request_review_comment_in_reply_to_id:
-    type: integer
-  nv_repository_tag_name:
-    type: string
-    string_semantics: short
-  nv_repository_tag_zipball_url:
-    type: string
-    string_semantics: short
-  nv_repository_tag_tarball_url:
-    type: string
-    string_semantics: short
-  nv_contributor_contributions:
-    type: integer
-  nv_workflow_id:
-    type: integer
-  nv_workflow_node_id:
-    type: string
-    string_semantics: short
-  nv_workflow_name:
-    type: string
-    string_semantics: short
-  nv_workflow_path:
-    type: string
-    string_semantics: short
-  nv_workflow_state:
-    type: select
-    allowed_values:
-    - active
-    - deleted
-    - disabled_fork
-    - disabled_inactivity
-    - disabled_manually
-  nv_workflow_badge_url:
-    type: string
-    string_semantics: short
-  nv_workflow_run_id:
-    type: integer
-  nv_workflow_run_name:
-    type: string
-    string_semantics: short
-  nv_workflow_run_display_title:
-    type: string
-    string_semantics: short
-  nv_workflow_run_status:
-    type: select
-    allowed_values:
-    - queued
-    - in_progress
-    - completed
-    - waiting
-    - requested
-    - pending
-  nv_workflow_run_conclusion:
-    type: select
-    allowed_values:
-    - success
-    - failure
-    - neutral
-    - cancelled
-    - skipped
-    - timed_out
-    - action_required
-    - stale
-    - startup_failure
-  nv_workflow_run_event:
-    type: string
-    string_semantics: short
-  nv_workflow_run_workflow_id:
-    type: integer
-  nv_workflow_run_run_number:
-    type: integer
-  nv_workflow_run_run_attempt:
-    type: integer
-  nv_workflow_run_path:
-    type: string
-    string_semantics: short
-  nv_workflow_run_run_started_at:
-    type: date
-    value_format: rfc3339
-  nv_workflow_job_run_id:
-    type: integer
-  nv_workflow_job_id:
-    type: integer
-  nv_workflow_job_run_attempt:
-    type: integer
-  nv_workflow_job_name:
-    type: string
-    string_semantics: short
-  nv_workflow_job_status:
-    type: select
-    allowed_values:
-    - queued
-    - in_progress
-    - completed
-    - waiting
-    - requested
-    - pending
-  nv_workflow_job_conclusion:
-    type: select
-    allowed_values:
-    - success
-    - failure
-    - neutral
-    - cancelled
-    - skipped
-    - timed_out
-    - action_required
-    - stale
-    - startup_failure
-  nv_workflow_job_started_at:
-    type: date
-    value_format: rfc3339
-  nv_workflow_job_completed_at:
-    type: date
-    value_format: rfc3339
-  nv_workflow_job_runner_name:
-    type: string
-    string_semantics: short
-  nv_workflow_job_runner_group_name:
-    type: string
-    string_semantics: short
-  nv_workflow_job_labels_item:
-    type: string
-    string_semantics: short
-  nv_workflow_job_labels:
-    type: array
-    items:
-      value_ref: nv_workflow_job_labels_item
-  nv_workflow_artifact_id:
-    type: integer
-  nv_workflow_artifact_run_id:
-    type: integer
-  nv_workflow_artifact_name:
-    type: string
-    string_semantics: short
-  nv_workflow_artifact_size_in_bytes:
-    type: integer
-  nv_workflow_artifact_expired:
-    type: boolean
-  nv_workflow_artifact_expires_at:
-    type: date
-    value_format: rfc3339
-  nv_workflow_artifact_archive_download_url:
-    type: string
-    string_semantics: short
-  nv_workflow_run_usage_run_id:
-    type: integer
-  nv_workflow_run_usage_run_duration_ms:
-    type: integer
-  nv_workflow_run_usage_ubuntu_total_ms:
-    type: integer
-  nv_workflow_run_usage_ubuntu_jobs:
-    type: integer
-  nv_workflow_run_usage_macos_total_ms:
-    type: integer
-  nv_workflow_run_usage_macos_jobs:
-    type: integer
-  nv_workflow_run_usage_windows_total_ms:
-    type: integer
-  nv_workflow_run_usage_windows_jobs:
-    type: integer
-  nv_notification_id:
-    type: string
-    string_semantics: short
-  nv_notification_unread:
-    type: boolean
-  nv_notification_reason:
-    type: string
-    string_semantics: short
-  nv_notification_last_read_at:
-    type: date
-    value_format: rfc3339
-  nv_notification_url:
-    type: string
-    string_semantics: short
-  nv_notification_subscription_url:
-    type: string
-    string_semantics: short
-  nv_repo_search_q:
-    type: string
-    string_semantics: short
-    description: GitHub repository search query, not natural language. Use valid qualifiers such as "org:rust-lang rust in:name"
-      or "plasm-core in:name not:fork"; invalid qualifier syntax may be rejected by GitHub.
-  nv_repo_search_sort:
-    type: select
-    allowed_values:
-    - stars
-    - forks
-    - help-wanted-issues
-    - updated
-  nv_repo_search_order:
-    type: select
-    allowed_values:
-    - desc
-    - asc
-  nv_user_repos_query_type:
-    type: select
-    allowed_values:
-    - all
-    - owner
-    - member
-  nv_user_repos_query_sort:
-    type: select
-    allowed_values:
-    - created
-    - updated
-    - pushed
-    - full_name
-  nv_user_repos_query_direction:
-    type: select
-    allowed_values:
-    - asc
-    - desc
+    description: 'Comma list: owner, collaborator, organization_member.'
   nv_auth_user_repos_query_visibility:
     type: select
     allowed_values:
     - all
     - public
     - private
-  nv_auth_user_repos_query_affiliation:
+  nv_contributor_query_anon:
+    type: boolean
+    description: Count anonymous contributions too.
+  nv_github_account_login:
     type: string
     string_semantics: short
-    description: 'Comma list: owner, collaborator, organization_member.'
-  nv_auth_user_repos_query_sort:
-    type: select
-    allowed_values:
-    - created
-    - updated
-    - pushed
-    - full_name
-  nv_auth_user_repos_query_direction:
-    type: select
-    allowed_values:
-    - asc
-    - desc
-  nv_repo_collaborators_query_affiliation:
-    type: select
-    allowed_values:
-    - outside
-    - direct
-    - all
-  nv_repo_forks_query_sort:
-    type: select
-    allowed_values:
-    - newest
-    - oldest
-    - stargazers
-  nv_issue_query_state:
-    type: select
-    allowed_values:
-    - open
-    - closed
-    - all
+    description: GitHub user or organization login.
+  nv_github_branch_name:
+    type: string
+    string_semantics: short
+    description: Git branch name or branch ref within a repository.
+  nv_github_closed_at:
+    type: date
+    value_format: rfc3339
+    description: Timestamp when a GitHub issue, pull request, or milestone was closed.
+  nv_github_created_at:
+    type: date
+    value_format: rfc3339
+    description: Timestamp when a GitHub resource was created.
+  nv_github_git_sha:
+    type: string
+    string_semantics: short
+    description: Git object SHA, such as a commit, tree, or blob identifier.
+  nv_github_html_url:
+    type: string
+    string_semantics: short
+    description: Browser URL for a GitHub resource.
+  nv_github_repository_full_name:
+    type: string
+    string_semantics: short
+    description: Repository identifier in owner/name form.
+  nv_github_repository_name:
+    type: string
+    string_semantics: short
+    description: Repository name within a GitHub owner account.
+  nv_github_scope_repository:
+    type: string
+    string_semantics: short
+    description: Repository owner/name used as HTTP scope for repository-scoped capabilities.
+  nv_github_updated_at:
+    type: date
+    value_format: rfc3339
+    description: Timestamp when a GitHub resource was last updated.
+  nv_issue_assign_copilot_custom_agent:
+    type: string
+    string_semantics: short
+    description: Custom Copilot coding agent name, when configured.
+  nv_issue_assign_copilot_custom_instructions:
+    type: string
+    string_semantics: markdown
+    description: Additional instructions for Copilot.
+  nv_issue_assign_copilot_model:
+    type: string
+    string_semantics: short
+    description: Model name for Copilot to use, when supported.
+  nv_issue_assign_copilot_target_repo:
+    type: string
+    string_semantics: short
+    description: Target repo (owner/name), e.g. octocat/Hello-World.
+  nv_issue_assignees_add_assignees_item:
+    type: entity_ref
+    target: User
+  nv_issue_assignees_remove_assignees_item:
+    type: entity_ref
+    target: User
+  nv_issue_comment_query_since:
+    type: date
+    value_format: rfc3339
+    description: Only comments updated at or after this time.
+  nv_issue_create_assignees_item:
+    type: entity_ref
+    target: User
+  nv_issue_create_milestone:
+    type: integer
+    description: Milestone number.
+  nv_issue_number:
+    type: integer
+    description: Repository-local issue number.
   nv_issue_query_assignee:
     type: entity_ref
     target: User
     description: Filter by assignee login (omit for any assignee).
-  nv_issue_query_labels:
-    type: string
-    string_semantics: short
-  nv_issue_query_milestone:
-    type: string
-    string_semantics: short
   nv_issue_query_since:
     type: date
     value_format: rfc3339
@@ -4409,39 +3779,124 @@ values:
     - created
     - updated
     - comments
-  nv_issue_query_direction:
+  nv_issue_state_reason:
     type: select
     allowed_values:
-    - asc
-    - desc
-  nv_issue_search_q:
+    - completed
+    - reopened
+    - not_planned
+    - duplicate
+  nv_issue_sub_issue_add_replace_parent:
+    type: boolean
+    description: Re-parent the sub-issue when the API allows.
+  nv_issue_sub_issue_add_sub_issue_id:
+    type: integer
+    description: Sub-issue to attach (numeric issue id).
+  nv_issue_sub_issue_remove_sub_issue_id:
+    type: integer
+    description: Numeric database id of the sub-issue to remove.
+  nv_issue_sub_issue_reprioritize_after_id:
+    type: integer
+    description: Place the sub-issue after this sibling id.
+  nv_issue_sub_issue_reprioritize_before_id:
+    type: integer
+    description: Place the sub-issue before this sibling id.
+  nv_issue_sub_issue_reprioritize_sub_issue_id:
+    type: integer
+    description: Numeric database id of the sub-issue to reposition.
+  nv_issue_sub_issues_percent_completed:
+    type: number
+  nv_issue_update_assignees_item:
+    type: entity_ref
+    target: User
+  nv_issue_update_locked:
+    type: boolean
+    description: Lock or unlock conversation on the issue.
+  nv_issue_update_milestone:
+    type: integer
+    description: Milestone number in the repo, or omit to leave unchanged.
+  nv_issue_update_state_reason:
+    type: select
+    allowed_values:
+    - completed
+    - reopened
+    - not_planned
+    - duplicate
+    description: State-change reason; ignored if state unchanged.
+  nv_label_create_color:
     type: string
     string_semantics: short
-  nv_issue_search_sort:
+    description: Hex color without leading
+  nv_label_update_color:
+    type: string
+    string_semantics: short
+    description: Hex color without leading
+  nv_label_update_new_name:
+    type: string
+    string_semantics: short
+    description: New label name (GitHub JSON field new_name).
+  nv_milestone_query_sort:
     type: select
     allowed_values:
-    - comments
-    - reactions
-    - created
-    - updated
-    - interactions
-  nv_issue_search_order:
+    - due_on
+    - completeness
+  nv_notification_query_before:
+    type: date
+    value_format: rfc3339
+    description: Only notifications updated before this time.
+  nv_notification_query_since:
+    type: date
+    value_format: rfc3339
+    description: Only notifications updated at or after this time.
+  nv_org_members_query_filter:
     type: select
     allowed_values:
-    - desc
-    - asc
-  nv_pr_query_state:
-    type: select
-    allowed_values:
-    - open
-    - closed
+    - 2fa_disabled
+    - 2fa_insecure
     - all
-  nv_pr_query_head:
+  nv_org_members_query_role:
+    type: select
+    allowed_values:
+    - all
+    - admin
+    - member
+  nv_org_public_repos_query_visibility:
+    type: select
+    allowed_values:
+    - public
+  nv_org_repos_query_type:
+    type: select
+    allowed_values:
+    - all
+    - public
+    - private
+    - forks
+    - sources
+    - member
+  nv_pr_create_base:
     type: string
     string_semantics: short
-  nv_pr_query_base:
+    description: Branch you want to merge into.
+  nv_pr_create_head:
     type: string
     string_semantics: short
+    description: Head branch, or user:branch for a fork.
+  nv_pr_create_issue:
+    type: integer
+    description: Issue to turn into this pull request (optional).
+  nv_pr_create_maintainer_can_modify:
+    type: boolean
+    description: Allow base maintainers to push to head.
+  nv_pr_merge_merge_method:
+    type: select
+    allowed_values:
+    - merge
+    - squash
+    - rebase
+  nv_pr_patch_base:
+    type: string
+    string_semantics: short
+    description: Base branch name to target (if changing).
   nv_pr_query_sort:
     type: select
     allowed_values:
@@ -4449,100 +3904,20 @@ values:
     - updated
     - popularity
     - long-running
-  nv_pr_query_direction:
-    type: select
-    allowed_values:
-    - asc
-    - desc
-  nv_pr_search_q:
-    type: string
-    string_semantics: short
-  nv_pr_search_sort:
-    type: select
-    allowed_values:
-    - comments
-    - reactions
-    - created
-    - updated
-    - interactions
-  nv_pr_search_order:
-    type: select
-    allowed_values:
-    - desc
-    - asc
-  nv_pr_touching_path_search_q:
-    type: string
-    string_semantics: short
-    description: Path or file name fragment to search for.
-  nv_pr_touching_path_search_sort:
-    type: select
-    allowed_values:
-    - comments
-    - reactions
-    - created
-    - updated
-    - interactions
-  nv_pr_touching_path_search_order:
-    type: select
-    allowed_values:
-    - desc
-    - asc
-  nv_commit_query_path:
-    type: string
-    string_semantics: short
-  nv_commit_query_by_author:
-    type: string
-    string_semantics: short
-  nv_commit_query_by_committer:
-    type: string
-    string_semantics: short
-  nv_commit_query_since:
-    type: date
-    value_format: rfc3339
-  nv_commit_query_until:
-    type: date
-    value_format: rfc3339
-  nv_pr_review_comment_query_since:
-    type: date
-    value_format: rfc3339
-    description: Only comments updated at or after this time.
-  nv_pr_review_create_body:
-    type: string
-    string_semantics: markdown
-  nv_pr_review_create_commit_id:
-    type: string
-    string_semantics: short
-    description: Commit SHA to review; omit for the PR head.
-  nv_pr_review_create_event:
-    type: select
-    allowed_values:
-    - APPROVE
-    - REQUEST_CHANGES
-    - COMMENT
-    description: Omit to create a pending review.
-  nv_pr_review_submit_event:
-    type: select
-    allowed_values:
-    - APPROVE
-    - REQUEST_CHANGES
-    - COMMENT
-  nv_pr_review_submit_body:
-    type: string
-    string_semantics: markdown
-  nv_pr_review_comment_create_body:
-    type: string
-    string_semantics: markdown
   nv_pr_review_comment_create_commit_id:
     type: string
     string_semantics: short
     description: Commit SHA to comment on for a new inline comment.
+  nv_pr_review_comment_create_in_reply_to:
+    type: integer
+    description: Existing review comment id to reply to.
+  nv_pr_review_comment_create_line:
+    type: integer
+    description: Diff line for a new inline comment.
   nv_pr_review_comment_create_path:
     type: string
     string_semantics: short
     description: File path in repo for a new inline comment.
-  nv_pr_review_comment_create_line:
-    type: integer
-    description: Diff line for a new inline comment.
   nv_pr_review_comment_create_side:
     type: select
     allowed_values:
@@ -4564,16 +3939,237 @@ values:
     - line
     - file
     description: Comment on a diff line vs whole file.
-  nv_pr_review_comment_create_in_reply_to:
+  nv_pr_review_comment_query_since:
+    type: date
+    value_format: rfc3339
+    description: Only comments updated at or after this time.
+  nv_pr_review_create_commit_id:
+    type: string
+    string_semantics: short
+    description: Commit SHA to review; omit for the PR head.
+  nv_pr_review_create_event:
+    type: select
+    allowed_values:
+    - APPROVE
+    - REQUEST_CHANGES
+    - COMMENT
+    description: Omit to create a pending review.
+  nv_pr_review_submit_event:
+    type: select
+    allowed_values:
+    - APPROVE
+    - REQUEST_CHANGES
+    - COMMENT
+  nv_pr_touching_path_search_q:
+    type: string
+    string_semantics: short
+    description: Path or file name fragment to search for.
+  nv_pr_update_branch_expected_head_sha:
+    type: string
+    string_semantics: short
+    description: Only if PR head still matches this SHA.
+  nv_pull_request_number:
     type: integer
-    description: Existing review comment id to reply to.
-  nv_contributor_query_anon:
+    description: Repository-local pull request number.
+  nv_pull_request_review_comment_subject_type:
+    type: select
+    allowed_values:
+    - line
+    - file
+  nv_pull_request_review_state:
+    type: select
+    allowed_values:
+    - APPROVED
+    - CHANGES_REQUESTED
+    - COMMENTED
+    - DISMISSED
+    - PENDING
+  nv_release_create_generate_release_notes:
     type: boolean
-    description: Count anonymous contributions too.
+    description: Auto release notes from merged PRs (if supported).
+  nv_release_create_target_commitish:
+    type: string
+    string_semantics: short
+    description: Branch or commit SHA the release tag points at.
+  nv_repo_collaborators_query_affiliation:
+    type: select
+    allowed_values:
+    - outside
+    - direct
+    - all
+  nv_repo_comment_query_since:
+    type: date
+    value_format: rfc3339
+    description: Only comments updated at or after this time.
+  nv_repo_comment_query_sort:
+    type: select
+    allowed_values:
+    - created
+    - updated
+  nv_repo_content_put_content:
+    type: blob
+    description: New file content (base64).
+  nv_repo_forks_query_sort:
+    type: select
+    allowed_values:
+    - newest
+    - oldest
+    - stargazers
+  nv_repo_search_q:
+    type: string
+    string_semantics: short
+    description: GitHub repository search query, not natural language. Use valid qualifiers such as "org:rust-lang rust in:name"
+      or "plasm-core in:name not:fork"; invalid qualifier syntax may be rejected by GitHub.
+  nv_repo_search_sort:
+    type: select
+    allowed_values:
+    - stars
+    - forks
+    - help-wanted-issues
+    - updated
+  nv_repository_visibility:
+    type: select
+    allowed_values:
+    - public
+    - private
+    - internal
+  nv_user_repos_query_type:
+    type: select
+    allowed_values:
+    - all
+    - owner
+    - member
+  nv_user_search_sort:
+    type: select
+    allowed_values:
+    - followers
+    - repositories
+    - joined
+  nv_wire_bool:
+    type: boolean
+  nv_wire_date_rfc3339:
+    type: date
+    value_format: rfc3339
+  nv_wire_int:
+    type: integer
+  nv_wire_sel_1b3907e07c1297e8:
+    type: select
+    allowed_values:
+    - asc
+    - desc
+  nv_wire_sel_668f8e38fed376e3:
+    type: select
+    allowed_values:
+    - closed
+    - open
+  nv_wire_sel_801aab563793550a:
+    type: select
+    allowed_values:
+    - added
+    - changed
+    - copied
+    - modified
+    - removed
+    - renamed
+    - unchanged
+  nv_wire_sel_8f80b338e6b66401:
+    type: select
+    allowed_values:
+    - created
+    - full_name
+    - pushed
+    - updated
+  nv_wire_sel_9a078639e0272e4d:
+    type: select
+    allowed_values:
+    - blue
+    - gray
+    - green
+    - orange
+    - pink
+    - purple
+    - red
+    - yellow
+  nv_wire_sel_c5a1665707ce30ae:
+    type: select
+    allowed_values:
+    - all
+    - closed
+    - open
+  nv_wire_sel_cecfba3d4d1c9fbf:
+    type: select
+    allowed_values:
+    - comments
+    - created
+    - interactions
+    - reactions
+    - updated
+  nv_wire_sel_e53c76c5bba3a0f0:
+    type: select
+    allowed_values:
+    - LEFT
+    - RIGHT
+  nv_wire_sel_ecdb4e0a7d7f72ae:
+    type: select
+    allowed_values:
+    - completed
+    - in_progress
+    - pending
+    - queued
+    - requested
+    - waiting
+  nv_wire_sel_f9da2eb819f6e623:
+    type: select
+    allowed_values:
+    - action_required
+    - cancelled
+    - failure
+    - neutral
+    - skipped
+    - stale
+    - startup_failure
+    - success
+    - timed_out
+  nv_wire_str_markdown:
+    type: string
+    string_semantics: markdown
+  nv_wire_str_short:
+    type: string
+    string_semantics: short
   nv_workflow_dispatch_ref:
     type: string
     string_semantics: short
     description: Branch, tag, or commit SHA to run the workflow on.
+  nv_workflow_job_query_filter:
+    type: select
+    allowed_values:
+    - latest
+    - all
+    description: Only latest-attempt jobs vs all attempts.
+  nv_workflow_run_by_workflow_query_event:
+    type: string
+    string_semantics: short
+    description: Event type that triggered the workflow.
+  nv_workflow_run_by_workflow_query_status:
+    type: select
+    allowed_values:
+    - completed
+    - action_required
+    - cancelled
+    - failure
+    - neutral
+    - skipped
+    - stale
+    - success
+    - timed_out
+    - in_progress
+    - queued
+    - requested
+    - waiting
+  nv_workflow_run_query_actor:
+    type: entity_ref
+    target: User
+    description: User who triggered the run.
   nv_workflow_run_query_event:
     type: select
     allowed_values:
@@ -4628,421 +4224,45 @@ values:
     - requested
     - waiting
     description: Workflow run status.
-  nv_workflow_run_query_actor:
-    type: entity_ref
-    target: User
-    description: User who triggered the run.
-  nv_workflow_run_by_workflow_query_workflow_id:
-    type: integer
-  nv_workflow_run_by_workflow_query_event:
-    type: string
-    string_semantics: short
-    description: Event type that triggered the workflow.
-  nv_workflow_run_by_workflow_query_status:
+  nv_workflow_state:
     type: select
     allowed_values:
-    - completed
-    - action_required
-    - cancelled
-    - failure
-    - neutral
-    - skipped
-    - stale
-    - success
-    - timed_out
-    - in_progress
-    - queued
-    - requested
-    - waiting
-  nv_workflow_job_query_run_id:
-    type: integer
-  nv_workflow_job_query_filter:
-    type: select
-    allowed_values:
-    - latest
-    - all
-    description: Only latest-attempt jobs vs all attempts.
-  nv_workflow_artifact_query_run_id:
-    type: integer
-  nv_user_search_q:
-    type: string
-    string_semantics: short
-  nv_user_search_sort:
-    type: select
-    allowed_values:
-    - followers
-    - repositories
-    - joined
-  nv_user_search_order:
-    type: select
-    allowed_values:
-    - desc
-    - asc
-  nv_org_repos_query_type:
-    type: select
-    allowed_values:
-    - all
-    - public
-    - private
-    - forks
-    - sources
-    - member
-  nv_org_repos_query_sort:
-    type: select
-    allowed_values:
-    - created
-    - updated
-    - pushed
-    - full_name
-  nv_org_repos_query_direction:
-    type: select
-    allowed_values:
-    - asc
-    - desc
-  nv_org_public_repos_query_visibility:
-    type: select
-    allowed_values:
-    - public
-  nv_org_public_repos_query_sort:
-    type: select
-    allowed_values:
-    - created
-    - updated
-    - pushed
-    - full_name
-  nv_org_public_repos_query_direction:
-    type: select
-    allowed_values:
-    - asc
-    - desc
-  nv_org_members_query_filter:
-    type: select
-    allowed_values:
-    - 2fa_disabled
-    - 2fa_insecure
-    - all
-  nv_org_members_query_role:
-    type: select
-    allowed_values:
-    - all
-    - admin
-    - member
-  nv_notification_query_all:
-    type: boolean
-  nv_notification_query_participating:
-    type: boolean
-  nv_notification_query_since:
-    type: date
-    value_format: rfc3339
-    description: Only notifications updated at or after this time.
-  nv_notification_query_before:
-    type: date
-    value_format: rfc3339
-    description: Only notifications updated before this time.
-  nv_milestone_query_state:
-    type: select
-    allowed_values:
-    - open
-    - closed
-    - all
-  nv_milestone_query_sort:
-    type: select
-    allowed_values:
-    - due_on
-    - completeness
-  nv_milestone_query_direction:
-    type: select
-    allowed_values:
-    - asc
-    - desc
-  nv_milestone_create_title:
-    type: string
-    string_semantics: short
-  nv_milestone_create_description:
-    type: string
-    string_semantics: markdown
-  nv_milestone_create_state:
-    type: select
-    allowed_values:
-    - open
-    - closed
-  nv_milestone_create_due_on:
-    type: date
-    value_format: rfc3339
-  nv_milestone_update_title:
-    type: string
-    string_semantics: short
-  nv_milestone_update_description:
-    type: string
-    string_semantics: markdown
-  nv_milestone_update_state:
-    type: select
-    allowed_values:
-    - open
-    - closed
-  nv_milestone_update_due_on:
-    type: date
-    value_format: rfc3339
-  nv_release_create_tag_name:
-    type: string
-    string_semantics: short
-  nv_release_create_name:
-    type: string
-    string_semantics: short
-  nv_release_create_body:
-    type: string
-    string_semantics: markdown
-  nv_release_create_draft:
-    type: boolean
-  nv_release_create_prerelease:
-    type: boolean
-  nv_release_create_target_commitish:
-    type: string
-    string_semantics: short
-    description: Branch or commit SHA the release tag points at.
-  nv_release_create_generate_release_notes:
-    type: boolean
-    description: Auto release notes from merged PRs (if supported).
-  nv_release_update_tag_name:
-    type: string
-    string_semantics: short
-  nv_release_update_name:
-    type: string
-    string_semantics: short
-  nv_release_update_body:
-    type: string
-    string_semantics: markdown
-  nv_release_update_draft:
-    type: boolean
-  nv_release_update_prerelease:
-    type: boolean
-  nv_release_update_target_commitish:
-    type: string
-    string_semantics: short
-  nv_issue_comment_query_since:
-    type: date
-    value_format: rfc3339
-    description: Only comments updated at or after this time.
-  nv_repo_comment_query_sort:
-    type: select
-    allowed_values:
-    - created
-    - updated
-  nv_repo_comment_query_direction:
-    type: select
-    allowed_values:
-    - asc
-    - desc
-  nv_repo_comment_query_since:
-    type: date
-    value_format: rfc3339
-    description: Only comments updated at or after this time.
-  nv_issue_create_title:
-    type: string
-    string_semantics: short
-  nv_issue_create_body:
-    type: string
-    string_semantics: markdown
-  nv_issue_create_labels_item:
-    type: string
-  nv_issue_create_labels:
-    type: array
-    items:
-      value_ref: nv_issue_create_labels_item
-    description: Label names to apply.
-  nv_issue_create_assignees_item:
-    type: entity_ref
-    target: User
-  nv_issue_create_assignees:
-    type: array
-    items:
-      value_ref: nv_issue_create_assignees_item
-    description: Assignee logins.
-  nv_issue_create_milestone:
-    type: integer
-    description: Milestone number.
-  nv_issue_update_title:
-    type: string
-    string_semantics: short
-  nv_issue_update_body:
-    type: string
-    string_semantics: markdown
-  nv_issue_update_state:
-    type: select
-    allowed_values:
-    - open
-    - closed
-  nv_issue_update_state_reason:
-    type: select
-    allowed_values:
-    - completed
-    - reopened
-    - not_planned
-    - duplicate
-    description: State-change reason; ignored if state unchanged.
-  nv_issue_update_labels_item:
-    type: string
-  nv_issue_update_labels:
-    type: array
-    items:
-      value_ref: nv_issue_update_labels_item
-    description: Full label-name list; omit to leave labels unchanged.
-  nv_issue_update_assignees_item:
-    type: entity_ref
-    target: User
-  nv_issue_update_assignees:
-    type: array
-    items:
-      value_ref: nv_issue_update_assignees_item
-    description: Full replacement list of assignee logins.
-  nv_issue_update_milestone:
-    type: integer
-    description: Milestone number in the repo, or omit to leave unchanged.
-  nv_issue_update_locked:
-    type: boolean
-    description: Lock or unlock conversation on the issue.
-  nv_issue_sub_issue_add_sub_issue_id:
-    type: integer
-    description: Sub-issue to attach (numeric issue id).
-  nv_issue_sub_issue_add_replace_parent:
-    type: boolean
-    description: Re-parent the sub-issue when the API allows.
-  nv_issue_sub_issue_remove_sub_issue_id:
-    type: integer
-    description: Numeric database id of the sub-issue to remove.
-  nv_issue_sub_issue_reprioritize_sub_issue_id:
-    type: integer
-    description: Numeric database id of the sub-issue to reposition.
-  nv_issue_sub_issue_reprioritize_after_id:
-    type: integer
-    description: Place the sub-issue after this sibling id.
-  nv_issue_sub_issue_reprioritize_before_id:
-    type: integer
-    description: Place the sub-issue before this sibling id.
-  nv_issue_assignees_add_assignees_item:
-    type: entity_ref
-    target: User
+    - active
+    - deleted
+    - disabled_fork
+    - disabled_inactivity
+    - disabled_manually
   nv_issue_assignees_add_assignees:
     type: array
     items:
       value_ref: nv_issue_assignees_add_assignees_item
     description: Assignee logins to add.
-  nv_issue_assignees_remove_assignees_item:
-    type: entity_ref
-    target: User
   nv_issue_assignees_remove_assignees:
     type: array
     items:
       value_ref: nv_issue_assignees_remove_assignees_item
     description: Assignee logins to remove.
-  nv_issue_assign_copilot_target_repo:
-    type: string
-    string_semantics: short
-    description: Target repo (owner/name), e.g. octocat/Hello-World.
-  nv_issue_assign_copilot_custom_instructions:
-    type: string
-    string_semantics: markdown
-    description: Additional instructions for Copilot.
-  nv_issue_assign_copilot_custom_agent:
-    type: string
-    string_semantics: short
-    description: Custom Copilot coding agent name, when configured.
-  nv_issue_assign_copilot_model:
-    type: string
-    string_semantics: short
-    description: Model name for Copilot to use, when supported.
-  nv_issue_comment_create_body:
-    type: string
-    string_semantics: markdown
-  nv_issue_comment_update_body:
-    type: string
-    string_semantics: markdown
-  nv_pr_patch_title:
-    type: string
-    string_semantics: short
-  nv_pr_patch_body:
-    type: string
-    string_semantics: markdown
-  nv_pr_patch_state:
-    type: select
-    allowed_values:
-    - open
-    - closed
-  nv_pr_patch_base:
-    type: string
-    string_semantics: short
-    description: Base branch name to target (if changing).
-  nv_pr_merge_commit_title:
-    type: string
-    string_semantics: short
-  nv_pr_merge_commit_message:
-    type: string
-    string_semantics: markdown
-  nv_pr_merge_merge_method:
-    type: select
-    allowed_values:
-    - merge
-    - squash
-    - rebase
-  nv_pr_update_branch_expected_head_sha:
-    type: string
-    string_semantics: short
-    description: Only if PR head still matches this SHA.
-  nv_pr_create_title:
-    type: string
-    string_semantics: short
-  nv_pr_create_head:
-    type: string
-    string_semantics: short
-    description: Head branch, or user:branch for a fork.
-  nv_pr_create_base:
-    type: string
-    string_semantics: short
-    description: Branch you want to merge into.
-  nv_pr_create_body:
-    type: string
-    string_semantics: markdown
-  nv_pr_create_draft:
-    type: boolean
-  nv_pr_create_maintainer_can_modify:
-    type: boolean
-    description: Allow base maintainers to push to head.
-  nv_pr_create_issue:
-    type: integer
-    description: Issue to turn into this pull request (optional).
-  nv_label_create_name:
-    type: string
-    string_semantics: short
-  nv_label_create_color:
-    type: string
-    string_semantics: short
-    description: Hex color without leading
-  nv_label_create_description:
-    type: string
-    string_semantics: markdown
-  nv_label_update_new_name:
-    type: string
-    string_semantics: short
-    description: New label name (GitHub JSON field new_name).
-  nv_label_update_color:
-    type: string
-    string_semantics: short
-    description: Hex color without leading
-  nv_label_update_description:
-    type: string
-    string_semantics: markdown
-  nv_repo_content_put_path:
-    type: string
-    string_semantics: short
-  nv_repo_content_put_message:
-    type: string
-    string_semantics: short
-  nv_repo_content_put_content:
-    type: blob
-    description: New file content (base64).
-  nv_repo_content_delete_path:
-    type: string
-    string_semantics: short
-  nv_repo_content_delete_message:
-    type: string
-    string_semantics: short
+  nv_issue_create_assignees:
+    type: array
+    items:
+      value_ref: nv_issue_create_assignees_item
+    description: Assignee logins.
+  nv_issue_update_assignees:
+    type: array
+    items:
+      value_ref: nv_issue_update_assignees_item
+    description: Full replacement list of assignee logins.
+  nv_issue_create_labels:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Label names to apply.
+  nv_issue_update_labels:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Full label-name list; omit to leave labels unchanged.
+  nv_workflow_job_labels:
+    type: array
+    items:
+      value_ref: nv_wire_str_short

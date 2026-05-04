@@ -7,8 +7,8 @@ use plasm_compile::{
 };
 use plasm_core::discovery::CatalogEntryMeta;
 use plasm_core::prompt_render::{
-    render_domain_prompt_bundle, DomainLineKind, DomainLineMeta, DomainPromptModel,
-    PromptRenderMode, RenderConfig,
+    render_domain_bundle, DomainLineKind, DomainLineMeta, DomainPromptModel, DomainPromptSettings,
+    DomainPromptSource,
 };
 use plasm_core::schema::{
     AuthScheme, EntityDef, FieldSchema, InputFieldSchema, OauthExtension, OutputType,
@@ -902,12 +902,14 @@ fn render_bundle_for_tool_model(
                 ));
             }
             Ok((
-                render_domain_prompt_bundle(
+                render_domain_bundle(
                     cgs,
-                    RenderConfig {
+                    DomainPromptSource::Catalog {
                         focus: FocusSpec::All,
-                        render_mode: PromptRenderMode::Canonical,
+                    },
+                    DomainPromptSettings {
                         include_domain_execution_model: true,
+                        symbolic: false,
                         symbol_map_cross_cache: None,
                     },
                 ),
@@ -922,12 +924,14 @@ fn render_bundle_for_tool_model(
             }
             validate_entity_names(cgs, &q.entity)?;
             Ok((
-                render_domain_prompt_bundle(
+                render_domain_bundle(
                     cgs,
-                    RenderConfig {
+                    DomainPromptSource::Catalog {
                         focus: FocusSpec::Single(q.entity[0].as_str()),
-                        render_mode: PromptRenderMode::Canonical,
+                    },
+                    DomainPromptSettings {
                         include_domain_execution_model: true,
+                        symbolic: false,
                         symbol_map_cross_cache: None,
                     },
                 ),
@@ -943,12 +947,14 @@ fn render_bundle_for_tool_model(
             validate_entity_names(cgs, &q.entity)?;
             let refs: Vec<&str> = q.entity.iter().map(|s| s.as_str()).collect();
             Ok((
-                render_domain_prompt_bundle(
+                render_domain_bundle(
                     cgs,
-                    RenderConfig {
+                    DomainPromptSource::Catalog {
                         focus: FocusSpec::Seeds(&refs),
-                        render_mode: PromptRenderMode::Canonical,
+                    },
+                    DomainPromptSettings {
                         include_domain_execution_model: true,
+                        symbolic: false,
                         symbol_map_cross_cache: None,
                     },
                 ),

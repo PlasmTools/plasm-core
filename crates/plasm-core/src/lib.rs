@@ -156,8 +156,13 @@ pub use paging_handle::{
 };
 pub use predicate::Predicate;
 pub use prompt_pipeline::{PromptFocus, PromptPipelineConfig};
+pub use prompt_render::domain_tsv_table_from_wrapped_prompt;
+pub use prompt_render::render_domain_bundle;
 pub use prompt_render::render_domain_prompt_bundle_for_exposure;
+pub use prompt_render::render_domain_tsv;
 pub use prompt_render::split_tsv_domain_contract_and_table;
+pub use prompt_render::DomainPromptSettings;
+pub use prompt_render::DomainPromptSource;
 pub use prompt_render::PromptRenderMode;
 pub use prompt_render::TSV_DOMAIN_TABLE_HEADER;
 pub use query_resolve::{

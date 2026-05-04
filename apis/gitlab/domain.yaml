@@ -1,4 +1,4 @@
-version: 1
+version: 2
 http_backend: https://gitlab.com
 entities:
   Project:
@@ -7,49 +7,49 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_project_id
+        value_ref: nv_wire_int
       name:
         required: true
-        value_ref: nv_project_name
+        value_ref: nv_wire_str_short
       path:
         required: true
-        value_ref: nv_project_path
+        value_ref: nv_wire_str_short
       name_with_namespace:
         required: false
-        value_ref: nv_project_name_with_namespace
+        value_ref: nv_wire_str_short
       path_with_namespace:
         required: false
-        value_ref: nv_project_path_with_namespace
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_project_description
+        value_ref: nv_wire_str_markdown
       visibility:
         required: false
-        value_ref: nv_project_visibility
+        value_ref: nv_wire_str_short
       web_url:
         required: false
-        value_ref: nv_project_web_url
+        value_ref: nv_wire_str_short
       created_at:
         required: false
-        value_ref: nv_project_created_at
+        value_ref: nv_wire_date_rfc3339
       last_activity_at:
         required: false
-        value_ref: nv_project_last_activity_at
+        value_ref: nv_wire_date_rfc3339
       default_branch:
         required: false
-        value_ref: nv_project_default_branch
+        value_ref: nv_wire_str_short
       star_count:
         required: false
-        value_ref: nv_project_star_count
+        value_ref: nv_wire_int
       forks_count:
         required: false
-        value_ref: nv_project_forks_count
+        value_ref: nv_wire_int
       ssh_url_to_repo:
         required: false
-        value_ref: nv_project_ssh_url_to_repo
+        value_ref: nv_wire_str_short
       http_url_to_repo:
         required: false
-        value_ref: nv_project_http_url_to_repo
+        value_ref: nv_wire_str_short
     relations:
       issues:
         target: Issue
@@ -68,55 +68,55 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_issue_id
+        value_ref: nv_wire_int
       iid:
         required: true
-        value_ref: nv_issue_iid
+        value_ref: nv_wire_int
       project_id:
         required: true
         value_ref: nv_issue_project_id
       title:
         required: true
-        value_ref: nv_issue_title
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_issue_description
+        value_ref: nv_wire_str_markdown
       state:
         required: false
         value_ref: nv_issue_state
       issue_type:
         required: false
-        value_ref: nv_issue_issue_type
+        value_ref: nv_wire_str_short
       confidential:
         required: false
-        value_ref: nv_issue_confidential
+        value_ref: nv_wire_bool
       created_at:
         required: false
-        value_ref: nv_issue_created_at
+        value_ref: nv_wire_date_rfc3339
       updated_at:
         required: false
-        value_ref: nv_issue_updated_at
+        value_ref: nv_wire_date_rfc3339
       closed_at:
         required: false
-        value_ref: nv_issue_closed_at
+        value_ref: nv_wire_date_rfc3339
       web_url:
         required: false
-        value_ref: nv_issue_web_url
+        value_ref: nv_wire_str_short
       labels:
         required: false
         value_ref: nv_issue_labels
       time_estimate:
         required: false
-        value_ref: nv_issue_time_estimate
+        value_ref: nv_wire_int
       total_time_spent:
         required: false
-        value_ref: nv_issue_total_time_spent
+        value_ref: nv_wire_int
       human_time_estimate:
         required: false
-        value_ref: nv_issue_human_time_estimate
+        value_ref: nv_wire_str_short
       human_total_time_spent:
         required: false
-        value_ref: nv_issue_human_total_time_spent
+        value_ref: nv_wire_str_short
   MergeRequest:
     id_field: id
     key_vars:
@@ -126,61 +126,61 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_merge_request_id
+        value_ref: nv_wire_int
       iid:
         required: true
-        value_ref: nv_merge_request_iid
+        value_ref: nv_wire_int
       project_id:
         required: true
         value_ref: nv_merge_request_project_id
       title:
         required: true
-        value_ref: nv_merge_request_title
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_merge_request_description
+        value_ref: nv_wire_str_markdown
       state:
         required: false
-        value_ref: nv_merge_request_state
+        value_ref: nv_wire_str_short
       draft:
         required: false
-        value_ref: nv_merge_request_draft
+        value_ref: nv_wire_bool
       source_branch:
         required: false
-        value_ref: nv_merge_request_source_branch
+        value_ref: nv_wire_str_short
       target_branch:
         required: false
-        value_ref: nv_merge_request_target_branch
+        value_ref: nv_wire_str_short
       labels:
         required: false
-        value_ref: nv_merge_request_labels
+        value_ref: nv_wire_str_short
       created_at:
         required: false
-        value_ref: nv_merge_request_created_at
+        value_ref: nv_wire_date_rfc3339
       updated_at:
         required: false
-        value_ref: nv_merge_request_updated_at
+        value_ref: nv_wire_date_rfc3339
       merged_at:
         required: false
-        value_ref: nv_merge_request_merged_at
+        value_ref: nv_wire_date_rfc3339
       closed_at:
         required: false
-        value_ref: nv_merge_request_closed_at
+        value_ref: nv_wire_date_rfc3339
       web_url:
         required: false
-        value_ref: nv_merge_request_web_url
+        value_ref: nv_wire_str_short
       time_estimate:
         required: false
-        value_ref: nv_merge_request_time_estimate
+        value_ref: nv_wire_int
       total_time_spent:
         required: false
-        value_ref: nv_merge_request_total_time_spent
+        value_ref: nv_wire_int
       human_time_estimate:
         required: false
-        value_ref: nv_merge_request_human_time_estimate
+        value_ref: nv_wire_str_short
       human_total_time_spent:
         required: false
-        value_ref: nv_merge_request_human_total_time_spent
+        value_ref: nv_wire_str_short
   IssueNote:
     id_field: id
     key_vars:
@@ -194,22 +194,22 @@ entities:
         value_ref: nv_issue_note_project_id
       iid:
         required: true
-        value_ref: nv_issue_note_iid
+        value_ref: nv_wire_int
       id:
         required: true
-        value_ref: nv_issue_note_id
+        value_ref: nv_wire_str_short
       body:
         required: false
-        value_ref: nv_issue_note_body
+        value_ref: nv_wire_str_markdown
       created_at:
         required: false
-        value_ref: nv_issue_note_created_at
+        value_ref: nv_wire_date_rfc3339
       updated_at:
         required: false
-        value_ref: nv_issue_note_updated_at
+        value_ref: nv_wire_date_rfc3339
       confidential:
         required: false
-        value_ref: nv_issue_note_confidential
+        value_ref: nv_wire_bool
   MergeRequestNote:
     id_field: id
     key_vars:
@@ -223,19 +223,19 @@ entities:
         value_ref: nv_merge_request_note_project_id
       iid:
         required: true
-        value_ref: nv_merge_request_note_iid
+        value_ref: nv_wire_int
       id:
         required: true
-        value_ref: nv_merge_request_note_id
+        value_ref: nv_wire_str_short
       body:
         required: false
-        value_ref: nv_merge_request_note_body
+        value_ref: nv_wire_str_markdown
       created_at:
         required: false
-        value_ref: nv_merge_request_note_created_at
+        value_ref: nv_wire_date_rfc3339
       updated_at:
         required: false
-        value_ref: nv_merge_request_note_updated_at
+        value_ref: nv_wire_date_rfc3339
   IssueAwardEmoji:
     id_field: id
     key_vars:
@@ -249,19 +249,19 @@ entities:
         value_ref: nv_issue_award_emoji_project_id
       iid:
         required: true
-        value_ref: nv_issue_award_emoji_iid
+        value_ref: nv_wire_int
       id:
         required: true
-        value_ref: nv_issue_award_emoji_id
+        value_ref: nv_wire_int
       name:
         required: true
-        value_ref: nv_issue_award_emoji_name
+        value_ref: nv_wire_str_short
       created_at:
         required: false
-        value_ref: nv_issue_award_emoji_created_at
+        value_ref: nv_wire_date_rfc3339
       updated_at:
         required: false
-        value_ref: nv_issue_award_emoji_updated_at
+        value_ref: nv_wire_date_rfc3339
   MergeRequestAwardEmoji:
     id_field: id
     key_vars:
@@ -275,19 +275,19 @@ entities:
         value_ref: nv_merge_request_award_emoji_project_id
       iid:
         required: true
-        value_ref: nv_merge_request_award_emoji_iid
+        value_ref: nv_wire_int
       id:
         required: true
-        value_ref: nv_merge_request_award_emoji_id
+        value_ref: nv_wire_int
       name:
         required: true
-        value_ref: nv_merge_request_award_emoji_name
+        value_ref: nv_wire_str_short
       created_at:
         required: false
-        value_ref: nv_merge_request_award_emoji_created_at
+        value_ref: nv_wire_date_rfc3339
       updated_at:
         required: false
-        value_ref: nv_merge_request_award_emoji_updated_at
+        value_ref: nv_wire_date_rfc3339
 capabilities:
   project_query:
     kind: query
@@ -295,38 +295,38 @@ capabilities:
     description: List projects visible to the authenticated account
     parameters:
     - name: search
-      value_ref: nv_project_query_search
+      value_ref: nv_wire_str_short
       required: false
       role: search
     - name: visibility
-      value_ref: nv_project_query_visibility
+      value_ref: nv_wire_sel_8807b75f968505fb
       required: false
     - name: archived
-      value_ref: nv_project_query_archived
+      value_ref: nv_wire_bool
       required: false
     - name: owned
-      value_ref: nv_project_query_owned
+      value_ref: nv_wire_bool
       required: false
     - name: membership
-      value_ref: nv_project_query_membership
+      value_ref: nv_wire_bool
       required: false
     - name: starred
-      value_ref: nv_project_query_starred
+      value_ref: nv_wire_bool
       required: false
     - name: order_by
       value_ref: nv_project_query_order_by
       required: false
       role: sort
     - name: sort
-      value_ref: nv_project_query_sort
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
     - name: simple
-      value_ref: nv_project_query_simple
+      value_ref: nv_wire_bool
       required: false
       role: response_control
     - name: statistics
-      value_ref: nv_project_query_statistics
+      value_ref: nv_wire_bool
       required: false
       role: response_control
   project_get:
@@ -335,7 +335,7 @@ capabilities:
     description: Fetch one project by numeric id or URL-encoded path
     parameters:
     - name: statistics
-      value_ref: nv_project_get_statistics
+      value_ref: nv_wire_bool
       required: false
       role: response_control
     provides:
@@ -360,21 +360,21 @@ capabilities:
     description: List issues for the current user across projects
     parameters:
     - name: state
-      value_ref: nv_issue_query_state
+      value_ref: nv_wire_sel_c4015a1a98023521
       required: false
     - name: search
-      value_ref: nv_issue_query_search
+      value_ref: nv_wire_str_short
       required: false
       role: search
     - name: scope
       value_ref: nv_issue_query_scope
       required: false
     - name: order_by
-      value_ref: nv_issue_query_order_by
+      value_ref: nv_wire_sel_bc45924eafff6feb
       required: false
       role: sort
     - name: sort
-      value_ref: nv_issue_query_sort
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   issue_for_project_query:
@@ -387,18 +387,18 @@ capabilities:
       required: true
       role: scope
     - name: state
-      value_ref: nv_issue_for_project_query_state
+      value_ref: nv_wire_sel_c4015a1a98023521
       required: false
     - name: search
-      value_ref: nv_issue_for_project_query_search
+      value_ref: nv_wire_str_short
       required: false
       role: search
     - name: order_by
-      value_ref: nv_issue_for_project_query_order_by
+      value_ref: nv_wire_sel_bc45924eafff6feb
       required: false
       role: sort
     - name: sort
-      value_ref: nv_issue_for_project_query_sort
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   issue_get:
@@ -425,17 +425,17 @@ capabilities:
     description: List merge requests visible to the authenticated user
     parameters:
     - name: state
-      value_ref: nv_merge_request_query_state
+      value_ref: nv_wire_sel_e25280eac2a90f88
       required: false
     - name: scope
       value_ref: nv_merge_request_query_scope
       required: false
     - name: order_by
-      value_ref: nv_merge_request_query_order_by
+      value_ref: nv_wire_sel_7c59fc7f43f5debc
       required: false
       role: sort
     - name: sort
-      value_ref: nv_merge_request_query_sort
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   merge_request_for_project_query:
@@ -448,14 +448,14 @@ capabilities:
       required: true
       role: scope
     - name: state
-      value_ref: nv_merge_request_for_project_query_state
+      value_ref: nv_wire_sel_e25280eac2a90f88
       required: false
     - name: order_by
-      value_ref: nv_merge_request_for_project_query_order_by
+      value_ref: nv_wire_sel_7c59fc7f43f5debc
       required: false
       role: sort
     - name: sort
-      value_ref: nv_merge_request_for_project_query_sort
+      value_ref: nv_wire_sel_1b3907e07c1297e8
       required: false
       role: sort_direction
   merge_request_get:
@@ -484,31 +484,31 @@ capabilities:
     description: Create a new project under the authenticated user or namespace
     parameters:
     - name: name
-      value_ref: nv_project_create_name
+      value_ref: nv_wire_str_short
       required: true
     - name: path
-      value_ref: nv_project_create_path
+      value_ref: nv_wire_str_short
       required: false
     - name: namespace_id
-      value_ref: nv_project_create_namespace_id
+      value_ref: nv_wire_int
       required: false
     - name: description
-      value_ref: nv_project_create_description
+      value_ref: nv_wire_str_markdown
       required: false
     - name: visibility
-      value_ref: nv_project_create_visibility
+      value_ref: nv_wire_sel_8807b75f968505fb
       required: false
     - name: default_branch
-      value_ref: nv_project_create_default_branch
+      value_ref: nv_wire_str_short
       required: false
     - name: issues_enabled
-      value_ref: nv_project_create_issues_enabled
+      value_ref: nv_wire_bool
       required: false
     - name: merge_requests_enabled
-      value_ref: nv_project_create_merge_requests_enabled
+      value_ref: nv_wire_bool
       required: false
     - name: wiki_enabled
-      value_ref: nv_project_create_wiki_enabled
+      value_ref: nv_wire_bool
       required: false
   project_update:
     kind: update
@@ -516,28 +516,28 @@ capabilities:
     description: Update project attributes
     parameters:
     - name: name
-      value_ref: nv_project_update_name
+      value_ref: nv_wire_str_short
       required: false
     - name: path
-      value_ref: nv_project_update_path
+      value_ref: nv_wire_str_short
       required: false
     - name: description
-      value_ref: nv_project_update_description
+      value_ref: nv_wire_str_markdown
       required: false
     - name: default_branch
-      value_ref: nv_project_update_default_branch
+      value_ref: nv_wire_str_short
       required: false
     - name: visibility
-      value_ref: nv_project_update_visibility
+      value_ref: nv_wire_sel_8807b75f968505fb
       required: false
     - name: issues_enabled
-      value_ref: nv_project_update_issues_enabled
+      value_ref: nv_wire_bool
       required: false
     - name: merge_requests_enabled
-      value_ref: nv_project_update_merge_requests_enabled
+      value_ref: nv_wire_bool
       required: false
     - name: wiki_enabled
-      value_ref: nv_project_update_wiki_enabled
+      value_ref: nv_wire_bool
       required: false
   project_delete:
     kind: delete
@@ -552,13 +552,13 @@ capabilities:
       value_ref: nv_issue_create_project_id
       required: true
     - name: title
-      value_ref: nv_issue_create_title
+      value_ref: nv_wire_str_short
       required: true
     - name: description
-      value_ref: nv_issue_create_description
+      value_ref: nv_wire_str_markdown
       required: false
     - name: confidential
-      value_ref: nv_issue_create_confidential
+      value_ref: nv_wire_bool
       required: false
     - name: labels
       value_ref: nv_issue_create_labels
@@ -567,7 +567,7 @@ capabilities:
       value_ref: nv_issue_create_issue_type
       required: false
     - name: milestone_id
-      value_ref: nv_issue_create_milestone_id
+      value_ref: nv_wire_int
       required: false
     - name: assignee_ids
       value_ref: nv_issue_create_assignee_ids
@@ -578,16 +578,16 @@ capabilities:
     description: Update an existing issue
     parameters:
     - name: title
-      value_ref: nv_issue_update_title
+      value_ref: nv_wire_str_short
       required: false
     - name: description
-      value_ref: nv_issue_update_description
+      value_ref: nv_wire_str_markdown
       required: false
     - name: state_event
-      value_ref: nv_issue_update_state_event
+      value_ref: nv_wire_sel_a821a0002dfcca16
       required: false
     - name: confidential
-      value_ref: nv_issue_update_confidential
+      value_ref: nv_wire_bool
       required: false
     - name: labels
       value_ref: nv_issue_update_labels
@@ -599,7 +599,7 @@ capabilities:
       value_ref: nv_issue_update_remove_labels
       required: false
     - name: milestone_id
-      value_ref: nv_issue_update_milestone_id
+      value_ref: nv_wire_int
       required: false
     - name: assignee_ids
       value_ref: nv_issue_update_assignee_ids
@@ -617,28 +617,28 @@ capabilities:
       value_ref: nv_merge_request_create_project_id
       required: true
     - name: title
-      value_ref: nv_merge_request_create_title
+      value_ref: nv_wire_str_short
       required: true
     - name: source_branch
-      value_ref: nv_merge_request_create_source_branch
+      value_ref: nv_wire_str_short
       required: true
     - name: target_branch
-      value_ref: nv_merge_request_create_target_branch
+      value_ref: nv_wire_str_short
       required: true
     - name: description
-      value_ref: nv_merge_request_create_description
+      value_ref: nv_wire_str_markdown
       required: false
     - name: draft
-      value_ref: nv_merge_request_create_draft
+      value_ref: nv_wire_bool
       required: false
     - name: labels
       value_ref: nv_merge_request_create_labels
       required: false
     - name: milestone_id
-      value_ref: nv_merge_request_create_milestone_id
+      value_ref: nv_wire_int
       required: false
     - name: remove_source_branch
-      value_ref: nv_merge_request_create_remove_source_branch
+      value_ref: nv_wire_bool
       required: false
   merge_request_update:
     kind: update
@@ -646,19 +646,19 @@ capabilities:
     description: Update merge request fields
     parameters:
     - name: title
-      value_ref: nv_merge_request_update_title
+      value_ref: nv_wire_str_short
       required: false
     - name: description
-      value_ref: nv_merge_request_update_description
+      value_ref: nv_wire_str_markdown
       required: false
     - name: target_branch
-      value_ref: nv_merge_request_update_target_branch
+      value_ref: nv_wire_str_short
       required: false
     - name: state_event
-      value_ref: nv_merge_request_update_state_event
+      value_ref: nv_wire_sel_a821a0002dfcca16
       required: false
     - name: draft
-      value_ref: nv_merge_request_update_draft
+      value_ref: nv_wire_bool
       required: false
     - name: labels
       value_ref: nv_merge_request_update_labels
@@ -673,22 +673,22 @@ capabilities:
     description: Merge the merge request when allowed
     parameters:
     - name: merge_commit_message
-      value_ref: nv_merge_request_merge_merge_commit_message
+      value_ref: nv_wire_str_short
       required: false
     - name: squash_commit_message
-      value_ref: nv_merge_request_merge_squash_commit_message
+      value_ref: nv_wire_str_short
       required: false
     - name: should_remove_source_branch
-      value_ref: nv_merge_request_merge_should_remove_source_branch
+      value_ref: nv_wire_bool
       required: false
     - name: squash
-      value_ref: nv_merge_request_merge_squash
+      value_ref: nv_wire_bool
       required: false
     - name: sha
-      value_ref: nv_merge_request_merge_sha
+      value_ref: nv_wire_str_short
       required: false
     - name: auto_merge
-      value_ref: nv_merge_request_merge_auto_merge
+      value_ref: nv_wire_bool
       required: false
     provides:
     - id
@@ -753,7 +753,7 @@ capabilities:
       required: true
       role: scope
     - name: iid
-      value_ref: nv_issue_note_for_issue_query_iid
+      value_ref: nv_wire_int
       required: true
   issue_note_get:
     kind: get
@@ -774,13 +774,13 @@ capabilities:
       value_ref: nv_issue_note_create_project_id
       required: true
     - name: iid
-      value_ref: nv_issue_note_create_iid
+      value_ref: nv_wire_int
       required: true
     - name: body
-      value_ref: nv_issue_note_create_body
+      value_ref: nv_wire_str_markdown
       required: true
     - name: confidential
-      value_ref: nv_issue_note_create_confidential
+      value_ref: nv_wire_bool
       required: false
   issue_note_update:
     kind: update
@@ -788,7 +788,7 @@ capabilities:
     description: Edit an issue note
     parameters:
     - name: body
-      value_ref: nv_issue_note_update_body
+      value_ref: nv_wire_str_markdown
       required: true
   issue_note_delete:
     kind: delete
@@ -804,7 +804,7 @@ capabilities:
       required: true
       role: scope
     - name: iid
-      value_ref: nv_merge_request_note_for_mr_query_iid
+      value_ref: nv_wire_int
       required: true
   merge_request_note_get:
     kind: get
@@ -824,10 +824,10 @@ capabilities:
       value_ref: nv_merge_request_note_create_project_id
       required: true
     - name: iid
-      value_ref: nv_merge_request_note_create_iid
+      value_ref: nv_wire_int
       required: true
     - name: body
-      value_ref: nv_merge_request_note_create_body
+      value_ref: nv_wire_str_markdown
       required: true
   merge_request_note_update:
     kind: update
@@ -835,7 +835,7 @@ capabilities:
     description: Edit a merge request note
     parameters:
     - name: body
-      value_ref: nv_merge_request_note_update_body
+      value_ref: nv_wire_str_markdown
       required: true
   merge_request_note_delete:
     kind: delete
@@ -851,7 +851,7 @@ capabilities:
       required: true
       role: scope
     - name: iid
-      value_ref: nv_issue_award_emoji_for_issue_query_iid
+      value_ref: nv_wire_int
       required: true
   issue_award_emoji_get:
     kind: get
@@ -871,10 +871,10 @@ capabilities:
       value_ref: nv_issue_award_emoji_create_project_id
       required: true
     - name: iid
-      value_ref: nv_issue_award_emoji_create_iid
+      value_ref: nv_wire_int
       required: true
     - name: name
-      value_ref: nv_issue_award_emoji_create_name
+      value_ref: nv_wire_str_short
       required: true
   issue_award_emoji_delete:
     kind: delete
@@ -890,7 +890,7 @@ capabilities:
       required: true
       role: scope
     - name: iid
-      value_ref: nv_merge_request_award_emoji_for_mr_query_iid
+      value_ref: nv_wire_int
       required: true
   merge_request_award_emoji_get:
     kind: get
@@ -910,10 +910,10 @@ capabilities:
       value_ref: nv_merge_request_award_emoji_create_project_id
       required: true
     - name: iid
-      value_ref: nv_merge_request_award_emoji_create_iid
+      value_ref: nv_wire_int
       required: true
     - name: name
-      value_ref: nv_merge_request_award_emoji_create_name
+      value_ref: nv_wire_str_short
       required: true
   merge_request_award_emoji_delete:
     kind: delete
@@ -924,236 +924,87 @@ auth:
   header: PRIVATE-TOKEN
   env: GITLAB_TOKEN
 values:
-  nv_project_id:
-    type: integer
-  nv_project_name:
-    type: string
-    string_semantics: short
-  nv_project_path:
-    type: string
-    string_semantics: short
-  nv_project_name_with_namespace:
-    type: string
-    string_semantics: short
-  nv_project_path_with_namespace:
-    type: string
-    string_semantics: short
-  nv_project_description:
-    type: string
-    string_semantics: markdown
-  nv_project_visibility:
-    type: string
-    string_semantics: short
-  nv_project_web_url:
-    type: string
-    string_semantics: short
-  nv_project_created_at:
-    type: date
-    value_format: rfc3339
-  nv_project_last_activity_at:
-    type: date
-    value_format: rfc3339
-  nv_project_default_branch:
-    type: string
-    string_semantics: short
-  nv_project_star_count:
-    type: integer
-  nv_project_forks_count:
-    type: integer
-  nv_project_ssh_url_to_repo:
-    type: string
-    string_semantics: short
-  nv_project_http_url_to_repo:
-    type: string
-    string_semantics: short
-  nv_issue_id:
-    type: integer
-  nv_issue_iid:
-    type: integer
+  nv_issue_award_emoji_create_project_id:
+    type: entity_ref
+    target: Project
+  nv_issue_award_emoji_for_issue_query_project_id:
+    type: entity_ref
+    target: Project
+  nv_issue_award_emoji_project_id:
+    type: entity_ref
+    target: Project
+  nv_issue_create_issue_type:
+    type: select
+    allowed_values:
+    - issue
+    - incident
+    - test_case
+    - requirement
+    - task
+    - ticket
+  nv_issue_create_project_id:
+    type: entity_ref
+    target: Project
+  nv_issue_for_project_query_project_id:
+    type: entity_ref
+    target: Project
+  nv_issue_note_create_project_id:
+    type: entity_ref
+    target: Project
+  nv_issue_note_for_issue_query_project_id:
+    type: entity_ref
+    target: Project
+  nv_issue_note_project_id:
+    type: entity_ref
+    target: Project
   nv_issue_project_id:
     type: entity_ref
     target: Project
-  nv_issue_title:
-    type: string
-    string_semantics: short
-  nv_issue_description:
-    type: string
-    string_semantics: markdown
+  nv_issue_query_scope:
+    type: select
+    allowed_values:
+    - created_by_me
+    - assigned_to_me
+    - all
   nv_issue_state:
     type: select
     allowed_values:
     - opened
     - closed
-  nv_issue_issue_type:
-    type: string
-    string_semantics: short
-  nv_issue_confidential:
-    type: boolean
-  nv_issue_created_at:
-    type: date
-    value_format: rfc3339
-  nv_issue_updated_at:
-    type: date
-    value_format: rfc3339
-  nv_issue_closed_at:
-    type: date
-    value_format: rfc3339
-  nv_issue_web_url:
-    type: string
-    string_semantics: short
-  nv_issue_labels_item:
-    type: string
-  nv_issue_labels:
-    type: array
-    items:
-      value_ref: nv_issue_labels_item
-  nv_issue_time_estimate:
-    type: integer
-  nv_issue_total_time_spent:
-    type: integer
-  nv_issue_human_time_estimate:
-    type: string
-    string_semantics: short
-  nv_issue_human_total_time_spent:
-    type: string
-    string_semantics: short
-  nv_merge_request_id:
-    type: integer
-  nv_merge_request_iid:
-    type: integer
-  nv_merge_request_project_id:
+  nv_merge_request_award_emoji_create_project_id:
     type: entity_ref
     target: Project
-  nv_merge_request_title:
-    type: string
-    string_semantics: short
-  nv_merge_request_description:
-    type: string
-    string_semantics: markdown
-  nv_merge_request_state:
-    type: string
-    string_semantics: short
-  nv_merge_request_draft:
-    type: boolean
-  nv_merge_request_source_branch:
-    type: string
-    string_semantics: short
-  nv_merge_request_target_branch:
-    type: string
-    string_semantics: short
-  nv_merge_request_labels:
-    type: string
-    string_semantics: short
-  nv_merge_request_created_at:
-    type: date
-    value_format: rfc3339
-  nv_merge_request_updated_at:
-    type: date
-    value_format: rfc3339
-  nv_merge_request_merged_at:
-    type: date
-    value_format: rfc3339
-  nv_merge_request_closed_at:
-    type: date
-    value_format: rfc3339
-  nv_merge_request_web_url:
-    type: string
-    string_semantics: short
-  nv_merge_request_time_estimate:
-    type: integer
-  nv_merge_request_total_time_spent:
-    type: integer
-  nv_merge_request_human_time_estimate:
-    type: string
-    string_semantics: short
-  nv_merge_request_human_total_time_spent:
-    type: string
-    string_semantics: short
-  nv_issue_note_project_id:
+  nv_merge_request_award_emoji_for_mr_query_project_id:
     type: entity_ref
     target: Project
-  nv_issue_note_iid:
-    type: integer
-  nv_issue_note_id:
-    type: string
-    string_semantics: short
-  nv_issue_note_body:
-    type: string
-    string_semantics: markdown
-  nv_issue_note_created_at:
-    type: date
-    value_format: rfc3339
-  nv_issue_note_updated_at:
-    type: date
-    value_format: rfc3339
-  nv_issue_note_confidential:
-    type: boolean
-  nv_merge_request_note_project_id:
-    type: entity_ref
-    target: Project
-  nv_merge_request_note_iid:
-    type: integer
-  nv_merge_request_note_id:
-    type: string
-    string_semantics: short
-  nv_merge_request_note_body:
-    type: string
-    string_semantics: markdown
-  nv_merge_request_note_created_at:
-    type: date
-    value_format: rfc3339
-  nv_merge_request_note_updated_at:
-    type: date
-    value_format: rfc3339
-  nv_issue_award_emoji_project_id:
-    type: entity_ref
-    target: Project
-  nv_issue_award_emoji_iid:
-    type: integer
-  nv_issue_award_emoji_id:
-    type: integer
-  nv_issue_award_emoji_name:
-    type: string
-    string_semantics: short
-  nv_issue_award_emoji_created_at:
-    type: date
-    value_format: rfc3339
-  nv_issue_award_emoji_updated_at:
-    type: date
-    value_format: rfc3339
   nv_merge_request_award_emoji_project_id:
     type: entity_ref
     target: Project
-  nv_merge_request_award_emoji_iid:
-    type: integer
-  nv_merge_request_award_emoji_id:
-    type: integer
-  nv_merge_request_award_emoji_name:
-    type: string
-    string_semantics: short
-  nv_merge_request_award_emoji_created_at:
-    type: date
-    value_format: rfc3339
-  nv_merge_request_award_emoji_updated_at:
-    type: date
-    value_format: rfc3339
-  nv_project_query_search:
-    type: string
-    string_semantics: short
-  nv_project_query_visibility:
+  nv_merge_request_create_project_id:
+    type: entity_ref
+    target: Project
+  nv_merge_request_for_project_query_project_id:
+    type: entity_ref
+    target: Project
+  nv_merge_request_note_create_project_id:
+    type: entity_ref
+    target: Project
+  nv_merge_request_note_for_mr_query_project_id:
+    type: entity_ref
+    target: Project
+  nv_merge_request_note_project_id:
+    type: entity_ref
+    target: Project
+  nv_merge_request_project_id:
+    type: entity_ref
+    target: Project
+  nv_merge_request_query_scope:
     type: select
     allowed_values:
-    - private
-    - internal
-    - public
-  nv_project_query_archived:
-    type: boolean
-  nv_project_query_owned:
-    type: boolean
-  nv_project_query_membership:
-    type: boolean
-  nv_project_query_starred:
-    type: boolean
+    - created_by_me
+    - assigned_to_me
+    - reviews_for_me
+    - all
   nv_project_query_order_by:
     type: select
     allowed_values:
@@ -1165,33 +1016,41 @@ values:
     - last_activity_at
     - similarity
     - star_count
-  nv_project_query_sort:
+  nv_wire_bool:
+    type: boolean
+  nv_wire_date_rfc3339:
+    type: date
+    value_format: rfc3339
+  nv_wire_int:
+    type: integer
+  nv_wire_sel_1b3907e07c1297e8:
     type: select
     allowed_values:
     - asc
     - desc
-  nv_project_query_simple:
-    type: boolean
-  nv_project_query_statistics:
-    type: boolean
-  nv_project_get_statistics:
-    type: boolean
-  nv_issue_query_state:
+  nv_wire_sel_7c59fc7f43f5debc:
     type: select
     allowed_values:
-    - opened
-    - closed
-    - all
-  nv_issue_query_search:
-    type: string
-    string_semantics: short
-  nv_issue_query_scope:
+    - created_at
+    - label_priority
+    - merged_at
+    - milestone_due
+    - popularity
+    - priority
+    - title
+    - updated_at
+  nv_wire_sel_8807b75f968505fb:
     type: select
     allowed_values:
-    - created_by_me
-    - assigned_to_me
-    - all
-  nv_issue_query_order_by:
+    - internal
+    - private
+    - public
+  nv_wire_sel_a821a0002dfcca16:
+    type: select
+    allowed_values:
+    - close
+    - reopen
+  nv_wire_sel_bc45924eafff6feb:
     type: select
     allowed_values:
     - created_at
@@ -1204,343 +1063,59 @@ values:
     - title
     - updated_at
     - weight
-  nv_issue_query_sort:
+  nv_wire_sel_c4015a1a98023521:
     type: select
     allowed_values:
-    - asc
-    - desc
-  nv_issue_for_project_query_project_id:
-    type: entity_ref
-    target: Project
-  nv_issue_for_project_query_state:
-    type: select
-    allowed_values:
-    - opened
-    - closed
     - all
-  nv_issue_for_project_query_search:
-    type: string
-    string_semantics: short
-  nv_issue_for_project_query_order_by:
-    type: select
-    allowed_values:
-    - created_at
-    - due_date
-    - label_priority
-    - milestone_due
-    - popularity
-    - priority
-    - relative_position
-    - title
-    - updated_at
-    - weight
-  nv_issue_for_project_query_sort:
-    type: select
-    allowed_values:
-    - asc
-    - desc
-  nv_merge_request_query_state:
-    type: select
-    allowed_values:
+    - closed
     - opened
+  nv_wire_sel_e25280eac2a90f88:
+    type: select
+    allowed_values:
+    - all
     - closed
     - locked
     - merged
-    - all
-  nv_merge_request_query_scope:
-    type: select
-    allowed_values:
-    - created_by_me
-    - assigned_to_me
-    - reviews_for_me
-    - all
-  nv_merge_request_query_order_by:
-    type: select
-    allowed_values:
-    - created_at
-    - label_priority
-    - milestone_due
-    - popularity
-    - priority
-    - title
-    - updated_at
-    - merged_at
-  nv_merge_request_query_sort:
-    type: select
-    allowed_values:
-    - asc
-    - desc
-  nv_merge_request_for_project_query_project_id:
-    type: entity_ref
-    target: Project
-  nv_merge_request_for_project_query_state:
-    type: select
-    allowed_values:
     - opened
-    - closed
-    - locked
-    - merged
-    - all
-  nv_merge_request_for_project_query_order_by:
-    type: select
-    allowed_values:
-    - created_at
-    - label_priority
-    - milestone_due
-    - popularity
-    - priority
-    - title
-    - updated_at
-    - merged_at
-  nv_merge_request_for_project_query_sort:
-    type: select
-    allowed_values:
-    - asc
-    - desc
-  nv_project_create_name:
-    type: string
-    string_semantics: short
-  nv_project_create_path:
-    type: string
-    string_semantics: short
-  nv_project_create_namespace_id:
-    type: integer
-  nv_project_create_description:
+  nv_wire_str_markdown:
     type: string
     string_semantics: markdown
-  nv_project_create_visibility:
-    type: select
-    allowed_values:
-    - private
-    - internal
-    - public
-  nv_project_create_default_branch:
+  nv_wire_str_short:
     type: string
     string_semantics: short
-  nv_project_create_issues_enabled:
-    type: boolean
-  nv_project_create_merge_requests_enabled:
-    type: boolean
-  nv_project_create_wiki_enabled:
-    type: boolean
-  nv_project_update_name:
-    type: string
-    string_semantics: short
-  nv_project_update_path:
-    type: string
-    string_semantics: short
-  nv_project_update_description:
-    type: string
-    string_semantics: markdown
-  nv_project_update_default_branch:
-    type: string
-    string_semantics: short
-  nv_project_update_visibility:
-    type: select
-    allowed_values:
-    - private
-    - internal
-    - public
-  nv_project_update_issues_enabled:
-    type: boolean
-  nv_project_update_merge_requests_enabled:
-    type: boolean
-  nv_project_update_wiki_enabled:
-    type: boolean
-  nv_issue_create_project_id:
-    type: entity_ref
-    target: Project
-  nv_issue_create_title:
-    type: string
-    string_semantics: short
-  nv_issue_create_description:
-    type: string
-    string_semantics: markdown
-  nv_issue_create_confidential:
-    type: boolean
-  nv_issue_create_labels_item:
-    type: string
-  nv_issue_create_labels:
-    type: array
-    items:
-      value_ref: nv_issue_create_labels_item
-  nv_issue_create_issue_type:
-    type: select
-    allowed_values:
-    - issue
-    - incident
-    - test_case
-    - requirement
-    - task
-    - ticket
-  nv_issue_create_milestone_id:
-    type: integer
-  nv_issue_create_assignee_ids_item:
-    type: integer
   nv_issue_create_assignee_ids:
     type: array
     items:
-      value_ref: nv_issue_create_assignee_ids_item
-  nv_issue_update_title:
-    type: string
-    string_semantics: short
-  nv_issue_update_description:
-    type: string
-    string_semantics: markdown
-  nv_issue_update_state_event:
-    type: select
-    allowed_values:
-    - reopen
-    - close
-  nv_issue_update_confidential:
-    type: boolean
-  nv_issue_update_labels_item:
-    type: string
-  nv_issue_update_labels:
-    type: array
-    items:
-      value_ref: nv_issue_update_labels_item
-  nv_issue_update_add_labels_item:
-    type: string
-  nv_issue_update_add_labels:
-    type: array
-    items:
-      value_ref: nv_issue_update_add_labels_item
-  nv_issue_update_remove_labels_item:
-    type: string
-  nv_issue_update_remove_labels:
-    type: array
-    items:
-      value_ref: nv_issue_update_remove_labels_item
-  nv_issue_update_milestone_id:
-    type: integer
-  nv_issue_update_assignee_ids_item:
-    type: integer
+      value_ref: nv_wire_int
   nv_issue_update_assignee_ids:
     type: array
     items:
-      value_ref: nv_issue_update_assignee_ids_item
-  nv_merge_request_create_project_id:
-    type: entity_ref
-    target: Project
-  nv_merge_request_create_title:
-    type: string
-    string_semantics: short
-  nv_merge_request_create_source_branch:
-    type: string
-    string_semantics: short
-  nv_merge_request_create_target_branch:
-    type: string
-    string_semantics: short
-  nv_merge_request_create_description:
-    type: string
-    string_semantics: markdown
-  nv_merge_request_create_draft:
-    type: boolean
-  nv_merge_request_create_labels_item:
-    type: string
+      value_ref: nv_wire_int
+  nv_issue_create_labels:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_issue_labels:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_issue_update_add_labels:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_issue_update_labels:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_issue_update_remove_labels:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
   nv_merge_request_create_labels:
     type: array
     items:
-      value_ref: nv_merge_request_create_labels_item
-  nv_merge_request_create_milestone_id:
-    type: integer
-  nv_merge_request_create_remove_source_branch:
-    type: boolean
-  nv_merge_request_update_title:
-    type: string
-    string_semantics: short
-  nv_merge_request_update_description:
-    type: string
-    string_semantics: markdown
-  nv_merge_request_update_target_branch:
-    type: string
-    string_semantics: short
-  nv_merge_request_update_state_event:
-    type: select
-    allowed_values:
-    - close
-    - reopen
-  nv_merge_request_update_draft:
-    type: boolean
-  nv_merge_request_update_labels_item:
-    type: string
+      value_ref: nv_wire_str_short
   nv_merge_request_update_labels:
     type: array
     items:
-      value_ref: nv_merge_request_update_labels_item
-  nv_merge_request_merge_merge_commit_message:
-    type: string
-    string_semantics: short
-  nv_merge_request_merge_squash_commit_message:
-    type: string
-    string_semantics: short
-  nv_merge_request_merge_should_remove_source_branch:
-    type: boolean
-  nv_merge_request_merge_squash:
-    type: boolean
-  nv_merge_request_merge_sha:
-    type: string
-    string_semantics: short
-  nv_merge_request_merge_auto_merge:
-    type: boolean
-  nv_issue_note_for_issue_query_project_id:
-    type: entity_ref
-    target: Project
-  nv_issue_note_for_issue_query_iid:
-    type: integer
-  nv_issue_note_create_project_id:
-    type: entity_ref
-    target: Project
-  nv_issue_note_create_iid:
-    type: integer
-  nv_issue_note_create_body:
-    type: string
-    string_semantics: markdown
-  nv_issue_note_create_confidential:
-    type: boolean
-  nv_issue_note_update_body:
-    type: string
-    string_semantics: markdown
-  nv_merge_request_note_for_mr_query_project_id:
-    type: entity_ref
-    target: Project
-  nv_merge_request_note_for_mr_query_iid:
-    type: integer
-  nv_merge_request_note_create_project_id:
-    type: entity_ref
-    target: Project
-  nv_merge_request_note_create_iid:
-    type: integer
-  nv_merge_request_note_create_body:
-    type: string
-    string_semantics: markdown
-  nv_merge_request_note_update_body:
-    type: string
-    string_semantics: markdown
-  nv_issue_award_emoji_for_issue_query_project_id:
-    type: entity_ref
-    target: Project
-  nv_issue_award_emoji_for_issue_query_iid:
-    type: integer
-  nv_issue_award_emoji_create_project_id:
-    type: entity_ref
-    target: Project
-  nv_issue_award_emoji_create_iid:
-    type: integer
-  nv_issue_award_emoji_create_name:
-    type: string
-    string_semantics: short
-  nv_merge_request_award_emoji_for_mr_query_project_id:
-    type: entity_ref
-    target: Project
-  nv_merge_request_award_emoji_for_mr_query_iid:
-    type: integer
-  nv_merge_request_award_emoji_create_project_id:
-    type: entity_ref
-    target: Project
-  nv_merge_request_award_emoji_create_iid:
-    type: integer
-  nv_merge_request_award_emoji_create_name:
-    type: string
-    string_semantics: short
+      value_ref: nv_wire_str_short

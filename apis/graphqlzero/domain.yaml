@@ -1,4 +1,4 @@
-version: 1
+version: 2
 auth:
   scheme: none
 http_backend: https://graphqlzero.almansi.network
@@ -12,19 +12,19 @@ entities:
         value_ref: nv_user_id
       name:
         required: false
-        value_ref: nv_user_name
+        value_ref: nv_wire_str_short
       username:
         required: false
-        value_ref: nv_user_username
+        value_ref: nv_wire_str_short
       email:
         required: false
-        value_ref: nv_user_email
+        value_ref: nv_wire_str_short
       phone:
         required: false
-        value_ref: nv_user_phone
+        value_ref: nv_wire_str_short
       website:
         required: false
-        value_ref: nv_user_website
+        value_ref: nv_wire_str_short
     relations:
       posts:
         target: Post
@@ -47,10 +47,10 @@ entities:
         value_ref: nv_post_id
       title:
         required: false
-        value_ref: nv_post_title
+        value_ref: nv_wire_str_short
       body:
         required: false
-        value_ref: nv_post_body
+        value_ref: nv_wire_str_markdown
     relations:
       user:
         target: User
@@ -66,16 +66,16 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_comment_id
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_comment_name
+        value_ref: nv_wire_str_short
       email:
         required: false
-        value_ref: nv_comment_email
+        value_ref: nv_wire_str_short
       body:
         required: false
-        value_ref: nv_comment_body
+        value_ref: nv_wire_str_markdown
     relations:
       post:
         target: Post
@@ -87,10 +87,10 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_todo_id
+        value_ref: nv_wire_str_short
       title:
         required: false
-        value_ref: nv_todo_title
+        value_ref: nv_wire_str_short
       completed:
         required: false
         value_ref: nv_todo_completed
@@ -105,10 +105,10 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_album_id
+        value_ref: nv_wire_str_short
       title:
         required: false
-        value_ref: nv_album_title
+        value_ref: nv_wire_str_short
     relations:
       user:
         target: User
@@ -124,16 +124,16 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_photo_id
+        value_ref: nv_wire_str_short
       title:
         required: false
-        value_ref: nv_photo_title
+        value_ref: nv_wire_str_short
       url:
         required: false
-        value_ref: nv_photo_url
+        value_ref: nv_wire_str_short
       thumbnailUrl:
         required: false
-        value_ref: nv_photo_thumbnail_url
+        value_ref: nv_wire_str_short
     relations:
       album:
         target: Album
@@ -252,10 +252,10 @@ capabilities:
     - body
     parameters:
     - name: title
-      value_ref: nv_post_create_title
+      value_ref: nv_wire_str_short
       required: true
     - name: body
-      value_ref: nv_post_create_body
+      value_ref: nv_wire_str_markdown
       required: true
   post_update:
     kind: update
@@ -267,92 +267,29 @@ capabilities:
     - body
     parameters:
     - name: title
-      value_ref: nv_post_update_title
+      value_ref: nv_wire_str_short
       required: false
     - name: body
-      value_ref: nv_post_update_body
+      value_ref: nv_wire_str_markdown
       required: false
   post_delete:
     kind: delete
     entity: Post
     description: Delete a post by id (shared demo dataset).
 values:
-  nv_user_id:
-    type: string
-    string_semantics: short
-    description: User identifier.
-  nv_user_name:
-    type: string
-    string_semantics: short
-  nv_user_username:
-    type: string
-    string_semantics: short
-  nv_user_email:
-    type: string
-    string_semantics: short
-  nv_user_phone:
-    type: string
-    string_semantics: short
-  nv_user_website:
-    type: string
-    string_semantics: short
   nv_post_id:
     type: string
     string_semantics: short
     description: Post identifier.
-  nv_post_title:
-    type: string
-    string_semantics: short
-  nv_post_body:
-    type: string
-    string_semantics: markdown
-  nv_comment_id:
-    type: string
-    string_semantics: short
-  nv_comment_name:
-    type: string
-    string_semantics: short
-  nv_comment_email:
-    type: string
-    string_semantics: short
-  nv_comment_body:
-    type: string
-    string_semantics: markdown
-  nv_todo_id:
-    type: string
-    string_semantics: short
-  nv_todo_title:
-    type: string
-    string_semantics: short
   nv_todo_completed:
     type: boolean
-  nv_album_id:
+  nv_user_id:
     type: string
     string_semantics: short
-  nv_album_title:
-    type: string
-    string_semantics: short
-  nv_photo_id:
-    type: string
-    string_semantics: short
-  nv_photo_title:
-    type: string
-    string_semantics: short
-  nv_photo_url:
-    type: string
-    string_semantics: short
-  nv_photo_thumbnail_url:
-    type: string
-    string_semantics: short
-  nv_post_create_title:
-    type: string
-    string_semantics: short
-  nv_post_create_body:
+    description: User identifier.
+  nv_wire_str_markdown:
     type: string
     string_semantics: markdown
-  nv_post_update_title:
+  nv_wire_str_short:
     type: string
     string_semantics: short
-  nv_post_update_body:
-    type: string
-    string_semantics: markdown

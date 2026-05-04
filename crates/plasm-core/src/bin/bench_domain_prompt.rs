@@ -121,7 +121,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let mut full_samples = bench_iter(iters, warmup, || {
         let b = render_domain_prompt_bundle(&cgs, cfg);
-        black_box(b.prompt.len());
+        black_box(
+            b.teaching_blocks
+                .iter()
+                .map(|bl| bl.teaching_rows.len())
+                .sum::<usize>(),
+        );
     });
     let med_full = median_ms(&mut full_samples);
     eprintln!(
@@ -145,7 +150,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     let mut exp_samples = bench_iter(iters, warmup, || {
         let b = render_domain_prompt_bundle_for_exposure(&cgs, cfg, &exposure, None);
-        black_box(b.prompt.len());
+        black_box(
+            b.teaching_blocks
+                .iter()
+                .map(|bl| bl.teaching_rows.len())
+                .sum::<usize>(),
+        );
     });
     let med_exp = median_ms(&mut exp_samples);
     eprintln!(

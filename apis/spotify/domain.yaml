@@ -1,4 +1,4 @@
-version: 1
+version: 2
 http_backend: https://api.spotify.com
 entities:
   Album:
@@ -138,11 +138,11 @@ capabilities:
     entity: Album
     parameters:
     - name: ids
-      value_ref: nv_album_query_ids
+      value_ref: nv_wire_str_short
       required: true
       role: filter
     - name: market
-      value_ref: nv_album_query_market
+      value_ref: nv_wire_str_short
       required: false
       role: response_control
   album_get:
@@ -162,15 +162,15 @@ capabilities:
     entity: Album
     parameters:
     - name: market
-      value_ref: nv_album_tracks_market
+      value_ref: nv_wire_str_short
       required: false
       role: response_control
     - name: limit
-      value_ref: nv_album_tracks_limit
+      value_ref: nv_wire_int
       required: false
       role: response_control
     - name: offset
-      value_ref: nv_album_tracks_offset
+      value_ref: nv_wire_int
       required: false
       role: response_control
     output:
@@ -182,7 +182,7 @@ capabilities:
     entity: Artist
     parameters:
     - name: ids
-      value_ref: nv_artist_query_ids
+      value_ref: nv_wire_str_short
       required: true
       role: filter
   artist_get:
@@ -200,19 +200,19 @@ capabilities:
     entity: Artist
     parameters:
     - name: include_groups
-      value_ref: nv_artist_albums_include_groups
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: market
-      value_ref: nv_artist_albums_market
+      value_ref: nv_wire_str_short
       required: false
       role: response_control
     - name: limit
-      value_ref: nv_artist_albums_limit
+      value_ref: nv_wire_int
       required: false
       role: response_control
     - name: offset
-      value_ref: nv_artist_albums_offset
+      value_ref: nv_wire_int
       required: false
       role: response_control
     output:
@@ -231,7 +231,7 @@ capabilities:
     entity: Artist
     parameters:
     - name: market
-      value_ref: nv_artist_top_tracks_market
+      value_ref: nv_wire_str_short
       required: false
       role: response_control
     output:
@@ -243,11 +243,11 @@ capabilities:
     entity: Track
     parameters:
     - name: ids
-      value_ref: nv_track_query_ids
+      value_ref: nv_wire_str_short
       required: true
       role: filter
     - name: market
-      value_ref: nv_track_query_market
+      value_ref: nv_wire_str_short
       required: false
       role: response_control
   track_get:
@@ -299,19 +299,19 @@ capabilities:
     entity: Playlist
     parameters:
     - name: market
-      value_ref: nv_playlist_tracks_market
+      value_ref: nv_wire_str_short
       required: false
       role: response_control
     - name: limit
-      value_ref: nv_playlist_tracks_limit
+      value_ref: nv_wire_int
       required: false
       role: response_control
     - name: offset
-      value_ref: nv_playlist_tracks_offset
+      value_ref: nv_wire_int
       required: false
       role: response_control
     - name: fields
-      value_ref: nv_playlist_tracks_fields
+      value_ref: nv_wire_str_short
       required: false
       role: response_control
     output:
@@ -323,16 +323,16 @@ capabilities:
     entity: Playlist
     parameters:
     - name: name
-      value_ref: nv_playlist_update_name
+      value_ref: nv_wire_str_short
       required: false
     - name: description
-      value_ref: nv_playlist_update_description
+      value_ref: nv_wire_str_markdown
       required: false
     - name: public
-      value_ref: nv_playlist_update_public
+      value_ref: nv_wire_bool
       required: false
     - name: collaborative
-      value_ref: nv_playlist_update_collaborative
+      value_ref: nv_wire_bool
       required: false
   user_get:
     description: Retrieve a user profile by ID
@@ -347,10 +347,10 @@ capabilities:
     entity: User
     parameters:
     - name: limit
-      value_ref: nv_user_playlists_limit
+      value_ref: nv_wire_int
       required: false
     - name: offset
-      value_ref: nv_user_playlists_offset
+      value_ref: nv_wire_int
       required: false
     output:
       type: side_effect
@@ -361,16 +361,16 @@ capabilities:
     entity: User
     parameters:
     - name: name
-      value_ref: nv_user_create_playlist_name
+      value_ref: nv_wire_str_short
       required: true
     - name: description
-      value_ref: nv_user_create_playlist_description
+      value_ref: nv_wire_str_markdown
       required: false
     - name: public
-      value_ref: nv_user_create_playlist_public
+      value_ref: nv_wire_bool
       required: false
     - name: collaborative
-      value_ref: nv_user_create_playlist_collaborative
+      value_ref: nv_wire_bool
       required: false
     output:
       type: side_effect
@@ -381,6 +381,13 @@ auth:
   client_id_env: SPOTIFY_CLIENT_ID
   client_secret_env: SPOTIFY_CLIENT_SECRET
 values:
+  nv_album_album_type:
+    type: select
+    allowed_values:
+    - album
+    - single
+    - compilation
+    description: Album, single, or compilation
   nv_album_id:
     type: string
     string_semantics: short
@@ -389,23 +396,16 @@ values:
     type: string
     string_semantics: short
     description: Album title
-  nv_album_album_type:
-    type: select
-    allowed_values:
-    - album
-    - single
-    - compilation
-    description: Album, single, or compilation
-  nv_album_total_tracks:
+  nv_album_popularity:
     type: integer
-    description: Number of tracks on the album
+    description: Popularity score from 0 to 100
   nv_album_release_date:
     type: string
     string_semantics: short
     description: Date the album was released
-  nv_album_popularity:
+  nv_album_total_tracks:
     type: integer
-    description: Popularity score from 0 to 100
+    description: Number of tracks on the album
   nv_artist_id:
     type: string
     string_semantics: short
@@ -417,66 +417,13 @@ values:
   nv_artist_popularity:
     type: integer
     description: Popularity score from 0 to 100
-  nv_artist_genres_item:
-    type: string
-  nv_artist_genres:
-    type: array
-    items:
-      value_ref: nv_artist_genres_item
-    description: List of associated music genres
-  nv_track_id:
-    type: string
-    string_semantics: short
-    description: Unique Spotify track identifier
-  nv_track_name:
-    type: string
-    string_semantics: short
-    description: Track title
-  nv_track_duration_ms:
-    type: integer
-    description: Track length in milliseconds
-  nv_track_explicit:
+  nv_playlist_collaborative:
     type: boolean
-    description: Whether the track has explicit lyrics
-  nv_track_popularity:
-    type: integer
-    description: Popularity score from 0 to 100
-  nv_track_danceability:
-    type: number
-    description: How suitable for dancing 0.0–1.0. Populated by track_get_audio_features.
-  nv_track_energy:
-    type: number
-    description: Intensity/activity 0.0–1.0. Populated by track_get_audio_features.
-  nv_track_valence:
-    type: number
-    description: Musical positiveness 0.0–1.0. Populated by track_get_audio_features.
-  nv_track_tempo:
-    type: number
-    description: Estimated beats per minute. Populated by track_get_audio_features.
-  nv_track_acousticness:
-    type: number
-    description: Confidence the track is acoustic 0.0–1.0. Populated by track_get_audio_features.
-  nv_track_instrumentalness:
-    type: number
-    description: Predicts whether track has no vocals 0.0–1.0. Populated by track_get_audio_features.
-  nv_track_liveness:
-    type: number
-    description: Presence of live audience 0.0–1.0. Populated by track_get_audio_features.
-  nv_track_speechiness:
-    type: number
-    description: Presence of spoken words 0.0–1.0. Populated by track_get_audio_features.
-  nv_track_loudness:
-    type: number
-    description: Overall loudness in dB, typically -60 to 0. Populated by track_get_audio_features.
-  nv_track_key:
-    type: integer
-    description: Estimated key (0=C, 1=C#, ... 11=B). Populated by track_get_audio_features.
-  nv_track_mode:
-    type: integer
-    description: 'Modality: 1=major, 0=minor. Populated by track_get_audio_features.'
-  nv_track_time_signature:
-    type: integer
-    description: Estimated meter (beats per bar, usually 3–7). Populated by track_get_audio_features.
+    description: Whether others can add tracks
+  nv_playlist_description:
+    type: string
+    string_semantics: markdown
+    description: User-provided playlist description text
   nv_playlist_id:
     type: string
     string_semantics: short
@@ -485,94 +432,86 @@ values:
     type: string
     string_semantics: short
     description: Playlist name
-  nv_playlist_description:
-    type: string
-    string_semantics: markdown
-    description: User-provided playlist description text
   nv_playlist_public:
     type: boolean
     description: Whether the playlist is publicly visible
-  nv_playlist_collaborative:
-    type: boolean
-    description: Whether others can add tracks
   nv_playlist_snapshot_id:
     type: string
     string_semantics: short
     description: Version identifier for playlist state
-  nv_user_id:
+  nv_track_acousticness:
+    type: number
+    description: Confidence the track is acoustic 0.0–1.0. Populated by track_get_audio_features.
+  nv_track_danceability:
+    type: number
+    description: How suitable for dancing 0.0–1.0. Populated by track_get_audio_features.
+  nv_track_duration_ms:
+    type: integer
+    description: Track length in milliseconds
+  nv_track_energy:
+    type: number
+    description: Intensity/activity 0.0–1.0. Populated by track_get_audio_features.
+  nv_track_explicit:
+    type: boolean
+    description: Whether the track has explicit lyrics
+  nv_track_id:
     type: string
     string_semantics: short
-    description: Unique Spotify user identifier
+    description: Unique Spotify track identifier
+  nv_track_instrumentalness:
+    type: number
+    description: Predicts whether track has no vocals 0.0–1.0. Populated by track_get_audio_features.
+  nv_track_key:
+    type: integer
+    description: Estimated key (0=C, 1=C#, ... 11=B). Populated by track_get_audio_features.
+  nv_track_liveness:
+    type: number
+    description: Presence of live audience 0.0–1.0. Populated by track_get_audio_features.
+  nv_track_loudness:
+    type: number
+    description: Overall loudness in dB, typically -60 to 0. Populated by track_get_audio_features.
+  nv_track_mode:
+    type: integer
+    description: 'Modality: 1=major, 0=minor. Populated by track_get_audio_features.'
+  nv_track_name:
+    type: string
+    string_semantics: short
+    description: Track title
+  nv_track_popularity:
+    type: integer
+    description: Popularity score from 0 to 100
+  nv_track_speechiness:
+    type: number
+    description: Presence of spoken words 0.0–1.0. Populated by track_get_audio_features.
+  nv_track_tempo:
+    type: number
+    description: Estimated beats per minute. Populated by track_get_audio_features.
+  nv_track_time_signature:
+    type: integer
+    description: Estimated meter (beats per bar, usually 3–7). Populated by track_get_audio_features.
+  nv_track_valence:
+    type: number
+    description: Musical positiveness 0.0–1.0. Populated by track_get_audio_features.
   nv_user_display_name:
     type: string
     string_semantics: short
     description: User's public display name
-  nv_album_query_ids:
+  nv_user_id:
     type: string
     string_semantics: short
-  nv_album_query_market:
-    type: string
-    string_semantics: short
-  nv_album_tracks_market:
-    type: string
-    string_semantics: short
-  nv_album_tracks_limit:
+    description: Unique Spotify user identifier
+  nv_wire_bool:
+    type: boolean
+  nv_wire_int:
     type: integer
-  nv_album_tracks_offset:
-    type: integer
-  nv_artist_query_ids:
-    type: string
-    string_semantics: short
-  nv_artist_albums_include_groups:
-    type: string
-    string_semantics: short
-  nv_artist_albums_market:
-    type: string
-    string_semantics: short
-  nv_artist_albums_limit:
-    type: integer
-  nv_artist_albums_offset:
-    type: integer
-  nv_artist_top_tracks_market:
-    type: string
-    string_semantics: short
-  nv_track_query_ids:
-    type: string
-    string_semantics: short
-  nv_track_query_market:
-    type: string
-    string_semantics: short
-  nv_playlist_tracks_market:
-    type: string
-    string_semantics: short
-  nv_playlist_tracks_limit:
-    type: integer
-  nv_playlist_tracks_offset:
-    type: integer
-  nv_playlist_tracks_fields:
-    type: string
-    string_semantics: short
-  nv_playlist_update_name:
-    type: string
-    string_semantics: short
-  nv_playlist_update_description:
+  nv_wire_str_markdown:
     type: string
     string_semantics: markdown
-  nv_playlist_update_public:
-    type: boolean
-  nv_playlist_update_collaborative:
-    type: boolean
-  nv_user_playlists_limit:
-    type: integer
-  nv_user_playlists_offset:
-    type: integer
-  nv_user_create_playlist_name:
+  nv_wire_str_short:
     type: string
     string_semantics: short
-  nv_user_create_playlist_description:
-    type: string
-    string_semantics: markdown
-  nv_user_create_playlist_public:
-    type: boolean
-  nv_user_create_playlist_collaborative:
-    type: boolean
+  nv_artist_genres:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: List of associated music genres

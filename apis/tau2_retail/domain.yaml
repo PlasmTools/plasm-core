@@ -1,4 +1,4 @@
-version: 1
+version: 2
 auth:
   scheme: none
 http_backend: http://localhost:1080
@@ -9,7 +9,7 @@ entities:
     fields:
       order_id:
         required: true
-        value_ref: nv_order_order_id
+        value_ref: nv_wire_str_short
       user_id:
         required: true
         value_ref: nv_order_user_id
@@ -18,7 +18,7 @@ entities:
         value_ref: nv_order_status
       cancel_reason:
         required: false
-        value_ref: nv_order_cancel_reason
+        value_ref: nv_wire_sel_751b7acc3dde7cde
     relations: {}
   User:
     id_field: user_id
@@ -26,10 +26,10 @@ entities:
     fields:
       user_id:
         required: true
-        value_ref: nv_user_user_id
+        value_ref: nv_wire_str_short
       email:
         required: false
-        value_ref: nv_user_email
+        value_ref: nv_wire_str_short
     relations: {}
   Product:
     id_field: product_id
@@ -37,10 +37,10 @@ entities:
     fields:
       product_id:
         required: true
-        value_ref: nv_product_product_id
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_product_name
+        value_ref: nv_wire_str_short
     relations:
       variants:
         description: SKUs / line items for this product
@@ -56,7 +56,7 @@ entities:
     fields:
       item_id:
         required: true
-        value_ref: nv_variant_item_id
+        value_ref: nv_wire_str_short
       product_id:
         required: true
         value_ref: nv_variant_product_id
@@ -73,10 +73,10 @@ entities:
     fields:
       product_id:
         required: true
-        value_ref: nv_catalog_line_product_id
+        value_ref: nv_wire_str_short
       name:
         required: true
-        value_ref: nv_catalog_line_name
+        value_ref: nv_wire_str_short
     relations: {}
   CalcJob:
     id_field: result
@@ -84,7 +84,7 @@ entities:
     fields:
       result:
         required: true
-        value_ref: nv_calc_job_result
+        value_ref: nv_wire_str_short
     relations: {}
     domain_projection_examples: false
   HumanHandoff:
@@ -93,7 +93,7 @@ entities:
     fields:
       status:
         required: true
-        value_ref: nv_human_handoff_status
+        value_ref: nv_wire_str_short
     relations: {}
     domain_projection_examples: false
 capabilities:
@@ -146,7 +146,7 @@ capabilities:
     - user_id
     parameters:
     - name: email
-      value_ref: nv_find_user_id_by_email_email
+      value_ref: nv_wire_str_short
       required: true
   find_user_id_by_name_zip:
     kind: query
@@ -156,13 +156,13 @@ capabilities:
     - user_id
     parameters:
     - name: first_name
-      value_ref: nv_find_user_id_by_name_zip_first_name
+      value_ref: nv_wire_str_short
       required: true
     - name: last_name
-      value_ref: nv_find_user_id_by_name_zip_last_name
+      value_ref: nv_wire_str_short
       required: true
     - name: zip
-      value_ref: nv_find_user_id_by_name_zip_zip
+      value_ref: nv_wire_str_short
       required: true
   list_all_product_types:
     kind: query
@@ -176,7 +176,7 @@ capabilities:
     - result
     parameters:
     - name: expression
-      value_ref: nv_calculate_expression
+      value_ref: nv_wire_str_short
       required: true
   transfer_to_human_agents:
     kind: create
@@ -184,7 +184,7 @@ capabilities:
     description: Escalate to human with summary
     parameters:
     - name: summary
-      value_ref: nv_transfer_to_human_agents_summary
+      value_ref: nv_wire_str_short
       required: true
   cancel_pending_order:
     kind: update
@@ -192,7 +192,7 @@ capabilities:
     description: Cancel pending order with policy reason
     parameters:
     - name: reason
-      value_ref: nv_cancel_pending_order_reason
+      value_ref: nv_wire_sel_751b7acc3dde7cde
       required: true
   modify_pending_order_address:
     kind: update
@@ -200,22 +200,22 @@ capabilities:
     description: Change shipping address on a pending order
     parameters:
     - name: address1
-      value_ref: nv_modify_pending_order_address_address1
+      value_ref: nv_wire_str_short
       required: true
     - name: address2
-      value_ref: nv_modify_pending_order_address_address2
+      value_ref: nv_wire_str_short
       required: false
     - name: city
-      value_ref: nv_modify_pending_order_address_city
+      value_ref: nv_wire_str_short
       required: true
     - name: state
-      value_ref: nv_modify_pending_order_address_state
+      value_ref: nv_wire_str_short
       required: true
     - name: country
-      value_ref: nv_modify_pending_order_address_country
+      value_ref: nv_wire_str_short
       required: true
     - name: zip
-      value_ref: nv_modify_pending_order_address_zip
+      value_ref: nv_wire_str_short
       required: true
   modify_pending_order_payment:
     kind: update
@@ -223,7 +223,7 @@ capabilities:
     description: Switch payment method on a pending order
     parameters:
     - name: payment_method_id
-      value_ref: nv_modify_pending_order_payment_payment_method_id
+      value_ref: nv_wire_str_short
       required: true
   modify_pending_order_items:
     kind: action
@@ -237,7 +237,7 @@ capabilities:
       value_ref: nv_modify_pending_order_items_new_item_ids
       required: true
     - name: payment_method_id
-      value_ref: nv_modify_pending_order_items_payment_method_id
+      value_ref: nv_wire_str_short
       required: true
     output:
       type: side_effect
@@ -254,7 +254,7 @@ capabilities:
       value_ref: nv_exchange_delivered_order_items_new_item_ids
       required: true
     - name: payment_method_id
-      value_ref: nv_exchange_delivered_order_items_payment_method_id
+      value_ref: nv_wire_str_short
       required: true
     output:
       type: side_effect
@@ -268,7 +268,7 @@ capabilities:
       value_ref: nv_return_delivered_order_items_item_ids
       required: true
     - name: payment_method_id
-      value_ref: nv_return_delivered_order_items_payment_method_id
+      value_ref: nv_wire_str_short
       required: true
     output:
       type: side_effect
@@ -279,30 +279,39 @@ capabilities:
     description: Update user's default address
     parameters:
     - name: address1
-      value_ref: nv_modify_user_address_address1
+      value_ref: nv_wire_str_short
       required: true
     - name: address2
-      value_ref: nv_modify_user_address_address2
+      value_ref: nv_wire_str_short
       required: false
     - name: city
-      value_ref: nv_modify_user_address_city
+      value_ref: nv_wire_str_short
       required: true
     - name: state
-      value_ref: nv_modify_user_address_state
+      value_ref: nv_wire_str_short
       required: true
     - name: country
-      value_ref: nv_modify_user_address_country
+      value_ref: nv_wire_str_short
       required: true
     - name: zip
-      value_ref: nv_modify_user_address_zip
+      value_ref: nv_wire_str_short
       required: true
 values:
-  nv_order_order_id:
-    type: string
-    string_semantics: short
-  nv_order_user_id:
+  nv_exchange_delivered_order_items_item_ids_item:
     type: entity_ref
-    target: User
+    target: Variant
+  nv_exchange_delivered_order_items_new_item_ids_item:
+    type: entity_ref
+    target: Variant
+  nv_list_variants_by_product_product_id:
+    type: entity_ref
+    target: Product
+  nv_modify_pending_order_items_item_ids_item:
+    type: entity_ref
+    target: Variant
+  nv_modify_pending_order_items_new_item_ids_item:
+    type: entity_ref
+    target: Variant
   nv_order_status:
     type: select
     allowed_values:
@@ -313,151 +322,44 @@ values:
     - cancelled
     - exchange requested
     - return requested
-  nv_order_cancel_reason:
-    type: select
-    allowed_values:
-    - no longer needed
-    - ordered by mistake
-  nv_user_user_id:
-    type: string
-    string_semantics: short
-  nv_user_email:
-    type: string
-    string_semantics: short
-  nv_product_product_id:
-    type: string
-    string_semantics: short
-  nv_product_name:
-    type: string
-    string_semantics: short
-  nv_variant_item_id:
-    type: string
-    string_semantics: short
-  nv_variant_product_id:
+  nv_order_user_id:
     type: entity_ref
-    target: Product
+    target: User
+  nv_return_delivered_order_items_item_ids_item:
+    type: entity_ref
+    target: Variant
   nv_variant_available:
     type: boolean
   nv_variant_price:
     type: number
-  nv_catalog_line_product_id:
-    type: string
-    string_semantics: short
-  nv_catalog_line_name:
-    type: string
-    string_semantics: short
-  nv_calc_job_result:
-    type: string
-    string_semantics: short
-  nv_human_handoff_status:
-    type: string
-    string_semantics: short
-  nv_list_variants_by_product_product_id:
+  nv_variant_product_id:
     type: entity_ref
     target: Product
-  nv_find_user_id_by_email_email:
-    type: string
-    string_semantics: short
-  nv_find_user_id_by_name_zip_first_name:
-    type: string
-    string_semantics: short
-  nv_find_user_id_by_name_zip_last_name:
-    type: string
-    string_semantics: short
-  nv_find_user_id_by_name_zip_zip:
-    type: string
-    string_semantics: short
-  nv_calculate_expression:
-    type: string
-    string_semantics: short
-  nv_transfer_to_human_agents_summary:
-    type: string
-    string_semantics: short
-  nv_cancel_pending_order_reason:
+  nv_wire_sel_751b7acc3dde7cde:
     type: select
     allowed_values:
     - no longer needed
     - ordered by mistake
-  nv_modify_pending_order_address_address1:
+  nv_wire_str_short:
     type: string
     string_semantics: short
-  nv_modify_pending_order_address_address2:
-    type: string
-    string_semantics: short
-  nv_modify_pending_order_address_city:
-    type: string
-    string_semantics: short
-  nv_modify_pending_order_address_state:
-    type: string
-    string_semantics: short
-  nv_modify_pending_order_address_country:
-    type: string
-    string_semantics: short
-  nv_modify_pending_order_address_zip:
-    type: string
-    string_semantics: short
-  nv_modify_pending_order_payment_payment_method_id:
-    type: string
-    string_semantics: short
-  nv_modify_pending_order_items_item_ids_item:
-    type: entity_ref
-    target: Variant
-  nv_modify_pending_order_items_item_ids:
-    type: array
-    items:
-      value_ref: nv_modify_pending_order_items_item_ids_item
-  nv_modify_pending_order_items_new_item_ids_item:
-    type: entity_ref
-    target: Variant
-  nv_modify_pending_order_items_new_item_ids:
-    type: array
-    items:
-      value_ref: nv_modify_pending_order_items_new_item_ids_item
-  nv_modify_pending_order_items_payment_method_id:
-    type: string
-    string_semantics: short
-  nv_exchange_delivered_order_items_item_ids_item:
-    type: entity_ref
-    target: Variant
   nv_exchange_delivered_order_items_item_ids:
     type: array
     items:
       value_ref: nv_exchange_delivered_order_items_item_ids_item
-  nv_exchange_delivered_order_items_new_item_ids_item:
-    type: entity_ref
-    target: Variant
   nv_exchange_delivered_order_items_new_item_ids:
     type: array
     items:
       value_ref: nv_exchange_delivered_order_items_new_item_ids_item
-  nv_exchange_delivered_order_items_payment_method_id:
-    type: string
-    string_semantics: short
-  nv_return_delivered_order_items_item_ids_item:
-    type: entity_ref
-    target: Variant
+  nv_modify_pending_order_items_item_ids:
+    type: array
+    items:
+      value_ref: nv_modify_pending_order_items_item_ids_item
+  nv_modify_pending_order_items_new_item_ids:
+    type: array
+    items:
+      value_ref: nv_modify_pending_order_items_new_item_ids_item
   nv_return_delivered_order_items_item_ids:
     type: array
     items:
       value_ref: nv_return_delivered_order_items_item_ids_item
-  nv_return_delivered_order_items_payment_method_id:
-    type: string
-    string_semantics: short
-  nv_modify_user_address_address1:
-    type: string
-    string_semantics: short
-  nv_modify_user_address_address2:
-    type: string
-    string_semantics: short
-  nv_modify_user_address_city:
-    type: string
-    string_semantics: short
-  nv_modify_user_address_state:
-    type: string
-    string_semantics: short
-  nv_modify_user_address_country:
-    type: string
-    string_semantics: short
-  nv_modify_user_address_zip:
-    type: string
-    string_semantics: short

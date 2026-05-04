@@ -1,4 +1,4 @@
-version: 1
+version: 2
 auth:
   scheme: none
 http_backend: https://api.open-meteo.com
@@ -28,11 +28,11 @@ capabilities:
     entity: Forecast
     parameters:
     - name: latitude
-      value_ref: nv_weather_forecast_latitude
+      value_ref: nv_wire_num
       required: true
       role: filter
     - name: longitude
-      value_ref: nv_weather_forecast_longitude
+      value_ref: nv_wire_num
       required: true
       role: filter
     - name: current_weather
@@ -56,6 +56,9 @@ capabilities:
       required: false
       role: filter
 values:
+  nv_forecast_elevation:
+    type: number
+    description: Terrain elevation in metres
   nv_forecast_latitude:
     type: number
     description: Decimal latitude of the forecast location
@@ -66,20 +69,18 @@ values:
     type: string
     string_semantics: short
     description: IANA timezone name for the location
-  nv_forecast_elevation:
-    type: number
-    description: Terrain elevation in metres
-  nv_weather_forecast_latitude:
-    type: number
-  nv_weather_forecast_longitude:
-    type: number
   nv_weather_forecast_current_weather:
     type: boolean
+  nv_weather_forecast_past_days:
+    type: integer
   nv_weather_forecast_temperature_unit:
     type: select
     allowed_values:
     - celsius
     - fahrenheit
+  nv_weather_forecast_timezone:
+    type: string
+    string_semantics: short
   nv_weather_forecast_wind_speed_unit:
     type: select
     allowed_values:
@@ -87,8 +88,5 @@ values:
     - ms
     - mph
     - kn
-  nv_weather_forecast_timezone:
-    type: string
-    string_semantics: short
-  nv_weather_forecast_past_days:
-    type: integer
+  nv_wire_num:
+    type: number

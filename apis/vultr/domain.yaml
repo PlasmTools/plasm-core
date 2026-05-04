@@ -1,4 +1,4 @@
-version: 16
+version: 17
 http_backend: https://api.vultr.com
 entities:
   Account:
@@ -7,22 +7,22 @@ entities:
     fields:
       email:
         required: true
-        value_ref: nv_account_email
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_account_name
+        value_ref: nv_wire_str_short
       balance:
         required: false
-        value_ref: nv_account_balance
+        value_ref: nv_wire_num
       pending_charges:
         required: false
-        value_ref: nv_account_pending_charges
+        value_ref: nv_wire_num
       last_payment_amount:
         required: false
-        value_ref: nv_account_last_payment_amount
+        value_ref: nv_wire_num
       last_payment_date:
         required: false
-        value_ref: nv_account_last_payment_date
+        value_ref: nv_wire_date_rfc3339
       acls:
         required: false
         value_ref: nv_account_acls
@@ -34,14 +34,14 @@ entities:
     fields:
       enabled:
         required: false
-        value_ref: nv_account_bgp_enabled
+        value_ref: nv_wire_bool
       asn:
         required: false
-        value_ref: nv_account_bgp_asn
+        value_ref: nv_wire_int
       password:
         required: false
         path: pasword
-        value_ref: nv_account_bgp_password
+        value_ref: nv_wire_str_short
     relations: {}
   AccountBandwidth:
     id_field: id
@@ -59,16 +59,16 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_region_id
+        value_ref: nv_wire_str_short
       city:
         required: false
-        value_ref: nv_region_city
+        value_ref: nv_wire_str_short
       country:
         required: false
-        value_ref: nv_region_country
+        value_ref: nv_wire_str_short
       continent:
         required: false
-        value_ref: nv_region_continent
+        value_ref: nv_wire_str_short
       options:
         required: false
         value_ref: nv_region_options
@@ -89,34 +89,34 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_plan_id
+        value_ref: nv_wire_str_short
       vcpu_count:
         required: false
-        value_ref: nv_plan_vcpu_count
+        value_ref: nv_wire_int
       ram:
         required: false
-        value_ref: nv_plan_ram
+        value_ref: nv_wire_int
       disk:
         required: false
-        value_ref: nv_plan_disk
+        value_ref: nv_wire_int
       disk_count:
         required: false
-        value_ref: nv_plan_disk_count
+        value_ref: nv_wire_int
       bandwidth:
         required: false
-        value_ref: nv_plan_bandwidth
+        value_ref: nv_wire_int
       type:
         required: false
-        value_ref: nv_plan_type
+        value_ref: nv_wire_str_short
       locations:
         required: false
         value_ref: nv_plan_locations
       monthly_cost:
         required: false
-        value_ref: nv_plan_monthly_cost
+        value_ref: nv_wire_num
       hourly_cost:
         required: false
-        value_ref: nv_plan_hourly_cost
+        value_ref: nv_wire_num
     relations: {}
   BareMetalPlan:
     id_field: id
@@ -124,31 +124,31 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_bare_metal_plan_id
+        value_ref: nv_wire_str_short
       type:
         required: false
-        value_ref: nv_bare_metal_plan_type
+        value_ref: nv_wire_str_short
       cpu_count:
         required: false
-        value_ref: nv_bare_metal_plan_cpu_count
+        value_ref: nv_wire_int
       cpu_threads:
         required: false
-        value_ref: nv_bare_metal_plan_cpu_threads
+        value_ref: nv_wire_int
       cpu_model:
         required: false
-        value_ref: nv_bare_metal_plan_cpu_model
+        value_ref: nv_wire_str_short
       ram:
         required: false
-        value_ref: nv_bare_metal_plan_ram
+        value_ref: nv_wire_int
       disk:
         required: false
-        value_ref: nv_bare_metal_plan_disk
+        value_ref: nv_wire_int
       disk_count:
         required: false
-        value_ref: nv_bare_metal_plan_disk_count
+        value_ref: nv_wire_int
       bandwidth:
         required: false
-        value_ref: nv_bare_metal_plan_bandwidth
+        value_ref: nv_wire_int
       locations:
         required: false
         value_ref: nv_bare_metal_plan_locations
@@ -159,16 +159,16 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_os_id
+        value_ref: nv_wire_int
       name:
         required: false
-        value_ref: nv_os_name
+        value_ref: nv_wire_str_short
       arch:
         required: false
-        value_ref: nv_os_arch
+        value_ref: nv_wire_str_short
       family:
         required: false
-        value_ref: nv_os_family
+        value_ref: nv_wire_str_short
     relations: {}
   Application:
     id_field: id
@@ -176,25 +176,25 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_application_id
+        value_ref: nv_wire_int
       name:
         required: false
-        value_ref: nv_application_name
+        value_ref: nv_wire_str_short
       type:
         required: false
-        value_ref: nv_application_type
+        value_ref: nv_wire_str_short
       vendor:
         required: false
-        value_ref: nv_application_vendor
+        value_ref: nv_wire_str_short
       short_name:
         required: false
-        value_ref: nv_application_short_name
+        value_ref: nv_wire_str_short
       deploy_name:
         required: false
-        value_ref: nv_application_deploy_name
+        value_ref: nv_wire_str_short
       image_id:
         required: false
-        value_ref: nv_application_image_id
+        value_ref: nv_wire_str_short
     relations: {}
   BillingLine:
     id_field: id
@@ -202,22 +202,22 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_billing_line_id
+        value_ref: nv_wire_int
       type:
         required: false
-        value_ref: nv_billing_line_type
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_billing_line_description
+        value_ref: nv_wire_str_short
       amount:
         required: false
-        value_ref: nv_billing_line_amount
+        value_ref: nv_wire_num
       balance:
         required: false
-        value_ref: nv_billing_line_balance
+        value_ref: nv_wire_num
       date:
         required: false
-        value_ref: nv_billing_line_date
+        value_ref: nv_wire_date_rfc3339
     relations: {}
   Invoice:
     id_field: id
@@ -225,16 +225,16 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_invoice_id
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_invoice_description
+        value_ref: nv_wire_str_short
       amount:
         required: false
-        value_ref: nv_invoice_amount
+        value_ref: nv_wire_num
       date:
         required: false
-        value_ref: nv_invoice_date
+        value_ref: nv_wire_date_rfc3339
     relations: {}
   ApiKey:
     id_field: id
@@ -242,20 +242,20 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_api_key_id
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_api_key_name
+        value_ref: nv_wire_str_short
       masked_key:
         required: false
         path: api_key
-        value_ref: nv_api_key_masked_key
+        value_ref: nv_wire_str_short
       expire:
         required: false
-        value_ref: nv_api_key_expire
+        value_ref: nv_wire_bool
       date_expire:
         required: false
-        value_ref: nv_api_key_date_expire
+        value_ref: nv_wire_date_rfc3339
     relations: {}
   User:
     id_field: id
@@ -263,40 +263,40 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_user_id
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_user_name
+        value_ref: nv_wire_str_short
       first_name:
         required: false
-        value_ref: nv_user_first_name
+        value_ref: nv_wire_str_short
       last_name:
         required: false
-        value_ref: nv_user_last_name
+        value_ref: nv_wire_str_short
       email:
         required: false
-        value_ref: nv_user_email
+        value_ref: nv_wire_str_short
       api_enabled:
         required: false
-        value_ref: nv_user_api_enabled
+        value_ref: nv_wire_bool
       service_user:
         required: false
-        value_ref: nv_user_service_user
+        value_ref: nv_wire_bool
       status:
         required: false
-        value_ref: nv_user_status
+        value_ref: nv_wire_bool
       invited_by:
         required: false
-        value_ref: nv_user_invited_by
+        value_ref: nv_wire_str_short
       invited_on:
         required: false
-        value_ref: nv_user_invited_on
+        value_ref: nv_wire_date_rfc3339
       invite_accepted:
         required: false
-        value_ref: nv_user_invite_accepted
+        value_ref: nv_wire_bool
       last_activity:
         required: false
-        value_ref: nv_user_last_activity
+        value_ref: nv_wire_date_rfc3339
       acls:
         required: false
         value_ref: nv_user_acls
@@ -307,17 +307,17 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_ssh_key_id
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_ssh_key_name
+        value_ref: nv_wire_str_short
       public_key:
         required: false
         path: ssh_key
-        value_ref: nv_ssh_key_public_key
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_ssh_key_date_created
+        value_ref: nv_wire_date_rfc3339
     relations: {}
   IamPolicy:
     id_field: id
@@ -325,22 +325,22 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_iam_policy_id
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_iam_policy_name
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_iam_policy_description
+        value_ref: nv_wire_str_short
       version:
         required: false
-        value_ref: nv_iam_policy_version
+        value_ref: nv_wire_str_short
       is_system_policy:
         required: false
-        value_ref: nv_iam_policy_is_system_policy
+        value_ref: nv_wire_bool
       date_created:
         required: false
-        value_ref: nv_iam_policy_date_created
+        value_ref: nv_wire_date_rfc3339
       policy_document:
         required: false
         value_ref: nv_iam_policy_policy_document
@@ -351,22 +351,22 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_iam_role_id
+        value_ref: nv_wire_str_short
       name:
         required: false
-        value_ref: nv_iam_role_name
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_iam_role_description
+        value_ref: nv_wire_str_short
       role_type:
         required: false
-        value_ref: nv_iam_role_role_type
+        value_ref: nv_wire_str_short
       max_session_duration:
         required: false
-        value_ref: nv_iam_role_max_session_duration
+        value_ref: nv_wire_int
       date_created:
         required: false
-        value_ref: nv_iam_role_date_created
+        value_ref: nv_wire_date_rfc3339
       policies:
         required: false
         value_ref: nv_iam_role_policies
@@ -377,25 +377,25 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_iam_group_id
+        value_ref: nv_wire_str_short
       display_name:
         required: false
-        value_ref: nv_iam_group_display_name
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_iam_group_description
+        value_ref: nv_wire_str_short
       status:
         required: false
-        value_ref: nv_iam_group_status
+        value_ref: nv_wire_str_short
       last_activity:
         required: false
-        value_ref: nv_iam_group_last_activity
+        value_ref: nv_wire_date_rfc3339
       date_created:
         required: false
-        value_ref: nv_iam_group_date_created
+        value_ref: nv_wire_date_rfc3339
       date_updated:
         required: false
-        value_ref: nv_iam_group_date_updated
+        value_ref: nv_wire_date_rfc3339
       members:
         required: false
         value_ref: nv_iam_group_members
@@ -406,22 +406,22 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_vpc_id
+        value_ref: nv_wire_str_short
       region:
         required: false
         value_ref: nv_vpc_region
       description:
         required: false
-        value_ref: nv_vpc_description
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_vpc_date_created
+        value_ref: nv_wire_date_rfc3339
       v4_subnet:
         required: false
-        value_ref: nv_vpc_v4_subnet
+        value_ref: nv_wire_str_short
       v4_subnet_mask:
         required: false
-        value_ref: nv_vpc_v4_subnet_mask
+        value_ref: nv_wire_int
       nodes:
         required: false
         value_ref: nv_vpc_nodes
@@ -432,25 +432,25 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_firewall_group_id
+        value_ref: nv_wire_str_short
       description:
         required: false
-        value_ref: nv_firewall_group_description
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_firewall_group_date_created
+        value_ref: nv_wire_date_rfc3339
       date_modified:
         required: false
-        value_ref: nv_firewall_group_date_modified
+        value_ref: nv_wire_date_rfc3339
       instance_count:
         required: false
-        value_ref: nv_firewall_group_instance_count
+        value_ref: nv_wire_int
       rule_count:
         required: false
-        value_ref: nv_firewall_group_rule_count
+        value_ref: nv_wire_int
       max_rule_count:
         required: false
-        value_ref: nv_firewall_group_max_rule_count
+        value_ref: nv_wire_int
     relations:
       rules:
         target: FirewallRule
@@ -472,16 +472,16 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_instance_id
+        value_ref: nv_wire_str_short
       label:
         required: false
-        value_ref: nv_instance_label
+        value_ref: nv_wire_str_short
       hostname:
         required: false
-        value_ref: nv_instance_hostname
+        value_ref: nv_wire_str_short
       os:
         required: false
-        value_ref: nv_instance_os
+        value_ref: nv_wire_str_short
       region:
         required: false
         value_ref: nv_instance_region
@@ -490,25 +490,25 @@ entities:
         value_ref: nv_instance_plan
       main_ip:
         required: false
-        value_ref: nv_instance_main_ip
+        value_ref: nv_wire_str_short
       status:
         required: false
-        value_ref: nv_instance_status
+        value_ref: nv_wire_str_short
       power_status:
         required: false
-        value_ref: nv_instance_power_status
+        value_ref: nv_wire_str_short
       server_status:
         required: false
-        value_ref: nv_instance_server_status
+        value_ref: nv_wire_str_short
       ram:
         required: false
-        value_ref: nv_instance_ram
+        value_ref: nv_wire_int
       disk:
         required: false
-        value_ref: nv_instance_disk
+        value_ref: nv_wire_int
       vcpu_count:
         required: false
-        value_ref: nv_instance_vcpu_count
+        value_ref: nv_wire_int
       os_id:
         required: false
         value_ref: nv_instance_os_id
@@ -517,16 +517,16 @@ entities:
         value_ref: nv_instance_app_id
       image_id:
         required: false
-        value_ref: nv_instance_image_id
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_instance_date_created
+        value_ref: nv_wire_date_rfc3339
       allowed_bandwidth:
         required: false
-        value_ref: nv_instance_allowed_bandwidth
+        value_ref: nv_wire_int
       pending_charges:
         required: false
-        value_ref: nv_instance_pending_charges
+        value_ref: nv_wire_num
       firewall_group_id:
         required: false
         value_ref: nv_instance_firewall_group_id
@@ -546,22 +546,22 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_reserved_ip_id
+        value_ref: nv_wire_str_short
       region:
         required: false
         value_ref: nv_reserved_ip_region
       ip_type:
         required: false
-        value_ref: nv_reserved_ip_ip_type
+        value_ref: nv_wire_sel_3165a4e18b8315ed
       subnet:
         required: false
-        value_ref: nv_reserved_ip_subnet
+        value_ref: nv_wire_str_short
       subnet_size:
         required: false
-        value_ref: nv_reserved_ip_subnet_size
+        value_ref: nv_wire_int
       label:
         required: false
-        value_ref: nv_reserved_ip_label
+        value_ref: nv_wire_str_short
       instance_id:
         required: false
         value_ref: nv_reserved_ip_instance_id
@@ -572,43 +572,43 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_load_balancer_id
+        value_ref: nv_wire_str_short
       label:
         required: false
-        value_ref: nv_load_balancer_label
+        value_ref: nv_wire_str_short
       region:
         required: false
         value_ref: nv_load_balancer_region
       status:
         required: false
-        value_ref: nv_load_balancer_status
+        value_ref: nv_wire_str_short
       ipv4:
         required: false
-        value_ref: nv_load_balancer_ipv4
+        value_ref: nv_wire_str_short
       ipv6:
         required: false
-        value_ref: nv_load_balancer_ipv6
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_load_balancer_date_created
+        value_ref: nv_wire_date_rfc3339
       pending_charges:
         required: false
-        value_ref: nv_load_balancer_pending_charges
+        value_ref: nv_wire_num
       has_ssl:
         required: false
-        value_ref: nv_load_balancer_has_ssl
+        value_ref: nv_wire_bool
       http2:
         required: false
-        value_ref: nv_load_balancer_http2
+        value_ref: nv_wire_bool
       http3:
         required: false
-        value_ref: nv_load_balancer_http3
+        value_ref: nv_wire_bool
       nodes:
         required: false
-        value_ref: nv_load_balancer_nodes
+        value_ref: nv_wire_int
       cname:
         required: false
-        value_ref: nv_load_balancer_cname
+        value_ref: nv_wire_str_short
       generic_info:
         required: false
         path: generic_info
@@ -635,38 +635,38 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_firewall_rule_id
+        value_ref: nv_wire_str_short
       firewall_group_id:
         required: true
         value_ref: nv_firewall_rule_firewall_group_id
       kind:
         required: false
         path: type
-        value_ref: nv_firewall_rule_kind
+        value_ref: nv_wire_sel_3165a4e18b8315ed
       ip_type:
         required: false
-        value_ref: nv_firewall_rule_ip_type
+        value_ref: nv_wire_sel_3165a4e18b8315ed
       action:
         required: false
-        value_ref: nv_firewall_rule_action
+        value_ref: nv_wire_str_short
       protocol:
         required: false
-        value_ref: nv_firewall_rule_protocol
+        value_ref: nv_wire_sel_3fe4d4fac1a8e87f
       port:
         required: false
-        value_ref: nv_firewall_rule_port
+        value_ref: nv_wire_str_short
       subnet:
         required: false
-        value_ref: nv_firewall_rule_subnet
+        value_ref: nv_wire_str_short
       subnet_size:
         required: false
-        value_ref: nv_firewall_rule_subnet_size
+        value_ref: nv_wire_int
       source:
         required: false
-        value_ref: nv_firewall_rule_source
+        value_ref: nv_wire_str_short
       notes:
         required: false
-        value_ref: nv_firewall_rule_notes
+        value_ref: nv_wire_str_short
     relations: {}
   Snapshot:
     id_field: id
@@ -674,22 +674,22 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_snapshot_id
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_snapshot_date_created
+        value_ref: nv_wire_date_rfc3339
       description:
         required: false
-        value_ref: nv_snapshot_description
+        value_ref: nv_wire_str_short
       size:
         required: false
-        value_ref: nv_snapshot_size
+        value_ref: nv_wire_int
       compressed_size:
         required: false
-        value_ref: nv_snapshot_compressed_size
+        value_ref: nv_wire_int
       status:
         required: false
-        value_ref: nv_snapshot_status
+        value_ref: nv_wire_str_short
       os_id:
         required: false
         value_ref: nv_snapshot_os_id
@@ -703,19 +703,19 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_block_storage_id
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_block_storage_date_created
+        value_ref: nv_wire_date_rfc3339
       cost:
         required: false
-        value_ref: nv_block_storage_cost
+        value_ref: nv_wire_num
       status:
         required: false
-        value_ref: nv_block_storage_status
+        value_ref: nv_wire_sel_302f7ca29e8dda16
       size_gb:
         required: false
-        value_ref: nv_block_storage_size_gb
+        value_ref: nv_wire_int
       region:
         required: false
         value_ref: nv_block_storage_region
@@ -724,13 +724,13 @@ entities:
         value_ref: nv_block_storage_attached_to_instance
       label:
         required: false
-        value_ref: nv_block_storage_label
+        value_ref: nv_wire_str_short
       mount_id:
         required: false
-        value_ref: nv_block_storage_mount_id
+        value_ref: nv_wire_str_short
       block_type:
         required: false
-        value_ref: nv_block_storage_block_type
+        value_ref: nv_wire_sel_72fd39fb1f8b8f2f
     relations: {}
   Iso:
     id_field: id
@@ -738,22 +738,22 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_iso_id
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_iso_date_created
+        value_ref: nv_wire_date_rfc3339
       filename:
         required: false
-        value_ref: nv_iso_filename
+        value_ref: nv_wire_str_short
       size:
         required: false
-        value_ref: nv_iso_size
+        value_ref: nv_wire_int
       md5sum:
         required: false
-        value_ref: nv_iso_md5sum
+        value_ref: nv_wire_str_short
       status:
         required: false
-        value_ref: nv_iso_status
+        value_ref: nv_wire_str_short
     relations: {}
   StartupScript:
     id_field: id
@@ -761,19 +761,19 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_startup_script_id
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_startup_script_date_created
+        value_ref: nv_wire_date_rfc3339
       date_modified:
         required: false
-        value_ref: nv_startup_script_date_modified
+        value_ref: nv_wire_date_rfc3339
       name:
         required: false
-        value_ref: nv_startup_script_name
+        value_ref: nv_wire_str_short
       type:
         required: false
-        value_ref: nv_startup_script_type
+        value_ref: nv_wire_sel_529cf443139f2286
       script:
         required: false
         value_ref: nv_startup_script_script
@@ -784,19 +784,19 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_backup_id
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_backup_date_created
+        value_ref: nv_wire_date_rfc3339
       description:
         required: false
-        value_ref: nv_backup_description
+        value_ref: nv_wire_str_short
       size:
         required: false
-        value_ref: nv_backup_size
+        value_ref: nv_wire_int
       status:
         required: false
-        value_ref: nv_backup_status
+        value_ref: nv_wire_str_short
       os_id:
         required: false
         value_ref: nv_backup_os_id
@@ -810,13 +810,13 @@ entities:
     fields:
       domain:
         required: true
-        value_ref: nv_dns_domain_domain
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_dns_domain_date_created
+        value_ref: nv_wire_date_rfc3339
       dns_sec:
         required: false
-        value_ref: nv_dns_domain_dns_sec
+        value_ref: nv_wire_str_short
     relations:
       records:
         target: DnsRecord
@@ -834,25 +834,25 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_dns_record_id
+        value_ref: nv_wire_str_short
       domain:
         required: true
         value_ref: nv_dns_record_domain
       type:
         required: false
-        value_ref: nv_dns_record_type
+        value_ref: nv_wire_sel_c7fc16b95f0ae0a7
       name:
         required: false
-        value_ref: nv_dns_record_name
+        value_ref: nv_wire_str_short
       data:
         required: false
-        value_ref: nv_dns_record_data
+        value_ref: nv_wire_str_short
       priority:
         required: false
-        value_ref: nv_dns_record_priority
+        value_ref: nv_wire_int
       ttl:
         required: false
-        value_ref: nv_dns_record_ttl
+        value_ref: nv_wire_int
     relations: {}
   ObjectStorage:
     id_field: id
@@ -860,34 +860,34 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_object_storage_id
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_object_storage_date_created
+        value_ref: nv_wire_date_rfc3339
       cluster_id:
         required: false
-        value_ref: nv_object_storage_cluster_id
+        value_ref: nv_wire_int
       region:
         required: false
         value_ref: nv_object_storage_region
       label:
         required: false
-        value_ref: nv_object_storage_label
+        value_ref: nv_wire_str_short
       status:
         required: false
-        value_ref: nv_object_storage_status
+        value_ref: nv_wire_str_short
       s3_hostname:
         required: false
-        value_ref: nv_object_storage_s3_hostname
+        value_ref: nv_wire_str_short
       s3_access_key:
         required: false
-        value_ref: nv_object_storage_s3_access_key
+        value_ref: nv_wire_str_short
       s3_secret_key:
         required: false
-        value_ref: nv_object_storage_s3_secret_key
+        value_ref: nv_wire_str_short
       pending_charges:
         required: false
-        value_ref: nv_object_storage_pending_charges
+        value_ref: nv_wire_num
     relations: {}
   ManagedDatabase:
     id_field: id
@@ -895,79 +895,79 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_managed_database_id
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_managed_database_date_created
+        value_ref: nv_wire_date_rfc3339
       plan:
         required: false
-        value_ref: nv_managed_database_plan
+        value_ref: nv_wire_str_short
       plan_disk:
         required: false
-        value_ref: nv_managed_database_plan_disk
+        value_ref: nv_wire_int
       plan_ram:
         required: false
-        value_ref: nv_managed_database_plan_ram
+        value_ref: nv_wire_int
       plan_vcpus:
         required: false
-        value_ref: nv_managed_database_plan_vcpus
+        value_ref: nv_wire_int
       plan_replicas:
         required: false
-        value_ref: nv_managed_database_plan_replicas
+        value_ref: nv_wire_int
       region:
         required: false
         value_ref: nv_managed_database_region
       database_engine:
         required: false
-        value_ref: nv_managed_database_database_engine
+        value_ref: nv_wire_str_short
       database_engine_version:
         required: false
-        value_ref: nv_managed_database_database_engine_version
+        value_ref: nv_wire_int
       vpc_id:
         required: false
         value_ref: nv_managed_database_vpc_id
       status:
         required: false
-        value_ref: nv_managed_database_status
+        value_ref: nv_wire_str_short
       label:
         required: false
-        value_ref: nv_managed_database_label
+        value_ref: nv_wire_str_short
       tag:
         required: false
-        value_ref: nv_managed_database_tag
+        value_ref: nv_wire_str_short
       dbname:
         required: false
-        value_ref: nv_managed_database_dbname
+        value_ref: nv_wire_str_short
       host:
         required: false
-        value_ref: nv_managed_database_host
+        value_ref: nv_wire_str_short
       public_host:
         required: false
-        value_ref: nv_managed_database_public_host
+        value_ref: nv_wire_str_short
       user:
         required: false
-        value_ref: nv_managed_database_user
+        value_ref: nv_wire_str_short
       password:
         required: false
-        value_ref: nv_managed_database_password
+        value_ref: nv_wire_str_short
       port:
         required: false
-        value_ref: nv_managed_database_port
+        value_ref: nv_wire_int
       maintenance_dow:
         required: false
-        value_ref: nv_managed_database_maintenance_dow
+        value_ref: nv_wire_sel_0780285c9fcb6c03
       maintenance_time:
         required: false
-        value_ref: nv_managed_database_maintenance_time
+        value_ref: nv_wire_str_short
       backup_hour:
         required: false
-        value_ref: nv_managed_database_backup_hour
+        value_ref: nv_wire_str_short
       backup_minute:
         required: false
-        value_ref: nv_managed_database_backup_minute
+        value_ref: nv_wire_str_short
       pending_charges:
         required: false
-        value_ref: nv_managed_database_pending_charges
+        value_ref: nv_wire_num
     relations: {}
   KubernetesCluster:
     id_field: id
@@ -975,37 +975,37 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_kubernetes_cluster_id
+        value_ref: nv_wire_str_short
       label:
         required: false
-        value_ref: nv_kubernetes_cluster_label
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_kubernetes_cluster_date_created
+        value_ref: nv_wire_date_rfc3339
       region:
         required: false
         value_ref: nv_kubernetes_cluster_region
       version:
         required: false
-        value_ref: nv_kubernetes_cluster_version
+        value_ref: nv_wire_str_short
       status:
         required: false
-        value_ref: nv_kubernetes_cluster_status
+        value_ref: nv_wire_str_short
       endpoint:
         required: false
-        value_ref: nv_kubernetes_cluster_endpoint
+        value_ref: nv_wire_str_short
       ip:
         required: false
-        value_ref: nv_kubernetes_cluster_ip
+        value_ref: nv_wire_str_short
       cluster_subnet:
         required: false
-        value_ref: nv_kubernetes_cluster_cluster_subnet
+        value_ref: nv_wire_str_short
       service_subnet:
         required: false
-        value_ref: nv_kubernetes_cluster_service_subnet
+        value_ref: nv_wire_str_short
       ha_controlplanes:
         required: false
-        value_ref: nv_kubernetes_cluster_ha_controlplanes
+        value_ref: nv_wire_bool
       firewall_group_id:
         required: false
         value_ref: nv_kubernetes_cluster_firewall_group_id
@@ -1041,13 +1041,13 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_bare_metal_id
+        value_ref: nv_wire_str_short
       os:
         required: false
-        value_ref: nv_bare_metal_os
+        value_ref: nv_wire_str_short
       main_ip:
         required: false
-        value_ref: nv_bare_metal_main_ip
+        value_ref: nv_wire_str_short
       region:
         required: false
         value_ref: nv_bare_metal_region
@@ -1056,16 +1056,16 @@ entities:
         value_ref: nv_bare_metal_plan
       date_created:
         required: false
-        value_ref: nv_bare_metal_date_created
+        value_ref: nv_wire_date_rfc3339
       status:
         required: false
-        value_ref: nv_bare_metal_status
+        value_ref: nv_wire_str_short
       label:
         required: false
-        value_ref: nv_bare_metal_label
+        value_ref: nv_wire_str_short
       hostname:
         required: false
-        value_ref: nv_bare_metal_hostname
+        value_ref: nv_wire_str_short
       os_id:
         required: false
         value_ref: nv_bare_metal_os_id
@@ -1074,7 +1074,7 @@ entities:
         value_ref: nv_bare_metal_app_id
       image_id:
         required: false
-        value_ref: nv_bare_metal_image_id
+        value_ref: nv_wire_str_short
       snapshot_id:
         required: false
         value_ref: nv_bare_metal_snapshot_id
@@ -1091,7 +1091,7 @@ entities:
       vnc_url:
         required: false
         path: url
-        value_ref: nv_bare_metal_vnc_url
+        value_ref: nv_wire_str_short
     relations:
       ipv4_addresses:
         target: BareMetalIpV4
@@ -1131,43 +1131,43 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_cdn_pull_zone_id
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_cdn_pull_zone_date_created
+        value_ref: nv_wire_date_rfc3339
       status:
         required: false
-        value_ref: nv_cdn_pull_zone_status
+        value_ref: nv_wire_sel_302f7ca29e8dda16
       label:
         required: false
-        value_ref: nv_cdn_pull_zone_label
+        value_ref: nv_wire_str_short
       origin_scheme:
         required: false
         value_ref: nv_cdn_pull_zone_origin_scheme
       origin_domain:
         required: false
-        value_ref: nv_cdn_pull_zone_origin_domain
+        value_ref: nv_wire_str_short
       cdn_url:
         required: false
-        value_ref: nv_cdn_pull_zone_cdn_url
+        value_ref: nv_wire_str_short
       vanity_domain:
         required: false
-        value_ref: nv_cdn_pull_zone_vanity_domain
+        value_ref: nv_wire_str_short
       cache_size:
         required: false
-        value_ref: nv_cdn_pull_zone_cache_size
+        value_ref: nv_wire_int
       cors:
         required: false
-        value_ref: nv_cdn_pull_zone_cors
+        value_ref: nv_wire_bool
       gzip:
         required: false
-        value_ref: nv_cdn_pull_zone_gzip
+        value_ref: nv_wire_bool
       block_ai:
         required: false
-        value_ref: nv_cdn_pull_zone_block_ai
+        value_ref: nv_wire_bool
       block_bad_bots:
         required: false
-        value_ref: nv_cdn_pull_zone_block_bad_bots
+        value_ref: nv_wire_bool
     relations: {}
   CdnPushZone:
     id_field: id
@@ -1175,37 +1175,37 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_cdn_push_zone_id
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_cdn_push_zone_date_created
+        value_ref: nv_wire_date_rfc3339
       status:
         required: false
-        value_ref: nv_cdn_push_zone_status
+        value_ref: nv_wire_sel_302f7ca29e8dda16
       label:
         required: false
-        value_ref: nv_cdn_push_zone_label
+        value_ref: nv_wire_str_short
       cdn_url:
         required: false
-        value_ref: nv_cdn_push_zone_cdn_url
+        value_ref: nv_wire_str_short
       vanity_domain:
         required: false
-        value_ref: nv_cdn_push_zone_vanity_domain
+        value_ref: nv_wire_str_short
       cache_size:
         required: false
-        value_ref: nv_cdn_push_zone_cache_size
+        value_ref: nv_wire_int
       cors:
         required: false
-        value_ref: nv_cdn_push_zone_cors
+        value_ref: nv_wire_bool
       gzip:
         required: false
-        value_ref: nv_cdn_push_zone_gzip
+        value_ref: nv_wire_bool
       block_ai:
         required: false
-        value_ref: nv_cdn_push_zone_block_ai
+        value_ref: nv_wire_bool
       block_bad_bots:
         required: false
-        value_ref: nv_cdn_push_zone_block_bad_bots
+        value_ref: nv_wire_bool
     relations:
       files:
         target: CdnPushZoneFile
@@ -1220,7 +1220,7 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_kubernetes_version_id
+        value_ref: nv_wire_str_short
     relations: {}
   KubernetesNodePool:
     id_field: id
@@ -1231,40 +1231,40 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_kubernetes_node_pool_id
+        value_ref: nv_wire_str_short
       vke_id:
         required: true
         value_ref: nv_kubernetes_node_pool_vke_id
       date_created:
         required: false
-        value_ref: nv_kubernetes_node_pool_date_created
+        value_ref: nv_wire_date_rfc3339
       date_updated:
         required: false
-        value_ref: nv_kubernetes_node_pool_date_updated
+        value_ref: nv_wire_date_rfc3339
       label:
         required: false
-        value_ref: nv_kubernetes_node_pool_label
+        value_ref: nv_wire_str_short
       tag:
         required: false
-        value_ref: nv_kubernetes_node_pool_tag
+        value_ref: nv_wire_str_short
       plan:
         required: false
-        value_ref: nv_kubernetes_node_pool_plan
+        value_ref: nv_wire_str_short
       status:
         required: false
-        value_ref: nv_kubernetes_node_pool_status
+        value_ref: nv_wire_str_short
       node_quantity:
         required: false
-        value_ref: nv_kubernetes_node_pool_node_quantity
+        value_ref: nv_wire_int
       min_nodes:
         required: false
-        value_ref: nv_kubernetes_node_pool_min_nodes
+        value_ref: nv_wire_int
       max_nodes:
         required: false
-        value_ref: nv_kubernetes_node_pool_max_nodes
+        value_ref: nv_wire_int
       auto_scaler:
         required: false
-        value_ref: nv_kubernetes_node_pool_auto_scaler
+        value_ref: nv_wire_bool
       nodes:
         required: false
         path: nodes
@@ -1306,19 +1306,19 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_kubernetes_node_pool_label_id
+        value_ref: nv_wire_str_short
       vke_id:
         required: true
         value_ref: nv_kubernetes_node_pool_label_vke_id
       nodepool_id:
         required: true
-        value_ref: nv_kubernetes_node_pool_label_nodepool_id
+        value_ref: nv_wire_str_short
       key:
         required: false
-        value_ref: nv_kubernetes_node_pool_label_key
+        value_ref: nv_wire_str_short
       value:
         required: false
-        value_ref: nv_kubernetes_node_pool_label_value
+        value_ref: nv_wire_str_short
     relations: {}
   KubernetesNodePoolTaint:
     id_field: id
@@ -1330,22 +1330,22 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_kubernetes_node_pool_taint_id
+        value_ref: nv_wire_str_short
       vke_id:
         required: true
         value_ref: nv_kubernetes_node_pool_taint_vke_id
       nodepool_id:
         required: true
-        value_ref: nv_kubernetes_node_pool_taint_nodepool_id
+        value_ref: nv_wire_str_short
       key:
         required: false
-        value_ref: nv_kubernetes_node_pool_taint_key
+        value_ref: nv_wire_str_short
       value:
         required: false
-        value_ref: nv_kubernetes_node_pool_taint_value
+        value_ref: nv_wire_str_short
       effect:
         required: false
-        value_ref: nv_kubernetes_node_pool_taint_effect
+        value_ref: nv_wire_str_short
     relations: {}
   KubernetesNodePoolNode:
     id_field: id
@@ -1357,22 +1357,22 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_kubernetes_node_pool_node_id
+        value_ref: nv_wire_str_short
       vke_id:
         required: true
         value_ref: nv_kubernetes_node_pool_node_vke_id
       nodepool_id:
         required: true
-        value_ref: nv_kubernetes_node_pool_node_nodepool_id
+        value_ref: nv_wire_str_short
       label:
         required: false
-        value_ref: nv_kubernetes_node_pool_node_label
+        value_ref: nv_wire_str_short
       date_created:
         required: false
-        value_ref: nv_kubernetes_node_pool_node_date_created
+        value_ref: nv_wire_date_rfc3339
       status:
         required: false
-        value_ref: nv_kubernetes_node_pool_node_status
+        value_ref: nv_wire_str_short
     relations: {}
   CdnUploadEndpoint:
     id_field: url
@@ -1382,7 +1382,7 @@ entities:
       url:
         required: true
         path: URL
-        value_ref: nv_cdn_upload_endpoint_url
+        value_ref: nv_wire_str_short
       inputs:
         required: false
         path: inputs
@@ -1397,19 +1397,19 @@ entities:
     fields:
       name:
         required: true
-        value_ref: nv_cdn_push_zone_file_name
+        value_ref: nv_wire_str_short
       push_zone_id:
         required: true
         value_ref: nv_cdn_push_zone_file_push_zone_id
       size:
         required: false
-        value_ref: nv_cdn_push_zone_file_size
+        value_ref: nv_wire_int
       last_modified:
         required: false
-        value_ref: nv_cdn_push_zone_file_last_modified
+        value_ref: nv_wire_date_rfc3339
       mime:
         required: false
-        value_ref: nv_cdn_push_zone_file_mime
+        value_ref: nv_wire_str_short
       content:
         required: false
         value_ref: nv_cdn_push_zone_file_content
@@ -1450,7 +1450,7 @@ entities:
     fields:
       id:
         required: true
-        value_ref: nv_vke_available_upgrade_id
+        value_ref: nv_wire_str_short
       vke_id:
         required: true
         value_ref: nv_vke_available_upgrade_vke_id
@@ -1464,22 +1464,22 @@ entities:
     fields:
       ip:
         required: true
-        value_ref: nv_bare_metal_ip_v4_ip
+        value_ref: nv_wire_str_short
       bare_metal_id:
         required: true
         value_ref: nv_bare_metal_ip_v4_bare_metal_id
       netmask:
         required: false
-        value_ref: nv_bare_metal_ip_v4_netmask
+        value_ref: nv_wire_str_short
       gateway:
         required: false
-        value_ref: nv_bare_metal_ip_v4_gateway
+        value_ref: nv_wire_str_short
       type:
         required: false
-        value_ref: nv_bare_metal_ip_v4_type
+        value_ref: nv_wire_str_short
       reverse:
         required: false
-        value_ref: nv_bare_metal_ip_v4_reverse
+        value_ref: nv_wire_str_short
     relations: {}
   BareMetalIpV6:
     id_field: ip
@@ -1490,19 +1490,19 @@ entities:
     fields:
       ip:
         required: true
-        value_ref: nv_bare_metal_ip_v6_ip
+        value_ref: nv_wire_str_short
       bare_metal_id:
         required: true
         value_ref: nv_bare_metal_ip_v6_bare_metal_id
       network:
         required: false
-        value_ref: nv_bare_metal_ip_v6_network
+        value_ref: nv_wire_str_short
       network_size:
         required: false
-        value_ref: nv_bare_metal_ip_v6_network_size
+        value_ref: nv_wire_int
       type:
         required: false
-        value_ref: nv_bare_metal_ip_v6_type
+        value_ref: nv_wire_str_short
     relations: {}
   BareMetalBandwidth:
     id_field: id
@@ -1558,10 +1558,10 @@ entities:
         value_ref: nv_bare_metal_vpc_attachment_bare_metal_id
       mac_address:
         required: false
-        value_ref: nv_bare_metal_vpc_attachment_mac_address
+        value_ref: nv_wire_str_short
       ip_address:
         required: false
-        value_ref: nv_bare_metal_vpc_attachment_ip_address
+        value_ref: nv_wire_str_short
     relations: {}
   BareMetalVpc2Attachment:
     id_field: id
@@ -1578,10 +1578,10 @@ entities:
         value_ref: nv_bare_metal_vpc2_attachment_bare_metal_id
       mac_address:
         required: false
-        value_ref: nv_bare_metal_vpc2_attachment_mac_address
+        value_ref: nv_wire_str_short
       ip_address:
         required: false
-        value_ref: nv_bare_metal_vpc2_attachment_ip_address
+        value_ref: nv_wire_str_short
     relations: {}
 capabilities:
   account_get:
@@ -1601,11 +1601,11 @@ capabilities:
     entity: Plan
     parameters:
     - name: type
-      value_ref: nv_plan_query_type
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: os
-      value_ref: nv_plan_query_os
+      value_ref: nv_wire_str_short
       required: false
       role: filter
   bare_metal_plan_query:
@@ -1641,13 +1641,13 @@ capabilities:
     entity: ApiKey
     parameters:
     - name: name
-      value_ref: nv_apikey_create_name
+      value_ref: nv_wire_str_short
       required: true
     - name: expire
-      value_ref: nv_apikey_create_expire
+      value_ref: nv_wire_bool
       required: false
     - name: date_expire
-      value_ref: nv_apikey_create_date_expire
+      value_ref: nv_wire_date_rfc3339
       required: false
   apikey_delete:
     kind: delete
@@ -1663,22 +1663,22 @@ capabilities:
     entity: User
     parameters:
     - name: email
-      value_ref: nv_user_create_email
+      value_ref: nv_wire_str_short
       required: true
     - name: first_name
-      value_ref: nv_user_create_first_name
+      value_ref: nv_wire_str_short
       required: true
     - name: last_name
-      value_ref: nv_user_create_last_name
+      value_ref: nv_wire_str_short
       required: true
     - name: password
-      value_ref: nv_user_create_password
+      value_ref: nv_wire_str_short
       required: true
     - name: api_enabled
-      value_ref: nv_user_create_api_enabled
+      value_ref: nv_wire_bool
       required: false
     - name: service_user
-      value_ref: nv_user_create_service_user
+      value_ref: nv_wire_bool
       required: false
     - name: acls
       value_ref: nv_user_create_acls
@@ -1688,19 +1688,19 @@ capabilities:
     entity: User
     parameters:
     - name: email
-      value_ref: nv_user_update_email
+      value_ref: nv_wire_str_short
       required: false
     - name: first_name
-      value_ref: nv_user_update_first_name
+      value_ref: nv_wire_str_short
       required: false
     - name: last_name
-      value_ref: nv_user_update_last_name
+      value_ref: nv_wire_str_short
       required: false
     - name: password
-      value_ref: nv_user_update_password
+      value_ref: nv_wire_str_short
       required: false
     - name: api_enabled
-      value_ref: nv_user_update_api_enabled
+      value_ref: nv_wire_bool
       required: false
     - name: acls
       value_ref: nv_user_update_acls
@@ -1719,20 +1719,20 @@ capabilities:
     entity: SshKey
     parameters:
     - name: name
-      value_ref: nv_sshkey_create_name
+      value_ref: nv_wire_str_short
       required: true
     - name: key_material
-      value_ref: nv_sshkey_create_key_material
+      value_ref: nv_wire_str_short
       required: true
   sshkey_update:
     kind: update
     entity: SshKey
     parameters:
     - name: name
-      value_ref: nv_sshkey_update_name
+      value_ref: nv_wire_str_short
       required: false
     - name: key_material
-      value_ref: nv_sshkey_update_key_material
+      value_ref: nv_wire_str_short
       required: false
   sshkey_delete:
     kind: delete
@@ -1769,20 +1769,20 @@ capabilities:
       value_ref: nv_vpc_create_region
       required: true
     - name: description
-      value_ref: nv_vpc_create_description
+      value_ref: nv_wire_str_short
       required: true
     - name: v4_subnet
-      value_ref: nv_vpc_create_v4_subnet
+      value_ref: nv_wire_str_short
       required: true
     - name: v4_subnet_mask
-      value_ref: nv_vpc_create_v4_subnet_mask
+      value_ref: nv_wire_int
       required: true
   vpc_update:
     kind: update
     entity: Vpc
     parameters:
     - name: description
-      value_ref: nv_vpc_update_description
+      value_ref: nv_wire_str_short
       required: true
   vpc_delete:
     kind: delete
@@ -1798,14 +1798,14 @@ capabilities:
     entity: FirewallGroup
     parameters:
     - name: description
-      value_ref: nv_firewallgroup_create_description
+      value_ref: nv_wire_str_short
       required: true
   firewallgroup_update:
     kind: update
     entity: FirewallGroup
     parameters:
     - name: description
-      value_ref: nv_firewallgroup_update_description
+      value_ref: nv_wire_str_short
       required: true
   firewallgroup_delete:
     kind: delete
@@ -1815,15 +1815,15 @@ capabilities:
     entity: Instance
     parameters:
     - name: tag
-      value_ref: nv_instance_query_tag
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: label
-      value_ref: nv_instance_query_label
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: main_ip
-      value_ref: nv_instance_query_main_ip
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: region
@@ -1831,14 +1831,14 @@ capabilities:
       required: false
       role: filter
     - name: hostname
-      value_ref: nv_instance_query_hostname
+      value_ref: nv_wire_str_short
       required: false
       role: filter
     - name: firewall_group_id
       value_ref: nv_instance_query_firewall_group_id
       required: false
     - name: show_pending_charges
-      value_ref: nv_instance_query_show_pending_charges
+      value_ref: nv_wire_bool
       required: false
   instance_get:
     kind: get
@@ -1857,13 +1857,13 @@ capabilities:
       value_ref: nv_instance_create_os_id
       required: true
     - name: label
-      value_ref: nv_instance_create_label
+      value_ref: nv_wire_str_short
       required: false
     - name: hostname
-      value_ref: nv_instance_create_hostname
+      value_ref: nv_wire_str_short
       required: false
     - name: enable_ipv6
-      value_ref: nv_instance_create_enable_ipv6
+      value_ref: nv_wire_bool
       required: false
     - name: firewall_group_id
       value_ref: nv_instance_create_firewall_group_id
@@ -1873,10 +1873,10 @@ capabilities:
     entity: Instance
     parameters:
     - name: label
-      value_ref: nv_instance_update_label
+      value_ref: nv_wire_str_short
       required: false
     - name: hostname
-      value_ref: nv_instance_update_hostname
+      value_ref: nv_wire_str_short
       required: false
   instance_delete:
     kind: delete
@@ -1913,17 +1913,17 @@ capabilities:
       value_ref: nv_reservedip_create_region
       required: true
     - name: ip_type
-      value_ref: nv_reservedip_create_ip_type
+      value_ref: nv_wire_sel_3165a4e18b8315ed
       required: true
     - name: label
-      value_ref: nv_reservedip_create_label
+      value_ref: nv_wire_str_short
       required: false
   reservedip_update:
     kind: update
     entity: ReservedIp
     parameters:
     - name: label
-      value_ref: nv_reservedip_update_label
+      value_ref: nv_wire_str_short
       required: true
   reservedip_delete:
     kind: delete
@@ -1942,28 +1942,28 @@ capabilities:
       value_ref: nv_loadbalancer_create_region
       required: true
     - name: label
-      value_ref: nv_loadbalancer_create_label
+      value_ref: nv_wire_str_short
       required: true
     - name: nodes
-      value_ref: nv_loadbalancer_create_nodes
+      value_ref: nv_wire_int
       required: false
     - name: ssl_redirect
-      value_ref: nv_loadbalancer_create_ssl_redirect
+      value_ref: nv_wire_bool
       required: false
     - name: http2
-      value_ref: nv_loadbalancer_create_http2
+      value_ref: nv_wire_bool
       required: false
     - name: http3
-      value_ref: nv_loadbalancer_create_http3
+      value_ref: nv_wire_bool
       required: false
     - name: proxy_protocol
-      value_ref: nv_loadbalancer_create_proxy_protocol
+      value_ref: nv_wire_bool
       required: false
     - name: timeout
-      value_ref: nv_loadbalancer_create_timeout
+      value_ref: nv_wire_int
       required: false
     - name: balancing_algorithm
-      value_ref: nv_loadbalancer_create_balancing_algorithm
+      value_ref: nv_wire_str_short
       required: false
     - name: vpc
       value_ref: nv_loadbalancer_create_vpc
@@ -1973,28 +1973,28 @@ capabilities:
     entity: LoadBalancer
     parameters:
     - name: label
-      value_ref: nv_loadbalancer_update_label
+      value_ref: nv_wire_str_short
       required: false
     - name: nodes
-      value_ref: nv_loadbalancer_update_nodes
+      value_ref: nv_wire_int
       required: false
     - name: ssl_redirect
-      value_ref: nv_loadbalancer_update_ssl_redirect
+      value_ref: nv_wire_bool
       required: false
     - name: http2
-      value_ref: nv_loadbalancer_update_http2
+      value_ref: nv_wire_bool
       required: false
     - name: http3
-      value_ref: nv_loadbalancer_update_http3
+      value_ref: nv_wire_bool
       required: false
     - name: proxy_protocol
-      value_ref: nv_loadbalancer_update_proxy_protocol
+      value_ref: nv_wire_bool
       required: false
     - name: timeout
-      value_ref: nv_loadbalancer_update_timeout
+      value_ref: nv_wire_int
       required: false
     - name: balancing_algorithm
-      value_ref: nv_loadbalancer_update_balancing_algorithm
+      value_ref: nv_wire_str_short
       required: false
   loadbalancer_delete:
     kind: delete
@@ -2018,25 +2018,25 @@ capabilities:
       value_ref: nv_firewallrule_create_firewall_group_id
       required: true
     - name: ip_type
-      value_ref: nv_firewallrule_create_ip_type
+      value_ref: nv_wire_sel_3165a4e18b8315ed
       required: true
     - name: protocol
-      value_ref: nv_firewallrule_create_protocol
+      value_ref: nv_wire_sel_3fe4d4fac1a8e87f
       required: true
     - name: subnet
-      value_ref: nv_firewallrule_create_subnet
+      value_ref: nv_wire_str_short
       required: true
     - name: subnet_size
-      value_ref: nv_firewallrule_create_subnet_size
+      value_ref: nv_wire_int
       required: true
     - name: port
-      value_ref: nv_firewallrule_create_port
+      value_ref: nv_wire_str_short
       required: false
     - name: source
-      value_ref: nv_firewallrule_create_source
+      value_ref: nv_wire_str_short
       required: false
     - name: notes
-      value_ref: nv_firewallrule_create_notes
+      value_ref: nv_wire_str_short
       required: false
   firewallrule_delete:
     kind: delete
@@ -2055,20 +2055,20 @@ capabilities:
       value_ref: nv_snapshot_create_instance_id
       required: true
     - name: description
-      value_ref: nv_snapshot_create_description
+      value_ref: nv_wire_str_short
       required: false
   snapshot_create_from_url:
     kind: create
     entity: Snapshot
     parameters:
     - name: url
-      value_ref: nv_snapshot_create_from_url_url
+      value_ref: nv_wire_str_short
       required: true
     - name: description
-      value_ref: nv_snapshot_create_from_url_description
+      value_ref: nv_wire_str_short
       required: false
     - name: uefi
-      value_ref: nv_snapshot_create_from_url_uefi
+      value_ref: nv_wire_bool
       required: false
   snapshot_delete:
     kind: delete
@@ -2087,29 +2087,29 @@ capabilities:
       value_ref: nv_block_create_region
       required: true
     - name: size_gb
-      value_ref: nv_block_create_size_gb
+      value_ref: nv_wire_int
       required: true
     - name: label
-      value_ref: nv_block_create_label
+      value_ref: nv_wire_str_short
       required: true
     - name: block_type
-      value_ref: nv_block_create_block_type
+      value_ref: nv_wire_sel_72fd39fb1f8b8f2f
       required: false
     - name: snapshot_id
       value_ref: nv_block_create_snapshot_id
       required: false
     - name: bootable
-      value_ref: nv_block_create_bootable
+      value_ref: nv_wire_bool
       required: false
   block_update:
     kind: update
     entity: BlockStorage
     parameters:
     - name: label
-      value_ref: nv_block_update_label
+      value_ref: nv_wire_str_short
       required: false
     - name: size_gb
-      value_ref: nv_block_update_size_gb
+      value_ref: nv_wire_int
       required: false
   block_delete:
     kind: delete
@@ -2125,7 +2125,7 @@ capabilities:
       value_ref: nv_block_attach_instance_id
       required: true
     - name: live
-      value_ref: nv_block_attach_live
+      value_ref: nv_wire_bool
       required: false
   block_detach:
     kind: action
@@ -2135,7 +2135,7 @@ capabilities:
       description: Detaches this block volume, with optional live detach to avoid reboot.
     parameters:
     - name: live
-      value_ref: nv_block_detach_live
+      value_ref: nv_wire_bool
       required: false
   iso_query:
     kind: query
@@ -2148,7 +2148,7 @@ capabilities:
     entity: Iso
     parameters:
     - name: url
-      value_ref: nv_iso_create_url
+      value_ref: nv_wire_str_short
       required: true
   iso_delete:
     kind: delete
@@ -2164,10 +2164,10 @@ capabilities:
     entity: StartupScript
     parameters:
     - name: name
-      value_ref: nv_startupscript_create_name
+      value_ref: nv_wire_str_short
       required: true
     - name: type
-      value_ref: nv_startupscript_create_type
+      value_ref: nv_wire_sel_529cf443139f2286
       required: true
     - name: script
       value_ref: nv_startupscript_create_script
@@ -2177,7 +2177,7 @@ capabilities:
     entity: StartupScript
     parameters:
     - name: name
-      value_ref: nv_startupscript_update_name
+      value_ref: nv_wire_str_short
       required: false
     - name: script
       value_ref: nv_startupscript_update_script
@@ -2202,13 +2202,13 @@ capabilities:
     entity: DnsDomain
     parameters:
     - name: domain
-      value_ref: nv_dnsdomain_create_domain
+      value_ref: nv_wire_str_short
       required: true
     - name: ip
-      value_ref: nv_dnsdomain_create_ip
+      value_ref: nv_wire_str_short
       required: false
     - name: dns_sec
-      value_ref: nv_dnsdomain_create_dns_sec
+      value_ref: nv_wire_str_short
       required: false
   dnsdomain_delete:
     kind: delete
@@ -2232,35 +2232,35 @@ capabilities:
       value_ref: nv_dnsrecord_create_domain
       required: true
     - name: name
-      value_ref: nv_dnsrecord_create_name
+      value_ref: nv_wire_str_short
       required: true
     - name: type
-      value_ref: nv_dnsrecord_create_type
+      value_ref: nv_wire_sel_c7fc16b95f0ae0a7
       required: true
     - name: data
-      value_ref: nv_dnsrecord_create_data
+      value_ref: nv_wire_str_short
       required: true
     - name: ttl
-      value_ref: nv_dnsrecord_create_ttl
+      value_ref: nv_wire_int
       required: true
     - name: priority
-      value_ref: nv_dnsrecord_create_priority
+      value_ref: nv_wire_int
       required: false
   dnsrecord_update:
     kind: update
     entity: DnsRecord
     parameters:
     - name: name
-      value_ref: nv_dnsrecord_update_name
+      value_ref: nv_wire_str_short
       required: false
     - name: data
-      value_ref: nv_dnsrecord_update_data
+      value_ref: nv_wire_str_short
       required: false
     - name: ttl
-      value_ref: nv_dnsrecord_update_ttl
+      value_ref: nv_wire_int
       required: false
     - name: priority
-      value_ref: nv_dnsrecord_update_priority
+      value_ref: nv_wire_int
       required: false
   dnsrecord_delete:
     kind: delete
@@ -2276,20 +2276,20 @@ capabilities:
     entity: ObjectStorage
     parameters:
     - name: cluster_id
-      value_ref: nv_objectstorage_create_cluster_id
+      value_ref: nv_wire_int
       required: true
     - name: tier_id
-      value_ref: nv_objectstorage_create_tier_id
+      value_ref: nv_wire_int
       required: true
     - name: label
-      value_ref: nv_objectstorage_create_label
+      value_ref: nv_wire_str_short
       required: true
   objectstorage_update:
     kind: update
     entity: ObjectStorage
     parameters:
     - name: label
-      value_ref: nv_objectstorage_update_label
+      value_ref: nv_wire_str_short
       required: true
   objectstorage_delete:
     kind: delete
@@ -2305,50 +2305,50 @@ capabilities:
     entity: ManagedDatabase
     parameters:
     - name: database_engine
-      value_ref: nv_manageddatabase_create_database_engine
+      value_ref: nv_wire_str_short
       required: true
     - name: database_engine_version
-      value_ref: nv_manageddatabase_create_database_engine_version
+      value_ref: nv_wire_int
       required: true
     - name: region
       value_ref: nv_manageddatabase_create_region
       required: true
     - name: plan
-      value_ref: nv_manageddatabase_create_plan
+      value_ref: nv_wire_str_short
       required: true
     - name: label
-      value_ref: nv_manageddatabase_create_label
+      value_ref: nv_wire_str_short
       required: true
     - name: tag
-      value_ref: nv_manageddatabase_create_tag
+      value_ref: nv_wire_str_short
       required: false
     - name: vpc_id
       value_ref: nv_manageddatabase_create_vpc_id
       required: false
     - name: maintenance_dow
-      value_ref: nv_manageddatabase_create_maintenance_dow
+      value_ref: nv_wire_sel_0780285c9fcb6c03
       required: false
     - name: maintenance_time
-      value_ref: nv_manageddatabase_create_maintenance_time
+      value_ref: nv_wire_str_short
       required: false
     - name: backup_hour
-      value_ref: nv_manageddatabase_create_backup_hour
+      value_ref: nv_wire_str_short
       required: false
     - name: backup_minute
-      value_ref: nv_manageddatabase_create_backup_minute
+      value_ref: nv_wire_str_short
       required: false
   manageddatabase_update:
     kind: update
     entity: ManagedDatabase
     parameters:
     - name: plan
-      value_ref: nv_manageddatabase_update_plan
+      value_ref: nv_wire_str_short
       required: false
     - name: label
-      value_ref: nv_manageddatabase_update_label
+      value_ref: nv_wire_str_short
       required: false
     - name: tag
-      value_ref: nv_manageddatabase_update_tag
+      value_ref: nv_wire_str_short
       required: false
   manageddatabase_delete:
     kind: delete
@@ -2403,7 +2403,7 @@ capabilities:
       description: Enqueues a control plane upgrade to a target available Kubernetes version for this cluster.
     parameters:
     - name: upgrade_version
-      value_ref: nv_kubernetescluster_start_upgrade_upgrade_version
+      value_ref: nv_wire_str_short
       required: true
   kubernetescluster_delete_with_linked_resources:
     kind: delete
@@ -2426,13 +2426,13 @@ capabilities:
     entity: BareMetal
     parameters:
     - name: label
-      value_ref: nv_baremetal_update_label
+      value_ref: nv_wire_str_short
       required: false
     - name: tags
       value_ref: nv_baremetal_update_tags
       required: false
     - name: user_data
-      value_ref: nv_baremetal_update_user_data
+      value_ref: nv_wire_str_short
       required: false
   baremetal_delete:
     kind: delete
@@ -2509,10 +2509,10 @@ capabilities:
       description: Publishes or updates reverse DNS (PTR) for a specific IPv4 address on this server.
     parameters:
     - name: ip
-      value_ref: nv_baremetal_set_ipv4_reverse_ip
+      value_ref: nv_wire_str_short
       required: true
     - name: reverse
-      value_ref: nv_baremetal_set_ipv4_reverse_reverse
+      value_ref: nv_wire_str_short
       required: true
   baremetal_set_ipv6_reverse:
     kind: action
@@ -2522,10 +2522,10 @@ capabilities:
       description: Publishes or updates reverse DNS (PTR) for a specific full-length IPv6 address on this server.
     parameters:
     - name: ip
-      value_ref: nv_baremetal_set_ipv6_reverse_ip
+      value_ref: nv_wire_str_short
       required: true
     - name: reverse
-      value_ref: nv_baremetal_set_ipv6_reverse_reverse
+      value_ref: nv_wire_str_short
       required: true
   baremetal_set_ipv4_default_reverse:
     kind: action
@@ -2535,7 +2535,7 @@ capabilities:
       description: Restores default Vultr reverse DNS for a given primary IPv4 address.
     parameters:
     - name: ip
-      value_ref: nv_baremetal_set_ipv4_default_reverse_ip
+      value_ref: nv_wire_str_short
       required: true
   baremetal_delete_ipv6_reverse:
     kind: action
@@ -2545,7 +2545,7 @@ capabilities:
       description: Clears a user-defined reverse record for a specific IPv6 address.
     parameters:
     - name: ip
-      value_ref: nv_baremetal_delete_ipv6_reverse_ip
+      value_ref: nv_wire_str_short
       required: true
   baremetalbandwidth_get:
     kind: get
@@ -2589,7 +2589,7 @@ capabilities:
       value_ref: nv_baremetal_vpc2_attach_vpc_id
       required: true
     - name: ip_address
-      value_ref: nv_baremetal_vpc2_attach_ip_address
+      value_ref: nv_wire_str_short
       required: true
   baremetal_vpc2_detach:
     kind: action
@@ -2696,7 +2696,7 @@ capabilities:
       required: true
       role: scope
     - name: nodepool_id
-      value_ref: nv_kubernetesnodepoollabel_query_nodepool_id
+      value_ref: nv_wire_str_short
       required: true
       role: scope
   kubernetesnodepoollabel_get:
@@ -2710,13 +2710,13 @@ capabilities:
       value_ref: nv_kubernetesnodepoollabel_create_vke_id
       required: true
     - name: nodepool_id
-      value_ref: nv_kubernetesnodepoollabel_create_nodepool_id
+      value_ref: nv_wire_str_short
       required: true
     - name: key
-      value_ref: nv_kubernetesnodepoollabel_create_key
+      value_ref: nv_wire_str_short
       required: true
     - name: value
-      value_ref: nv_kubernetesnodepoollabel_create_value
+      value_ref: nv_wire_str_short
       required: true
   kubernetesnodepoollabel_delete:
     kind: delete
@@ -2730,7 +2730,7 @@ capabilities:
       required: true
       role: scope
     - name: nodepool_id
-      value_ref: nv_kubernetesnodepooltaint_query_nodepool_id
+      value_ref: nv_wire_str_short
       required: true
       role: scope
   kubernetesnodepooltaint_get:
@@ -2744,16 +2744,16 @@ capabilities:
       value_ref: nv_kubernetesnodepooltaint_create_vke_id
       required: true
     - name: nodepool_id
-      value_ref: nv_kubernetesnodepooltaint_create_nodepool_id
+      value_ref: nv_wire_str_short
       required: true
     - name: key
-      value_ref: nv_kubernetesnodepooltaint_create_key
+      value_ref: nv_wire_str_short
       required: true
     - name: value
-      value_ref: nv_kubernetesnodepooltaint_create_value
+      value_ref: nv_wire_str_short
       required: true
     - name: effect
-      value_ref: nv_kubernetesnodepooltaint_create_effect
+      value_ref: nv_wire_str_short
       required: true
   kubernetesnodepooltaint_delete:
     kind: delete
@@ -2789,10 +2789,10 @@ capabilities:
       value_ref: nv_cdnpushzonefile_request_upload_push_zone_id
       required: true
     - name: name
-      value_ref: nv_cdnpushzonefile_request_upload_name
+      value_ref: nv_wire_str_short
       required: true
     - name: size
-      value_ref: nv_cdnpushzonefile_request_upload_size
+      value_ref: nv_wire_int
       required: true
   baremetal_reinstall:
     kind: action
@@ -2809,7 +2809,7 @@ capabilities:
     - date_created
     parameters:
     - name: hostname
-      value_ref: nv_baremetal_reinstall_hostname
+      value_ref: nv_wire_str_short
       required: true
   baremetal_vnc:
     kind: action
@@ -2840,1622 +2840,138 @@ auth:
   scheme: bearer_token
   env: VULTR_API_KEY
 values:
-  nv_account_email:
-    type: string
-    string_semantics: short
-  nv_account_name:
-    type: string
-    string_semantics: short
-  nv_account_balance:
-    type: number
-  nv_account_pending_charges:
-    type: number
-  nv_account_last_payment_amount:
-    type: number
-  nv_account_last_payment_date:
-    type: date
-    value_format: rfc3339
-  nv_account_acls_item:
-    type: string
-    string_semantics: short
-  nv_account_acls:
-    type: array
-    items:
-      value_ref: nv_account_acls_item
-  nv_account_bgp_enabled:
-    type: boolean
-  nv_account_bgp_asn:
-    type: integer
-  nv_account_bgp_password:
-    type: string
-    string_semantics: short
   nv_account_bandwidth_usage:
     type: json
-  nv_region_id:
-    type: string
-    string_semantics: short
-  nv_region_city:
-    type: string
-    string_semantics: short
-  nv_region_country:
-    type: string
-    string_semantics: short
-  nv_region_continent:
-    type: string
-    string_semantics: short
-  nv_region_options_item:
-    type: string
-    string_semantics: short
-  nv_region_options:
-    type: array
-    items:
-      value_ref: nv_region_options_item
-  nv_region_connectivity_item:
-    type: string
-    string_semantics: short
-  nv_region_connectivity:
-    type: array
-    items:
-      value_ref: nv_region_connectivity_item
-  nv_plan_id:
-    type: string
-    string_semantics: short
-  nv_plan_vcpu_count:
-    type: integer
-  nv_plan_ram:
-    type: integer
-  nv_plan_disk:
-    type: integer
-  nv_plan_disk_count:
-    type: integer
-  nv_plan_bandwidth:
-    type: integer
-  nv_plan_type:
-    type: string
-    string_semantics: short
-  nv_plan_locations_item:
-    type: string
-    string_semantics: short
-  nv_plan_locations:
-    type: array
-    items:
-      value_ref: nv_plan_locations_item
-  nv_plan_monthly_cost:
-    type: number
-  nv_plan_hourly_cost:
-    type: number
-  nv_bare_metal_plan_id:
-    type: string
-    string_semantics: short
-  nv_bare_metal_plan_type:
-    type: string
-    string_semantics: short
-  nv_bare_metal_plan_cpu_count:
-    type: integer
-  nv_bare_metal_plan_cpu_threads:
-    type: integer
-  nv_bare_metal_plan_cpu_model:
-    type: string
-    string_semantics: short
-  nv_bare_metal_plan_ram:
-    type: integer
-  nv_bare_metal_plan_disk:
-    type: integer
-  nv_bare_metal_plan_disk_count:
-    type: integer
-  nv_bare_metal_plan_bandwidth:
-    type: integer
-  nv_bare_metal_plan_locations_item:
-    type: string
-    string_semantics: short
-  nv_bare_metal_plan_locations:
-    type: array
-    items:
-      value_ref: nv_bare_metal_plan_locations_item
-  nv_os_id:
-    type: integer
-  nv_os_name:
-    type: string
-    string_semantics: short
-  nv_os_arch:
-    type: string
-    string_semantics: short
-  nv_os_family:
-    type: string
-    string_semantics: short
-  nv_application_id:
-    type: integer
-  nv_application_name:
-    type: string
-    string_semantics: short
-  nv_application_type:
-    type: string
-    string_semantics: short
-  nv_application_vendor:
-    type: string
-    string_semantics: short
-  nv_application_short_name:
-    type: string
-    string_semantics: short
-  nv_application_deploy_name:
-    type: string
-    string_semantics: short
-  nv_application_image_id:
-    type: string
-    string_semantics: short
-  nv_billing_line_id:
-    type: integer
-  nv_billing_line_type:
-    type: string
-    string_semantics: short
-  nv_billing_line_description:
-    type: string
-    string_semantics: short
-  nv_billing_line_amount:
-    type: number
-  nv_billing_line_balance:
-    type: number
-  nv_billing_line_date:
-    type: date
-    value_format: rfc3339
-  nv_invoice_id:
-    type: string
-    string_semantics: short
-  nv_invoice_description:
-    type: string
-    string_semantics: short
-  nv_invoice_amount:
-    type: number
-  nv_invoice_date:
-    type: date
-    value_format: rfc3339
-  nv_api_key_id:
-    type: string
-    string_semantics: short
-  nv_api_key_name:
-    type: string
-    string_semantics: short
-  nv_api_key_masked_key:
-    type: string
-    string_semantics: short
-  nv_api_key_expire:
-    type: boolean
-  nv_api_key_date_expire:
-    type: date
-    value_format: rfc3339
-  nv_user_id:
-    type: string
-    string_semantics: short
-  nv_user_name:
-    type: string
-    string_semantics: short
-  nv_user_first_name:
-    type: string
-    string_semantics: short
-  nv_user_last_name:
-    type: string
-    string_semantics: short
-  nv_user_email:
-    type: string
-    string_semantics: short
-  nv_user_api_enabled:
-    type: boolean
-  nv_user_service_user:
-    type: boolean
-  nv_user_status:
-    type: boolean
-  nv_user_invited_by:
-    type: string
-    string_semantics: short
-  nv_user_invited_on:
-    type: date
-    value_format: rfc3339
-  nv_user_invite_accepted:
-    type: boolean
-  nv_user_last_activity:
-    type: date
-    value_format: rfc3339
-  nv_user_acls_item:
-    type: string
-    string_semantics: short
-  nv_user_acls:
-    type: array
-    items:
-      value_ref: nv_user_acls_item
-  nv_ssh_key_id:
-    type: string
-    string_semantics: short
-  nv_ssh_key_name:
-    type: string
-    string_semantics: short
-  nv_ssh_key_public_key:
-    type: string
-    string_semantics: short
-  nv_ssh_key_date_created:
-    type: date
-    value_format: rfc3339
-  nv_iam_policy_id:
-    type: string
-    string_semantics: short
-  nv_iam_policy_name:
-    type: string
-    string_semantics: short
-  nv_iam_policy_description:
-    type: string
-    string_semantics: short
-  nv_iam_policy_version:
-    type: string
-    string_semantics: short
-  nv_iam_policy_is_system_policy:
-    type: boolean
-  nv_iam_policy_date_created:
-    type: date
-    value_format: rfc3339
-  nv_iam_policy_policy_document:
-    type: json
-  nv_iam_role_id:
-    type: string
-    string_semantics: short
-  nv_iam_role_name:
-    type: string
-    string_semantics: short
-  nv_iam_role_description:
-    type: string
-    string_semantics: short
-  nv_iam_role_role_type:
-    type: string
-    string_semantics: short
-  nv_iam_role_max_session_duration:
-    type: integer
-  nv_iam_role_date_created:
-    type: date
-    value_format: rfc3339
-  nv_iam_role_policies:
-    type: json
-  nv_iam_group_id:
-    type: string
-    string_semantics: short
-  nv_iam_group_display_name:
-    type: string
-    string_semantics: short
-  nv_iam_group_description:
-    type: string
-    string_semantics: short
-  nv_iam_group_status:
-    type: string
-    string_semantics: short
-  nv_iam_group_last_activity:
-    type: date
-    value_format: rfc3339
-  nv_iam_group_date_created:
-    type: date
-    value_format: rfc3339
-  nv_iam_group_date_updated:
-    type: date
-    value_format: rfc3339
-  nv_iam_group_members:
-    type: json
-  nv_vpc_id:
-    type: string
-    string_semantics: short
-  nv_vpc_region:
-    type: entity_ref
-    target: Region
-  nv_vpc_description:
-    type: string
-    string_semantics: short
-  nv_vpc_date_created:
-    type: date
-    value_format: rfc3339
-  nv_vpc_v4_subnet:
-    type: string
-    string_semantics: short
-  nv_vpc_v4_subnet_mask:
-    type: integer
-  nv_vpc_nodes:
-    type: json
-  nv_firewall_group_id:
-    type: string
-    string_semantics: short
-  nv_firewall_group_description:
-    type: string
-    string_semantics: short
-  nv_firewall_group_date_created:
-    type: date
-    value_format: rfc3339
-  nv_firewall_group_date_modified:
-    type: date
-    value_format: rfc3339
-  nv_firewall_group_instance_count:
-    type: integer
-  nv_firewall_group_rule_count:
-    type: integer
-  nv_firewall_group_max_rule_count:
-    type: integer
-  nv_instance_id:
-    type: string
-    string_semantics: short
-  nv_instance_label:
-    type: string
-    string_semantics: short
-  nv_instance_hostname:
-    type: string
-    string_semantics: short
-  nv_instance_os:
-    type: string
-    string_semantics: short
-  nv_instance_region:
-    type: entity_ref
-    target: Region
-  nv_instance_plan:
-    type: entity_ref
-    target: Plan
-  nv_instance_main_ip:
-    type: string
-    string_semantics: short
-  nv_instance_status:
-    type: string
-    string_semantics: short
-  nv_instance_power_status:
-    type: string
-    string_semantics: short
-  nv_instance_server_status:
-    type: string
-    string_semantics: short
-  nv_instance_ram:
-    type: integer
-  nv_instance_disk:
-    type: integer
-  nv_instance_vcpu_count:
-    type: integer
-  nv_instance_os_id:
-    type: entity_ref
-    target: Os
-  nv_instance_app_id:
-    type: entity_ref
-    target: Application
-  nv_instance_image_id:
-    type: string
-    string_semantics: short
-  nv_instance_date_created:
-    type: date
-    value_format: rfc3339
-  nv_instance_allowed_bandwidth:
-    type: integer
-  nv_instance_pending_charges:
-    type: number
-  nv_instance_firewall_group_id:
-    type: entity_ref
-    target: FirewallGroup
-  nv_instance_vpcs:
-    type: json
-  nv_instance_features_item:
-    type: string
-    string_semantics: short
-  nv_instance_features:
-    type: array
-    items:
-      value_ref: nv_instance_features_item
-  nv_instance_tags_item:
-    type: string
-    string_semantics: short
-  nv_instance_tags:
-    type: array
-    items:
-      value_ref: nv_instance_tags_item
-  nv_reserved_ip_id:
-    type: string
-    string_semantics: short
-  nv_reserved_ip_region:
-    type: entity_ref
-    target: Region
-  nv_reserved_ip_ip_type:
-    type: select
-    allowed_values:
-    - v4
-    - v6
-  nv_reserved_ip_subnet:
-    type: string
-    string_semantics: short
-  nv_reserved_ip_subnet_size:
-    type: integer
-  nv_reserved_ip_label:
-    type: string
-    string_semantics: short
-  nv_reserved_ip_instance_id:
-    type: entity_ref
-    target: Instance
-  nv_load_balancer_id:
-    type: string
-    string_semantics: short
-  nv_load_balancer_label:
-    type: string
-    string_semantics: short
-  nv_load_balancer_region:
-    type: entity_ref
-    target: Region
-  nv_load_balancer_status:
-    type: string
-    string_semantics: short
-  nv_load_balancer_ipv4:
-    type: string
-    string_semantics: short
-  nv_load_balancer_ipv6:
-    type: string
-    string_semantics: short
-  nv_load_balancer_date_created:
-    type: date
-    value_format: rfc3339
-  nv_load_balancer_pending_charges:
-    type: number
-  nv_load_balancer_has_ssl:
-    type: boolean
-  nv_load_balancer_http2:
-    type: boolean
-  nv_load_balancer_http3:
-    type: boolean
-  nv_load_balancer_nodes:
-    type: integer
-  nv_load_balancer_cname:
-    type: string
-    string_semantics: short
-  nv_load_balancer_generic_info:
-    type: json
-  nv_load_balancer_health_check:
-    type: json
-  nv_load_balancer_forwarding_rules:
-    type: json
-  nv_load_balancer_node_ips:
-    type: json
-  nv_firewall_rule_id:
-    type: string
-    string_semantics: short
-  nv_firewall_rule_firewall_group_id:
-    type: entity_ref
-    target: FirewallGroup
-  nv_firewall_rule_kind:
-    type: select
-    allowed_values:
-    - v4
-    - v6
-  nv_firewall_rule_ip_type:
-    type: select
-    allowed_values:
-    - v4
-    - v6
-  nv_firewall_rule_action:
-    type: string
-    string_semantics: short
-  nv_firewall_rule_protocol:
-    type: select
-    allowed_values:
-    - tcp
-    - udp
-    - icmp
-    - gre
-    - esp
-    - ah
-  nv_firewall_rule_port:
-    type: string
-    string_semantics: short
-  nv_firewall_rule_subnet:
-    type: string
-    string_semantics: short
-  nv_firewall_rule_subnet_size:
-    type: integer
-  nv_firewall_rule_source:
-    type: string
-    string_semantics: short
-  nv_firewall_rule_notes:
-    type: string
-    string_semantics: short
-  nv_snapshot_id:
-    type: string
-    string_semantics: short
-  nv_snapshot_date_created:
-    type: date
-    value_format: rfc3339
-  nv_snapshot_description:
-    type: string
-    string_semantics: short
-  nv_snapshot_size:
-    type: integer
-  nv_snapshot_compressed_size:
-    type: integer
-  nv_snapshot_status:
-    type: string
-    string_semantics: short
-  nv_snapshot_os_id:
-    type: entity_ref
-    target: Os
-  nv_snapshot_app_id:
-    type: entity_ref
-    target: Application
-  nv_block_storage_id:
-    type: string
-    string_semantics: short
-  nv_block_storage_date_created:
-    type: date
-    value_format: rfc3339
-  nv_block_storage_cost:
-    type: number
-  nv_block_storage_status:
-    type: select
-    allowed_values:
-    - pending
-    - active
-  nv_block_storage_size_gb:
-    type: integer
-  nv_block_storage_region:
-    type: entity_ref
-    target: Region
-  nv_block_storage_attached_to_instance:
-    type: entity_ref
-    target: Instance
-  nv_block_storage_label:
-    type: string
-    string_semantics: short
-  nv_block_storage_mount_id:
-    type: string
-    string_semantics: short
-  nv_block_storage_block_type:
-    type: select
-    allowed_values:
-    - high_perf
-    - storage_opt
-  nv_iso_id:
-    type: string
-    string_semantics: short
-  nv_iso_date_created:
-    type: date
-    value_format: rfc3339
-  nv_iso_filename:
-    type: string
-    string_semantics: short
-  nv_iso_size:
-    type: integer
-  nv_iso_md5sum:
-    type: string
-    string_semantics: short
-  nv_iso_status:
-    type: string
-    string_semantics: short
-  nv_startup_script_id:
-    type: string
-    string_semantics: short
-  nv_startup_script_date_created:
-    type: date
-    value_format: rfc3339
-  nv_startup_script_date_modified:
-    type: date
-    value_format: rfc3339
-  nv_startup_script_name:
-    type: string
-    string_semantics: short
-  nv_startup_script_type:
-    type: select
-    allowed_values:
-    - boot
-    - pxe
-  nv_startup_script_script:
-    type: blob
-  nv_backup_id:
-    type: string
-    string_semantics: short
-  nv_backup_date_created:
-    type: date
-    value_format: rfc3339
-  nv_backup_description:
-    type: string
-    string_semantics: short
-  nv_backup_size:
-    type: integer
-  nv_backup_status:
-    type: string
-    string_semantics: short
-  nv_backup_os_id:
-    type: entity_ref
-    target: Os
-  nv_backup_app_id:
-    type: entity_ref
-    target: Application
-  nv_dns_domain_domain:
-    type: string
-    string_semantics: short
-  nv_dns_domain_date_created:
-    type: date
-    value_format: rfc3339
-  nv_dns_domain_dns_sec:
-    type: string
-    string_semantics: short
-  nv_dns_record_id:
-    type: string
-    string_semantics: short
-  nv_dns_record_domain:
-    type: entity_ref
-    target: DnsDomain
-  nv_dns_record_type:
-    type: select
-    allowed_values:
-    - A
-    - AAAA
-    - CNAME
-    - NS
-    - MX
-    - SRV
-    - TXT
-    - CAA
-    - SSHFP
-  nv_dns_record_name:
-    type: string
-    string_semantics: short
-  nv_dns_record_data:
-    type: string
-    string_semantics: short
-  nv_dns_record_priority:
-    type: integer
-  nv_dns_record_ttl:
-    type: integer
-  nv_object_storage_id:
-    type: string
-    string_semantics: short
-  nv_object_storage_date_created:
-    type: date
-    value_format: rfc3339
-  nv_object_storage_cluster_id:
-    type: integer
-  nv_object_storage_region:
-    type: entity_ref
-    target: Region
-  nv_object_storage_label:
-    type: string
-    string_semantics: short
-  nv_object_storage_status:
-    type: string
-    string_semantics: short
-  nv_object_storage_s3_hostname:
-    type: string
-    string_semantics: short
-  nv_object_storage_s3_access_key:
-    type: string
-    string_semantics: short
-  nv_object_storage_s3_secret_key:
-    type: string
-    string_semantics: short
-  nv_object_storage_pending_charges:
-    type: number
-  nv_managed_database_id:
-    type: string
-    string_semantics: short
-  nv_managed_database_date_created:
-    type: date
-    value_format: rfc3339
-  nv_managed_database_plan:
-    type: string
-    string_semantics: short
-  nv_managed_database_plan_disk:
-    type: integer
-  nv_managed_database_plan_ram:
-    type: integer
-  nv_managed_database_plan_vcpus:
-    type: integer
-  nv_managed_database_plan_replicas:
-    type: integer
-  nv_managed_database_region:
-    type: entity_ref
-    target: Region
-  nv_managed_database_database_engine:
-    type: string
-    string_semantics: short
-  nv_managed_database_database_engine_version:
-    type: integer
-  nv_managed_database_vpc_id:
-    type: entity_ref
-    target: Vpc
-  nv_managed_database_status:
-    type: string
-    string_semantics: short
-  nv_managed_database_label:
-    type: string
-    string_semantics: short
-  nv_managed_database_tag:
-    type: string
-    string_semantics: short
-  nv_managed_database_dbname:
-    type: string
-    string_semantics: short
-  nv_managed_database_host:
-    type: string
-    string_semantics: short
-  nv_managed_database_public_host:
-    type: string
-    string_semantics: short
-  nv_managed_database_user:
-    type: string
-    string_semantics: short
-  nv_managed_database_password:
-    type: string
-    string_semantics: short
-  nv_managed_database_port:
-    type: integer
-  nv_managed_database_maintenance_dow:
-    type: select
-    allowed_values:
-    - monday
-    - tuesday
-    - wednesday
-    - thursday
-    - friday
-    - saturday
-    - sunday
-  nv_managed_database_maintenance_time:
-    type: string
-    string_semantics: short
-  nv_managed_database_backup_hour:
-    type: string
-    string_semantics: short
-  nv_managed_database_backup_minute:
-    type: string
-    string_semantics: short
-  nv_managed_database_pending_charges:
-    type: number
-  nv_kubernetes_cluster_id:
-    type: string
-    string_semantics: short
-  nv_kubernetes_cluster_label:
-    type: string
-    string_semantics: short
-  nv_kubernetes_cluster_date_created:
-    type: date
-    value_format: rfc3339
-  nv_kubernetes_cluster_region:
-    type: entity_ref
-    target: Region
-  nv_kubernetes_cluster_version:
-    type: string
-    string_semantics: short
-  nv_kubernetes_cluster_status:
-    type: string
-    string_semantics: short
-  nv_kubernetes_cluster_endpoint:
-    type: string
-    string_semantics: short
-  nv_kubernetes_cluster_ip:
-    type: string
-    string_semantics: short
-  nv_kubernetes_cluster_cluster_subnet:
-    type: string
-    string_semantics: short
-  nv_kubernetes_cluster_service_subnet:
-    type: string
-    string_semantics: short
-  nv_kubernetes_cluster_ha_controlplanes:
-    type: boolean
-  nv_kubernetes_cluster_firewall_group_id:
-    type: entity_ref
-    target: FirewallGroup
-  nv_kubernetes_cluster_oidc:
-    type: json
-  nv_kubernetes_cluster_node_pools:
-    type: json
-  nv_kubernetes_cluster_vpcs:
-    type: json
-  nv_bare_metal_id:
-    type: string
-    string_semantics: short
-  nv_bare_metal_os:
-    type: string
-    string_semantics: short
-  nv_bare_metal_main_ip:
-    type: string
-    string_semantics: short
-  nv_bare_metal_region:
-    type: entity_ref
-    target: Region
-  nv_bare_metal_plan:
-    type: entity_ref
-    target: BareMetalPlan
-  nv_bare_metal_date_created:
-    type: date
-    value_format: rfc3339
-  nv_bare_metal_status:
-    type: string
-    string_semantics: short
-  nv_bare_metal_label:
-    type: string
-    string_semantics: short
-  nv_bare_metal_hostname:
-    type: string
-    string_semantics: short
-  nv_bare_metal_os_id:
-    type: entity_ref
-    target: Os
-  nv_bare_metal_app_id:
-    type: entity_ref
-    target: Application
-  nv_bare_metal_image_id:
-    type: string
-    string_semantics: short
-  nv_bare_metal_snapshot_id:
-    type: entity_ref
-    target: Snapshot
-  nv_bare_metal_features_item:
-    type: string
-    string_semantics: short
-  nv_bare_metal_features:
-    type: array
-    items:
-      value_ref: nv_bare_metal_features_item
-  nv_bare_metal_tags_item:
-    type: string
-    string_semantics: short
-  nv_bare_metal_tags:
-    type: array
-    items:
-      value_ref: nv_bare_metal_tags_item
-  nv_bare_metal_vpcs:
-    type: json
-  nv_bare_metal_vnc_url:
-    type: string
-    string_semantics: short
-  nv_cdn_pull_zone_id:
-    type: string
-    string_semantics: short
-  nv_cdn_pull_zone_date_created:
-    type: date
-    value_format: rfc3339
-  nv_cdn_pull_zone_status:
-    type: select
-    allowed_values:
-    - active
-    - pending
-  nv_cdn_pull_zone_label:
-    type: string
-    string_semantics: short
-  nv_cdn_pull_zone_origin_scheme:
-    type: select
-    allowed_values:
-    - http
-    - https
-  nv_cdn_pull_zone_origin_domain:
-    type: string
-    string_semantics: short
-  nv_cdn_pull_zone_cdn_url:
-    type: string
-    string_semantics: short
-  nv_cdn_pull_zone_vanity_domain:
-    type: string
-    string_semantics: short
-  nv_cdn_pull_zone_cache_size:
-    type: integer
-  nv_cdn_pull_zone_cors:
-    type: boolean
-  nv_cdn_pull_zone_gzip:
-    type: boolean
-  nv_cdn_pull_zone_block_ai:
-    type: boolean
-  nv_cdn_pull_zone_block_bad_bots:
-    type: boolean
-  nv_cdn_push_zone_id:
-    type: string
-    string_semantics: short
-  nv_cdn_push_zone_date_created:
-    type: date
-    value_format: rfc3339
-  nv_cdn_push_zone_status:
-    type: select
-    allowed_values:
-    - active
-    - pending
-  nv_cdn_push_zone_label:
-    type: string
-    string_semantics: short
-  nv_cdn_push_zone_cdn_url:
-    type: string
-    string_semantics: short
-  nv_cdn_push_zone_vanity_domain:
-    type: string
-    string_semantics: short
-  nv_cdn_push_zone_cache_size:
-    type: integer
-  nv_cdn_push_zone_cors:
-    type: boolean
-  nv_cdn_push_zone_gzip:
-    type: boolean
-  nv_cdn_push_zone_block_ai:
-    type: boolean
-  nv_cdn_push_zone_block_bad_bots:
-    type: boolean
-  nv_kubernetes_version_id:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_id:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_vke_id:
-    type: entity_ref
-    target: KubernetesCluster
-  nv_kubernetes_node_pool_date_created:
-    type: date
-    value_format: rfc3339
-  nv_kubernetes_node_pool_date_updated:
-    type: date
-    value_format: rfc3339
-  nv_kubernetes_node_pool_label:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_tag:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_plan:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_status:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_node_quantity:
-    type: integer
-  nv_kubernetes_node_pool_min_nodes:
-    type: integer
-  nv_kubernetes_node_pool_max_nodes:
-    type: integer
-  nv_kubernetes_node_pool_auto_scaler:
-    type: boolean
-  nv_kubernetes_node_pool_nodes:
-    type: json
-  nv_kubernetes_node_pool_pool_labels:
-    type: json
-  nv_kubernetes_node_pool_taints:
-    type: json
-  nv_kubernetes_node_pool_label_id:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_label_vke_id:
-    type: entity_ref
-    target: KubernetesCluster
-  nv_kubernetes_node_pool_label_nodepool_id:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_label_key:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_label_value:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_taint_id:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_taint_vke_id:
-    type: entity_ref
-    target: KubernetesCluster
-  nv_kubernetes_node_pool_taint_nodepool_id:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_taint_key:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_taint_value:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_taint_effect:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_node_id:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_node_vke_id:
-    type: entity_ref
-    target: KubernetesCluster
-  nv_kubernetes_node_pool_node_nodepool_id:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_node_label:
-    type: string
-    string_semantics: short
-  nv_kubernetes_node_pool_node_date_created:
-    type: date
-    value_format: rfc3339
-  nv_kubernetes_node_pool_node_status:
-    type: string
-    string_semantics: short
-  nv_cdn_upload_endpoint_url:
-    type: string
-    string_semantics: short
-  nv_cdn_upload_endpoint_inputs:
-    type: json
-  nv_cdn_push_zone_file_name:
-    type: string
-    string_semantics: short
-  nv_cdn_push_zone_file_push_zone_id:
-    type: entity_ref
-    target: CdnPushZone
-  nv_cdn_push_zone_file_size:
-    type: integer
-  nv_cdn_push_zone_file_last_modified:
-    type: date
-    value_format: rfc3339
-  nv_cdn_push_zone_file_mime:
-    type: string
-    string_semantics: short
-  nv_cdn_push_zone_file_content:
-    type: blob
-  nv_vke_resource_inventory_id:
-    type: entity_ref
-    target: KubernetesCluster
-  nv_vke_resource_inventory_resources:
-    type: json
-  nv_vke_kubeconfig_id:
-    type: entity_ref
-    target: KubernetesCluster
-  nv_vke_kubeconfig_content:
-    type: blob
-  nv_vke_available_upgrade_id:
-    type: string
-    string_semantics: short
-  nv_vke_available_upgrade_vke_id:
-    type: entity_ref
-    target: KubernetesCluster
-  nv_bare_metal_ip_v4_ip:
-    type: string
-    string_semantics: short
-  nv_bare_metal_ip_v4_bare_metal_id:
-    type: entity_ref
-    target: BareMetal
-  nv_bare_metal_ip_v4_netmask:
-    type: string
-    string_semantics: short
-  nv_bare_metal_ip_v4_gateway:
-    type: string
-    string_semantics: short
-  nv_bare_metal_ip_v4_type:
-    type: string
-    string_semantics: short
-  nv_bare_metal_ip_v4_reverse:
-    type: string
-    string_semantics: short
-  nv_bare_metal_ip_v6_ip:
-    type: string
-    string_semantics: short
-  nv_bare_metal_ip_v6_bare_metal_id:
-    type: entity_ref
-    target: BareMetal
-  nv_bare_metal_ip_v6_network:
-    type: string
-    string_semantics: short
-  nv_bare_metal_ip_v6_network_size:
-    type: integer
-  nv_bare_metal_ip_v6_type:
-    type: string
-    string_semantics: short
-  nv_bare_metal_bandwidth_id:
-    type: entity_ref
-    target: BareMetal
-  nv_bare_metal_bandwidth_series:
-    type: json
-  nv_bare_metal_user_data_id:
-    type: entity_ref
-    target: BareMetal
-  nv_bare_metal_user_data_data:
-    type: blob
-  nv_bare_metal_upgrade_catalog_id:
-    type: entity_ref
-    target: BareMetal
-  nv_bare_metal_upgrade_catalog_upgrades:
-    type: json
-  nv_bare_metal_vpc_attachment_id:
-    type: entity_ref
-    target: Vpc
-  nv_bare_metal_vpc_attachment_bare_metal_id:
-    type: entity_ref
-    target: BareMetal
-  nv_bare_metal_vpc_attachment_mac_address:
-    type: string
-    string_semantics: short
-  nv_bare_metal_vpc_attachment_ip_address:
-    type: string
-    string_semantics: short
-  nv_bare_metal_vpc2_attachment_id:
-    type: entity_ref
-    target: Vpc
-  nv_bare_metal_vpc2_attachment_bare_metal_id:
-    type: entity_ref
-    target: BareMetal
-  nv_bare_metal_vpc2_attachment_mac_address:
-    type: string
-    string_semantics: short
-  nv_bare_metal_vpc2_attachment_ip_address:
-    type: string
-    string_semantics: short
-  nv_plan_query_type:
-    type: string
-    string_semantics: short
-  nv_plan_query_os:
-    type: string
-    string_semantics: short
   nv_application_query_type:
     type: select
     allowed_values:
     - all
     - marketplace
     - one-click
-  nv_apikey_create_name:
-    type: string
-    string_semantics: short
-  nv_apikey_create_expire:
-    type: boolean
-  nv_apikey_create_date_expire:
-    type: date
-    value_format: rfc3339
-  nv_user_create_email:
-    type: string
-    string_semantics: short
-  nv_user_create_first_name:
-    type: string
-    string_semantics: short
-  nv_user_create_last_name:
-    type: string
-    string_semantics: short
-  nv_user_create_password:
-    type: string
-    string_semantics: short
-  nv_user_create_api_enabled:
-    type: boolean
-  nv_user_create_service_user:
-    type: boolean
-  nv_user_create_acls_item:
-    type: string
-    string_semantics: short
-  nv_user_create_acls:
-    type: array
-    items:
-      value_ref: nv_user_create_acls_item
-  nv_user_update_email:
-    type: string
-    string_semantics: short
-  nv_user_update_first_name:
-    type: string
-    string_semantics: short
-  nv_user_update_last_name:
-    type: string
-    string_semantics: short
-  nv_user_update_password:
-    type: string
-    string_semantics: short
-  nv_user_update_api_enabled:
-    type: boolean
-  nv_user_update_acls_item:
-    type: string
-    string_semantics: short
-  nv_user_update_acls:
-    type: array
-    items:
-      value_ref: nv_user_update_acls_item
-  nv_sshkey_create_name:
-    type: string
-    string_semantics: short
-  nv_sshkey_create_key_material:
-    type: string
-    string_semantics: short
-  nv_sshkey_update_name:
-    type: string
-    string_semantics: short
-  nv_sshkey_update_key_material:
-    type: string
-    string_semantics: short
-  nv_vpc_create_region:
+  nv_backup_app_id:
     type: entity_ref
-    target: Region
-  nv_vpc_create_description:
-    type: string
-    string_semantics: short
-  nv_vpc_create_v4_subnet:
-    type: string
-    string_semantics: short
-  nv_vpc_create_v4_subnet_mask:
-    type: integer
-  nv_vpc_update_description:
-    type: string
-    string_semantics: short
-  nv_firewallgroup_create_description:
-    type: string
-    string_semantics: short
-  nv_firewallgroup_update_description:
-    type: string
-    string_semantics: short
-  nv_instance_query_tag:
-    type: string
-    string_semantics: short
-  nv_instance_query_label:
-    type: string
-    string_semantics: short
-  nv_instance_query_main_ip:
-    type: string
-    string_semantics: short
-  nv_instance_query_region:
-    type: entity_ref
-    target: Region
-  nv_instance_query_hostname:
-    type: string
-    string_semantics: short
-  nv_instance_query_firewall_group_id:
-    type: entity_ref
-    target: FirewallGroup
-  nv_instance_query_show_pending_charges:
-    type: boolean
-  nv_instance_create_region:
-    type: entity_ref
-    target: Region
-  nv_instance_create_plan:
-    type: entity_ref
-    target: Plan
-  nv_instance_create_os_id:
+    target: Application
+  nv_backup_os_id:
     type: entity_ref
     target: Os
-  nv_instance_create_label:
-    type: string
-    string_semantics: short
-  nv_instance_create_hostname:
-    type: string
-    string_semantics: short
-  nv_instance_create_enable_ipv6:
-    type: boolean
-  nv_instance_create_firewall_group_id:
+  nv_bare_metal_app_id:
     type: entity_ref
-    target: FirewallGroup
-  nv_instance_update_label:
-    type: string
-    string_semantics: short
-  nv_instance_update_hostname:
-    type: string
-    string_semantics: short
-  nv_reservedip_create_region:
+    target: Application
+  nv_bare_metal_bandwidth_id:
     type: entity_ref
-    target: Region
-  nv_reservedip_create_ip_type:
-    type: select
-    allowed_values:
-    - v4
-    - v6
-  nv_reservedip_create_label:
-    type: string
-    string_semantics: short
-  nv_reservedip_update_label:
-    type: string
-    string_semantics: short
-  nv_loadbalancer_create_region:
+    target: BareMetal
+  nv_bare_metal_bandwidth_series:
+    type: json
+  nv_bare_metal_ip_v4_bare_metal_id:
+    type: entity_ref
+    target: BareMetal
+  nv_bare_metal_ip_v6_bare_metal_id:
+    type: entity_ref
+    target: BareMetal
+  nv_bare_metal_os_id:
+    type: entity_ref
+    target: Os
+  nv_bare_metal_plan:
+    type: entity_ref
+    target: BareMetalPlan
+  nv_bare_metal_region:
     type: entity_ref
     target: Region
-  nv_loadbalancer_create_label:
-    type: string
-    string_semantics: short
-  nv_loadbalancer_create_nodes:
-    type: integer
-  nv_loadbalancer_create_ssl_redirect:
-    type: boolean
-  nv_loadbalancer_create_http2:
-    type: boolean
-  nv_loadbalancer_create_http3:
-    type: boolean
-  nv_loadbalancer_create_proxy_protocol:
-    type: boolean
-  nv_loadbalancer_create_timeout:
-    type: integer
-  nv_loadbalancer_create_balancing_algorithm:
-    type: string
-    string_semantics: short
-  nv_loadbalancer_create_vpc:
-    type: entity_ref
-    target: Vpc
-  nv_loadbalancer_update_label:
-    type: string
-    string_semantics: short
-  nv_loadbalancer_update_nodes:
-    type: integer
-  nv_loadbalancer_update_ssl_redirect:
-    type: boolean
-  nv_loadbalancer_update_http2:
-    type: boolean
-  nv_loadbalancer_update_http3:
-    type: boolean
-  nv_loadbalancer_update_proxy_protocol:
-    type: boolean
-  nv_loadbalancer_update_timeout:
-    type: integer
-  nv_loadbalancer_update_balancing_algorithm:
-    type: string
-    string_semantics: short
-  nv_firewallrule_query_firewall_group_id:
-    type: entity_ref
-    target: FirewallGroup
-  nv_firewallrule_create_firewall_group_id:
-    type: entity_ref
-    target: FirewallGroup
-  nv_firewallrule_create_ip_type:
-    type: select
-    allowed_values:
-    - v4
-    - v6
-  nv_firewallrule_create_protocol:
-    type: select
-    allowed_values:
-    - tcp
-    - udp
-    - icmp
-    - gre
-    - esp
-    - ah
-  nv_firewallrule_create_subnet:
-    type: string
-    string_semantics: short
-  nv_firewallrule_create_subnet_size:
-    type: integer
-  nv_firewallrule_create_port:
-    type: string
-    string_semantics: short
-  nv_firewallrule_create_source:
-    type: string
-    string_semantics: short
-  nv_firewallrule_create_notes:
-    type: string
-    string_semantics: short
-  nv_snapshot_create_instance_id:
-    type: entity_ref
-    target: Instance
-  nv_snapshot_create_description:
-    type: string
-    string_semantics: short
-  nv_snapshot_create_from_url_url:
-    type: string
-    string_semantics: short
-  nv_snapshot_create_from_url_description:
-    type: string
-    string_semantics: short
-  nv_snapshot_create_from_url_uefi:
-    type: boolean
-  nv_block_create_region:
-    type: entity_ref
-    target: Region
-  nv_block_create_size_gb:
-    type: integer
-  nv_block_create_label:
-    type: string
-    string_semantics: short
-  nv_block_create_block_type:
-    type: select
-    allowed_values:
-    - high_perf
-    - storage_opt
-  nv_block_create_snapshot_id:
+  nv_bare_metal_snapshot_id:
     type: entity_ref
     target: Snapshot
-  nv_block_create_bootable:
-    type: boolean
-  nv_block_update_label:
-    type: string
-    string_semantics: short
-  nv_block_update_size_gb:
-    type: integer
-  nv_block_attach_instance_id:
+  nv_bare_metal_upgrade_catalog_id:
     type: entity_ref
-    target: Instance
-  nv_block_attach_live:
-    type: boolean
-  nv_block_detach_live:
-    type: boolean
-  nv_iso_create_url:
-    type: string
-    string_semantics: short
-  nv_startupscript_create_name:
-    type: string
-    string_semantics: short
-  nv_startupscript_create_type:
-    type: select
-    allowed_values:
-    - boot
-    - pxe
-  nv_startupscript_create_script:
+    target: BareMetal
+  nv_bare_metal_upgrade_catalog_upgrades:
+    type: json
+  nv_bare_metal_user_data_data:
     type: blob
-  nv_startupscript_update_name:
-    type: string
-    string_semantics: short
-  nv_startupscript_update_script:
-    type: blob
-  nv_dnsdomain_create_domain:
-    type: string
-    string_semantics: short
-  nv_dnsdomain_create_ip:
-    type: string
-    string_semantics: short
-  nv_dnsdomain_create_dns_sec:
-    type: string
-    string_semantics: short
-  nv_dnsrecord_query_domain:
+  nv_bare_metal_user_data_id:
     type: entity_ref
-    target: DnsDomain
-  nv_dnsrecord_create_domain:
+    target: BareMetal
+  nv_bare_metal_vpc2_attachment_bare_metal_id:
     type: entity_ref
-    target: DnsDomain
-  nv_dnsrecord_create_name:
-    type: string
-    string_semantics: short
-  nv_dnsrecord_create_type:
-    type: select
-    allowed_values:
-    - A
-    - AAAA
-    - CNAME
-    - NS
-    - MX
-    - SRV
-    - TXT
-    - CAA
-    - SSHFP
-  nv_dnsrecord_create_data:
-    type: string
-    string_semantics: short
-  nv_dnsrecord_create_ttl:
-    type: integer
-  nv_dnsrecord_create_priority:
-    type: integer
-  nv_dnsrecord_update_name:
-    type: string
-    string_semantics: short
-  nv_dnsrecord_update_data:
-    type: string
-    string_semantics: short
-  nv_dnsrecord_update_ttl:
-    type: integer
-  nv_dnsrecord_update_priority:
-    type: integer
-  nv_objectstorage_create_cluster_id:
-    type: integer
-  nv_objectstorage_create_tier_id:
-    type: integer
-  nv_objectstorage_create_label:
-    type: string
-    string_semantics: short
-  nv_objectstorage_update_label:
-    type: string
-    string_semantics: short
-  nv_manageddatabase_create_database_engine:
-    type: string
-    string_semantics: short
-  nv_manageddatabase_create_database_engine_version:
-    type: integer
-  nv_manageddatabase_create_region:
-    type: entity_ref
-    target: Region
-  nv_manageddatabase_create_plan:
-    type: string
-    string_semantics: short
-  nv_manageddatabase_create_label:
-    type: string
-    string_semantics: short
-  nv_manageddatabase_create_tag:
-    type: string
-    string_semantics: short
-  nv_manageddatabase_create_vpc_id:
+    target: BareMetal
+  nv_bare_metal_vpc2_attachment_id:
     type: entity_ref
     target: Vpc
-  nv_manageddatabase_create_maintenance_dow:
-    type: select
-    allowed_values:
-    - monday
-    - tuesday
-    - wednesday
-    - thursday
-    - friday
-    - saturday
-    - sunday
-  nv_manageddatabase_create_maintenance_time:
-    type: string
-    string_semantics: short
-  nv_manageddatabase_create_backup_hour:
-    type: string
-    string_semantics: short
-  nv_manageddatabase_create_backup_minute:
-    type: string
-    string_semantics: short
-  nv_manageddatabase_update_plan:
-    type: string
-    string_semantics: short
-  nv_manageddatabase_update_label:
-    type: string
-    string_semantics: short
-  nv_manageddatabase_update_tag:
-    type: string
-    string_semantics: short
-  nv_kubernetescluster_create_input:
-    type: json
-  nv_kubernetescluster_update_input:
-    type: json
-  nv_vkeavailableupgrade_query_vke_id:
+  nv_bare_metal_vpc_attachment_bare_metal_id:
     type: entity_ref
-    target: KubernetesCluster
-  nv_kubernetescluster_start_upgrade_upgrade_version:
-    type: string
-    string_semantics: short
+    target: BareMetal
+  nv_bare_metal_vpc_attachment_id:
+    type: entity_ref
+    target: Vpc
+  nv_bare_metal_vpcs:
+    type: json
   nv_baremetal_create_input:
     type: json
-  nv_baremetal_update_label:
-    type: string
-    string_semantics: short
-  nv_baremetal_update_tags_item:
-    type: string
-    string_semantics: short
-  nv_baremetal_update_tags:
-    type: array
-    items:
-      value_ref: nv_baremetal_update_tags_item
-  nv_baremetal_update_user_data:
-    type: string
-    string_semantics: short
-  nv_baremetals_bulk_halt_bare_metal_ids_item:
+  nv_baremetal_vpc2_attach_vpc_id:
     type: entity_ref
-    target: BareMetal
-  nv_baremetals_bulk_halt_bare_metal_ids:
-    type: array
-    items:
-      value_ref: nv_baremetals_bulk_halt_bare_metal_ids_item
-  nv_baremetals_bulk_reboot_bare_metal_ids_item:
+    target: Vpc
+  nv_baremetal_vpc2_detach_vpc_id:
     type: entity_ref
-    target: BareMetal
-  nv_baremetals_bulk_reboot_bare_metal_ids:
-    type: array
-    items:
-      value_ref: nv_baremetals_bulk_reboot_bare_metal_ids_item
-  nv_baremetals_bulk_start_bare_metal_ids_item:
+    target: Vpc
+  nv_baremetal_vpc_attach_vpc_id:
     type: entity_ref
-    target: BareMetal
-  nv_baremetals_bulk_start_bare_metal_ids:
-    type: array
-    items:
-      value_ref: nv_baremetals_bulk_start_bare_metal_ids_item
+    target: Vpc
+  nv_baremetal_vpc_detach_vpc_id:
+    type: entity_ref
+    target: Vpc
   nv_baremetalipv4_query_bare_metal_id:
     type: entity_ref
     target: BareMetal
   nv_baremetalipv6_query_bare_metal_id:
     type: entity_ref
     target: BareMetal
-  nv_baremetal_set_ipv4_reverse_ip:
-    type: string
-    string_semantics: short
-  nv_baremetal_set_ipv4_reverse_reverse:
-    type: string
-    string_semantics: short
-  nv_baremetal_set_ipv6_reverse_ip:
-    type: string
-    string_semantics: short
-  nv_baremetal_set_ipv6_reverse_reverse:
-    type: string
-    string_semantics: short
-  nv_baremetal_set_ipv4_default_reverse_ip:
-    type: string
-    string_semantics: short
-  nv_baremetal_delete_ipv6_reverse_ip:
-    type: string
-    string_semantics: short
+  nv_baremetals_bulk_halt_bare_metal_ids_item:
+    type: entity_ref
+    target: BareMetal
+  nv_baremetals_bulk_reboot_bare_metal_ids_item:
+    type: entity_ref
+    target: BareMetal
+  nv_baremetals_bulk_start_bare_metal_ids_item:
+    type: entity_ref
+    target: BareMetal
   nv_baremetalupgradecatalog_get_type:
     type: select
     allowed_values:
     - all
     - applications
     - os
-  nv_baremetalvpc_query_bare_metal_id:
-    type: entity_ref
-    target: BareMetal
   nv_baremetalvpc2_query_bare_metal_id:
     type: entity_ref
     target: BareMetal
-  nv_baremetal_vpc2_attach_vpc_id:
+  nv_baremetalvpc_query_bare_metal_id:
     type: entity_ref
-    target: Vpc
-  nv_baremetal_vpc2_attach_ip_address:
-    type: string
-    string_semantics: short
-  nv_baremetal_vpc2_detach_vpc_id:
+    target: BareMetal
+  nv_block_attach_instance_id:
     type: entity_ref
-    target: Vpc
+    target: Instance
+  nv_block_create_region:
+    type: entity_ref
+    target: Region
+  nv_block_create_snapshot_id:
+    type: entity_ref
+    target: Snapshot
+  nv_block_storage_attached_to_instance:
+    type: entity_ref
+    target: Instance
+  nv_block_storage_region:
+    type: entity_ref
+    target: Region
+  nv_cdn_pull_zone_origin_scheme:
+    type: select
+    allowed_values:
+    - http
+    - https
+  nv_cdn_push_zone_file_content:
+    type: blob
+  nv_cdn_push_zone_file_push_zone_id:
+    type: entity_ref
+    target: CdnPushZone
+  nv_cdn_upload_endpoint_inputs:
+    type: json
   nv_cdnpullzone_create_input:
     type: json
   nv_cdnpullzone_update_input:
@@ -4464,72 +2980,331 @@ values:
     type: json
   nv_cdnpushzone_update_input:
     type: json
-  nv_kubernetesnodepool_query_vke_id:
-    type: entity_ref
-    target: KubernetesCluster
-  nv_kubernetesnodepool_create_vke_id:
-    type: entity_ref
-    target: KubernetesCluster
-  nv_kubernetesnodepool_create_input:
-    type: json
-  nv_kubernetesnodepool_update_input:
-    type: json
-  nv_kubernetesnodepoollabel_query_vke_id:
-    type: entity_ref
-    target: KubernetesCluster
-  nv_kubernetesnodepoollabel_query_nodepool_id:
-    type: string
-    string_semantics: short
-  nv_kubernetesnodepoollabel_create_vke_id:
-    type: entity_ref
-    target: KubernetesCluster
-  nv_kubernetesnodepoollabel_create_nodepool_id:
-    type: string
-    string_semantics: short
-  nv_kubernetesnodepoollabel_create_key:
-    type: string
-    string_semantics: short
-  nv_kubernetesnodepoollabel_create_value:
-    type: string
-    string_semantics: short
-  nv_kubernetesnodepooltaint_query_vke_id:
-    type: entity_ref
-    target: KubernetesCluster
-  nv_kubernetesnodepooltaint_query_nodepool_id:
-    type: string
-    string_semantics: short
-  nv_kubernetesnodepooltaint_create_vke_id:
-    type: entity_ref
-    target: KubernetesCluster
-  nv_kubernetesnodepooltaint_create_nodepool_id:
-    type: string
-    string_semantics: short
-  nv_kubernetesnodepooltaint_create_key:
-    type: string
-    string_semantics: short
-  nv_kubernetesnodepooltaint_create_value:
-    type: string
-    string_semantics: short
-  nv_kubernetesnodepooltaint_create_effect:
-    type: string
-    string_semantics: short
   nv_cdnpushzonefile_query_push_zone_id:
     type: entity_ref
     target: CdnPushZone
   nv_cdnpushzonefile_request_upload_push_zone_id:
     type: entity_ref
     target: CdnPushZone
-  nv_cdnpushzonefile_request_upload_name:
-    type: string
-    string_semantics: short
-  nv_cdnpushzonefile_request_upload_size:
+  nv_dns_record_domain:
+    type: entity_ref
+    target: DnsDomain
+  nv_dnsrecord_create_domain:
+    type: entity_ref
+    target: DnsDomain
+  nv_dnsrecord_query_domain:
+    type: entity_ref
+    target: DnsDomain
+  nv_firewall_rule_firewall_group_id:
+    type: entity_ref
+    target: FirewallGroup
+  nv_firewallrule_create_firewall_group_id:
+    type: entity_ref
+    target: FirewallGroup
+  nv_firewallrule_query_firewall_group_id:
+    type: entity_ref
+    target: FirewallGroup
+  nv_iam_group_members:
+    type: json
+  nv_iam_policy_policy_document:
+    type: json
+  nv_iam_role_policies:
+    type: json
+  nv_instance_app_id:
+    type: entity_ref
+    target: Application
+  nv_instance_create_firewall_group_id:
+    type: entity_ref
+    target: FirewallGroup
+  nv_instance_create_os_id:
+    type: entity_ref
+    target: Os
+  nv_instance_create_plan:
+    type: entity_ref
+    target: Plan
+  nv_instance_create_region:
+    type: entity_ref
+    target: Region
+  nv_instance_firewall_group_id:
+    type: entity_ref
+    target: FirewallGroup
+  nv_instance_os_id:
+    type: entity_ref
+    target: Os
+  nv_instance_plan:
+    type: entity_ref
+    target: Plan
+  nv_instance_query_firewall_group_id:
+    type: entity_ref
+    target: FirewallGroup
+  nv_instance_query_region:
+    type: entity_ref
+    target: Region
+  nv_instance_region:
+    type: entity_ref
+    target: Region
+  nv_instance_vpcs:
+    type: json
+  nv_kubernetes_cluster_firewall_group_id:
+    type: entity_ref
+    target: FirewallGroup
+  nv_kubernetes_cluster_node_pools:
+    type: json
+  nv_kubernetes_cluster_oidc:
+    type: json
+  nv_kubernetes_cluster_region:
+    type: entity_ref
+    target: Region
+  nv_kubernetes_cluster_vpcs:
+    type: json
+  nv_kubernetes_node_pool_label_vke_id:
+    type: entity_ref
+    target: KubernetesCluster
+  nv_kubernetes_node_pool_node_vke_id:
+    type: entity_ref
+    target: KubernetesCluster
+  nv_kubernetes_node_pool_nodes:
+    type: json
+  nv_kubernetes_node_pool_pool_labels:
+    type: json
+  nv_kubernetes_node_pool_taint_vke_id:
+    type: entity_ref
+    target: KubernetesCluster
+  nv_kubernetes_node_pool_taints:
+    type: json
+  nv_kubernetes_node_pool_vke_id:
+    type: entity_ref
+    target: KubernetesCluster
+  nv_kubernetescluster_create_input:
+    type: json
+  nv_kubernetescluster_update_input:
+    type: json
+  nv_kubernetesnodepool_create_input:
+    type: json
+  nv_kubernetesnodepool_create_vke_id:
+    type: entity_ref
+    target: KubernetesCluster
+  nv_kubernetesnodepool_query_vke_id:
+    type: entity_ref
+    target: KubernetesCluster
+  nv_kubernetesnodepool_update_input:
+    type: json
+  nv_kubernetesnodepoollabel_create_vke_id:
+    type: entity_ref
+    target: KubernetesCluster
+  nv_kubernetesnodepoollabel_query_vke_id:
+    type: entity_ref
+    target: KubernetesCluster
+  nv_kubernetesnodepooltaint_create_vke_id:
+    type: entity_ref
+    target: KubernetesCluster
+  nv_kubernetesnodepooltaint_query_vke_id:
+    type: entity_ref
+    target: KubernetesCluster
+  nv_load_balancer_forwarding_rules:
+    type: json
+  nv_load_balancer_generic_info:
+    type: json
+  nv_load_balancer_health_check:
+    type: json
+  nv_load_balancer_node_ips:
+    type: json
+  nv_load_balancer_region:
+    type: entity_ref
+    target: Region
+  nv_loadbalancer_create_region:
+    type: entity_ref
+    target: Region
+  nv_loadbalancer_create_vpc:
+    type: entity_ref
+    target: Vpc
+  nv_managed_database_region:
+    type: entity_ref
+    target: Region
+  nv_managed_database_vpc_id:
+    type: entity_ref
+    target: Vpc
+  nv_manageddatabase_create_region:
+    type: entity_ref
+    target: Region
+  nv_manageddatabase_create_vpc_id:
+    type: entity_ref
+    target: Vpc
+  nv_object_storage_region:
+    type: entity_ref
+    target: Region
+  nv_reserved_ip_instance_id:
+    type: entity_ref
+    target: Instance
+  nv_reserved_ip_region:
+    type: entity_ref
+    target: Region
+  nv_reservedip_create_region:
+    type: entity_ref
+    target: Region
+  nv_snapshot_app_id:
+    type: entity_ref
+    target: Application
+  nv_snapshot_create_instance_id:
+    type: entity_ref
+    target: Instance
+  nv_snapshot_os_id:
+    type: entity_ref
+    target: Os
+  nv_startup_script_script:
+    type: blob
+  nv_startupscript_create_script:
+    type: blob
+  nv_startupscript_update_script:
+    type: blob
+  nv_vke_available_upgrade_vke_id:
+    type: entity_ref
+    target: KubernetesCluster
+  nv_vke_kubeconfig_content:
+    type: blob
+  nv_vke_kubeconfig_id:
+    type: entity_ref
+    target: KubernetesCluster
+  nv_vke_resource_inventory_id:
+    type: entity_ref
+    target: KubernetesCluster
+  nv_vke_resource_inventory_resources:
+    type: json
+  nv_vkeavailableupgrade_query_vke_id:
+    type: entity_ref
+    target: KubernetesCluster
+  nv_vpc_create_region:
+    type: entity_ref
+    target: Region
+  nv_vpc_nodes:
+    type: json
+  nv_vpc_region:
+    type: entity_ref
+    target: Region
+  nv_wire_bool:
+    type: boolean
+  nv_wire_date_rfc3339:
+    type: date
+    value_format: rfc3339
+  nv_wire_int:
     type: integer
-  nv_baremetal_reinstall_hostname:
+  nv_wire_num:
+    type: number
+  nv_wire_sel_0780285c9fcb6c03:
+    type: select
+    allowed_values:
+    - friday
+    - monday
+    - saturday
+    - sunday
+    - thursday
+    - tuesday
+    - wednesday
+  nv_wire_sel_302f7ca29e8dda16:
+    type: select
+    allowed_values:
+    - active
+    - pending
+  nv_wire_sel_3165a4e18b8315ed:
+    type: select
+    allowed_values:
+    - v4
+    - v6
+  nv_wire_sel_3fe4d4fac1a8e87f:
+    type: select
+    allowed_values:
+    - ah
+    - esp
+    - gre
+    - icmp
+    - tcp
+    - udp
+  nv_wire_sel_529cf443139f2286:
+    type: select
+    allowed_values:
+    - boot
+    - pxe
+  nv_wire_sel_72fd39fb1f8b8f2f:
+    type: select
+    allowed_values:
+    - high_perf
+    - storage_opt
+  nv_wire_sel_c7fc16b95f0ae0a7:
+    type: select
+    allowed_values:
+    - A
+    - AAAA
+    - CAA
+    - CNAME
+    - MX
+    - NS
+    - SRV
+    - SSHFP
+    - TXT
+  nv_wire_str_short:
     type: string
     string_semantics: short
-  nv_baremetal_vpc_attach_vpc_id:
-    type: entity_ref
-    target: Vpc
-  nv_baremetal_vpc_detach_vpc_id:
-    type: entity_ref
-    target: Vpc
+  nv_baremetals_bulk_halt_bare_metal_ids:
+    type: array
+    items:
+      value_ref: nv_baremetals_bulk_halt_bare_metal_ids_item
+  nv_baremetals_bulk_reboot_bare_metal_ids:
+    type: array
+    items:
+      value_ref: nv_baremetals_bulk_reboot_bare_metal_ids_item
+  nv_baremetals_bulk_start_bare_metal_ids:
+    type: array
+    items:
+      value_ref: nv_baremetals_bulk_start_bare_metal_ids_item
+  nv_account_acls:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_bare_metal_features:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_bare_metal_plan_locations:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_bare_metal_tags:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_baremetal_update_tags:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_instance_features:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_instance_tags:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_plan_locations:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_region_connectivity:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_region_options:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_user_acls:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_user_create_acls:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+  nv_user_update_acls:
+    type: array
+    items:
+      value_ref: nv_wire_str_short

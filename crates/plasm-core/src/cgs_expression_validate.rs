@@ -94,7 +94,7 @@ fn validate_expression_witnesses(cgs: &CGS) -> Result<(), SchemaError> {
         if n == 0 {
             return Err(SchemaError::EntityExpressionIncomplete {
                 entity: entity_name.to_string(),
-                detail: "no type-checked example lines could be synthesized for DOMAIN (see collect_entity_domain_block / domain_line_valid)".to_string(),
+                detail: "no type-checked example lines could be synthesized for DOMAIN (see collect_entity_teaching_block / domain_line_valid)".to_string(),
             });
         }
     }
@@ -130,6 +130,21 @@ fn covered_capabilities(cgs: &CGS) -> HashSet<String> {
         .collect();
     for (entity, kind) in covered_domains_by_kind.drain() {
         for cap in cgs.find_capabilities(entity.as_str(), kind) {
+            covered.insert(cap.name.to_string());
+        }
+    }
+    // When any `Query` for an entity is on the DOMAIN surface, treat every `Get` on that entity as
+    // covered too — fetch-by-id is compositional on the same row type (no unary `e#($)` required).
+    let mut domains_with_query: HashSet<String> = HashSet::new();
+    for cap_name in &covered {
+        if let Some(cap) = cgs.get_capability(cap_name) {
+            if cap.kind == CapabilityKind::Query {
+                domains_with_query.insert(cap.domain.to_string());
+            }
+        }
+    }
+    for domain in domains_with_query {
+        for cap in cgs.find_capabilities(domain.as_str(), CapabilityKind::Get) {
             covered.insert(cap.name.to_string());
         }
     }

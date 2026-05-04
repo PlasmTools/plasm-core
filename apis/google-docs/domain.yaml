@@ -1,4 +1,4 @@
-version: 1
+version: 2
 http_backend: https://docs.googleapis.com
 entities:
   Document:
@@ -8,13 +8,13 @@ entities:
     fields:
       documentId:
         required: true
-        value_ref: nv_document_document_id
+        value_ref: nv_wire_str_short
       title:
         required: false
-        value_ref: nv_document_title
+        value_ref: nv_wire_str_short
       revisionId:
         required: false
-        value_ref: nv_document_revision_id
+        value_ref: nv_wire_str_short
       body:
         required: false
         value_ref: nv_document_body
@@ -47,7 +47,7 @@ entities:
         value_ref: nv_document_named_styles
       suggestionsViewMode:
         required: false
-        value_ref: nv_document_suggestions_view_mode
+        value_ref: nv_wire_str_short
       tabs:
         required: false
         value_ref: nv_document_tabs
@@ -68,7 +68,7 @@ capabilities:
       value_ref: nv_documents_get_include_tabs_content
       required: false
     - name: suggestionsViewMode
-      value_ref: nv_documents_get_suggestions_view_mode
+      value_ref: nv_wire_str_short
       required: false
   documents_create:
     kind: create
@@ -140,54 +140,42 @@ auth:
   scheme: bearer_token
   env: GOOGLE_DOCS_ACCESS_TOKEN
 values:
-  nv_document_document_id:
-    type: string
-    string_semantics: short
-  nv_document_title:
-    type: string
-    string_semantics: short
-  nv_document_revision_id:
-    type: string
-    string_semantics: short
   nv_document_body:
     type: json
     description: Structured body content (StructuralElement list under body.content when present).
-  nv_document_headers:
+  nv_document_document_style:
     type: json
   nv_document_footers:
     type: json
   nv_document_footnotes:
     type: json
-  nv_document_inline_objects:
+  nv_document_headers:
     type: json
-  nv_document_positioned_objects:
+  nv_document_inline_objects:
     type: json
   nv_document_lists:
     type: json
   nv_document_named_ranges:
     type: json
-  nv_document_document_style:
-    type: json
   nv_document_named_styles:
     type: json
-  nv_document_suggestions_view_mode:
-    type: string
-    string_semantics: short
-  nv_document_tabs:
+  nv_document_positioned_objects:
     type: json
   nv_document_replies:
     type: json
     description: Response replies from batchUpdate (write results and id mappings).
+  nv_document_tabs:
+    type: json
   nv_document_write_control:
     type: json
-  nv_documents_get_include_tabs_content:
-    type: boolean
-  nv_documents_get_suggestions_view_mode:
-    type: string
-    string_semantics: short
-  nv_documents_create_input:
-    type: json
-    description: Document resource body for POST /documents.
   nv_documents_batch_update_input:
     type: json
     description: BatchUpdateDocumentRequest JSON (requests array and write control fields).
+  nv_documents_create_input:
+    type: json
+    description: Document resource body for POST /documents.
+  nv_documents_get_include_tabs_content:
+    type: boolean
+  nv_wire_str_short:
+    type: string
+    string_semantics: short
