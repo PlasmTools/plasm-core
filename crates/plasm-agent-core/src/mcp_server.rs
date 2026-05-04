@@ -1426,13 +1426,8 @@ impl PlasmMcpHandler {
                                         Ok(dry) => {
                                             let dry_text = render_plasm_plan_dry_text(&dry, None);
                                             let guidance = plasm_plan_review_guidance_lines(&dry);
-                                            let markdown = format!(
-                                                "# Plasm program plan (dry-run)\n\n\
-Each **`plasm`** response is **plan-only** (no live API execution). \
-Call **`plasm_run`** with the same **`logical_session_ref`** and **`program`** after this topology and result shapes match your intent. \
-After **`plasm_run`**, follow **`resource_link`** / `_meta.plasm` when snapshots apply.\n\n\
-```text\n{dry_text}\n```"
-                                            );
+                                            let markdown =
+                                                format!("```text\n{dry_text}\n```");
                                             let plan_json = plasm_plan_dag_json(&dry);
                                             trace_archive_and_emit_code_plan_evaluate(
                                                 &self.plasm.trace_hub,
