@@ -177,7 +177,7 @@ impl TypedDiscovery {
     }
 
     pub fn with_max_options(mut self, n: usize) -> Self {
-        self.max_options = n.max(1).min(32);
+        self.max_options = n.clamp(1, 32);
         self
     }
 
@@ -219,11 +219,9 @@ impl TypedDiscovery {
         let wants_get = verbs
             .iter()
             .any(|v| ["get", "fetch", "open"].contains(&v.as_str()));
-        let wants_query = verbs.iter().any(|v| {
-            ["list", "query", "show", "find", "pull"]
-                .iter()
-                .any(|x| *x == v.as_str())
-        });
+        let wants_query = verbs
+            .iter()
+            .any(|v| ["list", "query", "show", "find", "pull"].contains(&v.as_str()));
 
         if wants_search {
             if let Some((n, k, _)) = caps
@@ -409,10 +407,13 @@ impl TypedDiscovery {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        if query.enable_embeddings && self.embedder.is_some() && !hypotheses.is_empty() {
+        if let (true, false, Some(embedder)) = (
+            query.enable_embeddings,
+            hypotheses.is_empty(),
+            self.embedder.as_ref().cloned(),
+        ) {
             let t_embed = Instant::now();
             metrics::record_embed_cache("miss");
-            let embedder = self.embedder.as_ref().unwrap().clone();
             let lines: Vec<String> = hypotheses
                 .iter()
                 .map(|h| format!("{} {} {}", h.entry_id, h.entity, h.matched_phrase))

@@ -3938,7 +3938,7 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     let _ = writeln!(s, "root          ::= ident | plasm_expr");
     let _ = writeln!(
         s,
-        "node          ::= (plasm_expr | ident) postfix* render_tail? | ident \"=>\" value_or_template"
+        "node          ::= (plasm_expr | ident) postfix* row_template? | ident \"=>\" value_or_template"
     );
     let _ = writeln!(s, "plasm_expr    ::= entity_expr [projection] | page");
     let _ = writeln!(s, "entity_expr   ::= {}", entity_expr_rhs);
@@ -3963,7 +3963,7 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     );
     let _ = writeln!(
         s,
-        "render_tail   ::= (\"[\" fields \"]\")? \"<<TAG\" template_body \"TAG\""
+        "row_template  ::= (\"[\" fields \"]\")? \"<<TAG\" template_body \"TAG\""
     );
     let _ = writeln!(s, "fields        ::= {}", projection);
     let _ = writeln!(
@@ -3982,7 +3982,9 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     s.push_str(
         "- Multi-line program strings use literal newlines: one binding per line, final roots last. Spaces never separate statements.\n\
 - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.\n\
-- Render tails use Minijinja over `rows`; the render result is one row with `content`. Pass `binding.content` to string/body parameters.\n\
+- To turn rows into text, bind a template block: `report = rows[p#,…] <<TAG` newline template newline `TAG`, or `report = rows <<TAG` when columns can be inferred.\n\
+- Template blocks use Minijinja with `rows` as the input array. The bound result is a row with a `content` field; pass `report.content` to string/body parameters or `=>` payloads.\n\
+- Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.\n\
 - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.\n",
     );
     let _ = writeln!(

@@ -449,4 +449,38 @@ mod tests {
         );
         assert!(normalize_entity_ref_value_for_target(&partial, &target).is_none());
     }
+
+    /// Regression: scoped Cloudflare (and similar) capabilities bind full `Zone{…}` rows into
+    /// `entity_ref` scope slots typed as `Zone`; HTTP path compilation must see a primitive id, not
+    /// a JSON object in URL segments.
+    #[test]
+    fn zone_like_entity_row_narrows_entity_ref_to_primitive_id() {
+        let zone = EntityDef {
+            name: "Zone".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: IndexMap::new(),
+            relations: IndexMap::new(),
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+            discovery: None,
+        };
+        let row = Value::Object(
+            vec![
+                ("id".into(), Value::String("zone_cf_scope_test".into())),
+                ("name".into(), Value::String("plasm.tools".into())),
+                ("status".into(), Value::String("active".into())),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let n = normalize_entity_ref_value_for_target(&row, &zone).expect("narrow zone row");
+        assert_eq!(n, Value::String("zone_cf_scope_test".into()));
+    }
 }

@@ -10,7 +10,7 @@ use crate::plasm_plan::{
     PlanRelationTraversal, PlanValue, QualifiedEntityKey, RelationCardinality,
     RelationSourceCardinality, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
 };
-use crate::plasm_plan_run::parse_plasm_surface_line_program;
+use crate::plasm_plan_run::{parse_plasm_surface_line_program, symbol_map_for_plasm_surface_parse};
 use plasm_core::expr_parser::{
     peel_postfix_suffixes, try_parse_render_tail, PlasmPostfixOp, RenderTailParse,
 };
@@ -513,16 +513,16 @@ fn infer_render_columns_for_node(
             }
             ComputeOp::Sort { .. } | ComputeOp::Limit { .. } => {
                 let parent = lookup_dag_node(state, staged, parent_id.as_str()).ok_or_else(|| {
-                    format!("bracket-render column inference: missing upstream node `{parent_id}`")
+                    format!("template column inference: missing upstream node `{parent_id}`")
                 })?;
                 infer_render_columns_for_node(session, state, staged, parent)
             }
             ComputeOp::Render { .. } => Err(
-                "cannot infer columns from a bracket-render output; bind a row-producing node or use explicit `[field,...] <<TAG`".into(),
+                "cannot infer columns from a row-to-text template result; bind a row-producing query/relation/projection, or write explicit `[field,...] <<TAG` columns before the template".into(),
             ),
-            ComputeOp::Filter { .. } => Err(
-                "filtered compute rows cannot be used for inferred bracket-render columns".into(),
-            ),
+            ComputeOp::Filter { .. } => {
+                Err("filtered compute rows cannot provide inferred template columns".into())
+            }
         },
         DagNodeSource::Surface {
             qualified_entity, ..
@@ -531,19 +531,40 @@ fn infer_render_columns_for_node(
             qualified_entity, ..
         } => infer_entity_row_columns(session, qualified_entity),
         DagNodeSource::Data(_) => Err(
-            "data literals cannot be bracket-render sources; use explicit `[field,...] <<TAG` or bind a query".into(),
+            "data literals cannot provide inferred template columns; use explicit `[field,...] <<TAG` columns or bind a query".into(),
         ),
         DagNodeSource::Derive { .. } => {
-            Err("derive bindings cannot be bracket-render sources".into())
+            Err("derive bindings cannot provide inferred template columns".into())
         }
         DagNodeSource::ForEach { .. } => {
-            Err("for_each bindings cannot be bracket-render sources".into())
+            Err("for_each bindings cannot provide inferred template columns".into())
         }
+    }
+}
+
+fn single_segment_teaching_field_hint(
+    session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    qe: &QualifiedEntityKey,
+    path: &FieldPath,
+) -> String {
+    let segs = path.segments().to_vec();
+    if segs.len() != 1 {
+        return String::new();
+    }
+    let wire = segs[0].as_str();
+    let map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
+    let sym = map.ident_sym_entity_field(qe.entity.as_str(), wire);
+    if sym != wire {
+        format!(" For `{wire}` the active teaching-table symbol is `{sym}`.")
+    } else {
+        String::new()
     }
 }
 
 fn validate_compute_paths_for_entity(
     session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     qe: &QualifiedEntityKey,
     paths: &[FieldPath],
     op_label: &str,
@@ -566,8 +587,9 @@ fn validate_compute_paths_for_entity(
         if allowed.contains(&segs) {
             continue;
         }
+        let hint = single_segment_teaching_field_hint(session, symbol_map_cross_cache, qe, path);
         return Err(format!(
-            "Plasm program {op_label}: field path `{}` is not a row field of entity `{}` (catalog entry `{}`). Use DOMAIN field names or `p#` symbols that refer to this entity's fields — mixing another entity's symbols yields null columns.",
+            "Plasm program {op_label}: field path `{}` is not a row field of entity `{}` (catalog entry `{}`). Use wire field names or `p#` symbols from the active TSV teaching table for this entity — mixing another entity's symbols yields null columns.{hint}",
             path.dotted(),
             qe.entity,
             qe.entry_id
@@ -604,6 +626,61 @@ fn resolve_qualified_entity_for_dag_source(
         }
     }
     None
+}
+
+/// Schema describing passthrough rows from `source_id` when it resolves to a catalog entity surface
+/// or relation node (preserves [`SyntheticResultSchema::entity`] for downstream plan validation).
+fn synthetic_schema_passthrough_rows(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    staged: &[DagNode],
+    source_id: &str,
+) -> Result<SyntheticResultSchema, String> {
+    let qe = resolve_qualified_entity_for_dag_source(state, staged, source_id.to_string())
+        .ok_or_else(|| {
+            format!(
+                "bare-label `.singleton()` / `.page_size(...)` requires `{source_id}` to trace to a catalog entity row (surface query or relation); synthetic binds and literals cannot use this postfix here"
+            )
+        })?;
+    let cols = infer_entity_row_columns(session, &qe)?;
+    if cols.is_empty() {
+        return Err(format!(
+            "Plasm internal: cannot infer passthrough columns for entity `{}`",
+            qe.entity
+        ));
+    }
+    Ok(schema_from_output_fields(
+        qe.entity.as_str(),
+        cols.iter(),
+        SyntheticValueKind::Unknown,
+    ))
+}
+
+/// Identity [`ComputeOp::Project`] map plus schema for passthrough compute nodes (e.g. bare-label
+/// `.page_size(n)` lowering).
+fn passthrough_identity_projection_fields(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    staged: &[DagNode],
+    source_id: &str,
+) -> Result<(BTreeMap<OutputName, FieldPath>, SyntheticResultSchema), String> {
+    let schema = synthetic_schema_passthrough_rows(session, state, staged, source_id)?;
+    let qe = resolve_qualified_entity_for_dag_source(state, staged, source_id.to_string())
+        .expect("trace matches synthetic_schema_passthrough_rows");
+    let mut map = BTreeMap::new();
+    for field in &schema.fields {
+        let path = FieldPath::from_dotted(field.name.as_str())?;
+        map.insert(field.name.clone(), path);
+    }
+    let paths: Vec<FieldPath> = map.values().cloned().collect();
+    validate_compute_paths_for_entity(
+        session,
+        state.cross_cache,
+        &qe,
+        &paths,
+        "bare-label passthrough projection",
+    )?;
+    Ok((map, schema))
 }
 
 fn postfix_op_to_compute(
@@ -650,6 +727,7 @@ fn postfix_op_to_compute(
             {
                 validate_compute_paths_for_entity(
                     session,
+                    state.cross_cache,
                     &qe,
                     std::slice::from_ref(&key_fp),
                     "sort(...)",
@@ -671,7 +749,13 @@ fn postfix_op_to_compute(
             {
                 let paths: Vec<FieldPath> =
                     aggregates.iter().filter_map(|a| a.field.clone()).collect();
-                validate_compute_paths_for_entity(session, &qe, &paths, "aggregate(...)")?;
+                validate_compute_paths_for_entity(
+                    session,
+                    state.cross_cache,
+                    &qe,
+                    &paths,
+                    "aggregate(...)",
+                )?;
             }
             let schema = schema_from_aggregates("PlanAggregate", &aggregates);
             Ok(mk(ComputeOp::Aggregate { aggregates }, schema, true))
@@ -694,7 +778,13 @@ fn postfix_op_to_compute(
             {
                 let mut paths = vec![key_fp.clone()];
                 paths.extend(aggregates.iter().filter_map(|a| a.field.clone()));
-                validate_compute_paths_for_entity(session, &qe, &paths, "group_by(...)")?;
+                validate_compute_paths_for_entity(
+                    session,
+                    state.cross_cache,
+                    &qe,
+                    &paths,
+                    "group_by(...)",
+                )?;
             }
             let schema = schema_from_aggregates("PlanGroup", &aggregates);
             Ok(mk(
@@ -718,7 +808,13 @@ fn postfix_op_to_compute(
                 resolve_qualified_entity_for_dag_source(state, staged, source.to_string())
             {
                 let paths: Vec<FieldPath> = map.values().cloned().collect();
-                validate_compute_paths_for_entity(session, &qe, &paths, "postfix projection")?;
+                validate_compute_paths_for_entity(
+                    session,
+                    state.cross_cache,
+                    &qe,
+                    &paths,
+                    "postfix projection",
+                )?;
             }
             let schema =
                 schema_from_output_fields("PlanProject", map.keys(), SyntheticValueKind::Unknown);
@@ -744,9 +840,40 @@ fn compile_postfix_plan(
 
     if compute_ops.is_empty() {
         if state.contains(primary) && (tail_singleton || tail_page_size.is_some()) {
-            return Err(format!(
-                "Plasm program `{binding_id}`: `.singleton()` / `.page_size(...)` on bare label `{primary}` is not supported; apply transforms to a surface expression or insert an intermediate binding"
-            ));
+            // Equivalent to applying tail flags on `primary` as a surface expression: lower through a
+            // compute node so the bound label stays a row producer with correct entity metadata.
+            let staged: &[DagNode] = &[];
+            let mut node = if tail_singleton {
+                let schema = synthetic_schema_passthrough_rows(session, state, staged, primary)?;
+                DagNode {
+                    id: binding_id.to_string(),
+                    expr: full_rhs.to_string(),
+                    singleton: tail_singleton,
+                    page_size: tail_page_size,
+                    source: DagNodeSource::Compute {
+                        source: primary.to_string(),
+                        op: ComputeOp::Limit { count: 1 },
+                        schema,
+                    },
+                }
+            } else {
+                let (fields, schema) =
+                    passthrough_identity_projection_fields(session, state, staged, primary)?;
+                DagNode {
+                    id: binding_id.to_string(),
+                    expr: full_rhs.to_string(),
+                    singleton: false,
+                    page_size: tail_page_size,
+                    source: DagNodeSource::Compute {
+                        source: primary.to_string(),
+                        op: ComputeOp::Project { fields },
+                        schema,
+                    },
+                }
+            };
+            node.singleton |= tail_singleton;
+            node.page_size = tail_page_size.or(node.page_size);
+            return Ok(vec![node]);
         }
         let mut node = compile_surface_node(session, state, binding_id, primary)?;
         node.singleton |= tail_singleton;
@@ -844,24 +971,19 @@ fn compile_render_chain(
 ) -> Result<Vec<DagNode>, String> {
     let (core, ops) =
         peel_postfix_suffixes(head).map_err(|e| format!("Plasm program `{id}`: {e}"))?;
+    let ops_full = ops.clone();
     let (compute_ops, tail_singleton, tail_page_size) = split_tail_postfix_flags(ops);
 
-    if compute_ops.is_empty()
-        && state.contains(core.trim())
-        && (tail_singleton || tail_page_size.is_some())
-    {
-        return Err(format!(
-            "Plasm program `{id}`: `.singleton()` / `.page_size(...)` on bare label `{}` is not supported before bracket render; apply transforms to a surface expression first",
-            core.trim()
-        ));
-    }
-
     let mut prefix: Vec<DagNode> = Vec::new();
-    let chain_tail_id: String = if compute_ops.is_empty() && state.contains(core.trim()) {
+    let chain_tail_id: String = if compute_ops.is_empty()
+        && state.contains(core.trim())
+        && !tail_singleton
+        && tail_page_size.is_none()
+    {
         core.trim().to_string()
     } else {
         let tmp = format!("__plasm_render_src_{id}");
-        prefix = compile_postfix_plan(session, state, &tmp, head, core.trim(), compute_ops)
+        prefix = compile_postfix_plan(session, state, &tmp, head, core.trim(), ops_full)
             .map_err(|e| format!("Plasm program `{id}`: {e}"))?;
         prefix
             .last()
@@ -875,17 +997,16 @@ fn compile_render_chain(
         let tail_node =
             lookup_dag_node(state, &prefix, chain_tail_id.as_str()).ok_or_else(|| {
                 format!(
-                    "Plasm program `{id}`: bracket-render inference failed for `{chain_tail_id}`"
+                    "Plasm program `{id}`: template column inference failed for `{chain_tail_id}`"
                 )
             })?;
-        infer_render_columns_for_node(session, state, &prefix, tail_node).map_err(|e| {
-            format!("Plasm program `{id}`: cannot infer bracket-render columns: {e}")
-        })?
+        infer_render_columns_for_node(session, state, &prefix, tail_node)
+            .map_err(|e| format!("Plasm program `{id}`: cannot infer template columns: {e}"))?
     };
 
     if columns.is_empty() {
         return Err(format!(
-            "Plasm program `{id}`: bracket-render requires at least one column; use `[field,...] <<TAG` after narrowing"
+            "Plasm program `{id}`: row-to-text templates require at least one column; use `[field,...] <<TAG` after narrowing"
         ));
     }
 
@@ -893,7 +1014,14 @@ fn compile_render_chain(
         id: id.to_string(),
         expr: rhs_display.to_string(),
         singleton: true,
-        page_size: tail_page_size,
+        // When postfix lowering built a non-empty prefix, trailing `.page_size(n)` / `.singleton()`
+        // are applied to the final row-producing node there; avoid double-applying `page_size` on
+        // the row-to-text template compute.
+        page_size: if prefix.is_empty() {
+            tail_page_size
+        } else {
+            None
+        },
         source: DagNodeSource::Compute {
             source: chain_tail_id,
             op: ComputeOp::Render { columns, template },
@@ -1033,6 +1161,22 @@ fn anchor_expanded_plasm(state: &CompileState<'_>, label: &str) -> Option<String
     }
 }
 
+fn is_bracket_render_binding(state: &CompileState<'_>, label: &str) -> bool {
+    matches!(
+        state.get(label).map(|n| &n.source),
+        Some(DagNodeSource::Compute {
+            op: ComputeOp::Render { .. },
+            ..
+        })
+    )
+}
+
+fn plan_render_content_scalar_reference_err(id: &str, expr: &str, label: &str) -> String {
+    format!(
+        "Plasm program `{id}`: `{expr}` reads generated text from `{label}.content`. That path is a **scalar string** for `=>` derives and capability parameters only — not a final root and not a relation receiver. Return `{label}` if you want the generated text row, or use `{label}.content` only inside string/body/template/object payload positions."
+    )
+}
+
 fn relation_source_cardinality_from_bound_node(
     state: &CompileState<'_>,
     source_label: &str,
@@ -1066,6 +1210,7 @@ fn relation_source_cardinality_from_bound_node(
 /// Resolve relation metadata for a parsed [`Expr::Chain`] (declared CGS relation on the source entity).
 fn lookup_relation_chain_meta(
     session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     chain: &plasm_core::ChainExpr,
 ) -> Result<(QualifiedEntityKey, RelationCardinality), String> {
     let source_entity = chain.source.primary_entity();
@@ -1078,8 +1223,15 @@ fn lookup_relation_chain_meta(
         format!("unknown entity `{source_entity}` (Plasm program relation continuation)")
     })?;
     let rel = ent.relations.get(chain.selector.as_str()).ok_or_else(|| {
+        let map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
+        let sym = map.ident_sym_relation(source_entity, chain.selector.as_str());
+        let sym_note = if sym.as_str() != chain.selector.as_str() {
+            format!(" Active teaching-table relation symbol for `{0}` on `{source_entity}` is `{sym}`.", chain.selector)
+        } else {
+            String::new()
+        };
         format!(
-            "entity `{source_entity}` has no relation `{}` — use a declared relation name from DOMAIN",
+            "entity `{source_entity}` has no relation `{}` — use a declared catalog relation wire name or the `.p#` navigation slot from the active TSV teaching rows for `{source_entity}`.{sym_note}",
             chain.selector
         )
     })?;
@@ -1130,7 +1282,8 @@ fn compile_surface_node(
                 )
             })?;
             if let Expr::Chain(ref chain) = parsed.expr {
-                let (target_qe, rel_cardinality) = lookup_relation_chain_meta(session, chain)?;
+                let (target_qe, rel_cardinality) =
+                    lookup_relation_chain_meta(session, state.cross_cache, chain)?;
                 let source_card = relation_source_cardinality_from_bound_node(state, &label);
                 let result_shape = match rel_cardinality {
                     RelationCardinality::Many => crate::plasm_plan::ResultShape::List,
@@ -1169,6 +1322,12 @@ fn compile_surface_node(
             return Err(format!(
                 "Plasm program `{id}`: `{label}.…` expands to a non-relation Plasm expression; node-ref continuation currently supports CGS relation chains (`label.<relation>`) only"
             ));
+        }
+        let tail_trim = tail.trim();
+        if is_bracket_render_binding(state, &label)
+            && (tail_trim == "content" || tail_trim.starts_with("content."))
+        {
+            return Err(plan_render_content_scalar_reference_err(id, expr, &label));
         }
         return Err(format!(
             "Plasm program `{id}`: `{label}` is not a Plasm expression anchor — only surface/relation bindings and row-preserving projection bindings can be extended with `{label}.…`; aggregate/render/derive/data/for_each bindings must use postfix transforms or an explicit entity constructor"
@@ -2130,7 +2289,7 @@ fn infer_surface_contract(
     String,
 > {
     if let Expr::Chain(chain) = expr {
-        let (qe, cardinality) = lookup_relation_chain_meta(session, chain)?;
+        let (qe, cardinality) = lookup_relation_chain_meta(session, None, chain)?;
         let shape = match cardinality {
             RelationCardinality::Many => crate::plasm_plan::ResultShape::List,
             RelationCardinality::One => crate::plasm_plan::ResultShape::Single,
@@ -2275,7 +2434,7 @@ fn looks_like_data_literal(rhs: &str) -> bool {
 }
 
 fn looks_like_plasm_effect_template(rhs: &str) -> bool {
-    // Distinguish for-each side effects from `source => { … }` derive. `.m#` (DOMAIN methods) and
+    // Distinguish for-each side effects from `source => { … }` derive. `.m#` (teaching-table methods) and
     // all readable verbs must register here—`.label(`, `.update(`, etc.—not just `.m`.
     rhs.contains(".m")
         || rhs.contains("=>")
@@ -2667,6 +2826,128 @@ projected"#;
         assert_eq!(dry.node_results.len(), 4, "{dry:?}");
     }
 
+    #[test]
+    fn bare_label_singleton_lowers_to_limit_preserving_commit_entity() {
+        let session = github_repository_commit_session();
+        let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
+commits = repo.commits.limit(3)
+one = commits.singleton()
+one"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "bare-label-singleton",
+            source,
+        )
+        .expect("compile");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let one = nodes.iter().find(|n| n["id"] == "one").expect("one");
+        assert_eq!(one["kind"], "compute");
+        assert_eq!(one["compute"]["source"], "commits");
+        assert_eq!(one["compute"]["op"]["kind"], "limit");
+        assert_eq!(one["compute"]["op"]["count"], 1);
+        assert_eq!(one["compute"]["schema"]["entity"], json!("Commit"));
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+        assert_eq!(dry.node_results.len(), nodes.len());
+    }
+
+    #[test]
+    fn bare_label_page_size_lowers_to_identity_project() {
+        let session = github_repository_commit_session();
+        let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
+commits = repo.commits.limit(5)
+paged = commits.page_size(10)
+paged"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "bare-label-page-size",
+            source,
+        )
+        .expect("compile");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let paged = nodes.iter().find(|n| n["id"] == "paged").expect("paged");
+        assert_eq!(paged["kind"], "compute");
+        assert_eq!(paged["compute"]["op"]["kind"], "project");
+        assert_eq!(paged["compute"]["page_size"], json!(10));
+        assert_eq!(paged["compute"]["schema"]["entity"], json!("Commit"));
+    }
+
+    #[test]
+    fn bracket_render_accepts_bare_label_singleton_on_source() {
+        let session = github_repository_commit_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let p_sha = map.ident_sym_entity_field("Commit", "sha");
+        let source = format!(
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(2)\nmail = commits.singleton()[{p_sha}] <<MD\nx\nMD\nmail"
+        );
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "bare-label-singleton-render",
+            &source,
+        )
+        .expect("compile");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let prefix = nodes
+            .iter()
+            .find(|n| n["id"].as_str() == Some("__plasm_render_src_mail"))
+            .expect("render prefix");
+        assert_eq!(prefix["compute"]["op"]["kind"], "limit");
+        let render = nodes.iter().find(|n| n["id"] == "mail").expect("mail");
+        assert_eq!(render["compute"]["op"]["kind"], "render");
+        assert!(
+            render["compute"]["page_size"].is_null(),
+            "expected render compute.page_size omitted when prefix lowered tail flags"
+        );
+    }
+
+    #[test]
+    fn bracket_render_content_rejected_as_program_root_with_actionable_copy() {
+        let session = github_repository_commit_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let p_sha = map.ident_sym_entity_field("Commit", "sha");
+        let source = format!(
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(1)\nmail = commits[{p_sha}] <<MD\nx\nMD\nmail.content"
+        );
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "render-content-root",
+            &source,
+        )
+        .expect_err("mail.content must not be a root");
+        assert!(
+            err.contains("scalar string") && err.contains("mail.content"),
+            "unexpected: {err}"
+        );
+    }
+
+    #[test]
+    fn derive_accepts_render_content_as_binding_rhs() {
+        let session = github_repository_commit_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let p_sha = map.ident_sym_entity_field("Commit", "sha");
+        let source = format!(
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(1)\nmail = commits[{p_sha}] <<MD\nx\nMD\nout = mail => mail.content\nout"
+        );
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "derive-render-content",
+            &source,
+        )
+        .expect("derive with mail.content");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let derive = nodes.iter().find(|n| n["id"] == "out").expect("derive");
+        assert_eq!(derive["kind"], "derive");
+    }
+
     /// DOMAIN `p#` inside postfix projection must lower to wire field names in `Plan` IR (not
     /// survive as literal `p#` paths that dry-run would project as null).
     #[test]
@@ -2696,10 +2977,12 @@ projected"#;
             fields.contains_key("sha") && fields.contains_key("message"),
             "expected wire keys sha/message, got {fields:?}"
         );
-        assert!(
-            !fields.contains_key(&p_sha),
-            "DOMAIN symbol {p_sha} must not appear as projection column: {fields:?}"
-        );
+        if p_sha != "sha" {
+            assert!(
+                !fields.contains_key(&p_sha),
+                "teaching-table symbol {p_sha} must not appear as projection column: {fields:?}"
+            );
+        }
     }
 
     #[test]
@@ -2907,8 +3190,8 @@ report"#;
         )
         .expect_err("render from render");
         assert!(
-            err.contains("cannot infer bracket-render columns")
-                || err.contains("bracket-render output"),
+            err.contains("cannot infer template columns")
+                || err.contains("row-to-text template result"),
             "unexpected: {err}"
         );
     }

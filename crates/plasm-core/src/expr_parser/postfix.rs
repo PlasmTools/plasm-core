@@ -82,6 +82,37 @@ pub fn normalize_nested_projection_field(segment: &str) -> Result<String, String
 }
 
 /// `ident[field,...]` with no trailing junk after `]` (same contract as program DAG `parse_projection`).
+/// Closing line for row-to-text template heredocs — matches structured parameter heredocs
+/// ([`crate::expr_parser::value`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RenderHeredocCloseLineKind {
+    LineOnly,
+    GluedSuffix,
+}
+
+fn render_tail_tagged_close_kind(
+    line_slice: &str,
+    tag: &str,
+) -> Option<(RenderHeredocCloseLineKind, usize)> {
+    let leading_ws = line_slice.len() - line_slice.trim_start().len();
+    let t = line_slice.trim();
+    if t == tag {
+        return Some((RenderHeredocCloseLineKind::LineOnly, leading_ws));
+    }
+    if !t.starts_with(tag) {
+        return None;
+    }
+    let after = &t[tag.len()..];
+    let after = after.trim_start();
+    if after.len() == 1 {
+        let b = after.as_bytes()[0];
+        if matches!(b, b')' | b',' | b'}') {
+            return Some((RenderHeredocCloseLineKind::GluedSuffix, leading_ws));
+        }
+    }
+    None
+}
+
 fn parse_projection_head(head: &str) -> Option<(&str, &str)> {
     let head = head.trim_end();
     if !head.ends_with(']') {
@@ -93,30 +124,63 @@ fn parse_projection_head(head: &str) -> Option<(&str, &str)> {
 }
 
 fn parse_render_template_after_tag_opener(rest: &str) -> Result<String, String> {
-    let mut lines = rest.lines();
-    let tag = lines
-        .next()
-        .map(str::trim)
-        .ok_or_else(|| "render heredoc missing tag".to_string())?;
-    if tag.is_empty() {
-        return Err("render heredoc missing tag".to_string());
+    let bytes = rest.as_bytes();
+    if rest.is_empty() {
+        return Err(
+            "row-to-text template heredoc: expected `<<TAG` then newline after the tag on the opener line"
+                .into(),
+        );
     }
-    let body = lines.collect::<Vec<_>>().join("\n");
-    let end = body
-        .rfind(&format!("\n{tag}"))
-        .or_else(|| (body.trim() == tag).then_some(0))
-        .ok_or_else(|| format!("render heredoc <<{tag} is not closed"))?;
-    Ok(if end == 0 {
-        String::new()
-    } else {
-        body[..end].to_string()
-    })
+    let b0 = bytes[0];
+    if !(b0.is_ascii_alphabetic() || b0 == b'_') {
+        return Err(
+            "row-to-text template heredoc: `<<` must be followed by `TAG` ([A-Za-z_][A-Za-z0-9_]*) then newline"
+                .into(),
+        );
+    }
+    let mut pos = 1usize;
+    while pos < bytes.len() && (bytes[pos].is_ascii_alphanumeric() || bytes[pos] == b'_') {
+        pos += 1;
+    }
+    let tag = &rest[..pos];
+    if pos >= bytes.len() || bytes[pos] != b'\n' {
+        return Err(format!(
+            "row-to-text template heredoc `<<{tag}`: newline required immediately after the tag on the opener line (same rule as structured parameter heredocs)"
+        ));
+    }
+    pos += 1;
+    let body_start = pos;
+    loop {
+        let line_start = pos;
+        while pos < bytes.len() && bytes[pos] != b'\n' && bytes[pos] != b'\r' {
+            pos += 1;
+        }
+        let line_slice = &rest[line_start..pos];
+        if render_tail_tagged_close_kind(line_slice, tag).is_some() {
+            return Ok(rest[body_start..line_start].to_string());
+        }
+        if pos >= bytes.len() {
+            return Err(format!(
+                "row-to-text template heredoc `<<{tag}` is not closed: after the template body, add a line whose trimmed text is `{tag}` (closes on the **first** such line; interior lines must not trim-equal `TAG`). Same discipline as structured `<<TAG` parameter heredocs."
+            ));
+        }
+        if bytes[pos] == b'\r' {
+            pos += 1;
+        }
+        if pos < bytes.len() && bytes[pos] == b'\n' {
+            pos += 1;
+        } else {
+            return Err(format!(
+                "row-to-text template heredoc `<<{tag}`: malformed line terminator inside template body"
+            ));
+        }
+    }
 }
 
 /// Parsed `<<TAG … TAG` render tail after peeling postfix from the expression head.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RenderTailParse {
-    /// `source[field,...] <<TAG … TAG` — explicit render columns (same as legacy bracket-render).
+    /// `source[field,...] <<TAG … TAG` — explicit columns for a row-to-text template.
     Explicit {
         source: String,
         fields: String,
@@ -156,7 +220,7 @@ pub fn try_parse_render_tail(rhs: &str) -> Result<Option<RenderTailParse>, Strin
             continue;
         };
         // `<<TAG` at the start of the RHS is a tagged **value** heredoc (`body = <<TAG`), not a
-        // bracket-render tail (`binding <<TAG`). Require a non-empty expression head before `<<`.
+        // row-to-text template (`binding <<TAG`). Require a non-empty expression head before `<<`.
         if head.trim().is_empty() {
             continue;
         }
@@ -407,7 +471,7 @@ mod tests {
         let br = r.expect("bracket render");
         assert_eq!(br.source, "repo");
         assert_eq!(br.fields, "p1,p2");
-        assert_eq!(br.template, "line one");
+        assert_eq!(br.template, "line one\n");
     }
 
     #[test]
@@ -423,6 +487,22 @@ mod tests {
             e.contains("not closed") || e.contains("<<H"),
             "unexpected err: {e}"
         );
+    }
+
+    #[test]
+    fn bracket_render_heredoc_first_tag_match_wins() {
+        let br = try_parse_bracket_render("row[a]<<T\nhello\nT\nignored\nT")
+            .unwrap()
+            .unwrap();
+        assert_eq!(br.template, "hello\n");
+    }
+
+    #[test]
+    fn bracket_render_heredoc_glued_close_matches_structured_rules() {
+        let br = try_parse_bracket_render("row[a]<<T\nx\nT)")
+            .unwrap()
+            .unwrap();
+        assert_eq!(br.template, "x\n");
     }
 
     #[test]
@@ -485,7 +565,7 @@ mod tests {
             } => {
                 assert_eq!(source, "commits.limit(20)");
                 assert_eq!(fields, "sha,message");
-                assert_eq!(template, "one");
+                assert_eq!(template, "one\n");
             }
             RenderTailParse::Inferred { .. } => panic!("expected explicit"),
         }

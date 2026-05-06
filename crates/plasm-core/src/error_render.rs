@@ -184,7 +184,7 @@ pub fn render_query_resolve_error_for_feedback(
                         .trim_end_matches(['.', ' '])
                         .to_string();
                     let scope_hint = if msg.contains("scope") {
-                        "\n\nIf the predicate already supplies some scope fields but resolution still fails, add each remaining scope key listed on that entity's query line in DOMAIN, or use another entity whose query rows match the result shape you need."
+                        "\n\nIf the predicate already supplies some scope fields but resolution still fails, add each remaining scope key listed on that entity's query line in the TSV teaching table, or use another entity whose query rows match the result shape you need."
                     } else {
                         ""
                     };
@@ -431,7 +431,7 @@ pub fn render_parse_error_with_feedback(
                         .to_string()
                 })
             } else if structured_slot {
-                "Close the string: DOMAIN gloss marks this parameter as structured text (not plain `str`). For multiline or quote-containing values you MUST use a tagged `<<TAG` … `TAG` heredoc; if you used normal `\"…\"` instead, add the closing quote and use only `\\\"` / `\\\\` escapes—`\\n` inside quotes is two characters, not a newline."
+                "Close the string: the teaching-table gloss marks this parameter as structured text (not plain `str`). For multiline or quote-containing values you MUST use a tagged `<<TAG` … `TAG` heredoc; if you used normal `\"…\"` instead, add the closing quote and use only `\\\"` / `\\\\` escapes—`\\n` inside quotes is two characters, not a newline."
                     .into()
             } else {
                 "Close string quotes and fix `\\` escapes.".into()
@@ -446,7 +446,7 @@ pub fn render_parse_error_with_feedback(
                 format!("Use `{entity}(id)` for get-by-id. The `{entity}:id` shape is not Plasm syntax.")
             }
             FeedbackStyle::SymbolicLlm { map: _ } => {
-                "Use the get form `e#(id)` from DOMAIN for that entity — not `e#:…`.".into()
+                "Use the get form `e#(id)` from the teaching table for that entity — not `e#:…`.".into()
             }
         },
         ParseErrorKind::SearchTextMustBeString => match style {
@@ -460,10 +460,10 @@ pub fn render_parse_error_with_feedback(
         },
         ParseErrorKind::SearchNotSupported { entity } => match style {
             FeedbackStyle::CanonicalDev => format!(
-                "Entity `{entity}` has no Search capability in this schema: do not use `{entity}~…`. Use a query or get form from `{entity}`'s DOMAIN block (e.g. `{entity}{{…}}` or `{entity}(id)`)."
+                "Entity `{entity}` has no Search capability in this schema: do not use `{entity}~…`. Use a query or get form from `{entity}`'s teaching-table block (e.g. `{entity}{{…}}` or `{entity}(id)`)."
             ),
             FeedbackStyle::SymbolicLlm { map: _ } => format!(
-                "The entity for symbol covering `{entity}` has no `~` search line in DOMAIN: use only example shapes from that entity's block (query `{{…}}`, get `(id)`, relations)."
+                "The entity for symbol covering `{entity}` has no `~` search line in the teaching table: use only example shapes from that entity's block (query `{{…}}`, get `(id)`, relations)."
             ),
         },
         ParseErrorKind::InvalidFloat { .. } | ParseErrorKind::InvalidInteger { .. } => {
@@ -541,7 +541,7 @@ pub fn render_parse_error_with_feedback(
                 )
             } else if markdown_like && structured_slot {
                 format!(
-                    "{base} DOMAIN gloss marks this parameter as structured text (not plain `str`). For prose or markdown (headings, bullets, commas, embedded quotes) you MUST use a tagged `<<TAG` … `TAG` heredoc—not normal `\"…\"`."
+                    "{base} Teaching-table gloss marks this parameter as structured text (not plain `str`). For prose or markdown (headings, bullets, commas, embedded quotes) you MUST use a tagged `<<TAG` … `TAG` heredoc—not normal `\"…\"`."
                 )
             } else if markdown_like && !structured_slot {
                 format!(
@@ -561,10 +561,10 @@ pub fn render_parse_error_with_feedback(
             ..
         } => match style {
             FeedbackStyle::CanonicalDev => format!(
-                "Many-relation `{entity}({{id}}).{relation}` is not supported: `{target}` has no chain materialization. Use a scoped query on `{target}` (see DOMAIN) or add `materialize` for `{relation}` in the schema."
+                "Many-relation `{entity}({{id}}).{relation}` is not supported: `{target}` has no chain materialization. Use a scoped query on `{target}` (see the teaching table) or add `materialize` for `{relation}` in the schema."
             ),
             FeedbackStyle::SymbolicLlm { map: _ } => format!(
-                "This prompt does not support bare many-relation navigation to `{target}` for `{relation}`: use a list/query form from the `{target}` block in DOMAIN, or the schema must declare materialization for that edge."
+                "This prompt does not support bare many-relation navigation to `{target}` for `{relation}`: use a list/query form from the `{target}` block in the teaching table, or the schema must declare materialization for that edge."
             ),
         },
         ParseErrorKind::Other { message } => message.clone(),
@@ -1954,7 +1954,7 @@ For example: `{te}(<id>)` when you already know the id, instead of relying on `{
             );
             if value_type == "object" && matches!(field_type.as_str(), "String" | "Blob") {
                 correction.push_str(
-                    "\n\nIf you passed a **program binding** from **bracket render** (`label[p#,…] <<TAG … TAG`), that node materializes as a row object with a **`content`** field. Use **`binding.content`** for plain string / body parameters—not the bare binding name.",
+                    "\n\nIf you passed a **program binding** created by a row-to-text template (`label = rows[p#,…] <<TAG … TAG`), that binding is a row object with a **`content`** field. Use **`binding.content`** for plain string / body parameters—not the bare binding name.",
                 );
             }
             StepError::type_correction(correction, error)
@@ -2303,8 +2303,8 @@ mod tests {
         };
         let se = render_type_error(&err, &cgs);
         assert!(
-            se.correction.contains("bracket render") && se.correction.contains(".content"),
-            "expected Plan.render / .content hint, correction={}",
+            se.correction.contains("row-to-text template") && se.correction.contains(".content"),
+            "expected row-to-text / .content hint, correction={}",
             se.correction
         );
     }

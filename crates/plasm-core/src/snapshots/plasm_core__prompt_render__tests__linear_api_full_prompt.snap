@@ -1,5 +1,5 @@
 ---
-source: crates/plasm-core/src/prompt_render.rs
+source: plasm-oss/crates/plasm-core/src/prompt_render.rs
 expression: prompt
 ---
 # Follow the grammar and the teaching TSV below; reply with one valid plasm_program:
@@ -33,7 +33,7 @@ expression: prompt
 # binding       ::= ident "=" node
 # roots         ::= root ("," root)*
 # root          ::= ident | plasm_expr
-# node          ::= (plasm_expr | ident) postfix* render_tail? | ident "=>" value_or_template
+# node          ::= (plasm_expr | ident) postfix* row_template? | ident "=>" value_or_template
 # plasm_expr    ::= entity_expr [projection] | page
 # entity_expr   ::= query_all | get | query | relation | method | create_action
 # query_all     ::= e#
@@ -45,7 +45,7 @@ expression: prompt
 # page          ::= page(sN_pgM) | page(sN_pgM, limit=N)
 # projection    ::= e#(<id>)[p#,…] | "[" fields "]"
 # postfix       ::= ".limit(N)" | ".page_size(N)" | ".sort(field[, dir])" | ".aggregate(specs)" | ".group_by(field, specs)" | ".singleton()" | "[" fields "]"
-# render_tail   ::= ("[" fields "]")? "<<TAG" template_body "TAG"
+# row_template  ::= ("[" fields "]")? "<<TAG" template_body "TAG"
 # fields        ::= [p#,…]
 # specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) [, ...]
 # dir           ::= desc | asc | descending | ascending
@@ -55,7 +55,9 @@ expression: prompt
 # Composition rules:
 # - Multi-line program strings use literal newlines: one binding per line, final roots last. Spaces never separate statements.
 # - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.
-# - Render tails use Minijinja over `rows`; the render result is one row with `content`. Pass `binding.content` to string/body parameters.
+# - To turn rows into text, bind a template block: `report = rows[p#,…] <<TAG` newline template newline `TAG`, or `report = rows <<TAG` when columns can be inferred.
+# - Template blocks use Minijinja with `rows` as the input array. The bound result is a row with a `content` field; pass `report.content` to string/body parameters or `=>` payloads.
+# - Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.
 # - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
 # - Examples: scoped child list `e#{p#=e#(<id>)}`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
 # - `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `m#(..., p#=<<TXT` + newline body + `TXT` newline `)`.

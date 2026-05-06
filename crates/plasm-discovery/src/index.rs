@@ -52,7 +52,7 @@ pub(crate) fn camel_case_word_spaced(name: &str) -> Option<String> {
             && c.is_uppercase()
             && chars
                 .get(i - 1)
-                .map_or(false, |p| p.is_lowercase() || p.is_numeric())
+                .is_some_and(|p| p.is_lowercase() || p.is_numeric())
         {
             out.push(' ');
         }

@@ -627,7 +627,9 @@ pub(crate) enum RankedCapabilitiesArg {
     Set(Option<Vec<String>>),
 }
 
-pub(crate) fn normalize_ranked_capabilities_for_gate(raw: Option<Vec<String>>) -> Option<Vec<String>> {
+pub(crate) fn normalize_ranked_capabilities_for_gate(
+    raw: Option<Vec<String>>,
+) -> Option<Vec<String>> {
     let mut v: Vec<String> = raw?
         .into_iter()
         .map(|s| s.trim().to_string())
@@ -860,9 +862,9 @@ async fn execute_session_create_response_inner(
     let domain_filter_intent =
         normalize_context_intent_for_domain_filter(body.context_intent.as_deref());
 
-    let ranked_for_domain = domain_filter_intent.as_ref().and_then(|_| {
-        normalize_ranked_capabilities_for_gate(body.ranked_capabilities.clone())
-    });
+    let ranked_for_domain = domain_filter_intent
+        .as_ref()
+        .and_then(|_| normalize_ranked_capabilities_for_gate(body.ranked_capabilities.clone()));
 
     let reuse_key = SessionReuseKey {
         tenant_scope: scope.clone(),
@@ -1165,8 +1167,8 @@ pub async fn federate_execute_session(
 
 /// Markdown reminder after an expand wave.
 ///
-/// - **Delta wave** (`noop_expand == false`): new DOMAIN rows are in **this** message—point the model at them.
-/// - **No-op expand** (`noop_expand == true`): we intentionally **do not** replay the full DOMAIN to save
+/// - **Delta wave** (`noop_expand == false`): new teaching-table rows are in **this** message—point the model at them.
+/// - **No-op expand** (`noop_expand == true`): we intentionally **do not** replay the full TSV teaching table to save
 ///   tokens; remind the model that symbols still apply and steady state is `plasm` with `logical_session_ref`.
 fn expand_session_symbol_reminder(n: usize, noop_expand: bool) -> String {
     if noop_expand {
@@ -1174,16 +1176,16 @@ fn expand_session_symbol_reminder(n: usize, noop_expand: bool) -> String {
             return "_No exposed entities in this session yet._\n".to_string();
         }
         return format!(
-            "_Symbols `e1`…`e{n}` are unchanged. Full DOMAIN / TSV teaching text is **not** repeated in this response (token-saving). Keep using your **`logical_session_ref`** with **`plasm`** / **`plasm_run`**; rely on DOMAIN from the prior `plasm_context` open or append wave in chat history._\n",
+            "_Symbols `e1`…`e{n}` are unchanged. Full Plasm teaching-table / TSV text is **not** repeated in this response (token-saving). Keep using your **`logical_session_ref`** with **`plasm`** / **`plasm_run`**; rely on the teaching table from the prior `plasm_context` open or append wave in chat history._\n",
             n = n
         );
     }
     if n == 0 {
-        "_Follow the DOMAIN table in **this** `plasm_context` response for valid `e#` / `m#` / `p#` shapes._\n"
+        "_Follow the TSV teaching table in **this** `plasm_context` response for valid `e#` / `m#` / `p#` shapes._\n"
             .to_string()
     } else {
         format!(
-            "_Symbols `e1`…`e{n}` are append-only for this logical session. Use them with the new DOMAIN rows in **this** response._\n",
+            "_Symbols `e1`…`e{n}` are append-only for this logical session. Use them with the new teaching-table rows in **this** response._\n",
             n = n
         )
     }
@@ -1437,7 +1439,7 @@ pub(crate) async fn apply_capability_seeds(
             let mut open_md = String::new();
             if stale_execute_binding_recovered {
                 open_md.push_str(
-                    "**Prior Plasm symbol table is void.** The in-memory execute session for this logical handle was missing or expired. A new `(prompt_hash, session)` was opened — **discard** any cached `e#` / `m#` / `p#` or DOMAIN text from earlier `plasm_context` output in this chat. Re-read the teaching table from this response only. Monotonic `e#` / `m#` / `p#` apply to the **new** session.\n\n",
+                    "**Prior Plasm symbol table is void.** The in-memory execute session for this logical handle was missing or expired. A new `(prompt_hash, session)` was opened — **discard** any cached `e#` / `m#` / `p#` or prior teaching-table text from earlier `plasm_context` output in this chat. Re-read the teaching table from this response only. Monotonic `e#` / `m#` / `p#` apply to the **new** session.\n\n",
                 );
             }
             open_md.push_str(&format_plasm_context_wave_line(
@@ -1449,9 +1451,9 @@ pub(crate) async fn apply_capability_seeds(
             if created.reused {
                 open_md.push_str("\n\nSession unchanged.");
             }
-            // First attach after binding resolution (`binding == None`): restate the current DOMAIN symbol table
+            // First attach after binding resolution (`binding == None`): restate the current teaching-table snapshot
             // from the execute session prompt so the client receives authoritative `e#` / `m#` / `p#` for this open.
-            // (Later expand waves with no new entities omit full DOMAIN replay—see `expand_execute_domain_session`.)
+            // (Later expand waves with no new entities omit full teaching-table replay—see `expand_execute_domain_session`.)
             let mode = st.engine.prompt_pipeline().render_mode;
             if mode.is_tsv() {
                 if let Some(body_tsv) = domain_tsv_table_from_wrapped_prompt(

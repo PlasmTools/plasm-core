@@ -19,7 +19,7 @@
   schema: cloudflare
   goal: "From a zone, list all rulesets to see managed WAF and DDoS phases"
   tags: [query, relation]
-  covers: [query_filtered, chain, projection]
+  covers: [query_filtered, chain, reverse, projection]
   expect:
     entities_any: [Ruleset]
 
