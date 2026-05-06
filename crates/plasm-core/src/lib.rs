@@ -83,6 +83,7 @@ pub mod cgs_federation;
 pub mod connect_profile;
 pub mod cross_entity;
 pub mod discovery;
+pub mod discovery_adversarial_intents;
 pub mod domain_lexicon;
 pub mod domain_term;
 pub mod entity_ref_value;
@@ -131,6 +132,10 @@ pub use discovery::{
     Ambiguity, CapabilityQuery, CatalogEntryMeta, CgsCatalog, CgsDiscovery, ClosureStats,
     DiscoveryContextJson, DiscoveryError, DiscoveryResult, DiscoverySchemaNeighborhood,
     EntitySummary, InMemoryCgsRegistry, RankedCandidate, RegistryEntryPair,
+};
+pub use discovery_adversarial_intents::{
+    adversarial_case_count, iter_all_cases, DiscoveryAdversarialCase,
+    DiscoveryAdversarialFailureKind, CROSS_CUTTING, PER_CATALOG_SELECTION,
 };
 pub use domain_term::{
     method_ref_for_domain_segment, resolve_parameter_slot, DomainTerm, EntityRef, MethodRef,

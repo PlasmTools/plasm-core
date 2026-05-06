@@ -219,6 +219,7 @@ struct RegistryRow {
 fn fallback_target_entry_ids(
     query: &CapabilityQuery,
     entries: &IndexMap<String, RegistryRow>,
+    catalog_route: Option<&HashSet<String>>,
 ) -> Vec<String> {
     if let Some(p) = &query.pick_entry {
         return vec![p.clone()];
@@ -234,6 +235,11 @@ fn fallback_target_entry_ids(
     }
     let mut out: Vec<String> = Vec::new();
     for (eid, row) in entries {
+        if let Some(route) = catalog_route {
+            if !route.contains(eid) {
+                continue;
+            }
+        }
         let cgs = row.cgs.as_ref();
         if exp
             .iter()
@@ -346,6 +352,136 @@ fn collect_query_tokens(query: &CapabilityQuery) -> HashSet<String> {
         }
     }
     set
+}
+
+fn catalog_route_probe_lower(query: &CapabilityQuery) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for t in &query.tokens {
+        let u = t.trim();
+        if !u.is_empty() {
+            parts.push(u);
+        }
+    }
+    for p in &query.phrases {
+        let u = p.trim();
+        if !u.is_empty() {
+            parts.push(u);
+        }
+    }
+    parts.join(" ").to_ascii_lowercase()
+}
+
+fn catalog_route_tokens_from_query(query: &CapabilityQuery) -> HashSet<String> {
+    let mut set = HashSet::new();
+    for t in &query.tokens {
+        for tok in domain_lexicon::tokens_keep_brands(t) {
+            set.insert(tok);
+        }
+    }
+    for p in &query.phrases {
+        for tok in domain_lexicon::tokens_keep_brands(p) {
+            set.insert(tok);
+        }
+    }
+    set
+}
+
+fn probe_word_hit(probe_lower: &str, word: &str) -> bool {
+    if word.is_empty() {
+        return false;
+    }
+    probe_lower
+        .split(|c: char| !c.is_alphanumeric())
+        .any(|w| w == word)
+}
+
+fn entry_matches_catalog_route(
+    entry_id: &str,
+    label: &str,
+    tags: &[String],
+    probe_lower: &str,
+    route_tokens: &HashSet<String>,
+) -> bool {
+    let eid_lower = entry_id.to_ascii_lowercase();
+
+    if eid_lower.len() >= 4
+        && (route_tokens.contains(&eid_lower) || probe_word_hit(probe_lower, &eid_lower))
+    {
+        return true;
+    }
+
+    let segments: Vec<&str> = entry_id
+        .split(|c| c == '_' || c == '-')
+        .filter(|s| !s.is_empty())
+        .collect();
+    if segments.len() >= 2 {
+        let mut all = true;
+        let mut saw_required = false;
+        for seg in &segments {
+            let sl = seg.to_ascii_lowercase();
+            if sl.len() < 3 {
+                continue;
+            }
+            saw_required = true;
+            if !(route_tokens.contains(&sl) || probe_word_hit(probe_lower, &sl)) {
+                all = false;
+                break;
+            }
+        }
+        if all && saw_required {
+            return true;
+        }
+    }
+
+    let lab = label.trim().to_ascii_lowercase();
+    if lab.len() >= 4 && probe_lower.contains(&lab) {
+        return true;
+    }
+
+    if eid_lower.contains('-') || eid_lower.contains('_') {
+        let normalized = eid_lower.replace(['-', '_'], " ");
+        if normalized.len() >= 4 && probe_lower.contains(&normalized) {
+            return true;
+        }
+    }
+
+    for tag in tags {
+        let t = tag.trim().to_ascii_lowercase();
+        if t.len() >= 4
+            && (probe_lower.contains(&t)
+                || route_tokens.contains(&t)
+                || probe_word_hit(probe_lower, &t))
+        {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn catalog_routes_for_query(
+    query: &CapabilityQuery,
+    entries: &IndexMap<String, RegistryRow>,
+) -> Option<HashSet<String>> {
+    if query.pick_entry.is_some() || query.entry_ids.is_some() {
+        return None;
+    }
+    let probe_lower = catalog_route_probe_lower(query);
+    let route_tokens = catalog_route_tokens_from_query(query);
+    if probe_lower.is_empty() && route_tokens.is_empty() {
+        return None;
+    }
+    let mut matched = HashSet::new();
+    for (eid, row) in entries {
+        if entry_matches_catalog_route(eid, &row.label, &row.tags, &probe_lower, &route_tokens) {
+            matched.insert(eid.clone());
+        }
+    }
+    if matched.is_empty() {
+        None
+    } else {
+        Some(matched)
+    }
 }
 
 fn score_token_hits(query: &HashSet<String>, text: &str) -> (u32, Vec<String>) {
@@ -461,9 +597,16 @@ impl CgsDiscovery for InMemoryCgsRegistry {
             return Err(DiscoveryError::EmptyQuery);
         }
 
+        let catalog_route = catalog_routes_for_query(query, &self.entries);
+
         let mut candidates: Vec<RankedCandidate> = Vec::new();
 
         for (entry_id, row) in &self.entries {
+            if let Some(route) = &catalog_route {
+                if !route.contains(entry_id) {
+                    continue;
+                }
+            }
             for cap in row.cgs.capabilities.values() {
                 if !cap_passes_filters(query, entry_id, cap) {
                     continue;
@@ -565,7 +708,7 @@ impl CgsDiscovery for InMemoryCgsRegistry {
                 }
             }
         } else {
-            let fb = fallback_target_entry_ids(query, &self.entries);
+            let fb = fallback_target_entry_ids(query, &self.entries, catalog_route.as_ref());
             for eid in fb {
                 let Some(row) = self.entries.get(&eid) else {
                     continue;
@@ -814,7 +957,9 @@ mod tests {
     use super::*;
     use crate::loader::load_schema_dir;
     use crate::Prefix;
+    use std::collections::HashSet;
     use std::path::Path;
+    use std::sync::Arc;
 
     #[test]
     fn discover_fixture_by_token() {
@@ -1051,6 +1196,185 @@ mod tests {
                 .iter()
                 .any(|c| { c.capability.as_str() == "prompt_run_create" }),
             "ranked gate should drop scored mutations absent from the ranked name list"
+        );
+    }
+
+    #[test]
+    fn discover_catalog_route_cloudflare_long_intent() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        let reg = InMemoryCgsRegistry::from_pairs(vec![
+            (
+                "cloudflare".into(),
+                "Cloudflare".into(),
+                vec![],
+                cgs.clone(),
+            ),
+            ("clickup".into(), "ClickUp".into(), vec![], cgs.clone()),
+            ("github".into(), "GitHub".into(), vec![], cgs.clone()),
+        ]);
+        let phrase =
+            "Update Cloudflare zone WAF rules and comment moderation labels for security issues";
+        let q = CapabilityQuery {
+            phrases: vec![phrase.into()],
+            ..Default::default()
+        };
+        let r = reg.discover(&q).expect("discover");
+        assert!(
+            r.candidates.iter().all(|c| c.entry_id == "cloudflare"),
+            "expected only cloudflare candidates; got {:?}",
+            r.candidates.iter().map(|c| &c.entry_id).collect::<Vec<_>>()
+        );
+        assert!(
+            r.schema_neighborhoods
+                .iter()
+                .all(|n| n.entry_id == "cloudflare"),
+            "expected neighborhoods only for cloudflare"
+        );
+        assert!(
+            r.contexts
+                .iter()
+                .all(|ctx| { matches!(&ctx.prefix, Prefix::Entry { id } if id == "cloudflare") }),
+            "expected single cloudflare context"
+        );
+    }
+
+    #[test]
+    fn discover_catalog_route_google_sheets_phrase() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        let reg = InMemoryCgsRegistry::from_pairs(vec![
+            ("github".into(), "GitHub".into(), vec![], cgs.clone()),
+            (
+                "google-sheets".into(),
+                "Google Sheets".into(),
+                vec![],
+                cgs.clone(),
+            ),
+        ]);
+        let q = CapabilityQuery {
+            phrases: vec!["sync google sheets rows".into()],
+            ..Default::default()
+        };
+        let r = reg.discover(&q).expect("discover");
+        assert!(r.candidates.iter().all(|c| c.entry_id == "google-sheets"));
+    }
+
+    #[test]
+    fn discover_explicit_entry_ids_overrides_catalog_route() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        let reg = InMemoryCgsRegistry::from_pairs(vec![
+            (
+                "cloudflare".into(),
+                "Cloudflare".into(),
+                vec![],
+                cgs.clone(),
+            ),
+            ("github".into(), "GitHub".into(), vec![], cgs.clone()),
+        ]);
+        let q = CapabilityQuery {
+            phrases: vec!["Cloudflare DNS records".into()],
+            entry_ids: Some(vec!["github".into()]),
+            ..Default::default()
+        };
+        let r = reg.discover(&q).expect("discover");
+        assert!(r.candidates.iter().all(|c| c.entry_id == "github"));
+    }
+
+    #[test]
+    fn discover_pick_entry_overrides_catalog_route_inference() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        let reg = InMemoryCgsRegistry::from_pairs(vec![
+            (
+                "cloudflare".into(),
+                "Cloudflare".into(),
+                vec![],
+                cgs.clone(),
+            ),
+            ("github".into(), "GitHub".into(), vec![], cgs.clone()),
+        ]);
+        let q = CapabilityQuery {
+            phrases: vec!["Cloudflare zones".into()],
+            pick_entry: Some("github".into()),
+            ..Default::default()
+        };
+        let r = reg.discover(&q).expect("discover");
+        assert!(r.candidates.iter().all(|c| c.entry_id == "github"));
+    }
+
+    #[test]
+    fn discover_generic_intent_scans_all_catalogs() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        let reg = InMemoryCgsRegistry::from_pairs(vec![
+            ("alpha".into(), "Alpha".into(), vec![], cgs.clone()),
+            ("beta".into(), "Beta".into(), vec![], cgs.clone()),
+        ]);
+        let q = CapabilityQuery {
+            phrases: vec!["organisation project profile metadata list".into()],
+            ..Default::default()
+        };
+        let r = reg.discover(&q).expect("discover");
+        let eids: HashSet<_> = r.candidates.iter().map(|c| c.entry_id.as_str()).collect();
+        assert!(
+            eids.contains("alpha") && eids.contains("beta"),
+            "generic intent should scan every catalog; got {:?}",
+            eids
+        );
+    }
+
+    #[test]
+    fn discover_catalog_route_union_when_two_apis_named() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        let reg = InMemoryCgsRegistry::from_pairs(vec![
+            (
+                "cloudflare".into(),
+                "Cloudflare".into(),
+                vec![],
+                cgs.clone(),
+            ),
+            ("github".into(), "GitHub".into(), vec![], cgs.clone()),
+            ("clickup".into(), "ClickUp".into(), vec![], cgs.clone()),
+        ]);
+        let q = CapabilityQuery {
+            // Schema overlap for scoring (brand tokens are stripped from lexicon scoring).
+            tokens: vec!["profile".into()],
+            phrases: vec!["Compare Cloudflare WAF with GitHub issue labels".into()],
+            ..Default::default()
+        };
+        let r = reg.discover(&q).expect("discover");
+        let eids: HashSet<_> = r.candidates.iter().map(|c| c.entry_id.as_str()).collect();
+        assert!(
+            eids.contains("cloudflare") && eids.contains("github") && !eids.contains("clickup"),
+            "expected cloudflare+github only; got {:?}",
+            eids
         );
     }
 

@@ -247,13 +247,7 @@ impl DomainLexicon {
     }
 }
 
-/// Tokenise a name or description into normalised, filtered tokens.
-///
-/// - Split on `_`, `-`, space, and camelCase boundaries
-/// - Lowercase
-/// - Strip simple English suffixes
-/// - Remove brand names and common stop-words
-pub fn tokens(input: &str) -> Vec<String> {
+fn raw_words(input: &str) -> Vec<String> {
     let mut words: Vec<String> = Vec::new();
 
     // Split on non-alphabetic/non-digit runs, then split camelCase
@@ -281,12 +275,33 @@ pub fn tokens(input: &str) -> Vec<String> {
         words.push(current.to_lowercase());
     }
 
-    // Stem + filter
     words
+}
+
+/// Tokenise a name or description into normalised, filtered tokens.
+///
+/// - Split on `_`, `-`, space, and camelCase boundaries
+/// - Lowercase
+/// - Strip simple English suffixes
+/// - Remove brand names and common stop-words
+pub fn tokens(input: &str) -> Vec<String> {
+    raw_words(input)
         .into_iter()
         .map(stem)
         .filter(|w| w.len() >= 3)
         .filter(|w| !BRAND_STOPWORDS.contains(&w.as_str()))
+        .filter(|w| !COMMON_STOPWORDS.contains(&w.as_str()))
+        .collect()
+}
+
+/// Like [`tokens`], but **does not** drop API/product brand tokens.
+///
+/// Used for catalog / API routing where product names must remain visible to deterministic matchers.
+pub fn tokens_keep_brands(input: &str) -> Vec<String> {
+    raw_words(input)
+        .into_iter()
+        .map(stem)
+        .filter(|w| w.len() >= 3)
         .filter(|w| !COMMON_STOPWORDS.contains(&w.as_str()))
         .collect()
 }
@@ -324,6 +339,14 @@ mod tests {
     fn tokenises_camel_case() {
         let t = tokens("teamId");
         assert!(t.contains(&"team".to_string()));
+    }
+
+    #[test]
+    fn tokens_keep_brands_retains_github() {
+        // PascalCase splits into git/hub before stemming; routing uses lowercase brands too.
+        let t = tokens_keep_brands("github issue");
+        assert!(t.contains(&"github".to_string()));
+        assert!(!tokens("github issue").contains(&"github".to_string()));
     }
 
     #[test]
