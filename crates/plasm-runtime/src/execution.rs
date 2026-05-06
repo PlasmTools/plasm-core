@@ -17,10 +17,10 @@ use plasm_core::{
         CrossEntityStrategy,
     },
     resolve_query_capability as resolve_query_capability_core, type_check_expr,
-    type_check_expr_federated, CapabilityParamName, CapabilitySchema, ChainStep, EntityFieldName,
-    EntityKey, EntityName, Expr, FieldType, GetExpr, InputType, InvokeExpr, InvokeInputPayload,
-    ParameterRole, Predicate, PromptPipelineConfig, QueryExpr, QueryPagination, Ref,
-    RelationMaterialization, RelationSchema, TypeError, Value, CGS,
+    type_check_expr_federated, CapabilityParamName, CapabilitySchema, ChainStep, EntityDef,
+    EntityFieldName, EntityKey, EntityName, Expr, FieldType, GetExpr, InputType, InvokeExpr,
+    InvokeInputPayload, ParameterRole, Predicate, PromptPipelineConfig, QueryExpr, QueryPagination,
+    Ref, RelationMaterialization, RelationSchema, TypeError, Value, CGS,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -875,6 +875,7 @@ impl ExecutionEngine {
         if let Some(pred) = &query.predicate {
             extract_predicate_vars(pred, &mut env);
         }
+        normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
         plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
             RuntimeError::ConfigurationError {
                 message: e.to_string(),
@@ -1897,6 +1898,7 @@ impl ExecutionEngine {
                 env.insert(k.clone(), v.clone());
             }
         }
+        normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
         plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
             RuntimeError::ConfigurationError {
                 message: e.to_string(),
@@ -3221,11 +3223,34 @@ fn normalize_cml_env_scope_entity_refs(
         let Some(slot) = env.get_mut(&field.name) else {
             continue;
         };
-        if let Some(norm) = plasm_core::normalize_entity_ref_value_for_target(slot, ent) {
+        if let Some(norm) = normalize_cml_scope_entity_ref_value(slot, ent) {
             *slot = norm;
         }
     }
     Ok(())
+}
+
+fn normalize_cml_scope_entity_ref_value(value: &Value, ent: &EntityDef) -> Option<Value> {
+    let normalized = plasm_core::normalize_entity_ref_value_for_target(value, ent)?;
+    if ent.key_vars.len() >= 2 {
+        return Some(normalized);
+    }
+    match &normalized {
+        Value::Object(map) => {
+            let key = ent
+                .key_vars
+                .first()
+                .map(|k| k.as_str())
+                .unwrap_or_else(|| ent.id_field.as_str());
+            map.get(key).and_then(|v| match v {
+                Value::String(_) | Value::Integer(_) | Value::Float(_) | Value::Bool(_) => {
+                    Some(v.clone())
+                }
+                _ => None,
+            })
+        }
+        other => Some(other.clone()),
+    }
 }
 
 fn pagination_default_limit(pconf: &PaginationConfig) -> u32 {
@@ -4644,8 +4669,8 @@ mod tests {
     use indexmap::IndexMap;
     use plasm_core::{
         CapabilityKind, CapabilityMapping, CapabilitySchema, Expr, FieldSchema, FieldType,
-        FieldValueKind, GetExpr, NamedValueSchema, Ref, ResourceSchema, StringSemantics,
-        ValueDomainKey,
+        FieldValueKind, GetExpr, InputFieldSchema, InputSchema, InputValidation, NamedValueSchema,
+        Ref, ResourceSchema, StringSemantics, ValueDomainKey,
     };
     use std::collections::BTreeMap;
 
@@ -4778,6 +4803,135 @@ mod tests {
         cgs.add_capability(get_capability).unwrap();
 
         cgs
+    }
+
+    fn cgs_with_unary_entity_ref_scope_query() -> (CGS, CapabilitySchema) {
+        let mut cgs = CGS::new();
+        cgs.values.insert(
+            "rt_str".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+                string_semantics: Some(StringSemantics::Short),
+                array_items: None,
+            },
+        );
+        cgs.values.insert(
+            "rt_workspace_ref".into(),
+            NamedValueSchema {
+                description: String::new(),
+                field_type: FieldType::EntityRef {
+                    target: "Workspace".into(),
+                },
+                value_format: None,
+                allowed_values: None,
+                string_semantics: None,
+                array_items: None,
+            },
+        );
+        cgs.add_resource(ResourceSchema {
+            name: "Workspace".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: vec![FieldSchema {
+                name: "id".into(),
+                kind: FieldValueKind::Registry(ValueDomainKey::new("rt_str").expect("key")),
+                description: String::new(),
+                required: true,
+                agent_presentation: None,
+                mime_type_hint: None,
+                attachment_media: None,
+                wire_path: None,
+                derive: None,
+            }],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+            discovery: None,
+        })
+        .expect("workspace resource");
+        let cap = CapabilitySchema {
+            name: "managed_resource_query".into(),
+            description: String::new(),
+            kind: CapabilityKind::Query,
+            domain: "ManagedResource".into(),
+            mapping: CapabilityMapping {
+                template: serde_json::json!({
+                    "method": "GET",
+                    "path": [
+                        {"type": "literal", "value": "workspaces"},
+                        {"type": "var", "name": "workspace_id"},
+                        {"type": "literal", "value": "managed-resources"}
+                    ]
+                })
+                .into(),
+            },
+            input_schema: Some(InputSchema {
+                input_type: InputType::Object {
+                    fields: vec![InputFieldSchema {
+                        name: "workspace_id".to_string(),
+                        kind: FieldValueKind::Registry(
+                            ValueDomainKey::new("rt_workspace_ref").expect("workspace ref key"),
+                        ),
+                        required: true,
+                        description: None,
+                        default: None,
+                        role: Some(ParameterRole::Scope),
+                    }],
+                    additional_fields: false,
+                },
+                validation: InputValidation::default(),
+                description: None,
+                examples: vec![],
+            }),
+            output_schema: None,
+            provides: vec![],
+            scope_aggregate_key_policy: Default::default(),
+            invoke_preflight: None,
+            discovery: None,
+        };
+        (cgs, cap)
+    }
+
+    #[test]
+    fn normalize_cml_scope_entity_ref_keeps_scalar_unary_ref_for_path_var() {
+        let (cgs, cap) = cgs_with_unary_entity_ref_scope_query();
+        let mut env = CmlEnv::new();
+        env.insert(
+            "workspace_id".to_string(),
+            Value::String("workspace_123".to_string()),
+        );
+        normalize_cml_env_scope_entity_refs(&mut env, &cgs, &cap).expect("normalize");
+        assert_eq!(
+            env.get("workspace_id"),
+            Some(&Value::String("workspace_123".to_string()))
+        );
+    }
+
+    #[test]
+    fn normalize_cml_scope_entity_ref_narrows_unary_ref_row_to_path_scalar() {
+        let (cgs, cap) = cgs_with_unary_entity_ref_scope_query();
+        let mut env = CmlEnv::new();
+        env.insert(
+            "workspace_id".to_string(),
+            Value::Object(indexmap::indexmap! {
+                "id".to_string() => Value::String("workspace_123".to_string()),
+                "name".to_string() => Value::String("General Workspace".to_string()),
+            }),
+        );
+        normalize_cml_env_scope_entity_refs(&mut env, &cgs, &cap).expect("normalize");
+        assert_eq!(
+            env.get("workspace_id"),
+            Some(&Value::String("workspace_123".to_string()))
+        );
     }
 
     #[test]

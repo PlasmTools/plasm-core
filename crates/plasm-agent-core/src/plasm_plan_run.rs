@@ -1973,9 +1973,9 @@ struct MaterializedNode {
     entry_id: String,
     entity: String,
     result: ExecutionResult,
-    /// Complete logical rows for downstream DAG semantics. `result.entities` may be a paged view for
-    /// display/publication, but compute/project/group/map must consume the full materialized collection.
-    all_entities: Vec<CachedEntity>,
+    /// Raw row values for downstream language semantics. Synthetic scalar bindings stay scalar here
+    /// even though display/publication wraps them as `{ "value": ... }` cached entities.
+    rows: Vec<serde_json::Value>,
     artifact: Option<crate::run_artifacts::RunArtifactHandle>,
     display: String,
     projection: Option<Vec<String>>,
@@ -2083,7 +2083,11 @@ async fn run_validated_plan_phased(
                         .unwrap_or_else(|| node.id().as_str().to_string()),
                     display: crate::expr_display::expr_display(&parsed.expr),
                     projection: parsed.projection,
-                    all_entities: result.entities.clone(),
+                    rows: result
+                        .entities
+                        .iter()
+                        .map(CachedEntity::payload_to_json)
+                        .collect(),
                     result,
                     artifact,
                 }
@@ -2180,7 +2184,11 @@ async fn run_validated_plan_phased(
                     entity: relation.relation.target.entity.clone(),
                     display: crate::expr_display::expr_display(&parsed.expr),
                     projection: parsed.projection,
-                    all_entities: result.entities.clone(),
+                    rows: result
+                        .entities
+                        .iter()
+                        .map(CachedEntity::payload_to_json)
+                        .collect(),
                     result,
                     artifact,
                 }
@@ -2371,7 +2379,7 @@ async fn materialize_synthetic_node(
         entity: entity.clone(),
         display: synthetic_node_display(node),
         projection: synthetic_projection(node),
-        all_entities: full_result.entities.clone(),
+        rows,
         result: ExecutionResult {
             count: entities.len(),
             entities,
@@ -2408,11 +2416,7 @@ fn materialized_rows(
             source.as_str()
         )
     })?;
-    Ok(mat
-        .all_entities
-        .iter()
-        .map(CachedEntity::payload_to_json)
-        .collect())
+    Ok(mat.rows.clone())
 }
 
 fn materialized_singleton_inputs(
@@ -2428,25 +2432,21 @@ fn materialized_singleton_inputs(
                 input.alias.as_str()
             )
         })?;
-        if mat.all_entities.len() != 1 {
+        if mat.rows.len() != 1 {
             return Err(singleton_input_row_count_error(
                 input.node.as_str(),
                 input.alias.as_str(),
-                mat.all_entities.len(),
+                mat.rows.len(),
                 format!("{:?} broadcast", input.proof).as_str(),
             ));
         }
-        let row = mat
-            .all_entities
-            .first()
-            .map(CachedEntity::payload_to_json)
-            .ok_or_else(|| {
-                format!(
-                    "Plan input {:?} for alias {:?} expected one row but was empty",
-                    input.node.as_str(),
-                    input.alias.as_str()
-                )
-            })?;
+        let row = mat.rows.first().cloned().ok_or_else(|| {
+            format!(
+                "Plan input {:?} for alias {:?} expected one row but was empty",
+                input.node.as_str(),
+                input.alias.as_str()
+            )
+        })?;
         out.insert(
             input.alias.clone(),
             MaterializedInputRow {
@@ -2474,25 +2474,21 @@ fn materialized_result_use_inputs(
                 alias.as_str()
             )
         })?;
-        if mat.all_entities.len() != 1 {
+        if mat.rows.len() != 1 {
             return Err(singleton_input_row_count_error(
                 node.as_str(),
                 alias.as_str(),
-                mat.all_entities.len(),
+                mat.rows.len(),
                 "staged expression rendering",
             ));
         }
-        let row = mat
-            .all_entities
-            .first()
-            .map(CachedEntity::payload_to_json)
-            .ok_or_else(|| {
-                format!(
-                    "Plan input {:?} for alias {:?} expected one row but was empty",
-                    node.as_str(),
-                    alias.as_str()
-                )
-            })?;
+        let row = mat.rows.first().cloned().ok_or_else(|| {
+            format!(
+                "Plan input {:?} for alias {:?} expected one row but was empty",
+                node.as_str(),
+                alias.as_str()
+            )
+        })?;
         out.insert(
             alias,
             MaterializedInputRow {
@@ -2794,12 +2790,15 @@ async fn materialize_for_each_node(
             source_rows.len()
         )
     };
-    let all_entities = result.entities.clone();
     Ok(MaterializedNode {
         entry_id: for_each.effect_template.qualified_entity.entry_id.clone(),
         entity: for_each.effect_template.qualified_entity.entity.clone(),
+        rows: result
+            .entities
+            .iter()
+            .map(CachedEntity::payload_to_json)
+            .collect(),
         result,
-        all_entities,
         artifact: Some(artifact),
         display,
         projection: Some(for_each.projection.clone()).filter(|p| !p.is_empty()),
@@ -3395,6 +3394,51 @@ mod tests {
     use plasm_core::DomainExposureSession;
     use std::path::PathBuf;
     use std::sync::Arc;
+
+    #[test]
+    fn materialized_result_use_preserves_scalar_data_binding_value() {
+        let node = PlanNodeId::new("workspace_id".to_string()).expect("node id");
+        let row = serde_json::json!("workspace_123");
+        let entities =
+            json_rows_to_entities("PlanComputed_workspace_id", std::slice::from_ref(&row));
+        let mut materialized = BTreeMap::new();
+        materialized.insert(
+            node.clone(),
+            MaterializedNode {
+                entry_id: "acme".to_string(),
+                entity: "PlanComputed_workspace_id".to_string(),
+                result: ExecutionResult {
+                    count: entities.len(),
+                    entities: entities.clone(),
+                    has_more: false,
+                    pagination_resume: None,
+                    paging_handle: None,
+                    source: ExecutionSource::Cache,
+                    stats: ExecutionStats {
+                        duration_ms: 0,
+                        network_requests: 0,
+                        cache_hits: 0,
+                        cache_misses: 0,
+                    },
+                    request_fingerprints: vec![],
+                },
+                rows: vec![row.clone()],
+                artifact: None,
+                display: "workspace_id".to_string(),
+                projection: None,
+            },
+        );
+        let inputs = materialized_result_use_inputs(
+            &materialized,
+            &[PlanResultUse {
+                node: node.as_str().to_string(),
+                r#as: "workspace_id".to_string(),
+            }],
+        )
+        .expect("inputs");
+        let alias = InputAlias::new("workspace_id".to_string()).expect("alias");
+        assert_eq!(inputs.get(&alias).expect("workspace_id").row, row);
+    }
 
     fn test_session() -> ExecuteSession {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));

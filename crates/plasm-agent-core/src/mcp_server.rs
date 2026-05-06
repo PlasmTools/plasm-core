@@ -728,21 +728,15 @@ impl PlasmMcpHandler {
         );
         let mut discover_props = BTreeMap::new();
         discover_props.insert(
-            "query".into(),
-            json_schema_string_or_string_array(
-                "Describe the **task or goal** you need catalog coverage for (plain language). Response is a table of matching **capabilities**: **`api`**, **`entity`**, **`description`** per row — turn the rows you need into **`plasm_context`** **`seeds`** (each row is one `{api, entity}` or `{entry_id, entity}`).",
+            "intent".into(),
+            json_schema_non_empty_string_type(
+                "Describe what the agent needs to do, in one plain-language intent string. This is the task intent to resolve into catalog coverage, not a list of keywords. Response is a table of matching **capabilities**: **`api`**, **`entity`**, **`description`** per row — turn the rows you need into **`plasm_context`** **`seeds`** (each row is one `{api, entity}` or `{entry_id, entity}`).",
             ),
         );
         discover_props.insert(
             "typed".into(),
             json_schema_bool_type(
                 "If **true**, response is fenced **`json`** (`DiscoveryDecision`) for structured disambiguation instead of the capability table.",
-            ),
-        );
-        discover_props.insert(
-            "utterance".into(),
-            json_schema_string_type(
-                "Typed mode: optional single string for the same intent as **`query`**; if omitted, **`query`** is used.",
             ),
         );
         discover_props.insert(
@@ -834,9 +828,9 @@ impl PlasmMcpHandler {
                 name: "discover_capabilities".into(),
                 title: Some("Resolve intent to capabilities".into()),
                 description: Some(
-                    "Map what you are trying to do (**intent** / task wording) to concrete catalog **capabilities**. Send **`query`** as a short description of that intent. You get a table of candidate capabilities (`**api**`, **`entity**`, **`description`**); use the rows you need to build **`plasm_context`** **`seeds`**. Skip when you already know **`api`**/**`entity`** for every capability you need. With **`typed: true`**, the reply is fenced **`json`** (`DiscoveryDecision`) for stepwise disambiguation instead of the table.".into(),
+                    "Map what the agent needs to do to concrete catalog **capabilities**. Send exactly one **`intent`** string describing the task; do not send keyword arrays or multiple alternate phrasings. You get a table of candidate capabilities (`**api**`, **`entity**`, **`description`**); use the rows you need to build **`plasm_context`** **`seeds`**. Skip when you already know **`api`**/**`entity`** for every capability you need. With **`typed: true`**, the reply is fenced **`json`** (`DiscoveryDecision`) for stepwise disambiguation instead of the table.".into(),
                 ),
-                input_schema: ToolInputSchema::new(vec![], Some(discover_props), None),
+                input_schema: ToolInputSchema::new(vec!["intent".into()], Some(discover_props), None),
                 annotations: Some(ToolAnnotations {
                     read_only_hint: Some(true),
                     open_world_hint: Some(true),
@@ -906,6 +900,14 @@ fn json_schema_string_type(description: &str) -> serde_json::Map<String, serde_j
     m
 }
 
+fn json_schema_non_empty_string_type(
+    description: &str,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut m = json_schema_string_type(description);
+    m.insert("minLength".into(), serde_json::json!(1));
+    m
+}
+
 fn json_schema_bool_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
     m.insert("type".into(), serde_json::json!("boolean"));
@@ -914,31 +916,6 @@ fn json_schema_bool_type(description: &str) -> serde_json::Map<String, serde_jso
         serde_json::Value::String(description.to_string()),
     );
     m
-}
-
-fn json_schema_string_or_string_array(
-    description: &str,
-) -> serde_json::Map<String, serde_json::Value> {
-    let v = serde_json::json!({
-        "description": description,
-        "oneOf": [
-            {
-                "type": "string",
-                "minLength": 1,
-                "description": "One intent phrase or keywords for the task."
-            },
-            {
-                "type": "array",
-                "minItems": 1,
-                "items": { "type": "string", "minLength": 1 },
-                "description": "Several strings for the same search (combined for coverage)."
-            }
-        ]
-    });
-    match v {
-        serde_json::Value::Object(m) => m,
-        _ => unreachable!(),
-    }
 }
 
 fn json_schema_non_empty_object_array(
@@ -985,46 +962,28 @@ fn args_value(params: &CallToolRequestParams) -> serde_json::Value {
     serde_json::Value::Object(params.arguments.clone().unwrap_or_default())
 }
 
-/// MCP `discover_capabilities`: `query` is one string or several strings (same as HTTP discovery;
-/// values feed [`CapabilityQuery::tokens`]).
+/// MCP `discover_capabilities`: `intent` is exactly one non-empty task description string.
 fn mcp_discover_query_from_arguments(v: &serde_json::Value) -> Result<CapabilityQuery, String> {
     let Some(obj) = v.as_object() else {
         return Err("discover_capabilities arguments must be a JSON object".to_string());
     };
-    let q = obj.get("query");
-    let tokens: Vec<String> = match q {
-        None | Some(serde_json::Value::Null) => Vec::new(),
-        Some(serde_json::Value::String(s)) => {
-            if s.is_empty() {
-                Vec::new()
-            } else {
-                vec![s.clone()]
-            }
-        }
-        Some(serde_json::Value::Array(arr)) => {
-            let mut out = Vec::with_capacity(arr.len());
-            for item in arr {
-                match item {
-                    serde_json::Value::String(s) if !s.is_empty() => out.push(s.clone()),
-                    serde_json::Value::String(_) => {}
-                    _ => {
-                        return Err(
-                            "discover_capabilities `query` array must contain only strings"
-                                .to_string(),
-                        );
-                    }
-                }
-            }
-            out
+    if obj.contains_key("query") || obj.contains_key("utterance") {
+        return Err(
+            "discover_capabilities now requires `intent` as a single string; `query`/`utterance` are not accepted"
+                .to_string(),
+        );
+    }
+    let intent = match obj.get("intent") {
+        Some(serde_json::Value::String(s)) if !s.trim().is_empty() => s.trim().to_string(),
+        Some(serde_json::Value::String(_)) | None | Some(serde_json::Value::Null) => {
+            return Err("discover_capabilities `intent` must be a non-empty string".to_string());
         }
         Some(_) => {
-            return Err(
-                "discover_capabilities `query` must be a string or an array of strings".to_string(),
-            );
+            return Err("discover_capabilities `intent` must be a single string".to_string());
         }
     };
     Ok(CapabilityQuery {
-        tokens,
+        tokens: vec![intent],
         phrases: vec![],
         ..CapabilityQuery::default()
     })
@@ -1054,16 +1013,11 @@ fn typed_discovery_mcp_error(e: plasm_discovery::DiscoveryError) -> CallToolErro
 
 fn mcp_typed_discovery_query_from_arguments(
     obj: &serde_json::Map<String, serde_json::Value>,
-    legacy_tokens: &[String],
+    intent: &str,
 ) -> Result<DiscoveryQuery, String> {
-    let utterance = obj
-        .get("utterance")
-        .and_then(|v| v.as_str())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| legacy_tokens.join(" ").trim().to_string());
+    let utterance = intent.trim().to_string();
     if utterance.is_empty() {
-        return Err("typed discovery requires a non-empty `utterance` or `query`".to_string());
+        return Err("typed discovery requires a non-empty `intent`".to_string());
     }
     let max_options = obj
         .get("max_options")
@@ -2440,7 +2394,7 @@ impl ServerHandler for PlasmMcpHandler {
                     tracing::info!(
                         target: "plasm_agent::mcp",
                         tool = "discover_capabilities",
-                        query = ?q.tokens,
+                        intent = %q.tokens.first().map(String::as_str).unwrap_or_default(),
                         "MCP tool: discover_capabilities (search)"
                     );
                     let reg = self.plasm.catalog.snapshot();
@@ -2452,7 +2406,8 @@ impl ServerHandler for PlasmMcpHandler {
                     };
                     let typed = obj.get("typed").and_then(|x| x.as_bool()).unwrap_or(false);
                     if typed {
-                        let mut dq = mcp_typed_discovery_query_from_arguments(obj, &q.tokens)
+                        let intent = q.tokens.first().map(String::as_str).unwrap_or_default();
+                        let mut dq = mcp_typed_discovery_query_from_arguments(obj, intent)
                             .map_err(|msg| {
                                 CallToolError::invalid_arguments("discover_capabilities", Some(msg))
                             })?;
@@ -2704,12 +2659,12 @@ mod tests {
     use insta::assert_snapshot;
 
     #[test]
-    fn mcp_discover_maps_subset_to_capability_query() {
+    fn mcp_discover_maps_intent_to_capability_query() {
         let v = serde_json::json!({
-            "query": ["electric", "type chart"],
+            "intent": "Find electric type chart data for Pokemon",
         });
         let q = mcp_discover_query_from_arguments(&v).expect("deserialize");
-        assert_eq!(q.tokens, vec!["electric", "type chart"]);
+        assert_eq!(q.tokens, vec!["Find electric type chart data for Pokemon"]);
         assert!(q.phrases.is_empty());
         assert!(q.entity_hints.is_empty());
         assert!(q.pick_entry.is_none());
@@ -2717,12 +2672,24 @@ mod tests {
     }
 
     #[test]
-    fn mcp_discover_query_accepts_single_intent_string() {
+    fn mcp_discover_rejects_legacy_query_array() {
         let v = serde_json::json!({
-            "query": "github repository commits git linear issue",
+            "query": ["github", "repository commits"],
         });
-        let q = mcp_discover_query_from_arguments(&v).expect("deserialize");
-        assert_eq!(q.tokens, vec!["github repository commits git linear issue"]);
+        let err = mcp_discover_query_from_arguments(&v).expect_err("legacy query rejected");
+        assert!(
+            err.contains("requires `intent`") && err.contains("not accepted"),
+            "unexpected: {err}"
+        );
+    }
+
+    #[test]
+    fn mcp_discover_rejects_non_string_intent() {
+        let v = serde_json::json!({
+            "intent": ["github", "commits"],
+        });
+        let err = mcp_discover_query_from_arguments(&v).expect_err("array intent rejected");
+        assert!(err.contains("single string"), "unexpected: {err}");
     }
 
     #[test]
@@ -2845,30 +2812,30 @@ mod tests {
     }
 
     /// MCP hosts (e.g. Cursor) may validate `tools/call` args against the advertised JSON Schema
-    /// from `tools/list`. `query` must allow a single string so intent-style searches are not
-    /// rejected as "expected a sequence" before the request reaches the server.
+    /// from `tools/list`. Discovery accepts one `intent` string only; array-shaped `query` is a
+    /// removed interface, not a compatibility path.
     #[test]
-    fn discover_capabilities_input_schema_advertises_string_or_array_query() {
-        use serde_json::json;
+    fn discover_capabilities_input_schema_requires_single_intent_string() {
         let tools = super::PlasmMcpHandler::plasm_tools();
         let discover = tools
             .iter()
             .find(|t| t.name == "discover_capabilities")
             .expect("discover_capabilities tool");
         let v = serde_json::to_value(&discover.input_schema).expect("input_schema json");
-        let q = v
-            .get("properties")
-            .and_then(|p| p.get("query"))
-            .expect("query property in input_schema");
-        let one_of = q
-            .get("oneOf")
+        let required = v
+            .get("required")
             .and_then(|x| x.as_array())
-            .expect("query.oneOf array");
-        assert!(
-            one_of.len() >= 2,
-            "query schema should oneOf string and array, got: {}",
-            json!(q)
-        );
+            .expect("required array");
+        assert!(required.iter().any(|x| x.as_str() == Some("intent")));
+        let props = v.get("properties").and_then(|p| p.as_object()).unwrap();
+        assert!(!props.contains_key("query"));
+        assert!(!props.contains_key("utterance"));
+        let intent = v
+            .get("properties")
+            .and_then(|p| p.get("intent"))
+            .expect("intent property in input_schema");
+        assert_eq!(intent.get("type").and_then(|x| x.as_str()), Some("string"));
+        assert_eq!(intent.get("minLength").and_then(|x| x.as_u64()), Some(1));
     }
 
     #[test]
@@ -2933,11 +2900,11 @@ mod tests {
     #[test]
     fn mcp_discover_ignores_unknown_json_keys() {
         let v = serde_json::json!({
-            "query": ["x"],
+            "intent": "find x resources",
             "kinds": ["query"],
         });
         let q = mcp_discover_query_from_arguments(&v).expect("deserialize");
-        assert_eq!(q.tokens, vec!["x"]);
+        assert_eq!(q.tokens, vec!["find x resources"]);
         assert!(q.kinds.is_empty());
     }
 
