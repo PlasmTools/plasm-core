@@ -379,6 +379,12 @@ pub struct CreateExecuteSessionBody {
     /// MCP logical session from `plasm_context` (scopes execute-session reuse + short artifact URIs).
     #[serde(default)]
     pub logical_session_id: Option<Uuid>,
+    /// When set (non-empty after trim), DOMAIN symbols use intent-scoped capability exposure (MCP `plasm_context`).
+    #[serde(default)]
+    pub context_intent: Option<String>,
+    /// Optional capability wire names for ranked mutation gating when `context_intent` is set.
+    #[serde(default)]
+    pub ranked_capabilities: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -599,6 +605,71 @@ fn primary_entry_id_for_grouped(grouped: &IndexMap<String, Vec<String>>) -> Stri
 }
 
 /// One-line summary for LLM-facing session waves (MCP + stored `prompt_text`); not a Plasm expression.
+/// Normalize optional MCP intent for DOMAIN filtering and [`SessionReuseKey::context_intent`].
+#[inline]
+pub(crate) fn normalize_context_intent_for_domain_filter(raw: Option<&str>) -> Option<String> {
+    raw.and_then(|s| {
+        let t = s.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        }
+    })
+}
+
+/// MCP `plasm_context` `ranked_capabilities` argument: omitted vs explicit replace/clear.
+#[derive(Clone, Debug)]
+pub(crate) enum RankedCapabilitiesArg {
+    /// Key absent — keep the session's ranked list on expand waves.
+    Unspecified,
+    /// Key present (`null`, `[]`, or string array) — replace the session list when intent-scoped.
+    Set(Option<Vec<String>>),
+}
+
+pub(crate) fn normalize_ranked_capabilities_for_gate(raw: Option<Vec<String>>) -> Option<Vec<String>> {
+    let mut v: Vec<String> = raw?
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if v.is_empty() {
+        return None;
+    }
+    v.sort();
+    v.dedup();
+    Some(v)
+}
+
+async fn apply_ranked_capabilities_session_update(
+    st: &PlasmHostState,
+    prompt_hash: &str,
+    session_id: &str,
+    ranked_arg: &RankedCapabilitiesArg,
+) -> Result<(), String> {
+    let RankedCapabilitiesArg::Set(opt) = ranked_arg else {
+        return Ok(());
+    };
+    let prompt_hash_p: PromptHashHex = prompt_hash
+        .parse()
+        .map_err(|e: &'static str| e.to_string())?;
+    let session_id_p: ExecuteSessionId = session_id
+        .parse()
+        .map_err(|e: &'static str| e.to_string())?;
+    let Some(sess_arc) = st.sessions.get(&prompt_hash_p, &session_id_p).await else {
+        return Err("unknown or expired execute session".into());
+    };
+    let mut sess = (*sess_arc).clone();
+    if sess.context_intent.is_none() {
+        return Ok(());
+    }
+    sess.ranked_capabilities = normalize_ranked_capabilities_for_gate(opt.clone());
+    st.sessions
+        .replace_session(&prompt_hash_p, &session_id_p, sess)
+        .await;
+    Ok(())
+}
+
 pub(crate) fn format_plasm_context_wave_line(entry_id: &str, entities: &[String]) -> String {
     let mut v: Vec<String> = entities.to_vec();
     v.sort_unstable();
@@ -786,11 +857,20 @@ async fn execute_session_create_response_inner(
     let scope = tenant_scope(principal);
     let subj = principal.map(|p| p.subject.clone()).unwrap_or_default();
 
+    let domain_filter_intent =
+        normalize_context_intent_for_domain_filter(body.context_intent.as_deref());
+
+    let ranked_for_domain = domain_filter_intent.as_ref().and_then(|_| {
+        normalize_ranked_capabilities_for_gate(body.ranked_capabilities.clone())
+    });
+
     let reuse_key = SessionReuseKey {
         tenant_scope: scope.clone(),
         entry_id: body.entry_id.clone(),
         catalog_cgs_hash: catalog_cgs_hash.clone(),
         entities: names.clone(),
+        context_intent: domain_filter_intent.clone(),
+        ranked_capabilities: ranked_for_domain.clone(),
         principal: principal_stored.clone(),
         plugin_generation_id,
         logical_session_id: body.logical_session_id.map(|u| u.hyphenated().to_string()),
@@ -838,8 +918,28 @@ async fn execute_session_create_response_inner(
     }
 
     let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-    let domain_exposure =
-        plasm_core::DomainExposureSession::new(cgs.as_ref(), body.entry_id.as_str(), &refs);
+    let domain_exposure = match &domain_filter_intent {
+        Some(intent_s) => {
+            let mut relation_endpoints = names.clone();
+            relation_endpoints.sort_unstable();
+            relation_endpoints.dedup();
+            let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
+                cgs.as_ref(),
+                body.entry_id.as_str(),
+                intent_s.as_str(),
+                &relation_endpoints,
+                &names,
+                ranked_for_domain.as_deref(),
+            );
+            plasm_core::DomainExposureSession::new_with_intent_delta(
+                cgs.as_ref(),
+                body.entry_id.as_str(),
+                &refs,
+                delta,
+            )
+        }
+        None => plasm_core::DomainExposureSession::new(cgs.as_ref(), body.entry_id.as_str(), &refs),
+    };
     let sym_cross = st.sessions.symbol_map_cross_cache();
     let domain_prompt = st
         .engine
@@ -874,6 +974,8 @@ async fn execute_session_create_response_inner(
         principal_stored.clone(),
         plugin_generation,
         catalog_cgs_hash,
+        domain_filter_intent,
+        ranked_for_domain,
     );
     st.sessions
         .insert(
@@ -935,6 +1037,8 @@ pub async fn federate_execute_session(
         return Err("unknown or expired execute session".into());
     };
     let mut sess = (*sess_arc).clone();
+    let scope_intent = sess.context_intent.clone();
+    let ranked_slice = sess.ranked_capabilities.as_deref();
 
     if sess.contexts_by_entry.contains_key(&new_entry_id) {
         return Err(format!(
@@ -977,7 +1081,29 @@ pub async fn federate_execute_session(
         .collect();
     let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
     let n0 = exp.entities.len();
-    exp.expose_entities(&layers, ctx_arc.cgs.clone(), new_entry_id.as_str(), &refs);
+    if let Some(ref intent_s) = scope_intent {
+        let mut relation_endpoints = sess.entities.clone();
+        relation_endpoints.extend(names.iter().cloned());
+        relation_endpoints.sort_unstable();
+        relation_endpoints.dedup();
+        let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
+            ctx_arc.cgs.as_ref(),
+            new_entry_id.as_str(),
+            intent_s.as_str(),
+            &relation_endpoints,
+            &names,
+            ranked_slice,
+        );
+        exp.expose_surface(
+            &layers,
+            ctx_arc.cgs.clone(),
+            new_entry_id.as_str(),
+            &refs,
+            delta,
+        );
+    } else {
+        exp.expose_entities(&layers, ctx_arc.cgs.clone(), new_entry_id.as_str(), &refs);
+    }
     let added: Vec<&str> = exp.entities[n0..].iter().map(|s| s.as_str()).collect();
 
     if added.is_empty() {
@@ -1089,6 +1215,8 @@ pub async fn expand_execute_domain_session(
     if !session_allows_principal(&sess, principal) {
         return Err("forbidden: execute session tenant does not match caller".into());
     }
+    let scope_intent = sess.context_intent.clone();
+    let ranked_slice = sess.ranked_capabilities.as_deref();
     let Some(mut exp) = sess.domain_exposure.take() else {
         return Err("session has no incremental exposure state".into());
     };
@@ -1118,6 +1246,17 @@ pub async fn expand_execute_domain_session(
             .or_default()
             .push(seed.entity.clone());
     }
+    let mut relation_base: Vec<String> = sess.entities.clone();
+    for ents in groups.values() {
+        for e in ents {
+            if !relation_base.contains(e) {
+                relation_base.push(e.clone());
+            }
+        }
+    }
+    relation_base.sort_unstable();
+    relation_base.dedup();
+
     let eid_order = process_order_for_expand_group(&groups);
     let add_lines: Vec<String> = eid_order
         .iter()
@@ -1138,7 +1277,19 @@ pub async fn expand_execute_domain_session(
             .clone();
         let normalized = normalize_execute_entity_names(group);
         let refs: Vec<&str> = normalized.iter().map(|s| s.as_str()).collect();
-        exp.expose_entities(&layers, ctx.cgs.clone(), eid.as_str(), &refs);
+        if let Some(ref intent_s) = scope_intent {
+            let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
+                ctx.cgs.as_ref(),
+                eid.as_str(),
+                intent_s.as_str(),
+                &relation_base,
+                &normalized,
+                ranked_slice,
+            );
+            exp.expose_surface(&layers, ctx.cgs.clone(), eid.as_str(), &refs, delta);
+        } else {
+            exp.expose_entities(&layers, ctx.cgs.clone(), eid.as_str(), &refs);
+        }
     }
     let added: Vec<&str> = exp.entities[n0..].iter().map(|s| s.as_str()).collect();
 
@@ -1196,7 +1347,8 @@ pub async fn expand_execute_domain_session(
     Ok(wave)
 }
 
-pub async fn apply_capability_seeds(
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn apply_capability_seeds(
     st: &PlasmHostState,
     principal_incoming: Option<&crate::incoming_auth::TenantPrincipal>,
     binding: Option<(&str, &str)>,
@@ -1204,6 +1356,8 @@ pub async fn apply_capability_seeds(
     principal: Option<String>,
     tenant_mcp_cfg: Option<Arc<crate::mcp_runtime_config::McpRuntimeConfig>>,
     logical_session_id: Option<Uuid>,
+    plasm_context_intent: &str,
+    ranked_capabilities: RankedCapabilitiesArg,
 ) -> Result<ApplyCapabilitySeedsOutcome, String> {
     let seeds = normalize_capability_seeds(seeds);
     if seeds.is_empty() {
@@ -1214,6 +1368,7 @@ pub async fn apply_capability_seeds(
     // Treat a binding as absent so we open a fresh execute session instead of failing federate/expand.
     let mut stale_execute_binding_recovered = false;
     let mut stale_binding_previous: Option<(String, String)> = None;
+    let had_binding = binding.is_some();
     let binding = match binding {
         None => None,
         Some((ph, sid)) => {
@@ -1266,6 +1421,13 @@ pub async fn apply_capability_seeds(
                     entities: primary_entities.clone(),
                     principal: principal.clone(),
                     logical_session_id,
+                    context_intent: normalize_context_intent_for_domain_filter(Some(
+                        plasm_context_intent,
+                    )),
+                    ranked_capabilities: match &ranked_capabilities {
+                        RankedCapabilitiesArg::Unspecified => None,
+                        RankedCapabilitiesArg::Set(opt) => opt.clone(),
+                    },
                 },
                 plan.seeds_by_entry.len() <= 1,
                 outbound_ref,
@@ -1320,6 +1482,16 @@ pub async fn apply_capability_seeds(
         }
         Some((ph, sid)) => (ph.to_string(), sid.to_string(), false),
     };
+
+    if had_binding {
+        apply_ranked_capabilities_session_update(
+            st,
+            prompt_hash.as_str(),
+            session_id.as_str(),
+            &ranked_capabilities,
+        )
+        .await?;
+    }
 
     for eid in &plan.process_order {
         if *eid == primary_entry_id && binding.is_none() {
@@ -4115,6 +4287,8 @@ mod tests {
             entities: vec!["Profile".into()],
             principal: None,
             logical_session_id: None,
+            context_intent: None,
+            ranked_capabilities: None,
         };
         let first = execute_session_create_response(&st, None, body.clone())
             .await
@@ -4139,6 +4313,8 @@ mod tests {
                 entities: vec!["Profile".into()],
                 principal: None,
                 logical_session_id: None,
+                context_intent: None,
+                ranked_capabilities: None,
             },
         )
         .await
@@ -4224,6 +4400,8 @@ mod tests {
                 entities: vec!["Profile".into()],
                 principal: None,
                 logical_session_id: None,
+                context_intent: None,
+                ranked_capabilities: None,
             },
         )
         .await

@@ -64,6 +64,8 @@ pub fn matrix_execute_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
         None,
         None,
         cgs.catalog_cgs_hash_hex(),
+        None,
+        None,
     )
 }
 

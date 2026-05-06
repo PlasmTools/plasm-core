@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2021"
 readme = "README.md"
 
+[features]
+default = ["ranked_capability_gate"]
+# Non-read capabilities also require membership in an optional sorted capability-name list when that list is non-empty.
+ranked_capability_gate = []
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

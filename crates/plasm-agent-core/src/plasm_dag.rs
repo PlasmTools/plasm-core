@@ -2331,6 +2331,8 @@ mod tests {
             None,
             None,
             cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
         )
     }
 
@@ -2371,6 +2373,8 @@ mod tests {
             None,
             None,
             cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
         );
         let plan = compile_plasm_surface_line_to_plan(
             &PromptPipelineConfig::default(),
@@ -2607,6 +2611,8 @@ mod tests {
             None,
             None,
             cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
         )
     }
 

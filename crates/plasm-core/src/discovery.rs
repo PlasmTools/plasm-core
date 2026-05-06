@@ -2,8 +2,12 @@
 
 use crate::cgs_context::{CgsContext, Prefix};
 use crate::domain_lexicon;
-use crate::schema::{CapabilityKind, CapabilitySchema, CGS};
-use crate::symbol_tuning::build_focus_set_union;
+use crate::identity::{CapabilityParamName, EntityFieldName, EntityName};
+use crate::schema::{CapabilityKind, CapabilitySchema, InputType, CGS};
+use crate::symbol_tuning::{
+    build_focus_set_union, ExposureCapabilityKey, ExposureEntityKey, ExposureSlotKey,
+    ExposureSurface, ExposureSurfaceDelta,
+};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -356,7 +360,7 @@ fn score_token_hits(query: &HashSet<String>, text: &str) -> (u32, Vec<String>) {
     (score, codes)
 }
 
-fn score_capability(
+pub(crate) fn score_capability(
     query: &HashSet<String>,
     cgs: &CGS,
     cap: &CapabilitySchema,
@@ -634,6 +638,176 @@ impl CgsDiscovery for InMemoryCgsRegistry {
     }
 }
 
+fn fields_for_admitted_read_cap(
+    cgs: &CGS,
+    cap: &CapabilitySchema,
+    entity_name: &str,
+) -> Vec<EntityFieldName> {
+    if !cap.provides.is_empty() {
+        let Some(ent) = cgs.get_entity(entity_name) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for pname in &cap.provides {
+            if let Some((fk, _)) = ent
+                .fields
+                .iter()
+                .find(|(k, _)| k.as_str() == pname.as_str())
+            {
+                out.push(fk.clone());
+            }
+        }
+        return out;
+    }
+    let Some(ent) = cgs.get_entity(entity_name) else {
+        return Vec::new();
+    };
+    match cap.kind {
+        CapabilityKind::Get => {
+            let mut out = vec![ent.id_field.clone()];
+            for kv in &ent.key_vars {
+                if kv.as_str() != ent.id_field.as_str() {
+                    out.push(kv.clone());
+                }
+            }
+            out
+        }
+        CapabilityKind::Query | CapabilityKind::Search => {
+            vec![ent.id_field.clone()]
+        }
+        _ => Vec::new(),
+    }
+}
+
+#[cfg(feature = "ranked_capability_gate")]
+fn ranked_gate_allows_mutation(ranked_capability_names: Option<&[String]>, cap_name: &str) -> bool {
+    match ranked_capability_names {
+        None | Some([]) => true,
+        Some(names) => names.iter().any(|n| n.as_str() == cap_name),
+    }
+}
+
+/// Minimal intent-filtered DOMAIN surface for MCP `plasm_context` / incremental expand waves.
+///
+/// - Read capabilities (`query` / `search` / `get`) on each batched entity are always admitted.
+/// - Mutating capabilities require a non-zero lexicon overlap score against `intent`.
+/// - With the default `ranked_capability_gate` feature, when `ranked_capability_names` is non-empty,
+///   mutating capabilities must also appear in that list (typically discovery-ranked picks).
+/// - Relations are admitted only when the target entity name appears in `relation_endpoint_names`.
+/// - Entity fields are driven by admitted read-capability projections plus `id_field`.
+///
+/// `entry_id` names the registry row for callers; exposure keys follow [`CGS::entry_id`] when set (see
+/// [`crate::symbol_tuning::legacy_exposure_surface_for_entities`]).
+pub fn derive_intent_exposure_surface_batch(
+    cgs: &CGS,
+    _entry_id: &str,
+    intent: &str,
+    relation_endpoint_names: &[String],
+    entity_batch: &[String],
+    ranked_capability_names: Option<&[String]>,
+) -> ExposureSurfaceDelta {
+    let mut surface = ExposureSurface::default();
+    let cid = cgs.entry_id.clone().unwrap_or_default();
+    let relation_set: HashSet<String> = relation_endpoint_names.iter().cloned().collect();
+
+    let mut query_tokens = HashSet::new();
+    for tok in domain_lexicon::tokens(intent) {
+        query_tokens.insert(tok);
+    }
+
+    for raw_ent in entity_batch {
+        let Some(canonical) = resolve_canonical_entity_name(cgs, raw_ent) else {
+            continue;
+        };
+        let ename = canonical.as_str();
+        let ekey = ExposureEntityKey {
+            entry_id: cid.clone(),
+            entity: EntityName::from(ename),
+        };
+        surface.entities.insert(ekey.clone());
+
+        let Some(ent) = cgs.get_entity(ename) else {
+            continue;
+        };
+
+        surface.slots.insert(ExposureSlotKey::EntityField {
+            entity: ekey.clone(),
+            field: ent.id_field.clone(),
+        });
+
+        let Some(cap_names) = cgs.capability_names_by_domain().get(ename) else {
+            continue;
+        };
+        for cap_name in cap_names {
+            let Some(cap) = cgs.capabilities.get(cap_name) else {
+                continue;
+            };
+            let include = match cap.kind {
+                CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get => true,
+                _ => {
+                    let (score, _) = score_capability(&query_tokens, cgs, cap);
+                    if score == 0 {
+                        false
+                    } else {
+                        #[cfg(feature = "ranked_capability_gate")]
+                        {
+                            ranked_gate_allows_mutation(ranked_capability_names, cap.name.as_str())
+                        }
+                        #[cfg(not(feature = "ranked_capability_gate"))]
+                        {
+                            let _ = ranked_capability_names;
+                            true
+                        }
+                    }
+                }
+            };
+            if !include {
+                continue;
+            }
+            let ckey = ExposureCapabilityKey {
+                entry_id: cid.clone(),
+                domain: EntityName::from(ename),
+                capability: cap.name.clone(),
+            };
+            surface.capabilities.insert(ckey.clone());
+
+            if let Some(is) = &cap.input_schema {
+                if let InputType::Object { fields, .. } = &is.input_type {
+                    for f in fields {
+                        surface.slots.insert(ExposureSlotKey::CapabilityParam {
+                            capability: ckey.clone(),
+                            param: CapabilityParamName::new(f.name.clone()),
+                        });
+                    }
+                }
+            }
+
+            if matches!(
+                cap.kind,
+                CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
+            ) {
+                for fk in fields_for_admitted_read_cap(cgs, cap, ename) {
+                    surface.slots.insert(ExposureSlotKey::EntityField {
+                        entity: ekey.clone(),
+                        field: fk,
+                    });
+                }
+            }
+        }
+
+        for (rname, rel) in &ent.relations {
+            if relation_set.contains(rel.target_resource.as_str()) {
+                surface.slots.insert(ExposureSlotKey::Relation {
+                    source: ekey.clone(),
+                    relation: rname.clone(),
+                });
+            }
+        }
+    }
+
+    ExposureSurfaceDelta { required: surface }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -732,5 +906,141 @@ mod tests {
             .find(|s| s.name == "Profile")
             .expect("Profile summary");
         assert!(!profile_sum.description.is_empty());
+    }
+
+    #[test]
+    fn intent_surface_omits_relation_until_relation_target_in_scope() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("overshow_tools");
+        let endpoints = vec!["Profile".to_string()];
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "overshow",
+            "display profiles",
+            &endpoints,
+            &["Profile".to_string()],
+            None,
+        );
+        assert!(
+            !delta.required.slots.iter().any(|s| matches!(
+                s,
+                ExposureSlotKey::Relation { relation, .. }
+                    if relation.as_str() == "recorded_matches"
+            )),
+            "Profile.recorded_matches targets RecordedContent; omit until that entity is in scope"
+        );
+    }
+
+    #[test]
+    fn intent_surface_includes_profile_relation_when_recorded_content_in_scope() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("overshow_tools");
+        let mut endpoints = vec!["Profile".to_string(), "RecordedContent".to_string()];
+        endpoints.sort_unstable();
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "overshow",
+            "profile and captured content",
+            &endpoints,
+            &["Profile".to_string()],
+            None,
+        );
+        assert!(
+            delta.required.slots.iter().any(|s| matches!(
+                s,
+                ExposureSlotKey::Relation { relation, .. }
+                    if relation.as_str() == "recorded_matches"
+            )),
+            "expected recorded_matches when RecordedContent is an allowed relation endpoint"
+        );
+    }
+
+    #[test]
+    fn intent_surface_drops_unscored_mutations_on_prompt_run() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("overshow_tools");
+        let endpoints = vec!["PromptRun".to_string()];
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "overshow",
+            "list profiles read metadata only",
+            &endpoints,
+            &["PromptRun".to_string()],
+            None,
+        );
+        assert!(
+            !delta
+                .required
+                .capabilities
+                .iter()
+                .any(|c| c.capability.as_str() == "prompt_run_create"),
+            "narrow intent should omit PromptRun create when lexicon does not score it"
+        );
+    }
+
+    #[cfg(feature = "ranked_capability_gate")]
+    #[test]
+    fn intent_surface_ranked_gate_excludes_scored_mutation_not_in_list() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("overshow_tools");
+        let endpoints = vec!["PromptRun".to_string()];
+        let ranked = vec!["__not_prompt_run_create__".to_string()];
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "overshow",
+            "create and execute a new prompt run",
+            &endpoints,
+            &["PromptRun".to_string()],
+            Some(&ranked),
+        );
+        assert!(
+            !delta.required.capabilities.iter().any(|c| {
+                c.capability.as_str() == "prompt_run_create"
+            }),
+            "ranked gate should drop scored mutations absent from the ranked name list"
+        );
+    }
+
+    #[cfg(feature = "ranked_capability_gate")]
+    #[test]
+    fn intent_surface_ranked_gate_keeps_mutation_on_list() {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("overshow_tools");
+        let endpoints = vec!["PromptRun".to_string()];
+        let ranked = vec!["prompt_run_create".to_string()];
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "overshow",
+            "create and execute a new prompt run",
+            &endpoints,
+            &["PromptRun".to_string()],
+            Some(&ranked),
+        );
+        assert!(
+            delta.required.capabilities.iter().any(|c| {
+                c.capability.as_str() == "prompt_run_create"
+            }),
+            "ranked gate should admit mutations present in the ranked name list when intent scores them"
+        );
     }
 }

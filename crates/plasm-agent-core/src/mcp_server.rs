@@ -69,7 +69,7 @@ use tokio::sync::{Mutex, RwLock};
 use crate::execute_session::ExecuteSession;
 use crate::http_execute::{
     apply_capability_seeds, execute_session_run_markdown, normalize_capability_seeds,
-    ApplyCapabilitySeedsOutcome, CapabilitySeed,
+    ApplyCapabilitySeedsOutcome, CapabilitySeed, RankedCapabilitiesArg,
 };
 use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
 use crate::mcp_plasm_meta::PlasmMetaIndex;
@@ -164,6 +164,33 @@ fn parse_tool_seeds(
         ));
     }
     Ok(seeds)
+}
+
+fn parse_plasm_context_ranked_capabilities(
+    tool: &str,
+    v: &serde_json::Value,
+) -> Result<RankedCapabilitiesArg, CallToolError> {
+    match v.get("ranked_capabilities") {
+        None => Ok(RankedCapabilitiesArg::Unspecified),
+        Some(serde_json::Value::Null) => Ok(RankedCapabilitiesArg::Set(None)),
+        Some(serde_json::Value::Array(arr)) => {
+            let mut out = Vec::with_capacity(arr.len());
+            for (i, item) in arr.iter().enumerate() {
+                let s = item.as_str().ok_or_else(|| {
+                    CallToolError::invalid_arguments(
+                        tool,
+                        Some(format!("ranked_capabilities[{i}] must be a string")),
+                    )
+                })?;
+                out.push(s.to_string());
+            }
+            Ok(RankedCapabilitiesArg::Set(Some(out)))
+        }
+        Some(_) => Err(CallToolError::invalid_arguments(
+            tool,
+            Some("`ranked_capabilities` must be null or an array of strings".into()),
+        )),
+    }
 }
 
 fn parse_optional_principal(v: &serde_json::Value) -> Option<String> {
@@ -750,6 +777,15 @@ impl PlasmMcpHandler {
                 "Non-empty **`seeds`** — each object is **one capability pick**: **`api`** (integration id) and **`entity`** (resource type). Include **every** pick this program needs on first open; several **`api`** values belong in the **same** array. Example: [{\"api\":\"github\",\"entity\":\"Issue\"},{\"api\":\"slack\",\"entity\":\"Channel\"}]. Per object you may use **`entry_id`** instead of **`api`**.",
                 vec!["api", "entity"],
             ),
+        );
+        context_props.insert(
+            "ranked_capabilities".into(),
+            serde_json::from_value(serde_json::json!({
+                "type": ["array", "null"],
+                "items": { "type": "string" },
+                "description": "Optional capability **wire names** (e.g. from `discover_capabilities`). When non-empty and intent-scoped DOMAIN is active, **mutating** capabilities must appear in this list **and** score against **`intent`**. Omit on expand to keep the session list; send **`null`** or **`[]`** to clear."
+            }))
+            .expect("ranked_capabilities schema"),
         );
         let mut plasm_program_props = BTreeMap::new();
         plasm_program_props.insert(
@@ -2175,6 +2211,7 @@ impl ServerHandler for PlasmMcpHandler {
                     let logical_uuid = rec.logical_session_id.as_uuid();
                     let ls_key = logical_uuid.to_string();
                     let seeds = parse_tool_seeds(tname, &v)?;
+                    let ranked_capabilities = parse_plasm_context_ranked_capabilities(tname, &v)?;
                     let principal = parse_optional_principal(&v);
                     let distinct_entries: Vec<String> = {
                         let mut seen = std::collections::HashSet::new();
@@ -2219,6 +2256,8 @@ impl ServerHandler for PlasmMcpHandler {
                         principal,
                         tcfg.clone(),
                         Some(logical_uuid),
+                        intent,
+                        ranked_capabilities,
                     )
                     .instrument(context_span)
                     .await
@@ -2798,6 +2837,10 @@ mod tests {
                 .and_then(|x| x.get("type"))
                 .and_then(|x| x.as_str()),
             Some("string")
+        );
+        assert!(
+            props.contains_key("ranked_capabilities"),
+            "expected optional ranked_capabilities on plasm_context"
         );
     }
 

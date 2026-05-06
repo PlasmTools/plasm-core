@@ -50,10 +50,11 @@ use crate::{
     },
     symbol_tuning::{
         symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog, DomainExposureSession,
-        FocusSpec, IdentMetaKey, IdentMetadata, SymbolMap, SymbolMapCrossRequestCache,
+        ExposureCapabilityKey, ExposureEntityKey, ExposureSlotKey, ExposureSurface, FocusSpec,
+        IdentMetaKey, IdentMetadata, SymbolMap, SymbolMapCrossRequestCache,
     },
-    CapabilityKind, CapabilityName, EntityName, Expr, FieldType, InputType, ParameterRole,
-    ValueWireFormat, CGS,
+    CapabilityKind, CapabilityName, EntityFieldName, EntityName, Expr, FieldType, InputType,
+    ParameterRole, RelationName, ValueWireFormat, CGS,
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -1706,6 +1707,7 @@ fn domain_expression_tool_count_resolved(
     };
     let mut n = 0usize;
     let mut line_valid_cache = HashMap::new();
+    let surface_filter = exposure_opt.map(|e| &e.surface);
     for &ename in &full_entities {
         let mut seen_expr: HashSet<TeachingRowDedupeKey> = HashSet::new();
         let mut gloss_emit_none = None;
@@ -1717,6 +1719,7 @@ fn domain_expression_tool_count_resolved(
             false,
             &mut line_valid_cache,
             &mut gloss_emit_none,
+            surface_filter,
         );
         for row in &block.teaching_rows {
             if seen_expr.insert(row.dedupe_key.clone()) {
@@ -2825,12 +2828,74 @@ fn format_dotted_call_line(
 
 const MAX_MULTI_ARITY_METHOD_LINES: usize = 48;
 
+#[inline]
+fn surface_allows_capability(
+    surface: Option<&ExposureSurface>,
+    catalog_entry_id: &str,
+    cap: &crate::schema::CapabilitySchema,
+) -> bool {
+    let Some(s) = surface else {
+        return true;
+    };
+    s.capabilities.contains(&ExposureCapabilityKey {
+        entry_id: catalog_entry_id.to_string(),
+        domain: cap.domain.clone(),
+        capability: cap.name.clone(),
+    })
+}
+
+#[inline]
+fn surface_allows_entity_field(
+    surface: Option<&ExposureSurface>,
+    catalog_entry_id: &str,
+    entity: &str,
+    field: &str,
+) -> bool {
+    let Some(s) = surface else {
+        return true;
+    };
+    let ekey = ExposureEntityKey {
+        entry_id: catalog_entry_id.to_string(),
+        entity: EntityName::from(entity),
+    };
+    s.slots.contains(&ExposureSlotKey::EntityField {
+        entity: ekey,
+        field: EntityFieldName::new(field.to_string()),
+    })
+}
+
+#[inline]
+fn surface_allows_relation_nav(
+    surface: Option<&ExposureSurface>,
+    catalog_entry_id: &str,
+    entity: &str,
+    relation: &str,
+    is_declared_relation: bool,
+) -> bool {
+    let Some(s) = surface else {
+        return true;
+    };
+    if is_declared_relation {
+        let source = ExposureEntityKey {
+            entry_id: catalog_entry_id.to_string(),
+            entity: EntityName::from(entity),
+        };
+        return s.slots.contains(&ExposureSlotKey::Relation {
+            source,
+            relation: RelationName::new(relation.to_string()),
+        });
+    }
+    surface_allows_entity_field(surface, catalog_entry_id, entity, relation)
+}
+
 /// Non–zero-arity invoke/create/update: `e#($).m#(p#=…)` (same rules as parser dotted-call capability resolution).
 fn collect_multi_arity_method_lines(
     cgs: &CGS,
     ename: &str,
     es: &str,
     map: Option<&SymbolMap>,
+    surface_filter: Option<&ExposureSurface>,
+    catalog_entry_id: &str,
 ) -> Vec<(CapabilityName, String)> {
     let mut out: Vec<(CapabilityName, String)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -2839,6 +2904,9 @@ fn collect_multi_arity_method_lines(
     };
 
     for cap in cgs.find_capabilities(ename, CapabilityKind::Action) {
+        if !surface_allows_capability(surface_filter, catalog_entry_id, cap) {
+            continue;
+        }
         if capability_is_zero_arity_invoke(cap) {
             continue;
         }
@@ -2850,6 +2918,9 @@ fn collect_multi_arity_method_lines(
         }
     }
     for cap in cgs.find_capabilities(ename, CapabilityKind::Update) {
+        if !surface_allows_capability(surface_filter, catalog_entry_id, cap) {
+            continue;
+        }
         if capability_is_zero_arity_invoke(cap) {
             continue;
         }
@@ -2861,6 +2932,9 @@ fn collect_multi_arity_method_lines(
         }
     }
     for cap in cgs.find_capabilities(ename, CapabilityKind::Delete) {
+        if !surface_allows_capability(surface_filter, catalog_entry_id, cap) {
+            continue;
+        }
         if capability_is_zero_arity_invoke(cap) {
             continue;
         }
@@ -2877,6 +2951,9 @@ fn collect_multi_arity_method_lines(
         if cap.kind != CapabilityKind::Create {
             continue;
         }
+        if !surface_allows_capability(surface_filter, catalog_entry_id, cap) {
+            continue;
+        }
         if !can_bind_create_from_anchor(cap, ename) {
             continue;
         }
@@ -2890,6 +2967,9 @@ fn collect_multi_arity_method_lines(
 
     // Standalone creates: `Entity.create(args)` — cap.domain == ename, no anchor needed.
     for cap in cgs.find_capabilities(ename, CapabilityKind::Create) {
+        if !surface_allows_capability(surface_filter, catalog_entry_id, cap) {
+            continue;
+        }
         if seen.contains(cap.name.as_str()) {
             continue;
         }
@@ -2909,6 +2989,7 @@ fn collect_multi_arity_method_lines(
     out.into_iter().take(MAX_MULTI_ARITY_METHOD_LINES).collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn collect_entity_teaching_block(
     cgs: &CGS,
     ename: &str,
@@ -2917,6 +2998,7 @@ fn collect_entity_teaching_block(
     collect_meta: bool,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
     gloss_emit: &mut Option<GlossScratch<'_>>,
+    surface_filter: Option<&ExposureSurface>,
 ) -> EntityTeachingBlock {
     let mut teaching_rows: Vec<EntityTeachingExprRow> = Vec::new();
 
@@ -2940,15 +3022,28 @@ fn collect_entity_teaching_block(
 
     let primary_get_projection_bracket: Option<String> = cgs
         .domain_projection_teaching_wire_fields(ename, ent)
-        .map(|f| {
+        .and_then(|f| {
+            let f: Vec<String> = f
+                .into_iter()
+                .filter(|k| {
+                    surface_allows_entity_field(surface_filter, catalog_entry_id, ename, k.as_str())
+                })
+                .collect();
+            if f.is_empty() {
+                return None;
+            }
             let syms: Vec<String> = f
                 .iter()
                 .map(|k| id_sym_entity(map, ename, k.as_str()))
                 .collect();
-            format!("[{}]", syms.join(","))
+            Some(format!("[{}]", syms.join(",")))
         });
 
-    let get_caps: Vec<_> = cgs.find_capabilities(ename, CapabilityKind::Get);
+    let get_caps: Vec<_> = cgs
+        .find_capabilities(ename, CapabilityKind::Get)
+        .into_iter()
+        .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap))
+        .collect();
     let only_singleton_gets = !get_caps.is_empty()
         && get_caps
             .iter()
@@ -2962,9 +3057,15 @@ fn collect_entity_teaching_block(
     singleton_get_caps.sort_by(|a, b| a.name.cmp(&b.name));
 
     let get_gloss = Some(crate::result_gloss::result_gloss_for_get_entity(ename, map));
-    let primary_get_cap = cgs.resolved_primary_get_for_projection(ename, ent);
+    let primary_get_cap = cgs
+        .resolved_primary_get_for_projection(ename, ent)
+        .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap));
 
-    let mut query_caps: Vec<_> = cgs.find_capabilities(ename, CapabilityKind::Query);
+    let mut query_caps: Vec<_> = cgs
+        .find_capabilities(ename, CapabilityKind::Query)
+        .into_iter()
+        .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap))
+        .collect();
     query_caps.sort_by(|a, b| a.name.cmp(&b.name));
     let query_cap_refs: Vec<&crate::CapabilitySchema> = query_caps.to_vec();
 
@@ -3067,6 +3168,9 @@ fn collect_entity_teaching_block(
         CapabilityKind::Delete,
     ] {
         for cap in cgs.find_capabilities(ename, kind) {
+            if !surface_allows_capability(surface_filter, catalog_entry_id, cap) {
+                continue;
+            }
             if capability_is_zero_arity_invoke(cap) {
                 zero_arity_method_caps.push(cap);
             }
@@ -3119,7 +3223,9 @@ fn collect_entity_teaching_block(
             );
         }
     }
-    for (cap_name, line) in collect_multi_arity_method_lines(cgs, ename, &es, map) {
+    for (cap_name, line) in
+        collect_multi_arity_method_lines(cgs, ename, &es, map, surface_filter, catalog_entry_id)
+    {
         let cap_ref = cgs.capabilities.get(&cap_name);
         let cap_leg = cap_ref.and_then(|c| {
             capability_legend_for_domain(map, cgs, c, ename, ident_meta, catalog_entry_id)
@@ -3247,15 +3353,17 @@ fn collect_entity_teaching_block(
         );
     }
 
-    if !cgs
+    let mut search_caps: Vec<_> = cgs
         .find_capabilities(ename, CapabilityKind::Search)
-        .is_empty()
-    {
+        .into_iter()
+        .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap))
+        .collect();
+    if !search_caps.is_empty() {
         let line = format!("{es}~{}", DOMAIN_PARAM_VALUE_PLACEHOLDER);
-        let mut search_caps = cgs.find_capabilities(ename, CapabilityKind::Search);
         search_caps.sort_by(|a, b| a.name.cmp(&b.name));
         let scap = cgs
             .primary_search_capability(ename)
+            .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap))
             .or_else(|| search_caps.first().copied());
         let sg =
             scap.and_then(|cap| crate::result_gloss::result_gloss_for_capability(cap, cgs, map));
@@ -3301,10 +3409,28 @@ fn collect_entity_teaching_block(
     for rel in nav_keys.iter().take(MAX_REL_NAV_LINES) {
         let (target_entity, skip_many_unresolved, rel_for_meta) =
             if let Some(rel_schema) = ent.relations.get(rel.as_str()) {
+                if !surface_allows_relation_nav(
+                    surface_filter,
+                    catalog_entry_id,
+                    ename,
+                    rel.as_str(),
+                    true,
+                ) {
+                    continue;
+                }
                 let skip = rel_schema.cardinality == Cardinality::Many
                     && !many_relation_nav_emittable(rel_schema);
                 (rel_schema.target_resource.clone(), skip, Some(rel_schema))
             } else if let Some(f) = ent.fields.get(rel.as_str()) {
+                if !surface_allows_relation_nav(
+                    surface_filter,
+                    catalog_entry_id,
+                    ename,
+                    rel.as_str(),
+                    false,
+                ) {
+                    continue;
+                }
                 match cgs.named_value_for_slot(f) {
                     Ok(nv) => match &nv.field_type {
                         FieldType::EntityRef { target } => (target.clone(), false, None),
@@ -3392,6 +3518,7 @@ pub(crate) fn domain_example_line_count(cgs: &CGS, ename: &str, map: Option<&Sym
         false,
         &mut line_valid_cache,
         &mut gloss_emit_none,
+        None,
     )
     .teaching_rows
     .len()
@@ -3399,7 +3526,12 @@ pub(crate) fn domain_example_line_count(cgs: &CGS, ename: &str, map: Option<&Sym
 
 /// Raw DOMAIN lines for an entity (for per-capability witness checks).
 #[cfg(test)]
-pub(crate) fn domain_example_lines(cgs: &CGS, ename: &str, map: Option<&SymbolMap>) -> Vec<String> {
+pub(crate) fn domain_example_lines(
+    cgs: &CGS,
+    ename: &str,
+    map: Option<&SymbolMap>,
+    surface_filter: Option<&ExposureSurface>,
+) -> Vec<String> {
     let mut line_valid_cache = HashMap::new();
     let mut gloss_emit_none = None;
     collect_entity_teaching_block(
@@ -3410,6 +3542,7 @@ pub(crate) fn domain_example_lines(cgs: &CGS, ename: &str, map: Option<&SymbolMa
         false,
         &mut line_valid_cache,
         &mut gloss_emit_none,
+        surface_filter,
     )
     .teaching_rows
     .into_iter()
@@ -3423,6 +3556,7 @@ fn domain_heading_projection_bracket(
     cgs: &CGS,
     ename: &str,
     map: Option<&SymbolMap>,
+    surface_filter: Option<&ExposureSurface>,
 ) -> Option<String> {
     let mut line_valid_cache = HashMap::new();
     let mut gloss_emit_none = None;
@@ -3434,6 +3568,7 @@ fn domain_heading_projection_bracket(
         false,
         &mut line_valid_cache,
         &mut gloss_emit_none,
+        surface_filter,
     );
     let refs: Vec<&TeachingExprLine> = block
         .teaching_rows
@@ -3449,11 +3584,12 @@ fn domain_projection_bracket_exemplar(
     cgs: &CGS,
     ename: &str,
     map: Option<&SymbolMap>,
+    surface_filter: Option<&ExposureSurface>,
 ) -> Option<String> {
-    if let Some(b) = domain_heading_projection_bracket(cgs, ename, map) {
+    if let Some(b) = domain_heading_projection_bracket(cgs, ename, map, surface_filter) {
         return Some(b);
     }
-    for line in domain_example_lines(cgs, ename, map) {
+    for line in domain_example_lines(cgs, ename, map, surface_filter) {
         if let Some(b) = parse_trailing_projection_bracket(line.trim()) {
             return Some(b);
         }
@@ -3986,6 +4122,7 @@ fn render_domain_table_resolved<'b, F>(
 ) where
     F: FnMut(&str) -> &'b CGS,
 {
+    let surface_filter = exposure_for_ident.map(|e| &e.surface);
     let ident_meta = match (map, exposure_for_ident) {
         (Some(_), Some(exposure)) => {
             Some(exposure.ident_metadata_for_exposure_entities(full_entities))
@@ -4038,6 +4175,7 @@ fn render_domain_table_resolved<'b, F>(
             collect_meta,
             &mut line_valid_cache,
             &mut gloss_emit,
+            surface_filter,
         );
         if block.teaching_rows.is_empty() {
             debug_assert!(
@@ -4356,7 +4494,7 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(&dir).unwrap();
-        let lines = domain_example_lines(&cgs, "ValueRange", None);
+        let lines = domain_example_lines(&cgs, "ValueRange", None, None);
         let expected = "ValueRange(spreadsheetId=Spreadsheet($), range=$)";
         assert!(
             lines.iter().any(|l| l.starts_with(expected)),
@@ -4380,6 +4518,8 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(&dir).unwrap();
+        let exposure = crate::symbol_tuning::domain_exposure_session_from_focus(&cgs, FocusSpec::All);
+        let surface = Some(&exposure.surface);
         let Some(ent) = cgs.get_entity("Issue") else {
             panic!("missing Issue entity");
         };
@@ -4396,13 +4536,13 @@ mod tests {
             "Issue primary get should expose many response fields for teaching; got {}",
             prefixes[0].len()
         );
-        let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref())
+        let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref(), surface)
             .expect("Issue should carry a full projection bracket (heading or primary get)");
         assert!(
             br.starts_with('[') && br.contains('p'),
             "unexpected projection bracket: {br}"
         );
-        let lines = domain_example_lines(&cgs, "Issue", map.as_ref());
+        let lines = domain_example_lines(&cgs, "Issue", map.as_ref(), surface);
         let bracket_lines = lines
             .iter()
             .filter(|l| l.contains("[p") && l.contains(']'))
@@ -4436,14 +4576,16 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(&dir).unwrap();
+        let exposure = crate::symbol_tuning::domain_exposure_session_from_focus(&cgs, FocusSpec::All);
+        let surface = Some(&exposure.surface);
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true);
-        let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref())
+        let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref(), surface)
             .expect("Linear Issue should carry a full projection bracket (heading or primary get)");
         assert!(
             br.starts_with('[') && br.contains('p'),
             "unexpected projection bracket: {br}"
         );
-        let lines = domain_example_lines(&cgs, "Issue", map.as_ref());
+        let lines = domain_example_lines(&cgs, "Issue", map.as_ref(), surface);
         let bracket_lines = lines
             .iter()
             .filter(|l| l.contains("[p") && l.contains(']'))
@@ -4470,8 +4612,10 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(&dir).unwrap();
+        let exposure = crate::symbol_tuning::domain_exposure_session_from_focus(&cgs, FocusSpec::All);
+        let surface = Some(&exposure.surface);
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true);
-        let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref())
+        let br = domain_projection_bracket_exemplar(&cgs, "Issue", map.as_ref(), surface)
             .expect("Issue should carry a projection list");
         let out = render_prompt_with_config(
             &cgs,
@@ -4902,7 +5046,7 @@ mod tests {
         }
         let cgs = load_schema_dir(&dir).unwrap();
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
-        let lines = domain_example_lines(&cgs, "Zone", Some(&map));
+        let lines = domain_example_lines(&cgs, "Zone", Some(&map), None);
         for line in &lines {
             let head = line.trim();
             assert!(
@@ -4920,6 +5064,7 @@ mod tests {
             false,
             &mut line_valid_cache,
             &mut gloss_emit_none,
+            None,
         );
         let witness_row = block.teaching_rows.iter().find(|r| {
             r.teaching_expr.is_projection_teaching
@@ -5053,6 +5198,7 @@ mod tests {
             false,
             &mut line_valid_cache,
             &mut gloss_emit_none,
+            None,
         );
         let witness_row = block.teaching_rows.iter().find(|r| {
             r.teaching_expr.is_projection_teaching
@@ -5160,6 +5306,7 @@ mod tests {
             false,
             &mut line_valid_cache,
             &mut gloss_emit_none,
+            None,
         );
         let witness = block.teaching_rows.iter().find(|r| {
             r.teaching_expr.is_projection_teaching

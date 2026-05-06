@@ -198,6 +198,12 @@ impl RunArtifactHotCache {
 ///
 /// When set, [`Self::logical_session_id`] scopes reuse to one MCP agent logical session (distinct
 /// from MCP transport `MCP-Session-Id`).
+///
+/// [`Self::context_intent`] participates in reuse when set (MCP `plasm_context`): distinct intents
+/// must not share an execute row whose DOMAIN symbols were filtered for a different wording.
+///
+/// When [`Self::context_intent`] is set, [`Self::ranked_capabilities`] participates in reuse: distinct
+/// ranked gate lists must not share a session row filtered for different mutation picks.
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct SessionReuseKey {
     /// Tenant scope from incoming auth (empty string when anonymous / auth off).
@@ -207,6 +213,10 @@ pub struct SessionReuseKey {
     pub catalog_cgs_hash: String,
     /// Sorted, deduplicated entity names (same convention as HTTP/MCP bodies).
     pub entities: Vec<String>,
+    /// Normalized first-open `plasm_context` intent when capability-scoped DOMAIN is active.
+    pub context_intent: Option<String>,
+    /// Sorted deduped capability wire names for ranked mutation gating when intent-scoped DOMAIN is active.
+    pub ranked_capabilities: Option<Vec<String>>,
     /// Set when `PLASM_AUTH_RESOLUTION=delegated` so distinct users do not share a session.
     pub principal: Option<String>,
     /// Pinned compile-plugin generation when [`ExecuteSession::plugin_generation`] is set.
@@ -364,6 +374,10 @@ pub struct ExecuteSession {
     pub plugin_generation: Option<Arc<LoadedPluginGeneration>>,
     /// Canonical digest of the pinned primary CGS at session open.
     pub catalog_cgs_hash: String,
+    /// Normalized MCP `plasm_context` intent when DOMAIN uses intent-scoped capability exposure (`None` = legacy full closure).
+    pub context_intent: Option<String>,
+    /// Optional ranked capability-name gate for mutators (aligned with [`SessionReuseKey::ranked_capabilities`]).
+    pub ranked_capabilities: Option<Vec<String>>,
     /// Per-session materialized graph; isolated from other execute sessions.
     pub graph_cache: Arc<MutexGraphCacheSession>,
     /// Unified in-session graph/artifact state.
@@ -393,6 +407,8 @@ impl ExecuteSession {
         principal: Option<String>,
         plugin_generation: Option<Arc<LoadedPluginGeneration>>,
         catalog_cgs_hash: String,
+        context_intent: Option<String>,
+        ranked_capabilities: Option<Vec<String>>,
     ) -> Self {
         let core = Arc::new(SessionCore::new());
         Self {
@@ -410,6 +426,8 @@ impl ExecuteSession {
             principal,
             plugin_generation,
             catalog_cgs_hash,
+            context_intent,
+            ranked_capabilities,
             graph_cache: core.graph_cache(),
             core,
             run_resource_next: Arc::new(AtomicU64::new(0)),
@@ -841,6 +859,8 @@ mod tests {
             entry_id: "default".into(),
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
             entities: vec!["Pet".into(), "Store".into()],
+            context_intent: None,
+            ranked_capabilities: None,
             principal: None,
             plugin_generation_id: None,
             logical_session_id: None,
@@ -865,6 +885,8 @@ mod tests {
             None,
             None,
             cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
         );
         store
             .insert(key.clone(), "ph1".into(), "sid-one".into(), s1)
@@ -899,6 +921,8 @@ mod tests {
             None,
             None,
             cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
         );
         let s2 = ExecuteSession::new(
             "ph2".into(),
@@ -914,6 +938,8 @@ mod tests {
             None,
             None,
             s1.catalog_cgs_hash.clone(),
+            None,
+            None,
         );
         assert!(!Arc::ptr_eq(&s1.graph_cache, &s2.graph_cache));
     }
@@ -948,6 +974,8 @@ mod tests {
             entry_id: "default".into(),
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
             entities: vec!["Pet".into()],
+            context_intent: None,
+            ranked_capabilities: None,
             principal: None,
             plugin_generation_id: None,
             logical_session_id: None,
@@ -971,6 +999,8 @@ mod tests {
             None,
             None,
             "hash".into(),
+            None,
+            None,
         );
         store
             .insert(
@@ -1022,6 +1052,8 @@ mod tests {
             None,
             None,
             cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
         );
         let r = sample_pagination_resume();
         let h1 = sess.register_paging_continuation(r.clone(), None);

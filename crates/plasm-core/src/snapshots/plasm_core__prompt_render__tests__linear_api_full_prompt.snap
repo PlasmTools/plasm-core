@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm-core/src/prompt_render.rs
+source: crates/plasm-core/src/prompt_render.rs
 expression: prompt
 ---
 # Follow the grammar and the teaching TSV below; reply with one valid plasm_program:
@@ -80,7 +80,7 @@ p14	v4 · id
 p15	v5 · number
 p17	v7 · startsAt
 p13	v3 · endsAt
-e2{p16=e6($)}[p14,p15,p17,p13,team]	returns [e2] · projection · A time-boxed iteration on a team (sprint / cycle window)
+e2{p16=e6($)}[p14,p15,p17,p13]	returns [e2] · projection · A time-boxed iteration on a team (sprint / cycle window)
 e2{p16=e6($)}	returns [e2]
 e2{p16=e6($)}.p2	relation e2 => e6 · Team this cycle belongs to
 v16	uuid
@@ -106,7 +106,7 @@ p27	v16 · id
 p26	v17 · identifier
 p49	v34 · title
 p44	v33 · description
-e3[p27,p26,p49,p44,parent,team,project,assignee,state,cycle]	returns e3 · projection · A Linear issue
+e3[p27,p26,p49,p44]	returns e3 · projection · A Linear issue
 e3($).m9()	returns e3 · Move an issue to trash (recoverable; not a permanent delete)
 e3($).m13()	returns e3 · optional params: p49, p44, p32, p29, p33, p31, p30 · Update an issue
 e3($).m6(p18=e4($))	returns e3 · Attach one label to this issue (existing labels kept)

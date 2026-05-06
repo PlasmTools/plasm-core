@@ -3421,6 +3421,8 @@ mod tests {
             None,
             None,
             cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
         )
     }
 
@@ -3454,6 +3456,8 @@ mod tests {
             None,
             None,
             cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
         )
     }
 
@@ -3545,6 +3549,8 @@ mod tests {
             None,
             None,
             cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
         )
     }
 

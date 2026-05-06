@@ -24,8 +24,9 @@ use crate::domain_term::{
     method_ref_for_domain_segment, resolve_parameter_slot, DomainTerm, EntityRef, ParameterSlot,
     Symbol,
 };
-use crate::identity::CapabilityName;
-use crate::identity::EntityName;
+use crate::identity::{
+    CapabilityName, CapabilityParamName, EntityFieldName, EntityName, RelationName,
+};
 use crate::schema::{
     capability_method_label_kebab, ArrayItemsSchema, CapabilitySchema, InputFieldSchema, InputType,
     ParameterRole, StringSemantics, ValueDomainKey, CGS,
@@ -115,6 +116,262 @@ pub enum IdentMetadata {
 /// Key for [`IdentMetadata`] maps: `(registry entry_id, CGS entity, wire name)`.
 pub type IdentMetaKey = (String, EntityName, String);
 use std::fmt::Write;
+
+/// Catalog-qualified entity identity for incremental DOMAIN exposure filtering.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExposureEntityKey {
+    pub entry_id: String,
+    pub entity: EntityName,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ExposureCapabilityKey {
+    pub entry_id: String,
+    pub domain: EntityName,
+    pub capability: CapabilityName,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ExposureSlotKey {
+    EntityField {
+        entity: ExposureEntityKey,
+        field: EntityFieldName,
+    },
+    Relation {
+        source: ExposureEntityKey,
+        relation: RelationName,
+    },
+    CapabilityParam {
+        capability: ExposureCapabilityKey,
+        param: CapabilityParamName,
+    },
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExposureSurface {
+    pub entities: BTreeSet<ExposureEntityKey>,
+    pub capabilities: BTreeSet<ExposureCapabilityKey>,
+    pub slots: BTreeSet<ExposureSlotKey>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExposureSurfaceDelta {
+    pub required: ExposureSurface,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ExposureAppendReport {
+    pub entities_added: usize,
+}
+
+impl ExposureSurface {
+    pub fn merge_from(&mut self, other: &ExposureSurface) {
+        self.entities.extend(other.entities.iter().cloned());
+        self.capabilities.extend(other.capabilities.iter().cloned());
+        self.slots.extend(other.slots.iter().cloned());
+    }
+
+    pub fn fingerprint(&self) -> u64 {
+        let mut h = DefaultHasher::new();
+        for e in &self.entities {
+            e.entry_id.hash(&mut h);
+            e.entity.hash(&mut h);
+        }
+        for c in &self.capabilities {
+            c.entry_id.hash(&mut h);
+            c.domain.hash(&mut h);
+            c.capability.hash(&mut h);
+        }
+        for s in &self.slots {
+            match s {
+                ExposureSlotKey::EntityField { entity, field } => {
+                    0u8.hash(&mut h);
+                    entity.entry_id.hash(&mut h);
+                    entity.entity.hash(&mut h);
+                    field.hash(&mut h);
+                }
+                ExposureSlotKey::Relation { source, relation } => {
+                    1u8.hash(&mut h);
+                    source.entry_id.hash(&mut h);
+                    source.entity.hash(&mut h);
+                    relation.hash(&mut h);
+                }
+                ExposureSlotKey::CapabilityParam { capability, param } => {
+                    2u8.hash(&mut h);
+                    capability.entry_id.hash(&mut h);
+                    capability.domain.hash(&mut h);
+                    capability.capability.hash(&mut h);
+                    param.hash(&mut h);
+                }
+            }
+        }
+        h.finish()
+    }
+}
+
+/// Full per-entity closure (legacy HTTP execute / REPL paths): every field, relation, capability, and param.
+///
+/// `entry_id` is the caller’s registry row id (HTTP/MCP); exposure keys follow [`CGS::entry_id`] when set.
+#[allow(unused_variables)]
+pub fn legacy_exposure_surface_for_entities(
+    cgs: &CGS,
+    entry_id: &str,
+    entities: &[&str],
+    out: &mut ExposureSurface,
+) {
+    // Match [`crate::prompt_render`] / gloss scratch: registry-backed rows key on `CGS::entry_id`,
+    // defaulting to empty when unset (YAML fixtures often omit `entry_id:`).
+    let cid = cgs.entry_id.clone().unwrap_or_default();
+    for ename in entities.iter().copied() {
+        let Some(ent) = cgs.get_entity(ename) else {
+            continue;
+        };
+        let ekey = ExposureEntityKey {
+            entry_id: cid.clone(),
+            entity: EntityName::from(ename),
+        };
+        out.entities.insert(ekey.clone());
+        for (fname, _f) in &ent.fields {
+            out.slots.insert(ExposureSlotKey::EntityField {
+                entity: ekey.clone(),
+                field: fname.clone(),
+            });
+        }
+        for (rname, _r) in &ent.relations {
+            out.slots.insert(ExposureSlotKey::Relation {
+                source: ekey.clone(),
+                relation: rname.clone(),
+            });
+        }
+        let Some(names) = cgs.capability_names_by_domain().get(ename) else {
+            continue;
+        };
+        for cap_name in names {
+            let Some(cap) = cgs.capabilities.get(cap_name) else {
+                continue;
+            };
+            let ckey = ExposureCapabilityKey {
+                entry_id: cid.clone(),
+                domain: EntityName::from(ename),
+                capability: cap_name.clone(),
+            };
+            out.capabilities.insert(ckey.clone());
+            if let Some(is) = &cap.input_schema {
+                let InputType::Object { fields, .. } = &is.input_type else {
+                    continue;
+                };
+                for f in fields {
+                    out.slots.insert(ExposureSlotKey::CapabilityParam {
+                        capability: ckey.clone(),
+                        param: CapabilityParamName::new(f.name.clone()),
+                    });
+                }
+            }
+        }
+    }
+}
+
+pub fn legacy_exposure_surface_delta_for_entities(
+    cgs: &CGS,
+    entry_id: &str,
+    entities: &[&str],
+) -> ExposureSurfaceDelta {
+    let mut required = ExposureSurface::default();
+    legacy_exposure_surface_for_entities(cgs, entry_id, entities, &mut required);
+    ExposureSurfaceDelta { required }
+}
+
+pub(crate) fn collect_slot_metas_for_surface(
+    catalog_cgs: &IndexMap<String, Arc<CGS>>,
+    surface: &ExposureSurface,
+) -> Vec<IdentMetadata> {
+    let mut out = Vec::new();
+    for slot in &surface.slots {
+        match slot {
+            ExposureSlotKey::EntityField { entity, field } => {
+                let Some(cgs) = catalog_cgs.get(&entity.entry_id) else {
+                    continue;
+                };
+                let Some(ent) = cgs.get_entity(entity.entity.as_str()) else {
+                    continue;
+                };
+                let Some(f) = ent.fields.get(field) else {
+                    continue;
+                };
+                let nv = cgs
+                    .named_value_for_slot(f)
+                    .expect("values row for entity field");
+                let en = entity.entity.clone();
+                let cid = entity.entry_id.clone();
+                out.push(IdentMetadata::RegistryBacked {
+                    catalog_entry_id: cid,
+                    entity: en,
+                    role: IdentRegistryRole::EntityField,
+                    value_registry_key: f.kind.registry_key().clone(),
+                    field_type: nv.field_type.clone(),
+                    string_semantics: nv.string_semantics,
+                    array_items: nv.array_items.clone(),
+                    allowed_values: nv.allowed_values.clone(),
+                    wire_name: field.as_str().to_string(),
+                    description: f.description.clone(),
+                });
+            }
+            ExposureSlotKey::Relation { source, relation } => {
+                let Some(cgs) = catalog_cgs.get(&source.entry_id) else {
+                    continue;
+                };
+                let Some(ent) = cgs.get_entity(source.entity.as_str()) else {
+                    continue;
+                };
+                let Some(r) = ent.relations.get(relation) else {
+                    continue;
+                };
+                out.push(IdentMetadata::Relation {
+                    catalog_entry_id: source.entry_id.clone(),
+                    entity: source.entity.clone(),
+                    wire_name: relation.as_str().to_string(),
+                    description: r.description.clone(),
+                    target: r.target_resource.clone(),
+                });
+            }
+            ExposureSlotKey::CapabilityParam { capability, param } => {
+                let Some(cgs) = catalog_cgs.get(&capability.entry_id) else {
+                    continue;
+                };
+                let Some(cap) = cgs.capabilities.get(&capability.capability) else {
+                    continue;
+                };
+                let Some(is) = &cap.input_schema else {
+                    continue;
+                };
+                let InputType::Object { fields, .. } = &is.input_type else {
+                    continue;
+                };
+                let Some(f) = fields.iter().find(|x| x.name == param.as_str()) else {
+                    continue;
+                };
+                let nv = cgs
+                    .named_value_for_slot(f)
+                    .expect("values row for capability param");
+                out.push(IdentMetadata::RegistryBacked {
+                    catalog_entry_id: capability.entry_id.clone(),
+                    entity: capability.domain.clone(),
+                    role: IdentRegistryRole::CapabilityParam {
+                        capability: cap.name.clone(),
+                    },
+                    value_registry_key: f.kind.registry_key().clone(),
+                    field_type: nv.field_type.clone(),
+                    string_semantics: nv.string_semantics,
+                    array_items: nv.array_items.clone(),
+                    allowed_values: nv.allowed_values.clone(),
+                    wire_name: param.as_str().to_string(),
+                    description: f.description.clone().unwrap_or_default(),
+                });
+            }
+        }
+    }
+    out
+}
 
 /// Same 2-hop focus neighbourhood as prompt rendering: `Some(set)` when focus is set.
 #[inline]
@@ -465,87 +722,6 @@ fn slot_occurrence_key(meta: &IdentMetadata) -> String {
             wire_name
         ),
     }
-}
-
-/// One [`IdentMetadata`] per slot (entity field, relation, or capability input field) visible for
-/// `full_entities` — used for fingerprint-based `p#` allocation (not wire-name-only).
-fn collect_slot_metas(
-    cgs: &CGS,
-    full_entities: &[&str],
-    catalog_entry_id: &str,
-) -> Vec<IdentMetadata> {
-    let full_set: HashSet<&str> = full_entities.iter().copied().collect();
-    let mut out = Vec::new();
-    let cid = catalog_entry_id.to_string();
-    for &ename in full_entities {
-        let Some(ent) = cgs.get_entity(ename) else {
-            continue;
-        };
-        let en = EntityName::from(ename.to_string());
-        for (fname, f) in &ent.fields {
-            let nv = cgs
-                .named_value_for_slot(f)
-                .expect("values row for entity field");
-            out.push(IdentMetadata::RegistryBacked {
-                catalog_entry_id: cid.clone(),
-                entity: en.clone(),
-                role: IdentRegistryRole::EntityField,
-                value_registry_key: f.kind.registry_key().clone(),
-                field_type: nv.field_type.clone(),
-                string_semantics: nv.string_semantics,
-                array_items: nv.array_items.clone(),
-                allowed_values: nv.allowed_values.clone(),
-                wire_name: fname.as_str().to_string(),
-                description: f.description.clone(),
-            });
-        }
-        for (rname, r) in &ent.relations {
-            out.push(IdentMetadata::Relation {
-                catalog_entry_id: cid.clone(),
-                entity: en.clone(),
-                wire_name: rname.as_str().to_string(),
-                description: r.description.clone(),
-                target: r.target_resource.clone(),
-            });
-        }
-    }
-    for dom in &full_set {
-        let Some(names) = cgs.capability_names_by_domain().get(*dom) else {
-            continue;
-        };
-        for cap_name in names {
-            let Some(cap) = cgs.capabilities.get(cap_name) else {
-                continue;
-            };
-            let Some(is) = &cap.input_schema else {
-                continue;
-            };
-            let InputType::Object { fields, .. } = &is.input_type else {
-                continue;
-            };
-            let en = cap.domain.clone();
-            for f in fields {
-                let nv = cgs
-                    .named_value_for_slot(f)
-                    .expect("values row for capability param");
-                out.push(IdentMetadata::RegistryBacked {
-                    catalog_entry_id: cid.clone(),
-                    entity: en.clone(),
-                    role: IdentRegistryRole::CapabilityParam {
-                        capability: cap.name.clone(),
-                    },
-                    value_registry_key: f.kind.registry_key().clone(),
-                    field_type: nv.field_type.clone(),
-                    string_semantics: nv.string_semantics,
-                    array_items: nv.array_items.clone(),
-                    allowed_values: nv.allowed_values.clone(),
-                    wire_name: f.name.clone(),
-                    description: f.description.clone().unwrap_or_default(),
-                });
-            }
-        }
-    }
-    out
 }
 
 /// Build typed metadata for all (entity, ident) pairs in the full-entity slice.
@@ -1949,6 +2125,8 @@ pub fn resolve_prompt_surface_entities(
 /// the CGS graph. Indices only **append** — existing symbols never change when new domains appear.
 #[derive(Debug)]
 pub struct DomainExposureSession {
+    /// Cumulative allowed DOMAIN surface for filtered (`intent`) sessions; full closure for legacy paths.
+    pub surface: ExposureSurface,
     /// Entities included in symbol space (order = `e1`, `e2`, …).
     pub entities: Vec<String>,
     /// Catalog registry `entry_id` for each row in [`Self::entities`] (same length). Disambiguates
@@ -1986,6 +2164,7 @@ pub struct DomainExposureSession {
 impl Clone for DomainExposureSession {
     fn clone(&self) -> Self {
         Self {
+            surface: self.surface.clone(),
             entities: self.entities.clone(),
             entity_catalog_entry_ids: self.entity_catalog_entry_ids.clone(),
             catalog_cgs: self.catalog_cgs.clone(),
@@ -2014,6 +2193,7 @@ impl DomainExposureSession {
     /// `catalog_entry_id` is the registry row for this graph (`""` when not using a multi-entry catalog).
     pub fn new(cgs: &CGS, catalog_entry_id: &str, entity_names_in_order: &[&str]) -> Self {
         let mut s = Self {
+            surface: ExposureSurface::default(),
             entities: Vec::new(),
             entity_catalog_entry_ids: Vec::new(),
             catalog_cgs: IndexMap::new(),
@@ -2036,6 +2216,39 @@ impl DomainExposureSession {
         };
         let arc = Arc::new(cgs.clone());
         s.expose_entities(&[cgs], arc, catalog_entry_id, entity_names_in_order);
+        s
+    }
+
+    pub fn new_with_intent_delta(
+        cgs: &CGS,
+        catalog_entry_id: &str,
+        entity_names_in_order: &[&str],
+        delta: ExposureSurfaceDelta,
+    ) -> Self {
+        let mut s = Self {
+            surface: ExposureSurface::default(),
+            entities: Vec::new(),
+            entity_catalog_entry_ids: Vec::new(),
+            catalog_cgs: IndexMap::new(),
+            sym_to_entity: IndexMap::new(),
+            qualified_entity_to_sym: IndexMap::new(),
+            method_to_sym: IndexMap::new(),
+            sym_to_method: IndexMap::new(),
+            ident_to_sym: IndexMap::new(),
+            sym_to_ident: IndexMap::new(),
+            anchor_scoped_method_sym: HashMap::new(),
+            slot_fingerprint_to_sym: IndexMap::new(),
+            fingerprint_meta: IndexMap::new(),
+            slot_occurrence_meta: IndexMap::new(),
+            entity_field_to_sym: HashMap::new(),
+            relation_to_sym: HashMap::new(),
+            cap_param_to_sym: HashMap::new(),
+            value_domain_fp_to_sym: IndexMap::new(),
+            value_domain_fp_to_repr_meta: IndexMap::new(),
+            symbol_map_cache: RwLock::new(None),
+        };
+        let arc = Arc::new(cgs.clone());
+        let _ = s.expose_surface(&[cgs], arc, catalog_entry_id, entity_names_in_order, delta);
         s
     }
 
@@ -2077,33 +2290,87 @@ impl DomainExposureSession {
             self.qualified_entity_to_sym.insert(qkey, sym.clone());
             self.sym_to_entity.insert(sym, (*n).to_string());
         }
+        self.union_legacy_surface_for_entities(catalog_entry_id, names);
         self.assign_new_methods_and_idents(cgs_layers);
         self.rebuild_anchor_scoped_method_labels(cgs_layers);
     }
 
-    fn assign_new_methods_and_idents(&mut self, cgs_layers: &[&CGS]) {
-        let full_refs: Vec<String> = self.entities.clone();
-        let full_refs_str: Vec<&str> = full_refs.iter().map(|s| s.as_str()).collect();
+    fn union_legacy_surface_for_entities(&mut self, entry_id: &str, entities: &[&str]) {
+        let Some(cgs) = self.catalog_cgs.get(entry_id) else {
+            return;
+        };
+        legacy_exposure_surface_for_entities(cgs.as_ref(), entry_id, entities, &mut self.surface);
+    }
 
+    pub fn expose_surface(
+        &mut self,
+        cgs_layers: &[&CGS],
+        owning_cgs: Arc<CGS>,
+        catalog_entry_id: &str,
+        entity_names_in_order: &[&str],
+        delta: ExposureSurfaceDelta,
+    ) -> ExposureAppendReport {
+        if cgs_layers.is_empty() {
+            return ExposureAppendReport::default();
+        }
+        self.catalog_cgs
+            .insert(catalog_entry_id.to_string(), owning_cgs.clone());
+        *self
+            .symbol_map_cache
+            .write()
+            .expect("symbol_map_cache lock poisoned") = None;
+        self.surface.merge_from(&delta.required);
+        let mut entities_added = 0usize;
+        for n in entity_names_in_order {
+            let ekey = ExposureEntityKey {
+                entry_id: catalog_entry_id.to_string(),
+                entity: EntityName::from(*n),
+            };
+            if !self.surface.entities.contains(&ekey) {
+                continue;
+            }
+            let qkey = (catalog_entry_id.to_string(), (*n).to_string());
+            if self.qualified_entity_to_sym.contains_key(&qkey) {
+                continue;
+            }
+            let Some(ent) = owning_cgs.get_entity(n) else {
+                continue;
+            };
+            if ent.abstract_entity {
+                continue;
+            }
+            entities_added += 1;
+            let i = self.entities.len() + 1;
+            let sym = format!("e{i}");
+            self.entities.push((*n).to_string());
+            self.entity_catalog_entry_ids
+                .push(catalog_entry_id.to_string());
+            self.qualified_entity_to_sym.insert(qkey, sym.clone());
+            self.sym_to_entity.insert(sym, (*n).to_string());
+        }
+        self.assign_new_methods_and_idents(cgs_layers);
+        self.rebuild_anchor_scoped_method_labels(cgs_layers);
+        ExposureAppendReport { entities_added }
+    }
+
+    fn assign_new_methods_and_idents(&mut self, cgs_layers: &[&CGS]) {
+        let _ = cgs_layers;
         let mut new_triples: Vec<(String, String, String)> = Vec::new();
-        for (dom, entry_id) in full_refs.iter().zip(self.entity_catalog_entry_ids.iter()) {
-            let dom = dom.as_str();
-            let entry_id = entry_id.as_str();
-            let Some(cgs) = self.catalog_cgs.get(entry_id) else {
+        for cap_key in self.surface.capabilities.iter() {
+            let Some(cgs) = self.catalog_cgs.get(&cap_key.entry_id) else {
                 continue;
             };
-            let Some(names) = cgs.capability_names_by_domain().get(dom) else {
+            let Some(cap) = cgs.capabilities.get(&cap_key.capability) else {
                 continue;
             };
-            for cap_name in names {
-                let Some(cap) = cgs.capabilities.get(cap_name) else {
-                    continue;
-                };
-                let kebab = capability_method_label_kebab(cap);
-                let triple = (entry_id.to_string(), cap.domain.to_string(), kebab.clone());
-                if !self.method_to_sym.contains_key(&triple) {
-                    new_triples.push(triple);
-                }
+            let kebab = capability_method_label_kebab(cap);
+            let triple = (
+                cap_key.entry_id.clone(),
+                cap.domain.to_string(),
+                kebab.clone(),
+            );
+            if !self.method_to_sym.contains_key(&triple) {
+                new_triples.push(triple);
             }
         }
         new_triples.sort();
@@ -2115,23 +2382,15 @@ impl DomainExposureSession {
             self.sym_to_method.insert(sym, triple);
         }
 
-        self.assign_new_slot_symbols(cgs_layers, &full_refs_str);
+        self.assign_new_slot_symbols();
     }
 
-    fn assign_new_slot_symbols(&mut self, _cgs_layers: &[&CGS], full_refs: &[&str]) {
-        let mut collected: Vec<IdentMetadata> = Vec::new();
-        let full_set: HashSet<&str> = full_refs.iter().copied().collect();
-        for i in 0..self.entities.len() {
-            let dom = self.entities[i].as_str();
-            if !full_set.contains(dom) {
-                continue;
-            }
-            let entry_id = self.entity_catalog_entry_ids[i].as_str();
-            let Some(cgs) = self.catalog_cgs.get(entry_id) else {
-                continue;
-            };
-            collected.extend(collect_slot_metas(cgs.as_ref(), &[dom], entry_id));
-        }
+    fn assign_new_slot_symbols(&mut self) {
+        let mut collected: Vec<IdentMetadata> =
+            collect_slot_metas_for_surface(&self.catalog_cgs, &self.surface);
+        collected.sort_by(|a, b| {
+            slot_symbol_allocation_fingerprint(a).cmp(&slot_symbol_allocation_fingerprint(b))
+        });
         let mut by_fp: IndexMap<String, IdentMetadata> = IndexMap::new();
         for m in collected {
             self.slot_occurrence_meta
@@ -2301,6 +2560,14 @@ impl DomainExposureSession {
                 let Some(cap) = cgs.capabilities.get(cap_name) else {
                     continue;
                 };
+                let cap_key = ExposureCapabilityKey {
+                    entry_id: entry_id.to_string(),
+                    domain: EntityName::from(dom),
+                    capability: cap_name.clone(),
+                };
+                if !self.surface.capabilities.contains(&cap_key) {
+                    continue;
+                }
                 if cap.kind != CapabilityKind::Create {
                     continue;
                 }
@@ -2538,6 +2805,7 @@ fn hash_exposure_session_rows(exposure: &DomainExposureSession) -> u64 {
         e.hash(&mut h);
         row.hash(&mut h);
     }
+    exposure.surface.fingerprint().hash(&mut h);
     h.finish()
 }
 
@@ -3438,5 +3706,29 @@ mod tests {
             .get(&("beta".into(), "Pet".into()))
             .expect("beta Pet");
         assert_ne!(sa, sb);
+    }
+
+    #[test]
+    fn intent_filtered_domain_session_has_narrower_capability_surface_than_legacy() {
+        let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let refs: &[&str] = &["PromptRun"];
+        let legacy = DomainExposureSession::new(&cgs, "overshow", refs);
+        let delta = crate::discovery::derive_intent_exposure_surface_batch(
+            &cgs,
+            "overshow",
+            "list profiles read metadata only",
+            &["PromptRun".into()],
+            &["PromptRun".into()],
+            None,
+        );
+        let filtered = DomainExposureSession::new_with_intent_delta(&cgs, "overshow", refs, delta);
+        assert!(
+            filtered.surface.capabilities.len() < legacy.surface.capabilities.len(),
+            "expected fewer admitted capabilities than legacy full closure (prompt_run_create omitted)"
+        );
     }
 }
