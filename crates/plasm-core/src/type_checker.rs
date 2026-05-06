@@ -447,11 +447,31 @@ pub fn type_check_get(get: &GetExpr, cgs: &CGS) -> Result<(), TypeError> {
                 .iter()
                 .map(|k| k.as_str().to_string())
                 .collect();
-            let got: std::collections::BTreeSet<String> = m.keys().cloned().collect();
-            if expected != got {
+            let from_ref: std::collections::BTreeSet<String> = m.keys().cloned().collect();
+            let from_pv: std::collections::BTreeSet<String> = get
+                .path_vars
+                .as_ref()
+                .map(|pv| pv.keys().cloned().collect())
+                .unwrap_or_default();
+            let overlap: Vec<String> = from_ref.intersection(&from_pv).cloned().collect();
+            if !overlap.is_empty() {
                 return Err(TypeError::RefKeyMismatch {
                     entity: en,
-                    message: format!("expected keys {:?}, got {:?}", entity.key_vars, got),
+                    message: format!(
+                        "compound GET identity keys {:?} must not appear in both `ref` and `path_vars`",
+                        overlap
+                    ),
+                });
+            }
+            let union: std::collections::BTreeSet<String> =
+                from_ref.union(&from_pv).cloned().collect();
+            if union != expected {
+                return Err(TypeError::RefKeyMismatch {
+                    entity: en,
+                    message: format!(
+                        "expected compound identity keys {:?} from ref ∪ path_vars, got {:?} ∪ {:?}",
+                        entity.key_vars, from_ref, from_pv
+                    ),
                 });
             }
         }

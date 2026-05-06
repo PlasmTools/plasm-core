@@ -273,6 +273,17 @@ impl GetExpr {
             path_vars: None,
         }
     }
+
+    /// [`from_ref`] plus optional CML path bindings (program `node_input` holes, entity-ref rows, …).
+    pub fn from_ref_with_path_vars(
+        reference: Ref,
+        path_vars: Option<IndexMap<String, Value>>,
+    ) -> Self {
+        Self {
+            reference,
+            path_vars,
+        }
+    }
 }
 
 impl CreateExpr {
@@ -310,6 +321,19 @@ impl DeleteExpr {
             path_vars: None,
         }
     }
+
+    /// Like [`with_target`], preserving CML path overlays from a source [`GetExpr`].
+    pub fn with_target_path_vars(
+        capability: impl Into<CapabilityName>,
+        target: Ref,
+        path_vars: Option<IndexMap<String, Value>>,
+    ) -> Self {
+        Self {
+            capability: capability.into(),
+            target,
+            path_vars,
+        }
+    }
 }
 
 impl InvokeExpr {
@@ -339,6 +363,21 @@ impl InvokeExpr {
             target,
             input: input.map(InvokeInputPayload::from),
             path_vars: None,
+        }
+    }
+
+    /// Like [`with_target`], preserving CML path overlays from a source [`GetExpr`].
+    pub fn with_target_path_vars(
+        capability: impl Into<CapabilityName>,
+        target: Ref,
+        input: Option<Value>,
+        path_vars: Option<IndexMap<String, Value>>,
+    ) -> Self {
+        Self {
+            capability: capability.into(),
+            target,
+            input: input.map(InvokeInputPayload::from),
+            path_vars,
         }
     }
 }

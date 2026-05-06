@@ -14,8 +14,17 @@
 //! - [`Parser::parse_predicate_value_rhs`] / [`Parser::parse_dotted_call_arg_value_rhs`]: `Entity{…}` and
 //!   dotted-call `method(k=v,…)` allow unquoted phrases (spaces) until top-level `,` or `}` / `)`.
 //!   RHS may also be an **array literal** `[v1, v2]` (comma-separated; same strict [`Parser::parse_value`]
-//!   tokens per element). Unary `Entity($)` is allowed here (DOMAIN fill-in, same as scalar `$`); top-level
-//!   `Entity($)` GET also uses [`Parser::parse_value`].
+//!   tokens per element). Unary `Entity($)` is allowed here (DOMAIN fill-in, same as scalar `$`).
+//!
+//! **Binding-substitution matrix (program `node_input`):**
+//! - Predicate `{…}`, dotted-call `(k=v)`, compound ctor `Entity(k=v,…)`, and simple `Entity(id)` **when
+//!   [`Parser::program_nodes`] is set** use the lenient RHS paths above (or [`Parser::parse_compound_key_value_rhs`]),
+//!   so bare labels can become [`crate::PlasmInputRef::node_output`].
+//! - Positions that always use strict [`Parser::parse_value`] **without** `program_nodes` coerce bare tokens to
+//!   [`Value::String`] (no `node_input`).
+//! - DAG plan template uses (`collect_expr_for_template_uses` in `plasm-agent-core`) record `node_input` from query
+//!   predicates, create payloads, invoke input/`path_vars`, delete `path_vars`, chain bodies, and **get** `path_vars`;
+//!   they intentionally skip [`crate::PlasmInputRef::RowBinding`] (`for_each` row holes).
 //!   Trailing `[`…`]` projection syntax applies only **after** the expression, not inside `{…}`.
 //!
 //! # Lenient parsing (references)
@@ -356,6 +365,18 @@ impl<'a> Parser<'a> {
     #[inline]
     pub(super) fn parse_dotted_call_arg_value_rhs(&mut self) -> Result<Value, ParseError> {
         self.parse_predicate_or_dotted_call_arg_value(PhraseClose::DottedCallParen)
+    }
+
+    /// RHS of `key=value` inside compound `Entity(k=v,…)` (GET ctor and nested entity constructors).
+    ///
+    /// With [`Self::program_nodes`], uses the same phrase / `node_input` rules as dotted-call args so
+    /// `zone_id=zone` binds a prior program label instead of the literal string `"zone"`.
+    pub(super) fn parse_compound_key_value_rhs(&mut self) -> Result<Value, ParseError> {
+        if self.program_nodes.is_some() {
+            self.parse_predicate_or_dotted_call_arg_value_inner(PhraseClose::DottedCallParen)
+        } else {
+            self.parse_value()
+        }
     }
 
     fn parse_predicate_or_dotted_call_arg_value(

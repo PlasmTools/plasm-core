@@ -682,7 +682,7 @@ impl<'a> Parser<'a> {
                 }));
             }
             self.pos += 1;
-            let val = self.parse_value()?;
+            let val = self.parse_compound_key_value_rhs()?;
             parts.insert(key, val);
             self.skip_ws();
             if self.peek_char() == Some(')') {
@@ -956,9 +956,10 @@ impl<'a> Parser<'a> {
                     label: label.clone(),
                 }));
             };
-            return Ok(Expr::Delete(DeleteExpr::with_target(
+            return Ok(Expr::Delete(DeleteExpr::with_target_path_vars(
                 cap_name,
                 g.reference.clone(),
+                g.path_vars.clone(),
             )));
         }
         if cap.kind == CapabilityKind::Get {
@@ -988,10 +989,11 @@ impl<'a> Parser<'a> {
                 label: label.clone(),
             }));
         };
-        Ok(Expr::Invoke(InvokeExpr::with_target(
+        Ok(Expr::Invoke(InvokeExpr::with_target_path_vars(
             cap_name,
             g.reference.clone(),
             None,
+            g.path_vars.clone(),
         )))
     }
 
@@ -1070,6 +1072,14 @@ impl<'a> Parser<'a> {
         let Expr::Get(g) = source else {
             return;
         };
+        // Explicit `Get.path_vars` from compound/simple ctor holes (`node_input`, row JSON, …).
+        if let Some(explicit) = &g.path_vars {
+            for (k, v) in explicit {
+                if !map.contains_key(k) {
+                    map.insert(k.clone(), v.clone());
+                }
+            }
+        }
         let src_ent = g.reference.entity_type.as_str();
         let expected_id_key = format!("{}_id", src_ent.to_lowercase());
         match &g.reference.key {
@@ -1196,7 +1206,18 @@ impl<'a> Parser<'a> {
         }
         let src_ent = g.reference.entity_type.as_str();
         let expected = format!("{}_id", src_ent.to_lowercase());
-        path_vars.iter().all(|pv| pv == &expected)
+        path_vars.iter().all(|pv| {
+            if pv != &expected {
+                return false;
+            }
+            if g.path_vars.as_ref().is_some_and(|m| m.contains_key(pv)) {
+                return true;
+            }
+            match &g.reference.key {
+                EntityKey::Simple(id) => !id.is_empty(),
+                EntityKey::Compound(parts) => parts.contains_key(pv),
+            }
+        })
     }
 
     /// Build Create / Update / Action / Delete from dotted-call args after `resolve_dotted_call_capability`.
@@ -1223,10 +1244,11 @@ impl<'a> Parser<'a> {
                         message: "invoke with arguments requires Entity(id) on the left".into(),
                     }));
                 };
-                Ok(Expr::Invoke(InvokeExpr::with_target(
+                Ok(Expr::Invoke(InvokeExpr::with_target_path_vars(
                     cap.name.clone(),
                     g.reference.clone(),
                     Some(input),
+                    g.path_vars.clone(),
                 )))
             }
             _ => Err(self.err(ParseErrorKind::Other {
@@ -1706,12 +1728,25 @@ impl<'a> Parser<'a> {
                     }
                     let map_values = self.parse_strict_compound_key_value_map(&entity, &ent)?;
                     let mut ordered: BTreeMap<String, String> = BTreeMap::new();
+                    let mut ctor_path_vars: IndexMap<String, Value> = IndexMap::new();
                     for k in &ent.key_vars {
                         let v = map_values.get(k.as_str()).expect("keys validated");
+                        if matches!(v, Value::PlasmInputRef(_)) {
+                            ctor_path_vars.insert(k.to_string(), v.clone());
+                            continue;
+                        }
                         let s = self.compound_get_slot_string_from_value(v)?;
                         ordered.insert(k.to_string(), s);
                     }
-                    Ok(Expr::Get(GetExpr::from_ref(Ref::compound(entity, ordered))))
+                    let get = GetExpr::from_ref_with_path_vars(
+                        Ref::compound(entity, ordered),
+                        if ctor_path_vars.is_empty() {
+                            None
+                        } else {
+                            Some(ctor_path_vars)
+                        },
+                    );
+                    Ok(Expr::Get(get))
                 } else {
                     if looks_kv && ent.key_vars.is_empty() {
                         return Err(self.err(ParseErrorKind::Other {
@@ -1722,10 +1757,22 @@ impl<'a> Parser<'a> {
                         }));
                     }
                     self.pos = after_paren;
-                    let id_val = self.parse_value()?;
+                    let id_val = if self.program_nodes.is_some() {
+                        self.parse_dotted_call_arg_value_rhs()?
+                    } else {
+                        self.parse_value()?
+                    };
                     self.expect_char(')')?;
-                    let id_str = self.compound_get_slot_string_from_value(&id_val)?;
-                    Ok(Expr::Get(GetExpr::new(entity, id_str)))
+                    if matches!(id_val, Value::PlasmInputRef(_)) {
+                        let path_key = format!("{}_id", entity.to_lowercase());
+                        Ok(Expr::Get(GetExpr::from_ref_with_path_vars(
+                            Ref::new(entity, ""),
+                            Some(IndexMap::from([(path_key, id_val)])),
+                        )))
+                    } else {
+                        let id_str = self.compound_get_slot_string_from_value(&id_val)?;
+                        Ok(Expr::Get(GetExpr::new(entity, id_str)))
+                    }
                 }
             }
             Some('{') => {
@@ -2121,8 +2168,11 @@ mod tests {
     use crate::symbol_tuning::{entity_slices_for_render, FocusSpec, SymbolMap};
     use crate::{
         loader::load_schema_dir, CapabilityKind, CapabilityMapping, CapabilitySchema, Cardinality,
-        EntityKey, FieldType, RelationSchema, ResourceSchema, CGS,
+        EntityKey, FieldType, PlasmInputRef, RelationSchema, ResourceSchema, CGS,
     };
+    use indexmap::IndexMap;
+    use std::collections::BTreeMap;
+    use std::collections::BTreeSet;
 
     fn seed_fx_str(cgs: &mut CGS) {
         cgs.values.insert(
@@ -3462,6 +3512,61 @@ mod tests {
         assert_eq!(m.get("owner").map(String::as_str), Some("o"));
         assert_eq!(m.get("repo").map(String::as_str), Some("r"));
         assert_eq!(m.get("n").map(String::as_str), Some("9"));
+    }
+
+    #[test]
+    fn program_parse_compound_get_maps_binding_slot_to_path_vars() {
+        let cgs = compound_get_fixture_cgs();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map = SymbolMap::build(&cgs, &full);
+        let layers = [&cgs];
+        let mut refs = BTreeSet::new();
+        refs.insert("zone".into());
+        let r = parse_with_cgs_layers_program(
+            "Ticket(owner=zone,repo=r,n=9)",
+            &layers,
+            sym_map,
+            Some(&refs),
+            false,
+        )
+        .expect("compound get with program binding");
+        let Expr::Get(g) = &r.expr else {
+            panic!("expected Get");
+        };
+        let pv = g.path_vars.as_ref().expect("path_vars for hole slot");
+        assert!(
+            matches!(
+                pv.get("owner"),
+                Some(Value::PlasmInputRef(PlasmInputRef::NodeInput { node, path }))
+                    if node == "zone" && path.is_empty()
+            ),
+            "expected node_input(zone), got {:?}",
+            pv.get("owner")
+        );
+        let EntityKey::Compound(m) = &g.reference.key else {
+            panic!("expected compound ref");
+        };
+        assert!(m.get("owner").is_none());
+        assert_eq!(m.get("repo").map(String::as_str), Some("r"));
+        assert_eq!(m.get("n").map(String::as_str), Some("9"));
+        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
+    }
+
+    #[test]
+    fn get_expr_serde_json_roundtrip_with_compound_path_vars() {
+        let mut parts = BTreeMap::new();
+        parts.insert("repo".into(), "r".into());
+        parts.insert("n".into(), "9".into());
+        let g = GetExpr::from_ref_with_path_vars(
+            Ref::compound("Ticket", parts),
+            Some(IndexMap::from([(
+                "owner".into(),
+                Value::PlasmInputRef(PlasmInputRef::node_output("zone", vec![])),
+            )])),
+        );
+        let json = serde_json::to_value(&g).unwrap();
+        let back: GetExpr = serde_json::from_value(json).unwrap();
+        assert_eq!(back, g);
     }
 
     #[test]

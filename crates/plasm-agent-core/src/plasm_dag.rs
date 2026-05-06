@@ -159,6 +159,13 @@ fn collect_template_uses_from_expr(expr: &Expr) -> Vec<serde_json::Value> {
     dedupe_uses(acc)
 }
 
+/// Records upstream plan nodes so `node_input` holes become `uses_result` → `ir_template` + instantiation
+/// before compile.
+///
+/// Surfaces covered: query predicates; **get**/**delete**/**invoke** `path_vars`; invoke/create payloads (values
+/// recurse into objects/arrays). [`Expr::Get`] compound identity literals live on `reference`; program bindings
+/// in compound slots are lowered to `path_vars` and collected here. [`PlasmInputRef::RowBinding`] is skipped on
+/// purpose (`for_each` row scope).
 fn collect_expr_for_template_uses(acc: &mut Vec<serde_json::Value>, expr: &Expr) {
     match expr {
         Expr::Query(q) => {

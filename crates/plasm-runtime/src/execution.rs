@@ -19,8 +19,8 @@ use plasm_core::{
     resolve_query_capability as resolve_query_capability_core, type_check_expr,
     type_check_expr_federated, CapabilityParamName, CapabilitySchema, ChainStep, EntityFieldName,
     EntityKey, EntityName, Expr, FieldType, GetExpr, InputType, InvokeExpr, InvokeInputPayload,
-    Predicate, PromptPipelineConfig, QueryExpr, QueryPagination, Ref, RelationMaterialization,
-    RelationSchema, TypeError, Value, CGS,
+    ParameterRole, Predicate, PromptPipelineConfig, QueryExpr, QueryPagination, Ref,
+    RelationMaterialization, RelationSchema, TypeError, Value, CGS,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -1695,6 +1695,12 @@ impl ExecutionEngine {
             get.path_vars.as_ref(),
             None,
         );
+        normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
+        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
+            RuntimeError::ConfigurationError {
+                message: e.to_string(),
+            }
+        })?;
 
         let compiled = compile_operation_dispatch(&capability_template, &env)?;
         let (response, source) = with_dispatch_entity(
@@ -1985,6 +1991,12 @@ impl ExecutionEngine {
             delete.path_vars.as_ref(),
             None,
         );
+        normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
+        plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
+            RuntimeError::ConfigurationError {
+                message: e.to_string(),
+            }
+        })?;
 
         let compiled = compile_operation_dispatch(&capability_template, &env)?;
 
@@ -2075,6 +2087,7 @@ impl ExecutionEngine {
                 }
             }
         }
+        normalize_cml_env_scope_entity_refs(&mut env, cgs, capability)?;
         plasm_core::apply_entity_ref_scope_splat(&mut env, cgs, capability).map_err(|e| {
             RuntimeError::ConfigurationError {
                 message: e.to_string(),
@@ -3168,6 +3181,51 @@ fn populate_template_path_env(
             env.insert(var_name.clone(), value);
         }
     }
+
+    // Explicit `path_vars` override compound [`Ref`] strings and template defaults (program
+    // `node_input`, materialized entity-ref rows, …).
+    if let Some(pv) = path_vars {
+        for (k, v) in pv {
+            env.insert(k.clone(), v.clone());
+        }
+    }
+}
+
+/// Narrow scope slots typed as [`FieldType::EntityRef`] (row JSON → id string, etc.).
+fn normalize_cml_env_scope_entity_refs(
+    env: &mut CmlEnv,
+    cgs: &CGS,
+    capability: &CapabilitySchema,
+) -> Result<(), RuntimeError> {
+    let Some(schema) = capability.input_schema.as_ref() else {
+        return Ok(());
+    };
+    let InputType::Object { fields, .. } = &schema.input_type else {
+        return Ok(());
+    };
+    for field in fields {
+        if !matches!(field.role, Some(ParameterRole::Scope)) {
+            continue;
+        }
+        let nv = cgs
+            .named_value_for_slot(field)
+            .map_err(|e| RuntimeError::ConfigurationError {
+                message: format!("capability `{}`: {e}", capability.name),
+            })?;
+        let FieldType::EntityRef { target } = &nv.field_type else {
+            continue;
+        };
+        let Some(ent) = cgs.get_entity(target.as_str()) else {
+            continue;
+        };
+        let Some(slot) = env.get_mut(&field.name) else {
+            continue;
+        };
+        if let Some(norm) = plasm_core::normalize_entity_ref_value_for_target(slot, ent) {
+            *slot = norm;
+        }
+    }
+    Ok(())
 }
 
 fn pagination_default_limit(pconf: &PaginationConfig) -> u32 {
@@ -4589,6 +4647,7 @@ mod tests {
         FieldValueKind, GetExpr, NamedValueSchema, Ref, ResourceSchema, StringSemantics,
         ValueDomainKey,
     };
+    use std::collections::BTreeMap;
 
     fn create_test_cgs() -> CGS {
         let mut cgs = CGS::new();
@@ -4999,6 +5058,42 @@ mod tests {
         assert!(
             !env.contains_key("owner"),
             "non-id EVM vars should be explicitly supplied, not silently bound to the primary id"
+        );
+    }
+
+    #[test]
+    fn populate_template_path_env_path_vars_override_compound_ref_strings() {
+        let template = parse_capability_template(&serde_json::json!({
+            "method": "GET",
+            "path": [
+                {"type": "var", "name": "owner"},
+                {"type": "literal", "value": "/"},
+                {"type": "var", "name": "repo"},
+                {"type": "literal", "value": "/"},
+                {"type": "var", "name": "n"}
+            ]
+        }))
+        .unwrap();
+
+        let mut parts = BTreeMap::new();
+        parts.insert("owner".into(), "stale-binding-name".into());
+        parts.insert("repo".into(), "r".into());
+        parts.insert("n".into(), "9".into());
+        let reference = Ref::compound("Ticket", parts);
+
+        let mut pv = IndexMap::new();
+        pv.insert(
+            "owner".into(),
+            plasm_core::Value::String("real-owner-id".into()),
+        );
+
+        let mut env = CmlEnv::new();
+        populate_template_path_env(&mut env, &template, &reference, Some(&pv), None);
+
+        assert_eq!(
+            env.get("owner"),
+            Some(&plasm_core::Value::String("real-owner-id".into())),
+            "path_vars must override stale compound Ref string for HTTP template vars"
         );
     }
 
