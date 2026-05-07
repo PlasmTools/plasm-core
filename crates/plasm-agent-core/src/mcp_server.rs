@@ -2698,7 +2698,7 @@ mod tests {
         assert_eq!(super::plasm_invocation_char_count("a", Some("#c")), 1 + 2);
     }
 
-    /// Model-facing copy; update with `INSTA_UPDATE=1 cargo test -p plasm-agent-core mcp_`.
+    /// Model-facing copy; update with `just update-insta-snapshots` or `INSTA_UPDATE=1 cargo test -p plasm-agent-core mcp_`.
     #[test]
     fn mcp_plasm_tool_description_snapshot() {
         insta::assert_snapshot!(

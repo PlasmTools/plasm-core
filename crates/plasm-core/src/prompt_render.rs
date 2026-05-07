@@ -5626,6 +5626,7 @@ mod tests {
 
     /// Full `apis/github` TSV teaching prompt (symbolic). Output is **deterministic** for the
     /// tree’s `apis/github` catalog. When the catalog or renderer changes, run
+    /// `just update-insta-snapshots` (repo root) or
     /// `INSTA_UPDATE=1 cargo test -p plasm-core github_api_full_prompt_symbolic_snapshot` and review the diff.
     #[test]
     fn github_api_full_prompt_symbolic_snapshot() {
