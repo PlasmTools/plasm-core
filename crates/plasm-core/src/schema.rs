@@ -1338,6 +1338,10 @@ pub enum AuthScheme {
         /// auth-framework KV key for the stored token
         #[serde(default)]
         hosted_kv: Option<String>,
+        /// When `true`, allows omitting both `env` and `hosted_kv` in the catalog — operators rely on a
+        /// **session-bound** bearer (host/runtime `AuthResolver` session override, e.g. share-link bind).
+        #[serde(default)]
+        optional_env: bool,
     },
     /// OAuth 2.0 Client Credentials flow.
     /// The runtime exchanges `client_id` + `client_secret` for an access token,
@@ -1399,7 +1403,19 @@ impl AuthScheme {
             AuthScheme::ApiKeyQuery { env, hosted_kv, .. } => {
                 one_of_env_hosted(env.as_deref(), hosted_kv.as_deref(), "api_key_query")
             }
-            AuthScheme::BearerToken { env, hosted_kv } => {
+            AuthScheme::BearerToken {
+                env,
+                hosted_kv,
+                optional_env,
+            } => {
+                let e = env.as_deref().map(str::trim).filter(|s| !s.is_empty());
+                let h = hosted_kv
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty());
+                if *optional_env && e.is_none() && h.is_none() {
+                    return Ok(());
+                }
                 one_of_env_hosted(env.as_deref(), hosted_kv.as_deref(), "bearer_token")
             }
             AuthScheme::Oauth2ClientCredentials {

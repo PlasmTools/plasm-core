@@ -78,9 +78,15 @@ fn apply_resolved_auth(
 ) -> reqwest::RequestBuilder {
     if let Some(a) = auth {
         for (key, value) in a.headers {
+            if key.trim().is_empty() || value.trim().is_empty() {
+                continue;
+            }
             req = req.header(key, value);
         }
         for (param, value) in a.query_params {
+            if param.trim().is_empty() || value.trim().is_empty() {
+                continue;
+            }
             req = req.query(&[(param, value)]);
         }
     }
@@ -186,11 +192,22 @@ impl HttpTransport for ReqwestHttpTransport {
             if let Some(obj) = json_val.as_object() {
                 for (key, value) in obj {
                     let header_val = match value {
-                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Null => continue,
+                        serde_json::Value::String(s) => {
+                            if s.trim().is_empty() {
+                                continue;
+                            }
+                            s.clone()
+                        }
                         serde_json::Value::Number(n) => n.to_string(),
                         serde_json::Value::Bool(b) => b.to_string(),
                         other => other.to_string(),
                     };
+                    if header_val.trim().is_empty() {
+                        continue;
+                    }
+                    // Template headers are applied **after** resolved auth so duplicate keys (notably
+                    // `Authorization`) follow **last-wins** semantics at the reqwest layer.
                     req_builder = req_builder.header(key, header_val);
                 }
             }

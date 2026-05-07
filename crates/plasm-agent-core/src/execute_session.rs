@@ -378,6 +378,8 @@ pub struct ExecuteSession {
     pub context_intent: Option<String>,
     /// Optional ranked capability-name gate for mutators (aligned with [`SessionReuseKey::ranked_capabilities`]).
     pub ranked_capabilities: Option<Vec<String>>,
+    /// Share-link / instance token bound once per execute session (Bearer + optional `share_token` CML env).
+    pub session_share_token: Arc<RwLock<Option<String>>>,
     /// Per-session materialized graph; isolated from other execute sessions.
     pub graph_cache: Arc<MutexGraphCacheSession>,
     /// Unified in-session graph/artifact state.
@@ -428,6 +430,7 @@ impl ExecuteSession {
             catalog_cgs_hash,
             context_intent,
             ranked_capabilities,
+            session_share_token: Arc::new(RwLock::new(None)),
             graph_cache: core.graph_cache(),
             core,
             run_resource_next: Arc::new(AtomicU64::new(0)),

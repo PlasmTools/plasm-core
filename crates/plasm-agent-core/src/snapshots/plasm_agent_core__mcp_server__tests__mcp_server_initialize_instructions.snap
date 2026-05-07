@@ -1,6 +1,5 @@
 ---
 source: crates/plasm-agent-core/src/mcp_server.rs
-assertion_line: 2572
 expression: "super::mcp_server_initialize_instructions()"
 ---
 Plasm is **several MCP tools**; use what you need, in order. **`plasm_context`** opens one logical session; **`plasm`** returns a **dry-run plan** for programs inside it; **`plasm_run`** performs **live execution** after you review that plan; **`discover_capabilities`** finds **`api`** and **`entity`** values that match your intent when you do not already know them. **Skip `discover_capabilities`** when you already know every **`api`/`entity`** pair you need.
@@ -41,7 +40,8 @@ Symbol and fill rules:
 - `e#` = entity surface; `m#` = method/action surface; `p#` = keyed field/parameter/relation slot; `v#` = value-domain metadata only.
 - Entity-ref slots in `Meaning` look like `ref:Zone · str · Zone identifier`: canonical entity, id wire type, short note — not `plasm_expr` syntax.
 - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.
-- `$` appears only in taught examples as a required fill placeholder. Replace every `$`; never emit `$`.
+- Unary identity rows often teach `e#(p#)` using the opaque `p#` for the entity `id_field` (same token as gloss); substitute the real wire id — do not treat it as a literal API value.
+- `$` appears only in taught examples when no opaque id slot is shown. Replace every `$`; never emit `$`.
 - `<id>`, `<value>`, `<receiver>`, and `elem` in this contract are meta-variables, not syntax tokens.
 - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.
 - If `Meaning` says `optional params: pA, pB`, those keys may be added only as keyed assignments with real values.
@@ -54,7 +54,7 @@ plasm_program ::= plasm_expr | binding+ roots
 binding       ::= ident "=" node
 roots         ::= root ("," root)*
 root          ::= ident | plasm_expr
-node          ::= (plasm_expr | ident) postfix* render_tail? | ident "=>" value_or_template
+node          ::= (plasm_expr | ident) postfix* row_template? | ident "=>" value_or_template
 plasm_expr    ::= entity_expr [projection] | page
 entity_expr   ::= query_all | get | query | relation | method | create_action | search
 query_all     ::= e#
@@ -67,7 +67,7 @@ search        ::= e#~"text"
 page          ::= page(sN_pgM) | page(sN_pgM, limit=N)
 projection    ::= e#(<id>)[p#,…] | "[" fields "]"
 postfix       ::= ".limit(N)" | ".page_size(N)" | ".sort(field[, dir])" | ".aggregate(specs)" | ".group_by(field, specs)" | ".singleton()" | "[" fields "]"
-render_tail   ::= ("[" fields "]")? "<<TAG" template_body "TAG"
+row_template  ::= ("[" fields "]")? "<<TAG" template_body "TAG"
 fields        ::= [p#,…]
 specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) [, ...]
 dir           ::= desc | asc | descending | ascending
@@ -77,7 +77,9 @@ literal       ::= quoted string | number | bool | null
 Composition rules:
 - Multi-line program strings use literal newlines: one binding per line, final roots last. Spaces never separate statements.
 - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.
-- Render tails use Minijinja over `rows`; the render result is one row with `content`. Pass `binding.content` to string/body parameters.
+- To turn rows into text, bind a template block: `report = rows[p#,…] <<TAG` newline template newline `TAG`, or `report = rows <<TAG` when columns can be inferred.
+- Template blocks use Minijinja with `rows` as the input array. The bound result is a row with a `content` field; pass `report.content` to string/body parameters or `=>` payloads.
+- Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.
 - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
 - Examples: scoped child list `e#{p#=e#(<id>)}`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
 - `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `m#(..., p#=<<TXT` + newline body + `TXT` newline `)`.

@@ -760,6 +760,35 @@ document_get_markdown:
         value: application/json
   response:
     single: true
+document_share_bind:
+  method: GET
+  path:
+  - type: literal
+    value: d
+  - type: var
+    name: slug
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  response:
+    single: true
 document_title_update:
   method: PUT
   path:

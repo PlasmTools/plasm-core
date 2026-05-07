@@ -1,8 +1,10 @@
-version: 13
+version: 14
 http_backend: https://www.proofeditor.ai
 auth:
   scheme: bearer_token
   env: PROOF_API_TOKEN
+  # Share-only laptops may omit PROOF_API_TOKEN when HTTP/MCP execute binds `document_share_bind` first.
+  optional_env: true
 
 entities:
   Document:
@@ -187,6 +189,24 @@ capabilities:
     provides:
       - slug
       - markdown
+
+  document_share_bind:
+    description: >
+      One-time session bind for Proof share links: pass the share URL (with ?token=) or raw share_token
+      for this Document slug. Subsequent Document capabilities omit share_token; the host supplies Bearer
+      and mirrors ?token= via execute session material (escape hatch: explicit share_token on any capability still overrides).
+    kind: action
+    entity: Document
+    parameters:
+      - name: share_url
+        value_ref: nv_proof_str
+        required: false
+      - name: share_token
+        value_ref: nv_proof_str
+        required: false
+    output:
+      type: side_effect
+      description: Execute session now carries this document’s share credentials for outbound Proof HTTP.
 
   editor_state_get:
     description: Load marks, revision, and collaboration contract needed to edit safely with others.

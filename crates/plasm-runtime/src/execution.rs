@@ -47,6 +47,9 @@ fn resolve_query_capability<'a>(
 pub struct ExecuteSessionMaterial {
     pub prompt_hash: String,
     pub session_id: String,
+    /// When set (e.g. after a catalog-specific session bind), merged into CML env as `share_token`
+    /// so mappings can emit `?token=` mirrors without repeating the secret in every program line.
+    pub share_token: Option<String>,
 }
 
 /// Reserved CML env key: 64-char lowercase hex (rendered DOMAIN prompt digest for the row).
@@ -336,7 +339,8 @@ tokio::task_local! {
 }
 
 tokio::task_local! {
-    /// When [`ExecuteOptions::execute_session`] is set, [`merge_plasm_execute_session_env`] injects reserved keys.
+    /// When [`ExecuteOptions::execute_session`] is set, identity keys plus optional `share_token` are merged
+    /// via [`merge_plasm_execute_session_identity_env`] / [`merge_plasm_execute_session_share_token_env`].
     static EXECUTION_EXECUTE_SESSION: Option<std::sync::Arc<ExecuteSessionMaterial>>;
 }
 
@@ -345,12 +349,36 @@ tokio::task_local! {
     static EXECUTION_DISPATCH_ENTITY: Option<String>;
 }
 
+/// Merge session-bound `share_token` into CML env **before** flattened invoke/create parameters
+/// so explicit capability parameters can override it (escape hatch).
+///
+/// No-op when [`ExecuteOptions::execute_session`] is unset or `share_token` is absent/blank.
+pub fn merge_plasm_execute_session_share_token_env(env: &mut CmlEnv) {
+    let Ok(material) = EXECUTION_EXECUTE_SESSION.try_with(|s| s.clone()) else {
+        return;
+    };
+    let Some(m) = material else {
+        return;
+    };
+    let Some(ref token) = m.share_token else {
+        return;
+    };
+    let trimmed = token.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    env.insert(
+        "share_token".to_string(),
+        Value::String(trimmed.to_string()),
+    );
+}
+
 /// Merge [`CML_ENV_PLASM_EXECUTE_PROMPT_HASH`] / [`CML_ENV_PLASM_EXECUTE_SESSION_ID`] when the
 /// host set [`ExecuteOptions::execute_session`] for this execute task (see task-local scope).
 ///
 /// Call **after** `invoke_preflight` merges for invoke; for GET/create/delete, call after path
 /// env and splat so internal preflight GETs (which run with TLS unset or unchanged) omit this.
-pub fn merge_plasm_execute_session_env(env: &mut CmlEnv) {
+pub fn merge_plasm_execute_session_identity_env(env: &mut CmlEnv) {
     let Ok(material) = EXECUTION_EXECUTE_SESSION.try_with(|s| s.clone()) else {
         return;
     };
@@ -365,6 +393,12 @@ pub fn merge_plasm_execute_session_env(env: &mut CmlEnv) {
         CML_ENV_PLASM_EXECUTE_SESSION_ID.to_string(),
         Value::String(m.session_id.clone()),
     );
+}
+
+/// Back-compat alias: identity keys only (prompt hash + session id).
+#[inline]
+pub fn merge_plasm_execute_session_env(env: &mut CmlEnv) {
+    merge_plasm_execute_session_identity_env(env);
 }
 
 async fn with_dispatch_entity<Fut, T>(entity: Option<&str>, fut: Fut) -> T
@@ -467,7 +501,8 @@ pub struct ExecuteOptions {
     /// When set, typecheck and HTTP dispatch use per-entity owning [`plasm_core::CgsContext`].
     pub federation: Option<std::sync::Arc<plasm_core::FederationDispatch>>,
     /// When set, CML compilation for outbound HTTP sees reserved `plasm_execute_*` env keys
-    /// ([`merge_plasm_execute_session_env`]) for catalog-driven idempotency and hashing.
+    /// ([`merge_plasm_execute_session_env`]) plus optional session-bound `share_token`
+    /// ([`merge_plasm_execute_session_share_token_env`]) for mirror query parameters.
     pub execute_session: Option<std::sync::Arc<ExecuteSessionMaterial>>,
 }
 
@@ -1757,6 +1792,9 @@ impl ExecutionEngine {
         let capability_template = parse_capability_template(&capability.mapping.template)?;
 
         let mut env = CmlEnv::new();
+        if inject_execute_session_env {
+            merge_plasm_execute_session_share_token_env(&mut env);
+        }
         populate_template_path_env(
             &mut env,
             &capability_template,
@@ -1962,6 +2000,7 @@ impl ExecutionEngine {
         };
 
         let mut env = CmlEnv::new();
+        merge_plasm_execute_session_share_token_env(&mut env);
         env.insert("input".to_string(), input.clone());
         if let Value::Object(ref map) = input {
             // Path segments: same as the historical loop.
@@ -2066,6 +2105,7 @@ impl ExecutionEngine {
         let capability_template = parse_capability_template(&capability.mapping.template)?;
 
         let mut env = CmlEnv::new();
+        merge_plasm_execute_session_share_token_env(&mut env);
         populate_template_path_env(
             &mut env,
             &capability_template,
@@ -2155,6 +2195,7 @@ impl ExecutionEngine {
         };
 
         let mut env = CmlEnv::new();
+        merge_plasm_execute_session_share_token_env(&mut env);
         populate_template_path_env(
             &mut env,
             &capability_template,

@@ -176,6 +176,7 @@ mod tests {
         let auth = AuthScheme::BearerToken {
             env: Some("CLOUDFLARE_API_TOKEN".into()),
             hosted_kv: None,
+            optional_env: false,
         };
         let p = catalog_connect_profile(Some(&auth), None);
         assert_eq!(p.capability, CatalogAuthCapability::ApiKeyOnly);
@@ -188,6 +189,7 @@ mod tests {
         let auth = AuthScheme::BearerToken {
             env: Some("GITHUB_TOKEN".into()),
             hosted_kv: None,
+            optional_env: false,
         };
         let oauth = OauthExtension {
             provider: "github".into(),

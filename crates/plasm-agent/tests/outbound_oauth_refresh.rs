@@ -71,6 +71,7 @@ async fn hosted_bearer_refreshes_expired_envelope_and_rewrites_kv() {
     let scheme = AuthScheme::BearerToken {
         env: None,
         hosted_kv: Some(kv_key.to_string()),
+        optional_env: false,
     };
     let resolver = AuthResolver::new(scheme, Arc::new(prov) as Arc<dyn SecretProvider>);
     let resolved = resolver.resolve().await.expect("resolve after refresh");

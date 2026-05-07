@@ -97,13 +97,14 @@ p27	v9 · by
 p28	v9 · mark_id
 p29	v9 · presence_status
 p30	v9 · share_token
-p31	v9 · status
-p33	v9 · up_to_id
-p34	v10 · suggestion_kind
-p35	v11 · idempotency_key
+p31	v9 · share_url
+p32	v9 · status
+p34	v9 · up_to_id
+p35	v10 · suggestion_kind
+p36	v11 · idempotency_key
 p11	v4 · slug
 p20	v7 · markdown
-p32	v9 · title
+p33	v9 · title
 p14	v6 · links · Related URLs or endpoints surfaced with this read (navigation, not document body)
 p13	v6 · agent_auth · When present, how authenticated automation should call mutating flows for this document
 v211{p24=$}	returns comment_resolve — Close a thread as addressed while keeping history
@@ -115,21 +116,22 @@ v104{p7=$}	returns delete_block — Remove one block from the structure
 v105{p6=$,p8=$,p12=$}	returns replace_range — Replace every block from one anchor through another with new blocks
 v12	union · v210 | v211 | v212
 v13	union · v101 | v102 | v103 | v104 | v105 | v106 | v107
-e1(p11)[p11,p20,p32,p14,p13]	returns e1 · projection · Shared document the user sees in Proof: body, title, and hints for follow-up reads or edits
+e1(p11)[p11,p20,p33,p14,p13]	returns e1 · projection · Shared document the user sees in Proof: body, title, and hints for follow-up reads or edits
 e1(p11)	returns e1
-e1(p11).m9()	returns e1 · Send diagnostics tied to this document’s context
+e1.m9()	returns e1 · Send diagnostics tied to this document’s context
 e1(p11).m13()	returns e1 · optional params: p30 · Load only the document body as markdown (fast path for content extraction)
+e1(p11).m15()	returns e1 · optional params: p31, p30 · One-time session bind for Proof share links: pass the share URL (with ?token=) or raw share_token…
 e1(p11).m1(p5=$, p27=$, p21=$, p22=$,..)	returns e1 · optional params: p30 · Start a review thread anchored on an exact quoted passage from the document
 e1(p11).m2(p5=$, p27=$, p1=[$],..)	returns e1 · optional params: p30 · Perform several comment-thread updates in one coordinated step
 e1(p11).m3(p5=$, p27=$, p28=$, p22=$,..)	returns e1 · optional params: p10, p30 · Continue an existing comment thread; may close it as resolved in the same step
 e1(p11).m4(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Close a comment thread as addressed while keeping history visible
 e1(p11).m5(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Bring a resolved thread back to active discussion
 e1(p11).m6(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Apply a pending suggestion so its proposed change becomes real content
-e1(p11).m7(p5=$, p27=$, p34=$, p21=$,..)	returns e1 · optional params: p19, p31, p30 · Propose an insert, removal, or replacement anchored on quoted text for human acceptance
+e1(p11).m7(p5=$, p27=$, p35=$, p21=$,..)	returns e1 · optional params: p19, p32, p30 · Propose an insert, removal, or replacement anchored on quoted text for human acceptance
 e1(p11).m8(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Discard a pending suggestion without changing the document body
-e1(p11).m10(p5=$, p33=$, p27=$)	returns e1 · Confirm how far this client has consumed collaboration events so the host can trim history
-e1(p11).m11(p5=$, p27=$, p26=$, p2=[v101{p7=$,p17=$},v103{p7=$,p12=$}],..)	returns e1 · optional params: p35, p30 · Apply one batch of structural edits against the revision token from the latest snapshot. Combine …
-e1(p11).m15(p32=$)	returns e1 · Change the document title shown to readers and collaborators
+e1(p11).m10(p5=$, p34=$, p27=$)	returns e1 · Confirm how far this client has consumed collaboration events so the host can trim history
+e1(p11).m11(p5=$, p27=$, p26=$, p2=[v101{p7=$,p17=$},v103{p7=$,p12=$}],..)	returns e1 · optional params: p36, p30 · Apply one batch of structural edits against the revision token from the latest snapshot. Combine …
+e1(p11).m16(p33=$)	returns e1 · Change the document title shown to readers and collaborators
 e1(p11).m14(p5=$,..)	returns e1 · optional params: p29 · Signal whether this automation session is actively viewing or editing the document
 e1(p11).p3	relation e1 => [Block] · Structural slices of the snapshot used for precise insert, replace, or delete edits
 e1(p11).p4	relation e1 => [CollaborationEvent] · Recent collaboration activity (edits, marks, presence) not yet acknowledged by this client

@@ -137,6 +137,15 @@ m["document_get_markdown"] = {
     "response": response_single(),
 }
 
+# Fallback mapping (agent HTTP/MCP intercepts this capability — no outbound HTTP on success).
+m["document_share_bind"] = {
+    "method": "GET",
+    "path": [LIT("d"), VAR("slug")],
+    "query": query_token_optional(),
+    "headers": headers_json(),
+    "response": response_single(),
+}
+
 m["editor_state_get"] = {
     "method": "GET",
     "path": path_documents_slug() + [LIT("state")],

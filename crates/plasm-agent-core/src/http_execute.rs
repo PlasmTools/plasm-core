@@ -36,6 +36,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::Instrument;
+use url::Url;
 use uuid::Uuid;
 
 use crate::run_artifacts::{
@@ -775,17 +776,25 @@ fn patch_auth_scheme_for_tenant_hosted(
             env: None,
             hosted_kv: kv,
         },
-        Some(AuthScheme::BearerToken { .. }) | None => AuthScheme::BearerToken {
+        Some(AuthScheme::BearerToken { optional_env, .. }) => AuthScheme::BearerToken {
             env: None,
             hosted_kv: kv,
+            optional_env: *optional_env,
+        },
+        None => AuthScheme::BearerToken {
+            env: None,
+            hosted_kv: kv,
+            optional_env: false,
         },
         Some(AuthScheme::Oauth2ClientCredentials { .. }) => AuthScheme::BearerToken {
             env: None,
             hosted_kv: kv,
+            optional_env: false,
         },
         Some(AuthScheme::None) => AuthScheme::BearerToken {
             env: None,
             hosted_kv: kv,
+            optional_env: false,
         },
     }
 }
@@ -2606,6 +2615,132 @@ fn synthetic_page_result(
     }
 }
 
+fn trim_json_string_field(map: &IndexMap<String, plasm_core::Value>, key: &str) -> Option<String> {
+    map.get(key).and_then(|v| match v {
+        plasm_core::Value::String(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        }
+        _ => None,
+    })
+}
+
+fn parse_proof_share_link_url(raw: &str) -> Result<(String, Option<String>), RunLineError> {
+    let u = Url::parse(raw.trim()).map_err(|e| {
+        RunLineError::Parse(format!("document_share_bind: invalid share_url ({e})"))
+    })?;
+    let segments: Vec<&str> = u.path_segments().map(|s| s.collect()).unwrap_or_default();
+    let slug = segments
+        .iter()
+        .position(|seg| *seg == "d")
+        .and_then(|i| segments.get(i + 1).copied())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| {
+            RunLineError::Parse(
+                "document_share_bind: share_url path must include `/d/{slug}`".into(),
+            )
+        })?;
+    let token = u
+        .query_pairs()
+        .find(|(k, _)| k == "token")
+        .map(|(_, v)| v.into_owned())
+        .and_then(|t| {
+            let tr = t.trim();
+            if tr.is_empty() {
+                None
+            } else {
+                Some(tr.to_string())
+            }
+        });
+    Ok((slug.to_string(), token))
+}
+
+/// Proof-only session bind: stores share token on [`ExecuteSession`] (no HTTP) when invoked via agent execute.
+async fn try_proof_document_share_bind(
+    sess: &ExecuteSession,
+    exec_cgs: &CGS,
+    expr: &plasm_core::Expr,
+) -> Result<Option<ExecutionResult>, RunLineError> {
+    let plasm_core::Expr::Invoke(invoke) = expr else {
+        return Ok(None);
+    };
+    if invoke.capability.as_str() != "document_share_bind" {
+        return Ok(None);
+    }
+    if exec_cgs.get_capability("document_share_bind").is_none() {
+        return Ok(None);
+    }
+    if invoke.target.entity_type.as_str() != "Document" {
+        return Err(RunLineError::Parse(
+            "document_share_bind applies only to Document".into(),
+        ));
+    }
+    let slug = invoke.target.primary_slot_str();
+    let Some(inp) = invoke.input.as_ref() else {
+        return Err(RunLineError::Parse(
+            "document_share_bind: pass share_url and/or share_token".into(),
+        ));
+    };
+    let map = match inp.to_value() {
+        plasm_core::Value::Object(m) => m,
+        _ => {
+            return Err(RunLineError::Parse(
+                "document_share_bind: arguments must be an object".into(),
+            ));
+        }
+    };
+    let share_url = trim_json_string_field(&map, "share_url");
+    let share_token_arg = trim_json_string_field(&map, "share_token");
+
+    let token = match (share_url, share_token_arg) {
+        (Some(url), explicit_tok) => {
+            let (url_slug, url_tok) = parse_proof_share_link_url(&url)?;
+            if url_slug != slug {
+                return Err(RunLineError::Parse(format!(
+                    "document_share_bind: share_url slug `{url_slug}` does not match Document `{slug}`"
+                )));
+            }
+            explicit_tok.or(url_tok).ok_or_else(|| {
+                RunLineError::Parse(
+                    "document_share_bind: missing token — add `?token=` to share_url or pass share_token="
+                        .into(),
+                )
+            })?
+        }
+        (None, Some(tok)) => tok,
+        (None, None) => {
+            return Err(RunLineError::Parse(
+                "document_share_bind: provide share_url or share_token".into(),
+            ));
+        }
+    };
+
+    {
+        let mut slot = sess.session_share_token.write().await;
+        *slot = Some(token);
+    }
+
+    Ok(Some(ExecutionResult {
+        entities: vec![],
+        count: 0,
+        has_more: false,
+        pagination_resume: None,
+        paging_handle: None,
+        source: ExecutionSource::Live,
+        stats: ExecutionStats {
+            duration_ms: 0,
+            network_requests: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+        },
+        request_fingerprints: Vec::new(),
+    }))
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_parsed_plasm_line(
     line: &str,
@@ -2759,11 +2894,19 @@ async fn run_parsed_plasm_line(
         plugin_execute_options_from_session(sess);
     let fp_sink = Arc::new(Mutex::new(Vec::<String>::new()));
     let secret_provider = st.effective_outbound_secret_provider();
+    let (_, operation) = trace_expr_api_meta(&parsed.expr);
+
+    let bound_share = sess.session_share_token.read().await.clone();
+
     let exec_opts = ExecuteOptions {
         request_fingerprint_sink: Some(fp_sink.clone()),
-        http_base_url_override: http_backend_for_root,
-        auth_resolver_override: auth_for_exec
-            .map(|scheme| Arc::new(AuthResolver::new(scheme, secret_provider.clone()))),
+        http_base_url_override: http_backend_for_root.clone(),
+        auth_resolver_override: auth_for_exec.clone().map(|scheme| {
+            Arc::new(
+                AuthResolver::new(scheme, secret_provider.clone())
+                    .with_session_bearer_override(bound_share.clone()),
+            )
+        }),
         compile_operation_fn,
         compile_query_fn,
         plugin_generation_id,
@@ -2771,72 +2914,76 @@ async fn run_parsed_plasm_line(
         execute_session: Some(Arc::new(ExecuteSessionMaterial {
             prompt_hash: sess.prompt_hash.clone(),
             session_id: session_id.to_string(),
+            share_token: bound_share.clone(),
         })),
     };
-    let (_, operation) = trace_expr_api_meta(&parsed.expr);
-    let mut result = match &parsed.expr {
-        plasm_core::Expr::Page(page) => {
-            let resume = page_resume_owned.take().ok_or_else(|| {
-                RunLineError::Parse(
-                    "internal: page expression without pagination snapshot".to_string(),
-                )
-            })?;
-            let consume = StreamConsumeOpts {
-                fetch_all: false,
-                max_items: page.limit,
-                one_page: true,
-            };
-            st.engine
-                .execute_pagination_resume(
-                    resume,
-                    exec_cgs,
-                    cache,
-                    Some(st.mode),
-                    consume,
-                    exec_opts.clone(),
-                )
-                .instrument(expr_span.clone())
-                .await
+
+    let mut result = match try_proof_document_share_bind(sess, exec_cgs, &parsed.expr).await? {
+        Some(r) => r,
+        None => match &parsed.expr {
+            plasm_core::Expr::Page(page) => {
+                let resume = page_resume_owned.take().ok_or_else(|| {
+                    RunLineError::Parse(
+                        "internal: page expression without pagination snapshot".to_string(),
+                    )
+                })?;
+                let consume = StreamConsumeOpts {
+                    fetch_all: false,
+                    max_items: page.limit,
+                    one_page: true,
+                };
+                st.engine
+                    .execute_pagination_resume(
+                        resume,
+                        exec_cgs,
+                        cache,
+                        Some(st.mode),
+                        consume,
+                        exec_opts.clone(),
+                    )
+                    .instrument(expr_span.clone())
+                    .await
+            }
+            _ => {
+                st.engine
+                    .execute(
+                        &parsed.expr,
+                        exec_cgs,
+                        cache,
+                        Some(st.mode),
+                        StreamConsumeOpts::default(),
+                        exec_opts.clone(),
+                    )
+                    .instrument(expr_span.clone())
+                    .await
+            }
         }
-        _ => {
-            st.engine
-                .execute(
-                    &parsed.expr,
-                    exec_cgs,
-                    cache,
-                    Some(st.mode),
-                    StreamConsumeOpts::default(),
-                    exec_opts.clone(),
-                )
-                .instrument(expr_span.clone())
-                .await
-        }
-    }
-    .map_err(|e| {
-        let ms = wall.elapsed().as_secs_f64() * 1000.0;
-        crate::metrics::record_execute_expression_line(
-            sess.entry_id.as_str(),
-            operation.as_str(),
-            "error",
-            "runtime",
-            ms,
-            0,
-            0,
-        );
-        tracing::error!(
-            target: "plasm_agent::http_execute",
-            entry_id = %sess.entry_id,
-            error = %e,
-            "execute failed"
-        );
-        tracing::trace!(
-            target: "plasm_agent::http_execute",
-            source_expression = %line,
-            parsed_expression = %log_expr,
-            "execute failed (expression detail)"
-        );
-        RunLineError::Runtime(e, line.to_string())
-    })?;
+        .map_err(|e| {
+            let ms = wall.elapsed().as_secs_f64() * 1000.0;
+            crate::metrics::record_execute_expression_line(
+                sess.entry_id.as_str(),
+                operation.as_str(),
+                "error",
+                "runtime",
+                ms,
+                0,
+                0,
+            );
+            tracing::error!(
+                target: "plasm_agent::http_execute",
+                entry_id = %sess.entry_id,
+                error = %e,
+                "execute failed"
+            );
+            tracing::trace!(
+                target: "plasm_agent::http_execute",
+                source_expression = %line,
+                parsed_expression = %log_expr,
+                "execute failed (expression detail)"
+            );
+            RunLineError::Runtime(e, line.to_string())
+        })?,
+    };
 
     if let Some(ref storage_key) = page_storage_key {
         if result.has_more {
