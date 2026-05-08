@@ -4288,6 +4288,7 @@ fn narrow_http_graphql_response_for_entity_decode(
 }
 
 /// For mappings that declare `response.single` + `items_path` (e.g. GraphQL `{ data: { issue: { ... } } }`),
+/// or `response.single` + top-level `items` (e.g. Cloudflare v4 `{ result: { ... } }` via `items: result`),
 /// take the entity object at that path. Used for GET/detail, create, and update **invoke** decoding—
 /// not specific to GET semantics.
 fn extract_single_entity_payload_from_response(
@@ -4318,6 +4319,18 @@ fn extract_single_entity_payload_from_response(
                         };
                     }
                 }
+            } else if let Some(key) = r.items.as_deref().filter(|k| !k.is_empty()) {
+                cur = match single_response_path_step(cur, key) {
+                    Some(v) => v,
+                    None => {
+                        let mut msg = format!("single-entity response: missing `{key}`");
+                        if let Some(gs) = graphql_errors_summary(&response) {
+                            msg.push_str(" — GraphQL: ");
+                            msg.push_str(&gs);
+                        }
+                        return Err(RuntimeError::ConfigurationError { message: msg });
+                    }
+                };
             }
             let mut out = cur.clone();
             if let Some(ref inner) = r.item_inner_key {
@@ -5260,6 +5273,114 @@ mod tests {
         assert!(config.validate_responses);
         assert!(config.hydrate);
         assert_eq!(config.hydrate_concurrency, 5);
+    }
+
+    /// Regression: Cloudflare v4 list envelopes use `result: [...]`; paginated queries skip
+    /// `prepare_http_query_response` and must still decode rows with scalar `id`.
+    #[test]
+    fn cloudflare_ruleset_query_decodes_v4_envelope_list() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/cloudflare");
+        let cgs = plasm_core::load_schema(&dir).expect("load apis/cloudflare");
+        let cap = cgs
+            .get_capability("ruleset_query")
+            .expect("ruleset_query capability");
+        let capability_template = parse_capability_template(&cap.mapping.template).unwrap();
+        let cml = match &capability_template {
+            plasm_compile::CapabilityTemplate::Http(c) => c,
+            _ => panic!("expected HTTP template"),
+        };
+        assert!(
+            !cml.response_is_single_object(),
+            "ruleset_query must be a collection decode (`single: false`)",
+        );
+        let body = serde_json::json!({
+            "errors": [],
+            "messages": [],
+            "result": [{
+                "id": "2f2feab2026849078ba485f918791bdc",
+                "kind": "root",
+                "last_updated": "2000-01-01T00:00:00.000000Z",
+                "name": "My ruleset",
+                "phase": "http_request_firewall_custom",
+                "version": "1",
+                "description": "A description for my ruleset."
+            }],
+            "success": true,
+            "result_info": { "cursors": { "after": "dGhpc2lzYW5leGFtcGxlCg" } }
+        });
+        let normalized =
+            normalize_collection_response(body, response_bare_array_wrap_key(cml).as_str());
+        let mut ambient = indexmap::IndexMap::new();
+        ambient.insert(
+            "zone_id".into(),
+            "00d2860b1edaed6074fd0f45a66e1a87".into(),
+        );
+        let decoder = create_entity_decoder(
+            "Ruleset",
+            &cgs,
+            Some(http_collection_source(cml)),
+            None,
+            Some(&ambient),
+        );
+        let entities = decode_entities(&decoder, &normalized).expect("decode rulesets");
+        assert_eq!(entities.len(), 1);
+        let parts = entities[0]
+            .reference
+            .compound_parts()
+            .expect("compound Ruleset ref");
+        assert_eq!(
+            parts.get("ruleset_id").map(String::as_str),
+            Some("2f2feab2026849078ba485f918791bdc")
+        );
+        assert_eq!(
+            parts.get("zone_id").map(String::as_str),
+            Some("00d2860b1edaed6074fd0f45a66e1a87")
+        );
+    }
+
+    #[test]
+    fn cloudflare_ruleset_get_narrowing_decodes_inner_result_object() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/cloudflare");
+        let cgs = plasm_core::load_schema(&dir).expect("load apis/cloudflare");
+        let cap = cgs
+            .get_capability("ruleset_get")
+            .expect("ruleset_get capability");
+        let capability_template = parse_capability_template(&cap.mapping.template).unwrap();
+        let cml = match &capability_template {
+            plasm_compile::CapabilityTemplate::Http(c) => c,
+            _ => panic!("expected HTTP template"),
+        };
+        assert!(cml.response_is_single_object());
+        let body = serde_json::json!({
+            "result": {
+                "id": "2f2feab2026849078ba485f918791bdc",
+                "name": "Zone-level phase entry point",
+                "description": "",
+                "kind": "zone",
+                "version": "5",
+                "last_updated": "2025-03-18T18:30:08.122758Z",
+                "phase": "http_request_firewall_managed"
+            },
+            "success": true,
+            "errors": [],
+            "messages": []
+        });
+        let narrowed =
+            narrow_http_graphql_response_for_entity_decode(&capability_template, body).unwrap();
+        let mut ambient = indexmap::IndexMap::new();
+        ambient.insert(
+            "zone_id".into(),
+            "00d2860b1edaed6074fd0f45a66e1a87".into(),
+        );
+        let decoder = create_entity_decoder("Ruleset", &cgs, None, None, Some(&ambient));
+        let entities = decode_entities(&decoder, &narrowed).expect("decode ruleset get");
+        assert_eq!(entities.len(), 1);
+        assert_eq!(
+            entities[0].fields.get("id"),
+            Some(&plasm_core::Value::String(
+                "2f2feab2026849078ba485f918791bdc".into()
+            ))
+        );
     }
 
     #[test]
