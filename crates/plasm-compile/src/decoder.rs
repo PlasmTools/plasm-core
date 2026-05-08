@@ -322,6 +322,23 @@ pub fn extract_path(
     Ok(current)
 }
 
+/// Split `s` on `:` and return `"<segment>:<next>"` when `segment` appears as a whole segment with a
+/// non-empty following segment (used for snapshot block refs such as `snapshot:id:mt1:hash:b0`).
+fn colon_segment_pair_extract(s: &str, segment: &str) -> Option<String> {
+    let parts: Vec<&str> = s.split(':').collect();
+    for i in 0..parts.len() {
+        if parts[i] == segment {
+            return parts
+                .get(i + 1)
+                .copied()
+                .map(str::trim)
+                .filter(|h| !h.is_empty())
+                .map(|h| format!("{segment}:{h}"));
+        }
+    }
+    None
+}
+
 fn apply_field_derive_rule(
     rule: &FieldDeriveRule,
     v: &serde_json::Value,
@@ -415,6 +432,47 @@ fn apply_field_derive_rule(
                     .cloned()
                     .unwrap_or(serde_json::Value::Null))
             }
+        }
+        FieldDeriveRule::ColonPairPreferKeysElseBlockRefs {
+            prefer_keys,
+            blocks_key,
+            ref_field,
+            segment,
+        } => {
+            let Some(obj) = v.as_object() else {
+                return Ok(serde_json::Value::Null);
+            };
+            for pk in prefer_keys {
+                let Some(serde_json::Value::String(s)) = obj.get(pk.as_str()) else {
+                    continue;
+                };
+                let t = s.trim();
+                if t.is_empty() {
+                    continue;
+                }
+                if let Some(out) = colon_segment_pair_extract(t, segment.as_str()) {
+                    return Ok(serde_json::Value::String(out));
+                }
+            }
+            let Some(serde_json::Value::Array(blocks)) = obj.get(blocks_key.as_str()) else {
+                return Ok(serde_json::Value::Null);
+            };
+            for item in blocks {
+                let Some(bobj) = item.as_object() else {
+                    continue;
+                };
+                let Some(serde_json::Value::String(rs)) = bobj.get(ref_field.as_str()) else {
+                    continue;
+                };
+                let rt = rs.trim();
+                if rt.is_empty() {
+                    continue;
+                }
+                if let Some(out) = colon_segment_pair_extract(rt, segment.as_str()) {
+                    return Ok(serde_json::Value::String(out));
+                }
+            }
+            Ok(serde_json::Value::Null)
         }
     }
 }
@@ -1374,6 +1432,50 @@ mod tests {
         };
         let out = apply_field_derive_rule(&rule, &obj).unwrap();
         assert_eq!(out, json!("lowercase key"));
+    }
+
+    #[test]
+    fn colon_pair_prefer_keys_else_block_refs_from_blocks() {
+        let state = json!({
+            "baseToken": null,
+            "blocks": [{"ref": "snapshot:snap1:mt1:abc123hash:b0"}]
+        });
+        let rule = FieldDeriveRule::ColonPairPreferKeysElseBlockRefs {
+            prefer_keys: vec!["baseToken".into()],
+            blocks_key: "blocks".into(),
+            ref_field: "ref".into(),
+            segment: "mt1".into(),
+        };
+        let out = apply_field_derive_rule(&rule, &state).unwrap();
+        assert_eq!(out, json!("mt1:abc123hash"));
+    }
+
+    #[test]
+    fn colon_pair_prefers_base_token_string_when_present() {
+        let state = json!({
+            "baseToken": "snapshot:x:mt1:direct:b1",
+            "blocks": []
+        });
+        let rule = FieldDeriveRule::ColonPairPreferKeysElseBlockRefs {
+            prefer_keys: vec!["baseToken".into()],
+            blocks_key: "blocks".into(),
+            ref_field: "ref".into(),
+            segment: "mt1".into(),
+        };
+        let out = apply_field_derive_rule(&rule, &state).unwrap();
+        assert_eq!(out, json!("mt1:direct"));
+    }
+
+    #[test]
+    fn colon_pair_non_object_returns_null() {
+        let rule = FieldDeriveRule::ColonPairPreferKeysElseBlockRefs {
+            prefer_keys: vec![],
+            blocks_key: "blocks".into(),
+            ref_field: "ref".into(),
+            segment: "mt1".into(),
+        };
+        let out = apply_field_derive_rule(&rule, &json!("nope")).unwrap();
+        assert_eq!(out, serde_json::Value::Null);
     }
 
     #[test]

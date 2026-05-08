@@ -411,6 +411,26 @@ pub enum FieldDeriveRule {
         #[serde(default)]
         case_insensitive: bool,
     },
+    /// Input must be a JSON **object** (typical wire path: `[]` on the decoded row).
+    ///
+    /// 1. For each key in `prefer_keys` (order preserved), if `obj[key]` is a non-empty string,
+    ///    split on `:` and find `segment` as a whole segment; if the next segment is non-empty,
+    ///    return `"<segment>:<next>"`. Otherwise try the next preferred key.
+    /// 2. Else if `obj[blocks_key]` is an array, scan elements in order; for each object, read
+    ///    string field `ref_field` and apply the same colon-segment pair rule; return the first match.
+    /// 3. Otherwise JSON null.
+    ColonPairPreferKeysElseBlockRefs {
+        #[serde(default)]
+        prefer_keys: Vec<String>,
+        blocks_key: String,
+        #[serde(default = "default_block_ref_field")]
+        ref_field: String,
+        segment: String,
+    },
+}
+
+fn default_block_ref_field() -> String {
+    "ref".to_string()
 }
 
 impl FieldSchema {

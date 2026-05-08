@@ -71,7 +71,7 @@ v12	str · Short text
 v9	json · JSON object
 v1	str · Stable name for this agent on edits (shows in attribution)
 v4	bool · true/false flag (for example resolve thread)
-v2	str · Precondition token from EditorState; host stores it in the execute session after editor_state_get…
+v2	str · mt1 precondition string exposed on EditorState (wire baseToken or derived from block refs); host …
 v13	uuid · Optional idempotency key so you can retry the same edit batch safely
 v6	str · Event id from the pending collaboration stream—use for after= and ack up_to_id only
 v3	str · Block id from your current snapshot. Refresh the snapshot after others edit before you reuse ids

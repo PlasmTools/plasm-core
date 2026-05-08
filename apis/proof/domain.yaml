@@ -1,4 +1,4 @@
-version: 20
+version: 21
 http_backend: https://www.proofeditor.ai
 auth:
   scheme: bearer_token
@@ -75,8 +75,14 @@ entities:
       base_token:
         value_ref: nv_proof_base_token
         required: false
-        path: baseToken
-        description: Precondition token from state—the execute host stores it for /ops after each editor_state_get.
+        path: []
+        derive:
+          type: colon_pair_prefer_keys_else_block_refs
+          prefer_keys: [baseToken]
+          blocks_key: blocks
+          ref_field: ref
+          segment: mt1
+        description: Mutation precondition token (mt1 snapshot-hash segment)—from wire baseToken when set; otherwise parsed from the first block ref (colon-separated snapshot ref). The host caches it for /ops after editor_state_get.
       collab:
         value_ref: nv_proof_json
         required: false
@@ -824,7 +830,7 @@ values:
   nv_proof_base_token:
     type: string
     string_semantics: short
-    description: Precondition token from EditorState; host stores it in the execute session after editor_state_get—pass only to override.
+    description: mt1 precondition string exposed on EditorState (wire baseToken or derived from block refs); host stores it after editor_state_get—pass only to override.
 
   nv_proof_block_ref:
     type: string
