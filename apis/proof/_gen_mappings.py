@@ -274,13 +274,21 @@ m["annotation_comment_unresolve"] = {
 }
 
 m["annotation_suggestion_add"] = {
+    # Hosted `www.proofeditor.ai` returns 404 on `…/bridge/suggestions`; canonical agent flow is
+    # `POST /documents/:slug/ops` with `type: suggestion.add` (Proof SDK agent-docs).
     "method": "POST",
-    "path": path_documents_slug() + [LIT("bridge"), LIT("suggestions")],
+    "path": path_documents_slug() + [LIT("ops")],
     "query": query_token_optional(),
-    "headers": headers_proof_sdk_bridge(headers_agent()),
+    "headers": headers_agent_mutations(
+        _host_idempotency_else(
+            "plasm:{ph}:{sid}:{slug}:suggestion_add:{sk}",
+            {"sk": VAR("suggestion_kind")},
+        ),
+    ),
     "body": {
         "type": "object",
         "fields": [
+            ["type", {"type": "const", "value": "suggestion.add"}],
             ["by", VAR("by")],
             ["kind", VAR("suggestion_kind")],
             ["quote", VAR("quote")],
@@ -293,19 +301,43 @@ m["annotation_suggestion_add"] = {
 
 m["annotation_suggestion_accept"] = {
     "method": "POST",
-    "path": path_documents_slug() + [LIT("bridge"), LIT("marks"), LIT("accept")],
+    "path": path_documents_slug() + [LIT("ops")],
     "query": query_token_optional(),
-    "headers": headers_proof_sdk_bridge(headers_agent()),
-    "body": {"type": "object", "fields": [["markId", VAR("mark_id")]]},
+    "headers": headers_agent_mutations(
+        _host_idempotency_else(
+            "plasm:{ph}:{sid}:{slug}:suggestion_accept:{mid}",
+            {"mid": VAR("mark_id")},
+        ),
+    ),
+    "body": {
+        "type": "object",
+        "fields": [
+            ["type", {"type": "const", "value": "suggestion.accept"}],
+            ["by", VAR("by")],
+            ["markId", VAR("mark_id")],
+        ],
+    },
     "response": response_single(),
 }
 
 m["annotation_suggestion_reject"] = {
     "method": "POST",
-    "path": path_documents_slug() + [LIT("bridge"), LIT("marks"), LIT("reject")],
+    "path": path_documents_slug() + [LIT("ops")],
     "query": query_token_optional(),
-    "headers": headers_proof_sdk_bridge(headers_agent()),
-    "body": {"type": "object", "fields": [["markId", VAR("mark_id")]]},
+    "headers": headers_agent_mutations(
+        _host_idempotency_else(
+            "plasm:{ph}:{sid}:{slug}:suggestion_reject:{mid}",
+            {"mid": VAR("mark_id")},
+        ),
+    ),
+    "body": {
+        "type": "object",
+        "fields": [
+            ["type", {"type": "const", "value": "suggestion.reject"}],
+            ["by", VAR("by")],
+            ["markId", VAR("mark_id")],
+        ],
+    },
     "response": response_single(),
 }
 

@@ -267,11 +267,7 @@ annotation_suggestion_accept:
   - type: var
     name: slug
   - type: literal
-    value: bridge
-  - type: literal
-    value: marks
-  - type: literal
-    value: accept
+    value: ops
   query:
     type: object
     fields:
@@ -292,18 +288,47 @@ annotation_suggestion_accept:
     - - X-Agent-Id
       - type: var
         name: agent_id
-    - - X-Proof-Client-Version
-      - type: const
-        value: 0.30.0
-    - - X-Proof-Client-Protocol
-      - type: const
-        value: '3'
-    - - X-Proof-Client-Build
-      - type: const
-        value: plasm-agent
+    - - Idempotency-Key
+      - type: if
+        condition:
+          type: exists
+          var: idempotency_key
+        then_expr:
+          type: var
+          name: idempotency_key
+        else_expr:
+          type: if
+          condition:
+            type: exists
+            var: plasm_execute_prompt_hash
+          then_expr:
+            type: format
+            template: plasm:{ph}:{sid}:{slug}:suggestion_accept:{mid}
+            vars:
+              ph:
+                type: var
+                name: plasm_execute_prompt_hash
+              sid:
+                type: var
+                name: plasm_execute_session_id
+              slug:
+                type: var
+                name: slug
+              mid:
+                type: var
+                name: mark_id
+          else_expr:
+            type: const
+            value: null
   body:
     type: object
     fields:
+    - - type
+      - type: const
+        value: suggestion.accept
+    - - by
+      - type: var
+        name: by
     - - markId
       - type: var
         name: mark_id
@@ -317,9 +342,7 @@ annotation_suggestion_add:
   - type: var
     name: slug
   - type: literal
-    value: bridge
-  - type: literal
-    value: suggestions
+    value: ops
   query:
     type: object
     fields:
@@ -340,18 +363,44 @@ annotation_suggestion_add:
     - - X-Agent-Id
       - type: var
         name: agent_id
-    - - X-Proof-Client-Version
-      - type: const
-        value: 0.30.0
-    - - X-Proof-Client-Protocol
-      - type: const
-        value: '3'
-    - - X-Proof-Client-Build
-      - type: const
-        value: plasm-agent
+    - - Idempotency-Key
+      - type: if
+        condition:
+          type: exists
+          var: idempotency_key
+        then_expr:
+          type: var
+          name: idempotency_key
+        else_expr:
+          type: if
+          condition:
+            type: exists
+            var: plasm_execute_prompt_hash
+          then_expr:
+            type: format
+            template: plasm:{ph}:{sid}:{slug}:suggestion_add:{sk}
+            vars:
+              ph:
+                type: var
+                name: plasm_execute_prompt_hash
+              sid:
+                type: var
+                name: plasm_execute_session_id
+              slug:
+                type: var
+                name: slug
+              sk:
+                type: var
+                name: suggestion_kind
+          else_expr:
+            type: const
+            value: null
   body:
     type: object
     fields:
+    - - type
+      - type: const
+        value: suggestion.add
     - - by
       - type: var
         name: by
@@ -393,11 +442,7 @@ annotation_suggestion_reject:
   - type: var
     name: slug
   - type: literal
-    value: bridge
-  - type: literal
-    value: marks
-  - type: literal
-    value: reject
+    value: ops
   query:
     type: object
     fields:
@@ -418,18 +463,47 @@ annotation_suggestion_reject:
     - - X-Agent-Id
       - type: var
         name: agent_id
-    - - X-Proof-Client-Version
-      - type: const
-        value: 0.30.0
-    - - X-Proof-Client-Protocol
-      - type: const
-        value: '3'
-    - - X-Proof-Client-Build
-      - type: const
-        value: plasm-agent
+    - - Idempotency-Key
+      - type: if
+        condition:
+          type: exists
+          var: idempotency_key
+        then_expr:
+          type: var
+          name: idempotency_key
+        else_expr:
+          type: if
+          condition:
+            type: exists
+            var: plasm_execute_prompt_hash
+          then_expr:
+            type: format
+            template: plasm:{ph}:{sid}:{slug}:suggestion_reject:{mid}
+            vars:
+              ph:
+                type: var
+                name: plasm_execute_prompt_hash
+              sid:
+                type: var
+                name: plasm_execute_session_id
+              slug:
+                type: var
+                name: slug
+              mid:
+                type: var
+                name: mark_id
+          else_expr:
+            type: const
+            value: null
   body:
     type: object
     fields:
+    - - type
+      - type: const
+        value: suggestion.reject
+    - - by
+      - type: var
+        name: by
     - - markId
       - type: var
         name: mark_id

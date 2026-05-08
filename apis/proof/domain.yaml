@@ -1,4 +1,4 @@
-version: 14
+version: 15
 http_backend: https://www.proofeditor.ai
 auth:
   scheme: bearer_token
