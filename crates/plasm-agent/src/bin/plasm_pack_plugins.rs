@@ -3,6 +3,9 @@
 //! Usage (from repo root):
 //!   cargo run -p plasm-agent --bin plasm-pack-plugins -- --apis-root apis --output-dir target/plasm-plugins
 //! Docker release builds add `--package-list deploy/packaged-apis.txt` to pack only whitelisted APIs.
+//!
+//! After pinning `CGS::entry_id` to the directory name, each graph is run through full `CGS::validate`
+//! (expression-teaching surface, auth, …) so regressions fail at pack time in CI, not only at runtime load.
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
@@ -171,6 +174,12 @@ fn prepare_cgs_for_plugin(api_dir: &Path, entry_id: &str) -> Result<CGS> {
             entry_id
         );
     }
+
+    // `load_schema` validated before `entry_id` was pinned (YAML often omits it). Runtime plugins and
+    // teaching-bundle checks use the packed registry id — re-validate so CI `plasm-pack-plugins` fails
+    // on expression-surface / coverage regressions instead of at deploy.
+    cgs.validate()
+        .map_err(|e| anyhow::anyhow!("CGS validate {entry_id} (after entry_id pin): {e}"))?;
 
     Ok(cgs)
 }
