@@ -65,15 +65,15 @@ expression: tsv
 #
 
 plasm_expr	Meaning
-v4	ref:Document · Stable document key shared across reads, edits, collaboration, and sharing flows
+v4	ref:Document · Document slug or id this API uses
 v7	markdown
-v9	str · Short free-text bucket for opaque ids, titles, tokens, filters, and similar scalars
-v6	json · Structured bundles such as navigation hints, auth guidance, collaboration payloads, or raw slices
-v1	str · Stable label for this automation actor on mutating flows so attribution and locks stay consistent
-v3	bool · Simple toggles carried on mutations such as resolving discussion threads
-v10	uuid · Optional uniqueness token so identical edit batches can be retried safely
-v2	str · Identifier for one block in a specific snapshot; reuse only with the snapshot it came from, then …
-v5	array[str] · New blocks to splice next to an anchor, in top-to-bottom order
+v9	str · Short text
+v6	json · JSON object
+v1	str · Stable name for this agent on edits (shows in attribution)
+v3	bool · true/false flag (for example resolve thread)
+v10	uuid · Optional idempotency key so you can retry the same edit batch safely
+v2	str · Block id from your current snapshot. Refresh the snapshot after others edit before you reuse ids
+v5	array[str] · New blocks in order from top to bottom
 v8	select · first, all
 p1	union · v210 | v211 | v212 · operations
 p2	union · v101 | v102 | v103 | v104 | v105 | v106 | v107 · operations
@@ -103,38 +103,38 @@ p35	v10 · idempotency_key
 p11	v4 · slug
 p20	v7 · markdown
 p33	v9 · title
-p14	v6 · links · Related URLs or endpoints surfaced with this read (navigation, not document body)
-p13	v6 · agent_auth · When present, how authenticated automation should call mutating flows for this document
-v211{p24=$}	returns comment_resolve — Close a thread as addressed while keeping history
-v212{p24=$}	returns comment_unresolve — Re-open a resolved thread for further discussion
-v111{p5=$,p27=$,p21=$,p19=$}	returns suggestion_insert — Suggest inserting new text anchored on an exact quoted passage
-v112{p5=$,p27=$,p21=$}	returns suggestion_delete — Suggest removing the quoted passage
-v113{p5=$,p27=$,p21=$,p19=$}	returns suggestion_replace — Suggest replacing the quoted passage with new content
-v101{p7=$,p17=$}	returns replace_block — Replace the markdown body of one existing block
-v102{p7=$,p12=$}	returns insert_before — Insert new blocks immediately before a chosen anchor block
-v103{p7=$,p12=$}	returns insert_after — Insert new blocks immediately after a chosen anchor block
-v104{p7=$}	returns delete_block — Remove one block from the structure
-v105{p6=$,p8=$,p12=$}	returns replace_range — Replace every block from one anchor through another with new blocks
+p14	v6 · links · Extra links from this read; not the document body
+p13	v6 · agent_auth · How to authenticate edits for this document, when included
+v211{p24=$}	returns comment_resolve — Resolve a thread; keep history
+v212{p24=$}	returns comment_unresolve — Unresolve a thread for more replies
+v111{p5=$,p27=$,p21=$,p19=$}	returns suggestion_insert — Suggest inserting text after the quote
+v112{p5=$,p27=$,p21=$}	returns suggestion_delete — Suggest deleting the quoted text
+v113{p5=$,p27=$,p21=$,p19=$}	returns suggestion_replace — Suggest replacing the quoted text with new content
+v101{p7=$,p17=$}	returns replace_block — Replace one block’s markdown
+v102{p7=$,p12=$}	returns insert_before — Insert blocks before the anchor block
+v103{p7=$,p12=$}	returns insert_after — Insert blocks after the anchor block
+v104{p7=$}	returns delete_block — Delete one block
+v105{p6=$,p8=$,p12=$}	returns replace_range — Replace a range of blocks with new blocks
 v11	union · v210 | v211 | v212
 v12	union · v111 | v112 | v113
 v13	union · v101 | v102 | v103 | v104 | v105 | v106 | v107
-e1(p11)[p11,p20,p33,p14,p13]	returns e1 · projection · Shared document the user sees in Proof: body, title, and hints for follow-up reads or edits
+e1(p11)[p11,p20,p33,p14,p13]	returns e1 · projection · Read or edit a shared Proof document
 e1(p11)	returns e1
-e1.m9()	returns e1 · Send diagnostics tied to this document’s context
-e1(p11).m13()	returns e1 · optional params: p30 · Load only the document body as markdown (fast path for content extraction)
-e1(p11).m15()	returns e1 · optional params: p31, p30 · One-time session bind for Proof share links: pass the share URL (with ?token=) or raw share_token…
-e1(p11).m1(p5=$, p27=$, p21=$, p22=$,..)	returns e1 · optional params: p30 · Start a review thread anchored on an exact quoted passage from the document
-e1(p11).m2(p5=$, p27=$, p1=[$],..)	returns e1 · optional params: p30 · Perform several comment-thread updates in one coordinated step
-e1(p11).m3(p5=$, p27=$, p28=$, p22=$,..)	returns e1 · optional params: p10, p30 · Continue an existing comment thread; may close it as resolved in the same step
-e1(p11).m4(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Close a comment thread as addressed while keeping history visible
-e1(p11).m5(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Bring a resolved thread back to active discussion
-e1(p11).m6(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Apply a pending suggestion so its proposed change becomes real content
-e1(p11).m7(v111{p5=$,p27=$,p21=$,p19=$})	returns e1 · optional params: p30, p32, p35 · Propose an insert, removal, or replacement anchored on quoted text for human acceptance
-e1(p11).m8(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Discard a pending suggestion without changing the document body
-e1(p11).m10(p5=$, p34=$, p27=$)	returns e1 · Confirm how far this client has consumed collaboration events so the host can trim history
-e1(p11).m11(p5=$, p27=$, p26=$, p2=[v101{p7=$,p17=$},v103{p7=$,p12=$}],..)	returns e1 · optional params: p35, p30 · Apply one batch of structural edits against the revision token from the latest snapshot. Combine …
-e1(p11).m16(p33=$)	returns e1 · Change the document title shown to readers and collaborators
-e1(p11).m14(p5=$,..)	returns e1 · optional params: p29 · Signal whether this automation session is actively viewing or editing the document
-e1(p11).p3	relation e1 => [Block] · Structural slices of the snapshot used for precise insert, replace, or delete edits
-e1(p11).p4	relation e1 => [CollaborationEvent] · Recent collaboration activity (edits, marks, presence) not yet acknowledged by this client
-e1(p11).p11	relation e1 => e1 · Stable document key shared across reads, edits, collaboration, and sharing flows
+e1.m9()	returns e1 · Report a bug and include this document as context
+e1(p11).m13()	returns e1 · optional params: p30 · Get the document body as markdown only
+e1(p11).m15()	returns e1 · optional params: p31, p30 · Bind this session to a share URL or token for this slug. Later calls reuse stored credentials. Pa…
+e1(p11).m1(p5=$, p27=$, p21=$, p22=$,..)	returns e1 · optional params: p30 · Start a comment thread on quoted text from the document
+e1(p11).m2(p5=$, p27=$, p1=[$],..)	returns e1 · optional params: p30 · Apply several comment updates in one request
+e1(p11).m3(p5=$, p27=$, p28=$, p22=$,..)	returns e1 · optional params: p10, p30 · Reply in a thread; optionally mark it resolved in the same step
+e1(p11).m4(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Mark a thread resolved; history stays visible
+e1(p11).m5(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Open a resolved thread for more discussion
+e1(p11).m6(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Accept a pending suggestion and apply it to the document
+e1(p11).m7(v111{p5=$,p27=$,p21=$,p19=$})	returns e1 · optional params: p30, p32, p35 · Propose an insert, delete, or replace on quoted text for a human to accept or reject
+e1(p11).m8(p5=$, p27=$, p28=$,..)	returns e1 · optional params: p30 · Reject a pending suggestion without changing the document body
+e1(p11).m10(p5=$, p34=$, p27=$)	returns e1 · Tell the server how far you read the collaboration event stream
+e1(p11).m11(p5=$, p27=$, p26=$, p2=[v101{p7=$,p17=$},v103{p7=$,p12=$}],..)	returns e1 · optional params: p35, p30 · Apply one batch of block edits. Use the revision from your latest snapshot. Combine replace, inse…
+e1(p11).m16(p33=$)	returns e1 · Set the document title
+e1(p11).m14(p5=$,..)	returns e1 · optional params: p29 · Update your presence so collaborators see what you are doing
+e1(p11).p3	relation e1 => [Block] · Blocks from the latest snapshot—use for edits that need stable block ids
+e1(p11).p4	relation e1 => [CollaborationEvent] · Recent collaboration updates you have not acknowledged yet
+e1(p11).p11	relation e1 => e1 · Document slug or id this API uses

@@ -1,16 +1,15 @@
-version: 16
+version: 18
 http_backend: https://www.proofeditor.ai
 auth:
   scheme: bearer_token
   env: PROOF_API_TOKEN
-  # Share-only laptops may omit PROOF_API_TOKEN when HTTP/MCP execute binds `document_share_bind` first.
+  # Omit PROOF_API_TOKEN when the session already bound the doc via document_share_bind (share flows).
   optional_env: true
 
 entities:
   Document:
     id_field: slug
-    description: >
-      Shared document the user sees in Proof: body, title, and hints for follow-up reads or edits.
+    description: Read or edit a shared Proof document (title, body, auth hints).
     primary_read: document_get
     fields:
       slug:
@@ -25,16 +24,16 @@ entities:
       links:
         value_ref: nv_proof_json
         required: false
-        description: Related URLs or endpoints surfaced with this read (navigation, not document body).
+        description: Extra links from this read; not the document body.
       agent_auth:
         value_ref: nv_proof_json
         required: false
-        description: When present, how authenticated automation should call mutating flows for this document.
+        description: How to authenticate edits for this document, when included.
     relations:
       blocks:
         target: Block
         cardinality: many
-        description: Structural slices of the snapshot used for precise insert, replace, or delete edits.
+        description: Blocks from the latest snapshot—use for edits that need stable block ids.
         materialize:
           kind: query_scoped
           capability: block_query
@@ -42,7 +41,7 @@ entities:
       collaboration_events:
         target: CollaborationEvent
         cardinality: many
-        description: Recent collaboration activity (edits, marks, presence) not yet acknowledged by this client.
+        description: Recent collaboration updates you have not acknowledged yet.
         materialize:
           kind: query_scoped
           capability: collaboration_event_query
@@ -50,9 +49,7 @@ entities:
 
   EditorState:
     id_field: slug
-    description: >
-      Authoritative editing picture: comments and suggestions as marks, revision for safe concurrent edits,
-      and collaboration rules (who may mutate, idempotency expectations).
+    description: Fetch before editing with others—revision, comments, suggestions, collaboration rules.
     domain_projection_examples: false
     fields:
       slug:
@@ -66,7 +63,7 @@ entities:
         value_ref: nv_proof_json
         required: false
         path: contract
-        description: Host-defined constraints on how this session may mutate the document.
+        description: Rules for how this session may edit the document.
       connected_clients:
         value_ref: nv_proof_int
         required: false
@@ -81,13 +78,11 @@ entities:
       raw:
         value_ref: nv_proof_json
         required: false
-        description: Complete state payload when the typed slices above do not carry enough detail.
+        description: Full server state when you need fields not listed above.
 
   Block:
     id_field: ref
-    description: >
-      One structural chunk of the document at a point in time. Treat refs as tied to that snapshot;
-      after others edit, refresh snapshot before applying further structural changes.
+    description: One chunk of the document in the current snapshot. Refresh the snapshot after others edit before you change structure again.
     domain_projection_examples: false
     fields:
       ref:
@@ -107,9 +102,7 @@ entities:
 
   CollaborationEvent:
     id_field: id
-    description: >
-      Incremental collaboration signal (what changed and when). Poll to stay current; acknowledge so the
-      server can advance your cursor.
+    description: One collaboration update. Poll for new rows; acknowledge what you processed.
     domain_projection_examples: false
     fields:
       id:
@@ -127,8 +120,7 @@ entities:
 
   ShareLink:
     id_field: slug
-    description: >
-      Outcome of seeding a new shared document: identifiers and share URL when the host returns them.
+    description: Result of creating a new shared document (ids, link, token).
     fields:
       slug:
         value_ref: nv_proof_document_ref
@@ -145,8 +137,7 @@ entities:
 
   BugReport:
     id_field: id
-    description: >
-      Acknowledgement from sending diagnostics to Proof support; may include a short triage or fixer-facing note.
+    description: Response after you report a bug to Proof support.
     domain_projection_examples: false
     fields:
       id:
@@ -164,7 +155,7 @@ entities:
 
 capabilities:
   document_get:
-    description: Load structured document fields for reading or as context before edits.
+    description: Get title, body, links, and auth hints for this document.
     kind: get
     entity: Document
     parameters:
@@ -179,7 +170,7 @@ capabilities:
       - agent_auth
 
   document_get_markdown:
-    description: Load only the document body as markdown (fast path for content extraction).
+    description: Get the document body as markdown only.
     kind: action
     entity: Document
     parameters:
@@ -192,9 +183,8 @@ capabilities:
 
   document_share_bind:
     description: >
-      One-time session bind for Proof share links: pass the share URL (with ?token=) or raw share_token
-      for this Document slug. Subsequent Document capabilities omit share_token; the host supplies Bearer
-      and mirrors ?token= via execute session material (escape hatch: explicit share_token on any capability still overrides).
+      Bind this session to a share URL or token for this slug. Later calls reuse stored credentials.
+      Pass share_token again only when you need to override the stored value.
     kind: action
     entity: Document
     parameters:
@@ -206,10 +196,10 @@ capabilities:
         required: false
     output:
       type: side_effect
-      description: Execute session now carries this document’s share credentials for outbound Proof HTTP.
+      description: Session stores share credentials for later Proof requests.
 
   editor_state_get:
-    description: Load marks, revision, and collaboration contract needed to edit safely with others.
+    description: Get revision, marks, and collaboration rules before you edit with others.
     kind: get
     entity: EditorState
     parameters:
@@ -226,7 +216,7 @@ capabilities:
       - collab
 
   block_query:
-    description: Enumerate blocks from the current snapshot so edits anchor on stable structural ids.
+    description: List blocks from the current snapshot so edits use stable block ids.
     kind: query
     entity: Block
     parameters:
@@ -241,7 +231,7 @@ capabilities:
       - block_kind
 
   collaboration_event_query:
-    description: Fetch collaboration updates newer than your last seen event id.
+    description: List collaboration updates after a given event id.
     kind: query
     entity: CollaborationEvent
     parameters:
@@ -259,8 +249,8 @@ capabilities:
 
   document_edit_v2:
     description: >
-      Apply one batch of structural edits against the revision token from the latest snapshot. Combine replace,
-      insert, delete, span replace, and scoped find/replace operations in a single atomic submission when supported.
+      Apply one batch of block edits. Use the revision from your latest snapshot. Combine replace, insert,
+      delete, range replace, and find/replace steps in a single request when you need to.
     kind: action
     entity: Document
     parameters:
@@ -275,8 +265,7 @@ capabilities:
         required: false
     input_schema:
       description: >
-        Batch payload: who is acting, the snapshot revision token those edits assume, and an ordered list of
-        operations (replace block text, insert adjacent blocks, delete, replace span, find/replace in block or doc).
+        Send author id, snapshot revision, and an ordered list of edit operations.
       input_type:
         type: object
         additional_fields: false
@@ -296,7 +285,7 @@ capabilities:
                 variants:
                   - name: replace_block
                     constructor_symbol: v101
-                    description: Replace the markdown body of one existing block.
+                    description: Replace one block’s markdown.
                     wire:
                       field: op
                       value: replace_block
@@ -312,7 +301,7 @@ capabilities:
                           - markdown
                   - name: insert_before
                     constructor_symbol: v102
-                    description: Insert new blocks immediately before a chosen anchor block.
+                    description: Insert blocks before the anchor block.
                     wire:
                       field: op
                       value: insert_before
@@ -326,7 +315,7 @@ capabilities:
                         wire_array_element_key: markdown
                   - name: insert_after
                     constructor_symbol: v103
-                    description: Insert new blocks immediately after a chosen anchor block.
+                    description: Insert blocks after the anchor block.
                     wire:
                       field: op
                       value: insert_after
@@ -340,7 +329,7 @@ capabilities:
                         wire_array_element_key: markdown
                   - name: delete_block
                     constructor_symbol: v104
-                    description: Remove one block from the structure.
+                    description: Delete one block.
                     wire:
                       field: op
                       value: delete_block
@@ -350,7 +339,7 @@ capabilities:
                         required: true
                   - name: replace_range
                     constructor_symbol: v105
-                    description: Replace every block from one anchor through another with new blocks.
+                    description: Replace a range of blocks with new blocks.
                     wire:
                       field: op
                       value: replace_range
@@ -367,7 +356,7 @@ capabilities:
                         wire_array_element_key: markdown
                   - name: find_replace_in_block
                     constructor_symbol: v106
-                    description: Search-and-replace literal text inside a single block.
+                    description: Find and replace text inside one block.
                     wire:
                       field: op
                       value: find_replace_in_block
@@ -386,7 +375,7 @@ capabilities:
                         required: false
                   - name: find_replace_in_doc
                     constructor_symbol: v107
-                    description: Search-and-replace across the document, optionally limited to a block range or kind filter.
+                    description: Find and replace text across the document (optional block range or kind filter).
                     wire:
                       field: op
                       value: find_replace_in_doc
@@ -413,10 +402,10 @@ capabilities:
         allow_null: false
     output:
       type: side_effect
-      description: Structural document content updates according to the batch and revision token.
+      description: Updates document content when the revision matches.
 
   annotation_comment_add:
-    description: Start a review thread anchored on an exact quoted passage from the document.
+    description: Start a comment thread on quoted text from the document.
     kind: action
     entity: Document
     parameters:
@@ -437,10 +426,10 @@ capabilities:
         required: false
     output:
       type: side_effect
-      description: Document gains a new comment mark tied to the quoted selection.
+      description: Adds a comment thread on that quote.
 
   annotation_comment_reply:
-    description: Continue an existing comment thread; may close it as resolved in the same step.
+    description: Reply in a thread; optionally mark it resolved in the same step.
     kind: action
     entity: Document
     parameters:
@@ -464,10 +453,10 @@ capabilities:
         required: false
     output:
       type: side_effect
-      description: Thread grows with the new reply and optional resolved state.
+      description: Adds the reply and updates resolved state if you set resolve.
 
   annotation_comment_resolve:
-    description: Close a comment thread as addressed while keeping history visible.
+    description: Mark a thread resolved; history stays visible.
     kind: action
     entity: Document
     parameters:
@@ -485,10 +474,10 @@ capabilities:
         required: false
     output:
       type: side_effect
-      description: Thread shows as resolved for collaborators.
+      description: Shows the thread as resolved for everyone.
 
   annotation_comment_unresolve:
-    description: Bring a resolved thread back to active discussion.
+    description: Open a resolved thread for more discussion.
     kind: action
     entity: Document
     parameters:
@@ -506,22 +495,21 @@ capabilities:
         required: false
     output:
       type: side_effect
-      description: Thread is open again for further replies.
+      description: Marks the thread open again.
 
   annotation_suggestion_add:
-    description: Propose an insert, removal, or replacement anchored on quoted text for human acceptance.
+    description: Propose an insert, delete, or replace on quoted text for a human to accept or reject.
     kind: action
     entity: Document
     input_schema:
       description: >
-        Who is acting, optional share/idempotency context, and exactly one suggestion shape (insert,
-        delete, or replace) so required fields match the Proof ops payload.
+        Pick one shape (insert, delete, or replace). Include author id, quote, and fields for that shape.
       input_type:
         type: union
         variants:
           - name: suggestion_insert
             constructor_symbol: v111
-            description: Suggest inserting new text anchored on an exact quoted passage.
+            description: Suggest inserting text after the quote.
             wire:
               field: kind
               value: insert
@@ -549,7 +537,7 @@ capabilities:
                 required: false
           - name: suggestion_delete
             constructor_symbol: v112
-            description: Suggest removing the quoted passage.
+            description: Suggest deleting the quoted text.
             wire:
               field: kind
               value: delete
@@ -574,7 +562,7 @@ capabilities:
                 required: false
           - name: suggestion_replace
             constructor_symbol: v113
-            description: Suggest replacing the quoted passage with new content.
+            description: Suggest replacing the quoted text with new content.
             wire:
               field: kind
               value: replace
@@ -604,10 +592,10 @@ capabilities:
         allow_null: false
     output:
       type: side_effect
-      description: Document shows a pending suggestion collaborators can accept or reject.
+      description: Creates a pending suggestion others can accept or reject.
 
   annotation_suggestion_accept:
-    description: Apply a pending suggestion so its proposed change becomes real content.
+    description: Accept a pending suggestion and apply it to the document.
     kind: action
     entity: Document
     parameters:
@@ -625,10 +613,10 @@ capabilities:
         required: false
     output:
       type: side_effect
-      description: Proposed edit lands in the document body; mark clears or updates per server rules.
+      description: Applies the change per server rules and updates the suggestion mark.
 
   annotation_suggestion_reject:
-    description: Discard a pending suggestion without changing the document body.
+    description: Reject a pending suggestion without changing the document body.
     kind: action
     entity: Document
     parameters:
@@ -646,10 +634,10 @@ capabilities:
         required: false
     output:
       type: side_effect
-      description: Suggestion is withdrawn from the active review set.
+      description: Removes the suggestion from the active list.
 
   annotation_comment_batch_apply:
-    description: Perform several comment-thread updates in one coordinated step.
+    description: Apply several comment updates in one request.
     kind: action
     entity: Document
     parameters:
@@ -676,7 +664,7 @@ capabilities:
                 variants:
                   - name: comment_reply
                     constructor_symbol: v210
-                    description: Append to an existing comment thread; may resolve in the same step.
+                    description: Reply in a thread; optionally resolve in the same step.
                     wire:
                       field: type
                       value: comment.reply
@@ -694,7 +682,7 @@ capabilities:
                         required: false
                   - name: comment_resolve
                     constructor_symbol: v211
-                    description: Close a thread as addressed while keeping history.
+                    description: Resolve a thread; keep history.
                     wire:
                       field: type
                       value: comment.resolve
@@ -706,7 +694,7 @@ capabilities:
                           - markId
                   - name: comment_unresolve
                     constructor_symbol: v212
-                    description: Re-open a resolved thread for further discussion.
+                    description: Unresolve a thread for more replies.
                     wire:
                       field: type
                       value: comment.unresolve
@@ -718,13 +706,13 @@ capabilities:
                           - markId
       validation:
         allow_null: false
-      description: Ordered comment-thread steps issued under one authorship context.
+      description: Ordered list of reply, resolve, or unresolve steps from one author.
     output:
       type: side_effect
-      description: All listed comment updates succeed or none apply, per server semantics.
+      description: Applies every step or applies none, per server rules.
 
   document_title_update:
-    description: Change the document title shown to readers and collaborators.
+    description: Set the document title.
     kind: update
     entity: Document
     parameters:
@@ -733,7 +721,7 @@ capabilities:
         required: true
 
   collaboration_event_ack:
-    description: Confirm how far this client has consumed collaboration events so the host can trim history.
+    description: Tell the server how far you read the collaboration event stream.
     kind: action
     entity: Document
     parameters:
@@ -748,10 +736,10 @@ capabilities:
         required: true
     output:
       type: side_effect
-      description: Server records your processed-through position for subsequent polls.
+      description: Records how far you processed events for later polls.
 
   presence_update:
-    description: Signal whether this automation session is actively viewing or editing the document.
+    description: Update your presence so collaborators see what you are doing.
     kind: action
     entity: Document
     parameters:
@@ -763,10 +751,10 @@ capabilities:
         required: false
     output:
       type: side_effect
-      description: Collaborators see updated presence for this automation actor on the document.
+      description: Updates what collaborators see for your agent.
 
   share_link_create:
-    description: Spin up a new shared document whose initial body is the supplied markdown.
+    description: Create a new shared document from markdown.
     kind: create
     entity: ShareLink
     parameters:
@@ -775,7 +763,7 @@ capabilities:
         required: true
 
   bug_report_submit:
-    description: Send diagnostics about Proof itself to operator-facing triage (not document edits).
+    description: Report a bug in Proof itself—not about editing this document.
     kind: create
     entity: BugReport
     input_schema:
@@ -785,15 +773,15 @@ capabilities:
         fields: []
       validation:
         allow_null: false
-      description: Free-form diagnostic envelope for product-level bug intake.
+      description: Send any JSON fields Proof support asks for.
 
   document_bug_report_submit:
-    description: Send diagnostics tied to this document’s context (logs, repro steps, environment).
+    description: Report a bug and include this document as context.
     kind: action
     entity: Document
     output:
       type: side_effect
-      description: Accepts a diagnostic envelope for product intake; does not change persisted document content.
+      description: Sends diagnostics only; does not change the document.
     input_schema:
       input_type:
         type: object
@@ -801,7 +789,7 @@ capabilities:
         fields: []
       validation:
         allow_null: false
-      description: Diagnostic envelope including anything needed to reproduce issues seen on this document.
+      description: Include logs, steps, and environment details Proof support needs.
     provides:
       - status
       - fixer_brief
@@ -811,24 +799,23 @@ values:
   nv_proof_document_ref:
     type: entity_ref
     target: Document
-    description: Stable document key shared across reads, edits, collaboration, and sharing flows.
+    description: Document slug or id this API uses.
 
   nv_proof_block_ref:
     type: string
     string_semantics: short
     description: >
-      Identifier for one block in a specific snapshot; reuse only with the snapshot it came from, then refresh
-      after concurrent edits.
+      Block id from your current snapshot. Refresh the snapshot after others edit before you reuse ids.
 
   nv_proof_agent_id:
     type: string
     string_semantics: short
-    description: Stable label for this automation actor on mutating flows so attribution and locks stay consistent.
+    description: Stable name for this agent on edits (shows in attribution).
 
   nv_proof_str:
     type: string
     string_semantics: short
-    description: Short free-text bucket for opaque ids, titles, tokens, filters, and similar scalars.
+    description: Short text (ids, titles, tokens, filters).
 
   nv_proof_markdown:
     type: string
@@ -836,27 +823,27 @@ values:
 
   nv_proof_json:
     type: json
-    description: Structured bundles such as navigation hints, auth guidance, collaboration payloads, or raw slices.
+    description: JSON object (links, auth hints, extra fields).
 
   nv_proof_int:
     type: integer
-    description: Whole numbers for revisions, presence counts, pagination sizing, and similar quantities.
+    description: Integer (revision, counts, limits).
 
   nv_proof_bool:
     type: boolean
-    description: Simple toggles carried on mutations such as resolving discussion threads.
+    description: true/false flag (for example resolve thread).
 
   nv_proof_uuid:
     type: uuid
-    description: Optional uniqueness token so identical edit batches can be retried safely.
+    description: Optional idempotency key so you can retry the same edit batch safely.
 
   nv_proof_occurrence:
     type: select
     allowed_values: [first, all]
-    description: Whether find/replace touches the first match only or every match in scope.
+    description: Replace only the first match or every match in range.
 
   nv_proof_insert_blocks_markdown:
     type: array
     items:
       value_ref: nv_proof_markdown
-    description: New blocks to splice next to an anchor, in top-to-bottom order.
+    description: New blocks in order from top to bottom.

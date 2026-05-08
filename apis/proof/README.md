@@ -1,11 +1,11 @@
 # Proof catalog (Plasm)
 
-This package targets the **public HTTP surface** described in [EveryInc/proof-sdk](https://github.com/EveryInc/proof-sdk) (`AGENT_CONTRACT.md`, `docs/agent-docs.md`): `POST /documents`, `GET /documents/:slug/state`, `GET /documents/:slug/snapshot`, `POST /documents/:slug/edit` and `…/edit/v2`, `POST /documents/:slug/ops`, bridge routes under `…/bridge/*`, and collaboration polling `…/events/pending` / `…/events/ack`.
+This package targets the **Proof agent HTTP surface** described in [EveryInc/proof-sdk](https://github.com/EveryInc/proof-sdk) (`AGENT_CONTRACT.md`, `docs/agent-docs.md`). The SDK documents many routes under `/documents/:slug/…`; **hosted `www.proofeditor.ai` serves those agent operations under `/api/agent/:slug/…`** (plain `/documents/:slug/…` often returns **404** HTML). Share flows still use **`GET /d/:slug`** (JSON / markdown); **`POST /share/markdown`** creates a new shared doc. **`POST /api/bridge/report_bug`** is product bug intake.
 
-`mappings.yaml` is generated from `_gen_mappings.py` so paths stay consistent:
+Author and maintain **`mappings.yaml`** directly (paths, query, headers, body CML). Validate after edits:
 
 ```bash
-python3 plasm-oss/apis/proof/_gen_mappings.py
+cargo run -p plasm-cli --bin plasm -- schema validate apis/proof
 ```
 
 ## Local Proof SDK
@@ -24,11 +24,7 @@ export PROOF_API_TOKEN=   # if PROOF_SHARE_MARKDOWN_AUTH_MODE=api_key
 cargo run -p plasm-agent --bin plasm-mcp -- --schema apis/proof --http --port 3000 --backend http://127.0.0.1:4000
 ```
 
-Validate the catalog only:
-
-```bash
-cargo run -p plasm-cli --bin plasm -- schema validate apis/proof
-```
+If your local SDK does not mirror **`/api/agent/:slug/*`**, adjust **`mappings.yaml`** paths for that backend (hosted **`www.proofeditor.ai`** is the default `http_backend` target).
 
 ## curl smoke tests
 
@@ -70,9 +66,9 @@ curl -sS -H "Authorization: Bearer $PROOF_API_TOKEN" -H 'Accept: application/jso
 - **Session bind (HTTP/MCP execute):** call **`document_share_bind`** once per document with the share URL (`…/d/{slug}?token=…`) or explicit `share_token`; the host keeps Bearer + mirrored `?token=` in execute session material so later lines stay token-free — see [instance-share-auth.md](../../../docs/instance-share-auth.md).
 - **Agent identity:** `agent_id` is sent as **`X-Agent-Id`** on mutating routes.
 - **Idempotency:** explicit capability parameter `idempotency_key` is sent as **`Idempotency-Key`** when set. On HTTP/MCP execute, Plasm also injects CML env keys `plasm_execute_prompt_hash` and `plasm_execute_session_id`; the generated **`document_edit_*`** mappings derive a default `Idempotency-Key` from those plus mutation fields (`baseRevision`, refs, text, …) when the caller omits `idempotency_key`. Align with Proof rollout: read `contract.idempotencyRequired` and `contract.mutationStage` from `GET …/state` — during required stages the wire must still carry a key (host-derived or explicit). Same key with a different payload hash yields `IDEMPOTENCY_KEY_REUSED`.
-- **`document_edit_find_replace_in_doc`:** CML currently emits a single structured `replace` op; optional sweep fields in the domain are not yet mapped — extend `_gen_mappings.py` when you confirm the live JSON shape.
+- **`document_edit_find_replace_in_doc`:** CML currently emits a single structured `replace` op; optional sweep fields in the domain are not yet mapped — extend `mappings.yaml` when you confirm the live JSON shape.
 - **Bug intake:** mappings use **`POST /api/bridge/report_bug`** with **`Accept: application/json`** (hosted `www.proofeditor.ai` and apex `proofeditor.ai`). Older **`POST /report/bug`** returned **404** in production probes — do not revert without re-verifying. **`document_bug_report_submit`** uses the same URL and sends **`slug`** in the JSON body plus optional share **`token`** query when `share_token` is set.
-- **Suggestions (hosted `www.proofeditor.ai`):** use **`POST /documents/:slug/ops`** with **`type: suggestion.add`** / **`suggestion.accept`** / **`suggestion.reject`** (see proof-sdk `docs/agent-docs.md`). **`POST …/bridge/suggestions`** and **`…/bridge/marks/{accept,reject}`** return **404** on production probes — the Plasm mappings follow **`/ops`** for these capabilities. **`annotation_suggestion_add`** uses a **root tagged union** in `domain.yaml` (`insert` / `delete` / `replace`); DOMAIN teaches **`Document(slug).annotation-suggestion-add(v111{p5=…,…})`**-style invokes (see [plasm-language-definition.md](../../../docs/plasm-language-definition.md) `METHOD_ARGS` / `UNION_CTOR_PAYLOAD`).
+- **Suggestions (hosted `www.proofeditor.ai`):** use **`POST /api/agent/:slug/ops`** with **`type: suggestion.add`** / **`suggestion.accept`** / **`suggestion.reject`** (see proof-sdk `docs/agent-docs.md`). **`POST …/bridge/suggestions`** and **`…/bridge/marks/{accept,reject}`** return **404** on production probes — the Plasm mappings follow **`/ops`** for these capabilities. **`annotation_suggestion_add`** uses a **root tagged union** in `domain.yaml` (`insert` / `delete` / `replace`); DOMAIN teaches **`Document(slug).annotation-suggestion-add(v111{p5=…,…})`**-style invokes (see [plasm-language-definition.md](../../../docs/plasm-language-definition.md) `METHOD_ARGS` / `UNION_CTOR_PAYLOAD`).
 - **`annotation_comment_unresolve`** / **`annotation_comment_batch_apply`** / other **`/ops`** shapes remain **best-effort** — verify against your Proof revision if the server returns 4xx.
 
 ## Hosted production checks (manual)
@@ -82,11 +78,11 @@ Probed **2026-05** with anonymous requests (no doc secrets):
 | Check | Result |
 | ----- | ------ |
 | `GET https://proofeditor.ai/` vs `https://www.proofeditor.ai/` | **200** / **200** |
-| `GET …/documents/{slug}/state` vs `…/api/agent/{slug}/state` (unknown slug) | **404** / **404** on both apex and www (same status — aliases behave consistently for missing docs) |
+| `GET …/documents/{slug}/state` vs `…/api/agent/{slug}/state` on **www** (unknown slug, no token) | **404** HTML vs **401/404 JSON** — hosted slug-scoped reads use **`/api/agent/…`** in this catalog |
 | `POST https://www.proofeditor.ai/report/bug` | **404** |
 | `POST https://www.proofeditor.ai/api/bridge/report_bug` | **200** with JSON validation envelope (`needs_more_info` on minimal `{}` body) |
 
-**Presence:** use **`POST /documents/:slug/presence`** (hosted alias **`POST /api/agent/:slug/presence`**) with **`Authorization: Bearer`** + **`X-Agent-Id`** and JSON **`{ "status": "online" }`** (default when `presence_status` is omitted). **`…/bridge/presence`** is for the desktop/SDK bridge — it does **not** substitute for agent join on hosted collab UIs.
+**Presence:** use **`POST /api/agent/:slug/presence`** with **`Authorization: Bearer`** + **`X-Agent-Id`** and JSON **`{ "status": "online" }`** (default when `presence_status` is omitted). On **`www.proofeditor.ai`**, **`POST /documents/:slug/presence`** returns **404** — Plasm maps **`presence_update`** to **`/api/agent/…`** only. **`…/bridge/presence`** is for the desktop/SDK bridge — it does **not** substitute for agent join on hosted collab UIs.
 
 ## Incremental DOMAIN waves (execute / MCP)
 
@@ -107,4 +103,4 @@ cargo run -p plasm-eval -- coverage --schema apis/proof --cases apis/proof/eval/
 
 ## Hosted Proof
 
-The default `http_backend` in `domain.yaml` remains `https://www.proofeditor.ai`. Hosted deployments expose **`/api/agent/*`** compatibility aliases in places; this catalog uses **`documents/…`** for reads/edits/collaboration and **`/api/bridge/report_bug`** for product bug intake as verified above.
+The default `http_backend` in `domain.yaml` is `https://www.proofeditor.ai`. **`mappings.yaml` uses `/api/agent/:slug/…`** for slug-scoped reads/edits/ops/events/presence/title (anything that used to hit `/documents/:slug/…` on the local SDK). **`document_get`**, **`document_get_markdown`**, and **`document_share_bind`** stay on **`GET /d/:slug`**. **`share_link_create`** maps to **`POST /share/markdown`**. Bug intake uses **`/api/bridge/report_bug`** as above.

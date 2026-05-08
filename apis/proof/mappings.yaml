@@ -1,12 +1,15 @@
-# Proof — HTTP mappings aligned with EveryInc/proof-sdk public routes.
-# See apis/proof/README.md for local curl + plasm-cli exploration.
+# Proof — HTTP mappings for hosted `www.proofeditor.ai`.
+# Slug-scoped agent routes use `/api/agent/:slug/…` (plain `/documents/:slug/…` returns 404 HTML on hosted).
+# Share negotiation stays `GET /d/:slug`; new docs use `POST /share/markdown`. See apis/proof/README.md.
 # Auth: domain `auth.env` bearer (PROOF_API_TOKEN); optional share `?token=` maps to `share_token`.
 
 annotation_comment_add:
   method: POST
   path:
   - type: literal
-    value: documents
+    value: api
+  - type: literal
+    value: agent
   - type: var
     name: slug
   - type: literal
@@ -60,7 +63,9 @@ annotation_comment_batch_apply:
   method: POST
   path:
   - type: literal
-    value: documents
+    value: api
+  - type: literal
+    value: agent
   - type: var
     name: slug
   - type: literal
@@ -103,7 +108,9 @@ annotation_comment_reply:
   method: POST
   path:
   - type: literal
-    value: documents
+    value: api
+  - type: literal
+    value: agent
   - type: var
     name: slug
   - type: literal
@@ -170,7 +177,9 @@ annotation_comment_resolve:
   method: POST
   path:
   - type: literal
-    value: documents
+    value: api
+  - type: literal
+    value: agent
   - type: var
     name: slug
   - type: literal
@@ -220,7 +229,9 @@ annotation_comment_unresolve:
   method: POST
   path:
   - type: literal
-    value: documents
+    value: api
+  - type: literal
+    value: agent
   - type: var
     name: slug
   - type: literal
@@ -263,7 +274,9 @@ annotation_suggestion_accept:
   method: POST
   path:
   - type: literal
-    value: documents
+    value: api
+  - type: literal
+    value: agent
   - type: var
     name: slug
   - type: literal
@@ -338,7 +351,9 @@ annotation_suggestion_add:
   method: POST
   path:
   - type: literal
-    value: documents
+    value: api
+  - type: literal
+    value: agent
   - type: var
     name: slug
   - type: literal
@@ -438,7 +453,9 @@ annotation_suggestion_reject:
   method: POST
   path:
   - type: literal
-    value: documents
+    value: api
+  - type: literal
+    value: agent
   - type: var
     name: slug
   - type: literal
@@ -513,7 +530,9 @@ block_query:
   method: GET
   path:
   - type: literal
-    value: documents
+    value: api
+  - type: literal
+    value: agent
   - type: var
     name: document_id
   - type: literal
@@ -565,7 +584,9 @@ collaboration_event_ack:
   method: POST
   path:
   - type: literal
-    value: documents
+    value: api
+  - type: literal
+    value: agent
   - type: var
     name: slug
   - type: literal
@@ -610,7 +631,9 @@ collaboration_event_query:
   method: GET
   path:
   - type: literal
-    value: documents
+    value: api
+  - type: literal
+    value: agent
   - type: var
     name: document_id
   - type: literal
@@ -703,7 +726,9 @@ document_edit_v2:
   method: POST
   path:
   - type: literal
-    value: documents
+    value: api
+  - type: literal
+    value: agent
   - type: var
     name: slug
   - type: literal
@@ -867,7 +892,9 @@ document_title_update:
   method: PUT
   path:
   - type: literal
-    value: documents
+    value: api
+  - type: literal
+    value: agent
   - type: var
     name: slug
   - type: literal
@@ -904,7 +931,9 @@ editor_state_get:
   method: GET
   path:
   - type: literal
-    value: documents
+    value: api
+  - type: literal
+    value: agent
   - type: var
     name: slug
   - type: literal
@@ -946,7 +975,9 @@ presence_update:
   method: POST
   path:
   - type: literal
-    value: documents
+    value: api
+  - type: literal
+    value: agent
   - type: var
     name: slug
   - type: literal
@@ -994,7 +1025,9 @@ share_link_create:
   method: POST
   path:
   - type: literal
-    value: documents
+    value: share
+  - type: literal
+    value: markdown
   body:
     type: object
     fields:
