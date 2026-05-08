@@ -1225,6 +1225,40 @@ editor_state_get:
         value: application/json
   response:
     single: true
+    auxiliary_merge:
+      method: GET
+      path:
+      - type: literal
+        value: api
+      - type: literal
+        value: agent
+      - type: var
+        name: slug
+      - type: literal
+        value: snapshot
+      query:
+        type: object
+        fields:
+        - - token
+          - type: if
+            condition:
+              type: exists
+              var: share_token
+            then_expr:
+              type: var
+              name: share_token
+            else_expr:
+              type: const
+              value: null
+      headers:
+        type: object
+        fields:
+        - - Accept
+          - type: const
+            value: application/json
+      from_path:
+      - blocks
+      into_key: blocks
 presence_update:
   method: POST
   path:

@@ -313,6 +313,25 @@ pub enum PaginationStop {
     FieldAbsent { field: String, absent: bool },
 }
 
+/// Secondary GET merged into the primary JSON **before** `response_preprocess` / entity narrowing.
+///
+/// Used when one HTTP resource omits fields another sibling endpoint supplies (e.g. collab state
+/// plus snapshot blocks).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AuxiliaryHttpMerge {
+    pub method: HttpMethod,
+    pub path: Vec<PathSegment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub query: Option<CmlExpr>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub headers: Option<CmlExpr>,
+    /// Path from the auxiliary JSON root to the value copied onto the primary object (empty = whole body).
+    #[serde(default)]
+    pub from_path: Vec<String>,
+    /// Top-level key set on the primary JSON object (insert or replace).
+    pub into_key: String,
+}
+
 /// Optional decode hints for HTTP responses (non-paginated query/search and similar).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct HttpResponseDecode {
@@ -342,6 +361,10 @@ pub struct HttpResponseDecode {
     /// is documented on each [`ResponsePreprocess`] variant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub response_preprocess: Option<ResponsePreprocess>,
+    /// Optional follow-up HTTP GET evaluated with the **same** [`CmlEnv`] as the primary request;
+    /// `from_path` on that JSON is merged into the primary body at `into_key` before narrowing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auxiliary_merge: Option<AuxiliaryHttpMerge>,
 }
 
 /// One optional HTTP JSON reshape before collection decode (`HttpResponseDecode::items` / `items_path`).
@@ -398,6 +421,7 @@ fn legacy_http_response_decode(s: &str) -> Result<HttpResponseDecode, String> {
             single: true,
             wrap_root_scalar: false,
             response_preprocess: None,
+            auxiliary_merge: None,
         }),
         "results_list" => Ok(HttpResponseDecode {
             items: None,
@@ -406,6 +430,7 @@ fn legacy_http_response_decode(s: &str) -> Result<HttpResponseDecode, String> {
             single: false,
             wrap_root_scalar: false,
             response_preprocess: None,
+            auxiliary_merge: None,
         }),
         "items_list" => Ok(HttpResponseDecode {
             items: Some("items".to_string()),
@@ -414,6 +439,7 @@ fn legacy_http_response_decode(s: &str) -> Result<HttpResponseDecode, String> {
             single: false,
             wrap_root_scalar: false,
             response_preprocess: None,
+            auxiliary_merge: None,
         }),
         "bare_list" => Ok(HttpResponseDecode {
             items: None,
@@ -422,6 +448,7 @@ fn legacy_http_response_decode(s: &str) -> Result<HttpResponseDecode, String> {
             single: false,
             wrap_root_scalar: false,
             response_preprocess: None,
+            auxiliary_merge: None,
         }),
         _ => Err(format!("unknown legacy response hint: {s}")),
     }

@@ -8,8 +8,8 @@ use plasm_compile::{
     compile_operation, compile_query, decode_entities, parse_capability_template,
     path_expr_from_json_segments, path_var_names_from_request, template_pagination,
     template_var_names, BackendFilter, CapabilityTemplate, CmlEnv, CmlRequest,
-    CompileOperationHook, CompileQueryHook, CompiledOperation, CompiledRequest, PaginationConfig,
-    PathExpr, PathSegment, ResponsePreprocess,
+    CompileOperationHook, CompileQueryHook, CompiledOperation, CompiledRequest, HttpBodyFormat,
+    PaginationConfig, PathExpr, PathSegment, ResponsePreprocess,
 };
 use plasm_core::{
     cross_entity::{
@@ -1767,6 +1767,72 @@ impl ExecutionEngine {
         })
     }
 
+    /// When the primary capability's CML [`HttpResponseDecode::auxiliary_merge`] is set, perform that
+    /// follow-up GET (same [`CmlEnv`] as the primary request) and shallow-merge one field into the
+    /// primary JSON before narrowing/decoding.
+    async fn apply_auxiliary_http_merge_response(
+        &self,
+        capability_template: &CapabilityTemplate,
+        env: &CmlEnv,
+        mode: ExecutionMode,
+        primary: serde_json::Value,
+        entity_dispatch_hint: Option<&str>,
+    ) -> Result<serde_json::Value, RuntimeError> {
+        let CapabilityTemplate::Http(primary_cml) = capability_template else {
+            return Ok(primary);
+        };
+        let Some(ref decode) = primary_cml.response else {
+            return Ok(primary);
+        };
+        let Some(ref aux) = decode.auxiliary_merge else {
+            return Ok(primary);
+        };
+
+        let aux_req = CmlRequest {
+            method: aux.method.clone(),
+            path: aux.path.clone(),
+            query: aux.query.clone(),
+            body: None,
+            body_format: HttpBodyFormat::default(),
+            multipart: None,
+            headers: aux.headers.clone(),
+            pagination: None,
+            response: None,
+        };
+        let aux_template = CapabilityTemplate::Http(aux_req);
+        let compiled = compile_operation_dispatch(&aux_template, env)?;
+
+        let aux_body = match with_dispatch_entity(
+            entity_dispatch_hint,
+            self.execute_with_replay(&compiled, mode),
+        )
+        .await
+        {
+            Ok((v, _)) => v,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "auxiliary_merge request failed; continuing with primary response only"
+                );
+                return Ok(primary);
+            }
+        };
+
+        let extracted = if aux.from_path.is_empty() {
+            aux_body
+        } else {
+            walk_json_path(&aux_body, &aux.from_path)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null)
+        };
+
+        let serde_json::Value::Object(mut primary_obj) = primary else {
+            return Ok(primary);
+        };
+        primary_obj.insert(aux.into_key.clone(), extracted);
+        Ok(serde_json::Value::Object(primary_obj))
+    }
+
     /// Run GET + decode without consulting the graph cache (used for query hydration and cache refresh).
     ///
     /// When `hydrate_capability` is `Some(name)`, use that named GET capability instead of the
@@ -1847,6 +1913,15 @@ impl ExecutionEngine {
             self.execute_with_replay(&compiled, mode),
         )
         .await?;
+        let response = self
+            .apply_auxiliary_http_merge_response(
+                &capability_template,
+                &env,
+                mode,
+                response,
+                Some(get.reference.entity_type.as_str()),
+            )
+            .await?;
         let response =
             narrow_http_graphql_response_for_entity_decode(&capability_template, response)?;
         let rid = cgs

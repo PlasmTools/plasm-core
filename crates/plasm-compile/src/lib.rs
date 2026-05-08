@@ -13,11 +13,11 @@ pub mod predicate_compiler;
 
 pub use plasm_cml::{
     compile_operation, compile_request, eval_cml, eval_cond, parse_capability_template,
-    path_var_names_from_request, template_pagination, template_var_names, CapabilityTemplate,
-    CmlCond, CmlEnv, CmlExpr, CmlRequest, CmlType, CompiledMultipartBody, CompiledMultipartPart,
-    CompiledOperation, CompiledRequest, HttpBodyFormat, HttpMethod, HttpResponseDecode,
-    MultipartBodySpec, MultipartPartSpec, PaginationConfig, PaginationLocation, PaginationParam,
-    PaginationStop, PathSegment as CmlPathSegment, ResponsePreprocess,
+    path_var_names_from_request, template_pagination, template_var_names, AuxiliaryHttpMerge,
+    CapabilityTemplate, CmlCond, CmlEnv, CmlExpr, CmlRequest, CmlType, CompiledMultipartBody,
+    CompiledMultipartPart, CompiledOperation, CompiledRequest, HttpBodyFormat, HttpMethod,
+    HttpResponseDecode, MultipartBodySpec, MultipartPartSpec, PaginationConfig, PaginationLocation,
+    PaginationParam, PaginationStop, PathSegment as CmlPathSegment, ResponsePreprocess,
 };
 
 #[cfg(feature = "evm")]
