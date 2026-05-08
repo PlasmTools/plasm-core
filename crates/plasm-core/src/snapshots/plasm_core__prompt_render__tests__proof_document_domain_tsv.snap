@@ -107,8 +107,8 @@ p36	v13 · idempotency_key
 p12	v5 · slug
 p23	v10 · markdown
 p35	v12 · title
-p17	v9 · links · Extra links from this read; not the document body
-p16	v9 · agent_auth · How to authenticate edits for this document, when included
+p17	v9 · links · SDK link bundle (state, ops, docs). Wire key _links
+p16	v9 · agent_auth · Auth hints from share JSON agent.auth (token source, header names)
 v211{p27=$}	returns comment_resolve — Resolve a thread; keep history
 v212{p27=$}	returns comment_unresolve — Unresolve a thread for more replies
 v101{p8=$,p20=$}	returns replace_block — Replace one block’s markdown

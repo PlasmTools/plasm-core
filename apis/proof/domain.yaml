@@ -1,4 +1,4 @@
-version: 22
+version: 23
 http_backend: https://www.proofeditor.ai
 auth:
   scheme: bearer_token
@@ -24,11 +24,13 @@ entities:
       links:
         value_ref: nv_proof_json
         required: false
-        description: Extra links from this read; not the document body.
+        path: _links
+        description: "SDK link bundle (state, ops, docs). Wire key _links."
       agent_auth:
         value_ref: nv_proof_json
         required: false
-        description: How to authenticate edits for this document, when included.
+        path: agent.auth
+        description: "Auth hints from share JSON agent.auth (token source, header names)."
     relations:
       blocks:
         target: Block
@@ -140,9 +142,27 @@ entities:
       url:
         value_ref: nv_proof_str
         required: false
+        description: Short doc path from create (`url`).
+      share_url:
+        value_ref: nv_proof_str
+        required: false
+        path: shareUrl
+        description: Web share URL without query token.
+      token_url:
+        value_ref: nv_proof_str
+        required: false
+        path: tokenUrl
+        description: Full share URL including `?token=`—use for document_share_bind or API calls.
+      token_path:
+        value_ref: nv_proof_str
+        required: false
+        path: tokenPath
+        description: Path-style URL with token query for CLI-style copy/paste.
       token:
         value_ref: nv_proof_str
         required: false
+        path: accessToken
+        description: Link access token (`accessToken` on wire)—send as Bearer or `token` query.
       raw:
         value_ref: nv_proof_json
         required: false
