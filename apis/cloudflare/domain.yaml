@@ -1,9 +1,9 @@
-version: 11
+version: 12
 http_backend: https://api.cloudflare.com/client/v4
 entities:
   Zone:
     id_field: id
-    description: Anchor row for one proxied site—keep work scoped when firewall or proxy behavior is tied to that site.
+    description: Anchor for one proxied site—keep work scoped when firewall or proxy behavior is tied to that site.
     fields:
       id:
         required: true
@@ -59,7 +59,7 @@ entities:
     key_vars:
     - zone_id
     - ruleset_id
-    description: Rules configuration this row represents—the inspect or replace target when the task names that ruleset.
+    description: Rules configuration held here—the inspect or replace target when the task names this ruleset.
     fields:
       zone_id:
         required: true
@@ -394,7 +394,7 @@ capabilities:
   security_overview_query:
     kind: query
     entity: SecurityOverview
-    description: Posture snapshot exposed as a query—same agent-facing row shape as get for teaching symmetry.
+    description: Posture snapshot exposed as a query—same agent-facing projection as get for teaching symmetry.
     discovery:
       operation_terms:
       - security overview
@@ -403,7 +403,7 @@ capabilities:
       target_terms:
       - zone security overview
       - composed posture snapshot
-      - security posture row
+      - zone security posture summary
     parameters:
     - name: zone_id
       value_ref: nv_cloudflare_zone_id
@@ -420,14 +420,14 @@ capabilities:
   security_overview_get:
     kind: get
     entity: SecurityOverview
-    description: Posture snapshot by zone id—use when you already scoped the zone and want the composed row.
+    description: Posture snapshot by zone id—use when you already scoped the zone and want the composed overview.
     discovery:
       operation_terms:
       - get
       - fetch
       - load
       target_terms:
-      - security overview row
+      - security overview snapshot
       - zone security posture
       - posture snapshot
     parameters:
@@ -445,7 +445,7 @@ capabilities:
     - security_surface_status
 views:
   security_overview:
-    description: One composed posture row without manually correlating the backing reads.
+    description: One composed security overview without manually correlating the backing reads.
     capability: security_overview_query
     entity: SecurityOverview
     scope:
@@ -615,7 +615,7 @@ auth:
 values:
   nv_cf_security_posture_bool:
     type: boolean
-    description: Yes/no posture signal derived for overview rows.
+    description: Yes/no posture signal derived for SecurityOverview.
   nv_wire_sel_security_surface_status:
     type: select
     description: Coarse derived posture label for SecurityOverview (mirrors runtime derivation).
@@ -631,7 +631,7 @@ values:
     description: Full ruleset payload for the phase entrypoint update.
   nv_ruleset_query_per_page:
     type: integer
-    description: Preferred maximum rows per page when listing rulesets.
+    description: Preferred maximum rulesets per page when listing.
   nv_cloudflare_zone_id:
     type: entity_ref
     target: Zone

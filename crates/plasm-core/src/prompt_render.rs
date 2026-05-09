@@ -6466,7 +6466,7 @@ mod tests {
             !prompt.contains("List rulesets on a zone"),
             "ruleset_query capability prose must not leak into TSV Meaning"
         );
-        let desc = "Rules configuration this row represents";
+        let desc = "Rules configuration held here";
         assert_eq!(
             prompt.matches(desc).count(),
             1,
