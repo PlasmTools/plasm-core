@@ -819,7 +819,9 @@ fn explorer_args_for_get(entity: &EntityDef, get_cap: &CapabilitySchema) -> Vec<
         CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => {
             path_var_names_from_request(cml)
         }
-        CapabilityTemplate::EvmCall(_) | CapabilityTemplate::EvmLogs(_) => Vec::new(),
+        CapabilityTemplate::View(_)
+        | CapabilityTemplate::EvmCall(_)
+        | CapabilityTemplate::EvmLogs(_) => Vec::new(),
     };
 
     for var_name in template_var_names(&template) {

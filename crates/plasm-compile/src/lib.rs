@@ -18,6 +18,7 @@ pub use plasm_cml::{
     CompiledMultipartPart, CompiledOperation, CompiledRequest, HttpBodyFormat, HttpMethod,
     HttpResponseDecode, MultipartBodySpec, MultipartPartSpec, PaginationConfig, PaginationLocation,
     PaginationParam, PaginationStop, PathSegment as CmlPathSegment, ResponsePreprocess,
+    ViewCompiled, ViewTemplate,
 };
 
 #[cfg(feature = "evm")]

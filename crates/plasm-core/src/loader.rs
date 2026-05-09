@@ -6,7 +6,7 @@
 //! For CML template parsing after load: `plasm_compile::transport=trace`.
 
 use crate::identity::{CapabilityName, EntityFieldName, EntityName, RelationName};
-use crate::schema::{FieldValueKind, NamedValueSchema, ValueDomainKey};
+use crate::schema::{FieldValueKind, NamedValueSchema, ValueDomainKey, ViewDefinition};
 use crate::{
     capability_template_all_var_names, AgentPresentation, ArrayItemsSchema, AttachmentMediaKind,
     AuthScheme, CapabilityKind, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson,
@@ -88,6 +88,9 @@ pub struct DomainFile {
     /// Optional declarative OAuth scope implications (see [`OauthExtension`]).
     #[serde(default)]
     pub oauth: Option<OauthExtension>,
+    /// Composed read-only capabilities (`transport: view` in mappings).
+    #[serde(default)]
+    pub views: IndexMap<String, ViewDefinition>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -804,6 +807,8 @@ fn assemble_cgs_core(
         cgs.add_capability(capability)
             .map_err(|e| format!("Failed to add capability '{}': {}", cap_name, e))?;
     }
+
+    cgs.views = domain.views.clone();
 
     Ok(cgs)
 }

@@ -791,6 +791,10 @@ impl ExecutionEngine {
                 let json = execute_evm_logs(rpc_url, auth.as_ref(), request).await?;
                 Ok((json, None))
             }
+            CompiledOperation::View(_) => Err(RuntimeError::ConfigurationError {
+                message: "composed views execute via Query (`transport: view`), not HTTP invoke"
+                    .into(),
+            }),
         };
         if out.is_ok() {
             append_request_fingerprint(fp.to_hex());
@@ -1012,6 +1016,29 @@ impl ExecutionEngine {
             );
         }
         let capability_template = parse_capability_template(&capability.mapping.template)?;
+        if let CapabilityTemplate::View(vt) = &capability_template {
+            let view_name = vt.view.clone();
+            let query = query.clone();
+            let stream = Box::pin(async_stream::try_stream! {
+                let res = crate::view_execution::execute_view_query(
+                    self,
+                    view_name.as_str(),
+                    &query,
+                    cgs,
+                    cache,
+                    mode,
+                )
+                .await?;
+                yield PageResult {
+                    entities: res.entities,
+                    page_index: 0,
+                    has_more: false,
+                    pagination_resume: None,
+                    stats: res.stats,
+                };
+            });
+            return Ok(stream);
+        }
         if let Some(pconf) = template_pagination(&capability_template) {
             return self.paginated_query_stream(
                 query.clone(),
@@ -1039,7 +1066,7 @@ impl ExecutionEngine {
     }
 
     /// Execute a query expression (materializes [`query_to_stream`]).
-    async fn execute_query(
+    pub(crate) async fn execute_query(
         &self,
         query: &QueryExpr,
         cgs: &CGS,
@@ -1109,6 +1136,9 @@ impl ExecutionEngine {
                         Some(&cml_env_to_identity_strings(&env)),
                     ),
                 )),
+                CapabilityTemplate::View(_) => Err(RuntimeError::ConfigurationError {
+                    message: "internal: view query must use composed-read stream".into(),
+                }),
                 CapabilityTemplate::EvmCall(_) | CapabilityTemplate::EvmLogs(_) => {
                     Err(RuntimeError::ConfigurationError {
                         message: "query/search capabilities must use HTTP CML templates".into(),
@@ -1209,6 +1239,11 @@ impl ExecutionEngine {
                 ),
                 response_bare_array_wrap_key(req),
             ),
+            plasm_compile::CapabilityTemplate::View(_) => {
+                return Err(RuntimeError::ConfigurationError {
+                    message: "composed views do not support CML pagination".into(),
+                });
+            }
             plasm_compile::CapabilityTemplate::EvmCall(_)
             | plasm_compile::CapabilityTemplate::EvmLogs(_) => (
                 create_entity_decoder(
@@ -1715,7 +1750,7 @@ impl ExecutionEngine {
     }
 
     /// Execute a get expression
-    async fn execute_get(
+    pub(crate) async fn execute_get(
         &self,
         get: &GetExpr,
         cgs: &CGS,
@@ -3347,6 +3382,7 @@ fn path_var_names_from_template(template: &CapabilityTemplate) -> Vec<String> {
         CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => {
             path_var_names_from_request(cml)
         }
+        CapabilityTemplate::View(_) => Vec::new(),
         CapabilityTemplate::EvmCall(_) | CapabilityTemplate::EvmLogs(_) => Vec::new(),
     }
 }
@@ -3388,7 +3424,9 @@ fn populate_template_path_env(
             let names = path_var_names_from_request(cml);
             (names.len() == 1).then(|| names[0].clone())
         }
-        CapabilityTemplate::EvmCall(_) | CapabilityTemplate::EvmLogs(_) => None,
+        CapabilityTemplate::View(_)
+        | CapabilityTemplate::EvmCall(_)
+        | CapabilityTemplate::EvmLogs(_) => None,
     };
 
     for var_name in template_var_names(template) {
@@ -3562,6 +3600,9 @@ fn compiled_query_insert(
                 "query parameter pagination key '{key}' is not valid for evm_logs transport"
             ),
         }),
+        CompiledOperation::View(_) => Err(RuntimeError::ConfigurationError {
+            message: format!("pagination key '{key}' is not valid for composed view transport"),
+        }),
     }
 }
 
@@ -3587,6 +3628,9 @@ fn compiled_block_range_set(
         }
         CompiledOperation::EvmCall(_) => Err(RuntimeError::ConfigurationError {
             message: "block-range pagination is not valid for evm_call transport".to_string(),
+        }),
+        CompiledOperation::View(_) => Err(RuntimeError::ConfigurationError {
+            message: "block-range pagination is not valid for composed view transport".to_string(),
         }),
     }
 }
@@ -3792,6 +3836,12 @@ impl PaginationLoopState {
                 CompiledOperation::EvmCall(_) => {
                     return Err(RuntimeError::ConfigurationError {
                         message: "block_range pagination is not valid for evm_call transport"
+                            .to_string(),
+                    });
+                }
+                CompiledOperation::View(_) => {
+                    return Err(RuntimeError::ConfigurationError {
+                        message: "block_range pagination is not valid for composed view transport"
                             .to_string(),
                     });
                 }
@@ -4283,6 +4333,9 @@ fn narrow_http_graphql_response_for_entity_decode(
         CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => {
             extract_single_entity_payload_from_response(response, cml)
         }
+        CapabilityTemplate::View(_) => Err(RuntimeError::ConfigurationError {
+            message: "view capabilities do not use HTTP response narrowing".into(),
+        }),
         CapabilityTemplate::EvmCall(_) | CapabilityTemplate::EvmLogs(_) => Ok(response),
     }
 }
@@ -4838,7 +4891,7 @@ fn create_entity_decoder(
     decoder
 }
 
-fn current_timestamp() -> u64 {
+pub(crate) fn current_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -5279,7 +5332,8 @@ mod tests {
     /// `prepare_http_query_response` and must still decode rows with scalar `id`.
     #[test]
     fn cloudflare_ruleset_query_decodes_v4_envelope_list() {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/cloudflare");
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/cloudflare");
         let cgs = plasm_core::load_schema(&dir).expect("load apis/cloudflare");
         let cap = cgs
             .get_capability("ruleset_query")
@@ -5311,10 +5365,7 @@ mod tests {
         let normalized =
             normalize_collection_response(body, response_bare_array_wrap_key(cml).as_str());
         let mut ambient = indexmap::IndexMap::new();
-        ambient.insert(
-            "zone_id".into(),
-            "00d2860b1edaed6074fd0f45a66e1a87".into(),
-        );
+        ambient.insert("zone_id".into(), "00d2860b1edaed6074fd0f45a66e1a87".into());
         let decoder = create_entity_decoder(
             "Ruleset",
             &cgs,
@@ -5340,7 +5391,8 @@ mod tests {
 
     #[test]
     fn cloudflare_ruleset_get_narrowing_decodes_inner_result_object() {
-        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/cloudflare");
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/cloudflare");
         let cgs = plasm_core::load_schema(&dir).expect("load apis/cloudflare");
         let cap = cgs
             .get_capability("ruleset_get")
@@ -5368,10 +5420,7 @@ mod tests {
         let narrowed =
             narrow_http_graphql_response_for_entity_decode(&capability_template, body).unwrap();
         let mut ambient = indexmap::IndexMap::new();
-        ambient.insert(
-            "zone_id".into(),
-            "00d2860b1edaed6074fd0f45a66e1a87".into(),
-        );
+        ambient.insert("zone_id".into(), "00d2860b1edaed6074fd0f45a66e1a87".into());
         let decoder = create_entity_decoder("Ruleset", &cgs, None, None, Some(&ambient));
         let entities = decode_entities(&decoder, &narrowed).expect("decode ruleset get");
         assert_eq!(entities.len(), 1);

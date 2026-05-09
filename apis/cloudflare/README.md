@@ -1,6 +1,25 @@
 # Cloudflare API (Phase 1)
 
-Plasm CGS/CML for Cloudflare REST v4. **Phase 1** covers **zone-scoped** flows: **rulesets**, **managed phase entrypoints** (DDoS L7, managed WAF, custom rules, etc.), and **WAF packages**. Add more entities and capabilities in this directory as the surface grows.
+Plasm CGS/CML for Cloudflare REST v4. **Phase 1** covers **zone-scoped** flows: **Ruleset Engine** (**rulesets** + managed **phase entrypoints**), plus **legacy WAF packages** as an explicit (**abstract**) surface. Add more entities and capabilities in this directory as the surface grows.
+
+### Agent playbook (CGS)
+
+- Default graph: **`Zone → rulesets`** is the **hub** for firewall / WAF inspection — not legacy packages.
+- **`ruleset_query`** returns a **mixed** inventory; use **`ruleset_get`** with ids from that list as the primary “inspect one ruleset” path.
+- **`ruleset_entrypoint_get`** is a **phase shortcut** — **404 / 10003** when the entrypoint is **not provisioned** is **normal** and does **not** mean “no WAF.”
+- **`WafPackage`** / **`waf_package_query`** map only the **legacy** **`…/firewall/waf/packages`** API (often empty on modern zones). There is **no** default **`Zone`** relation to **`WafPackage`** — seed **`WafPackage`** (or name the capability) when an agent must audit that API.
+
+### `SecurityOverview` (composed read via CGS `views:`)
+
+The catalog implements **`SecurityOverview`** as an **`abstract: true`** entity with **`security_overview_query`** (**`kind: query`**) backed by **`views.security_overview`**. The DAG runs **`zone_get`**, **`ruleset_query`**, and **`waf_package_query`** (legacy packages), then shapes one row (zone name, ruleset counts, **`kind`** histogram JSON, legacy package count). **`mappings.yaml`** wires **`security_overview_query`** with **`transport: view`** / **`view: security_overview`** — no dedicated Cloudflare path.
+
+**Seeding:** EXPRESSION teaching skips **`abstract`** domains unless seeded — callers must include **`SecurityOverview`** in **`plasm_context`** seeds (or name **`security_overview_query`**) when they want this composed surface.
+
+Validate after edits:
+
+```bash
+cargo run -p plasm-cli --bin plasm -- schema validate apis/cloudflare
+```
 
 Ground truth: Cloudflare REST API (OpenAPI). The upstream **full** spec is large and contains path patterns that **Hermit** (used by `plasm validate`) cannot load. This directory therefore keeps:
 
@@ -43,6 +62,6 @@ cargo run -p plasm-cli --bin plasm -- validate --spec apis/cloudflare/openapi.he
 - **Zone** — list (`GET /zones`) and get (`GET /zones/{zone_id}`).
 - **Ruleset** — list for a zone, get one ruleset (includes rules when the API returns them).
 - **RulesetEntrypoint** — get/update the managed entrypoint for a **phase** (`…/rulesets/phases/{phase}/entrypoint`).
-- **WafPackage** — list WAF packages for a zone.
+- **WafPackage** (**abstract**) — legacy **`waf_package_query`** only; explicit seeding, not default **`Zone`** traversal.
 
 Hosted MCP / browser OAuth can use the same capability graph once an outbound OAuth app is registered; API tokens remain the simplest path for CI and local REPL.

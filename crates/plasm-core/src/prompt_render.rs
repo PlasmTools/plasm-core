@@ -6581,8 +6581,25 @@ mod tests {
             "witness base should be query-shaped brace form: {}",
             row.teaching_expr.expression
         );
-        let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         let expr = row.teaching_expr.expression.as_str();
+        let Some(wp_ent) = cgs.get_entity("WafPackage") else {
+            panic!("missing WafPackage entity");
+        };
+        if wp_ent.abstract_entity {
+            // Abstract entities are omitted from default DOMAIN slices — explicit teaching
+            // collection still synthesizes witness rows for tooling/tests.
+            let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+            assert!(
+                !prompt.lines().any(|l| {
+                    !l.starts_with('#')
+                        && !l.is_empty()
+                        && l.split_once('\t').is_some_and(|(e, _)| e == expr)
+                }),
+                "abstract WafPackage lines must not appear in default DOMAIN TSV: {expr:?}"
+            );
+            return;
+        }
+        let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         let line = prompt.lines().find(|l| {
             !l.starts_with('#')
                 && !l.is_empty()

@@ -2361,9 +2361,11 @@ mod tests {
 
     #[test]
     fn collect_program_statement_lines_glued_heredoc_close() {
-        let stmts = collect_program_statement_lines("x = <<H\none\nH)").expect("parse");
+        // `H)` closes the heredoc and ends with `)`; outer `m(` balances that delimiter.
+        let stmts = collect_program_statement_lines("x = m(<<H\none\nH)").expect("parse");
         assert_eq!(stmts.len(), 1);
         assert!(stmts[0].contains("<<H"), "{:?}", stmts[0]);
+        assert!(stmts[0].contains("one"));
     }
 
     #[test]

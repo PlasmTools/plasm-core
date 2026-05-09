@@ -189,7 +189,8 @@ pub use schema::{
     OauthDefaultScopeSet, OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema,
     OutputType, ParameterRole, RelationMaterialization, RelationSchema, ResourceSchema,
     ScopeAggregateKeyPolicy, ScopeRequirement, StringSemantics, ValidationOp, ValidationPredicate,
-    ValueDomainKey, ValueDomainSlot, WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
+    ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding,
+    ViewParamBinding, ViewScopeParam, WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use scope_entity_ref_splat::apply_entity_ref_scope_splat;
 pub use step_semantics::*;

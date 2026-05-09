@@ -117,6 +117,8 @@ pub mod replay;
 pub mod runtime_error_render;
 pub mod session_graph_cache;
 
+mod view_execution;
+
 mod runtime_metrics;
 mod spans;
 

@@ -26,12 +26,26 @@ pub use crate::evm_transport::*;
 /// Parsed CML mapping template (HTTP or EVM). For YAML/schema loading, use [`parse_capability_template`].
 ///
 /// **`serde` / CBOR**: uses Rust enum encoding on the wire (not the JSON object shape from `domain.yaml`).
+/// Declarative composed read (`views:` on the CGS) — executed by the runtime, not HTTP CML.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewTemplate {
+    /// Stable view id matching the CGS `views:` map key.
+    pub view: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewCompiled {
+    pub view: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum CapabilityTemplate {
     Http(CmlRequest),
     /// GraphQL over HTTP: same [`CmlRequest`] shape as HTTP (typically `POST` + JSON body with `query` / `variables`).
     /// Distinguished for fingerprints, replay, and future GraphQL-specific pagination.
     GraphQl(CmlRequest),
+    /// Server-side composition over other capabilities (see CGS `views:`).
+    View(ViewTemplate),
     #[cfg(feature = "evm")]
     EvmCall(EvmCallTemplate),
     #[cfg(feature = "evm")]
@@ -43,6 +57,7 @@ pub enum CompiledOperation {
     Http(CompiledRequest),
     /// Compiled GraphQL request (same wire payload as HTTP POST JSON today).
     GraphQl(CompiledRequest),
+    View(ViewCompiled),
     #[cfg(feature = "evm")]
     EvmCall(CompiledEvmCall),
     #[cfg(feature = "evm")]
@@ -72,6 +87,11 @@ pub fn parse_capability_template(
             .map_err(|e| CmlError::InvalidTemplate {
                 message: format!("invalid GraphQL template: {e}"),
             }),
+        "view" => serde_json::from_value::<ViewTemplate>(template.clone())
+            .map(CapabilityTemplate::View)
+            .map_err(|e| CmlError::InvalidTemplate {
+                message: format!("invalid view template: {e}"),
+            }),
         #[cfg(feature = "evm")]
         "evm_call" => serde_json::from_value::<EvmCallTemplate>(template.clone())
             .map(CapabilityTemplate::EvmCall)
@@ -99,6 +119,12 @@ pub fn compile_operation(
         CapabilityTemplate::GraphQl(req) => {
             compile_request(req, env).map(CompiledOperation::GraphQl)
         }
+        CapabilityTemplate::View(v) => {
+            let _ = env;
+            Ok(CompiledOperation::View(ViewCompiled {
+                view: v.view.clone(),
+            }))
+        }
         #[cfg(feature = "evm")]
         CapabilityTemplate::EvmCall(req) => {
             evm_transport::compile_evm_call(req, env).map(CompiledOperation::EvmCall)
@@ -112,6 +138,7 @@ pub fn compile_operation(
 pub fn template_pagination(template: &CapabilityTemplate) -> Option<&PaginationConfig> {
     match template {
         CapabilityTemplate::Http(req) | CapabilityTemplate::GraphQl(req) => req.pagination.as_ref(),
+        CapabilityTemplate::View(_) => None,
         #[cfg(feature = "evm")]
         CapabilityTemplate::EvmCall(_) => None,
         #[cfg(feature = "evm")]
@@ -122,6 +149,7 @@ pub fn template_pagination(template: &CapabilityTemplate) -> Option<&PaginationC
 pub fn template_var_names(template: &CapabilityTemplate) -> Vec<String> {
     let mut vars = IndexSet::new();
     match template {
+        CapabilityTemplate::View(_) => {}
         CapabilityTemplate::Http(req) | CapabilityTemplate::GraphQl(req) => {
             for name in path_var_names_from_request(req) {
                 vars.insert(name);

@@ -1586,6 +1586,68 @@ impl CgsCapabilityIndex {
     }
 }
 
+/// Binding for a parameter when executing one [`ViewNodeSpec`] step (`domain.yaml` under `views:`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ViewParamBinding {
+    /// Take from the view invocation scope (typically populated from the outer query predicate).
+    Scope { param: String },
+    /// Inline JSON value wired into the backing capability env / predicate.
+    Literal { value: serde_json::Value },
+}
+
+/// One DAG node in a composed [`ViewDefinition`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ViewNodeSpec {
+    pub id: String,
+    pub capability: String,
+    #[serde(default)]
+    pub bind: IndexMap<String, ViewParamBinding>,
+}
+
+/// Maps a field on the view's output [`EntityName`] to scope data or a prior node's rows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ViewOutputBinding {
+    Scope {
+        param: String,
+    },
+    NodeRowCount {
+        node: String,
+    },
+    NodeField {
+        node: String,
+        field: String,
+    },
+    /// JSON object mapping distinct `field` values to occurrence counts across node rows.
+    NodeFieldHistogramJson {
+        node: String,
+        field: String,
+    },
+}
+
+/// Declared scope slot for a view (documentation + validation hooks).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ViewScopeParam {
+    pub name: String,
+    #[serde(default)]
+    pub value_ref: Option<String>,
+}
+
+/// Declarative read-only composition plan (`views:` in `domain.yaml`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ViewDefinition {
+    pub description: String,
+    /// Capability id implementing this view (`transport: view` in `mappings.yaml`).
+    pub capability: String,
+    pub entity: EntityName,
+    #[serde(default)]
+    pub scope: Vec<ViewScopeParam>,
+    pub nodes: Vec<ViewNodeSpec>,
+    #[serde(default)]
+    pub output: IndexMap<String, ViewOutputBinding>,
+}
+
 /// Default HTTP origin when constructing an empty [`CGS`] in tests or programmatically.
 pub const DEFAULT_HTTP_BACKEND: &str = "http://localhost:1080";
 
@@ -1611,6 +1673,9 @@ pub struct CGS {
     /// Monotonic distribution version for this catalog entry (`0` when omitted in plain file schemas).
     #[serde(default)]
     pub version: u64,
+    /// Composed read models (`views:`), executed by the runtime without dedicated HTTP mappings.
+    #[serde(default, skip_serializing_if = "views_map_is_empty")]
+    pub views: IndexMap<String, ViewDefinition>,
     /// Lazily built index for [`Self::find_capabilities`] / [`Self::find_capability`].
     #[serde(skip, default = "new_capability_index_lock")]
     capability_index: OnceLock<Arc<CgsCapabilityIndex>>,
@@ -1627,6 +1692,10 @@ fn new_capability_names_by_domain_lock() -> OnceLock<Arc<IndexMap<String, Vec<Ca
     OnceLock::new()
 }
 
+fn views_map_is_empty(m: &IndexMap<String, ViewDefinition>) -> bool {
+    m.is_empty()
+}
+
 impl Clone for CGS {
     fn clone(&self) -> Self {
         Self {
@@ -1638,6 +1707,7 @@ impl Clone for CGS {
             oauth: self.oauth.clone(),
             entry_id: self.entry_id.clone(),
             version: self.version,
+            views: self.views.clone(),
             capability_index: OnceLock::new(),
             capability_names_by_domain: OnceLock::new(),
         }
@@ -1654,6 +1724,7 @@ impl PartialEq for CGS {
             && self.oauth == other.oauth
             && self.entry_id == other.entry_id
             && self.version == other.version
+            && self.views == other.views
     }
 }
 
@@ -1785,6 +1856,7 @@ impl CGS {
             oauth: None,
             entry_id: None,
             version: 0,
+            views: IndexMap::new(),
             capability_index: new_capability_index_lock(),
             capability_names_by_domain: new_capability_names_by_domain_lock(),
         }
@@ -1890,6 +1962,110 @@ impl CGS {
     /// Validate all cross-references in this schema (includes expression-teaching surface).
     pub fn validate(&self) -> Result<(), SchemaError> {
         self.validate_core()
+    }
+
+    fn validate_views(&self) -> Result<(), SchemaError> {
+        use std::collections::HashSet;
+        for (view_key, view) in &self.views {
+            let ent =
+                self.entities
+                    .get(&view.entity)
+                    .ok_or_else(|| SchemaError::ViewUnknownEntity {
+                        view: view_key.clone(),
+                        entity: view.entity.to_string(),
+                    })?;
+
+            let cap = self
+                .capabilities
+                .get(view.capability.as_str())
+                .ok_or_else(|| SchemaError::ViewCapabilityMissing {
+                    view: view_key.clone(),
+                    capability: view.capability.clone(),
+                })?;
+
+            if cap.domain != view.entity {
+                return Err(SchemaError::ViewCapabilityEntityMismatch {
+                    view: view_key.clone(),
+                    capability: view.capability.clone(),
+                    entity: view.entity.to_string(),
+                });
+            }
+
+            let template = &cap.mapping.template.0;
+            if template.get("transport").and_then(|x| x.as_str()) != Some("view") {
+                return Err(SchemaError::ViewCapabilityMappingInvalid {
+                    view: view_key.clone(),
+                    capability: view.capability.clone(),
+                    detail: "expected `transport: view` in mappings for this capability".into(),
+                });
+            }
+            if template.get("view").and_then(|x| x.as_str()) != Some(view_key.as_str()) {
+                return Err(SchemaError::ViewCapabilityMappingInvalid {
+                    view: view_key.clone(),
+                    capability: view.capability.clone(),
+                    detail: format!("expected `view: {view_key}` to match views map key"),
+                });
+            }
+
+            let mut seen_ids = HashSet::new();
+            for node in &view.nodes {
+                if !seen_ids.insert(node.id.as_str()) {
+                    return Err(SchemaError::ViewDuplicateNodeId {
+                        view: view_key.clone(),
+                        node: node.id.clone(),
+                    });
+                }
+                let nc = self
+                    .capabilities
+                    .get(node.capability.as_str())
+                    .ok_or_else(|| SchemaError::ViewUnknownNodeCapability {
+                        view: view_key.clone(),
+                        node: node.id.clone(),
+                        capability: node.capability.clone(),
+                    })?;
+                if nc.kind != CapabilityKind::Query && nc.kind != CapabilityKind::Get {
+                    return Err(SchemaError::ViewUnsupportedNodeCapabilityKind {
+                        view: view_key.clone(),
+                        node: node.id.clone(),
+                        capability: node.capability.clone(),
+                        kind: format!("{:?}", nc.kind),
+                    });
+                }
+            }
+
+            for (field_name, binding) in &view.output {
+                if !ent.fields.contains_key(field_name.as_str()) {
+                    return Err(SchemaError::ViewUnknownOutputField {
+                        view: view_key.clone(),
+                        field: field_name.clone(),
+                        entity: view.entity.to_string(),
+                    });
+                }
+                match binding {
+                    ViewOutputBinding::NodeRowCount { node } => {
+                        if !view.nodes.iter().any(|n| n.id == *node) {
+                            return Err(SchemaError::ViewOutputUnknownNode {
+                                view: view_key.clone(),
+                                field: field_name.clone(),
+                                node: node.clone(),
+                            });
+                        }
+                    }
+                    ViewOutputBinding::NodeField { node, .. }
+                    | ViewOutputBinding::NodeFieldHistogramJson { node, .. } => {
+                        if !view.nodes.iter().any(|n| n.id == *node) {
+                            return Err(SchemaError::ViewOutputUnknownNode {
+                                view: view_key.clone(),
+                                field: field_name.clone(),
+                                node: node.clone(),
+                            });
+                        }
+                    }
+                    ViewOutputBinding::Scope { .. } => {}
+                }
+            }
+        }
+        Ok(())
     }
 
     fn validate_core(&self) -> Result<(), SchemaError> {
@@ -2178,6 +2354,8 @@ impl CGS {
                 }
             }
         }
+
+        self.validate_views()?;
 
         crate::cgs_expression_validate::validate_cgs_expression_surface(self)?;
 

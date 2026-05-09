@@ -12,5 +12,5 @@ pub use cml::*;
 pub use error::CmlError;
 pub use transport::{
     compile_operation, parse_capability_template, template_pagination, template_var_names,
-    CapabilityTemplate, CompiledOperation,
+    CapabilityTemplate, CompiledOperation, ViewCompiled, ViewTemplate,
 };

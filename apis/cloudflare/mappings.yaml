@@ -1,4 +1,4 @@
-# Cloudflare REST API v4 — CML (Phase 1: zones, rulesets, WAF packages; extend mappings here).
+# Cloudflare REST API v4 — CML (Phase 1: zones, rulesets, legacy WAF packages query; extend mappings here).
 # Semantic model: domain.yaml. Base URL matches OpenAPI servers (client/v4 origin).
 #
 # Responses use the standard v4 envelope { success, errors, messages, result, result_info? }.
@@ -116,6 +116,10 @@ ruleset_entrypoint_update:
   response:
     items: result
     single: true
+
+security_overview_query:
+  transport: view
+  view: security_overview
 
 waf_package_query:
   method: GET

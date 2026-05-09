@@ -548,7 +548,9 @@ fn collect_template_string_bindings(
         CapabilityTemplate::Http(cml) | CapabilityTemplate::GraphQl(cml) => {
             path_var_names_from_request(cml)
         }
-        CapabilityTemplate::EvmCall(_) | CapabilityTemplate::EvmLogs(_) => Vec::new(),
+        CapabilityTemplate::View(_)
+        | CapabilityTemplate::EvmCall(_)
+        | CapabilityTemplate::EvmLogs(_) => Vec::new(),
     };
 
     if !http_path_vars.is_empty() {

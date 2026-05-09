@@ -368,6 +368,62 @@ pub enum SchemaError {
 
     #[error("auth.scheme `none` (no outbound credentials) cannot be combined with an `oauth:` extension")]
     AuthNoneIncompatibleWithOauthExtension,
+
+    #[error("View '{view}': unknown capability '{capability}' in node '{node}'")]
+    ViewUnknownNodeCapability {
+        view: String,
+        node: String,
+        capability: String,
+    },
+
+    #[error("View '{view}': duplicate node id '{node}'")]
+    ViewDuplicateNodeId { view: String, node: String },
+
+    #[error("View '{view}': output field '{field}' references unknown node '{node}'")]
+    ViewOutputUnknownNode {
+        view: String,
+        field: String,
+        node: String,
+    },
+
+    #[error(
+        "View '{view}': capability '{capability}' must target entity '{entity}' (declared view entity)"
+    )]
+    ViewCapabilityEntityMismatch {
+        view: String,
+        capability: String,
+        entity: String,
+    },
+
+    #[error("View '{view}': unknown output entity '{entity}'")]
+    ViewUnknownEntity { view: String, entity: String },
+
+    #[error("View '{view}': output field '{field}' is not declared on entity '{entity}'")]
+    ViewUnknownOutputField {
+        view: String,
+        field: String,
+        entity: String,
+    },
+
+    #[error("View '{view}': declares capability '{capability}' but it is not defined")]
+    ViewCapabilityMissing { view: String, capability: String },
+
+    #[error("View '{view}': capability '{capability}' mapping invalid for views: {detail}")]
+    ViewCapabilityMappingInvalid {
+        view: String,
+        capability: String,
+        detail: String,
+    },
+
+    #[error(
+        "View '{view}': node '{node}' capability '{capability}' must be Query or Get (got {kind})"
+    )]
+    ViewUnsupportedNodeCapabilityKind {
+        view: String,
+        node: String,
+        capability: String,
+        kind: String,
+    },
 }
 
 #[derive(Error, Debug, Clone)]

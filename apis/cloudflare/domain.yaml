@@ -1,9 +1,9 @@
-version: 4
+version: 6
 http_backend: https://api.cloudflare.com/client/v4
 entities:
   Zone:
     id_field: id
-    description: A Cloudflare zone (site) the account can manage.
+    description: 'A Cloudflare zone (site) the account can manage. Agent playbook — treat **`rulesets`** as the default security/WAF hub: traverse **`Zone → rulesets`** for Ruleset Engine inventory. Prefer **`ruleset_get`** with ids from that list before phase shortcuts. Legacy **`waf_package_query`** is **not** on the default zone graph (seed **`WafPackage`** explicitly when auditing the old packages API).'
     fields:
       id:
         required: true
@@ -24,17 +24,19 @@ entities:
       rulesets:
         target: Ruleset
         cardinality: many
+        discovery:
+          qualifier_terms:
+          - rulesets
+          - ruleset engine
+          - waf
+          - firewall
+          - managed rules
+          - cloudflare waf
+          - phase rulesets
+          traversal_weight: 1.2
         materialize:
           kind: query_scoped_bindings
           capability: ruleset_query
-          bindings:
-            zone_id: id
-      waf_packages:
-        target: WafPackage
-        cardinality: many
-        materialize:
-          kind: query_scoped_bindings
-          capability: waf_package_query
           bindings:
             zone_id: id
   Ruleset:
@@ -42,7 +44,7 @@ entities:
     key_vars:
     - zone_id
     - ruleset_id
-    description: Rules that control traffic handling for a Cloudflare zone.
+    description: 'Rules that control traffic handling for a Cloudflare zone (**Ruleset Engine**). **`ruleset_query`** returns a **mixed** inventory (**managed**, **zone**, **root**, etc.). Rows with **`kind: zone`** are the phase entrypoint rulesets attached to the zone. For inspection, prefer **`ruleset_get`** using **`ruleset_id`** from the list—do **not** assume a **`RulesetEntrypoint`** row exists just because managed rulesets appear in the list.'
     fields:
       zone_id:
         required: true
@@ -77,7 +79,7 @@ entities:
     key_vars:
     - zone_id
     - ruleset_phase
-    description: Managed entrypoint ruleset for one execution phase on a zone (DDoS L7, managed WAF, rate limits, etc.).
+    description: 'Managed entrypoint ruleset for one execution phase on a zone (**Ruleset Engine** — DDoS L7, managed WAF, rate limits, etc.). Use **`ruleset_entrypoint_get`** when you already know the **`ruleset_phase`** string. **HTTP 404** or Cloudflare error **10003** is **normal** when that phase has **no provisioned entrypoint** yet—absence does **not** mean the zone has no WAF; reconcile against **`ruleset_query`** / **`ruleset_get`** first.'
     fields:
       zone_id:
         required: true
@@ -107,10 +109,11 @@ entities:
         required: false
         value_ref: nv_wire_date_rfc3339
   WafPackage:
+    abstract: true
     id_field: id
     key_vars:
     - zone_id
-    description: A WAF package offered for a zone (OWASP Core Ruleset, Cloudflare managed rules, etc.).
+    description: '**Legacy** WAF package rows from **`GET /zones/{zone_id}/firewall/waf/packages`** only (pre–Ruleset Engine managed-rules packaging). Modern managed WAF is **`ruleset_query`** / **`ruleset_get`**. Empty lists on newer zones are **expected**. **Abstract** in CGS — **no** default **`Zone`** relation; call **`waf_package_query`** only when **`WafPackage`** is explicitly seeded or for migration/audit.'
     fields:
       zone_id:
         required: true
@@ -127,6 +130,28 @@ entities:
       detection_mode:
         required: false
         value_ref: nv_wire_str_short
+  SecurityOverview:
+    abstract: true
+    id_field: zone_id
+    key_vars:
+    - zone_id
+    description: 'Composed zone security read model (**rulesets** + legacy **WAF packages**). **Abstract** — seed **`SecurityOverview`** explicitly; runs via **`security_overview_query`** (`transport: view`), not a single Cloudflare endpoint.'
+    fields:
+      zone_id:
+        required: true
+        value_ref: nv_cloudflare_zone_id
+      zone_name:
+        required: false
+        value_ref: nv_wire_str_short
+      ruleset_count:
+        required: false
+        value_ref: nv_wire_int
+      legacy_waf_package_count:
+        required: false
+        value_ref: nv_wire_int
+      ruleset_kind_counts_json:
+        required: false
+        value_ref: nv_cf_security_overview_ruleset_hist_json
 capabilities:
   zone_query:
     kind: query
@@ -170,7 +195,17 @@ capabilities:
   ruleset_query:
     kind: query
     entity: Ruleset
-    description: Rulesets scoped to one zone.
+    description: List Ruleset Engine rulesets for one zone (mixed **managed** / **zone** / **root** inventory — primary hub after **`Zone`**).
+    discovery:
+      operation_terms:
+      - list
+      - enumerate
+      - inventory
+      target_terms:
+      - rulesets
+      - zone rulesets
+      - ruleset engine
+      - firewall rulesets
     parameters:
     - name: zone_id
       value_ref: nv_cloudflare_zone_id
@@ -183,7 +218,17 @@ capabilities:
   ruleset_get:
     kind: get
     entity: Ruleset
-    description: One ruleset for a zone by identifier.
+    description: Fetch one ruleset by **`ruleset_id`** for a zone — **preferred** detail path; use ids from **`ruleset_query`** before relying on phase entrypoint shortcuts.
+    discovery:
+      operation_terms:
+      - get
+      - fetch
+      - load
+      - inspect
+      target_terms:
+      - ruleset by id
+      - ruleset detail
+      - single ruleset
     parameters:
     - name: zone_id
       value_ref: nv_cloudflare_zone_id
@@ -205,7 +250,16 @@ capabilities:
   ruleset_entrypoint_get:
     kind: get
     entity: RulesetEntrypoint
-    description: Get the managed entrypoint ruleset for a phase (DDoS L7, managed WAF, custom rules, etc.).
+    description: Get the managed **phase entrypoint** ruleset when you already know **`ruleset_phase`**. **404 / 10003** when the phase entrypoint is **not provisioned** is normal — not equivalent to “ruleset list empty”.
+    discovery:
+      operation_terms:
+      - entrypoint
+      - phase entrypoint
+      - get by phase
+      target_terms:
+      - managed phase ruleset
+      - phase ruleset
+      - rulesets phases entrypoint
     parameters:
     - name: zone_id
       value_ref: nv_cloudflare_zone_id
@@ -228,7 +282,7 @@ capabilities:
   ruleset_entrypoint_update:
     kind: action
     entity: RulesetEntrypoint
-    description: Replace the managed entrypoint ruleset for one execution phase on a zone.
+    description: Replace the managed entrypoint ruleset for one execution phase on a zone (**Ruleset Engine** write — requires **Zone WAF Edit**).
     parameters:
     - name: zone_id
       value_ref: nv_cloudflare_zone_id
@@ -247,7 +301,16 @@ capabilities:
   waf_package_query:
     kind: query
     entity: WafPackage
-    description: List WAF packages available for a zone.
+    description: List **legacy** firewall WAF **packages** for a zone (old **`…/firewall/waf/packages`** API — **not** Ruleset Engine). Usually empty on modern zones; use only when **`WafPackage`** is explicitly in context.
+    discovery:
+      operation_terms:
+      - list legacy packages
+      - legacy waf packages
+      - firewall packages api
+      target_terms:
+      - waf packages endpoint
+      - old managed rules packages
+      - pre ruleset engine waf
     parameters:
     - name: zone_id
       value_ref: nv_cloudflare_zone_id
@@ -261,6 +324,68 @@ capabilities:
       value_ref: nv_wire_int
       required: false
       role: response_control
+  security_overview_query:
+    kind: query
+    entity: SecurityOverview
+    description: Composed read — zone row, Ruleset Engine inventory counts, **`kind`** histogram, and legacy **`waf_package_query`** totals (**explicit `SecurityOverview` seed only**).
+    discovery:
+      operation_terms:
+      - security overview
+      - firewall summary
+      - waf summary
+      target_terms:
+      - zone security overview
+      - composed rulesets summary
+    parameters:
+    - name: zone_id
+      value_ref: nv_cloudflare_zone_id
+      required: true
+      role: scope
+views:
+  security_overview:
+    description: Aggregate zone_get + ruleset_query + legacy waf_package_query into one synthetic row.
+    capability: security_overview_query
+    entity: SecurityOverview
+    scope:
+    - name: zone_id
+      value_ref: nv_cloudflare_zone_id
+    nodes:
+    - id: zone_row
+      capability: zone_get
+      bind:
+        zone_id:
+          kind: scope
+          param: zone_id
+    - id: rulesets
+      capability: ruleset_query
+      bind:
+        zone_id:
+          kind: scope
+          param: zone_id
+    - id: legacy_packages
+      capability: waf_package_query
+      bind:
+        zone_id:
+          kind: scope
+          param: zone_id
+    output:
+      zone_id:
+        kind: scope
+        param: zone_id
+      zone_name:
+        kind: node_field
+        node: zone_row
+        field: name
+      ruleset_count:
+        kind: node_row_count
+        node: rulesets
+      legacy_waf_package_count:
+        kind: node_row_count
+        node: legacy_packages
+      ruleset_kind_counts_json:
+        kind: node_field_histogram_json
+        node: rulesets
+        field: kind
 oauth:
   provider: cloudflare
   scopes:
@@ -282,7 +407,7 @@ oauth:
       docs_url: https://developers.cloudflare.com/fundamentals/api/reference/permissions/
   default_scope_sets:
     plasm_cloudflare_demo_readonly:
-      description: Demo read bundle — zones plus zone WAF read (list zones, inspect rulesets/WAF packages; no entrypoint writes).
+      description: Demo read bundle — zones plus zone WAF read (list zones, **`Zone → rulesets`** hub; legacy **`waf_package_query`** needs explicit **`WafPackage`** seed; no entrypoint writes).
       scopes:
       - cloudflare.zone.read
       - cloudflare.zone.waf.read
@@ -324,6 +449,12 @@ oauth:
           - cloudflare.zone.read
         - any_of:
           - cloudflare.zone.waf.read
+      security_overview_query:
+        all_of:
+        - any_of:
+          - cloudflare.zone.read
+        - any_of:
+          - cloudflare.zone.waf.read
       ruleset_entrypoint_update:
         all_of:
         - any_of:
@@ -335,6 +466,9 @@ auth:
   scheme: bearer_token
   env: CLOUDFLARE_API_TOKEN
 values:
+  nv_cf_security_overview_ruleset_hist_json:
+    type: json
+    description: Ruleset `kind` value histogram for SecurityOverview rows.
   nv_ruleset_entrypoint_update_input:
     type: json
     description: Full ruleset payload for the phase entrypoint update.

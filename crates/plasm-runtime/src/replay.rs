@@ -172,6 +172,10 @@ impl RequestFingerprint {
                 hasher.update(normalize_serde_for_fingerprint(&request.to_block).as_bytes());
                 hasher.update(normalize_serde_for_fingerprint(&request.decode).as_bytes());
             }
+            CompiledOperation::View(view) => {
+                hasher.update(b"view");
+                hasher.update(view.view.as_bytes());
+            }
         }
 
         RequestFingerprint(*hasher.finalize().as_bytes())

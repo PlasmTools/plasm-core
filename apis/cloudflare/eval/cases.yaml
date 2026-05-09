@@ -49,9 +49,9 @@
 
 - id: cf-edge-07
   schema: cloudflare
-  goal: "From a zone, list WAF packages to compare OWASP vs managed offerings"
-  tags: [query, relation]
-  covers: [query_filtered, chain, projection]
+  goal: "Audit legacy zone WAF packages with waf_package_query after seeding WafPackage (old firewall packages API, not Ruleset Engine)"
+  tags: [query]
+  covers: [query_filtered, projection]
   expect:
     entities_any: [WafPackage]
 
