@@ -7,7 +7,7 @@ Before creating or changing an API catalog, read:
 - [AGENTS.md](AGENTS.md)
 - [.cursor/skills/plasm-authoring/SKILL.md](.cursor/skills/plasm-authoring/SKILL.md)
 - [.cursor/skills/plasm-authoring/reference.md](.cursor/skills/plasm-authoring/reference.md)
-- [.cursor/agents/plasm-api-mapping-designer.md](.cursor/agents/plasm-api-mapping-designer.md)
+- [.cursor/agents/plasm-forge.md](.cursor/agents/plasm-forge.md)
 
 Use these companion skills for follow-on work:
 

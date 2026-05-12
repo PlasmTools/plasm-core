@@ -49,7 +49,7 @@ Short ideas worth tracking; expand into separate sections when a line of work st
 
 ## 3. How this ties to authoring
 
-When extending CGS, keep **domain.yaml** as semantic truth and **mappings.yaml** as transport; prompt-only data should stay **optional** and **downgrade gracefully** to current behavior when absent (per [plasm authoring skill](../.cursor/skills/plasm-authoring/SKILL.md)).
+When extending CGS, keep **domain.yaml** as semantic truth and **mappings.yaml** as transport; prompt-only data should stay **optional** and **downgrade gracefully** to current behavior when absent (per [plasm forge skill](../.cursor/skills/plasm-forge/SKILL.md)).
 
 ---
 

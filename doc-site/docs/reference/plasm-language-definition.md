@@ -2,7 +2,7 @@
 
 This document is the **canonical specification** of the user-facing Plasm surface language: path expressions, multi-line programs (bindings, postfix transforms, roots), structured values and heredocs, row-to-text templates, and the **CGS load-time rules** for structured capability inputs. It aligns with the reference implementation in **`plasm_core::expr_parser`** and with program lowering in **`plasm-agent-core`** (Plan/DAG).
 
-For API authoring (YAML catalogs, transport), use the OSS documentation **Connect an API → Reference**, or in the Plasm monorepo the skill file `.cursor/skills/plasm-authoring/reference.md` (repository root–relative).
+For API authoring (YAML catalogs, transport), use the OSS documentation **Connect an API → Reference**, or in the Plasm monorepo the skill file `.cursor/skills/plasm-forge/reference.md` (repository root–relative).
 
 ---
 

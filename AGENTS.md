@@ -13,7 +13,7 @@ This repository contains the OSS Plasm compiler/runtime workspace and curated AP
 - [.cursor/skills/plasm-catalog-score/SKILL.md](.cursor/skills/plasm-catalog-score/SKILL.md) — rubric scorecard.
 - [.cursor/skills/plasm-catalog-reprint/SKILL.md](.cursor/skills/plasm-catalog-reprint/SKILL.md) — full-cutover regeneration of weak catalogs.
 - [.cursor/skills/plasm-catalog-retro/SKILL.md](.cursor/skills/plasm-catalog-retro/SKILL.md) — post-authoring retrospective.
-- [.cursor/agents/plasm-api-mapping-designer.md](.cursor/agents/plasm-api-mapping-designer.md) — Cursor agent that drives the loop autonomously.
+- [.cursor/agents/plasm-forge.md](.cursor/agents/plasm-forge.md) — Cursor agent (**Plasm forge**) that drives the loop autonomously.
 
 API authoring is semi-autonomous. Agents may read specs, design entities, edit YAML, run validation, test against mocks and sandboxes, and add eval cases, but `domain.yaml` is a semantic CGS model, not a deterministic OpenAPI dump.
 

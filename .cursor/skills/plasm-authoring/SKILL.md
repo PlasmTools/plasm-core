@@ -25,7 +25,7 @@ This skill is the authoring core. Use these companion skills for follow-on work:
 - [plasm-catalog-reprint](../plasm-catalog-reprint/SKILL.md) — full-cutover regeneration of a weak catalog.
 - [plasm-catalog-retro](../plasm-catalog-retro/SKILL.md) — post-authoring retrospective for systemic press improvements.
 
-The companion Cursor agent at [`.cursor/agents/plasm-api-mapping-designer.md`](../../agents/plasm-api-mapping-designer.md) wraps this skill for autonomous catalog runs.
+The companion Cursor agent at [`.cursor/agents/plasm-forge.md`](../../agents/plasm-forge.md) wraps this skill for autonomous catalog runs.
 
 ## Domain authoring is not deterministic
 

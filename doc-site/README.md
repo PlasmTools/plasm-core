@@ -23,7 +23,7 @@ Org-owned repos: confirm **Pages** is enabled under organization policy and that
 
 Sources under `docs/` are **allowlisted**. Maintainer workflow:
 
-1. Edit canonical markdown under the **private monorepo** `docs/` and `.cursor/skills/plasm-authoring/` as needed.
+1. Edit canonical markdown under the **private monorepo** `docs/` and `.cursor/skills/plasm-forge/` as needed.
 2. Run **`python scripts/sync_allowlisted_docs.py`** from `doc-site/` with monorepo root containing sibling `docs/` (paths adjusted in the script).
 3. Commit updates under **`doc-site/docs/`** so the OSS repo stays self-contained for CI.
 
