@@ -27,7 +27,7 @@ use crate::terminal_session::ClientSymbolSession;
 use crate::terminal_state::{
     format_qualified_capabilities, merge_and_write_latest_discovery, mint_client_session_id,
     read_current_session_pointer, resolve_capability_seeds, resolve_current_session,
-    write_current_session_pointer, write_session_file,
+    write_current_session_pointer, write_language_frontmatter_markdown, write_session_file,
     ExecutionBinding,
 };
 
@@ -214,8 +214,15 @@ fn run_init(
     }
     let path = profile_path(profile_name);
     save_profile(profile_name, profile)?;
+    let grammar_path = write_language_frontmatter_markdown(
+        &plasm_core::prompt_render::render_plasm_mcp_language_frontmatter(),
+    )?;
     println!("configured {}", path.display());
-    println!("  server: {}", profile.server.as_deref().unwrap_or("(none)"));
+    println!("  grammar: {}", grammar_path.display());
+    println!(
+        "  server: {}",
+        profile.server.as_deref().unwrap_or("(none)")
+    );
     println!(
         "  api_key: {}",
         if profile.api_key.as_ref().is_some_and(|s| !s.is_empty()) {
@@ -226,11 +233,7 @@ fn run_init(
     );
     println!(
         "  bearer_token: {}",
-        if profile
-            .bearer_token
-            .as_ref()
-            .is_some_and(|s| !s.is_empty())
-        {
+        if profile.bearer_token.as_ref().is_some_and(|s| !s.is_empty()) {
             "set"
         } else {
             "unset"
@@ -382,7 +385,10 @@ async fn http_post_context(
     Ok(())
 }
 
-fn context_seeds_after_open(seeds: &[CapabilitySeed], primary_entry_id: &str) -> Vec<CapabilitySeed> {
+fn context_seeds_after_open(
+    seeds: &[CapabilitySeed],
+    primary_entry_id: &str,
+) -> Vec<CapabilitySeed> {
     seeds
         .iter()
         .filter(|s| s.entry_id != primary_entry_id)
@@ -490,7 +496,9 @@ async fn run_context_command(
     let mut sym = if new_session {
         let id = mint_client_session_id();
         let intent = resolved_intent.clone().ok_or_else(|| {
-            anyhow!("context: pass an intent string as the first argument, or run `plasm search` first")
+            anyhow!(
+                "context: pass an intent string as the first argument, or run `plasm search` first"
+            )
         })?;
         ClientSymbolSession::new(id, intent)
     } else if let Some(id) = read_current_session_pointer(server)? {
@@ -498,7 +506,9 @@ async fn run_context_command(
     } else {
         let id = mint_client_session_id();
         let intent = resolved_intent.clone().ok_or_else(|| {
-            anyhow!("context: pass an intent string as the first argument, or run `plasm search` first")
+            anyhow!(
+                "context: pass an intent string as the first argument, or run `plasm search` first"
+            )
         })?;
         ClientSymbolSession::new(id, intent)
     };
@@ -508,7 +518,11 @@ async fn run_context_command(
     }
 
     let prof_ref = TerminalProfileRef::new(profile);
-    for api in seeds.iter().map(|s| s.entry_id.as_str()).collect::<std::collections::HashSet<_>>() {
+    for api in seeds
+        .iter()
+        .map(|s| s.entry_id.as_str())
+        .collect::<std::collections::HashSet<_>>()
+    {
         sym.ensure_catalog(client, server, &prof_ref, api).await?;
     }
 
@@ -534,10 +548,7 @@ async fn run_context_command(
 }
 
 fn extract_run_id_from_response(headers: &HeaderMap, body: &[u8]) -> Option<String> {
-    if let Some(rid) = headers
-        .get("x-plasm-run-id")
-        .and_then(|v| v.to_str().ok())
-    {
+    if let Some(rid) = headers.get("x-plasm-run-id").and_then(|v| v.to_str().ok()) {
         return Some(rid.to_string());
     }
     let v: serde_json::Value = serde_json::from_slice(body).ok()?;
@@ -583,8 +594,8 @@ async fn mirror_run_snapshot(
     let text = serde_json::to_string_pretty(&serde_json::from_slice::<serde_json::Value>(&body)?)
         .unwrap_or_else(|_| String::from_utf8_lossy(&body).into_owned());
     std::fs::write(&snap, &text)?;
-    let latest = crate::terminal_state::client_session_dir(server, client_session_id)
-        .join("latest_run.txt");
+    let latest =
+        crate::terminal_state::client_session_dir(server, client_session_id).join("latest_run.txt");
     std::fs::write(latest, format!("runs/{run_id}/snapshot.txt\n"))?;
     Ok(snap)
 }
@@ -699,8 +710,7 @@ pub async fn run_terminal() -> Result<()> {
                 std::process::exit(1);
             }
             let md = String::from_utf8_lossy(&body);
-            let disc =
-                crate::terminal_state::discovery_from_search_markdown(&md, &utterance)?;
+            let disc = crate::terminal_state::discovery_from_search_markdown(&md, &utterance)?;
             let path = merge_and_write_latest_discovery(&server, &disc)?;
             eprintln!("discovery cache: {}", path.display());
             std::io::stdout().write_all(&body)?;
@@ -730,11 +740,7 @@ pub async fn run_terminal() -> Result<()> {
             )
             .await
         }
-        Cmd::Run {
-            mode,
-            accept,
-            file,
-        } => {
+        Cmd::Run { mode, accept, file } => {
             let server = require_configured_server(&profile)?;
             let meta = resolve_current_session(&server)?;
             let mut sym = ClientSymbolSession::load_from_disk(&server, &meta.client_session_id)?;
@@ -742,14 +748,15 @@ pub async fn run_terminal() -> Result<()> {
             if body.is_empty() {
                 return Err(anyhow!("run: empty program (stdin or --file)"));
             }
-            let line = String::from_utf8(body).map_err(|_| anyhow!("run: program must be UTF-8"))?;
+            let line =
+                String::from_utf8(body).map_err(|_| anyhow!("run: program must be UTF-8"))?;
             let program = line.trim().to_string();
             let plan_json = sym
                 .compile_program_to_plan(&program)
                 .context("compile program to plan")?;
             parse_and_validate_plan_json(&plan_json).map_err(|e| anyhow!("plan: {e}"))?;
-            let plan_bytes = serde_json::to_vec_pretty(&plan_json)
-                .map_err(|e| anyhow!("plan json: {e}"))?;
+            let plan_bytes =
+                serde_json::to_vec_pretty(&plan_json).map_err(|e| anyhow!("plan json: {e}"))?;
             let _ = write_session_file(
                 server.as_str(),
                 &sym.client_session_id,
@@ -813,12 +820,8 @@ pub async fn run_terminal() -> Result<()> {
             } else {
                 "latest_result.txt"
             };
-            let mirror_resp = write_session_file(
-                server.as_str(),
-                &sym.client_session_id,
-                label,
-                &out,
-            )?;
+            let mirror_resp =
+                write_session_file(server.as_str(), &sym.client_session_id, label, &out)?;
             eprintln!("mirror: {}", mirror_resp.display());
             if !st.is_success() {
                 eprintln!("run: HTTP {}", st);

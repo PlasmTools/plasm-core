@@ -4,6 +4,9 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 fn plasm_exe() -> PathBuf {
+    if let Some(p) = option_env!("CARGO_BIN_EXE_plasm") {
+        return PathBuf::from(p);
+    }
     if let Some(p) = std::env::var_os("CARGO_BIN_EXE_plasm") {
         return PathBuf::from(p);
     }
@@ -78,6 +81,12 @@ fn plasm_init_writes_profile_and_search_uses_it() {
         std::fs::read_to_string(home.join(".plasm/cgs/profiles/default.json")).expect("profile");
     let v: Value = serde_json::from_str(&prof_raw).expect("json");
     assert_eq!(v["server"], "http://127.0.0.1:9");
+    let grammar_raw =
+        std::fs::read_to_string(home.join(".plasm/cgs/plasm_grammar.md")).expect("grammar");
+    assert!(grammar_raw.contains("# Plasm Grammar"));
+    let expected_frontmatter = plasm_core::prompt_render::render_plasm_mcp_language_frontmatter();
+    let expected_block = format!("```text\n{}\n```", expected_frontmatter.trim());
+    assert!(grammar_raw.contains(&expected_block));
 
     let search = std::process::Command::new(&exe)
         .env("HOME", home)
@@ -111,6 +120,7 @@ fn plasm_init_default_server_without_flag() {
     )
     .unwrap();
     assert_eq!(v["server"], "http://127.0.0.1:3000");
+    assert!(home.join(".plasm/cgs/plasm_grammar.md").exists());
 }
 
 #[test]
