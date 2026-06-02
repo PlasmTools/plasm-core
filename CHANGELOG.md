@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.67] - 2026-06-02
+
+### Fixed
+
+- **OSS release (macOS):** Circle `oss_binaries_macos` no longer deletes downloaded release tarballs before computing `SHA256SUMS` (fixes post-upload checksum failure on retagged releases).
+
 ## [0.1.66] - 2026-06-01
 
 ### Fixed
