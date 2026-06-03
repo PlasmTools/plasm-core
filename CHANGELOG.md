@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.68] - 2026-05-30
+
+### Added
+
+- **Row compute:** `.filter{…}` / `.filter(…)` on materialized bindings; `group_by(key)` sugar (`count=count`) and multi-key `group_by`; plan lowering to `ComputeOp::Filter` / expanded `GroupBy` keys; matrix + MCP prompt coverage.
+- **Federation P0:** `catalog_entry_id` on surface IR through typecheck/plan; ambiguous bare entity names fail closed across federated catalogs.
+
+### Fixed
+
+- **Plan relations:** chained `from_parent_get` hops (e.g. `summary.detail`) materialize nested JSON from parent rows instead of HTTP GET on non-existent summary/detail routes.
+- **Language matrix (live):** `run_markdown` expectations match MCP fenced TSV output; row-filter fixtures use stable Hermit `owner` values.
+
 ## [0.1.67] - 2026-06-02
 
 ### Fixed

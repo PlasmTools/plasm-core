@@ -788,7 +788,8 @@ pub enum ComputeOp {
         predicates: Vec<PlanPredicate>,
     },
     GroupBy {
-        key: FieldPath,
+        #[serde(alias = "key", deserialize_with = "deserialize_group_by_keys")]
+        keys: Vec<FieldPath>,
         aggregates: Vec<AggregateSpec>,
     },
     Aggregate {
@@ -2260,6 +2261,46 @@ pub fn validate_plan_value(plan: &serde_json::Value) -> Result<(), String> {
     validate_plan(&plan)
 }
 
+fn deserialize_group_by_keys<'de, D>(deserializer: D) -> Result<Vec<FieldPath>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let v = serde_json::Value::deserialize(deserializer)?;
+    match v {
+        serde_json::Value::String(s) => FieldPath::from_dotted(s.as_str()).map(|k| vec![k]).map_err(D::Error::custom),
+        serde_json::Value::Array(items) => {
+            let mut keys = Vec::with_capacity(items.len());
+            for item in items {
+                match item {
+                    serde_json::Value::String(s) => {
+                        keys.push(FieldPath::from_dotted(s.as_str()).map_err(D::Error::custom)?);
+                    }
+                    serde_json::Value::Array(segs) => {
+                        let parts: Vec<String> = segs
+                            .iter()
+                            .filter_map(|x| x.as_str().map(str::to_string))
+                            .collect();
+                        keys.push(FieldPath::new(parts).map_err(D::Error::custom)?);
+                    }
+                    other => {
+                        return Err(D::Error::custom(format!(
+                            "group_by key entry must be string or path array, got {other}"
+                        )));
+                    }
+                }
+            }
+            if keys.is_empty() {
+                return Err(D::Error::custom("group_by requires at least one key"));
+            }
+            Ok(keys)
+        }
+        other => Err(D::Error::custom(format!(
+            "group_by keys must be a string or array, got {other}"
+        ))),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2752,7 +2793,7 @@ mod tests {
                 "result_shape": "list",
                 "compute": {
                     "source": "missing",
-                    "op": { "kind": "group_by", "key": ["state"], "aggregates": [{ "name": "count", "function": "count" }] },
+                    "op": { "kind": "group_by", "keys": ["state"], "aggregates": [{ "name": "count", "function": "count" }] },
                     "schema": { "fields": [{ "name": "key", "value_kind": "string" }, { "name": "count", "value_kind": "integer" }] }
                 }
             }],

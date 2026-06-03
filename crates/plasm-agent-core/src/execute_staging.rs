@@ -123,6 +123,7 @@ mod tests {
             expr: Expr::Get(GetExpr {
                 reference: Ref::new("Pet", "1"),
                 path_vars: None,
+                catalog_entry_id: None,
             }),
             projection: None,
         };
@@ -193,6 +194,7 @@ mod property_tests {
                         expr: Expr::Get(GetExpr {
                             reference: Ref::new("Pet", "1"),
                             path_vars: None,
+                            catalog_entry_id: None,
                         }),
                         projection: None,
                     },

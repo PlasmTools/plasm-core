@@ -75,7 +75,16 @@ impl FederationDispatch {
         let mut entity_to_entry: HashMap<String, String> = HashMap::new();
         for (i, ent) in exposure.entities.iter().enumerate() {
             if let Some(eid) = exposure.entity_catalog_entry_ids.get(i) {
-                entity_to_entry.insert(ent.clone(), eid.clone());
+                match entity_to_entry.entry(ent.clone()) {
+                    std::collections::hash_map::Entry::Vacant(v) => {
+                        v.insert(eid.clone());
+                    }
+                    std::collections::hash_map::Entry::Occupied(mut o) => {
+                        if o.get() != eid {
+                            o.remove();
+                        }
+                    }
+                }
             }
         }
         Self {
@@ -280,5 +289,25 @@ mod tests {
             .resolve_entity("LangSummary", hint, primary.as_ref())
             .expect("plan qe routes to pokeapi catalog");
         assert!(std::ptr::eq(cgs, secondary.as_ref()));
+    }
+
+    #[test]
+    fn from_exposure_drops_ambiguous_bare_entity_name() {
+        let cgs = matrix_cgs();
+        let mut by_entry = IndexMap::new();
+        by_entry.insert(
+            "github".into(),
+            Arc::new(CgsContext::entry("github", cgs.clone())),
+        );
+        by_entry.insert(
+            "linear".into(),
+            Arc::new(CgsContext::entry("linear", cgs.clone())),
+        );
+        let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
+        let mut exp = DomainExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+        exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
+        let fed = FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
+        assert!(fed.cgs_for_entity("LangItem").is_none());
+        assert!(fed.qualified_entity_for_exposed_entity("LangItem").is_none());
     }
 }

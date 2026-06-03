@@ -37,13 +37,17 @@ use crate::plasm_plan::{
     OutputName, Plan, PlanExprTemplate, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue,
     QualifiedEntityKey, ValidatedDeriveNode, ValidatedForEachNode, ValidatedPlan,
     ValidatedPlanDataInput, ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanReturn,
-    ValidatedPlanState, ValidatedSurfaceNode, PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
+    ValidatedPlanState, ValidatedRelationTraversalNode, ValidatedSurfaceNode,
+    PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
 };
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::{CodePlanRunArtifactRef, McpPlasmTraceSink};
 use crate::trace_sink_emit::PlasmTraceContext;
 use indexmap::IndexMap;
-use plasm_core::{CapabilityKind, EntityKey, EntityName, Expr, Ref, TypedFieldValue, Value};
+use plasm_core::{
+    CapabilityKind, Cardinality, EntityKey, EntityName, Expr, JsonPathSegment,
+    RelationMaterialization, Ref, TypedFieldValue, Value,
+};
 use plasm_runtime::{
     CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
 };
@@ -423,6 +427,13 @@ fn propagate_row_identities(
     match op {
         ComputeOp::Limit { count } => Ok(mat.row_identities.iter().take(*count).cloned().collect()),
         ComputeOp::Project { .. } => Ok(mat.row_identities.iter().take(out_len).cloned().collect()),
+        ComputeOp::Filter { predicates } => Ok(mat
+            .row_identities
+            .iter()
+            .zip(mat.rows.iter())
+            .filter(|(_, row)| predicates.iter().all(|p| predicate_matches(row, p)))
+            .map(|(id, _)| id.clone())
+            .collect()),
         _ => Ok(vec![None; out_len]),
     }
 }
@@ -1044,11 +1055,15 @@ fn render_compute_template(compute: &ComputeTemplate) -> String {
                 .join(", ");
             format!("filter {} where {predicates}", compute.source)
         }
-        ComputeOp::GroupBy { key, aggregates } => {
+        ComputeOp::GroupBy { keys, aggregates } => {
+            let key_list = keys
+                .iter()
+                .map(|k| k.dotted())
+                .collect::<Vec<_>>()
+                .join(", ");
             format!(
-                "group_by {} key={} -> {{{}}}",
+                "group_by {} keys=[{key_list}] -> {{{}}}",
                 compute.source,
-                key.dotted(),
                 render_aggregates(aggregates)
             )
         }
@@ -2090,51 +2105,78 @@ async fn run_validated_plan_phased(
                 .await?
             }
             ValidatedPlanNode::RelationTraversal(relation) => {
-                let _ = materialized_rows(&materialized, &relation.relation.source)?;
-                let pe = ParsedExpr {
-                    expr: relation.relation.ir.expr.clone(),
-                    projection: relation.relation.ir.projection.clone(),
-                };
-                let parsed =
-                    instantiate_parsed_expr_plan_inputs(pe, &relation.uses_result, &materialized)?;
-                let expr_label = relation
-                    .relation
-                    .ir
-                    .display_expr
-                    .as_deref()
-                    .unwrap_or("<ir>");
-                let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
-                let (parsed, result, artifact) = execute_plasm_parsed_expr(
+                let source_mat = materialized
+                    .get(&relation.relation.source)
+                    .ok_or_else(|| {
+                        format!(
+                            "relation source node {:?} has not been materialized",
+                            relation.relation.source.as_str()
+                        )
+                    })?;
+                let source_rows = source_mat.rows.clone();
+                if let Some(mat) = try_materialize_from_parent_get_relation(
                     st,
-                    &scoped_es,
+                    es,
                     session_id,
-                    expr_label,
-                    parsed,
+                    node,
+                    relation,
+                    source_mat,
+                    &source_rows,
                     trace.as_ref(),
-                    idx as i64,
                 )
-                .await?;
-                if let Some(sink) = sink.as_ref() {
-                    trace_record_plasm_line(sink, idx, expr_label, &parsed, &result, &scoped_es)
-                        .await;
-                }
-                MaterializedNode {
-                    entry_id: relation.relation.target.entry_id.clone(),
-                    entity: relation.relation.target.entity.clone(),
-                    display: crate::expr_display::expr_display(&parsed.expr),
-                    projection: parsed.projection,
-                    rows: result
-                        .entities
-                        .iter()
-                        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-                        .collect(),
-                    row_identities: row_identities_from_entities(
+                .await?
+                {
+                    mat
+                } else {
+                    let pe = ParsedExpr {
+                        expr: relation.relation.ir.expr.clone(),
+                        projection: relation.relation.ir.projection.clone(),
+                    };
+                    let parsed = instantiate_parsed_expr_plan_inputs(
+                        pe,
+                        &relation.uses_result,
+                        &materialized,
+                    )?;
+                    let expr_label = relation
+                        .relation
+                        .ir
+                        .display_expr
+                        .as_deref()
+                        .unwrap_or("<ir>");
+                    let scoped_es =
+                        entry_scoped_execute_session(es, Some(&relation.relation.target))?;
+                    let (parsed, result, artifact) = execute_plasm_parsed_expr(
+                        st,
                         &scoped_es,
-                        relation.relation.target.entity.as_str(),
-                        &result.entities,
-                    ),
-                    result,
-                    artifact,
+                        session_id,
+                        expr_label,
+                        parsed,
+                        trace.as_ref(),
+                        idx as i64,
+                    )
+                    .await?;
+                    if let Some(sink) = sink.as_ref() {
+                        trace_record_plasm_line(sink, idx, expr_label, &parsed, &result, &scoped_es)
+                            .await;
+                    }
+                    MaterializedNode {
+                        entry_id: relation.relation.target.entry_id.clone(),
+                        entity: relation.relation.target.entity.clone(),
+                        display: crate::expr_display::expr_display(&parsed.expr),
+                        projection: parsed.projection,
+                        rows: result
+                            .entities
+                            .iter()
+                            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+                            .collect(),
+                        row_identities: row_identities_from_entities(
+                            &scoped_es,
+                            relation.relation.target.entity.as_str(),
+                            &result.entities,
+                        ),
+                        result,
+                        artifact,
+                    }
                 }
             }
             ValidatedPlanNode::ForEach(for_each) => {
@@ -2351,6 +2393,148 @@ fn synthetic_node_display(node: &ValidatedPlanNode) -> String {
         }
         _ => format!("plan.stage({})", node.id().as_str()),
     }
+}
+
+fn extract_from_parent_get_value(
+    row: &serde_json::Value,
+    path: &[JsonPathSegment],
+) -> Vec<serde_json::Value> {
+    fn walk(cur: &serde_json::Value, path: &[JsonPathSegment], idx: usize) -> Vec<serde_json::Value> {
+        if idx >= path.len() {
+            return vec![cur.clone()];
+        }
+        match &path[idx] {
+            JsonPathSegment::Key { key } => cur
+                .get(key.as_str())
+                .map(|next| walk(next, path, idx + 1))
+                .unwrap_or_default(),
+            JsonPathSegment::Wildcard { wildcard: true } => cur
+                .as_array()
+                .map(|items| {
+                    items
+                        .iter()
+                        .flat_map(|item| walk(item, path, idx + 1))
+                        .collect()
+                })
+                .unwrap_or_default(),
+            JsonPathSegment::Wildcard { wildcard: false } => Vec::new(),
+        }
+    }
+    walk(row, path, 0)
+}
+
+fn flatten_from_parent_get_source_rows(
+    source_rows: &[serde_json::Value],
+    path: &[JsonPathSegment],
+    cardinality: Cardinality,
+) -> Vec<serde_json::Value> {
+    let mut out = Vec::new();
+    for row in source_rows {
+        let extracted = extract_from_parent_get_value(row, path);
+        match cardinality {
+            Cardinality::One => {
+                if let Some(v) = extracted.into_iter().next() {
+                    if !v.is_null() {
+                        out.push(v);
+                    }
+                }
+            }
+            Cardinality::Many => out.extend(extracted.into_iter().filter(|v| !v.is_null())),
+        }
+    }
+    out
+}
+
+async fn try_materialize_from_parent_get_relation(
+    st: &PlasmHostState,
+    es: &ExecuteSession,
+    session_id: &str,
+    node: &ValidatedPlanNode,
+    relation: &ValidatedRelationTraversalNode,
+    source_mat: &MaterializedNode,
+    source_rows: &[serde_json::Value],
+    trace: Option<&PlasmTraceContext>,
+) -> Result<Option<MaterializedNode>, String> {
+    let cgs = match crate::catalog_ownership::resolve_cgs_for_entity(
+        es,
+        source_mat.entity.as_str(),
+        None,
+    ) {
+        Ok(cgs) => cgs,
+        Err(_) => return Ok(None),
+    };
+    let ent = cgs
+        .get_entity(source_mat.entity.as_str())
+        .ok_or_else(|| format!("unknown source entity `{}`", source_mat.entity))?;
+    let rel_schema = ent
+        .relations
+        .get(relation.relation.relation.as_str())
+        .ok_or_else(|| {
+            format!(
+                "entity `{}` has no relation `{}`",
+                source_mat.entity, relation.relation.relation
+            )
+        })?;
+    let Some(RelationMaterialization::FromParentGet { path }) = rel_schema.materialize.as_ref() else {
+        return Ok(None);
+    };
+    if path.is_empty() {
+        return Err(format!(
+            "relation `{}` on `{}` declares from_parent_get with an empty path",
+            relation.relation.relation, source_mat.entity
+        ));
+    }
+    let rows = flatten_from_parent_get_source_rows(source_rows, path, rel_schema.cardinality);
+    let target = relation.relation.target.entity.as_str();
+    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
+    let entities = json_rows_to_entities_with_refs(target, &rows, Some(scoped_es.cgs.as_ref()));
+    let request_fingerprints = vec![compute_fingerprint(node, &rows)];
+    let full_result = ExecutionResult {
+        count: entities.len(),
+        entities: entities.clone(),
+        has_more: false,
+        pagination_resume: None,
+        paging_handle: None,
+        source: ExecutionSource::Cache,
+        stats: ExecutionStats {
+            duration_ms: 0,
+            network_requests: 0,
+            cache_hits: 0,
+            cache_misses: 0,
+        },
+        request_fingerprints: request_fingerprints.clone(),
+    };
+    let artifact = archive_plasm_result_snapshot(
+        st,
+        es,
+        session_id,
+        Some(relation.relation.target.entry_id.as_str()),
+        vec![format!(
+            "plan.relation({})",
+            node.id().as_str()
+        )],
+        &full_result,
+        trace,
+    )
+    .await?;
+    let row_identities =
+        row_identities_from_entities(&scoped_es, target, &full_result.entities);
+    let display = relation
+        .relation
+        .ir
+        .display_expr
+        .clone()
+        .unwrap_or_else(|| format!("plan.relation({})", node.id().as_str()));
+    Ok(Some(MaterializedNode {
+        entry_id: relation.relation.target.entry_id.clone(),
+        entity: relation.relation.target.entity.clone(),
+        display,
+        projection: relation.relation.ir.projection.clone(),
+        rows,
+        row_identities,
+        result: full_result,
+        artifact: Some(artifact),
+    }))
 }
 
 fn materialized_rows(
@@ -2952,7 +3136,7 @@ fn eval_compute(
             .filter(|row| predicates.iter().all(|p| predicate_matches(row, p)))
             .map(Ok)
             .collect(),
-        ComputeOp::GroupBy { key, aggregates } => group_rows(&rows, key, aggregates),
+        ComputeOp::GroupBy { keys, aggregates } => group_rows(&rows, keys, aggregates),
         ComputeOp::Aggregate { aggregates } => aggregate_rows(&rows, aggregates),
         ComputeOp::Sort { key, descending } => {
             let mut sorted = rows;
@@ -3222,21 +3406,33 @@ fn predicate_matches(row: &serde_json::Value, pred: &crate::plasm_plan::PlanPred
 
 fn group_rows(
     rows: &[serde_json::Value],
-    key: &FieldPath,
+    keys: &[FieldPath],
     aggregates: &[crate::plasm_plan::AggregateSpec],
 ) -> Result<Vec<serde_json::Value>, String> {
+    if keys.is_empty() {
+        return Err("group_by requires at least one key".into());
+    }
     let mut groups: BTreeMap<String, Vec<&serde_json::Value>> = BTreeMap::new();
     for row in rows {
-        let k = value_at_path(row, key)
-            .map(json_scalar_display)
-            .unwrap_or_default();
-        groups.entry(k).or_default().push(row);
+        let parts: Vec<String> = keys
+            .iter()
+            .map(|k| {
+                value_at_path(row, k)
+                    .map(json_scalar_display)
+                    .unwrap_or_default()
+            })
+            .collect();
+        let composite = serde_json::to_string(&parts).unwrap_or_default();
+        groups.entry(composite).or_default().push(row);
     }
     let mut out = Vec::new();
-    for (key_value, rows) in groups {
+    for (composite, group_rows) in groups {
+        let parts: Vec<String> = serde_json::from_str(&composite).unwrap_or_default();
         let mut obj = serde_json::Map::new();
-        obj.insert("key".to_string(), serde_json::Value::String(key_value));
-        append_aggregates(&mut obj, &rows, aggregates)?;
+        for (key_path, part) in keys.iter().zip(parts.iter()) {
+            obj.insert(key_path.dotted(), serde_json::Value::String(part.clone()));
+        }
+        append_aggregates(&mut obj, &group_rows, aggregates)?;
         out.push(serde_json::Value::Object(obj));
     }
     Ok(out)
@@ -3412,6 +3608,18 @@ fn cmp_json_sort_values(
 }
 
 fn json_rows_to_entities(entity: &str, rows: &[serde_json::Value]) -> Vec<CachedEntity> {
+    json_rows_to_entities_with_refs(entity, rows, None)
+}
+
+fn json_rows_to_entities_with_refs(
+    entity: &str,
+    rows: &[serde_json::Value],
+    cgs: Option<&CGS>,
+) -> Vec<CachedEntity> {
+    let id_field = cgs
+        .and_then(|c| c.get_entity(entity))
+        .map(|e| e.id_field.as_str())
+        .unwrap_or("id");
     rows.iter()
         .enumerate()
         .map(|(idx, row)| {
@@ -3429,11 +3637,18 @@ fn json_rows_to_entities(entity: &str, rows: &[serde_json::Value]) -> Vec<Cached
                     );
                 }
             }
+            let wire_id = row
+                .get(id_field)
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            let reference = Ref::new(
+                EntityName::new(entity.to_string()),
+                wire_id
+                    .map(str::to_string)
+                    .unwrap_or_else(|| format!("synthetic-{}", idx + 1)),
+            );
             CachedEntity {
-                reference: Ref::new(
-                    EntityName::new(entity.to_string()),
-                    format!("synthetic-{}", idx + 1),
-                ),
+                reference,
                 fields,
                 relations: IndexMap::new(),
                 last_updated: 0,

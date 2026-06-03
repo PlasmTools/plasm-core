@@ -526,6 +526,8 @@ pub(super) struct Parser<'a> {
     pub(super) for_each_row_context: bool,
     /// When the surface entity token was an opaque `e#`, owning catalog for disambiguation.
     pub(super) active_entity_entry_id: Option<String>,
+    /// Copied onto surface [`Expr`] nodes built from that opaque `e#` head (federated sessions).
+    pending_session_catalog_entry_id: Option<String>,
 }
 
 impl<'a> Parser<'a> {
@@ -545,9 +547,16 @@ impl<'a> Parser<'a> {
             program_nodes: None,
             for_each_row_context: false,
             active_entity_entry_id: None,
+            pending_session_catalog_entry_id: None,
         };
         p.skip_ws();
         p
+    }
+
+    fn ok_stamped(&self, expr: Expr) -> Result<Expr, ParseError> {
+        Ok(
+            expr.with_session_catalog_entry_id(self.pending_session_catalog_entry_id.clone()),
+        )
     }
 
     fn layers_slice(&self) -> &[&'a CGS] {
@@ -1966,8 +1975,10 @@ impl<'a> Parser<'a> {
                 });
             }
         };
+        self.pending_session_catalog_entry_id = None;
         if let Some(sym) = entity_from_sym.as_deref() {
             self.active_entity_entry_id = self.sym_map.entry_id_for_entity_symbol(sym);
+            self.pending_session_catalog_entry_id = self.active_entity_entry_id.clone();
         }
         let ent = self
             .cgs_for_entity_required(&entity)
@@ -1982,11 +1993,11 @@ impl<'a> Parser<'a> {
             .clone();
 
         if let Some(expr) = self.try_parse_entity_dot_search(&entity)? {
-            return Ok(expr);
+            return self.ok_stamped(expr);
         }
 
         self.skip_ws();
-        match self.peek_char() {
+        let expr = match self.peek_char() {
             Some('(') => {
                 // Get by ID: simple `Entity(value)` or compound `Entity(k=v,...)`.
                 self.pos += 1;
@@ -2033,7 +2044,7 @@ impl<'a> Parser<'a> {
                         if let Some(get) =
                             self.try_parse_simple_id_field_get_sugar(&entity, &ent)?
                         {
-                            return Ok(get);
+                            return self.ok_stamped(get);
                         }
                         return Err(self.err(ParseErrorKind::Other {
                             message: format!(
@@ -2138,7 +2149,8 @@ impl<'a> Parser<'a> {
                 // Query all
                 Ok(Expr::Query(QueryExpr::all(entity)))
             }
-        }
+        }?;
+        self.ok_stamped(expr)
     }
 
     fn parse_pipeline(&mut self, source: Expr) -> Result<Expr, ParseError> {
@@ -2422,6 +2434,9 @@ impl<'a> Parser<'a> {
 
     fn parse_expr(&mut self) -> Result<ParsedExpr, ParseError> {
         let mut expr = self.parse_source()?;
+        if let Some(eid) = expr.session_catalog_entry_id() {
+            self.pending_session_catalog_entry_id = Some(eid.to_string());
+        }
 
         // Apply pipeline steps
         loop {
@@ -4492,6 +4507,11 @@ mod tests {
         };
         assert_eq!(q.capability_name.as_deref(), Some("issue_search"));
         assert_eq!(q.entity, "Issue");
+        assert_eq!(
+            q.catalog_entry_id.as_deref(),
+            Some("linear"),
+            "e2 must stamp linear catalog ownership"
+        );
     }
 
     /// Session `e2` (Library) compound ctor inside brace predicate on `e1` (Book) — referential transparency.

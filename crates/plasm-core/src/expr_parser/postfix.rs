@@ -16,6 +16,7 @@ pub enum PlasmPostfixOp {
     PageSize(usize),
     Limit(usize),
     Sort { args: String },
+    Filter { body: String },
     Aggregate { args: String },
     GroupBy { args: String },
     Projection { fields: String },
@@ -255,6 +256,14 @@ pub fn peel_postfix_suffixes(rhs: &str) -> Result<(String, Vec<PlasmPostfixOp>),
             ops_rev.push(PlasmPostfixOp::Sort { args });
             cur = p;
             progressed = true;
+        } else if let Some((p, body)) = strip_trailing_brace_block(t, "filter")? {
+            ops_rev.push(PlasmPostfixOp::Filter { body });
+            cur = p;
+            progressed = true;
+        } else if let Some((p, body)) = strip_trailing_method_call(t, "filter")? {
+            ops_rev.push(PlasmPostfixOp::Filter { body });
+            cur = p;
+            progressed = true;
         } else if let Some((p, args)) = strip_trailing_method_call(t, "aggregate")? {
             ops_rev.push(PlasmPostfixOp::Aggregate { args });
             cur = p;
@@ -301,6 +310,55 @@ fn strip_trailing_unary_int_call(s: &str, name: &str) -> Result<Option<(String, 
 }
 
 /// Finds the **last** `.name(` at delimiter depth 0 whose closing `)` ends the string.
+/// `.name{preds}` at delimiter depth 0 with balanced `{…}`.
+fn strip_trailing_brace_block(s: &str, name: &str) -> Result<Option<(String, String)>, String> {
+    let needle = format!(".{name}{{");
+    let mut search_end = s.len();
+    while search_end > 0 {
+        let slice = &s[..search_end];
+        let Some(pos) = slice.rfind(&needle) else {
+            return Ok(None);
+        };
+        if delimiter_depth_before(s, pos) != 0 {
+            search_end = pos;
+            continue;
+        }
+        let open_brace = pos + needle.len() - 1;
+        let close = matching_brace_close(s, open_brace)?;
+        if close + 1 != s.len() {
+            search_end = pos;
+            continue;
+        }
+        let body = s[open_brace + 1..close].to_string();
+        return Ok(Some((s[..pos].trim_end().to_string(), body)));
+    }
+    Ok(None)
+}
+
+fn matching_brace_close(s: &str, open: usize) -> Result<usize, String> {
+    if !s[open..].starts_with('{') {
+        return Err("expected `{`".into());
+    }
+    let mut depth = 0i32;
+    let mut quote = None::<char>;
+    for (idx, c) in s[open..].char_indices() {
+        match c {
+            '"' | '\'' if quote == Some(c) => quote = None,
+            '"' | '\'' if quote.is_none() => quote = Some(c),
+            _ if quote.is_some() => {}
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(open + idx);
+                }
+            }
+            _ => {}
+        }
+    }
+    Err("unclosed `{` in filter brace block".into())
+}
+
 fn strip_trailing_method_call(s: &str, name: &str) -> Result<Option<(String, String)>, String> {
     let needle = format!(".{name}(");
     let mut search_end = s.len();
@@ -541,6 +599,25 @@ mod tests {
                 assert_eq!(template, "one\n");
             }
             RenderTailParse::Inferred { .. } => panic!("expected explicit"),
+        }
+    }
+
+    #[test]
+    fn peel_filter_brace_and_paren_equivalent() {
+        let (p1, ops1) = peel_postfix_suffixes("items.filter{owner=\"a\"}").unwrap();
+        let (p2, ops2) = peel_postfix_suffixes("items.filter(owner=\"a\")").unwrap();
+        assert_eq!(p1, "items");
+        assert_eq!(p2, "items");
+        assert_eq!(ops1.len(), 1);
+        assert_eq!(ops2.len(), 1);
+        match (&ops1[0], &ops2[0]) {
+            (
+                PlasmPostfixOp::Filter { body: b1 },
+                PlasmPostfixOp::Filter { body: b2 },
+            ) => {
+                assert_eq!(b1.trim(), b2.trim());
+            }
+            _ => panic!("expected filter ops"),
         }
     }
 }

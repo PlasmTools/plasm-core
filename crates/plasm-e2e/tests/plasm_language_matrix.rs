@@ -18,8 +18,11 @@
 //! - Effects: create / update / delete / zero-arity action (domain-stripped method label), `for_each`.
 //! - DOMAIN: `e#` symbols where applicable.
 //!
-//! Hermit returns **schema-generated** bodies; live assertions use stable planner markdown cues, not
-//! OpenAPI `example` literals. Multi-digit **numeric** `.sort` ordering is covered in
+//! Hermit returns **schema-generated** bodies; live assertions target stable row payloads, not
+//! OpenAPI `example` literals. **Live `run_markdown`** is fenced TSV for row-shaped HTTP results
+//! ([`mcp_format_execute_result_table_or_tsv`](../../plasm-agent-core/src/mcp_run_markdown.rs));
+//! operation display strings (`Query(…)`, `Get(…)`) are asserted on dry-run IR in [`assert_planning_ir`].
+//! Multi-digit **numeric** `.sort` ordering is covered in
 //! `plasm-agent-core` (`plan_sort_compute_orders_integer_scores_numerically`) because Hermit list
 //! payloads are not example-stable.
 //!
@@ -87,6 +90,9 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "for_each_effect",
     "domain_symbol_e1",
     "postfix_group_by",
+    "postfix_row_filter",
+    "postfix_group_by_sugar",
+    "postfix_group_by_multi",
     "federated_relation_target_entry",
     "pagination_page_size",
     "surface_line_compile",
@@ -478,9 +484,9 @@ fn assert_planning_ir(
                 return Err(format!("expected sum(score), got {:?}", spec.field));
             }
         }
-        "lang_group_by" => {
+        "lang_group_by_sugar" => {
             let Some(ComputeTemplate {
-                op: ComputeOp::GroupBy { key, aggregates },
+                op: ComputeOp::GroupBy { keys, aggregates },
                 ..
             }) = computes
                 .iter()
@@ -488,8 +494,56 @@ fn assert_planning_ir(
             else {
                 return Err(format!("expected GroupBy compute, got {:?}", computes));
             };
-            if key.dotted() != "owner" {
-                return Err(format!("expected group key owner, got {}", key.dotted()));
+            if keys.len() != 1 || keys[0].dotted() != "owner" {
+                return Err(format!("expected key owner, got {:?}", keys));
+            }
+            let Some(spec) = aggregates.iter().find(|a| a.name.as_str() == "count") else {
+                return Err(format!("expected count=count sugar, got {:?}", aggregates));
+            };
+            if spec.function != AggregateFunction::Count {
+                return Err(format!("unexpected aggregate: {spec:?}"));
+            }
+        }
+        "lang_group_by_multi" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::GroupBy { keys, aggregates },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::GroupBy { .. }))
+            else {
+                return Err(format!("expected GroupBy compute, got {:?}", computes));
+            };
+            if keys.len() != 2 {
+                return Err(format!("expected two group keys, got {:?}", keys));
+            }
+            if keys[0].dotted() != "owner" || keys[1].dotted() != "score" {
+                return Err(format!("expected owner+score keys, got {:?}", keys));
+            }
+            if !aggregates.iter().any(|a| a.name.as_str() == "n") {
+                return Err(format!("expected aggregate n, got {:?}", aggregates));
+            }
+        }
+        "lang_row_filter_brace" | "lang_row_filter_paren" => {
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Filter { .. }))
+            {
+                return Err(format!("expected Filter compute, got {:?}", computes));
+            }
+        }
+        "lang_group_by" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::GroupBy { keys, aggregates },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::GroupBy { .. }))
+            else {
+                return Err(format!("expected GroupBy compute, got {:?}", computes));
+            };
+            if keys.len() != 1 || keys[0].dotted() != "owner" {
+                return Err(format!("expected group key owner, got {:?}", keys));
             }
             let Some(spec) = aggregates.iter().find(|a| a.name.as_str() == "n") else {
                 return Err(format!("expected aggregate n, got {:?}", aggregates));
@@ -865,7 +919,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["entity_query"],
         min_node_results: 1,
-        expect_markdown_substrings: &["Query(LangItem", "```"],
+        expect_markdown_substrings: &["```tsv", "owner"],
     },
     MatrixRow {
         id: "lang_surface_line_limit",
@@ -874,7 +928,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["surface_line_compile", "postfix_limit"],
         min_node_results: 1,
-        expect_markdown_substrings: &["compute", "PlanLimit"],
+        expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_bind_first_limit",
@@ -883,7 +937,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["bind_first_postfix_limit", "postfix_limit"],
         min_node_results: 2,
-        expect_markdown_substrings: &["compute", "PlanLimit"],
+        expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_search",
@@ -892,7 +946,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["entity_search"],
         min_node_results: 1,
-        expect_markdown_substrings: &["langitem_search", "filtered"],
+        expect_markdown_substrings: &["```tsv", "Alpha"],
     },
     MatrixRow {
         id: "lang_get_by_id",
@@ -901,7 +955,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["entity_get"],
         min_node_results: 1,
-        expect_markdown_substrings: &["Get(LangItem", "i1"],
+        expect_markdown_substrings: &["```tsv", "i1"],
     },
     MatrixRow {
         id: "lang_predicate_brace_owner",
@@ -910,8 +964,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["predicate_brace_equality"],
         min_node_results: 1,
-        // Routed to `langitem_query_owner` in CGS; planner markdown is still `Query(LangItem filtered)`.
-        expect_markdown_substrings: &["Query(LangItem", "filtered"],
+        expect_markdown_substrings: &["```tsv", "alice"],
     },
     MatrixRow {
         id: "lang_predicate_brace_score_cmp",
@@ -920,7 +973,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["predicate_brace_comparison"],
         min_node_results: 1,
-        expect_markdown_substrings: &["Query(LangItem", "filtered"],
+        expect_markdown_substrings: &["```tsv", "score"],
     },
     MatrixRow {
         id: "lang_limit_projection",
@@ -929,7 +982,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["postfix_limit", "postfix_projection"],
         min_node_results: 1,
-        expect_markdown_substrings: &["compute", "projection"],
+        expect_markdown_substrings: &["```tsv", "title"],
     },
     MatrixRow {
         id: "lang_sort_limit",
@@ -938,7 +991,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["postfix_sort"],
         min_node_results: 1,
-        expect_markdown_substrings: &["score", "projection"],
+        expect_markdown_substrings: &["```tsv", "score"],
     },
     MatrixRow {
         id: "lang_sort_asc",
@@ -947,7 +1000,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["postfix_sort", "postfix_sort_ascending"],
         min_node_results: 1,
-        expect_markdown_substrings: &["score", "projection"],
+        expect_markdown_substrings: &["```tsv", "score"],
     },
     MatrixRow {
         id: "lang_aggregate",
@@ -956,7 +1009,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["postfix_aggregate"],
         min_node_results: 1,
-        expect_markdown_substrings: &["PlanAggregate", "n"],
+        expect_markdown_substrings: &["```tsv", "n"],
     },
     MatrixRow {
         id: "lang_aggregate_sugar_count",
@@ -965,7 +1018,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["aggregate_sugar_count", "postfix_aggregate"],
         min_node_results: 1,
-        expect_markdown_substrings: &["PlanAggregate", "count"],
+        expect_markdown_substrings: &["```tsv", "count"],
     },
     MatrixRow {
         id: "lang_aggregate_sum",
@@ -975,7 +1028,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         features: &["aggregate_sum", "postfix_aggregate"],
         min_node_results: 1,
         // Aggregate label `sum(...)` is not spelled in short markdown; binding `t` is stable.
-        expect_markdown_substrings: &["PlanAggregate", "t"],
+        expect_markdown_substrings: &["```tsv", "t"],
     },
     MatrixRow {
         id: "lang_group_by",
@@ -984,7 +1037,43 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["postfix_group_by"],
         min_node_results: 1,
-        expect_markdown_substrings: &["PlanGroup", "key"],
+        expect_markdown_substrings: &["```tsv", "owner"],
+    },
+    MatrixRow {
+        id: "lang_group_by_sugar",
+        program: "LangItem.group_by(owner)",
+        surface_line: false,
+        federated: false,
+        features: &["postfix_group_by_sugar", "postfix_group_by"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "count"],
+    },
+    MatrixRow {
+        id: "lang_group_by_multi",
+        program: "LangItem.group_by(owner, score, n=count)",
+        surface_line: false,
+        federated: false,
+        features: &["postfix_group_by_multi", "postfix_group_by"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "owner"],
+    },
+    MatrixRow {
+        id: "lang_row_filter_brace",
+        program: "items = LangItem\nfiltered = items.filter{owner=\"alice\"}\nfiltered",
+        surface_line: false,
+        federated: false,
+        features: &["postfix_row_filter", "bindings_assignment"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alice"],
+    },
+    MatrixRow {
+        id: "lang_row_filter_paren",
+        program: "items = LangItem\nfiltered = items.filter(owner=\"alice\")\nfiltered",
+        surface_line: false,
+        federated: false,
+        features: &["postfix_row_filter", "bindings_assignment"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alice"],
     },
     MatrixRow {
         id: "lang_relation_lines",
@@ -993,7 +1082,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["relation_from_parent_get"],
         min_node_results: 1,
-        expect_markdown_substrings: &["compute", "note"],
+        expect_markdown_substrings: &["```tsv", "note"],
     },
     MatrixRow {
         id: "lang_query_singleton",
@@ -1002,7 +1091,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["postfix_singleton"],
         min_node_results: 1,
-        expect_markdown_substrings: &["PlanLimit", "langmatrix"],
+        expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_relation_tags_scoped",
@@ -1011,7 +1100,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         federated: false,
         features: &["relation_query_scoped"],
         min_node_results: 1,
-        expect_markdown_substrings: &["tags", "LangTag"],
+        expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_bindings_render",
@@ -1039,7 +1128,7 @@ LangItem.create(title=hdr.content, score=0, owner="render-pipe-owner")"#,
             "bracket_render",
         ],
         min_node_results: 2,
-        expect_markdown_substrings: &["Create(LangItem", "render-pipe-owner"],
+        expect_markdown_substrings: &["```tsv", "render-pipe-owner"],
     },
     MatrixRow {
         id: "lang_heredoc_binding",
@@ -1052,7 +1141,7 @@ one, note"#,
         federated: false,
         features: &["static_heredoc_binding", "parallel_final_roots"],
         min_node_results: 2,
-        expect_markdown_substrings: &["hello-matrix", "parallel"],
+        expect_markdown_substrings: &["# Results", "hello-matrix", "```tsv"],
     },
     MatrixRow {
         id: "lang_derive_map_parallel",
@@ -1064,7 +1153,7 @@ sumry, cards"#,
         federated: false,
         features: &["derive_map", "parallel_final_roots"],
         min_node_results: 3,
-        expect_markdown_substrings: &["derive", "parallel["],
+        expect_markdown_substrings: &["# Results", "```tsv", "t"],
     },
     MatrixRow {
         id: "lang_binding_continuation",
@@ -1075,7 +1164,7 @@ tags"#,
         federated: false,
         features: &["binding_continuation"],
         min_node_results: 2,
-        expect_markdown_substrings: &["tags", "LangTag"],
+        expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_bind_limit1_continuation",
@@ -1087,7 +1176,7 @@ tags"#,
         federated: false,
         features: &["bind_limit1_continuation", "postfix_limit"],
         min_node_results: 3,
-        expect_markdown_substrings: &["tags", "LangTag"],
+        expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_bind_projection_then_relation",
@@ -1099,7 +1188,7 @@ tags"#,
         federated: false,
         features: &["bind_projection_then_relation", "postfix_projection"],
         min_node_results: 3,
-        expect_markdown_substrings: &["tags", "LangTag"],
+        expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_bind_relation_hop_one_one",
@@ -1111,7 +1200,7 @@ detail"#,
         federated: false,
         features: &["bind_relation_hop_one_one", "relation_from_parent_get"],
         min_node_results: 3,
-        expect_markdown_substrings: &["detail", "LangDetail"],
+        expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_effect_create_literal",
@@ -1120,7 +1209,7 @@ detail"#,
         federated: false,
         features: &["effect_create"],
         min_node_results: 1,
-        expect_markdown_substrings: &["Create(LangItem", "MatrixCreated"],
+        expect_markdown_substrings: &["```tsv", "MatrixCreated"],
     },
     MatrixRow {
         id: "lang_effect_update",
@@ -1129,7 +1218,7 @@ detail"#,
         federated: false,
         features: &["effect_update"],
         min_node_results: 1,
-        expect_markdown_substrings: &["langitem_update", "42"],
+        expect_markdown_substrings: &["MatrixPatch", "42"],
     },
     MatrixRow {
         id: "lang_effect_action_ping",
@@ -1138,7 +1227,7 @@ detail"#,
         federated: false,
         features: &["effect_action"],
         min_node_results: 1,
-        expect_markdown_substrings: &["langitem_ping", "Invoke"],
+        expect_markdown_substrings: &["```tsv", "i1"],
     },
     MatrixRow {
         id: "lang_effect_delete",
@@ -1147,7 +1236,7 @@ detail"#,
         federated: false,
         features: &["effect_delete"],
         min_node_results: 1,
-        expect_markdown_substrings: &["Delete(LangItem", "i2"],
+        expect_markdown_substrings: &["(no results)"],
     },
     MatrixRow {
         id: "lang_for_each_update",
@@ -1156,7 +1245,7 @@ detail"#,
         federated: false,
         features: &["for_each_effect"],
         min_node_results: 2,
-        expect_markdown_substrings: &["Invoke(langitem_update", "langmatrix", "i1"],
+        expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_federated_relation_target_entry",
@@ -1167,7 +1256,7 @@ summary"#,
         federated: true,
         features: &["federated_relation_target_entry", "relation_from_parent_get"],
         min_node_results: 2,
-        expect_markdown_substrings: &["summary", "LangSummary"],
+        expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
         id: "lang_domain_symbol_page_size",
@@ -1176,7 +1265,7 @@ summary"#,
         federated: false,
         features: &["domain_symbol_e1", "pagination_page_size"],
         min_node_results: 1,
-        expect_markdown_substrings: &["langmatrix.LangItem", "Query(LangItem"],
+        expect_markdown_substrings: &["```tsv", "owner"],
     },
 ];
 

@@ -1,3 +1,4 @@
+use crate::cgs_federation::QualifiedEntityKey;
 use crate::identity::{CapabilityName, EntityId, EntityName};
 use crate::paging_handle::PagingHandle;
 use crate::typed_invoke::InvokeInputPayload;
@@ -98,6 +99,9 @@ pub struct QueryExpr {
     /// predicate compiler, and CML execution aligned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability_name: Option<CapabilityName>,
+    /// Owning registry `entry_id` when the surface head was a session `e#` symbol (federated disambiguation).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_entry_id: Option<String>,
 }
 
 /// Get expression: fetch a specific resource by reference.
@@ -108,6 +112,8 @@ pub struct GetExpr {
     /// Optional CML path bindings overriding [`Ref::key`] for the same names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path_vars: Option<IndexMap<String, Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_entry_id: Option<String>,
 }
 
 /// Create expression: create a new resource (no target ID).
@@ -116,6 +122,8 @@ pub struct CreateExpr {
     pub capability: CapabilityName,
     pub entity: EntityName,
     pub input: InvokeInputPayload,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_entry_id: Option<String>,
 }
 
 /// Delete expression: remove a resource by ID.
@@ -125,6 +133,8 @@ pub struct DeleteExpr {
     pub target: Ref,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path_vars: Option<IndexMap<String, Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_entry_id: Option<String>,
 }
 
 /// Invoke expression: call a capability on a resource.
@@ -136,6 +146,8 @@ pub struct InvokeExpr {
     pub input: Option<InvokeInputPayload>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path_vars: Option<IndexMap<String, Value>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_entry_id: Option<String>,
 }
 
 /// Chain expression: Kleisli composition via EntityRef field navigation.
@@ -210,6 +222,7 @@ impl QueryExpr {
             pagination: None,
             hydrate: None,
             capability_name: None,
+            catalog_entry_id: None,
         }
     }
 
@@ -222,6 +235,7 @@ impl QueryExpr {
             pagination: None,
             hydrate: None,
             capability_name: None,
+            catalog_entry_id: None,
         }
     }
 
@@ -238,6 +252,7 @@ impl QueryExpr {
             pagination: None,
             hydrate: None,
             capability_name: None,
+            catalog_entry_id: None,
         }
     }
 
@@ -272,6 +287,7 @@ impl GetExpr {
         Self {
             reference: Ref::new(entity_type, id),
             path_vars: None,
+            catalog_entry_id: None,
         }
     }
 
@@ -280,6 +296,7 @@ impl GetExpr {
         Self {
             reference,
             path_vars: None,
+            catalog_entry_id: None,
         }
     }
 
@@ -291,6 +308,7 @@ impl GetExpr {
         Self {
             reference,
             path_vars,
+            catalog_entry_id: None,
         }
     }
 }
@@ -305,6 +323,7 @@ impl CreateExpr {
             capability: capability.into(),
             entity: entity.into(),
             input: input.into(),
+            catalog_entry_id: None,
         }
     }
 }
@@ -319,6 +338,7 @@ impl DeleteExpr {
             capability: capability.into(),
             target: Ref::new(entity_type, id),
             path_vars: None,
+            catalog_entry_id: None,
         }
     }
 
@@ -328,6 +348,7 @@ impl DeleteExpr {
             capability: capability.into(),
             target,
             path_vars: None,
+            catalog_entry_id: None,
         }
     }
 
@@ -341,6 +362,7 @@ impl DeleteExpr {
             capability: capability.into(),
             target,
             path_vars,
+            catalog_entry_id: None,
         }
     }
 }
@@ -358,6 +380,7 @@ impl InvokeExpr {
             target: Ref::new(entity_type, id),
             input: input.map(InvokeInputPayload::from),
             path_vars: None,
+            catalog_entry_id: None,
         }
     }
 
@@ -372,6 +395,7 @@ impl InvokeExpr {
             target,
             input: input.map(InvokeInputPayload::from),
             path_vars: None,
+            catalog_entry_id: None,
         }
     }
 
@@ -387,6 +411,7 @@ impl InvokeExpr {
             target,
             input: input.map(InvokeInputPayload::from),
             path_vars,
+            catalog_entry_id: None,
         }
     }
 }
@@ -486,6 +511,46 @@ impl Expr {
 
     pub fn page(page: PageExpr) -> Self {
         Expr::Page(page)
+    }
+
+    /// Registry `entry_id` when the surface entity token was a session `e#` symbol.
+    pub fn session_catalog_entry_id(&self) -> Option<&str> {
+        match self {
+            Expr::Query(q) => q.catalog_entry_id.as_deref(),
+            Expr::Get(g) => g.catalog_entry_id.as_deref(),
+            Expr::Create(c) => c.catalog_entry_id.as_deref(),
+            Expr::Delete(d) => d.catalog_entry_id.as_deref(),
+            Expr::Invoke(i) => i.catalog_entry_id.as_deref(),
+            Expr::Chain(c) => c.source.session_catalog_entry_id(),
+            Expr::Page(_) | Expr::TeachingValue { .. } => None,
+        }
+    }
+
+    /// `(catalog_entry_id, entity)` for federated type-check and plan dispatch when present.
+    pub fn qualified_entity_key(&self) -> Option<QualifiedEntityKey> {
+        let entry_id = self.session_catalog_entry_id()?;
+        Some(QualifiedEntityKey::new(
+            entry_id.to_string(),
+            self.primary_entity().to_string(),
+        ))
+    }
+
+    /// Attach session catalog ownership from a parsed opaque `e#` head.
+    pub fn with_session_catalog_entry_id(mut self, catalog_entry_id: Option<String>) -> Self {
+        match &mut self {
+            Expr::Query(q) => q.catalog_entry_id = catalog_entry_id,
+            Expr::Get(g) => g.catalog_entry_id = catalog_entry_id,
+            Expr::Create(c) => c.catalog_entry_id = catalog_entry_id,
+            Expr::Delete(d) => d.catalog_entry_id = catalog_entry_id,
+            Expr::Invoke(i) => i.catalog_entry_id = catalog_entry_id,
+            Expr::Chain(c) => {
+                c.source = Box::new(c.source.clone().with_session_catalog_entry_id(
+                    catalog_entry_id.clone(),
+                ));
+            }
+            Expr::Page(_) | Expr::TeachingValue { .. } => {}
+        }
+        self
     }
 
     /// Get the primary entity type this expression operates on.

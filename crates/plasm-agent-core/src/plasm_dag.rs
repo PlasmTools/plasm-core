@@ -555,8 +555,11 @@ fn infer_render_columns_for_node(
                 .iter()
                 .map(|f| f.name.clone())
                 .collect()),
-            ComputeOp::GroupBy { key, aggregates } => {
-                let mut cols = vec![OutputName::new(key.dotted()).map_err(|e| e.to_string())?];
+            ComputeOp::GroupBy { keys, aggregates } => {
+                let mut cols = Vec::new();
+                for key in keys {
+                    cols.push(OutputName::new(key.dotted()).map_err(|e| e.to_string())?);
+                }
                 cols.extend(aggregates.iter().map(|a| a.name.clone()));
                 Ok(cols)
             }
@@ -570,7 +573,10 @@ fn infer_render_columns_for_node(
                 "cannot infer columns from a row-to-text template result; bind a row-producing query/relation/projection, or write explicit `[field,...] <<TAG` columns before the template".into(),
             ),
             ComputeOp::Filter { .. } => {
-                Err("filtered compute rows cannot provide inferred template columns".into())
+                let parent = lookup_dag_node(state, staged, parent_id.as_str()).ok_or_else(|| {
+                    format!("template column inference: missing upstream node `{parent_id}`")
+                })?;
+                infer_render_columns_for_node(session, state, staged, parent)
             }
         },
         DagNodeSource::Surface {
@@ -788,6 +794,61 @@ fn postfix_op_to_compute(
             single_unknown_schema("PlanLimit"),
             *n <= 1,
         )),
+        PlasmPostfixOp::Filter { body } => {
+            let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string())
+                .ok_or_else(|| {
+                    format!(
+                        "filter(...) on `{source}` requires an upstream catalog entity row"
+                    )
+                })?;
+            let cgs = cgs_for_qualified_entity(session, &qe).ok_or_else(|| {
+                format!(
+                    "catalog `{}` is not loaded for entity `{}`",
+                    qe.entry_id, qe.entity
+                )
+            })?;
+            let layers = vec![cgs.as_ref()];
+            let sym_map = symbol_map_for_plasm_surface_parse(session, state.cross_cache);
+            let core_qe = plasm_core::QualifiedEntityKey::new(qe.entry_id.as_str(), qe.entity.as_str());
+            let row_pred = plasm_core::parse_row_predicate_list(
+                qe.entity.as_str(),
+                body.as_str(),
+                &layers,
+                sym_map,
+            )?;
+            let tc_ctx = plasm_core::RowPredicateTypeCtx {
+                qe: &core_qe,
+                cgs: cgs.as_ref(),
+                symbol_map: None,
+            };
+            plasm_core::type_check_row_predicate(&row_pred, &tc_ctx)
+                .map_err(|e| e.to_string())?;
+            let mut paths = Vec::new();
+            for clause in &row_pred.0 {
+                paths.push(FieldPath::from_dotted(clause.field.as_str())?);
+            }
+            if !paths.is_empty() {
+                validate_compute_paths_for_entity(
+                    session,
+                    state.cross_cache,
+                    &qe,
+                    &paths,
+                    "filter(...)",
+                )?;
+            }
+            let predicates = crate::row_predicate_lower::lower_row_predicate_to_plan(
+                &row_pred,
+                session,
+                &qe,
+                state.cross_cache,
+            )?;
+            let schema = synthetic_schema_passthrough_rows(session, state, staged, source)?;
+            Ok(mk(
+                ComputeOp::Filter { predicates },
+                schema,
+                false,
+            ))
+        }
         PlasmPostfixOp::Sort { args } => {
             let parts = split_top_level(args, ',')?;
             let key = parts
@@ -851,24 +912,27 @@ fn postfix_op_to_compute(
             Ok(mk(ComputeOp::Aggregate { aggregates }, schema, true))
         }
         PlasmPostfixOp::GroupBy { args } => {
-            let parts = split_top_level(args, ',')?;
-            let key = parts
-                .first()
-                .ok_or_else(|| "group_by(...) requires a key field".to_string())?
-                .trim();
-            let rest = if parts.len() <= 1 {
-                return Err("group_by(...) requires aggregate specs".into());
+            let (key_names, agg_tail) = parse_group_by_key_and_aggregate_tail(args)?;
+            let aggregates = if agg_tail.trim().is_empty() {
+                if key_names.len() != 1 {
+                    return Err(
+                        "group_by(k1, k2, …) without aggregates requires exactly one key; add n=count".into(),
+                    );
+                }
+                parse_aggregates("count=count")?
             } else {
-                parts[1..].join(",")
+                parse_aggregates(agg_tail.as_str())?
             };
-            let aggregates = parse_aggregates(rest.as_str())?;
             let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
-            let key_fp = resolve_compute_field_path(
-                session,
-                state.cross_cache,
-                qe.as_ref(),
-                &FieldPath::from_dotted(key)?,
-            )?;
+            let mut key_fps = Vec::new();
+            for key in &key_names {
+                key_fps.push(resolve_compute_field_path(
+                    session,
+                    state.cross_cache,
+                    qe.as_ref(),
+                    &FieldPath::from_dotted(key)?,
+                )?);
+            }
             let mut aggregates = aggregates;
             if let Some(qe) = qe.as_ref() {
                 for agg in &mut aggregates {
@@ -881,20 +945,20 @@ fn postfix_op_to_compute(
                         )?);
                     }
                 }
-                let mut paths = vec![key_fp.clone()];
+                let mut paths = key_fps.clone();
                 paths.extend(aggregates.iter().filter_map(|a| a.field.clone()));
                 validate_compute_paths_for_entity(
                     session,
                     state.cross_cache,
-                    &qe,
+                    qe,
                     &paths,
                     "group_by(...)",
                 )?;
             }
-            let schema = schema_from_aggregates("PlanGroup", &aggregates);
+            let schema = schema_from_group_by("PlanGroup", &key_fps, &aggregates);
             Ok(mk(
                 ComputeOp::GroupBy {
-                    key: key_fp,
+                    keys: key_fps,
                     aggregates,
                 },
                 schema,
@@ -984,6 +1048,7 @@ fn row_suffix_to_postfix(suffix: &RowSuffix) -> Option<PlasmPostfixOp> {
             fields: fields.join(","),
         }),
         RowSuffix::Sort { args } => Some(PlasmPostfixOp::Sort { args: args.clone() }),
+        RowSuffix::Filter { body } => Some(PlasmPostfixOp::Filter { body: body.clone() }),
         RowSuffix::Aggregate { args } => Some(PlasmPostfixOp::Aggregate { args: args.clone() }),
         RowSuffix::GroupBy { args } => Some(PlasmPostfixOp::GroupBy { args: args.clone() }),
         RowSuffix::Singleton => Some(PlasmPostfixOp::Singleton),
@@ -2752,10 +2817,27 @@ fn infer_surface_contract(
     }
 
     let (mut kind, entity, effect, shape) = infer_surface_contract_from_expr(expr)?;
-    let resolving_cgs =
-        crate::catalog_ownership::resolve_cgs_for_entity(session, entity.as_str(), None)?;
+    let qe = if let Some(qe) = expr.qualified_entity_key() {
+        QualifiedEntityKey::from(qe)
+    } else {
+        let resolving_cgs =
+            crate::catalog_ownership::resolve_cgs_for_entity(session, entity.as_str(), None)?;
+        crate::catalog_ownership::resolve_qualified_entity_key(
+            session,
+            entity.as_str(),
+            Some(resolving_cgs),
+        )?
+    };
     if let Expr::Query(q) = expr {
         if let Some(capability_name) = q.capability_name.as_ref() {
+            let resolving_cgs = cgs_for_qualified_entity(session, &qe).ok_or_else(
+                    || {
+                        format!(
+                            "catalog `{}` is not loaded for entity `{}`",
+                            qe.entry_id, qe.entity
+                        )
+                    },
+                )?;
             if let Some(cap) = resolving_cgs.capabilities.get(capability_name.as_str()) {
                 if cap.kind == plasm_core::CapabilityKind::Search {
                     kind = PlanNodeKind::Search;
@@ -2763,11 +2845,6 @@ fn infer_surface_contract(
             }
         }
     }
-    let qe = crate::catalog_ownership::resolve_qualified_entity_key(
-        session,
-        entity.as_str(),
-        Some(resolving_cgs),
-    )?;
     Ok((kind, qe, effect, shape))
 }
 
@@ -2864,6 +2941,67 @@ fn schema_from_aggregates(
             })
             .collect(),
     }
+}
+
+fn schema_from_group_by(
+    entity: &str,
+    keys: &[FieldPath],
+    aggregates: &[crate::plasm_plan::AggregateSpec],
+) -> SyntheticResultSchema {
+    let mut fields: Vec<SyntheticFieldSchema> = keys
+        .iter()
+        .filter_map(|k| {
+            OutputName::new(k.dotted()).ok().map(|name| SyntheticFieldSchema {
+                name,
+                value_kind: SyntheticValueKind::String,
+                source: None,
+            })
+        })
+        .collect();
+    fields.extend(
+        aggregates
+            .iter()
+            .map(|agg| SyntheticFieldSchema {
+                name: agg.name.clone(),
+                value_kind: if agg.function == AggregateFunction::Count {
+                    SyntheticValueKind::Integer
+                } else {
+                    SyntheticValueKind::Number
+                },
+                source: None,
+            }),
+    );
+    SyntheticResultSchema {
+        entity: Some(entity.to_string()),
+        fields,
+    }
+}
+
+/// Split `group_by` args into key field names (no `=`) and trailing aggregate tail.
+fn parse_group_by_key_and_aggregate_tail(args: &str) -> Result<(Vec<String>, String), String> {
+    let parts = split_top_level(args, ',')?;
+    let mut keys = Vec::new();
+    let mut agg_start = parts.len();
+    for (i, part) in parts.iter().enumerate() {
+        let t = part.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if t.contains('=') {
+            agg_start = i;
+            break;
+        }
+        keys.push(t.to_string());
+    }
+    if keys.is_empty() {
+        return Err("group_by(...) requires at least one key field".into());
+    }
+    let agg_tail = if agg_start < parts.len() {
+        parts[agg_start..].join(",")
+    } else {
+        String::new()
+    };
+    Ok((keys, agg_tail))
 }
 
 fn single_unknown_schema(entity: &str) -> SyntheticResultSchema {
@@ -2995,6 +3133,60 @@ mod tests {
         let qe = &plan["nodes"][0]["qualified_entity"];
         assert_eq!(qe["entry_id"], "linear", "{plan}");
         assert_eq!(qe["entity"], "LangLine");
+    }
+
+    /// Same wire entity name in two catalogs: session `e1` / `e2` must stamp `qualified_entity` per catalog.
+    #[test]
+    fn federated_duplicate_entity_name_e_symbol_stamps_catalog_in_plan() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(
+            plasm_core::loader::load_schema_dir(
+                &root.join("../../fixtures/schemas/plasm_language_matrix"),
+            )
+            .expect("load plasm_language_matrix"),
+        );
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "github".into(),
+            Arc::new(CgsContext::entry("github", cgs.clone())),
+        );
+        ctxs.insert(
+            "linear".into(),
+            Arc::new(CgsContext::entry("linear", cgs.clone())),
+        );
+        let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
+        let mut exp = DomainExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+        exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
+        let session = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "github".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["LangItem".into()],
+            Some(exp),
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
+        );
+        for (sym, entry_id) in [("e1", "github"), ("e2", "linear")] {
+            let plan = compile_plasm_surface_line_to_plan(
+                &PromptPipelineConfig::default(),
+                None,
+                &session,
+                sym,
+                sym,
+            )
+            .unwrap_or_else(|e| panic!("compile {sym}: {e}"));
+            let qe = &plan["nodes"][0]["qualified_entity"];
+            assert_eq!(qe["entry_id"], entry_id, "plan for {sym}");
+            assert_eq!(qe["entity"], "LangItem");
+        }
     }
 
     /// Federated primary is `linear` but relation target `LangDetail` resolves via owning CGS pointer, not primary `entry_id`.
@@ -3963,6 +4155,25 @@ x"#;
     }
 
     #[test]
+    fn compile_row_filter_brace_on_binding() {
+        let session = test_session();
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "lang_row_filter_brace",
+            "items = LangItem\nfiltered = items.filter{owner=\"o1\"}\nfiltered",
+        )
+        .expect("compile filter program");
+        let has_filter = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .any(|n| n.get("compute").and_then(|c| c.get("op")).and_then(|o| o.get("kind")) == Some(&serde_json::json!("filter")));
+        assert!(has_filter, "expected filter compute node: {plan}");
+    }
+
+    #[test]
     fn group_by_postfix_accepts_canonical_key_and_aggs() {
         let session = test_session();
         let pipeline = PromptPipelineConfig::default();
@@ -3983,12 +4194,13 @@ x"#;
             super::DagNodeSource::Compute {
                 op:
                     crate::plasm_plan::ComputeOp::GroupBy {
-                        ref key,
+                        ref keys,
                         ref aggregates,
                     },
                 ..
             } => {
-                assert_eq!(key.dotted(), "owner");
+                assert_eq!(keys.len(), 1);
+                assert_eq!(keys[0].dotted(), "owner");
                 assert_eq!(aggregates.len(), 1);
                 assert_eq!(aggregates[0].name.as_str(), "n");
             }

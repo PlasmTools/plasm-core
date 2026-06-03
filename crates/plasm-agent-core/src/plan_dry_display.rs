@@ -95,7 +95,7 @@ pub enum PlanDryOp {
         predicates: Vec<String>,
     },
     GroupBy {
-        key: String,
+        keys: Vec<String>,
         aggregates: String,
     },
     Aggregate {
@@ -223,8 +223,8 @@ fn render_plan_dry_op(op: &PlanDryOp) -> String {
         PlanDryOp::Surface { kind, expr } => format!("{} {expr}", render_kind(*kind)),
         PlanDryOp::Project { fields } => format!("project {}", fields.join(", ")),
         PlanDryOp::Filter { predicates } => format!("filter {}", predicates.join(", ")),
-        PlanDryOp::GroupBy { key, aggregates } => {
-            format!("group_by {key} → {{{aggregates}}}")
+        PlanDryOp::GroupBy { keys, aggregates } => {
+            format!("group_by {} → {{{aggregates}}}", keys.join(", "))
         }
         PlanDryOp::Aggregate { aggregates } => format!("aggregate → {{{aggregates}}}"),
         PlanDryOp::Sort { key, descending } => {
@@ -307,8 +307,8 @@ fn compact_op_from_compute(
         ComputeOp::Filter { predicates } => PlanDryOp::Filter {
             predicates: predicates.iter().map(render_predicate_compact).collect(),
         },
-        ComputeOp::GroupBy { key, aggregates } => PlanDryOp::GroupBy {
-            key: key.dotted(),
+        ComputeOp::GroupBy { keys, aggregates } => PlanDryOp::GroupBy {
+            keys: keys.iter().map(|k| k.dotted()).collect(),
             aggregates: render_aggregates_compact(aggregates),
         },
         ComputeOp::Aggregate { aggregates } => PlanDryOp::Aggregate {

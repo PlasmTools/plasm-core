@@ -1,4 +1,4 @@
-use crate::cgs_federation::FederationDispatch;
+use crate::cgs_federation::{FederationDispatch, FederationResolveError};
 use crate::entity_ref_value::normalize_entity_ref_value_for_target;
 use crate::{
     ArrayItemsSchema, CapabilityKind, ChainExpr, ChainStep, CompOp, CreateExpr, DeleteExpr,
@@ -236,31 +236,98 @@ pub fn type_check_expr(expr: &Expr, cgs: &CGS) -> Result<(), TypeError> {
     }
 }
 
+fn federation_resolve_type_error(err: FederationResolveError) -> TypeError {
+    match err {
+        FederationResolveError::AmbiguousEntity { entity, entry_ids } => TypeError::EntityNotFound {
+            entity: format!(
+                "`{entity}` is ambiguous across federated catalogs {entry_ids:?}; use the session `e#` symbol from the teaching table for the intended catalog"
+            ),
+        },
+        FederationResolveError::EntityNotInAnyCatalog { entity } => {
+            TypeError::EntityNotFound { entity }
+        }
+    }
+}
+
+fn resolve_cgs_for_catalog_entity<'a>(
+    catalog_entry_id: Option<&str>,
+    entity: &str,
+    fed: &'a FederationDispatch,
+    fallback: &'a CGS,
+) -> Result<&'a CGS, TypeError> {
+    if let Some(eid) = catalog_entry_id {
+        return fed
+            .by_entry
+            .get(eid)
+            .filter(|ctx| ctx.cgs.entities.contains_key(entity))
+            .map(|ctx| ctx.cgs.as_ref())
+            .ok_or_else(|| TypeError::EntityNotFound {
+                entity: format!(
+                    "entity `{entity}` is not defined in catalog `{eid}` (use the session `e#` from the teaching table)"
+                ),
+            });
+    }
+    fed.resolve_entity(
+        entity,
+        crate::row_composition::ResolutionHint::default(),
+        fallback,
+    )
+    .map_err(federation_resolve_type_error)
+}
+
 /// Type-check using per-entity [`CGS`] from [`FederationDispatch`] (fallback: primary session graph).
 pub fn type_check_expr_federated(
     expr: &Expr,
     fed: &FederationDispatch,
     fallback: &CGS,
 ) -> Result<(), TypeError> {
-    let cgs_for = |entity: &str| {
-        fed.resolve_entity(
-            entity,
-            crate::row_composition::ResolutionHint::default(),
-            fallback,
-        )
-        .unwrap_or(fallback)
-    };
     match expr {
-        Expr::Query(query) => type_check_query(query, cgs_for(query.entity.as_str())),
-        Expr::Get(get) => type_check_get(get, cgs_for(get.reference.entity_type.as_str())),
-        Expr::Create(create) => type_check_create(create, cgs_for(create.entity.as_str())),
+        Expr::Query(query) => type_check_query(
+            query,
+            resolve_cgs_for_catalog_entity(
+                query.catalog_entry_id.as_deref(),
+                query.entity.as_str(),
+                fed,
+                fallback,
+            )?,
+        ),
+        Expr::Get(get) => type_check_get(
+            get,
+            resolve_cgs_for_catalog_entity(
+                get.catalog_entry_id.as_deref(),
+                get.reference.entity_type.as_str(),
+                fed,
+                fallback,
+            )?,
+        ),
+        Expr::Create(create) => type_check_create(
+            create,
+            resolve_cgs_for_catalog_entity(
+                create.catalog_entry_id.as_deref(),
+                create.entity.as_str(),
+                fed,
+                fallback,
+            )?,
+        ),
         Expr::Page(page) => type_check_page(page),
-        Expr::Delete(delete) => {
-            type_check_delete(delete, cgs_for(delete.target.entity_type.as_str()))
-        }
-        Expr::Invoke(invoke) => {
-            type_check_invoke(invoke, cgs_for(invoke.target.entity_type.as_str()))
-        }
+        Expr::Delete(delete) => type_check_delete(
+            delete,
+            resolve_cgs_for_catalog_entity(
+                delete.catalog_entry_id.as_deref(),
+                delete.target.entity_type.as_str(),
+                fed,
+                fallback,
+            )?,
+        ),
+        Expr::Invoke(invoke) => type_check_invoke(
+            invoke,
+            resolve_cgs_for_catalog_entity(
+                invoke.catalog_entry_id.as_deref(),
+                invoke.target.entity_type.as_str(),
+                fed,
+                fallback,
+            )?,
+        ),
         Expr::Chain(chain) => type_check_chain_federated(chain, fed, fallback),
         Expr::TeachingValue { .. } => Ok(()),
     }
@@ -2589,5 +2656,44 @@ mod tests {
         ));
         let chain = Expr::Chain(ChainExpr::auto_get(get, "summary".to_string()));
         type_check_expr_federated(&chain, &fed, cgs_primary.as_ref()).expect("federated chain tc");
+    }
+
+    #[test]
+    fn federated_duplicate_entity_name_requires_session_catalog_stamp() {
+        use crate::{Expr, QueryExpr};
+
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = std::sync::Arc::new(load_schema_dir(&root).expect("matrix"));
+        let mut by_entry = IndexMap::new();
+        by_entry.insert(
+            "github".into(),
+            std::sync::Arc::new(crate::CgsContext::entry("github", cgs.clone())),
+        );
+        by_entry.insert(
+            "linear".into(),
+            std::sync::Arc::new(crate::CgsContext::entry("linear", cgs.clone())),
+        );
+        let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
+        let mut exp = crate::symbol_tuning::DomainExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+        exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
+        let fed = FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
+
+        let mut stamped = QueryExpr::all("LangItem");
+        stamped.catalog_entry_id = Some("linear".into());
+        type_check_expr_federated(&Expr::Query(stamped), &fed, cgs.as_ref())
+            .expect("catalog stamp disambiguates");
+
+        let bare = QueryExpr::all("LangItem");
+        let err = type_check_expr_federated(&Expr::Query(bare), &fed, cgs.as_ref()).unwrap_err();
+        match err {
+            TypeError::EntityNotFound { entity } => {
+                assert!(
+                    entity.contains("ambiguous"),
+                    "expected ambiguity, got {entity}"
+                );
+            }
+            other => panic!("expected ambiguous entity error, got {other:?}"),
+        }
     }
 }

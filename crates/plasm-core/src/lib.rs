@@ -107,6 +107,7 @@ pub mod query_resolve;
 pub mod resolved_identity;
 pub mod result_gloss;
 pub mod row_composition;
+pub mod row_predicate;
 pub mod schema;
 pub mod schema_overlay;
 pub mod scope_entity_ref_splat;
@@ -197,6 +198,10 @@ pub use row_composition::{
     parse_row_suffix_stream_tail, resolve_relation_target_id, row_identity_from_parts,
     row_identity_from_ref, IdEncoding, PreflightToken, ResolutionHint, RowIdentity, RowProvenance,
     RowState, RowSuffix,
+};
+pub use row_predicate::{
+    entity_def_for_row_predicate, parse_row_predicate_list, row_predicate_from_expr,
+    type_check_row_predicate, RowComparison, RowPredicate, RowPredicateTypeCtx,
 };
 pub use schema::{
     capability_is_zero_arity_action, capability_is_zero_arity_invoke,
