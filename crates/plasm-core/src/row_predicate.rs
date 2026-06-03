@@ -5,7 +5,7 @@
 
 use crate::cgs_federation::QualifiedEntityKey;
 use crate::predicate::Predicate;
-use crate::schema::{CGS, EntityDef};
+use crate::schema::{EntityDef, CGS};
 use crate::symbol_tuning::SymbolMap;
 use crate::type_checker::type_check_predicate;
 use crate::{CompOp, Expr, TypeError, TypedComparisonValue};
@@ -73,7 +73,9 @@ fn flatten_flat_and(pred: &Predicate) -> Result<Vec<RowComparison>, String> {
             }
             Ok(out)
         }
-        Predicate::Or { .. } => Err("row filter: OR is not supported (use comma-separated AND)".into()),
+        Predicate::Or { .. } => {
+            Err("row filter: OR is not supported (use comma-separated AND)".into())
+        }
         Predicate::Not { .. } => Err("row filter: NOT is not supported".into()),
         Predicate::ExistsRelation { .. } => {
             Err("row filter: relation exists predicates are not supported".into())
@@ -86,12 +88,12 @@ pub fn type_check_row_predicate(
     pred: &RowPredicate,
     ctx: &RowPredicateTypeCtx<'_>,
 ) -> Result<(), TypeError> {
-    let entity = ctx
-        .cgs
-        .get_entity(ctx.qe.entity.as_str())
-        .ok_or_else(|| TypeError::EntityNotFound {
-            entity: ctx.qe.entity.clone(),
-        })?;
+    let entity =
+        ctx.cgs
+            .get_entity(ctx.qe.entity.as_str())
+            .ok_or_else(|| TypeError::EntityNotFound {
+                entity: ctx.qe.entity.clone(),
+            })?;
     for clause in &pred.0 {
         let p = Predicate::comparison(clause.field.as_str(), clause.op, clause.value.clone());
         type_check_predicate(&p, entity, &[], ctx.cgs)?;
@@ -144,13 +146,9 @@ mod tests {
         let layers: Vec<&CGS> = layers_arc.iter().map(|c| c.as_ref()).collect();
         let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
         let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
-        let err = parse_row_predicate_list(
-            "LangItem",
-            "owner=\"a\" or owner=\"b\"",
-            &layers,
-            sym_map,
-        )
-        .unwrap_err();
+        let err =
+            parse_row_predicate_list("LangItem", "owner=\"a\" or owner=\"b\"", &layers, sym_map)
+                .unwrap_err();
         assert!(err.contains("OR") || err.contains("parse"), "{err}");
     }
 }

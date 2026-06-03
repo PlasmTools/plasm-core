@@ -797,9 +797,7 @@ fn postfix_op_to_compute(
         PlasmPostfixOp::Filter { body } => {
             let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string())
                 .ok_or_else(|| {
-                    format!(
-                        "filter(...) on `{source}` requires an upstream catalog entity row"
-                    )
+                    format!("filter(...) on `{source}` requires an upstream catalog entity row")
                 })?;
             let cgs = cgs_for_qualified_entity(session, &qe).ok_or_else(|| {
                 format!(
@@ -809,7 +807,8 @@ fn postfix_op_to_compute(
             })?;
             let layers = vec![cgs.as_ref()];
             let sym_map = symbol_map_for_plasm_surface_parse(session, state.cross_cache);
-            let core_qe = plasm_core::QualifiedEntityKey::new(qe.entry_id.as_str(), qe.entity.as_str());
+            let core_qe =
+                plasm_core::QualifiedEntityKey::new(qe.entry_id.as_str(), qe.entity.as_str());
             let row_pred = plasm_core::parse_row_predicate_list(
                 qe.entity.as_str(),
                 body.as_str(),
@@ -821,8 +820,7 @@ fn postfix_op_to_compute(
                 cgs: cgs.as_ref(),
                 symbol_map: None,
             };
-            plasm_core::type_check_row_predicate(&row_pred, &tc_ctx)
-                .map_err(|e| e.to_string())?;
+            plasm_core::type_check_row_predicate(&row_pred, &tc_ctx).map_err(|e| e.to_string())?;
             let mut paths = Vec::new();
             for clause in &row_pred.0 {
                 paths.push(FieldPath::from_dotted(clause.field.as_str())?);
@@ -843,11 +841,7 @@ fn postfix_op_to_compute(
                 state.cross_cache,
             )?;
             let schema = synthetic_schema_passthrough_rows(session, state, staged, source)?;
-            Ok(mk(
-                ComputeOp::Filter { predicates },
-                schema,
-                false,
-            ))
+            Ok(mk(ComputeOp::Filter { predicates }, schema, false))
         }
         PlasmPostfixOp::Sort { args } => {
             let parts = split_top_level(args, ',')?;
@@ -2830,14 +2824,12 @@ fn infer_surface_contract(
     };
     if let Expr::Query(q) = expr {
         if let Some(capability_name) = q.capability_name.as_ref() {
-            let resolving_cgs = cgs_for_qualified_entity(session, &qe).ok_or_else(
-                    || {
-                        format!(
-                            "catalog `{}` is not loaded for entity `{}`",
-                            qe.entry_id, qe.entity
-                        )
-                    },
-                )?;
+            let resolving_cgs = cgs_for_qualified_entity(session, &qe).ok_or_else(|| {
+                format!(
+                    "catalog `{}` is not loaded for entity `{}`",
+                    qe.entry_id, qe.entity
+                )
+            })?;
             if let Some(cap) = resolving_cgs.capabilities.get(capability_name.as_str()) {
                 if cap.kind == plasm_core::CapabilityKind::Search {
                     kind = PlanNodeKind::Search;
@@ -2951,26 +2943,24 @@ fn schema_from_group_by(
     let mut fields: Vec<SyntheticFieldSchema> = keys
         .iter()
         .filter_map(|k| {
-            OutputName::new(k.dotted()).ok().map(|name| SyntheticFieldSchema {
-                name,
-                value_kind: SyntheticValueKind::String,
-                source: None,
-            })
+            OutputName::new(k.dotted())
+                .ok()
+                .map(|name| SyntheticFieldSchema {
+                    name,
+                    value_kind: SyntheticValueKind::String,
+                    source: None,
+                })
         })
         .collect();
-    fields.extend(
-        aggregates
-            .iter()
-            .map(|agg| SyntheticFieldSchema {
-                name: agg.name.clone(),
-                value_kind: if agg.function == AggregateFunction::Count {
-                    SyntheticValueKind::Integer
-                } else {
-                    SyntheticValueKind::Number
-                },
-                source: None,
-            }),
-    );
+    fields.extend(aggregates.iter().map(|agg| SyntheticFieldSchema {
+        name: agg.name.clone(),
+        value_kind: if agg.function == AggregateFunction::Count {
+            SyntheticValueKind::Integer
+        } else {
+            SyntheticValueKind::Number
+        },
+        source: None,
+    }));
     SyntheticResultSchema {
         entity: Some(entity.to_string()),
         fields,
@@ -4165,11 +4155,12 @@ x"#;
             "items = LangItem\nfiltered = items.filter{owner=\"o1\"}\nfiltered",
         )
         .expect("compile filter program");
-        let has_filter = plan["nodes"]
-            .as_array()
-            .expect("nodes")
-            .iter()
-            .any(|n| n.get("compute").and_then(|c| c.get("op")).and_then(|o| o.get("kind")) == Some(&serde_json::json!("filter")));
+        let has_filter = plan["nodes"].as_array().expect("nodes").iter().any(|n| {
+            n.get("compute")
+                .and_then(|c| c.get("op"))
+                .and_then(|o| o.get("kind"))
+                == Some(&serde_json::json!("filter"))
+        });
         assert!(has_filter, "expected filter compute node: {plan}");
     }
 

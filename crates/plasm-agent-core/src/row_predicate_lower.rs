@@ -1,9 +1,9 @@
 //! Lower [`plasm_core::RowPredicate`] to executable [`PlanPredicate`] IR.
 
-use plasm_core::{CompOp, RowPredicate, TypedComparisonValue};
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{PlanPredicate, PlanPredicateOp, PlanValue, QualifiedEntityKey};
 use plasm_core::SymbolMapCrossRequestCache;
+use plasm_core::{CompOp, RowPredicate, TypedComparisonValue};
 
 pub(crate) fn lower_row_predicate_to_plan(
     pred: &RowPredicate,
@@ -44,7 +44,6 @@ fn comp_op_to_plan(op: CompOp) -> PlanPredicateOp {
 }
 
 fn typed_comparison_to_plan_value(v: &TypedComparisonValue) -> Result<PlanValue, String> {
-    let json = serde_json::to_value(v.to_value())
-        .map_err(|e| format!("row filter value: {e}"))?;
+    let json = serde_json::to_value(v.to_value()).map_err(|e| format!("row filter value: {e}"))?;
     Ok(PlanValue::Literal { value: json })
 }

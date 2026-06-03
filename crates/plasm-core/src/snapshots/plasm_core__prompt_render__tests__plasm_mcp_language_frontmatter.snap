@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm-core/src/prompt_render.rs
+source: crates/plasm-core/src/prompt_render.rs
 expression: render_plasm_mcp_language_frontmatter()
 ---
 Follow the grammar and the teaching TSV below; reply with one valid plasm_program:
@@ -46,7 +46,7 @@ create_action ::= e#.m#(p#=<value>, …)
 search        ::= e#~"text"
 page          ::= page(sN_pgM) | page(sN_pgM, limit=N)
 projection    ::= e#(<id>)[p#,…] | "[" fields "]"
-postfix       ::= ".limit(N)" | ".page_size(N)" | ".sort(field[, dir])" | ".aggregate(specs)" | ".group_by(field, specs)" | ".singleton()" | "[" fields "]"
+postfix       ::= ".limit(N)" | ".page_size(N)" | ".sort(field[, dir])" | ".filter{…}" | ".filter(…)" | ".aggregate(specs)" | ".group_by(field, specs)" | ".singleton()" | "[" fields "]"
 row_template  ::= ("[" fields "]")? "<<TAG" template_body "TAG"
 fields        ::= [p#,…]
 specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) [, ...]
@@ -61,5 +61,17 @@ Composition rules:
 - Template blocks use Minijinja with `rows` as the input array. The bound result is a row with a `content` field; pass `report.content` to string/body parameters or `=>` payloads.
 - Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.
 - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
-- Examples: scoped child list `e#{p#=e#(<id>)}`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
+- Examples: scoped child list `e1{p14=e3(p5=<val>, p13=<val>), …} (inline) OR repo=e3(…); e1{p14=repo, …} (decomposed label ref)`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
+- Worked scoped-search program (copy shape, substitute values):
+repo = e3(p5=octocat, p13=Hello-World)
+e1{p14=repo, p71=open}
+OR inline: e1{p14=e3(p5=octocat, p13=Hello-World), p71=open}
 - `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `m#(..., p#=<<TXT` + newline body + `TXT` newline `)`.
+
+Common pitfalls:
+- Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.
+- `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.
+- Federated sessions: use the `e#` from the teaching row for that catalog when the same wire entity name appears in multiple APIs.
+- Continuation: `label.<relation>` from row-producing bindings; aggregate/render/derive labels are not row anchors.
+- Derived columns: `label =>` template (Minijinja on `rows`), not `.derive(…)`.
+- String slots: pass `binding.content` from bracket-render, not the whole row.

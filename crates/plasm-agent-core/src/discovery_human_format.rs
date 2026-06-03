@@ -15,9 +15,21 @@ pub const MCP_DISCOVERY_DEFAULT_MAX_ROWS: usize = 12;
 /// Default max rows per registry `entry_id` in MCP discovery TSV.
 pub const MCP_DISCOVERY_DEFAULT_MAX_PER_ENTRY: usize = 8;
 
+/// How capped MCP discovery rows are chosen from score-ranked deduped candidates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DiscoveryTableMode {
+    /// First `max_rows` rows in global score order (default for MCP).
+    #[default]
+    GlobalTopN,
+    /// Round-robin across catalogs up to `max_per_entry` per `entry_id` (legacy fair-share).
+    #[allow(dead_code)] // selected via `DiscoveryTablePolicy` (tests + explicit policy)
+    PerEntryFairShare,
+}
+
 /// Row cap and per-catalog limits for MCP discovery tables (HTTP terminal uses uncapped [`format_discovery_markdown`]).
 #[derive(Debug, Clone, Copy)]
 pub struct DiscoveryTablePolicy {
+    pub mode: DiscoveryTableMode,
     pub max_rows: usize,
     pub max_per_entry: Option<usize>,
 }
@@ -25,6 +37,7 @@ pub struct DiscoveryTablePolicy {
 impl Default for DiscoveryTablePolicy {
     fn default() -> Self {
         Self {
+            mode: DiscoveryTableMode::GlobalTopN,
             max_rows: MCP_DISCOVERY_DEFAULT_MAX_ROWS,
             max_per_entry: Some(MCP_DISCOVERY_DEFAULT_MAX_PER_ENTRY),
         }
@@ -92,6 +105,47 @@ fn apply_discovery_table_policy(
         return (Vec::new(), DiscoveryOmissionMeta::default());
     }
 
+    match policy.mode {
+        DiscoveryTableMode::GlobalTopN => apply_global_top_n_policy(rows, policy),
+        DiscoveryTableMode::PerEntryFairShare => apply_per_entry_fair_share_policy(rows, policy),
+    }
+}
+
+fn apply_global_top_n_policy(
+    rows: Vec<(String, String)>,
+    policy: &DiscoveryTablePolicy,
+) -> (Vec<(String, String)>, DiscoveryOmissionMeta) {
+    let mut per_entry: HashMap<String, usize> = HashMap::new();
+    let mut shown = Vec::new();
+    let mut omitted = Vec::new();
+    for row in rows {
+        if shown.len() >= policy.max_rows {
+            omitted.push(row);
+            continue;
+        }
+        if let Some(cap) = policy.max_per_entry {
+            let n = per_entry.entry(row.0.clone()).or_insert(0);
+            if *n >= cap {
+                omitted.push(row);
+                continue;
+            }
+            *n += 1;
+        }
+        shown.push(row);
+    }
+    let omission = DiscoveryOmissionMeta {
+        truncated: !omitted.is_empty(),
+        shown: shown.len(),
+        omitted: omitted.len(),
+        top_omitted: omitted.into_iter().take(5).collect(),
+    };
+    (shown, omission)
+}
+
+fn apply_per_entry_fair_share_policy(
+    rows: Vec<(String, String)>,
+    policy: &DiscoveryTablePolicy,
+) -> (Vec<(String, String)>, DiscoveryOmissionMeta) {
     let mut groups: IndexMap<String, Vec<(String, String)>> = IndexMap::new();
     for row in rows {
         groups.entry(row.0.clone()).or_default().push(row);
@@ -223,7 +277,7 @@ fn discovery_markdown_body(
         s.push_str("\n```\n\n");
         if omission.truncated {
             s.push_str(&format!(
-                "_Showing top {} discovery rows ({} omitted). Federated intents may need a second discover with narrower intent per `api`, or `typed: true` for disambiguation._\n\n",
+                "_Showing top {} discovery rows ({} omitted). Narrow `intent`, pass seeds you already know, or use `typed: true` if the entity is ambiguous._\n\n",
                 omission.shown, omission.omitted
             ));
         }
@@ -237,6 +291,7 @@ pub fn format_discovery_markdown(result: &DiscoveryResult) -> String {
     format_discovery_markdown_for_mcp(
         result,
         &DiscoveryTablePolicy {
+            mode: DiscoveryTableMode::GlobalTopN,
             max_rows: usize::MAX,
             max_per_entry: None,
         },
@@ -368,6 +423,7 @@ mod tests {
         let formatted = format_discovery_markdown_for_mcp(
             &r,
             &DiscoveryTablePolicy {
+                mode: DiscoveryTableMode::GlobalTopN,
                 max_rows: 3,
                 max_per_entry: None,
             },
@@ -376,6 +432,52 @@ mod tests {
         assert_eq!(formatted.omission.shown, 3);
         assert_eq!(formatted.omission.omitted, 17);
         assert!(formatted.markdown.contains("17 omitted"));
+    }
+
+    #[test]
+    fn mcp_discovery_global_top_n_prefers_high_scores() {
+        let r = sample_result(vec![
+            RankedCandidate {
+                entry_id: "github".into(),
+                entity: "Repository".into(),
+                capability_name: "repo_search".into(),
+                score: 100,
+                reason_codes: vec![],
+                capability_description: String::new(),
+            },
+            RankedCandidate {
+                entry_id: "proof".into(),
+                entity: "Project".into(),
+                capability_name: "list".into(),
+                score: 5,
+                reason_codes: vec![],
+                capability_description: String::new(),
+            },
+            RankedCandidate {
+                entry_id: "cloudflare".into(),
+                entity: "Zone".into(),
+                capability_name: "list".into(),
+                score: 4,
+                reason_codes: vec![],
+                capability_description: String::new(),
+            },
+        ]);
+        let formatted = format_discovery_markdown_for_mcp(
+            &r,
+            &DiscoveryTablePolicy {
+                mode: DiscoveryTableMode::GlobalTopN,
+                max_rows: 2,
+                max_per_entry: None,
+            },
+        );
+        let lines: Vec<_> = formatted
+            .markdown
+            .lines()
+            .filter(|l| l.contains('\t') && !l.starts_with("api\t"))
+            .collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("github\tRepository"));
+        assert!(lines[1].starts_with("proof\tProject"));
     }
 
     #[test]
@@ -417,6 +519,7 @@ mod tests {
         let formatted = format_discovery_markdown_for_mcp(
             &r,
             &DiscoveryTablePolicy {
+                mode: DiscoveryTableMode::PerEntryFairShare,
                 max_rows: 3,
                 max_per_entry: Some(8),
             },

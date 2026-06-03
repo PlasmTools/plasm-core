@@ -23,6 +23,8 @@ pub struct PlanDryReview {
     pub has_unbounded_read_root: bool,
     pub has_full_collection_compute: bool,
     pub has_foreach_fanout_risk: bool,
+    /// `query` surface → `.limit` → `.filter` on materialized rows (fetch vs row filter nudge).
+    pub has_query_limit_row_filter: bool,
     pub unused_seeds: Vec<String>,
 }
 
@@ -44,16 +46,19 @@ impl PlanDryReview {
         if !self.unused_seeds.is_empty() {
             parts.push(format!("unused seed {}", self.unused_seeds.join(", ")));
         }
-        if self.has_unbounded_read_root || return_unbounded_root {
-            if !parts.iter().any(|p| p.contains("unbounded")) {
-                parts.push("unbounded read".to_string());
-            }
+        if (self.has_unbounded_read_root || return_unbounded_root)
+            && !parts.iter().any(|p| p.contains("unbounded"))
+        {
+            parts.push("unbounded read".to_string());
         }
         if self.has_full_collection_compute && !parts.iter().any(|p| p.contains("project")) {
             parts.push("narrow before aggregate/limit".to_string());
         }
         if self.has_foreach_fanout_risk {
             parts.push("for_each fanout".to_string());
+        }
+        if self.has_query_limit_row_filter && !parts.iter().any(|p| p.contains("fetch filter")) {
+            parts.push("fetch filter: e1{…} at HTTP, binding.filter{…} on rows".to_string());
         }
         if parts.is_empty() {
             None

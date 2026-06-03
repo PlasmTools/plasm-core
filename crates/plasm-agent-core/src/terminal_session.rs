@@ -5,8 +5,9 @@ use indexmap::IndexMap;
 use plasm_core::prompt_render::domain_tsv_table_from_wrapped_prompt;
 use plasm_core::CgsContext;
 use plasm_core::{
-    discovery::derive_intent_exposure_surface_batch, relation_endpoint_keys, DomainExposureSession,
-    ExposureEntityKey, PromptPipelineConfig, SymbolMapCrossRequestCache, CGS,
+    discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions},
+    relation_endpoint_keys, DomainExposureSession, ExposureEntityKey, PromptPipelineConfig,
+    SymbolMapCrossRequestCache, CGS,
 };
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT};
 use reqwest::Client;
@@ -254,6 +255,7 @@ impl ClientSymbolSession {
                         &relation_keys,
                         entities,
                         None,
+                        ExposureSurfaceOptions::default(),
                     );
                     self.exposure = Some(DomainExposureSession::new_with_intent_delta(
                         cgs.as_ref(),
@@ -281,6 +283,7 @@ impl ClientSymbolSession {
                         &relation_keys,
                         entities,
                         None,
+                        ExposureSurfaceOptions::default(),
                     );
                     exp.expose_surface(&layer_refs, cgs.clone(), entry_id.as_str(), &refs, delta);
                 } else {
@@ -295,6 +298,7 @@ impl ClientSymbolSession {
                     &relation_keys,
                     entities,
                     None,
+                    ExposureSurfaceOptions::default(),
                 );
                 self.exposure = Some(DomainExposureSession::new_with_intent_delta(
                     cgs.as_ref(),

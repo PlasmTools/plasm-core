@@ -4,6 +4,4 @@ expression: "super::MCP_PLASM_RUN_TOOL_DESCRIPTION"
 ---
 **Run Plasm** (live execution) with the same **`logical_session_ref`**, **`program`**, and optional **`reasoning`** as **`plasm`**. Call **only after** reviewing the **`plasm`** dry-run plan. Performs real HTTP/API work; may return **`resource_link`** blocks and `_meta.plasm` snapshot references.
 
-**Program contract:** MCP initialize instructions (same as **`plasm`**, including comma-separated multi-root final lines). **`ident.<relation>`** continuation like **`plasm`**.
-
 **Live results:** `## {return_label} ({n} rows)` + TSV/table; multi-return programs use `# Results` with `### {label} ({n} rows)` per root. Truncated rows: `_meta.plasm.steps` + MCP **`resources/read`** on snapshot URIs.

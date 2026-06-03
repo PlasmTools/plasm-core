@@ -611,10 +611,7 @@ mod tests {
         assert_eq!(ops1.len(), 1);
         assert_eq!(ops2.len(), 1);
         match (&ops1[0], &ops2[0]) {
-            (
-                PlasmPostfixOp::Filter { body: b1 },
-                PlasmPostfixOp::Filter { body: b2 },
-            ) => {
+            (PlasmPostfixOp::Filter { body: b1 }, PlasmPostfixOp::Filter { body: b2 }) => {
                 assert_eq!(b1.trim(), b2.trim());
             }
             _ => panic!("expected filter ops"),

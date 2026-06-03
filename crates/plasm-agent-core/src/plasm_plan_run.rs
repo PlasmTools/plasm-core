@@ -45,14 +45,13 @@ use crate::trace_hub::{CodePlanRunArtifactRef, McpPlasmTraceSink};
 use crate::trace_sink_emit::PlasmTraceContext;
 use indexmap::IndexMap;
 use plasm_core::{
-    CapabilityKind, Cardinality, EntityKey, EntityName, Expr, JsonPathSegment,
-    RelationMaterialization, Ref, TypedFieldValue, Value,
+    CapabilityKind, Cardinality, EntityKey, EntityName, Expr, JsonPathSegment, Ref,
+    RelationMaterialization, TypedFieldValue, Value,
 };
 use plasm_runtime::{
     CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
 };
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write as _;
 
 #[cfg(test)]
 use crate::plasm_plan::{parse_plan_value, validate_plan_artifact};
@@ -1276,6 +1275,38 @@ fn render_predicate_op(op: crate::plasm_plan::PlanPredicateOp) -> &'static str {
     }
 }
 
+fn plan_has_query_limit_row_filter_chain(plan: &Plan<ValidatedPlanState>) -> bool {
+    let by_id: std::collections::HashMap<&str, &ValidatedPlanNode> =
+        plan.nodes.iter().map(|n| (n.id().as_str(), n)).collect();
+    for n in &plan.nodes {
+        let ValidatedPlanNode::Compute(c) = n else {
+            continue;
+        };
+        let ComputeOp::Filter { .. } = c.compute.op else {
+            continue;
+        };
+        let Some(limit_node) = by_id.get(c.compute.source.as_str()) else {
+            continue;
+        };
+        let ValidatedPlanNode::Compute(limit_c) = limit_node else {
+            continue;
+        };
+        let ComputeOp::Limit { .. } = limit_c.compute.op else {
+            continue;
+        };
+        let Some(q_node) = by_id.get(limit_c.compute.source.as_str()) else {
+            continue;
+        };
+        let ValidatedPlanNode::Surface(s) = q_node else {
+            continue;
+        };
+        if s.kind == PlanNodeKind::Query {
+            return true;
+        }
+    }
+    false
+}
+
 fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDryReview) {
     let mut read_nodes = Vec::new();
     let mut write_or_side_effect_nodes = Vec::new();
@@ -1418,6 +1449,7 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDry
         has_unbounded_read_root,
         has_full_collection_compute,
         has_foreach_fanout_risk,
+        has_query_limit_row_filter: plan_has_query_limit_row_filter_chain(plan),
         unused_seeds: Vec::new(),
     };
 
@@ -2105,14 +2137,12 @@ async fn run_validated_plan_phased(
                 .await?
             }
             ValidatedPlanNode::RelationTraversal(relation) => {
-                let source_mat = materialized
-                    .get(&relation.relation.source)
-                    .ok_or_else(|| {
-                        format!(
-                            "relation source node {:?} has not been materialized",
-                            relation.relation.source.as_str()
-                        )
-                    })?;
+                let source_mat = materialized.get(&relation.relation.source).ok_or_else(|| {
+                    format!(
+                        "relation source node {:?} has not been materialized",
+                        relation.relation.source.as_str()
+                    )
+                })?;
                 let source_rows = source_mat.rows.clone();
                 if let Some(mat) = try_materialize_from_parent_get_relation(
                     st,
@@ -2156,8 +2186,10 @@ async fn run_validated_plan_phased(
                     )
                     .await?;
                     if let Some(sink) = sink.as_ref() {
-                        trace_record_plasm_line(sink, idx, expr_label, &parsed, &result, &scoped_es)
-                            .await;
+                        trace_record_plasm_line(
+                            sink, idx, expr_label, &parsed, &result, &scoped_es,
+                        )
+                        .await;
                     }
                     MaterializedNode {
                         entry_id: relation.relation.target.entry_id.clone(),
@@ -2399,7 +2431,11 @@ fn extract_from_parent_get_value(
     row: &serde_json::Value,
     path: &[JsonPathSegment],
 ) -> Vec<serde_json::Value> {
-    fn walk(cur: &serde_json::Value, path: &[JsonPathSegment], idx: usize) -> Vec<serde_json::Value> {
+    fn walk(
+        cur: &serde_json::Value,
+        path: &[JsonPathSegment],
+        idx: usize,
+    ) -> Vec<serde_json::Value> {
         if idx >= path.len() {
             return vec![cur.clone()];
         }
@@ -2445,6 +2481,7 @@ fn flatten_from_parent_get_source_rows(
     out
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn try_materialize_from_parent_get_relation(
     st: &PlasmHostState,
     es: &ExecuteSession,
@@ -2475,7 +2512,8 @@ async fn try_materialize_from_parent_get_relation(
                 source_mat.entity, relation.relation.relation
             )
         })?;
-    let Some(RelationMaterialization::FromParentGet { path }) = rel_schema.materialize.as_ref() else {
+    let Some(RelationMaterialization::FromParentGet { path }) = rel_schema.materialize.as_ref()
+    else {
         return Ok(None);
     };
     if path.is_empty() {
@@ -2509,16 +2547,12 @@ async fn try_materialize_from_parent_get_relation(
         es,
         session_id,
         Some(relation.relation.target.entry_id.as_str()),
-        vec![format!(
-            "plan.relation({})",
-            node.id().as_str()
-        )],
+        vec![format!("plan.relation({})", node.id().as_str())],
         &full_result,
         trace,
     )
     .await?;
-    let row_identities =
-        row_identities_from_entities(&scoped_es, target, &full_result.entities);
+    let row_identities = row_identities_from_entities(&scoped_es, target, &full_result.entities);
     let display = relation
         .relation
         .ir

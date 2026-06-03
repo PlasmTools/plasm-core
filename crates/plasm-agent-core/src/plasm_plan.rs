@@ -2268,7 +2268,9 @@ where
     use serde::de::Error;
     let v = serde_json::Value::deserialize(deserializer)?;
     match v {
-        serde_json::Value::String(s) => FieldPath::from_dotted(s.as_str()).map(|k| vec![k]).map_err(D::Error::custom),
+        serde_json::Value::String(s) => FieldPath::from_dotted(s.as_str())
+            .map(|k| vec![k])
+            .map_err(D::Error::custom),
         serde_json::Value::Array(items) => {
             let mut keys = Vec::with_capacity(items.len());
             for item in items {

@@ -13,7 +13,6 @@ use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use futures_util::future::join_all;
 use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use http_problem::Problem;
 use indexmap::IndexMap;
@@ -46,7 +45,7 @@ use crate::run_artifacts::{
     RunArtifactWire,
 };
 use crate::trace_hub::{
-    trace_id_for_http_execute_session, McpPlasmTraceSink, PlasmLineTraceMeta, TraceEvent,
+    McpPlasmTraceSink, PlasmLineTraceMeta, TraceEvent,
     TraceSegment,
 };
 use crate::trace_sink_emit::{McpTraceAuditFields, PlasmTraceContext};
@@ -167,6 +166,7 @@ fn artifact_archive_fallback_parsed_expr() -> ParsedExpr {
     }
 }
 
+#[allow(dead_code)]
 fn session_cgs_for_result<'a>(
     sess: &'a crate::execute_session::ExecuteSession,
     result: &ExecutionResult,
@@ -323,6 +323,7 @@ fn resolve_paging_storage_handle(
     }
 }
 
+#[allow(dead_code)]
 fn paging_followup_handle(parsed: &ParsedExpr, result: &ExecutionResult) -> Option<PagingHandle> {
     if !result.has_more {
         return None;
@@ -333,6 +334,7 @@ fn paging_followup_handle(parsed: &ParsedExpr, result: &ExecutionResult) -> Opti
     }
 }
 
+#[allow(dead_code)]
 fn paging_step_meta(
     run_step: usize,
     parsed: &ParsedExpr,
@@ -346,6 +348,7 @@ fn paging_step_meta(
     })
 }
 
+#[allow(dead_code)]
 fn append_paging_hint_markdown(
     markdown: String,
     parsed: &ParsedExpr,
@@ -373,6 +376,7 @@ fn tool_meta_from_handles(
     Some(meta)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_mcp_tool_meta(
     meta_index: Option<&mut PlasmMetaIndex>,
     handles: &[RunArtifactHandle],
@@ -442,6 +446,9 @@ pub struct CreateExecuteSessionBody {
     /// Optional capability wire names for ranked mutation gating when `context_intent` is set.
     #[serde(default)]
     pub ranked_capabilities: Option<Vec<String>>,
+    /// MCP `plasm_context` open: read-first seeded exposure (defer mutators unless intent scores strongly).
+    #[serde(default)]
+    pub read_first_seeded_exposure: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -926,6 +933,7 @@ fn wrap_domain_markdown_literal_block(body: &str, render_mode: PromptRenderMode)
     format!("```{fence}\n{t}\n```\n")
 }
 
+#[allow(dead_code)]
 fn cgs_entity_names_sample(names: &[String], max_list: usize) -> String {
     if names.is_empty() {
         return "()".to_string();
@@ -941,6 +949,7 @@ fn cgs_entity_names_sample(names: &[String], max_list: usize) -> String {
     }
 }
 
+#[allow(dead_code)]
 const MAX_PLASM_LINES_PER_REQUEST: usize = 64;
 
 /// For tenant MCP: resolve `plasm:outbound:*` keys bound to each catalog `entry_id` via Phoenix tables.
@@ -1195,6 +1204,9 @@ async fn execute_session_create_response_inner(
                 &relation_keys,
                 &names,
                 ranked_for_domain.as_deref(),
+                plasm_core::discovery::ExposureSurfaceOptions {
+                    read_first_seeded: body.read_first_seeded_exposure,
+                },
             );
             plasm_core::DomainExposureSession::new_with_intent_delta(
                 cgs.as_ref(),
@@ -1369,6 +1381,9 @@ pub async fn federate_execute_session(
             &relation_keys,
             &names,
             ranked_slice,
+            plasm_core::discovery::ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
         );
         exp.expose_surface(
             &layers,
@@ -1438,6 +1453,7 @@ pub async fn federate_execute_session(
     })
 }
 
+#[allow(dead_code)]
 const PLASM_NOOP_EXPRESSION_HINTS: &str = "\
 **Syntax (unchanged):** Search: `Entity~\"text\"` or `Entity.search(key=value, …)` — brace-only `Entity{…}` works when the entity has Search but no Query (e.g. Linear `Issue`). Views: abstract constructors from DOMAIN (`IssueContext(id)`, `MyWorkSnapshot`). Get + relation: `Issue(id).comments`.\n";
 
@@ -1558,6 +1574,9 @@ pub async fn expand_execute_domain_session(
                 &relation_keys,
                 &normalized,
                 ranked_slice,
+                plasm_core::discovery::ExposureSurfaceOptions {
+                    read_first_seeded: true,
+                },
             );
             exp.expose_surface(&layers, ctx.cgs.clone(), eid.as_str(), &refs, delta);
         } else {
@@ -1706,6 +1725,7 @@ pub(crate) async fn apply_capability_seeds(
                         RankedCapabilitiesArg::Unspecified => None,
                         RankedCapabilitiesArg::Set(opt) => opt.clone(),
                     },
+                    read_first_seeded_exposure: true,
                 },
                 plan.seeds_by_entry.len() <= 1,
                 outbound_ref,
@@ -2447,6 +2467,7 @@ pub(crate) enum RunLineError {
     ArtifactPersist(String),
 }
 
+#[allow(dead_code)]
 fn run_line_error_metric_labels(err: &RunLineError) -> (&'static str, &'static str) {
     match err {
         RunLineError::Parse(_) => ("parse", "parse"),
@@ -3398,6 +3419,7 @@ fn respond_staged_lines_execute_result(
     attach_plasm_run_headers(res, artifact)
 }
 
+#[allow(dead_code)]
 fn execution_failed_response(
     e: &RuntimeError,
     line: &str,
@@ -3447,6 +3469,7 @@ fn execution_failed_response(
     )
 }
 
+#[allow(dead_code)]
 fn plasm_line_step_bad_request(
     step_index: usize,
     total: usize,
@@ -4736,6 +4759,7 @@ mod tests {
             logical_session_id: None,
             context_intent: None,
             ranked_capabilities: None,
+            read_first_seeded_exposure: false,
         };
         let first = execute_session_create_response(&st, None, body.clone())
             .await
@@ -4762,6 +4786,7 @@ mod tests {
                 logical_session_id: None,
                 context_intent: None,
                 ranked_capabilities: None,
+                read_first_seeded_exposure: false,
             },
         )
         .await
@@ -4859,6 +4884,7 @@ mod tests {
                 logical_session_id: None,
                 context_intent: None,
                 ranked_capabilities: None,
+                read_first_seeded_exposure: false,
             },
         )
         .await

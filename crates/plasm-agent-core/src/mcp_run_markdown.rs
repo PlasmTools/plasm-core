@@ -89,6 +89,7 @@ impl McpExecuteResultBlock {
 }
 
 /// Truncate long expression source lines for MCP previews and traces.
+#[allow(dead_code)]
 pub(crate) fn execute_expression_preview(expr: &str) -> String {
     const MAX_CHARS: usize = 400;
     let t = expr.trim();

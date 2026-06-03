@@ -397,6 +397,7 @@ async fn http_create_session(
         logical_session_id: None,
         context_intent: intent,
         ranked_capabilities: None,
+        read_first_seeded_exposure: false,
     })?;
     let create_client = Client::builder()
         .redirect(Policy::none())

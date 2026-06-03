@@ -554,9 +554,7 @@ impl<'a> Parser<'a> {
     }
 
     fn ok_stamped(&self, expr: Expr) -> Result<Expr, ParseError> {
-        Ok(
-            expr.with_session_catalog_entry_id(self.pending_session_catalog_entry_id.clone()),
-        )
+        Ok(expr.with_session_catalog_entry_id(self.pending_session_catalog_entry_id.clone()))
     }
 
     fn layers_slice(&self) -> &[&'a CGS] {
@@ -4638,11 +4636,7 @@ mod tests {
         }
         let payload = match &r.expr {
             Expr::Create(c) => c.input.to_value(),
-            Expr::Invoke(i) => i
-                .input
-                .as_ref()
-                .expect("invoke input")
-                .to_value(),
+            Expr::Invoke(i) => i.input.as_ref().expect("invoke input").to_value(),
             other => panic!("expected create/invoke, got {other:?}"),
         };
         let refs_found: Vec<_> = find_input_refs(&payload);

@@ -409,10 +409,8 @@ fn suggest_entry_id(
             .chain(row.tags.iter().map(|s| s.as_str()));
         for cand in candidates {
             let dist = levenshtein_ascii(&raw_l, &cand.to_ascii_lowercase());
-            if dist <= 3 {
-                if best.as_ref().is_none_or(|(d, _)| dist < *d) {
-                    best = Some((dist, id.clone()));
-                }
+            if dist <= 3 && best.as_ref().is_none_or(|(d, _)| dist < *d) {
+                best = Some((dist, id.clone()));
             }
         }
     }
@@ -1010,6 +1008,51 @@ fn ranked_gate_allows_mutation(ranked_capability_names: Option<&[String]>, cap_n
     }
 }
 
+/// Minimum intent lexicon score for seeded-entity mutators on MCP read-first exposure waves.
+pub const READ_FIRST_SEEDED_MUTATOR_MIN_SCORE: u32 = 2;
+
+/// Options for [`derive_intent_exposure_surface_batch`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ExposureSurfaceOptions {
+    /// When true (MCP `plasm_context` waves), seeded-entity `create` / `update` / `delete` / `action`
+    /// require a stronger intent score or an explicit `ranked_capability_names` listing.
+    pub read_first_seeded: bool,
+}
+
+fn mutating_capability_admitted(
+    read_first_seeded: bool,
+    entity_is_seeded: bool,
+    score: u32,
+    ranked_capability_names: Option<&[String]>,
+    cap_name: &str,
+) -> bool {
+    if score == 0 {
+        return false;
+    }
+    if read_first_seeded && entity_is_seeded {
+        #[cfg(feature = "ranked_capability_gate")]
+        {
+            if ranked_gate_allows_mutation(ranked_capability_names, cap_name)
+                && ranked_capability_names.is_some_and(|n| !n.is_empty())
+            {
+                return true;
+            }
+        }
+        #[cfg(not(feature = "ranked_capability_gate"))]
+        let _ = (ranked_capability_names, cap_name);
+        return score >= READ_FIRST_SEEDED_MUTATOR_MIN_SCORE;
+    }
+    #[cfg(feature = "ranked_capability_gate")]
+    {
+        ranked_gate_allows_mutation(ranked_capability_names, cap_name)
+    }
+    #[cfg(not(feature = "ranked_capability_gate"))]
+    {
+        let _ = ranked_capability_names;
+        true
+    }
+}
+
 /// Capabilities on an explicitly seeded entity that are always admitted (no intent lexicon score).
 fn seed_entity_surface_always_includes(
     cap: &CapabilitySchema,
@@ -1036,6 +1079,8 @@ fn seed_entity_surface_always_includes(
 /// - **Seeded entities** (`entity_batch`): always admit `query` / `search` / `get` on that
 ///   entity’s domain, plus [`EntityDef::primary_read`] when set. Seeded `create` / `update` /
 ///   `delete` / `action` require intent lexicon overlap (or ranked-capability gate when enabled).
+///   With [`ExposureSurfaceOptions::read_first_seeded`], seeded mutators also require score ≥
+///   [`READ_FIRST_SEEDED_MUTATOR_MIN_SCORE`] unless listed in `ranked_capability_names`.
 /// - **Non-seeded** read capabilities require a non-zero lexicon overlap score against `intent`.
 /// - **Non-seeded** mutating capabilities require a non-zero score; with `ranked_capability_gate`,
 ///   when `ranked_capability_names` is non-empty they must also appear in that list.
@@ -1053,6 +1098,7 @@ pub fn derive_intent_exposure_surface_batch(
     relation_endpoint_keys: &[ExposureEntityKey],
     entity_batch: &[String],
     ranked_capability_names: Option<&[String]>,
+    options: ExposureSurfaceOptions,
 ) -> ExposureSurfaceDelta {
     let mut surface = ExposureSurface::default();
     let cid = if entry_id.is_empty() {
@@ -1105,6 +1151,7 @@ pub fn derive_intent_exposure_surface_batch(
             let seed_surface =
                 seed_entity_surface_always_includes(cap, ename, ent, &seeded_entities);
             let (score, _) = score_capability(&query_tokens, cgs, cap);
+            let entity_is_seeded = seeded_entities.contains(ename);
             let include = if seed_surface {
                 true
             } else {
@@ -1112,24 +1159,13 @@ pub fn derive_intent_exposure_surface_batch(
                     CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get => {
                         score > 0
                     }
-                    _ => {
-                        if score == 0 {
-                            false
-                        } else {
-                            #[cfg(feature = "ranked_capability_gate")]
-                            {
-                                ranked_gate_allows_mutation(
-                                    ranked_capability_names,
-                                    cap.name.as_str(),
-                                )
-                            }
-                            #[cfg(not(feature = "ranked_capability_gate"))]
-                            {
-                                let _ = ranked_capability_names;
-                                true
-                            }
-                        }
-                    }
+                    _ => mutating_capability_admitted(
+                        options.read_first_seeded,
+                        entity_is_seeded,
+                        score,
+                        ranked_capability_names,
+                        cap.name.as_str(),
+                    ),
                 }
             };
             if !include {
@@ -1217,11 +1253,13 @@ pub fn derive_intent_exposure_surface_batch(
                     continue;
                 }
                 let (score, _) = score_capability(&query_tokens, cgs, cap);
-                if score == 0 {
-                    continue;
-                }
-                #[cfg(feature = "ranked_capability_gate")]
-                if !ranked_gate_allows_mutation(ranked_capability_names, cap.name.as_str()) {
+                if !mutating_capability_admitted(
+                    options.read_first_seeded,
+                    false,
+                    score,
+                    ranked_capability_names,
+                    cap.name.as_str(),
+                ) {
                     continue;
                 }
                 let ckey = ExposureCapabilityKey {
@@ -1362,6 +1400,7 @@ mod tests {
             &endpoints,
             &["Profile".to_string()],
             None,
+            ExposureSurfaceOptions::default(),
         );
         assert!(
             !delta.required.slots.iter().any(|s| matches!(
@@ -1386,6 +1425,7 @@ mod tests {
             &endpoints,
             &["Profile".to_string()],
             None,
+            ExposureSurfaceOptions::default(),
         );
         assert!(
             delta.required.slots.iter().any(|s| matches!(
@@ -1394,6 +1434,95 @@ mod tests {
                     if relation.as_str() == "recorded_matches"
             )),
             "expected recorded_matches when RecordedContent is an allowed relation endpoint"
+        );
+    }
+
+    #[test]
+    fn intent_surface_read_first_defers_weak_scored_seeded_mutator() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
+        let cap = cgs
+            .capabilities
+            .get("langitem_create")
+            .expect("langitem_create");
+        let weak_intent = "langitem browse inventory metadata";
+        let strong_intent = "create new langitem title";
+        let mut weak_tokens = HashSet::new();
+        for tok in domain_lexicon::tokens(weak_intent) {
+            weak_tokens.insert(tok);
+        }
+        let mut strong_tokens = HashSet::new();
+        for tok in domain_lexicon::tokens(strong_intent) {
+            strong_tokens.insert(tok);
+        }
+        let (weak_score, _) = score_capability(&weak_tokens, &cgs, cap);
+        let (strong_score, _) = score_capability(&strong_tokens, &cgs, cap);
+        assert!(
+            weak_score > 0 && weak_score < READ_FIRST_SEEDED_MUTATOR_MIN_SCORE,
+            "fixture intent should score weakly: {weak_score}"
+        );
+        assert!(
+            strong_score >= READ_FIRST_SEEDED_MUTATOR_MIN_SCORE,
+            "fixture intent should score strongly: {strong_score}"
+        );
+        let endpoints = relation_keys("matrix", &["LangItem"]);
+        let delta_weak = derive_intent_exposure_surface_batch(
+            &cgs,
+            "matrix",
+            weak_intent,
+            &endpoints,
+            &["LangItem".to_string()],
+            None,
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        assert!(
+            !delta_weak
+                .required
+                .capabilities
+                .iter()
+                .any(|c| { c.capability.as_str() == "langitem_create" }),
+            "read-first should defer weak-scored seeded mutator"
+        );
+        let delta_strong = derive_intent_exposure_surface_batch(
+            &cgs,
+            "matrix",
+            strong_intent,
+            &endpoints,
+            &["LangItem".to_string()],
+            None,
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        assert!(
+            delta_strong
+                .required
+                .capabilities
+                .iter()
+                .any(|c| { c.capability.as_str() == "langitem_create" }),
+            "read-first should admit strong-scored seeded mutator"
+        );
+        let delta_ranked = derive_intent_exposure_surface_batch(
+            &cgs,
+            "matrix",
+            weak_intent,
+            &endpoints,
+            &["LangItem".to_string()],
+            Some(&["langitem_create".to_string()]),
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        assert!(
+            delta_ranked
+                .required
+                .capabilities
+                .iter()
+                .any(|c| { c.capability.as_str() == "langitem_create" }),
+            "read-first should admit ranked mutator wire name"
         );
     }
 
@@ -1410,6 +1539,7 @@ mod tests {
             &endpoints,
             &["PromptRun".to_string()],
             None,
+            ExposureSurfaceOptions::default(),
         );
         assert!(
             !delta
@@ -1426,6 +1556,7 @@ mod tests {
             &endpoints,
             &["PromptRun".to_string()],
             None,
+            ExposureSurfaceOptions::default(),
         );
         assert!(
             delta_create
@@ -1450,6 +1581,7 @@ mod tests {
             &endpoints,
             &["Profile".to_string()],
             None,
+            ExposureSurfaceOptions::default(),
         );
         assert!(
             delta.required.capabilities.iter().any(|c| {
@@ -1482,6 +1614,7 @@ mod tests {
             &endpoints,
             &["Profile".to_string()],
             Some(&ranked),
+            ExposureSurfaceOptions::default(),
         );
         assert!(
             !surface_has_capability(&delta, "PromptRun", "prompt_run_create"),
@@ -1667,6 +1800,7 @@ mod tests {
             &endpoints,
             &["PromptRun".to_string()],
             Some(&ranked),
+            ExposureSurfaceOptions::default(),
         );
         assert!(
             delta.required.capabilities.iter().any(|c| {
@@ -1707,6 +1841,7 @@ mod tests {
             &endpoints,
             &["ShareLink".to_string()],
             None,
+            ExposureSurfaceOptions::default(),
         );
         assert!(
             !surface_has_capability(&delta, "ShareLink", "share_link_create"),
@@ -1719,6 +1854,7 @@ mod tests {
             &endpoints,
             &["ShareLink".to_string()],
             None,
+            ExposureSurfaceOptions::default(),
         );
         assert!(
             surface_has_capability(&delta_create, "ShareLink", "share_link_create"),
@@ -1742,6 +1878,7 @@ mod tests {
             &endpoints,
             &["ShareLink".to_string()],
             None,
+            ExposureSurfaceOptions::default(),
         );
         assert!(
             surface_has_capability(&delta, "ShareLink", "share_link_create"),
@@ -1776,6 +1913,7 @@ mod tests {
             &endpoints,
             &["Pokemon".to_string()],
             None,
+            ExposureSurfaceOptions::default(),
         );
         assert!(
             surface_has_capability(&delta, "Pokemon", "pokemon_query"),
@@ -1804,6 +1942,7 @@ mod tests {
             &endpoints,
             &["ShareLink".to_string()],
             Some(&ranked),
+            ExposureSurfaceOptions::default(),
         );
         assert!(
             !surface_has_capability(&delta, "ShareLink", "share_link_create"),

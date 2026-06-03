@@ -2675,7 +2675,8 @@ mod tests {
             std::sync::Arc::new(crate::CgsContext::entry("linear", cgs.clone())),
         );
         let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
-        let mut exp = crate::symbol_tuning::DomainExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+        let mut exp =
+            crate::symbol_tuning::DomainExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
         exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
         let fed = FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
 

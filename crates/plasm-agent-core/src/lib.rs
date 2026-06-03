@@ -67,7 +67,6 @@ pub mod oss_local_state;
 pub mod outbound_secret_provider;
 pub mod output;
 mod plan_dry_display;
-pub(crate) mod row_predicate_lower;
 pub mod plasm_dag;
 /// Serializable effect [`Plan`](plasm_plan::Plan) contract and DAG validation (Plasm programs, archived plans).
 pub mod plasm_plan;
@@ -76,6 +75,7 @@ pub mod plugin_catalog;
 mod program_binding;
 pub mod query_args;
 pub(crate) mod resolved_plan_http;
+pub(crate) mod row_predicate_lower;
 pub mod run_artifacts;
 pub mod schema_overlay_session;
 pub mod server_state;

@@ -79,7 +79,7 @@ impl FederationDispatch {
                     std::collections::hash_map::Entry::Vacant(v) => {
                         v.insert(eid.clone());
                     }
-                    std::collections::hash_map::Entry::Occupied(mut o) => {
+                    std::collections::hash_map::Entry::Occupied(o) => {
                         if o.get() != eid {
                             o.remove();
                         }
@@ -308,6 +308,8 @@ mod tests {
         exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
         let fed = FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
         assert!(fed.cgs_for_entity("LangItem").is_none());
-        assert!(fed.qualified_entity_for_exposed_entity("LangItem").is_none());
+        assert!(fed
+            .qualified_entity_for_exposed_entity("LangItem")
+            .is_none());
     }
 }

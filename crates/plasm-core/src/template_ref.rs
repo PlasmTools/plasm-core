@@ -69,11 +69,9 @@ impl<'a> TemplateRefContext<'a> {
             if self.classify_root(root.as_str()) == RefKind::Unknown {
                 return Err(error(root));
             }
-            if root == "_" {
-                if self.row_binding != Some("_") {
-                    let cursor = self.row_binding.unwrap_or("_");
-                    return Err(error(format!("_ (use {cursor}.path for the row cursor)")));
-                }
+            if root == "_" && self.row_binding != Some("_") {
+                let cursor = self.row_binding.unwrap_or("_");
+                return Err(error(format!("_ (use {cursor}.path for the row cursor)")));
             }
         }
         Ok(())

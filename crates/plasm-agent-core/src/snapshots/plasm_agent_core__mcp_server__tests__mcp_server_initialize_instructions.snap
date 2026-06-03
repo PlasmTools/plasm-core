@@ -11,7 +11,8 @@ Plasm is **several MCP tools**; use what you need, in order. **`plasm_context`**
 
 **Heredoc:** After `<<TAG` on the opener line, start the body on the next line; close with a line whose trimmed text is `TAG` (or `TAG)` / `TAG,` / `TAG}`). First trimmed-line match closes the heredoc—use a long opaque `TAG` for unconstrained payloads (MIME, markdown, logs).
 
-Executable grammar (`e#` / `m#` / `p#`), bracket-render, and `.content` rules: **`plasm_context` teaching TSV** plus the **`plasm`** tool description — not repeated here.
+Executable grammar (`e#` / `m#` / `p#`), bracket-render, `.content`, and postfix pitfalls: **`plasm_context` teaching TSV** preamble on first wave — not repeated in tool descriptions.
+
      **`plasm`** is **plan-only** (no live HTTP). Prefer **one** `program` per call (bindings on separate lines; comma-separated roots on the final line for multi-return). Multi-root answers: review with **`plasm`**, execute with **`plasm_run`**. Never prefix roots with `return`.
      **`plasm_run`**: same arguments as **`plasm`**. Call **only after** the **`plasm`** dry-run plan matches intent—this tool performs **live** HTTP/API execution (and may return run snapshot URIs).
      **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` in the same logical session for more rows.

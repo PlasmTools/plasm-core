@@ -3,6 +3,8 @@
 //! `join_all` + ordered `merge_from_graph`). Everything else runs sequentially so
 //! in-request cache dependencies remain observable.
 
+#![allow(dead_code)] // parallel stage helpers wired when HTTP execute adopts staging
+
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::Expr;
 

@@ -597,6 +597,7 @@ pub fn render_domain_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> Domai
         cgs,
         &full_entities,
         map_opt.as_deref(),
+        map_opt.clone(),
         &mut teaching_blocks,
         &mut entities_buf,
         fill_model,
@@ -723,6 +724,8 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
             ident_meta.as_ref(),
             collect_meta,
             &mut line_valid_cache,
+            prompt_line_valid_cache_seed_exposure(exposure),
+            map_opt.clone(),
             &mut gloss_emit,
             surface_filter,
             Some(entry_id.as_str()),
@@ -806,6 +809,7 @@ pub fn render_domain_prompt_bundle_for_exposure(
         |_| cgs,
         &full_entities,
         map_opt.as_deref(),
+        map_opt.clone(),
         Some(exposure),
         &mut teaching_blocks,
         &mut entities_buf,
@@ -1921,13 +1925,27 @@ fn domain_expression_tool_count_resolved(
     };
     let mut n = 0usize;
     let mut line_valid_cache = HashMap::new();
+    let line_valid_cache_seed = exposure_opt
+        .map(prompt_line_valid_cache_seed_exposure)
+        .unwrap_or_else(|| prompt_line_valid_cache_seed_cgs(cgs));
     let surface_filter = exposure_opt.map(|e| &e.surface);
+    let entity_catalog_ids: HashMap<&str, &str> = exposure_opt
+        .map(|exp| {
+            exp.entities
+                .iter()
+                .zip(exp.entity_catalog_entry_ids.iter())
+                .map(|(entity, entry_id)| (entity.as_str(), entry_id.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
     for &ename in &full_entities {
         let mut seen_expr: HashSet<TeachingRowDedupeKey> = HashSet::new();
         let mut gloss_emit_none = None;
-        let session_entry_id = exposure_opt
-            .and_then(|e| e.qualified_entity_for_exposed_entity(ename))
-            .map(|k| k.catalog_entry_id);
+        let session_entry_id = entity_catalog_ids
+            .get(ename)
+            .copied()
+            .map(str::to_string)
+            .or_else(|| cgs.entry_id.clone());
         let block = collect_entity_teaching_block(
             cgs,
             ename,
@@ -1935,6 +1953,8 @@ fn domain_expression_tool_count_resolved(
             None,
             false,
             &mut line_valid_cache,
+            line_valid_cache_seed,
+            map.clone(),
             &mut gloss_emit_none,
             surface_filter,
             session_entry_id.as_deref(),
@@ -2231,6 +2251,8 @@ fn try_push_projection_witness_row(
     primary_get_cap: Option<&crate::CapabilitySchema>,
     query_caps: &[&crate::CapabilitySchema],
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
+    line_valid_cache_seed: u64,
+    map_arc: Option<std::sync::Arc<SymbolMap>>,
     surface_filter: Option<&ExposureSurface>,
     catalog_entry_id: &str,
 ) -> bool {
@@ -2320,6 +2342,8 @@ fn try_push_projection_witness_row(
             source_cap,
             false,
             line_valid_cache,
+            line_valid_cache_seed,
+            map_arc,
         );
     }
     false
@@ -2714,11 +2738,38 @@ fn domain_line_execution_meta_from_validated(
     }
 }
 
-type DomainLineValidCacheKey = (usize, String);
+type DomainLineValidCacheKey = u64;
 
 #[inline]
-fn domain_line_cache_key(cgs: &CGS, work: &str) -> DomainLineValidCacheKey {
-    ((cgs as *const CGS).addr(), work.to_string())
+fn domain_line_cache_key(cache_seed: u64, work: &str) -> DomainLineValidCacheKey {
+    use std::hash::{Hash, Hasher};
+    let mut h = rustc_hash::FxHasher::default();
+    cache_seed.hash(&mut h);
+    work.hash(&mut h);
+    h.finish()
+}
+
+#[inline]
+fn prompt_line_valid_cache_seed_cgs(cgs: &CGS) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = rustc_hash::FxHasher::default();
+    cgs.catalog_cgs_hash_hex().hash(&mut h);
+    h.finish()
+}
+
+#[inline]
+fn prompt_line_valid_cache_seed_exposure(exposure: &DomainExposureSession) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = rustc_hash::FxHasher::default();
+    for (entity, entry_id) in exposure
+        .entities
+        .iter()
+        .zip(exposure.entity_catalog_entry_ids.iter())
+    {
+        entity.hash(&mut h);
+        entry_id.hash(&mut h);
+    }
+    h.finish()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2737,6 +2788,8 @@ fn try_push_teaching_example(
     // scope / optional params / compact args remain.
     omit_capability_prose: bool,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
+    line_valid_cache_seed: u64,
+    map_arc: Option<std::sync::Arc<SymbolMap>>,
 ) -> bool {
     if let Some(gs) = gloss_emit.as_mut() {
         gs.emit_before_teaching_example(expr, cap_leg.as_deref(), gloss.as_deref());
@@ -2753,8 +2806,8 @@ fn try_push_teaching_example(
         let Some(parsed_expr) = domain_line_validate_full(cgs, &work) else {
             return false;
         };
-        if let Some(m) = map {
-            if !domain_line_validate_symbolic(cgs, m, expr) {
+        if let Some(arc) = map_arc {
+            if !domain_line_validate_symbolic(cgs, arc, expr) {
                 return false;
             }
         }
@@ -2772,10 +2825,10 @@ fn try_push_teaching_example(
         return true;
     }
 
-    let cache_key = domain_line_cache_key(cgs, &work);
+    let cache_key = domain_line_cache_key(line_valid_cache_seed, &work);
     let ok = *line_valid_cache
         .entry(cache_key)
-        .or_insert_with(|| domain_line_valid_work_and_symbolic(cgs, map, expr, &work));
+        .or_insert_with(|| domain_line_valid_work_and_symbolic(cgs, map_arc, expr, &work));
     if !ok {
         return false;
     }
@@ -2810,12 +2863,14 @@ fn domain_line_validate_full(cgs: &CGS, work: &str) -> Option<crate::expr_parser
 }
 
 /// Agent execute path: expand `p#`/`m#` only (keep `e#` opaque), parse with session [`SymbolMap`].
-fn domain_line_validate_symbolic(cgs: &CGS, map: &SymbolMap, expr: &str) -> bool {
-    use std::sync::Arc;
-
+fn domain_line_validate_symbolic(
+    cgs: &CGS,
+    sym_arc: std::sync::Arc<SymbolMap>,
+    expr: &str,
+) -> bool {
     let stripped = crate::symbol_tuning::strip_prompt_expression_annotations(expr);
-    let work = crate::symbol_tuning::expand_path_symbols_with_options(&stripped, map, false);
-    let sym_arc = Arc::new(map.clone());
+    let work =
+        crate::symbol_tuning::expand_path_symbols_with_options(&stripped, sym_arc.as_ref(), false);
     let layers = [cgs];
     let mut r = match crate::expr_parser::parse_with_cgs_layers(&work, &layers, sym_arc) {
         Ok(r) => r,
@@ -2835,15 +2890,15 @@ fn domain_line_valid_work(cgs: &CGS, work: &str) -> bool {
 #[inline]
 fn domain_line_valid_work_and_symbolic(
     cgs: &CGS,
-    map: Option<&SymbolMap>,
+    map_arc: Option<std::sync::Arc<SymbolMap>>,
     expr: &str,
     work: &str,
 ) -> bool {
     if !domain_line_valid_work(cgs, work) {
         return false;
     }
-    match map {
-        Some(m) => domain_line_validate_symbolic(cgs, m, expr),
+    match map_arc {
+        Some(arc) => domain_line_validate_symbolic(cgs, arc, expr),
         None => true,
     }
 }
@@ -3258,6 +3313,8 @@ fn try_push_union_constructor_teaching_expr_rows(
     map: Option<&SymbolMap>,
     cap: &crate::CapabilitySchema,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
+    line_valid_cache_seed: u64,
+    map_arc: Option<std::sync::Arc<SymbolMap>>,
 ) {
     let Some(is) = cap.input_schema.as_ref() else {
         return;
@@ -3294,6 +3351,8 @@ fn try_push_union_constructor_teaching_expr_rows(
                 Some(&cap.name),
                 false,
                 line_valid_cache,
+                line_valid_cache_seed,
+                map_arc.clone(),
             );
         }
         return;
@@ -3344,6 +3403,8 @@ fn try_push_union_constructor_teaching_expr_rows(
                 Some(&cap.name),
                 false,
                 line_valid_cache,
+                line_valid_cache_seed,
+                map_arc.clone(),
             );
         }
         return;
@@ -3735,6 +3796,7 @@ fn surface_exposes_relation_nav_target(
 }
 
 /// Non–zero-arity invoke/create/update: `e#($).m#(p#=…)` (same rules as parser dotted-call capability resolution).
+#[allow(clippy::too_many_arguments)]
 fn collect_multi_arity_method_lines(
     cgs: &CGS,
     ename: &str,
@@ -3742,6 +3804,8 @@ fn collect_multi_arity_method_lines(
     map: Option<&SymbolMap>,
     surface_filter: Option<&ExposureSurface>,
     catalog_entry_id: &str,
+    multi_arity_methods: &[&crate::CapabilitySchema],
+    standalone_creates: &[&crate::CapabilitySchema],
 ) -> Vec<(CapabilityName, String)> {
     let mut out: Vec<(CapabilityName, String)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -3749,39 +3813,8 @@ fn collect_multi_arity_method_lines(
         return out;
     };
 
-    for cap in cgs.find_capabilities(ename, CapabilityKind::Action) {
+    for cap in multi_arity_methods {
         if !surface_allows_capability(surface_filter, catalog_entry_id, cap) {
-            continue;
-        }
-        if capability_is_zero_arity_invoke(cap) {
-            continue;
-        }
-        if !seen.insert(cap.name.to_string()) {
-            continue;
-        }
-        if let Some(line) = format_dotted_call_line(ename, cap, ent, es, cgs, map) {
-            out.push((cap.name.clone(), line));
-        }
-    }
-    for cap in cgs.find_capabilities(ename, CapabilityKind::Update) {
-        if !surface_allows_capability(surface_filter, catalog_entry_id, cap) {
-            continue;
-        }
-        if capability_is_zero_arity_invoke(cap) {
-            continue;
-        }
-        if !seen.insert(cap.name.to_string()) {
-            continue;
-        }
-        if let Some(line) = format_dotted_call_line(ename, cap, ent, es, cgs, map) {
-            out.push((cap.name.clone(), line));
-        }
-    }
-    for cap in cgs.find_capabilities(ename, CapabilityKind::Delete) {
-        if !surface_allows_capability(surface_filter, catalog_entry_id, cap) {
-            continue;
-        }
-        if capability_is_zero_arity_invoke(cap) {
             continue;
         }
         if !seen.insert(cap.name.to_string()) {
@@ -3812,7 +3845,7 @@ fn collect_multi_arity_method_lines(
     }
 
     // Standalone creates: `Entity.create(args)` — cap.domain == ename, no anchor needed.
-    for cap in cgs.find_capabilities(ename, CapabilityKind::Create) {
+    for cap in standalone_creates {
         if !surface_allows_capability(surface_filter, catalog_entry_id, cap) {
             continue;
         }
@@ -3843,6 +3876,8 @@ fn collect_entity_teaching_block(
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     collect_meta: bool,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
+    line_valid_cache_seed: u64,
+    map_arc: Option<std::sync::Arc<SymbolMap>>,
     gloss_emit: &mut Option<GlossScratch<'_>>,
     surface_filter: Option<&ExposureSurface>,
     catalog_entry_id_override: Option<&str>,
@@ -3858,8 +3893,9 @@ fn collect_entity_teaching_block(
     };
     let es = ent_sym(map, ename);
     let catalog_entry_id = catalog_entry_id_override
-        .or_else(|| cgs.entry_id.as_deref())
+        .or(cgs.entry_id.as_deref())
         .unwrap_or("");
+    let manifest = cgs.capability_manifest(ename);
     let ent_desc_short = {
         let d = ent.description.as_str().trim();
         (!d.is_empty()).then(|| truncate_inline_desc(d, 200))
@@ -3937,6 +3973,8 @@ fn collect_entity_teaching_block(
             primary_get_cap,
             &query_cap_refs,
             line_valid_cache,
+            line_valid_cache_seed,
+            map_arc.clone(),
             surface_filter,
             catalog_entry_id,
         );
@@ -3966,6 +4004,8 @@ fn collect_entity_teaching_block(
             Some(&cap.name),
             true,
             line_valid_cache,
+            line_valid_cache_seed,
+            map_arc.clone(),
         );
     }
 
@@ -3986,6 +4026,8 @@ fn collect_entity_teaching_block(
                 primary_name,
                 true,
                 line_valid_cache,
+                line_valid_cache_seed,
+                map_arc.clone(),
             ) {
                 emitted_primary_get = true;
             }
@@ -4006,27 +4048,20 @@ fn collect_entity_teaching_block(
                 primary_name,
                 true,
                 line_valid_cache,
+                line_valid_cache_seed,
+                map_arc.clone(),
             ) {
                 emitted_primary_get = true;
             }
         }
     }
 
-    let mut zero_arity_method_caps: Vec<&crate::CapabilitySchema> = Vec::new();
-    for kind in [
-        CapabilityKind::Action,
-        CapabilityKind::Update,
-        CapabilityKind::Delete,
-    ] {
-        for cap in cgs.find_capabilities(ename, kind) {
-            if !surface_allows_capability(surface_filter, catalog_entry_id, cap) {
-                continue;
-            }
-            if capability_is_zero_arity_invoke(cap) {
-                zero_arity_method_caps.push(cap);
-            }
-        }
-    }
+    let mut zero_arity_method_caps: Vec<&crate::CapabilitySchema> = manifest
+        .zero_arity_methods
+        .iter()
+        .copied()
+        .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap))
+        .collect();
     zero_arity_method_caps.sort_by(|a, b| a.name.cmp(&b.name));
 
     let mut pathless: Vec<&crate::CapabilitySchema> = Vec::new();
@@ -4071,12 +4106,21 @@ fn collect_entity_teaching_block(
                 Some(&cap.name),
                 false,
                 line_valid_cache,
+                line_valid_cache_seed,
+                map_arc.clone(),
             );
         }
     }
-    for (cap_name, line) in
-        collect_multi_arity_method_lines(cgs, ename, &es, map, surface_filter, catalog_entry_id)
-    {
+    for (cap_name, line) in collect_multi_arity_method_lines(
+        cgs,
+        ename,
+        &es,
+        map,
+        surface_filter,
+        catalog_entry_id,
+        &manifest.multi_arity_methods,
+        &manifest.standalone_creates,
+    ) {
         let cap_ref = cgs.capabilities.get(&cap_name);
         if let Some(cap) = cap_ref {
             if let Some(gs) = gloss_emit.as_mut() {
@@ -4090,6 +4134,8 @@ fn collect_entity_teaching_block(
                 map,
                 cap,
                 line_valid_cache,
+                line_valid_cache_seed,
+                map_arc.clone(),
             );
         }
         let cap_leg = cap_ref.and_then(|c| {
@@ -4110,6 +4156,8 @@ fn collect_entity_teaching_block(
             Some(&cap_name),
             false,
             line_valid_cache,
+            line_valid_cache_seed,
+            map_arc.clone(),
         );
     }
 
@@ -4140,6 +4188,8 @@ fn collect_entity_teaching_block(
                         Some(&cap.name),
                         true,
                         line_valid_cache,
+                        line_valid_cache_seed,
+                        map_arc.clone(),
                     )
                 {
                     added = true;
@@ -4162,6 +4212,8 @@ fn collect_entity_teaching_block(
                             Some(&cap.name),
                             true,
                             line_valid_cache,
+                            line_valid_cache_seed,
+                            map_arc.clone(),
                         )
                     {
                         added = true;
@@ -4185,6 +4237,8 @@ fn collect_entity_teaching_block(
                             Some(&cap.name),
                             true,
                             line_valid_cache,
+                            line_valid_cache_seed,
+                            map_arc.clone(),
                         )
                     {
                         query_line_count += 1;
@@ -4215,6 +4269,8 @@ fn collect_entity_teaching_block(
             primary_name,
             true,
             line_valid_cache,
+            line_valid_cache_seed,
+            map_arc.clone(),
         );
     }
 
@@ -4248,6 +4304,8 @@ fn collect_entity_teaching_block(
             scap.map(|c| &c.name),
             true,
             line_valid_cache,
+            line_valid_cache_seed,
+            map_arc.clone(),
         );
     }
 
@@ -4362,6 +4420,8 @@ fn collect_entity_teaching_block(
             None,
             false,
             line_valid_cache,
+            line_valid_cache_seed,
+            map_arc.clone(),
         );
     }
 
@@ -4382,6 +4442,7 @@ fn collect_entity_teaching_block(
 pub(crate) fn domain_example_line_count(cgs: &CGS, ename: &str, map: Option<&SymbolMap>) -> usize {
     let mut line_valid_cache = HashMap::new();
     let mut gloss_emit_none = None;
+    let seed = prompt_line_valid_cache_seed_cgs(cgs);
     collect_entity_teaching_block(
         cgs,
         ename,
@@ -4389,6 +4450,8 @@ pub(crate) fn domain_example_line_count(cgs: &CGS, ename: &str, map: Option<&Sym
         None,
         false,
         &mut line_valid_cache,
+        seed,
+        None,
         &mut gloss_emit_none,
         None,
         None,
@@ -4407,6 +4470,7 @@ pub(crate) fn domain_example_lines(
 ) -> Vec<String> {
     let mut line_valid_cache = HashMap::new();
     let mut gloss_emit_none = None;
+    let seed = prompt_line_valid_cache_seed_cgs(cgs);
     collect_entity_teaching_block(
         cgs,
         ename,
@@ -4414,6 +4478,8 @@ pub(crate) fn domain_example_lines(
         None,
         false,
         &mut line_valid_cache,
+        seed,
+        None,
         &mut gloss_emit_none,
         surface_filter,
         None,
@@ -4435,6 +4501,7 @@ fn domain_heading_projection_bracket(
 ) -> Option<String> {
     let mut line_valid_cache = HashMap::new();
     let mut gloss_emit_none = None;
+    let seed = prompt_line_valid_cache_seed_cgs(cgs);
     let block = collect_entity_teaching_block(
         cgs,
         ename,
@@ -4442,6 +4509,8 @@ fn domain_heading_projection_bracket(
         None,
         false,
         &mut line_valid_cache,
+        seed,
+        None,
         &mut gloss_emit_none,
         surface_filter,
         None,
@@ -4762,7 +4831,7 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     );
     let _ = writeln!(
         s,
-        "postfix       ::= \".limit(N)\" | \".page_size(N)\" | \".sort(field[, dir])\" | \".aggregate(specs)\" | \".group_by(field, specs)\" | \".singleton()\" | \"[\" fields \"]\""
+        "postfix       ::= \".limit(N)\" | \".page_size(N)\" | \".sort(field[, dir])\" | \".filter{{…}}\" | \".filter(…)\" | \".aggregate(specs)\" | \".group_by(field, specs)\" | \".singleton()\" | \"[\" fields \"]\""
     );
     let _ = writeln!(
         s,
@@ -4807,6 +4876,17 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     if spec.include_rich_string_guidance {
         s.push_str(&render_rich_string_guidance_tsv());
     }
+    s.push('\n');
+
+    s.push_str("Common pitfalls:\n");
+    s.push_str(
+        "- Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.\n\
+- `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.\n\
+- Federated sessions: use the `e#` from the teaching row for that catalog when the same wire entity name appears in multiple APIs.\n\
+- Continuation: `label.<relation>` from row-producing bindings; aggregate/render/derive labels are not row anchors.\n\
+- Derived columns: `label =>` template (Minijinja on `rows`), not `.derive(…)`.\n\
+- String slots: pass `binding.content` from bracket-render, not the whole row.\n",
+    );
     s.push('\n');
 
     s
@@ -5172,6 +5252,7 @@ fn render_domain_table_resolved<'b, F>(
     mut resolve: F,
     full_entities: &[&str],
     map: Option<&SymbolMap>,
+    map_arc: Option<std::sync::Arc<SymbolMap>>,
     exposure_for_ident: Option<&DomainExposureSession>,
     teaching_blocks_out: &mut Vec<EntityTeachingBlock>,
     model_out: &mut Vec<EntityDomainPrompt>,
@@ -5181,6 +5262,22 @@ fn render_domain_table_resolved<'b, F>(
 ) where
     F: FnMut(&str) -> &'b CGS,
 {
+    let line_valid_cache_seed = match exposure_for_ident {
+        Some(exp) => prompt_line_valid_cache_seed_exposure(exp),
+        None => full_entities
+            .first()
+            .map(|&ename| prompt_line_valid_cache_seed_cgs(resolve(ename)))
+            .unwrap_or(0),
+    };
+    let entity_catalog_ids: HashMap<&str, &str> = exposure_for_ident
+        .map(|exp| {
+            exp.entities
+                .iter()
+                .zip(exp.entity_catalog_entry_ids.iter())
+                .map(|(entity, entry_id)| (entity.as_str(), entry_id.as_str()))
+                .collect()
+        })
+        .unwrap_or_default();
     let surface_filter = exposure_for_ident.map(|e| &e.surface);
     let ident_meta = match (map, exposure_for_ident) {
         (Some(_), Some(exposure)) => {
@@ -5216,9 +5313,10 @@ fn render_domain_table_resolved<'b, F>(
 
     for &ename in &block_iter {
         let cgs = resolve(ename);
-        let catalog_entry_id_owned = exposure_for_ident
-            .and_then(|exp| exp.qualified_entity_for_exposed_entity(ename))
-            .map(|k| k.catalog_entry_id.clone())
+        let catalog_entry_id_owned = entity_catalog_ids
+            .get(ename)
+            .copied()
+            .map(str::to_string)
             .or_else(|| cgs.entry_id.clone())
             .unwrap_or_default();
         let catalog_entry_id = catalog_entry_id_owned.as_str();
@@ -5243,6 +5341,8 @@ fn render_domain_table_resolved<'b, F>(
             ident_meta.as_ref(),
             collect_meta,
             &mut line_valid_cache,
+            line_valid_cache_seed,
+            map_arc.clone(),
             &mut gloss_emit,
             surface_filter,
             Some(catalog_entry_id),
@@ -5346,6 +5446,7 @@ fn render_domain_table(
     cgs: &CGS,
     full_entities: &[&str],
     map: Option<&SymbolMap>,
+    map_arc: Option<std::sync::Arc<SymbolMap>>,
     teaching_blocks_out: &mut Vec<EntityTeachingBlock>,
     model_out: &mut Vec<EntityDomainPrompt>,
     fill_model: bool,
@@ -5356,6 +5457,7 @@ fn render_domain_table(
         |_| cgs,
         full_entities,
         map,
+        map_arc,
         None,
         teaching_blocks_out,
         model_out,
@@ -6361,6 +6463,8 @@ mod tests {
             None,
             false,
             &mut line_valid_cache,
+            prompt_line_valid_cache_seed_cgs(&cgs),
+            None,
             &mut gloss_emit_none,
             None,
             None,
@@ -6459,6 +6563,7 @@ mod tests {
             &crate::relation_endpoint_keys(entry.as_str(), &["Ruleset".to_string()]),
             &["Ruleset".to_string()],
             None,
+            crate::discovery::ExposureSurfaceOptions::default(),
         );
         assert!(
             delta
@@ -6488,6 +6593,8 @@ mod tests {
             None,
             false,
             &mut line_valid_cache,
+            prompt_line_valid_cache_seed_cgs(&cgs),
+            None,
             &mut gloss_emit_none,
             Some(&delta.required),
             Some(entry.as_str()),
@@ -6520,6 +6627,8 @@ mod tests {
             None,
             false,
             &mut line_valid_cache2,
+            prompt_line_valid_cache_seed_cgs(&cgs),
+            None,
             &mut gloss_emit_none2,
             Some(&surface_with_zone),
             Some(entry.as_str()),
@@ -6564,6 +6673,7 @@ mod tests {
             &crate::relation_endpoint_keys(entry.as_str(), &["Ruleset".to_string()]),
             &["Ruleset".to_string()],
             None,
+            crate::discovery::ExposureSurfaceOptions::default(),
         );
         let filtered = super::incoming_relation_nav_bases_to_entity(
             &cgs,
@@ -6617,6 +6727,8 @@ mod tests {
             None,
             false,
             &mut line_valid_cache,
+            prompt_line_valid_cache_seed_cgs(&cgs),
+            None,
             &mut gloss_emit_none,
             None,
             None,
@@ -6720,6 +6832,8 @@ mod tests {
             None,
             false,
             &mut line_valid_cache,
+            prompt_line_valid_cache_seed_cgs(&cgs),
+            None,
             &mut gloss_emit_none,
             None,
             None,

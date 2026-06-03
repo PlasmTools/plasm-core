@@ -289,7 +289,7 @@ fn walk_inline_capability_param_paths(ty: &InputType, prefix: &str, out: &mut BT
 /// those entities are explicitly exposed.
 ///
 /// `entry_id` is the caller’s registry row id (HTTP/MCP); exposure keys follow [`CGS::entry_id`] when set.
-
+///
 /// Catalog-local relation endpoint keys for intent-surface derivation (single-catalog open).
 pub fn relation_endpoint_keys(entry_id: &str, names: &[String]) -> Vec<ExposureEntityKey> {
     names
@@ -4473,6 +4473,7 @@ mod tests {
             &endpoints,
             &["Profile".to_string()],
             None,
+            crate::discovery::ExposureSurfaceOptions::default(),
         );
         let filtered =
             DomainExposureSession::new_with_intent_delta(&cgs, "overshow", &["Profile"], delta);

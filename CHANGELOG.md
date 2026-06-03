@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.69] - 2026-05-30
+
+### Changed
+
+- **MCP prompts:** `plasm` / `plasm_run` tool descriptions are head-only; v0.1.68 grammar pitfalls live in the first-wave teaching TSV contract preamble (passes `mcp_prompt_char_budget` again).
+- **Discovery:** MCP `discover_capabilities` defaults to global score-ranked top-N rows (round-robin fair-share opt-in via `DiscoveryTableMode::PerEntryFairShare`).
+- **DOMAIN exposure:** MCP `plasm_context` read-first seeded waves defer weak-scored mutators unless `ranked_capabilities` lists the wire name.
+
+### Added
+
+- **Plan dry-run:** hint when the graph is `query` → `.limit` → row `.filter` (fetch vs row filter).
+
+### Performance
+
+- **DOMAIN synthesis:** `Arc<SymbolMap>` on line validation (no per-row map clone); `u64` line-valid cache keys; exposure `entity_catalog_ids` map; `capability_manifest` reuse per entity.
+- **Regression:** Criterion bench `domain_prompt_render`; CI wall-time guard `prompt_matrix_full_tsv_synthesis_benchmark` (`PLASM_PROMPT_MATRIX_SYNTH_MAX_MS`).
+
 ## [0.1.68] - 2026-05-30
 
 ### Added

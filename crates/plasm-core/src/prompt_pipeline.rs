@@ -76,7 +76,7 @@ impl<'exposure, 'cgs> FederatedExposureResolver<'exposure, 'cgs> {
                     e.insert(cgs);
                 }
                 std::collections::hash_map::Entry::Occupied(e) => {
-                    if *e.get() as *const CGS != cgs as *const CGS {
+                    if !std::ptr::eq(*e.get(), cgs) {
                         e.remove();
                     }
                 }

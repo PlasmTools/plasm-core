@@ -2,4 +2,5 @@
 
 **Heredoc:** After `<<TAG` on the opener line, start the body on the next line; close with a line whose trimmed text is `TAG` (or `TAG)` / `TAG,` / `TAG}`). First trimmed-line match closes the heredoc—use a long opaque `TAG` for unconstrained payloads (MIME, markdown, logs).
 
-Executable grammar (`e#` / `m#` / `p#`), bracket-render, and `.content` rules: **`plasm_context` teaching TSV** plus the **`plasm`** tool description — not repeated here.
+Executable grammar (`e#` / `m#` / `p#`), bracket-render, `.content`, and postfix pitfalls: **`plasm_context` teaching TSV** preamble on first wave — not repeated in tool descriptions.
+

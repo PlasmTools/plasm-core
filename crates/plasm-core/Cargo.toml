@@ -37,3 +37,7 @@ plasm-discovery = { path = "../plasm-discovery" }
 [[bench]]
 name = "schema_load"
 harness = false
+
+[[bench]]
+name = "domain_prompt_render"
+harness = false

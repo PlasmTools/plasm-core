@@ -1,6 +1,6 @@
 //! TCP listen address resolution and client-facing HTTP origins for Plasm HTTP/MCP servers.
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, SocketAddr};
 use std::str::FromStr;
 
 const ENV_LISTEN_HOST: &str = "PLASM_LISTEN_HOST";
@@ -211,7 +211,7 @@ mod tests {
         let ep = TcpListenEndpoint::new(LOOPBACK_V4, 0);
         assert_eq!(
             ep.socket_addr().unwrap(),
-            SocketAddr::from((Ipv4Addr::LOCALHOST, 0))
+            SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 0)
         );
     }
 }

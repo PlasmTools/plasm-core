@@ -544,9 +544,10 @@ impl Expr {
             Expr::Delete(d) => d.catalog_entry_id = catalog_entry_id,
             Expr::Invoke(i) => i.catalog_entry_id = catalog_entry_id,
             Expr::Chain(c) => {
-                c.source = Box::new(c.source.clone().with_session_catalog_entry_id(
-                    catalog_entry_id.clone(),
-                ));
+                *c.source = c
+                    .source
+                    .clone()
+                    .with_session_catalog_entry_id(catalog_entry_id);
             }
             Expr::Page(_) | Expr::TeachingValue { .. } => {}
         }
