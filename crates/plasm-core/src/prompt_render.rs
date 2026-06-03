@@ -685,7 +685,8 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
         non_registry_slots: HashMap::new(),
         defined_value_domains: HashSet::new(),
     };
-    let mut line_valid_cache: HashMap<DomainLineValidCacheKey, bool> = HashMap::with_capacity(8192);
+    let mut line_valid_cache: HashMap<DomainLineValidCacheKey, DomainLineValidEntry> =
+        HashMap::with_capacity(8192);
 
     for (entity, entry_id) in exposure
         .entities
@@ -2100,10 +2101,13 @@ fn relation_nav_anchor_expr(
     ent: &EntityDef,
     cgs: &CGS,
     map: Option<&SymbolMap>,
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
+    line_valid_cache_seed: u64,
 ) -> Option<String> {
     for recv in nav_receiver_candidates(es, ent, cgs, map) {
         let work = domain_line_work_string(&recv, map);
-        if domain_line_valid_work(cgs, &work) {
+        if domain_line_work_valid_cached(line_valid_cache, line_valid_cache_seed, cgs, &work, &recv)
+        {
             return Some(recv);
         }
     }
@@ -2117,11 +2121,14 @@ fn receiver_for_dotted_suffix(
     cgs: &CGS,
     map: Option<&SymbolMap>,
     suffix: &str,
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
+    line_valid_cache_seed: u64,
 ) -> Option<String> {
     for recv in nav_receiver_candidates(es, ent, cgs, map) {
         let full = format!("{recv}{suffix}");
         let work = domain_line_work_string(&full, map);
-        if domain_line_valid_work(cgs, &work) {
+        if domain_line_work_valid_cached(line_valid_cache, line_valid_cache_seed, cgs, &work, &full)
+        {
             return Some(recv);
         }
     }
@@ -2141,6 +2148,8 @@ fn incoming_relation_nav_bases_to_entity(
     map: Option<&SymbolMap>,
     surface_filter: Option<&ExposureSurface>,
     catalog_entry_id: &str,
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
+    line_valid_cache_seed: u64,
 ) -> Vec<String> {
     let mut out = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -2170,12 +2179,26 @@ fn incoming_relation_nav_bases_to_entity(
             ) {
                 continue;
             }
-            let Some(recv) = relation_nav_anchor_expr(&parent_es, src_ent, cgs, map) else {
+            let Some(recv) = relation_nav_anchor_expr(
+                &parent_es,
+                src_ent,
+                cgs,
+                map,
+                line_valid_cache,
+                line_valid_cache_seed,
+            ) else {
                 continue;
             };
             let expr = format!("{}.{}", recv, id_sym_rel(map, src_name, rel_k.as_str()));
             let work = domain_line_work_string(&expr, map);
-            if domain_line_valid_work(cgs, &work) && seen.insert(expr.clone()) {
+            if domain_line_work_valid_cached(
+                line_valid_cache,
+                line_valid_cache_seed,
+                cgs,
+                &work,
+                &expr,
+            ) && seen.insert(expr.clone())
+            {
                 out.push(expr);
                 if out.len() >= MAX_INCOMING_REL_NAV_PROJECTION_BASES {
                     return out;
@@ -2204,12 +2227,26 @@ fn incoming_relation_nav_bases_to_entity(
             ) {
                 continue;
             }
-            let Some(recv) = relation_nav_anchor_expr(&parent_es, src_ent, cgs, map) else {
+            let Some(recv) = relation_nav_anchor_expr(
+                &parent_es,
+                src_ent,
+                cgs,
+                map,
+                line_valid_cache,
+                line_valid_cache_seed,
+            ) else {
                 continue;
             };
             let expr = format!("{}.{}", recv, id_sym_entity(map, src_name, fname.as_str()));
             let work = domain_line_work_string(&expr, map);
-            if domain_line_valid_work(cgs, &work) && seen.insert(expr.clone()) {
+            if domain_line_work_valid_cached(
+                line_valid_cache,
+                line_valid_cache_seed,
+                cgs,
+                &work,
+                &expr,
+            ) && seen.insert(expr.clone())
+            {
                 out.push(expr);
                 if out.len() >= MAX_INCOMING_REL_NAV_PROJECTION_BASES {
                     return out;
@@ -2250,7 +2287,7 @@ fn try_push_projection_witness_row(
     ent: &EntityDef,
     primary_get_cap: Option<&crate::CapabilitySchema>,
     query_caps: &[&crate::CapabilitySchema],
-    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
     map_arc: Option<std::sync::Arc<SymbolMap>>,
     surface_filter: Option<&ExposureSurface>,
@@ -2287,9 +2324,15 @@ fn try_push_projection_witness_row(
             attempts.push((cmp, primary_get_cap));
         }
     }
-    for rel_base in
-        incoming_relation_nav_bases_to_entity(cgs, ename, map, surface_filter, catalog_entry_id)
-    {
+    for rel_base in incoming_relation_nav_bases_to_entity(
+        cgs,
+        ename,
+        map,
+        surface_filter,
+        catalog_entry_id,
+        line_valid_cache,
+        line_valid_cache_seed,
+    ) {
         if seen_bases.insert(rel_base.clone()) {
             attempts.push((rel_base, None));
         }
@@ -2306,7 +2349,16 @@ fn try_push_projection_witness_row(
     for (base, witness_cap) in attempts {
         let full = format!("{base}{bracket}");
         let work = domain_line_work_string(&full, map);
-        let Some(parsed) = domain_line_validate_full(cgs, &work) else {
+        let symbolic_key = map_arc.as_ref().map(|_| full.as_str());
+        let Some(parsed) = domain_line_validate_cached(
+            line_valid_cache,
+            line_valid_cache_seed,
+            cgs,
+            &work,
+            symbolic_key,
+            map_arc.clone(),
+            &full,
+        ) else {
             continue;
         };
         let gloss_core = witness_cap
@@ -2740,12 +2792,25 @@ fn domain_line_execution_meta_from_validated(
 
 type DomainLineValidCacheKey = u64;
 
+#[derive(Clone)]
+enum DomainLineValidEntry {
+    Invalid,
+    Valid(Box<crate::expr_parser::ParsedExpr>),
+}
+
 #[inline]
-fn domain_line_cache_key(cache_seed: u64, work: &str) -> DomainLineValidCacheKey {
+fn domain_line_cache_key(
+    cache_seed: u64,
+    work: &str,
+    symbolic_expr: Option<&str>,
+) -> DomainLineValidCacheKey {
     use std::hash::{Hash, Hasher};
     let mut h = rustc_hash::FxHasher::default();
     cache_seed.hash(&mut h);
     work.hash(&mut h);
+    if let Some(expr) = symbolic_expr {
+        expr.hash(&mut h);
+    }
     h.finish()
 }
 
@@ -2787,7 +2852,7 @@ fn try_push_teaching_example(
     // When true: strip [`TeachingExprLine::description`] from capability legend (Query/Get/Search);
     // scope / optional params / compact args remain.
     omit_capability_prose: bool,
-    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
     map_arc: Option<std::sync::Arc<SymbolMap>>,
 ) -> bool {
@@ -2802,45 +2867,39 @@ fn try_push_teaching_example(
     }
     let dedupe_key = TeachingRowDedupeKey::new(expr, gloss.as_ref(), cap_leg.as_ref());
 
-    if collect_meta {
-        let Some(parsed_expr) = domain_line_validate_full(cgs, &work) else {
-            return false;
-        };
-        if let Some(arc) = map_arc {
-            if !domain_line_validate_symbolic(cgs, arc, expr) {
-                return false;
-            }
-        }
-        teaching_rows.push(EntityTeachingExprRow {
-            teaching_expr: teaching_line,
-            meta: domain_line_execution_meta_from_validated(
-                cgs,
-                work,
-                relation,
-                source_capability,
-                &parsed_expr.expr,
-            ),
-            dedupe_key,
-        });
-        return true;
-    }
-
-    let cache_key = domain_line_cache_key(line_valid_cache_seed, &work);
-    let ok = *line_valid_cache
-        .entry(cache_key)
-        .or_insert_with(|| domain_line_valid_work_and_symbolic(cgs, map_arc, expr, &work));
-    if !ok {
+    let symbolic_key = map_arc.as_ref().map(|_| expr);
+    let Some(parsed) = domain_line_validate_cached(
+        line_valid_cache,
+        line_valid_cache_seed,
+        cgs,
+        &work,
+        symbolic_key,
+        map_arc,
+        expr,
+    ) else {
         return false;
-    }
-    teaching_rows.push(EntityTeachingExprRow {
-        teaching_expr: teaching_line,
-        meta: DomainLineMeta {
+    };
+
+    let meta = if collect_meta {
+        domain_line_execution_meta_from_validated(
+            cgs,
+            work,
+            relation,
+            source_capability,
+            &parsed.expr,
+        )
+    } else {
+        DomainLineMeta {
             expression: work,
             kind: DomainLineKind::Other,
             source_capability: None,
             cross_entity: None,
             relation_materialization: None,
-        },
+        }
+    };
+    teaching_rows.push(EntityTeachingExprRow {
+        teaching_expr: teaching_line,
+        meta,
         dedupe_key,
     });
     true
@@ -2860,6 +2919,45 @@ fn domain_line_validate_full(cgs: &CGS, work: &str) -> Option<crate::expr_parser
     }
     crate::type_check_expr(&r.expr, cgs).ok()?;
     Some(r)
+}
+
+/// Memoized wire + optional opaque-symbolic validation for one teaching row.
+fn domain_line_validate_cached(
+    cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
+    cache_seed: u64,
+    cgs: &CGS,
+    work: &str,
+    symbolic_expr_key: Option<&str>,
+    map_arc: Option<std::sync::Arc<SymbolMap>>,
+    expr_surface: &str,
+) -> Option<crate::expr_parser::ParsedExpr> {
+    let key = domain_line_cache_key(cache_seed, work, symbolic_expr_key);
+    if let Some(entry) = cache.get(&key) {
+        return match entry {
+            DomainLineValidEntry::Invalid => None,
+            DomainLineValidEntry::Valid(p) => Some(p.as_ref().clone()),
+        };
+    }
+    let entry = match domain_line_validate_full(cgs, work) {
+        Some(parsed) => {
+            if let Some(arc) = map_arc {
+                if domain_line_validate_symbolic(cgs, arc, expr_surface) {
+                    DomainLineValidEntry::Valid(Box::new(parsed))
+                } else {
+                    DomainLineValidEntry::Invalid
+                }
+            } else {
+                DomainLineValidEntry::Valid(Box::new(parsed))
+            }
+        }
+        None => DomainLineValidEntry::Invalid,
+    };
+    let out = match &entry {
+        DomainLineValidEntry::Valid(p) => Some(p.as_ref().clone()),
+        DomainLineValidEntry::Invalid => None,
+    };
+    cache.insert(key, entry);
+    out
 }
 
 /// Agent execute path: expand `p#`/`m#` only (keep `e#` opaque), parse with session [`SymbolMap`].
@@ -2883,24 +2981,14 @@ fn domain_line_validate_symbolic(
 }
 
 #[inline]
-fn domain_line_valid_work(cgs: &CGS, work: &str) -> bool {
-    domain_line_validate_full(cgs, work).is_some()
-}
-
-#[inline]
-fn domain_line_valid_work_and_symbolic(
+fn domain_line_work_valid_cached(
+    cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
+    cache_seed: u64,
     cgs: &CGS,
-    map_arc: Option<std::sync::Arc<SymbolMap>>,
-    expr: &str,
     work: &str,
+    wire_expr: &str,
 ) -> bool {
-    if !domain_line_valid_work(cgs, work) {
-        return false;
-    }
-    match map_arc {
-        Some(arc) => domain_line_validate_symbolic(cgs, arc, expr),
-        None => true,
-    }
+    domain_line_validate_cached(cache, cache_seed, cgs, work, None, None, wire_expr).is_some()
 }
 
 /// Same rule as `Parser::can_bind_create_path_vars`: path template binds `{anchor}_id` from `Get(anchor)`.
@@ -3312,7 +3400,7 @@ fn try_push_union_constructor_teaching_expr_rows(
     cgs: &CGS,
     map: Option<&SymbolMap>,
     cap: &crate::CapabilitySchema,
-    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
     map_arc: Option<std::sync::Arc<SymbolMap>>,
 ) {
@@ -3665,6 +3753,7 @@ fn build_standalone_create_paren_args(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn format_dotted_call_line(
     anchor_entity: &str,
     cap: &crate::CapabilitySchema,
@@ -3672,12 +3761,22 @@ fn format_dotted_call_line(
     es: &str,
     cgs: &CGS,
     map: Option<&SymbolMap>,
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
+    line_valid_cache_seed: u64,
 ) -> Option<String> {
     let args = build_dotted_call_paren_args(anchor_entity, cap, cgs, map)?;
     let label = capability_method_label_kebab(cap);
     let ms = met_sym(map, cap.domain.as_str(), &label);
     let suffix = format!(".{ms}({args})");
-    let recv = receiver_for_dotted_suffix(es, ent, cgs, map, &suffix)?;
+    let recv = receiver_for_dotted_suffix(
+        es,
+        ent,
+        cgs,
+        map,
+        &suffix,
+        line_valid_cache,
+        line_valid_cache_seed,
+    )?;
     Some(format!("{recv}{suffix}"))
 }
 
@@ -3806,6 +3905,8 @@ fn collect_multi_arity_method_lines(
     catalog_entry_id: &str,
     multi_arity_methods: &[&crate::CapabilitySchema],
     standalone_creates: &[&crate::CapabilitySchema],
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
+    line_valid_cache_seed: u64,
 ) -> Vec<(CapabilityName, String)> {
     let mut out: Vec<(CapabilityName, String)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -3820,7 +3921,16 @@ fn collect_multi_arity_method_lines(
         if !seen.insert(cap.name.to_string()) {
             continue;
         }
-        if let Some(line) = format_dotted_call_line(ename, cap, ent, es, cgs, map) {
+        if let Some(line) = format_dotted_call_line(
+            ename,
+            cap,
+            ent,
+            es,
+            cgs,
+            map,
+            line_valid_cache,
+            line_valid_cache_seed,
+        ) {
             out.push((cap.name.clone(), line));
         }
     }
@@ -3839,7 +3949,16 @@ fn collect_multi_arity_method_lines(
         if !seen.insert(cap.name.to_string()) {
             continue;
         }
-        if let Some(line) = format_dotted_call_line(ename, cap, ent, es, cgs, map) {
+        if let Some(line) = format_dotted_call_line(
+            ename,
+            cap,
+            ent,
+            es,
+            cgs,
+            map,
+            line_valid_cache,
+            line_valid_cache_seed,
+        ) {
             out.push((cap.name.clone(), line));
         }
     }
@@ -3875,7 +3994,7 @@ fn collect_entity_teaching_block(
     map: Option<&SymbolMap>,
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     collect_meta: bool,
-    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, bool>,
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
     map_arc: Option<std::sync::Arc<SymbolMap>>,
     gloss_emit: &mut Option<GlossScratch<'_>>,
@@ -4085,7 +4204,15 @@ fn collect_entity_teaching_block(
                 format!("{es}.{ms}()")
             } else {
                 let suffix = format!(".{ms}()");
-                let Some(recv) = receiver_for_dotted_suffix(&es, ent, cgs, map, &suffix) else {
+                let Some(recv) = receiver_for_dotted_suffix(
+                    &es,
+                    ent,
+                    cgs,
+                    map,
+                    &suffix,
+                    line_valid_cache,
+                    line_valid_cache_seed,
+                ) else {
                     continue;
                 };
                 format!("{recv}{suffix}")
@@ -4120,6 +4247,8 @@ fn collect_entity_teaching_block(
         catalog_entry_id,
         &manifest.multi_arity_methods,
         &manifest.standalone_creates,
+        line_valid_cache,
+        line_valid_cache_seed,
     ) {
         let cap_ref = cgs.capabilities.get(&cap_name);
         if let Some(cap) = cap_ref {
@@ -4380,7 +4509,15 @@ fn collect_entity_teaching_block(
             id_sym_entity(map, ename, rel.as_str())
         };
         let suffix = format!(".{rel_sym}");
-        let Some(recv) = receiver_for_dotted_suffix(&es, ent, cgs, map, &suffix) else {
+        let Some(recv) = receiver_for_dotted_suffix(
+            &es,
+            ent,
+            cgs,
+            map,
+            &suffix,
+            line_valid_cache,
+            line_valid_cache_seed,
+        ) else {
             continue;
         };
         let rel_expr = format!("{recv}{suffix}");
@@ -5303,7 +5440,8 @@ fn render_domain_table_resolved<'b, F>(
         non_registry_slots: HashMap::new(),
         defined_value_domains: HashSet::new(),
     };
-    let mut line_valid_cache: HashMap<DomainLineValidCacheKey, bool> = HashMap::with_capacity(8192);
+    let mut line_valid_cache: HashMap<DomainLineValidCacheKey, DomainLineValidEntry> =
+        HashMap::with_capacity(8192);
 
     let block_iter: Vec<&str> = if let Some(e) = emit_entity_blocks {
         e.to_vec()
@@ -5868,7 +6006,7 @@ mod tests {
         );
         let work = domain_line_work_string(expected, None);
         assert!(
-            domain_line_valid_work(&cgs, &work),
+            domain_line_validate_full(&cgs, &work).is_some(),
             "expected synthesized compound get witness to parse+typecheck: `{expected}`"
         );
     }
@@ -6487,7 +6625,7 @@ mod tests {
         .to_owned();
         let work = domain_line_work_string(expr, Some(map.as_ref()));
         assert!(
-            domain_line_valid_work(&cgs, &work),
+            domain_line_validate_full(&cgs, &work).is_some(),
             "projection witness must parse+typecheck: {expr}"
         );
         assert!(
@@ -6654,12 +6792,16 @@ mod tests {
         let entry = cgs.entry_id.clone().unwrap_or_default();
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
         let zone_es = map.entity_sym("Zone");
+        let mut nav_cache = HashMap::new();
+        let nav_seed = prompt_line_valid_cache_seed_cgs(&cgs);
         let unfiltered = super::incoming_relation_nav_bases_to_entity(
             &cgs,
             "Ruleset",
             Some(map.as_ref()),
             None,
             entry.as_str(),
+            &mut nav_cache,
+            nav_seed,
         );
         assert!(
             unfiltered.iter().any(|line| line.contains(zone_es.as_str())),
@@ -6681,6 +6823,8 @@ mod tests {
             Some(map.as_ref()),
             Some(&delta.required),
             entry.as_str(),
+            &mut nav_cache,
+            nav_seed,
         );
         assert!(
             !filtered

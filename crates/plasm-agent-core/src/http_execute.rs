@@ -44,10 +44,7 @@ use crate::run_artifacts::{
     ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun, RunArtifactHandle, RunArtifactId,
     RunArtifactWire,
 };
-use crate::trace_hub::{
-    McpPlasmTraceSink, PlasmLineTraceMeta, TraceEvent,
-    TraceSegment,
-};
+use crate::trace_hub::{McpPlasmTraceSink, PlasmLineTraceMeta, TraceEvent, TraceSegment};
 use crate::trace_sink_emit::{McpTraceAuditFields, PlasmTraceContext};
 
 /// Validated `/execute/:prompt_hash/:session_id` segments; rejects with RFC 7807 `problem+json`.

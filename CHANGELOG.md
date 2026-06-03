@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.70] - 2026-05-30
+
+### Performance
+
+- **DOMAIN synthesis:** unified line-valid cache stores `ParsedExpr` for both TSV-only and `include_domain_execution_model` paths (no `collect_meta` bypass); nav/projection probes share the same cache.
+- **CGS indexing:** `named_query_capabilities` uses `CgsCapabilityIndex` instead of scanning all capabilities.
+
 ## [0.1.69] - 2026-05-30
 
 ### Changed

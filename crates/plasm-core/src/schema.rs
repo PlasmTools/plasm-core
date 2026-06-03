@@ -4048,15 +4048,21 @@ impl CGS {
     pub fn named_query_capabilities(&self, entity: &str) -> Vec<&CapabilitySchema> {
         let primary_q = self.primary_query_capability(entity).map(|c| &c.name);
         let primary_s = self.primary_search_capability(entity).map(|c| &c.name);
-        self.capabilities
-            .values()
-            .filter(|cap| {
-                cap.domain == entity
-                    && matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search)
-                    && Some(&cap.name) != primary_q
-                    && Some(&cap.name) != primary_s
-            })
-            .collect()
+        let mut out = Vec::new();
+        for kind in [CapabilityKind::Query, CapabilityKind::Search] {
+            for name in self
+                .capability_index_arc()
+                .names_for_domain_kind(entity, kind)
+            {
+                if Some(name) == primary_q || Some(name) == primary_s {
+                    continue;
+                }
+                if let Some(cap) = self.capabilities.get(name.as_str()) {
+                    out.push(cap);
+                }
+            }
+        }
+        out
     }
 
     /// Validates [`RelationMaterialization::QueryScoped`] / [`QueryScopedBindings`]: `capability` must
