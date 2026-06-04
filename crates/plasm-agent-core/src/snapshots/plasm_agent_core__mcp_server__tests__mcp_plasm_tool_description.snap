@@ -1,6 +1,5 @@
 ---
 source: crates/plasm-agent-core/src/mcp_server.rs
-assertion_line: 2641
 expression: "super::MCP_PLASM_TOOL_DESCRIPTION"
 ---
-**Plan Plasm** (dry-run only) with **`program`** and **`logical_session_ref`** from **`plasm_context`**. Returns a reviewable dry-run plan (topology + expected shapes). **No live HTTP** — use **`plasm_run`** after the plan matches intent. **Program contract** (newlines + heredoc): MCP initialize instructions. Grammar: **`plasm_context` teaching TSV**.
+**Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology. Program contract: MCP initialize; grammar: **`plasm_context`** teaching TSV.

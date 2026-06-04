@@ -2356,8 +2356,9 @@ fn try_push_projection_witness_row(
     false
 }
 
-/// In DOMAIN synthetic lines, bare `$` (and search `~$`) marks a **placeholder** for the real
-/// parameter value — use the corresponding `p#` gloss line; it is not a literal value to send to the API.
+/// In DOMAIN synthetic lines, bare `$` marks a **placeholder** for the real parameter value — use the
+/// corresponding `p#` gloss line; it is not a literal value to send to the API. Search rows teach
+/// `e#~"text"` (quoted meta-literal); never `e#~$`.
 const DOMAIN_PARAM_VALUE_PLACEHOLDER: &str = "$";
 
 fn truncate_inline_desc(s: &str, max: usize) -> String {
@@ -4044,7 +4045,16 @@ fn collect_entity_teaching_block(
         .into_iter()
         .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap))
         .collect();
-    query_caps.sort_by(|a, b| a.name.cmp(&b.name));
+    let primary_q_name = cgs.primary_query_capability(ename).map(|c| c.name.clone());
+    query_caps.sort_by(|a, b| {
+        let a_pri = primary_q_name.as_deref() == Some(a.name.as_str());
+        let b_pri = primary_q_name.as_deref() == Some(b.name.as_str());
+        match (a_pri, b_pri) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.cmp(&b.name),
+        }
+    });
     let query_cap_refs: Vec<&crate::CapabilitySchema> = query_caps.to_vec();
 
     // Projection witness before other `e#…` lines for this entity (query/get/relation) so the field
@@ -4268,7 +4278,7 @@ fn collect_entity_teaching_block(
     if !query_caps.is_empty() {
         let mut local_seen: HashSet<String> = HashSet::new();
         let mut query_line_count: usize = 0;
-        const MAX_QUERY_LINES: usize = 32;
+        const MAX_QUERY_LINES: usize = 2;
         for cap in &query_caps {
             if query_line_count >= MAX_QUERY_LINES {
                 break;
@@ -4384,7 +4394,7 @@ fn collect_entity_teaching_block(
         .filter(|cap| surface_allows_capability(surface_filter, catalog_entry_id, cap))
         .collect();
     if !search_caps.is_empty() {
-        let line = format!("{es}~{}", DOMAIN_PARAM_VALUE_PLACEHOLDER);
+        let line = format!("{es}~\"text\"");
         search_caps.sort_by(|a, b| a.name.cmp(&b.name));
         let scap = cgs
             .primary_search_capability(ename)
@@ -4538,15 +4548,92 @@ fn collect_entity_teaching_block(
         );
     }
 
-    let field_gloss_rows = gloss_emit
+    let mut field_gloss_rows = gloss_emit
         .as_mut()
         .map(|gs| std::mem::take(gs.field_gloss))
         .unwrap_or_default();
+    field_gloss_rows = filter_field_gloss_to_referenced_symbols(&field_gloss_rows, &teaching_rows, &es);
 
     EntityTeachingBlock {
         heading,
         field_gloss_rows,
         teaching_rows,
+    }
+}
+
+/// Keep `p#`/`v#` gloss rows referenced by teaching exemplars (and linked value domains).
+fn filter_field_gloss_to_referenced_symbols(
+    rows: &[TeachingFieldGloss],
+    teaching_rows: &[EntityTeachingExprRow],
+    entity_surface: &str,
+) -> Vec<TeachingFieldGloss> {
+    let mut referenced = collect_opaque_domain_symbols(entity_surface);
+    for row in teaching_rows {
+        referenced.extend(collect_opaque_domain_symbols(&row.teaching_expr.expression));
+    }
+    loop {
+        let mut expanded = false;
+        for g in rows {
+            if !referenced.contains(g.symbol.as_str()) {
+                continue;
+            }
+            for sym in collect_opaque_domain_symbols(&format!(
+                "{} {} {}",
+                g.field_type, g.allowed_values, g.description
+            )) {
+                if referenced.insert(sym) {
+                    expanded = true;
+                }
+            }
+        }
+        if !expanded {
+            break;
+        }
+    }
+    rows.iter()
+        .filter(|g| g.is_inline_union_summary || referenced.contains(g.symbol.as_str()))
+        .cloned()
+        .collect()
+}
+
+fn collect_opaque_domain_symbols(text: &str) -> HashSet<String> {
+    let mut out = HashSet::new();
+    let bytes = text.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        let b = bytes[i];
+        if matches!(b, b'e' | b'm' | b'p' | b'v') {
+            let start = i;
+            i += 1;
+            if i < bytes.len() && bytes[i].is_ascii_digit() {
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+                if let Ok(s) = std::str::from_utf8(&bytes[start..i]) {
+                    out.insert(s.to_string());
+                }
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+#[cfg(test)]
+mod lazy_field_gloss_tests {
+    use super::*;
+
+    #[test]
+    fn collect_opaque_domain_symbols_finds_em_pv_tokens() {
+        let syms = collect_opaque_domain_symbols("e1{p14=e3(p5=$), p71=open}[p1,p2]");
+        assert!(syms.contains("e1"));
+        assert!(syms.contains("e3"));
+        assert!(syms.contains("p14"));
+        assert!(syms.contains("p5"));
+        assert!(syms.contains("p71"));
+        assert!(syms.contains("p1"));
+        assert!(syms.contains("p2"));
     }
 }
 
@@ -4703,6 +4790,7 @@ struct PromptContractSpec {
     symbolic: bool,
     include_search_line: bool,
     include_rich_string_guidance: bool,
+    include_scoped_search_worked_example: bool,
 }
 
 /// Render the agent-facing Plasm language guide used by MCP initialize instructions.
@@ -4716,6 +4804,7 @@ pub fn render_plasm_mcp_language_frontmatter() -> String {
         symbolic: true,
         include_search_line: true,
         include_rich_string_guidance: true,
+        include_scoped_search_worked_example: false,
     })
 }
 
@@ -4775,6 +4864,10 @@ fn cgs_slice_has_structured_string_semantics(cgs: &CGS, full_entities: &[&str]) 
     false
 }
 
+fn cgs_slice_has_repository_issue_scoped_search(full_entities: &[&str]) -> bool {
+    full_entities.contains(&"Repository") && full_entities.contains(&"Issue")
+}
+
 fn prompt_contract_spec_resolved<'b, F>(
     resolve: &mut F,
     full_entities: &[&str],
@@ -4795,6 +4888,7 @@ where
         symbolic,
         include_search_line,
         include_rich_string_guidance,
+        include_scoped_search_worked_example: cgs_slice_has_repository_issue_scoped_search(full_entities),
     }
 }
 
@@ -4978,7 +5072,7 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         scoped_form = scoped_form,
         array_form = array_form
     );
-    if spec.symbolic {
+    if spec.symbolic && spec.include_scoped_search_worked_example {
         s.push_str(
             "- Worked scoped-search program (copy shape, substitute values):\n\
   repo = e3(p5=octocat, p13=Hello-World)\n\
@@ -4996,9 +5090,9 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         "- Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.\n\
 - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.\n\
 - Federated sessions: use the `e#` from the teaching row for that catalog when the same wire entity name appears in multiple APIs.\n\
-- Continuation: `label.<relation>` from row-producing bindings; aggregate/render/derive labels are not row anchors.\n\
-- Derived columns: `label =>` template (Minijinja on `rows`), not `.derive(…)`.\n\
-- String slots: pass `binding.content` from bracket-render, not the whole row.\n",
+- String slots: pass `binding.content` from bracket-render, not the whole row.\n\
+- Search: copy `e#~\"text\"` with real quoted search terms — never `e#~$` or bare `$`. Bare `$` anywhere is a fill-in, not an API value.\n\
+- Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or real `~\"…\"` search text.\n",
     );
     s.push('\n');
 
@@ -7204,6 +7298,25 @@ mod tests {
                 render_plasm_mcp_language_frontmatter()
             );
         });
+    }
+
+    /// Search teaching rows must not invite copy-paste of `e#~$` (grammar teaches `e#~"text"`).
+    #[test]
+    fn domain_search_teaching_rows_use_quoted_text_not_dollar() {
+        let dir = apis_dir("linear");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+        for line in prompt.lines() {
+            if line.contains('~') && line.starts_with('e') {
+                assert!(
+                    !line.contains("~$"),
+                    "search teaching row must not contain ~$: {line}"
+                );
+            }
+        }
     }
 
     /// Full `apis/linear` prompt. Deterministic for the checked-in catalog; use `INSTA_UPDATE=1`

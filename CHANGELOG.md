@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.73] - 2026-05-30
+
+### Changed
+
+- **DOMAIN teaching:** search exemplars use `e#~"text"` (not `e#~$`); Common pitfalls call out search-only entities and fill-in `$`.
+- **MCP initialize:** compressed `workflow_head`; fill-in rule folded into `program_contract` grammar line; tool heads head-only again; per-segment char budgets in `mcp_prompt_char_budget`.
+- **DOMAIN contract:** scoped GitHub worked example only when slice includes `Repository` + `Issue`; trimmed Common pitfalls; generic MCP frontmatter omits worked example.
+- **Teaching TSV:** lazy field gloss (retain `p#`/`v#` referenced by exemplars); cap query exemplars to 2 per entity (primary query first).
+
+### Added
+
+- **`domain_search_teaching_rows_use_quoted_text_not_dollar`** regression test.
+- **Docs:** DOMAIN `$` / `~"text"` placeholder subsection in incremental-domain-prompts.
+
 ## [0.1.72] - 2026-05-30
 
 ### Fixed

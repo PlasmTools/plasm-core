@@ -62,19 +62,15 @@ expression: prompt
 # - Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.
 # - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
 # - Examples: scoped child list `e1{p14=e3(p5=<val>, p13=<val>), …} (inline) OR repo=e3(…); e1{p14=repo, …} (decomposed label ref)`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
-# - Worked scoped-search program (copy shape, substitute values):
-# repo = e3(p5=octocat, p13=Hello-World)
-# e1{p14=repo, p71=open}
-# OR inline: e1{p14=e3(p5=octocat, p13=Hello-World), p71=open}
 # - `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `m#(..., p#=<<TXT` + newline body + `TXT` newline `)`.
 #
 # Common pitfalls:
 # - Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.
 # - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.
 # - Federated sessions: use the `e#` from the teaching row for that catalog when the same wire entity name appears in multiple APIs.
-# - Continuation: `label.<relation>` from row-producing bindings; aggregate/render/derive labels are not row anchors.
-# - Derived columns: `label =>` template (Minijinja on `rows`), not `.derive(…)`.
 # - String slots: pass `binding.content` from bracket-render, not the whole row.
+# - Search: copy `e#~"text"` with real quoted search terms — never `e#~$` or bare `$`. Bare `$` anywhere is a fill-in, not an API value.
+# - Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or real `~"…"` search text.
 #
 
 plasm_expr	Meaning
@@ -104,14 +100,12 @@ e2{p46=$}	returns [e2]
 e2(p19)	returns e2
 e2{p46=$}.p19	relation e2 => e2
 e2{p46=$}.p2	relation e2 => e10
-p50	v27 · content
 p22	v2 · id
 p59	v6 · title
 e3(p22)[p22,p59]	returns e3 · projection · A Linear document
 e3(p22)	returns e3
 e3(p22).m7()	returns e3 · optional params: p59, p50 · Update document title or content
-e3~$	returns [e3]
-p51	v27 · description
+e3~"text"	returns [e3]
 p23	v2 · id
 p56	v6 · name
 e4[p23,p56]	returns e4 · projection · A strategic initiative grouping projects
@@ -120,20 +114,11 @@ e4	returns [e4]
 e4(p23)	returns e4
 v11	str · Human-visible issue key
 v12	int · Linear priority 0–4 (1 urgent, 4 low)
-v22	str · Workflow column name
 v9	ref:Team · str · Owning team (by team key)
 p4	ref:Cycle
 p9	ref:Team · Owning team (by team key).
-p14	v6 · assignee_name
-p18	v4 · cycle
 p24	v9 · team
-p26	v11 · parent_identifier
-p32	v6 · add_label_name
-p33	v6 · label_name
-p35	v6 · remove_label_name
-p43	v22 · state_name
 p45	v24 · key
-p57	v6 · project_name
 p27	v2 · id
 p25	v11 · identifier
 p28	v12 · priority
@@ -144,7 +129,7 @@ e5(p25)	returns e5
 e5(p25).m12()	returns e5 · Move an issue to trash (recoverable)
 e5(p25).m15()	returns e5 · optional params: p59, p51, p43, p14, p57, p32, p35, p28 · Update issue fields (state, assignee, labels, priority, …) by identifier
 e5.m11(p24=e10(p45), p59=$,..)	returns e5 · optional params: p51, p43, p14, p57, p26, p28 · Create an issue on a team (by team key)
-e5~$	returns [e5] · optional params: p46, p43, p33, p14, p28, p57, p18
+e5~"text"	returns [e5] · optional params: p46, p43, p33, p14, p28, p57, p18
 e5(p25).p10	relation e5 => e11
 e5(p25).p5	relation e5 => [e5]
 e5(p25).p3	relation e5 => [e1]
@@ -163,7 +148,7 @@ e7(p36).m21()	returns e7 · optional params: p56, p51 · Update project name or 
 e7.m17(p56=$, p24=e10(p45),..)	returns e7 · optional params: p51 · Create a project on a team (by team key)
 e7	returns [e7]
 e7(p36)	returns e7
-e7~$	returns [e7]
+e7~"text"	returns [e7]
 p12	uuid
 p37	v2 · project
 p38	v2 · id
@@ -190,7 +175,7 @@ p53	v6 · displayName
 p55	v6 · email
 e5(p25).p10[p47,p56,p53,p55]	returns e11 · projection · A Linear user
 e11.m30()	returns e11
-e11~$	returns [e11]
+e11~"text"	returns [e11]
 p60	v2 · id
 p42	v22 · name
 p61	v6 · type

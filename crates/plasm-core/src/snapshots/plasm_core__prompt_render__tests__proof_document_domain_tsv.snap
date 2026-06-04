@@ -61,19 +61,15 @@ expression: tsv
 # - Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.
 # - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
 # - Examples: scoped child list `e1{p14=e3(p5=<val>, p13=<val>), …} (inline) OR repo=e3(…); e1{p14=repo, …} (decomposed label ref)`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
-# - Worked scoped-search program (copy shape, substitute values):
-# repo = e3(p5=octocat, p13=Hello-World)
-# e1{p14=repo, p71=open}
-# OR inline: e1{p14=e3(p5=octocat, p13=Hello-World), p71=open}
 # - `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `m#(..., p#=<<TXT` + newline body + `TXT` newline `)`.
 #
 # Common pitfalls:
 # - Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.
 # - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.
 # - Federated sessions: use the `e#` from the teaching row for that catalog when the same wire entity name appears in multiple APIs.
-# - Continuation: `label.<relation>` from row-producing bindings; aggregate/render/derive labels are not row anchors.
-# - Derived columns: `label =>` template (Minijinja on `rows`), not `.derive(…)`.
 # - String slots: pass `binding.content` from bracket-render, not the whole row.
+# - Search: copy `e#~"text"` with real quoted search terms — never `e#~$` or bare `$`. Bare `$` anywhere is a fill-in, not an API value.
+# - Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or real `~"…"` search text.
 #
 
 plasm_expr	Meaning
@@ -82,29 +78,20 @@ v10	markdown
 v12	str · Short text
 v9	json · JSON object
 v1	str · Stable name for this agent on edits (shows in attribution)
-v2	str · mt1 precondition string exposed on EditorState (wire baseToken or derived from block refs); host …
-v4	bool · true/false flag (for example resolve thread)
-v13	uuid · Optional idempotency key so you can retry the same edit batch safely
 v6	str · Event id from the pending collaboration stream—use for after= and ack up_to_id only
 v3	str · Block id from your current snapshot. Refresh the snapshot after others edit before you reuse ids
 v7	array[str] · New blocks in order from top to bottom
-v11	select · first, all
 v8	int · Integer
 p1	union · v210 | v211 | v212 · operations
 p2	union · v101 | v102 | v103 | v104 | v105 | v106 | v107 · operations
 p5	v1 · agent_id
-p6	v2 · base_token
 p7	v3 · fromRef
 p8	v3 · ref
 p9	v3 · toRef
-p11	v4 · resolve
 p13	v6 · up_to_id
 p14	v7 · blocks
 p15	v8 · base_revision
-p18	v10 · text
-p19	v10 · find
 p20	v10 · markdown
-p21	v10 · replace
 p22	v10 · content
 p24	v10 · quote
 p25	v10 · report · Full bug report
@@ -112,11 +99,6 @@ p26	v10 · text
 p28	v12 · mark_id
 p30	v12 · by
 p31	v12 · mark_id
-p32	v12 · presence_status
-p33	v12 · share_token
-p34	v12 · share_url
-p35	v12 · status
-p37	v13 · idempotency_key
 p12	v5 · slug
 p23	v10 · markdown
 p36	v12 · title

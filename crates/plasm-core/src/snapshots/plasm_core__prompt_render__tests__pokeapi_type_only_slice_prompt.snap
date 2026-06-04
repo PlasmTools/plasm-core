@@ -61,18 +61,14 @@ expression: out
 # - Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.
 # - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
 # - Examples: scoped child list `e1{p14=e3(p5=<val>, p13=<val>), …} (inline) OR repo=e3(…); e1{p14=repo, …} (decomposed label ref)`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
-# - Worked scoped-search program (copy shape, substitute values):
-# repo = e3(p5=octocat, p13=Hello-World)
-# e1{p14=repo, p71=open}
-# OR inline: e1{p14=e3(p5=octocat, p13=Hello-World), p71=open}
 #
 # Common pitfalls:
 # - Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.
 # - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.
 # - Federated sessions: use the `e#` from the teaching row for that catalog when the same wire entity name appears in multiple APIs.
-# - Continuation: `label.<relation>` from row-producing bindings; aggregate/render/derive labels are not row anchors.
-# - Derived columns: `label =>` template (Minijinja on `rows`), not `.derive(…)`.
 # - String slots: pass `binding.content` from bracket-render, not the whole row.
+# - Search: copy `e#~"text"` with real quoted search terms — never `e#~$` or bare `$`. Bare `$` anywhere is a fill-in, not an API value.
+# - Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or real `~"…"` search text.
 #
 
 plasm_expr	Meaning

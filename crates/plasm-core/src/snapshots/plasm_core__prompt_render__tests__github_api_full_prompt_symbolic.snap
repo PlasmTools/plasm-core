@@ -72,9 +72,9 @@ expression: prompt
 # - Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.
 # - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.
 # - Federated sessions: use the `e#` from the teaching row for that catalog when the same wire entity name appears in multiple APIs.
-# - Continuation: `label.<relation>` from row-producing bindings; aggregate/render/derive labels are not row anchors.
-# - Derived columns: `label =>` template (Minijinja on `rows`), not `.derive(…)`.
 # - String slots: pass `binding.content` from bracket-render, not the whole row.
+# - Search: copy `e#~"text"` with real quoted search terms — never `e#~$` or bare `$`. Bare `$` anywhere is a fill-in, not an API value.
+# - Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or real `~"…"` search text.
 #
 
 plasm_expr	Meaning
@@ -144,53 +144,27 @@ v28	select · completed, reopened, not_planned, duplicate
 v94	select · blue, gray, green, orange, pink, purple, red, yellow
 v35	float
 v6	date · Timestamp when a GitHub issue, pull request, or milestone was closed
-v37	array[str] · Full label-name list; omit to leave labels unchanged
-v36	array[ref:e19] · Full replacement list of assignee logins
-v39	int · Milestone number in the repo, or omit to leave unchanged
-v38	bool · Lock or unlock conversation on the issue
 v17	str · Target repo (owner/name), e.g. octocat/Hello-World
 v5	str · Git branch name or branch ref within a repository
-v15	markdown · Additional instructions for Copilot
-v14	str · Custom Copilot coding agent name, when configured
-v16	str · Model name for Copilot to use, when supported
 v18	array[ref:e19] · Assignee logins to add
 v19	array[ref:e19] · Assignee logins to remove
-v22	array[str] · Label names to apply
-v21	array[ref:e19] · Assignee logins
-v23	int · Milestone number
 v30	int · Sub-issue to attach (numeric issue id)
-v29	bool · Re-parent the sub-issue when the API allows
 v31	int · Numeric database id of the sub-issue to remove
 v34	int · Numeric database id of the sub-issue to reposition
-v32	int · Place the sub-issue after this sibling id
-v33	int · Place the sub-issue before this sibling id
 p8	str
 p9	str
 p10	ref:User · Filter by assignee login (omit for any assignee).
 p39	v4 · login
 p44	v5 · base_branch
-p59	v14 · custom_agent
-p60	v15 · custom_instructions
-p61	v16 · model
 p62	v17 · target_repo
 p63	v18 · assignees
 p64	v19 · assignees
-p66	v21 · assignees
-p67	v22 · labels
-p68	v23 · milestone
 p69	v24 · issue_number
 p71	v25 · assignee
 p72	v26 · since
-p75	v29 · replace_parent
 p76	v30 · sub_issue_id
 p77	v31 · sub_issue_id
-p78	v32 · after_id
-p79	v33 · before_id
 p80	v34 · sub_issue_id
-p82	v36 · assignees
-p83	v37 · labels
-p84	v38 · locked
-p85	v39 · milestone
 p214	v95 · state
 p248	v101 · labels
 p253	v101 · milestone
@@ -221,7 +195,7 @@ e5(p41=$, p56=$, p70=$).m18(p77=$)	returns () · Remove a sub-issue from this pa
 e5(p41=$, p56=$, p70=$).m19(p80=$,..)	returns () · optional params: p78, p79 · Reorder a sub-issue within this parent issue
 e5{p57=e17(p41=$, p56=$), p214=$, p71=e19(p39), p248=$, p253=$, p72=$}	returns [e5] · optional params: p214, p71, p248, p253, p72
 e5{p41=$, p56=$, p69=$}	returns [e5]
-e5~$	returns [e5]
+e5~"text"	returns [e5]
 e5(p41=$, p56=$, p70=$).p10	relation e5 => e19
 e5(p41=$, p56=$, p70=$).p8	relation e5 => [e8]
 e5(p41=$, p56=$, p70=$).p9	relation e5 => e9
@@ -242,10 +216,6 @@ p255	v101 · node_id
 p40	v4 · org
 e7{p40=$}[p175,p212,p49,p223,p141,p254,p255,p40,p58]	returns [e7] · projection · Organization-scoped issue type
 e7{p40=$}	returns [e7]
-v43	str · New label name (GitHub JSON field new_name)
-v42	str · Hex color without leading
-p88	v42 · color
-p89	v43 · new_name
 p235	v101 · color
 p136	v87 · default
 e8{p41=$, p56=$, p69=$}[p254,p41,p56,p175,p223,p235,p136]	returns [e8] · projection · Label for issues and PRs
@@ -291,25 +261,13 @@ p268	v101 · type
 e11(p39)[p39,p175,p254,p223,p232,p250,p240,p228,p269,p188,p187,p172,p173,p268]	returns e11 · projection · A GitHub organization
 e11(p39)	returns e11
 v72	int · Repository-local pull request number
-v55	select · merge, squash, rebase
-v56	str · Base branch name to target (if changing)
-v71	str · Only if PR head still matches this SHA
 v52	str · Head branch, or user:branch for a fork
 v51	str · Branch you want to merge into
-v54	bool · Allow base maintainers to push to head
-v53	int · Issue to turn into this pull request (optional)
 v70	str · Path or file name fragment to search for
 p97	v51 · base
 p98	v52 · head
-p99	v53 · issue
-p100	v54 · maintainer_can_modify
-p101	v55 · merge_method
-p102	v56 · base
 p116	v70 · q
-p117	v71 · expected_head_sha
-p222	v100 · commit_message
 p230	v101 · base
-p237	v101 · commit_title
 p243	v101 · head
 p118	v72 · number
 p137	v87 · draft
@@ -322,7 +280,7 @@ e12(p41=$, p56=$, p118=$).m49()	returns () · optional params: p117 · Update a 
 e12.m42(p57=e17(p41=$, p56=$), p267=$, p98=$, p97=$,..)	returns e12 · [scope p57→e17] · optional params: p221, p137, p100, p99 · Open a PR (head into base)
 e12{p57=e17(p41=$, p56=$), p214=$, p243=$, p230=$}	returns [e12] · optional params: p214, p243, p230
 e12{p57=e17(p41=$, p56=$), p116=$}	returns [e12]
-e12~$	returns [e12]
+e12~"text"	returns [e12]
 e12(p41=$, p56=$, p118=$).p19	relation e12 => e19
 e12(p41=$, p56=$, p118=$).p16	relation e12 => [e13]
 e12(p41=$, p56=$, p118=$).p15	relation e12 => e9
@@ -339,10 +297,6 @@ p210	v92 · status
 e13{p41=$, p56=$, p119=$}[p242,p166,p171,p226,p53,p210]	returns [e13] · projection · A file entry in a pull request diff
 e13{p41=$, p56=$, p119=$}	returns [e13]
 v74	select · APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING
-v67	str · Commit SHA to review; omit for the PR head
-v68	select · APPROVE, REQUEST_CHANGES, COMMENT
-p113	v67 · commit_id
-p114	v68 · event
 p121	v74 · state
 p236	v101 · commit_id
 p164	v88 · submitted_at
@@ -356,16 +310,6 @@ e14(p41=$, p56=$, p119=$, p175=$).p13	relation e14 => e12
 e14(p41=$, p56=$, p119=$, p175=$).p14	relation e14 => e19
 v97	select · LEFT, RIGHT
 v73	select · line, file
-v58	str · Commit SHA to comment on for a new inline comment
-v61	str · File path in repo for a new inline comment
-v60	int · Diff line for a new inline comment
-v63	int · First diff line for a multi-line comment
-v59	int · Existing review comment id to reply to
-p104	v58 · commit_id
-p105	v59 · in_reply_to
-p106	v60 · line
-p107	v61 · path
-p109	v63 · start_line
 p112	v20 · since
 p224	v100 · diff_hunk
 p189	v89 · review_id
@@ -379,11 +323,6 @@ e15(p41=$, p56=$, p175=$)	returns e15
 e15.m56(p57=e17(p41=$, p56=$), p119=$, p221=$,..)	returns e15 · [scope p57→e17, p119] · optional params: p104, p107, p106, p216, p109, p217, p120, p105 · Add or reply to an inline review comment
 e15{p41=$, p56=$, p119=$, p112=$}	returns [e15] · optional params: p112
 e15(p41=$, p56=$, p175=$).p12	relation e15 => e19
-v76	str · Branch or commit SHA the release tag points at
-v75	bool · Auto release notes from merged PRs (if supported)
-p122	v75 · generate_release_notes
-p123	v76 · target_commitish
-p266	v101 · target_commitish
 p264	v101 · tag_name
 p146	v87 · prerelease
 p159	v88 · published_at
@@ -400,16 +339,10 @@ v80	blob · New file content (base64)
 v2	select · all, public, private
 v1	str · Comma list: owner, collaborator, organization_member
 v49	select · public
-v50	select · all, public, private, forks, sources, member
-v85	select · all, owner, member
 p35	v1 · affiliation
 p36	v2 · visibility
-p43	v4 · username
-p45	v5 · branch
 p95	v49 · visibility
-p96	v50 · type
 p127	v80 · content
-p132	v85 · type
 p252	v101 · message
 p55	v10 · full_name
 p147	v87 · private
@@ -428,10 +361,7 @@ e17(p41=$, p56=$).m67(p57=e17(p41=$, p56=$), p257=$, p252=$, p53=$,..)	returns (
 e17(p41=$, p56=$).m68(p57=e17(p41=$, p56=$), p257=$, p252=$, p127=$,..)	returns () · [scope p57→e17] · optional params: p45, p53 · Create or update a file in a repository
 e17{p36=$, p35=$}	returns [e17] · optional params: p36, p35
 e17{p40=$, p95=$}	returns [e17]
-e17{p40=$, p96=$}	returns [e17] · optional params: p96
-e17{p57=e17(p41=$, p56=$)}	returns [e17]
-e17{p43=$, p132=$}	returns [e17] · optional params: p132
-e17~$	returns [e17]
+e17~"text"	returns [e17]
 e17(p41=$, p56=$).p22	relation e17 => [e1]
 e17(p41=$, p56=$).p23	relation e17 => [e2]
 e17(p41=$, p56=$).p24	relation e17 => [e3]
@@ -457,7 +387,7 @@ e19.m75()	returns e19
 e19{p40=$, p93=$, p94=$}	returns [e19] · optional params: p93, p94
 e19{p57=e17(p41=$, p56=$), p124=$}	returns [e19] · optional params: p124
 e19(p39)	returns e19
-e19~$	returns [e19]
+e19~"text"	returns [e19]
 v110	select · active, deleted, disabled_fork, disabled_inactivity, disabled_manually
 v102	str · Branch, tag, or commit SHA to run the workflow on
 p271	v102 · ref

@@ -1,5 +1,6 @@
 ---
 source: crates/plasm-agent-core/src/mcp_server.rs
+assertion_line: 2658
 expression: "super::mcp_server_initialize_instructions()"
 ---
 Plasm MCP tools (in order): **`plasm_context`** (session + teaching TSV), **`plasm`** (dry-run plan), **`plasm_run`** (live execute), **`discover_capabilities`** (when **`api`/`entity`** unknown). Skip discover when seeds are known.

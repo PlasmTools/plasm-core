@@ -2666,14 +2666,13 @@ mod tests {
     fn mcp_server_initialize_workflow_uses_intent_not_query() {
         let text = super::MCP_SERVER_INITIALIZE_WORKFLOW;
         assert!(text.contains("`intent`"));
-        assert!(text.contains("One user goal"));
-        assert!(text.contains("one call per user goal"));
+        assert!(text.contains("One goal"));
+        assert!(text.contains("one **`intent`** per goal"));
         assert!(!text.contains("several discovery calls"));
         assert!(!text.contains("pass **`query`**"));
         assert!(!text.contains("syntax guide in MCP initialize"));
         assert!(text.contains("plasm_context` teaching TSV"));
-        assert!(text.contains("pokeapi"));
-        assert!(text.contains("linear"));
+        assert!(text.contains("Multi-API"));
         let discover = super::PlasmMcpHandler::plasm_tools()
             .into_iter()
             .find(|t| t.name == "discover_capabilities")
@@ -2686,7 +2685,7 @@ mod tests {
         assert!(!discover_desc.contains("query"));
     }
 
-    /// Static MCP prompt byte budgets (Unicode scalar count). Targets from MCP prompt dedup plan.
+    /// Static MCP prompt byte budgets (UTF-8 byte length). Targets from MCP prompt dedup plan.
     #[test]
     fn mcp_prompt_char_budget() {
         let init = super::mcp_server_initialize_instructions();
@@ -2695,6 +2694,25 @@ mod tests {
             "initialize instructions too long: {} chars",
             init.len()
         );
+        let head = include_str!("mcp_prompt/workflow_head.txt");
+        let contract = include_str!("mcp_prompt/program_contract.txt");
+        let tail = include_str!("mcp_prompt/workflow_tail.txt");
+        assert!(
+            head.len() < 1400,
+            "workflow_head too long: {} chars",
+            head.len()
+        );
+        assert!(
+            contract.len() < 900,
+            "program_contract too long: {} chars",
+            contract.len()
+        );
+        assert!(
+            tail.len() < 750,
+            "workflow_tail too long: {} chars",
+            tail.len()
+        );
+        assert_eq!(init.len(), head.len() + contract.len() + tail.len());
         assert!(
             super::MCP_PLASM_TOOL_DESCRIPTION.len() < 1200,
             "plasm tool description too long: {} chars",
