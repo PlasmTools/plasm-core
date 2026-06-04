@@ -69,6 +69,70 @@ pub fn matrix_execute_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
     )
 }
 
+/// Same wire entity (`LangItem`) in `github` and `linear` catalogs — distinct session `e1` / `e2`.
+pub fn matrix_federated_duplicate_entity_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
+    let mut ctxs = IndexMap::new();
+    ctxs.insert(
+        "github".into(),
+        Arc::new(CgsContext::entry("github", cgs.clone())),
+    );
+    ctxs.insert(
+        "linear".into(),
+        Arc::new(CgsContext::entry("linear", cgs.clone())),
+    );
+    let layers: Vec<&plasm_core::CGS> = vec![cgs.as_ref(), cgs.as_ref()];
+    let mut exp = DomainExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+    exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
+    ExecuteSession::new(
+        "matrix_ph".into(),
+        String::new(),
+        cgs.clone(),
+        ctxs,
+        "github".into(),
+        String::new(),
+        String::new(),
+        None,
+        vec!["LangItem".into()],
+        Some(exp),
+        None,
+        None,
+        cgs.catalog_cgs_hash_hex(),
+        None,
+        None,
+    )
+}
+
+pub fn matrix_federated_duplicate_entity_host_state(
+    engine: ExecutionEngine,
+    cgs: Arc<plasm_core::CGS>,
+) -> plasm_agent::server_state::PlasmHostState {
+    let registry = Arc::new(InMemoryCgsRegistry::from_pairs(vec![
+        (
+            "github".into(),
+            "GitHub (matrix federated duplicate LangItem)".into(),
+            vec!["matrix".into()],
+            cgs.clone(),
+        ),
+        (
+            "linear".into(),
+            "Linear (matrix federated duplicate LangItem)".into(),
+            vec!["matrix".into()],
+            cgs.clone(),
+        ),
+    ]));
+    build_plasm_host_state(PlasmHostBootstrap {
+        engine,
+        mode: ExecutionMode::Live,
+        registry,
+        catalog_bootstrap: CatalogBootstrap::Fixed,
+        plugin_manager: None,
+        incoming_auth: None,
+        run_artifacts: Arc::new(RunArtifactStore::memory()),
+        session_graph_persistence: None,
+        oss_local_filesystem_defaults: false,
+    })
+}
+
 pub fn matrix_federated_relation_target_session(
     cgs_primary: Arc<plasm_core::CGS>,
     cgs_secondary: Arc<plasm_core::CGS>,

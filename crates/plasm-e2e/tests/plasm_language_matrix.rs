@@ -94,6 +94,7 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "postfix_group_by_sugar",
     "postfix_group_by_multi",
     "federated_relation_target_entry",
+    "federated_duplicate_entity_symbol",
     "pagination_page_size",
     "surface_line_compile",
 ];
@@ -753,6 +754,57 @@ fn assert_planning_ir(
                 return Err("relation IR must not use teaching placeholder $".into());
             }
         }
+        "lang_federated_duplicate_entity_e1_query" => {
+            let q = first_query(&surfaces)?;
+            if q.entity != "LangItem" {
+                return Err(format!("expected LangItem query on e1, got {:?}", q.entity));
+            }
+            if q.catalog_entry_id.as_deref() != Some("github") {
+                return Err(format!(
+                    "e1 must resolve to github catalog, got catalog_entry_id={:?}",
+                    q.catalog_entry_id
+                ));
+            }
+            let qe = plan
+                .get("nodes")
+                .and_then(|n| n.as_array())
+                .and_then(|a| a.first())
+                .and_then(|n| n.get("qualified_entity"))
+                .ok_or_else(|| "expected qualified_entity on plan node".to_string())?;
+            if qe.get("entry_id").and_then(|v| v.as_str()) != Some("github") {
+                return Err(format!("plan qualified_entity must be github: {qe:?}"));
+            }
+            if qe.get("entity").and_then(|v| v.as_str()) != Some("LangItem") {
+                return Err(format!("plan qualified_entity entity LangItem: {qe:?}"));
+            }
+        }
+        "lang_federated_duplicate_entity_e2_search" => {
+            let q = first_query(&surfaces)?;
+            if q.entity != "LangItem" {
+                return Err(format!("expected LangItem search on e2, got {:?}", q.entity));
+            }
+            if q.catalog_entry_id.as_deref() != Some("linear") {
+                return Err(format!(
+                    "e2 must resolve to linear catalog, got catalog_entry_id={:?}",
+                    q.catalog_entry_id
+                ));
+            }
+            let Some(cap) = q.capability_name.as_ref() else {
+                return Err("e2 search should pin Search capability".into());
+            };
+            if cap.as_str() != "langitem_search" {
+                return Err(format!("expected langitem_search, got {cap}"));
+            }
+            let qe = plan
+                .get("nodes")
+                .and_then(|n| n.as_array())
+                .and_then(|a| a.first())
+                .and_then(|n| n.get("qualified_entity"))
+                .ok_or_else(|| "expected qualified_entity on plan node".to_string())?;
+            if qe.get("entry_id").and_then(|v| v.as_str()) != Some("linear") {
+                return Err(format!("plan qualified_entity must be linear: {qe:?}"));
+            }
+        }
         "lang_effect_create_literal" => {
             let Some(Expr::Create(c)) = surfaces.iter().find(|e| matches!(e, Expr::Create(_)))
             else {
@@ -1259,6 +1311,32 @@ summary"#,
         expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
+        id: "lang_federated_duplicate_entity_e1_query",
+        program: r#"e1{owner="alice"}"#,
+        surface_line: false,
+        federated: true,
+        features: &[
+            "federated_duplicate_entity_symbol",
+            "domain_symbol_e1",
+            "entity_query",
+            "predicate_brace_equality",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "owner"],
+    },
+    MatrixRow {
+        id: "lang_federated_duplicate_entity_e2_search",
+        program: "e2~$",
+        surface_line: false,
+        federated: true,
+        features: &[
+            "federated_duplicate_entity_symbol",
+            "entity_search",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
+    },
+    MatrixRow {
         id: "lang_domain_symbol_page_size",
         program: "e1.page_size(10)",
         surface_line: false,
@@ -1302,13 +1380,27 @@ async fn plasm_language_matrix_live_runs() {
         })
         .expect("ExecutionEngine"),
         cgs.clone(),
-        cgs_secondary,
+        cgs_secondary.clone(),
+    );
+    let es_federated_dup = language_matrix::matrix_federated_duplicate_entity_session(cgs.clone());
+    let st_federated_dup = language_matrix::matrix_federated_duplicate_entity_host_state(
+        ExecutionEngine::new(ExecutionConfig {
+            base_url: Some(base.clone()),
+            ..Default::default()
+        })
+        .expect("ExecutionEngine"),
+        cgs,
     );
 
     let mut tags_seen: BTreeSet<String> = BTreeSet::new();
 
     for row in MATRIX_ROWS {
-        let (row_es, row_st) = if row.federated {
+        let (row_es, row_st) = if matches!(
+            row.id,
+            "lang_federated_duplicate_entity_e1_query" | "lang_federated_duplicate_entity_e2_search"
+        ) {
+            (&es_federated_dup, &st_federated_dup)
+        } else if row.federated {
             (&es_federated, &st_federated)
         } else {
             (&es, &st)

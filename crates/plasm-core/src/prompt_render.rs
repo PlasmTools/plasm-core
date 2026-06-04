@@ -1872,21 +1872,13 @@ fn domain_expression_tool_count_resolved(
         .map(prompt_line_valid_cache_seed_exposure)
         .unwrap_or_else(|| prompt_line_valid_cache_seed_cgs(cgs));
     let surface_filter = exposure_opt.map(|e| &e.surface);
-    let entity_catalog_ids: HashMap<&str, &str> = exposure_opt
-        .map(|exp| {
-            exp.entities
-                .iter()
-                .zip(exp.entity_catalog_entry_ids.iter())
-                .map(|(entity, entry_id)| (entity.as_str(), entry_id.as_str()))
-                .collect()
-        })
+    let entity_catalog_ids: IndexMap<(&str, &str), ()> = exposure_opt
+        .map(exposure_qualified_catalog_ids)
         .unwrap_or_default();
     for &ename in &full_entities {
         let mut seen_expr: HashSet<TeachingRowDedupeKey> = HashSet::new();
         let mut gloss_emit_none = None;
-        let session_entry_id = entity_catalog_ids
-            .get(ename)
-            .copied()
+        let session_entry_id = catalog_entry_id_for_exposed_entity(&entity_catalog_ids, ename)
             .map(str::to_string)
             .or_else(|| cgs.entry_id.clone());
         let block = collect_entity_teaching_block(
@@ -1959,34 +1951,85 @@ fn navigation_edge_count(cgs: &CGS, ent: &EntityDef) -> usize {
 
 // ── DOMAIN (many-shot examples) ───────────────────────────────────────────
 
+/// Owning `entry_id` for an exposed entity wire name when it appears under exactly one catalog row.
 #[inline]
-fn ent_sym(m: Option<&SymbolMap>, c: &str) -> String {
-    m.and_then(|x| x.try_entity_domain_term(c))
-        .map(|t| t.to_string())
+fn catalog_entry_id_for_exposed_entity<'a>(
+    qualified: &IndexMap<(&'a str, &'a str), ()>,
+    entity: &str,
+) -> Option<&'a str> {
+    let mut matches: Vec<_> = qualified.keys().filter(|(_, e)| *e == entity).collect();
+    match matches.len() {
+        1 => Some(matches.pop().expect("len 1").0),
+        _ => None,
+    }
+}
+
+#[inline]
+fn exposure_qualified_catalog_ids<'a>(
+    exposure: &'a crate::symbol_tuning::DomainExposureSession,
+) -> IndexMap<(&'a str, &'a str), ()> {
+    exposure
+        .entities
+        .iter()
+        .zip(exposure.entity_catalog_entry_ids.iter())
+        .map(|(entity, entry_id)| ((entry_id.as_str(), entity.as_str()), ()))
+        .collect()
+}
+
+#[inline]
+fn ent_sym(m: Option<&SymbolMap>, catalog_entry_id: &str, c: &str) -> String {
+    m.map(|x| x.entity_sym_for(catalog_entry_id, c))
         .unwrap_or_else(|| c.to_string())
 }
 
 #[inline]
-fn id_sym_entity(m: Option<&SymbolMap>, entity: &str, field: &str) -> String {
-    m.map(|x| x.ident_sym_entity_field(entity, field))
+fn id_sym_entity(
+    m: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    entity: &str,
+    field: &str,
+) -> String {
+    m.map(|x| x.ident_sym_entity_field_for(catalog_entry_id, entity, field))
         .unwrap_or_else(|| field.to_string())
 }
 
 #[inline]
-fn id_sym_cap(m: Option<&SymbolMap>, cap: &crate::CapabilitySchema, param: &str) -> String {
-    m.map(|x| x.ident_sym_cap_param(cap.domain.as_str(), cap.name.as_str(), param))
-        .unwrap_or_else(|| param.to_string())
+fn id_sym_cap(
+    m: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    cap: &crate::CapabilitySchema,
+    param: &str,
+) -> String {
+    m.map(|x| {
+        x.ident_sym_cap_param_for(
+            catalog_entry_id,
+            cap.domain.as_str(),
+            cap.name.as_str(),
+            param,
+        )
+    })
+    .unwrap_or_else(|| param.to_string())
 }
 
 #[inline]
-fn id_sym_rel(m: Option<&SymbolMap>, entity: &str, rel: &str) -> String {
-    m.map(|x| x.ident_sym_relation(entity, rel))
+fn id_sym_rel(
+    m: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    entity: &str,
+    rel: &str,
+) -> String {
+    m.map(|x| x.ident_sym_relation_for(catalog_entry_id, entity, rel))
         .unwrap_or_else(|| rel.to_string())
 }
 
 #[inline]
-fn met_sym(m: Option<&SymbolMap>, entity: &str, kebab: &str) -> String {
-    m.map(|x| x.method_sym(entity, kebab))
+fn met_sym(
+    m: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    entity: &str,
+    kebab: &str,
+) -> String {
+    m.map(|x| x.method_sym_for(catalog_entry_id, entity, kebab))
         .unwrap_or_else(|| kebab.to_string())
 }
 
@@ -2002,10 +2045,11 @@ fn nav_receiver_candidates(
     ent: &EntityDef,
     cgs: &CGS,
     map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
 ) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    if let Some(cmp) = compound_get_expr_line(es, ent, cgs, map) {
+    if let Some(cmp) = compound_get_expr_line(es, ent, cgs, map, catalog_entry_id) {
         if seen.insert(cmp.clone()) {
             out.push(cmp);
         }
@@ -2014,9 +2058,9 @@ fn nav_receiver_candidates(
     query_caps.sort_by(|a, b| a.name.cmp(&b.name));
     for cap in &query_caps {
         for qline in [
-            query_expr_maximal(cap, es, cgs, map),
-            query_expr_scope_only(cap, es, cgs, map),
-            query_expr_filters_only(cap, es, cgs, map),
+            query_expr_maximal(cap, es, cgs, map, catalog_entry_id),
+            query_expr_scope_only(cap, es, cgs, map, catalog_entry_id),
+            query_expr_filters_only(cap, es, cgs, map, catalog_entry_id),
         ]
         .into_iter()
         .flatten()
@@ -2026,7 +2070,7 @@ fn nav_receiver_candidates(
             }
         }
     }
-    let unary = unary_entity_id_teaching_expr_line(es, ent, map);
+    let unary = unary_entity_id_teaching_expr_line(es, ent, map, catalog_entry_id);
     if seen.insert(unary.clone()) {
         out.push(unary);
     }
@@ -2043,10 +2087,11 @@ fn relation_nav_anchor_expr(
     ent: &EntityDef,
     cgs: &CGS,
     map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
 ) -> Option<String> {
-    for recv in nav_receiver_candidates(es, ent, cgs, map) {
+    for recv in nav_receiver_candidates(es, ent, cgs, map, catalog_entry_id) {
         let work = domain_line_work_string(&recv, map);
         if domain_line_work_valid_cached(line_valid_cache, line_valid_cache_seed, cgs, &work, &recv)
         {
@@ -2062,11 +2107,12 @@ fn receiver_for_dotted_suffix(
     ent: &EntityDef,
     cgs: &CGS,
     map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
     suffix: &str,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
 ) -> Option<String> {
-    for recv in nav_receiver_candidates(es, ent, cgs, map) {
+    for recv in nav_receiver_candidates(es, ent, cgs, map, catalog_entry_id) {
         let full = format!("{recv}{suffix}");
         let work = domain_line_work_string(&full, map);
         if domain_line_work_valid_cached(line_valid_cache, line_valid_cache_seed, cgs, &work, &full)
@@ -2105,7 +2151,7 @@ fn incoming_relation_nav_bases_to_entity(
         let Some(src_ent) = cgs.get_entity(src_name) else {
             continue;
         };
-        let parent_es = ent_sym(map, src_name);
+        let parent_es = ent_sym(map, catalog_entry_id, src_name);
         let is_relation = matches!(edge.kind, IncomingNavSlotKind::Relation);
         if is_relation {
             let Some(rel_s) = src_ent.relations.get(edge.slot_name.as_str()) else {
@@ -2129,6 +2175,7 @@ fn incoming_relation_nav_bases_to_entity(
             src_ent,
             cgs,
             map,
+            catalog_entry_id,
             line_valid_cache,
             line_valid_cache_seed,
         ) else {
@@ -2138,13 +2185,13 @@ fn incoming_relation_nav_bases_to_entity(
             format!(
                 "{}.{}",
                 recv,
-                id_sym_rel(map, src_name, edge.slot_name.as_str())
+                id_sym_rel(map, catalog_entry_id, src_name, edge.slot_name.as_str())
             )
         } else {
             format!(
                 "{}.{}",
                 recv,
-                id_sym_entity(map, src_name, edge.slot_name.as_str())
+                id_sym_entity(map, catalog_entry_id, src_name, edge.slot_name.as_str())
             )
         };
         let work = domain_line_work_string(&expr, map);
@@ -2215,9 +2262,9 @@ fn try_push_projection_witness_row(
     }
     for cap in query_caps {
         for qline in [
-            query_expr_maximal(cap, es, cgs, map),
-            query_expr_scope_only(cap, es, cgs, map),
-            query_expr_filters_only(cap, es, cgs, map),
+            query_expr_maximal(cap, es, cgs, map, catalog_entry_id),
+            query_expr_scope_only(cap, es, cgs, map, catalog_entry_id),
+            query_expr_filters_only(cap, es, cgs, map, catalog_entry_id),
         ]
         .into_iter()
         .flatten()
@@ -2227,7 +2274,7 @@ fn try_push_projection_witness_row(
             }
         }
     }
-    if let Some(cmp) = compound_get_expr_line(es, ent, cgs, map) {
+    if let Some(cmp) = compound_get_expr_line(es, ent, cgs, map, catalog_entry_id) {
         if seen_bases.insert(cmp.clone()) {
             attempts.push((cmp, primary_get_cap));
         }
@@ -2248,7 +2295,7 @@ fn try_push_projection_witness_row(
     // Unary identity get is omitted from projection attempts when list/query exists — teach
     // `e#{{…}}[p#,…]` instead of unary `e#(p#)[p#,…]` / `e#($)[p#,…]` (same policy as primary-get emission).
     if query_caps.is_empty() {
-        let unary = unary_entity_id_teaching_expr_line(es, ent, map);
+        let unary = unary_entity_id_teaching_expr_line(es, ent, map, catalog_entry_id);
         if seen_bases.insert(unary.clone()) {
             attempts.push((unary, primary_get_cap));
         }
@@ -2377,8 +2424,13 @@ fn relation_nav_meaning_result_gloss(
 /// Compound `Entity(p#=$,…)` when the target has multiple `key_vars` (per-key placeholders are still the string `$`).
 ///
 /// Unary entity refs use [`unary_entity_id_teaching_expr_line`] / `$` fallback like scalar identity GET teaching.
-fn entity_ref_id_example(cgs: &CGS, target: &str, map: Option<&SymbolMap>) -> String {
-    let target_sym = ent_sym(map, target);
+fn entity_ref_id_example(
+    cgs: &CGS,
+    catalog_entry_id: &str,
+    target: &str,
+    map: Option<&SymbolMap>,
+) -> String {
+    let target_sym = ent_sym(map, catalog_entry_id, target);
     let p = DOMAIN_PARAM_VALUE_PLACEHOLDER;
     let Some(ent) = cgs.get_entity(target) else {
         return format!("{target_sym}({})", DOMAIN_PARAM_VALUE_PLACEHOLDER);
@@ -2387,11 +2439,17 @@ fn entity_ref_id_example(cgs: &CGS, target: &str, map: Option<&SymbolMap>) -> St
         let parts: Vec<String> = ent
             .key_vars
             .iter()
-            .map(|kv| format!("{}={}", id_sym_entity(map, target, kv.as_str()), p))
+            .map(|kv| {
+                format!(
+                    "{}={}",
+                    id_sym_entity(map, catalog_entry_id, target, kv.as_str()),
+                    p
+                )
+            })
             .collect();
         format!("{}({})", target_sym, parts.join(", "))
     } else {
-        unary_entity_id_teaching_expr_line(&target_sym, ent, map)
+        unary_entity_id_teaching_expr_line(&target_sym, ent, map, catalog_entry_id)
     }
 }
 
@@ -2401,19 +2459,20 @@ fn query_param_slot_example(
     cap: &crate::CapabilitySchema,
     cgs: &CGS,
     map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
 ) -> String {
     let Ok(nv) = f.named_value(cgs) else {
-        let n = id_sym_cap(map, cap, f.name.as_str());
+        let n = id_sym_cap(map, catalog_entry_id, cap, f.name.as_str());
         return format!("{n}={}", DOMAIN_PARAM_VALUE_PLACEHOLDER);
     };
     if matches!(nv.field_type, FieldType::Array) {
         // Array predicates in DOMAIN teaching use bare `$` so query type-check can apply
         // capability-param placeholder relaxation (`field=$`) for list-like filters.
-        let n = id_sym_cap(map, cap, f.name.as_str());
+        let n = id_sym_cap(map, catalog_entry_id, cap, f.name.as_str());
         return format!("{n}={}", DOMAIN_PARAM_VALUE_PLACEHOLDER);
     }
-    invoke_dotted_call_arg_example(f, cap, cgs, map).unwrap_or_else(|| {
-        let n = id_sym_cap(map, cap, f.name.as_str());
+    invoke_dotted_call_arg_example(f, cap, cgs, map, catalog_entry_id).unwrap_or_else(|| {
+        let n = id_sym_cap(map, catalog_entry_id, cap, f.name.as_str());
         let p = DOMAIN_PARAM_VALUE_PLACEHOLDER;
         match &nv.field_type {
             FieldType::Integer | FieldType::Number | FieldType::Boolean => {
@@ -2425,7 +2484,10 @@ fn query_param_slot_example(
                 format!("{n}={p}", n = n, p = p)
             }
             FieldType::EntityRef { target } => {
-                format!("{n}={}", entity_ref_id_example(cgs, target, map))
+                format!(
+                    "{n}={}",
+                    entity_ref_id_example(cgs, catalog_entry_id, target, map)
+                )
             }
             FieldType::Array => {
                 format!("{n}=[{p}]", n = n, p = p)
@@ -2451,8 +2513,9 @@ fn scope_param_slot(
     cap: &crate::CapabilitySchema,
     cgs: &CGS,
     map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
 ) -> String {
-    query_param_slot_example(f, cap, cgs, map)
+    query_param_slot_example(f, cap, cgs, map, catalog_entry_id)
 }
 
 /// `Entity(k=v,…)` for multi-`key_vars` GET examples (validated like other DOMAIN lines).
@@ -2461,6 +2524,7 @@ fn compound_get_expr_line(
     ent: &EntityDef,
     cgs: &CGS,
     map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
 ) -> Option<String> {
     if ent.key_vars.len() <= 1 {
         return None;
@@ -2469,7 +2533,7 @@ fn compound_get_expr_line(
     let p = DOMAIN_PARAM_VALUE_PLACEHOLDER;
     for kv in &ent.key_vars {
         let f = ent.fields.get(kv)?;
-        let sym = id_sym_entity(map, ent.name.as_str(), kv.as_str());
+        let sym = id_sym_entity(map, catalog_entry_id, ent.name.as_str(), kv.as_str());
         let nv = f.named_value(cgs).ok()?;
         match &nv.field_type {
             FieldType::Integer
@@ -2486,7 +2550,10 @@ fn compound_get_expr_line(
                 parts.push(format!("{sym}={p}"));
             }
             FieldType::EntityRef { target } => {
-                parts.push(format!("{sym}={}", entity_ref_id_example(cgs, target, map)));
+                parts.push(format!(
+                    "{sym}={}",
+                    entity_ref_id_example(cgs, catalog_entry_id, target, map)
+                ));
             }
         }
     }
@@ -2499,8 +2566,9 @@ fn unary_entity_id_teaching_expr_line(
     es: &str,
     ent: &EntityDef,
     map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
 ) -> String {
-    let sym = id_sym_entity(map, ent.name.as_str(), ent.id_field.as_str());
+    let sym = id_sym_entity(map, catalog_entry_id, ent.name.as_str(), ent.id_field.as_str());
     if map.is_some_and(|m| m.resolve_ident(sym.as_str()).is_some()) {
         format!("{es}({sym})")
     } else {
@@ -2514,6 +2582,7 @@ fn query_expr_maximal(
     es: &str,
     cgs: &CGS,
     map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
 ) -> Option<String> {
     let Some(is) = &cap.input_schema else {
         return Some(es.to_string());
@@ -2530,7 +2599,7 @@ fn query_expr_maximal(
 
     let mut inner: Vec<String> = Vec::new();
     for sf in &scope_fields {
-        inner.push(scope_param_slot(sf, cap, cgs, map));
+        inner.push(scope_param_slot(sf, cap, cgs, map, catalog_entry_id));
     }
 
     for f in fields {
@@ -2540,7 +2609,7 @@ fn query_expr_maximal(
         if !field_is_filter_like(f) {
             continue;
         }
-        inner.push(query_param_slot_example(f, cap, cgs, map));
+        inner.push(query_param_slot_example(f, cap, cgs, map, catalog_entry_id));
     }
 
     if inner.is_empty() {
@@ -2556,6 +2625,7 @@ fn query_expr_filters_only(
     es: &str,
     cgs: &CGS,
     map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
 ) -> Option<String> {
     let Some(is) = &cap.input_schema else {
         return None;
@@ -2571,7 +2641,7 @@ fn query_expr_filters_only(
         if !field_is_filter_like(f) {
             continue;
         }
-        inner.push(query_param_slot_example(f, cap, cgs, map));
+        inner.push(query_param_slot_example(f, cap, cgs, map, catalog_entry_id));
     }
     if inner.is_empty() {
         return None;
@@ -2585,6 +2655,7 @@ fn query_expr_scope_only(
     es: &str,
     cgs: &CGS,
     map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
 ) -> Option<String> {
     let Some(is) = &cap.input_schema else {
         return None;
@@ -2601,7 +2672,7 @@ fn query_expr_scope_only(
     }
     let mut inner: Vec<String> = Vec::new();
     for sf in &scope_fields {
-        inner.push(scope_param_slot(sf, cap, cgs, map));
+        inner.push(scope_param_slot(sf, cap, cgs, map, catalog_entry_id));
     }
     Some(format!("{es}{{{}}}", inner.join(", ")))
 }
@@ -3403,8 +3474,9 @@ fn invoke_dotted_call_arg_example(
     cap: &crate::CapabilitySchema,
     cgs: &CGS,
     map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
 ) -> Option<String> {
-    let n = id_sym_cap(map, cap, f.name.as_str());
+    let n = id_sym_cap(map, catalog_entry_id, cap, f.name.as_str());
     let p = DOMAIN_PARAM_VALUE_PLACEHOLDER;
     if let crate::InputFieldWire::Inline(ty) = &f.wire {
         return Some(match ty.as_ref() {
@@ -3465,9 +3537,10 @@ fn invoke_dotted_call_arg_example(
         | FieldType::Integer
         | FieldType::Number => Some(format!("{n}={p}")),
         FieldType::Select | FieldType::MultiSelect => Some(format!("{n}={p}")),
-        FieldType::EntityRef { target } => {
-            Some(format!("{n}={}", entity_ref_id_example(cgs, target, map)))
-        }
+        FieldType::EntityRef { target } => Some(format!(
+            "{n}={}",
+            entity_ref_id_example(cgs, catalog_entry_id, target, map)
+        )),
         FieldType::Date => match &nv.value_format {
             // Same placeholder as strings — avoid teaching ISO literals in DOMAIN dotted-call invokes.
             Some(ValueWireFormat::Temporal(_)) => Some(format!(
@@ -3489,6 +3562,7 @@ fn build_dotted_call_paren_args(
     cap: &crate::CapabilitySchema,
     cgs: &CGS,
     map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
 ) -> Option<String> {
     let ent = cgs.get_entity(anchor_entity)?;
     let is = cap.input_schema.as_ref()?;
@@ -3536,7 +3610,7 @@ fn build_dotted_call_paren_args(
         if field_omitted_from_path_inject(ent, cap, f.name.as_str()) {
             continue;
         }
-        parts.push(scope_param_slot(f, cap, cgs, map));
+        parts.push(scope_param_slot(f, cap, cgs, map, catalog_entry_id));
     }
     for f in fields {
         if matches!(f.role, Some(ParameterRole::Scope)) {
@@ -3551,7 +3625,7 @@ fn build_dotted_call_paren_args(
         if !f.required {
             continue;
         }
-        match invoke_dotted_call_arg_example(f, cap, cgs, map) {
+        match invoke_dotted_call_arg_example(f, cap, cgs, map, catalog_entry_id) {
             Some(a) => parts.push(a),
             None => required_example_failed = true,
         }
@@ -3582,9 +3656,10 @@ fn build_standalone_create_paren_args(
     cap: &crate::CapabilitySchema,
     cgs: &CGS,
     map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
 ) -> Option<String> {
     if cap.kind != CapabilityKind::Create {
-        return build_dotted_call_paren_args(ename, cap, cgs, map);
+        return build_dotted_call_paren_args(ename, cap, cgs, map, catalog_entry_id);
     }
     let is = cap.input_schema.as_ref()?;
     let InputType::Object { fields, .. } = &is.input_type else {
@@ -3594,7 +3669,7 @@ fn build_standalone_create_paren_args(
         .iter()
         .any(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)));
     if !has_required_scope {
-        return build_dotted_call_paren_args(ename, cap, cgs, map);
+        return build_dotted_call_paren_args(ename, cap, cgs, map, catalog_entry_id);
     }
 
     let ent = cgs.get_entity(ename)?;
@@ -3621,7 +3696,7 @@ fn build_standalone_create_paren_args(
             continue;
         }
         if matches!(f.role, Some(ParameterRole::Scope)) {
-            parts.push(scope_param_slot(f, cap, cgs, map));
+            parts.push(scope_param_slot(f, cap, cgs, map, catalog_entry_id));
             continue;
         }
         if !field_is_filter_like(f) {
@@ -3630,7 +3705,7 @@ fn build_standalone_create_paren_args(
         if field_omitted_from_path_inject(ent, cap, f.name.as_str()) {
             continue;
         }
-        match invoke_dotted_call_arg_example(f, cap, cgs, map) {
+        match invoke_dotted_call_arg_example(f, cap, cgs, map, catalog_entry_id) {
             Some(a) => parts.push(a),
             None => required_failed = true,
         }
@@ -3659,18 +3734,20 @@ fn format_dotted_call_line(
     es: &str,
     cgs: &CGS,
     map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
 ) -> Option<String> {
-    let args = build_dotted_call_paren_args(anchor_entity, cap, cgs, map)?;
+    let args = build_dotted_call_paren_args(anchor_entity, cap, cgs, map, catalog_entry_id)?;
     let label = capability_method_label_kebab(cap);
-    let ms = met_sym(map, cap.domain.as_str(), &label);
+    let ms = met_sym(map, catalog_entry_id, cap.domain.as_str(), &label);
     let suffix = format!(".{ms}({args})");
     let recv = receiver_for_dotted_suffix(
         es,
         ent,
         cgs,
         map,
+        catalog_entry_id,
         &suffix,
         line_valid_cache,
         line_valid_cache_seed,
@@ -3826,6 +3903,7 @@ fn collect_multi_arity_method_lines(
             es,
             cgs,
             map,
+            catalog_entry_id,
             line_valid_cache,
             line_valid_cache_seed,
         ) {
@@ -3851,6 +3929,7 @@ fn collect_multi_arity_method_lines(
             es,
             cgs,
             map,
+            catalog_entry_id,
             line_valid_cache,
             line_valid_cache_seed,
         ) {
@@ -3870,8 +3949,8 @@ fn collect_multi_arity_method_lines(
             continue;
         }
         let label = capability_method_label_kebab(cap);
-        let ms = met_sym(map, ename, &label);
-        let line = match build_standalone_create_paren_args(ename, cap, cgs, map) {
+        let ms = met_sym(map, catalog_entry_id, ename, &label);
+        let line = match build_standalone_create_paren_args(ename, cap, cgs, map, catalog_entry_id) {
             Some(args) => format!("{es}.{ms}({args})"),
             None => format!("{es}.{ms}()"),
         };
@@ -3905,10 +3984,10 @@ fn collect_entity_teaching_block(
             teaching_rows,
         };
     };
-    let es = ent_sym(map, ename);
     let catalog_entry_id = catalog_entry_id_override
         .or(cgs.entry_id.as_deref())
         .unwrap_or("");
+    let es = ent_sym(map, catalog_entry_id, ename);
     let manifest = cgs.capability_manifest(ename);
     let ent_desc_short = {
         let d = ent.description.as_str().trim();
@@ -3933,7 +4012,7 @@ fn collect_entity_teaching_block(
             }
             let syms: Vec<String> = f
                 .iter()
-                .map(|k| id_sym_entity(map, ename, k.as_str()))
+                .map(|k| id_sym_entity(map, catalog_entry_id, ename, k.as_str()))
                 .collect();
             Some(format!("[{}]", syms.join(",")))
         });
@@ -4000,7 +4079,7 @@ fn collect_entity_teaching_block(
             continue;
         }
         let label = capability_method_label_kebab(cap);
-        let ms = met_sym(map, ename, &label);
+        let ms = met_sym(map, catalog_entry_id, ename, &label);
         let expr = format!("{es}.{ms}()");
         let result_gloss = crate::result_gloss::result_gloss_for_capability(cap, cgs, map);
         let cap_leg =
@@ -4026,7 +4105,7 @@ fn collect_entity_teaching_block(
     let mut emitted_primary_get = false;
     if primary_get_cap.is_some() && !only_singleton_gets {
         let primary_name = primary_get_cap.map(|c| &c.name);
-        if let Some(cmp) = compound_get_expr_line(&es, ent, cgs, map) {
+        if let Some(cmp) = compound_get_expr_line(&es, ent, cgs, map, catalog_entry_id) {
             if try_push_teaching_example(
                 gloss_emit,
                 &mut teaching_rows,
@@ -4048,7 +4127,7 @@ fn collect_entity_teaching_block(
         }
         // Unary identity get only when there is no query surface (compound already attempted above).
         if !emitted_primary_get && query_caps.is_empty() {
-            let line_base = unary_entity_id_teaching_expr_line(&es, ent, map);
+            let line_base = unary_entity_id_teaching_expr_line(&es, ent, map, catalog_entry_id);
             if try_push_teaching_example(
                 gloss_emit,
                 &mut teaching_rows,
@@ -4094,7 +4173,7 @@ fn collect_entity_teaching_block(
         }
         for cap in group.iter() {
             let label = capability_method_label_kebab(cap);
-            let ms = met_sym(map, ename, &label);
+            let ms = met_sym(map, catalog_entry_id, ename, &label);
             let expr = if path_vars_empty(cap) {
                 format!("{es}.{ms}()")
             } else {
@@ -4104,6 +4183,7 @@ fn collect_entity_teaching_block(
                     ent,
                     cgs,
                     map,
+                    catalog_entry_id,
                     &suffix,
                     line_valid_cache,
                     line_valid_cache_seed,
@@ -4197,7 +4277,7 @@ fn collect_entity_teaching_block(
             let cap_leg =
                 capability_legend_for_domain(map, cgs, cap, ename, ident_meta, catalog_entry_id);
             let mut added = false;
-            if let Some(line) = query_expr_maximal(cap, &es, cgs, map) {
+            if let Some(line) = query_expr_maximal(cap, &es, cgs, map, catalog_entry_id) {
                 if local_seen.insert(line.clone())
                     && try_push_teaching_example(
                         gloss_emit,
@@ -4221,7 +4301,7 @@ fn collect_entity_teaching_block(
                 }
             }
             if !added {
-                if let Some(line) = query_expr_scope_only(cap, &es, cgs, map) {
+                if let Some(line) = query_expr_scope_only(cap, &es, cgs, map, catalog_entry_id) {
                     if local_seen.insert(line.clone())
                         && try_push_teaching_example(
                             gloss_emit,
@@ -4246,7 +4326,7 @@ fn collect_entity_teaching_block(
                 }
             }
             if !added {
-                if let Some(line) = query_expr_filters_only(cap, &es, cgs, map) {
+                if let Some(line) = query_expr_filters_only(cap, &es, cgs, map, catalog_entry_id) {
                     if local_seen.insert(line.clone())
                         && try_push_teaching_example(
                             gloss_emit,
@@ -4279,7 +4359,7 @@ fn collect_entity_teaching_block(
         && !query_caps.is_empty()
     {
         let primary_name = primary_get_cap.map(|c| &c.name);
-        let keyed = unary_entity_id_teaching_expr_line(&es, ent, map);
+        let keyed = unary_entity_id_teaching_expr_line(&es, ent, map, catalog_entry_id);
         let _ = try_push_teaching_example(
             gloss_emit,
             &mut teaching_rows,
@@ -4399,9 +4479,9 @@ fn collect_entity_teaching_block(
             continue;
         }
         let rel_sym = if rel_for_meta.is_some() {
-            id_sym_rel(map, ename, rel.as_str())
+            id_sym_rel(map, catalog_entry_id, ename, rel.as_str())
         } else {
-            id_sym_entity(map, ename, rel.as_str())
+            id_sym_entity(map, catalog_entry_id, ename, rel.as_str())
         };
         let suffix = format!(".{rel_sym}");
         let Some(recv) = receiver_for_dotted_suffix(
@@ -4409,6 +4489,7 @@ fn collect_entity_teaching_block(
             ent,
             cgs,
             map,
+            catalog_entry_id,
             &suffix,
             line_valid_cache,
             line_valid_cache_seed,
@@ -5068,7 +5149,7 @@ struct DomainSynthesisSession<'a> {
     map_arc: Option<std::sync::Arc<SymbolMap>>,
     ident_meta: Option<HashMap<crate::symbol_tuning::IdentMetaKey, IdentMetadata>>,
     surface_filter: Option<&'a ExposureSurface>,
-    entity_catalog_ids: HashMap<&'a str, &'a str>,
+    entity_catalog_ids: IndexMap<(&'a str, &'a str), ()>,
     collect_meta: bool,
 }
 
@@ -5079,7 +5160,7 @@ impl<'a> DomainSynthesisSession<'a> {
         map_arc: Option<std::sync::Arc<SymbolMap>>,
         ident_meta: Option<HashMap<crate::symbol_tuning::IdentMetaKey, IdentMetadata>>,
         surface_filter: Option<&'a ExposureSurface>,
-        entity_catalog_ids: HashMap<&'a str, &'a str>,
+        entity_catalog_ids: IndexMap<(&'a str, &'a str), ()>,
         collect_meta: bool,
     ) -> Self {
         Self {
@@ -5412,14 +5493,8 @@ fn render_domain_table_resolved<'b, F>(
             .map(|&ename| prompt_line_valid_cache_seed_cgs(resolve(ename)))
             .unwrap_or(0),
     };
-    let entity_catalog_ids: HashMap<&str, &str> = exposure_for_ident
-        .map(|exp| {
-            exp.entities
-                .iter()
-                .zip(exp.entity_catalog_entry_ids.iter())
-                .map(|(entity, entry_id)| (entity.as_str(), entry_id.as_str()))
-                .collect()
-        })
+    let entity_catalog_ids: IndexMap<(&str, &str), ()> = exposure_for_ident
+        .map(exposure_qualified_catalog_ids)
         .unwrap_or_default();
     let surface_filter = exposure_for_ident.map(|e| &e.surface);
     let ident_meta = match (map, exposure_for_ident) {
@@ -5547,13 +5622,13 @@ fn render_domain_table_resolved<'b, F>(
         };
         for &ename in &block_iter {
             let cgs = resolve(ename);
-            let catalog_entry_id_owned = session
-                .entity_catalog_ids
-                .get(ename)
-                .copied()
-                .map(str::to_string)
-                .or_else(|| cgs.entry_id.clone())
-                .unwrap_or_default();
+            let catalog_entry_id_owned = catalog_entry_id_for_exposed_entity(
+                &session.entity_catalog_ids,
+                ename,
+            )
+            .map(str::to_string)
+            .or_else(|| cgs.entry_id.clone())
+            .unwrap_or_default();
             render_one(
                 &mut session,
                 cgs,
@@ -7845,5 +7920,101 @@ mod tests {
         with_insta_snapshots(|| {
             insta::assert_snapshot!("overshow_tools_prompt_tsv", tsv);
         });
+    }
+
+    /// Federated open: colliding wire entity names get distinct `e#` in teaching TSV rows (B1).
+    #[test]
+    fn federated_duplicate_entity_wire_names_use_distinct_e_in_domain_tsv() {
+        use std::sync::Arc;
+
+        let root = fixtures_schemas_dir("plasm_language_matrix");
+        let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
+        let layers = [&cgs, &cgs];
+        let mut exp = DomainExposureSession::new(&cgs, "github", &["LangItem"]);
+        exp.expose_entities(&layers, Arc::new(cgs.clone()), "linear", &["LangItem"]);
+        let mut by_entry: IndexMap<String, &CGS> = IndexMap::new();
+        by_entry.insert("github".into(), &cgs);
+        by_entry.insert("linear".into(), &cgs);
+        let bundle = render_domain_prompt_bundle_for_exposure_federated(
+            &by_entry,
+            RenderConfig::for_eval(None),
+            &exp,
+            None,
+        );
+        assert!(
+            bundle.teaching_blocks.len() >= 2,
+            "expected github + linear LangItem blocks"
+        );
+        let row_text = |block: &EntityTeachingBlock| {
+            block
+                .teaching_rows
+                .iter()
+                .map(|r| r.teaching_expr.expression.as_str())
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let github_text = row_text(&bundle.teaching_blocks[0]);
+        let linear_text = row_text(&bundle.teaching_blocks[1]);
+        assert!(
+            github_text.contains("e1"),
+            "github LangItem teaching rows should use e1: {github_text}"
+        );
+        assert!(
+            !github_text.contains("e2"),
+            "github block must not bleed linear e2: {github_text}"
+        );
+        assert!(
+            linear_text.contains("e2"),
+            "linear LangItem teaching rows should use e2: {linear_text}"
+        );
+    }
+
+    /// Production catalogs: `github/Issue` + `linear/Issue` federated TSV uses e1 vs e2.
+    #[test]
+    fn federated_github_linear_issue_distinct_e_symbols_when_apis_present() {
+        use std::sync::Arc;
+
+        let github_dir = apis_dir("github");
+        let linear_dir = apis_dir("linear");
+        if !github_dir.is_dir() || !linear_dir.is_dir() {
+            return;
+        }
+        let mut cgs_github = load_schema_dir(&github_dir).expect("github");
+        cgs_github.entry_id = Some("github".into());
+        let mut cgs_linear = load_schema_dir(&linear_dir).expect("linear");
+        cgs_linear.entry_id = Some("linear".into());
+        let layers = [&cgs_github, &cgs_linear];
+        let mut exp = DomainExposureSession::new(&cgs_github, "github", &["Issue"]);
+        exp.expose_entities(
+            &layers,
+            Arc::new(cgs_linear.clone()),
+            "linear",
+            &["Issue"],
+        );
+        let mut by_entry: IndexMap<String, &CGS> = IndexMap::new();
+        by_entry.insert("github".into(), &cgs_github);
+        by_entry.insert("linear".into(), &cgs_linear);
+        let bundle = render_domain_prompt_bundle_for_exposure_federated(
+            &by_entry,
+            RenderConfig::for_eval(None),
+            &exp,
+            None,
+        );
+        assert!(bundle.teaching_blocks.len() >= 2);
+        let github_has_e1 = bundle.teaching_blocks[0]
+            .teaching_rows
+            .iter()
+            .any(|r| r.teaching_expr.expression.contains("e1"));
+        let linear_has_e2 = bundle.teaching_blocks[1]
+            .teaching_rows
+            .iter()
+            .any(|r| r.teaching_expr.expression.contains("e2"));
+        let linear_not_only_e1 = !bundle.teaching_blocks[1].teaching_rows.iter().all(|r| {
+            r.teaching_expr.expression.contains("e1")
+                && !r.teaching_expr.expression.contains("e2")
+        });
+        assert!(github_has_e1, "github Issue block should teach e1");
+        assert!(linear_has_e2, "linear Issue block should teach e2");
+        assert!(linear_not_only_e1, "linear block must not reuse github e1");
     }
 }

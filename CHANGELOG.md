@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.72] - 2026-05-30
+
+### Fixed
+
+- **Federated DOMAIN symbols:** teaching TSV and gloss emission use qualified `(entry_id, entity)` lookups (`entity_sym_for`, `ident_sym_*_for`) so colliding wire names (e.g. `github/Issue` + `linear/Issue`) render distinct `e1` / `e2` instead of both `e1`.
+- **Unqualified symbol lookup:** `SymbolMap::entity_sym` / `try_entity_domain_term` return wire names when the same entity label is exposed from multiple catalogs (fail closed for agents inferring from bare `Issue`).
+
+### Added
+
+- **`plasm_language_matrix`:** `lang_federated_duplicate_entity_e1_query` and `lang_federated_duplicate_entity_e2_search` Hermit rows assert `catalog_entry_id` stamps `github` vs `linear` for session `e1` / `e2`.
+
 ## [0.1.71] - 2026-05-30
 
 ### Performance

@@ -1156,9 +1156,12 @@ impl IdentMetadata {
                 description,
                 ..
             } => {
-                let type_label = match map {
-                    Some(m) => format!("=> {}", m.entity_sym(target.as_str())),
-                    None => format!("=> {}", target),
+                let type_label = match (map, cgs.and_then(|c| c.entry_id.as_deref())) {
+                    (Some(m), Some(eid)) => {
+                        format!("=> {}", m.entity_sym_for(eid, target.as_str()))
+                    }
+                    (Some(m), None) => format!("=> {}", m.entity_sym(target.as_str())),
+                    (None, _) => format!("=> {}", target),
                 };
                 let desc = description.trim();
                 if desc.is_empty() {
@@ -1651,7 +1654,29 @@ impl SymbolMap {
         Arc::try_unwrap(arc).unwrap_or_else(|a| (*a).clone())
     }
 
-    /// Structured DOMAIN token when `canonical` is in this map.
+    /// Structured DOMAIN token for one exposed `(registry entry_id, entity)` pair.
+    #[inline]
+    pub fn try_entity_domain_term_for(
+        &self,
+        catalog_entry_id: &str,
+        canonical: &str,
+    ) -> Option<DomainTerm> {
+        let sym_str = self
+            .qualified_entity_to_sym
+            .get(&(catalog_entry_id.to_string(), canonical.to_string()))?;
+        let idx = Symbol::parse_index(sym_str, 'e')?;
+        Some(DomainTerm::Entity(
+            EntityRef {
+                name: EntityName::new(canonical),
+            },
+            idx,
+        ))
+    }
+
+    /// Structured DOMAIN token when `canonical` is exposed under **exactly one** catalog row.
+    ///
+    /// Federated sessions with colliding wire names (e.g. `github/Issue` + `linear/Issue`) return
+    /// `None` — use [`Self::try_entity_domain_term_for`] with the owning `entry_id`.
     #[inline]
     pub fn try_entity_domain_term(&self, canonical: &str) -> Option<DomainTerm> {
         let mut matches: Vec<_> = self
@@ -1659,12 +1684,14 @@ impl SymbolMap {
             .iter()
             .filter(|((_, ent), _)| ent.as_str() == canonical)
             .collect();
-        matches.sort_by_key(|((eid, _), sym)| (eid.clone(), (*sym).clone()));
-        let sym_str = matches.first()?.1;
+        if matches.len() != 1 {
+            return None;
+        }
+        let ((_, ent), sym_str) = matches.pop().expect("len 1");
         let idx = Symbol::parse_index(sym_str, 'e')?;
         Some(DomainTerm::Entity(
             EntityRef {
-                name: EntityName::new(canonical),
+                name: EntityName::new(ent.as_str()),
             },
             idx,
         ))
@@ -1729,12 +1756,38 @@ impl SymbolMap {
         Some(DomainTerm::Parameter(slot, idx))
     }
 
-    /// Opaque `e#` string — prefer [`Self::try_entity_domain_term`] then [`std::fmt::Display`] on [`DomainTerm`](crate::domain_term::DomainTerm) when threading DOMAIN state.
+    /// Opaque `e#` for one exposed `(registry entry_id, entity)` pair.
+    #[inline]
+    pub fn entity_sym_for(&self, catalog_entry_id: &str, canonical: &str) -> String {
+        self.try_entity_domain_term_for(catalog_entry_id, canonical)
+            .map(|t| t.to_string())
+            .unwrap_or_else(|| canonical.to_string())
+    }
+
+    /// Opaque `e#` string — unambiguous wire name only; prefer [`Self::entity_sym_for`] under federation.
     #[inline]
     pub fn entity_sym(&self, canonical: &str) -> String {
         self.try_entity_domain_term(canonical)
             .map(|t| t.to_string())
             .unwrap_or_else(|| canonical.to_string())
+    }
+
+    /// Opaque `p#` for an **entity field** on a qualified entity row.
+    #[inline]
+    pub fn ident_sym_entity_field_for(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        field: &str,
+    ) -> String {
+        self.entity_field_to_sym
+            .get(&(
+                catalog_entry_id.to_string(),
+                entity.to_string(),
+                field.to_string(),
+            ))
+            .cloned()
+            .unwrap_or_else(|| field.to_string())
     }
 
     /// Opaque `p#` for an **entity field** (scoped; preferred over [`Self::ident_sym`] when the entity is known).
@@ -1745,10 +1798,30 @@ impl SymbolMap {
             .iter()
             .filter(|((_, e, f), _)| e.as_str() == entity && f.as_str() == field)
             .collect();
-        v.sort_by_key(|((a, b, c), s)| (a.clone(), b.clone(), c.clone(), (*s).clone()));
+        if v.len() != 1 {
+            return field.to_string();
+        }
         v.first()
             .map(|(_, s)| (*s).clone())
             .unwrap_or_else(|| field.to_string())
+    }
+
+    /// Opaque `p#` for a **relation** on a qualified entity row.
+    #[inline]
+    pub fn ident_sym_relation_for(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        relation: &str,
+    ) -> String {
+        self.relation_to_sym
+            .get(&(
+                catalog_entry_id.to_string(),
+                entity.to_string(),
+                relation.to_string(),
+            ))
+            .cloned()
+            .unwrap_or_else(|| relation.to_string())
     }
 
     /// Opaque `p#` for a **relation** (or entity-ref nav segment) on `entity`.
@@ -1759,10 +1832,32 @@ impl SymbolMap {
             .iter()
             .filter(|((_, e, r), _)| e.as_str() == entity && r.as_str() == relation)
             .collect();
-        v.sort_by_key(|((a, b, c), s)| (a.clone(), b.clone(), c.clone(), (*s).clone()));
+        if v.len() != 1 {
+            return relation.to_string();
+        }
         v.first()
             .map(|(_, s)| (*s).clone())
             .unwrap_or_else(|| relation.to_string())
+    }
+
+    /// Opaque `p#` for a **capability input** on a qualified catalog row.
+    #[inline]
+    pub fn ident_sym_cap_param_for(
+        &self,
+        catalog_entry_id: &str,
+        domain_entity: &str,
+        capability: &str,
+        param: &str,
+    ) -> String {
+        self.cap_param_to_sym
+            .get(&(
+                catalog_entry_id.to_string(),
+                domain_entity.to_string(),
+                capability.to_string(),
+                param.to_string(),
+            ))
+            .cloned()
+            .unwrap_or_else(|| param.to_string())
     }
 
     /// Opaque `p#` for a **capability input** parameter (domain entity + capability + param name).
@@ -1780,9 +1875,9 @@ impl SymbolMap {
                 dom.as_str() == domain_entity && cap.as_str() == capability && p.as_str() == param
             })
             .collect();
-        v.sort_by_key(|((a, b, c, d), s)| {
-            (a.clone(), b.clone(), c.clone(), d.clone(), (*s).clone())
-        });
+        if v.len() != 1 {
+            return param.to_string();
+        }
         v.first()
             .map(|(_, s)| (*s).clone())
             .unwrap_or_else(|| param.to_string())
@@ -1923,13 +2018,32 @@ impl SymbolMap {
         s
     }
 
-    /// Opaque `m#` string — prefer [`Self::try_method_domain_term`] when `cgs` is available.
+    /// Opaque `m#` for one `(registry entry_id, domain entity, kebab)` triple.
+    #[inline]
+    pub fn method_sym_for(&self, catalog_entry_id: &str, entity: &str, kebab: &str) -> String {
+        self.method_to_sym
+            .get(&(
+                catalog_entry_id.to_string(),
+                entity.to_string(),
+                kebab.to_string(),
+            ))
+            .cloned()
+            .unwrap_or_else(|| kebab.to_string())
+    }
+
+    /// Opaque `m#` string — unambiguous match only; prefer [`Self::method_sym_for`] under federation.
     #[inline]
     pub fn method_sym(&self, entity: &str, kebab: &str) -> String {
-        self.method_to_sym
+        let mut v: Vec<_> = self
+            .method_to_sym
             .iter()
-            .find(|((_, e, k), _)| e == entity && k == kebab)
-            .map(|(_, s)| s.clone())
+            .filter(|((_, e, k), _)| e == entity && k == kebab)
+            .collect();
+        if v.len() != 1 {
+            return kebab.to_string();
+        }
+        v.first()
+            .map(|(_, s)| (*s).clone())
             .unwrap_or_else(|| kebab.to_string())
     }
 
@@ -1969,6 +2083,7 @@ impl SymbolMap {
         if cap.kind == CapabilityKind::Query {
             return String::new();
         }
+        let entry_id = cgs.entry_id.as_deref().unwrap_or("");
         let mut scope_parts: Vec<String> = Vec::new();
         let domain = cap.domain.as_str();
         let cap_name = cap.name.as_str();
@@ -1980,11 +2095,14 @@ impl SymbolMap {
                 continue;
             };
             if let FieldType::EntityRef { target } = &nv.field_type {
-                let ps = self.ident_sym_cap_param(domain, cap_name, f.name.as_str());
-                let es = self.entity_sym(target.as_str());
+                let ps =
+                    self.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str());
+                let es = self.entity_sym_for(entry_id, target.as_str());
                 scope_parts.push(format!("{ps}→{es}"));
             } else {
-                scope_parts.push(self.ident_sym_cap_param(domain, cap_name, f.name.as_str()));
+                scope_parts.push(
+                    self.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str()),
+                );
             }
         }
         if scope_parts.is_empty() {
@@ -2007,6 +2125,7 @@ impl SymbolMap {
             return String::new();
         };
         let mut scope_s = self.capability_scope_legend_gloss(cgs, cap);
+        let entry_id = cgs.entry_id.as_deref().unwrap_or("");
         let mut optional_parts: Vec<String> = Vec::new();
         let domain = cap.domain.as_str();
         let cap_name = cap.name.as_str();
@@ -2019,7 +2138,8 @@ impl SymbolMap {
                     if !field_is_filter_like_gloss(f) {
                         continue;
                     }
-                    let sym = self.ident_sym_cap_param(domain, cap_name, f.name.as_str());
+                    let sym =
+                        self.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str());
                     if f.required {
                         continue;
                     }
@@ -2040,7 +2160,8 @@ impl SymbolMap {
                             continue;
                         }
                         if seen.insert(f.name.clone()) {
-                            optional_parts.push(self.ident_sym_cap_param(
+                            optional_parts.push(self.ident_sym_cap_param_for(
+                                entry_id,
                                 domain,
                                 cap_name,
                                 f.name.as_str(),
@@ -4629,6 +4750,8 @@ mod tests {
             map.entry_id_for_entity_symbol("e2").as_deref(),
             Some("linear")
         );
-        assert_eq!(map.entity_sym("LangItem"), "e1");
+        assert_eq!(map.entity_sym_for("github", "LangItem"), "e1");
+        assert_eq!(map.entity_sym_for("linear", "LangItem"), "e2");
+        assert_eq!(map.entity_sym("LangItem"), "LangItem");
     }
 }
