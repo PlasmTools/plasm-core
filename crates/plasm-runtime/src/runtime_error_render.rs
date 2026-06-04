@@ -42,7 +42,7 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
             ),
             None,
         ),
-        RuntimeError::RequestError { message } => StepError::new(
+        RuntimeError::RequestError { message, .. } => StepError::new(
             StepErrorCategory::Network,
             append_correction_lines(
                 message.clone(),
@@ -50,6 +50,24 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
             ),
             None,
         ),
+        RuntimeError::RateLimited {
+            message,
+            retry_after,
+            ..
+        } => {
+            let mut hints = vec![
+                "Upstream returned HTTP 429; reduce concurrency or retry after the rate-limit window."
+                    .into(),
+            ];
+            if let Some(d) = retry_after {
+                hints.push(format!("Retry-After hint: {}s.", d.as_secs()));
+            }
+            StepError::new(
+                StepErrorCategory::Network,
+                append_correction_lines(message.clone(), hints),
+                None,
+            )
+        }
         RuntimeError::CacheError { message } => {
             StepError::new(StepErrorCategory::Runtime, message.clone(), None)
         }

@@ -313,9 +313,11 @@ fn extract_log_meta(key: EvmLogMetaKey, log: &Log) -> Result<JsonValue, RuntimeE
                 .ok_or_else(|| RuntimeError::RequestError {
                     message: "EVM log is missing transaction_hash required for event_id"
                         .to_string(),
+                    attempts: 1,
                 })?;
             let log_index = log.log_index.ok_or_else(|| RuntimeError::RequestError {
                 message: "EVM log is missing log_index required for event_id".to_string(),
+                attempts: 1,
             })?;
             JsonValue::String(format!("{tx_hash}:{log_index}"))
         }
@@ -374,5 +376,8 @@ fn plasm_value_to_json(value: &plasm_core::Value) -> Result<JsonValue, RuntimeEr
 }
 
 fn request_error(message: String) -> RuntimeError {
-    RuntimeError::RequestError { message }
+    RuntimeError::RequestError {
+        message,
+        attempts: 1,
+    }
 }

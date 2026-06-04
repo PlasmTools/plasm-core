@@ -107,13 +107,15 @@ pub mod error;
 pub mod evm;
 pub mod execution;
 pub mod hosted_oauth_kv;
+pub mod http_config;
+pub mod http_resilience;
 pub mod http_trace;
 pub mod http_transport;
+pub mod materialization;
 pub mod mockserver;
 pub mod oauth_client;
 pub mod oauth_token_debug;
 pub mod preflight;
-pub mod materialization;
 pub mod query_index;
 pub mod replay;
 pub mod runtime_error_render;
@@ -147,7 +149,12 @@ pub use hosted_oauth_kv::{
     OAuthTokenEndpointError, OutboundOAuthKvParseError, OutboundOAuthKvV1,
     HOSTED_OAUTH_EXPIRY_SKEW_SECS, OUTBOUND_OAUTH_KV_VERSION,
 };
+pub use http_resilience::{HttpResiliencePolicy, ResilientHttpTransport};
 pub use http_transport::{HttpTransport, ReqwestHttpTransport};
+pub use materialization::{
+    CacheDecision, CacheTelemetry, EntityGraphSnapshot, ExecutionCacheConsult, FanoutCoordinator,
+    SessionMaterialization, SessionResponseStore, StoredResponse,
+};
 pub use mockserver::*;
 pub use oauth_client::{
     begin_authorization_code_pkce, exchange_authorization_code, poll_oauth_device_token_once,
@@ -155,10 +162,6 @@ pub use oauth_client::{
     OAuthDeviceAuthorizationResponse, OAuthDeviceTokenPoll,
 };
 pub use oauth_token_debug::TokenEndpointResponseSummary;
-pub use materialization::{
-    CacheDecision, CacheTelemetry, EntityGraphSnapshot, ExecutionCacheConsult, FanoutCoordinator,
-    SessionMaterialization, SessionResponseStore, StoredResponse,
-};
 pub use query_index::{QueryCacheKey, QueryIndex};
 pub use replay::*;
 pub use runtime_error_render::step_error_from_runtime;

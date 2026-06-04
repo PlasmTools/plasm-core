@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Graph-first relation materialization:** `execute_chain_via_bindings` / `execute_chain_via_param` use decoded parent `relations[rel]` when present (per-row hybrid fallback to scoped HTTP). Plan fanout fast-path `try_collect_relation_targets_from_parent_graph` when all parents have embedded edges.
+- **GitHub `Issue.labels`:** `from_parent_get` on list/GET wire `labels` (with `parent_identity_field_hints` for compound Label refs). Decoder tests in `plasm-runtime`.
+
+### Changed
+
+- Nested relation decode copies parent field paths/derives into child `identity_ambient` via `ParentIdentityFieldHint` (`plasm-compile`).
+
 ## [0.1.78] - 2026-06-04
 
 ### Added

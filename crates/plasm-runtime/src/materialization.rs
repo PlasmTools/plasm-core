@@ -23,7 +23,9 @@ pub struct CacheTelemetry {
 
 impl CacheTelemetry {
     pub fn merge(&mut self, other: &Self) {
-        self.entity_graph_hits = self.entity_graph_hits.saturating_add(other.entity_graph_hits);
+        self.entity_graph_hits = self
+            .entity_graph_hits
+            .saturating_add(other.entity_graph_hits);
         self.entity_graph_misses = self
             .entity_graph_misses
             .saturating_add(other.entity_graph_misses);
@@ -39,7 +41,9 @@ impl CacheTelemetry {
         self.query_required_network = self
             .query_required_network
             .saturating_add(other.query_required_network);
-        self.rows_materialized = self.rows_materialized.saturating_add(other.rows_materialized);
+        self.rows_materialized = self
+            .rows_materialized
+            .saturating_add(other.rows_materialized);
     }
 
     /// Legacy trace fields: hits = consult hits; misses = consult misses (not row count).
@@ -109,10 +113,8 @@ impl SessionResponseStore {
         response: serde_json::Value,
         source: ExecutionSource,
     ) {
-        self.entries.insert(
-            fingerprint,
-            Arc::new(StoredResponse { response, source }),
-        );
+        self.entries
+            .insert(fingerprint, Arc::new(StoredResponse { response, source }));
     }
 
     pub fn invalidate_entity_type(&mut self, _entity_type: &str) {
@@ -285,9 +287,9 @@ fn client_side_predicate_matches_entity(
             .get_field(field)
             .map(|f| f.to_value() == value.to_value())
             .unwrap_or(false),
-        Predicate::And { args } => args.iter().all(|c| {
-            client_side_predicate_matches_entity(entity, c, entity_def)
-        }),
+        Predicate::And { args } => args
+            .iter()
+            .all(|c| client_side_predicate_matches_entity(entity, c, entity_def)),
         _ => false,
     }
 }

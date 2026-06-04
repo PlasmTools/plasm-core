@@ -1,8 +1,8 @@
 //! Capability **preflight** orchestration (ordered steps before CML compile).
 
 use crate::execution::{ExecutionEngine, ExecutionMode, StreamConsumeOpts};
-use crate::{CachedEntity, EntityCompleteness, RuntimeError};
 use crate::materialization::SessionMaterialization;
+use crate::{CachedEntity, EntityCompleteness, RuntimeError};
 use indexmap::IndexMap;
 use plasm_compile::CmlEnv;
 use plasm_core::preflight::{

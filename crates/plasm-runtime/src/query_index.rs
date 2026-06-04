@@ -74,8 +74,10 @@ impl QueryIndex {
     }
 
     pub fn invalidate_entity_type(&mut self, entity_type: &str) {
-        self.entries
-            .retain(|_, refs| refs.first().is_none_or(|r| r.entity_type.as_str() != entity_type));
+        self.entries.retain(|_, refs| {
+            refs.first()
+                .is_none_or(|r| r.entity_type.as_str() != entity_type)
+        });
     }
 
     pub fn merge_from(&mut self, other: QueryIndex) {

@@ -26,6 +26,18 @@ pub struct EntityDecoder {
     /// Scope / request bindings (CML env or GET ref) merged when a key part is missing from the row.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub identity_ambient: IndexMap<String, String>,
+    /// Parent row field paths/derives for compound child refs (e.g. Issue `owner`/`repo` → Label).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parent_identity_field_hints: Vec<ParentIdentityFieldHint>,
+}
+
+/// Parent scalar slot used when decoding nested relation rows (compound child `key_vars`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ParentIdentityFieldHint {
+    pub slot: String,
+    pub from: PathExpr,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derive: Option<FieldDeriveRule>,
 }
 
 /// Field decoder - specifies how to extract a single field
@@ -211,7 +223,16 @@ impl EntityDecoder {
             request_identity_override: None,
             key_vars: Vec::new(),
             identity_ambient: IndexMap::new(),
+            parent_identity_field_hints: Vec::new(),
         }
+    }
+
+    pub fn with_parent_identity_field_hints(
+        mut self,
+        hints: Vec<ParentIdentityFieldHint>,
+    ) -> Self {
+        self.parent_identity_field_hints = hints;
+        self
     }
 
     /// Compound-key parts from CGS `key_vars`, in declaration order.
@@ -672,6 +693,26 @@ fn child_decoder_with_parent_ambient(
             if let Some(s) = json_value_identity_slot_string(v) {
                 out.identity_ambient.insert(kv.clone(), s);
             }
+        }
+    }
+    for hint in &child.parent_identity_field_hints {
+        if out.identity_ambient.contains_key(&hint.slot) {
+            continue;
+        }
+        let Ok(vals) = extract_path(&hint.from, parent) else {
+            continue;
+        };
+        let Some(first) = vals.first() else {
+            continue;
+        };
+        let mut raw = first.clone();
+        if let Some(ref dr) = hint.derive {
+            if let Ok(derived) = apply_field_derive_rule(dr, &raw) {
+                raw = derived;
+            }
+        }
+        if let Ok(s) = json_scalar_to_id_string(&raw) {
+            out.identity_ambient.insert(hint.slot.clone(), s);
         }
     }
     out

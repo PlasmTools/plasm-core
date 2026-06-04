@@ -2906,13 +2906,37 @@ async fn materialize_relation_singleton_chain(
     })
 }
 
+/// When every parent row decoded relation refs into the session graph, materialize targets
+/// without per-row scoped HTTP (aligns with runtime `execute_chain_via_bindings` hybrid).
+fn try_collect_relation_targets_from_parent_graph(
+    relation_name: &str,
+    target_entity: &str,
+    parents: &[CachedEntity],
+    graph: &plasm_runtime::GraphCache,
+) -> Option<Vec<CachedEntity>> {
+    let mut out = Vec::new();
+    for parent in parents {
+        if !parent.relations.contains_key(relation_name) {
+            return None;
+        }
+        let refs = parent.relations.get(relation_name)?;
+        for r in refs {
+            if r.entity_type.as_str() != target_entity {
+                return None;
+            }
+            out.push(graph.get(r)?.clone());
+        }
+    }
+    Some(out)
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn materialize_relation_scoped_fanout(
     st: &PlasmHostState,
     es: &ExecuteSession,
     session_id: &str,
     node_index: usize,
-    _node: &ValidatedPlanNode,
+    node: &ValidatedPlanNode,
     relation: &ValidatedRelationTraversalNode,
     source_mat: &MaterializedNode,
     source_rows: &[serde_json::Value],
@@ -2925,6 +2949,73 @@ async fn materialize_relation_scoped_fanout(
         projection: relation.relation.ir.projection.clone(),
     };
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
+    let rel_name = relation.relation.relation.as_str();
+    let target_entity = relation.relation.target.entity.as_str();
+    {
+        let graph = scoped_es.graph_cache.lock().await;
+        if let Some(entities) = try_collect_relation_targets_from_parent_graph(
+            rel_name,
+            target_entity,
+            &source_mat.result.entities,
+            &graph,
+        ) {
+            drop(graph);
+            let count = entities.len();
+            let full_result = ExecutionResult {
+                count,
+                entities: entities.clone(),
+                has_more: false,
+                pagination_resume: None,
+                paging_handle: None,
+                source: ExecutionSource::Cache,
+                stats: ExecutionStats {
+                    duration_ms: 0,
+                    network_requests: 0,
+                    cache_hits: count,
+                    cache_misses: 0,
+                    ..Default::default()
+                },
+                request_fingerprints: vec![compute_fingerprint(node, source_rows)],
+            };
+            let artifact = archive_plasm_result_snapshot(
+                st,
+                es,
+                session_id,
+                Some(relation.relation.target.entry_id.as_str()),
+                vec![format!(
+                    "plan.relation({}) graph_embedded {} rows",
+                    relation.id.as_str(),
+                    source_rows.len()
+                )],
+                &full_result,
+                trace,
+            )
+            .await?;
+            let display = format!(
+                "plan.relation({}) graph_embedded ({} source rows)",
+                relation.id.as_str(),
+                source_rows.len()
+            );
+            return Ok(MaterializedNode {
+                entry_id: relation.relation.target.entry_id.clone(),
+                entity: relation.relation.target.entity.clone(),
+                display,
+                projection: relation.relation.ir.projection.clone(),
+                rows: full_result
+                    .entities
+                    .iter()
+                    .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+                    .collect(),
+                row_identities: row_identities_from_entities(
+                    &scoped_es,
+                    target_entity,
+                    &full_result.entities,
+                ),
+                result: full_result,
+                artifact: Some(artifact),
+            });
+        }
+    }
     let source_node = &relation.relation.source;
     let mut entities = Vec::new();
     let mut request_fingerprints = Vec::new();

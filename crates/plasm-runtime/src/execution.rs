@@ -1,10 +1,9 @@
 use crate::api_error_detail::graphql_errors_summary;
 use crate::evm::{execute_evm_call, execute_evm_logs};
+use crate::http_resilience::{HttpResiliencePolicy, ResilientHttpTransport};
 use crate::http_transport::{HttpTransport, ReqwestHttpTransport};
+use crate::materialization::{CacheTelemetry, ExecutionCacheConsult, SessionMaterialization};
 use crate::preflight::{apply_preflight_steps, PreflightInvoke};
-use crate::materialization::{
-    CacheTelemetry, ExecutionCacheConsult, SessionMaterialization,
-};
 use crate::{AuthResolver, CachedEntity, EntityCompleteness, RuntimeError};
 use indexmap::IndexMap;
 use plasm_compile::{
@@ -140,14 +139,22 @@ pub struct ExecutionConfig {
     pub timeout_seconds: u64,
     /// Whether to validate responses after decoding
     pub validate_responses: bool,
-    /// Maximum number of concurrent requests
+    /// Process-wide concurrent outbound HTTP permits (transport semaphore).
     pub max_concurrent_requests: usize,
+    /// Per-origin concurrent outbound HTTP permits.
+    pub per_host_max_inflight: usize,
     /// Path for the replay store directory (if using replay/hybrid)
     pub replay_store_path: Option<std::path::PathBuf>,
     /// After query, fetch each row via GET when the entity has a Get capability (unless `QueryExpr.hydrate == Some(false)`).
     pub hydrate: bool,
     /// Max concurrent GETs during query hydration.
     pub hydrate_concurrency: usize,
+    /// Max attempts per logical HTTP request (including first try).
+    pub http_max_attempts: u32,
+    pub http_retry_initial_backoff_ms: u64,
+    pub http_retry_max_backoff_ms: u64,
+    /// Wall-clock retry budget per logical HTTP request.
+    pub http_retry_total_budget_ms: u64,
     /// DOMAIN prompt rendering + symbol expansion (REPL `:schema`, HTTP execute session prompt, eval).
     pub prompt_pipeline: PromptPipelineConfig,
 }
@@ -548,10 +555,15 @@ impl Default for ExecutionConfig {
             default_mode: ExecutionMode::Live,
             timeout_seconds: 30,
             validate_responses: true,
-            max_concurrent_requests: 10,
+            max_concurrent_requests: 64,
+            per_host_max_inflight: 24,
             replay_store_path: None,
             hydrate: true,
-            hydrate_concurrency: 5,
+            hydrate_concurrency: 16,
+            http_max_attempts: 4,
+            http_retry_initial_backoff_ms: 500,
+            http_retry_max_backoff_ms: 30_000,
+            http_retry_total_budget_ms: 120_000,
             prompt_pipeline: PromptPipelineConfig::default(),
         }
     }
@@ -663,6 +675,7 @@ impl ExecutionEngine {
         auth_resolver: Option<AuthResolver>,
     ) -> Result<Self, RuntimeError> {
         // GitHub and several other APIs reject requests without User-Agent (often HTML 403 → JSON parse errors).
+        let per_host = config.per_host_max_inflight.max(1);
         let client = reqwest::Client::builder()
             .user_agent(concat!(
                 "plasm-runtime/",
@@ -670,13 +683,19 @@ impl ExecutionEngine {
                 " (+https://github.com)"
             ))
             .timeout(std::time::Duration::from_secs(config.timeout_seconds))
+            .pool_max_idle_per_host(per_host)
             .build()
             .map_err(|e| RuntimeError::RequestError {
                 message: format!("Failed to create HTTP client: {}", e),
+                attempts: 1,
             })?;
 
+        let inner = ReqwestHttpTransport::new(client);
+        let policy = HttpResiliencePolicy::from(&config);
+        let transport = ResilientHttpTransport::new(inner, policy);
+
         Ok(Self {
-            transport: Arc::new(ReqwestHttpTransport::new(client)),
+            transport: Arc::new(transport),
             config,
             replay_store: Some(crate::MemoryReplayStore::default()),
             auth_resolver,
@@ -1132,15 +1151,7 @@ impl ExecutionEngine {
             );
         }
 
-        self.non_paginated_query_stream(
-            query,
-            cgs,
-            mat,
-            mode,
-            capability,
-            capability_template,
-            env,
-        )
+        self.non_paginated_query_stream(query, cgs, mat, mode, capability, capability_template, env)
     }
 
     /// Execute a query expression (materializes [`query_to_stream`]).
@@ -1633,9 +1644,8 @@ impl ExecutionEngine {
                 federation,
                 execute_session,
                 async move {
-                    let mut stream = self.execute_pagination_resume_stream(
-                        resume, cgs, mat, mode, consume, &opts,
-                    )?;
+                    let mut stream = self
+                        .execute_pagination_resume_stream(resume, cgs, mat, mode, consume, &opts)?;
                     collect_query_stream(&mut stream).await
                 },
             )
@@ -1776,7 +1786,7 @@ impl ExecutionEngine {
                                     network_requests: total_network,
                                     cache_hits: 0,
                                     cache_misses: 0,
-                                ..Default::default()
+                                    ..Default::default()
                                 },
                                 request_fingerprints: Vec::new(),
                             });
@@ -1888,7 +1898,7 @@ impl ExecutionEngine {
                         network_requests: 0,
                         cache_hits: 1,
                         cache_misses: 0,
-                    ..Default::default()
+                        ..Default::default()
                     },
                     request_fingerprints: Vec::new(),
                 });
@@ -1944,7 +1954,7 @@ impl ExecutionEngine {
                         network_requests: 0,
                         cache_hits: 1,
                         cache_misses: 0,
-                    ..Default::default()
+                        ..Default::default()
                     },
                     request_fingerprints: Vec::new(),
                 });
@@ -2429,7 +2439,7 @@ impl ExecutionEngine {
                         network_requests: 1,
                         cache_hits: 0,
                         cache_misses: count,
-                    ..Default::default()
+                        ..Default::default()
                     },
                     request_fingerprints: Vec::new(),
                 })
@@ -2504,7 +2514,7 @@ impl ExecutionEngine {
                         network_requests: 1,
                         cache_hits: 0,
                         cache_misses: 0,
-                    ..Default::default()
+                        ..Default::default()
                     },
                     request_fingerprints: Vec::new(),
                 })
@@ -2654,7 +2664,7 @@ impl ExecutionEngine {
                         network_requests: 1,
                         cache_hits: 0,
                         cache_misses: count,
-                    ..Default::default()
+                        ..Default::default()
                     },
                     request_fingerprints: Vec::new(),
                 })
@@ -2756,12 +2766,15 @@ impl ExecutionEngine {
                             return self
                                 .execute_chain_via_param(
                                     &source_result,
-                                    rel.target_resource.clone(),
+                                    rel,
                                     capability,
                                     param,
                                     cgs,
                                     mat,
                                     mode,
+                                    &chain.step,
+                                    consume.clone(),
+                                    opts.clone(),
                                 )
                                 .await;
                         }
@@ -2773,12 +2786,15 @@ impl ExecutionEngine {
                                 .execute_chain_via_bindings(
                                     &source_result,
                                     source_entity,
-                                    rel.target_resource.clone(),
+                                    rel,
                                     capability,
                                     bindings,
                                     cgs,
                                     mat,
                                     mode,
+                                    &chain.step,
+                                    consume.clone(),
+                                    opts.clone(),
                                 )
                                 .await;
                         }
@@ -2954,7 +2970,7 @@ impl ExecutionEngine {
                     network_requests: total_network,
                     cache_hits: total_cache_hits,
                     cache_misses: count,
-                ..Default::default()
+                    ..Default::default()
                 },
                 request_fingerprints: Vec::new(),
             });
@@ -3045,7 +3061,7 @@ impl ExecutionEngine {
                 network_requests: source_result.stats.network_requests + extra_network,
                 cache_hits: source_result.stats.cache_hits + cached_hits,
                 cache_misses: count,
-            ..Default::default()
+                ..Default::default()
             },
             request_fingerprints: Vec::new(),
         })
@@ -3054,23 +3070,23 @@ impl ExecutionEngine {
     /// Execute a `via_param` relation traversal: for each source entity, run a scoped
     /// query on the target using the source entity's `id_field` value as `via_param`.
     ///
-    /// Example: `Page.blocks` with `via_param: block_id` → for each Page, execute
-    /// `block_children_query(block_id = page.id)` and return the Block results.
-    ///
-    /// Queries are run concurrently (up to `hydrate_concurrency` limit).
+    /// When the parent row already has decoded relation refs on the session graph, serves
+    /// those targets without HTTP (per-row hybrid fallback to scoped query on miss).
     #[allow(clippy::too_many_arguments)]
     async fn execute_chain_via_param(
         &self,
         source_result: &ExecutionResult,
-        target_entity: EntityName,
+        rel: &plasm_core::RelationSchema,
         capability: &plasm_core::CapabilityName,
         via_param: &CapabilityParamName,
         cgs: &CGS,
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
+        _chain_step: &plasm_core::ChainStep,
+        _consume: StreamConsumeOpts,
+        _opts: ExecuteOptions,
     ) -> Result<ExecutionResult, RuntimeError> {
-        use futures_util::stream::{self, StreamExt};
-
+        let target_entity = rel.target_resource.clone();
         let target_key = target_entity.as_str();
         let cap = cgs.get_capability(capability.as_str()).ok_or_else(|| {
             RuntimeError::ConfigurationError {
@@ -3089,33 +3105,10 @@ impl ExecutionEngine {
             });
         }
         let capability_name = cap.name.clone();
+        let relation_key = rel.name.as_str();
+        let expected_target = target_key;
 
-        // Build one QueryExpr per source entity, using its id as scope value.
-        let queries: Vec<QueryExpr> = source_result
-            .entities
-            .iter()
-            .map(|entity| {
-                let id_field = cgs
-                    .get_entity(entity.reference.entity_type.as_str())
-                    .map(|def| def.id_field.as_str().to_string())
-                    .unwrap_or_default();
-                let id = entity
-                    .get_field(id_field.as_str())
-                    .map(|tf| tf.to_value())
-                    .and_then(|v| match v {
-                        Value::String(s) => Some(s.clone()),
-                        Value::Integer(n) => Some(n.to_string()),
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| entity.reference.primary_slot_str());
-                let pred = plasm_core::Predicate::eq(via_param.as_str(), id);
-                let mut q = QueryExpr::filtered(target_entity.clone(), pred);
-                q.capability_name = Some(capability_name.clone());
-                q
-            })
-            .collect();
-
-        if queries.is_empty() {
+        if source_result.entities.is_empty() {
             return Ok(ExecutionResult {
                 entities: vec![],
                 count: 0,
@@ -3128,50 +3121,62 @@ impl ExecutionEngine {
             });
         }
 
-        let concurrency = self.config.hydrate_concurrency.max(1);
         let mut all_entities: Vec<CachedEntity> = Vec::new();
         let mut total_network = source_result.stats.network_requests;
         let mut merged_stats = ExecutionStats::default();
+        merged_stats.merge_telemetry(&source_result.stats.cache);
         let mut any_live = source_result.source == ExecutionSource::Live;
+        let mut graph_hits = 0usize;
 
-        let branch_seed = {
-            let snap = mat.snapshot();
-            SessionMaterialization {
-                graph: snap.into_graph(),
-                responses: mat.responses.clone(),
-                query_index: mat.query_index.clone(),
+        for entity in &source_result.entities {
+            if parent_row_relation_decoded(entity, relation_key) {
+                let refs = entity
+                    .relations
+                    .get(relation_key)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                match resolve_cached_targets_from_relation_refs(mat, refs, expected_target) {
+                    Ok(mut rows) => {
+                        graph_hits += rows.len();
+                        all_entities.append(&mut rows);
+                        continue;
+                    }
+                    Err(_) => {}
+                }
             }
-        };
 
-        let mut stream = stream::iter(queries.into_iter().map(|q| {
-            let mut branch = branch_seed.clone();
-            async move {
-                self.execute_query(
-                    &q,
-                    cgs,
-                    &mut branch,
-                    mode,
-                    StreamConsumeOpts::default(),
-                )
-                .await
-                .map(|result| (result, branch))
-            }
-        }))
-        .buffer_unordered(concurrency);
-
-        while let Some(res) = stream.next().await {
-            let (result, branch) = res?;
-            mat.absorb_branch(branch)?;
+            let id_field = cgs
+                .get_entity(entity.reference.entity_type.as_str())
+                .map(|def| def.id_field.as_str().to_string())
+                .unwrap_or_default();
+            let id = entity
+                .get_field(id_field.as_str())
+                .map(|tf| tf.to_value())
+                .and_then(|v| match v {
+                    Value::String(s) => Some(s.clone()),
+                    Value::Integer(n) => Some(n.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| entity.reference.primary_slot_str());
+            let pred = plasm_core::Predicate::eq(via_param.as_str(), id);
+            let mut q = QueryExpr::filtered(target_entity.clone(), pred);
+            q.capability_name = Some(capability_name.clone());
+            let result = self
+                .execute_query(&q, cgs, mat, mode, StreamConsumeOpts::default())
+                .await?;
             if result.source == ExecutionSource::Live {
                 any_live = true;
             }
             total_network += result.stats.network_requests;
             merged_stats.merge_telemetry(&result.stats.cache);
-            merged_stats.cache_hits = merged_stats.cache.legacy_cache_hits();
-            merged_stats.cache_misses = merged_stats.cache.legacy_cache_misses();
             all_entities.extend(result.entities);
         }
 
+        merged_stats.cache_hits = merged_stats
+            .cache
+            .legacy_cache_hits()
+            .saturating_add(graph_hits);
+        merged_stats.cache_misses = merged_stats.cache.legacy_cache_misses();
         let count = all_entities.len();
         merged_stats.network_requests = total_network;
         merged_stats.record_rows_materialized(count);
@@ -3192,20 +3197,25 @@ impl ExecutionEngine {
     }
 
     /// Multi-parameter scoped query fanout (`RelationMaterialization::QueryScopedBindings`).
+    ///
+    /// Per-row hybrid: when the parent row has decoded relation refs in the session graph,
+    /// collect targets from cache; otherwise run the scoped query for that row only.
     #[allow(clippy::too_many_arguments)]
     async fn execute_chain_via_bindings(
         &self,
         source_result: &ExecutionResult,
         parent_entity_def: &plasm_core::EntityDef,
-        target_entity: EntityName,
+        rel: &plasm_core::RelationSchema,
         capability: &plasm_core::CapabilityName,
         bindings: &IndexMap<CapabilityParamName, EntityFieldName>,
         cgs: &CGS,
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
+        chain_step: &plasm_core::ChainStep,
+        consume: StreamConsumeOpts,
+        opts: ExecuteOptions,
     ) -> Result<ExecutionResult, RuntimeError> {
-        use futures_util::stream::{self, StreamExt};
-
+        let target_entity = rel.target_resource.clone();
         let target_key = target_entity.as_str();
         let cap = cgs.get_capability(capability.as_str()).ok_or_else(|| {
             RuntimeError::ConfigurationError {
@@ -3223,38 +3233,8 @@ impl ExecutionEngine {
                 ),
             });
         }
-        let capability_name = cap.name.clone();
-        let cap_params: Vec<_> = cap.object_params().map(|f| f.to_vec()).unwrap_or_default();
 
-        let queries: Vec<QueryExpr> = source_result
-            .entities
-            .iter()
-            .map(|entity| {
-                let preds: Vec<Predicate> = bindings
-                    .iter()
-                    .map(|(cap_param, parent_field)| {
-                        let raw = chain_binding_raw_json(entity, parent_entity_def, parent_field);
-                        let value = chain_binding_plasm_value(
-                            &raw,
-                            cap_param.as_str(),
-                            &cap_params,
-                            cgs,
-                        );
-                        Predicate::eq(cap_param.as_str(), value)
-                    })
-                    .collect();
-                let pred = if preds.len() == 1 {
-                    preds.into_iter().next().expect("non-empty preds")
-                } else {
-                    Predicate::and(preds)
-                };
-                let mut q = QueryExpr::filtered(target_entity.clone(), pred);
-                q.capability_name = Some(capability_name.clone());
-                q
-            })
-            .collect();
-
-        if queries.is_empty() {
+        if source_result.entities.is_empty() {
             return Ok(ExecutionResult {
                 entities: vec![],
                 count: 0,
@@ -3267,51 +3247,87 @@ impl ExecutionEngine {
             });
         }
 
-        let concurrency = self.config.hydrate_concurrency.max(1);
+        let relation_key = rel.name.as_str();
+        let expected_target = target_key;
+        if source_result
+            .entities
+            .iter()
+            .all(|e| parent_row_relation_decoded(e, relation_key))
+        {
+            return self
+                .execute_chain_from_embedded_relations(
+                    source_result,
+                    rel,
+                    cgs,
+                    mat,
+                    mode,
+                    chain_step,
+                    consume,
+                    opts,
+                )
+                .await;
+        }
+
+        let capability_name = cap.name.clone();
+        let cap_params: Vec<_> = cap.object_params().map(|f| f.to_vec()).unwrap_or_default();
+
         let mut all_entities: Vec<CachedEntity> = Vec::new();
         let mut total_network = source_result.stats.network_requests;
         let mut merged_stats = ExecutionStats::default();
+        merged_stats.merge_telemetry(&source_result.stats.cache);
         let mut any_live = source_result.source == ExecutionSource::Live;
+        let mut graph_hits = 0usize;
 
-        let branch_seed = {
-            let snap = mat.snapshot();
-            SessionMaterialization {
-                graph: snap.into_graph(),
-                responses: mat.responses.clone(),
-                query_index: mat.query_index.clone(),
+        for entity in &source_result.entities {
+            if parent_row_relation_decoded(entity, relation_key) {
+                let refs = entity
+                    .relations
+                    .get(relation_key)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                match resolve_cached_targets_from_relation_refs(mat, refs, expected_target) {
+                    Ok(mut rows) => {
+                        graph_hits += rows.len();
+                        all_entities.append(&mut rows);
+                        continue;
+                    }
+                    Err(_) => {}
+                }
             }
-        };
 
-        let mut stream = stream::iter(queries.into_iter().map(|q| {
-            let mut branch = branch_seed.clone();
-            async move {
-                self.execute_query(
-                    &q,
-                    cgs,
-                    &mut branch,
-                    mode,
-                    StreamConsumeOpts::default(),
-                )
-                .await
-                .map(|result| (result, branch))
-            }
-        }))
-        .buffer_unordered(concurrency);
-
-        while let Some(res) = stream.next().await {
-            let (result, branch) = res?;
-            mat.absorb_branch(branch)?;
+            let preds: Vec<Predicate> = bindings
+                .iter()
+                .map(|(cap_param, parent_field)| {
+                    let raw = chain_binding_raw_json(entity, parent_entity_def, parent_field);
+                    let value =
+                        chain_binding_plasm_value(&raw, cap_param.as_str(), &cap_params, cgs);
+                    Predicate::eq(cap_param.as_str(), value)
+                })
+                .collect();
+            let pred = if preds.len() == 1 {
+                preds.into_iter().next().expect("non-empty preds")
+            } else {
+                Predicate::and(preds)
+            };
+            let mut q = QueryExpr::filtered(target_entity.clone(), pred);
+            q.capability_name = Some(capability_name.clone());
+            let result = self
+                .execute_query(&q, cgs, mat, mode, StreamConsumeOpts::default())
+                .await?;
             if result.source == ExecutionSource::Live {
                 any_live = true;
             }
             total_network += result.stats.network_requests;
             merged_stats.merge_telemetry(&result.stats.cache);
-            merged_stats.cache_hits = merged_stats.cache.legacy_cache_hits();
-            merged_stats.cache_misses = merged_stats.cache.legacy_cache_misses();
             all_entities.extend(result.entities);
         }
 
         let count = all_entities.len();
+        merged_stats.cache_hits = merged_stats
+            .cache
+            .legacy_cache_hits()
+            .saturating_add(graph_hits);
+        merged_stats.cache_misses = merged_stats.cache.legacy_cache_misses();
         merged_stats.network_requests = total_network;
         merged_stats.record_rows_materialized(count);
         Ok(ExecutionResult {
@@ -3442,7 +3458,7 @@ impl ExecutionEngine {
                 network_requests: total_network + extra_network,
                 cache_hits: total_cache_hits + extra_cache_hits,
                 cache_misses: count,
-            ..Default::default()
+                ..Default::default()
             },
             request_fingerprints: Vec::new(),
         })
@@ -3537,7 +3553,7 @@ impl ExecutionEngine {
                     network_requests: total_network,
                     cache_hits: total_cache_hits,
                     cache_misses: count,
-                ..Default::default()
+                    ..Default::default()
                 },
                 request_fingerprints: Vec::new(),
             });
@@ -3615,7 +3631,7 @@ impl ExecutionEngine {
                 network_requests: source_result.stats.network_requests + extra_network,
                 cache_hits: source_result.stats.cache_hits + cached_hits,
                 cache_misses: count,
-            ..Default::default()
+                ..Default::default()
             },
             request_fingerprints: Vec::new(),
         })
@@ -4822,6 +4838,36 @@ fn chain_relation_refs_present(source_result: &ExecutionResult, selector: &str) 
     })
 }
 
+/// Parent row decoded this relation edge (including authoritative `Specified([])`).
+fn parent_row_relation_decoded(entity: &CachedEntity, relation_key: &str) -> bool {
+    entity.relations.contains_key(relation_key)
+}
+
+fn resolve_cached_targets_from_relation_refs(
+    mat: &SessionMaterialization,
+    refs: &[Ref],
+    expected_target: &str,
+) -> Result<Vec<CachedEntity>, RuntimeError> {
+    let mut out = Vec::with_capacity(refs.len());
+    for r in refs {
+        if r.entity_type.as_str() != expected_target {
+            return Err(RuntimeError::ConfigurationError {
+                message: format!(
+                    "Decoded relation expected Ref.entity_type {expected_target}, got {}",
+                    r.entity_type
+                ),
+            });
+        }
+        let Some(e) = mat.get(r) else {
+            return Err(RuntimeError::CacheError {
+                message: format!("missing embedded relation target in session graph: {r}"),
+            });
+        };
+        out.push(e.clone());
+    }
+    Ok(out)
+}
+
 fn ref_from_materialize_bindings_for_get_chain(
     target_ent: &EntityDef,
     binding_values: &IndexMap<String, String>,
@@ -5452,6 +5498,38 @@ fn create_entity_decoder_for_capability(
     )
 }
 
+fn parent_identity_field_hints_for_child(
+    parent_ent: &plasm_core::EntityDef,
+    child_ent: &plasm_core::EntityDef,
+) -> Vec<plasm_compile::ParentIdentityFieldHint> {
+    use plasm_compile::{ParentIdentityFieldHint, PathExpr, PathSegment};
+
+    let mut hints = Vec::new();
+    for kv in &child_ent.key_vars {
+        let Some(fs) = parent_ent.fields.get(kv.as_str()) else {
+            continue;
+        };
+        let from = if let Some(wp) = &fs.wire_path {
+            PathExpr::new(
+                wp.iter()
+                    .map(|n| PathSegment::Key { name: n.clone() })
+                    .collect(),
+            )
+        } else {
+            PathExpr::new(vec![PathSegment::Key {
+                name: kv.as_str().to_string(),
+            }])
+        };
+        let derive = fs.derive.clone();
+        hints.push(ParentIdentityFieldHint {
+            slot: kv.as_str().to_string(),
+            from,
+            derive,
+        });
+    }
+    hints
+}
+
 fn create_entity_decoder_inner(
     entity_type: &str,
     cgs: &CGS,
@@ -5555,11 +5633,13 @@ fn create_entity_decoder_inner(
                     .iter()
                     .map(|k| k.as_str().to_string())
                     .collect();
+                let parent_hints = parent_identity_field_hints_for_child(entity, target_ent);
                 let child = EntityDecoder::new(rel.target_resource.as_str(), rel_path)
                     .with_fields(cf)
                     .with_id_field(target_ent.id_field.clone())
                     .with_key_vars(child_kv)
-                    .with_identity_ambient(IndexMap::new());
+                    .with_identity_ambient(IndexMap::new())
+                    .with_parent_identity_field_hints(parent_hints);
                 relation_decoders.push(plasm_compile::RelationDecoder {
                     relation: rel_name.as_str().to_string(),
                     decoder: child,
@@ -6049,7 +6129,9 @@ mod tests {
         assert_eq!(config.timeout_seconds, 30);
         assert!(config.validate_responses);
         assert!(config.hydrate);
-        assert_eq!(config.hydrate_concurrency, 5);
+        assert_eq!(config.max_concurrent_requests, 64);
+        assert_eq!(config.per_host_max_inflight, 24);
+        assert_eq!(config.hydrate_concurrency, 16);
     }
 
     /// Regression: Cloudflare v4 list envelopes use `result: [...]`; paginated queries skip
@@ -6238,7 +6320,7 @@ mod tests {
                 network_requests: 1,
                 cache_hits: 0,
                 cache_misses: 0,
-            ..Default::default()
+                ..Default::default()
             },
             request_fingerprints: Vec::new(),
         };
@@ -6263,7 +6345,7 @@ mod tests {
                 network_requests: 0,
                 cache_hits: 0,
                 cache_misses: 0,
-            ..Default::default()
+                ..Default::default()
             },
             request_fingerprints: Vec::new(),
         };
@@ -6884,5 +6966,99 @@ mod tests {
         assert!(task
             .fields
             .contains_key(&plasm_core::EntityFieldName::from("Priority_Level")));
+    }
+
+    #[test]
+    fn github_issue_query_decoder_includes_embedded_labels_relation() {
+        use plasm_compile::decode_entities;
+        use plasm_compile::DecodedRelation;
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
+        let cgs = load_schema_dir(&dir).expect("load github catalog");
+        let cap = cgs.get_capability("issue_query").expect("issue_query");
+        let capability_template =
+            parse_capability_template(&cap.mapping.template).expect("parse template");
+        let cml = match &capability_template {
+            plasm_compile::CapabilityTemplate::Http(c) => c,
+            _ => panic!("expected HTTP template"),
+        };
+        let decoder = create_entity_decoder_for_capability(
+            "Issue",
+            &cgs,
+            Some("issue_query"),
+            Some(http_collection_source(cml)),
+            None,
+            None,
+        );
+        assert!(
+            decoder.relations.iter().any(|r| r.relation == "labels"),
+            "Issue.labels from_parent_get must emit a relation decoder on issue_query"
+        );
+
+        let row = serde_json::json!({
+            "id": 42,
+            "number": 7,
+            "repository_url": "https://api.github.com/repos/acme/demo",
+            "title": "Bug",
+            "state": "open",
+            "labels": [
+                {
+                    "id": 1,
+                    "name": "bug",
+                    "color": "f29513",
+                    "description": "label",
+                    "default": false
+                }
+            ]
+        });
+        let body = serde_json::json!([row]);
+        let normalized =
+            normalize_collection_response(body, response_bare_array_wrap_key(cml).as_str());
+        let decoded = decode_entities(&decoder, &normalized).expect("decode issues");
+        assert_eq!(decoded.len(), 1);
+        match decoded[0].relations.get("labels") {
+            Some(DecodedRelation::Specified(refs)) => {
+                assert_eq!(refs.len(), 1);
+                assert!(!decoded[0].embedded_entities.is_empty());
+            }
+            other => panic!("expected Specified labels relation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parent_row_relation_decoded_and_resolve_cached_targets() {
+        let parent_ref = Ref::new("LangItem", "i1");
+        let tag_ref = Ref::new("LangTag", "t1");
+        let mut parent = CachedEntity::from_decoded(
+            parent_ref,
+            IndexMap::from([(String::from("id"), Value::String("i1".into()))]),
+            IndexMap::new(),
+            0,
+            EntityCompleteness::Summary,
+        );
+        parent.update_relations("tags".into(), vec![tag_ref.clone()], 0);
+        assert!(parent_row_relation_decoded(&parent, "tags"));
+
+        let tag = CachedEntity::from_decoded(
+            tag_ref,
+            IndexMap::from([(String::from("label"), Value::String("urgent".into()))]),
+            IndexMap::new(),
+            0,
+            EntityCompleteness::Summary,
+        );
+        let mut mat = SessionMaterialization::new();
+        mat.insert(tag).expect("insert tag");
+        let resolved = resolve_cached_targets_from_relation_refs(
+            &mat,
+            parent.relations.get("tags").expect("tags refs"),
+            "LangTag",
+        )
+        .expect("resolve tag ref");
+        assert_eq!(resolved.len(), 1);
+        assert_eq!(
+            resolved[0].get_field("label").map(|f| f.to_value()),
+            Some(Value::String("urgent".into()))
+        );
     }
 }

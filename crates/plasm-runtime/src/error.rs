@@ -27,7 +27,16 @@ pub enum RuntimeError {
     },
 
     #[error("HTTP request failed: {message}")]
-    RequestError { message: String },
+    RequestError { message: String, attempts: u32 },
+
+    #[error("Upstream rate limited (HTTP {status}): {message}")]
+    RateLimited {
+        status: u16,
+        host: String,
+        retry_after: Option<std::time::Duration>,
+        attempts: u32,
+        message: String,
+    },
 
     #[error("Cache error: {message}")]
     CacheError { message: String },
@@ -57,13 +66,26 @@ pub enum RuntimeError {
     AuthenticationError { message: String },
 }
 
+impl RuntimeError {
+    pub fn set_attempts(&mut self, attempts: u32) {
+        match self {
+            RuntimeError::RequestError { attempts: a, .. }
+            | RuntimeError::RateLimited { attempts: a, .. } => *a = attempts,
+            _ => {}
+        }
+    }
+}
+
 impl From<reqwest::Error> for RuntimeError {
     fn from(err: reqwest::Error) -> Self {
         let mut message = err.to_string();
         if let Some(url) = err.url() {
             message = format!("{message} (request URL: {url})");
         }
-        RuntimeError::RequestError { message }
+        RuntimeError::RequestError {
+            message,
+            attempts: 1,
+        }
     }
 }
 

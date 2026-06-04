@@ -238,11 +238,12 @@ pub fn build_execution_engine_from_matches(
     let prompt_pipeline =
         PromptPipelineConfig::for_cli_focus(prompt_focus.as_deref()).with_render_mode(render_mode);
 
-    let config = ExecutionConfig {
+    let mut config = ExecutionConfig {
         base_url: Some(backend.to_string()),
         prompt_pipeline,
         ..ExecutionConfig::default()
     };
+    config.apply_http_env_overrides();
 
     let auth_resolver = cgs.auth.clone().map(AuthResolver::from_env);
     let engine = ExecutionEngine::new_with_auth(config, auth_resolver)?;

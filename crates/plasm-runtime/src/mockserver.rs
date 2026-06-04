@@ -86,6 +86,7 @@ impl MockServerClient {
                     "Failed to create MockServer expectation: {}",
                     response.status()
                 ),
+                attempts: 1,
             });
         }
 
@@ -109,6 +110,7 @@ impl MockServerClient {
                     "Failed to clear MockServer expectations: {}",
                     response.status()
                 ),
+                attempts: 1,
             });
         }
 
@@ -137,6 +139,7 @@ impl MockServerClient {
         if !response.status().is_success() {
             return Err(RuntimeError::RequestError {
                 message: format!("Failed to reset MockServer: {}", response.status()),
+                attempts: 1,
             });
         }
 

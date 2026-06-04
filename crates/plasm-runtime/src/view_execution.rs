@@ -14,11 +14,11 @@ use plasm_core::schema::{
 use plasm_core::{CapabilityKind, GetExpr, Predicate, QueryExpr, Ref, TypedFieldValue, Value, CGS};
 
 use crate::cache::{CachedEntity, EntityCompleteness};
-use crate::materialization::SessionMaterialization;
 use crate::execution::{
     ExecutionEngine, ExecutionMode, ExecutionResult, ExecutionSource, ExecutionStats,
     StreamConsumeOpts,
 };
+use crate::materialization::SessionMaterialization;
 use crate::RuntimeError;
 
 fn json_to_plasm_value(json: &serde_json::Value) -> Value {

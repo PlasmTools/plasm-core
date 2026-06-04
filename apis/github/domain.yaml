@@ -225,13 +225,15 @@ entities:
       labels:
         target: Label
         cardinality: many
+        description: >-
+          Labels on the issue. List and GET issue responses embed a `labels` array on the wire;
+          use those when present. For authoritative or post-mutation label sets, traverse via
+          `issue_label_query` (scoped per issue) when list embed is absent or incomplete.
         materialize:
-          kind: query_scoped_bindings
-          capability: issue_label_query
-          bindings:
-            owner: owner
-            repo: repo
-            issue_number: number
+          kind: from_parent_get
+          path:
+          - key: labels
+          - wildcard: true
       sub_issues:
         target: Issue
         cardinality: many
