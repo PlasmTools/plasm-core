@@ -782,6 +782,7 @@ mod tests {
                 network_requests: 0,
                 cache_hits: 0,
                 cache_misses: 0,
+            ..Default::default()
             },
             request_fingerprints: vec![],
         };
@@ -817,6 +818,7 @@ mod tests {
                 network_requests: 0,
                 cache_hits: 0,
                 cache_misses: 0,
+            ..Default::default()
             },
             request_fingerprints: vec![],
         };
@@ -946,6 +948,7 @@ mod tests {
                 network_requests: 0,
                 cache_hits: 0,
                 cache_misses: 0,
+            ..Default::default()
             },
             request_fingerprints: vec![],
         };
@@ -1002,6 +1005,7 @@ mod tests {
                 network_requests: 0,
                 cache_hits: 0,
                 cache_misses: 0,
+            ..Default::default()
             },
             request_fingerprints: vec![],
         };
@@ -1043,6 +1047,7 @@ mod tests {
                 network_requests: 0,
                 cache_hits: 0,
                 cache_misses: 0,
+            ..Default::default()
             },
             request_fingerprints: vec![],
         };
@@ -1089,6 +1094,7 @@ mod tests {
                 network_requests: 0,
                 cache_hits: 0,
                 cache_misses: 0,
+            ..Default::default()
             },
             request_fingerprints: vec![],
         };
@@ -1128,6 +1134,7 @@ mod tests {
                 network_requests: 0,
                 cache_hits: 0,
                 cache_misses: 0,
+            ..Default::default()
             },
             request_fingerprints: vec![],
         };

@@ -2,7 +2,10 @@ use crate::api_error_detail::graphql_errors_summary;
 use crate::evm::{execute_evm_call, execute_evm_logs};
 use crate::http_transport::{HttpTransport, ReqwestHttpTransport};
 use crate::preflight::{apply_preflight_steps, PreflightInvoke};
-use crate::{AuthResolver, CachedEntity, EntityCompleteness, GraphCache, RuntimeError};
+use crate::materialization::{
+    CacheTelemetry, ExecutionCacheConsult, SessionMaterialization,
+};
+use crate::{AuthResolver, CachedEntity, EntityCompleteness, RuntimeError};
 use indexmap::IndexMap;
 use plasm_compile::{
     compile_operation, compile_query, decode_entities, parse_capability_template,
@@ -91,8 +94,13 @@ pub async fn collect_query_stream(
             any_live = true;
         }
         all_entities.extend(page.entities);
+        if page.stats.network_requests == 0 && page.stats.cache_hits > 0 {
+            // page carried consult hits
+        }
     }
     let count = all_entities.len();
+    let mut stats = ExecutionStats::from_telemetry(CacheTelemetry::default(), total_net);
+    stats.record_rows_materialized(count);
     Ok(ExecutionResult {
         entities: all_entities,
         count,
@@ -104,12 +112,7 @@ pub async fn collect_query_stream(
         } else {
             ExecutionSource::Replay
         },
-        stats: ExecutionStats {
-            duration_ms: 0,
-            network_requests: total_net,
-            cache_hits: 0,
-            cache_misses: count,
-        },
+        stats,
         request_fingerprints: Vec::new(),
     })
 }
@@ -184,16 +187,41 @@ pub enum ExecutionSource {
 }
 
 /// Execution statistics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ExecutionStats {
     /// Duration of execution in milliseconds
     pub duration_ms: u64,
     /// Whether any network requests were made
     pub network_requests: usize,
-    /// Cache hits during execution
+    /// Cache hits during execution (legacy aggregate; see [`Self::cache`])
     pub cache_hits: usize,
-    /// Cache misses during execution
+    /// Cache misses during execution (legacy aggregate; see [`Self::cache`])
     pub cache_misses: usize,
+    /// Honest consult counters and row materialization count.
+    #[serde(default)]
+    pub cache: CacheTelemetry,
+}
+
+impl ExecutionStats {
+    pub fn from_telemetry(telemetry: CacheTelemetry, network_requests: usize) -> Self {
+        Self {
+            duration_ms: 0,
+            network_requests,
+            cache_hits: telemetry.legacy_cache_hits(),
+            cache_misses: telemetry.legacy_cache_misses(),
+            cache: telemetry,
+        }
+    }
+
+    pub fn merge_telemetry(&mut self, other: &CacheTelemetry) {
+        self.cache.merge(other);
+        self.cache_hits = self.cache.legacy_cache_hits();
+        self.cache_misses = self.cache.legacy_cache_misses();
+    }
+
+    pub fn record_rows_materialized(&mut self, count: usize) {
+        self.cache.rows_materialized = self.cache.rows_materialized.saturating_add(count);
+    }
 }
 
 /// Out-of-band consumption controls: how many pages / entities to pull (not part of the IR).
@@ -722,7 +750,7 @@ impl ExecutionEngine {
             None,
             None,
             async move {
-                self.execute_with_replay(&compiled, mode)
+                self.execute_with_replay(&compiled, mode, None)
                     .await
                     .map(|(j, _)| j)
             },
@@ -738,8 +766,9 @@ impl ExecutionEngine {
         &self,
         compiled: &CompiledOperation,
         mode: ExecutionMode,
+        mat: Option<&mut SessionMaterialization>,
     ) -> Result<(serde_json::Value, ExecutionSource), RuntimeError> {
-        let (json, _link, source) = self.execute_with_replay_full(compiled, mode).await?;
+        let (json, _link, source) = self.execute_with_replay_full(compiled, mode, mat).await?;
         Ok((json, source))
     }
 
@@ -748,13 +777,32 @@ impl ExecutionEngine {
         &self,
         compiled: &CompiledOperation,
         mode: ExecutionMode,
+        mat: Option<&mut SessionMaterialization>,
     ) -> Result<(serde_json::Value, Option<String>, ExecutionSource), RuntimeError> {
         let fingerprint = crate::RequestFingerprint::from_operation(compiled);
+        let mut consult = CacheTelemetry::default();
 
         match mode {
             ExecutionMode::Live => {
-                let (resp, link) = self.execute_operation_full(compiled).await?;
-                Ok((resp, link, ExecutionSource::Live))
+                if let Some(session) = mat {
+                    if let Some(stored) = ExecutionCacheConsult::decide_response(
+                        &fingerprint,
+                        &session.responses,
+                        &mut consult,
+                    ) {
+                        append_request_fingerprint(fingerprint.to_hex());
+                        return Ok((stored.response, None, stored.source));
+                    }
+                    ExecutionCacheConsult::record_response_miss(&mut consult);
+                    let (resp, link) = self.execute_operation_full(compiled).await?;
+                    session
+                        .responses
+                        .store(fingerprint, resp.clone(), ExecutionSource::Live);
+                    Ok((resp, link, ExecutionSource::Live))
+                } else {
+                    let (resp, link) = self.execute_operation_full(compiled).await?;
+                    Ok((resp, link, ExecutionSource::Live))
+                }
             }
             ExecutionMode::Replay => {
                 if let Some(store) = &self.replay_store {
@@ -776,8 +824,25 @@ impl ExecutionEngine {
                         return Ok((entry.response, None, ExecutionSource::Replay));
                     }
                 }
-                let (resp, link) = self.execute_operation_full(compiled).await?;
-                Ok((resp, link, ExecutionSource::Live))
+                if let Some(session) = mat {
+                    if let Some(stored) = ExecutionCacheConsult::decide_response(
+                        &fingerprint,
+                        &session.responses,
+                        &mut consult,
+                    ) {
+                        append_request_fingerprint(fingerprint.to_hex());
+                        return Ok((stored.response, None, stored.source));
+                    }
+                    ExecutionCacheConsult::record_response_miss(&mut consult);
+                    let (resp, link) = self.execute_operation_full(compiled).await?;
+                    session
+                        .responses
+                        .store(fingerprint, resp.clone(), ExecutionSource::Live);
+                    Ok((resp, link, ExecutionSource::Live))
+                } else {
+                    let (resp, link) = self.execute_operation_full(compiled).await?;
+                    Ok((resp, link, ExecutionSource::Live))
+                }
             }
         }
     }
@@ -847,7 +912,7 @@ impl ExecutionEngine {
         &'a self,
         expr: &'a Expr,
         cgs: &'a CGS,
-        cache: &'a mut GraphCache,
+        mat: &'a mut SessionMaterialization,
         mode: Option<ExecutionMode>,
         consume: StreamConsumeOpts,
         opts: ExecuteOptions,
@@ -870,7 +935,7 @@ impl ExecutionEngine {
                 federation,
                 execute_session,
                 async move {
-                    let mut stream = self.execute_stream(expr, cgs, cache, mode, consume, opts)?;
+                    let mut stream = self.execute_stream(expr, cgs, mat, mode, consume, opts)?;
                     collect_query_stream(&mut stream).await
                 },
             )
@@ -888,7 +953,7 @@ impl ExecutionEngine {
         &'a self,
         expr: &'a Expr,
         cgs: &'a CGS,
-        cache: &'a mut GraphCache,
+        mat: &'a mut SessionMaterialization,
         mode: Option<ExecutionMode>,
         consume: StreamConsumeOpts,
         opts: ExecuteOptions,
@@ -904,7 +969,7 @@ impl ExecutionEngine {
         let execution_mode = mode.unwrap_or(self.config.default_mode);
         let chain_consume = consume.clone();
         match expr {
-            Expr::Query(query) => self.query_to_stream(query, cgs, cache, execution_mode, consume),
+            Expr::Query(query) => self.query_to_stream(query, cgs, mat, execution_mode, consume),
             Expr::Page(_) => Err(RuntimeError::ConfigurationError {
                 message: "`page(pg#)` continuations are executed via `ExecutionEngine::execute_pagination_resume`"
                     .to_string(),
@@ -912,7 +977,7 @@ impl ExecutionEngine {
             Expr::Get(get) => {
                 let get = get.clone();
                 let stream = Box::pin(async_stream::try_stream! {
-                    let res = self.execute_get(&get, cgs, cache, execution_mode).await?;
+                    let res = self.execute_get(&get, cgs, mat, execution_mode).await?;
                     yield PageResult {
                         entities: res.entities,
                         page_index: 0,
@@ -926,7 +991,7 @@ impl ExecutionEngine {
             Expr::Create(create) => {
                 let create = create.clone();
                 let stream = Box::pin(async_stream::try_stream! {
-                    let res = self.execute_create(&create, cgs, cache, execution_mode).await?;
+                    let res = self.execute_create(&create, cgs, mat, execution_mode).await?;
                     yield PageResult {
                         entities: res.entities,
                         page_index: 0,
@@ -940,7 +1005,7 @@ impl ExecutionEngine {
             Expr::Delete(delete) => {
                 let delete = delete.clone();
                 let stream = Box::pin(async_stream::try_stream! {
-                    let res = self.execute_delete(&delete, cgs, cache, execution_mode).await?;
+                    let res = self.execute_delete(&delete, cgs, mat, execution_mode).await?;
                     yield PageResult {
                         entities: res.entities,
                         page_index: 0,
@@ -954,7 +1019,7 @@ impl ExecutionEngine {
             Expr::Invoke(invoke) => {
                 let invoke = invoke.clone();
                 let stream = Box::pin(async_stream::try_stream! {
-                    let res = self.execute_invoke(&invoke, cgs, cache, execution_mode).await?;
+                    let res = self.execute_invoke(&invoke, cgs, mat, execution_mode).await?;
                     yield PageResult {
                         entities: res.entities,
                         page_index: 0,
@@ -969,7 +1034,7 @@ impl ExecutionEngine {
                 let chain = chain.clone();
                 let stream = Box::pin(async_stream::try_stream! {
                     let res = self
-                        .execute_chain(&chain, cgs, cache, execution_mode, chain_consume, opts.clone())
+                        .execute_chain(&chain, cgs, mat, execution_mode, chain_consume, opts.clone())
                         .await?;
                     yield PageResult {
                         entities: res.entities,
@@ -992,7 +1057,7 @@ impl ExecutionEngine {
         &'a self,
         query: &'a QueryExpr,
         cgs: &'a CGS,
-        cache: &'a mut GraphCache,
+        mat: &'a mut SessionMaterialization,
         mode: ExecutionMode,
         consume: StreamConsumeOpts,
     ) -> Result<QueryStream<'a>, RuntimeError> {
@@ -1001,7 +1066,7 @@ impl ExecutionEngine {
                 let crosses = extract_cross_entity_predicates(pred, source_entity, cgs);
                 if !crosses.is_empty() {
                     return self
-                        .cross_entity_query_stream(query, &crosses, cgs, cache, mode, consume);
+                        .cross_entity_query_stream(query, &crosses, cgs, mat, mode, consume);
                 }
             }
         }
@@ -1038,7 +1103,7 @@ impl ExecutionEngine {
                     view_name.as_str(),
                     &query,
                     cgs,
-                    cache,
+                    mat,
                     mode,
                 )
                 .await?;
@@ -1056,7 +1121,7 @@ impl ExecutionEngine {
             return self.paginated_query_stream(
                 query.clone(),
                 cgs,
-                cache,
+                mat,
                 mode,
                 capability_template.clone(),
                 pconf.clone(),
@@ -1070,7 +1135,7 @@ impl ExecutionEngine {
         self.non_paginated_query_stream(
             query,
             cgs,
-            cache,
+            mat,
             mode,
             capability,
             capability_template,
@@ -1083,11 +1148,11 @@ impl ExecutionEngine {
         &self,
         query: &QueryExpr,
         cgs: &CGS,
-        cache: &mut GraphCache,
+        mat: &mut SessionMaterialization,
         mode: ExecutionMode,
         consume: StreamConsumeOpts,
     ) -> Result<ExecutionResult, RuntimeError> {
-        let mut stream = self.query_to_stream(query, cgs, cache, mode, consume)?;
+        let mut stream = self.query_to_stream(query, cgs, mat, mode, consume)?;
         collect_query_stream(&mut stream).await
     }
 
@@ -1097,7 +1162,7 @@ impl ExecutionEngine {
         query: &'a QueryExpr,
         crosses: &[plasm_core::cross_entity::CrossEntityPredicate],
         cgs: &'a CGS,
-        cache: &'a mut GraphCache,
+        mat: &'a mut SessionMaterialization,
         mode: ExecutionMode,
         consume: StreamConsumeOpts,
     ) -> Result<QueryStream<'a>, RuntimeError> {
@@ -1105,7 +1170,7 @@ impl ExecutionEngine {
         let crosses = crosses.to_vec();
         let stream = Box::pin(async_stream::try_stream! {
             let res = self
-                .execute_query_cross_entity(&query, &crosses, cgs, cache, mode, consume)
+                .execute_query_cross_entity(&query, &crosses, cgs, mat, mode, consume)
                 .await?;
             yield PageResult {
                 entities: res.entities,
@@ -1123,7 +1188,7 @@ impl ExecutionEngine {
         &'a self,
         query: &'a QueryExpr,
         cgs: &'a CGS,
-        cache: &'a mut GraphCache,
+        mat: &'a mut SessionMaterialization,
         mode: ExecutionMode,
         capability: &'a CapabilitySchema,
         capability_template: CapabilityTemplate,
@@ -1133,9 +1198,34 @@ impl ExecutionEngine {
         let query = query.clone();
         let capability = capability.clone();
         let stream = Box::pin(async_stream::try_stream! {
+            let cap_name = capability.name.as_str();
+            let snapshot = mat.snapshot();
+            let mut consult = CacheTelemetry::default();
+            if let Some(cached_entities) = ExecutionCacheConsult::decide_query(
+                &query,
+                cap_name,
+                &snapshot,
+                &mat.query_index,
+                cgs,
+                &mut consult,
+            ) {
+                let count = cached_entities.len();
+                let mut stats = ExecutionStats::from_telemetry(consult, 0);
+                stats.record_rows_materialized(count);
+                yield PageResult {
+                    entities: cached_entities,
+                    page_index: 0,
+                    has_more: false,
+                    pagination_resume: None,
+                    stats,
+                };
+                return;
+            }
+            ExecutionCacheConsult::record_query_network(&mut consult);
+
             let (response, source) = with_dispatch_entity(
                 Some(query.entity.as_str()),
-                self.execute_with_replay(&compiled, mode),
+                self.execute_with_replay(&compiled, mode, Some(mat)),
             )
             .await?;
             let (normalized, decoder) = match &capability_template {
@@ -1184,11 +1274,14 @@ impl ExecutionEngine {
                 decoded_entities,
                 response_completeness,
                 source,
-                cache,
+                mat,
                 1,
             )?;
+            res.stats.merge_telemetry(&consult);
+            res.stats.record_rows_materialized(res.count);
+            ExecutionCacheConsult::index_query_result(mat, &query, cap_name, &res.entities);
             let (entities, extra_net) = self
-                .hydrate_query_summaries(&query.entity, &res.entities, cgs, cache, mode, hydrate_run)
+                .hydrate_query_summaries(&query.entity, &res.entities, cgs, mat, mode, hydrate_run)
                 .await?;
             res.entities = entities;
             res.stats.network_requests += extra_net;
@@ -1223,7 +1316,7 @@ impl ExecutionEngine {
         &'a self,
         query: QueryExpr,
         cgs: &'a CGS,
-        cache: &'a mut GraphCache,
+        mat: &'a mut SessionMaterialization,
         mode: ExecutionMode,
         capability_template: CapabilityTemplate,
         pconf: PaginationConfig,
@@ -1323,7 +1416,7 @@ impl ExecutionEngine {
                         )?;
                         let (j, link, src) = with_dispatch_entity(
                             Some(query.entity.as_str()),
-                            self.execute_with_replay_full(&compiled, mode),
+                            self.execute_with_replay_full(&compiled, mode, Some(mat)),
                         )
                         .await?;
                         (j, link, src == ExecutionSource::Live)
@@ -1360,7 +1453,7 @@ impl ExecutionEngine {
                     .collect();
                 accumulated_total += page_cached.len();
 
-                cache.merge(page_cached.clone())?;
+                mat.merge(page_cached.clone())?;
 
                 let hydrate_run = query.hydrate.unwrap_or(self.config.hydrate);
                 let (hydrated, extra_net) = self
@@ -1368,7 +1461,7 @@ impl ExecutionEngine {
                         &query.entity,
                         &page_cached,
                         cgs,
-                        cache,
+                        mat,
                         mode,
                         hydrate_run,
                     )
@@ -1421,6 +1514,7 @@ impl ExecutionEngine {
                             network_requests: page_net,
                             cache_hits: 0,
                             cache_misses: page_cache_misses,
+                        ..Default::default()
                         },
                     };
                     break;
@@ -1436,6 +1530,7 @@ impl ExecutionEngine {
                             network_requests: page_net,
                             cache_hits: 0,
                             cache_misses: page_cache_misses,
+                        ..Default::default()
                         },
                     };
                     break;
@@ -1454,6 +1549,7 @@ impl ExecutionEngine {
                             network_requests: page_net,
                             cache_hits: 0,
                             cache_misses: page_cache_misses,
+                        ..Default::default()
                         },
                     };
                     break;
@@ -1469,6 +1565,7 @@ impl ExecutionEngine {
                             network_requests: page_net,
                             cache_hits: 0,
                             cache_misses: page_cache_misses,
+                        ..Default::default()
                         },
                     };
                     break;
@@ -1493,6 +1590,7 @@ impl ExecutionEngine {
                         network_requests: page_net,
                         cache_hits: 0,
                         cache_misses: page_cache_misses,
+                    ..Default::default()
                     },
                 };
 
@@ -1512,7 +1610,7 @@ impl ExecutionEngine {
         &'a self,
         resume: QueryPaginationResumeData,
         cgs: &'a CGS,
-        cache: &'a mut GraphCache,
+        mat: &'a mut SessionMaterialization,
         mode: Option<ExecutionMode>,
         consume: StreamConsumeOpts,
         opts: ExecuteOptions,
@@ -1536,7 +1634,7 @@ impl ExecutionEngine {
                 execute_session,
                 async move {
                     let mut stream = self.execute_pagination_resume_stream(
-                        resume, cgs, cache, mode, consume, &opts,
+                        resume, cgs, mat, mode, consume, &opts,
                     )?;
                     collect_query_stream(&mut stream).await
                 },
@@ -1555,7 +1653,7 @@ impl ExecutionEngine {
         &'a self,
         resume: QueryPaginationResumeData,
         cgs: &'a CGS,
-        cache: &'a mut GraphCache,
+        mat: &'a mut SessionMaterialization,
         mode: Option<ExecutionMode>,
         consume: StreamConsumeOpts,
         opts: &ExecuteOptions,
@@ -1589,7 +1687,7 @@ impl ExecutionEngine {
         self.paginated_query_stream(
             query,
             cgs,
-            cache,
+            mat,
             execution_mode,
             template,
             config,
@@ -1612,7 +1710,7 @@ impl ExecutionEngine {
         query: &'a QueryExpr,
         crosses: &'a [plasm_core::cross_entity::CrossEntityPredicate],
         cgs: &'a CGS,
-        cache: &'a mut GraphCache,
+        mat: &'a mut SessionMaterialization,
         mode: ExecutionMode,
         consume: StreamConsumeOpts,
     ) -> std::pin::Pin<
@@ -1644,7 +1742,7 @@ impl ExecutionEngine {
                             .execute_query(
                                 &foreign_query,
                                 cgs,
-                                cache,
+                                mat,
                                 mode,
                                 StreamConsumeOpts {
                                     fetch_all: true,
@@ -1678,6 +1776,7 @@ impl ExecutionEngine {
                                     network_requests: total_network,
                                     cache_hits: 0,
                                     cache_misses: 0,
+                                ..Default::default()
                                 },
                                 request_fingerprints: Vec::new(),
                             });
@@ -1721,7 +1820,7 @@ impl ExecutionEngine {
             rewritten_query.predicate = rewritten_pred;
 
             let mut result = self
-                .execute_query(&rewritten_query, cgs, cache, mode, consume)
+                .execute_query(&rewritten_query, cgs, mat, mode, consume)
                 .await?;
             result.stats.network_requests += total_network;
             if any_live {
@@ -1741,7 +1840,7 @@ impl ExecutionEngine {
                         };
 
                         let get = GetExpr::new(&cross.foreign_entity, &id);
-                        let get_result = self.execute_get(&get, cgs, cache, mode).await?;
+                        let get_result = self.execute_get(&get, cgs, mat, mode).await?;
                         result.stats.network_requests += get_result.stats.network_requests;
 
                         let Some(foreign) = get_result.entities.first() else {
@@ -1771,11 +1870,11 @@ impl ExecutionEngine {
         &self,
         get: &GetExpr,
         cgs: &CGS,
-        cache: &mut GraphCache,
+        mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
         // Satisfy from cache only when we already hold a detail payload.
-        if let Some(entity) = cache.get(&get.reference) {
+        if let Some(entity) = mat.get(&get.reference) {
             if entity.completeness == EntityCompleteness::Complete {
                 return Ok(ExecutionResult {
                     entities: vec![entity.clone()],
@@ -1789,6 +1888,7 @@ impl ExecutionEngine {
                         network_requests: 0,
                         cache_hits: 1,
                         cache_misses: 0,
+                    ..Default::default()
                     },
                     request_fingerprints: Vec::new(),
                 });
@@ -1796,9 +1896,9 @@ impl ExecutionEngine {
         }
 
         let (cached, source) = self
-            .fetch_get_decoded(get, cgs, mode, None, true, Some(cache))
+            .fetch_get_decoded(get, cgs, mode, None, true, Some(mat))
             .await?;
-        cache.insert(cached.clone())?;
+        mat.insert(cached.clone())?;
 
         Ok(ExecutionResult {
             entities: vec![cached],
@@ -1816,6 +1916,7 @@ impl ExecutionEngine {
                 },
                 cache_hits: 0,
                 cache_misses: 1,
+                ..Default::default()
             },
             request_fingerprints: Vec::new(),
         })
@@ -1826,10 +1927,10 @@ impl ExecutionEngine {
         &self,
         get: &GetExpr,
         cgs: &CGS,
-        cache: &mut GraphCache,
+        mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
-        if let Some(entity) = cache.get(&get.reference) {
+        if let Some(entity) = mat.get(&get.reference) {
             if entity.completeness == EntityCompleteness::Complete {
                 return Ok(ExecutionResult {
                     entities: vec![entity.clone()],
@@ -1843,6 +1944,7 @@ impl ExecutionEngine {
                         network_requests: 0,
                         cache_hits: 1,
                         cache_misses: 0,
+                    ..Default::default()
                     },
                     request_fingerprints: Vec::new(),
                 });
@@ -1871,10 +1973,10 @@ impl ExecutionEngine {
                 capability,
                 &capability_template,
                 true,
-                Some(cache),
+                Some(mat),
             )
             .await?;
-        cache.insert(cached.clone())?;
+        mat.insert(cached.clone())?;
 
         Ok(ExecutionResult {
             entities: vec![cached],
@@ -1892,6 +1994,7 @@ impl ExecutionEngine {
                 },
                 cache_hits: 0,
                 cache_misses: 1,
+                ..Default::default()
             },
             request_fingerprints: Vec::new(),
         })
@@ -1934,7 +2037,7 @@ impl ExecutionEngine {
 
         let aux_body = match with_dispatch_entity(
             entity_dispatch_hint,
-            self.execute_with_replay(&compiled, mode),
+            self.execute_with_replay(&compiled, mode, None),
         )
         .await
         {
@@ -1973,7 +2076,7 @@ impl ExecutionEngine {
         capability: &CapabilitySchema,
         capability_template: &CapabilityTemplate,
         inject_execute_session_env: bool,
-        cache: Option<&mut GraphCache>,
+        mut cache: Option<&mut SessionMaterialization>,
     ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
         let mut env = CmlEnv::new();
         if inject_execute_session_env {
@@ -2003,7 +2106,7 @@ impl ExecutionEngine {
         let compiled = compile_operation_dispatch(capability_template, &env)?;
         let (response, source) = with_dispatch_entity(
             Some(get.reference.entity_type.as_str()),
-            self.execute_with_replay(&compiled, mode),
+            self.execute_with_replay(&compiled, mode, cache.as_deref_mut()),
         )
         .await?;
         let response = self
@@ -2042,9 +2145,9 @@ impl ExecutionEngine {
             })?;
 
         let timestamp = current_timestamp();
-        let cached = if let Some(cache) = cache {
+        let cached = if let Some(session) = cache {
             cache_decoded_entity_tree(
-                cache,
+                session,
                 decoded.clone(),
                 timestamp,
                 EntityCompleteness::Complete,
@@ -2075,7 +2178,7 @@ impl ExecutionEngine {
         mode: ExecutionMode,
         hydrate_capability: Option<&str>,
         inject_execute_session_env: bool,
-        cache: Option<&mut GraphCache>,
+        cache: Option<&mut SessionMaterialization>,
     ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
         let capability: &CapabilitySchema = match hydrate_capability {
             Some(name) => {
@@ -2112,7 +2215,7 @@ impl ExecutionEngine {
         let capability_template = parse_capability_template(&capability.mapping.template)?;
 
         if let CapabilityTemplate::View(vt) = &capability_template {
-            let mut ephemeral = GraphCache::new();
+            let mut ephemeral = SessionMaterialization::new();
             let cache_ref = cache.unwrap_or(&mut ephemeral);
             let res = crate::view_execution::execute_view_get(
                 self,
@@ -2151,7 +2254,7 @@ impl ExecutionEngine {
         entity_type: &str,
         ordered_entities: &[CachedEntity],
         cgs: &CGS,
-        cache: &mut GraphCache,
+        mat: &mut SessionMaterialization,
         mode: ExecutionMode,
         hydrate_enabled: bool,
     ) -> Result<(Vec<CachedEntity>, usize), RuntimeError> {
@@ -2174,7 +2277,7 @@ impl ExecutionEngine {
             .iter()
             .filter(|r| {
                 !matches!(
-                    cache.get(r).map(|e| e.completeness),
+                    mat.get(r).map(|e| e.completeness),
                     Some(EntityCompleteness::Complete)
                 )
             })
@@ -2200,12 +2303,12 @@ impl ExecutionEngine {
             if source == ExecutionSource::Live {
                 extra_network += 1;
             }
-            cache.insert(entity)?;
+            mat.insert(entity)?;
         }
 
         let mut out = Vec::with_capacity(ordered_refs.len());
         for r in &ordered_refs {
-            let e = cache.get(r).ok_or_else(|| RuntimeError::CacheError {
+            let e = mat.get(r).ok_or_else(|| RuntimeError::CacheError {
                 message: format!("entity missing after query/hydrate: {}", r),
             })?;
             out.push(e.clone());
@@ -2218,7 +2321,7 @@ impl ExecutionEngine {
         &self,
         create: &plasm_core::CreateExpr,
         cgs: &CGS,
-        cache: &mut GraphCache,
+        mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
         let capability = cgs
@@ -2269,7 +2372,7 @@ impl ExecutionEngine {
             }
         })?;
 
-        apply_preflight_steps(self, capability, cgs, cache, mode, &mut env, None, true).await?;
+        apply_preflight_steps(self, capability, cgs, mat, mode, &mut env, None, true).await?;
 
         merge_plasm_execute_session_env(&mut env);
 
@@ -2326,6 +2429,7 @@ impl ExecutionEngine {
                         network_requests: 1,
                         cache_hits: 0,
                         cache_misses: count,
+                    ..Default::default()
                     },
                     request_fingerprints: Vec::new(),
                 })
@@ -2341,7 +2445,7 @@ impl ExecutionEngine {
         &self,
         delete: &plasm_core::DeleteExpr,
         cgs: &CGS,
-        cache: &mut GraphCache,
+        mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
         let capability = cgs
@@ -2386,7 +2490,7 @@ impl ExecutionEngine {
                 .await?;
 
                 // Remove from cache if present
-                cache.remove(&delete.target);
+                mat.remove(&delete.target);
 
                 Ok(ExecutionResult {
                     entities: vec![],
@@ -2400,6 +2504,7 @@ impl ExecutionEngine {
                         network_requests: 1,
                         cache_hits: 0,
                         cache_misses: 0,
+                    ..Default::default()
                     },
                     request_fingerprints: Vec::new(),
                 })
@@ -2415,7 +2520,7 @@ impl ExecutionEngine {
         &self,
         invoke: &InvokeExpr,
         cgs: &CGS,
-        cache: &mut GraphCache,
+        mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
         let capability = cgs
@@ -2478,7 +2583,7 @@ impl ExecutionEngine {
             self,
             capability,
             cgs,
-            cache,
+            mat,
             mode,
             &mut env,
             Some(PreflightInvoke { invoke }),
@@ -2534,7 +2639,7 @@ impl ExecutionEngine {
                 let count = entities.len();
 
                 if count > 0 {
-                    cache.merge(entities.clone())?;
+                    mat.merge(entities.clone())?;
                 }
 
                 Ok(ExecutionResult {
@@ -2549,6 +2654,7 @@ impl ExecutionEngine {
                         network_requests: 1,
                         cache_hits: 0,
                         cache_misses: count,
+                    ..Default::default()
                     },
                     request_fingerprints: Vec::new(),
                 })
@@ -2569,7 +2675,7 @@ impl ExecutionEngine {
         &self,
         chain: &plasm_core::ChainExpr,
         cgs: &CGS,
-        cache: &mut GraphCache,
+        mat: &mut SessionMaterialization,
         mode: ExecutionMode,
         consume: StreamConsumeOpts,
         opts: ExecuteOptions,
@@ -2578,7 +2684,7 @@ impl ExecutionEngine {
             .execute(
                 &chain.source,
                 cgs,
-                cache,
+                mat,
                 Some(mode),
                 consume.clone(),
                 opts.clone(),
@@ -2641,11 +2747,11 @@ impl ExecutionEngine {
         } else if let Some(rel) = source_entity.relations.get(chain.selector.as_str()) {
             match rel.cardinality {
                 plasm_core::Cardinality::Many => {
-                    let mat = rel
+                    let rel_mat = rel
                         .materialize
                         .as_ref()
                         .unwrap_or(&RelationMaterialization::Unavailable);
-                    match mat {
+                    match rel_mat {
                         RelationMaterialization::QueryScoped { capability, param } => {
                             return self
                                 .execute_chain_via_param(
@@ -2654,7 +2760,7 @@ impl ExecutionEngine {
                                     capability,
                                     param,
                                     cgs,
-                                    cache,
+                                    mat,
                                     mode,
                                 )
                                 .await;
@@ -2671,7 +2777,7 @@ impl ExecutionEngine {
                                     capability,
                                     bindings,
                                     cgs,
-                                    cache,
+                                    mat,
                                     mode,
                                 )
                                 .await;
@@ -2682,7 +2788,7 @@ impl ExecutionEngine {
                                     &source_result,
                                     rel,
                                     cgs,
-                                    cache,
+                                    mat,
                                     mode,
                                     &chain.step,
                                     consume.clone(),
@@ -2698,7 +2804,7 @@ impl ExecutionEngine {
                                         &source_result,
                                         rel,
                                         cgs,
-                                        cache,
+                                        mat,
                                         mode,
                                         &chain.step,
                                         consume.clone(),
@@ -2737,7 +2843,7 @@ impl ExecutionEngine {
                                     capability,
                                     bindings,
                                     cgs,
-                                    cache,
+                                    mat,
                                     mode,
                                 )
                                 .await;
@@ -2748,7 +2854,7 @@ impl ExecutionEngine {
                                     &source_result,
                                     rel,
                                     cgs,
-                                    cache,
+                                    mat,
                                     mode,
                                     &chain.step,
                                     consume.clone(),
@@ -2773,7 +2879,7 @@ impl ExecutionEngine {
                                         &source_result,
                                         rel,
                                         cgs,
-                                        cache,
+                                        mat,
                                         mode,
                                         &chain.step,
                                         consume.clone(),
@@ -2816,7 +2922,7 @@ impl ExecutionEngine {
                         .execute(
                             expr,
                             cgs,
-                            cache,
+                            mat,
                             Some(mode),
                             StreamConsumeOpts::default(),
                             opts.clone(),
@@ -2848,6 +2954,7 @@ impl ExecutionEngine {
                     network_requests: total_network,
                     cache_hits: total_cache_hits,
                     cache_misses: count,
+                ..Default::default()
                 },
                 request_fingerprints: Vec::new(),
             });
@@ -2872,7 +2979,7 @@ impl ExecutionEngine {
             .filter(|id| {
                 let r = Ref::new(&target_entity_name, id.as_str());
                 if matches!(
-                    cache.get(&r).map(|e| e.completeness),
+                    mat.get(&r).map(|e| e.completeness),
                     Some(crate::EntityCompleteness::Complete)
                 ) {
                     cached_hits += 1;
@@ -2907,7 +3014,7 @@ impl ExecutionEngine {
                     any_live = true;
                     extra_network += 1;
                 }
-                cache.insert(entity)?;
+                mat.insert(entity)?;
             }
         }
 
@@ -2916,7 +3023,7 @@ impl ExecutionEngine {
         for id_opt in &ref_ids {
             let Some(id) = id_opt else { continue };
             let r = Ref::new(&target_entity_name, id.as_str());
-            if let Some(e) = cache.get(&r) {
+            if let Some(e) = mat.get(&r) {
                 resolved.push(e.clone());
             }
         }
@@ -2938,6 +3045,7 @@ impl ExecutionEngine {
                 network_requests: source_result.stats.network_requests + extra_network,
                 cache_hits: source_result.stats.cache_hits + cached_hits,
                 cache_misses: count,
+            ..Default::default()
             },
             request_fingerprints: Vec::new(),
         })
@@ -2958,7 +3066,7 @@ impl ExecutionEngine {
         capability: &plasm_core::CapabilityName,
         via_param: &CapabilityParamName,
         cgs: &CGS,
-        cache: &mut GraphCache,
+        mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
         use futures_util::stream::{self, StreamExt};
@@ -3023,41 +3131,52 @@ impl ExecutionEngine {
         let concurrency = self.config.hydrate_concurrency.max(1);
         let mut all_entities: Vec<CachedEntity> = Vec::new();
         let mut total_network = source_result.stats.network_requests;
-        let mut total_cache_hits = source_result.stats.cache_hits;
+        let mut merged_stats = ExecutionStats::default();
         let mut any_live = source_result.source == ExecutionSource::Live;
 
-        // Execute one scoped query per source entity, concurrently.
-        // Each query uses its own local cache to avoid borrow conflicts; we merge
-        // the results into the caller's cache afterward.
-        let mut stream = stream::iter(queries.into_iter().map(|q| async move {
-            let mut local_cache = GraphCache::new();
-            self.execute_query(
-                &q,
-                cgs,
-                &mut local_cache,
-                mode,
-                StreamConsumeOpts::default(),
-            )
-            .await
+        let branch_seed = {
+            let snap = mat.snapshot();
+            SessionMaterialization {
+                graph: snap.into_graph(),
+                responses: mat.responses.clone(),
+                query_index: mat.query_index.clone(),
+            }
+        };
+
+        let mut stream = stream::iter(queries.into_iter().map(|q| {
+            let mut branch = branch_seed.clone();
+            async move {
+                self.execute_query(
+                    &q,
+                    cgs,
+                    &mut branch,
+                    mode,
+                    StreamConsumeOpts::default(),
+                )
+                .await
+                .map(|result| (result, branch))
+            }
         }))
         .buffer_unordered(concurrency);
 
         while let Some(res) = stream.next().await {
-            let result = res?;
+            let (result, branch) = res?;
+            mat.absorb_branch(branch)?;
             if result.source == ExecutionSource::Live {
                 any_live = true;
             }
             total_network += result.stats.network_requests;
-            total_cache_hits += result.stats.cache_hits;
+            merged_stats.merge_telemetry(&result.stats.cache);
+            merged_stats.cache_hits = merged_stats.cache.legacy_cache_hits();
+            merged_stats.cache_misses = merged_stats.cache.legacy_cache_misses();
             all_entities.extend(result.entities);
         }
 
-        cache.merge(all_entities.clone())?;
-        let entities = all_entities;
-
-        let count = entities.len();
+        let count = all_entities.len();
+        merged_stats.network_requests = total_network;
+        merged_stats.record_rows_materialized(count);
         Ok(ExecutionResult {
-            entities,
+            entities: all_entities,
             count,
             has_more: false,
             pagination_resume: None,
@@ -3067,12 +3186,7 @@ impl ExecutionEngine {
             } else {
                 ExecutionSource::Cache
             },
-            stats: ExecutionStats {
-                duration_ms: 0,
-                network_requests: total_network,
-                cache_hits: total_cache_hits,
-                cache_misses: count,
-            },
+            stats: merged_stats,
             request_fingerprints: Vec::new(),
         })
     }
@@ -3087,7 +3201,7 @@ impl ExecutionEngine {
         capability: &plasm_core::CapabilityName,
         bindings: &IndexMap<CapabilityParamName, EntityFieldName>,
         cgs: &CGS,
-        cache: &mut GraphCache,
+        mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
         use futures_util::stream::{self, StreamExt};
@@ -3156,34 +3270,50 @@ impl ExecutionEngine {
         let concurrency = self.config.hydrate_concurrency.max(1);
         let mut all_entities: Vec<CachedEntity> = Vec::new();
         let mut total_network = source_result.stats.network_requests;
-        let mut total_cache_hits = source_result.stats.cache_hits;
+        let mut merged_stats = ExecutionStats::default();
         let mut any_live = source_result.source == ExecutionSource::Live;
 
-        let mut stream = stream::iter(queries.into_iter().map(|q| async move {
-            let mut local_cache = GraphCache::new();
-            self.execute_query(
-                &q,
-                cgs,
-                &mut local_cache,
-                mode,
-                StreamConsumeOpts::default(),
-            )
-            .await
+        let branch_seed = {
+            let snap = mat.snapshot();
+            SessionMaterialization {
+                graph: snap.into_graph(),
+                responses: mat.responses.clone(),
+                query_index: mat.query_index.clone(),
+            }
+        };
+
+        let mut stream = stream::iter(queries.into_iter().map(|q| {
+            let mut branch = branch_seed.clone();
+            async move {
+                self.execute_query(
+                    &q,
+                    cgs,
+                    &mut branch,
+                    mode,
+                    StreamConsumeOpts::default(),
+                )
+                .await
+                .map(|result| (result, branch))
+            }
         }))
         .buffer_unordered(concurrency);
 
         while let Some(res) = stream.next().await {
-            let result = res?;
+            let (result, branch) = res?;
+            mat.absorb_branch(branch)?;
             if result.source == ExecutionSource::Live {
                 any_live = true;
             }
             total_network += result.stats.network_requests;
-            total_cache_hits += result.stats.cache_hits;
+            merged_stats.merge_telemetry(&result.stats.cache);
+            merged_stats.cache_hits = merged_stats.cache.legacy_cache_hits();
+            merged_stats.cache_misses = merged_stats.cache.legacy_cache_misses();
             all_entities.extend(result.entities);
         }
 
-        cache.merge(all_entities.clone())?;
         let count = all_entities.len();
+        merged_stats.network_requests = total_network;
+        merged_stats.record_rows_materialized(count);
         Ok(ExecutionResult {
             entities: all_entities,
             count,
@@ -3195,12 +3325,7 @@ impl ExecutionEngine {
             } else {
                 ExecutionSource::Cache
             },
-            stats: ExecutionStats {
-                duration_ms: 0,
-                network_requests: total_network,
-                cache_hits: total_cache_hits,
-                cache_misses: count,
-            },
+            stats: merged_stats,
             request_fingerprints: Vec::new(),
         })
     }
@@ -3215,7 +3340,7 @@ impl ExecutionEngine {
         capability: &plasm_core::CapabilityName,
         bindings: &IndexMap<CapabilityParamName, EntityFieldName>,
         cgs: &CGS,
-        cache: &mut GraphCache,
+        mat: &mut SessionMaterialization,
         mode: ExecutionMode,
     ) -> Result<ExecutionResult, RuntimeError> {
         use futures_util::stream::{self, StreamExt};
@@ -3299,7 +3424,7 @@ impl ExecutionEngine {
             all_entities.push(entity);
         }
 
-        cache.merge(all_entities.clone())?;
+        mat.merge(all_entities.clone())?;
         let count = all_entities.len();
         Ok(ExecutionResult {
             entities: all_entities,
@@ -3317,6 +3442,7 @@ impl ExecutionEngine {
                 network_requests: total_network + extra_network,
                 cache_hits: total_cache_hits + extra_cache_hits,
                 cache_misses: count,
+            ..Default::default()
             },
             request_fingerprints: Vec::new(),
         })
@@ -3329,7 +3455,7 @@ impl ExecutionEngine {
         source_result: &ExecutionResult,
         relation: &RelationSchema,
         cgs: &CGS,
-        cache: &mut GraphCache,
+        mat: &mut SessionMaterialization,
         mode: ExecutionMode,
         chain_step: &ChainStep,
         consume: StreamConsumeOpts,
@@ -3383,7 +3509,7 @@ impl ExecutionEngine {
                 while remaining > 0 {
                     remaining -= 1;
                     let res = self
-                        .execute(expr, cgs, cache, Some(mode), consume.clone(), opts.clone())
+                        .execute(expr, cgs, mat, Some(mode), consume.clone(), opts.clone())
                         .await?;
                     if res.source == ExecutionSource::Live {
                         any_live = true;
@@ -3411,6 +3537,7 @@ impl ExecutionEngine {
                     network_requests: total_network,
                     cache_hits: total_cache_hits,
                     cache_misses: count,
+                ..Default::default()
                 },
                 request_fingerprints: Vec::new(),
             });
@@ -3428,7 +3555,7 @@ impl ExecutionEngine {
             .iter()
             .filter(|r| {
                 if matches!(
-                    cache.get(r).map(|e| e.completeness),
+                    mat.get(r).map(|e| e.completeness),
                     Some(crate::EntityCompleteness::Complete)
                 ) {
                     cached_hits += 1;
@@ -3460,13 +3587,13 @@ impl ExecutionEngine {
                     any_live = true;
                     extra_network += 1;
                 }
-                cache.insert(entity)?;
+                mat.insert(entity)?;
             }
         }
 
         let mut resolved = Vec::with_capacity(ordered_refs.len());
         for r in &ordered_refs {
-            if let Some(e) = cache.get(r) {
+            if let Some(e) = mat.get(r) {
                 resolved.push(e.clone());
             }
         }
@@ -3488,6 +3615,7 @@ impl ExecutionEngine {
                 network_requests: source_result.stats.network_requests + extra_network,
                 cache_hits: source_result.stats.cache_hits + cached_hits,
                 cache_misses: count,
+            ..Default::default()
             },
             request_fingerprints: Vec::new(),
         })
@@ -3513,7 +3641,7 @@ impl ExecutionEngine {
         entity_type: &str,
         projection: &[String],
         cgs: &CGS,
-        cache: &mut GraphCache,
+        mat: &mut SessionMaterialization,
         mode: ExecutionMode,
         opts: ExecuteOptions,
     ) -> Result<Vec<CachedEntity>, RuntimeError> {
@@ -3606,31 +3734,39 @@ impl ExecutionEngine {
                             })
                             .collect();
 
+                        let branch_seed = {
+                            let snap = mat.snapshot();
+                            SessionMaterialization {
+                                graph: snap.into_graph(),
+                                responses: mat.responses.clone(),
+                                query_index: mat.query_index.clone(),
+                            }
+                        };
+
                         let mut stream = stream::iter(exprs.into_iter().map(|(_id, expr)| {
+                            let mut branch = branch_seed.clone();
                             async move {
-                                let mut local_cache = GraphCache::new();
-                                // Use a minimal execute path to avoid infinite projection loops.
-                                match &expr {
+                                let result = match &expr {
                                     Expr::Get(g) => {
-                                        self.execute_get(g, cgs, &mut local_cache, mode).await
+                                        self.execute_get(g, cgs, &mut branch, mode).await
                                     }
                                     Expr::Invoke(inv) => {
-                                        self.execute_invoke(inv, cgs, &mut local_cache, mode).await
+                                        self.execute_invoke(inv, cgs, &mut branch, mode).await
                                     }
                                     _ => Err(RuntimeError::ConfigurationError {
                                         message: "auto_resolve_projection: unexpected expr type"
                                             .into(),
                                     }),
-                                }
+                                };
+                                result.map(|r| (r, branch))
                             }
                         }))
                         .buffer_unordered(concurrency);
 
                         while let Some(res) = stream.next().await {
                             match res {
-                                Ok(result) => {
-                                    // Merge the enriched entities into the main cache (additive merge).
-                                    cache.merge(result.entities)?;
+                                Ok((_result, branch)) => {
+                                    mat.absorb_branch(branch)?;
                                 }
                                 Err(e) => {
                                     // Best-effort: log the error but don't fail the whole resolution.
@@ -3653,7 +3789,7 @@ impl ExecutionEngine {
                 // Re-read the (now-enriched) entities from cache.
                 let refreshed: Vec<CachedEntity> = entities
                     .iter()
-                    .filter_map(|e| cache.get(&e.reference).cloned())
+                    .filter_map(|e| mat.get(&e.reference).cloned())
                     .collect();
 
                 Ok(refreshed)
@@ -3685,7 +3821,7 @@ impl ExecutionEngine {
 }
 
 fn cache_decoded_entity_tree(
-    cache: &mut GraphCache,
+    mat: &mut SessionMaterialization,
     decoded: plasm_compile::DecodedEntity,
     timestamp: u64,
     completeness: EntityCompleteness,
@@ -3698,7 +3834,7 @@ fn cache_decoded_entity_tree(
             timestamp,
             EntityCompleteness::Complete,
         );
-        cache.insert(child)?;
+        mat.insert(child)?;
     }
     let cached = CachedEntity::from_decoded(
         decoded.reference,
@@ -3707,7 +3843,7 @@ fn cache_decoded_entity_tree(
         timestamp,
         completeness,
     );
-    cache.insert(cached.clone())?;
+    mat.insert(cached.clone())?;
     Ok(cached)
 }
 
@@ -3715,21 +3851,23 @@ fn query_result_merge_cache(
     decoded_entities: Vec<plasm_compile::DecodedEntity>,
     completeness: EntityCompleteness,
     source: ExecutionSource,
-    cache: &mut GraphCache,
+    mat: &mut SessionMaterialization,
     network_requests: usize,
 ) -> Result<ExecutionResult, RuntimeError> {
     let timestamp = current_timestamp();
     let mut cached_entities = Vec::new();
     for decoded in decoded_entities {
         cached_entities.push(cache_decoded_entity_tree(
-            cache,
+            mat,
             decoded,
             timestamp,
             completeness,
         )?);
     }
     let count = cached_entities.len();
-    cache.merge(cached_entities.clone())?;
+    mat.merge(cached_entities.clone())?;
+    let mut stats = ExecutionStats::from_telemetry(CacheTelemetry::default(), network_requests);
+    stats.record_rows_materialized(count);
     Ok(ExecutionResult {
         entities: cached_entities,
         count,
@@ -3737,12 +3875,7 @@ fn query_result_merge_cache(
         pagination_resume: None,
         paging_handle: None,
         source,
-        stats: ExecutionStats {
-            duration_ms: 0,
-            network_requests,
-            cache_hits: 0,
-            cache_misses: count,
-        },
+        stats,
         request_fingerprints: Vec::new(),
     })
 }
@@ -5528,7 +5661,7 @@ pub trait ExprExecutor: Send + Sync {
         &'a self,
         expr: &'a Expr,
         cgs: &'a CGS,
-        cache: &'a mut GraphCache,
+        mat: &'a mut SessionMaterialization,
         mode: Option<ExecutionMode>,
         consume: StreamConsumeOpts,
         opts: ExecuteOptions,
@@ -5542,14 +5675,14 @@ impl ExprExecutor for ExecutionEngine {
         &'a self,
         expr: &'a Expr,
         cgs: &'a CGS,
-        cache: &'a mut GraphCache,
+        mat: &'a mut SessionMaterialization,
         mode: Option<ExecutionMode>,
         consume: StreamConsumeOpts,
         opts: ExecuteOptions,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<ExecutionResult, RuntimeError>> + Send + 'a>,
     > {
-        ExecutionEngine::execute(self, expr, cgs, cache, mode, consume, opts)
+        ExecutionEngine::execute(self, expr, cgs, mat, mode, consume, opts)
     }
 }
 
@@ -6035,7 +6168,7 @@ mod tests {
         let config = ExecutionConfig::default();
         let engine = ExecutionEngine::new(config).unwrap();
         let cgs = create_test_cgs();
-        let mut cache = GraphCache::new();
+        let mut cache = SessionMaterialization::new();
 
         // Create an invalid query (non-existent entity)
         let query = QueryExpr::all("NonExistentEntity");
@@ -6062,7 +6195,7 @@ mod tests {
     async fn test_execute_get_rejects_domain_placeholder_id() {
         let engine = ExecutionEngine::new(ExecutionConfig::default()).unwrap();
         let cgs = create_test_cgs();
-        let mut cache = GraphCache::new();
+        let mut cache = SessionMaterialization::new();
         let expr = Expr::Get(GetExpr::new("Account", "$"));
         let res = engine
             .execute(
@@ -6105,6 +6238,7 @@ mod tests {
                 network_requests: 1,
                 cache_hits: 0,
                 cache_misses: 0,
+            ..Default::default()
             },
             request_fingerprints: Vec::new(),
         };
@@ -6129,6 +6263,7 @@ mod tests {
                 network_requests: 0,
                 cache_hits: 0,
                 cache_misses: 0,
+            ..Default::default()
             },
             request_fingerprints: Vec::new(),
         };
@@ -6412,7 +6547,7 @@ mod tests {
         };
         let engine = ExecutionEngine::new_with_transport(config, Arc::new(transport), None);
         let cgs = create_test_cgs();
-        let mut cache = GraphCache::new();
+        let mut cache = SessionMaterialization::new();
         let expr = Expr::Get(GetExpr::new("Account", "1"));
         engine
             .execute(
@@ -6483,7 +6618,7 @@ mod tests {
         let override_resolver = Arc::new(crate::AuthResolver::from_env(scheme));
         let engine = ExecutionEngine::new_with_transport(config, Arc::new(transport), None);
         let cgs = create_test_cgs();
-        let mut cache = GraphCache::new();
+        let mut cache = SessionMaterialization::new();
         let expr = Expr::Get(GetExpr::new("Account", "1"));
         engine
             .execute(

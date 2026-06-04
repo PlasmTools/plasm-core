@@ -13,7 +13,8 @@ use plasm_core::schema::{
 };
 use plasm_core::{CapabilityKind, GetExpr, Predicate, QueryExpr, Ref, TypedFieldValue, Value, CGS};
 
-use crate::cache::{CachedEntity, EntityCompleteness, GraphCache};
+use crate::cache::{CachedEntity, EntityCompleteness};
+use crate::materialization::SessionMaterialization;
 use crate::execution::{
     ExecutionEngine, ExecutionMode, ExecutionResult, ExecutionSource, ExecutionStats,
     StreamConsumeOpts,
@@ -605,7 +606,7 @@ async fn execute_view_scoped(
     view_name: &str,
     mut scope: IndexMap<String, Value>,
     cgs: &CGS,
-    cache: &mut GraphCache,
+    cache: &mut SessionMaterialization,
     mode: ExecutionMode,
 ) -> Result<ExecutionResult, RuntimeError> {
     let Some(view) = cgs.views.get(view_name) else {
@@ -632,6 +633,7 @@ async fn execute_view_scoped(
         network_requests: 0,
         cache_hits: 0,
         cache_misses: 0,
+        ..Default::default()
     };
     let mut fingerprints: Vec<String> = Vec::new();
     let mut any_live = false;
@@ -751,7 +753,7 @@ pub(crate) async fn execute_view_query(
     view_name: &str,
     query: &QueryExpr,
     cgs: &CGS,
-    cache: &mut GraphCache,
+    cache: &mut SessionMaterialization,
     mode: ExecutionMode,
 ) -> Result<ExecutionResult, RuntimeError> {
     let Some(view) = cgs.views.get(view_name) else {
@@ -790,7 +792,7 @@ pub(crate) async fn execute_view_get(
     view_name: &str,
     get: &GetExpr,
     cgs: &CGS,
-    cache: &mut GraphCache,
+    cache: &mut SessionMaterialization,
     mode: ExecutionMode,
 ) -> Result<ExecutionResult, RuntimeError> {
     let Some(view) = cgs.views.get(view_name) else {

@@ -16,7 +16,8 @@ mod common;
 use common::hermit;
 use plasm_core::{Expr, Predicate, QueryExpr, QueryPagination, CGS};
 use plasm_runtime::{
-    ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, GraphCache, StreamConsumeOpts,
+    ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, SessionMaterialization,
+    StreamConsumeOpts,
 };
 use std::path::Path;
 
@@ -108,7 +109,7 @@ async fn query_pets_through_execution_engine() {
     }
     let url = hermit_base_url().await;
     let engine = make_engine(url);
-    let mut cache = GraphCache::new();
+    let mut cache = SessionMaterialization::new();
 
     // List response already carries full pet rows; avoid default hydration so this stays a
     // single-request smoke test (parallel GETs against the shared hermit instance are flaky).
@@ -152,7 +153,7 @@ async fn query_pets_with_hydrate_resolves_names() {
         ..Default::default()
     };
     let engine = ExecutionEngine::new(config).unwrap();
-    let mut cache = GraphCache::new();
+    let mut cache = SessionMaterialization::new();
 
     let query = QueryExpr::filtered("Pet", Predicate::eq("status", "available"));
     let result = engine
@@ -189,7 +190,7 @@ async fn get_pet_by_id_through_engine() {
     }
     let url = hermit_base_url().await;
     let engine = make_engine(url);
-    let mut cache = GraphCache::new();
+    let mut cache = SessionMaterialization::new();
 
     let get = plasm_core::Expr::Get(plasm_core::GetExpr::new("Pet", "42"));
     let result = engine
@@ -219,7 +220,7 @@ async fn get_order_through_engine() {
     }
     let url = hermit_base_url().await;
     let engine = make_engine(url);
-    let mut cache = GraphCache::new();
+    let mut cache = SessionMaterialization::new();
 
     let get = plasm_core::Expr::Get(plasm_core::GetExpr::new("Order", "99"));
     let result = engine
@@ -252,7 +253,7 @@ async fn get_user_by_username() {
     }
     let url = hermit_base_url().await;
     let engine = make_engine(url);
-    let mut cache = GraphCache::new();
+    let mut cache = SessionMaterialization::new();
 
     let get = plasm_core::Expr::Get(plasm_core::GetExpr::new("User", "testuser"));
     let result = engine
@@ -322,7 +323,7 @@ async fn pokeapi_berry_query_paginates_with_cml() {
     let url = pokeapi_hermit_base_url().await;
     let cgs = load_pokeapi_mini_cgs();
     let engine = make_engine(url);
-    let mut cache = GraphCache::new();
+    let mut cache = SessionMaterialization::new();
 
     let mut query = QueryExpr::all("Berry");
     query.pagination = Some(QueryPagination::default());
@@ -363,7 +364,7 @@ async fn cache_populated_after_get() {
     }
     let url = hermit_base_url().await;
     let engine = make_engine(url);
-    let mut cache = GraphCache::new();
+    let mut cache = SessionMaterialization::new();
 
     assert_eq!(cache.stats().total_entities, 0);
 
@@ -386,4 +387,57 @@ async fn cache_populated_after_get() {
     );
     let ref_ = plasm_core::Ref::new("Pet", "7");
     assert!(cache.contains(&ref_), "Cache should contain Pet:7");
+}
+
+#[tokio::test]
+async fn scoped_query_second_run_reuses_session_response_store() {
+    let Some(cgs) = load_petstore_cgs() else {
+        return;
+    };
+    if find_spec_path().is_none() {
+        return;
+    }
+    let url = hermit_base_url().await;
+    let engine = make_engine(url);
+    let mut cache = SessionMaterialization::new();
+
+    let mut query = QueryExpr::filtered("Pet", Predicate::eq("status", "available"));
+    query.hydrate = Some(false);
+    let expr = Expr::Query(query.clone());
+
+    let first = engine
+        .execute(
+            &expr,
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts::default(),
+            ExecuteOptions::default(),
+        )
+        .await
+        .expect("first query");
+    assert!(
+        first.stats.network_requests >= 1,
+        "first run should hit Hermit"
+    );
+
+    let second = engine
+        .execute(
+            &Expr::Query(query),
+            &cgs,
+            &mut cache,
+            Some(ExecutionMode::Live),
+            StreamConsumeOpts::default(),
+            ExecuteOptions::default(),
+        )
+        .await
+        .expect("second query");
+    assert_eq!(
+        second.stats.network_requests, 0,
+        "second identical query should consult session response store, not HTTP"
+    );
+    assert!(
+        second.stats.cache.response_store_hits >= 1 || second.stats.cache_hits >= 1,
+        "expected response-store or legacy cache hit telemetry on second run"
+    );
 }

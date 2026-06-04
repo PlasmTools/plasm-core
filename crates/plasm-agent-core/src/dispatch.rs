@@ -8,7 +8,7 @@ use plasm_core::{
     CapabilityKind, ChainExpr, CreateExpr, DeleteExpr, EntityDef, EntityKey, Expr, FieldType,
     GetExpr, InvokeExpr, QueryExpr, QueryPagination, Ref, Value, CGS,
 };
-use plasm_runtime::{ExecuteOptions, ExecutionMode, ExprExecutor, GraphCache, StreamConsumeOpts};
+use plasm_runtime::{ExecuteOptions, ExecutionMode, ExprExecutor, SessionMaterialization, StreamConsumeOpts};
 use tracing::Instrument;
 
 use crate::error::AgentError;
@@ -24,7 +24,7 @@ pub async fn dispatch<E: ExprExecutor>(
     matches: &ArgMatches,
     cgs: &CGS,
     engine: &E,
-    cache: &mut GraphCache,
+    cache: &mut SessionMaterialization,
     mode: ExecutionMode,
     output_format: OutputFormat,
 ) -> Result<(), AgentError> {

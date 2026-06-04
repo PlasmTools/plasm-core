@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.78] - 2026-06-04
+
+### Added
+
+- **Runtime session cache cutover:** `SessionMaterialization` facade (entity graph + live `ResponseStore` by `RequestFingerprint` + `QueryIndex` for exact scoped queries); consult-before-HTTP in query/GET/replay paths; fanout branches fork session snapshots and merge via `absorb_branch()` instead of empty local caches.
+- **`CacheTelemetry`:** honest consult counters (`entity_graph_*`, `response_store_*`, `query_satisfied_from_graph`, `rows_materialized`) alongside legacy `cache_hits` / `cache_misses` on traces.
+
+### Changed
+
+- **Plan relation fanout:** `materialize_relation_scoped_fanout` holds one session graph lock and reuses materialization across rows (fewer redundant pipeline re-entries).
+
+### Fixed
+
+- **Trace cache KPIs:** stop treating output row counts as cache misses on query/chain merge paths.
+
 ## [0.1.77] - 2026-05-30
 
 ### Changed

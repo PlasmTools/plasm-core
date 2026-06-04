@@ -13,7 +13,7 @@ use crate::plasm_plan::ValidatedPlan;
 use crate::plasm_plan_run::{PlasmPlanRunHooks, PlasmPlanRunResult};
 use crate::server_state::PlasmHostState;
 use plasm_core::expr_parser::ParsedExpr;
-use plasm_runtime::GraphCache;
+use plasm_runtime::SessionMaterialization;
 
 /// What the caller wants — replaces scattered `plan_only` / `run: bool` flags.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,7 +62,7 @@ impl ExecutePipeline {
         line: &str,
         sess: &ExecuteSession,
         st: &PlasmHostState,
-        cache: &mut GraphCache,
+        cache: &mut SessionMaterialization,
         session_id: &str,
         parsed: ParsedExpr,
         trace: Option<&crate::trace_sink_emit::PlasmTraceContext>,

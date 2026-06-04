@@ -5,7 +5,7 @@ mod common;
 use alloy::primitives::{Address, U256};
 use common::evm::{make_engine, EvmTestContext, ANVIL_ADDRESS_1, ANVIL_ADDRESS_2};
 use plasm_core::{loader, Expr, GetExpr, QueryExpr, QueryPagination};
-use plasm_runtime::{ExecuteOptions, ExecutionMode, GraphCache, StreamConsumeOpts};
+use plasm_runtime::{ExecuteOptions, ExecutionMode, SessionMaterialization, StreamConsumeOpts};
 
 #[tokio::test]
 async fn evm_call_get_token_balance_works() {
@@ -16,7 +16,7 @@ async fn evm_call_get_token_balance_works() {
     let schema_dir = ctx.write_schema_dir(token);
     let cgs = loader::load_schema_dir(schema_dir.path()).unwrap();
     let engine = make_engine(&ctx.endpoint);
-    let mut cache = GraphCache::new();
+    let mut cache = SessionMaterialization::new();
 
     let result = engine
         .execute(
@@ -54,7 +54,7 @@ async fn evm_logs_query_transfer_events_works() {
     let cgs = loader::load_schema_dir(schema_dir.path()).unwrap();
     let engine = make_engine(&ctx.endpoint);
     let latest_block = ctx.latest_block().await;
-    let mut cache = GraphCache::new();
+    let mut cache = SessionMaterialization::new();
 
     let mut query = QueryExpr::all("Transfer");
     query.pagination = Some(QueryPagination {
@@ -96,7 +96,7 @@ async fn evm_logs_block_range_pagination_works() {
     let cgs = loader::load_schema_dir(schema_dir.path()).unwrap();
     let engine = make_engine(&ctx.endpoint);
     let latest_block = ctx.latest_block().await;
-    let mut cache = GraphCache::new();
+    let mut cache = SessionMaterialization::new();
 
     let mut query = QueryExpr::all("Transfer");
     query.pagination = Some(QueryPagination {

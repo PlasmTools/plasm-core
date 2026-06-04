@@ -27,7 +27,7 @@ use plasm_core::{
 use plasm_runtime::{
     auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
     CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecuteSessionMaterial, ExecutionResult,
-    ExecutionSource, ExecutionStats, GraphCache, QueryPaginationResumeData, RuntimeError,
+    ExecutionSource, ExecutionStats, QueryPaginationResumeData, RuntimeError, SessionMaterialization,
     StreamConsumeOpts,
 };
 use serde::{Deserialize, Serialize};
@@ -1965,13 +1965,14 @@ fn plasm_line_trace_meta(
         }
     }
     let repl_post = format!(
-        "{} results · {:?} · {}ms · net {} · cache {}/{}",
+        "{} results · {:?} · {}ms · net {} · cache {}/{} · rows {}",
         result.count,
         result.source,
         result.stats.duration_ms,
         result.stats.network_requests,
         result.stats.cache_hits,
-        result.stats.cache_misses
+        result.stats.cache_misses,
+        result.stats.cache.rows_materialized
     );
     PlasmLineTraceMeta {
         source_expression: line.to_string(),
@@ -2564,6 +2565,7 @@ fn synthetic_page_result(
             network_requests: 0,
             cache_hits: 0,
             cache_misses: 0,
+        ..Default::default()
         },
         request_fingerprints,
     }
@@ -2737,6 +2739,7 @@ async fn try_proof_document_share_bind(
             network_requests: 0,
             cache_hits: 0,
             cache_misses: 0,
+        ..Default::default()
         },
         request_fingerprints: Vec::new(),
     }))
@@ -2747,7 +2750,7 @@ pub(crate) async fn run_parsed_plasm_line(
     line: &str,
     sess: &ExecuteSession,
     st: &PlasmHostState,
-    cache: &mut GraphCache,
+    cache: &mut SessionMaterialization,
     session_id: &str,
     parsed: ParsedExpr,
     trace: Option<&PlasmTraceContext>,
@@ -4364,6 +4367,7 @@ mod tests {
                         network_requests: 0,
                         cache_hits: 0,
                         cache_misses: 0,
+                    ..Default::default()
                     },
                     request_fingerprints: vec![],
                 },

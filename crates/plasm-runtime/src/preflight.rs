@@ -1,7 +1,8 @@
 //! Capability **preflight** orchestration (ordered steps before CML compile).
 
 use crate::execution::{ExecutionEngine, ExecutionMode, StreamConsumeOpts};
-use crate::{CachedEntity, EntityCompleteness, GraphCache, RuntimeError};
+use crate::{CachedEntity, EntityCompleteness, RuntimeError};
+use crate::materialization::SessionMaterialization;
 use indexmap::IndexMap;
 use plasm_compile::CmlEnv;
 use plasm_core::preflight::{
@@ -33,7 +34,7 @@ pub(crate) async fn apply_preflight_steps(
     engine: &ExecutionEngine,
     capability: &CapabilitySchema,
     cgs: &CGS,
-    cache: &mut GraphCache,
+    cache: &mut SessionMaterialization,
     mode: ExecutionMode,
     env: &mut CmlEnv,
     invoke: Option<PreflightInvoke<'_>>,
@@ -120,7 +121,7 @@ fn env_param_present(env: &CmlEnv, name: &str) -> bool {
 async fn hydrate_invoke_target(
     engine: &ExecutionEngine,
     cgs: &CGS,
-    cache: &mut GraphCache,
+    cache: &mut SessionMaterialization,
     mode: ExecutionMode,
     env: &mut CmlEnv,
     invoke: &InvokeExpr,
@@ -158,7 +159,7 @@ async fn hydrate_invoke_target(
 async fn hydrate_entity_ref_param(
     engine: &ExecutionEngine,
     cgs: &CGS,
-    cache: &mut GraphCache,
+    cache: &mut SessionMaterialization,
     mode: ExecutionMode,
     env: &mut CmlEnv,
     capability: &CapabilitySchema,
@@ -240,7 +241,7 @@ fn ref_from_param_env(env: &CmlEnv, ent: &EntityDef, param: &str) -> Result<Ref,
 async fn query_pick_step(
     engine: &ExecutionEngine,
     cgs: &CGS,
-    cache: &mut GraphCache,
+    cache: &mut SessionMaterialization,
     mode: ExecutionMode,
     env: &mut CmlEnv,
     parent_cap: &CapabilitySchema,
@@ -396,7 +397,7 @@ fn value_to_match_string(v: &Value) -> String {
 async fn label_ids_delta_step(
     engine: &ExecutionEngine,
     cgs: &CGS,
-    cache: &mut GraphCache,
+    cache: &mut SessionMaterialization,
     mode: ExecutionMode,
     env: &mut CmlEnv,
     add_when: &str,
@@ -460,7 +461,7 @@ async fn label_ids_delta_step(
 async fn resolve_label_id_by_name(
     engine: &ExecutionEngine,
     cgs: &CGS,
-    cache: &mut GraphCache,
+    cache: &mut SessionMaterialization,
     mode: ExecutionMode,
     lookup_cap: &CapabilitySchema,
     name: &str,

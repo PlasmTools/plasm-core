@@ -27,7 +27,7 @@ use crate::expr_display::expr_display_resolved;
 use crate::expr_display::expr_display_resolved_federated;
 use crate::http_execute::{
     archive_plasm_result_snapshot, execute_plasm_parsed_expr, publish_plasm_result_steps,
-    trace_record_plasm_line, PublishedResultStep,
+    run_parsed_plasm_line, trace_record_plasm_line, PublishedResultStep,
 };
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::plan_dry_display;
@@ -2402,6 +2402,7 @@ async fn materialize_synthetic_node(
             network_requests: 0,
             cache_hits: 0,
             cache_misses: 0,
+        ..Default::default()
         },
         request_fingerprints: request_fingerprints.clone(),
     };
@@ -2581,6 +2582,7 @@ async fn try_materialize_from_parent_get_relation(
             network_requests: 0,
             cache_hits: 0,
             cache_misses: 0,
+        ..Default::default()
         },
         request_fingerprints: request_fingerprints.clone(),
     };
@@ -2931,6 +2933,7 @@ async fn materialize_relation_scoped_fanout(
         network_requests: 0,
         cache_hits: 0,
         cache_misses: 0,
+    ..Default::default()
     };
     let mut source = ExecutionSource::Cache;
     let base_display = relation
@@ -2940,6 +2943,7 @@ async fn materialize_relation_scoped_fanout(
         .clone()
         .unwrap_or_else(|| format!("plan.relation({})", relation.id.as_str()));
 
+    let mut cache = scoped_es.graph_cache.lock().await;
     for (row_index, source_row) in source_rows.iter().enumerate() {
         let row_identity = source_mat
             .row_identities
@@ -2965,17 +2969,37 @@ async fn materialize_relation_scoped_fanout(
             .and_then(|base| base.checked_add(row_index))
             .unwrap_or(node_index);
         let expr_label = format!("{base_display} [row {row_index}]");
-        let (parsed, result, _artifact) = execute_plasm_parsed_expr(
-            st,
+        crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(
             &scoped_es,
-            session_id,
             &expr_label,
+            &parsed,
+        )
+        .map_err(|e| e.to_string())?;
+        let (parsed, result, _artifact) = run_parsed_plasm_line(
+            &expr_label,
+            &scoped_es,
+            st,
+            &mut cache,
+            session_id,
             parsed,
             trace,
             trace_line_index as i64,
             None,
+            Some(plasm_core::PreflightToken::VERIFIED),
         )
-        .await?;
+        .await
+        .map_err(|e| match e {
+            crate::http_execute::RunLineError::Parse(d)
+            | crate::http_execute::RunLineError::Normalize(d)
+            | crate::http_execute::RunLineError::Projection(d) => d,
+            crate::http_execute::RunLineError::Runtime(e, src) => format!("{e}\nsource expression: {src}"),
+            crate::http_execute::RunLineError::ArtifactSerialization(e) => {
+                format!("artifact serialization failed: {e}")
+            }
+            crate::http_execute::RunLineError::ArtifactPersist(d) => {
+                format!("run artifact persist failed: {d}")
+            }
+        })?;
         if let Some(sink) = sink {
             trace_record_plasm_line(
                 sink,
@@ -2992,8 +3016,9 @@ async fn materialize_relation_scoped_fanout(
         stats.network_requests = stats
             .network_requests
             .saturating_add(result.stats.network_requests);
-        stats.cache_hits = stats.cache_hits.saturating_add(result.stats.cache_hits);
-        stats.cache_misses = stats.cache_misses.saturating_add(result.stats.cache_misses);
+        stats.merge_telemetry(&result.stats.cache);
+        stats.cache_hits = stats.cache.legacy_cache_hits();
+        stats.cache_misses = stats.cache.legacy_cache_misses();
         request_fingerprints.extend(result.request_fingerprints);
         entities.extend(result.entities);
     }
@@ -3402,6 +3427,7 @@ async fn materialize_for_each_node(
         network_requests: 0,
         cache_hits: 0,
         cache_misses: 0,
+    ..Default::default()
     };
     let mut source = ExecutionSource::Cache;
     let mut displays = Vec::new();
@@ -4171,6 +4197,7 @@ mod tests {
                         network_requests: 0,
                         cache_hits: 0,
                         cache_misses: 0,
+                    ..Default::default()
                     },
                     request_fingerprints: vec![],
                 },
@@ -5481,6 +5508,7 @@ mod tests {
                         network_requests: 0,
                         cache_hits: 0,
                         cache_misses: 0,
+                    ..Default::default()
                     },
                     request_fingerprints: vec![],
                 },

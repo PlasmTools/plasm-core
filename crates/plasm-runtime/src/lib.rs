@@ -113,6 +113,8 @@ pub mod mockserver;
 pub mod oauth_client;
 pub mod oauth_token_debug;
 pub mod preflight;
+pub mod materialization;
+pub mod query_index;
 pub mod replay;
 pub mod runtime_error_render;
 pub mod session_graph_cache;
@@ -153,6 +155,11 @@ pub use oauth_client::{
     OAuthDeviceAuthorizationResponse, OAuthDeviceTokenPoll,
 };
 pub use oauth_token_debug::TokenEndpointResponseSummary;
+pub use materialization::{
+    CacheDecision, CacheTelemetry, EntityGraphSnapshot, ExecutionCacheConsult, FanoutCoordinator,
+    SessionMaterialization, SessionResponseStore, StoredResponse,
+};
+pub use query_index::{QueryCacheKey, QueryIndex};
 pub use replay::*;
 pub use runtime_error_render::step_error_from_runtime;
 pub use session_graph_cache::MutexGraphCacheSession;

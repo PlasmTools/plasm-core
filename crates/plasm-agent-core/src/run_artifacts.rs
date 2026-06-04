@@ -1509,6 +1509,7 @@ mod tests {
                 network_requests: 0,
                 cache_hits: 0,
                 cache_misses: 0,
+            ..Default::default()
             },
         };
         let n = store
@@ -1654,6 +1655,7 @@ mod tests {
                 network_requests: 0,
                 cache_hits: 0,
                 cache_misses: 0,
+            ..Default::default()
             },
         };
         store.insert(&ph, "s1", run_id, &doc).await.expect("insert");
@@ -1712,6 +1714,7 @@ mod tests {
                 network_requests: 0,
                 cache_hits: 0,
                 cache_misses: 0,
+            ..Default::default()
             },
         };
         store

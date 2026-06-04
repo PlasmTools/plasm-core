@@ -8,7 +8,8 @@ use axum::{
 };
 use plasm_core::{loader, Expr, GetExpr};
 use plasm_runtime::{
-    AuthResolver, ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, GraphCache,
+    AuthResolver, ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode,
+    SessionMaterialization,
     StreamConsumeOpts,
 };
 use serde_json::json;
@@ -124,7 +125,7 @@ async fn execute_balance_get(cgs: &plasm_core::CGS, base_url: &str) -> Option<St
     let mut config = ExecutionConfig::default();
     config.base_url = Some(base_url.to_string());
     let engine = ExecutionEngine::new_with_auth(config, auth_resolver).unwrap();
-    let mut cache = GraphCache::new();
+    let mut cache = SessionMaterialization::new();
     let result = engine
         .execute(
             &Expr::Get(GetExpr::new(

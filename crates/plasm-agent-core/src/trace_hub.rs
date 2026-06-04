@@ -1440,6 +1440,7 @@ mod tests {
                 network_requests: 1,
                 cache_hits: 0,
                 cache_misses: 1,
+                ..Default::default()
             },
             source: ExecutionSource::Live,
             request_fingerprints: vec!["ab".into()],
