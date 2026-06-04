@@ -85,6 +85,7 @@ impl ExecutePipeline {
             parsed,
             trace,
             line_index,
+            None,
             Some(plasm_core::PreflightToken::VERIFIED),
         )
         .await

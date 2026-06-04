@@ -170,6 +170,30 @@ fn collect_template_uses_from_expr(expr: &Expr) -> Vec<serde_json::Value> {
     dedupe_uses(acc)
 }
 
+/// `uses_result` for relation plan nodes: per-row `source` plus any `node_input` aliases (e.g. `repo`).
+fn relation_plan_uses_result(
+    source_label: &str,
+    parsed: &plasm_core::expr_parser::ParsedExpr,
+) -> Vec<serde_json::Value> {
+    let mut uses = vec![serde_json::json!({
+        "node": source_label,
+        "as": "source",
+    })];
+    for u in collect_template_uses_from_expr(&parsed.expr) {
+        let node = u.get("node").and_then(|v| v.as_str()).unwrap_or("");
+        let alias = u.get("as").and_then(|v| v.as_str()).unwrap_or(node);
+        if node == source_label || (node == "source" && alias == "source") {
+            continue;
+        }
+        uses.push(if node == "source" {
+            serde_json::json!({ "node": source_label, "as": alias })
+        } else {
+            u
+        });
+    }
+    dedupe_uses(uses)
+}
+
 /// Records upstream plan nodes so `node_input` holes become `uses_result` → `ir_template` + instantiation
 /// before compile.
 ///
@@ -2394,7 +2418,7 @@ fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
                 "predicates": [],
                 "relation": plan_relation,
                 "depends_on": [source_label],
-                "uses_result": [{ "node": source_label, "as": "source" }],
+                "uses_result": relation_plan_uses_result(source_label, parsed),
             });
             if let Some(n) = node.page_size {
                 obj["page_size"] = json!(n);
@@ -3805,6 +3829,86 @@ commits"#;
         assert_eq!(
             dry.node_results[1]["simulation"]["kind"],
             "relation_traversal"
+        );
+    }
+
+    fn github_issue_label_session() -> ExecuteSession {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(load_schema(&root.join("../../apis/github")).expect("load github"));
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "github".into(),
+            Arc::new(CgsContext::entry("github", cgs.clone())),
+        );
+        let exp = DomainExposureSession::new(
+            cgs.as_ref(),
+            "github",
+            &["Repository", "Issue", "Label"],
+        );
+        ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "github".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Repository".into(), "Issue".into(), "Label".into()],
+            Some(exp),
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn relation_uses_result_includes_scope_binding_aliases() {
+        let session = github_issue_label_session();
+        let source = r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
+issues = Issue{repository=repo.full_name}
+labels = issues.labels
+labels"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "github-issue-label-scope",
+            source,
+        )
+        .expect("compile");
+        let labels = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "labels")
+            .expect("labels relation node");
+        let uses = labels["uses_result"].as_array().expect("uses_result");
+        assert!(
+            uses.iter().any(|u| u["node"] == "repo" && u["as"] == "repo"),
+            "expected repo in uses_result: {uses:?}"
+        );
+        assert!(
+            uses.iter().any(|u| u["node"] == "issues" && u["as"] == "source"),
+            "expected issues source in uses_result: {uses:?}"
+        );
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+        let facts = dry
+            .graph_summary
+            .get("boundedness_facts")
+            .and_then(|v| v.as_array())
+            .expect("boundedness_facts");
+        let joined: Vec<String> = facts
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
+        assert!(
+            joined
+                .iter()
+                .any(|f: &String| f.contains("all API pages by default")),
+            "expected default fetch-all boundedness fact: {joined:?}"
         );
     }
 

@@ -2039,6 +2039,7 @@ pub async fn execute_plasm_parsed_expr(
     parsed: ParsedExpr,
     trace: Option<&PlasmTraceContext>,
     line_index: i64,
+    host_page_size: Option<usize>,
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), String> {
     crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(sess, source_label, &parsed)
         .map_err(|e| run_line_error_string(RunLineError::Parse(e)))?;
@@ -2052,6 +2053,7 @@ pub async fn execute_plasm_parsed_expr(
         parsed,
         trace,
         line_index,
+        host_page_size,
         Some(plasm_core::PreflightToken::VERIFIED),
     )
     .await
@@ -2750,6 +2752,7 @@ pub(crate) async fn run_parsed_plasm_line(
     parsed: ParsedExpr,
     trace: Option<&PlasmTraceContext>,
     line_index: i64,
+    host_page_size: Option<usize>,
     preflight: Option<plasm_core::PreflightToken>,
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), RunLineError> {
     let preflight_token = match preflight {
@@ -2966,13 +2969,18 @@ pub(crate) async fn run_parsed_plasm_line(
                     .await
             }
             _ => {
+                let consume = crate::stream_consume::stream_consume_for_read(
+                    exec_cgs,
+                    &parsed.expr,
+                    host_page_size,
+                );
                 st.engine
                     .execute(
                         &parsed.expr,
                         exec_cgs,
                         cache,
                         Some(st.mode),
-                        StreamConsumeOpts::default(),
+                        consume,
                         exec_opts.clone(),
                     )
                     .instrument(expr_span.clone())

@@ -22,6 +22,7 @@ pub mod discovery_embedding_reconcile;
 pub mod discovery_embedding_repository;
 mod discovery_human_format;
 pub mod dispatch;
+mod stream_consume;
 pub mod dotenv_safe;
 pub mod error;
 pub mod execute_path_ids;

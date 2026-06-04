@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.77] - 2026-05-30
+
+### Changed
+
+- **Paginated program reads:** plan and HTTP execute default to consuming **all API pages** for paginated capabilities unless the surface node sets `.page_size(n)` (first-page cap). Row `.limit(n)` still truncates after materialization. MCP `page(pgN)` continuations unchanged.
+
+### Fixed
+
+- **Relation `uses_result`:** merge scope `node_input` aliases (e.g. `repo`) into relation plan nodes; rewrite IR holes that name the row input `source` to the upstream binding id (fixes live `InputAlias("repo")` on scoped fanout).
+
 ## [0.1.76] - 2026-05-30
 
 ### Fixed

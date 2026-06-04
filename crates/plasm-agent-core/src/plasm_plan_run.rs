@@ -1330,6 +1330,7 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDry
     let mut has_relation_many_source_fanout = false;
     let mut relation_traversal_nodes = 0usize;
     let mut has_unprojected_multi_row_read = false;
+    let mut has_paginated_list_fetch_all_default = false;
 
     for n in &plan.nodes {
         if node_dependencies(n).is_empty() {
@@ -1373,6 +1374,20 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDry
                 has_explicit_limit = true;
             } else {
                 has_full_collection_compute = true;
+            }
+        }
+        if let ValidatedPlanNode::Surface(surface) = n {
+            if surface.page_size.is_none()
+                && matches!(
+                    surface.kind,
+                    PlanNodeKind::Query | PlanNodeKind::Search
+                )
+                && matches!(
+                    surface.result_shape,
+                    crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
+                )
+            {
+                has_paginated_list_fetch_all_default = true;
             }
         }
         if let ValidatedPlanNode::RelationTraversal(rel) = n {
@@ -1423,8 +1438,20 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDry
     if has_explicit_limit {
         boundedness_facts.push("Explicit .limit truncation in the compute chain".to_string());
     }
+    if has_paginated_list_fetch_all_default {
+        boundedness_facts.push(
+            "Paginated list reads consume all API pages by default (runtime page cap); use .limit(n) or .page_size(n) to bound."
+                .to_string(),
+        );
+    }
     if relation_traversal_nodes > 0 {
         boundedness_facts.push("Includes relation traversal".to_string());
+    }
+    if has_relation_many_source_fanout && has_paginated_list_fetch_all_default {
+        boundedness_facts.push(
+            "Parent list reads materialize all pages before relation fanout unless .page_size(n) caps the read."
+                .to_string(),
+        );
     }
 
     if has_unprojected_multi_row_read {
@@ -1435,7 +1462,7 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDry
     }
     if has_unbounded_read_root {
         warnings.push(
-            "Unbounded root read; add API filters/search text or .limit(n)/.page_size(n) when cost or latency is uncertain"
+            "Unbounded root read; paginated APIs fetch all pages by default — add API filters/search text or .limit(n) / .page_size(n) when cost or latency is uncertain"
                 .to_string(),
         );
     }
@@ -1453,7 +1480,7 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDry
     }
     if has_relation_many_source_fanout {
         warnings.push(
-            "Relation traversal fans out one scoped query per upstream row (source_cardinality: many); narrow the parent list (.limit, filters, paging) when API cost matters"
+            "Relation traversal fans out one scoped query per upstream row (source_cardinality: many); bound the parent list with .limit(n), filters, or .page_size(n) when API cost matters"
                 .to_string(),
         );
     }
@@ -2035,6 +2062,7 @@ async fn run_validated_plan_phased(
                     parsed,
                     trace.as_ref(),
                     idx as i64,
+                    surface.page_size,
                 )
                 .await?;
                 if let Some(cap) = surface.page_size {
@@ -2850,6 +2878,7 @@ async fn materialize_relation_singleton_chain(
         parsed,
         trace,
         node_index as i64,
+        None,
     )
     .await?;
     if let Some(sink) = sink {
@@ -2944,6 +2973,7 @@ async fn materialize_relation_scoped_fanout(
             parsed,
             trace,
             trace_line_index as i64,
+            None,
         )
         .await?;
         if let Some(sink) = sink {
@@ -3395,6 +3425,7 @@ async fn materialize_for_each_node(
             parsed_expr,
             trace,
             trace_line_index as i64,
+            None,
         )
         .await?;
         if let Some(sink) = sink {
