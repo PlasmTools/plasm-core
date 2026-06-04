@@ -97,6 +97,36 @@ pub fn field_type_assignable_for_relation_binding(parent: &FieldType, param: &Fi
     }
 }
 
+/// Catalog relation `query_scoped_bindings` / `get_scoped_bindings` assignability (includes identity slots).
+pub fn relation_binding_assignable(
+    parent_entity: &EntityDef,
+    parent_field: &str,
+    parent_ty: &FieldType,
+    param_ty: &FieldType,
+) -> bool {
+    if field_type_assignable_for_relation_binding(parent_ty, param_ty) {
+        return true;
+    }
+    let FieldType::EntityRef { target } = param_ty else {
+        return false;
+    };
+    if parent_entity.name != *target {
+        return false;
+    }
+    let identity_slot = parent_field == parent_entity.id_field.as_str()
+        || parent_entity
+            .key_vars
+            .iter()
+            .any(|k| k.as_str() == parent_field);
+    if !identity_slot {
+        return false;
+    }
+    matches!(
+        parent_ty,
+        FieldType::String | FieldType::Integer | FieldType::Number | FieldType::Uuid
+    )
+}
+
 /// Coerce a parsed predicate / env token for typecheck and downstream HTTP binding.
 pub fn coerce_value_for_field_type(
     ft: &FieldType,
@@ -288,6 +318,7 @@ pub fn parent_entity_field_type(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indexmap::IndexMap;
 
     #[test]
     fn integer_param_accepts_integer_and_string_parent() {
@@ -302,6 +333,42 @@ mod tests {
         assert!(!field_type_assignable_for_relation_binding(
             &FieldType::Boolean,
             &FieldType::Integer,
+        ));
+    }
+
+    #[test]
+    fn entity_ref_param_accepts_parent_id_scalar() {
+        let zone = EntityDef {
+            name: "Zone".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: IndexMap::new(),
+            relations: IndexMap::new(),
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: true,
+            primary_read: None,
+            discovery: None,
+        };
+        assert!(relation_binding_assignable(
+            &zone,
+            "id",
+            &FieldType::String,
+            &FieldType::EntityRef {
+                target: "Zone".into(),
+            },
+        ));
+        assert!(!relation_binding_assignable(
+            &zone,
+            "name",
+            &FieldType::String,
+            &FieldType::EntityRef {
+                target: "Zone".into(),
+            },
         ));
     }
 

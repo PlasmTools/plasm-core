@@ -160,6 +160,7 @@ pub use entity_ref_value::{
 pub use wire_coercion::{
     binding_value_as_plasm_value, collect_relation_binding_proofs, coerce_json_value_for_field_type,
     coerce_value_for_field_type, field_type_assignable_for_relation_binding,
+    relation_binding_assignable,
     identity_slot_to_json, json_value_to_plasm_value, parent_entity_field_type,
     plasm_value_to_json, RelationBindingProof,
 };

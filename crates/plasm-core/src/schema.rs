@@ -4383,7 +4383,9 @@ impl CGS {
                     capability: capability.to_string(),
                     detail,
                 })?;
-            if !crate::wire_coercion::field_type_assignable_for_relation_binding(
+            if !crate::wire_coercion::relation_binding_assignable(
+                entity,
+                parent_field.as_str(),
                 &parent_ty,
                 &param_nv.field_type,
             ) {
