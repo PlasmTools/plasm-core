@@ -1,9 +1,10 @@
 //! Catalog-driven wire value coercion and relation-binding type assignability.
 
 use crate::{
-    ArrayItemsSchema, CGS, EntityDef, FieldType, NamedValueSchema, RelationMaterialization,
-    RelationSchema, Value, ValueWireFormat,
+    ArrayItemsSchema, CGS, EntityDef, EntityFieldName, FieldType, NamedValueSchema,
+    RelationMaterialization, RelationSchema, Value, ValueWireFormat,
 };
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 /// Static witness for a `query_scoped_bindings` / `get_scoped_bindings` materialize map entry.
@@ -118,13 +119,30 @@ pub fn relation_binding_assignable(
             .key_vars
             .iter()
             .any(|k| k.as_str() == parent_field);
-    if !identity_slot {
-        return false;
+    if identity_slot {
+        return matches!(
+            parent_ty,
+            FieldType::String | FieldType::Integer | FieldType::Number | FieldType::Uuid
+        );
     }
-    matches!(
-        parent_ty,
-        FieldType::String | FieldType::Integer | FieldType::Number | FieldType::Uuid
-    )
+    parent_scalar_field_supplies_entity_ref_scope(parent_entity, parent_field, parent_ty)
+}
+
+/// True when a single parent row field value can [`normalize_entity_ref_value_for_target`] for this entity.
+fn parent_scalar_field_supplies_entity_ref_scope(
+    parent_entity: &EntityDef,
+    parent_field: &str,
+    parent_ty: &FieldType,
+) -> bool {
+    let leaf = match parent_ty {
+        FieldType::String => Value::String("a/b".into()),
+        FieldType::Integer => Value::Integer(1),
+        FieldType::Number => Value::Float(1.0),
+        FieldType::Uuid => Value::String("00000000-0000-0000-0000-000000000001".into()),
+        _ => return false,
+    };
+    let row = Value::Object(IndexMap::from([(parent_field.to_string(), leaf)]));
+    crate::entity_ref_value::normalize_entity_ref_value_for_target(&row, parent_entity).is_some()
 }
 
 /// Coerce a parsed predicate / env token for typecheck and downstream HTTP binding.
@@ -368,6 +386,45 @@ mod tests {
             &FieldType::String,
             &FieldType::EntityRef {
                 target: "Zone".into(),
+            },
+        ));
+    }
+
+    #[test]
+    fn entity_ref_param_accepts_repository_full_name_slug() {
+        let repo = EntityDef {
+            name: "Repository".into(),
+            description: String::new(),
+            id_field: "id".into(),
+            id_format: None,
+            id_from: None,
+            fields: IndexMap::new(),
+            relations: IndexMap::new(),
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![
+                EntityFieldName::from("owner"),
+                EntityFieldName::from("repo"),
+            ],
+            abstract_entity: false,
+            domain_projection_examples: true,
+            primary_read: None,
+            discovery: None,
+        };
+        assert!(relation_binding_assignable(
+            &repo,
+            "full_name",
+            &FieldType::String,
+            &FieldType::EntityRef {
+                target: "Repository".into(),
+            },
+        ));
+        assert!(!relation_binding_assignable(
+            &repo,
+            "description",
+            &FieldType::String,
+            &FieldType::EntityRef {
+                target: "Repository".into(),
             },
         ));
     }
