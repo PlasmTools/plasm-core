@@ -733,6 +733,40 @@ fn assert_planning_ir(
                 return Err(format!("expected LangItem query, got {:?}", q.entity));
             }
         }
+        "lang_relation_integer_scoped_bindings" => {
+            let rel_plan = plan_relation_named(plan, "tags_by_score").ok_or_else(|| {
+                "expected `.tags_by_score` relation with integer scoped bindings".to_string()
+            })?;
+            if rel_plan["source_cardinality"].as_str() != Some("many") {
+                return Err(format!(
+                    "expected many source_cardinality for integer binding fanout, got {rel_plan:?}"
+                ));
+            }
+            let proofs = rel_plan
+                .get("binding_proofs")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    format!("expected binding_proofs on relation node, got {rel_plan:?}")
+                })?;
+            if !proofs.iter().any(|p| {
+                p.get("cap_param").and_then(|v| v.as_str()) == Some("seq")
+                    && p.get("parent_field").and_then(|v| v.as_str()) == Some("score")
+            }) {
+                return Err(format!(
+                    "expected seq←score binding proof, got {proofs:?}"
+                ));
+            }
+            let pool: Vec<&Expr> = surfaces.iter().chain(rel.iter()).collect();
+            if !pool
+                .iter()
+                .copied()
+                .any(|e| chain_selector_matches(e, "tags_by_score"))
+            {
+                return Err(format!(
+                    "expected `.tags_by_score` chain IR, got surfaces={surfaces:?} rel={rel:?}"
+                ));
+            }
+        }
         "lang_group_by_then_sort_agg_column" => {
             let group = computes
                 .iter()
@@ -1282,6 +1316,22 @@ tags"#,
             "relation_many_from_plural",
             "relation_query_scoped",
             "binding_continuation",
+            "dry_live_parity",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "label"],
+    },
+    MatrixRow {
+        id: "lang_relation_integer_scoped_bindings",
+        program: r#"items = LangItem
+tags = items.tags_by_score
+tags"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "relation_many_from_plural",
+            "relation_query_scoped_bindings",
+            "relation_binding_proof",
             "dry_live_parity",
         ],
         min_node_results: 2,

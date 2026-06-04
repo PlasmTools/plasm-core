@@ -297,6 +297,18 @@ pub enum SchemaError {
         field: String,
     },
 
+    #[error(
+        "Entity '{entity}' relation '{relation}': binding `{cap_param}` ← parent `{parent_field}` is not assignable ({parent_type:?} → {param_type:?})"
+    )]
+    RelationMaterializeBindingTypeMismatch {
+        entity: String,
+        relation: String,
+        cap_param: String,
+        parent_field: String,
+        parent_type: String,
+        param_type: String,
+    },
+
     #[error("Entity '{entity}' relation '{relation}': query_scoped_bindings must be non-empty")]
     RelationMaterializeEmptyBindings { entity: String, relation: String },
 

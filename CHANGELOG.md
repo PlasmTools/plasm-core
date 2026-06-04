@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.75] - 2026-05-30
+
+### Fixed
+
+- **Relation scoped bindings (proof-carrying):** catalog validates parent field ↔ capability param type assignability; plan stores `RelationBindingProof`; shared `wire_coercion` types row JSON, IR holes, and runtime `execute_chain_via_bindings` predicates; post-instantiate preflight on plan fanout (`execute_plasm_parsed_expr`) so dry plan approval matches live compile (fixes `issue_number: Integer` vs string on GitHub-style `query_scoped_bindings`).
+- **Preflight `$` gate:** reject teaching placeholder via IR (`reject_domain_placeholder_in_executable`) only — not raw `source.contains('$')` — so search surface `e#~$` and plan display labels still execute.
+
+### Added
+
+- **`plasm_language_matrix`:** `lang_relation_integer_scoped_bindings` (Integer param through relation fanout).
+- **`plasm-core`:** `wire_coercion` module (`RelationBindingProof`, `field_type_assignable_for_relation_binding`, `coerce_value_for_field_type`).
+
 ## [0.1.74] - 2026-05-30
 
 ### Fixed

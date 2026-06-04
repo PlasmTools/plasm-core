@@ -194,6 +194,11 @@ paths:
           required: true
           schema:
             type: string
+        - name: seq
+          in: query
+          required: false
+          schema:
+            type: integer
       responses:
         "200":
           description: Tags

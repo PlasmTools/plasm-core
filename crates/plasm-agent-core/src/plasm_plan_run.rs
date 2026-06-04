@@ -173,12 +173,16 @@ fn cached_entity_row_json(entity: &CachedEntity, cgs: &CGS) -> serde_json::Value
             }
         }
         EntityKey::Compound(parts) => {
+            let ent = cgs.get_entity(entity.reference.entity_type.as_str());
             for (k, val) in parts {
                 if val.is_empty() {
                     continue;
                 }
                 if slot_needed(obj.get(k.as_str())) {
-                    obj.insert(k.clone(), serde_json::Value::String(val.clone()));
+                    let json = ent
+                        .map(|e| plasm_core::identity_slot_to_json(cgs, e, k.as_str(), val))
+                        .unwrap_or_else(|| serde_json::Value::String(val.clone()));
+                    obj.insert(k.clone(), json);
                 }
             }
         }
@@ -2003,7 +2007,11 @@ async fn run_validated_plan_phased(
                         row: &serde_json::Value::Null,
                     };
                     let inputs = InputEnv { rows: &input_rows };
-                    let env = PlanEvalEnv { scope, inputs };
+                    let env = PlanEvalEnv {
+                        scope,
+                        inputs,
+                        wire_coercion: None,
+                    };
                     instantiate_expr_template(template, &env)?
                 } else {
                     return Err(format!(
@@ -2105,7 +2113,11 @@ async fn run_validated_plan_phased(
                         binding: &derive.item_binding,
                     };
                     let inputs = InputEnv { rows: &input_rows };
-                    let env = PlanEvalEnv { scope, inputs };
+                    let env = PlanEvalEnv {
+                        scope,
+                        inputs,
+                        wire_coercion: None,
+                    };
                     rows.push(eval_plan_value(&derive.value, &env)?);
                 }
                 let empty_identities = vec![None; rows.len()];
@@ -2756,6 +2768,7 @@ fn materialized_result_use_inputs_with_source_row(
 fn instantiate_parsed_expr_plan_inputs_with_rows(
     parsed: ParsedExpr,
     input_rows: &BTreeMap<InputAlias, MaterializedInputRow>,
+    wire_coercion: Option<WireCoercionCtx<'_>>,
 ) -> Result<ParsedExpr, String> {
     if input_rows.is_empty() {
         return Ok(parsed);
@@ -2764,7 +2777,11 @@ fn instantiate_parsed_expr_plan_inputs_with_rows(
         row: &serde_json::Value::Null,
     };
     let inputs = InputEnv { rows: input_rows };
-    let env = PlanEvalEnv { scope, inputs };
+    let env = PlanEvalEnv {
+        scope,
+        inputs,
+        wire_coercion,
+    };
     let expr_json = serde_json::to_value(&parsed.expr)
         .map_err(|e| format!("serialize expr for hole instantiation: {e}"))?;
     let expr_json = instantiate_expr_template_value(&expr_json, &env)?;
@@ -2788,7 +2805,18 @@ fn instantiate_parsed_expr_plan_inputs(
         return Ok(parsed);
     }
     let input_rows = materialized_result_use_inputs(materialized, uses_result)?;
-    instantiate_parsed_expr_plan_inputs_with_rows(parsed, &input_rows)
+    instantiate_parsed_expr_plan_inputs_with_rows(parsed, &input_rows, None)
+}
+
+fn wire_coercion_ctx_for_source_entity<'a>(
+    cgs: &'a CGS,
+    source_entity_name: &str,
+) -> Option<WireCoercionCtx<'a>> {
+    let ent = cgs.get_entity(source_entity_name)?;
+    Some(WireCoercionCtx {
+        cgs,
+        source_entity: ent,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2896,8 +2924,13 @@ async fn materialize_relation_scoped_fanout(
             source_row,
             row_identity,
         )?;
-        let parsed =
-            instantiate_parsed_expr_plan_inputs_with_rows(pe.clone(), &input_rows)?;
+        let wire_coercion =
+            wire_coercion_ctx_for_source_entity(scoped_es.cgs.as_ref(), source_mat.entity.as_str());
+        let parsed = instantiate_parsed_expr_plan_inputs_with_rows(
+            pe.clone(),
+            &input_rows,
+            wire_coercion,
+        )?;
         let trace_line_index = node_index
             .checked_mul(1000)
             .and_then(|base| base.checked_add(row_index))
@@ -3112,34 +3145,79 @@ fn augment_row_json_with_identity(
     serde_json::Value::Object(obj)
 }
 
+fn coerce_node_input_json(
+    ctx: Option<&WireCoercionCtx<'_>>,
+    path: &[String],
+    value: serde_json::Value,
+) -> serde_json::Value {
+    let Some(ctx) = ctx else {
+        return value;
+    };
+    let Some(field) = path.last().map(String::as_str) else {
+        return value;
+    };
+    match plasm_core::parent_entity_field_type(ctx.cgs, ctx.source_entity, field) {
+        Ok(ft) => {
+            let nv = ctx
+                .source_entity
+                .fields
+                .get(field)
+                .and_then(|f| f.named_value(ctx.cgs).ok());
+            plasm_core::coerce_json_value_for_field_type(
+                &ft,
+                nv.and_then(|n| n.value_format),
+                nv.and_then(|n| n.array_items.as_ref()),
+                value,
+            )
+        }
+        Err(_) => value,
+    }
+}
+
 fn node_input_hole_from_identity(
+    ctx: Option<&WireCoercionCtx<'_>>,
     identity: &Option<plasm_core::RowIdentity>,
     path: &[String],
     row: &serde_json::Value,
 ) -> Option<serde_json::Value> {
     let identity = identity.as_ref()?;
     if path.is_empty() {
-        return Some(serde_json::Value::String(
-            identity.reference.primary_slot_str(),
+        let slot = identity.reference.primary_slot_str();
+        return Some(coerce_node_input_json(
+            ctx,
+            path,
+            serde_json::Value::String(slot),
         ));
     }
     if path.len() == 1 {
         let key = path[0].as_str();
         if key == "id" {
-            return Some(serde_json::Value::String(
-                identity.reference.primary_slot_str(),
+            let slot = identity.reference.primary_slot_str();
+            return Some(coerce_node_input_json(
+                ctx,
+                path,
+                serde_json::Value::String(slot),
             ));
         }
         if let Some(v) = identity.ambient.get(key) {
-            return Some(serde_json::Value::String(v.clone()));
+            return Some(coerce_node_input_json(
+                ctx,
+                path,
+                serde_json::Value::String(v.clone()),
+            ));
         }
         if let plasm_core::EntityKey::Compound(parts) = &identity.reference.key {
             if let Some(v) = parts.get(key) {
-                return Some(serde_json::Value::String(v.clone()));
+                let raw = ctx
+                    .map(|c| plasm_core::identity_slot_to_json(c.cgs, c.source_entity, key, v))
+                    .unwrap_or_else(|| serde_json::Value::String(v.clone()));
+                return Some(coerce_node_input_json(ctx, path, raw));
             }
         }
     }
-    value_at_segments(row, path).cloned()
+    value_at_segments(row, path)
+        .cloned()
+        .map(|v| coerce_node_input_json(ctx, path, v))
 }
 
 fn instantiate_ir_hole(
@@ -3198,13 +3276,20 @@ fn instantiate_ir_hole(
                 .as_ref()
                 .is_some_and(|v| !v.is_null() && v.as_str().is_none_or(|s| !s.is_empty()));
             if from_row_usable {
-                return Ok(coerce_json_integer_wire_path(&path, from_row.unwrap()));
+                return Ok(coerce_node_input_json(
+                    env.wire_coercion.as_ref(),
+                    &path,
+                    from_row.unwrap(),
+                ));
             }
-            if let Some(value) =
-                node_input_hole_from_identity(&input.row_identity, &path, &input.row)
-            {
+            if let Some(value) = node_input_hole_from_identity(
+                env.wire_coercion.as_ref(),
+                &input.row_identity,
+                &path,
+                &input.row,
+            ) {
                 if value.as_str().is_none_or(|s| !s.is_empty()) {
-                    return Ok(coerce_json_integer_wire_path(&path, value));
+                    return Ok(value);
                 }
             }
             Ok(from_row.unwrap_or(serde_json::Value::Null))
@@ -3232,7 +3317,11 @@ fn for_each_plan_eval_env<'a>(
         binding: &for_each.item_binding,
     };
     let inputs = InputEnv { rows: input_rows };
-    PlanEvalEnv { scope, inputs }
+    PlanEvalEnv {
+        scope,
+        inputs,
+        wire_coercion: None,
+    }
 }
 
 #[cfg(test)]
@@ -3400,6 +3489,7 @@ fn plan_value_to_rows(value: &PlanValue) -> Result<Vec<serde_json::Value>, Strin
     let env = PlanEvalEnv {
         scope,
         inputs: input_env,
+        wire_coercion: None,
     };
     let json = eval_plan_value(value, &env)?;
     Ok(match json {
@@ -3473,9 +3563,15 @@ struct InputEnv<'a> {
     rows: &'a BTreeMap<InputAlias, MaterializedInputRow>,
 }
 
+struct WireCoercionCtx<'a> {
+    cgs: &'a CGS,
+    source_entity: &'a plasm_core::EntityDef,
+}
+
 struct PlanEvalEnv<'a> {
     scope: EvalScope<'a>,
     inputs: InputEnv<'a>,
+    wire_coercion: Option<WireCoercionCtx<'a>>,
 }
 
 fn eval_plan_value(value: &PlanValue, env: &PlanEvalEnv<'_>) -> Result<serde_json::Value, String> {
@@ -3657,24 +3753,6 @@ fn value_at_dotted<'a>(row: &'a serde_json::Value, path: &str) -> Option<&'a ser
         cur = cur.get(segment)?;
     }
     Some(cur)
-}
-
-/// Coerce numeric strings for catalog integer slots (e.g. `number` → `issue_number`).
-fn coerce_json_integer_wire_path(path: &[String], value: serde_json::Value) -> serde_json::Value {
-    let Some(key) = path.last() else {
-        return value;
-    };
-    let is_int_slot = key == "number" || key == "issue_number" || key.ends_with("_number");
-    if !is_int_slot {
-        return value;
-    }
-    match value {
-        serde_json::Value::String(s) => s
-            .parse::<i64>()
-            .map(|n| serde_json::json!(n))
-            .unwrap_or(serde_json::Value::String(s)),
-        other => other,
-    }
 }
 
 fn value_at_segments<'a>(
@@ -4705,6 +4783,7 @@ mod tests {
         let env = PlanEvalEnv {
             scope,
             inputs: input_env,
+            wire_coercion: None,
         };
         let out = eval_plan_value(&value, &env).expect("eval");
         assert_eq!(out["title"], "pikachu uses thunderbolt");
@@ -4787,6 +4866,7 @@ mod tests {
         let env = PlanEvalEnv {
             scope,
             inputs: InputEnv { rows: &inputs },
+            wire_coercion: None,
         };
         let out = eval_plan_value(&value, &env).expect("eval");
 
@@ -5276,7 +5356,11 @@ mod tests {
             binding: &binding,
         };
         let inputs = InputEnv { rows: &input_rows };
-        let env = PlanEvalEnv { scope, inputs };
+        let env = PlanEvalEnv {
+            scope,
+            inputs,
+            wire_coercion: None,
+        };
         let out = instantiate_expr_template_value(
             &serde_json::json!("${_.title} / ${report.content}"),
             &env,

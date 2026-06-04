@@ -2708,6 +2708,13 @@ impl CGS {
                                         );
                                     }
                                 }
+                                self.validate_relation_materialize_bindings(
+                                    entity_name.as_str(),
+                                    relation_name.as_str(),
+                                    entity,
+                                    capability,
+                                    bindings,
+                                )?;
                             }
                             RelationMaterialization::GetScopedBindings { .. } => {
                                 return Err(
@@ -2757,6 +2764,13 @@ impl CGS {
                                     );
                                 }
                             }
+                            self.validate_relation_materialize_bindings(
+                                entity_name.as_str(),
+                                relation_name.as_str(),
+                                entity,
+                                capability,
+                                bindings,
+                            )?;
                         }
                         Some(_) => {
                             return Err(SchemaError::RelationOneWithDisallowedMaterialize {
@@ -4316,6 +4330,71 @@ impl CGS {
                 return err(format!(
                     "object input does not declare materialize parameter `{name}`"
                 ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates each `query_scoped_bindings` / `get_scoped_bindings` parent field is assignable to its capability param type.
+    pub fn validate_relation_materialize_bindings(
+        &self,
+        parent_entity: &str,
+        relation: &str,
+        entity: &EntityDef,
+        capability: &CapabilityName,
+        bindings: &indexmap::IndexMap<CapabilityParamName, EntityFieldName>,
+    ) -> Result<(), SchemaError> {
+        let cap = self.get_capability(capability.as_str()).ok_or_else(|| {
+            SchemaError::RelationMaterializeCapabilityInvalid {
+                entity: parent_entity.to_string(),
+                relation: relation.to_string(),
+                target: String::new(),
+                capability: capability.to_string(),
+                detail: "no such capability".into(),
+            }
+        })?;
+        let fields = cap.object_params().ok_or_else(|| {
+            SchemaError::RelationMaterializeCapabilityInvalid {
+                entity: parent_entity.to_string(),
+                relation: relation.to_string(),
+                target: cap.domain.to_string(),
+                capability: capability.to_string(),
+                detail: "capability has no object input".into(),
+            }
+        })?;
+        for (cap_param, parent_field) in bindings {
+            let Some(param_schema) = fields.iter().find(|f| cap_param.as_str() == f.name) else {
+                continue;
+            };
+            let param_nv = param_schema.named_value(self).map_err(|e| {
+                SchemaError::RelationMaterializeCapabilityInvalid {
+                    entity: parent_entity.to_string(),
+                    relation: relation.to_string(),
+                    target: cap.domain.to_string(),
+                    capability: capability.to_string(),
+                    detail: format!("param `{}`: {e}", cap_param),
+                }
+            })?;
+            let parent_ty = crate::wire_coercion::parent_entity_field_type(self, entity, parent_field.as_str())
+                .map_err(|detail| SchemaError::RelationMaterializeCapabilityInvalid {
+                    entity: parent_entity.to_string(),
+                    relation: relation.to_string(),
+                    target: cap.domain.to_string(),
+                    capability: capability.to_string(),
+                    detail,
+                })?;
+            if !crate::wire_coercion::field_type_assignable_for_relation_binding(
+                &parent_ty,
+                &param_nv.field_type,
+            ) {
+                return Err(SchemaError::RelationMaterializeBindingTypeMismatch {
+                    entity: parent_entity.to_string(),
+                    relation: relation.to_string(),
+                    cap_param: cap_param.to_string(),
+                    parent_field: parent_field.to_string(),
+                    parent_type: format!("{parent_ty:?}"),
+                    param_type: format!("{:?}", param_nv.field_type),
+                });
             }
         }
         Ok(())

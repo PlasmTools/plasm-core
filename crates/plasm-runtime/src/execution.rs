@@ -3110,6 +3110,7 @@ impl ExecutionEngine {
             });
         }
         let capability_name = cap.name.clone();
+        let cap_params: Vec<_> = cap.object_params().map(|f| f.to_vec()).unwrap_or_default();
 
         let queries: Vec<QueryExpr> = source_result
             .entities
@@ -3118,8 +3119,14 @@ impl ExecutionEngine {
                 let preds: Vec<Predicate> = bindings
                     .iter()
                     .map(|(cap_param, parent_field)| {
-                        let v = chain_binding_value(entity, parent_entity_def, parent_field);
-                        Predicate::eq(cap_param.as_str(), Value::String(v))
+                        let raw = chain_binding_raw_json(entity, parent_entity_def, parent_field);
+                        let value = chain_binding_plasm_value(
+                            &raw,
+                            cap_param.as_str(),
+                            &cap_params,
+                            cgs,
+                        );
+                        Predicate::eq(cap_param.as_str(), value)
                     })
                     .collect();
                 let pred = if preds.len() == 1 {
@@ -4713,31 +4720,56 @@ fn ref_from_materialize_bindings_for_get_chain(
     }
 }
 
-/// Value for a `query_scoped_bindings` param from a parent cached row / ref.
+/// Raw JSON for a `query_scoped_bindings` parent field from a cached row / ref.
+fn chain_binding_raw_json(
+    entity: &CachedEntity,
+    parent_def: &plasm_core::EntityDef,
+    parent_field: &EntityFieldName,
+) -> serde_json::Value {
+    let pf = parent_field.as_str();
+    if let Some(v) = entity.get_field(pf) {
+        return plasm_core::plasm_value_to_json(&v.to_value());
+    }
+    if pf == parent_def.id_field.as_str() {
+        return serde_json::Value::String(entity.reference.primary_slot_str());
+    }
+    if let EntityKey::Compound(parts) = &entity.reference.key {
+        if let Some(s) = parts.get(pf) {
+            return serde_json::Value::String(s.clone());
+        }
+    }
+    serde_json::Value::String(entity.reference.primary_slot_str())
+}
+
+fn chain_binding_plasm_value(
+    raw: &serde_json::Value,
+    cap_param: &str,
+    cap_params: &[plasm_core::InputFieldSchema],
+    cgs: &CGS,
+) -> Value {
+    let Some(param_schema) = cap_params.iter().find(|f| f.name == cap_param) else {
+        return plasm_core::json_value_to_plasm_value(raw);
+    };
+    let Ok(nv) = param_schema.named_value(cgs) else {
+        return plasm_core::json_value_to_plasm_value(raw);
+    };
+    plasm_core::binding_value_as_plasm_value(raw, nv)
+}
+
+/// String slot for get_scoped_bindings path keys (compound ref parts).
 fn chain_binding_value(
     entity: &CachedEntity,
     parent_def: &plasm_core::EntityDef,
     parent_field: &EntityFieldName,
 ) -> String {
-    let pf = parent_field.as_str();
-    if let Some(v) = entity.get_field(pf) {
-        return match v.to_value() {
-            Value::String(s) if !s.is_empty() => s,
-            Value::Integer(i) => i.to_string(),
-            Value::Float(f) => f.to_string(),
-            Value::Bool(b) => b.to_string(),
-            _ => entity.reference.primary_slot_str(),
-        };
+    let v = chain_binding_raw_json(entity, parent_def, parent_field);
+    match plasm_core::json_value_to_plasm_value(&v) {
+        Value::String(s) if !s.is_empty() => s,
+        Value::Integer(i) => i.to_string(),
+        Value::Float(f) => f.to_string(),
+        Value::Bool(b) => b.to_string(),
+        _ => entity.reference.primary_slot_str(),
     }
-    if pf == parent_def.id_field.as_str() {
-        return entity.reference.primary_slot_str();
-    }
-    if let EntityKey::Compound(parts) = &entity.reference.key {
-        if let Some(s) = parts.get(pf) {
-            return s.clone();
-        }
-    }
-    entity.reference.primary_slot_str()
 }
 
 /// JSON path to the entity array: top-level `items` key or [`HttpResponseDecode::items_path`].

@@ -50,16 +50,6 @@ impl PlasmPreflight {
         Ok(PreflightToken::VERIFIED)
     }
 
-    pub fn reject_domain_placeholders(source: &str) -> Result<PreflightToken, String> {
-        if source.contains('$') {
-            return Err(
-                "executable Plasm must not contain DOMAIN teaching placeholder `$` — substitute a concrete value"
-                    .into(),
-            );
-        }
-        Ok(PreflightToken::VERIFIED)
-    }
-
     pub fn validate_projection_fields(
         session: &crate::execute_session::ExecuteSession,
         parsed: &ParsedExpr,
@@ -92,10 +82,9 @@ impl PlasmPreflight {
     /// Full preflight chain shared by dry preview and live execute (dry ≡ live gates).
     pub fn preflight_parsed_line(
         session: &crate::execute_session::ExecuteSession,
-        source: &str,
+        _source: &str,
         parsed: &ParsedExpr,
     ) -> Result<PreflightReport, String> {
-        Self::reject_domain_placeholders(source)?;
         Self::typecheck_parsed_for_session(session, parsed)?;
         reject_domain_placeholder_in_executable(&parsed.expr).map_err(|e| e.to_string())?;
         Self::validate_projection_fields(session, parsed)?;
@@ -116,7 +105,6 @@ impl PlasmPreflight {
 #[cfg(test)]
 mod tests {
     use plasm_core::expr_parser::ParsedExpr;
-    use plasm_core::{Expr, GetExpr};
 
     use crate::execute_session::ExecuteSession;
     use crate::plasm_plan_run::parse_parsed_expr_for_session;
@@ -153,12 +141,9 @@ mod tests {
     }
 
     #[test]
-    fn preflight_rejects_domain_dollar_in_source() {
+    fn preflight_rejects_domain_dollar_in_get_identity() {
         let session = matrix_session();
-        let parsed = ParsedExpr {
-            expr: Expr::Get(GetExpr::new("LangItem", "1")),
-            projection: None,
-        };
+        let parsed = parse_parsed_expr_for_session(&session, "e1($)").expect("parse");
         let err =
             PlasmPreflight::preflight_parsed_line(&session, "e1($)", &parsed).expect_err("dollar");
         assert!(err.contains('$'), "{err}");

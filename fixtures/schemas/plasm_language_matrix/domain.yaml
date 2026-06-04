@@ -103,6 +103,15 @@ entities:
           kind: query_scoped
           capability: langtag_query
           param: item_id
+      tags_by_score:
+        description: Tags scoped by integer score (query_scoped_bindings proof)
+        target: LangTag
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: langtag_by_score_query
+          bindings:
+            seq: score
 capabilities:
   langitem_query:
     description: List LangItem rows (no required HTTP filters)
@@ -212,6 +221,19 @@ capabilities:
     - id
     - item_id
     - label
+  langtag_by_score_query:
+    description: List tags filtered by parent LangItem score (integer scope param)
+    kind: query
+    entity: LangTag
+    parameters:
+    - name: seq
+      value_ref: nv_langtag_by_score_query_seq
+      required: true
+      role: scope
+    provides:
+    - id
+    - item_id
+    - label
   langline_get:
     description: Get LangLine by id (batch relation resolution)
     kind: get
@@ -314,6 +336,8 @@ values:
   nv_langtag_query_item_id:
     type: entity_ref
     target: LangItem
+  nv_langtag_by_score_query_seq:
+    type: integer
   nv_langline_query_item_id:
     type: entity_ref
     target: LangItem

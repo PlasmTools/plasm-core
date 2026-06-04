@@ -2047,6 +2047,12 @@ fn lower_relation_continuation(
         projection: parsed.projection.clone(),
         display_expr: Some(expr.to_string()),
     };
+    let binding_proofs = relation_binding_proofs_for_lower(
+        session,
+        &contract.row_entity,
+        wire.as_str(),
+    )
+    .unwrap_or_default();
     let plan_relation = PlanRelationTraversal {
         source: source_label.to_string(),
         relation: wire,
@@ -2055,6 +2061,7 @@ fn lower_relation_continuation(
         source_cardinality: source_card,
         expr: expanded.clone(),
         ir: ir.clone(),
+        binding_proofs,
     };
     Ok(DagNode {
         id: id.to_string(),
@@ -2111,6 +2118,28 @@ fn plan_render_content_scalar_reference_err(id: &str, expr: &str, label: &str) -
     format!(
         "Plasm program `{id}`: `{expr}` reads generated text from `{label}.content`. That path is a **scalar string** for `=>` derives and capability parameters only — not a final root and not a relation receiver. Return `{label}` if you want the generated text row, or use `{label}.content` only inside string/body/template/object payload positions."
     )
+}
+
+fn relation_binding_proofs_for_lower(
+    session: &ExecuteSession,
+    row_qe: &QualifiedEntityKey,
+    relation_wire: &str,
+) -> Result<Vec<plasm_core::RelationBindingProof>, String> {
+    let cgs = crate::catalog_ownership::resolve_cgs_for_entity(
+        session,
+        row_qe.entity.as_str(),
+        resolve_cgs_for_qualified_entity(session, row_qe),
+    )?;
+    let ent = cgs.get_entity(row_qe.entity.as_str()).ok_or_else(|| {
+        format!("unknown entity `{}` for relation binding proofs", row_qe.entity)
+    })?;
+    let rel = ent.relations.get(relation_wire).ok_or_else(|| {
+        format!(
+            "entity `{}` has no relation `{relation_wire}` for binding proofs",
+            row_qe.entity
+        )
+    })?;
+    plasm_core::collect_relation_binding_proofs(cgs, ent, rel)
 }
 
 /// Resolve relation metadata for a parsed [`Expr::Chain`] (declared CGS relation on the source entity).
@@ -2231,6 +2260,12 @@ fn compile_surface_node(
                         projection: parsed.projection.clone(),
                         display_expr: Some(expr.to_string()),
                     };
+                    let binding_proofs = relation_binding_proofs_for_lower(
+                        session,
+                        &contract.row_entity,
+                        chain.selector.as_str(),
+                    )
+                    .unwrap_or_default();
                     let plan_relation = PlanRelationTraversal {
                         source: label.clone(),
                         relation: chain.selector.clone(),
@@ -2239,6 +2274,7 @@ fn compile_surface_node(
                         source_cardinality: source_card,
                         expr: expanded.clone(),
                         ir: ir.clone(),
+                        binding_proofs,
                     };
                     return Ok(DagNode {
                         id: id.to_string(),

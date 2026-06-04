@@ -124,6 +124,20 @@ langtag_query:
     fields:
     - ["item_id", { type: var, name: item_id }]
 
+langtag_by_score_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: tags
+  query:
+    type: object
+    fields:
+    - ["seq", { type: var, name: seq }]
+
 langline_query:
   method: GET
   path:

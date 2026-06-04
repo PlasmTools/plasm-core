@@ -2040,6 +2040,8 @@ pub async fn execute_plasm_parsed_expr(
     trace: Option<&PlasmTraceContext>,
     line_index: i64,
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), String> {
+    crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(sess, source_label, &parsed)
+        .map_err(|e| run_line_error_string(RunLineError::Parse(e)))?;
     let mut cache = sess.graph_cache.lock().await;
     run_parsed_plasm_line(
         source_label,

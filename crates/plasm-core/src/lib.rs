@@ -128,6 +128,7 @@ pub mod value;
 mod o200k_token_count;
 mod spans;
 mod utf8_trunc;
+mod wire_coercion;
 
 /// Local `o200k_base` BPE length (OpenAI `o200k_base` via riptoken).
 pub use o200k_token_count::o200k_token_count;
@@ -155,6 +156,12 @@ pub use domain_term::{
 pub use entity_ref_value::{
     normalize_entity_ref_value_for_target, try_narrow_entity_row_to_entity_ref_value,
     EntityRefAtom, EntityRefPayload, EntityRefValueError, ScopeEntityRefNormalizeError,
+};
+pub use wire_coercion::{
+    binding_value_as_plasm_value, collect_relation_binding_proofs, coerce_json_value_for_field_type,
+    coerce_value_for_field_type, field_type_assignable_for_relation_binding,
+    identity_slot_to_json, json_value_to_plasm_value, parent_entity_field_type,
+    plasm_value_to_json, RelationBindingProof,
 };
 pub use error::{NormalizationError, SchemaError, TypeError};
 pub use expr::{

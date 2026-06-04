@@ -87,9 +87,10 @@ use crate::schema::{
 };
 use crate::symbol_tuning::{entity_slices_for_render, FocusSpec, SymbolMap};
 use crate::{
-    ArrayItemsSchema, CapabilityKind, CapabilityName, ChainExpr, CompOp, CreateExpr, DeleteExpr,
-    EntityDef, EntityKey, EntityName, Expr, FieldType, GetExpr, InputType, InvokeExpr, PageExpr,
-    ParameterRole, Predicate, QueryExpr, Ref, Value, ValueWireFormat, CGS,
+    coerce_value_for_field_type, ArrayItemsSchema, CapabilityKind, CapabilityName, ChainExpr,
+    CompOp, CreateExpr, DeleteExpr, EntityDef, EntityKey, EntityName, Expr, FieldType, GetExpr,
+    InputType, InvokeExpr, PageExpr, ParameterRole, Predicate, QueryExpr, Ref, Value,
+    ValueWireFormat, CGS,
 };
 use indexmap::IndexMap;
 use serde::Serialize;
@@ -361,82 +362,6 @@ fn normalize_numeric_id_float(f: f64) -> String {
         format!("{}", f as i64)
     } else {
         f.to_string()
-    }
-}
-
-/// Coerce a parsed predicate token for typecheck and downstream HTTP binding (**input only**).
-///
-/// Date fields use [`crate::temporal::normalize_temporal_value`]; response decoding and UI
-/// display are unchanged.
-fn coerce_value_for_field_type(
-    ft: &FieldType,
-    value_format: Option<ValueWireFormat>,
-    array_items: Option<&ArrayItemsSchema>,
-    val: Value,
-) -> Result<Value, String> {
-    match ft {
-        FieldType::Array => {
-            let coerce_elem = |v: Value| -> Result<Value, String> {
-                match array_items {
-                    Some(items) => {
-                        coerce_value_for_field_type(&items.field_type, items.value_format, None, v)
-                    }
-                    None => Ok(v),
-                }
-            };
-            match val {
-                Value::Array(elements) => {
-                    let mut out = Vec::with_capacity(elements.len());
-                    for e in elements {
-                        out.push(coerce_elem(e)?);
-                    }
-                    Ok(Value::Array(out))
-                }
-                other => Ok(Value::Array(vec![coerce_elem(other)?])),
-            }
-        }
-        FieldType::Date => match value_format {
-            Some(ValueWireFormat::Temporal(fmt)) => {
-                crate::temporal::normalize_temporal_value(val, fmt)
-            }
-            None => Err("Date field missing value_format in schema".to_string()),
-        },
-        FieldType::String | FieldType::Uuid | FieldType::Select | FieldType::MultiSelect => {
-            Ok(match val {
-                Value::Integer(n) => Value::String(n.to_string()),
-                Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
-                _ => val,
-            })
-        }
-        FieldType::Integer => Ok(match val {
-            Value::String(ref s) => s.parse::<i64>().map(Value::Integer).unwrap_or(val),
-            Value::Float(f) if f.fract() == 0.0 && f.is_finite() => Value::Integer(f as i64),
-            _ => val,
-        }),
-        FieldType::Number => Ok(match val {
-            Value::String(ref s) => s.parse::<f64>().map(Value::Float).unwrap_or(val),
-            Value::Integer(n) => Value::Float(n as f64),
-            _ => val,
-        }),
-        FieldType::EntityRef { .. } => Ok(match val {
-            Value::Integer(n) => Value::String(n.to_string()),
-            Value::Float(f) => Value::String(normalize_numeric_id_float(f)),
-            _ => val,
-        }),
-        FieldType::Boolean => Ok(match val {
-            Value::String(s) if s.eq_ignore_ascii_case("true") => Value::Bool(true),
-            Value::String(s) if s.eq_ignore_ascii_case("false") => Value::Bool(false),
-            _ => val,
-        }),
-        FieldType::Json => match val {
-            Value::String(ref s) if s.as_str() == "$" => Ok(val),
-            Value::String(s) => crate::value::parse_json_subtree_str(&s).ok_or_else(|| {
-                "Json parameter: string must be valid JSON with a top-level object or array"
-                    .to_string()
-            }),
-            other => Ok(other),
-        },
-        _ => Ok(val),
     }
 }
 
@@ -1193,6 +1118,8 @@ impl<'a> Parser<'a> {
         }
         let src_ent = g.reference.entity_type.as_str();
         let expected_id_key = format!("{}_id", src_ent.to_lowercase());
+        let cgs_src = self.cgs_for_entity_required(src_ent);
+        let ent_src = cgs_src.get_entity(src_ent);
         match &g.reference.key {
             EntityKey::Compound(parts) => {
                 for pv in path_vars {
@@ -1200,7 +1127,13 @@ impl<'a> Parser<'a> {
                         continue;
                     }
                     if let Some(v) = parts.get(&pv) {
-                        map.insert(pv, Value::String(v.clone()));
+                        let wire = if let Some(ent) = ent_src {
+                            let json = crate::identity_slot_to_json(cgs_src, ent, pv.as_str(), v);
+                            crate::json_value_to_plasm_value(&json)
+                        } else {
+                            Value::String(v.clone())
+                        };
+                        map.insert(pv, wire);
                     }
                 }
             }

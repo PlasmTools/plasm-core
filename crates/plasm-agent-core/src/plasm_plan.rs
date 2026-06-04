@@ -503,6 +503,7 @@ pub struct ValidatedPlanRelationTraversal {
     pub(crate) cardinality: RelationCardinality,
     pub(crate) source_cardinality: RelationSourceCardinality,
     pub(crate) ir: ValidatedPlanExprIr,
+    pub(crate) binding_proofs: Vec<plasm_core::RelationBindingProof>,
 }
 
 impl ValidatedPlanNode {
@@ -713,6 +714,9 @@ pub struct PlanRelationTraversal {
     pub source_cardinality: RelationSourceCardinality,
     pub expr: String,
     pub ir: PlanExprIr,
+    /// Catalog-derived `(cap_param ← parent_field)` witnesses for scoped materialization.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub binding_proofs: Vec<plasm_core::RelationBindingProof>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1358,6 +1362,7 @@ fn validated_node_from_raw(
                         cardinality: relation.cardinality,
                         source_cardinality: relation.source_cardinality,
                         ir: validated_plan_expr_ir(&relation.ir, node_index, "relation.ir")?,
+                        binding_proofs: relation.binding_proofs.clone(),
                     },
                     depends_on,
                     uses_result,
