@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.71] - 2026-05-30
+
+### Performance
+
+- **DOMAIN synthesis (full-catalog / `include_domain_execution_model`):** precomputed `SymbolMap` expand tables (no per-call `HashMap` on symbol replace); lazily cached per-entity `CachedManifestNames`; inverted `CgsIncomingNavIndex` for incoming relation nav; `creates_by_anchor` on `CgsCapabilityIndex` (no full-capability scan per entity).
+- **Render path:** `DomainSynthesisSession` shares line-valid cache and gloss state; federated exposure uses `render_domain_table_resolved` (no duplicate entity loop); `ident_meta_by_entity` index for exposure ident metadata lookup.
+- **Regression:** Criterion benches for validation TSV on `plasm_prompt_matrix` and `apis/github` (`domain_prompt_render`).
+
 ## [0.1.70] - 2026-05-30
 
 ### Performance

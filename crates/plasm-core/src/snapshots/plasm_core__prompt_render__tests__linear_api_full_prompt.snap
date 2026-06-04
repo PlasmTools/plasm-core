@@ -81,6 +81,7 @@ plasm_expr	Meaning
 v13	ref:Issue · str · Issue anchor
 v2	uuid
 v27	markdown
+p1	ref:Issue · Issue anchor (human identifier, e.g. ENG-42).
 p25	v11 · identifier
 p29	v13 · issue
 p16	v2 · id
@@ -121,7 +122,8 @@ v11	str · Human-visible issue key
 v12	int · Linear priority 0–4 (1 urgent, 4 low)
 v22	str · Workflow column name
 v9	ref:Team · str · Owning team (by team key)
-p1	issue
+p4	ref:Cycle
+p9	ref:Team · Owning team (by team key).
 p14	v6 · assignee_name
 p18	v4 · cycle
 p24	v9 · team
@@ -162,6 +164,7 @@ e7.m17(p56=$, p24=e10(p45),..)	returns e7 · optional params: p51 · Create a pr
 e7	returns [e7]
 e7(p36)	returns e7
 e7~$	returns [e7]
+p12	uuid
 p37	v2 · project
 p38	v2 · id
 e8{p37=$}[p38,p56]	returns [e8] · projection · A milestone on a project
@@ -170,6 +173,7 @@ e8.m22(p37=$, p56=$,..)	returns e8 · optional params: p51 · Create a milestone
 e8{p37=$}	returns [e8]
 e8{p37=$}.p12	relation e8 => e7
 v20	select · onTrack, atRisk, offTrack
+p13	uuid
 p41	v2 · id
 p40	v20 · health
 e9{p37=$}[p41,p49,p40]	returns [e9] · projection · A status update posted on a project

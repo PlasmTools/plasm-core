@@ -39,6 +39,7 @@ fn domain_prompt_benchmarks(c: &mut Criterion) {
     let mut group = c.benchmark_group("domain_prompt");
     group.sample_size(30);
     let config = RenderConfig::for_eval(None);
+    let validation_config = RenderConfig::for_expression_surface_validation();
 
     if let Some(path) = fixture_schema("plasm_prompt_matrix") {
         let cgs = load_cgs(&path);
@@ -47,6 +48,18 @@ fn domain_prompt_benchmarks(c: &mut Criterion) {
             &cgs,
             |b, cgs: &Arc<CGS>| {
                 b.iter(|| render_prompt_tsv_with_config(black_box(cgs.as_ref()), config));
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new(
+                "render_prompt_tsv_validation_all_entities",
+                "plasm_prompt_matrix",
+            ),
+            &cgs,
+            |b, cgs: &Arc<CGS>| {
+                b.iter(|| {
+                    render_prompt_tsv_with_config(black_box(cgs.as_ref()), validation_config)
+                });
             },
         );
     }
@@ -96,6 +109,18 @@ fn domain_prompt_benchmarks(c: &mut Criterion) {
                         &exposure,
                         None,
                     ));
+                });
+            },
+        );
+        group.bench_with_input(
+            BenchmarkId::new(
+                "render_prompt_tsv_validation_all_entities",
+                "github",
+            ),
+            &cgs,
+            |b, cgs: &Arc<CGS>| {
+                b.iter(|| {
+                    render_prompt_tsv_with_config(black_box(cgs.as_ref()), validation_config)
                 });
             },
         );

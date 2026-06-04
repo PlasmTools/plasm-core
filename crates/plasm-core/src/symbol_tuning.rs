@@ -1565,6 +1565,11 @@ pub struct SymbolMap {
     pub(crate) p_sym_to_value_sym: HashMap<String, String>,
     /// Pre-rendered `v#  ;;  …` gloss bodies (DOMAIN teaching only; not used by [`expand_path_symbols`]).
     value_sym_gloss: IndexMap<String, String>,
+    /// `(sym, wire)` pairs sorted by symbol length descending — built once per snapshot for [`expand_path_symbols`].
+    entity_replacements: Arc<[(String, String)]>,
+    ident_replacements: Arc<[(String, String)]>,
+    /// Method symbols sorted by length descending — built once per snapshot for [`expand_method_tokens`].
+    method_syms_sorted: Arc<[String]>,
 }
 
 #[inline]
@@ -1603,6 +1608,12 @@ pub(crate) fn next_opaque_v_symbol_after_map_and_extra_syms<'a>(
 }
 
 impl SymbolMap {
+    fn finalize_expand_tables(&mut self) {
+        self.entity_replacements = sorted_sym_replacements(&self.sym_to_entity);
+        self.ident_replacements = sorted_sym_replacements(&self.sym_to_ident);
+        self.method_syms_sorted = sorted_method_syms(&self.sym_to_method);
+    }
+
     /// Stable `(entry_id, entity)` → `e#` assignments for HTTP `/symbols` and terminals.
     pub fn exposed_entity_symbol_rows(&self) -> Vec<ExposedEntitySymbolRow> {
         self.qualified_entity_to_sym
@@ -2306,24 +2317,11 @@ enum SymPhase {
 }
 
 fn replace_sym_tokens(input: &str, map: &SymbolMap, phase: SymPhase) -> String {
-    use std::collections::HashMap;
-    let lookup: HashMap<String, String> = match phase {
-        SymPhase::Entity => map
-            .sym_to_entity
-            .iter()
-            .map(|(a, b)| (a.clone(), b.clone()))
-            .collect(),
-        SymPhase::Ident => map
-            .sym_to_ident
-            .iter()
-            .map(|(a, b)| (a.clone(), b.clone()))
-            .collect(),
+    let replacements = match phase {
+        SymPhase::Entity => map.entity_replacements.as_ref(),
+        SymPhase::Ident => map.ident_replacements.as_ref(),
     };
-    let mut syms: Vec<String> = lookup.keys().cloned().collect();
-    syms.sort_by_key(|k| std::cmp::Reverse(k.len()));
-    scan_replace(input, &syms, |sym| {
-        lookup.get(sym).cloned().unwrap_or_else(|| sym.to_string())
-    })
+    scan_replace_sorted_pairs(input, replacements)
 }
 
 /// When [`expand_path_symbols_with_options`] keeps `e#` opaque, method expansion must still
@@ -2336,8 +2334,7 @@ fn entity_surface_wire_name(left: &str, map: &SymbolMap) -> String {
 }
 
 fn expand_method_tokens(input: &str, map: &SymbolMap) -> String {
-    let mut syms: Vec<String> = map.sym_to_method.keys().cloned().collect();
-    syms.sort_by_key(|k| std::cmp::Reverse(k.len()));
+    let syms = map.method_syms_sorted.as_ref();
     let mut out = String::with_capacity(input.len());
     let mut i = 0usize;
     let mut in_string = false;
@@ -2367,7 +2364,7 @@ fn expand_method_tokens(input: &str, map: &SymbolMap) -> String {
         let mut advanced = false;
         if ch == '.' && i + 1 < input.len() {
             let rest = &input[i + 1..];
-            if let Some(sym) = syms.iter().find(|s| rest.starts_with(*s)) {
+            if let Some(sym) = syms.iter().find(|s| rest.starts_with(s.as_str())) {
                 let sym_len = sym.len();
                 let after = i + 1 + sym_len;
                 let boundary_ok =
@@ -2406,6 +2403,73 @@ fn expand_method_tokens(input: &str, map: &SymbolMap) -> String {
         i += ch_len;
     }
     out
+}
+
+/// Like [`scan_replace`] but uses pre-sorted `(sym, replacement)` pairs (longest sym first).
+fn scan_replace_sorted_pairs(input: &str, replacements: &[(String, String)]) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0usize;
+    let mut in_string = false;
+    let mut escape = false;
+
+    while i < input.len() {
+        let ch = input[i..].chars().next().unwrap();
+        let ch_len = ch.len_utf8();
+        if in_string {
+            out.push(ch);
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            i += ch_len;
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            out.push(ch);
+            i += ch_len;
+            continue;
+        }
+        let mut replaced = false;
+        if ident_boundary_left(input, i) {
+            for (sym, wire) in replacements {
+                if input[i..].starts_with(sym) {
+                    let after = i + sym.len();
+                    let boundary_ok = after >= input.len()
+                        || !ident_continue(input[after..].chars().next().unwrap());
+                    if boundary_ok {
+                        out.push_str(wire);
+                        i = after;
+                        replaced = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if !replaced {
+            out.push(ch);
+            i += ch_len;
+        }
+    }
+    out
+}
+
+fn sorted_sym_replacements(map: &IndexMap<String, String>) -> Arc<[(String, String)]> {
+    let mut pairs: Vec<(String, String)> = map
+        .iter()
+        .map(|(sym, wire)| (sym.clone(), wire.clone()))
+        .collect();
+    pairs.sort_by_key(|(sym, _)| std::cmp::Reverse(sym.len()));
+    pairs.into()
+}
+
+fn sorted_method_syms(map: &IndexMap<String, (String, String, String)>) -> Arc<[String]> {
+    let mut syms: Vec<String> = map.keys().cloned().collect();
+    syms.sort_by_key(|k| std::cmp::Reverse(k.len()));
+    syms.into()
 }
 
 fn find_entity_before_dot(s: &str, dot_idx: usize) -> Option<String> {
@@ -2689,6 +2753,8 @@ pub struct DomainExposureSession {
     value_domain_fp_to_repr_meta: IndexMap<String, IdentMetadata>,
     /// Memoized [`SymbolMap`] for this session; cleared in [`Self::expose_entities`].
     symbol_map_cache: RwLock<Option<Arc<SymbolMap>>>,
+    /// `(catalog_entry_id, entity)` → wire name → slot metadata (rebuilt after each slot assignment wave).
+    ident_meta_by_entity: HashMap<(String, EntityName), HashMap<String, IdentMetadata>>,
 }
 
 impl Clone for DomainExposureSession {
@@ -2714,6 +2780,7 @@ impl Clone for DomainExposureSession {
             value_domain_fp_to_sym: self.value_domain_fp_to_sym.clone(),
             value_domain_fp_to_repr_meta: self.value_domain_fp_to_repr_meta.clone(),
             symbol_map_cache: RwLock::new(None),
+            ident_meta_by_entity: self.ident_meta_by_entity.clone(),
         }
     }
 }
@@ -2743,6 +2810,7 @@ impl DomainExposureSession {
             value_domain_fp_to_sym: IndexMap::new(),
             value_domain_fp_to_repr_meta: IndexMap::new(),
             symbol_map_cache: RwLock::new(None),
+            ident_meta_by_entity: HashMap::new(),
         };
         let arc = Arc::new(cgs.clone());
         s.expose_entities(&[cgs], arc, catalog_entry_id, entity_names_in_order);
@@ -2776,6 +2844,7 @@ impl DomainExposureSession {
             value_domain_fp_to_sym: IndexMap::new(),
             value_domain_fp_to_repr_meta: IndexMap::new(),
             symbol_map_cache: RwLock::new(None),
+            ident_meta_by_entity: HashMap::new(),
         };
         let arc = Arc::new(cgs.clone());
         let _ = s.expose_surface(&[cgs], arc, catalog_entry_id, entity_names_in_order, delta);
@@ -2968,6 +3037,21 @@ impl DomainExposureSession {
             self.slot_fingerprint_to_sym.insert(fp, sym);
         }
         self.rebuild_parameter_symbol_maps();
+        self.rebuild_ident_meta_by_entity();
+    }
+
+    fn rebuild_ident_meta_by_entity(&mut self) {
+        self.ident_meta_by_entity.clear();
+        for meta in self.slot_occurrence_meta.values() {
+            let key = (
+                meta.catalog_entry_id().to_string(),
+                meta.entity().clone(),
+            );
+            self.ident_meta_by_entity
+                .entry(key)
+                .or_default()
+                .insert(meta.wire_name().to_string(), meta.clone());
+        }
     }
 
     fn rebuild_parameter_symbol_maps(&mut self) {
@@ -3203,6 +3287,9 @@ impl DomainExposureSession {
             value_sym_to_fp,
             p_sym_to_value_sym,
             value_sym_gloss: IndexMap::new(),
+            entity_replacements: Arc::from([]),
+            ident_replacements: Arc::from([]),
+            method_syms_sorted: Arc::from([]),
         };
 
         for (fp, vsym) in &sm.value_domain_fp_to_sym {
@@ -3218,6 +3305,7 @@ impl DomainExposureSession {
                 sm.value_sym_gloss.insert(vsym.clone(), g);
             }
         }
+        sm.finalize_expand_tables();
         sm
     }
 
@@ -3228,16 +3316,18 @@ impl DomainExposureSession {
     ) -> HashMap<IdentMetaKey, IdentMetadata> {
         let set: HashSet<&str> = full_entities.iter().copied().collect();
         let mut out = HashMap::new();
-        for meta in self.slot_occurrence_meta.values() {
-            if !set.contains(meta.entity().as_str()) {
+        for ((entry_id, entity), by_wire) in &self.ident_meta_by_entity {
+            if !set.contains(entity.as_str()) {
                 continue;
             }
-            let k = (
-                meta.catalog_entry_id().to_string(),
-                meta.entity().clone(),
-                meta.wire_name().to_string(),
-            );
-            out.entry(k).or_insert_with(|| meta.clone());
+            for meta in by_wire.values() {
+                let k = (
+                    entry_id.clone(),
+                    entity.clone(),
+                    meta.wire_name().to_string(),
+                );
+                out.entry(k).or_insert_with(|| meta.clone());
+            }
         }
         out
     }

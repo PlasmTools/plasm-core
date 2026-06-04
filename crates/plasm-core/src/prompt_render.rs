@@ -663,7 +663,6 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
     let mut teaching_blocks = Vec::new();
     let mut entities_buf = Vec::new();
     let fill_model = config.include_domain_execution_model;
-    let surface_filter = Some(&exposure.surface);
 
     let emit_set: Option<std::collections::BTreeSet<(String, String)>> =
         emit_entity_blocks.map(|keys| {
@@ -672,91 +671,31 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
                 .collect()
         });
 
-    let ident_meta = map_opt
-        .as_ref()
-        .map(|_| exposure.ident_metadata_for_exposure_entities(&full_entities));
-
-    let mut gloss_emit_state = FieldGlossEmitState {
-        registry_p_slot_compact_gloss: HashMap::new(),
-        registry_compact_meaning_canonical_p: HashMap::new(),
-        registry_p_sym_alias: HashMap::new(),
-        registry_value_gloss_canonical_v: HashMap::new(),
-        registry_v_sym_alias: HashMap::new(),
-        non_registry_slots: HashMap::new(),
-        defined_value_domains: HashSet::new(),
-    };
-    let mut line_valid_cache: HashMap<DomainLineValidCacheKey, DomainLineValidEntry> =
-        HashMap::with_capacity(8192);
-
-    for (entity, entry_id) in exposure
+    let federated_blocks: Vec<(String, &str)> = exposure
         .entities
         .iter()
         .zip(exposure.entity_catalog_entry_ids.iter())
-    {
-        if let Some(ref set) = emit_set {
-            if !set.contains(&(entry_id.clone(), entity.clone())) {
-                continue;
-            }
-        }
-        let cgs = by_entry
-            .get(entry_id.as_str())
-            .copied()
-            .expect("CGS for catalog entry id");
-        let ename = entity.as_str();
-        let collect_meta = fill_model;
-        let mut field_gloss_accum = Vec::new();
-        let mut gloss_emit: Option<GlossScratch<'_>> =
-            match (map_opt.as_deref(), ident_meta.as_ref()) {
-                (Some(m), Some(meta)) => Some(GlossScratch {
-                    field_gloss: &mut field_gloss_accum,
-                    state: &mut gloss_emit_state,
-                    map: m,
-                    meta,
-                    catalog_entry_id: entry_id.as_str(),
-                    entity: ename,
-                    cgs,
-                }),
-                _ => None,
-            };
-        let block = collect_entity_teaching_block(
-            cgs,
-            ename,
-            map_opt.as_deref(),
-            ident_meta.as_ref(),
-            collect_meta,
-            &mut line_valid_cache,
-            prompt_line_valid_cache_seed_exposure(exposure),
-            map_opt.clone(),
-            &mut gloss_emit,
-            surface_filter,
-            Some(entry_id.as_str()),
-        );
-        if block.teaching_rows.is_empty() {
-            continue;
-        }
-        let mut seen_expr: HashSet<TeachingRowDedupeKey> = HashSet::new();
-        let mut emitted_metas: Vec<DomainLineMeta> = Vec::new();
-        let mut kept_rows: Vec<EntityTeachingExprRow> = Vec::new();
-        for row in block.teaching_rows {
-            if seen_expr.insert(row.dedupe_key.clone()) {
-                if collect_meta {
-                    emitted_metas.push(row.meta.clone());
-                }
-                kept_rows.push(row);
-            }
-        }
-        teaching_blocks.push(EntityTeachingBlock {
-            heading: block.heading,
-            field_gloss_rows: block.field_gloss_rows,
-            teaching_rows: kept_rows,
-        });
-        if fill_model {
-            entities_buf.push(EntityDomainPrompt {
-                entity: ename.to_string(),
-                lines: emitted_metas,
-            });
-        }
-    }
+        .map(|(entity, entry_id)| (entry_id.clone(), entity.as_str()))
+        .collect();
+
+    render_domain_table_resolved(
+        |ename| {
+            let _ = ename;
+            by_entry.values().next().expect("federated by_entry non-empty")
+        },
+        &full_entities,
+        map_opt.as_deref(),
+        map_opt.clone(),
+        Some(exposure),
+        &mut teaching_blocks,
+        &mut entities_buf,
+        fill_model,
+        false,
+        None,
+        emit_set.as_ref(),
+        Some(&federated_blocks),
+        Some(by_entry),
+    );
 
     let model = if fill_model {
         DomainPromptModel {
@@ -817,6 +756,9 @@ pub fn render_domain_prompt_bundle_for_exposure(
         fill_model,
         false,
         emit_entity_blocks,
+        None,
+        None,
+        None::<&IndexMap<String, &CGS>>,
     );
     let model = if fill_model {
         DomainPromptModel {
@@ -2151,106 +2093,72 @@ fn incoming_relation_nav_bases_to_entity(
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
 ) -> Vec<String> {
+    use crate::schema::IncomingNavSlotKind;
+
     let mut out = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    for (src_key, src_ent) in cgs.entities.iter() {
-        let src_name = src_key.as_str();
-        if src_name == target_ename {
-            continue;
-        }
+    for edge in cgs.incoming_nav_edges_to(target_ename) {
+        let src_name = edge.source_entity.as_str();
         if !surface_includes_exposed_entity(surface_filter, cgs, catalog_entry_id, src_name) {
             continue;
         }
+        let Some(src_ent) = cgs.get_entity(src_name) else {
+            continue;
+        };
         let parent_es = ent_sym(map, src_name);
-        let rel_keys: HashSet<&str> = src_ent.relations.keys().map(|k| k.as_str()).collect();
-        for (rel_k, rel_s) in src_ent.relations.iter() {
-            if rel_s.target_resource.as_str() != target_ename {
+        let is_relation = matches!(edge.kind, IncomingNavSlotKind::Relation);
+        if is_relation {
+            let Some(rel_s) = src_ent.relations.get(edge.slot_name.as_str()) else {
                 continue;
-            }
+            };
             if rel_s.cardinality == Cardinality::Many && !many_relation_nav_emittable(rel_s) {
                 continue;
             }
-            if !surface_allows_relation_nav(
-                surface_filter,
-                catalog_entry_id,
-                src_name,
-                rel_k.as_str(),
-                true,
-            ) {
-                continue;
-            }
-            let Some(recv) = relation_nav_anchor_expr(
-                &parent_es,
-                src_ent,
-                cgs,
-                map,
-                line_valid_cache,
-                line_valid_cache_seed,
-            ) else {
-                continue;
-            };
-            let expr = format!("{}.{}", recv, id_sym_rel(map, src_name, rel_k.as_str()));
-            let work = domain_line_work_string(&expr, map);
-            if domain_line_work_valid_cached(
-                line_valid_cache,
-                line_valid_cache_seed,
-                cgs,
-                &work,
-                &expr,
-            ) && seen.insert(expr.clone())
-            {
-                out.push(expr);
-                if out.len() >= MAX_INCOMING_REL_NAV_PROJECTION_BASES {
-                    return out;
-                }
-            }
         }
-        for (fname, f) in src_ent.fields.iter() {
-            if rel_keys.contains(fname.as_str()) {
-                continue;
-            }
-            let Ok(nv) = f.named_value(cgs) else {
-                continue;
-            };
-            let FieldType::EntityRef { target } = &nv.field_type else {
-                continue;
-            };
-            if target.as_str() != target_ename {
-                continue;
-            }
-            if !surface_allows_relation_nav(
-                surface_filter,
-                catalog_entry_id,
-                src_name,
-                fname.as_str(),
-                false,
-            ) {
-                continue;
-            }
-            let Some(recv) = relation_nav_anchor_expr(
-                &parent_es,
-                src_ent,
-                cgs,
-                map,
-                line_valid_cache,
-                line_valid_cache_seed,
-            ) else {
-                continue;
-            };
-            let expr = format!("{}.{}", recv, id_sym_entity(map, src_name, fname.as_str()));
-            let work = domain_line_work_string(&expr, map);
-            if domain_line_work_valid_cached(
-                line_valid_cache,
-                line_valid_cache_seed,
-                cgs,
-                &work,
-                &expr,
-            ) && seen.insert(expr.clone())
-            {
-                out.push(expr);
-                if out.len() >= MAX_INCOMING_REL_NAV_PROJECTION_BASES {
-                    return out;
-                }
+        if !surface_allows_relation_nav(
+            surface_filter,
+            catalog_entry_id,
+            src_name,
+            edge.slot_name.as_str(),
+            is_relation,
+        ) {
+            continue;
+        }
+        let Some(recv) = relation_nav_anchor_expr(
+            &parent_es,
+            src_ent,
+            cgs,
+            map,
+            line_valid_cache,
+            line_valid_cache_seed,
+        ) else {
+            continue;
+        };
+        let expr = if is_relation {
+            format!(
+                "{}.{}",
+                recv,
+                id_sym_rel(map, src_name, edge.slot_name.as_str())
+            )
+        } else {
+            format!(
+                "{}.{}",
+                recv,
+                id_sym_entity(map, src_name, edge.slot_name.as_str())
+            )
+        };
+        let work = domain_line_work_string(&expr, map);
+        if domain_line_work_valid_cached(
+            line_valid_cache,
+            line_valid_cache_seed,
+            cgs,
+            &work,
+            &expr,
+        ) && seen.insert(expr.clone())
+        {
+            out.push(expr);
+            if out.len() >= MAX_INCOMING_REL_NAV_PROJECTION_BASES {
+                return out;
             }
         }
     }
@@ -2989,16 +2897,6 @@ fn domain_line_work_valid_cached(
     wire_expr: &str,
 ) -> bool {
     domain_line_validate_cached(cache, cache_seed, cgs, work, None, None, wire_expr).is_some()
-}
-
-/// Same rule as `Parser::can_bind_create_path_vars`: path template binds `{anchor}_id` from `Get(anchor)`.
-fn can_bind_create_from_anchor(cap: &crate::CapabilitySchema, anchor: &str) -> bool {
-    let path_vars = crate::schema::path_var_names_from_mapping_json(&cap.mapping.template.0);
-    if path_vars.is_empty() {
-        return false;
-    }
-    let expected = format!("{}_id", anchor.to_lowercase());
-    path_vars.iter().all(|pv| pv == &expected)
 }
 
 /// Omit path-bound scope keys from explicit dotted-call `(…)` when they are already supplied by the
@@ -3936,14 +3834,11 @@ fn collect_multi_arity_method_lines(
     }
     // Anchored creates: `Parent($).create-child(args)` — cap.domain is the child,
     // but the CML path binds `{ename}_id` from the anchor.
-    for cap in cgs.capabilities.values() {
-        if cap.kind != CapabilityKind::Create {
+    for cap_name in cgs.create_caps_for_anchor(ename) {
+        let Some(cap) = cgs.capabilities.get(cap_name.as_str()) else {
             continue;
-        }
+        };
         if !surface_allows_capability(surface_filter, catalog_entry_id, cap) {
-            continue;
-        }
-        if !can_bind_create_from_anchor(cap, ename) {
             continue;
         }
         if !seen.insert(cap.name.to_string()) {
@@ -5164,6 +5059,114 @@ struct FieldGlossEmitState {
     defined_value_domains: HashSet<String>,
 }
 
+/// Shared per-render caches for DOMAIN table synthesis (line validation, gloss dedup, metadata).
+struct DomainSynthesisSession<'a> {
+    line_valid_cache: HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
+    line_valid_cache_seed: u64,
+    gloss_emit_state: FieldGlossEmitState,
+    map: Option<&'a SymbolMap>,
+    map_arc: Option<std::sync::Arc<SymbolMap>>,
+    ident_meta: Option<HashMap<crate::symbol_tuning::IdentMetaKey, IdentMetadata>>,
+    surface_filter: Option<&'a ExposureSurface>,
+    entity_catalog_ids: HashMap<&'a str, &'a str>,
+    collect_meta: bool,
+}
+
+impl<'a> DomainSynthesisSession<'a> {
+    fn new(
+        line_valid_cache_seed: u64,
+        map: Option<&'a SymbolMap>,
+        map_arc: Option<std::sync::Arc<SymbolMap>>,
+        ident_meta: Option<HashMap<crate::symbol_tuning::IdentMetaKey, IdentMetadata>>,
+        surface_filter: Option<&'a ExposureSurface>,
+        entity_catalog_ids: HashMap<&'a str, &'a str>,
+        collect_meta: bool,
+    ) -> Self {
+        Self {
+            line_valid_cache: HashMap::with_capacity(8192),
+            line_valid_cache_seed,
+            gloss_emit_state: FieldGlossEmitState {
+                registry_p_slot_compact_gloss: HashMap::new(),
+                registry_compact_meaning_canonical_p: HashMap::new(),
+                registry_p_sym_alias: HashMap::new(),
+                registry_value_gloss_canonical_v: HashMap::new(),
+                registry_v_sym_alias: HashMap::new(),
+                non_registry_slots: HashMap::new(),
+                defined_value_domains: HashSet::new(),
+            },
+            map,
+            map_arc,
+            ident_meta,
+            surface_filter,
+            entity_catalog_ids,
+            collect_meta,
+        }
+    }
+
+    fn apply_opaque_alias_rewrites(
+        &self,
+        teaching_blocks_out: &mut [EntityTeachingBlock],
+        model_out: &mut [EntityDomainPrompt],
+    ) {
+        let rep = merge_opaque_alias_maps(
+            &self.gloss_emit_state.registry_p_sym_alias,
+            &self.gloss_emit_state.registry_v_sym_alias,
+        );
+        if rep.is_empty() {
+            return;
+        }
+        if self.collect_meta {
+            debug_assert_eq!(
+                teaching_blocks_out.len(),
+                model_out.len(),
+                "model rows must stay aligned with teaching blocks"
+            );
+            for (block, prompt) in teaching_blocks_out.iter_mut().zip(model_out.iter_mut()) {
+                for g in &mut block.field_gloss_rows {
+                    rewrite_field_gloss_opaque_tokens(g, &rep);
+                }
+                for row in &mut block.teaching_rows {
+                    rewrite_teaching_expr_line_opaque_tokens(&mut row.teaching_expr, &rep);
+                    row.meta.expression = crate::symbol_tuning::rewrite_opaque_ident_tokens(
+                        &row.meta.expression,
+                        &rep,
+                    );
+                }
+                let mut seen = HashSet::new();
+                let mut new_rows = Vec::new();
+                let mut new_lines = Vec::new();
+                for (row, meta) in block.teaching_rows.drain(..).zip(prompt.lines.drain(..)) {
+                    let fp = teaching_expr_line_fingerprint(&row.teaching_expr);
+                    if seen.insert(fp) {
+                        new_rows.push(row);
+                        new_lines.push(meta);
+                    }
+                }
+                block.teaching_rows = new_rows;
+                prompt.lines = new_lines;
+            }
+        } else {
+            for block in teaching_blocks_out.iter_mut() {
+                for g in &mut block.field_gloss_rows {
+                    rewrite_field_gloss_opaque_tokens(g, &rep);
+                }
+                for row in &mut block.teaching_rows {
+                    rewrite_teaching_expr_line_opaque_tokens(&mut row.teaching_expr, &rep);
+                    row.meta.expression = crate::symbol_tuning::rewrite_opaque_ident_tokens(
+                        &row.meta.expression,
+                        &rep,
+                    );
+                }
+                let mut seen = HashSet::new();
+                block.teaching_rows.retain(|row| {
+                    let fp = teaching_expr_line_fingerprint(&row.teaching_expr);
+                    seen.insert(fp)
+                });
+            }
+        }
+    }
+}
+
 /// Per-entity field gloss rows built directly into [`TeachingFieldGloss`] (no compact transcript).
 struct GlossScratch<'a> {
     field_gloss: &'a mut Vec<TeachingFieldGloss>,
@@ -5396,6 +5399,9 @@ fn render_domain_table_resolved<'b, F>(
     fill_model: bool,
     _include_contract_preamble: bool,
     emit_entity_blocks: Option<&[&str]>,
+    emit_entity_keys: Option<&std::collections::BTreeSet<(String, String)>>,
+    federated_blocks: Option<&[(String, &str)]>,
+    federated_by_entry: Option<&'b IndexMap<String, &'b CGS>>,
 ) where
     F: FnMut(&str) -> &'b CGS,
 {
@@ -5431,151 +5437,135 @@ fn render_domain_table_resolved<'b, F>(
         _ => None,
     };
 
-    let mut gloss_emit_state = FieldGlossEmitState {
-        registry_p_slot_compact_gloss: HashMap::new(),
-        registry_compact_meaning_canonical_p: HashMap::new(),
-        registry_p_sym_alias: HashMap::new(),
-        registry_value_gloss_canonical_v: HashMap::new(),
-        registry_v_sym_alias: HashMap::new(),
-        non_registry_slots: HashMap::new(),
-        defined_value_domains: HashSet::new(),
-    };
-    let mut line_valid_cache: HashMap<DomainLineValidCacheKey, DomainLineValidEntry> =
-        HashMap::with_capacity(8192);
-
-    let block_iter: Vec<&str> = if let Some(e) = emit_entity_blocks {
-        e.to_vec()
-    } else {
-        full_entities.to_vec()
-    };
-
-    for &ename in &block_iter {
-        let cgs = resolve(ename);
-        let catalog_entry_id_owned = entity_catalog_ids
-            .get(ename)
-            .copied()
-            .map(str::to_string)
-            .or_else(|| cgs.entry_id.clone())
-            .unwrap_or_default();
-        let catalog_entry_id = catalog_entry_id_owned.as_str();
-        let collect_meta = fill_model;
-        let mut field_gloss_accum = Vec::new();
-        let mut gloss_emit: Option<GlossScratch<'_>> = match (map, ident_meta.as_ref()) {
-            (Some(m), Some(meta)) => Some(GlossScratch {
-                field_gloss: &mut field_gloss_accum,
-                state: &mut gloss_emit_state,
-                map: m,
-                meta,
-                catalog_entry_id,
-                entity: ename,
-                cgs,
-            }),
-            _ => None,
-        };
-        let block = collect_entity_teaching_block(
-            cgs,
-            ename,
-            map,
-            ident_meta.as_ref(),
-            collect_meta,
-            &mut line_valid_cache,
-            line_valid_cache_seed,
-            map_arc.clone(),
-            &mut gloss_emit,
-            surface_filter,
-            Some(catalog_entry_id),
-        );
-        if block.teaching_rows.is_empty() {
-            debug_assert!(
-                false,
-                "DOMAIN block empty for entity {ename} — CGS::validate should have rejected this via cgs_expression_validate"
-            );
-            tracing::warn!(
-                target: "plasm_core::prompt_render",
-                entity = ename,
-                "empty DOMAIN block; schema should have failed CGS::validate"
-            );
-            continue;
-        }
-        let mut seen_expr: HashSet<TeachingRowDedupeKey> = HashSet::new();
-        let mut emitted_metas: Vec<DomainLineMeta> = Vec::new();
-        let mut kept_rows: Vec<EntityTeachingExprRow> = Vec::new();
-        for row in block.teaching_rows {
-            if seen_expr.insert(row.dedupe_key.clone()) {
-                if collect_meta {
-                    emitted_metas.push(row.meta.clone());
-                }
-                kept_rows.push(row);
-            }
-        }
-        teaching_blocks_out.push(EntityTeachingBlock {
-            heading: block.heading,
-            field_gloss_rows: block.field_gloss_rows,
-            teaching_rows: kept_rows,
-        });
-        if fill_model {
-            model_out.push(EntityDomainPrompt {
-                entity: ename.to_string(),
-                lines: emitted_metas,
-            });
-        }
-    }
-
-    let rep = merge_opaque_alias_maps(
-        &gloss_emit_state.registry_p_sym_alias,
-        &gloss_emit_state.registry_v_sym_alias,
+    let mut session = DomainSynthesisSession::new(
+        line_valid_cache_seed,
+        map,
+        map_arc,
+        ident_meta,
+        surface_filter,
+        entity_catalog_ids,
+        fill_model,
     );
-    if !rep.is_empty() {
-        if fill_model {
-            debug_assert_eq!(
-                teaching_blocks_out.len(),
-                model_out.len(),
-                "model rows must stay aligned with teaching blocks"
+
+    let render_one =
+        |session: &mut DomainSynthesisSession<'_>,
+         cgs: &CGS,
+         ename: &str,
+         catalog_entry_id: &str,
+         teaching_blocks_out: &mut Vec<EntityTeachingBlock>,
+         model_out: &mut Vec<EntityDomainPrompt>| {
+            let mut field_gloss_accum = Vec::new();
+            let mut gloss_emit: Option<GlossScratch<'_>> =
+                match (session.map, session.ident_meta.as_ref()) {
+                    (Some(m), Some(meta)) => Some(GlossScratch {
+                        field_gloss: &mut field_gloss_accum,
+                        state: &mut session.gloss_emit_state,
+                        map: m,
+                        meta,
+                        catalog_entry_id,
+                        entity: ename,
+                        cgs,
+                    }),
+                    _ => None,
+                };
+            let block = collect_entity_teaching_block(
+                cgs,
+                ename,
+                session.map,
+                session.ident_meta.as_ref(),
+                session.collect_meta,
+                &mut session.line_valid_cache,
+                session.line_valid_cache_seed,
+                session.map_arc.clone(),
+                &mut gloss_emit,
+                session.surface_filter,
+                Some(catalog_entry_id),
             );
-            for (block, prompt) in teaching_blocks_out.iter_mut().zip(model_out.iter_mut()) {
-                for g in &mut block.field_gloss_rows {
-                    rewrite_field_gloss_opaque_tokens(g, &rep);
-                }
-                for row in &mut block.teaching_rows {
-                    rewrite_teaching_expr_line_opaque_tokens(&mut row.teaching_expr, &rep);
-                    row.meta.expression = crate::symbol_tuning::rewrite_opaque_ident_tokens(
-                        &row.meta.expression,
-                        &rep,
-                    );
-                }
-                let mut seen = HashSet::new();
-                let mut new_rows = Vec::new();
-                let mut new_lines = Vec::new();
-                for (row, meta) in block.teaching_rows.drain(..).zip(prompt.lines.drain(..)) {
-                    let fp = teaching_expr_line_fingerprint(&row.teaching_expr);
-                    if seen.insert(fp) {
-                        new_rows.push(row);
-                        new_lines.push(meta);
-                    }
-                }
-                block.teaching_rows = new_rows;
-                prompt.lines = new_lines;
+            if block.teaching_rows.is_empty() {
+                debug_assert!(
+                    false,
+                    "DOMAIN block empty for entity {ename} — CGS::validate should have rejected this via cgs_expression_validate"
+                );
+                tracing::warn!(
+                    target: "plasm_core::prompt_render",
+                    entity = ename,
+                    "empty DOMAIN block; schema should have failed CGS::validate"
+                );
+                return;
             }
-        } else {
-            for block in teaching_blocks_out.iter_mut() {
-                for g in &mut block.field_gloss_rows {
-                    rewrite_field_gloss_opaque_tokens(g, &rep);
+            let mut seen_expr: HashSet<TeachingRowDedupeKey> = HashSet::new();
+            let mut emitted_metas: Vec<DomainLineMeta> = Vec::new();
+            let mut kept_rows: Vec<EntityTeachingExprRow> = Vec::new();
+            for row in block.teaching_rows {
+                if seen_expr.insert(row.dedupe_key.clone()) {
+                    if session.collect_meta {
+                        emitted_metas.push(row.meta.clone());
+                    }
+                    kept_rows.push(row);
                 }
-                for row in &mut block.teaching_rows {
-                    rewrite_teaching_expr_line_opaque_tokens(&mut row.teaching_expr, &rep);
-                    row.meta.expression = crate::symbol_tuning::rewrite_opaque_ident_tokens(
-                        &row.meta.expression,
-                        &rep,
-                    );
-                }
-                let mut seen = HashSet::new();
-                block.teaching_rows.retain(|row| {
-                    let fp = teaching_expr_line_fingerprint(&row.teaching_expr);
-                    seen.insert(fp)
+            }
+            teaching_blocks_out.push(EntityTeachingBlock {
+                heading: block.heading,
+                field_gloss_rows: block.field_gloss_rows,
+                teaching_rows: kept_rows,
+            });
+            if session.collect_meta {
+                model_out.push(EntityDomainPrompt {
+                    entity: ename.to_string(),
+                    lines: emitted_metas,
                 });
             }
+        };
+
+    if let Some(blocks) = federated_blocks {
+        let by_entry = federated_by_entry
+            .expect("federated_by_entry required when federated_blocks is set");
+        for (entry_id, ename) in blocks {
+            if let Some(set) = emit_entity_keys {
+                if !set.contains(&(entry_id.clone(), ename.to_string())) {
+                    continue;
+                }
+            }
+            let cgs = by_entry
+                .get(entry_id.as_str())
+                .copied()
+                .expect("CGS for catalog entry id");
+            render_one(
+                &mut session,
+                cgs,
+                ename,
+                entry_id.as_str(),
+                teaching_blocks_out,
+                model_out,
+            );
+        }
+    } else {
+        let block_iter: Vec<&str> = if let Some(e) = emit_entity_blocks {
+            e.to_vec()
+        } else {
+            full_entities.to_vec()
+        };
+        for &ename in &block_iter {
+            let cgs = resolve(ename);
+            let catalog_entry_id_owned = session
+                .entity_catalog_ids
+                .get(ename)
+                .copied()
+                .map(str::to_string)
+                .or_else(|| cgs.entry_id.clone())
+                .unwrap_or_default();
+            render_one(
+                &mut session,
+                cgs,
+                ename,
+                catalog_entry_id_owned.as_str(),
+                teaching_blocks_out,
+                model_out,
+            );
         }
     }
+
+    session.apply_opaque_alias_rewrites(teaching_blocks_out, model_out);
 }
 
 /// Per-entity many-shot examples using a single [`CGS`].
@@ -5602,6 +5592,9 @@ fn render_domain_table(
         fill_model,
         include_contract_preamble,
         emit_entity_blocks,
+        None,
+        None,
+        None::<&IndexMap<String, &CGS>>,
     );
 }
 

@@ -131,7 +131,7 @@ v104{p8=$}	returns delete_block — Delete one block
 v105{p7=$,p9=$,p14=$}	returns replace_range — Replace a range of blocks with new blocks
 v14	union · v210 | v211 | v212
 v15	union · v101 | v102 | v103 | v104 | v105 | v106 | v107
-e1(p12)[p12,p23,p36,p17,p16]	returns e1 · projection · Read or edit a shared Proof document
+e1(p12).p12[p12,p23,p36,p17,p16]	returns e1 · projection · Read or edit a shared Proof document
 e1(p12)	returns e1
 e1(p12).m17()	returns e1 · optional params: p34, p33 · Bind this session to a share URL or token for this slug. Later calls reuse stored credentials. Cl…
 e1(p12).m1(p5=$, p30=$, p24=$, p26=$,..)	returns e1 · optional params: p6, p33 · Start a comment thread on quoted text from the document

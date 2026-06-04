@@ -665,6 +665,16 @@ pub fn path_var_names_from_mapping_json(template: &serde_json::Value) -> Vec<Str
     out
 }
 
+/// Same rule as `Parser::can_bind_create_path_vars`: path template binds `{anchor}_id` from `Get(anchor)`.
+pub fn can_bind_create_from_anchor(cap: &CapabilitySchema, anchor: &str) -> bool {
+    let path_vars = path_var_names_from_mapping_json(&cap.mapping.template.0);
+    if path_vars.is_empty() {
+        return false;
+    }
+    let expected = format!("{}_id", anchor.to_lowercase());
+    path_vars.iter().all(|pv| pv == &expected)
+}
+
 fn collect_template_var_refs(template: &serde_json::Value, out: &mut Vec<String>) {
     match template {
         serde_json::Value::Object(map) => {
@@ -1606,12 +1616,110 @@ pub struct CapabilityManifest<'a> {
     pub standalone_creates: Vec<&'a CapabilitySchema>,
 }
 
+/// Cached capability name buckets per entity — resolved to [`CapabilityManifest`] via [`Self::resolve`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedManifestNames {
+    pub primary_query: Option<CapabilityName>,
+    pub primary_search: Option<CapabilityName>,
+    pub named_queries: Vec<CapabilityName>,
+    pub get: Option<CapabilityName>,
+    pub singleton_gets: Vec<CapabilityName>,
+    pub zero_arity_methods: Vec<CapabilityName>,
+    pub multi_arity_methods: Vec<CapabilityName>,
+    pub standalone_creates: Vec<CapabilityName>,
+}
+
+impl CachedManifestNames {
+    pub fn resolve<'a>(&self, cgs: &'a CGS) -> CapabilityManifest<'a> {
+        let cap = |n: &CapabilityName| cgs.capabilities.get(n.as_str());
+        let caps =
+            |ns: &[CapabilityName]| ns.iter().filter_map(cap).collect::<Vec<_>>();
+        CapabilityManifest {
+            primary_query: self.primary_query.as_ref().and_then(cap),
+            primary_search: self.primary_search.as_ref().and_then(cap),
+            named_queries: caps(&self.named_queries),
+            get: self.get.as_ref().and_then(cap),
+            singleton_gets: caps(&self.singleton_gets),
+            zero_arity_methods: caps(&self.zero_arity_methods),
+            multi_arity_methods: caps(&self.multi_arity_methods),
+            standalone_creates: caps(&self.standalone_creates),
+        }
+    }
+}
+
+/// Incoming relation / entity-ref edge toward a target entity (structure only; parse validation at render).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IncomingNavSlotKind {
+    Relation,
+    EntityRefField,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncomingNavEdge {
+    pub source_entity: EntityName,
+    pub slot_name: String,
+    pub kind: IncomingNavSlotKind,
+}
+
+/// Inverted index: target entity → incoming nav edges from other entities.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CgsIncomingNavIndex {
+    by_target: IndexMap<EntityName, Vec<IncomingNavEdge>>,
+}
+
+impl CgsIncomingNavIndex {
+    pub fn build(cgs: &CGS) -> Self {
+        use std::collections::HashSet;
+        let mut by_target: IndexMap<EntityName, Vec<IncomingNavEdge>> = IndexMap::new();
+        for (src_key, src_ent) in cgs.entities.iter() {
+            let rel_keys: HashSet<&str> = src_ent.relations.keys().map(|k| k.as_str()).collect();
+            for (rel_k, rel_s) in src_ent.relations.iter() {
+                let target = EntityName::from(rel_s.target_resource.as_str());
+                by_target.entry(target).or_default().push(IncomingNavEdge {
+                    source_entity: src_key.clone(),
+                    slot_name: rel_k.to_string(),
+                    kind: IncomingNavSlotKind::Relation,
+                });
+            }
+            for (fname, f) in src_ent.fields.iter() {
+                if rel_keys.contains(fname.as_str()) {
+                    continue;
+                }
+                let Ok(nv) = f.named_value(cgs) else {
+                    continue;
+                };
+                if let FieldType::EntityRef { target } = &nv.field_type {
+                    by_target
+                        .entry(EntityName::from(target.as_str()))
+                        .or_default()
+                        .push(IncomingNavEdge {
+                            source_entity: src_key.clone(),
+                            slot_name: fname.to_string(),
+                            kind: IncomingNavSlotKind::EntityRefField,
+                        });
+                }
+            }
+        }
+        Self { by_target }
+    }
+
+    #[inline]
+    pub fn edges_to(&self, target: &str) -> &[IncomingNavEdge] {
+        self.by_target
+            .get(&EntityName::from(target))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+}
+
 /// Precomputed (entity, kind) → capability name list in [`CGS::capabilities`] iteration order.
 /// Built lazily on first [`CGS::find_capabilities`] to keep prompt/runtime lookups O(k) per entity
 /// instead of O(total_capabilities) per call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CgsCapabilityIndex {
     by_domain_kind: IndexMap<(EntityName, CapabilityKind), Vec<CapabilityName>>,
+    /// Create capabilities that bind `{anchor}_id` from a path anchor entity.
+    creates_by_anchor: IndexMap<EntityName, Vec<CapabilityName>>,
 }
 
 impl CgsCapabilityIndex {
@@ -1622,7 +1730,24 @@ impl CgsCapabilityIndex {
             let key = (cap.domain.clone(), cap.kind);
             by_domain_kind.entry(key).or_default().push(name.clone());
         }
-        Self { by_domain_kind }
+        let mut creates_by_anchor: IndexMap<EntityName, Vec<CapabilityName>> = IndexMap::new();
+        for (cap_name, cap) in cgs.capabilities.iter() {
+            if cap.kind != CapabilityKind::Create {
+                continue;
+            }
+            for anchor in cgs.entities.keys() {
+                if can_bind_create_from_anchor(cap, anchor.as_str()) {
+                    creates_by_anchor
+                        .entry(anchor.clone())
+                        .or_default()
+                        .push(cap_name.clone());
+                }
+            }
+        }
+        Self {
+            by_domain_kind,
+            creates_by_anchor,
+        }
     }
 
     #[inline]
@@ -1630,6 +1755,14 @@ impl CgsCapabilityIndex {
         let key = (EntityName::from(entity), kind);
         self.by_domain_kind
             .get(&key)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    #[inline]
+    pub fn create_caps_for_anchor(&self, anchor: &str) -> &[CapabilityName] {
+        self.creates_by_anchor
+            .get(&EntityName::from(anchor))
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
@@ -1808,6 +1941,12 @@ pub struct CGS {
     /// Lazily built index for [`Self::find_capabilities`] / [`Self::find_capability`].
     #[serde(skip, default = "new_capability_index_lock")]
     capability_index: OnceLock<Arc<CgsCapabilityIndex>>,
+    /// Per-entity [`CachedManifestNames`] for prompt/CLI manifest (lazy; reset on [`CGS`] clone).
+    #[serde(skip, default = "new_capability_manifest_by_entity_lock")]
+    capability_manifest_by_entity: OnceLock<Arc<IndexMap<EntityName, CachedManifestNames>>>,
+    /// Incoming relation / entity-ref nav edges by target entity (lazy; reset on [`CGS`] clone).
+    #[serde(skip, default = "new_incoming_nav_index_lock")]
+    incoming_nav_index: OnceLock<Arc<CgsIncomingNavIndex>>,
     /// Capability names grouped by [`CapabilitySchema::domain`] (lazy; reset on [`CGS`] clone).
     #[serde(skip, default = "new_capability_names_by_domain_lock")]
     capability_names_by_domain: OnceLock<Arc<IndexMap<String, Vec<CapabilityName>>>>,
@@ -1817,6 +1956,14 @@ pub struct CGS {
 }
 
 fn new_capability_index_lock() -> OnceLock<Arc<CgsCapabilityIndex>> {
+    OnceLock::new()
+}
+
+fn new_capability_manifest_by_entity_lock() -> OnceLock<Arc<IndexMap<EntityName, CachedManifestNames>>> {
+    OnceLock::new()
+}
+
+fn new_incoming_nav_index_lock() -> OnceLock<Arc<CgsIncomingNavIndex>> {
     OnceLock::new()
 }
 
@@ -1849,6 +1996,8 @@ impl Clone for CGS {
             schema_overlay_hash: self.schema_overlay_hash.clone(),
             schema_overlay_scope_index: self.schema_overlay_scope_index.clone(),
             capability_index: OnceLock::new(),
+            capability_manifest_by_entity: OnceLock::new(),
+            incoming_nav_index: OnceLock::new(),
             capability_names_by_domain: OnceLock::new(),
             catalog_hash_hex: OnceLock::new(),
         }
@@ -2007,6 +2156,8 @@ impl CGS {
             schema_overlay_hash: None,
             schema_overlay_scope_index: IndexMap::new(),
             capability_index: new_capability_index_lock(),
+            capability_manifest_by_entity: new_capability_manifest_by_entity_lock(),
+            incoming_nav_index: new_incoming_nav_index_lock(),
             capability_names_by_domain: new_capability_names_by_domain_lock(),
             catalog_hash_hex: new_catalog_hash_lock(),
         }
@@ -2082,6 +2233,83 @@ impl CGS {
     fn capability_index_arc(&self) -> &Arc<CgsCapabilityIndex> {
         self.capability_index
             .get_or_init(|| Arc::new(CgsCapabilityIndex::build(self)))
+    }
+
+    fn capability_manifest_names_arc(&self) -> Arc<IndexMap<EntityName, CachedManifestNames>> {
+        self.capability_manifest_by_entity
+            .get_or_init(|| {
+                let mut map = IndexMap::new();
+                for en in self.entities.keys() {
+                    map.insert(
+                        en.clone(),
+                        self.build_cached_manifest_names(en.as_str()),
+                    );
+                }
+                Arc::new(map)
+            })
+            .clone()
+    }
+
+    fn incoming_nav_index_arc(&self) -> &Arc<CgsIncomingNavIndex> {
+        self.incoming_nav_index
+            .get_or_init(|| Arc::new(CgsIncomingNavIndex::build(self)))
+    }
+
+    fn build_cached_manifest_names(&self, entity: &str) -> CachedManifestNames {
+        let primary_query = self
+            .primary_query_capability(entity)
+            .map(|c| c.name.clone());
+        let primary_search = self
+            .primary_search_capability(entity)
+            .map(|c| c.name.clone());
+        let named_queries: Vec<CapabilityName> = self
+            .named_query_capabilities(entity)
+            .into_iter()
+            .map(|c| c.name.clone())
+            .collect();
+
+        let get_caps = self.find_capabilities(entity, CapabilityKind::Get);
+        let get = self.primary_get_capability(entity).map(|c| c.name.clone());
+        let singleton_gets: Vec<CapabilityName> = get_caps
+            .iter()
+            .filter(|c| {
+                !c.domain_exemplar_requires_entity_anchor() && capability_is_zero_arity_invoke(c)
+            })
+            .map(|c| c.name.clone())
+            .collect();
+
+        let mut zero_arity_methods = Vec::new();
+        let mut multi_arity_methods = Vec::new();
+        for kind in [
+            CapabilityKind::Action,
+            CapabilityKind::Update,
+            CapabilityKind::Delete,
+        ] {
+            for cap in self.find_capabilities(entity, kind) {
+                if capability_is_zero_arity_invoke(cap) {
+                    zero_arity_methods.push(cap.name.clone());
+                } else {
+                    multi_arity_methods.push(cap.name.clone());
+                }
+            }
+        }
+
+        let standalone_creates: Vec<CapabilityName> = self
+            .find_capabilities(entity, CapabilityKind::Create)
+            .into_iter()
+            .map(|c| c.name.clone())
+            .collect();
+
+        CachedManifestNames {
+            primary_query,
+            primary_search,
+            named_queries,
+            get,
+            singleton_gets,
+            zero_arity_methods,
+            multi_arity_methods,
+            standalone_creates,
+        }
     }
 
     /// Add a resource schema to this CGS.
@@ -3957,51 +4185,28 @@ impl CGS {
     /// which capabilities are available, classified by role. Both CLI generation and
     /// prompt rendering should consume this instead of independent `find_capabilities` loops.
     pub fn capability_manifest(&self, entity: &str) -> CapabilityManifest<'_> {
-        let primary_query = self.primary_query_capability(entity);
-        let primary_search = self.primary_search_capability(entity);
-        let named_queries = self.named_query_capabilities(entity);
+        self.capability_manifest_cached(entity)
+    }
 
-        let get_caps = self.find_capabilities(entity, CapabilityKind::Get);
-        let get = self.primary_get_capability(entity);
-        let singleton_gets: Vec<_> = get_caps
-            .iter()
-            .filter(|c| {
-                !c.domain_exemplar_requires_entity_anchor() && capability_is_zero_arity_invoke(c)
-            })
-            .copied()
-            .collect();
-
-        let mut zero_arity_methods = Vec::new();
-        let mut multi_arity_methods = Vec::new();
-        for kind in [
-            CapabilityKind::Action,
-            CapabilityKind::Update,
-            CapabilityKind::Delete,
-        ] {
-            for cap in self.find_capabilities(entity, kind) {
-                if capability_is_zero_arity_invoke(cap) {
-                    zero_arity_methods.push(cap);
-                } else {
-                    multi_arity_methods.push(cap);
-                }
-            }
+    /// Like [`Self::capability_manifest`] but uses a lazily built per-entity name cache.
+    pub fn capability_manifest_cached(&self, entity: &str) -> CapabilityManifest<'_> {
+        if let Some(cached) = self
+            .capability_manifest_names_arc()
+            .get(&EntityName::from(entity))
+        {
+            return cached.resolve(self);
         }
+        self.build_cached_manifest_names(entity).resolve(self)
+    }
 
-        let mut standalone_creates = Vec::new();
-        for cap in self.find_capabilities(entity, CapabilityKind::Create) {
-            standalone_creates.push(cap);
-        }
+    /// Incoming relation / entity-ref edges whose target is `entity` (inverted nav index).
+    pub fn incoming_nav_edges_to(&self, entity: &str) -> &[IncomingNavEdge] {
+        self.incoming_nav_index_arc().edges_to(entity)
+    }
 
-        CapabilityManifest {
-            primary_query,
-            primary_search,
-            named_queries,
-            get,
-            singleton_gets,
-            zero_arity_methods,
-            multi_arity_methods,
-            standalone_creates,
-        }
+    /// Create capabilities that bind from path anchor `anchor` (see [`can_bind_create_from_anchor`]).
+    pub fn create_caps_for_anchor(&self, anchor: &str) -> &[CapabilityName] {
+        self.capability_index_arc().create_caps_for_anchor(anchor)
     }
 
     /// Find the **primary** query capability for an entity.
