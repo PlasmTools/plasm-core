@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.76] - 2026-05-30
+
+### Fixed
+
+- **Relation binding assignability:** parent `id` / `key_vars` scalars may supply `entity_ref` scope params on the same entity (e.g. Cloudflare `zone_id: id`); denormalized compound slugs such as GitHub `repository: full_name` pass when `normalize_entity_ref_value_for_target` accepts the parent field row.
+
 ## [0.1.75] - 2026-05-30
 
 ### Fixed
