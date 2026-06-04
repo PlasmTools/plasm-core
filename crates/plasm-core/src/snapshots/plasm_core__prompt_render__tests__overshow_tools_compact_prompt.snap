@@ -21,10 +21,9 @@ expression: prompt
 # - Entity-ref slots in `Meaning` look like `ref:Zone · str · Zone identifier`: canonical entity, id wire type, short note — not `plasm_expr` syntax.
 # - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.
 # - Unary identity rows often teach `e#(p#)` using the opaque `p#` for the entity `id_field` (same token as gloss); substitute the real wire id — do not treat it as a literal API value.
-# - `$` appears only in taught examples when no opaque id slot is shown. Replace every `$`; never emit `$`.
 # - `<id>`, `<value>`, `<receiver>`, and `elem` in this contract are meta-variables, not syntax tokens.
 # - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.
-# - If `Meaning` says `optional params: pA, pB`, those keys may be added only as keyed assignments with real values.
+# - If `Meaning` says `opt: pA, pB`, those keys may be added only as keyed assignments with real values.
 # - Projection rows ending `[p#,…]` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
 # - Relation rows end with `.p#`/`.field`; apply them to any executable receiver row for that same entity type.
 # - `page(sN_pgM)` uses a continuation handle returned by a prior response; copy the handle exactly and optionally add `, limit=N`.
@@ -58,7 +57,7 @@ expression: prompt
 # - Multi-line program strings use literal newlines: one binding per line, final roots last. Spaces never separate statements.
 # - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.
 # - To turn rows into text, bind a template block: `report = rows[p#,…] <<TAG` newline template newline `TAG`, or `report = rows <<TAG` when columns can be inferred.
-# - Template blocks use Minijinja with `rows` as the input array. The bound result is a row with a `content` field; pass `report.content` to string/body parameters or `=>` payloads.
+# - Template blocks use Minijinja with `rows` as the input array; the bound row has a `content` field (see Common pitfalls for string parameters).
 # - Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.
 # - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
 # - Examples: scoped child list `e1{p14=e3(p5=<val>, p13=<val>), …} (inline) OR repo=e3(…); e1{p14=repo, …} (decomposed label ref)`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
@@ -67,9 +66,11 @@ expression: prompt
 # Common pitfalls:
 # - Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.
 # - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.
-# - Federated sessions: use the `e#` from the teaching row for that catalog when the same wire entity name appears in multiple APIs.
-# - String slots: pass `binding.content` from bracket-render, not the whole row.
-# - Search: copy `e#~"text"` with real quoted search terms — never `e#~$` or bare `$`. Bare `$` anywhere is a fill-in, not an API value.
+# - Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.p#` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.
+# - Teaching-table `Meaning` may show `relation e3 → e2`; copy executable `.p#` from the left cell, not the arrow gloss.
+# - Fill-ins: never emit `$` from teaching rows — substitute real ids and parameter values before execute.
+# - String slots: pass `binding.content` from bracket-render or template rows, not the whole row.
+# - Search: copy `e#~"text"` with real quoted terms — never `e#~$`.
 # - Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or real `~"…"` search text.
 #
 
@@ -85,14 +86,14 @@ p7	v6 · start_time
 p3	v2 · id
 p2	v1 · content_type
 p8	v7 · text_preview
-e1[p3,p2,p8]	returns e1 · projection · One capture pipeline item
-e1(p3=$, p2=$)	returns e1
-e1{p6=$, p4=$, p7=$, p5=$}	returns [e1] · optional params: p6, p4, p7, p5
+e1[p3,p2,p8]	→ e1 · projection · One capture pipeline item
+e1(p3=$, p2=$)	→ e1
+e1{p6=$, p4=$, p7=$, p5=$}	→ [e1] · opt: p6, p4, p7, p5
 v9	bool
 p9	v7 · id
 p10	v9 · screen_capture_running
-e2(p9)[p9,p10]	returns e2 · projection · Capture running or paused
-e2.m3()	returns e2
+e2(p9)[p9,p10]	→ e2 · projection · Capture running or paused
+e2.m3()	→ e2
 v18	markdown
 v14	float
 p12	v7 · app_name
@@ -105,8 +106,8 @@ p18	v9 · unresolved_only
 p11	v7 · id
 p19	v18 · question_text
 p20	v9 · resolved
-e3[p11,p19,p20]	returns e3 · projection · A detected question with optional answers
-e3{p18=$, p12=$, p17=$, p13=$, p15=$, p14=$, p16=$}	returns [e3] · optional params: p18, p12, p17, p13, p15, p14, p16
+e3[p11,p19,p20]	→ e3 · projection · A detected question with optional answers
+e3{p18=$, p12=$, p17=$, p13=$, p15=$, p14=$, p16=$}	→ [e3] · opt: p18, p12, p17, p13, p15, p14, p16
 v26	select · active, ended, cancelled
 p23	v6 · end_date
 p24	v2 · limit
@@ -115,9 +116,9 @@ p22	v7 · meeting_uuid
 p21	v2 · meeting_id
 p27	v26 · status
 p28	v18 · summary
-e4[p22,p21,p27,p28]	returns e4 · projection · A detected meeting
-e4{p27=$, p25=$, p23=$, p24=$}	returns [e4] · optional params: p27, p25, p23, p24
-e4(p22)	returns e4
+e4[p22,p21,p27,p28]	→ e4 · projection · A detected meeting
+e4{p27=$, p25=$, p23=$, p24=$}	→ [e4] · opt: p27, p25, p23, p24
+e4(p22)	→ e4
 v34	select · debug, info, warning, error, critical
 p31	v2 · limit
 p32	v34 · min_severity
@@ -126,23 +127,23 @@ p34	v7 · sources
 p29	v7 · id
 p30	v7 · name
 p35	v34 · severity
-e5[p29,p30,p35]	returns e5 · projection · One pipeline bus event
-e5{p33=$, p34=$, p32=$, p31=$}	returns [e5] · optional params: p33, p34, p32, p31
+e5[p29,p30,p35]	→ e5 · projection · One pipeline bus event
+e5{p33=$, p34=$, p32=$, p31=$}	→ [e5] · opt: p33, p34, p32, p31
 p36	v7 · id
 p37	v7 · workers
-e6(p36)[p36,p37]	returns e6 · projection · Pipeline health snapshot
-e6.m8()	returns e6
+e6(p36)[p36,p37]	→ e6 · projection · Pipeline health snapshot
+e6.m8()	→ e6
 v39	select · person, organisation, project
 p41	v2 · limit
 p39	v2 · id
 p38	v7 · display_name
 p40	v39 · profile_type
-e7[p39,p38,p40]	returns e7 · projection · A person, organisation, or project profile
-e7{p40=$, p41=$}	returns [e7] · optional params: p40, p41
-e7(p39)	returns e7
-e7{p40=$, p41=$}.p1	relation e7 => [e9] · Content scoped to this profile
+e7[p39,p38,p40]	→ e7 · projection · A person, organisation, or project profile
+e7{p40=$, p41=$}	→ [e7] · opt: p40, p41
+e7(p39)	→ e7
+e7{p40=$, p41=$}.p1	relation e7 → [e9] · Content scoped to this profile
 p47	v7 · slug
-e8.m11(p47=$,..)	returns () · Action prompt execution result · optional params: p45, p46, p44, p48, p43 · prompt-run-create
+e8.m11(p47=$,..)	→ () · Action prompt execution result · opt: p45, p46, p44, p48, p43 · prompt-run-create
 v58	ref:Profile · int
 v57	select · auto, keyword, natural
 v53	select · all, ocr, audio, ui
@@ -156,7 +157,7 @@ p54	v53 · content_type
 p59	v58 · profile_id
 p71	v18 · text
 p72	v7 · window_name
-e9{p59=e7(p39), p60=$, p57=$, p58=$}[p55,p52,p53,p54,p59,p71,p72]	returns [e9] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
-e9{p59=e7(p39), p60=$, p57=$, p58=$}	returns [e9] · optional params: p60, p57, p58
-e9~"text"	returns [e9] · optional params: p54, p57, p67, p69, p63, p52, p72, p66, p65
-e9{p59=e7(p39), p60=$, p57=$, p58=$}.p59	relation e9 => e7
+e9{p59=e7(p39), p60=$, p57=$, p58=$}[p55,p52,p53,p54,p59,p71,p72]	→ [e9] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
+e9{p59=e7(p39), p60=$, p57=$, p58=$}	→ [e9] · opt: p60, p57, p58
+e9~"text"	→ [e9] · opt: p54, p57, p67, p69, p63, p52, p72, p66, p65
+e9{p59=e7(p39), p60=$, p57=$, p58=$}.p59	relation e9 → e7

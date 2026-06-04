@@ -5,10 +5,12 @@
 //! [`FocusSpec`](crate::symbol_tuning::FocusSpec) lifetimes stay correct for `Seeds` neighbourhoods.
 
 use crate::prompt_render::{
-    prompt_surface_stats, render_domain_prompt_bundle_for_exposure,
+    contract_slice_hints_from_exposure, prompt_surface_stats,
+    render_domain_prompt_bundle_for_exposure,
     render_domain_prompt_bundle_for_exposure_federated, render_prompt_surface_from_bundle,
     render_prompt_tsv_for_single_catalog_exposure, render_prompt_tsv_with_config,
-    DomainPromptBundle, DomainWaveSurface, PromptRenderMode, PromptSurfaceStats, RenderConfig,
+    ContractSliceHints, DomainPromptBundle, DomainWaveSurface, PromptRenderMode,
+    PromptSurfaceStats, RenderConfig,
 };
 use crate::schema::CGS;
 use crate::symbol_tuning::{
@@ -166,6 +168,11 @@ impl PromptPipelineConfig {
         F: FnMut(&str) -> &'b CGS,
     {
         let symbol_map = self.session_symbol_map(exposure);
+        let slice_hints = if matches!(wave_surface, DomainWaveSurface::InitialTeaching) {
+            contract_slice_hints_from_exposure(exposure)
+        } else {
+            ContractSliceHints::single_catalog(full_entities.len())
+        };
         render_prompt_surface_from_bundle(
             bundle,
             self.uses_symbols(),
@@ -174,6 +181,7 @@ impl PromptPipelineConfig {
             ident_meta,
             resolve,
             wave_surface,
+            slice_hints,
         )
     }
 

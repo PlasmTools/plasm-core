@@ -97,6 +97,9 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "federated_duplicate_entity_symbol",
     "pagination_page_size",
     "surface_line_compile",
+    "relation_many_from_plural",
+    "postfix_group_by_sort",
+    "dry_live_parity",
 ];
 
 struct MatrixRow {
@@ -714,6 +717,44 @@ fn assert_planning_ir(
                 return Err("expected relation node for `.tags` after limit(1)".to_string());
             }
         }
+        "lang_relation_many_from_plural_query" => {
+            let rel = plan_relation_named(plan, "tags")
+                .ok_or_else(|| "expected `.tags` relation from plural query".to_string())?;
+            if rel["source_cardinality"].as_str() != Some("many") {
+                return Err(format!(
+                    "expected many source_cardinality for plural fanout, got {rel:?}"
+                ));
+            }
+            if rel["source"].as_str() != Some("items") {
+                return Err(format!("expected source binding items, got {rel:?}"));
+            }
+            let q = first_query(&surfaces)?;
+            if q.entity != "LangItem" {
+                return Err(format!("expected LangItem query, got {:?}", q.entity));
+            }
+        }
+        "lang_group_by_then_sort_agg_column" => {
+            let group = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::GroupBy { .. }))
+                .ok_or_else(|| format!("expected GroupBy compute, got {:?}", computes))?;
+            let sort = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::Sort { .. }))
+                .ok_or_else(|| format!("expected Sort compute after group_by, got {:?}", computes))?;
+            if let ComputeOp::Sort { key, .. } = &sort.op {
+                if key.dotted() != "n" {
+                    return Err(format!("expected sort on aggregate n, got {:?}", key));
+                }
+            } else {
+                return Err("unreachable".into());
+            }
+            if let ComputeOp::GroupBy { aggregates, .. } = &group.op {
+                if !aggregates.iter().any(|a| a.name.as_str() == "n") {
+                    return Err(format!("expected aggregate n, got {:?}", aggregates));
+                }
+            }
+        }
         "lang_bind_projection_then_relation" => {
             let rel = plan_relation_named(plan, "tags")
                 .ok_or_else(|| "expected `.tags` relation after projection anchor".to_string())?;
@@ -1229,6 +1270,31 @@ tags"#,
         features: &["bind_limit1_continuation", "postfix_limit"],
         min_node_results: 3,
         expect_markdown_substrings: &["```tsv"],
+    },
+    MatrixRow {
+        id: "lang_relation_many_from_plural_query",
+        program: r#"items = LangItem
+tags = items.tags
+tags"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "relation_many_from_plural",
+            "relation_query_scoped",
+            "binding_continuation",
+            "dry_live_parity",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "label"],
+    },
+    MatrixRow {
+        id: "lang_group_by_then_sort_agg_column",
+        program: "LangItem.group_by(owner, n=count).sort(n, desc)",
+        surface_line: true,
+        federated: false,
+        features: &["postfix_group_by", "postfix_group_by_sort", "postfix_sort"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "owner"],
     },
     MatrixRow {
         id: "lang_bind_projection_then_relation",

@@ -2698,7 +2698,7 @@ mod tests {
         let contract = include_str!("mcp_prompt/program_contract.txt");
         let tail = include_str!("mcp_prompt/workflow_tail.txt");
         assert!(
-            head.len() < 1400,
+            head.len() < 950,
             "workflow_head too long: {} chars",
             head.len()
         );

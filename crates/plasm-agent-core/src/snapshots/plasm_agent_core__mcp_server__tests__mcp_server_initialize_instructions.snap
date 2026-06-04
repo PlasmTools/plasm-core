@@ -2,9 +2,9 @@
 source: crates/plasm-agent-core/src/mcp_server.rs
 expression: "super::mcp_server_initialize_instructions()"
 ---
-Plasm MCP tools (in order): **`plasm_context`** (session + teaching TSV), **`plasm`** (dry-run plan), **`plasm_run`** (live execute), **`discover_capabilities`** (when **`api`/`entity`** unknown). Skip discover when seeds are known.
-     **One goal → one stable **`intent`** → one **`plasm_context`**.** `logical_session_ref` (`s0`, …) is per goal, not per API. Multi-API: one **`seeds`** array (example in **`plasm_context`** tool).
-     **`discover_capabilities`**: one **`intent`** per goal (whole task in one sentence). Reply table → merge into **`plasm_context`** **`seeds`**. Retry if entities missing; **`typed: true`** when ambiguous.
+Plasm MCP tools (in order): **`plasm_context`** (session + teaching TSV), **`plasm`** (dry-run plan), **`plasm_run`** (live execute), **`discover_capabilities`** (when **`api`/`entity`** unknown).
+     **One goal → one stable **`intent`** → one **`plasm_context`**.** `logical_session_ref` (`s0`, …) is per goal, not per API. Multi-API: one **`seeds`** array (see **`plasm_context`** tool).
+     **`discover_capabilities`**: one **`intent`** per goal. Reply table → merge into **`plasm_context`** **`seeds`**. Retry if entities missing; **`typed: true`** when ambiguous.
      **`plasm_context`**: **`intent`** + **`seeds`**; returns **`logical_session_ref`** + teaching TSV. **Steady state:** reuse ref with **`plasm`** / **`plasm_run`**; do not repeat identical **`seeds`**.
 **JSON `program` string:** Use literal newline characters (U+000A) between statements when you have more than one binding—typically one `ident = …` per line, then bare comma-separated roots on the last line(s). Spaces do not separate statements. (Wire JSON may show `\n`; the parsed string must still contain real newlines.)
 

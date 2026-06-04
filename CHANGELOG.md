@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.74] - 2026-05-30
+
+### Fixed
+
+- **Plural relation fanout:** `RelationTraversal` with `source_cardinality: many` executes scoped child queries per upstream row (fixes live “expected exactly one row” on `issues.labels`-style programs).
+- **Postfix after `group_by`:** `.sort` / `.filter` on compute chains validate against immediate `PlanGroup` schema (e.g. `.sort(n, desc)` after `group_by(..., n=count)`).
+- **Scoped relation holes:** coerce numeric strings for `number` / `issue_number` (and `*_number`) when filling `node_input` IR holes.
+
+### Changed
+
+- **`=>` clarity:** MCP frontmatter pitfalls — binding `=>` only for derive maps and `for_each`; child reads use `binding.p#`. Teaching TSV relation Meaning uses `→` (not executable `=>`). Dry-run derive lines use `derive map … →` (not `map … =>`).
+- **Derive compile guard:** reject `source => Entity(…)` / `eN(…)` surface literals on derive RHS (use `binding.p#` for relation hops).
+- **Dry-run review:** warn when plan includes `source_cardinality: many` relation fanout (`has_relation_many_source_fanout`).
+- **DOMAIN contract:** federation pitfall only when `distinct_catalog_count > 1`; dedupe `$` / `.content` guidance (fill-in + string slots in Common pitfalls only).
+- **DOMAIN contract (slice-conditioned):** gate search, search-only-entity, and federation Common pitfalls by exposure slice (`ContractSliceHints`).
+- **Teaching TSV:** relation nav cap 16→4; skip redundant `.p#` nav when a teaching row already shows relation navigation; multi-arity method exemplars capped at 16 (was 48); Meaning uses `→` / `opt:`; capability gloss `MAX_DESC` 80.
+- **MCP initialize:** trim `workflow_head`; tighten head budget cap to 950; remove unused `plasm_tool_tail.txt`.
+
+### Added
+
+- **`plasm_language_matrix`:** `lang_relation_many_from_plural_query`, `lang_group_by_then_sort_agg_column`; derive-map compile reject tests.
+- **`pokeapi_type_only_slice_prompt_snapshot`** search-pitfall omissions; **`federated_slice_contract_includes_federation_pitfall`**; github full-prompt **5%** byte regression baseline (25_850).
+
 ## [0.1.73] - 2026-05-30
 
 ### Changed

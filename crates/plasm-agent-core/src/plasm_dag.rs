@@ -617,6 +617,80 @@ fn single_segment_teaching_field_hint(
     }
 }
 
+fn resolve_immediate_compute_schema(
+    state: &CompileState<'_>,
+    staged: &[DagNode],
+    source_id: &str,
+) -> Option<SyntheticResultSchema> {
+    let node = staged
+        .iter()
+        .find(|n| n.id == source_id)
+        .or_else(|| state.get(source_id))?;
+    match &node.source {
+        DagNodeSource::Compute { schema, .. } => Some(schema.clone()),
+        _ => None,
+    }
+}
+
+fn validate_compute_paths_for_schema(
+    schema: &SyntheticResultSchema,
+    paths: &[FieldPath],
+    op_label: &str,
+) -> Result<(), String> {
+    let allowed: std::collections::BTreeSet<String> = schema
+        .fields
+        .iter()
+        .map(|f| f.name.as_str().to_string())
+        .collect();
+    for path in paths {
+        let dotted = path.dotted();
+        if allowed.contains(&dotted) {
+            continue;
+        }
+        let cols: Vec<&str> = allowed.iter().map(String::as_str).collect();
+        return Err(format!(
+            "Plasm program {op_label}: field path `{dotted}` is not a row field of the upstream compute output (columns: {}). Use aggregate output names such as `n` after `group_by`.",
+            cols.join(", ")
+        ));
+    }
+    Ok(())
+}
+
+fn is_opaque_passthrough_compute_schema(schema: &SyntheticResultSchema) -> bool {
+    schema.fields.len() == 1
+        && schema.fields[0].name.as_str() == "value"
+        && matches!(
+            schema.fields[0].value_kind,
+            SyntheticValueKind::Unknown
+        )
+}
+
+fn validate_compute_paths_for_dag_source(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    staged: &[DagNode],
+    source_id: &str,
+    paths: &[FieldPath],
+    op_label: &str,
+) -> Result<(), String> {
+    if let Some(schema) = resolve_immediate_compute_schema(state, staged, source_id) {
+        if !is_opaque_passthrough_compute_schema(&schema) {
+            return validate_compute_paths_for_schema(&schema, paths, op_label);
+        }
+    }
+    if let Some(qe) = resolve_qualified_entity_for_dag_source(state, staged, source_id.to_string())
+    {
+        return validate_compute_paths_for_entity(
+            session,
+            state.cross_cache,
+            &qe,
+            paths,
+            op_label,
+        );
+    }
+    Ok(())
+}
+
 fn validate_compute_paths_for_entity(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
@@ -860,21 +934,23 @@ fn postfix_op_to_compute(
                 qe.as_ref(),
                 &FieldPath::from_dotted(key)?,
             )?;
-            if let Some(qe) = qe.as_ref() {
-                validate_compute_paths_for_entity(
-                    session,
-                    state.cross_cache,
-                    qe,
-                    std::slice::from_ref(&key_fp),
-                    "sort(...)",
-                )?;
-            }
+            validate_compute_paths_for_dag_source(
+                session,
+                state,
+                staged,
+                source,
+                std::slice::from_ref(&key_fp),
+                "sort(...)",
+            )?;
+            let schema = resolve_immediate_compute_schema(state, staged, source)
+                .filter(|s| !is_opaque_passthrough_compute_schema(s))
+                .unwrap_or_else(|| single_unknown_schema("PlanSort"));
             Ok(mk(
                 ComputeOp::Sort {
                     key: key_fp,
                     descending,
                 },
-                single_unknown_schema("PlanSort"),
+                schema,
                 false,
             ))
         }
@@ -1381,6 +1457,7 @@ fn compile_node_expr(
             }]);
         }
         let (value, inputs) = parse_plan_value_expr(right.trim(), state, Some("_"))?;
+        reject_derive_map_surface_expr_literal(&value)?;
         return Ok(vec![DagNode {
             id: id.to_string(),
             expr: rhs_display.to_string(),
@@ -2731,6 +2808,41 @@ fn parse_plan_value_expr(
     Ok((PlanValue::Literal { value }, Vec::new()))
 }
 
+/// `=>` derive maps accept `value_or_template` only — not surface `Entity(…)` calls.
+fn reject_derive_map_surface_expr_literal(value: &PlanValue) -> Result<(), String> {
+    let PlanValue::Literal { value } = value else {
+        return Ok(());
+    };
+    let Some(s) = value.as_str() else {
+        return Ok(());
+    };
+    let t = s.trim();
+    if derive_rhs_literal_looks_like_surface_call(t) {
+        return Err(format!(
+            "`=>` derive map does not accept surface expressions ({t:?}); use `binding.relation` / `binding.p#` for relation hops, or `source => {{ … }}` for per-row maps"
+        ));
+    }
+    Ok(())
+}
+
+fn derive_rhs_literal_looks_like_surface_call(s: &str) -> bool {
+    if !s.contains('(') {
+        return false;
+    }
+    let head = s.split('(').next().unwrap_or("").trim();
+    if head.is_empty() {
+        return false;
+    }
+    let mut chars = head.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if first == 'e' && chars.next().is_some_and(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    first.is_ascii_uppercase() && head.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
 fn parse_literal(raw: &str) -> Result<serde_json::Value, String> {
     if raw.starts_with('"') || raw == "null" || raw == "true" || raw == "false" {
         return serde_json::from_str(raw).map_err(|e| format!("literal `{raw}`: {e}"));
@@ -3070,6 +3182,44 @@ mod tests {
             None,
             None,
         )
+    }
+
+    #[test]
+    fn derive_map_rejects_surface_entity_ctor() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "derive-reject-entity-ctor",
+            r#"hits = LangItem
+bad = hits => LangItem(id=_.id)
+bad"#,
+        )
+        .expect_err("entity ctor on => must not compile as derive literal");
+        assert!(
+            err.contains("derive map does not accept surface expressions"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn derive_map_rejects_session_symbol_entity_ctor() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "derive-reject-e1-ctor",
+            r#"hits = LangItem
+bad = hits => e1(p5=_.id)
+bad"#,
+        )
+        .expect_err("e1(...) on => must not compile as derive literal");
+        assert!(
+            err.contains("derive map does not accept surface expressions"),
+            "{err}"
+        );
     }
 
     /// Primary session `entry_id` is `github`, but `LangLine` was exposed from `linear` in DOMAIN

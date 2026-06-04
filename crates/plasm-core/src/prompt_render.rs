@@ -35,7 +35,7 @@
 //! (`ParentRecv…[p#,…]`) require the parent entity on the surface plus the same slot checks as outgoing nav;
 //! field gloss rows and `ref:*` typing are unchanged.
 //! Meaning uses
-//! `relation e#_src => [e#_tgt]` (many) or `relation e#_src => e#_tgt` (one); the full receiver stays in `plasm_expr`.
+//! `relation e#_src → [e#_tgt]` (many) or `relation e#_src → e#_tgt` (one) in **Meaning** only; executable nav is `<receiver>.p#` in `plasm_expr`.
 //! For terminal relation chains, the example line already carries a **result gloss** (`relation …`), so the redundant standalone `p#` gloss row
 //! before it is omitted (see [`skip_redundant_terminal_relation_sym_gloss`]). For cardinality-many
 //! edges with `materialize` (`from_parent_get`, `query_scoped`, …) the IR is [`Expr::Chain`](crate::Expr);
@@ -799,6 +799,7 @@ pub(crate) fn render_prompt_tsv_for_single_catalog_exposure(
             .map(|_| symbol_map_cache_key_single_catalog(cgs, exposure));
         let (symbol_map_arc, _) = exposure.symbol_map_arc_cross(config.symbol_map_cross_cache, key);
         let ident_meta = exposure.ident_metadata_for_exposure_entities(&full_entities);
+        let hints = contract_slice_hints_from_exposure(exposure);
         render_prompt_tsv_from_bundle(
             &bundle,
             &full_entities,
@@ -807,8 +808,10 @@ pub(crate) fn render_prompt_tsv_for_single_catalog_exposure(
             DomainWaveSurface::InitialTeaching,
             true,
             |_| cgs,
+            hints,
         )
     } else {
+        let hints = contract_slice_hints_from_exposure(exposure);
         render_prompt_tsv_from_bundle(
             &bundle,
             &full_entities,
@@ -817,7 +820,23 @@ pub(crate) fn render_prompt_tsv_for_single_catalog_exposure(
             DomainWaveSurface::InitialTeaching,
             false,
             |_| cgs,
+            hints,
         )
+    }
+}
+
+pub(crate) fn contract_slice_hints_from_exposure(
+    exposure: &crate::symbol_tuning::DomainExposureSession,
+) -> ContractSliceHints {
+    let distinct_catalog_count = exposure
+        .entity_catalog_entry_ids
+        .iter()
+        .collect::<HashSet<_>>()
+        .len()
+        .max(1);
+    ContractSliceHints {
+        distinct_catalog_count,
+        entity_count: exposure.entities.len(),
     }
 }
 
@@ -843,6 +862,7 @@ pub fn render_prompt_tsv_with_config(cgs: &CGS, config: RenderConfig<'_>) -> Str
         DomainWaveSurface::InitialTeaching,
         false,
         |_| cgs,
+        ContractSliceHints::single_catalog(full_entities.len()),
     )
 }
 
@@ -854,6 +874,7 @@ pub(crate) fn render_prompt_surface_from_bundle<'b, F>(
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     resolve: F,
     wave_surface: DomainWaveSurface,
+    slice_hints: ContractSliceHints,
 ) -> String
 where
     F: FnMut(&str) -> &'b CGS,
@@ -866,6 +887,7 @@ where
         wave_surface,
         symbolic,
         resolve,
+        slice_hints,
     )
 }
 
@@ -1086,11 +1108,12 @@ fn render_prompt_tsv_from_bundle<'b, F>(
     wave_surface: DomainWaveSurface,
     symbolic: bool,
     mut resolve: F,
+    slice_hints: ContractSliceHints,
 ) -> String
 where
     F: FnMut(&str) -> &'b CGS,
 {
-    let spec = prompt_contract_spec_resolved(&mut resolve, full_entities, symbolic);
+    let spec = prompt_contract_spec_resolved(&mut resolve, full_entities, symbolic, slice_hints);
     let mut out = String::new();
     if matches!(wave_surface, DomainWaveSurface::InitialTeaching) {
         out.push_str(&comment_prefix_block(&render_prompt_contract(spec)));
@@ -1262,14 +1285,29 @@ enum TeachingMeaningAtom {
     LegendDescription(String),
 }
 
+/// True when an emitted teaching row already demonstrates **relation navigation** on `rel_sym`
+/// (receiver`.rel_sym`), not merely a scoped query filter `e#{rel_sym=…}`.
+fn relation_sym_shown_in_query_teaching_rows(
+    teaching_rows: &[EntityTeachingExprRow],
+    rel_sym: &str,
+) -> bool {
+    let dotted = format!(".{rel_sym}");
+    teaching_rows.iter().any(|row| {
+        row.teaching_expr
+            .expression
+            .as_str()
+            .contains(dotted.as_str())
+    })
+}
+
 impl TeachingMeaningAtom {
     fn encoded_fragment(&self) -> String {
         let raw = match self {
-            TeachingMeaningAtom::Returns { gloss } => format!("returns {gloss}"),
+            TeachingMeaningAtom::Returns { gloss } => format!("→ {gloss}"),
             TeachingMeaningAtom::RelationNav { line } => line.clone(),
             TeachingMeaningAtom::EntityHeadingDescription(s) => s.clone(),
             TeachingMeaningAtom::LegendScope(s) => s.clone(),
-            TeachingMeaningAtom::LegendOptionalParams(s) => format!("optional params: {s}"),
+            TeachingMeaningAtom::LegendOptionalParams(s) => format!("opt: {s}"),
             TeachingMeaningAtom::LegendCompactArgs(s) => format!("args: {s}"),
             TeachingMeaningAtom::LegendDescription(s) => s.clone(),
         };
@@ -1777,7 +1815,10 @@ fn fill_scope_optional_from_sig(
     let (sc, after_sc) = split_leading_scope_legend(sig);
     *scope = sc.to_string();
     let tail = after_sc.trim();
-    if let Some(p) = tail.strip_prefix("optional params:") {
+    if let Some(p) = tail
+        .strip_prefix("optional params:")
+        .or_else(|| tail.strip_prefix("opt:"))
+    {
         *optional_params = p.trim().to_string();
     } else if !tail.is_empty() {
         *orphan = tail.to_string();
@@ -2417,7 +2458,7 @@ fn relation_nav_meaning_result_gloss(
     target_gloss: String,
 ) -> String {
     match relation_receiver_teaching_hint(expr, map) {
-        Some(h) => format!("relation {h} => {target_gloss}"),
+        Some(h) => format!("relation {h} → {target_gloss}"),
         None => target_gloss,
     }
 }
@@ -3025,7 +3066,7 @@ fn format_capability_legend_line(
     _ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     _catalog_entry_id: &str,
 ) -> String {
-    const MAX_DESC: usize = 100;
+    const MAX_DESC: usize = 80;
     let kebab = capability_method_label_kebab(cap);
     let raw = cap.description.as_str().trim();
     let gloss = if raw.is_empty() {
@@ -3756,7 +3797,7 @@ fn format_dotted_call_line(
     Some(format!("{recv}{suffix}"))
 }
 
-const MAX_MULTI_ARITY_METHOD_LINES: usize = 48;
+const MAX_MULTI_ARITY_METHOD_LINES: usize = 16;
 
 #[inline]
 fn surface_allows_capability(
@@ -4441,7 +4482,7 @@ fn collect_entity_teaching_block(
         }
     }
     nav_keys.sort();
-    const MAX_REL_NAV_LINES: usize = 16;
+    const MAX_REL_NAV_LINES: usize = 4;
     for rel in nav_keys.iter().take(MAX_REL_NAV_LINES) {
         let (target_entity, skip_many_unresolved, rel_for_meta) =
             if let Some(rel_schema) = ent.relations.get(rel.as_str()) {
@@ -4493,6 +4534,9 @@ fn collect_entity_teaching_block(
         } else {
             id_sym_entity(map, catalog_entry_id, ename, rel.as_str())
         };
+        if relation_sym_shown_in_query_teaching_rows(&teaching_rows, &rel_sym) {
+            continue;
+        }
         let suffix = format!(".{rel_sym}");
         let Some(recv) = receiver_for_dotted_suffix(
             &es,
@@ -4785,12 +4829,32 @@ pub(crate) fn query_construct_display(es: &str, scope_variant: &str) -> String {
 pub const DOMAIN_VALID_EXPR_MARKER: &str =
     "Follow the grammar and the teaching TSV below; reply with one valid plasm_program:";
 
+/// Slice shape for conditioning the DOMAIN contract preamble (first-wave TSV only).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ContractSliceHints {
+    /// Distinct registry `entry_id`s in the exposed slice (1 for single-catalog sessions).
+    pub distinct_catalog_count: usize,
+    pub entity_count: usize,
+}
+
+impl ContractSliceHints {
+    pub(crate) fn single_catalog(entity_count: usize) -> Self {
+        Self {
+            distinct_catalog_count: 1,
+            entity_count,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct PromptContractSpec {
     symbolic: bool,
     include_search_line: bool,
     include_rich_string_guidance: bool,
     include_scoped_search_worked_example: bool,
+    include_search_pitfalls: bool,
+    include_search_only_entity_pitfall: bool,
+    include_federation_pitfall: bool,
 }
 
 /// Render the agent-facing Plasm language guide used by MCP initialize instructions.
@@ -4805,6 +4869,9 @@ pub fn render_plasm_mcp_language_frontmatter() -> String {
         include_search_line: true,
         include_rich_string_guidance: true,
         include_scoped_search_worked_example: false,
+        include_search_pitfalls: true,
+        include_search_only_entity_pitfall: true,
+        include_federation_pitfall: true,
     })
 }
 
@@ -4868,10 +4935,21 @@ fn cgs_slice_has_repository_issue_scoped_search(full_entities: &[&str]) -> bool 
     full_entities.contains(&"Repository") && full_entities.contains(&"Issue")
 }
 
+fn cgs_slice_all_entities_have_query<'b, F>(resolve: &mut F, full_entities: &[&str]) -> bool
+where
+    F: FnMut(&str) -> &'b CGS,
+{
+    full_entities.iter().all(|e| {
+        let cgs = resolve(*e);
+        !cgs.find_capabilities(e, CapabilityKind::Query).is_empty()
+    })
+}
+
 fn prompt_contract_spec_resolved<'b, F>(
     resolve: &mut F,
     full_entities: &[&str],
     symbolic: bool,
+    slice_hints: ContractSliceHints,
 ) -> PromptContractSpec
 where
     F: FnMut(&str) -> &'b CGS,
@@ -4884,11 +4962,15 @@ where
         let name = *e;
         cgs_slice_has_structured_string_semantics(resolve(name), &[name])
     });
+    let include_federation_pitfall = slice_hints.distinct_catalog_count > 1;
     PromptContractSpec {
         symbolic,
         include_search_line,
         include_rich_string_guidance,
         include_scoped_search_worked_example: cgs_slice_has_repository_issue_scoped_search(full_entities),
+        include_search_pitfalls: include_search_line,
+        include_search_only_entity_pitfall: !cgs_slice_all_entities_have_query(resolve, full_entities),
+        include_federation_pitfall,
     }
 }
 
@@ -4990,10 +5072,9 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
 - Entity-ref slots in `Meaning` look like `ref:Zone · str · Zone identifier`: canonical entity, id wire type, short note — not `plasm_expr` syntax.\n\
 - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.\n\
 - Unary identity rows often teach `e#(p#)` using the opaque `p#` for the entity `id_field` (same token as gloss); substitute the real wire id — do not treat it as a literal API value.\n\
-- `$` appears only in taught examples when no opaque id slot is shown. Replace every `$`; never emit `$`.\n\
 - `<id>`, `<value>`, `<receiver>`, and `elem` in this contract are meta-variables, not syntax tokens.\n\
 - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.\n\
-- If `Meaning` says `optional params: pA, pB`, those keys may be added only as keyed assignments with real values.\n",
+- If `Meaning` says `opt: pA, pB`, those keys may be added only as keyed assignments with real values.\n",
         );
     } else {
         s.push_str(
@@ -5062,7 +5143,7 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         "- Multi-line program strings use literal newlines: one binding per line, final roots last. Spaces never separate statements.\n\
 - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.\n\
 - To turn rows into text, bind a template block: `report = rows[p#,…] <<TAG` newline template newline `TAG`, or `report = rows <<TAG` when columns can be inferred.\n\
-- Template blocks use Minijinja with `rows` as the input array. The bound result is a row with a `content` field; pass `report.content` to string/body parameters or `=>` payloads.\n\
+- Template blocks use Minijinja with `rows` as the input array; the bound row has a `content` field (see Common pitfalls for string parameters).\n\
 - Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.\n\
 - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.\n",
     );
@@ -5089,11 +5170,28 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     s.push_str(
         "- Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.\n\
 - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.\n\
-- Federated sessions: use the `e#` from the teaching row for that catalog when the same wire entity name appears in multiple APIs.\n\
-- String slots: pass `binding.content` from bracket-render, not the whole row.\n\
-- Search: copy `e#~\"text\"` with real quoted search terms — never `e#~$` or bare `$`. Bare `$` anywhere is a fill-in, not an API value.\n\
-- Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or real `~\"…\"` search text.\n",
+- Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.p#` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.\n\
+- Teaching-table `Meaning` may show `relation e3 → e2`; copy executable `.p#` from the left cell, not the arrow gloss.\n",
     );
+    s.push_str(
+        "- Fill-ins: never emit `$` from teaching rows — substitute real ids and parameter values before execute.\n\
+- String slots: pass `binding.content` from bracket-render or template rows, not the whole row.\n",
+    );
+    if spec.include_federation_pitfall {
+        s.push_str(
+            "- Federated sessions: use the `e#` from the teaching row for that catalog when the same wire entity name appears in multiple APIs.\n",
+        );
+    }
+    if spec.include_search_pitfalls {
+        s.push_str(
+            "- Search: copy `e#~\"text\"` with real quoted terms — never `e#~$`.\n",
+        );
+    }
+    if spec.include_search_only_entity_pitfall {
+        s.push_str(
+            "- Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or real `~\"…\"` search text.\n",
+        );
+    }
     s.push('\n');
 
     s
@@ -5949,7 +6047,7 @@ mod tests {
             let needle = format!("{sym}\t=> Block ·");
             assert!(
                 !tsv.contains(&needle),
-                "capability `blocks` ctor params must not reuse relation-style `=> Block` gloss (symbol {sym}); relation nav stays on `e1($).p6`-style rows.\n{tsv}"
+                "capability `blocks` ctor params must not reuse relation-style `→ Block` gloss (symbol {sym}); relation nav stays on `e1($).p6`-style rows.\n{tsv}"
             );
         }
     }
@@ -6222,6 +6320,10 @@ mod tests {
         );
         let out = render_prompt_with_config(&cgs, cfg);
         assert!(
+            !out.contains("Federated sessions"),
+            "single-catalog github slice should omit federation pitfall"
+        );
+        assert!(
             out.contains(br.as_str()),
             "full prompt should include the full projection list `{br}` (heading or primary get)"
         );
@@ -6229,6 +6331,14 @@ mod tests {
             out.len() > 8_000,
             "full apis/github DOMAIN+legend should be substantial (got {}); compare `github_api_full_prompt_symbolic` snapshot",
             out.len()
+        );
+        // Baseline bumped after `=>` / relation-arrow contract pitfalls in MCP frontmatter.
+        const GITHUB_FULL_PROMPT_BASELINE_V0173: usize = 25_850;
+        assert!(
+            out.len() * 100 <= GITHUB_FULL_PROMPT_BASELINE_V0173 * 95,
+            "github full prompt should be at least 5% smaller than v0.1.73 baseline (got {} bytes, baseline {})",
+            out.len(),
+            GITHUB_FULL_PROMPT_BASELINE_V0173
         );
     }
 
@@ -6521,7 +6631,7 @@ mod tests {
                 line.starts_with("e1(")
                     && line.contains(&format!("{p_id}=$"))
                     && line.contains(&format!("{p_ct}=$"))
-                    && line.contains("returns e1")
+                    && line.contains("→ e1")
             }),
             "expected compound-key capture-item get witness in TSV; e1 lines:\n{}",
             tsv.lines()
@@ -6558,7 +6668,7 @@ mod tests {
                 cols.len() == 2
                     && cols[0].starts_with("e5(")
                     && !cols[0].contains('[')
-                    && cols[1].starts_with("returns e5")
+                    && cols[1].starts_with("→ e5")
             })
             .expect("Issue compound identity get row");
         let cols: Vec<&str> = issue_identity.split('\t').collect();
@@ -6666,7 +6776,7 @@ mod tests {
                     && cols[0].starts_with(&format!("{contrib_ent}{{"))
                     && cols[0].contains(&format!("{p_repo}="))
                     && cols[0].contains(&format!("{p_anon}="))
-                    && (cols[1].contains("optional params:") || cols[1].contains("[scope"))
+                    && (cols[1].contains("opt:") || cols[1].contains("[scope"))
             })
             .expect("Contributor list DOMAIN row (non-projection query exemplar)");
         assert!(
@@ -6678,7 +6788,7 @@ mod tests {
             "capability legends omit inline `args:`; contributor row was: {contrib:?}"
         );
         assert!(
-            contrib.contains("optional params:") || contrib.contains("[scope"),
+            contrib.contains("opt:") || contrib.contains("[scope"),
             "contributor query Meaning should carry optionality or scope context: {contrib:?}"
         );
     }
@@ -7352,9 +7462,59 @@ mod tests {
         }
         let cgs = load_schema_dir(&dir).unwrap();
         let out = render_prompt_with_config(&cgs, RenderConfig::for_eval_seeds(&["Type"]));
+        assert!(
+            !out.contains("Search-only entities"),
+            "Type-only slice must omit search-only entity pitfall"
+        );
+        assert!(
+            !out.contains("Search: copy"),
+            "Type-only slice must omit search pitfall when slice has no Search capability"
+        );
         with_insta_snapshots(|| {
             insta::assert_snapshot!("pokeapi_type_only_slice_prompt", out);
         });
+    }
+
+    #[test]
+    fn federated_slice_contract_includes_federation_pitfall() {
+        use std::sync::Arc;
+
+        let root = fixtures_schemas_dir("plasm_language_matrix");
+        let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
+        let layers = [&cgs, &cgs];
+        let mut exp = DomainExposureSession::new(&cgs, "github", &["LangItem"]);
+        exp.expose_entities(&layers, Arc::new(cgs.clone()), "linear", &["LangItem"]);
+        let mut by_entry: IndexMap<String, &CGS> = IndexMap::new();
+        by_entry.insert("github".into(), &cgs);
+        by_entry.insert("linear".into(), &cgs);
+        let bundle = render_domain_prompt_bundle_for_exposure_federated(
+            &by_entry,
+            RenderConfig::for_eval(None),
+            &exp,
+            None,
+        );
+        let full_entities: Vec<&str> = exp.entities.iter().map(|s| s.as_str()).collect();
+        let qualified = exposure_qualified_catalog_ids(&exp);
+        let hints = contract_slice_hints_from_exposure(&exp);
+        assert!(hints.distinct_catalog_count >= 2);
+        let ident_meta = exp.ident_metadata_for_exposure_entities(&full_entities);
+        let prompt = render_prompt_surface_from_bundle(
+            &bundle,
+            true,
+            &full_entities,
+            Some(exp.symbol_map_arc().as_ref()),
+            Some(&ident_meta),
+            |entity| {
+                let entry = catalog_entry_id_for_exposed_entity(&qualified, entity).unwrap_or("github");
+                *by_entry.get(entry).expect("entry cgs")
+            },
+            DomainWaveSurface::InitialTeaching,
+            hints,
+        );
+        assert!(
+            prompt.contains("Federated sessions"),
+            "multi-catalog slice must retain federation pitfall"
+        );
     }
 
     #[test]
@@ -7579,7 +7739,7 @@ mod tests {
             domain_block.lines().any(|line| {
                 line.split_once('\t').is_some_and(|(expr, meaning)| {
                     expr.starts_with(team_sym.as_str())
-                        && meaning.contains("returns")
+                        && (meaning.contains('→') || meaning.contains("returns"))
                         && meaning.contains(&format!("[{team_sym}]"))
                 })
             }),

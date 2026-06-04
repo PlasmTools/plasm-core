@@ -21,10 +21,9 @@ expression: prompt
 # - Entity-ref slots in `Meaning` look like `ref:Zone · str · Zone identifier`: canonical entity, id wire type, short note — not `plasm_expr` syntax.
 # - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.
 # - Unary identity rows often teach `e#(p#)` using the opaque `p#` for the entity `id_field` (same token as gloss); substitute the real wire id — do not treat it as a literal API value.
-# - `$` appears only in taught examples when no opaque id slot is shown. Replace every `$`; never emit `$`.
 # - `<id>`, `<value>`, `<receiver>`, and `elem` in this contract are meta-variables, not syntax tokens.
 # - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.
-# - If `Meaning` says `optional params: pA, pB`, those keys may be added only as keyed assignments with real values.
+# - If `Meaning` says `opt: pA, pB`, those keys may be added only as keyed assignments with real values.
 # - Projection rows ending `[p#,…]` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
 # - Relation rows end with `.p#`/`.field`; apply them to any executable receiver row for that same entity type.
 # - `page(sN_pgM)` uses a continuation handle returned by a prior response; copy the handle exactly and optionally add `, limit=N`.
@@ -58,7 +57,7 @@ expression: prompt
 # - Multi-line program strings use literal newlines: one binding per line, final roots last. Spaces never separate statements.
 # - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.
 # - To turn rows into text, bind a template block: `report = rows[p#,…] <<TAG` newline template newline `TAG`, or `report = rows <<TAG` when columns can be inferred.
-# - Template blocks use Minijinja with `rows` as the input array. The bound result is a row with a `content` field; pass `report.content` to string/body parameters or `=>` payloads.
+# - Template blocks use Minijinja with `rows` as the input array; the bound row has a `content` field (see Common pitfalls for string parameters).
 # - Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.
 # - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
 # - Examples: scoped child list `e1{p14=e3(p5=<val>, p13=<val>), …} (inline) OR repo=e3(…); e1{p14=repo, …} (decomposed label ref)`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
@@ -67,9 +66,11 @@ expression: prompt
 # Common pitfalls:
 # - Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.
 # - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.
-# - Federated sessions: use the `e#` from the teaching row for that catalog when the same wire entity name appears in multiple APIs.
-# - String slots: pass `binding.content` from bracket-render, not the whole row.
-# - Search: copy `e#~"text"` with real quoted search terms — never `e#~$` or bare `$`. Bare `$` anywhere is a fill-in, not an API value.
+# - Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.p#` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.
+# - Teaching-table `Meaning` may show `relation e3 → e2`; copy executable `.p#` from the left cell, not the arrow gloss.
+# - Fill-ins: never emit `$` from teaching rows — substitute real ids and parameter values before execute.
+# - String slots: pass `binding.content` from bracket-render or template rows, not the whole row.
+# - Search: copy `e#~"text"` with real quoted terms — never `e#~$`.
 # - Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or real `~"…"` search text.
 #
 
@@ -82,10 +83,10 @@ p25	v11 · identifier
 p29	v13 · issue
 p16	v2 · id
 p49	v27 · body
-e1{p29=e5(p25)}[p16,p49]	returns [e1] · projection · A comment on an issue
-e1.m2(p29=e5(p25), p49=$)	returns e1 · Add a comment on an issue (scoped by issue identifier)
-e1{p29=e5(p25)}	returns [e1]
-e1{p29=e5(p25)}.p1	relation e1 => e5
+e1{p29=e5(p25)}[p16,p49]	→ [e1] · projection · A comment on an issue
+e1.m2(p29=e5(p25), p49=$)	→ e1 · Add a comment on an issue (scoped by issue identifier)
+e1{p29=e5(p25)}	→ [e1]
+e1{p29=e5(p25)}.p1	relation e1 → e5
 v24	str · Team short key
 v4	ref:Cycle
 v5	float
@@ -95,28 +96,27 @@ p19	v4 · id
 p20	v5 · number
 p21	v6 · startsAt
 p17	v6 · endsAt
-e2{p46=$}[p19,p20,p21,p17]	returns [e2] · projection · A time-boxed iteration on a team
-e2{p46=$}	returns [e2]
-e2(p19)	returns e2
-e2{p46=$}.p19	relation e2 => e2
-e2{p46=$}.p2	relation e2 => e10
+e2{p46=$}[p19,p20,p21,p17]	→ [e2] · projection · A time-boxed iteration on a team
+e2{p46=$}	→ [e2]
+e2(p19)	→ e2
+e2{p46=$}.p19	relation e2 → e2
+e2{p46=$}.p2	relation e2 → e10
 p22	v2 · id
 p59	v6 · title
-e3(p22)[p22,p59]	returns e3 · projection · A Linear document
-e3(p22)	returns e3
-e3(p22).m7()	returns e3 · optional params: p59, p50 · Update document title or content
-e3~"text"	returns [e3]
+e3(p22)[p22,p59]	→ e3 · projection · A Linear document
+e3(p22)	→ e3
+e3(p22).m7()	→ e3 · opt: p59, p50 · Update document title or content
+e3~"text"	→ [e3]
 p23	v2 · id
 p56	v6 · name
-e4[p23,p56]	returns e4 · projection · A strategic initiative grouping projects
-e4(p23).m10()	returns e4 · optional params: p56, p51 · Update initiative name or description
-e4	returns [e4]
-e4(p23)	returns e4
+e4[p23,p56]	→ e4 · projection · A strategic initiative grouping projects
+e4(p23).m10()	→ e4 · opt: p56, p51 · Update initiative name or description
+e4	→ [e4]
+e4(p23)	→ e4
 v11	str · Human-visible issue key
 v12	int · Linear priority 0–4 (1 urgent, 4 low)
 v9	ref:Team · str · Owning team (by team key)
 p4	ref:Cycle
-p9	ref:Team · Owning team (by team key).
 p24	v9 · team
 p45	v24 · key
 p27	v2 · id
@@ -124,60 +124,57 @@ p25	v11 · identifier
 p28	v12 · priority
 p48	v5 · estimate
 p54	v6 · dueDate
-e1{p29=e5(p25)}.p1[p27,p25,p59,p51,p28,p48,p54]	returns e5 · projection · A Linear issue (task, bug, or feature); use human identifier
-e5(p25)	returns e5
-e5(p25).m12()	returns e5 · Move an issue to trash (recoverable)
-e5(p25).m15()	returns e5 · optional params: p59, p51, p43, p14, p57, p32, p35, p28 · Update issue fields (state, assignee, labels, priority, …) by identifier
-e5.m11(p24=e10(p45), p59=$,..)	returns e5 · optional params: p51, p43, p14, p57, p26, p28 · Create an issue on a team (by team key)
-e5~"text"	returns [e5] · optional params: p46, p43, p33, p14, p28, p57, p18
-e5(p25).p10	relation e5 => e11
-e5(p25).p5	relation e5 => [e5]
-e5(p25).p3	relation e5 => [e1]
-e5(p25).p4	relation e5 => e2
-e5(p25).p6	relation e5 => e5
-e5(p25).p8	relation e5 => e7
-e5(p25).p9	relation e5 => e10
+e1{p29=e5(p25)}.p1[p27,p25,p59,p51,p28,p48,p54]	→ e5 · projection · A Linear issue (task, bug, or feature); use human identifier
+e5(p25)	→ e5
+e5(p25).m12()	→ e5 · Move an issue to trash (recoverable)
+e5(p25).m15()	→ e5 · opt: p59, p51, p43, p14, p57, p32, p35, p28 · Update issue fields (state, assignee, labels, priority, …) by identifier
+e5.m11(p24=e10(p45), p59=$,..)	→ e5 · opt: p51, p43, p14, p57, p26, p28 · Create an issue on a team (by team key)
+e5~"text"	→ [e5] · opt: p46, p43, p33, p14, p28, p57, p18
+e5(p25).p10	relation e5 → e11
+e5(p25).p5	relation e5 → [e5]
+e5(p25).p3	relation e5 → [e1]
+e5(p25).p4	relation e5 → e2
 p34	v6 · name
 p52	v6 · color
-e6[p34,p52]	returns e6 · projection · An issue label (addressed by name in filters and writes)
-e6	returns [e6]
+e6[p34,p52]	→ e6 · projection · An issue label (addressed by name in filters and writes)
+e6	→ [e6]
 p36	v2 · id
 p39	v6 · slugId
-e7[p36,p56,p39]	returns e7 · projection · A Linear project
-e7(p36).m21()	returns e7 · optional params: p56, p51 · Update project name or description
-e7.m17(p56=$, p24=e10(p45),..)	returns e7 · optional params: p51 · Create a project on a team (by team key)
-e7	returns [e7]
-e7(p36)	returns e7
-e7~"text"	returns [e7]
+e7[p36,p56,p39]	→ e7 · projection · A Linear project
+e7(p36).m21()	→ e7 · opt: p56, p51 · Update project name or description
+e7.m17(p56=$, p24=e10(p45),..)	→ e7 · opt: p51 · Create a project on a team (by team key)
+e7	→ [e7]
+e7(p36)	→ e7
+e7~"text"	→ [e7]
 p12	uuid
 p37	v2 · project
 p38	v2 · id
-e8{p37=$}[p38,p56]	returns [e8] · projection · A milestone on a project
-e8(p38).m24()	returns e8 · optional params: p56, p51 · Update a project milestone
-e8.m22(p37=$, p56=$,..)	returns e8 · optional params: p51 · Create a milestone on a project
-e8{p37=$}	returns [e8]
-e8{p37=$}.p12	relation e8 => e7
+e8{p37=$}[p38,p56]	→ [e8] · projection · A milestone on a project
+e8(p38).m24()	→ e8 · opt: p56, p51 · Update a project milestone
+e8.m22(p37=$, p56=$,..)	→ e8 · opt: p51 · Create a milestone on a project
+e8{p37=$}	→ [e8]
+e8{p37=$}.p12	relation e8 → e7
 v20	select · onTrack, atRisk, offTrack
 p13	uuid
 p41	v2 · id
 p40	v20 · health
-e9{p37=$}[p41,p49,p40]	returns [e9] · projection · A status update posted on a project
-e9.m25(p37=$, p49=$,..)	returns e9 · optional params: p40 · Post a project status update
-e9{p37=$}	returns [e9]
-e9{p37=$}.p13	relation e9 => e7
+e9{p37=$}[p41,p49,p40]	→ [e9] · projection · A status update posted on a project
+e9.m25(p37=$, p49=$,..)	→ e9 · opt: p40 · Post a project status update
+e9{p37=$}	→ [e9]
+e9{p37=$}.p13	relation e9 → e7
 p44	v2 · id
 p45	v24 · key
-e10[p44,p45,p56]	returns e10 · projection · A Linear team (workspace grouping); agents address teams by short key
-e10	returns [e10]
+e10[p44,p45,p56]	→ e10 · projection · A Linear team (workspace grouping); agents address teams by short key
+e10	→ [e10]
 p10	assignee
 p47	v2 · id
 p53	v6 · displayName
 p55	v6 · email
-e5(p25).p10[p47,p56,p53,p55]	returns e11 · projection · A Linear user
-e11.m30()	returns e11
-e11~"text"	returns [e11]
+e5(p25).p10[p47,p56,p53,p55]	→ e11 · projection · A Linear user
+e11.m30()	→ e11
+e11~"text"	→ [e11]
 p60	v2 · id
 p42	v22 · name
 p61	v6 · type
-e12{p46=$}[p60,p42,p61]	returns [e12] · projection · A workflow column for a team
-e12{p46=$}	returns [e12]
+e12{p46=$}[p60,p42,p61]	→ [e12] · projection · A workflow column for a team
+e12{p46=$}	→ [e12]

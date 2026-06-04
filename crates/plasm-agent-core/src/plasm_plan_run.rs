@@ -35,9 +35,9 @@ pub use crate::plan_dry_display::PlanDryReview;
 use crate::plasm_plan::{
     AggregateFunction, BindingName, ComputeOp, ComputeTemplate, EffectClass, FieldPath, InputAlias,
     OutputName, Plan, PlanExprTemplate, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue,
-    QualifiedEntityKey, ValidatedDeriveNode, ValidatedForEachNode, ValidatedPlan,
-    ValidatedPlanDataInput, ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanReturn,
-    ValidatedPlanState, ValidatedRelationTraversalNode, ValidatedSurfaceNode,
+    QualifiedEntityKey, RelationSourceCardinality, ValidatedDeriveNode, ValidatedForEachNode,
+    ValidatedPlan, ValidatedPlanDataInput, ValidatedPlanExprTemplate, ValidatedPlanNode,
+    ValidatedPlanReturn, ValidatedPlanState, ValidatedRelationTraversalNode, ValidatedSurfaceNode,
     PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
 };
 use crate::server_state::PlasmHostState;
@@ -1008,7 +1008,7 @@ fn render_derive_template(template: &ValidatedDeriveNode) -> String {
         format!(" with {}", inputs.join(", "))
     };
     format!(
-        "map {source} as {binding}{input_suffix} => {}",
+        "derive map {source} as {binding}{input_suffix} → {}",
         render_plan_value(&template.value)
     )
 }
@@ -1323,6 +1323,7 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDry
     let mut has_explicit_limit = false;
     let mut has_full_collection_compute = false;
     let mut has_foreach_fanout_risk = false;
+    let mut has_relation_many_source_fanout = false;
     let mut relation_traversal_nodes = 0usize;
     let mut has_unprojected_multi_row_read = false;
 
@@ -1370,8 +1371,11 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDry
                 has_full_collection_compute = true;
             }
         }
-        if let ValidatedPlanNode::RelationTraversal(_) = n {
+        if let ValidatedPlanNode::RelationTraversal(rel) = n {
             relation_traversal_nodes += 1;
+            if rel.relation.source_cardinality == RelationSourceCardinality::Many {
+                has_relation_many_source_fanout = true;
+            }
         }
         if let ValidatedPlanNode::ForEach(fe) = n {
             if for_each_body_mutates_remote(
@@ -1443,12 +1447,19 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDry
                 .to_string(),
         );
     }
+    if has_relation_many_source_fanout {
+        warnings.push(
+            "Relation traversal fans out one scoped query per upstream row (source_cardinality: many); narrow the parent list (.limit, filters, paging) when API cost matters"
+                .to_string(),
+        );
+    }
 
     let review = PlanDryReview {
         has_unprojected_multi_row_read,
         has_unbounded_read_root,
         has_full_collection_compute,
         has_foreach_fanout_risk,
+        has_relation_many_source_fanout,
         has_query_limit_row_filter: plan_has_query_limit_row_filter_chain(plan),
         unused_seeds: Vec::new(),
     };
@@ -1468,6 +1479,7 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDry
                 "has_unbounded_read_root": has_unbounded_read_root,
                 "has_full_collection_compute": has_full_collection_compute,
                 "has_foreach_fanout_risk": has_foreach_fanout_risk,
+                "has_relation_many_source_fanout": has_relation_many_source_fanout,
                 "has_unprojected_multi_row_read": has_unprojected_multi_row_read,
             }
         }),
@@ -2157,58 +2169,48 @@ async fn run_validated_plan_phased(
                 .await?
                 {
                     mat
-                } else {
-                    let pe = ParsedExpr {
-                        expr: relation.relation.ir.expr.clone(),
-                        projection: relation.relation.ir.projection.clone(),
-                    };
-                    let parsed = instantiate_parsed_expr_plan_inputs(
-                        pe,
-                        &relation.uses_result,
-                        &materialized,
-                    )?;
-                    let expr_label = relation
-                        .relation
-                        .ir
-                        .display_expr
-                        .as_deref()
-                        .unwrap_or("<ir>");
-                    let scoped_es =
-                        entry_scoped_execute_session(es, Some(&relation.relation.target))?;
-                    let (parsed, result, artifact) = execute_plasm_parsed_expr(
+                } else if matches!(
+                    relation.relation.source_cardinality,
+                    RelationSourceCardinality::Many
+                ) {
+                    materialize_relation_scoped_fanout(
                         st,
-                        &scoped_es,
+                        es,
                         session_id,
-                        expr_label,
-                        parsed,
+                        idx,
+                        node,
+                        relation,
+                        source_mat,
+                        &source_rows,
+                        &materialized,
                         trace.as_ref(),
-                        idx as i64,
+                        sink.as_ref(),
                     )
-                    .await?;
-                    if let Some(sink) = sink.as_ref() {
-                        trace_record_plasm_line(
-                            sink, idx, expr_label, &parsed, &result, &scoped_es,
-                        )
-                        .await;
+                    .await?
+                } else {
+                    if matches!(
+                        relation.relation.source_cardinality,
+                        RelationSourceCardinality::RuntimeCheckedSingleton
+                    ) && source_rows.len() != 1
+                    {
+                        return Err(singleton_input_row_count_error(
+                            relation.relation.source.as_str(),
+                            "source",
+                            source_rows.len(),
+                            "relation traversal",
+                        ));
                     }
-                    MaterializedNode {
-                        entry_id: relation.relation.target.entry_id.clone(),
-                        entity: relation.relation.target.entity.clone(),
-                        display: crate::expr_display::expr_display(&parsed.expr),
-                        projection: parsed.projection,
-                        rows: result
-                            .entities
-                            .iter()
-                            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-                            .collect(),
-                        row_identities: row_identities_from_entities(
-                            &scoped_es,
-                            relation.relation.target.entity.as_str(),
-                            &result.entities,
-                        ),
-                        result,
-                        artifact,
-                    }
+                    materialize_relation_singleton_chain(
+                        st,
+                        es,
+                        session_id,
+                        idx,
+                        relation,
+                        &materialized,
+                        trace.as_ref(),
+                        sink.as_ref(),
+                    )
+                    .await?
                 }
             }
             ValidatedPlanNode::ForEach(for_each) => {
@@ -2691,6 +2693,89 @@ fn singleton_input_row_count_error(
     }
 }
 
+fn materialized_result_use_inputs_with_source_row(
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+    uses_result: &[PlanResultUse],
+    source_node: &PlanNodeId,
+    source_row: &serde_json::Value,
+    source_row_identity: Option<plasm_core::RowIdentity>,
+) -> Result<BTreeMap<InputAlias, MaterializedInputRow>, String> {
+    let mut out = BTreeMap::new();
+    for use_result in uses_result {
+        let node = PlanNodeId::new(use_result.node.clone())?;
+        let alias = InputAlias::new(use_result.r#as.clone())?;
+        let mat = materialized.get(&node).ok_or_else(|| {
+            format!(
+                "input node {:?} for alias {:?} has not been materialized",
+                node.as_str(),
+                alias.as_str()
+            )
+        })?;
+        let (row, row_identity) = if node == *source_node {
+            (
+                augment_row_json_with_identity(source_row, source_row_identity.as_ref()),
+                source_row_identity.clone(),
+            )
+        } else {
+            if mat.rows.len() != 1 {
+                return Err(singleton_input_row_count_error(
+                    node.as_str(),
+                    alias.as_str(),
+                    mat.rows.len(),
+                    "staged expression rendering",
+                ));
+            }
+            let row = mat.rows.first().cloned().ok_or_else(|| {
+                format!(
+                    "Plan input {:?} for alias {:?} expected one row but was empty",
+                    node.as_str(),
+                    alias.as_str()
+                )
+            })?;
+            (
+                augment_row_json_with_identity(
+                    &row,
+                    mat.row_identities.first().and_then(|i| i.as_ref()),
+                ),
+                mat.row_identities.first().cloned().flatten(),
+            )
+        };
+        out.insert(
+            alias,
+            MaterializedInputRow {
+                node,
+                proof: crate::plasm_plan::InputCardinalityProof::RuntimeCheckedSingleton,
+                row,
+                row_identity,
+            },
+        );
+    }
+    Ok(out)
+}
+
+fn instantiate_parsed_expr_plan_inputs_with_rows(
+    parsed: ParsedExpr,
+    input_rows: &BTreeMap<InputAlias, MaterializedInputRow>,
+) -> Result<ParsedExpr, String> {
+    if input_rows.is_empty() {
+        return Ok(parsed);
+    }
+    let scope = EvalScope::Root {
+        row: &serde_json::Value::Null,
+    };
+    let inputs = InputEnv { rows: input_rows };
+    let env = PlanEvalEnv { scope, inputs };
+    let expr_json = serde_json::to_value(&parsed.expr)
+        .map_err(|e| format!("serialize expr for hole instantiation: {e}"))?;
+    let expr_json = instantiate_expr_template_value(&expr_json, &env)?;
+    let expr: Expr = serde_json::from_value(expr_json)
+        .map_err(|e| format!("deserialize expr after hole instantiation: {e}"))?;
+    Ok(ParsedExpr {
+        expr,
+        projection: parsed.projection,
+    })
+}
+
 /// Deserialize → [`instantiate_expr_template_value`] → deserialize so predicate/CML env holes (e.g.
 /// `__plasm_hole` `node_input`) become concrete row JSON **before** HTTP compile — parity with dry-run
 /// topology checks that assumed splattable scope rows.
@@ -2703,19 +2788,199 @@ fn instantiate_parsed_expr_plan_inputs(
         return Ok(parsed);
     }
     let input_rows = materialized_result_use_inputs(materialized, uses_result)?;
-    let scope = EvalScope::Root {
-        row: &serde_json::Value::Null,
+    instantiate_parsed_expr_plan_inputs_with_rows(parsed, &input_rows)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn materialize_relation_singleton_chain(
+    st: &PlasmHostState,
+    es: &ExecuteSession,
+    session_id: &str,
+    node_index: usize,
+    relation: &ValidatedRelationTraversalNode,
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+    trace: Option<&PlasmTraceContext>,
+    sink: Option<&McpPlasmTraceSink>,
+) -> Result<MaterializedNode, String> {
+    let pe = ParsedExpr {
+        expr: relation.relation.ir.expr.clone(),
+        projection: relation.relation.ir.projection.clone(),
     };
-    let inputs = InputEnv { rows: &input_rows };
-    let env = PlanEvalEnv { scope, inputs };
-    let expr_json = serde_json::to_value(&parsed.expr)
-        .map_err(|e| format!("serialize expr for hole instantiation: {e}"))?;
-    let expr_json = instantiate_expr_template_value(&expr_json, &env)?;
-    let expr: Expr = serde_json::from_value(expr_json)
-        .map_err(|e| format!("deserialize expr after hole instantiation: {e}"))?;
-    Ok(ParsedExpr {
-        expr,
+    let parsed = instantiate_parsed_expr_plan_inputs(pe, &relation.uses_result, materialized)?;
+    let expr_label = relation
+        .relation
+        .ir
+        .display_expr
+        .as_deref()
+        .unwrap_or("<ir>");
+    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
+    let (parsed, result, artifact) = execute_plasm_parsed_expr(
+        st,
+        &scoped_es,
+        session_id,
+        expr_label,
+        parsed,
+        trace,
+        node_index as i64,
+    )
+    .await?;
+    if let Some(sink) = sink {
+        trace_record_plasm_line(sink, node_index, expr_label, &parsed, &result, &scoped_es).await;
+    }
+    Ok(MaterializedNode {
+        entry_id: relation.relation.target.entry_id.clone(),
+        entity: relation.relation.target.entity.clone(),
+        display: crate::expr_display::expr_display(&parsed.expr),
         projection: parsed.projection,
+        rows: result
+            .entities
+            .iter()
+            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+            .collect(),
+        row_identities: row_identities_from_entities(
+            &scoped_es,
+            relation.relation.target.entity.as_str(),
+            &result.entities,
+        ),
+        result,
+        artifact,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn materialize_relation_scoped_fanout(
+    st: &PlasmHostState,
+    es: &ExecuteSession,
+    session_id: &str,
+    node_index: usize,
+    _node: &ValidatedPlanNode,
+    relation: &ValidatedRelationTraversalNode,
+    source_mat: &MaterializedNode,
+    source_rows: &[serde_json::Value],
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+    trace: Option<&PlasmTraceContext>,
+    sink: Option<&McpPlasmTraceSink>,
+) -> Result<MaterializedNode, String> {
+    let pe = ParsedExpr {
+        expr: relation.relation.ir.expr.clone(),
+        projection: relation.relation.ir.projection.clone(),
+    };
+    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
+    let source_node = &relation.relation.source;
+    let mut entities = Vec::new();
+    let mut request_fingerprints = Vec::new();
+    let mut stats = ExecutionStats {
+        duration_ms: 0,
+        network_requests: 0,
+        cache_hits: 0,
+        cache_misses: 0,
+    };
+    let mut source = ExecutionSource::Cache;
+    let base_display = relation
+        .relation
+        .ir
+        .display_expr
+        .clone()
+        .unwrap_or_else(|| format!("plan.relation({})", relation.id.as_str()));
+
+    for (row_index, source_row) in source_rows.iter().enumerate() {
+        let row_identity = source_mat
+            .row_identities
+            .get(row_index)
+            .and_then(|i| i.as_ref())
+            .cloned();
+        let input_rows = materialized_result_use_inputs_with_source_row(
+            materialized,
+            &relation.uses_result,
+            source_node,
+            source_row,
+            row_identity,
+        )?;
+        let parsed =
+            instantiate_parsed_expr_plan_inputs_with_rows(pe.clone(), &input_rows)?;
+        let trace_line_index = node_index
+            .checked_mul(1000)
+            .and_then(|base| base.checked_add(row_index))
+            .unwrap_or(node_index);
+        let expr_label = format!("{base_display} [row {row_index}]");
+        let (parsed, result, _artifact) = execute_plasm_parsed_expr(
+            st,
+            &scoped_es,
+            session_id,
+            &expr_label,
+            parsed,
+            trace,
+            trace_line_index as i64,
+        )
+        .await?;
+        if let Some(sink) = sink {
+            trace_record_plasm_line(
+                sink,
+                trace_line_index,
+                &expr_label,
+                &parsed,
+                &result,
+                &scoped_es,
+            )
+            .await;
+        }
+        source = combine_execution_source(source, result.source);
+        stats.duration_ms = stats.duration_ms.saturating_add(result.stats.duration_ms);
+        stats.network_requests = stats
+            .network_requests
+            .saturating_add(result.stats.network_requests);
+        stats.cache_hits = stats.cache_hits.saturating_add(result.stats.cache_hits);
+        stats.cache_misses = stats.cache_misses.saturating_add(result.stats.cache_misses);
+        request_fingerprints.extend(result.request_fingerprints);
+        entities.extend(result.entities);
+    }
+
+    let full_result = ExecutionResult {
+        count: entities.len(),
+        entities: entities.clone(),
+        has_more: false,
+        pagination_resume: None,
+        paging_handle: None,
+        source,
+        stats,
+        request_fingerprints: request_fingerprints.clone(),
+    };
+    let artifact = archive_plasm_result_snapshot(
+        st,
+        es,
+        session_id,
+        Some(relation.relation.target.entry_id.as_str()),
+        vec![format!(
+            "plan.relation({}) fanout {} rows",
+            relation.id.as_str(),
+            source_rows.len()
+        )],
+        &full_result,
+        trace,
+    )
+    .await?;
+    let display = format!(
+        "plan.relation({}) fanout ({} source rows)",
+        relation.id.as_str(),
+        source_rows.len()
+    );
+    Ok(MaterializedNode {
+        entry_id: relation.relation.target.entry_id.clone(),
+        entity: relation.relation.target.entity.clone(),
+        display,
+        projection: relation.relation.ir.projection.clone(),
+        rows: full_result
+            .entities
+            .iter()
+            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+            .collect(),
+        row_identities: row_identities_from_entities(
+            &scoped_es,
+            relation.relation.target.entity.as_str(),
+            &full_result.entities,
+        ),
+        result: full_result,
+        artifact: Some(artifact),
     })
 }
 
@@ -2933,13 +3198,13 @@ fn instantiate_ir_hole(
                 .as_ref()
                 .is_some_and(|v| !v.is_null() && v.as_str().is_none_or(|s| !s.is_empty()));
             if from_row_usable {
-                return Ok(from_row.unwrap());
+                return Ok(coerce_json_integer_wire_path(&path, from_row.unwrap()));
             }
             if let Some(value) =
                 node_input_hole_from_identity(&input.row_identity, &path, &input.row)
             {
                 if value.as_str().is_none_or(|s| !s.is_empty()) {
-                    return Ok(value);
+                    return Ok(coerce_json_integer_wire_path(&path, value));
                 }
             }
             Ok(from_row.unwrap_or(serde_json::Value::Null))
@@ -3392,6 +3657,24 @@ fn value_at_dotted<'a>(row: &'a serde_json::Value, path: &str) -> Option<&'a ser
         cur = cur.get(segment)?;
     }
     Some(cur)
+}
+
+/// Coerce numeric strings for catalog integer slots (e.g. `number` → `issue_number`).
+fn coerce_json_integer_wire_path(path: &[String], value: serde_json::Value) -> serde_json::Value {
+    let Some(key) = path.last() else {
+        return value;
+    };
+    let is_int_slot = key == "number" || key == "issue_number" || key.ends_with("_number");
+    if !is_int_slot {
+        return value;
+    }
+    match value {
+        serde_json::Value::String(s) => s
+            .parse::<i64>()
+            .map(|n| serde_json::json!(n))
+            .unwrap_or(serde_json::Value::String(s)),
+        other => other,
+    }
 }
 
 fn value_at_segments<'a>(
@@ -4375,7 +4658,7 @@ mod tests {
 
         01 products     query Query(Product all)
         02 summary      project name, sku ← products
-        03 cards        map summary as product => {1} ← summary
+        03 cards        derive map summary as product → {1} ← summary
         "
         );
         assert!(!text.contains("node_results"));
