@@ -1,5 +1,5 @@
 ---
-source: crates/plasm-core/src/prompt_render.rs
+source: plasm-oss/crates/plasm-core/src/prompt_render.rs
 expression: prompt
 ---
 # Follow the grammar and the teaching TSV below; reply with one valid plasm_program:
@@ -198,7 +198,7 @@ e5{p57=e17(p41=$, p56=$), p214=$, p71=e19(p39), p248=$, p253=$, p72=$}	→ [e5] 
 e5{p41=$, p56=$, p69=$}	→ [e5]
 e5~"text"	→ [e5]
 e5(p41=$, p56=$, p70=$).p10	relation e5 → e19
-e5(p41=$, p56=$, p70=$).p8	relation e5 → [e8]
+e5(p41=$, p56=$, p70=$).p8	relation e5 → [e8] · Labels on the issue. List and GET issue responses embed a `labels` array on the wire; use those when present. For aut…
 e5(p41=$, p56=$, p70=$).p9	relation e5 → e9
 v20	date · Only comments updated at or after this time
 p65	v20 · since

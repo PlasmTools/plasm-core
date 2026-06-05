@@ -515,6 +515,7 @@ pub enum CrossEntityStrategyKind {
 pub enum RelationMaterializationSummary {
     Unavailable,
     FromParentGet,
+    PreferFromParentGet,
     QueryScoped,
     QueryScopedBindings,
     GetScopedBindings,
@@ -525,6 +526,7 @@ impl From<&RelationMaterialization> for RelationMaterializationSummary {
         match m {
             RelationMaterialization::Unavailable => Self::Unavailable,
             RelationMaterialization::FromParentGet { .. } => Self::FromParentGet,
+            RelationMaterialization::PreferFromParentGet { .. } => Self::PreferFromParentGet,
             RelationMaterialization::QueryScoped { .. } => Self::QueryScoped,
             RelationMaterialization::QueryScopedBindings { .. } => Self::QueryScopedBindings,
             RelationMaterialization::GetScopedBindings { .. } => Self::GetScopedBindings,
@@ -6334,9 +6336,16 @@ mod tests {
         );
         // Baseline bumped after `=>` / relation-arrow contract pitfalls in MCP frontmatter.
         const GITHUB_FULL_PROMPT_BASELINE_V0173: usize = 25_850;
+        const GITHUB_FULL_PROMPT_BASELINE_V0179: usize = 24_658;
         assert!(
-            out.len() * 100 <= GITHUB_FULL_PROMPT_BASELINE_V0173 * 95,
-            "github full prompt should be at least 5% smaller than v0.1.73 baseline (got {} bytes, baseline {})",
+            out.len() <= GITHUB_FULL_PROMPT_BASELINE_V0179,
+            "github full prompt regressed above v0.1.79 baseline (got {} bytes, baseline {})",
+            out.len(),
+            GITHUB_FULL_PROMPT_BASELINE_V0179
+        );
+        assert!(
+            out.len() < GITHUB_FULL_PROMPT_BASELINE_V0173,
+            "github full prompt should remain smaller than v0.1.73 baseline (got {} bytes, baseline {})",
             out.len(),
             GITHUB_FULL_PROMPT_BASELINE_V0173
         );

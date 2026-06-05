@@ -268,6 +268,44 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                             q.capability_name = Some(capability.clone());
                             Some(q)
                         }
+                        RelationMaterialization::PreferFromParentGet { fallback, .. } => {
+                            match fallback {
+                                plasm_core::RelationScopedFallback::QueryScoped {
+                                    capability,
+                                    param,
+                                } => {
+                                    let mut q = QueryExpr::filtered(
+                                        rel.target_resource.clone(),
+                                        Predicate::eq(param.as_str(), Value::String("1".into())),
+                                    );
+                                    q.capability_name = Some(capability.clone());
+                                    Some(q)
+                                }
+                                plasm_core::RelationScopedFallback::QueryScopedBindings {
+                                    capability,
+                                    bindings,
+                                } => {
+                                    let preds: Vec<Predicate> = bindings
+                                        .keys()
+                                        .map(|cap_param| {
+                                            Predicate::eq(
+                                                cap_param.as_str(),
+                                                Value::String("1".into()),
+                                            )
+                                        })
+                                        .collect();
+                                    let pred = if preds.len() == 1 {
+                                        preds.into_iter().next().unwrap()
+                                    } else {
+                                        Predicate::and(preds)
+                                    };
+                                    let mut q =
+                                        QueryExpr::filtered(rel.target_resource.clone(), pred);
+                                    q.capability_name = Some(capability.clone());
+                                    Some(q)
+                                }
+                            }
+                        }
                         RelationMaterialization::FromParentGet { .. }
                         | RelationMaterialization::GetScopedBindings { .. }
                         | RelationMaterialization::Unavailable => None,

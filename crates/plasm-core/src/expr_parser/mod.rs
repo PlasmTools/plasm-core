@@ -2212,6 +2212,7 @@ impl<'a> Parser<'a> {
                             .unwrap_or(&crate::RelationMaterialization::Unavailable);
                         match mat {
                             crate::RelationMaterialization::FromParentGet { .. }
+                            | crate::RelationMaterialization::PreferFromParentGet { .. }
                             | crate::RelationMaterialization::QueryScoped { .. }
                             | crate::RelationMaterialization::QueryScopedBindings { .. } => {
                                 let chain = ChainExpr::auto_get(source, field);

@@ -909,6 +909,28 @@ fn materialization_view(m: &RelationMaterialization) -> ExplorerRelationMaterial
             param: None,
             binding_keys: None,
         },
+        RelationMaterialization::PreferFromParentGet { fallback, .. } => {
+            let mut view = match fallback {
+                plasm_core::RelationScopedFallback::QueryScoped { capability, param } => {
+                    ExplorerRelationMaterialization {
+                        kind: "prefer_from_parent_get",
+                        capability: Some(capability.to_string()),
+                        param: Some(param.to_string()),
+                        binding_keys: None,
+                    }
+                }
+                plasm_core::RelationScopedFallback::QueryScopedBindings {
+                    capability,
+                    bindings,
+                } => ExplorerRelationMaterialization {
+                    kind: "prefer_from_parent_get",
+                    capability: Some(capability.to_string()),
+                    param: None,
+                    binding_keys: Some(bindings.keys().map(|k| k.to_string()).collect()),
+                },
+            };
+            view
+        }
         RelationMaterialization::QueryScoped { capability, param } => {
             ExplorerRelationMaterialization {
                 kind: "query_scoped",
@@ -1464,6 +1486,16 @@ fn relation_scope_meta(
         Some(RelationMaterialization::QueryScopedBindings { bindings, .. })
         | Some(RelationMaterialization::GetScopedBindings { bindings, .. }) => {
             bindings.keys().map(|k| k.to_string()).collect()
+        }
+        Some(RelationMaterialization::PreferFromParentGet { fallback, .. }) => {
+            match fallback {
+                plasm_core::RelationScopedFallback::QueryScoped { param, .. } => {
+                    vec![param.to_string()]
+                }
+                plasm_core::RelationScopedFallback::QueryScopedBindings { bindings, .. } => {
+                    bindings.keys().map(|k| k.to_string()).collect()
+                }
+            }
         }
         _ => Vec::new(),
     };

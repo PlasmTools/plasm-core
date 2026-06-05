@@ -504,6 +504,8 @@ pub struct ValidatedPlanRelationTraversal {
     pub(crate) source_cardinality: RelationSourceCardinality,
     pub(crate) ir: ValidatedPlanExprIr,
     pub(crate) binding_proofs: Vec<plasm_core::RelationBindingProof>,
+    /// Frozen from CGS at plan lower time; plan/runtime must not re-infer from cache shape.
+    pub(crate) materialize: plasm_core::RelationMaterialization,
 }
 
 impl ValidatedPlanNode {
@@ -662,7 +664,7 @@ impl PlanNodeKind {
 }
 
 /// One typed node in the Plan DAG.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanNode {
     pub id: String,
     pub kind: PlanNodeKind,
@@ -705,7 +707,7 @@ pub struct PlanNode {
     pub page_size: Option<usize>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlanRelationTraversal {
     pub source: String,
     pub relation: String,
@@ -717,6 +719,12 @@ pub struct PlanRelationTraversal {
     /// Catalog-derived `(cap_param ← parent_field)` witnesses for scoped materialization.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub binding_proofs: Vec<plasm_core::RelationBindingProof>,
+    #[serde(default, skip_serializing_if = "missing_materialize")]
+    pub materialize: Option<plasm_core::RelationMaterialization>,
+}
+
+fn missing_materialize(m: &Option<plasm_core::RelationMaterialization>) -> bool {
+    m.is_none()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -1363,6 +1371,10 @@ fn validated_node_from_raw(
                         source_cardinality: relation.source_cardinality,
                         ir: validated_plan_expr_ir(&relation.ir, node_index, "relation.ir")?,
                         binding_proofs: relation.binding_proofs.clone(),
+                        materialize: relation
+                            .materialize
+                            .clone()
+                            .unwrap_or(plasm_core::RelationMaterialization::Unavailable),
                     },
                     depends_on,
                     uses_result,

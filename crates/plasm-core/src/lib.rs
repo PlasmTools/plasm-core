@@ -211,6 +211,11 @@ pub use row_predicate::{
     entity_def_for_row_predicate, parse_row_predicate_list, row_predicate_from_expr,
     type_check_row_predicate, RowComparison, RowPredicate, RowPredicateTypeCtx,
 };
+pub mod relation_materialize;
+pub use relation_materialize::{
+    extract_from_parent_get_value, flatten_from_parent_get_source_rows, relation_refs_fully_resolved,
+    resolve_relation_row_resolution, RelationRowResolution,
+};
 pub use schema::{
     capability_is_zero_arity_action, capability_is_zero_arity_invoke,
     capability_method_label_kebab, capability_template_all_var_names,
@@ -222,7 +227,8 @@ pub use schema::{
     FieldValueKind, IdFormat, InputFieldSchema, InputFieldWire, InputSchema, InputType,
     InputValidation, InputVariantSchema, JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet,
     OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema, OutputType, ParameterRole,
-    RelationMaterialization, RelationSchema, ResourceSchema, ScopeAggregateKeyPolicy,
+    EmbedOnMissPolicy, RelationMaterialization, RelationScopedFallback, RelationSchema,
+    ResourceSchema, ScopeAggregateKeyPolicy,
     ScopeRequirement, StringSemantics, ValidationOp, ValidationPredicate, ValueDomainKey,
     ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding, ViewParamBinding,
     ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam,

@@ -23,8 +23,10 @@ use plasm_core::{
     type_check_expr_federated, CapabilityParamName, CapabilitySchema, ChainStep, EntityDef,
     EntityFieldName, EntityKey, EntityName, Expr, FieldType, GetExpr, InputType, InvokeExpr,
     InvokeInputPayload, ParameterRole, Predicate, PromptPipelineConfig, QueryExpr, QueryPagination,
-    Ref, RelationMaterialization, RelationSchema, Value, CGS,
+    Ref, RelationMaterialization, RelationRowResolution, RelationSchema, RelationScopedFallback,
+    Value, CGS,
 };
+use plasm_core::resolve_relation_row_resolution;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::pin::Pin;
@@ -2812,22 +2814,22 @@ impl ExecutionEngine {
                                 )
                                 .await;
                         }
+                        RelationMaterialization::PreferFromParentGet { .. } => {
+                            return self
+                                .execute_chain_prefer_from_parent_get(
+                                    &source_result,
+                                    source_entity,
+                                    rel,
+                                    cgs,
+                                    mat,
+                                    mode,
+                                    &chain.step,
+                                    consume.clone(),
+                                    opts.clone(),
+                                )
+                                .await;
+                        }
                         RelationMaterialization::Unavailable => {
-                            if chain_relation_refs_present(&source_result, chain.selector.as_str())
-                            {
-                                return self
-                                    .execute_chain_from_embedded_relations(
-                                        &source_result,
-                                        rel,
-                                        cgs,
-                                        mat,
-                                        mode,
-                                        &chain.step,
-                                        consume.clone(),
-                                        opts.clone(),
-                                    )
-                                    .await;
-                            }
                             return Err(RuntimeError::ConfigurationError {
                                 message: format!(
                                     "Relation '{}.{}' is not configured for chain traversal (materialize unavailable)",
@@ -2887,23 +2889,15 @@ impl ExecutionEngine {
                                 ),
                             });
                         }
-                        Some(RelationMaterialization::Unavailable) | None => {
-                            if chain_relation_refs_present(&source_result, chain.selector.as_str())
-                            {
-                                return self
-                                    .execute_chain_from_embedded_relations(
-                                        &source_result,
-                                        rel,
-                                        cgs,
-                                        mat,
-                                        mode,
-                                        &chain.step,
-                                        consume.clone(),
-                                        opts.clone(),
-                                    )
-                                    .await;
-                            }
+                        Some(RelationMaterialization::PreferFromParentGet { .. }) => {
+                            return Err(RuntimeError::ConfigurationError {
+                                message: format!(
+                                    "Relation '{}.{}': prefer_from_parent_get requires cardinality many",
+                                    source_entity_name, chain.selector
+                                ),
+                            });
                         }
+                        Some(RelationMaterialization::Unavailable) | None => {}
                     }
                     rel.target_resource.to_string()
                 }
@@ -3067,11 +3061,89 @@ impl ExecutionEngine {
         })
     }
 
+    /// Parallel scoped-query fanout; `network_jobs` must already list `(parent_index, query)`.
+    async fn fanout_scoped_query_parallel(
+        &self,
+        source_result: &ExecutionResult,
+        mut per_parent: Vec<Vec<CachedEntity>>,
+        network_jobs: Vec<(usize, QueryExpr)>,
+        cgs: &CGS,
+        mat: &mut SessionMaterialization,
+        mode: ExecutionMode,
+    ) -> Result<ExecutionResult, RuntimeError> {
+        use futures_util::stream::{self, StreamExt};
+
+        let mut total_network = source_result.stats.network_requests;
+        let mut merged_stats = ExecutionStats::default();
+        merged_stats.merge_telemetry(&source_result.stats.cache);
+        let mut any_live = source_result.source == ExecutionSource::Live;
+        let mut graph_hits = per_parent.iter().map(|v| v.len()).sum::<usize>();
+
+        if !network_jobs.is_empty() {
+            let concurrency = self.config.hydrate_concurrency.max(1);
+            let branch_seed = {
+                let snap = mat.snapshot();
+                SessionMaterialization {
+                    graph: snap.into_graph(),
+                    responses: mat.responses.clone(),
+                    query_index: mat.query_index.clone(),
+                }
+            };
+
+            let mut stream = stream::iter(network_jobs.into_iter().map(|(parent_idx, q)| {
+                let mut branch = branch_seed.clone();
+                async move {
+                    let result = self
+                        .execute_query(&q, cgs, &mut branch, mode, StreamConsumeOpts::default())
+                        .await?;
+                    Ok::<_, RuntimeError>((parent_idx, result, branch))
+                }
+            }))
+            .buffer_unordered(concurrency);
+
+            while let Some(res) = stream.next().await {
+                let (parent_idx, result, branch) = res?;
+                mat.absorb_branch(branch)?;
+                if result.source == ExecutionSource::Live {
+                    any_live = true;
+                }
+                total_network += result.stats.network_requests;
+                merged_stats.merge_telemetry(&result.stats.cache);
+                // At most one scoped query per parent today; order within parent = query row order.
+                per_parent[parent_idx].extend(result.entities);
+            }
+        }
+
+        let all_entities: Vec<CachedEntity> = per_parent.into_iter().flatten().collect();
+        let count = all_entities.len();
+        merged_stats.cache_hits = merged_stats
+            .cache
+            .legacy_cache_hits()
+            .saturating_add(graph_hits);
+        merged_stats.cache_misses = merged_stats.cache.legacy_cache_misses();
+        merged_stats.network_requests = total_network;
+        merged_stats.record_rows_materialized(count);
+        Ok(ExecutionResult {
+            entities: all_entities,
+            count,
+            has_more: false,
+            pagination_resume: None,
+            paging_handle: None,
+            source: if any_live {
+                ExecutionSource::Live
+            } else {
+                ExecutionSource::Cache
+            },
+            stats: merged_stats,
+            request_fingerprints: Vec::new(),
+        })
+    }
+
     /// Execute a `via_param` relation traversal: for each source entity, run a scoped
     /// query on the target using the source entity's `id_field` value as `via_param`.
     ///
-    /// When the parent row already has decoded relation refs on the session graph, serves
-    /// those targets without HTTP (per-row hybrid fallback to scoped query on miss).
+    /// When every parent row has decoded `relations[rel]`, uses embedded graph only; otherwise
+    /// hybrid fanout (graph or scoped query per row; graph miss with relation key is an error).
     #[allow(clippy::too_many_arguments)]
     async fn execute_chain_via_param(
         &self,
@@ -3082,9 +3154,9 @@ impl ExecutionEngine {
         cgs: &CGS,
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
-        _chain_step: &plasm_core::ChainStep,
-        _consume: StreamConsumeOpts,
-        _opts: ExecuteOptions,
+        chain_step: &plasm_core::ChainStep,
+        consume: StreamConsumeOpts,
+        opts: ExecuteOptions,
     ) -> Result<ExecutionResult, RuntimeError> {
         let target_entity = rel.target_resource.clone();
         let target_key = target_entity.as_str();
@@ -3121,85 +3193,33 @@ impl ExecutionEngine {
             });
         }
 
-        let mut all_entities: Vec<CachedEntity> = Vec::new();
-        let mut total_network = source_result.stats.network_requests;
-        let mut merged_stats = ExecutionStats::default();
-        merged_stats.merge_telemetry(&source_result.stats.cache);
-        let mut any_live = source_result.source == ExecutionSource::Live;
-        let mut graph_hits = 0usize;
-
-        for entity in &source_result.entities {
-            if parent_row_relation_decoded(entity, relation_key) {
-                let refs = entity
-                    .relations
-                    .get(relation_key)
-                    .map(|v| v.as_slice())
-                    .unwrap_or(&[]);
-                match resolve_cached_targets_from_relation_refs(mat, refs, expected_target) {
-                    Ok(mut rows) => {
-                        graph_hits += rows.len();
-                        all_entities.append(&mut rows);
-                        continue;
-                    }
-                    Err(_) => {}
-                }
-            }
-
-            let id_field = cgs
-                .get_entity(entity.reference.entity_type.as_str())
-                .map(|def| def.id_field.as_str().to_string())
-                .unwrap_or_default();
-            let id = entity
-                .get_field(id_field.as_str())
-                .map(|tf| tf.to_value())
-                .and_then(|v| match v {
-                    Value::String(s) => Some(s.clone()),
-                    Value::Integer(n) => Some(n.to_string()),
-                    _ => None,
-                })
-                .unwrap_or_else(|| entity.reference.primary_slot_str());
-            let pred = plasm_core::Predicate::eq(via_param.as_str(), id);
-            let mut q = QueryExpr::filtered(target_entity.clone(), pred);
-            q.capability_name = Some(capability_name.clone());
-            let result = self
-                .execute_query(&q, cgs, mat, mode, StreamConsumeOpts::default())
-                .await?;
-            if result.source == ExecutionSource::Live {
-                any_live = true;
-            }
-            total_network += result.stats.network_requests;
-            merged_stats.merge_telemetry(&result.stats.cache);
-            all_entities.extend(result.entities);
-        }
-
-        merged_stats.cache_hits = merged_stats
-            .cache
-            .legacy_cache_hits()
-            .saturating_add(graph_hits);
-        merged_stats.cache_misses = merged_stats.cache.legacy_cache_misses();
-        let count = all_entities.len();
-        merged_stats.network_requests = total_network;
-        merged_stats.record_rows_materialized(count);
-        Ok(ExecutionResult {
-            entities: all_entities,
-            count,
-            has_more: false,
-            pagination_resume: None,
-            paging_handle: None,
-            source: if any_live {
-                ExecutionSource::Live
-            } else {
-                ExecutionSource::Cache
-            },
-            stats: merged_stats,
-            request_fingerprints: Vec::new(),
-        })
+        let via = via_param.clone();
+        let network_jobs = partition_scoped_query_fanout(&source_result.entities, |entity| {
+                let id_field = cgs
+                    .get_entity(entity.reference.entity_type.as_str())
+                    .map(|def| def.id_field.as_str().to_string())
+                    .unwrap_or_default();
+                let id = entity
+                    .get_field(id_field.as_str())
+                    .map(|tf| tf.to_value())
+                    .and_then(|v| match v {
+                        Value::String(s) => Some(s.clone()),
+                        Value::Integer(n) => Some(n.to_string()),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| entity.reference.primary_slot_str());
+                let pred = plasm_core::Predicate::eq(via.as_str(), id);
+                let mut q = QueryExpr::filtered(target_entity.clone(), pred);
+                q.capability_name = Some(capability_name.clone());
+                q
+            });
+        let per_parent = vec![Vec::new(); source_result.entities.len()];
+        self.fanout_scoped_query_parallel(source_result, per_parent, network_jobs, cgs, mat, mode)
+            .await
     }
 
     /// Multi-parameter scoped query fanout (`RelationMaterialization::QueryScopedBindings`).
-    ///
-    /// Per-row hybrid: when the parent row has decoded relation refs in the session graph,
-    /// collect targets from cache; otherwise run the scoped query for that row only.
+    /// Always one scoped query per parent row (ignores decoded `relations` on the parent).
     #[allow(clippy::too_many_arguments)]
     async fn execute_chain_via_bindings(
         &self,
@@ -3247,13 +3267,91 @@ impl ExecutionEngine {
             });
         }
 
+        let capability_name = cap.name.clone();
+        let cap_params: Vec<_> = cap.object_params().map(|f| f.to_vec()).unwrap_or_default();
+        let parent_def = parent_entity_def;
+        let binds = bindings;
+
+        let network_jobs = partition_scoped_query_fanout(&source_result.entities, |entity| {
+                let preds: Vec<Predicate> = binds
+                    .iter()
+                    .map(|(cap_param, parent_field)| {
+                        let raw = chain_binding_raw_json(entity, parent_def, parent_field);
+                        let value =
+                            chain_binding_plasm_value(&raw, cap_param.as_str(), &cap_params, cgs);
+                        Predicate::eq(cap_param.as_str(), value)
+                    })
+                    .collect();
+                let pred = if preds.len() == 1 {
+                    preds.into_iter().next().expect("non-empty preds")
+                } else {
+                    Predicate::and(preds)
+                };
+                let mut q = QueryExpr::filtered(target_entity.clone(), pred);
+                q.capability_name = Some(capability_name.clone());
+                q
+            });
+        let per_parent = vec![Vec::new(); source_result.entities.len()];
+        self.fanout_scoped_query_parallel(source_result, per_parent, network_jobs, cgs, mat, mode)
+            .await
+    }
+
+    /// [`RelationMaterialization::PreferFromParentGet`]: typed per-row embed vs declared scoped fallback.
+    #[allow(clippy::too_many_arguments)]
+    async fn execute_chain_prefer_from_parent_get(
+        &self,
+        source_result: &ExecutionResult,
+        parent_entity_def: &EntityDef,
+        rel: &RelationSchema,
+        cgs: &CGS,
+        mat: &mut SessionMaterialization,
+        mode: ExecutionMode,
+        chain_step: &ChainStep,
+        consume: StreamConsumeOpts,
+        opts: ExecuteOptions,
+    ) -> Result<ExecutionResult, RuntimeError> {
+        let Some(RelationMaterialization::PreferFromParentGet { fallback, .. }) =
+            rel.materialize.as_ref()
+        else {
+            return Err(RuntimeError::ConfigurationError {
+                message: format!(
+                    "Relation '{}': expected PreferFromParentGet materialize",
+                    rel.name
+                ),
+            });
+        };
+
+        if source_result.entities.is_empty() {
+            return Ok(ExecutionResult {
+                entities: vec![],
+                count: 0,
+                has_more: false,
+                pagination_resume: None,
+                paging_handle: None,
+                source: source_result.source,
+                stats: source_result.stats.clone(),
+                request_fingerprints: source_result.request_fingerprints.clone(),
+            });
+        }
+
         let relation_key = rel.name.as_str();
-        let expected_target = target_key;
-        if source_result
-            .entities
-            .iter()
-            .all(|e| parent_row_relation_decoded(e, relation_key))
-        {
+        let expected_target = rel.target_resource.as_str();
+        let target_entity = rel.target_resource.clone();
+        let all_embed = source_result.entities.iter().all(|parent| {
+            let parent_json = parent.payload_to_json();
+            matches!(
+                resolve_relation_row_resolution(
+                    rel.materialize.as_ref().expect("prefer"),
+                    relation_key,
+                    expected_target,
+                    &parent_json,
+                    parent.relations.get(relation_key).map(|v| v.as_slice()),
+                    |r| mat.get(r).is_some(),
+                ),
+                RelationRowResolution::EmbeddedRefs(_)
+            )
+        });
+        if all_embed {
             return self
                 .execute_chain_from_embedded_relations(
                     source_result,
@@ -3268,82 +3366,19 @@ impl ExecutionEngine {
                 .await;
         }
 
-        let capability_name = cap.name.clone();
-        let cap_params: Vec<_> = cap.object_params().map(|f| f.to_vec()).unwrap_or_default();
-
-        let mut all_entities: Vec<CachedEntity> = Vec::new();
-        let mut total_network = source_result.stats.network_requests;
-        let mut merged_stats = ExecutionStats::default();
-        merged_stats.merge_telemetry(&source_result.stats.cache);
-        let mut any_live = source_result.source == ExecutionSource::Live;
-        let mut graph_hits = 0usize;
-
-        for entity in &source_result.entities {
-            if parent_row_relation_decoded(entity, relation_key) {
-                let refs = entity
-                    .relations
-                    .get(relation_key)
-                    .map(|v| v.as_slice())
-                    .unwrap_or(&[]);
-                match resolve_cached_targets_from_relation_refs(mat, refs, expected_target) {
-                    Ok(mut rows) => {
-                        graph_hits += rows.len();
-                        all_entities.append(&mut rows);
-                        continue;
-                    }
-                    Err(_) => {}
-                }
-            }
-
-            let preds: Vec<Predicate> = bindings
-                .iter()
-                .map(|(cap_param, parent_field)| {
-                    let raw = chain_binding_raw_json(entity, parent_entity_def, parent_field);
-                    let value =
-                        chain_binding_plasm_value(&raw, cap_param.as_str(), &cap_params, cgs);
-                    Predicate::eq(cap_param.as_str(), value)
-                })
-                .collect();
-            let pred = if preds.len() == 1 {
-                preds.into_iter().next().expect("non-empty preds")
-            } else {
-                Predicate::and(preds)
-            };
-            let mut q = QueryExpr::filtered(target_entity.clone(), pred);
-            q.capability_name = Some(capability_name.clone());
-            let result = self
-                .execute_query(&q, cgs, mat, mode, StreamConsumeOpts::default())
-                .await?;
-            if result.source == ExecutionSource::Live {
-                any_live = true;
-            }
-            total_network += result.stats.network_requests;
-            merged_stats.merge_telemetry(&result.stats.cache);
-            all_entities.extend(result.entities);
-        }
-
-        let count = all_entities.len();
-        merged_stats.cache_hits = merged_stats
-            .cache
-            .legacy_cache_hits()
-            .saturating_add(graph_hits);
-        merged_stats.cache_misses = merged_stats.cache.legacy_cache_misses();
-        merged_stats.network_requests = total_network;
-        merged_stats.record_rows_materialized(count);
-        Ok(ExecutionResult {
-            entities: all_entities,
-            count,
-            has_more: false,
-            pagination_resume: None,
-            paging_handle: None,
-            source: if any_live {
-                ExecutionSource::Live
-            } else {
-                ExecutionSource::Cache
-            },
-            stats: merged_stats,
-            request_fingerprints: Vec::new(),
-        })
+        let (per_parent, network_jobs) = partition_prefer_from_parent_get(
+            &source_result.entities,
+            rel.materialize.as_ref().expect("prefer"),
+            relation_key,
+            expected_target,
+            mat,
+            parent_entity_def,
+            cgs,
+            &target_entity,
+            fallback,
+        )?;
+        self.fanout_scoped_query_parallel(source_result, per_parent, network_jobs, cgs, mat, mode)
+            .await
     }
 
     /// Chain on `get_scoped_bindings`: synthesize a [`GetExpr`] per parent row from binding keys.
@@ -4829,18 +4864,122 @@ fn extract_ref_id(entity: &CachedEntity, selector: &str, cgs: &CGS) -> Option<St
     }
 }
 
-fn chain_relation_refs_present(source_result: &ExecutionResult, selector: &str) -> bool {
-    source_result.entities.iter().any(|e| {
-        e.relations
-            .get(selector)
-            .map(|v| !v.is_empty())
-            .unwrap_or(false)
-    })
+/// One scoped query per parent (pure `query_scoped` / `query_scoped_bindings`).
+pub(crate) fn partition_scoped_query_fanout<F>(
+    parents: &[CachedEntity],
+    mut build_scoped_query: F,
+) -> Vec<(usize, QueryExpr)>
+where
+    F: FnMut(&CachedEntity) -> QueryExpr,
+{
+    parents
+        .iter()
+        .enumerate()
+        .map(|(i, parent)| (i, build_scoped_query(parent)))
+        .collect()
 }
 
-/// Parent row decoded this relation edge (including authoritative `Specified([])`).
-fn parent_row_relation_decoded(entity: &CachedEntity, relation_key: &str) -> bool {
-    entity.relations.contains_key(relation_key)
+fn build_scoped_query_from_fallback(
+    fallback: &RelationScopedFallback,
+    parent: &CachedEntity,
+    parent_entity_def: &EntityDef,
+    target_entity: &EntityName,
+    cgs: &CGS,
+) -> Result<QueryExpr, RuntimeError> {
+    match fallback {
+        RelationScopedFallback::QueryScoped { capability, param } => {
+            let id_field = cgs
+                .get_entity(parent.reference.entity_type.as_str())
+                .map(|def| def.id_field.as_str().to_string())
+                .unwrap_or_default();
+            let id = parent
+                .get_field(id_field.as_str())
+                .map(|tf| tf.to_value())
+                .and_then(|v| match v {
+                    Value::String(s) => Some(s.clone()),
+                    Value::Integer(n) => Some(n.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| parent.reference.primary_slot_str());
+            let pred = Predicate::eq(param.as_str(), id);
+            let mut q = QueryExpr::filtered(target_entity.clone(), pred);
+            q.capability_name = Some(capability.clone());
+            Ok(q)
+        }
+        RelationScopedFallback::QueryScopedBindings {
+            capability,
+            bindings,
+        } => {
+            let cap = cgs.get_capability(capability.as_str()).ok_or_else(|| {
+                RuntimeError::ConfigurationError {
+                    message: format!("unknown fallback capability '{capability}'"),
+                }
+            })?;
+            let cap_params: Vec<_> = cap.object_params().map(|f| f.to_vec()).unwrap_or_default();
+            let preds: Vec<Predicate> = bindings
+                .iter()
+                .map(|(cap_param, parent_field)| {
+                    let raw = chain_binding_raw_json(parent, parent_entity_def, parent_field);
+                    let value =
+                        chain_binding_plasm_value(&raw, cap_param.as_str(), &cap_params, cgs);
+                    Predicate::eq(cap_param.as_str(), value)
+                })
+                .collect();
+            let pred = if preds.len() == 1 {
+                preds.into_iter().next().expect("non-empty preds")
+            } else {
+                Predicate::and(preds)
+            };
+            let mut q = QueryExpr::filtered(target_entity.clone(), pred);
+            q.capability_name = Some(capability.clone());
+            Ok(q)
+        }
+    }
+}
+
+/// Partition for [`RelationMaterialization::PreferFromParentGet`] using [`resolve_relation_row_resolution`].
+pub(crate) fn partition_prefer_from_parent_get(
+    parents: &[CachedEntity],
+    materialize: &RelationMaterialization,
+    relation_key: &str,
+    expected_target: &str,
+    mat: &SessionMaterialization,
+    parent_entity_def: &EntityDef,
+    cgs: &CGS,
+    target_entity: &EntityName,
+    fallback: &RelationScopedFallback,
+) -> Result<(Vec<Vec<CachedEntity>>, Vec<(usize, QueryExpr)>), RuntimeError> {
+    let n = parents.len();
+    let mut per_parent: Vec<Vec<CachedEntity>> = (0..n).map(|_| Vec::new()).collect();
+    let mut network_jobs: Vec<(usize, QueryExpr)> = Vec::new();
+    for (i, parent) in parents.iter().enumerate() {
+        let parent_json = parent.payload_to_json();
+        let resolution = resolve_relation_row_resolution(
+            materialize,
+            relation_key,
+            expected_target,
+            &parent_json,
+            parent.relations.get(relation_key).map(|v| v.as_slice()),
+            |r| mat.get(r).is_some(),
+        );
+        match resolution {
+            RelationRowResolution::EmbeddedRefs(refs) => {
+                per_parent[i] =
+                    resolve_cached_targets_from_relation_refs(mat, &refs, expected_target)?;
+            }
+            RelationRowResolution::ScopedQuery => {
+                let q = build_scoped_query_from_fallback(
+                    fallback,
+                    parent,
+                    parent_entity_def,
+                    target_entity,
+                    cgs,
+                )?;
+                network_jobs.push((i, q));
+            }
+        }
+    }
+    Ok((per_parent, network_jobs))
 }
 
 fn resolve_cached_targets_from_relation_refs(
@@ -5602,7 +5741,11 @@ fn create_entity_decoder_inner(
     let mut relation_decoders: Vec<plasm_compile::RelationDecoder> = Vec::new();
     if let Some(entity) = cgs.get_entity(entity_type) {
         for (rel_name, rel) in &entity.relations {
-            if let Some(RelationMaterialization::FromParentGet { path }) = &rel.materialize {
+            if let Some(path) = match &rel.materialize {
+                Some(RelationMaterialization::FromParentGet { path })
+                | Some(RelationMaterialization::PreferFromParentGet { path, .. }) => Some(path),
+                _ => None,
+            } {
                 let rel_path = path_expr_from_json_segments(path).unwrap_or_else(|e| {
                     panic!("CGS must reject invalid from_parent_get paths: {e}");
                 });
@@ -5771,6 +5914,7 @@ mod tests {
     use super::*;
     use indexmap::IndexMap;
     use plasm_core::{
+        EmbedOnMissPolicy, JsonPathSegment,
         CapabilityKind, CapabilityMapping, CapabilitySchema, Expr, FieldSchema, FieldType,
         FieldValueKind, GetExpr, InputFieldSchema, InputFieldWire, InputSchema, InputValidation,
         NamedValueSchema, Ref, ResourceSchema, StringSemantics, ValueDomainKey,
@@ -6993,7 +7137,7 @@ mod tests {
         );
         assert!(
             decoder.relations.iter().any(|r| r.relation == "labels"),
-            "Issue.labels from_parent_get must emit a relation decoder on issue_query"
+            "Issue.labels prefer/from_parent_get must emit a relation decoder on issue_query"
         );
 
         let row = serde_json::json!({
@@ -7027,6 +7171,98 @@ mod tests {
     }
 
     #[test]
+    fn partition_scoped_query_fanout_one_job_per_parent() {
+        let parents = vec![
+            CachedEntity::from_decoded(
+                Ref::new("LangItem", "i1"),
+                IndexMap::new(),
+                IndexMap::new(),
+                0,
+                EntityCompleteness::Summary,
+            ),
+            CachedEntity::from_decoded(
+                Ref::new("LangItem", "i2"),
+                IndexMap::new(),
+                IndexMap::new(),
+                0,
+                EntityCompleteness::Summary,
+            ),
+        ];
+        let jobs = partition_scoped_query_fanout(&parents, |p| {
+            let mut q = QueryExpr::filtered(EntityName::from("LangTag"), Predicate::eq("id", "x"));
+            let _ = p;
+            q
+        });
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0].0, 0);
+        assert_eq!(jobs[1].0, 1);
+    }
+
+    #[test]
+    fn prefer_graph_miss_yields_scoped_not_error() {
+        let materialize = RelationMaterialization::PreferFromParentGet {
+            path: vec![JsonPathSegment::Key {
+                key: "tags".into(),
+            }],
+            on_embed_miss: plasm_core::EmbedOnMissPolicy::FallbackScoped,
+            fallback: RelationScopedFallback::QueryScoped {
+                capability: "cap".into(),
+                param: "p".into(),
+            },
+        };
+        let parent_ref = Ref::new("LangItem", "i1");
+        let tag_ref = Ref::new("LangTag", "missing");
+        let mut parent = CachedEntity::from_decoded(
+            parent_ref,
+            IndexMap::from([(String::from("tags"), Value::String("1".into()))]),
+            IndexMap::new(),
+            0,
+            EntityCompleteness::Summary,
+        );
+        parent.update_relations("tags".into(), vec![tag_ref], 0);
+        let res = resolve_relation_row_resolution(
+            &materialize,
+            "tags",
+            "LangTag",
+            &parent.payload_to_json(),
+            parent.relations.get("tags").map(|v| v.as_slice()),
+            |_| false,
+        );
+        assert_eq!(res, RelationRowResolution::ScopedQuery);
+    }
+
+    #[test]
+    fn flatten_per_parent_major_order() {
+        let a = CachedEntity::from_decoded(
+            Ref::new("LangTag", "a"),
+            IndexMap::new(),
+            IndexMap::new(),
+            0,
+            EntityCompleteness::Summary,
+        );
+        let b = CachedEntity::from_decoded(
+            Ref::new("LangTag", "b"),
+            IndexMap::new(),
+            IndexMap::new(),
+            0,
+            EntityCompleteness::Summary,
+        );
+        let c = CachedEntity::from_decoded(
+            Ref::new("LangTag", "c"),
+            IndexMap::new(),
+            IndexMap::new(),
+            0,
+            EntityCompleteness::Summary,
+        );
+        let per_parent = vec![vec![a.clone()], vec![b.clone(), c.clone()]];
+        let flat: Vec<_> = per_parent.into_iter().flatten().collect();
+        assert_eq!(flat.len(), 3);
+        assert_eq!(flat[0].reference.primary_slot_str(), "a");
+        assert_eq!(flat[1].reference.primary_slot_str(), "b");
+        assert_eq!(flat[2].reference.primary_slot_str(), "c");
+    }
+
+    #[test]
     fn parent_row_relation_decoded_and_resolve_cached_targets() {
         let parent_ref = Ref::new("LangItem", "i1");
         let tag_ref = Ref::new("LangTag", "t1");
@@ -7038,7 +7274,7 @@ mod tests {
             EntityCompleteness::Summary,
         );
         parent.update_relations("tags".into(), vec![tag_ref.clone()], 0);
-        assert!(parent_row_relation_decoded(&parent, "tags"));
+        assert!(parent.relations.contains_key("tags"));
 
         let tag = CachedEntity::from_decoded(
             tag_ref,

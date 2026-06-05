@@ -45,8 +45,9 @@ use crate::trace_hub::{CodePlanRunArtifactRef, McpPlasmTraceSink};
 use crate::trace_sink_emit::PlasmTraceContext;
 use indexmap::IndexMap;
 use plasm_core::{
+    extract_from_parent_get_value, flatten_from_parent_get_source_rows, resolve_relation_row_resolution,
     CapabilityKind, Cardinality, EntityKey, EntityName, Expr, JsonPathSegment, Ref,
-    RelationMaterialization, TypedFieldValue, Value,
+    RelationMaterialization, RelationRowResolution, RelationScopedFallback, TypedFieldValue, Value,
 };
 use plasm_runtime::{
     CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
@@ -2189,69 +2190,18 @@ async fn run_validated_plan_phased(
                 .await?
             }
             ValidatedPlanNode::RelationTraversal(relation) => {
-                let source_mat = materialized.get(&relation.relation.source).ok_or_else(|| {
-                    format!(
-                        "relation source node {:?} has not been materialized",
-                        relation.relation.source.as_str()
-                    )
-                })?;
-                let source_rows = source_mat.rows.clone();
-                if let Some(mat) = try_materialize_from_parent_get_relation(
+                materialize_validated_relation_traversal(
                     st,
                     es,
                     session_id,
+                    idx,
                     node,
                     relation,
-                    source_mat,
-                    &source_rows,
+                    &materialized,
                     trace.as_ref(),
+                    sink.as_ref(),
                 )
                 .await?
-                {
-                    mat
-                } else if matches!(
-                    relation.relation.source_cardinality,
-                    RelationSourceCardinality::Many
-                ) {
-                    materialize_relation_scoped_fanout(
-                        st,
-                        es,
-                        session_id,
-                        idx,
-                        node,
-                        relation,
-                        source_mat,
-                        &source_rows,
-                        &materialized,
-                        trace.as_ref(),
-                        sink.as_ref(),
-                    )
-                    .await?
-                } else {
-                    if matches!(
-                        relation.relation.source_cardinality,
-                        RelationSourceCardinality::RuntimeCheckedSingleton
-                    ) && source_rows.len() != 1
-                    {
-                        return Err(singleton_input_row_count_error(
-                            relation.relation.source.as_str(),
-                            "source",
-                            source_rows.len(),
-                            "relation traversal",
-                        ));
-                    }
-                    materialize_relation_singleton_chain(
-                        st,
-                        es,
-                        session_id,
-                        idx,
-                        relation,
-                        &materialized,
-                        trace.as_ref(),
-                        sink.as_ref(),
-                    )
-                    .await?
-                }
             }
             ValidatedPlanNode::ForEach(for_each) => {
                 materialize_for_each_node(
@@ -2470,58 +2420,121 @@ fn synthetic_node_display(node: &ValidatedPlanNode) -> String {
     }
 }
 
-fn extract_from_parent_get_value(
-    row: &serde_json::Value,
-    path: &[JsonPathSegment],
-) -> Vec<serde_json::Value> {
-    fn walk(
-        cur: &serde_json::Value,
-        path: &[JsonPathSegment],
-        idx: usize,
-    ) -> Vec<serde_json::Value> {
-        if idx >= path.len() {
-            return vec![cur.clone()];
+#[allow(clippy::too_many_arguments)]
+async fn materialize_validated_relation_traversal(
+    st: &PlasmHostState,
+    es: &ExecuteSession,
+    session_id: &str,
+    idx: usize,
+    node: &ValidatedPlanNode,
+    relation: &ValidatedRelationTraversalNode,
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+    trace: Option<&PlasmTraceContext>,
+    sink: Option<&McpPlasmTraceSink>,
+) -> Result<MaterializedNode, String> {
+    let source_mat = materialized.get(&relation.relation.source).ok_or_else(|| {
+        format!(
+            "relation source node {:?} has not been materialized",
+            relation.relation.source.as_str()
+        )
+    })?;
+    let source_rows = source_mat.rows.clone();
+    match &relation.relation.materialize {
+        RelationMaterialization::FromParentGet { .. } => try_materialize_from_parent_get_relation(
+            st,
+            es,
+            session_id,
+            node,
+            relation,
+            source_mat,
+            &source_rows,
+            trace,
+        )
+        .await?
+        .ok_or_else(|| {
+            format!(
+                "relation `{}` FromParentGet materialize failed",
+                relation.relation.relation
+            )
+        }),
+        RelationMaterialization::PreferFromParentGet { .. } => {
+            materialize_prefer_from_parent_get_relation(
+                st,
+                es,
+                session_id,
+                idx,
+                node,
+                relation,
+                source_mat,
+                &source_rows,
+                materialized,
+                trace,
+                sink,
+            )
+            .await
         }
-        match &path[idx] {
-            JsonPathSegment::Key { key } => cur
-                .get(key.as_str())
-                .map(|next| walk(next, path, idx + 1))
-                .unwrap_or_default(),
-            JsonPathSegment::Wildcard { wildcard: true } => cur
-                .as_array()
-                .map(|items| {
-                    items
-                        .iter()
-                        .flat_map(|item| walk(item, path, idx + 1))
-                        .collect()
-                })
-                .unwrap_or_default(),
-            JsonPathSegment::Wildcard { wildcard: false } => Vec::new(),
-        }
-    }
-    walk(row, path, 0)
-}
-
-fn flatten_from_parent_get_source_rows(
-    source_rows: &[serde_json::Value],
-    path: &[JsonPathSegment],
-    cardinality: Cardinality,
-) -> Vec<serde_json::Value> {
-    let mut out = Vec::new();
-    for row in source_rows {
-        let extracted = extract_from_parent_get_value(row, path);
-        match cardinality {
-            Cardinality::One => {
-                if let Some(v) = extracted.into_iter().next() {
-                    if !v.is_null() {
-                        out.push(v);
-                    }
+        RelationMaterialization::QueryScoped { .. }
+        | RelationMaterialization::QueryScopedBindings { .. } => {
+            if matches!(
+                relation.relation.source_cardinality,
+                RelationSourceCardinality::Many
+            ) {
+                materialize_relation_scoped_fanout(
+                    st,
+                    es,
+                    session_id,
+                    idx,
+                    node,
+                    relation,
+                    source_mat,
+                    &source_rows,
+                    materialized,
+                    trace,
+                    sink,
+                )
+                .await
+            } else {
+                if matches!(
+                    relation.relation.source_cardinality,
+                    RelationSourceCardinality::RuntimeCheckedSingleton
+                ) && source_rows.len() != 1
+                {
+                    return Err(singleton_input_row_count_error(
+                        relation.relation.source.as_str(),
+                        "source",
+                        source_rows.len(),
+                        "relation traversal",
+                    ));
                 }
+                materialize_relation_singleton_chain(
+                    st, es, session_id, idx, relation, materialized, trace, sink,
+                )
+                .await
             }
-            Cardinality::Many => out.extend(extracted.into_iter().filter(|v| !v.is_null())),
         }
+        RelationMaterialization::GetScopedBindings { .. } => {
+            if matches!(
+                relation.relation.source_cardinality,
+                RelationSourceCardinality::RuntimeCheckedSingleton
+            ) && source_rows.len() != 1
+            {
+                return Err(singleton_input_row_count_error(
+                    relation.relation.source.as_str(),
+                    "source",
+                    source_rows.len(),
+                    "relation traversal",
+                ));
+            }
+            materialize_relation_singleton_chain(
+                st, es, session_id, idx, relation, materialized, trace, sink,
+            )
+            .await
+        }
+        RelationMaterialization::Unavailable => Err(format!(
+            "relation `{}` on `{}` has no materialize strategy (Unavailable)",
+            relation.relation.relation, source_mat.entity
+        )),
     }
-    out
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2555,8 +2568,7 @@ async fn try_materialize_from_parent_get_relation(
                 source_mat.entity, relation.relation.relation
             )
         })?;
-    let Some(RelationMaterialization::FromParentGet { path }) = rel_schema.materialize.as_ref()
-    else {
+    let RelationMaterialization::FromParentGet { path } = &relation.relation.materialize else {
         return Ok(None);
     };
     if path.is_empty() {
@@ -2613,6 +2625,287 @@ async fn try_materialize_from_parent_get_relation(
         result: full_result,
         artifact: Some(artifact),
     }))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn materialize_prefer_from_parent_get_relation(
+    st: &PlasmHostState,
+    es: &ExecuteSession,
+    session_id: &str,
+    node_index: usize,
+    node: &ValidatedPlanNode,
+    relation: &ValidatedRelationTraversalNode,
+    source_mat: &MaterializedNode,
+    source_rows: &[serde_json::Value],
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+    trace: Option<&PlasmTraceContext>,
+    sink: Option<&McpPlasmTraceSink>,
+) -> Result<MaterializedNode, String> {
+    let RelationMaterialization::PreferFromParentGet { .. } = &relation.relation.materialize
+    else {
+        return Err(format!(
+            "relation `{}` expected PreferFromParentGet materialize",
+            relation.relation.relation
+        ));
+    };
+    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
+    let rel_name = relation.relation.relation.as_str();
+    let target_entity = relation.relation.target.entity.as_str();
+    let parents = &source_mat.result.entities;
+    {
+        let graph = scoped_es.graph_cache.lock().await;
+        let all_embed = parents.len() == source_rows.len()
+            && parents.iter().zip(source_rows).all(|(parent, row)| {
+                matches!(
+                    resolve_relation_row_resolution(
+                        &relation.relation.materialize,
+                        rel_name,
+                        target_entity,
+                        row,
+                        parent.relations.get(rel_name).map(|v| v.as_slice()),
+                        |r| graph.get(r).is_some(),
+                    ),
+                    RelationRowResolution::EmbeddedRefs(_)
+                )
+            });
+        if all_embed {
+            if let Some(entities) = collect_all_embedded_relation_targets(
+                rel_name,
+                target_entity,
+                parents,
+                &graph,
+            ) {
+                let count = entities.len();
+                let full_result = ExecutionResult {
+                    count,
+                    entities: entities.clone(),
+                    has_more: false,
+                    pagination_resume: None,
+                    paging_handle: None,
+                    source: ExecutionSource::Cache,
+                    stats: ExecutionStats {
+                        duration_ms: 0,
+                        network_requests: 0,
+                        cache_hits: count,
+                        cache_misses: 0,
+                        ..Default::default()
+                    },
+                    request_fingerprints: vec![compute_fingerprint(node, source_rows)],
+                };
+                let artifact = archive_plasm_result_snapshot(
+                    st,
+                    es,
+                    session_id,
+                    Some(relation.relation.target.entry_id.as_str()),
+                    vec![format!("plan.relation({}) prefer_embed_all", relation.id.as_str())],
+                    &full_result,
+                    trace,
+                )
+                .await?;
+                return Ok(MaterializedNode {
+                    entry_id: relation.relation.target.entry_id.clone(),
+                    entity: relation.relation.target.entity.clone(),
+                    display: format!(
+                        "plan.relation({}) prefer_from_parent_get (all embedded)",
+                        relation.id.as_str()
+                    ),
+                    projection: relation.relation.ir.projection.clone(),
+                    rows: full_result
+                        .entities
+                        .iter()
+                        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+                        .collect(),
+                    row_identities: row_identities_from_entities(
+                        &scoped_es,
+                        target_entity,
+                        &full_result.entities,
+                    ),
+                    result: full_result,
+                    artifact: Some(artifact),
+                });
+            }
+        }
+    }
+    let pe = ParsedExpr {
+        expr: relation.relation.ir.expr.clone(),
+        projection: relation.relation.ir.projection.clone(),
+    };
+    let source_node = &relation.relation.source;
+    let base_display = relation
+        .relation
+        .ir
+        .display_expr
+        .clone()
+        .unwrap_or_else(|| format!("plan.relation({})", relation.id.as_str()));
+    let resolutions: Vec<RelationRowResolution> = {
+        let graph = scoped_es.graph_cache.lock().await;
+        source_rows
+            .iter()
+            .enumerate()
+            .map(|(row_index, source_row)| {
+                let parent = parents.get(row_index);
+                resolve_relation_row_resolution(
+                    &relation.relation.materialize,
+                    rel_name,
+                    target_entity,
+                    source_row,
+                    parent
+                        .and_then(|p| p.relations.get(rel_name))
+                        .map(|v| v.as_slice()),
+                    |r| graph.get(r).is_some(),
+                )
+            })
+            .collect()
+    };
+    let mut entities = Vec::new();
+    let mut request_fingerprints = Vec::new();
+    let mut stats = ExecutionStats {
+        duration_ms: 0,
+        network_requests: 0,
+        cache_hits: 0,
+        cache_misses: 0,
+        ..Default::default()
+    };
+    let mut source = ExecutionSource::Cache;
+    let mut cache = scoped_es.graph_cache.lock().await;
+    for (row_index, resolution) in resolutions.iter().enumerate() {
+        let source_row = &source_rows[row_index];
+        match resolution {
+            RelationRowResolution::EmbeddedRefs(refs) => {
+                for r in refs {
+                    let e = cache
+                        .get(r)
+                        .ok_or_else(|| format!("prefer embed: missing graph target {r}"))?
+                        .clone();
+                    entities.push(e);
+                }
+            }
+            RelationRowResolution::ScopedQuery => {
+                let row_identity = source_mat
+                    .row_identities
+                    .get(row_index)
+                    .and_then(|i| i.as_ref())
+                    .cloned();
+                let input_rows = materialized_result_use_inputs_with_source_row(
+                    materialized,
+                    &relation.uses_result,
+                    source_node,
+                    source_row,
+                    row_identity,
+                )?;
+                let wire_coercion = wire_coercion_ctx_for_source_entity(
+                    scoped_es.cgs.as_ref(),
+                    source_mat.entity.as_str(),
+                );
+                let parsed =
+                    instantiate_parsed_expr_plan_inputs_with_rows(pe.clone(), &input_rows, wire_coercion)?;
+                let trace_line_index = node_index
+                    .checked_mul(1000)
+                    .and_then(|base| base.checked_add(row_index))
+                    .unwrap_or(node_index);
+                let expr_label = format!("{base_display} [row {row_index}]");
+                crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(
+                    &scoped_es,
+                    &expr_label,
+                    &parsed,
+                )
+                .map_err(|e| e.to_string())?;
+                let (parsed, result, _artifact) = run_parsed_plasm_line(
+                    &expr_label,
+                    &scoped_es,
+                    st,
+                    &mut cache,
+                    session_id,
+                    parsed,
+                    trace,
+                    trace_line_index as i64,
+                    None,
+                    Some(plasm_core::PreflightToken::VERIFIED),
+                )
+                .await
+                .map_err(|e| match e {
+                    crate::http_execute::RunLineError::Parse(d)
+                    | crate::http_execute::RunLineError::Normalize(d)
+                    | crate::http_execute::RunLineError::Projection(d) => d,
+                    crate::http_execute::RunLineError::Runtime(e, src) => {
+                        format!("{e}\nsource expression: {src}")
+                    }
+                    crate::http_execute::RunLineError::ArtifactSerialization(e) => {
+                        format!("artifact serialization failed: {e}")
+                    }
+                    crate::http_execute::RunLineError::ArtifactPersist(d) => {
+                        format!("run artifact persist failed: {d}")
+                    }
+                })?;
+                if let Some(sink) = sink {
+                    trace_record_plasm_line(
+                        sink,
+                        trace_line_index,
+                        &expr_label,
+                        &parsed,
+                        &result,
+                        &scoped_es,
+                    )
+                    .await;
+                }
+                source = combine_execution_source(source, result.source);
+                stats.duration_ms = stats.duration_ms.saturating_add(result.stats.duration_ms);
+                stats.network_requests = stats
+                    .network_requests
+                    .saturating_add(result.stats.network_requests);
+                stats.merge_telemetry(&result.stats.cache);
+                stats.cache_hits = stats.cache.legacy_cache_hits();
+                stats.cache_misses = stats.cache.legacy_cache_misses();
+                request_fingerprints.extend(result.request_fingerprints);
+                entities.extend(result.entities);
+            }
+        }
+    }
+    let count = entities.len();
+    let full_result = ExecutionResult {
+        count,
+        entities: entities.clone(),
+        has_more: false,
+        pagination_resume: None,
+        paging_handle: None,
+        source,
+        stats,
+        request_fingerprints: request_fingerprints.clone(),
+    };
+    let artifact = archive_plasm_result_snapshot(
+        st,
+        es,
+        session_id,
+        Some(relation.relation.target.entry_id.as_str()),
+        vec![format!(
+            "plan.relation({}) prefer_from_parent_get (mixed)",
+            relation.id.as_str()
+        )],
+        &full_result,
+        trace,
+    )
+    .await?;
+    Ok(MaterializedNode {
+        entry_id: relation.relation.target.entry_id.clone(),
+        entity: relation.relation.target.entity.clone(),
+        display: format!(
+            "plan.relation({}) prefer_from_parent_get",
+            relation.id.as_str()
+        ),
+        projection: relation.relation.ir.projection.clone(),
+        rows: full_result
+            .entities
+            .iter()
+            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+            .collect(),
+        row_identities: row_identities_from_entities(
+            &scoped_es,
+            target_entity,
+            &full_result.entities,
+        ),
+        result: full_result,
+        artifact: Some(artifact),
+    })
 }
 
 fn materialized_rows(
@@ -2906,9 +3199,8 @@ async fn materialize_relation_singleton_chain(
     })
 }
 
-/// When every parent row decoded relation refs into the session graph, materialize targets
-/// without per-row scoped HTTP (aligns with runtime `execute_chain_via_bindings` hybrid).
-fn try_collect_relation_targets_from_parent_graph(
+/// When every parent row has fully resolved embed refs in the session graph.
+fn collect_all_embedded_relation_targets(
     relation_name: &str,
     target_entity: &str,
     parents: &[CachedEntity],
@@ -2949,73 +3241,6 @@ async fn materialize_relation_scoped_fanout(
         projection: relation.relation.ir.projection.clone(),
     };
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
-    let rel_name = relation.relation.relation.as_str();
-    let target_entity = relation.relation.target.entity.as_str();
-    {
-        let graph = scoped_es.graph_cache.lock().await;
-        if let Some(entities) = try_collect_relation_targets_from_parent_graph(
-            rel_name,
-            target_entity,
-            &source_mat.result.entities,
-            &graph,
-        ) {
-            drop(graph);
-            let count = entities.len();
-            let full_result = ExecutionResult {
-                count,
-                entities: entities.clone(),
-                has_more: false,
-                pagination_resume: None,
-                paging_handle: None,
-                source: ExecutionSource::Cache,
-                stats: ExecutionStats {
-                    duration_ms: 0,
-                    network_requests: 0,
-                    cache_hits: count,
-                    cache_misses: 0,
-                    ..Default::default()
-                },
-                request_fingerprints: vec![compute_fingerprint(node, source_rows)],
-            };
-            let artifact = archive_plasm_result_snapshot(
-                st,
-                es,
-                session_id,
-                Some(relation.relation.target.entry_id.as_str()),
-                vec![format!(
-                    "plan.relation({}) graph_embedded {} rows",
-                    relation.id.as_str(),
-                    source_rows.len()
-                )],
-                &full_result,
-                trace,
-            )
-            .await?;
-            let display = format!(
-                "plan.relation({}) graph_embedded ({} source rows)",
-                relation.id.as_str(),
-                source_rows.len()
-            );
-            return Ok(MaterializedNode {
-                entry_id: relation.relation.target.entry_id.clone(),
-                entity: relation.relation.target.entity.clone(),
-                display,
-                projection: relation.relation.ir.projection.clone(),
-                rows: full_result
-                    .entities
-                    .iter()
-                    .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-                    .collect(),
-                row_identities: row_identities_from_entities(
-                    &scoped_es,
-                    target_entity,
-                    &full_result.entities,
-                ),
-                result: full_result,
-                artifact: Some(artifact),
-            });
-        }
-    }
     let source_node = &relation.relation.source;
     let mut entities = Vec::new();
     let mut request_fingerprints = Vec::new();

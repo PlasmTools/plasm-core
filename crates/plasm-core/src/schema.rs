@@ -483,6 +483,29 @@ pub enum JsonPathSegment {
     Wildcard { wildcard: bool },
 }
 
+/// When [`RelationMaterialization::PreferFromParentGet`] has decoded refs but graph targets are missing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbedOnMissPolicy {
+    /// Run the declared scoped-query fallback for that parent row.
+    #[default]
+    FallbackScoped,
+}
+
+/// Scoped HTTP fallback nested under [`RelationMaterialization::PreferFromParentGet`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RelationScopedFallback {
+    QueryScoped {
+        capability: CapabilityName,
+        param: CapabilityParamName,
+    },
+    QueryScopedBindings {
+        capability: CapabilityName,
+        bindings: IndexMap<CapabilityParamName, EntityFieldName>,
+    },
+}
+
 /// How a relation’s targets are resolved at runtime (scoped query vs embedded GET payload).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -491,6 +514,13 @@ pub enum RelationMaterialization {
     Unavailable,
     /// Extract related entity refs from nested JSON on the parent entity’s GET body.
     FromParentGet { path: Vec<JsonPathSegment> },
+    /// Prefer wire/path embed on the parent row; per-row scoped fallback when embed is absent or incomplete.
+    PreferFromParentGet {
+        path: Vec<JsonPathSegment>,
+        #[serde(default)]
+        on_embed_miss: EmbedOnMissPolicy,
+        fallback: RelationScopedFallback,
+    },
     /// Single scope parameter on a target query/search capability; value from parent id (same as legacy `via_param`).
     ///
     /// `capability` must name a `query` / `search` capability on [`RelationSchema::target_resource`]
@@ -2645,24 +2675,25 @@ impl CGS {
                         match mat {
                             RelationMaterialization::Unavailable => {}
                             RelationMaterialization::FromParentGet { path } => {
-                                if path.is_empty() {
-                                    return Err(SchemaError::RelationFromParentGetEmptyPath {
-                                        entity: entity_name.to_string(),
-                                        relation: relation_name.to_string(),
-                                    });
-                                }
-                                for seg in path {
-                                    if let JsonPathSegment::Wildcard { wildcard } = seg {
-                                        if !wildcard {
-                                            return Err(
-                                                SchemaError::RelationFromParentGetInvalidWildcard {
-                                                    entity: entity_name.to_string(),
-                                                    relation: relation_name.to_string(),
-                                                },
-                                            );
-                                        }
-                                    }
-                                }
+                                Self::validate_from_parent_get_path(
+                                    entity_name.as_str(),
+                                    relation_name.as_str(),
+                                    path,
+                                )?;
+                            }
+                            RelationMaterialization::PreferFromParentGet { path, fallback, .. } => {
+                                Self::validate_from_parent_get_path(
+                                    entity_name.as_str(),
+                                    relation_name.as_str(),
+                                    path,
+                                )?;
+                                self.validate_relation_scoped_fallback(
+                                    entity_name.as_str(),
+                                    relation_name.as_str(),
+                                    relation.target_resource.as_str(),
+                                    fallback,
+                                    entity,
+                                )?;
                             }
                             RelationMaterialization::QueryScoped { capability, param } => {
                                 self.validate_chain_materialize_capability(
@@ -4282,6 +4313,93 @@ impl CGS {
             }
         }
         out
+    }
+
+    fn validate_from_parent_get_path(
+        parent_entity: &str,
+        relation: &str,
+        path: &[JsonPathSegment],
+    ) -> Result<(), SchemaError> {
+        if path.is_empty() {
+            return Err(SchemaError::RelationFromParentGetEmptyPath {
+                entity: parent_entity.to_string(),
+                relation: relation.to_string(),
+            });
+        }
+        for seg in path {
+            if let JsonPathSegment::Wildcard { wildcard } = seg {
+                if !wildcard {
+                    return Err(SchemaError::RelationFromParentGetInvalidWildcard {
+                        entity: parent_entity.to_string(),
+                        relation: relation.to_string(),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Validates nested scoped fallback under [`RelationMaterialization::PreferFromParentGet`].
+    pub fn validate_relation_scoped_fallback(
+        &self,
+        parent_entity: &str,
+        relation: &str,
+        target_entity: &str,
+        fallback: &RelationScopedFallback,
+        entity: &EntityDef,
+    ) -> Result<(), SchemaError> {
+        match fallback {
+            RelationScopedFallback::QueryScoped { capability, param } => {
+                self.validate_chain_materialize_capability(
+                    parent_entity,
+                    relation,
+                    target_entity,
+                    capability,
+                    &[param.as_str()],
+                )
+            }
+            RelationScopedFallback::QueryScopedBindings {
+                capability,
+                bindings,
+            } => {
+                if bindings.is_empty() {
+                    return Err(SchemaError::RelationMaterializeEmptyBindings {
+                        entity: parent_entity.to_string(),
+                        relation: relation.to_string(),
+                    });
+                }
+                let keys: Vec<&str> = bindings.keys().map(|k| k.as_str()).collect();
+                self.validate_chain_materialize_capability(
+                    parent_entity,
+                    relation,
+                    target_entity,
+                    capability,
+                    &keys,
+                )?;
+                for parent_field in bindings.values() {
+                    let ok = parent_field.as_str() == entity.id_field.as_str()
+                        || entity.fields.contains_key(parent_field.as_str())
+                        || entity
+                            .key_vars
+                            .iter()
+                            .any(|k| k.as_str() == parent_field.as_str());
+                    if !ok {
+                        return Err(SchemaError::RelationMaterializeUnknownParentField {
+                            entity: parent_entity.to_string(),
+                            relation: relation.to_string(),
+                            field: parent_field.as_str().to_string(),
+                        });
+                    }
+                }
+                self.validate_relation_materialize_bindings(
+                    parent_entity,
+                    relation,
+                    entity,
+                    capability,
+                    bindings,
+                )
+            }
+        }
     }
 
     /// Validates [`RelationMaterialization::QueryScoped`] / [`QueryScopedBindings`]: `capability` must

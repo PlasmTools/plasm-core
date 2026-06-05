@@ -230,10 +230,18 @@ entities:
           use those when present. For authoritative or post-mutation label sets, traverse via
           `issue_label_query` (scoped per issue) when list embed is absent or incomplete.
         materialize:
-          kind: from_parent_get
+          kind: prefer_from_parent_get
+          on_embed_miss: fallback_scoped
           path:
           - key: labels
           - wildcard: true
+          fallback:
+            kind: query_scoped_bindings
+            capability: issue_label_query
+            bindings:
+              owner: owner
+              repo: repo
+              issue_number: number
       sub_issues:
         target: Issue
         cardinality: many

@@ -1925,7 +1925,13 @@ fn relation_uses_from_parent_get(
     ent.relations
         .get(wire.as_str())
         .and_then(|r| r.materialize.as_ref())
-        .is_some_and(|m| matches!(m, plasm_core::RelationMaterialization::FromParentGet { .. }))
+        .is_some_and(|m| {
+            matches!(
+                m,
+                plasm_core::RelationMaterialization::FromParentGet { .. }
+                    | plasm_core::RelationMaterialization::PreferFromParentGet { .. }
+            )
+        })
 }
 
 fn prefer_row_hole_relation_continuation(
@@ -2077,6 +2083,7 @@ fn lower_relation_continuation(
         wire.as_str(),
     )
     .unwrap_or_default();
+    let materialize = relation_materialize_for_lower(session, &contract.row_entity, wire.as_str())?;
     let plan_relation = PlanRelationTraversal {
         source: source_label.to_string(),
         relation: wire,
@@ -2086,6 +2093,7 @@ fn lower_relation_continuation(
         expr: expanded.clone(),
         ir: ir.clone(),
         binding_proofs,
+        materialize: Some(materialize),
     };
     Ok(DagNode {
         id: id.to_string(),
@@ -2142,6 +2150,31 @@ fn plan_render_content_scalar_reference_err(id: &str, expr: &str, label: &str) -
     format!(
         "Plasm program `{id}`: `{expr}` reads generated text from `{label}.content`. That path is a **scalar string** for `=>` derives and capability parameters only — not a final root and not a relation receiver. Return `{label}` if you want the generated text row, or use `{label}.content` only inside string/body/template/object payload positions."
     )
+}
+
+fn relation_materialize_for_lower(
+    session: &ExecuteSession,
+    row_qe: &QualifiedEntityKey,
+    relation_wire: &str,
+) -> Result<plasm_core::RelationMaterialization, String> {
+    let cgs = crate::catalog_ownership::resolve_cgs_for_entity(
+        session,
+        row_qe.entity.as_str(),
+        resolve_cgs_for_qualified_entity(session, row_qe),
+    )?;
+    let ent = cgs.get_entity(row_qe.entity.as_str()).ok_or_else(|| {
+        format!("unknown entity `{}` for relation materialize", row_qe.entity)
+    })?;
+    let rel = ent.relations.get(relation_wire).ok_or_else(|| {
+        format!(
+            "entity `{}` has no relation `{relation_wire}` for materialize",
+            row_qe.entity
+        )
+    })?;
+    Ok(rel
+        .materialize
+        .clone()
+        .unwrap_or(plasm_core::RelationMaterialization::Unavailable))
 }
 
 fn relation_binding_proofs_for_lower(
@@ -2290,6 +2323,11 @@ fn compile_surface_node(
                         chain.selector.as_str(),
                     )
                     .unwrap_or_default();
+                    let materialize = relation_materialize_for_lower(
+                        session,
+                        &contract.row_entity,
+                        chain.selector.as_str(),
+                    )?;
                     let plan_relation = PlanRelationTraversal {
                         source: label.clone(),
                         relation: chain.selector.clone(),
@@ -2299,6 +2337,7 @@ fn compile_surface_node(
                         expr: expanded.clone(),
                         ir: ir.clone(),
                         binding_proofs,
+                        materialize: Some(materialize),
                     };
                     return Ok(DagNode {
                         id: id.to_string(),

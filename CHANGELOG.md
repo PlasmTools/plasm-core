@@ -7,14 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.79] - 2026-06-05
+
 ### Added
 
-- **Graph-first relation materialization:** `execute_chain_via_bindings` / `execute_chain_via_param` use decoded parent `relations[rel]` when present (per-row hybrid fallback to scoped HTTP). Plan fanout fast-path `try_collect_relation_targets_from_parent_graph` when all parents have embedded edges.
-- **GitHub `Issue.labels`:** `from_parent_get` on list/GET wire `labels` (with `parent_identity_field_hints` for compound Label refs). Decoder tests in `plasm-runtime`.
+- **`prefer_from_parent_get` relation materialization:** CGS composite (wire path + declared scoped fallback); shared `resolve_relation_row_resolution` in `plasm-core` for plan and runtime parity.
+- **Frozen plan materialize:** `ValidatedPlanRelationTraversal.materialize` copied from CGS at lower time; plan executor matches on enum (no cache-shape heuristics on pure scoped fanout).
 
 ### Changed
 
-- Nested relation decode copies parent field paths/derives into child `identity_ambient` via `ParentIdentityFieldHint` (`plasm-compile`).
+- **Pure `query_scoped_bindings`:** always one scoped HTTP query per parent row; ignores decoded `relations[rel]` on the parent.
+- **GitHub `Issue.labels`:** `prefer_from_parent_get` with `issue_label_query` scoped fallback (`on_embed_miss: fallback_scoped`).
+- **Parallel scoped fanout:** `fanout_scoped_query_parallel` reuses projection `branch_seed` + `hydrate_concurrency` for fallback jobs.
+- Removed runtime `chain_relation_refs_present` / hybrid `relations[key]` shortcuts on `Unavailable` and pure scoped paths.
+
+### Fixed
+
+- Relation decoders emit embed path for `prefer_from_parent_get` (same as `from_parent_get`).
 
 ## [0.1.78] - 2026-06-04
 
