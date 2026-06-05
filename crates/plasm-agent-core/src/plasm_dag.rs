@@ -1798,6 +1798,16 @@ fn resolve_relation_wire_on_entity(
     None
 }
 
+fn resolve_relation_segment_for_continuation(
+    session: &ExecuteSession,
+    cross_cache: Option<&SymbolMapCrossRequestCache>,
+    row_qe: &QualifiedEntityKey,
+    segment: &str,
+) -> Result<String, String> {
+    resolve_relation_wire_on_entity(session, cross_cache, row_qe, segment)
+        .ok_or_else(|| format!("entity `{}` has no relation `{segment}`", row_qe.entity))
+}
+
 fn relation_continuation_expr_from_source_row_hole(
     session: &ExecuteSession,
     row_qe: &QualifiedEntityKey,
@@ -1952,12 +1962,18 @@ fn parse_relation_continuation_expr(
     contract: &ProgramBindingContract,
     segment: &str,
 ) -> Result<plasm_core::expr_parser::ParsedExpr, String> {
+    let relation_wire = resolve_relation_segment_for_continuation(
+        session,
+        state.cross_cache,
+        &contract.row_entity,
+        segment,
+    )?;
     if prefer_row_hole_relation_continuation(state, contract, segment, session) {
         return Ok(plasm_core::expr_parser::ParsedExpr {
             expr: relation_continuation_expr_from_source_row_hole(
                 session,
                 &contract.row_entity,
-                segment,
+                &relation_wire,
             )?,
             projection: None,
         });
@@ -1985,14 +2001,21 @@ fn parse_relation_continuation_expr(
         None
     };
     if contract.anchor.allows_text_parse() {
-        if let Some(expanded) = contract.continuation_text_expansion(segment) {
+        if let Some(expanded) = contract.continuation_text_expansion(&relation_wire) {
             if let Some(parsed) = try_expanded_chain(&expanded) {
                 return Ok(parsed);
             }
         }
+        if relation_wire != segment {
+            if let Some(expanded) = contract.continuation_text_expansion(segment) {
+                if let Some(parsed) = try_expanded_chain(&expanded) {
+                    return Ok(parsed);
+                }
+            }
+        }
     }
     if matches!(contract.anchor, ContinuationAnchor::BindingLabel) {
-        if let Some(expanded) = contract.continuation_text_expansion(segment) {
+        if let Some(expanded) = contract.continuation_text_expansion(&relation_wire) {
             if let Some(parsed) = try_label_row_chain(&expanded) {
                 if let Expr::Chain(ref chain) = parsed.expr {
                     if matches!(chain.source.as_ref(), Expr::Get(_)) {
@@ -2006,7 +2029,7 @@ fn parse_relation_continuation_expr(
         expr: relation_continuation_expr_from_source_row_hole(
             session,
             &contract.row_entity,
-            segment,
+            &relation_wire,
         )?,
         projection: None,
     })
@@ -3941,6 +3964,100 @@ labels"#;
                 .iter()
                 .any(|f: &String| f.contains("all API pages by default")),
             "expected default fetch-all boundedness fact: {joined:?}"
+        );
+    }
+
+    #[test]
+    fn relation_plural_opaque_p2_continuation() {
+        let session = github_issue_label_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let sym = map.ident_sym_relation("Issue", "labels");
+        let source = format!(
+            r#"repo = Repository(owner="octocat", repo="Hello-World")
+issues = Issue{{repository=repo.full_name}}
+labels = issues.{sym}
+labels"#
+        );
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "github-issue-labels-opaque-p",
+            &source,
+        )
+        .expect("compile opaque plural relation continuation");
+        let labels = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "labels")
+            .expect("labels relation node");
+        assert_eq!(labels["relation"]["relation"], "labels");
+        assert_eq!(
+            labels["relation"]["source_cardinality"].as_str(),
+            Some("many")
+        );
+        assert_eq!(labels["relation"]["source"], "issues");
+        evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+    }
+
+    fn language_matrix_tags_session() -> ExecuteSession {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(
+            plasm_core::loader::load_schema_dir(
+                &root.join("../../fixtures/schemas/plasm_language_matrix"),
+            )
+            .expect("load plasm_language_matrix"),
+        );
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "langmatrix".into(),
+            Arc::new(CgsContext::entry("langmatrix", cgs.clone())),
+        );
+        let exp = DomainExposureSession::new(cgs.as_ref(), "langmatrix", &["LangItem", "LangTag"]);
+        ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "langmatrix".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["LangItem".into(), "LangTag".into()],
+            Some(exp),
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn language_matrix_plural_opaque_relation_continuation() {
+        let session = language_matrix_tags_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let sym = map.ident_sym_relation("LangItem", "tags");
+        let source = format!("items = LangItem\ntags = items.{sym}\ntags");
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "matrix-plural-opaque-tags",
+            &source,
+        )
+        .expect("compile matrix opaque plural relation continuation");
+        let tags = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "tags")
+            .expect("tags relation node");
+        assert_eq!(tags["relation"]["relation"], "tags");
+        assert_eq!(
+            tags["relation"]["source_cardinality"].as_str(),
+            Some("many")
         );
     }
 

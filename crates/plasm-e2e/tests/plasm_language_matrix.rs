@@ -99,6 +99,12 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "pagination_fetch_all_default",
     "surface_line_compile",
     "relation_many_from_plural",
+    "relation_prefer_from_parent_get",
+    "relation_prefer_embed_hit",
+    "relation_prefer_embed_miss",
+    "relation_query_scoped_bindings",
+    "relation_binding_proof",
+    "binding_opaque_relation_ref",
     "postfix_group_by_sort",
     "dry_live_parity",
 ];
@@ -607,6 +613,17 @@ fn assert_planning_ir(
                     "expected `.tags` relation chain IR, got surfaces={surfaces:?} rel={rel:?}",
                 ));
             }
+            let rel_plan = plan_relation_named(plan, "tags")
+                .ok_or_else(|| "expected `.tags` relation on LangItem(i1).tags".to_string())?;
+            if rel_plan
+                .pointer("/materialize/kind")
+                .and_then(|k| k.as_str())
+                != Some("prefer_from_parent_get")
+            {
+                return Err(format!(
+                    "expected prefer_from_parent_get on scoped tags row, got {rel_plan:?}"
+                ));
+            }
         }
         "lang_bindings_render" => {
             let Some(ComputeTemplate {
@@ -729,9 +746,64 @@ fn assert_planning_ir(
             if rel["source"].as_str() != Some("items") {
                 return Err(format!("expected source binding items, got {rel:?}"));
             }
+            if rel.pointer("/materialize/kind").and_then(|k| k.as_str())
+                != Some("prefer_from_parent_get")
+            {
+                return Err(format!(
+                    "expected prefer_from_parent_get materialize on tags relation, got {rel:?}"
+                ));
+            }
             let q = first_query(&surfaces)?;
             if q.entity != "LangItem" {
                 return Err(format!("expected LangItem query, got {:?}", q.entity));
+            }
+        }
+        "lang_relation_prefer_embed_hit" => {
+            let rel = plan_relation_named(plan, "tags")
+                .ok_or_else(|| "expected `.tags` relation on singleton item".to_string())?;
+            if rel.pointer("/materialize/kind").and_then(|k| k.as_str())
+                != Some("prefer_from_parent_get")
+            {
+                return Err(format!(
+                    "expected prefer_from_parent_get on embed-hit row, got {rel:?}"
+                ));
+            }
+            if rel["source_cardinality"].as_str() != Some("single") {
+                return Err(format!(
+                    "expected single source_cardinality for item.tags, got {rel:?}"
+                ));
+            }
+        }
+        "lang_relation_prefer_embed_miss" => {
+            let rel = plan_relation_named(plan, "tags")
+                .ok_or_else(|| "expected `.tags` relation from plural list".to_string())?;
+            if rel.pointer("/materialize/kind").and_then(|k| k.as_str())
+                != Some("prefer_from_parent_get")
+            {
+                return Err(format!(
+                    "expected prefer_from_parent_get on embed-miss row, got {rel:?}"
+                ));
+            }
+            if rel["source_cardinality"].as_str() != Some("many") {
+                return Err(format!(
+                    "expected many source_cardinality for plural fanout, got {rel:?}"
+                ));
+            }
+        }
+        "lang_bind_plural_relation_opaque_p" => {
+            let rel = plan_relation_named(plan, "tags")
+                .ok_or_else(|| "expected `.tags` relation from plural binding".to_string())?;
+            if rel["source_cardinality"].as_str() != Some("many") {
+                return Err(format!(
+                    "expected many source_cardinality for opaque plural fanout, got {rel:?}"
+                ));
+            }
+            if rel.pointer("/materialize/kind").and_then(|k| k.as_str())
+                != Some("prefer_from_parent_get")
+            {
+                return Err(format!(
+                    "expected prefer_from_parent_get on opaque plural row, got {rel:?}"
+                ));
             }
         }
         "lang_relation_integer_scoped_bindings" => {
@@ -1229,9 +1301,13 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         program: r#"LangItem("i1").tags"#,
         surface_line: false,
         federated: false,
-        features: &["relation_query_scoped"],
+        features: &[
+            "relation_from_parent_get",
+            "relation_prefer_embed_hit",
+            "relation_prefer_from_parent_get",
+        ],
         min_node_results: 1,
-        expect_markdown_substrings: &["```tsv"],
+        expect_markdown_substrings: &["```tsv", "LangTag"],
     },
     MatrixRow {
         id: "lang_bindings_render",
@@ -1318,7 +1394,60 @@ tags"#,
         federated: false,
         features: &[
             "relation_many_from_plural",
+            "relation_prefer_from_parent_get",
+            "relation_prefer_embed_miss",
+            "binding_continuation",
+            "dry_live_parity",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "label"],
+    },
+    MatrixRow {
+        id: "lang_relation_prefer_embed_hit",
+        program: r#"item = LangItem("i1")
+tags = item.tags
+tags"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "relation_prefer_embed_hit",
+            "relation_prefer_from_parent_get",
+            "relation_from_parent_get",
+            "binding_continuation",
+            "dry_live_parity",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "LangTag"],
+    },
+    MatrixRow {
+        id: "lang_relation_prefer_embed_miss",
+        program: r#"items = LangItem{owner="bob"}
+tags = items.tags
+tags"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "relation_prefer_embed_miss",
+            "relation_prefer_from_parent_get",
+            "relation_many_from_plural",
             "relation_query_scoped",
+            "binding_continuation",
+            "dry_live_parity",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "label"],
+    },
+    MatrixRow {
+        id: "lang_bind_plural_relation_opaque_p",
+        program: r#"items = LangItem
+tags = items.tags
+tags"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "binding_opaque_relation_ref",
+            "relation_many_from_plural",
+            "relation_prefer_from_parent_get",
             "binding_continuation",
             "dry_live_parity",
         ],

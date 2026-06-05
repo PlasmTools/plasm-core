@@ -39,6 +39,13 @@ paths:
                   title: "Alpha"
                   score: 10
                   owner: "alice"
+                  tags:
+                    - id: "t1"
+                      item_id: "i1"
+                      label: "urgent"
+                    - id: "t2"
+                      item_id: "i1"
+                      label: "review"
                 - id: "i2"
                   title: "Beta"
                   score: 20
@@ -124,6 +131,13 @@ paths:
                   - id: "l2"
                     item_id: "i1"
                     note: "line-b"
+                tags:
+                  - id: "t1"
+                    item_id: "i1"
+                    label: "urgent"
+                  - id: "t2"
+                    item_id: "i1"
+                    label: "review"
     patch:
       summary: Patch item
       parameters:
@@ -185,6 +199,26 @@ paths:
                     type: boolean
               example:
                 ok: true
+  /language/v1/tags/{id}:
+    get:
+      summary: Get tag by id
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tag
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LangTag"
+              example:
+                id: "t1"
+                item_id: "i1"
+                label: "urgent"
   /language/v1/tags:
     get:
       summary: Tags for an item
@@ -319,6 +353,10 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/LangLine"
+            tags:
+              type: array
+              items:
+                $ref: "#/components/schemas/LangTag"
     LangSummary:
       type: object
       required: [id, headline]

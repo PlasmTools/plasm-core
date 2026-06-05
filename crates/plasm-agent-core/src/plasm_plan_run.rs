@@ -2579,8 +2579,10 @@ async fn try_materialize_from_parent_get_relation(
                 source_mat.entity, relation.relation.relation
             )
         })?;
-    let RelationMaterialization::FromParentGet { path } = &relation.relation.materialize else {
-        return Ok(None);
+    let path = match &relation.relation.materialize {
+        RelationMaterialization::FromParentGet { path }
+        | RelationMaterialization::PreferFromParentGet { path, .. } => path,
+        _ => return Ok(None),
     };
     if path.is_empty() {
         return Err(format!(
@@ -2652,7 +2654,8 @@ async fn materialize_prefer_from_parent_get_relation(
     trace: Option<&PlasmTraceContext>,
     sink: Option<&McpPlasmTraceSink>,
 ) -> Result<MaterializedNode, String> {
-    let RelationMaterialization::PreferFromParentGet { .. } = &relation.relation.materialize else {
+    let RelationMaterialization::PreferFromParentGet { path, .. } = &relation.relation.materialize
+    else {
         return Err(format!(
             "relation `{}` expected PreferFromParentGet materialize",
             relation.relation.relation
@@ -2661,6 +2664,43 @@ async fn materialize_prefer_from_parent_get_relation(
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
     let rel_name = relation.relation.relation.as_str();
     let target_entity = relation.relation.target.entity.as_str();
+    let source_entity_def = scoped_es
+        .cgs
+        .entities
+        .values()
+        .find(|ent| ent.relations.contains_key(rel_name))
+        .ok_or_else(|| {
+            format!("no catalog entity declares relation `{rel_name}` for prefer embed")
+        })?;
+    let rel_schema = source_entity_def
+        .relations
+        .get(rel_name)
+        .ok_or_else(|| format!("relation `{rel_name}` missing on catalog entity"))?;
+    let all_wire_embedded = !source_rows.is_empty()
+        && source_rows.iter().all(|row| {
+            !flatten_from_parent_get_source_rows(
+                std::slice::from_ref(row),
+                path,
+                rel_schema.cardinality,
+            )
+            .is_empty()
+        });
+    if all_wire_embedded {
+        if let Some(node) = try_materialize_from_parent_get_relation(
+            st,
+            es,
+            session_id,
+            node,
+            relation,
+            source_mat,
+            source_rows,
+            trace,
+        )
+        .await?
+        {
+            return Ok(node);
+        }
+    }
     let parents = &source_mat.result.entities;
     {
         let graph = scoped_es.graph_cache.lock().await;
@@ -2777,11 +2817,11 @@ async fn materialize_prefer_from_parent_get_relation(
         ..Default::default()
     };
     let mut source = ExecutionSource::Cache;
-    let mut cache = scoped_es.graph_cache.lock().await;
     for (row_index, resolution) in resolutions.iter().enumerate() {
         let source_row = &source_rows[row_index];
         match resolution {
             RelationRowResolution::EmbeddedRefs(refs) => {
+                let cache = scoped_es.graph_cache.lock().await;
                 for r in refs {
                     let e = cache
                         .get(r)
@@ -2791,6 +2831,20 @@ async fn materialize_prefer_from_parent_get_relation(
                 }
             }
             RelationRowResolution::ScopedQuery => {
+                let wire_rows = flatten_from_parent_get_source_rows(
+                    std::slice::from_ref(source_row),
+                    path,
+                    rel_schema.cardinality,
+                );
+                if !wire_rows.is_empty() {
+                    let wire_entities = json_rows_to_entities_with_refs(
+                        target_entity,
+                        &wire_rows,
+                        Some(scoped_es.cgs.as_ref()),
+                    );
+                    entities.extend(wire_entities);
+                    continue;
+                }
                 let row_identity = source_mat
                     .row_identities
                     .get(row_index)
@@ -2823,33 +2877,36 @@ async fn materialize_prefer_from_parent_get_relation(
                     &parsed,
                 )
                 .map_err(|e| e.to_string())?;
-                let (parsed, result, _artifact) = run_parsed_plasm_line(
-                    &expr_label,
-                    &scoped_es,
-                    st,
-                    &mut cache,
-                    session_id,
-                    parsed,
-                    trace,
-                    trace_line_index as i64,
-                    None,
-                    Some(plasm_core::PreflightToken::VERIFIED),
-                )
-                .await
-                .map_err(|e| match e {
-                    crate::http_execute::RunLineError::Parse(d)
-                    | crate::http_execute::RunLineError::Normalize(d)
-                    | crate::http_execute::RunLineError::Projection(d) => d,
-                    crate::http_execute::RunLineError::Runtime(e, src) => {
-                        format!("{e}\nsource expression: {src}")
-                    }
-                    crate::http_execute::RunLineError::ArtifactSerialization(e) => {
-                        format!("artifact serialization failed: {e}")
-                    }
-                    crate::http_execute::RunLineError::ArtifactPersist(d) => {
-                        format!("run artifact persist failed: {d}")
-                    }
-                })?;
+                let (parsed, result, _artifact) = {
+                    let mut cache = scoped_es.graph_cache.lock().await;
+                    run_parsed_plasm_line(
+                        &expr_label,
+                        &scoped_es,
+                        st,
+                        &mut cache,
+                        session_id,
+                        parsed,
+                        trace,
+                        trace_line_index as i64,
+                        None,
+                        Some(plasm_core::PreflightToken::VERIFIED),
+                    )
+                    .await
+                    .map_err(|e| match e {
+                        crate::http_execute::RunLineError::Parse(d)
+                        | crate::http_execute::RunLineError::Normalize(d)
+                        | crate::http_execute::RunLineError::Projection(d) => d,
+                        crate::http_execute::RunLineError::Runtime(e, src) => {
+                            format!("{e}\nsource expression: {src}")
+                        }
+                        crate::http_execute::RunLineError::ArtifactSerialization(e) => {
+                            format!("artifact serialization failed: {e}")
+                        }
+                        crate::http_execute::RunLineError::ArtifactPersist(d) => {
+                            format!("run artifact persist failed: {d}")
+                        }
+                    })?
+                };
                 if let Some(sink) = sink {
                     trace_record_plasm_line(
                         sink,
@@ -3272,7 +3329,6 @@ async fn materialize_relation_scoped_fanout(
         .clone()
         .unwrap_or_else(|| format!("plan.relation({})", relation.id.as_str()));
 
-    let mut cache = scoped_es.graph_cache.lock().await;
     for (row_index, source_row) in source_rows.iter().enumerate() {
         let row_identity = source_mat
             .row_identities
@@ -3301,33 +3357,36 @@ async fn materialize_relation_scoped_fanout(
             &parsed,
         )
         .map_err(|e| e.to_string())?;
-        let (parsed, result, _artifact) = run_parsed_plasm_line(
-            &expr_label,
-            &scoped_es,
-            st,
-            &mut cache,
-            session_id,
-            parsed,
-            trace,
-            trace_line_index as i64,
-            None,
-            Some(plasm_core::PreflightToken::VERIFIED),
-        )
-        .await
-        .map_err(|e| match e {
-            crate::http_execute::RunLineError::Parse(d)
-            | crate::http_execute::RunLineError::Normalize(d)
-            | crate::http_execute::RunLineError::Projection(d) => d,
-            crate::http_execute::RunLineError::Runtime(e, src) => {
-                format!("{e}\nsource expression: {src}")
-            }
-            crate::http_execute::RunLineError::ArtifactSerialization(e) => {
-                format!("artifact serialization failed: {e}")
-            }
-            crate::http_execute::RunLineError::ArtifactPersist(d) => {
-                format!("run artifact persist failed: {d}")
-            }
-        })?;
+        let (parsed, result, _artifact) = {
+            let mut cache = scoped_es.graph_cache.lock().await;
+            run_parsed_plasm_line(
+                &expr_label,
+                &scoped_es,
+                st,
+                &mut cache,
+                session_id,
+                parsed,
+                trace,
+                trace_line_index as i64,
+                None,
+                Some(plasm_core::PreflightToken::VERIFIED),
+            )
+            .await
+            .map_err(|e| match e {
+                crate::http_execute::RunLineError::Parse(d)
+                | crate::http_execute::RunLineError::Normalize(d)
+                | crate::http_execute::RunLineError::Projection(d) => d,
+                crate::http_execute::RunLineError::Runtime(e, src) => {
+                    format!("{e}\nsource expression: {src}")
+                }
+                crate::http_execute::RunLineError::ArtifactSerialization(e) => {
+                    format!("artifact serialization failed: {e}")
+                }
+                crate::http_execute::RunLineError::ArtifactPersist(d) => {
+                    format!("run artifact persist failed: {d}")
+                }
+            })?
+        };
         if let Some(sink) = sink {
             trace_record_plasm_line(
                 sink,

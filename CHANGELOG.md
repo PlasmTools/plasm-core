@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.81] - 2026-05-30
+
+### Fixed
+
+- **Plural relation row-hole:** resolve opaque `p#` to wire names before row-hole IR in `parse_relation_continuation_expr` (`issues.p2` ≡ `issues.labels` on plural bindings).
+- **`expr_parser`:** resolve relation pipeline segments through `sym_map` for `p#` parity with DAG lowering.
+- **Plan `prefer_from_parent_get` live:** wire-embed fast path from parent JSON; per-row embed before scoped fallback; avoid holding session graph lock across scoped fanout (fixes Hermit matrix hang on `LangItem(…).tags`).
+
+### Added
+
+- **Language matrix:** `LangItem.tags` `prefer_from_parent_get` + `langtag_get`; Hermit embed hit/miss rows; opaque plural relation unit coverage in `plasm-agent-core`.
+
+### Changed
+
+- **Language spec:** plural binding continuations accept wire names and opaque `p#`; row-hole continuation subsection.
+
 ## [0.1.80] - 2026-05-30
 
 ### Fixed

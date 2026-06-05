@@ -96,13 +96,19 @@ entities:
           - key: lines
           - wildcard: true
       tags:
-        description: Tags fetched via scoped query
+        description: Tags embedded on LangItem GET when present; scoped query per item when embed is absent or incomplete
         target: LangTag
         cardinality: many
         materialize:
-          kind: query_scoped
-          capability: langtag_query
-          param: item_id
+          kind: prefer_from_parent_get
+          on_embed_miss: fallback_scoped
+          path:
+          - key: tags
+          - wildcard: true
+          fallback:
+            kind: query_scoped
+            capability: langtag_query
+            param: item_id
       tags_by_score:
         description: Tags scoped by integer score (query_scoped_bindings proof)
         target: LangTag
@@ -208,6 +214,14 @@ capabilities:
     output:
       type: side_effect
       description: Records a ping against the item (matrix conformance).
+  langtag_get:
+    description: Get LangTag by id (batch relation resolution for prefer_from_parent_get)
+    kind: get
+    entity: LangTag
+    provides:
+    - id
+    - item_id
+    - label
   langtag_query:
     description: List tags scoped to one LangItem
     kind: query

@@ -152,6 +152,18 @@ langline_query:
     fields:
     - ["item_id", { type: var, name: item_id }]
 
+langtag_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: tags
+  - type: var
+    name: id
+
 langline_get:
   method: GET
   path:

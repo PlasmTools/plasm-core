@@ -2180,8 +2180,14 @@ impl<'a> Parser<'a> {
                 .get_entity(&source_entity)
                 .cloned()
             {
+                let relation_field = self
+                    .sym_map
+                    .resolve_ident(field.as_str())
+                    .filter(|wire| ent.relations.contains_key(*wire))
+                    .map(str::to_string)
+                    .unwrap_or_else(|| field.clone());
                 // Check declared relations (e.g. .species, .abilities, .moves)
-                if let Some(rel) = ent.relations.get(field.as_str()) {
+                if let Some(rel) = ent.relations.get(relation_field.as_str()) {
                     let target = rel.target_resource.clone();
                     let cardinality = rel.cardinality;
 
@@ -2201,7 +2207,7 @@ impl<'a> Parser<'a> {
                     // relation target ID from entity.fields[selector] (populated by the
                     // relation decoder) to dispatch Get(target, id).
                     if cardinality == crate::Cardinality::One && preds.is_empty() {
-                        let chain = ChainExpr::auto_get(source, field);
+                        let chain = ChainExpr::auto_get(source, relation_field);
                         return Ok(Expr::Chain(chain));
                     }
 
@@ -2215,7 +2221,7 @@ impl<'a> Parser<'a> {
                             | crate::RelationMaterialization::PreferFromParentGet { .. }
                             | crate::RelationMaterialization::QueryScoped { .. }
                             | crate::RelationMaterialization::QueryScopedBindings { .. } => {
-                                let chain = ChainExpr::auto_get(source, field);
+                                let chain = ChainExpr::auto_get(source, relation_field);
                                 return Ok(Expr::Chain(chain));
                             }
                             crate::RelationMaterialization::GetScopedBindings { .. } => {
