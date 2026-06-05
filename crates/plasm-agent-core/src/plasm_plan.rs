@@ -503,7 +503,6 @@ pub struct ValidatedPlanRelationTraversal {
     pub(crate) cardinality: RelationCardinality,
     pub(crate) source_cardinality: RelationSourceCardinality,
     pub(crate) ir: ValidatedPlanExprIr,
-    pub(crate) binding_proofs: Vec<plasm_core::RelationBindingProof>,
     /// Frozen from CGS at plan lower time; plan/runtime must not re-infer from cache shape.
     pub(crate) materialize: plasm_core::RelationMaterialization,
 }
@@ -1370,7 +1369,6 @@ fn validated_node_from_raw(
                         cardinality: relation.cardinality,
                         source_cardinality: relation.source_cardinality,
                         ir: validated_plan_expr_ir(&relation.ir, node_index, "relation.ir")?,
-                        binding_proofs: relation.binding_proofs.clone(),
                         materialize: relation
                             .materialize
                             .clone()

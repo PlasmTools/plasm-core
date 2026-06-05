@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.80] - 2026-05-30
+
+### Fixed
+
+- Drop unused `binding_proofs` from `ValidatedPlanRelationTraversal` (plan JSON still carries proofs; fixes `-D warnings` dead_code in CI).
+
 ## [0.1.79] - 2026-06-05
 
 ### Added
