@@ -16,7 +16,7 @@ use crate::program_binding::{
     RowCardinalityProof, SegmentPolicy,
 };
 use plasm_core::expr_parser::{
-    collect_program_statement_lines, is_valid_program_label, peel_postfix_suffixes,
+    collect_program_statement_lines, expand_flattened_program_statements, peel_postfix_suffixes,
     split_assignment_at_top_level, split_token_top_level, split_top_level, strip_line_comment,
     try_parse_render_tail, validate_program_label, PlasmPostfixOp, RenderTailParse,
 };
@@ -356,11 +356,6 @@ pub fn compile_plasm_dag_to_plan(
     source: &str,
 ) -> Result<serde_json::Value, String> {
     compile_plasm_dag_to_plan_inner(pipeline, symbol_map_cross_cache, session, name, source)
-        .map_err(|err| {
-            flattened_program_newline_diagnostic(source)
-                .map(|hint| format!("{hint}\n\nOriginal parse error: {err}"))
-                .unwrap_or(err)
-        })
 }
 
 fn compile_plasm_dag_to_plan_inner(
@@ -371,7 +366,8 @@ fn compile_plasm_dag_to_plan_inner(
     source: &str,
 ) -> Result<serde_json::Value, String> {
     let mut state = CompileState::new(pipeline, symbol_map_cross_cache);
-    let statements = collect_program_statement_lines(source)?;
+    let flattened = expand_flattened_program_statements(&collect_program_statement_lines(source)?);
+    let statements = flattened.statements;
     if statements.is_empty() {
         return Err("Plasm program is empty".to_string());
     }
@@ -410,13 +406,21 @@ fn compile_plasm_dag_to_plan_inner(
     } else {
         json!({ "kind": "parallel", "nodes": roots })
     };
+    let mut metadata = serde_json::Map::new();
+    metadata.insert("language".to_string(), serde_json::json!("plasm-dag"));
+    if let Some(label) = flattened.coerced_default_return {
+        metadata.insert(
+            "coerced_default_return".to_string(),
+            serde_json::json!(label),
+        );
+    }
     Ok(json!({
         "version": 1,
         "kind": "program",
         "name": name,
         "nodes": nodes,
         "return": return_value,
-        "metadata": { "language": "plasm-dag" }
+        "metadata": serde_json::Value::Object(metadata),
     }))
 }
 
@@ -1778,24 +1782,37 @@ fn resolve_cgs_for_qualified_entity<'a>(
     Some(session.cgs.as_ref())
 }
 
+fn relation_segment_context<'a>(
+    map: &'a plasm_core::SymbolMap,
+    qe: &'a QualifiedEntityKey,
+    ent: &'a plasm_core::EntityDef,
+    binding_label: Option<plasm_core::ProgramBindingLabel<'a>>,
+    allow_lhs_coercion: bool,
+) -> plasm_core::RelationSegmentContext<'a> {
+    plasm_core::RelationSegmentContext {
+        map,
+        entity: qe.entity.as_str(),
+        relations: &ent.relations,
+        binding_label,
+        allow_lhs_coercion,
+    }
+}
+
 fn resolve_relation_wire_on_entity(
     session: &ExecuteSession,
     cross_cache: Option<&SymbolMapCrossRequestCache>,
     qe: &QualifiedEntityKey,
     segment: &str,
+    binding_label: Option<plasm_core::ProgramBindingLabel<'_>>,
 ) -> Option<String> {
     let cgs = resolve_cgs_for_qualified_entity(session, qe)?;
     let ent = cgs.get_entity(qe.entity.as_str())?;
-    if ent.relations.contains_key(segment) {
-        return Some(segment.to_string());
-    }
     let map = symbol_map_for_plasm_surface_parse(session, cross_cache);
-    if let Some(wire) = map.resolve_ident(segment) {
-        if ent.relations.contains_key(wire) {
-            return Some(wire.to_string());
-        }
+    let ctx = relation_segment_context(map.as_ref(), qe, ent, binding_label, true);
+    match plasm_core::resolve_relation_segment(&ctx, segment) {
+        plasm_core::RelationSegmentOutcome::Wire(w) => Some(w),
+        _ => None,
     }
-    None
 }
 
 fn resolve_relation_segment_for_continuation(
@@ -1803,9 +1820,32 @@ fn resolve_relation_segment_for_continuation(
     cross_cache: Option<&SymbolMapCrossRequestCache>,
     row_qe: &QualifiedEntityKey,
     segment: &str,
+    binding_label: Option<plasm_core::ProgramBindingLabel<'_>>,
 ) -> Result<String, String> {
-    resolve_relation_wire_on_entity(session, cross_cache, row_qe, segment)
-        .ok_or_else(|| format!("entity `{}` has no relation `{segment}`", row_qe.entity))
+    let cgs = resolve_cgs_for_qualified_entity(session, row_qe).ok_or_else(|| {
+        format!(
+            "unknown catalog entity `{}` for relation continuation",
+            row_qe.entity
+        )
+    })?;
+    let ent = cgs.get_entity(row_qe.entity.as_str()).ok_or_else(|| {
+        format!(
+            "unknown entity `{}` for relation continuation",
+            row_qe.entity
+        )
+    })?;
+    let map = symbol_map_for_plasm_surface_parse(session, cross_cache);
+    let ctx = relation_segment_context(map.as_ref(), row_qe, ent, binding_label, true);
+    match plasm_core::resolve_relation_segment(&ctx, segment) {
+        plasm_core::RelationSegmentOutcome::Wire(w) => Ok(w),
+        plasm_core::RelationSegmentOutcome::WrongRole { sym, wire } => Err(
+            plasm_core::relation_segment_wrong_role_message(&sym, &wire, row_qe.entity.as_str()),
+        ),
+        plasm_core::RelationSegmentOutcome::NotFound => Err(format!(
+            "entity `{}` has no relation `{segment}`",
+            row_qe.entity
+        )),
+    }
 }
 
 fn relation_continuation_expr_from_source_row_hole(
@@ -1920,7 +1960,7 @@ fn relation_uses_from_parent_get(
     let Some(ent) = cgs.get_entity(row_qe.entity.as_str()) else {
         return false;
     };
-    let Some(wire) = resolve_relation_wire_on_entity(session, None, row_qe, segment) else {
+    let Some(wire) = resolve_relation_wire_on_entity(session, None, row_qe, segment, None) else {
         return false;
     };
     ent.relations
@@ -1967,6 +2007,7 @@ fn parse_relation_continuation_expr(
         state.cross_cache,
         &contract.row_entity,
         segment,
+        Some(plasm_core::ProgramBindingLabel(contract.label.as_str())),
     )?;
     if prefer_row_hole_relation_continuation(state, contract, segment, session) {
         return Ok(plasm_core::expr_parser::ParsedExpr {
@@ -2063,9 +2104,13 @@ fn lower_relation_continuation(
             "Plasm program `{id}`: `{source_label}.{segment}` did not lower to a relation chain"
         ));
     };
-    let Some(wire) =
-        resolve_relation_wire_on_entity(session, state.cross_cache, &contract.row_entity, segment)
-    else {
+    let Some(wire) = resolve_relation_wire_on_entity(
+        session,
+        state.cross_cache,
+        &contract.row_entity,
+        segment,
+        Some(plasm_core::ProgramBindingLabel(id)),
+    ) else {
         return Err(format!(
             "Plasm program `{id}`: entity `{}` has no relation `{segment}`",
             contract.row_entity.entity
@@ -2576,93 +2621,6 @@ fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
             }))
         }
     }
-}
-
-fn flattened_program_newline_diagnostic(src: &str) -> Option<String> {
-    for raw in src.lines() {
-        let line = strip_line_comment(raw).trim();
-        if line.is_empty() || line.contains("<<") {
-            continue;
-        }
-        let Some((_id, rhs)) = split_assignment_at_top_level(line) else {
-            continue;
-        };
-        if has_flattened_assignment_boundary(rhs) || has_flattened_final_root_boundary(rhs) {
-            return Some(
-                "Plasm program statements must be separated by real newline characters (U+000A) in the `program` string; use one binding per line, then final roots on their own line. Do not separate bindings or final roots with spaces. Send one physical line per binding, e.g. `repo = e2(...)\\ncommits = e1{p4=repo}.limit(20)\\ncommits`. For multiline string parameters, use tagged heredocs such as `p58=<<MAIL_7f3a` followed by body lines and a closing `MAIL_7f3a)`."
-                    .to_string(),
-            );
-        }
-    }
-    None
-}
-
-fn has_flattened_assignment_boundary(s: &str) -> bool {
-    let mut depth = 0i32;
-    let mut quote = None::<char>;
-    for (i, c) in s.char_indices() {
-        match c {
-            '"' | '\'' if quote == Some(c) => quote = None,
-            '"' | '\'' if quote.is_none() => quote = Some(c),
-            '(' | '[' | '{' if quote.is_none() => depth += 1,
-            ')' | ']' | '}' if quote.is_none() => depth -= 1,
-            '=' if quote.is_none() && depth == 0 => {
-                let before_eq = &s[..i];
-                let before_trimmed = before_eq.trim_end();
-                let token_start = before_trimmed
-                    .char_indices()
-                    .rev()
-                    .find_map(|(idx, ch)| ch.is_whitespace().then_some(idx + ch.len_utf8()))
-                    .unwrap_or(0);
-                let label = &before_trimmed[token_start..];
-                if token_start > 0 && is_valid_program_label(label) {
-                    return true;
-                }
-            }
-            _ => {}
-        }
-    }
-    false
-}
-
-fn has_flattened_final_root_boundary(s: &str) -> bool {
-    let mut depth = 0i32;
-    let mut quote = None::<char>;
-    for (i, c) in s.char_indices() {
-        match c {
-            '"' | '\'' if quote == Some(c) => quote = None,
-            '"' | '\'' if quote.is_none() => quote = Some(c),
-            '(' | '[' | '{' if quote.is_none() => depth += 1,
-            ')' | ']' | '}' if quote.is_none() => depth -= 1,
-            c if quote.is_none() && depth == 0 && c.is_whitespace() => {
-                let left = s[..i].trim();
-                let right = s[i..].trim();
-                if !left.is_empty() && starts_like_statement_or_root(right) {
-                    return true;
-                }
-            }
-            _ => {}
-        }
-    }
-    false
-}
-
-fn starts_like_statement_or_root(s: &str) -> bool {
-    let Some(first) = s.chars().next() else {
-        return false;
-    };
-    if matches!(first, 'e' | 'p' | 'm') {
-        let mut chars = s.chars();
-        chars.next();
-        if matches!(chars.next(), Some(c) if c.is_ascii_digit()) {
-            return true;
-        }
-    }
-    let token = s
-        .split(|c: char| c.is_whitespace() || matches!(c, ',' | '(' | '[' | '{' | '.' | '='))
-        .next()
-        .unwrap_or_default();
-    is_valid_program_label(token)
 }
 
 fn split_return_list(
@@ -3968,6 +3926,100 @@ labels"#;
     }
 
     #[test]
+    fn lhs_gated_relation_segment_ignores_wrong_token() {
+        let session = github_issue_label_session();
+        let qe = QualifiedEntityKey {
+            entry_id: "github".into(),
+            entity: "Issue".into(),
+        };
+        let wire = resolve_relation_segment_for_continuation(
+            &session,
+            None,
+            &qe,
+            "p99",
+            Some(plasm_core::ProgramBindingLabel("labels")),
+        )
+        .expect("binding label selects relation wire");
+        assert_eq!(wire, "labels");
+    }
+
+    /// Opaque `p#` homograph to `labels` is rejected in relation nav; DAG LHS binding forgives it.
+    #[test]
+    fn homograph_p_rejected_in_parse_forgiven_with_lhs_binding_label() {
+        use plasm_core::expr_parser::{parse_with_cgs_layers_program, ParseErrorKind};
+        use plasm_core::relation_segment::{
+            resolve_relation_segment, RelationSegmentContext, RelationSegmentOutcome,
+        };
+
+        let session = github_issue_label_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let p_sym = map.ident_sym_cap_param_for("github", "Issue", "issue_query", "labels");
+        assert!(
+            p_sym.starts_with('p'),
+            "expected opaque p# for labels filter, got {p_sym}"
+        );
+        let issue_e = map.entity_sym_for("github", "Issue");
+        let line = format!("{issue_e}.{p_sym}");
+        let layers = crate::plasm_plan_run::session_cgs_layers(&session);
+        let err = parse_with_cgs_layers_program(&line, &layers, map.clone(), None, false)
+            .expect_err("homograph p# in relation nav");
+        assert!(matches!(
+            err.kind,
+            ParseErrorKind::RelationSegmentWrongRole { .. }
+        ));
+
+        let issue_ent = session.cgs.get_entity("Issue").expect("Issue");
+        let ctx = RelationSegmentContext {
+            map: &map,
+            entity: "Issue",
+            relations: &issue_ent.relations,
+            binding_label: None,
+            allow_lhs_coercion: false,
+        };
+        assert!(matches!(
+            resolve_relation_segment(&ctx, p_sym.as_str()),
+            RelationSegmentOutcome::WrongRole { .. }
+        ));
+
+        let qe = QualifiedEntityKey {
+            entry_id: "github".into(),
+            entity: "Issue".into(),
+        };
+        let wire = resolve_relation_segment_for_continuation(
+            &session,
+            None,
+            &qe,
+            p_sym.as_str(),
+            Some(plasm_core::ProgramBindingLabel("labels")),
+        )
+        .expect("LHS binding label selects relation wire");
+        assert_eq!(wire, "labels");
+    }
+
+    #[test]
+    fn flattened_single_liner_lhs_gated_relation_primary_return() {
+        let session = github_issue_label_session();
+        let source = r#"repo = Repository(owner="octocat", repo="Hello-World") issues = Issue{repository=repo.full_name} labels = issues.labels labels"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "github-flattened-labels",
+            source,
+        )
+        .expect("flattened single-liner");
+        assert_eq!(plan["return"]["node"], "repo");
+        assert_eq!(plan["metadata"]["coerced_default_return"], "repo");
+        let labels = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "labels")
+            .expect("labels node");
+        assert_eq!(labels["relation"]["relation"], "labels");
+    }
+
+    #[test]
     fn relation_plural_opaque_p2_continuation() {
         let session = github_issue_label_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
@@ -4927,5 +4979,46 @@ created"#;
         );
         let plan_value = crate::plasm_plan::parse_plan_value(&plan).expect("parse plan");
         crate::plasm_plan::validate_plan_artifact(&plan_value).expect("validate plan");
+    }
+
+    #[test]
+    fn lang_for_each_update_matrix_program_compiles_for_each_action() {
+        let session = test_session();
+        let source = "items = LangItem(\"i1\")[id,title,owner]\n\
+            sync = items => LangItem(\"i1\").update(score=3, title=_.title, owner=_.owner)\n\
+            sync";
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "lang_for_each_update",
+            source,
+        )
+        .expect("compile");
+        let sync = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "sync")
+            .expect("for_each sync node");
+        assert_eq!(sync["kind"], "for_each");
+        assert_eq!(
+            sync.pointer("/effect_template/kind")
+                .and_then(|k| k.as_str()),
+            Some("action")
+        );
+        let plan_value = crate::plasm_plan::parse_plan_value(&plan).expect("parse plan");
+        let validated = crate::plasm_plan::validate_plan_artifact(&plan_value).expect("validate");
+        let dry = crate::plasm_plan_run::evaluate_validated_plasm_plan_dry(&session, &validated)
+            .expect("dry");
+        assert!(
+            dry.node_results.iter().any(|nr| {
+                nr.get("kind").and_then(|k| k.as_str()) == Some("for_each")
+                    && nr.pointer("/effect_template/kind").and_then(|k| k.as_str())
+                        == Some("action")
+            }),
+            "dry node_results: {:?}",
+            dry.node_results
+        );
     }
 }

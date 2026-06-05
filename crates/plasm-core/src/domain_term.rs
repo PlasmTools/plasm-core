@@ -1,6 +1,6 @@
 //! DOMAIN-facing tokens with CGS-backed payloads and a per-session numeric [`Symbol`].
 //!
-//! Carry [`DomainTerm`] in the parser and prompt pipeline; format to `e1` / `m2` / `p3` only at
+//! Carry [`DomainTerm`] in the parser and prompt pipeline; format to `e1` / `m2` / `p3` / `r4` only at
 //! serialization boundaries via [`Display`] (or explicit [`std::fmt::Write`]).
 
 use crate::identity::{CapabilityName, EntityName, PathMethodSegment};
@@ -89,11 +89,12 @@ impl DomainTerm {
 }
 
 impl fmt::Display for DomainTerm {
-    /// Symbolic form: `e1`, `m2`, `p3` (1-based, matching [`crate::symbol_tuning::SymbolMap`]).
+    /// Symbolic form: `e1`, `m2`, `p3`, `r4` (1-based, matching [`crate::symbol_tuning::SymbolMap`]).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (prefix, sym) = match self {
             DomainTerm::Entity(_, s) => ('e', s),
             DomainTerm::Method(_, s) => ('m', s),
+            DomainTerm::Parameter(ParameterSlot::Relation { .. }, s) => ('r', s),
             DomainTerm::Parameter(_, s) => ('p', s),
         };
         write!(f, "{prefix}{}", sym.0.saturating_add(1))

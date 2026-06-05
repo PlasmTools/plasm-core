@@ -379,6 +379,9 @@ pub fn render_parse_error_with_feedback(
             span_start,
             span_end: _,
         } => correction_not_navigable(cgs, field, entity, expr_line, *span_start, &style),
+        ParseErrorKind::RelationSegmentWrongRole { sym, wire, entity, .. } => format!(
+            "Use `.{wire}` or an r# relation symbol for `{entity}` navigation — `{sym}` is a field or query parameter, not a relation hop"
+        ),
         ParseErrorKind::PredicateFieldNotFound {
             field,
             entity,

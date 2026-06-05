@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.83] - 2026-05-30
+
+### Added
+
+- **Relation `r#` namespace:** separate opaque relation symbols in [`SymbolMap`](crates/plasm-core/src/symbol_tuning.rs); teaching TSV / DOMAIN gloss rows; MCP `_meta.plasm.relations` with `target_entity`.
+- **Unified relation-segment resolver:** [`resolve_relation_segment`](crates/plasm-core/src/relation_segment.rs) shared by parser and DAG; homograph `p#` in relation nav rejected with `RelationSegmentWrongRole`.
+- **Forgiving program coercion:** space-separated single-liner programs split into bindings; default return is the first binding (`FlattenedProgram` + plan `metadata.coerced_default_return`); LHS-gated relation continuation forgives wrong opaque tokens when the binding label matches a relation wire.
+
+### Changed
+
+- MCP initialize / `plasm_context` prompts document `r#`, coerced single-liners, and `_meta.plasm.relations`.
+- `exposed_relation_symbol_rows_with_catalogs` fills `target_entity` at symbol-map build time.
+
 ## [0.1.82] - 2026-05-30
 
 ### Fixed

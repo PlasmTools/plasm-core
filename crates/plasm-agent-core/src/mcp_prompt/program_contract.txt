@@ -1,5 +1,5 @@
-**JSON `program` string:** Use literal newline characters (U+000A) between statements when you have more than one binding—typically one `ident = …` per line, then bare comma-separated roots on the last line(s). Spaces do not separate statements. (Wire JSON may show `\n`; the parsed string must still contain real newlines.)
+**JSON `program` string:** Prefer literal newlines between bindings, then bare comma-separated roots. Single-line space-separated bindings are **coerced**; default return is the **first** binding. (Wire JSON may show `\n`; decoded strings need real newlines for heredocs.)
 
 **Heredoc:** After `<<TAG` on the opener line, start the body on the next line; close with a line whose trimmed text is `TAG` (or `TAG)` / `TAG,` / `TAG}`). First trimmed-line match closes the heredoc—use a long opaque `TAG` not present in the body.
 
-Executable grammar (`e#` / `m#` / `p#`), bracket-render, `.content`, and postfix pitfalls (substitute teaching `$`/`~"text"` fill-ins): **`plasm_context` teaching TSV** preamble on first wave—not repeated in tool descriptions.
+Symbols: `e#` entity, `m#` method, `p#` field/filter/param, **`r#` relation nav**, `v#` value-domain gloss. Relation fanout: `.wire` or `.r#` — not bare `p#` after `.` on a receiver. Full grammar: **`plasm_context` teaching TSV** preamble.

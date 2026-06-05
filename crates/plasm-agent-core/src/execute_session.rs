@@ -1,5 +1,5 @@
 //! In-memory execute sessions: prompt text + CGS + entity seeds, keyed by `(prompt_hash, session_id)`.
-//! Plasm instructions text is built incrementally via [`plasm_core::DomainExposureSession`] (monotonic `e#`/`m#`/`p#`).
+//! Plasm instructions text is built incrementally via [`plasm_core::DomainExposureSession`] (monotonic `e#`/`m#`/`p#`/`r#`).
 
 use indexmap::IndexMap;
 use plasm_core::CgsContext;

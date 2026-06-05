@@ -1,5 +1,5 @@
 ---
-source: crates/plasm-core/src/prompt_render.rs
+source: plasm-oss/crates/plasm-core/src/prompt_render.rs
 expression: tsv
 ---
 # Follow the grammar and the teaching TSV below; reply with one valid plasm_program:
@@ -17,7 +17,8 @@ expression: tsv
 # - `Meaning` fragments joined by ` · ` stay inside `Meaning`; they are not operators.
 #
 # Symbol and fill rules:
-# - `e#` = entity surface; `m#` = method/action surface; `p#` = keyed field/parameter/relation slot; `v#` = value-domain metadata only.
+# - `e#` = entity surface; `m#` = method/action surface; `p#` = field/capability/query predicate; `r#` = declared relation navigation; `v#` = value-domain metadata only.
+# - Relation hops use `.wire` or `.r#` on a row-producing receiver — not `p#` in dotted navigation (`p#` in `e#{{…}}` is a filter/param).
 # - Entity-ref slots in `Meaning` look like `ref:Zone · str · Zone identifier`: canonical entity, id wire type, short note — not `plasm_expr` syntax.
 # - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.
 # - Unary identity rows often teach `e#(p#)` using the opaque `p#` for the entity `id_field` (same token as gloss); substitute the real wire id — do not treat it as a literal API value.
@@ -25,7 +26,7 @@ expression: tsv
 # - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.
 # - If `Meaning` says `opt: pA, pB`, those keys may be added only as keyed assignments with real values.
 # - Projection rows ending `[p#,…]` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
-# - Relation rows end with `.p#`/`.field`; apply them to any executable receiver row for that same entity type.
+# - Relation rows end with `.r#`/`.wire`; apply them to any executable receiver row for that same entity type.
 # - `page(sN_pgM)` uses a continuation handle returned by a prior response; copy the handle exactly and optionally add `, limit=N`.
 #
 # Grammar:
@@ -39,7 +40,7 @@ expression: tsv
 # query_all     ::= e#
 # get           ::= e#(<id>) or e#(p#=<value>, p#=<value>)
 # query         ::= e#{p#=<value>, …}
-# relation      ::= <receiver>.p#
+# relation      ::= <receiver>.r# | <receiver>.wire
 # method        ::= e#(<id>).m#() or e#(<id>).m#(p#=<value>, …)
 # create_action ::= e#.m#(p#=<value>, …)
 # search        ::= e#~"text"
@@ -54,7 +55,7 @@ expression: tsv
 # literal       ::= quoted string | number | bool | null
 #
 # Composition rules:
-# - Multi-line program strings use literal newlines: one binding per line, final roots last. Spaces never separate statements.
+# - Multi-line programs: one binding per line and final roots last (preferred). Single-line space-separated bindings are coerced; default return is the first binding.
 # - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.
 # - To turn rows into text, bind a template block: `report = rows[p#,…] <<TAG` newline template newline `TAG`, or `report = rows <<TAG` when columns can be inferred.
 # - Template blocks use Minijinja with `rows` as the input array; the bound row has a `content` field (see Common pitfalls for string parameters).
@@ -66,8 +67,9 @@ expression: tsv
 # Common pitfalls:
 # - Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.
 # - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.
-# - Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.p#` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.
-# - Teaching-table `Meaning` may show `relation e3 → e2`; copy executable `.p#` from the left cell, not the arrow gloss.
+# - Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.r#` or `issues.labels` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.
+# - Homograph: query filter `p#` and relation `.r#` may share a wire name (e.g. `labels`) — use `.r#`/wire for fanout; `labels = issues.p#` is forgiven when the binding name matches the relation.
+# - Teaching-table `Meaning` may show `relation e3 → e2`; copy executable `.r#`/wire from the left cell, not the arrow gloss.
 # - Fill-ins: never emit `$` from teaching rows — substitute real ids and parameter values before execute.
 # - String slots: pass `binding.content` from bracket-render or template rows, not the whole row.
 # - Search: copy `e#~"text"` with real quoted terms — never `e#~$`.
@@ -79,85 +81,85 @@ v2	int
 v1	select · ui, ocr, audio, document
 v7	str
 v6	date
-p4	v7 · app_name
-p5	v6 · end_time
-p6	v2 · limit
-p7	v6 · start_time
-p3	v2 · id
-p2	v1 · content_type
-p8	v7 · text_preview
-e1[p3,p2,p8]	→ e1 · projection · One capture pipeline item
-e1(p3=$, p2=$)	→ e1
-e1{p6=$, p4=$, p7=$, p5=$}	→ [e1] · opt: p6, p4, p7, p5
+p3	v7 · app_name
+p4	v6 · end_time
+p5	v2 · limit
+p6	v6 · start_time
+p2	v2 · id
+p1	v1 · content_type
+p7	v7 · text_preview
+e1[p2,p1,p7]	→ e1 · projection · One capture pipeline item
+e1(p2=$, p1=$)	→ e1
+e1{p5=$, p3=$, p6=$, p4=$}	→ [e1] · opt: p5, p3, p6, p4
 v9	bool
-p9	v7 · id
-p10	v9 · screen_capture_running
-e2(p9)[p9,p10]	→ e2 · projection · Capture running or paused
+p8	v7 · id
+p9	v9 · screen_capture_running
+e2(p8)[p8,p9]	→ e2 · projection · Capture running or paused
 e2.m3()	→ e2
 v18	markdown
 v14	float
-p12	v7 · app_name
-p13	v9 · include_answers
-p14	v2 · limit
-p15	v14 · min_answer_similarity
-p16	v2 · offset
-p17	v2 · speaker_id
-p18	v9 · unresolved_only
-p11	v7 · id
-p19	v18 · question_text
-p20	v9 · resolved
-e3[p11,p19,p20]	→ e3 · projection · A detected question with optional answers
-e3{p18=$, p12=$, p17=$, p13=$, p15=$, p14=$, p16=$}	→ [e3] · opt: p18, p12, p17, p13, p15, p14, p16
+p11	v7 · app_name
+p12	v9 · include_answers
+p13	v2 · limit
+p14	v14 · min_answer_similarity
+p15	v2 · offset
+p16	v2 · speaker_id
+p17	v9 · unresolved_only
+p10	v7 · id
+p18	v18 · question_text
+p19	v9 · resolved
+e3[p10,p18,p19]	→ e3 · projection · A detected question with optional answers
+e3{p17=$, p11=$, p16=$, p12=$, p14=$, p13=$, p15=$}	→ [e3] · opt: p17, p11, p16, p12, p14, p13, p15
 v26	select · active, ended, cancelled
-p23	v6 · end_date
-p24	v2 · limit
-p25	v6 · start_date
-p22	v7 · meeting_uuid
-p21	v2 · meeting_id
-p27	v26 · status
-p28	v18 · summary
-e4[p22,p21,p27,p28]	→ e4 · projection · A detected meeting
-e4{p27=$, p25=$, p23=$, p24=$}	→ [e4] · opt: p27, p25, p23, p24
-e4(p22)	→ e4
+p22	v6 · end_date
+p23	v2 · limit
+p24	v6 · start_date
+p21	v7 · meeting_uuid
+p20	v2 · meeting_id
+p26	v26 · status
+p27	v18 · summary
+e4[p21,p20,p26,p27]	→ e4 · projection · A detected meeting
+e4{p26=$, p24=$, p22=$, p23=$}	→ [e4] · opt: p26, p24, p22, p23
+e4(p21)	→ e4
 v34	select · debug, info, warning, error, critical
-p31	v2 · limit
-p32	v34 · min_severity
-p33	v7 · names
-p34	v7 · sources
-p29	v7 · id
-p30	v7 · name
-p35	v34 · severity
-e5[p29,p30,p35]	→ e5 · projection · One pipeline bus event
-e5{p33=$, p34=$, p32=$, p31=$}	→ [e5] · opt: p33, p34, p32, p31
-p36	v7 · id
-p37	v7 · workers
-e6(p36)[p36,p37]	→ e6 · projection · Pipeline health snapshot
+p30	v2 · limit
+p31	v34 · min_severity
+p32	v7 · names
+p33	v7 · sources
+p28	v7 · id
+p29	v7 · name
+p34	v34 · severity
+e5[p28,p29,p34]	→ e5 · projection · One pipeline bus event
+e5{p32=$, p33=$, p31=$, p30=$}	→ [e5] · opt: p32, p33, p31, p30
+p35	v7 · id
+p36	v7 · workers
+e6(p35)[p35,p36]	→ e6 · projection · Pipeline health snapshot
 e6.m8()	→ e6
 v39	select · person, organisation, project
-p41	v2 · limit
-p39	v2 · id
-p38	v7 · display_name
-p40	v39 · profile_type
-e7[p39,p38,p40]	→ e7 · projection · A person, organisation, or project profile
-e7{p40=$, p41=$}	→ [e7] · opt: p40, p41
-e7(p39)	→ e7
-e7{p40=$, p41=$}.p1	relation e7 → [e9] · Content scoped to this profile
-p47	v7 · slug
-e8.m11(p47=$,..)	→ () · Action prompt execution result · opt: p45, p46, p44, p48, p43 · prompt-run-create
+p40	v2 · limit
+p38	v2 · id
+p37	v7 · display_name
+p39	v39 · profile_type
+e7[p38,p37,p39]	→ e7 · projection · A person, organisation, or project profile
+e7{p39=$, p40=$}	→ [e7] · opt: p39, p40
+e7(p38)	→ e7
+e7{p39=$, p40=$}.r1	relation e7 → [e9] · Content scoped to this profile
+p46	v7 · slug
+e8.m11(p46=$,..)	→ () · Action prompt execution result · opt: p44, p45, p43, p47, p42 · prompt-run-create
 v58	ref:Profile · int
 v57	select · auto, keyword, natural
 v53	select · all, ocr, audio, ui
-p57	v2 · limit
-p58	v57 · mode
-p60	v7 · query
-p55	v7 · id
-p52	v7 · app_name
-p53	v6 · captured_at
-p54	v53 · content_type
-p59	v58 · profile_id
-p71	v18 · text
-p72	v7 · window_name
-e9{p59=e7(p39), p60=$, p57=$, p58=$}[p55,p52,p53,p54,p59,p71,p72]	→ [e9] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
-e9{p59=e7(p39), p60=$, p57=$, p58=$}	→ [e9] · opt: p60, p57, p58
-e9~"text"	→ [e9] · opt: p54, p57, p67, p69, p63, p52, p72, p66, p65
-e9{p59=e7(p39), p60=$, p57=$, p58=$}.p59	relation e9 → e7
+p56	v2 · limit
+p57	v57 · mode
+p59	v7 · query
+p54	v7 · id
+p51	v7 · app_name
+p52	v6 · captured_at
+p53	v53 · content_type
+p58	v58 · profile_id
+p70	v18 · text
+p71	v7 · window_name
+e9{p58=e7(p38), p59=$, p56=$, p57=$}[p54,p51,p52,p53,p58,p70,p71]	→ [e9] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
+e9{p58=e7(p38), p59=$, p56=$, p57=$}	→ [e9] · opt: p59, p56, p57
+e9~"text"	→ [e9] · opt: p53, p56, p66, p68, p62, p51, p71, p65, p64
+e9{p58=e7(p38), p59=$, p56=$, p57=$}.p58	relation e9 → e7

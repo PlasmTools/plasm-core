@@ -1538,6 +1538,17 @@ pub struct ExposedEntitySymbolRow {
     pub entity: String,
 }
 
+/// One `r#` row for relation navigation (MCP `_meta.plasm` / HTTP symbols).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct ExposedRelationSymbolRow {
+    pub symbol: String,
+    pub wire: String,
+    pub entry_id: String,
+    pub entity: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub target_entity: String,
+}
+
 /// Bidirectional maps for one prompt/eval slice.
 #[derive(Debug, Clone)]
 pub struct SymbolMap {
@@ -1556,8 +1567,10 @@ pub struct SymbolMap {
     ident_to_sym: IndexMap<String, String>,
     /// `(entry_id, entity, field)` → `p#` for entity fields.
     entity_field_to_sym: HashMap<(String, String, String), String>,
-    /// `(entry_id, entity, relation_or_ref_name)` → `p#` for relations and entity-ref nav.
+    /// `(entry_id, entity, relation_or_ref_name)` → `r#` for declared relations.
     relation_to_sym: HashMap<(String, String, String), String>,
+    /// `r#` → relation wire name (navigation only; not in [`Self::sym_to_ident`]).
+    sym_to_relation_wire: IndexMap<String, String>,
     /// `(entry_id, domain_entity, capability_name, param)` → `p#` for capability inputs.
     cap_param_to_sym: HashMap<(String, String, String, String), String>,
     /// `(catalog_entry_id|vr:value_ref)` → `v#` — one symbol per CGS `values:` row in this session.
@@ -1571,6 +1584,8 @@ pub struct SymbolMap {
     /// `(sym, wire)` pairs sorted by symbol length descending — built once per snapshot for [`expand_path_symbols`].
     entity_replacements: Arc<[(String, String)]>,
     ident_replacements: Arc<[(String, String)]>,
+    /// `r#` → relation wire (navigation expand for DOMAIN validation / execute).
+    relation_replacements: Arc<[(String, String)]>,
     /// Method symbols sorted by length descending — built once per snapshot for [`expand_method_tokens`].
     method_syms_sorted: Arc<[String]>,
 }
@@ -1614,6 +1629,7 @@ impl SymbolMap {
     fn finalize_expand_tables(&mut self) {
         self.entity_replacements = sorted_sym_replacements(&self.sym_to_entity);
         self.ident_replacements = sorted_sym_replacements(&self.sym_to_ident);
+        self.relation_replacements = sorted_sym_replacements(&self.sym_to_relation_wire);
         self.method_syms_sorted = sorted_method_syms(&self.sym_to_method);
     }
 
@@ -1627,6 +1643,45 @@ impl SymbolMap {
                 entity: entity.clone(),
             })
             .collect()
+    }
+
+    /// Stable `(entry_id, entity, relation wire)` → `r#` assignments for MCP `_meta.plasm`.
+    pub fn exposed_relation_symbol_rows(&self) -> Vec<ExposedRelationSymbolRow> {
+        self.exposed_relation_symbol_rows_with_catalogs(None)
+    }
+
+    /// Like [`Self::exposed_relation_symbol_rows`] with optional per-catalog relation targets filled in.
+    pub fn exposed_relation_symbol_rows_with_catalogs(
+        &self,
+        catalogs: Option<&IndexMap<String, Arc<CGS>>>,
+    ) -> Vec<ExposedRelationSymbolRow> {
+        let mut rows: Vec<ExposedRelationSymbolRow> = self
+            .relation_to_sym
+            .iter()
+            .map(|((entry_id, entity, wire), sym)| {
+                let mut target_entity = String::new();
+                if let Some(catalog_map) = catalogs {
+                    if let Some(cgs) = catalog_map.get(entry_id) {
+                        if let Some(ent) = cgs.entities.get(entity.as_str()) {
+                            if let Some(rel) = ent.relations.get(wire.as_str()) {
+                                target_entity = rel.target_resource.to_string();
+                            }
+                        }
+                    }
+                }
+                ExposedRelationSymbolRow {
+                    symbol: sym.clone(),
+                    wire: wire.clone(),
+                    entry_id: entry_id.clone(),
+                    entity: entity.clone(),
+                    target_entity,
+                }
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            (&a.entry_id, &a.entity, &a.wire).cmp(&(&b.entry_id, &b.entity, &b.wire))
+        });
+        rows
     }
 
     /// If `token` is a session `e#` symbol (e.g. `e1` from the DOMAIN table), return the canonical entity name.
@@ -1752,7 +1807,12 @@ impl SymbolMap {
                 param.clone(),
             )),
         }?;
-        let idx = Symbol::parse_index(sym_str, 'p')?;
+        let prefix = if matches!(slot, ParameterSlot::Relation { .. }) {
+            'r'
+        } else {
+            'p'
+        };
+        let idx = Symbol::parse_index(sym_str, prefix)?;
         Some(DomainTerm::Parameter(slot, idx))
     }
 
@@ -1806,7 +1866,7 @@ impl SymbolMap {
             .unwrap_or_else(|| field.to_string())
     }
 
-    /// Opaque `p#` for a **relation** on a qualified entity row.
+    /// Opaque `r#` for a **relation** on a qualified entity row.
     #[inline]
     pub fn ident_sym_relation_for(
         &self,
@@ -1824,7 +1884,7 @@ impl SymbolMap {
             .unwrap_or_else(|| relation.to_string())
     }
 
-    /// Opaque `p#` for a **relation** (or entity-ref nav segment) on `entity`.
+    /// Opaque `r#` for a **relation** on `entity`.
     #[inline]
     pub fn ident_sym_relation(&self, entity: &str, relation: &str) -> String {
         let v: Vec<_> = self
@@ -1933,9 +1993,38 @@ impl SymbolMap {
             .unwrap_or_else(|| name.to_string())
     }
 
-    /// Resolve `p#` → canonical field name. Returns `None` if `sym` is not a known `p#` token.
+    /// Resolve `p#` → canonical field/param wire. Returns `None` if `sym` is not a known `p#` token.
     pub fn resolve_ident<'a>(&'a self, sym: &str) -> Option<&'a str> {
         self.sym_to_ident.get(sym).map(|s| s.as_str())
+    }
+
+    /// Resolve `r#` → declared relation wire. Returns `None` if `sym` is not a session relation token.
+    pub fn resolve_relation_ident<'a>(&'a self, sym: &str) -> Option<&'a str> {
+        self.sym_to_relation_wire.get(sym).map(|s| s.as_str())
+    }
+
+    /// True when `sym` is a session `r#` relation token.
+    #[inline]
+    pub fn is_relation_symbol(&self, sym: &str) -> bool {
+        self.sym_to_relation_wire.contains_key(sym)
+    }
+
+    /// DOMAIN term for one relation `r#` on a qualified entity row.
+    pub fn try_relation_domain_term_for(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        relation: &str,
+    ) -> Option<DomainTerm> {
+        let sym_str = self.ident_sym_relation_for(catalog_entry_id, entity, relation);
+        let idx = Symbol::parse_index(sym_str.as_str(), 'r')?;
+        Some(DomainTerm::Parameter(
+            ParameterSlot::Relation {
+                entity: EntityName::from(entity.to_string()),
+                name: relation.to_string(),
+            },
+            idx,
+        ))
     }
 
     /// Registry-backed `p#` → shared `v#` value-domain symbol, when one exists.
@@ -2418,7 +2507,7 @@ pub fn expand_path_symbols(input: &str, map: &SymbolMap) -> String {
     expand_path_symbols_with_options(input, map, true)
 }
 
-/// Expand `p#` / `m#` for parse; optionally keep `e#` opaque so federated sessions retain catalog disambiguation.
+/// Expand `p#` / `r#` / `m#` for parse; optionally keep `e#` opaque so federated sessions retain catalog disambiguation.
 pub fn expand_path_symbols_with_options(
     input: &str,
     map: &SymbolMap,
@@ -2430,6 +2519,7 @@ pub fn expand_path_symbols_with_options(
         input.to_string()
     };
     s = replace_sym_tokens(&s, map, SymPhase::Ident);
+    s = replace_sym_tokens(&s, map, SymPhase::Relation);
     s = expand_method_tokens(&s, map);
     s
 }
@@ -2437,12 +2527,14 @@ pub fn expand_path_symbols_with_options(
 enum SymPhase {
     Entity,
     Ident,
+    Relation,
 }
 
 fn replace_sym_tokens(input: &str, map: &SymbolMap, phase: SymPhase) -> String {
     let replacements = match phase {
         SymPhase::Entity => map.entity_replacements.as_ref(),
         SymPhase::Ident => map.ident_replacements.as_ref(),
+        SymPhase::Relation => map.relation_replacements.as_ref(),
     };
     scan_replace_sorted_pairs(input, replacements)
 }
@@ -2860,8 +2952,10 @@ pub struct DomainExposureSession {
     sym_to_ident: IndexMap<String, String>,
     anchor_scoped_method_sym: HashMap<(String, String), String>,
     /// Share fingerprint → opaque `p#` (append-only; never renumbered). Registry-backed slots key on
-    /// `(values row, wire)`; see [`slot_symbol_allocation_fingerprint`].
+    /// `(values row, wire)`; see [`slot_symbol_allocation_fingerprint`]. Relations use [`Self::relation_fingerprint_to_sym`].
     slot_fingerprint_to_sym: IndexMap<String, String>,
+    /// Relation slot fingerprint → opaque `r#` (append-only).
+    relation_fingerprint_to_sym: IndexMap<String, String>,
     /// Share fingerprint → representative slot metadata (append-only; first occurrence wins).
     fingerprint_meta: IndexMap<String, IdentMetadata>,
     /// Concrete slot occurrence → metadata. Preserves every `(entity, slot)` binding even when
@@ -2895,6 +2989,7 @@ impl Clone for DomainExposureSession {
             sym_to_ident: self.sym_to_ident.clone(),
             anchor_scoped_method_sym: self.anchor_scoped_method_sym.clone(),
             slot_fingerprint_to_sym: self.slot_fingerprint_to_sym.clone(),
+            relation_fingerprint_to_sym: self.relation_fingerprint_to_sym.clone(),
             fingerprint_meta: self.fingerprint_meta.clone(),
             slot_occurrence_meta: self.slot_occurrence_meta.clone(),
             entity_field_to_sym: self.entity_field_to_sym.clone(),
@@ -2906,6 +3001,11 @@ impl Clone for DomainExposureSession {
             ident_meta_by_entity: self.ident_meta_by_entity.clone(),
         }
     }
+}
+
+#[inline]
+fn slot_meta_is_relation(meta: &IdentMetadata) -> bool {
+    matches!(meta, IdentMetadata::Relation { .. })
 }
 
 impl DomainExposureSession {
@@ -2925,6 +3025,7 @@ impl DomainExposureSession {
             sym_to_ident: IndexMap::new(),
             anchor_scoped_method_sym: HashMap::new(),
             slot_fingerprint_to_sym: IndexMap::new(),
+            relation_fingerprint_to_sym: IndexMap::new(),
             fingerprint_meta: IndexMap::new(),
             slot_occurrence_meta: IndexMap::new(),
             entity_field_to_sym: HashMap::new(),
@@ -2959,6 +3060,7 @@ impl DomainExposureSession {
             sym_to_ident: IndexMap::new(),
             anchor_scoped_method_sym: HashMap::new(),
             slot_fingerprint_to_sym: IndexMap::new(),
+            relation_fingerprint_to_sym: IndexMap::new(),
             fingerprint_meta: IndexMap::new(),
             slot_occurrence_meta: IndexMap::new(),
             entity_field_to_sym: HashMap::new(),
@@ -3149,15 +3251,36 @@ impl DomainExposureSession {
                 .or_insert_with(|| value_fps_in_wave.get(fp).expect("vfp").clone());
         }
 
-        let mut new_fps: Vec<String> = by_fp
+        let mut new_p_fps: Vec<String> = by_fp
             .keys()
-            .filter(|fp| !self.slot_fingerprint_to_sym.contains_key(*fp))
+            .filter(|fp| {
+                self.fingerprint_meta
+                    .get(*fp)
+                    .is_some_and(|m| !slot_meta_is_relation(m))
+                    && !self.slot_fingerprint_to_sym.contains_key(*fp)
+            })
             .cloned()
             .collect();
-        new_fps.sort();
-        for (next_p, fp) in (self.slot_fingerprint_to_sym.len() + 1..).zip(new_fps) {
+        new_p_fps.sort();
+        for (next_p, fp) in (self.slot_fingerprint_to_sym.len() + 1..).zip(new_p_fps) {
             let sym = format!("p{next_p}");
             self.slot_fingerprint_to_sym.insert(fp, sym);
+        }
+
+        let mut new_r_fps: Vec<String> = by_fp
+            .keys()
+            .filter(|fp| {
+                self.fingerprint_meta
+                    .get(*fp)
+                    .is_some_and(slot_meta_is_relation)
+                    && !self.relation_fingerprint_to_sym.contains_key(*fp)
+            })
+            .cloned()
+            .collect();
+        new_r_fps.sort();
+        for (next_r, fp) in (self.relation_fingerprint_to_sym.len() + 1..).zip(new_r_fps) {
+            let sym = format!("r{next_r}");
+            self.relation_fingerprint_to_sym.insert(fp, sym);
         }
         self.rebuild_parameter_symbol_maps();
         self.rebuild_ident_meta_by_entity();
@@ -3186,6 +3309,9 @@ impl DomainExposureSession {
             let Some(meta) = self.fingerprint_meta.get(&fp) else {
                 continue;
             };
+            if slot_meta_is_relation(meta) {
+                continue;
+            }
             let Some(sym) = self.slot_fingerprint_to_sym.get(&fp) else {
                 continue;
             };
@@ -3205,16 +3331,7 @@ impl DomainExposureSession {
                         sym.clone(),
                     );
                 }
-                IdentRole::Relation { .. } => {
-                    self.relation_to_sym.insert(
-                        (
-                            meta.catalog_entry_id().to_string(),
-                            meta.entity().as_str().to_string(),
-                            meta.wire_name().to_string(),
-                        ),
-                        sym.clone(),
-                    );
-                }
+                IdentRole::Relation { .. } => {}
                 IdentRole::CapabilityParam { capability } => {
                     self.cap_param_to_sym.insert(
                         (
@@ -3228,8 +3345,42 @@ impl DomainExposureSession {
                 }
             }
         }
+        let mut r_fp_order: Vec<String> =
+            self.relation_fingerprint_to_sym.keys().cloned().collect();
+        r_fp_order.sort();
+        for fp in r_fp_order {
+            let Some(meta) = self.fingerprint_meta.get(&fp) else {
+                continue;
+            };
+            let Some(sym) = self.relation_fingerprint_to_sym.get(&fp) else {
+                continue;
+            };
+            let wire = meta.wire_name().to_string();
+            self.relation_to_sym.insert(
+                (
+                    meta.catalog_entry_id().to_string(),
+                    meta.entity().as_str().to_string(),
+                    wire.clone(),
+                ),
+                sym.clone(),
+            );
+        }
         for meta in self.slot_occurrence_meta.values() {
             let fp = slot_symbol_allocation_fingerprint(meta);
+            if slot_meta_is_relation(meta) {
+                let Some(sym) = self.relation_fingerprint_to_sym.get(&fp) else {
+                    continue;
+                };
+                self.relation_to_sym.insert(
+                    (
+                        meta.catalog_entry_id().to_string(),
+                        meta.entity().as_str().to_string(),
+                        meta.wire_name().to_string(),
+                    ),
+                    sym.clone(),
+                );
+                continue;
+            }
             let Some(sym) = self.slot_fingerprint_to_sym.get(&fp) else {
                 continue;
             };
@@ -3244,16 +3395,7 @@ impl DomainExposureSession {
                         sym.clone(),
                     );
                 }
-                IdentRole::Relation { .. } => {
-                    self.relation_to_sym.insert(
-                        (
-                            meta.catalog_entry_id().to_string(),
-                            meta.entity().as_str().to_string(),
-                            meta.wire_name().to_string(),
-                        ),
-                        sym.clone(),
-                    );
-                }
+                IdentRole::Relation { .. } => {}
                 IdentRole::CapabilityParam { capability } => {
                     self.cap_param_to_sym.insert(
                         (
@@ -3392,6 +3534,11 @@ impl DomainExposureSession {
             value_sym_to_fp.insert(vs.clone(), fp.clone());
         }
 
+        let mut sym_to_relation_wire: IndexMap<String, String> = IndexMap::new();
+        for ((_, _, wire), sym) in &self.relation_to_sym {
+            sym_to_relation_wire.insert(sym.clone(), wire.clone());
+        }
+
         let mut sm = SymbolMap {
             sym_to_entity: self.sym_to_entity.clone(),
             qualified_entity_to_sym: self.qualified_entity_to_sym.clone(),
@@ -3402,6 +3549,7 @@ impl DomainExposureSession {
             ident_to_sym: self.ident_to_sym.clone(),
             entity_field_to_sym: self.entity_field_to_sym.clone(),
             relation_to_sym: self.relation_to_sym.clone(),
+            sym_to_relation_wire,
             cap_param_to_sym: self.cap_param_to_sym.clone(),
             value_domain_fp_to_sym,
             value_sym_to_fp,
@@ -3409,6 +3557,7 @@ impl DomainExposureSession {
             value_sym_gloss: IndexMap::new(),
             entity_replacements: Arc::from([]),
             ident_replacements: Arc::from([]),
+            relation_replacements: Arc::from([]),
             method_syms_sorted: Arc::from([]),
         };
 
@@ -3455,6 +3604,12 @@ impl DomainExposureSession {
     /// Shared [`SymbolMap`] for this exposure session (memoized until the next [`Self::expose_entities`]).
     pub fn symbol_map_arc(&self) -> Arc<SymbolMap> {
         self.symbol_map_arc_cross(None, None).0
+    }
+
+    /// Relation `r#` rows for MCP `_meta.plasm` with target entities from [`Self::catalog_cgs`].
+    pub fn exposed_relation_symbol_rows(&self) -> Vec<ExposedRelationSymbolRow> {
+        self.symbol_map_arc()
+            .exposed_relation_symbol_rows_with_catalogs(Some(&self.catalog_cgs))
     }
 
     /// Like [`Self::symbol_map_arc`], plus an optional process-wide LRU keyed by [`SymbolMapCacheKey`]

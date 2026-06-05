@@ -1,16 +1,16 @@
 ---
-source: crates/plasm-agent-core/src/mcp_server.rs
+source: plasm-oss/crates/plasm-agent-core/src/mcp_server.rs
 expression: "super::mcp_server_initialize_instructions()"
 ---
 Plasm MCP tools (in order): **`plasm_context`** (session + teaching TSV), **`plasm`** (dry-run plan), **`plasm_run`** (live execute), **`discover_capabilities`** (when **`api`/`entity`** unknown).
      **One goal → one stable **`intent`** → one **`plasm_context`**.** `logical_session_ref` (`s0`, …) is per goal, not per API. Multi-API: one **`seeds`** array (see **`plasm_context`** tool).
      **`discover_capabilities`**: one **`intent`** per goal. Reply table → merge into **`plasm_context`** **`seeds`**. Retry if entities missing; **`typed: true`** when ambiguous.
      **`plasm_context`**: **`intent`** + **`seeds`**; returns **`logical_session_ref`** + teaching TSV. **Steady state:** reuse ref with **`plasm`** / **`plasm_run`**; do not repeat identical **`seeds`**.
-**JSON `program` string:** Use literal newline characters (U+000A) between statements when you have more than one binding—typically one `ident = …` per line, then bare comma-separated roots on the last line(s). Spaces do not separate statements. (Wire JSON may show `\n`; the parsed string must still contain real newlines.)
+**JSON `program` string:** Prefer literal newlines between bindings, then bare comma-separated roots. Single-line space-separated bindings are **coerced**; default return is the **first** binding. (Wire JSON may show `\n`; decoded strings need real newlines for heredocs.)
 
 **Heredoc:** After `<<TAG` on the opener line, start the body on the next line; close with a line whose trimmed text is `TAG` (or `TAG)` / `TAG,` / `TAG}`). First trimmed-line match closes the heredoc—use a long opaque `TAG` not present in the body.
 
-Executable grammar (`e#` / `m#` / `p#`), bracket-render, `.content`, and postfix pitfalls (substitute teaching `$`/`~"text"` fill-ins): **`plasm_context` teaching TSV** preamble on first wave—not repeated in tool descriptions.
+Symbols: `e#` entity, `m#` method, `p#` field/filter/param, **`r#` relation nav**, `v#` value-domain gloss. Relation fanout: `.wire` or `.r#` — not bare `p#` after `.` on a receiver. Full grammar: **`plasm_context` teaching TSV** preamble.
      **`plasm`** is **plan-only** (no live HTTP). Prefer **one** `program` per call (comma-separated roots on the final line for multi-return). Multi-root answers: review with **`plasm`**, execute with **`plasm_run`**. Never prefix roots with `return`.
      **`plasm_run`**: same arguments as **`plasm`**. Call **only after** the **`plasm`** dry-run plan matches intent—this tool performs **live** HTTP/API execution (and may return run snapshot URIs).
      **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` in the same logical session for more rows.

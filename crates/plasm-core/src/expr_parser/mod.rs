@@ -74,10 +74,11 @@ pub use postfix::{
 };
 pub use program::{parse_expr_node, parse_program_shape, ExprNode, ParsedProgram, Statement};
 pub use program_surface::{
-    collect_program_statement_lines, is_valid_program_label, looks_like_domain_symbol,
-    scan_physical_line_stmt_state, split_assignment_at_top_level, split_assignment_for_binding,
-    split_token_top_level, split_top_level, strip_line_comment, validate_program_label,
-    PhysicalLineStmtState,
+    collect_program_statement_lines, expand_flattened_program_statements, is_valid_program_label,
+    looks_like_domain_symbol, scan_physical_line_stmt_state, split_assignment_at_top_level,
+    split_assignment_for_binding, split_flattened_program_line, split_token_top_level,
+    split_top_level, strip_line_comment, validate_program_label, FlattenedProgram,
+    FlattenedProgramLine, PhysicalLineStmtState,
 };
 pub use value_expr::{RenderExpr, ValueExpr};
 
@@ -145,6 +146,14 @@ pub enum ParseErrorKind {
     },
     NotNavigable {
         field: String,
+        entity: String,
+        span_start: usize,
+        span_end: usize,
+    },
+    /// `.p#` used where a relation hop was expected (`r#` or wire name required).
+    RelationSegmentWrongRole {
+        sym: String,
+        wire: String,
         entity: String,
         span_start: usize,
         span_end: usize,
@@ -249,6 +258,10 @@ impl fmt::Display for ParseErrorKind {
             ParseErrorKind::NotNavigable { field, entity, .. } => write!(
                 f,
                 "'{field}' on '{entity}' is not navigable (not an EntityRef or relation)"
+            ),
+            ParseErrorKind::RelationSegmentWrongRole { sym, wire, entity, .. } => write!(
+                f,
+                "'{sym}' is a query parameter or field ('{wire}'), not a relation on '{entity}'; use '.{wire}' or an r# symbol from the teaching table"
             ),
             ParseErrorKind::NotFieldOrRelation { field, entity, .. } => write!(
                 f,
@@ -2180,12 +2193,32 @@ impl<'a> Parser<'a> {
                 .get_entity(&source_entity)
                 .cloned()
             {
-                let relation_field = self
-                    .sym_map
-                    .resolve_ident(field.as_str())
-                    .filter(|wire| ent.relations.contains_key(*wire))
-                    .map(str::to_string)
-                    .unwrap_or_else(|| field.clone());
+                let seg_ctx = crate::relation_segment::RelationSegmentContext {
+                    map: &self.sym_map,
+                    entity: source_entity.as_str(),
+                    relations: &ent.relations,
+                    binding_label: None,
+                    allow_lhs_coercion: false,
+                };
+                let relation_field = match crate::relation_segment::resolve_relation_segment(
+                    &seg_ctx,
+                    field.as_str(),
+                ) {
+                    crate::relation_segment::RelationSegmentOutcome::Wire(w) => w,
+                    crate::relation_segment::RelationSegmentOutcome::WrongRole { sym, wire } => {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::RelationSegmentWrongRole {
+                                sym,
+                                wire,
+                                entity: source_entity.clone(),
+                                span_start,
+                                span_end,
+                            },
+                            offset: span_start,
+                        });
+                    }
+                    crate::relation_segment::RelationSegmentOutcome::NotFound => field.clone(),
+                };
                 // Check declared relations (e.g. .species, .abilities, .moves)
                 if let Some(rel) = ent.relations.get(relation_field.as_str()) {
                     let target = rel.target_resource.clone();

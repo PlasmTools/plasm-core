@@ -35,9 +35,9 @@
 //! (`ParentRecv…[p#,…]`) require the parent entity on the surface plus the same slot checks as outgoing nav;
 //! field gloss rows and `ref:*` typing are unchanged.
 //! Meaning uses
-//! `relation e#_src → [e#_tgt]` (many) or `relation e#_src → e#_tgt` (one) in **Meaning** only; executable nav is `<receiver>.p#` in `plasm_expr`.
-//! For terminal relation chains, the example line already carries a **result gloss** (`relation …`), so the redundant standalone `p#` gloss row
-//! before it is omitted (see [`skip_redundant_terminal_relation_sym_gloss`]). For cardinality-many
+//! `relation e#_src → [e#_tgt]` (many) or `relation e#_src → e#_tgt` (one) in **Meaning** only; executable nav is `<receiver>.r#` or wire in `plasm_expr`.
+//! For terminal relation chains, the example line already carries a **result gloss** (`relation …`); standalone `r#` gloss rows are always emitted.
+//! For cardinality-many
 //! edges with `materialize` (`from_parent_get`, `query_scoped`, …) the IR is [`Expr::Chain`](crate::Expr);
 //! many-relations without materialization **fail parse** and are omitted from DOMAIN.
 //!
@@ -1093,11 +1093,11 @@ fn is_union_ctor_teaching_surface_line(expr: &str) -> bool {
     i > 1 && i < b.len() && b[i] == b'{'
 }
 
-/// Numeric ordering for opaque `pN` / `vN` tokens (`p12` before `p101`, not lexicographic).
+/// Numeric ordering for opaque `pN` / `rN` / `vN` tokens (`p12` before `p101`, not lexicographic).
 fn opaque_pv_symbol_sort_key(sym: &str) -> Option<(u32, u32)> {
     let mut it = sym.chars();
     let prefix = it.next()?;
-    if prefix != 'p' && prefix != 'v' {
+    if prefix != 'p' && prefix != 'v' && prefix != 'r' {
         return None;
     }
     let rest: String = it.collect();
@@ -1126,6 +1126,9 @@ where
         out.push('\n');
     }
     out.push_str(TSV_DOMAIN_TABLE_HEADER);
+    let mut global_p_gloss_emitted: HashMap<String, String> = HashMap::new();
+    let gloss_emit_fingerprint =
+        |g: &TeachingFieldGloss| format!("{}|{}|{}", g.field_type, g.allowed_values, g.description);
     for block in &bundle.teaching_blocks {
         let heading = &block.heading;
         let field_gloss_rows = &block.field_gloss_rows;
@@ -1194,6 +1197,16 @@ where
             if !emitted_p_slot.insert(g.symbol.clone()) {
                 continue;
             }
+            if g.symbol.starts_with('p') {
+                let fp = gloss_emit_fingerprint(g);
+                if global_p_gloss_emitted
+                    .get(&g.symbol)
+                    .is_some_and(|prev| prev == &fp)
+                {
+                    continue;
+                }
+                global_p_gloss_emitted.insert(g.symbol.clone(), fp);
+            }
             write_domain_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
         }
         for sym in &projection_symbols {
@@ -1201,6 +1214,16 @@ where
                 continue;
             }
             if let Some(gloss) = field_gloss_by_symbol.get(sym.as_str()) {
+                if sym.starts_with('p') {
+                    let fp = gloss_emit_fingerprint(gloss);
+                    if global_p_gloss_emitted
+                        .get(sym.as_str())
+                        .is_some_and(|prev| prev == &fp)
+                    {
+                        continue;
+                    }
+                    global_p_gloss_emitted.insert(sym.clone(), fp);
+                }
                 write_domain_tsv_row(&mut out, DomainTsvRow::FieldGloss(gloss));
                 emitted_p_slot.insert(sym.clone());
             }
@@ -1595,7 +1618,7 @@ fn push_teaching_field_gloss_row(
 ) {
     let mut cs = symbol.chars();
     let first = match cs.next() {
-        Some(c @ ('p' | 'v')) => c,
+        Some(c @ ('p' | 'r' | 'v')) => c,
         _ => return,
     };
     let rest: String = cs.collect();
@@ -2978,7 +3001,7 @@ fn domain_line_validate_cached(
     out
 }
 
-/// Agent execute path: expand `p#`/`m#` only (keep `e#` opaque), parse with session [`SymbolMap`].
+/// Agent execute path: expand `p#`/`r#`/`m#` (keep `e#` opaque), parse with session [`SymbolMap`].
 fn domain_line_validate_symbolic(
     cgs: &CGS,
     sym_arc: std::sync::Arc<SymbolMap>,
@@ -3895,7 +3918,7 @@ fn surface_includes_exposed_entity(
     s.entities.contains(&ekey)
 }
 
-/// Relation-navigation rows (`… .p#` toward another CGS entity, or declared relation chains) are only
+/// Relation-navigation rows (`… .r#` or wire toward another CGS entity, or declared relation chains) are only
 /// taught when the **target** entity name appears in [`ExposureSurface::entities`] for the same
 /// `catalog_entry_id`. Without a surface (`None`), navigation is unrestricted (legacy full DOMAIN).
 #[inline]
@@ -5007,7 +5030,7 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     };
     let query_all_form = entity;
     let nav_form = if spec.symbolic {
-        "<receiver>.p#"
+        "<receiver>.r# | <receiver>.wire"
     } else {
         "<receiver>.field"
     };
@@ -5070,7 +5093,8 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     s.push_str("Symbol and fill rules:\n");
     if spec.symbolic {
         s.push_str(
-            "- `e#` = entity surface; `m#` = method/action surface; `p#` = keyed field/parameter/relation slot; `v#` = value-domain metadata only.\n\
+            "- `e#` = entity surface; `m#` = method/action surface; `p#` = field/capability/query predicate; `r#` = declared relation navigation; `v#` = value-domain metadata only.\n\
+            - Relation hops use `.wire` or `.r#` on a row-producing receiver — not `p#` in dotted navigation (`p#` in `e#{{…}}` is a filter/param).\n\
 - Entity-ref slots in `Meaning` look like `ref:Zone · str · Zone identifier`: canonical entity, id wire type, short note — not `plasm_expr` syntax.\n\
 - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.\n\
 - Unary identity rows often teach `e#(p#)` using the opaque `p#` for the entity `id_field` (same token as gloss); substitute the real wire id — do not treat it as a literal API value.\n\
@@ -5090,7 +5114,7 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         "- Projection rows ending `{projection}` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.",
         projection = projection
     );
-    s.push_str("- Relation rows end with `.p#`/`.field`; apply them to any executable receiver row for that same entity type.\n");
+    s.push_str("- Relation rows end with `.r#`/`.wire`; apply them to any executable receiver row for that same entity type.\n");
     s.push_str("- `page(sN_pgM)` uses a continuation handle returned by a prior response; copy the handle exactly and optionally add `, limit=N`.\n\n");
 
     s.push_str("Grammar:\n");
@@ -5142,7 +5166,7 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
 
     s.push_str("Composition rules:\n");
     s.push_str(
-        "- Multi-line program strings use literal newlines: one binding per line, final roots last. Spaces never separate statements.\n\
+        "- Multi-line programs: one binding per line and final roots last (preferred). Single-line space-separated bindings are coerced; default return is the first binding.\n\
 - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.\n\
 - To turn rows into text, bind a template block: `report = rows[p#,…] <<TAG` newline template newline `TAG`, or `report = rows <<TAG` when columns can be inferred.\n\
 - Template blocks use Minijinja with `rows` as the input array; the bound row has a `content` field (see Common pitfalls for string parameters).\n\
@@ -5172,8 +5196,9 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     s.push_str(
         "- Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.\n\
 - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.\n\
-- Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.p#` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.\n\
-- Teaching-table `Meaning` may show `relation e3 → e2`; copy executable `.p#` from the left cell, not the arrow gloss.\n",
+        - Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.r#` or `issues.labels` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.\n\
+        - Homograph: query filter `p#` and relation `.r#` may share a wire name (e.g. `labels`) — use `.r#`/wire for fanout; `labels = issues.p#` is forgiven when the binding name matches the relation.\n\
+        - Teaching-table `Meaning` may show `relation e3 → e2`; copy executable `.r#`/wire from the left cell, not the arrow gloss.\n",
     );
     s.push_str(
         "- Fill-ins: never emit `$` from teaching rows — substitute real ids and parameter values before execute.\n\
@@ -5213,29 +5238,6 @@ fn comment_prefix_block(text: &str) -> String {
         }
     }
     out
-}
-
-/// True when `sym` is the **terminal** relation segment (`… .p#`) and the teaching row already carries
-/// a result gloss — a standalone `p#` gloss row would duplicate relation target typing.
-fn skip_redundant_terminal_relation_sym_gloss(
-    expr: &str,
-    sym: &str,
-    meta: &crate::symbol_tuning::IdentMetadata,
-    result_gloss: Option<&str>,
-) -> bool {
-    let relation_like = matches!(meta, crate::symbol_tuning::IdentMetadata::Relation { .. });
-    if !relation_like {
-        return false;
-    }
-    if !matches!(result_gloss, Some(g) if !g.trim().is_empty()) {
-        return false;
-    }
-    let expr = crate::symbol_tuning::strip_prompt_expression_annotations(expr.trim());
-    let expr = expr.trim_end();
-    let Some((_, last_seg)) = expr.rsplit_once('.') else {
-        return false;
-    };
-    last_seg == sym
 }
 
 /// Returns [`None`] when `sym` is a synonym for an earlier opaque symbol with the same `meaning`:
@@ -5634,16 +5636,23 @@ fn emit_field_def_lines_before_example(
             _ => false,
         };
         if should_emit {
-            if let Some(m) = &meta {
-                if skip_redundant_terminal_relation_sym_gloss(expr, sym.as_str(), m, result_gloss) {
-                    state.non_registry_slots.remove(&sym);
-                    continue;
-                }
-            }
             let gloss = match meta {
                 Some(m) => m.render_gloss_with_cgs(Some(map), Some(cgs)),
                 None => field_name.to_string(),
             };
+            if sym.starts_with('p')
+                && state
+                    .registry_p_slot_compact_gloss
+                    .get(sym.as_str())
+                    .is_some_and(|prev| prev == &gloss)
+            {
+                continue;
+            }
+            if sym.starts_with('p') {
+                state
+                    .registry_p_slot_compact_gloss
+                    .insert(sym.clone(), gloss.clone());
+            }
             push_teaching_field_gloss_row(
                 out,
                 sym.clone(),
@@ -6044,7 +6053,7 @@ mod tests {
             let needle = format!("{sym}\t=> Block ·");
             assert!(
                 !tsv.contains(&needle),
-                "capability `blocks` ctor params must not reuse relation-style `→ Block` gloss (symbol {sym}); relation nav stays on `e1($).p6`-style rows.\n{tsv}"
+                "capability `blocks` ctor params must not reuse relation-style `→ Block` gloss (symbol {sym}); relation nav stays on `e1($).r6`-style rows.\n{tsv}"
             );
         }
     }
@@ -6185,45 +6194,6 @@ mod tests {
     }
 
     #[test]
-    fn redundant_relation_sym_gloss_skipped_for_terminal_chain_line() {
-        use crate::symbol_tuning::IdentMetadata;
-        use crate::EntityName;
-        let user = EntityName::from("User".to_string());
-        let issue = EntityName::from("Issue".to_string());
-        let rel_meta = IdentMetadata::Relation {
-            catalog_entry_id: String::new(),
-            entity: issue.clone(),
-            wire_name: "reporter".into(),
-            description: String::new(),
-            target: user.clone(),
-        };
-        assert!(skip_redundant_terminal_relation_sym_gloss(
-            "e5(p64=$, p80=$, p59=$).p101",
-            "p101",
-            &rel_meta,
-            Some("e18"),
-        ));
-        assert!(!skip_redundant_terminal_relation_sym_gloss(
-            "e5{p101=$, p64=$, p80=$}",
-            "p101",
-            &rel_meta,
-            Some("[e5]"),
-        ));
-        let title_meta = IdentMetadata::SyntheticUnknown {
-            catalog_entry_id: String::new(),
-            entity: issue,
-            wire_name: "title".into(),
-            description: String::new(),
-        };
-        assert!(!skip_redundant_terminal_relation_sym_gloss(
-            "e5(p64=$, p80=$, p59=$)[p96]",
-            "p96",
-            &title_meta,
-            Some("[p96]"),
-        ));
-    }
-
-    #[test]
     fn bundled_github_petstore_clickup_full_entities_emit_domain_lines() {
         for p in [
             apis_dir("github"),
@@ -6331,7 +6301,7 @@ mod tests {
         );
         // Baseline bumped after `=>` / relation-arrow contract pitfalls in MCP frontmatter.
         const GITHUB_FULL_PROMPT_BASELINE_V0173: usize = 25_850;
-        const GITHUB_FULL_PROMPT_BASELINE_V0179: usize = 24_658;
+        const GITHUB_FULL_PROMPT_BASELINE_V0179: usize = 24_850;
         assert!(
             out.len() <= GITHUB_FULL_PROMPT_BASELINE_V0179,
             "github full prompt regressed above v0.1.79 baseline (got {} bytes, baseline {})",
@@ -6608,7 +6578,9 @@ mod tests {
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         assert!(
             tsv.lines().any(|l| {
-                l.contains("Content scoped to this profile") && l.contains(".p") && l.contains("e7")
+                l.contains("Content scoped to this profile")
+                    && (l.contains(".r") || l.contains(".recorded_matches"))
+                    && l.contains("e7")
             }),
             "expected Profile → RecordedContent relation nav line; e7 lines:\n{}",
             tsv.lines()

@@ -115,7 +115,7 @@ pub(crate) const MCP_PLASM_CONTEXT_TOOL_DESCRIPTION: &str =
     include_str!("mcp_prompt/plasm_context_tool.txt");
 
 /// One-line JSON-schema description for the shared **`program`** parameter on **`plasm`** / **`plasm_run`**.
-pub(crate) const MCP_PROGRAM_PARAM_DESCRIPTION: &str = "Multi-line Plasm program JSON string. **Program contract** in MCP initialize instructions; executable grammar in `plasm_context` teaching rows.";
+pub(crate) const MCP_PROGRAM_PARAM_DESCRIPTION: &str = "Plasm program JSON string (`e#`/`m#`/`p#`/`r#`). Coerced single-liners OK; see initialize **program contract** + `plasm_context` TSV.";
 
 /// MCP initialize workflow text (orchestration + program contract).
 pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = concat!(
@@ -1784,6 +1784,12 @@ impl PlasmMcpHandler {
             let mut loaded: Vec<String> = sess_arc.contexts_by_entry.keys().cloned().collect();
             loaded.sort();
             plasm.insert("catalog_entry_ids".to_string(), json!(loaded));
+            if let Some(exposure) = sess_arc.domain_exposure.as_ref() {
+                let rel_rows = exposure.exposed_relation_symbol_rows();
+                if !rel_rows.is_empty() {
+                    plasm.insert("relations".to_string(), json!(rel_rows));
+                }
+            }
         }
         if text.is_empty() {
             text = format!("`{logical_session_ref}`\n");

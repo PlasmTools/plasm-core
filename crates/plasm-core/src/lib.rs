@@ -106,6 +106,7 @@ pub mod preflight;
 pub mod prompt_pipeline;
 pub mod prompt_render;
 pub mod query_resolve;
+pub mod relation_segment;
 pub mod resolved_identity;
 pub mod result_gloss;
 pub mod row_composition;
@@ -217,6 +218,10 @@ pub use relation_materialize::{
     extract_from_parent_get_value, flatten_from_parent_get_source_rows,
     relation_refs_fully_resolved, resolve_relation_row_resolution, RelationRowResolution,
 };
+pub use relation_segment::{
+    relation_segment_wrong_role_message, resolve_relation_segment, ProgramBindingLabel,
+    RelationSegmentContext, RelationSegmentOutcome,
+};
 pub use schema::{
     capability_is_zero_arity_action, capability_is_zero_arity_invoke,
     capability_method_label_kebab, capability_template_all_var_names,
@@ -251,8 +256,8 @@ pub use symbol_tuning::{
     expand_path_symbols, relation_endpoint_keys, resolve_prompt_surface_entities,
     strip_prompt_expression_annotations, symbol_map_cache_key_federated,
     symbol_map_cache_key_single_catalog, symbol_map_for_prompt, DomainExposureSession,
-    ExposedEntitySymbolRow, ExposureEntityKey, FocusSpec, SymbolMap, SymbolMapCacheKey,
-    SymbolMapCrossRequestCache,
+    ExposedEntitySymbolRow, ExposedRelationSymbolRow, ExposureEntityKey, FocusSpec, SymbolMap,
+    SymbolMapCacheKey, SymbolMapCrossRequestCache,
 };
 pub use template_interpolate::{
     dollar_interpolation_roots, interpolate_string, interpolate_string_map,
