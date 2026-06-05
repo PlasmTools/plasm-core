@@ -7,7 +7,8 @@ use plasm_core::{
     RelationMaterialization, Value, CGS,
 };
 use plasm_runtime::{
-    ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, GraphCache, StreamConsumeOpts,
+    ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, SessionMaterialization,
+    StreamConsumeOpts,
 };
 use std::path::Path;
 
@@ -66,7 +67,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
         ..ExecutionConfig::default()
     };
     let engine = ExecutionEngine::new(config)?;
-    let mut cache = GraphCache::new();
+    let mut mat = SessionMaterialization::new();
 
     let mut all_results: Vec<(String, Vec<CheckResult>)> = Vec::new();
     let mut total_pass = 0usize;
@@ -89,7 +90,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                     Expr::Get(GetExpr::new(entity_name, "test-1")),
                     &cgs,
                     &engine,
-                    &mut cache,
+                    &mut mat,
                     StreamConsumeOpts::default(),
                 )
                 .await,
@@ -110,7 +111,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                     Expr::Query(query_expr.clone()),
                     &cgs,
                     &engine,
-                    &mut cache,
+                    &mut mat,
                     StreamConsumeOpts::default(),
                 )
                 .await,
@@ -126,7 +127,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                         Expr::Query(paginated),
                         &cgs,
                         &engine,
-                        &mut cache,
+                        &mut mat,
                         StreamConsumeOpts {
                             fetch_all: false,
                             max_items: Some(VALIDATION_PAGINATION_MAX_ITEMS),
@@ -143,7 +144,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                     .execute(
                         &Expr::Query(QueryExpr::all(entity_name)),
                         &cgs,
-                        &mut GraphCache::new(),
+                        &mut SessionMaterialization::new(),
                         Some(ExecutionMode::Live),
                         StreamConsumeOpts::default(),
                         ExecuteOptions::default(),
@@ -175,7 +176,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                     Expr::Create(CreateExpr::new(&cap.name, entity_name, input)),
                     &cgs,
                     &engine,
-                    &mut cache,
+                    &mut mat,
                     StreamConsumeOpts::default(),
                 )
                 .await,
@@ -190,7 +191,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                     Expr::Delete(DeleteExpr::new(&cap.name, entity_name, "test-1")),
                     &cgs,
                     &engine,
-                    &mut cache,
+                    &mut mat,
                     StreamConsumeOpts::default(),
                 )
                 .await,
@@ -221,7 +222,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                     )),
                     &cgs,
                     &engine,
-                    &mut cache,
+                    &mut mat,
                     StreamConsumeOpts::default(),
                 )
                 .await,
@@ -341,7 +342,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                             Expr::Query(rel_query),
                             &cgs,
                             &engine,
-                            &mut cache,
+                            &mut mat,
                             consume,
                         )
                         .await,
@@ -429,14 +430,14 @@ async fn check_execution(
     expr: Expr,
     cgs: &CGS,
     engine: &ExecutionEngine,
-    cache: &mut GraphCache,
+    mat: &mut SessionMaterialization,
     consume: StreamConsumeOpts,
 ) -> CheckResult {
     match engine
         .execute(
             &expr,
             cgs,
-            cache,
+            mat,
             Some(ExecutionMode::Live),
             consume,
             ExecuteOptions::default(),

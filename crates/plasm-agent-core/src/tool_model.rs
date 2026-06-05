@@ -910,7 +910,7 @@ fn materialization_view(m: &RelationMaterialization) -> ExplorerRelationMaterial
             binding_keys: None,
         },
         RelationMaterialization::PreferFromParentGet { fallback, .. } => {
-            let mut view = match fallback {
+            let view = match fallback {
                 plasm_core::RelationScopedFallback::QueryScoped { capability, param } => {
                     ExplorerRelationMaterialization {
                         kind: "prefer_from_parent_get",
@@ -1487,16 +1487,14 @@ fn relation_scope_meta(
         | Some(RelationMaterialization::GetScopedBindings { bindings, .. }) => {
             bindings.keys().map(|k| k.to_string()).collect()
         }
-        Some(RelationMaterialization::PreferFromParentGet { fallback, .. }) => {
-            match fallback {
-                plasm_core::RelationScopedFallback::QueryScoped { param, .. } => {
-                    vec![param.to_string()]
-                }
-                plasm_core::RelationScopedFallback::QueryScopedBindings { bindings, .. } => {
-                    bindings.keys().map(|k| k.to_string()).collect()
-                }
+        Some(RelationMaterialization::PreferFromParentGet { fallback, .. }) => match fallback {
+            plasm_core::RelationScopedFallback::QueryScoped { param, .. } => {
+                vec![param.to_string()]
             }
-        }
+            plasm_core::RelationScopedFallback::QueryScopedBindings { bindings, .. } => {
+                bindings.keys().map(|k| k.to_string()).collect()
+            }
+        },
         _ => Vec::new(),
     };
     (skip, mat)

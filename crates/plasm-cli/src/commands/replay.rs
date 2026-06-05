@@ -2,8 +2,8 @@ use crate::commands::common;
 use crate::ReplayAction;
 use plasm_core::{Expr, Predicate, QueryExpr, CGS};
 use plasm_runtime::{
-    ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, FileReplayStore, GraphCache,
-    ReplayStore, StreamConsumeOpts,
+    ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, FileReplayStore, ReplayStore,
+    SessionMaterialization, StreamConsumeOpts,
 };
 use std::path::{Path, PathBuf};
 
@@ -54,14 +54,14 @@ pub async fn execute(action: ReplayAction) -> Result<(), Box<dyn std::error::Err
             };
 
             let engine = ExecutionEngine::new(config)?;
-            let mut cache = GraphCache::new();
+            let mut mat = SessionMaterialization::new();
 
             println!("Executing query in LIVE mode with recording...");
             match engine
                 .execute(
                     &expr,
                     &cgs,
-                    &mut cache,
+                    &mut mat,
                     Some(ExecutionMode::Live),
                     StreamConsumeOpts::default(),
                     ExecuteOptions::default(),

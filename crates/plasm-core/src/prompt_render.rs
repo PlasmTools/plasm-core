@@ -683,7 +683,10 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
     render_domain_table_resolved(
         |ename| {
             let _ = ename;
-            by_entry.values().next().expect("federated by_entry non-empty")
+            by_entry
+                .values()
+                .next()
+                .expect("federated by_entry non-empty")
         },
         &full_entities,
         map_opt.as_deref(),
@@ -838,7 +841,6 @@ pub(crate) fn contract_slice_hints_from_exposure(
         .max(1);
     ContractSliceHints {
         distinct_catalog_count,
-        entity_count: exposure.entities.len(),
     }
 }
 
@@ -864,10 +866,11 @@ pub fn render_prompt_tsv_with_config(cgs: &CGS, config: RenderConfig<'_>) -> Str
         DomainWaveSurface::InitialTeaching,
         false,
         |_| cgs,
-        ContractSliceHints::single_catalog(full_entities.len()),
+        ContractSliceHints::single_catalog(),
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_prompt_surface_from_bundle<'b, F>(
     bundle: &DomainPromptBundle,
     symbolic: bool,
@@ -1102,6 +1105,7 @@ fn opaque_pv_symbol_sort_key(sym: &str) -> Option<(u32, u32)> {
     Some((prefix as u32, n))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_prompt_tsv_from_bundle<'b, F>(
     bundle: &DomainPromptBundle,
     full_entities: &[&str],
@@ -2008,9 +2012,9 @@ fn catalog_entry_id_for_exposed_entity<'a>(
 }
 
 #[inline]
-fn exposure_qualified_catalog_ids<'a>(
-    exposure: &'a crate::symbol_tuning::DomainExposureSession,
-) -> IndexMap<(&'a str, &'a str), ()> {
+fn exposure_qualified_catalog_ids(
+    exposure: &crate::symbol_tuning::DomainExposureSession,
+) -> IndexMap<(&str, &str), ()> {
     exposure
         .entities
         .iter()
@@ -2055,23 +2059,13 @@ fn id_sym_cap(
 }
 
 #[inline]
-fn id_sym_rel(
-    m: Option<&SymbolMap>,
-    catalog_entry_id: &str,
-    entity: &str,
-    rel: &str,
-) -> String {
+fn id_sym_rel(m: Option<&SymbolMap>, catalog_entry_id: &str, entity: &str, rel: &str) -> String {
     m.map(|x| x.ident_sym_relation_for(catalog_entry_id, entity, rel))
         .unwrap_or_else(|| rel.to_string())
 }
 
 #[inline]
-fn met_sym(
-    m: Option<&SymbolMap>,
-    catalog_entry_id: &str,
-    entity: &str,
-    kebab: &str,
-) -> String {
+fn met_sym(m: Option<&SymbolMap>, catalog_entry_id: &str, entity: &str, kebab: &str) -> String {
     m.map(|x| x.method_sym_for(catalog_entry_id, entity, kebab))
         .unwrap_or_else(|| kebab.to_string())
 }
@@ -2145,6 +2139,7 @@ fn relation_nav_anchor_expr(
 }
 
 /// First receiver such that `recv + suffix` is a valid full DOMAIN expression (e.g. `.m#(…)`).
+#[allow(clippy::too_many_arguments)]
 fn receiver_for_dotted_suffix(
     es: &str,
     ent: &EntityDef,
@@ -2238,13 +2233,8 @@ fn incoming_relation_nav_bases_to_entity(
             )
         };
         let work = domain_line_work_string(&expr, map);
-        if domain_line_work_valid_cached(
-            line_valid_cache,
-            line_valid_cache_seed,
-            cgs,
-            &work,
-            &expr,
-        ) && seen.insert(expr.clone())
+        if domain_line_work_valid_cached(line_valid_cache, line_valid_cache_seed, cgs, &work, &expr)
+            && seen.insert(expr.clone())
         {
             out.push(expr);
             if out.len() >= MAX_INCOMING_REL_NAV_PROJECTION_BASES {
@@ -2612,7 +2602,12 @@ fn unary_entity_id_teaching_expr_line(
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,
 ) -> String {
-    let sym = id_sym_entity(map, catalog_entry_id, ent.name.as_str(), ent.id_field.as_str());
+    let sym = id_sym_entity(
+        map,
+        catalog_entry_id,
+        ent.name.as_str(),
+        ent.id_field.as_str(),
+    );
     if map.is_some_and(|m| m.resolve_ident(sym.as_str()).is_some()) {
         format!("{es}({sym})")
     } else {
@@ -3994,7 +3989,8 @@ fn collect_multi_arity_method_lines(
         }
         let label = capability_method_label_kebab(cap);
         let ms = met_sym(map, catalog_entry_id, ename, &label);
-        let line = match build_standalone_create_paren_args(ename, cap, cgs, map, catalog_entry_id) {
+        let line = match build_standalone_create_paren_args(ename, cap, cgs, map, catalog_entry_id)
+        {
             Some(args) => format!("{es}.{ms}({args})"),
             None => format!("{es}.{ms}()"),
         };
@@ -4598,7 +4594,8 @@ fn collect_entity_teaching_block(
         .as_mut()
         .map(|gs| std::mem::take(gs.field_gloss))
         .unwrap_or_default();
-    field_gloss_rows = filter_field_gloss_to_referenced_symbols(&field_gloss_rows, &teaching_rows, &es);
+    field_gloss_rows =
+        filter_field_gloss_to_referenced_symbols(&field_gloss_rows, &teaching_rows, &es);
 
     EntityTeachingBlock {
         heading,
@@ -4836,14 +4833,12 @@ pub const DOMAIN_VALID_EXPR_MARKER: &str =
 pub(crate) struct ContractSliceHints {
     /// Distinct registry `entry_id`s in the exposed slice (1 for single-catalog sessions).
     pub distinct_catalog_count: usize,
-    pub entity_count: usize,
 }
 
 impl ContractSliceHints {
-    pub(crate) fn single_catalog(entity_count: usize) -> Self {
+    pub(crate) fn single_catalog() -> Self {
         Self {
             distinct_catalog_count: 1,
-            entity_count,
         }
     }
 }
@@ -4942,7 +4937,7 @@ where
     F: FnMut(&str) -> &'b CGS,
 {
     full_entities.iter().all(|e| {
-        let cgs = resolve(*e);
+        let cgs = resolve(e);
         !cgs.find_capabilities(e, CapabilityKind::Query).is_empty()
     })
 }
@@ -4969,9 +4964,14 @@ where
         symbolic,
         include_search_line,
         include_rich_string_guidance,
-        include_scoped_search_worked_example: cgs_slice_has_repository_issue_scoped_search(full_entities),
+        include_scoped_search_worked_example: cgs_slice_has_repository_issue_scoped_search(
+            full_entities,
+        ),
         include_search_pitfalls: include_search_line,
-        include_search_only_entity_pitfall: !cgs_slice_all_entities_have_query(resolve, full_entities),
+        include_search_only_entity_pitfall: !cgs_slice_all_entities_have_query(
+            resolve,
+            full_entities,
+        ),
         include_federation_pitfall,
     }
 }
@@ -5185,9 +5185,7 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         );
     }
     if spec.include_search_pitfalls {
-        s.push_str(
-            "- Search: copy `e#~\"text\"` with real quoted terms — never `e#~$`.\n",
-        );
+        s.push_str("- Search: copy `e#~\"text\"` with real quoted terms — never `e#~$`.\n");
     }
     if spec.include_search_only_entity_pitfall {
         s.push_str(
@@ -5716,79 +5714,78 @@ fn render_domain_table_resolved<'b, F>(
         fill_model,
     );
 
-    let render_one =
-        |session: &mut DomainSynthesisSession<'_>,
-         cgs: &CGS,
-         ename: &str,
-         catalog_entry_id: &str,
-         teaching_blocks_out: &mut Vec<EntityTeachingBlock>,
-         model_out: &mut Vec<EntityDomainPrompt>| {
-            let mut field_gloss_accum = Vec::new();
-            let mut gloss_emit: Option<GlossScratch<'_>> =
-                match (session.map, session.ident_meta.as_ref()) {
-                    (Some(m), Some(meta)) => Some(GlossScratch {
-                        field_gloss: &mut field_gloss_accum,
-                        state: &mut session.gloss_emit_state,
-                        map: m,
-                        meta,
-                        catalog_entry_id,
-                        entity: ename,
-                        cgs,
-                    }),
-                    _ => None,
-                };
-            let block = collect_entity_teaching_block(
-                cgs,
-                ename,
-                session.map,
-                session.ident_meta.as_ref(),
-                session.collect_meta,
-                &mut session.line_valid_cache,
-                session.line_valid_cache_seed,
-                session.map_arc.clone(),
-                &mut gloss_emit,
-                session.surface_filter,
-                Some(catalog_entry_id),
-            );
-            if block.teaching_rows.is_empty() {
-                debug_assert!(
+    let render_one = |session: &mut DomainSynthesisSession<'_>,
+                      cgs: &CGS,
+                      ename: &str,
+                      catalog_entry_id: &str,
+                      teaching_blocks_out: &mut Vec<EntityTeachingBlock>,
+                      model_out: &mut Vec<EntityDomainPrompt>| {
+        let mut field_gloss_accum = Vec::new();
+        let mut gloss_emit: Option<GlossScratch<'_>> =
+            match (session.map, session.ident_meta.as_ref()) {
+                (Some(m), Some(meta)) => Some(GlossScratch {
+                    field_gloss: &mut field_gloss_accum,
+                    state: &mut session.gloss_emit_state,
+                    map: m,
+                    meta,
+                    catalog_entry_id,
+                    entity: ename,
+                    cgs,
+                }),
+                _ => None,
+            };
+        let block = collect_entity_teaching_block(
+            cgs,
+            ename,
+            session.map,
+            session.ident_meta.as_ref(),
+            session.collect_meta,
+            &mut session.line_valid_cache,
+            session.line_valid_cache_seed,
+            session.map_arc.clone(),
+            &mut gloss_emit,
+            session.surface_filter,
+            Some(catalog_entry_id),
+        );
+        if block.teaching_rows.is_empty() {
+            debug_assert!(
                     false,
                     "DOMAIN block empty for entity {ename} — CGS::validate should have rejected this via cgs_expression_validate"
                 );
-                tracing::warn!(
-                    target: "plasm_core::prompt_render",
-                    entity = ename,
-                    "empty DOMAIN block; schema should have failed CGS::validate"
-                );
-                return;
-            }
-            let mut seen_expr: HashSet<TeachingRowDedupeKey> = HashSet::new();
-            let mut emitted_metas: Vec<DomainLineMeta> = Vec::new();
-            let mut kept_rows: Vec<EntityTeachingExprRow> = Vec::new();
-            for row in block.teaching_rows {
-                if seen_expr.insert(row.dedupe_key.clone()) {
-                    if session.collect_meta {
-                        emitted_metas.push(row.meta.clone());
-                    }
-                    kept_rows.push(row);
+            tracing::warn!(
+                target: "plasm_core::prompt_render",
+                entity = ename,
+                "empty DOMAIN block; schema should have failed CGS::validate"
+            );
+            return;
+        }
+        let mut seen_expr: HashSet<TeachingRowDedupeKey> = HashSet::new();
+        let mut emitted_metas: Vec<DomainLineMeta> = Vec::new();
+        let mut kept_rows: Vec<EntityTeachingExprRow> = Vec::new();
+        for row in block.teaching_rows {
+            if seen_expr.insert(row.dedupe_key.clone()) {
+                if session.collect_meta {
+                    emitted_metas.push(row.meta.clone());
                 }
+                kept_rows.push(row);
             }
-            teaching_blocks_out.push(EntityTeachingBlock {
-                heading: block.heading,
-                field_gloss_rows: block.field_gloss_rows,
-                teaching_rows: kept_rows,
+        }
+        teaching_blocks_out.push(EntityTeachingBlock {
+            heading: block.heading,
+            field_gloss_rows: block.field_gloss_rows,
+            teaching_rows: kept_rows,
+        });
+        if session.collect_meta {
+            model_out.push(EntityDomainPrompt {
+                entity: ename.to_string(),
+                lines: emitted_metas,
             });
-            if session.collect_meta {
-                model_out.push(EntityDomainPrompt {
-                    entity: ename.to_string(),
-                    lines: emitted_metas,
-                });
-            }
-        };
+        }
+    };
 
     if let Some(blocks) = federated_blocks {
-        let by_entry = federated_by_entry
-            .expect("federated_by_entry required when federated_blocks is set");
+        let by_entry =
+            federated_by_entry.expect("federated_by_entry required when federated_blocks is set");
         for (entry_id, ename) in blocks {
             if let Some(set) = emit_entity_keys {
                 if !set.contains(&(entry_id.clone(), ename.to_string())) {
@@ -5816,13 +5813,11 @@ fn render_domain_table_resolved<'b, F>(
         };
         for &ename in &block_iter {
             let cgs = resolve(ename);
-            let catalog_entry_id_owned = catalog_entry_id_for_exposed_entity(
-                &session.entity_catalog_ids,
-                ename,
-            )
-            .map(str::to_string)
-            .or_else(|| cgs.entry_id.clone())
-            .unwrap_or_default();
+            let catalog_entry_id_owned =
+                catalog_entry_id_for_exposed_entity(&session.entity_catalog_ids, ename)
+                    .map(str::to_string)
+                    .or_else(|| cgs.entry_id.clone())
+                    .unwrap_or_default();
             render_one(
                 &mut session,
                 cgs,
@@ -7514,7 +7509,8 @@ mod tests {
             Some(exp.symbol_map_arc().as_ref()),
             Some(&ident_meta),
             |entity| {
-                let entry = catalog_entry_id_for_exposed_entity(&qualified, entity).unwrap_or("github");
+                let entry =
+                    catalog_entry_id_for_exposed_entity(&qualified, entity).unwrap_or("github");
                 *by_entry.get(entry).expect("entry cgs")
             },
             DomainWaveSurface::InitialTeaching,
@@ -8267,12 +8263,7 @@ mod tests {
         cgs_linear.entry_id = Some("linear".into());
         let layers = [&cgs_github, &cgs_linear];
         let mut exp = DomainExposureSession::new(&cgs_github, "github", &["Issue"]);
-        exp.expose_entities(
-            &layers,
-            Arc::new(cgs_linear.clone()),
-            "linear",
-            &["Issue"],
-        );
+        exp.expose_entities(&layers, Arc::new(cgs_linear.clone()), "linear", &["Issue"]);
         let mut by_entry: IndexMap<String, &CGS> = IndexMap::new();
         by_entry.insert("github".into(), &cgs_github);
         by_entry.insert("linear".into(), &cgs_linear);
@@ -8292,8 +8283,7 @@ mod tests {
             .iter()
             .any(|r| r.teaching_expr.expression.contains("e2"));
         let linear_not_only_e1 = !bundle.teaching_blocks[1].teaching_rows.iter().all(|r| {
-            r.teaching_expr.expression.contains("e1")
-                && !r.teaching_expr.expression.contains("e2")
+            r.teaching_expr.expression.contains("e1") && !r.teaching_expr.expression.contains("e2")
         });
         assert!(github_has_e1, "github Issue block should teach e1");
         assert!(linear_has_e2, "linear Issue block should teach e2");

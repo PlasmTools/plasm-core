@@ -13,6 +13,7 @@ use plasm_compile::{
     CompileOperationHook, CompileQueryHook, CompiledOperation, CompiledRequest, HttpBodyFormat,
     PaginationConfig, PathExpr, PathSegment, ResponsePreprocess,
 };
+use plasm_core::resolve_relation_row_resolution;
 use plasm_core::{
     cross_entity::{
         choose_strategy, extract_cross_entity_predicates, strip_cross_entity_comparisons,
@@ -26,7 +27,6 @@ use plasm_core::{
     Ref, RelationMaterialization, RelationRowResolution, RelationSchema, RelationScopedFallback,
     Value, CGS,
 };
-use plasm_core::resolve_relation_row_resolution;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 use std::pin::Pin;
@@ -3077,7 +3077,7 @@ impl ExecutionEngine {
         let mut merged_stats = ExecutionStats::default();
         merged_stats.merge_telemetry(&source_result.stats.cache);
         let mut any_live = source_result.source == ExecutionSource::Live;
-        let mut graph_hits = per_parent.iter().map(|v| v.len()).sum::<usize>();
+        let graph_hits = per_parent.iter().map(|v| v.len()).sum::<usize>();
 
         if !network_jobs.is_empty() {
             let concurrency = self.config.hydrate_concurrency.max(1);
@@ -3154,9 +3154,9 @@ impl ExecutionEngine {
         cgs: &CGS,
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
-        chain_step: &plasm_core::ChainStep,
-        consume: StreamConsumeOpts,
-        opts: ExecuteOptions,
+        _chain_step: &plasm_core::ChainStep,
+        _consume: StreamConsumeOpts,
+        _opts: ExecuteOptions,
     ) -> Result<ExecutionResult, RuntimeError> {
         let target_entity = rel.target_resource.clone();
         let target_key = target_entity.as_str();
@@ -3177,8 +3177,6 @@ impl ExecutionEngine {
             });
         }
         let capability_name = cap.name.clone();
-        let relation_key = rel.name.as_str();
-        let expected_target = target_key;
 
         if source_result.entities.is_empty() {
             return Ok(ExecutionResult {
@@ -3195,24 +3193,24 @@ impl ExecutionEngine {
 
         let via = via_param.clone();
         let network_jobs = partition_scoped_query_fanout(&source_result.entities, |entity| {
-                let id_field = cgs
-                    .get_entity(entity.reference.entity_type.as_str())
-                    .map(|def| def.id_field.as_str().to_string())
-                    .unwrap_or_default();
-                let id = entity
-                    .get_field(id_field.as_str())
-                    .map(|tf| tf.to_value())
-                    .and_then(|v| match v {
-                        Value::String(s) => Some(s.clone()),
-                        Value::Integer(n) => Some(n.to_string()),
-                        _ => None,
-                    })
-                    .unwrap_or_else(|| entity.reference.primary_slot_str());
-                let pred = plasm_core::Predicate::eq(via.as_str(), id);
-                let mut q = QueryExpr::filtered(target_entity.clone(), pred);
-                q.capability_name = Some(capability_name.clone());
-                q
-            });
+            let id_field = cgs
+                .get_entity(entity.reference.entity_type.as_str())
+                .map(|def| def.id_field.as_str().to_string())
+                .unwrap_or_default();
+            let id = entity
+                .get_field(id_field.as_str())
+                .map(|tf| tf.to_value())
+                .and_then(|v| match v {
+                    Value::String(s) => Some(s.clone()),
+                    Value::Integer(n) => Some(n.to_string()),
+                    _ => None,
+                })
+                .unwrap_or_else(|| entity.reference.primary_slot_str());
+            let pred = plasm_core::Predicate::eq(via.as_str(), id);
+            let mut q = QueryExpr::filtered(target_entity.clone(), pred);
+            q.capability_name = Some(capability_name.clone());
+            q
+        });
         let per_parent = vec![Vec::new(); source_result.entities.len()];
         self.fanout_scoped_query_parallel(source_result, per_parent, network_jobs, cgs, mat, mode)
             .await
@@ -3231,9 +3229,9 @@ impl ExecutionEngine {
         cgs: &CGS,
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
-        chain_step: &plasm_core::ChainStep,
-        consume: StreamConsumeOpts,
-        opts: ExecuteOptions,
+        _chain_step: &plasm_core::ChainStep,
+        _consume: StreamConsumeOpts,
+        _opts: ExecuteOptions,
     ) -> Result<ExecutionResult, RuntimeError> {
         let target_entity = rel.target_resource.clone();
         let target_key = target_entity.as_str();
@@ -3273,24 +3271,24 @@ impl ExecutionEngine {
         let binds = bindings;
 
         let network_jobs = partition_scoped_query_fanout(&source_result.entities, |entity| {
-                let preds: Vec<Predicate> = binds
-                    .iter()
-                    .map(|(cap_param, parent_field)| {
-                        let raw = chain_binding_raw_json(entity, parent_def, parent_field);
-                        let value =
-                            chain_binding_plasm_value(&raw, cap_param.as_str(), &cap_params, cgs);
-                        Predicate::eq(cap_param.as_str(), value)
-                    })
-                    .collect();
-                let pred = if preds.len() == 1 {
-                    preds.into_iter().next().expect("non-empty preds")
-                } else {
-                    Predicate::and(preds)
-                };
-                let mut q = QueryExpr::filtered(target_entity.clone(), pred);
-                q.capability_name = Some(capability_name.clone());
-                q
-            });
+            let preds: Vec<Predicate> = binds
+                .iter()
+                .map(|(cap_param, parent_field)| {
+                    let raw = chain_binding_raw_json(entity, parent_def, parent_field);
+                    let value =
+                        chain_binding_plasm_value(&raw, cap_param.as_str(), &cap_params, cgs);
+                    Predicate::eq(cap_param.as_str(), value)
+                })
+                .collect();
+            let pred = if preds.len() == 1 {
+                preds.into_iter().next().expect("non-empty preds")
+            } else {
+                Predicate::and(preds)
+            };
+            let mut q = QueryExpr::filtered(target_entity.clone(), pred);
+            q.capability_name = Some(capability_name.clone());
+            q
+        });
         let per_parent = vec![Vec::new(); source_result.entities.len()];
         self.fanout_scoped_query_parallel(source_result, per_parent, network_jobs, cgs, mat, mode)
             .await
@@ -4938,6 +4936,7 @@ fn build_scoped_query_from_fallback(
 }
 
 /// Partition for [`RelationMaterialization::PreferFromParentGet`] using [`resolve_relation_row_resolution`].
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn partition_prefer_from_parent_get(
     parents: &[CachedEntity],
     materialize: &RelationMaterialization,
@@ -5914,10 +5913,9 @@ mod tests {
     use super::*;
     use indexmap::IndexMap;
     use plasm_core::{
-        EmbedOnMissPolicy, JsonPathSegment,
         CapabilityKind, CapabilityMapping, CapabilitySchema, Expr, FieldSchema, FieldType,
         FieldValueKind, GetExpr, InputFieldSchema, InputFieldWire, InputSchema, InputValidation,
-        NamedValueSchema, Ref, ResourceSchema, StringSemantics, ValueDomainKey,
+        JsonPathSegment, NamedValueSchema, Ref, ResourceSchema, StringSemantics, ValueDomainKey,
     };
     use std::collections::BTreeMap;
 
@@ -7189,7 +7187,7 @@ mod tests {
             ),
         ];
         let jobs = partition_scoped_query_fanout(&parents, |p| {
-            let mut q = QueryExpr::filtered(EntityName::from("LangTag"), Predicate::eq("id", "x"));
+            let q = QueryExpr::filtered(EntityName::from("LangTag"), Predicate::eq("id", "x"));
             let _ = p;
             q
         });
@@ -7201,9 +7199,7 @@ mod tests {
     #[test]
     fn prefer_graph_miss_yields_scoped_not_error() {
         let materialize = RelationMaterialization::PreferFromParentGet {
-            path: vec![JsonPathSegment::Key {
-                key: "tags".into(),
-            }],
+            path: vec![JsonPathSegment::Key { key: "tags".into() }],
             on_embed_miss: plasm_core::EmbedOnMissPolicy::FallbackScoped,
             fallback: RelationScopedFallback::QueryScoped {
                 capability: "cap".into(),

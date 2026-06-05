@@ -69,7 +69,7 @@ impl ResilientHttpTransport {
         let exp = self
             .policy
             .initial_backoff
-            .saturating_mul(2u32.saturating_pow(attempt.saturating_sub(1)) as u32);
+            .saturating_mul(2u32.saturating_pow(attempt.saturating_sub(1)));
         let base = exp.min(self.policy.max_backoff);
         let base = retry_after.map(|r| r.max(base)).unwrap_or(base);
         jitter_duration(base, url, attempt)

@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Drop unused `binding_proofs` from `ValidatedPlanRelationTraversal` (plan JSON still carries proofs; fixes `-D warnings` dead_code in CI).
+- `plasm-core` / `plasm-runtime` clippy clean under `-D warnings` (Rust 1.93).
 
 ## [0.1.79] - 2026-06-05
 

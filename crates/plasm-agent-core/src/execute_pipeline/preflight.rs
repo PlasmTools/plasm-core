@@ -104,8 +104,6 @@ impl PlasmPreflight {
 
 #[cfg(test)]
 mod tests {
-    use plasm_core::expr_parser::ParsedExpr;
-
     use crate::execute_session::ExecuteSession;
     use crate::plasm_plan_run::parse_parsed_expr_for_session;
 

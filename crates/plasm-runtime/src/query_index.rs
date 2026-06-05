@@ -88,7 +88,7 @@ impl QueryIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plasm_core::{EntityName, Value};
+    use plasm_core::EntityName;
 
     #[test]
     fn query_cache_key_from_scoped_predicate() {

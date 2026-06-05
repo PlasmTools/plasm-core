@@ -811,6 +811,7 @@ pub fn attempt_result_into_result(
 }
 
 /// Read full body, parse JSON, and surface non-2xx API errors (single attempt, no retry loop).
+#[allow(dead_code)]
 async fn parse_http_response(
     response: reqwest::Response,
     method: &'static str,

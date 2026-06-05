@@ -1,7 +1,8 @@
 use crate::commands::common;
 use plasm_core::{Expr, Predicate, QueryExpr, CGS};
 use plasm_runtime::{
-    ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, GraphCache, StreamConsumeOpts,
+    ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, SessionMaterialization,
+    StreamConsumeOpts,
 };
 use std::path::Path;
 
@@ -67,7 +68,7 @@ pub async fn execute(
     };
 
     let engine = ExecutionEngine::new(config)?;
-    let mut cache = GraphCache::new();
+    let mut mat = SessionMaterialization::new();
 
     // Execute the query
     println!("Executing query...");
@@ -76,7 +77,7 @@ pub async fn execute(
         .execute(
             &expr,
             &cgs,
-            &mut cache,
+            &mut mat,
             Some(execution_mode),
             StreamConsumeOpts::default(),
             ExecuteOptions::default(),

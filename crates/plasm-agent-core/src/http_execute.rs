@@ -27,8 +27,8 @@ use plasm_core::{
 use plasm_runtime::{
     auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
     CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecuteSessionMaterial, ExecutionResult,
-    ExecutionSource, ExecutionStats, QueryPaginationResumeData, RuntimeError, SessionMaterialization,
-    StreamConsumeOpts,
+    ExecutionSource, ExecutionStats, QueryPaginationResumeData, RuntimeError,
+    SessionMaterialization, StreamConsumeOpts,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -2032,6 +2032,7 @@ pub async fn execute_plasm_plasm_line(
     .map_err(run_line_error_string)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_plasm_parsed_expr(
     st: &PlasmHostState,
     sess: &ExecuteSession,
@@ -2565,7 +2566,7 @@ fn synthetic_page_result(
             network_requests: 0,
             cache_hits: 0,
             cache_misses: 0,
-        ..Default::default()
+            ..Default::default()
         },
         request_fingerprints,
     }
@@ -2739,7 +2740,7 @@ async fn try_proof_document_share_bind(
             network_requests: 0,
             cache_hits: 0,
             cache_misses: 0,
-        ..Default::default()
+            ..Default::default()
         },
         request_fingerprints: Vec::new(),
     }))
@@ -4367,7 +4368,7 @@ mod tests {
                         network_requests: 0,
                         cache_hits: 0,
                         cache_misses: 0,
-                    ..Default::default()
+                        ..Default::default()
                     },
                     request_fingerprints: vec![],
                 },

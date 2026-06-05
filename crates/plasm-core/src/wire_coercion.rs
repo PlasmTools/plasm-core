@@ -1,8 +1,8 @@
 //! Catalog-driven wire value coercion and relation-binding type assignability.
 
 use crate::{
-    ArrayItemsSchema, CGS, EntityDef, EntityFieldName, FieldType, NamedValueSchema,
-    RelationMaterialization, RelationSchema, Value, ValueWireFormat,
+    ArrayItemsSchema, EntityDef, FieldType, NamedValueSchema, RelationMaterialization,
+    RelationSchema, Value, ValueWireFormat, CGS,
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -156,12 +156,9 @@ pub fn coerce_value_for_field_type(
         FieldType::Array => {
             let coerce_elem = |v: Value| -> Result<Value, String> {
                 match array_items {
-                    Some(items) => coerce_value_for_field_type(
-                        &items.field_type,
-                        items.value_format,
-                        None,
-                        v,
-                    ),
+                    Some(items) => {
+                        coerce_value_for_field_type(&items.field_type, items.value_format, None, v)
+                    }
                     None => Ok(v),
                 }
             };
@@ -177,7 +174,9 @@ pub fn coerce_value_for_field_type(
             }
         }
         FieldType::Date => match value_format {
-            Some(ValueWireFormat::Temporal(fmt)) => crate::temporal::normalize_temporal_value(val, fmt),
+            Some(ValueWireFormat::Temporal(fmt)) => {
+                crate::temporal::normalize_temporal_value(val, fmt)
+            }
             None => Err("Date field missing value_format in schema".to_string()),
         },
         FieldType::String | FieldType::Uuid | FieldType::Select | FieldType::MultiSelect => {
@@ -310,20 +309,28 @@ pub fn parent_entity_field_type(
 ) -> Result<FieldType, String> {
     if parent_field == entity.id_field.as_str() {
         if let Some(fs) = entity.fields.get(parent_field) {
-            return Ok(fs.named_value(cgs).map_err(|e| e.to_string())?.field_type.clone());
+            return Ok(fs
+                .named_value(cgs)
+                .map_err(|e| e.to_string())?
+                .field_type
+                .clone());
         }
         return Ok(FieldType::String);
     }
     if let Some(fs) = entity.fields.get(parent_field) {
-        return Ok(fs.named_value(cgs).map_err(|e| e.to_string())?.field_type.clone());
+        return Ok(fs
+            .named_value(cgs)
+            .map_err(|e| e.to_string())?
+            .field_type
+            .clone());
     }
-    if entity
-        .key_vars
-        .iter()
-        .any(|k| k.as_str() == parent_field)
-    {
+    if entity.key_vars.iter().any(|k| k.as_str() == parent_field) {
         if let Some(fs) = entity.fields.get(parent_field) {
-            return Ok(fs.named_value(cgs).map_err(|e| e.to_string())?.field_type.clone());
+            return Ok(fs
+                .named_value(cgs)
+                .map_err(|e| e.to_string())?
+                .field_type
+                .clone());
         }
         return Ok(FieldType::String);
     }
@@ -336,6 +343,7 @@ pub fn parent_entity_field_type(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::EntityFieldName;
     use indexmap::IndexMap;
 
     #[test]

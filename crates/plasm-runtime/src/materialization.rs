@@ -1,7 +1,6 @@
 //! Session materialization facade: entity graph + response fingerprints + query index.
 
 use crate::cache::{CachedEntity, EntityCompleteness, GraphCache};
-use crate::execution::ExecutionStats;
 use crate::query_index::{QueryCacheKey, QueryIndex};
 use crate::replay::{MemoryReplayStore, ReplayEntry, ReplayStore, RequestFingerprint};
 use crate::{ExecutionSource, RuntimeError};
@@ -272,6 +271,7 @@ impl ExecutionCacheConsult {
     }
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn client_side_predicate_matches_entity(
     entity: &CachedEntity,
     pred: &plasm_core::Predicate,
@@ -321,21 +321,31 @@ impl<'a> FanoutCoordinator<'a> {
     }
 }
 
+/// Bridge for tests that still use [`MemoryReplayStore`].
+pub fn replay_store_lookup(
+    store: &MemoryReplayStore,
+    fingerprint: &RequestFingerprint,
+) -> Result<Option<ReplayEntry>, RuntimeError> {
+    store.lookup(fingerprint)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::execution::ExecutionStats;
     use plasm_core::{EntityName, Predicate, QueryExpr, Value};
 
     #[test]
     fn cache_telemetry_legacy_hits_aggregate_consult_counters() {
-        let mut t = CacheTelemetry::default();
-        t.entity_graph_hits = 1;
-        t.response_store_hits = 2;
-        t.query_satisfied_from_graph = 3;
-        t.entity_graph_misses = 4;
-        t.response_store_misses = 5;
-        t.query_required_network = 6;
-        t.rows_materialized = 9;
+        let t = CacheTelemetry {
+            entity_graph_hits: 1,
+            response_store_hits: 2,
+            query_satisfied_from_graph: 3,
+            entity_graph_misses: 4,
+            response_store_misses: 5,
+            query_required_network: 6,
+            rows_materialized: 9,
+        };
         assert_eq!(t.legacy_cache_hits(), 6);
         assert_eq!(t.legacy_cache_misses(), 15);
         assert_eq!(t.rows_materialized, 9);
@@ -391,11 +401,10 @@ mod tests {
     #[test]
     fn execution_stats_rows_materialized_not_consult_miss() {
         let stats = ExecutionStats::from_telemetry(
-            {
-                let mut t = CacheTelemetry::default();
-                t.rows_materialized = 9;
-                t.query_required_network = 1;
-                t
+            CacheTelemetry {
+                rows_materialized: 9,
+                query_required_network: 1,
+                ..Default::default()
             },
             1,
         );
@@ -403,12 +412,4 @@ mod tests {
         assert_eq!(stats.cache_misses, 1);
         assert_ne!(stats.cache_misses, stats.cache.rows_materialized);
     }
-}
-
-/// Bridge for tests that still use [`MemoryReplayStore`].
-pub fn replay_store_lookup(
-    store: &MemoryReplayStore,
-    fingerprint: &RequestFingerprint,
-) -> Result<Option<ReplayEntry>, RuntimeError> {
-    store.lookup(fingerprint)
 }

@@ -35,7 +35,7 @@ use plasm_eval::{
     DEFAULT_OPENROUTER_EVAL_TEMPERATURE,
 };
 use plasm_runtime::{
-    ExecuteOptions, ExecutionEngine, ExecutionMode, GraphCache, StreamConsumeOpts,
+    ExecuteOptions, ExecutionEngine, ExecutionMode, SessionMaterialization, StreamConsumeOpts,
 };
 use rustyline::{error::ReadlineError, DefaultEditor};
 use tracing::Instrument;
@@ -95,7 +95,7 @@ pub async fn run_repl(
     println!();
 
     let mut rl = DefaultEditor::new()?;
-    let mut cache = GraphCache::new();
+    let mut mat = SessionMaterialization::new();
     let mut mode = initial_mode;
     let mut output_format = initial_format;
     let lexicon = DomainLexicon::from_cgs(cgs);
@@ -119,7 +119,7 @@ pub async fn run_repl(
                         engine,
                         &mut mode,
                         &mut output_format,
-                        &mut cache,
+                        &mut mat,
                         &mut prompt_focus,
                         &mut llm,
                     ) {
@@ -175,7 +175,7 @@ pub async fn run_repl(
                                     parsed,
                                     cgs.as_ref(),
                                     engine,
-                                    &mut cache,
+                                    &mut mat,
                                     mode,
                                     output_format,
                                 )
@@ -233,7 +233,7 @@ pub async fn run_repl(
                             parsed,
                             cgs.as_ref(),
                             engine,
-                            &mut cache,
+                            &mut mat,
                             mode,
                             output_format,
                         )
@@ -381,7 +381,7 @@ async fn execute_parsed_expr(
     mut parsed: ParsedExpr,
     cgs: &CGS,
     engine: &ExecutionEngine,
-    cache: &mut GraphCache,
+    cache: &mut SessionMaterialization,
     mode: ExecutionMode,
     output_format: OutputFormat,
 ) {
@@ -508,7 +508,7 @@ fn handle_command(
     engine: &ExecutionEngine,
     mode: &mut ExecutionMode,
     format: &mut OutputFormat,
-    cache: &mut GraphCache,
+    cache: &mut SessionMaterialization,
     prompt_focus: &mut Option<String>,
     llm: &mut LlmState,
 ) -> bool {
@@ -544,7 +544,7 @@ fn handle_command(
             println!("{text}");
         }
         ":clear" => {
-            *cache = GraphCache::new();
+            *cache = SessionMaterialization::new();
             println!("cache cleared.");
         }
         ":mode" => match parts.get(1).copied() {

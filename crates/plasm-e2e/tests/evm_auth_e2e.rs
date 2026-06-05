@@ -9,8 +9,7 @@ use axum::{
 use plasm_core::{loader, Expr, GetExpr};
 use plasm_runtime::{
     AuthResolver, ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode,
-    SessionMaterialization,
-    StreamConsumeOpts,
+    SessionMaterialization, StreamConsumeOpts,
 };
 use serde_json::json;
 use std::{

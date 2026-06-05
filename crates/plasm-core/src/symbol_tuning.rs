@@ -1793,7 +1793,7 @@ impl SymbolMap {
     /// Opaque `p#` for an **entity field** (scoped; preferred over [`Self::ident_sym`] when the entity is known).
     #[inline]
     pub fn ident_sym_entity_field(&self, entity: &str, field: &str) -> String {
-        let mut v: Vec<_> = self
+        let v: Vec<_> = self
             .entity_field_to_sym
             .iter()
             .filter(|((_, e, f), _)| e.as_str() == entity && f.as_str() == field)
@@ -1827,7 +1827,7 @@ impl SymbolMap {
     /// Opaque `p#` for a **relation** (or entity-ref nav segment) on `entity`.
     #[inline]
     pub fn ident_sym_relation(&self, entity: &str, relation: &str) -> String {
-        let mut v: Vec<_> = self
+        let v: Vec<_> = self
             .relation_to_sym
             .iter()
             .filter(|((_, e, r), _)| e.as_str() == entity && r.as_str() == relation)
@@ -1868,7 +1868,7 @@ impl SymbolMap {
         capability: &str,
         param: &str,
     ) -> String {
-        let mut v: Vec<_> = self
+        let v: Vec<_> = self
             .cap_param_to_sym
             .iter()
             .filter(|((_, dom, cap, p), _)| {
@@ -2034,7 +2034,7 @@ impl SymbolMap {
     /// Opaque `m#` string — unambiguous match only; prefer [`Self::method_sym_for`] under federation.
     #[inline]
     pub fn method_sym(&self, entity: &str, kebab: &str) -> String {
-        let mut v: Vec<_> = self
+        let v: Vec<_> = self
             .method_to_sym
             .iter()
             .filter(|((_, e, k), _)| e == entity && k == kebab)
@@ -2095,14 +2095,16 @@ impl SymbolMap {
                 continue;
             };
             if let FieldType::EntityRef { target } = &nv.field_type {
-                let ps =
-                    self.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str());
+                let ps = self.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str());
                 let es = self.entity_sym_for(entry_id, target.as_str());
                 scope_parts.push(format!("{ps}→{es}"));
             } else {
-                scope_parts.push(
-                    self.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str()),
-                );
+                scope_parts.push(self.ident_sym_cap_param_for(
+                    entry_id,
+                    domain,
+                    cap_name,
+                    f.name.as_str(),
+                ));
             }
         }
         if scope_parts.is_empty() {
@@ -3164,10 +3166,7 @@ impl DomainExposureSession {
     fn rebuild_ident_meta_by_entity(&mut self) {
         self.ident_meta_by_entity.clear();
         for meta in self.slot_occurrence_meta.values() {
-            let key = (
-                meta.catalog_entry_id().to_string(),
-                meta.entity().clone(),
-            );
+            let key = (meta.catalog_entry_id().to_string(), meta.entity().clone());
             self.ident_meta_by_entity
                 .entry(key)
                 .or_default()

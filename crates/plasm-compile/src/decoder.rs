@@ -227,10 +227,7 @@ impl EntityDecoder {
         }
     }
 
-    pub fn with_parent_identity_field_hints(
-        mut self,
-        hints: Vec<ParentIdentityFieldHint>,
-    ) -> Self {
+    pub fn with_parent_identity_field_hints(mut self, hints: Vec<ParentIdentityFieldHint>) -> Self {
         self.parent_identity_field_hints = hints;
         self
     }

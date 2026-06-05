@@ -1,7 +1,7 @@
 use alloy::primitives::U256;
 use plasm_core::{loader, Expr, GetExpr, QueryExpr, QueryPagination};
 use plasm_e2e::evm_support::{make_engine, EvmTestContext, ANVIL_ADDRESS_1, ANVIL_ADDRESS_2};
-use plasm_runtime::{ExecuteOptions, ExecutionMode, GraphCache, StreamConsumeOpts};
+use plasm_runtime::{ExecuteOptions, ExecutionMode, SessionMaterialization, StreamConsumeOpts};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -20,13 +20,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let schema_dir = ctx.write_schema_dir(token);
     let cgs = loader::load_schema_dir(schema_dir.path()).map_err(std::io::Error::other)?;
     let engine = make_engine(&ctx.endpoint);
-    let mut cache = GraphCache::new();
+    let mut mat = SessionMaterialization::new();
 
     let balance = engine
         .execute(
             &Expr::Get(GetExpr::new("Balance", ANVIL_ADDRESS_1.to_string())),
             &cgs,
-            &mut cache,
+            &mut mat,
             Some(ExecutionMode::Live),
             StreamConsumeOpts::default(),
             ExecuteOptions::default(),
@@ -50,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .execute(
             &Expr::Query(query),
             &cgs,
-            &mut cache,
+            &mut mat,
             Some(ExecutionMode::Live),
             StreamConsumeOpts {
                 fetch_all: true,

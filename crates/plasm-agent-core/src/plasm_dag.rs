@@ -683,10 +683,7 @@ fn validate_compute_paths_for_schema(
 fn is_opaque_passthrough_compute_schema(schema: &SyntheticResultSchema) -> bool {
     schema.fields.len() == 1
         && schema.fields[0].name.as_str() == "value"
-        && matches!(
-            schema.fields[0].value_kind,
-            SyntheticValueKind::Unknown
-        )
+        && matches!(schema.fields[0].value_kind, SyntheticValueKind::Unknown)
 }
 
 fn validate_compute_paths_for_dag_source(
@@ -704,13 +701,7 @@ fn validate_compute_paths_for_dag_source(
     }
     if let Some(qe) = resolve_qualified_entity_for_dag_source(state, staged, source_id.to_string())
     {
-        return validate_compute_paths_for_entity(
-            session,
-            state.cross_cache,
-            &qe,
-            paths,
-            op_label,
-        );
+        return validate_compute_paths_for_entity(session, state.cross_cache, &qe, paths, op_label);
     }
     Ok(())
 }
@@ -2077,12 +2068,9 @@ fn lower_relation_continuation(
         projection: parsed.projection.clone(),
         display_expr: Some(expr.to_string()),
     };
-    let binding_proofs = relation_binding_proofs_for_lower(
-        session,
-        &contract.row_entity,
-        wire.as_str(),
-    )
-    .unwrap_or_default();
+    let binding_proofs =
+        relation_binding_proofs_for_lower(session, &contract.row_entity, wire.as_str())
+            .unwrap_or_default();
     let materialize = relation_materialize_for_lower(session, &contract.row_entity, wire.as_str())?;
     let plan_relation = PlanRelationTraversal {
         source: source_label.to_string(),
@@ -2163,7 +2151,10 @@ fn relation_materialize_for_lower(
         resolve_cgs_for_qualified_entity(session, row_qe),
     )?;
     let ent = cgs.get_entity(row_qe.entity.as_str()).ok_or_else(|| {
-        format!("unknown entity `{}` for relation materialize", row_qe.entity)
+        format!(
+            "unknown entity `{}` for relation materialize",
+            row_qe.entity
+        )
     })?;
     let rel = ent.relations.get(relation_wire).ok_or_else(|| {
         format!(
@@ -2188,7 +2179,10 @@ fn relation_binding_proofs_for_lower(
         resolve_cgs_for_qualified_entity(session, row_qe),
     )?;
     let ent = cgs.get_entity(row_qe.entity.as_str()).ok_or_else(|| {
-        format!("unknown entity `{}` for relation binding proofs", row_qe.entity)
+        format!(
+            "unknown entity `{}` for relation binding proofs",
+            row_qe.entity
+        )
     })?;
     let rel = ent.relations.get(relation_wire).ok_or_else(|| {
         format!(
@@ -3879,11 +3873,8 @@ commits"#;
             "github".into(),
             Arc::new(CgsContext::entry("github", cgs.clone())),
         );
-        let exp = DomainExposureSession::new(
-            cgs.as_ref(),
-            "github",
-            &["Repository", "Issue", "Label"],
-        );
+        let exp =
+            DomainExposureSession::new(cgs.as_ref(), "github", &["Repository", "Issue", "Label"]);
         ExecuteSession::new(
             "ph".into(),
             "p".into(),
@@ -3926,11 +3917,13 @@ labels"#;
             .expect("labels relation node");
         let uses = labels["uses_result"].as_array().expect("uses_result");
         assert!(
-            uses.iter().any(|u| u["node"] == "repo" && u["as"] == "repo"),
+            uses.iter()
+                .any(|u| u["node"] == "repo" && u["as"] == "repo"),
             "expected repo in uses_result: {uses:?}"
         );
         assert!(
-            uses.iter().any(|u| u["node"] == "issues" && u["as"] == "source"),
+            uses.iter()
+                .any(|u| u["node"] == "issues" && u["as"] == "source"),
             "expected issues source in uses_result: {uses:?}"
         );
         let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");

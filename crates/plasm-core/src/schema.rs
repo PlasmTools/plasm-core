@@ -1662,8 +1662,7 @@ pub struct CachedManifestNames {
 impl CachedManifestNames {
     pub fn resolve<'a>(&self, cgs: &'a CGS) -> CapabilityManifest<'a> {
         let cap = |n: &CapabilityName| cgs.capabilities.get(n.as_str());
-        let caps =
-            |ns: &[CapabilityName]| ns.iter().filter_map(cap).collect::<Vec<_>>();
+        let caps = |ns: &[CapabilityName]| ns.iter().filter_map(cap).collect::<Vec<_>>();
         CapabilityManifest {
             primary_query: self.primary_query.as_ref().and_then(cap),
             primary_search: self.primary_search.as_ref().and_then(cap),
@@ -1989,7 +1988,8 @@ fn new_capability_index_lock() -> OnceLock<Arc<CgsCapabilityIndex>> {
     OnceLock::new()
 }
 
-fn new_capability_manifest_by_entity_lock() -> OnceLock<Arc<IndexMap<EntityName, CachedManifestNames>>> {
+fn new_capability_manifest_by_entity_lock(
+) -> OnceLock<Arc<IndexMap<EntityName, CachedManifestNames>>> {
     OnceLock::new()
 }
 
@@ -2270,10 +2270,7 @@ impl CGS {
             .get_or_init(|| {
                 let mut map = IndexMap::new();
                 for en in self.entities.keys() {
-                    map.insert(
-                        en.clone(),
-                        self.build_cached_manifest_names(en.as_str()),
-                    );
+                    map.insert(en.clone(), self.build_cached_manifest_names(en.as_str()));
                 }
                 Arc::new(map)
             })
@@ -2681,7 +2678,9 @@ impl CGS {
                                     path,
                                 )?;
                             }
-                            RelationMaterialization::PreferFromParentGet { path, fallback, .. } => {
+                            RelationMaterialization::PreferFromParentGet {
+                                path, fallback, ..
+                            } => {
                                 Self::validate_from_parent_get_path(
                                     entity_name.as_str(),
                                     relation_name.as_str(),
@@ -4349,15 +4348,14 @@ impl CGS {
         entity: &EntityDef,
     ) -> Result<(), SchemaError> {
         match fallback {
-            RelationScopedFallback::QueryScoped { capability, param } => {
-                self.validate_chain_materialize_capability(
+            RelationScopedFallback::QueryScoped { capability, param } => self
+                .validate_chain_materialize_capability(
                     parent_entity,
                     relation,
                     target_entity,
                     capability,
                     &[param.as_str()],
-                )
-            }
+                ),
             RelationScopedFallback::QueryScopedBindings {
                 capability,
                 bindings,
@@ -4493,14 +4491,15 @@ impl CGS {
                     detail: format!("param `{}`: {e}", cap_param),
                 }
             })?;
-            let parent_ty = crate::wire_coercion::parent_entity_field_type(self, entity, parent_field.as_str())
-                .map_err(|detail| SchemaError::RelationMaterializeCapabilityInvalid {
-                    entity: parent_entity.to_string(),
-                    relation: relation.to_string(),
-                    target: cap.domain.to_string(),
-                    capability: capability.to_string(),
-                    detail,
-                })?;
+            let parent_ty =
+                crate::wire_coercion::parent_entity_field_type(self, entity, parent_field.as_str())
+                    .map_err(|detail| SchemaError::RelationMaterializeCapabilityInvalid {
+                        entity: parent_entity.to_string(),
+                        relation: relation.to_string(),
+                        target: cap.domain.to_string(),
+                        capability: capability.to_string(),
+                        detail,
+                    })?;
             if !crate::wire_coercion::relation_binding_assignable(
                 entity,
                 parent_field.as_str(),

@@ -45,9 +45,9 @@ use crate::trace_hub::{CodePlanRunArtifactRef, McpPlasmTraceSink};
 use crate::trace_sink_emit::PlasmTraceContext;
 use indexmap::IndexMap;
 use plasm_core::{
-    extract_from_parent_get_value, flatten_from_parent_get_source_rows, resolve_relation_row_resolution,
-    CapabilityKind, Cardinality, EntityKey, EntityName, Expr, JsonPathSegment, Ref,
-    RelationMaterialization, RelationRowResolution, RelationScopedFallback, TypedFieldValue, Value,
+    flatten_from_parent_get_source_rows, resolve_relation_row_resolution, CapabilityKind,
+    EntityKey, EntityName, Expr, Ref, RelationMaterialization, RelationRowResolution,
+    TypedFieldValue, Value,
 };
 use plasm_runtime::{
     CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
@@ -1379,10 +1379,7 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDry
         }
         if let ValidatedPlanNode::Surface(surface) = n {
             if surface.page_size.is_none()
-                && matches!(
-                    surface.kind,
-                    PlanNodeKind::Query | PlanNodeKind::Search
-                )
+                && matches!(surface.kind, PlanNodeKind::Query | PlanNodeKind::Search)
                 && matches!(
                     surface.result_shape,
                     crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
@@ -2352,7 +2349,7 @@ async fn materialize_synthetic_node(
             network_requests: 0,
             cache_hits: 0,
             cache_misses: 0,
-        ..Default::default()
+            ..Default::default()
         },
         request_fingerprints: request_fingerprints.clone(),
     };
@@ -2507,7 +2504,14 @@ async fn materialize_validated_relation_traversal(
                     ));
                 }
                 materialize_relation_singleton_chain(
-                    st, es, session_id, idx, relation, materialized, trace, sink,
+                    st,
+                    es,
+                    session_id,
+                    idx,
+                    relation,
+                    materialized,
+                    trace,
+                    sink,
                 )
                 .await
             }
@@ -2526,7 +2530,14 @@ async fn materialize_validated_relation_traversal(
                 ));
             }
             materialize_relation_singleton_chain(
-                st, es, session_id, idx, relation, materialized, trace, sink,
+                st,
+                es,
+                session_id,
+                idx,
+                relation,
+                materialized,
+                trace,
+                sink,
             )
             .await
         }
@@ -2594,7 +2605,7 @@ async fn try_materialize_from_parent_get_relation(
             network_requests: 0,
             cache_hits: 0,
             cache_misses: 0,
-        ..Default::default()
+            ..Default::default()
         },
         request_fingerprints: request_fingerprints.clone(),
     };
@@ -2641,8 +2652,7 @@ async fn materialize_prefer_from_parent_get_relation(
     trace: Option<&PlasmTraceContext>,
     sink: Option<&McpPlasmTraceSink>,
 ) -> Result<MaterializedNode, String> {
-    let RelationMaterialization::PreferFromParentGet { .. } = &relation.relation.materialize
-    else {
+    let RelationMaterialization::PreferFromParentGet { .. } = &relation.relation.materialize else {
         return Err(format!(
             "relation `{}` expected PreferFromParentGet materialize",
             relation.relation.relation
@@ -2669,12 +2679,9 @@ async fn materialize_prefer_from_parent_get_relation(
                 )
             });
         if all_embed {
-            if let Some(entities) = collect_all_embedded_relation_targets(
-                rel_name,
-                target_entity,
-                parents,
-                &graph,
-            ) {
+            if let Some(entities) =
+                collect_all_embedded_relation_targets(rel_name, target_entity, parents, &graph)
+            {
                 let count = entities.len();
                 let full_result = ExecutionResult {
                     count,
@@ -2697,7 +2704,10 @@ async fn materialize_prefer_from_parent_get_relation(
                     es,
                     session_id,
                     Some(relation.relation.target.entry_id.as_str()),
-                    vec![format!("plan.relation({}) prefer_embed_all", relation.id.as_str())],
+                    vec![format!(
+                        "plan.relation({}) prefer_embed_all",
+                        relation.id.as_str()
+                    )],
                     &full_result,
                     trace,
                 )
@@ -2797,8 +2807,11 @@ async fn materialize_prefer_from_parent_get_relation(
                     scoped_es.cgs.as_ref(),
                     source_mat.entity.as_str(),
                 );
-                let parsed =
-                    instantiate_parsed_expr_plan_inputs_with_rows(pe.clone(), &input_rows, wire_coercion)?;
+                let parsed = instantiate_parsed_expr_plan_inputs_with_rows(
+                    pe.clone(),
+                    &input_rows,
+                    wire_coercion,
+                )?;
                 let trace_line_index = node_index
                     .checked_mul(1000)
                     .and_then(|base| base.checked_add(row_index))
@@ -3228,7 +3241,7 @@ async fn materialize_relation_scoped_fanout(
     es: &ExecuteSession,
     session_id: &str,
     node_index: usize,
-    node: &ValidatedPlanNode,
+    _node: &ValidatedPlanNode,
     relation: &ValidatedRelationTraversalNode,
     source_mat: &MaterializedNode,
     source_rows: &[serde_json::Value],
@@ -3249,7 +3262,7 @@ async fn materialize_relation_scoped_fanout(
         network_requests: 0,
         cache_hits: 0,
         cache_misses: 0,
-    ..Default::default()
+        ..Default::default()
     };
     let mut source = ExecutionSource::Cache;
     let base_display = relation
@@ -3275,11 +3288,8 @@ async fn materialize_relation_scoped_fanout(
         )?;
         let wire_coercion =
             wire_coercion_ctx_for_source_entity(scoped_es.cgs.as_ref(), source_mat.entity.as_str());
-        let parsed = instantiate_parsed_expr_plan_inputs_with_rows(
-            pe.clone(),
-            &input_rows,
-            wire_coercion,
-        )?;
+        let parsed =
+            instantiate_parsed_expr_plan_inputs_with_rows(pe.clone(), &input_rows, wire_coercion)?;
         let trace_line_index = node_index
             .checked_mul(1000)
             .and_then(|base| base.checked_add(row_index))
@@ -3308,7 +3318,9 @@ async fn materialize_relation_scoped_fanout(
             crate::http_execute::RunLineError::Parse(d)
             | crate::http_execute::RunLineError::Normalize(d)
             | crate::http_execute::RunLineError::Projection(d) => d,
-            crate::http_execute::RunLineError::Runtime(e, src) => format!("{e}\nsource expression: {src}"),
+            crate::http_execute::RunLineError::Runtime(e, src) => {
+                format!("{e}\nsource expression: {src}")
+            }
             crate::http_execute::RunLineError::ArtifactSerialization(e) => {
                 format!("artifact serialization failed: {e}")
             }
@@ -3743,7 +3755,7 @@ async fn materialize_for_each_node(
         network_requests: 0,
         cache_hits: 0,
         cache_misses: 0,
-    ..Default::default()
+        ..Default::default()
     };
     let mut source = ExecutionSource::Cache;
     let mut displays = Vec::new();
@@ -4513,7 +4525,7 @@ mod tests {
                         network_requests: 0,
                         cache_hits: 0,
                         cache_misses: 0,
-                    ..Default::default()
+                        ..Default::default()
                     },
                     request_fingerprints: vec![],
                 },
@@ -5824,7 +5836,7 @@ mod tests {
                         network_requests: 0,
                         cache_hits: 0,
                         cache_misses: 0,
-                    ..Default::default()
+                        ..Default::default()
                     },
                     request_fingerprints: vec![],
                 },

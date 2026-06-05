@@ -6,11 +6,10 @@
 
 use crate::prompt_render::{
     contract_slice_hints_from_exposure, prompt_surface_stats,
-    render_domain_prompt_bundle_for_exposure,
-    render_domain_prompt_bundle_for_exposure_federated, render_prompt_surface_from_bundle,
-    render_prompt_tsv_for_single_catalog_exposure, render_prompt_tsv_with_config,
-    ContractSliceHints, DomainPromptBundle, DomainWaveSurface, PromptRenderMode,
-    PromptSurfaceStats, RenderConfig,
+    render_domain_prompt_bundle_for_exposure, render_domain_prompt_bundle_for_exposure_federated,
+    render_prompt_surface_from_bundle, render_prompt_tsv_for_single_catalog_exposure,
+    render_prompt_tsv_with_config, ContractSliceHints, DomainPromptBundle, DomainWaveSurface,
+    PromptRenderMode, PromptSurfaceStats, RenderConfig,
 };
 use crate::schema::CGS;
 use crate::symbol_tuning::{
@@ -171,7 +170,7 @@ impl PromptPipelineConfig {
         let slice_hints = if matches!(wave_surface, DomainWaveSurface::InitialTeaching) {
             contract_slice_hints_from_exposure(exposure)
         } else {
-            ContractSliceHints::single_catalog(full_entities.len())
+            ContractSliceHints::single_catalog()
         };
         render_prompt_surface_from_bundle(
             bundle,

@@ -78,6 +78,8 @@
 //! The [`identity`] module defines string newtypes ([`EntityName`], [`EntityId`], [`CapabilityName`], etc.)
 //! so entity, capability, and parameter names do not cross-wire by accident. Re-exported at crate root.
 //!
+#![allow(clippy::result_large_err)]
+
 pub mod cgs_context;
 pub mod cgs_expression_validate;
 pub mod cgs_federation;
@@ -157,13 +159,6 @@ pub use entity_ref_value::{
     normalize_entity_ref_value_for_target, try_narrow_entity_row_to_entity_ref_value,
     EntityRefAtom, EntityRefPayload, EntityRefValueError, ScopeEntityRefNormalizeError,
 };
-pub use wire_coercion::{
-    binding_value_as_plasm_value, collect_relation_binding_proofs, coerce_json_value_for_field_type,
-    coerce_value_for_field_type, field_type_assignable_for_relation_binding,
-    relation_binding_assignable,
-    identity_slot_to_json, json_value_to_plasm_value, parent_entity_field_type,
-    plasm_value_to_json, RelationBindingProof,
-};
 pub use error::{NormalizationError, SchemaError, TypeError};
 pub use expr::{
     lift_invoke_payloads_in_expr, ChainExpr, ChainStep, CreateExpr, DeleteExpr, EntityKey, Expr,
@@ -211,10 +206,16 @@ pub use row_predicate::{
     entity_def_for_row_predicate, parse_row_predicate_list, row_predicate_from_expr,
     type_check_row_predicate, RowComparison, RowPredicate, RowPredicateTypeCtx,
 };
+pub use wire_coercion::{
+    binding_value_as_plasm_value, coerce_json_value_for_field_type, coerce_value_for_field_type,
+    collect_relation_binding_proofs, field_type_assignable_for_relation_binding,
+    identity_slot_to_json, json_value_to_plasm_value, parent_entity_field_type,
+    plasm_value_to_json, relation_binding_assignable, RelationBindingProof,
+};
 pub mod relation_materialize;
 pub use relation_materialize::{
-    extract_from_parent_get_value, flatten_from_parent_get_source_rows, relation_refs_fully_resolved,
-    resolve_relation_row_resolution, RelationRowResolution,
+    extract_from_parent_get_value, flatten_from_parent_get_source_rows,
+    relation_refs_fully_resolved, resolve_relation_row_resolution, RelationRowResolution,
 };
 pub use schema::{
     capability_is_zero_arity_action, capability_is_zero_arity_invoke,
@@ -223,16 +224,15 @@ pub use schema::{
     AgentPresentation, ArrayItemsSchema, AttachmentMediaKind, AuthScheme, CapabilityKind,
     CapabilityManifest, CapabilityMapping, CapabilitySchema, CapabilityTemplateJson, Cardinality,
     CgsCapabilityIndex, CrossFieldRule, CrossFieldRuleType, DiscoveryCapabilityHints,
-    DiscoveryEntityHints, DiscoveryRelationHints, EntityDef, FieldDeriveRule, FieldSchema,
-    FieldValueKind, IdFormat, InputFieldSchema, InputFieldWire, InputSchema, InputType,
-    InputValidation, InputVariantSchema, JsonPathSegment, NamedValueSchema, OauthDefaultScopeSet,
-    OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema, OutputType, ParameterRole,
-    EmbedOnMissPolicy, RelationMaterialization, RelationScopedFallback, RelationSchema,
-    ResourceSchema, ScopeAggregateKeyPolicy,
-    ScopeRequirement, StringSemantics, ValidationOp, ValidationPredicate, ValueDomainKey,
-    ValueDomainSlot, ViewDefinition, ViewNodeSpec, ViewOutputBinding, ViewParamBinding,
-    ViewRelationBinding, ViewRelationOutputSpec, ViewScopeInject, ViewScopeParam,
-    WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
+    DiscoveryEntityHints, DiscoveryRelationHints, EmbedOnMissPolicy, EntityDef, FieldDeriveRule,
+    FieldSchema, FieldValueKind, IdFormat, InputFieldSchema, InputFieldWire, InputSchema,
+    InputType, InputValidation, InputVariantSchema, JsonPathSegment, NamedValueSchema,
+    OauthDefaultScopeSet, OauthExtension, OauthRequirements, OauthScopeEntry, OutputSchema,
+    OutputType, ParameterRole, RelationMaterialization, RelationSchema, RelationScopedFallback,
+    ResourceSchema, ScopeAggregateKeyPolicy, ScopeRequirement, StringSemantics, ValidationOp,
+    ValidationPredicate, ValueDomainKey, ValueDomainSlot, ViewDefinition, ViewNodeSpec,
+    ViewOutputBinding, ViewParamBinding, ViewRelationBinding, ViewRelationOutputSpec,
+    ViewScopeInject, ViewScopeParam, WireVariantDiscriminator, CGS, DEFAULT_HTTP_BACKEND,
 };
 pub use schema_overlay::{
     build_decode_scope_key, build_schema_overlay, overlay_bind_cache_suffix, overlay_collect_rows,

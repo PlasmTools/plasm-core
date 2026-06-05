@@ -753,9 +753,7 @@ fn assert_planning_ir(
                 p.get("cap_param").and_then(|v| v.as_str()) == Some("seq")
                     && p.get("parent_field").and_then(|v| v.as_str()) == Some("score")
             }) {
-                return Err(format!(
-                    "expected seq←score binding proof, got {proofs:?}"
-                ));
+                return Err(format!("expected seq←score binding proof, got {proofs:?}"));
             }
             let pool: Vec<&Expr> = surfaces.iter().chain(rel.iter()).collect();
             if !pool
@@ -776,7 +774,9 @@ fn assert_planning_ir(
             let sort = computes
                 .iter()
                 .find(|c| matches!(c.op, ComputeOp::Sort { .. }))
-                .ok_or_else(|| format!("expected Sort compute after group_by, got {:?}", computes))?;
+                .ok_or_else(|| {
+                    format!("expected Sort compute after group_by, got {:?}", computes)
+                })?;
             if let ComputeOp::Sort { key, .. } = &sort.op {
                 if key.dotted() != "n" {
                     return Err(format!("expected sort on aggregate n, got {:?}", key));
@@ -857,7 +857,10 @@ fn assert_planning_ir(
         "lang_federated_duplicate_entity_e2_search" => {
             let q = first_query(&surfaces)?;
             if q.entity != "LangItem" {
-                return Err(format!("expected LangItem search on e2, got {:?}", q.entity));
+                return Err(format!(
+                    "expected LangItem search on e2, got {:?}",
+                    q.entity
+                ));
             }
             if q.catalog_entry_id.as_deref() != Some("linear") {
                 return Err(format!(
@@ -1514,7 +1517,8 @@ async fn plasm_language_matrix_live_runs() {
     for row in MATRIX_ROWS {
         let (row_es, row_st) = if matches!(
             row.id,
-            "lang_federated_duplicate_entity_e1_query" | "lang_federated_duplicate_entity_e2_search"
+            "lang_federated_duplicate_entity_e1_query"
+                | "lang_federated_duplicate_entity_e2_search"
         ) {
             (&es_federated_dup, &st_federated_dup)
         } else if row.federated {

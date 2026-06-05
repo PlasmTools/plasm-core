@@ -8,7 +8,9 @@ use plasm_core::{
     CapabilityKind, ChainExpr, CreateExpr, DeleteExpr, EntityDef, EntityKey, Expr, FieldType,
     GetExpr, InvokeExpr, QueryExpr, QueryPagination, Ref, Value, CGS,
 };
-use plasm_runtime::{ExecuteOptions, ExecutionMode, ExprExecutor, SessionMaterialization, StreamConsumeOpts};
+use plasm_runtime::{
+    ExecuteOptions, ExecutionMode, ExprExecutor, SessionMaterialization, StreamConsumeOpts,
+};
 use tracing::Instrument;
 
 use crate::error::AgentError;

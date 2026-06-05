@@ -113,10 +113,7 @@ fn domain_prompt_benchmarks(c: &mut Criterion) {
             },
         );
         group.bench_with_input(
-            BenchmarkId::new(
-                "render_prompt_tsv_validation_all_entities",
-                "github",
-            ),
+            BenchmarkId::new("render_prompt_tsv_validation_all_entities", "github"),
             &cgs,
             |b, cgs: &Arc<CGS>| {
                 b.iter(|| {

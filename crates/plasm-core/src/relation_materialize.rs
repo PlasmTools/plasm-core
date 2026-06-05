@@ -2,10 +2,7 @@
 //!
 //! Plan and runtime share this module so strategy does not depend on cache-shape heuristics.
 
-use crate::{
-    Cardinality, EmbedOnMissPolicy, JsonPathSegment, Ref, RelationMaterialization,
-    RelationScopedFallback,
-};
+use crate::{Cardinality, EmbedOnMissPolicy, JsonPathSegment, Ref, RelationMaterialization};
 use serde_json::Value;
 
 /// Whether a parent row is served from the session graph or needs a scoped query.
@@ -49,9 +46,8 @@ pub fn relation_refs_fully_resolved<'a>(
     expected_target: &str,
     mut get: impl FnMut(&Ref) -> Option<&'a ()>,
 ) -> bool {
-    refs.iter().all(|r| {
-        r.entity_type.as_str() == expected_target && get(r).is_some()
-    })
+    refs.iter()
+        .all(|r| r.entity_type.as_str() == expected_target && get(r).is_some())
 }
 
 /// Decide embed vs scoped query for one parent row from frozen catalog materialization.
@@ -90,7 +86,7 @@ pub fn resolve_relation_row_resolution(
 fn resolve_prefer_from_parent_get_row(
     path: &[JsonPathSegment],
     on_embed_miss: EmbedOnMissPolicy,
-    relation_name: &str,
+    _relation_name: &str,
     expected_target: &str,
     parent_json: &Value,
     relation_refs: Option<&[Ref]>,
@@ -140,7 +136,7 @@ pub fn flatten_from_parent_get_source_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::RelationMaterialization;
+    use crate::{RelationMaterialization, RelationScopedFallback};
     use indexmap::IndexMap;
 
     #[test]
