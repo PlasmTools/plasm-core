@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.84] - 2026-05-30
+
+### Added
+
+- **Language matrix:** `lang_relation_opaque_r_symbol` (`items.r#` nav) and `lang_flattened_single_liner_coercion` (space-separated bindings + `coerced_default_return` metadata).
+
+### Changed
+
+- **DOMAIN docs / prompt_render:** clarify `r#` vs `p#` pools — relation nav exemplars use `.r#` without duplicate standalone gloss rows; homograph `p#` vs expanded parse documented.
+
 ## [0.1.83] - 2026-05-30
 
 ### Added

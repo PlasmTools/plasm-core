@@ -13,7 +13,8 @@
 //!   `.group_by`, `.singleton()`, `.page_size`, bracket projection `[…]`.
 //! - Programs: bindings, node-ref continuation, parallel final roots, `compile_plasm_surface_line_to_plan`
 //!   (single-line surface) vs multi-line DAG programs.
-//! - Relations: `from_parent_get`, `query_scoped`.
+//! - Relations: `from_parent_get`, `query_scoped`, opaque `r#` nav (not `p#`).
+//! - Programs: flattened single-liner coercion (space-separated bindings; first binding default return).
 //! - Render: bracket render `<<TAG`, and passing **`.content`** into a typed string slot (`create`).
 //! - Effects: create / update / delete / zero-arity action (domain-stripped method label), `for_each`.
 //! - DOMAIN: `e#` symbols where applicable.
@@ -105,6 +106,8 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "relation_query_scoped_bindings",
     "relation_binding_proof",
     "binding_opaque_relation_ref",
+    "relation_opaque_r_symbol",
+    "flattened_single_liner_coercion",
     "postfix_group_by_sort",
     "dry_live_parity",
 ];
@@ -790,7 +793,7 @@ fn assert_planning_ir(
                 ));
             }
         }
-        "lang_bind_plural_relation_opaque_p" => {
+        "lang_bind_plural_relation_opaque_p" | "lang_relation_opaque_r_symbol" => {
             let rel = plan_relation_named(plan, "tags")
                 .ok_or_else(|| "expected `.tags` relation from plural binding".to_string())?;
             if rel["source_cardinality"].as_str() != Some("many") {
@@ -804,6 +807,25 @@ fn assert_planning_ir(
                 return Err(format!(
                     "expected prefer_from_parent_get on opaque plural row, got {rel:?}"
                 ));
+            }
+        }
+        "lang_flattened_single_liner_coercion" => {
+            if plan["return"]["node"].as_str() != Some("items") {
+                return Err(format!(
+                    "flattened single-liner should return first binding `items`, got {:?}",
+                    plan["return"]
+                ));
+            }
+            if plan["metadata"]["coerced_default_return"].as_str() != Some("items") {
+                return Err(format!(
+                    "expected coerced_default_return metadata, got {:?}",
+                    plan["metadata"]
+                ));
+            }
+            let rel = plan_relation_named(plan, "tags")
+                .ok_or_else(|| "expected `.tags` relation on flattened program".to_string())?;
+            if rel["source"].as_str() != Some("items") {
+                return Err(format!("expected tags relation sourced from items, got {rel:?}"));
             }
         }
         "lang_relation_integer_scoped_bindings" => {
@@ -1455,6 +1477,35 @@ tags"#,
         expect_markdown_substrings: &["```tsv", "label"],
     },
     MatrixRow {
+        id: "lang_relation_opaque_r_symbol",
+        program: "",
+        surface_line: false,
+        federated: false,
+        features: &[
+            "relation_opaque_r_symbol",
+            "relation_many_from_plural",
+            "relation_prefer_from_parent_get",
+            "binding_continuation",
+            "dry_live_parity",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "label"],
+    },
+    MatrixRow {
+        id: "lang_flattened_single_liner_coercion",
+        program: "",
+        surface_line: false,
+        federated: false,
+        features: &[
+            "flattened_single_liner_coercion",
+            "relation_many_from_plural",
+            "binding_continuation",
+            "dry_live_parity",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "title"],
+    },
+    MatrixRow {
         id: "lang_relation_integer_scoped_bindings",
         program: r#"items = LangItem
 tags = items.tags_by_score
@@ -1596,6 +1647,30 @@ summary"#,
     },
 ];
 
+/// Rows whose `program` is filled at runtime (opaque `r#`, flattened single-liner).
+fn matrix_program_for_row(row: &MatrixRow, es: &plasm_agent::execute_session::ExecuteSession) -> String {
+    match row.id {
+        "lang_relation_opaque_r_symbol" => {
+            let exp = es
+                .domain_exposure
+                .as_ref()
+                .expect("matrix session domain exposure");
+            let map = exp.symbol_map_arc();
+            let r_sym = map.ident_sym_relation_for(language_matrix::MATRIX_ENTRY_ID, "LangItem", "tags");
+            assert!(
+                r_sym.starts_with('r'),
+                "expected opaque r# for LangItem.tags, got {r_sym}"
+            );
+            format!("items = LangItem\ntags = items.{r_sym}\ntags")
+        }
+        "lang_flattened_single_liner_coercion" => {
+            // Trailing root `tags` is rewritten to first binding `items`.
+            "items = LangItem tags = items.tags tags".to_string()
+        }
+        _ => row.program.to_string(),
+    }
+}
+
 #[tokio::test]
 async fn plasm_language_matrix_cgs_templates_validate() {
     let cgs = language_matrix::load_language_matrix_cgs();
@@ -1655,13 +1730,14 @@ async fn plasm_language_matrix_live_runs() {
         } else {
             (&es, &st)
         };
+        let program = matrix_program_for_row(row, row_es);
         let plan_json = if row.surface_line {
             compile_plasm_surface_line_to_plan(
                 &PromptPipelineConfig::default(),
                 None,
                 row_es,
                 row.id,
-                row.program,
+                &program,
             )
         } else {
             compile_plasm_dag_to_plan(
@@ -1669,7 +1745,7 @@ async fn plasm_language_matrix_live_runs() {
                 None,
                 row_es,
                 row.id,
-                row.program,
+                &program,
             )
         }
         .unwrap_or_else(|e| panic!("row {} compile: {e}", row.id));

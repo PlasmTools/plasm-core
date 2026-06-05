@@ -36,7 +36,10 @@
 //! field gloss rows and `ref:*` typing are unchanged.
 //! Meaning uses
 //! `relation e#_src → [e#_tgt]` (many) or `relation e#_src → e#_tgt` (one) in **Meaning** only; executable nav is `<receiver>.r#` or wire in `plasm_expr`.
-//! For terminal relation chains, the example line already carries a **result gloss** (`relation …`); standalone `r#` gloss rows are always emitted.
+//! For terminal relation chains, the example line already carries a **result gloss** (`relation …`);
+//! relation hops use the **`r#` pool** in exemplars (`.r#` / wire) — not standalone `p#` gloss rows.
+//! Splitting relations out of the `p#` pool renumbers `p#` in snapshots but does **not** add duplicate
+//! teaching rows (GitHub full prompt stays ~flat; diff churn is mostly `p#` renumbering).
 //! For cardinality-many
 //! edges with `materialize` (`from_parent_get`, `query_scoped`, …) the IR is [`Expr::Chain`](crate::Expr);
 //! many-relations without materialization **fail parse** and are omitted from DOMAIN.
@@ -4668,7 +4671,7 @@ fn collect_opaque_domain_symbols(text: &str) -> HashSet<String> {
     let mut i = 0usize;
     while i < bytes.len() {
         let b = bytes[i];
-        if matches!(b, b'e' | b'm' | b'p' | b'v') {
+        if matches!(b, b'e' | b'm' | b'p' | b'r' | b'v') {
             let start = i;
             i += 1;
             if i < bytes.len() && bytes[i].is_ascii_digit() {
@@ -4700,6 +4703,8 @@ mod lazy_field_gloss_tests {
         assert!(syms.contains("p71"));
         assert!(syms.contains("p1"));
         assert!(syms.contains("p2"));
+        let rel = collect_opaque_domain_symbols("e5(p7=$).r8");
+        assert!(rel.contains("r8"));
     }
 }
 
@@ -6300,6 +6305,8 @@ mod tests {
             out.len()
         );
         // Baseline bumped after `=>` / relation-arrow contract pitfalls in MCP frontmatter.
+        // v0.1.83 `r#` pool: relation nav exemplars use `.r#` instead of `.p#`; `p#` renumbers but
+        // row count stays ~flat (no duplicate standalone relation gloss rows).
         const GITHUB_FULL_PROMPT_BASELINE_V0173: usize = 25_850;
         const GITHUB_FULL_PROMPT_BASELINE_V0179: usize = 24_850;
         assert!(
