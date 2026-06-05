@@ -56,7 +56,7 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
             ..
         } => {
             let mut hints = vec![
-                "Upstream returned HTTP 429; reduce concurrency or retry after the rate-limit window."
+                "Upstream rate limited (HTTP 429 or quota-exhausted 403); reduce concurrency or retry after the rate-limit window."
                     .into(),
             ];
             if let Some(d) = retry_after {

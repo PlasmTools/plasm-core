@@ -4,8 +4,8 @@ use crate::auth::ResolvedAuth;
 use crate::error::RuntimeError;
 use crate::execution::ExecutionConfig;
 use crate::http_transport::{
-    compiled_method_label, host_key_from_url, is_safe_http_method, join_base_url_path,
-    HttpAttemptResult, HttpTransport, ReqwestHttpTransport,
+    compiled_method_label, host_key_from_url, http_retryable_is_rate_limited, is_safe_http_method,
+    join_base_url_path, HttpAttemptResult, HttpTransport, ReqwestHttpTransport,
 };
 use async_trait::async_trait;
 use plasm_compile::CompiledRequest;
@@ -167,7 +167,7 @@ fn finalize_retryable_failure(
     attempts: u32,
     message: String,
 ) -> RuntimeError {
-    if status == 429 {
+    if http_retryable_is_rate_limited(status, retry_after, &message) {
         crate::runtime_metrics::record_http_rate_limited();
         RuntimeError::RateLimited {
             status,

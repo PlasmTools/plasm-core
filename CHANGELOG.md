@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.82] - 2026-05-30
+
+### Fixed
+
+- **HTTP 403 rate limits:** GitHub-style quota responses (`API rate limit exceeded`, `X-RateLimit-Remaining: 0`, `X-RateLimit-Reset`) are now retryable on safe methods with existing backoff; exhausted retries surface `RuntimeError::RateLimited` instead of a generic request error.
+- **`X-RateLimit-Reset` parsing:** sleep hint now uses seconds-until-reset (was incorrectly multiplied by 1000).
+
 ## [0.1.81] - 2026-05-30
 
 ### Fixed

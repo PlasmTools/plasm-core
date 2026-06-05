@@ -549,6 +549,8 @@ pub struct HttpParsedResponse {
     pub content_type: Option<String>,
     pub bytes: Vec<u8>,
     pub retry_after: Option<Duration>,
+    /// `X-RateLimit-Remaining` when present (GitHub and similar APIs).
+    pub rate_limit_remaining: Option<u32>,
 }
 
 /// Outcome of one HTTP attempt before the resilience retry loop commits to success or failure.
@@ -598,9 +600,62 @@ pub fn parse_retry_hints(headers: &reqwest::header::HeaderMap) -> Option<Duratio
         .and_then(|s| s.trim().parse::<u64>().ok())
         .and_then(|reset_unix| {
             let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
-            reset_unix.saturating_sub(now).checked_mul(1000)
+            Some(Duration::from_secs(reset_unix.saturating_sub(now)))
         })
-        .map(Duration::from_secs)
+}
+
+fn parse_rate_limit_remaining(headers: &reqwest::header::HeaderMap) -> Option<u32> {
+    headers
+        .get("x-ratelimit-remaining")
+        .or_else(|| headers.get("X-RateLimit-Remaining"))
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse().ok())
+}
+
+/// True when API error text indicates quota / abuse throttling (not generic 403 forbidden).
+#[must_use]
+pub fn api_error_indicates_rate_limit(detail: &str) -> bool {
+    let lower = detail.to_ascii_lowercase();
+    lower.contains("rate limit")
+        || lower.contains("rate_limit")
+        || lower.contains("secondary rate")
+        || lower.contains("abuse detection")
+}
+
+/// Whether a non-success HTTP response should be retried (safe methods only at transport layer).
+#[must_use]
+pub fn http_failure_is_retryable(
+    status: u16,
+    retry_after: Option<Duration>,
+    rate_limit_remaining: Option<u32>,
+    error_detail: Option<&str>,
+) -> bool {
+    if http_status_is_retryable(status) {
+        return true;
+    }
+    if status == 403 {
+        if rate_limit_remaining == Some(0) {
+            return true;
+        }
+        if retry_after.is_some() {
+            return true;
+        }
+        if error_detail.is_some_and(api_error_indicates_rate_limit) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Map a retryable failure to [`RuntimeError::RateLimited`] vs generic request error.
+#[must_use]
+pub fn http_retryable_is_rate_limited(
+    status: u16,
+    retry_after: Option<Duration>,
+    message: &str,
+) -> bool {
+    status == 429
+        || (status == 403 && (retry_after.is_some() || api_error_indicates_rate_limit(message)))
 }
 
 fn parse_retry_after_header(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
@@ -632,6 +687,7 @@ pub async fn read_http_response(
     let headers = response.headers().clone();
     let link = extract_link_next(&headers);
     let retry_after = parse_retry_hints(&headers);
+    let rate_limit_remaining = parse_rate_limit_remaining(&headers);
     let content_type = headers
         .get(reqwest::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
@@ -654,6 +710,7 @@ pub async fn read_http_response(
         content_type,
         bytes,
         retry_after,
+        rate_limit_remaining,
     })
 }
 
@@ -667,7 +724,7 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
         content_type,
         bytes,
         retry_after,
-        ..
+        rate_limit_remaining,
     } = parsed;
 
     let status_code = status;
@@ -676,7 +733,7 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
     if bytes.is_empty() {
         return if is_success {
             HttpAttemptResult::Success(serde_json::Value::Null, link)
-        } else if http_status_is_retryable(status_code) {
+        } else if http_failure_is_retryable(status_code, retry_after, rate_limit_remaining, None) {
             HttpAttemptResult::Retryable {
                 status: status_code,
                 retry_after,
@@ -735,7 +792,12 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
         (false, Ok(json)) => {
             let detail = summarize_json_api_error_for_http(&json);
             let message = format!("{method} {url} — HTTP {status_code} from API: {detail}");
-            if http_status_is_retryable(status_code) {
+            if http_failure_is_retryable(
+                status_code,
+                retry_after,
+                rate_limit_remaining,
+                Some(detail.as_str()),
+            ) {
                 HttpAttemptResult::Retryable {
                     status: status_code,
                     retry_after,
@@ -763,7 +825,12 @@ pub fn evaluate_parsed_response(parsed: HttpParsedResponse) -> HttpAttemptResult
             );
             let detail = summarize_text_error_body(&bytes, content_type.as_deref());
             let message = format!("{method} {url} — HTTP {status_code} from API: {detail}");
-            if http_status_is_retryable(status_code) {
+            if http_failure_is_retryable(
+                status_code,
+                retry_after,
+                rate_limit_remaining,
+                Some(detail.as_str()),
+            ) {
                 HttpAttemptResult::Retryable {
                     status: status_code,
                     retry_after,
@@ -791,7 +858,7 @@ pub fn attempt_result_into_result(
             retry_after,
             message,
         } => {
-            if status == 429 {
+            if http_retryable_is_rate_limited(status, retry_after, &message) {
                 Err(RuntimeError::RateLimited {
                     status,
                     host: String::new(),
@@ -927,11 +994,66 @@ mod http_outcome_tests {
             content_type: Some("application/json".into()),
             bytes: br#"{"message":"slow down"}"#.to_vec(),
             retry_after: Some(Duration::from_secs(2)),
+            rate_limit_remaining: None,
         };
         match evaluate_parsed_response(parsed) {
             HttpAttemptResult::Retryable { status, .. } => assert_eq!(status, 429),
             other => panic!("expected retryable, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn evaluate_github_403_rate_limit_is_retryable() {
+        let parsed = HttpParsedResponse {
+            status: 403,
+            url: "https://api.github.com/repos/octocat/Hello-World/issues".into(),
+            method: "GET",
+            link: None,
+            content_type: Some("application/json".into()),
+            bytes: br#"{"message":"API rate limit exceeded for user ID 1"}"#.to_vec(),
+            retry_after: Some(Duration::from_secs(60)),
+            rate_limit_remaining: Some(0),
+        };
+        match evaluate_parsed_response(parsed) {
+            HttpAttemptResult::Retryable {
+                status,
+                retry_after,
+                ..
+            } => {
+                assert_eq!(status, 403);
+                assert_eq!(retry_after, Some(Duration::from_secs(60)));
+            }
+            other => panic!("expected retryable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn evaluate_403_forbidden_not_retryable() {
+        let parsed = HttpParsedResponse {
+            status: 403,
+            url: "https://api.example.com/private".into(),
+            method: "GET",
+            link: None,
+            content_type: Some("application/json".into()),
+            bytes: br#"{"message":"Forbidden: insufficient scope"}"#.to_vec(),
+            retry_after: None,
+            rate_limit_remaining: None,
+        };
+        match evaluate_parsed_response(parsed) {
+            HttpAttemptResult::Failed(_) => {}
+            other => panic!("expected terminal failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn x_ratelimit_reset_parses_seconds_until_reset() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert("x-ratelimit-reset", (now + 42).to_string().parse().unwrap());
+        assert_eq!(parse_retry_hints(&headers), Some(Duration::from_secs(42)));
     }
 }
 
