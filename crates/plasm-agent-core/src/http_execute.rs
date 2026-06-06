@@ -1004,30 +1004,41 @@ async fn tenant_outbound_hosted_kv_for_entries(
     out
 }
 
-/// Resolve live HTTP origin for account-specific catalogs (Fibery workspace host).
-fn resolve_live_http_backend_for_entry(
+/// Migration: read legacy `http_backend` from outbound credential envelope.
+async fn migration_legacy_http_backend_from_outbound_key(
+    st: &PlasmHostState,
+    hosted_kv_key: &str,
+) -> Option<String> {
+    let storage = st.auth_storage()?;
+    let bytes = storage.get_kv(hosted_kv_key.trim()).await.ok()??;
+    let raw = String::from_utf8_lossy(&bytes);
+    plasm_runtime::hosted_oauth_kv::hosted_outbound_http_backend_from_kv(raw.trim())
+}
+
+async fn resolve_http_backend_for_entry(
+    st: &PlasmHostState,
     entry_id: &str,
     catalog_backend: &str,
-    hosted_kv_raw: Option<&str>,
-) -> String {
-    if entry_id != "fibery"
-        || !crate::catalog_ownership::is_fibery_account_placeholder_http_backend(catalog_backend)
-    {
-        return catalog_backend.to_string();
-    }
-    if let Ok(from_env) = std::env::var("FIBERY_HTTP_BACKEND") {
-        let t = from_env.trim().trim_end_matches('/');
-        if !t.is_empty() {
-            return t.to_string();
-        }
-    }
-    if let Some(raw) = hosted_kv_raw {
-        if let Some(from_kv) = plasm_runtime::hosted_oauth_kv::hosted_outbound_http_backend_from_kv(raw)
-        {
-            return from_kv;
-        }
-    }
-    catalog_backend.to_string()
+    bindings: Option<&crate::binding_slots::SessionBindingMap>,
+    outbound_hosted_kv_key: Option<&str>,
+) -> Result<String, String> {
+    let legacy = if let Some(key) = outbound_hosted_kv_key {
+        migration_legacy_http_backend_from_outbound_key(st, key).await
+    } else {
+        None
+    };
+    crate::binding_slots::resolve_catalog_http_backend(
+        entry_id,
+        catalog_backend,
+        bindings,
+        legacy.as_deref(),
+    )
+}
+
+fn patch_cgs_context_resolved_http_backend(ctx: CgsContext, resolved: &str) -> CgsContext {
+    let mut cgs = (*ctx.cgs).clone();
+    cgs.http_backend = resolved.trim().trim_end_matches('/').to_string();
+    CgsContext::new(ctx.prefix.clone(), Arc::new(cgs))
 }
 
 fn patch_auth_scheme_for_tenant_hosted(
@@ -1099,6 +1110,7 @@ async fn execute_session_create_response_inner(
     body: CreateExecuteSessionBody,
     allow_reuse: bool,
     outbound_hosted_kv_by_entry: Option<&HashMap<String, String>>,
+    bindings_by_entry: Option<&HashMap<String, crate::binding_slots::SessionBindingMap>>,
 ) -> Result<CreateExecuteSessionResponse, String> {
     if body.entities.is_empty() {
         crate::metrics::record_execute_session_outcome("error", "empty_entities");
@@ -1133,15 +1145,25 @@ async fn execute_session_create_response_inner(
             ctx = patch_cgs_context_outbound_hosted(ctx, kv);
         }
     }
-    let ctx_arc = Arc::new(ctx);
-    let hosted_kv_raw = outbound_hosted_kv_by_entry
+    let hosted_kv_key = outbound_hosted_kv_by_entry
         .and_then(|map| map.get(&body.entry_id))
         .map(|s| s.as_str());
-    let http_backend = resolve_live_http_backend_for_entry(
+    let entry_bindings = bindings_by_entry.and_then(|m| m.get(&body.entry_id));
+    let http_backend = resolve_http_backend_for_entry(
+        st,
         body.entry_id.as_str(),
-        ctx_arc.cgs.http_backend.as_str(),
-        hosted_kv_raw,
-    );
+        ctx.cgs.http_backend.as_str(),
+        entry_bindings,
+        hosted_kv_key,
+    )
+    .await?;
+    if crate::binding_slots::catalog_http_backend_needs_origin(
+        body.entry_id.as_str(),
+        ctx.cgs.http_backend.as_str(),
+    ) {
+        ctx = patch_cgs_context_resolved_http_backend(ctx, &http_backend);
+    }
+    let ctx_arc = Arc::new(ctx);
     let effective_cgs = crate::schema_overlay_session::resolve_schema_overlay_for_host(
         st.engine.as_ref(),
         st.mode,
@@ -1274,7 +1296,14 @@ async fn execute_session_create_response_inner(
         "execute session created"
     );
 
-    let session = ExecuteSession::new(
+    let mut bindings_map = indexmap::IndexMap::new();
+    if let Some(map) = bindings_by_entry {
+        if let Some(b) = map.get(&body.entry_id) {
+            bindings_map.insert(body.entry_id.clone(), b.clone());
+        }
+    }
+
+    let session = ExecuteSession::new_with_bindings(
         prompt_hash_str.clone(),
         prompt.clone(),
         cgs,
@@ -1290,6 +1319,7 @@ async fn execute_session_create_response_inner(
         catalog_cgs_hash,
         domain_filter_intent,
         ranked_for_domain,
+        bindings_map,
     );
     st.sessions
         .insert(
@@ -1318,7 +1348,7 @@ pub async fn execute_session_create_response(
     principal: Option<&crate::incoming_auth::TenantPrincipal>,
     body: CreateExecuteSessionBody,
 ) -> Result<CreateExecuteSessionResponse, String> {
-    execute_session_create_response_inner(st, principal, body, true, None).await
+    execute_session_create_response_inner(st, principal, body, true, None, None).await
 }
 
 /// Append another registry row’s [`plasm_core::CgsContext`] to an existing execute session (same
@@ -1332,6 +1362,7 @@ pub async fn federate_execute_session(
     entities: Vec<String>,
     principal: Option<String>,
     outbound_hosted_kv_by_entry: Option<&HashMap<String, String>>,
+    bindings_by_entry: Option<&HashMap<String, crate::binding_slots::SessionBindingMap>>,
 ) -> Result<CapabilityWaveOutcome, String> {
     let mode = auth_resolution_mode_from_env();
     validate_principal_for_mode(mode, principal.as_deref())?;
@@ -1374,14 +1405,24 @@ pub async fn federate_execute_session(
             ctx = patch_cgs_context_outbound_hosted(ctx, kv);
         }
     }
-    let hosted_kv_raw = outbound_hosted_kv_by_entry
+    let hosted_kv_key = outbound_hosted_kv_by_entry
         .and_then(|map| map.get(&new_entry_id))
         .map(|s| s.as_str());
-    let http_backend = resolve_live_http_backend_for_entry(
+    let entry_bindings = bindings_by_entry.and_then(|m| m.get(&new_entry_id));
+    let http_backend = resolve_http_backend_for_entry(
+        st,
         new_entry_id.as_str(),
         ctx.cgs.http_backend.as_str(),
-        hosted_kv_raw,
-    );
+        entry_bindings,
+        hosted_kv_key,
+    )
+    .await?;
+    if crate::binding_slots::catalog_http_backend_needs_origin(
+        new_entry_id.as_str(),
+        ctx.cgs.http_backend.as_str(),
+    ) {
+        ctx = patch_cgs_context_resolved_http_backend(ctx, &http_backend);
+    }
     let effective_cgs = crate::schema_overlay_session::resolve_schema_overlay_for_host(
         st.engine.as_ref(),
         st.mode,
@@ -1404,6 +1445,12 @@ pub async fn federate_execute_session(
 
     sess.contexts_by_entry
         .insert(new_entry_id.clone(), ctx_arc.clone());
+    if let Some(map) = bindings_by_entry {
+        if let Some(b) = map.get(&new_entry_id) {
+            sess.bindings_by_entry
+                .insert(new_entry_id.clone(), b.clone());
+        }
+    }
 
     let Some(mut exp) = sess.teaching_exposure.take() else {
         return Err("session has no incremental exposure state".into());
@@ -1749,6 +1796,15 @@ pub(crate) async fn apply_capability_seeds(
         None
     };
     let outbound_ref = outbound_map_storage.as_ref();
+    let bindings_map_storage = if let Some(ref cfg) = tenant_mcp_cfg {
+        Some(
+            crate::session_bindings::tenant_bindings_for_entries(st, cfg.as_ref(), &all_eids)
+                .await?,
+        )
+    } else {
+        None
+    };
+    let bindings_ref = bindings_map_storage.as_ref();
 
     let mut waves = Vec::new();
     let mut new_symbol_space = false;
@@ -1778,6 +1834,7 @@ pub(crate) async fn apply_capability_seeds(
                 },
                 plan.seeds_by_entry.len() <= 1,
                 outbound_ref,
+                bindings_ref,
             )
             .await?;
             new_symbol_space = !created.reused;
@@ -1897,6 +1954,7 @@ pub(crate) async fn apply_capability_seeds(
                 entities.clone(),
                 principal.clone(),
                 outbound_ref,
+                bindings_ref,
             )
             .await?;
             waves.push(wave);
@@ -2973,6 +3031,22 @@ pub(crate) async fn run_parsed_plasm_line(
 
     let bound_share = sess.session_share_token.read().await.clone();
     let bound_proof_base_token = sess.session_proof_base_token.read().await.clone();
+    let catalog_entry_for_bind = sess
+        .federation_dispatch()
+        .as_ref()
+        .and_then(|_| {
+            sess.contexts_by_entry.keys().find(|eid| {
+                sess.contexts_by_entry
+                    .get(*eid)
+                    .and_then(|ctx| ctx.get_entity(root_entity))
+                    .is_some()
+            })
+        })
+        .cloned()
+        .unwrap_or_else(|| sess.entry_id.clone());
+    let catalog_bind = sess
+        .session_bindings_for_entry(&catalog_entry_for_bind)
+        .map(|m| m.cml_env_entries());
 
     let exec_opts = ExecuteOptions {
         request_fingerprint_sink: Some(fp_sink.clone()),
@@ -2995,6 +3069,7 @@ pub(crate) async fn run_parsed_plasm_line(
             proof_base_token: bound_proof_base_token.clone(),
             transport_origin: http_backend_for_root.clone(),
             ui_origin: http_backend_for_root.clone(),
+            catalog_bind,
         })),
     };
 

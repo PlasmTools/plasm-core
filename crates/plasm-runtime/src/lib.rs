@@ -107,6 +107,7 @@ pub mod error;
 pub mod evm;
 pub mod execution;
 pub mod hosted_oauth_kv;
+pub mod binding_kv;
 pub mod http_config;
 pub mod http_resilience;
 pub mod http_trace;

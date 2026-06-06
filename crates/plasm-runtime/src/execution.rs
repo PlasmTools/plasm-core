@@ -62,6 +62,8 @@ pub struct ExecuteSessionMaterial {
     pub transport_origin: Option<String>,
     /// UI / browse deeplink origin; defaults to [`Self::transport_origin`] when unset.
     pub ui_origin: Option<String>,
+    /// MCP connect binding wire values for the active catalog row (merged as `bind_<wire>` CML env).
+    pub catalog_bind: Option<indexmap::IndexMap<String, String>>,
 }
 
 /// Reserved CML env key: 64-char lowercase hex (rendered teaching prompt digest for the row).
@@ -409,6 +411,23 @@ pub fn merge_plasm_execute_session_identity_env(env: &mut CmlEnv) {
 #[inline]
 pub fn merge_plasm_execute_session_env(env: &mut CmlEnv) {
     merge_plasm_execute_session_identity_env(env);
+    merge_plasm_execute_session_bind_env(env);
+}
+
+/// Merge session-constant MCP connect bindings as precomputed `bind_<wire>` CML env keys.
+pub fn merge_plasm_execute_session_bind_env(env: &mut CmlEnv) {
+    let Some(m) = try_current_execute_session_material() else {
+        return;
+    };
+    let Some(bind) = m.catalog_bind.as_ref() else {
+        return;
+    };
+    for (key, value) in bind {
+        if value.trim().is_empty() {
+            continue;
+        }
+        env.insert(key.clone(), Value::String(value.clone()));
+    }
 }
 
 async fn with_dispatch_entity<Fut, T>(entity: Option<&str>, fut: Fut) -> T

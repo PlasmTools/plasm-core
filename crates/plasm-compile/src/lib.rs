@@ -49,10 +49,22 @@ pub type CompileQueryHook =
 /// instead of first execution.
 pub fn validate_cgs_capability_templates(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
     for (name, cap) in &cgs.capabilities {
-        parse_capability_template(&cap.mapping.template).map_err(|e| {
+        let template_json = &cap.mapping.template.0;
+        parse_capability_template(template_json).map_err(|e| {
             CmlError::InvalidTemplate {
                 message: format!("capability `{name}`: {e}"),
             }
+        })?;
+        let template_text = template_json
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| template_json.to_string());
+        plasm_core::bind_wire_validate::validate_bind_wire_refs(
+            &template_text,
+            &format!("capability `{name}` CML template"),
+        )
+        .map_err(|e| CmlError::InvalidTemplate {
+            message: e.to_string(),
         })?;
     }
     Ok(())
@@ -140,5 +152,15 @@ mod tests {
                 || splat_err.to_string().contains("key_vars"),
             "{splat_err}"
         );
+    }
+
+    #[test]
+    fn binding_matrix_fixture_rejects_unknown_bind_wire() {
+        let err = plasm_core::bind_wire_validate::validate_bind_wire_refs(
+            "GET /\nHost: {{ bind.evil_origin }}",
+            "capability `schema_query` CML template",
+        )
+        .expect_err("unknown bind");
+        assert!(err.to_string().contains("bind.evil_origin"));
     }
 }

@@ -330,11 +330,36 @@ async fn post_discover(
     }
 }
 
+async fn get_connect_requirements(
+    Extension(st): Extension<PlasmHostState>,
+    Path(entry_id): Path<String>,
+) -> Response {
+    let reg = st.catalog.snapshot();
+    if reg.lookup_entry_meta(&entry_id).is_none() {
+        return problem_response(discovery_problem(DiscoveryError::UnknownEntry(
+            entry_id.clone(),
+        )));
+    }
+    match crate::binding_slots::connect_requirements_json(entry_id.as_str()) {
+        Some(spec) => Json(spec).into_response(),
+        None => Json(serde_json::json!({
+            "entry_id": entry_id,
+            "secret": { "kind": "none" },
+            "bindings": [],
+        }))
+        .into_response(),
+    }
+}
+
 /// Registry + discover (protected by incoming-auth middleware when enabled).
 pub fn discovery_routes_protected() -> Router {
     Router::new()
         .route("/v1/registry", get(get_registry))
         .route("/v1/registry/{entry_id}", get(get_registry_entry))
+        .route(
+            "/v1/registry/{entry_id}/connect-requirements",
+            get(get_connect_requirements),
+        )
         .route("/v1/registry/{entry_id}/tool-model", get(get_tool_model))
         .route("/v1/discover", post(post_discover))
         .route("/v1/discover-typed", post(post_discover_typed))

@@ -108,6 +108,10 @@ pub struct McpConfigCatalogRow {
     pub api_secret_hosted_kv: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub api_secret_present: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bindings_required: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub bindings_complete: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -307,6 +311,8 @@ impl McpConfigAdminService {
                 auth_scheme_summary,
                 api_secret_hosted_kv,
                 api_secret_present: false,
+                bindings_required: crate::binding_slots::entry_requires_bindings(&entry_id),
+                bindings_complete: false,
             });
         }
         rows

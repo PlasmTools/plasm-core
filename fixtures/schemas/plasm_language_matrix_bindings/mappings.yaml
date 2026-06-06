@@ -1,0 +1,3 @@
+schema_query: |
+  GET /api/schema
+  Host: {{ bind.catalog_http_origin }}

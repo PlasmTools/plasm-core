@@ -61,7 +61,6 @@ schema_overlay:
 auth:
   scheme: api_key_header
   header: Authorization
-  env: FIBERY_API_TOKEN
   hosted_kv: plasm:outbound:v1:catalog:fibery
 entities:
   Space:

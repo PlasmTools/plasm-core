@@ -38,7 +38,7 @@ async fn upsert_handler(
     let ps = body.project_slug_resolved().to_string();
     let nm = body.name_resolved().to_string();
     let st_status = body.status_normalized().to_string();
-    let cfg: McpRuntimeConfig = McpRuntimeConfig::try_from(body).map_err(|e: String| {
+    let cfg: McpRuntimeConfig = McpRuntimeConfig::try_from(body.clone()).map_err(|e: String| {
         crate::metrics::record_audit_control_plane("mcp.config.upsert", "validation_error");
         tracing::warn!(message = %e, "mcp config upsert parse");
         StatusCode::BAD_REQUEST
@@ -54,6 +54,24 @@ async fn upsert_handler(
             "MCP config upsert"
         );
     });
+    if st_status == "active" {
+        let gaps = crate::mcp_config_readiness::active_config_readiness_gaps(
+            &st,
+            &cfg,
+            &optional,
+            &st.catalog.snapshot(),
+        )
+        .await;
+        if !gaps.is_empty() {
+            crate::metrics::record_audit_control_plane("mcp.config.upsert", "readiness_gap");
+            tracing::warn!(
+                config_id = %config_id,
+                gaps = ?gaps,
+                "rejecting active MCP config upsert — catalog connect incomplete"
+            );
+            return Err(StatusCode::CONFLICT);
+        }
+    }
     repo.upsert_full(
         cfg,
         ws.as_str(),
@@ -138,10 +156,101 @@ async fn get_config_detail_handler(
         tracing::warn!(message = %e, "mcp config get");
         StatusCode::INTERNAL_SERVER_ERROR
     })?;
-    let Some(v) = v else {
+    let Some(mut v) = v else {
         return Err(StatusCode::NOT_FOUND);
     };
+    if let Ok(Some(cfg)) = repo.load_runtime_for_config_including_disabled(id).await {
+        let registry = st.catalog.snapshot();
+        let optional: std::collections::HashSet<String> = v
+            .get("auth_optional_entry_ids")
+            .and_then(|x| x.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|e| e.as_str().map(str::trim))
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let mut rows = crate::mcp_config_admin::McpConfigAdminService::catalog_rows(
+            registry.as_ref(),
+            &cfg,
+            &optional,
+        );
+        for row in &mut rows {
+            crate::mcp_config_readiness::hydrate_catalog_row_connect_status(&st, &cfg, row)
+                .await;
+        }
+        if let Some(obj) = v.as_object_mut() {
+            obj.insert(
+                "catalog_status".to_string(),
+                serde_json::to_value(&rows).unwrap_or(serde_json::json!([])),
+            );
+        }
+    }
     Ok(Json(v))
+}
+
+#[derive(Debug, Serialize)]
+struct ReadinessGapsResponse {
+    gaps: Vec<crate::binding_store::ReadinessGap>,
+    /// Sorted unique `entry_id`s with any gap (legacy consumers).
+    entry_ids: Vec<String>,
+}
+
+async fn get_readiness_gaps_handler(
+    Extension(st): Extension<PlasmHostState>,
+    headers: axum::http::HeaderMap,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ReadinessGapsResponse>, StatusCode> {
+    if !control_plane_headers_authorized(&headers, "MCP config sync") {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let Some(repo) = st.mcp_config_repository() else {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
+    };
+    if !repo
+        .config_exists(&id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let cfg = repo
+        .load_runtime_for_config_including_disabled(id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let detail = repo.get_config_detail_json(&id).await.map_err(|_| {
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    let optional: Vec<String> = detail
+        .as_ref()
+        .and_then(|v| v.get("auth_optional_entry_ids"))
+        .and_then(|x| x.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|e| e.as_str().map(str::trim))
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default();
+    let registry = st.catalog.snapshot();
+    let gaps = crate::mcp_config_readiness::active_config_readiness_gaps(
+        &st,
+        &cfg,
+        &optional,
+        registry.as_ref(),
+    )
+    .await;
+    let entry_ids = {
+        let mut ids: Vec<String> = gaps.iter().map(|g| g.entry_id.clone()).collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    };
+    Ok(Json(ReadinessGapsResponse { gaps, entry_ids }))
 }
 
 #[derive(Debug, Deserialize)]
@@ -574,6 +683,10 @@ pub fn mcp_config_routes() -> Router {
         .route(
             "/internal/mcp-config/v1/config/{id}",
             get(get_config_detail_handler),
+        )
+        .route(
+            "/internal/mcp-config/v1/config/{id}/readiness-gaps",
+            get(get_readiness_gaps_handler),
         )
         .route("/internal/mcp-config/v1/list", get(list_configs_handler))
         .route("/internal/mcp-config/v1/revoke", post(revoke_handler))

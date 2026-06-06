@@ -3,15 +3,13 @@
 A [Plasm](../../README.md) domain model for the [Fibery HTTP API](https://developers.fibery.com/guides/http-api/overview). The catalog is **task-oriented**: agents work with spaces, databases, rows, documents, views, webhooks, and files — not raw command names.
 
 ```bash
-export FIBERY_API_TOKEN="Token YOUR_TOKEN"
-export FIBERY_HTTP_BACKEND="https://YOUR_ACCOUNT.fibery.io"
 cargo run -p plasm -- \
   --schema apis/fibery \
-  --backend "$FIBERY_HTTP_BACKEND" \
+  --backend "https://YOUR_ACCOUNT.fibery.io" \
   --repl
 ```
 
-On hosted `plasm-mcp`, set the same env vars on the agent process (or connect via the web UI with workspace URL + API key so both are stored in outbound KV).
+On hosted `plasm-mcp` or the OSS appliance, connect **workspace URL + API key** in the MCP / control-station UI (bindings are stored in encrypted `plasm:binding:v1:*` KV; credentials in `plasm:outbound:v1:*`).
 
 Replace `YOUR_ACCOUNT` with your Fibery workspace subdomain. Generate an API token from the workspace menu (**API Tokens**). Fibery expects the token value to include the `Token ` prefix when sent as `Authorization`.
 
@@ -29,10 +27,10 @@ See [docs/schema-overlay.md](../../../docs/schema-overlay.md) for the generic ov
 auth:
   scheme: api_key_header
   header: Authorization
-  env: FIBERY_API_TOKEN
+  hosted_kv: plasm:outbound:v1:catalog:fibery
 ```
 
-The token is sent verbatim in `Authorization` (include the `Token …` prefix in the env value).
+Connect via MCP UI (workspace URL binding + API key secret). Local REPL: pass `--backend https://your-account.fibery.io`.
 
 ### Backend
 

@@ -5,14 +5,24 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.1.87] - 2026-06-07
+
+### Added
+
+- **Per-MCP catalog binding KV:** scoped encrypted envelopes for host-owned connect fields (Fibery workspace URL as `catalog_http_origin`); sqlx pointer table `project_mcp_entry_bindings`; `POST /internal/mcp-bindings/v1/put-scoped` and `GET …/readiness-gaps`; `GET /v1/registry/:entry_id/connect-requirements`.
+- **Fibery:** catalog uses scoped binding + outbound API key; no deploy-time `FIBERY_HTTP_BACKEND` env.
+
+### Changed
+
+- **Execute / MCP:** Fibery on an MCP auth map requires a scoped binding envelope; legacy outbound `http_backend` alone is not sufficient — operators must re-connect Fibery after upgrade (see monorepo `docs/fibery-binding-reconnect-runbook.md`).
+- **Active MCP upsert:** agent rejects activation when enabled graphs have secret or binding readiness gaps.
 
 ## [0.1.86] - 2026-06-06
 
 ### Added
 
 - **Row contract:** search/query teaching table separates capability filter `inputs` from `provides` row fields; projection, `group_by`, sort, dedupe, and row filters reject filter-only params with capability-scoped errors.
-- **Fibery hosted MCP:** resolve `YOUR_ACCOUNT.fibery.io` via `FIBERY_HTTP_BACKEND` env or `http_backend` in outbound KV JSON; catalog `hosted_kv` for tenant connect.
+- **Fibery hosted MCP:** tenant connect via outbound API key plus scoped workspace URL binding (`catalog_http_origin`); catalog `hosted_kv` for connect UX. (Legacy outbound KV `http_backend` is not used without a scoped binding row.)
 - **Release packaging:** `pokeapi` added to OSS appliance plugin pack list (`scripts/oss-packaged-apis.txt`); SaaS list updated in monorepo `deploy/saas-packaged-apis.txt`.
 
 ## [0.1.85] - 2026-06-06

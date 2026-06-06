@@ -950,6 +950,13 @@ enum InputMode {
         hosted_kv_key: String,
         buf: String,
     },
+    CatalogConnect {
+        entry_id: String,
+        hosted_kv_key: String,
+        step: u8,
+        workspace_url: String,
+        secret_buf: String,
+    },
     AddKeyLabel {
         buf: String,
     },
@@ -1173,6 +1180,7 @@ impl RunState {
             (&self.screen, &self.mode),
             (RunScreen::Apis, InputMode::ApiFilter)
                 | (RunScreen::Apis, InputMode::ApiSecretEdit { .. })
+                | (RunScreen::Apis, InputMode::CatalogConnect { .. })
                 | (RunScreen::OAuth, InputMode::OAuthWizard(_))
                 | (RunScreen::OAuth, InputMode::OAuthDeviceScopePick(_))
                 | (RunScreen::OAuth, InputMode::ConfirmOAuthDisable { .. })
@@ -1362,6 +1370,37 @@ fn apply_admin_completion(
                             NoticeSeverity::Error,
                             "API key store failed",
                             "Could not store the API key secret.",
+                        )
+                        .with_details(vec![e]),
+                    ),
+                }
+                if let Some(bridge) = bridge {
+                    enqueue_refresh_force(state, bridge);
+                }
+            }
+        }
+        AdminCompletion::StoreMcpCatalogBinding {
+            corr,
+            entry_id,
+            result,
+        } => {
+            if state.resources.admin.finish_inline(corr).is_some() {
+                match result {
+                    Ok(()) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Success,
+                            "Bindings stored",
+                            format!("Saved workspace binding for {entry_id}."),
+                        )
+                        .with_sticky(false),
+                    ),
+                    Err(e) => set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Error,
+                            "Binding store failed",
+                            format!("Could not store bindings for {entry_id}."),
                         )
                         .with_details(vec![e]),
                     ),
@@ -1592,6 +1631,26 @@ fn row_enabled(state: &RunState, snap: &UiSnapshot, entry_id: &str) -> bool {
     snap.db_allowed.contains(entry_id)
 }
 
+/// `(entry_id, missing)` pairs for enabled MCP allowlist rows (secret and/or binding slots).
+fn catalog_policy_readiness_gaps(
+    rows: &[McpConfigCatalogRow],
+    allowed: &std::collections::HashSet<String>,
+) -> Vec<(String, String)> {
+    rows.iter()
+        .filter(|r| allowed.contains(&r.entry_id))
+        .flat_map(|r| {
+            let mut gaps = Vec::new();
+            if r.connect_profile.has_api_key && !r.auth_optional && !r.api_secret_present {
+                gaps.push((r.entry_id.clone(), "secret".to_string()));
+            }
+            if r.bindings_required && !r.bindings_complete {
+                gaps.push((r.entry_id.clone(), "binding".to_string()));
+            }
+            gaps
+        })
+        .collect()
+}
+
 fn oauth_surface_status(snap: &UiSnapshot) -> Option<&str> {
     snap.oauth_surface.status_message()
 }
@@ -1601,6 +1660,7 @@ fn input_mode_label(mode: &InputMode) -> Option<&'static str> {
         InputMode::Normal => None,
         InputMode::ApiFilter => Some("API filter"),
         InputMode::ApiSecretEdit { .. } => Some("API key secret"),
+        InputMode::CatalogConnect { .. } => Some("Catalog connect"),
         InputMode::AddKeyLabel { .. } => Some("Add key"),
         InputMode::ConfirmKeyRevoke { .. } => Some("Confirm revoke"),
         InputMode::OAuthWizard(_) => Some("OAuth wizard"),
@@ -1686,6 +1746,109 @@ fn update_modal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>) 
                 buf.pop();
             }
             KeyCode::Char(c) => buf.push(c),
+            _ => {}
+        },
+        InputMode::CatalogConnect {
+            entry_id,
+            hosted_kv_key,
+            step,
+            workspace_url,
+            secret_buf,
+        } => match key.code {
+            KeyCode::Enter => {
+                if *step == 0 {
+                    let url = workspace_url.trim().to_string();
+                    if url.is_empty() || !url.starts_with("http") {
+                        set_notice(
+                            state,
+                            RunNotice::new(
+                                NoticeSeverity::Warning,
+                                "Invalid URL",
+                                "Workspace URL must start with http:// or https://",
+                            )
+                            .with_sticky(false),
+                        );
+                    } else {
+                        *step = 1;
+                        let entry_label = entry_id.clone();
+                        set_notice(
+                            state,
+                            RunNotice::new(
+                                NoticeSeverity::Info,
+                                "Connect catalog",
+                                format!("Step 2/2: API key for {entry_label}."),
+                            )
+                            .with_action_hint("Enter save · Esc cancel")
+                            .with_sticky(false),
+                        );
+                    }
+                } else {
+                    let secret = secret_buf.trim().to_string();
+                    let url = workspace_url.trim().trim_end_matches('/').to_string();
+                    let entry = entry_id.clone();
+                    let kv_key = hosted_kv_key.clone();
+                    state.mode = InputMode::Normal;
+                    if secret.is_empty() || url.is_empty() {
+                        return false;
+                    }
+                    let token = if secret.starts_with("Token ") {
+                        secret
+                    } else {
+                        format!("Token {secret}")
+                    };
+                    let payload = serde_json::json!({
+                        "version": 1,
+                        "entry_id": entry,
+                        "access_token": token,
+                    });
+                    if let (Some(bridge), Some(cid)) =
+                        (deps.admin_bridge, state.resources.config_id)
+                    {
+                        let tenant = appliance_mcp_scope().tenant_id;
+                        let values = std::collections::HashMap::from([(
+                            "catalog_http_origin".to_string(),
+                            url,
+                        )]);
+                        submit_inline_admin_job(
+                            state,
+                            bridge,
+                            AdminTaskKind::SavingApiSecret,
+                            |c| AdminJob::StoreOutboundSecret {
+                                corr: c,
+                                key: kv_key,
+                                value: payload.to_string(),
+                            },
+                        );
+                        submit_inline_admin_job(
+                            state,
+                            bridge,
+                            AdminTaskKind::SavingApiSecret,
+                            move |c| AdminJob::StoreMcpCatalogBinding {
+                                corr: c,
+                                tenant_id: tenant,
+                                config_id: cid,
+                                entry_id: entry,
+                                values,
+                            },
+                        );
+                    }
+                }
+            }
+            KeyCode::Esc => state.mode = InputMode::Normal,
+            KeyCode::Backspace => {
+                if *step == 0 {
+                    workspace_url.pop();
+                } else {
+                    secret_buf.pop();
+                }
+            }
+            KeyCode::Char(c) => {
+                if *step == 0 {
+                    workspace_url.push(c);
+                } else {
+                    secret_buf.push(c);
+                }
+            }
             _ => {}
         },
         InputMode::AddKeyLabel { buf } => match key.code {
@@ -2068,6 +2231,25 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
                     .staged_allowed
                     .clone()
                     .unwrap_or_else(|| snap.db_allowed.clone());
+                let gaps = catalog_policy_readiness_gaps(&snap.catalog_rows, &set);
+                if !gaps.is_empty() {
+                    let detail = gaps
+                        .iter()
+                        .map(|(eid, slot)| format!("{eid} ({slot})"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    set_notice(
+                        state,
+                        RunNotice::new(
+                            NoticeSeverity::Warning,
+                            "MCP policy not ready",
+                            format!(
+                                "Complete connect for: {detail}. Press 'a' on each catalog row."
+                            ),
+                        )
+                        .with_sticky(false),
+                    );
+                } else {
                 submit_inline_admin_job(state, bridge, AdminTaskKind::SavingApiAllowlist, |c| {
                     AdminJob::SetAllowedApisExact {
                         corr: c,
@@ -2075,6 +2257,7 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
                         entry_ids: set,
                     }
                 });
+                }
             }
         }
         KeyCode::Char('a') if state.screen == RunScreen::Apis => {
@@ -2093,6 +2276,25 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
                         .with_sticky(false),
                     );
                 } else if let Some(hosted_kv_key) = hosted_kv_key {
+                    if row.bindings_required && !row.bindings_complete {
+                        state.mode = InputMode::CatalogConnect {
+                            entry_id: entry_id.clone(),
+                            hosted_kv_key,
+                            step: 0,
+                            workspace_url: String::new(),
+                            secret_buf: String::new(),
+                        };
+                        set_notice(
+                            state,
+                            RunNotice::new(
+                                NoticeSeverity::Info,
+                                "Connect catalog",
+                                format!("Step 1/2: workspace URL for {entry_id}."),
+                            )
+                            .with_action_hint("Enter next · Esc cancel")
+                            .with_sticky(false),
+                        );
+                    } else {
                     state.mode = InputMode::ApiSecretEdit {
                         entry_id: entry_id.clone(),
                         hosted_kv_key,
@@ -2110,6 +2312,7 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
                         )
                         .with_sticky(false),
                     );
+                    }
                 } else {
                     set_notice(
                         state,
@@ -2619,6 +2822,7 @@ fn update(state: &mut RunState, msg: UiMsg, deps: &UpdateDeps<'_>) -> bool {
         UiMsg::Key(key) => match state.mode {
             InputMode::ApiFilter
             | InputMode::ApiSecretEdit { .. }
+            | InputMode::CatalogConnect { .. }
             | InputMode::AddKeyLabel { .. }
             | InputMode::OAuthWizard(_)
             | InputMode::OAuthDeviceScopePick(_) => update_modal_key(state, key, deps),
@@ -2909,6 +3113,27 @@ fn render_running_frame(
                         Span::raw("not configured"),
                     ]));
                 }
+                if row.api_secret_present {
+                    detail_lines.push(Line::from(vec![
+                        Span::styled("Secret: ", dim_style()),
+                        Span::raw("stored"),
+                    ]));
+                } else if row.connect_profile.has_api_key {
+                    detail_lines.push(Line::from(vec![
+                        Span::styled("Secret: ", dim_style()),
+                        Span::raw("missing"),
+                    ]));
+                }
+                if row.bindings_required {
+                    detail_lines.push(Line::from(vec![
+                        Span::styled("Bindings: ", dim_style()),
+                        Span::raw(if row.bindings_complete {
+                            "complete"
+                        } else {
+                            "missing (catalog_http_origin)"
+                        }),
+                    ]));
+                }
                 if let Some(ref key) = row.api_secret_hosted_kv {
                     detail_lines.push(Line::from(vec![
                         Span::styled("Hosted key: ", dim_style()),
@@ -2928,6 +3153,37 @@ fn render_running_frame(
                         detail_lines.push(Line::from(
                             "Enter save · Esc cancel · secret is masked in this pane only",
                         ));
+                    }
+                }
+                if let InputMode::CatalogConnect {
+                    entry_id,
+                    step,
+                    workspace_url,
+                    secret_buf,
+                    ..
+                } = &model.mode
+                {
+                    if entry_id == &row.entry_id {
+                        detail_lines.push(Line::from(""));
+                        if *step == 0 {
+                            detail_lines.push(Line::from(vec![
+                                Span::styled("Workspace URL: ", dim_style()),
+                                Span::raw(workspace_url.clone()),
+                            ]));
+                        } else {
+                            detail_lines.push(Line::from(vec![
+                                Span::styled("Workspace URL: ", dim_style()),
+                                Span::raw(workspace_url.clone()),
+                            ]));
+                            detail_lines.push(Line::from(vec![
+                                Span::styled("API key: ", dim_style()),
+                                Span::styled(
+                                    "*".repeat(secret_buf.len()) + "_",
+                                    Style::default().add_modifier(Modifier::BOLD),
+                                ),
+                            ]));
+                        }
+                        detail_lines.push(Line::from("Enter next/save · Esc cancel"));
                     }
                 }
             } else {

@@ -420,6 +420,8 @@ pub struct ExecuteSession {
     paging_handle_next: Arc<AtomicU64>,
     /// Serializes `page(pg#)` peek → execute → upsert so concurrent clients cannot corrupt continuation state.
     pub(crate) paging_op_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Per-catalog session binding maps (MCP connect / REPL `--backend`).
+    pub bindings_by_entry: indexmap::IndexMap<String, crate::binding_slots::SessionBindingMap>,
 }
 
 impl ExecuteSession {
@@ -440,6 +442,45 @@ impl ExecuteSession {
         catalog_cgs_hash: String,
         context_intent: Option<String>,
         ranked_capabilities: Option<Vec<String>>,
+    ) -> Self {
+        Self::new_with_bindings(
+            prompt_hash,
+            prompt_text,
+            cgs,
+            contexts_by_entry,
+            entry_id,
+            tenant_scope,
+            principal_subject,
+            http_backend,
+            entities,
+            teaching_exposure,
+            principal,
+            plugin_generation,
+            catalog_cgs_hash,
+            context_intent,
+            ranked_capabilities,
+            IndexMap::new(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new_with_bindings(
+        prompt_hash: String,
+        prompt_text: String,
+        cgs: Arc<CGS>,
+        contexts_by_entry: IndexMap<String, Arc<CgsContext>>,
+        entry_id: String,
+        tenant_scope: String,
+        principal_subject: String,
+        http_backend: Option<String>,
+        entities: Vec<String>,
+        teaching_exposure: Option<TeachingExposureSession>,
+        principal: Option<String>,
+        plugin_generation: Option<Arc<LoadedPluginGeneration>>,
+        catalog_cgs_hash: String,
+        context_intent: Option<String>,
+        ranked_capabilities: Option<Vec<String>>,
+        bindings_by_entry: indexmap::IndexMap<String, crate::binding_slots::SessionBindingMap>,
     ) -> Self {
         let core = Arc::new(SessionCore::new());
         Self {
@@ -467,7 +508,16 @@ impl ExecuteSession {
             paging_resume_by_handle: Arc::new(StdMutex::new(HashMap::new())),
             paging_handle_next: Arc::new(AtomicU64::new(0)),
             paging_op_lock: Arc::new(tokio::sync::Mutex::new(())),
+            bindings_by_entry,
         }
+    }
+
+    /// Session binding wire values for a catalog `entry_id`.
+    pub fn session_bindings_for_entry(
+        &self,
+        entry_id: &str,
+    ) -> Option<&crate::binding_slots::SessionBindingMap> {
+        self.bindings_by_entry.get(entry_id)
     }
 
     /// Allocate the next monotonic `resource_index` for this execute session (used for `plasm://r/{n}`).

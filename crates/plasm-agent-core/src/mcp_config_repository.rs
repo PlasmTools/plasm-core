@@ -220,6 +220,196 @@ impl McpConfigRepository {
         Ok(row)
     }
 
+    /// Binding KV pointer for `(config_id, entry_id)` scoped triple.
+    pub async fn fetch_binding_kv_key_for_scope(
+        &self,
+        config_id: Uuid,
+        entry_id: &str,
+    ) -> Result<Option<String>, sqlx::Error> {
+        let row: Option<String> = sqlx::query_scalar(
+            r#"
+            SELECT binding_kv_key
+            FROM project_mcp_entry_bindings
+            WHERE config_id = $1 AND entry_id = $2
+            "#,
+        )
+        .bind(config_id)
+        .bind(entry_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    pub async fn upsert_entry_binding(
+        &self,
+        scope: crate::binding_slots::BindingScope,
+        binding_kv_key: &str,
+    ) -> Result<(), sqlx::Error> {
+        let now = Utc::now();
+        sqlx::query(
+            r#"
+            INSERT INTO project_mcp_entry_bindings
+                (id, tenant_id, config_id, entry_id, binding_kv_key, inserted_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT (config_id, entry_id) DO UPDATE SET
+                tenant_id = EXCLUDED.tenant_id,
+                binding_kv_key = EXCLUDED.binding_kv_key,
+                updated_at = EXCLUDED.updated_at
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(&scope.tenant_id)
+        .bind(scope.mcp_config_id)
+        .bind(&scope.entry_id)
+        .bind(binding_kv_key)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Load runtime config for active or disabled MCP bundles (binding connect).
+    pub async fn load_runtime_for_config_including_disabled(
+        &self,
+        config_id: Uuid,
+    ) -> Result<Option<McpRuntimeConfig>, sqlx::Error> {
+        let row = sqlx::query(
+            r#"
+            SELECT id, tenant_id, space_type, owner_subject, config_version, endpoint_secret_hash
+            FROM project_mcp_configs
+            WHERE id = $1 AND status IN ('active', 'disabled')
+            "#,
+        )
+        .bind(config_id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+
+        let id: Uuid = row.get("id");
+        let tenant_id: String = row.get("tenant_id");
+        let space_type: String = row.get("space_type");
+        let owner_subject: Option<String> = row.get("owner_subject");
+        let version: i64 = row.get("config_version");
+        let endpoint_secret_hash: Vec<u8> = row.get("endpoint_secret_hash");
+        if endpoint_secret_hash.len() != 32 {
+            return Ok(None);
+        }
+        let mut endpoint_arr = [0u8; 32];
+        endpoint_arr.copy_from_slice(&endpoint_secret_hash);
+
+        let graph_rows = sqlx::query(
+            "SELECT entry_id, enabled FROM project_mcp_allowed_graphs WHERE config_id = $1",
+        )
+        .bind(config_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let graphs: Vec<(String, bool)> = graph_rows
+            .into_iter()
+            .map(|r| (r.get::<String, _>("entry_id"), r.get::<bool, _>("enabled")))
+            .collect();
+
+        let mut allowed_entry_ids = HashSet::new();
+        for (eid, en) in graphs {
+            if en && !eid.is_empty() {
+                allowed_entry_ids.insert(eid);
+            }
+        }
+
+        let cap_rows = sqlx::query(
+            r#"SELECT entry_id, capability_name FROM project_mcp_allowed_capabilities
+               WHERE config_id = $1 AND enabled = true"#,
+        )
+        .bind(config_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let caps: Vec<(String, String)> = cap_rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<String, _>("entry_id"),
+                    r.get::<String, _>("capability_name"),
+                )
+            })
+            .collect();
+
+        let mut capabilities_by_entry: HashMap<String, HashSet<String>> = HashMap::new();
+        for (entry_id, cap_name) in caps {
+            if entry_id.is_empty() || cap_name.is_empty() {
+                continue;
+            }
+            capabilities_by_entry
+                .entry(entry_id)
+                .or_default()
+                .insert(cap_name);
+        }
+
+        for eid in &allowed_entry_ids {
+            if !capabilities_by_entry.contains_key(eid) {
+                capabilities_by_entry.insert(eid.clone(), HashSet::new());
+            }
+        }
+
+        let bind_rows = sqlx::query(
+            "SELECT entry_id, auth_config_id FROM project_mcp_auth_bindings WHERE config_id = $1",
+        )
+        .bind(config_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let bindings: Vec<(String, Uuid)> = bind_rows
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<String, _>("entry_id"),
+                    r.get::<Uuid, _>("auth_config_id"),
+                )
+            })
+            .collect();
+
+        let mut auth_config_by_entry = HashMap::new();
+        for (eid, aid) in bindings {
+            if !eid.is_empty() {
+                auth_config_by_entry.insert(eid, aid);
+            }
+        }
+
+        let cred_rows = sqlx::query(
+            "SELECT secret_hash FROM project_mcp_credentials WHERE config_id = $1 AND status = 'active'",
+        )
+        .bind(config_id)
+        .fetch_all(&self.pool)
+        .await?;
+        let cred_hashes: Vec<Vec<u8>> = cred_rows
+            .into_iter()
+            .map(|r| r.get::<Vec<u8>, _>("secret_hash"))
+            .collect();
+
+        let mut credential_secret_hashes = HashSet::new();
+        for bytes in cred_hashes {
+            if bytes.len() == 32 {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&bytes);
+                credential_secret_hashes.insert(arr);
+            }
+        }
+
+        Ok(Some(McpRuntimeConfig {
+            id,
+            tenant_id,
+            space_type,
+            owner_subject,
+            version: version as u64,
+            endpoint_secret_hash: endpoint_arr,
+            credential_secret_hashes,
+            allowed_entry_ids,
+            capabilities_by_entry,
+            auth_config_by_entry,
+        }))
+    }
+
     pub async fn find_personal_runtime(
         &self,
         tenant_id: &str,
@@ -881,24 +1071,30 @@ mod tests {
     }
 
     #[test]
-    fn single_squashed_migration_file_is_present() {
+    fn squashed_migration_and_allowlisted_incrementals() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
-        let entries: Vec<_> = std::fs::read_dir(&dir)
+        let mut names: Vec<String> = std::fs::read_dir(&dir)
             .expect("migrations dir")
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().is_some_and(|x| x == "sql"))
+            .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
-        assert_eq!(
-            entries.len(),
-            1,
-            "expected one squashed plasm_agent_schema migration"
-        );
+        names.sort();
         assert!(
-            entries[0]
-                .file_name()
-                .to_string_lossy()
-                .contains("plasm_agent_schema"),
-            "migration file should be plasm_agent_schema"
+            names
+                .iter()
+                .any(|n| n.contains("plasm_agent_schema")),
+            "expected squashed plasm_agent_schema migration, got {names:?}"
         );
+        let allowlisted_incrementals = ["20260607000000_project_mcp_entry_bindings.sql"];
+        for name in &names {
+            if name.contains("plasm_agent_schema") {
+                continue;
+            }
+            assert!(
+                allowlisted_incrementals.contains(&name.as_str()),
+                "unexpected migration file {name}; add to allowlisted_incrementals if intentional"
+            );
+        }
     }
 }

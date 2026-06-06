@@ -24,6 +24,7 @@ use crate::execute_session::ExecuteSessionStore;
 use crate::http_discovery::{discovery_routes_protected, get_auth_status, health_response};
 use crate::http_execute::execute_routes;
 use crate::http_incoming_context::incoming_context_routes;
+use crate::http_mcp_bindings;
 use crate::http_oauth_link;
 use crate::http_outbound_secrets;
 use crate::http_traces::trace_routes;
@@ -185,7 +186,8 @@ pub fn discovery_execute_router(state: PlasmHostState) -> Router {
 
     let mut pre_internal = Router::new()
         .merge(http_oauth_link::oauth_link_routes())
-        .merge(http_outbound_secrets::outbound_secrets_routes());
+        .merge(http_outbound_secrets::outbound_secrets_routes())
+        .merge(http_mcp_bindings::mcp_bindings_routes());
     if state.mcp_config_repository().is_some() {
         pre_internal = pre_internal.merge(crate::http_mcp_config::mcp_config_routes());
     }

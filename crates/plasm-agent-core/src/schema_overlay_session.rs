@@ -110,7 +110,7 @@ async fn fetch_overlay_merged_response(
         let merge = step.merge.as_ref().expect("validated merge");
         for row in rows {
             let bind =
-                resolve_overlay_row_bind(&step.bind, row, None).map_err(|e| e.to_string())?;
+                resolve_overlay_row_bind(&step.bind, row, None, None).map_err(|e| e.to_string())?;
             let response = fetch_overlay_source_response(
                 engine,
                 base,

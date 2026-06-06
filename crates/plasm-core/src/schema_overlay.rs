@@ -214,23 +214,28 @@ fn capability_input_field_names(cap: &CapabilitySchema) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Resolve `bind` templates from an API row (`{ row, parent, env }`).
+/// Resolve `bind` templates from an API row (`{ row, parent, bind }`).
 pub fn resolve_overlay_row_bind(
     bind: &IndexMap<String, String>,
     row: &JsonValue,
     parent: Option<&JsonValue>,
+    session_bind: Option<&IndexMap<String, String>>,
 ) -> Result<IndexMap<String, String>, String> {
     if bind.is_empty() {
         return Ok(IndexMap::new());
     }
     let ctx = overlay_row_context(row, parent);
-    let env_vars: serde_json::Map<String, JsonValue> = std::env::vars()
-        .map(|(k, v)| (k, JsonValue::String(v)))
-        .collect();
+    let bind_obj: serde_json::Map<String, JsonValue> = session_bind
+        .map(|m| {
+            m.iter()
+                .map(|(k, v)| (k.clone(), JsonValue::String(v.clone())))
+                .collect()
+        })
+        .unwrap_or_default();
     let ctx = serde_json::json!({
         "row": ctx.get("row").cloned().unwrap_or(JsonValue::Null),
         "parent": ctx.get("parent").cloned().unwrap_or(JsonValue::Null),
-        "env": env_vars,
+        "bind": bind_obj,
     });
     let mut tmpl_env = overlay_template_environment();
     tmpl_env.set_undefined_behavior(UndefinedBehavior::Chainable);
@@ -1060,6 +1065,10 @@ impl CGS {
                 .map_err(|e| SchemaError::SchemaOverlayInvalid {
                     detail: format!("invalid Minijinja template '{tmpl}': {e}"),
                 })?;
+            crate::bind_wire_validate::validate_bind_wire_refs(
+                tmpl,
+                "schema_overlay Minijinja template",
+            )?;
         }
         if let Some(df) = &spec.entity.dynamic_fields {
             env.template_from_str(&df.name.template).map_err(|e| {
@@ -1119,6 +1128,10 @@ impl CGS {
             .map_err(|e| SchemaError::SchemaOverlayInvalid {
                 detail: format!("invalid source bind '{param}' template: {e}"),
             })?;
+        crate::bind_wire_validate::validate_bind_wire_refs(
+            template,
+            &format!("overlay source bind '{param}' on capability '{capability}'"),
+        )?;
         let input_fields = capability_input_field_names(cap);
         if !input_fields.is_empty() && !input_fields.iter().any(|name| name == param) {
             return Err(SchemaError::SchemaOverlayInvalid {
@@ -1285,7 +1298,7 @@ mod tests {
         };
         for row in &team_rows {
             let bind =
-                resolve_overlay_row_bind(&spec.source.steps[1].bind, row, None).expect("bind");
+                resolve_overlay_row_bind(&spec.source.steps[1].bind, row, None, None).expect("bind");
             assert_eq!(
                 bind.get("team_id").map(String::as_str),
                 Some(row["id"].as_str().unwrap())
@@ -1345,7 +1358,7 @@ mod tests {
         let mut bind = IndexMap::new();
         bind.insert("team_id".into(), "{{ row.id }}".into());
         let row = serde_json::json!({ "id": "777666555", "name": "Acme" });
-        let resolved = resolve_overlay_row_bind(&bind, &row, None).expect("bind");
+        let resolved = resolve_overlay_row_bind(&bind, &row, None, None).expect("bind");
         assert_eq!(
             resolved.get("team_id").map(String::as_str),
             Some("777666555")

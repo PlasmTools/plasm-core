@@ -139,6 +139,13 @@ pub enum AdminJob {
         key: String,
         value: String,
     },
+    StoreMcpCatalogBinding {
+        corr: AdminCorr,
+        tenant_id: String,
+        config_id: Uuid,
+        entry_id: String,
+        values: std::collections::HashMap<String, String>,
+    },
     OAuthDeviceBind {
         corr: AdminCorr,
         entry_id: String,
@@ -189,6 +196,11 @@ pub enum AdminCompletion {
     StoreOutboundSecret {
         corr: AdminCorr,
         key: String,
+        result: Result<(), String>,
+    },
+    StoreMcpCatalogBinding {
+        corr: AdminCorr,
+        entry_id: String,
         result: Result<(), String>,
     },
     OAuthDeviceBindStarted {
@@ -274,6 +286,33 @@ async fn apply_local_secret_state_to_catalog_rows(
             continue;
         };
         row.api_secret_present = matches!(storage.get_kv(key).await, Ok(Some(_)));
+    }
+}
+
+async fn apply_binding_state_to_catalog_rows(
+    rows: &mut [McpConfigCatalogRow],
+    storage: &Arc<dyn AuthStorage>,
+    repo: &plasm_agent_core::mcp_config_repository::McpConfigRepository,
+    config_id: uuid::Uuid,
+    tenant_id: &str,
+) {
+    for row in rows {
+        if !row.bindings_required {
+            row.bindings_complete = true;
+            continue;
+        }
+        let scope = plasm_agent_core::binding_slots::BindingScope::new(
+            tenant_id,
+            config_id,
+            row.entry_id.clone(),
+        );
+        row.bindings_complete =
+            plasm_agent_core::binding_store::entry_bindings_complete_scoped(
+                storage,
+                repo,
+                &scope,
+            )
+            .await;
     }
 }
 
@@ -364,6 +403,17 @@ pub async fn refresh_full_snapshot(state: &PlasmHostState) -> RefreshedUiData {
     data.catalog_rows = catalog_rows;
     data.keys = keys;
     data.db_allowed = runtime.allowed_entry_ids.clone();
+    if let (Some(storage), Some(repo)) = (state.auth_storage(), state.mcp_config_repository()) {
+        apply_local_secret_state_to_catalog_rows(&mut data.catalog_rows, storage).await;
+        apply_binding_state_to_catalog_rows(
+            &mut data.catalog_rows,
+            storage,
+            repo,
+            id,
+            runtime.tenant_id.as_str(),
+        )
+        .await;
+    }
     refresh_oauth_into(state, &mut data).await;
     data
 }
@@ -429,6 +479,51 @@ async fn run_admin_job(
             send_completion(
                 &comp_tx,
                 AdminCompletion::StoreOutboundSecret { corr, key, result },
+            );
+        }
+        AdminJob::StoreMcpCatalogBinding {
+            corr,
+            tenant_id,
+            config_id,
+            entry_id,
+            values,
+        } => {
+            let result = async {
+                let repo = state
+                    .mcp_config_repository()
+                    .ok_or_else(|| "mcp config repo unavailable".to_string())?;
+                let storage = state
+                    .auth_storage()
+                    .ok_or_else(|| "auth storage unavailable".to_string())?;
+                let normalized = plasm_agent_core::binding_slots::normalize_connect_binding_values(
+                    entry_id.as_str(),
+                    &values,
+                )
+                .map_err(|e| e.to_string())?;
+                let scope = plasm_agent_core::binding_slots::BindingScope::new(
+                    tenant_id,
+                    config_id,
+                    entry_id.clone(),
+                );
+                plasm_agent_core::binding_store::store_scoped_binding_envelope(
+                    storage,
+                    repo,
+                    scope,
+                    normalized,
+                    None,
+                )
+                .await
+                .map_err(|e| e.to_string())?;
+                Ok(())
+            }
+            .await;
+            send_completion(
+                &comp_tx,
+                AdminCompletion::StoreMcpCatalogBinding {
+                    corr,
+                    entry_id,
+                    result,
+                },
             );
         }
         AdminJob::OAuthDeviceBind {

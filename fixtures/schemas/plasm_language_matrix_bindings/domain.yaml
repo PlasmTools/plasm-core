@@ -1,0 +1,25 @@
+version: 1
+auth:
+  scheme: api_key_header
+  header: Authorization
+  hosted_kv: plasm:outbound:v1:fixture:binding_matrix
+http_backend: https://YOUR_ACCOUNT.example.test
+capabilities:
+  schema_query:
+    description: Probe capability referencing bind.catalog_http_origin in CML Host header.
+    kind: query
+    entity: BindingProbe
+    provides:
+      - id
+values:
+  nv_binding_probe_id:
+    type: string
+    string_semantics: short
+entities:
+  BindingProbe:
+    id_field: id
+    description: Matrix fixture for host bind.* CML references.
+    fields:
+      id:
+        required: true
+        value_ref: nv_binding_probe_id

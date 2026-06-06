@@ -80,6 +80,7 @@
 //!
 #![allow(clippy::result_large_err)]
 
+pub mod bind_wire_validate;
 pub mod cgs_context;
 pub mod cgs_expression_validate;
 pub mod cgs_federation;
