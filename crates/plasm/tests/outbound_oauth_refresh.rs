@@ -61,6 +61,7 @@ async fn hosted_bearer_refreshes_expired_envelope_and_rewrites_kv() {
         token_type: Some("Bearer".into()),
         expires_at_unix: Some(1),
         scope: None,
+        http_backend: None,
     };
     storage
         .store_kv(kv_key, &serde_json::to_vec(&env).unwrap(), None)

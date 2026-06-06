@@ -4,11 +4,14 @@ A [Plasm](../../README.md) domain model for the [Fibery HTTP API](https://develo
 
 ```bash
 export FIBERY_API_TOKEN="Token YOUR_TOKEN"
+export FIBERY_HTTP_BACKEND="https://YOUR_ACCOUNT.fibery.io"
 cargo run -p plasm -- \
   --schema apis/fibery \
-  --backend https://YOUR_ACCOUNT.fibery.io \
+  --backend "$FIBERY_HTTP_BACKEND" \
   --repl
 ```
+
+On hosted `plasm-mcp`, set the same env vars on the agent process (or connect via the web UI with workspace URL + API key so both are stored in outbound KV).
 
 Replace `YOUR_ACCOUNT` with your Fibery workspace subdomain. Generate an API token from the workspace menu (**API Tokens**). Fibery expects the token value to include the `Token ` prefix when sent as `Authorization`.
 

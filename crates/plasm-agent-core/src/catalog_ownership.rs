@@ -87,6 +87,23 @@ fn is_schema_placeholder_http_backend(url: &str) -> bool {
     url == DEFAULT_HTTP_BACKEND
         || url == "http://127.0.0.1:9"
         || url.starts_with("http://127.0.0.1:9/")
+        || is_fibery_account_placeholder_http_backend(url)
+}
+
+/// Fibery catalogs ship `https://YOUR_ACCOUNT.fibery.io` until connect or host env supplies the workspace host.
+pub(crate) fn is_fibery_account_placeholder_http_backend(url: &str) -> bool {
+    let t = url.trim().trim_end_matches('/');
+    if t.eq_ignore_ascii_case("https://YOUR_ACCOUNT.fibery.io")
+        || t.eq_ignore_ascii_case("http://YOUR_ACCOUNT.fibery.io")
+    {
+        return true;
+    }
+    let lower = t.to_ascii_lowercase();
+    lower
+        .strip_prefix("https://")
+        .or_else(|| lower.strip_prefix("http://"))
+        .and_then(|rest| rest.split('/').next())
+        .is_some_and(|host| host == "your_account.fibery.io")
 }
 
 /// Trace/metadata helper: never panics; falls back to primary `entry_id` only when entity exists there.
@@ -213,6 +230,19 @@ mod tests {
             .as_deref(),
             Some("https://api.example.com")
         );
+    }
+
+    #[test]
+    fn fibery_placeholder_backend_detected() {
+        assert!(super::is_fibery_account_placeholder_http_backend(
+            "https://YOUR_ACCOUNT.fibery.io"
+        ));
+        assert!(super::is_fibery_account_placeholder_http_backend(
+            "https://your_account.fibery.io/"
+        ));
+        assert!(!super::is_fibery_account_placeholder_http_backend(
+            "https://acme.fibery.io"
+        ));
     }
 
     #[test]

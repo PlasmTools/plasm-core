@@ -128,6 +128,9 @@ pub struct OutboundOAuthKvV1 {
     pub expires_at_unix: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scope: Option<String>,
+    /// Account-specific HTTP origin (e.g. Fibery workspace host) when catalog `http_backend` is a placeholder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_backend: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -295,6 +298,14 @@ pub fn parse_outbound_oauth_kv_v1(
     Ok(serde_json::from_value(v)?)
 }
 
+/// Optional per-account HTTP origin stored alongside a hosted outbound credential (Fibery workspace URL).
+pub fn hosted_outbound_http_backend_from_kv(raw: &str) -> Option<String> {
+    let env = parse_outbound_oauth_kv_v1(raw).ok()?;
+    env.http_backend
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+}
+
 impl OutboundOAuthKvV1 {
     /// `true` if a proactive refresh should run (access past expiry minus skew).
     pub fn needs_proactive_refresh(&self, now_unix: u64, skew_secs: u64) -> bool {
@@ -317,6 +328,7 @@ impl OutboundOAuthKvV1 {
             token_type: None,
             expires_at_unix: None,
             scope: None,
+            http_backend: None,
         };
         env.apply_token_response(body)?;
         Ok(env)
@@ -440,6 +452,37 @@ mod tests {
             token_type: Some("Bearer".into()),
             expires_at_unix: Some(1_700_000_000),
             scope: Some("read".into()),
+            http_backend: Some("https://acme.fibery.io".into()),
+        };
+        let json = serde_json::to_string(&env).unwrap();
+        let parsed = parse_outbound_oauth_kv_v1(&json).unwrap();
+        assert_eq!(parsed, env);
+        assert_eq!(
+            hosted_outbound_http_backend_from_kv(&json).as_deref(),
+            Some("https://acme.fibery.io")
+        );
+    }
+
+    #[test]
+    fn hosted_http_backend_trims_slash() {
+        let raw = r#"{"version":1,"entry_id":"fibery","access_token":"Token x","http_backend":"https://acme.fibery.io/"}"#;
+        assert_eq!(
+            hosted_outbound_http_backend_from_kv(raw).as_deref(),
+            Some("https://acme.fibery.io")
+        );
+    }
+
+    #[test]
+    fn parse_v1_round_trip_legacy_without_http_backend() {
+        let env = OutboundOAuthKvV1 {
+            version: OUTBOUND_OAUTH_KV_VERSION,
+            entry_id: "linear".into(),
+            access_token: "acc".into(),
+            refresh_token: Some("ref".into()),
+            token_type: Some("Bearer".into()),
+            expires_at_unix: Some(1_700_000_000),
+            scope: Some("read".into()),
+            http_backend: None,
         };
         let json = serde_json::to_string(&env).unwrap();
         let parsed = parse_outbound_oauth_kv_v1(&json).unwrap();
@@ -456,6 +499,7 @@ mod tests {
             token_type: None,
             expires_at_unix: Some(1000),
             scope: None,
+            http_backend: None,
         };
         assert!(!env.needs_proactive_refresh(900, HOSTED_OAUTH_EXPIRY_SKEW_SECS));
         assert!(env.needs_proactive_refresh(970, HOSTED_OAUTH_EXPIRY_SKEW_SECS));
@@ -477,6 +521,7 @@ mod tests {
             token_type: None,
             expires_at_unix: None,
             scope: None,
+            http_backend: None,
         };
         let err = env.apply_token_response(&body).unwrap_err();
         let msg = err.to_string();
@@ -499,6 +544,7 @@ mod tests {
             token_type: None,
             expires_at_unix: None,
             scope: None,
+            http_backend: None,
         };
         assert!(matches!(
             env.apply_token_response(&body),
@@ -516,6 +562,7 @@ mod tests {
             token_type: None,
             expires_at_unix: None,
             scope: None,
+            http_backend: None,
         };
         let body = serde_json::json!({
             "access_token": "a",
@@ -535,6 +582,7 @@ mod tests {
             token_type: None,
             expires_at_unix: None,
             scope: None,
+            http_backend: None,
         };
         let body = serde_json::json!({
             "access_token": "new",
@@ -577,6 +625,7 @@ mod tests {
             token_type: None,
             expires_at_unix: Some(1),
             scope: None,
+            http_backend: None,
         };
         let j = serde_json::to_string(&env).unwrap();
         let err = classify_hosted_bearer_utf8(&j, HOSTED_OAUTH_EXPIRY_SKEW_SECS).unwrap_err();

@@ -1004,6 +1004,32 @@ async fn tenant_outbound_hosted_kv_for_entries(
     out
 }
 
+/// Resolve live HTTP origin for account-specific catalogs (Fibery workspace host).
+fn resolve_live_http_backend_for_entry(
+    entry_id: &str,
+    catalog_backend: &str,
+    hosted_kv_raw: Option<&str>,
+) -> String {
+    if entry_id != "fibery"
+        || !crate::catalog_ownership::is_fibery_account_placeholder_http_backend(catalog_backend)
+    {
+        return catalog_backend.to_string();
+    }
+    if let Ok(from_env) = std::env::var("FIBERY_HTTP_BACKEND") {
+        let t = from_env.trim().trim_end_matches('/');
+        if !t.is_empty() {
+            return t.to_string();
+        }
+    }
+    if let Some(raw) = hosted_kv_raw {
+        if let Some(from_kv) = plasm_runtime::hosted_oauth_kv::hosted_outbound_http_backend_from_kv(raw)
+        {
+            return from_kv;
+        }
+    }
+    catalog_backend.to_string()
+}
+
 fn patch_auth_scheme_for_tenant_hosted(
     auth: Option<&AuthScheme>,
     hosted_kv_key: &str,
@@ -1108,7 +1134,14 @@ async fn execute_session_create_response_inner(
         }
     }
     let ctx_arc = Arc::new(ctx);
-    let http_backend = ctx_arc.cgs.http_backend.clone();
+    let hosted_kv_raw = outbound_hosted_kv_by_entry
+        .and_then(|map| map.get(&body.entry_id))
+        .map(|s| s.as_str());
+    let http_backend = resolve_live_http_backend_for_entry(
+        body.entry_id.as_str(),
+        ctx_arc.cgs.http_backend.as_str(),
+        hosted_kv_raw,
+    );
     let effective_cgs = crate::schema_overlay_session::resolve_schema_overlay_for_host(
         st.engine.as_ref(),
         st.mode,
@@ -1249,7 +1282,7 @@ async fn execute_session_create_response_inner(
         body.entry_id.clone(),
         scope,
         subj,
-        Some(ctx_arc.cgs.http_backend.clone()),
+        Some(http_backend.clone()),
         names.clone(),
         Some(teaching_exposure),
         principal_stored.clone(),
@@ -1341,7 +1374,14 @@ pub async fn federate_execute_session(
             ctx = patch_cgs_context_outbound_hosted(ctx, kv);
         }
     }
-    let http_backend = ctx.cgs.http_backend.clone();
+    let hosted_kv_raw = outbound_hosted_kv_by_entry
+        .and_then(|map| map.get(&new_entry_id))
+        .map(|s| s.as_str());
+    let http_backend = resolve_live_http_backend_for_entry(
+        new_entry_id.as_str(),
+        ctx.cgs.http_backend.as_str(),
+        hosted_kv_raw,
+    );
     let effective_cgs = crate::schema_overlay_session::resolve_schema_overlay_for_host(
         st.engine.as_ref(),
         st.mode,
