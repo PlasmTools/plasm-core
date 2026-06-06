@@ -683,7 +683,7 @@ fn infer_render_columns_for_node(
                 cols.extend(aggregates.iter().map(|a| a.name.clone()));
                 Ok(cols)
             }
-            ComputeOp::Sort { .. } | ComputeOp::Limit { .. } => {
+            ComputeOp::Sort { .. } | ComputeOp::Limit { .. } | ComputeOp::DedupeBy { .. } => {
                 let parent = lookup_dag_node(state, staged, parent_id.as_str()).ok_or_else(|| {
                     format!("template column inference: missing upstream node `{parent_id}`")
                 })?;
@@ -1210,6 +1210,28 @@ fn postfix_op_to_compute(
                 false,
             ))
         }
+        PlasmPostfixOp::Dedupe { keys } | PlasmPostfixOp::Distinct { keys: Some(keys) } => {
+            let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
+            let key_fps = parse_dedupe_key_paths(session, state.cross_cache, qe.as_ref(), keys)?;
+            validate_compute_paths_for_dag_source(
+                session,
+                state,
+                staged,
+                source,
+                &key_fps,
+                "dedupe(...)",
+            )?;
+            let schema = synthetic_schema_passthrough_rows(session, state, staged, source)?;
+            Ok(mk(ComputeOp::DedupeBy { keys: key_fps }, schema, false))
+        }
+        PlasmPostfixOp::Distinct { keys: None } => {
+            let schema = synthetic_schema_passthrough_rows(session, state, staged, source)?;
+            Ok(mk(
+                ComputeOp::DedupeBy { keys: vec![] },
+                schema,
+                false,
+            ))
+        }
         PlasmPostfixOp::Projection { fields } => {
             let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
             let mut map = BTreeMap::new();
@@ -1296,6 +1318,8 @@ fn row_suffix_to_postfix(suffix: &RowSuffix) -> Option<PlasmPostfixOp> {
         RowSuffix::Filter { body } => Some(PlasmPostfixOp::Filter { body: body.clone() }),
         RowSuffix::Aggregate { args } => Some(PlasmPostfixOp::Aggregate { args: args.clone() }),
         RowSuffix::GroupBy { args } => Some(PlasmPostfixOp::GroupBy { args: args.clone() }),
+        RowSuffix::Dedupe { keys } => Some(PlasmPostfixOp::Dedupe { keys: keys.clone() }),
+        RowSuffix::Distinct { keys } => Some(PlasmPostfixOp::Distinct { keys: keys.clone() }),
         RowSuffix::Singleton => Some(PlasmPostfixOp::Singleton),
         RowSuffix::PageSize { n } => Some(PlasmPostfixOp::PageSize(*n as usize)),
         RowSuffix::Relation { .. } => None,
@@ -2492,6 +2516,38 @@ fn compile_surface_node(
         if contract.supports_relation_dot() {
             let tail_trim = tail.trim();
             if !tail_trim.contains('.') {
+                if looks_like_surface_postfix_tail(tail_trim) {
+                    let synthetic = format!("{label}.{tail_trim}");
+                    match peel_postfix_suffixes(&synthetic) {
+                        Ok((primary, ops)) if primary.trim() == label && !ops.is_empty() => {
+                            let mut nodes = lower_row_expression(
+                                session,
+                                state,
+                                id,
+                                &synthetic,
+                                Some(id),
+                            )?;
+                            return nodes.pop().ok_or_else(|| {
+                                format!("Plasm program `{id}`: postfix continuation `{synthetic}` produced no nodes")
+                            });
+                        }
+                        Ok((_, ops)) if !ops.is_empty() => {
+                            let mut nodes = lower_row_expression(
+                                session,
+                                state,
+                                id,
+                                &synthetic,
+                                Some(id),
+                            )?;
+                            return nodes.pop().ok_or_else(|| {
+                                format!("Plasm program `{id}`: postfix continuation `{synthetic}` produced no nodes")
+                            });
+                        }
+                        _ => {
+                            return Err(unknown_row_transform_error(id, tail_trim));
+                        }
+                    }
+                }
                 if relation_sourced_continuation_eligible(state, &label)
                     || matches!(contract.anchor, ContinuationAnchor::BindingLabel)
                     || contract.anchor.allows_text_parse()
@@ -2779,6 +2835,52 @@ fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
     }
 }
 
+fn parse_dedupe_key_paths(
+    session: &ExecuteSession,
+    cross_cache: Option<&SymbolMapCrossRequestCache>,
+    qe: Option<&QualifiedEntityKey>,
+    keys: &str,
+) -> Result<Vec<FieldPath>, String> {
+    let trimmed = keys.trim();
+    if trimmed.is_empty() {
+        return Err("dedupe(...) requires at least one key field".into());
+    }
+    parse_field_list(session, cross_cache, qe, trimmed)?
+        .into_iter()
+        .map(|field| FieldPath::from_dotted(&field))
+        .collect::<Result<Vec<_>, _>>()
+}
+
+fn looks_like_surface_postfix_tail(tail: &str) -> bool {
+    let t = tail.trim();
+    if t.is_empty() {
+        return false;
+    }
+    if t.starts_with('[') {
+        return true;
+    }
+    if !(t.contains('(') || t.contains('{')) {
+        return false;
+    }
+    let head = t.split('(').next().unwrap_or(t).split('{').next().unwrap_or(t);
+    let name = head.trim().trim_start_matches('.');
+    is_known_postfix_method(name)
+}
+
+fn is_known_postfix_method(name: &str) -> bool {
+    matches!(
+        name,
+        "limit" | "page_size" | "sort" | "filter" | "aggregate" | "group_by" | "dedupe"
+            | "distinct" | "singleton"
+    )
+}
+
+fn unknown_row_transform_error(id: &str, tail: &str) -> String {
+    format!(
+        "Plasm program `{id}`: unknown row transform `{tail}`; allowed postfix: .limit(N), .page_size(N), .sort(field[, dir]), .filter{{…}}, .filter(…), .aggregate(specs), .group_by(field, specs), .dedupe(field[, …]), .distinct(field[, …]), .distinct(), .singleton(), [fields]"
+    )
+}
+
 fn split_return_list(
     line: &str,
     state: &mut CompileState<'_>,
@@ -2873,6 +2975,8 @@ fn parse_one_aggregate_spec(raw: &str) -> Result<crate::plasm_plan::AggregateSpe
             "avg" => AggregateFunction::Avg,
             "min" => AggregateFunction::Min,
             "max" => AggregateFunction::Max,
+            "first" => AggregateFunction::First,
+            "last" => AggregateFunction::Last,
             other => return Err(format!("unknown aggregate function `{other}`")),
         };
         return Ok(crate::plasm_plan::AggregateSpec {

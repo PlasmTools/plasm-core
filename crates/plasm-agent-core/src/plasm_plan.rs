@@ -814,6 +814,10 @@ pub enum ComputeOp {
     Limit {
         count: usize,
     },
+    DedupeBy {
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        keys: Vec<FieldPath>,
+    },
     Render {
         columns: Vec<OutputName>,
         template: String,
@@ -836,6 +840,8 @@ pub enum AggregateFunction {
     Avg,
     Min,
     Max,
+    First,
+    Last,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1780,7 +1786,8 @@ fn analyze_static_cardinality(
                     }
                     ComputeOp::Project { .. }
                     | ComputeOp::Filter { .. }
-                    | ComputeOp::Sort { .. } => inner(plan, by_id, &compute.source, memo),
+                    | ComputeOp::Sort { .. }
+                    | ComputeOp::DedupeBy { .. } => inner(plan, by_id, &compute.source, memo),
                     ComputeOp::Limit { count } if *count <= 1 => {
                         CardinalityAnalysis::StaticSingleton
                     }

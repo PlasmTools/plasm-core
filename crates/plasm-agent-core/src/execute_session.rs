@@ -1120,7 +1120,7 @@ mod tests {
             template,
             config: PaginationConfig {
                 params: indexmap! {
-                    "page".into() => PaginationParam::Counter { counter: 0, step: 1 },
+                    "page".into() => PaginationParam::Counter { counter: 0, step: 1, max: None },
                 },
                 location: PaginationLocation::Query,
                 body_merge_path: None,

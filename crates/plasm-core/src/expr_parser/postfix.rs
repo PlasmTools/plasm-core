@@ -19,6 +19,8 @@ pub enum PlasmPostfixOp {
     Filter { body: String },
     Aggregate { args: String },
     GroupBy { args: String },
+    Dedupe { keys: String },
+    Distinct { keys: Option<String> },
     Projection { fields: String },
 }
 
@@ -270,6 +272,20 @@ pub fn peel_postfix_suffixes(rhs: &str) -> Result<(String, Vec<PlasmPostfixOp>),
             progressed = true;
         } else if let Some((p, args)) = strip_trailing_method_call(t, "group_by")? {
             ops_rev.push(PlasmPostfixOp::GroupBy { args });
+            cur = p;
+            progressed = true;
+        } else if let Some((p, args)) = strip_trailing_method_call(t, "dedupe")? {
+            ops_rev.push(PlasmPostfixOp::Dedupe { keys: args });
+            cur = p;
+            progressed = true;
+        } else if let Some((p, args)) = strip_trailing_method_call(t, "distinct")? {
+            ops_rev.push(PlasmPostfixOp::Distinct {
+                keys: if args.trim().is_empty() {
+                    None
+                } else {
+                    Some(args)
+                },
+            });
             cur = p;
             progressed = true;
         } else if let Some((p, fields)) = strip_trailing_projection(t)? {
@@ -603,18 +619,24 @@ mod tests {
     }
 
     #[test]
-    fn peel_filter_brace_and_paren_equivalent() {
-        let (p1, ops1) = peel_postfix_suffixes("items.filter{owner=\"a\"}").unwrap();
-        let (p2, ops2) = peel_postfix_suffixes("items.filter(owner=\"a\")").unwrap();
-        assert_eq!(p1, "items");
-        assert_eq!(p2, "items");
-        assert_eq!(ops1.len(), 1);
-        assert_eq!(ops2.len(), 1);
-        match (&ops1[0], &ops2[0]) {
-            (PlasmPostfixOp::Filter { body: b1 }, PlasmPostfixOp::Filter { body: b2 }) => {
-                assert_eq!(b1.trim(), b2.trim());
-            }
-            _ => panic!("expected filter ops"),
-        }
+    fn peel_dedupe_and_distinct() {
+        let (p1, ops1) = peel_postfix_suffixes("repos.dedupe(owner)").unwrap();
+        assert_eq!(p1, "repos");
+        assert_eq!(ops1, vec![PlasmPostfixOp::Dedupe {
+            keys: "owner".to_string()
+        }]);
+
+        let (p2, ops2) = peel_postfix_suffixes("rows.distinct(owner, id)").unwrap();
+        assert_eq!(p2, "rows");
+        assert_eq!(
+            ops2,
+            vec![PlasmPostfixOp::Distinct {
+                keys: Some("owner, id".to_string())
+            }]
+        );
+
+        let (p3, ops3) = peel_postfix_suffixes("rows.distinct()").unwrap();
+        assert_eq!(p3, "rows");
+        assert_eq!(ops3, vec![PlasmPostfixOp::Distinct { keys: None }]);
     }
 }

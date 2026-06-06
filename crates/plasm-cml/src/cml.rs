@@ -243,6 +243,9 @@ pub enum PaginationParam {
         counter: i64,
         #[serde(default = "one_i64")]
         step: i64,
+        /// Stop pagination before the counter would exceed this value (inclusive last page).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max: Option<i64>,
     },
     /// Fixed value: sent unchanged on every page request.
     /// YAML: `limit: {fixed: 20}` or `page_size: {fixed: 100}`.
@@ -265,7 +268,7 @@ impl PaginationParam {
     pub fn initial_value(&self) -> Option<serde_json::Value> {
         match self {
             PaginationParam::Counter { counter, .. } => {
-                Some(serde_json::Value::Number((*counter).into()))
+                Some(serde_json::Value::Number(serde_json::Number::from(*counter)))
             }
             PaginationParam::Fixed { fixed } => Some(fixed.clone()),
             PaginationParam::FromResponse { .. } => None,

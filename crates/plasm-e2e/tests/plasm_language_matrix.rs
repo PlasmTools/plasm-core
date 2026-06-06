@@ -115,6 +115,8 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "flattened_surface_line_compile",
     "postfix_group_by_sort",
     "search_then_group_by",
+    "postfix_dedupe",
+    "agg_first_last",
     "dry_live_parity",
 ];
 
@@ -952,6 +954,31 @@ fn assert_planning_ir(
                 }
             }
         }
+        "lang_dedupe" | "lang_bind_dedupe" => {
+            let dedupe = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::DedupeBy { .. }))
+                .ok_or_else(|| format!("expected DedupeBy compute, got {:?}", computes))?;
+            if let ComputeOp::DedupeBy { keys, .. } = &dedupe.op {
+                if keys.is_empty() {
+                    return Err("expected non-empty dedupe keys".into());
+                }
+            }
+        }
+        "lang_group_by_first" => {
+            let group = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::GroupBy { .. }))
+                .ok_or_else(|| format!("expected GroupBy compute, got {:?}", computes))?;
+            if let ComputeOp::GroupBy { aggregates, .. } = &group.op {
+                let first = aggregates
+                    .iter()
+                    .find(|a| a.function == AggregateFunction::First);
+                if first.is_none() {
+                    return Err(format!("expected first() aggregate, got {:?}", aggregates));
+                }
+            }
+        }
         "lang_bind_projection_then_relation" => {
             let rel = plan_relation_named(plan, "tags")
                 .ok_or_else(|| "expected `.tags` relation after projection anchor".to_string())?;
@@ -1649,6 +1676,33 @@ tags"#,
         surface_line: true,
         federated: false,
         features: &["postfix_group_by", "postfix_group_by_sort", "postfix_sort"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "owner"],
+    },
+    MatrixRow {
+        id: "lang_dedupe",
+        program: "LangItem.dedupe(owner).limit(20)",
+        surface_line: true,
+        federated: false,
+        features: &["postfix_dedupe", "postfix_limit"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "owner"],
+    },
+    MatrixRow {
+        id: "lang_bind_dedupe",
+        program: "rows = LangItem~\"matrix\"\nrows.dedupe(owner)",
+        surface_line: false,
+        federated: false,
+        features: &["postfix_dedupe", "entity_search", "search_then_group_by"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv"],
+    },
+    MatrixRow {
+        id: "lang_group_by_first",
+        program: "LangItem.group_by(owner, title=first(title))",
+        surface_line: true,
+        federated: false,
+        features: &["postfix_group_by", "agg_first_last"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "owner"],
     },

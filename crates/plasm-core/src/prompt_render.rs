@@ -2722,6 +2722,39 @@ fn query_expr_filters_only(
     Some(format!("{es}{{{}}}", inner.join(", ")))
 }
 
+/// Search filter slots for `e#~"text"{p#=…}` — same param selection as [`query_expr_filters_only`].
+fn search_expr_with_filters(
+    cap: &crate::CapabilitySchema,
+    es: &str,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+) -> Option<String> {
+    let Some(is) = &cap.input_schema else {
+        return None;
+    };
+    let InputType::Object { fields, .. } = &is.input_type else {
+        return None;
+    };
+    let mut inner: Vec<String> = Vec::new();
+    for f in fields {
+        if matches!(f.role, Some(ParameterRole::Scope)) {
+            continue;
+        }
+        if matches!(f.role, Some(ParameterRole::Search)) {
+            continue;
+        }
+        if !field_is_filter_like(f) {
+            continue;
+        }
+        inner.push(query_param_slot_example(f, cap, cgs, map, catalog_entry_id));
+    }
+    if inner.is_empty() {
+        return None;
+    }
+    Some(format!("{es}~\"text\"{{{}}}", inner.join(", ")))
+}
+
 /// Only scope predicates (for a distinct structural example when maximal adds filters).
 fn query_expr_scope_only(
     cap: &crate::CapabilitySchema,
@@ -4485,8 +4518,8 @@ fn collect_entity_teaching_block(
             cgs,
             map,
             &line,
-            sg,
-            cap_leg,
+            sg.clone(),
+            cap_leg.clone(),
             None,
             scap.map(|c| &c.name),
             true,
@@ -4494,6 +4527,27 @@ fn collect_entity_teaching_block(
             line_valid_cache_seed,
             map_arc.clone(),
         );
+        if let (Some(cap), Some(filter_line)) = (
+            scap,
+            scap.and_then(|cap| search_expr_with_filters(cap, &es, cgs, map, catalog_entry_id)),
+        ) {
+            try_push_teaching_example(
+                gloss_emit,
+                &mut teaching_rows,
+                collect_meta,
+                cgs,
+                map,
+                &filter_line,
+                sg,
+                cap_leg,
+                None,
+                Some(&cap.name),
+                true,
+                line_valid_cache,
+                line_valid_cache_seed,
+                map_arc.clone(),
+            );
+        }
     }
 
     let mut nav_keys: Vec<String> = ent
@@ -5073,9 +5127,9 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         "name=[Entity(<id>), …]"
     };
     let search_form = if spec.symbolic {
-        "e#~\"text\""
+        "e#~\"text\"[{p#=…}]?"
     } else {
-        "Entity~\"text\""
+        "Entity~\"text\"[{filter=…}]?"
     };
     let entity_expr_rhs: &str = if spec.include_search_line {
         "query_all | get | query | relation | method | create_action | search"
@@ -5158,7 +5212,7 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     );
     let _ = writeln!(
         s,
-        "postfix       ::= \".limit(N)\" | \".page_size(N)\" | \".sort(field[, dir])\" | \".filter{{…}}\" | \".filter(…)\" | \".aggregate(specs)\" | \".group_by(field, specs)\" | \".singleton()\" | \"[\" fields \"]\""
+        "postfix       ::= \".limit(N)\" | \".page_size(N)\" | \".sort(field[, dir])\" | \".filter{{…}}\" | \".filter(…)\" | \".aggregate(specs)\" | \".group_by(field, specs)\" | \".dedupe(field[, …])\" | \".distinct(field[, …])\" | \".distinct()\" | \".singleton()\" | \"[\" fields \"]\""
     );
     let _ = writeln!(
         s,
@@ -5167,7 +5221,7 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     let _ = writeln!(s, "fields        ::= {}", projection);
     let _ = writeln!(
         s,
-        "specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) [, ...]"
+        "specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) | name=first(field) | name=last(field) [, ...]"
     );
     let _ = writeln!(s, "dir           ::= desc | asc | descending | ascending");
     let _ = writeln!(

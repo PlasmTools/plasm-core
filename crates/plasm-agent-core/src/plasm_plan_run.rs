@@ -1085,6 +1085,17 @@ fn render_compute_template(compute: &ComputeTemplate) -> String {
             if *descending { "desc" } else { "asc" }
         ),
         ComputeOp::Limit { count } => format!("limit {} count={count}", compute.source),
+        ComputeOp::DedupeBy { keys } => {
+            if keys.is_empty() {
+                format!("distinct {} *", compute.source)
+            } else {
+                format!(
+                    "dedupe {} keys={}",
+                    compute.source,
+                    keys.iter().map(|k| k.dotted()).collect::<Vec<_>>().join(",")
+                )
+            }
+        }
         ComputeOp::Render { columns, template } => format!(
             "render {} columns=[{}] template_chars={}",
             compute.source,
@@ -1263,6 +1274,8 @@ fn render_aggregate_function(function: AggregateFunction) -> &'static str {
         AggregateFunction::Avg => "avg",
         AggregateFunction::Min => "min",
         AggregateFunction::Max => "max",
+        AggregateFunction::First => "first",
+        AggregateFunction::Last => "last",
     }
 }
 
@@ -3981,6 +3994,7 @@ fn eval_compute(
             Ok(sorted)
         }
         ComputeOp::Limit { count } => Ok(rows.into_iter().take(*count).collect()),
+        ComputeOp::DedupeBy { keys } => dedupe_rows(&rows, keys),
         ComputeOp::Render { columns, template } => render_compute(&rows, columns, template),
     }
 }
@@ -4243,6 +4257,34 @@ fn predicate_matches(row: &serde_json::Value, pred: &crate::plasm_plan::PlanPred
     }
 }
 
+fn dedupe_rows(
+    rows: &[serde_json::Value],
+    keys: &[FieldPath],
+) -> Result<Vec<serde_json::Value>, String> {
+    use std::collections::HashSet;
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    for row in rows {
+        let composite = if keys.is_empty() {
+            serde_json::to_string(row).unwrap_or_default()
+        } else {
+            let parts: Vec<String> = keys
+                .iter()
+                .map(|k| {
+                    value_at_path(row, k)
+                        .map(json_scalar_display)
+                        .unwrap_or_default()
+                })
+                .collect();
+            serde_json::to_string(&parts).unwrap_or_default()
+        };
+        if seen.insert(composite) {
+            out.push(row.clone());
+        }
+    }
+    Ok(out)
+}
+
 fn group_rows(
     rows: &[serde_json::Value],
     keys: &[FieldPath],
@@ -4317,6 +4359,24 @@ fn append_aggregates(
                 .into_iter()
                 .reduce(f64::max)
                 .map(|n| serde_json::json!(n))
+                .unwrap_or(serde_json::Value::Null),
+            AggregateFunction::First => rows
+                .first()
+                .and_then(|row| {
+                    agg.field
+                        .as_ref()
+                        .and_then(|f| value_at_path(row, f))
+                        .cloned()
+                })
+                .unwrap_or(serde_json::Value::Null),
+            AggregateFunction::Last => rows
+                .last()
+                .and_then(|row| {
+                    agg.field
+                        .as_ref()
+                        .and_then(|f| value_at_path(row, f))
+                        .cloned()
+                })
                 .unwrap_or(serde_json::Value::Null),
         };
         obj.insert(agg.name.as_str().to_string(), value);

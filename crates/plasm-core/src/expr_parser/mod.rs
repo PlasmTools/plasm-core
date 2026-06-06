@@ -1495,6 +1495,35 @@ impl<'a> Parser<'a> {
                             .unwrap_or(false)
                     });
                 if !is_cap_param {
+                    let create_only = ec
+                        .find_capabilities(entity_name, CapabilityKind::Create)
+                        .iter()
+                        .any(|cap| {
+                            cap.input_schema
+                                .as_ref()
+                                .and_then(|is| {
+                                    if let crate::InputType::Object { fields, .. } = &is.input_type
+                                    {
+                                        Some(fields.iter().any(|f| f.name == pred_wire))
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .unwrap_or(false)
+                        });
+                    if create_only {
+                        return Err(ParseError {
+                            kind: ParseErrorKind::PredicateFieldNotFound {
+                                field: pred_field.clone(),
+                                entity: format!(
+                                    "{entity_name} (field `{pred_wire}` is a Create-capability param; in search filters `e#~\"…\"{{…}}` use the Search-capability param wire, not a Create-only homograph)"
+                                ),
+                                span_start,
+                                span_end,
+                            },
+                            offset: span_start,
+                        });
+                    }
                     return Err(ParseError {
                         kind: ParseErrorKind::PredicateFieldNotFound {
                             field: pred_field.clone(),

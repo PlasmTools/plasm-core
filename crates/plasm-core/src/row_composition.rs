@@ -69,6 +69,8 @@ pub enum RowSuffix {
     Filter { body: String },
     Aggregate { args: String },
     GroupBy { args: String },
+    Dedupe { keys: String },
+    Distinct { keys: Option<String> },
     Singleton,
     PageSize { n: u32 },
 }
@@ -88,6 +90,8 @@ impl RowSuffix {
             PlasmPostfixOp::Filter { body } => Ok(Self::Filter { body: body.clone() }),
             PlasmPostfixOp::Aggregate { args } => Ok(Self::Aggregate { args: args.clone() }),
             PlasmPostfixOp::GroupBy { args } => Ok(Self::GroupBy { args: args.clone() }),
+            PlasmPostfixOp::Dedupe { keys } => Ok(Self::Dedupe { keys: keys.clone() }),
+            PlasmPostfixOp::Distinct { keys } => Ok(Self::Distinct { keys: keys.clone() }),
             PlasmPostfixOp::Singleton => Ok(Self::Singleton),
             PlasmPostfixOp::PageSize(n) => Ok(Self::PageSize { n: *n as u32 }),
         }
@@ -96,7 +100,7 @@ impl RowSuffix {
     pub fn is_terminal_transform(&self) -> bool {
         matches!(
             self,
-            Self::Sort { .. } | Self::Aggregate { .. } | Self::GroupBy { .. }
+            Self::Sort { .. } | Self::Aggregate { .. } | Self::GroupBy { .. } | Self::Dedupe { .. } | Self::Distinct { .. }
         )
     }
 }

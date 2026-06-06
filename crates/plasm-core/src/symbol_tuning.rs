@@ -3914,7 +3914,231 @@ pub fn expand_expr_for_teaching_session(
         return input.to_string();
     }
     let map = session.symbol_map_arc();
-    expand_path_symbols_with_options(input, map.as_ref(), false)
+    let scoped = expand_search_filter_predicate_keys(input, session, map.as_ref());
+    expand_path_symbols_with_options(&scoped, map.as_ref(), false)
+}
+
+/// Before global `p#`→wire expansion, rewrite predicate **keys** inside `~\"…\"{…}` search filter
+/// blocks to the Search-capability param wire for that opaque symbol (avoids Create-param homographs).
+fn expand_search_filter_predicate_keys(
+    input: &str,
+    session: &TeachingExposureSession,
+    map: &SymbolMap,
+) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0;
+    while i < input.len() {
+        let Some(rel) = input[i..].find('~') else {
+            out.push_str(&input[i..]);
+            break;
+        };
+        let tilde = i + rel;
+        out.push_str(&input[i..tilde]);
+        let entity_start = search_entity_token_start(input, tilde);
+        let entity_token = input[entity_start..tilde].trim();
+        let (entity, entry_id) = resolve_entity_surface(entity_token, map);
+        if let Some(cgs) = session.catalog_cgs.get(&entry_id) {
+            if let Some(consumed) = rewrite_search_filter_brace(
+                input,
+                tilde,
+                entity.as_str(),
+                entry_id.as_str(),
+                map,
+                cgs.as_ref(),
+                &mut out,
+            ) {
+                i = consumed;
+                continue;
+            }
+        }
+        out.push('~');
+        i = tilde + '~'.len_utf8();
+    }
+    out
+}
+
+fn search_entity_token_start(input: &str, tilde_pos: usize) -> usize {
+    let prefix = input[..tilde_pos].trim_end();
+    let mut start = prefix.len();
+    for (idx, ch) in prefix.char_indices().rev() {
+        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '#' {
+            start = idx;
+        } else {
+            break;
+        }
+    }
+    start
+}
+
+fn resolve_entity_surface(token: &str, map: &SymbolMap) -> (String, String) {
+    if let Some(ent) = map.sym_to_entity.get(token) {
+        let entry = map
+            .entry_id_for_entity_symbol(token)
+            .unwrap_or_default();
+        return (ent.clone(), entry);
+    }
+    (token.to_string(), String::new())
+}
+
+fn search_param_wire_for_sym(
+    entity: &str,
+    entry_id: &str,
+    sym: &str,
+    map: &SymbolMap,
+    cgs: &CGS,
+) -> Option<String> {
+    for cap in cgs.find_capabilities(entity, crate::CapabilityKind::Search) {
+        for (key, s) in &map.cap_param_to_sym {
+            if s.as_str() != sym {
+                continue;
+            }
+            if key.0 != entry_id || key.1 != entity || key.2 != cap.name.as_str() {
+                continue;
+            }
+            return Some(key.3.clone());
+        }
+    }
+    None
+}
+
+fn rewrite_search_filter_brace(
+    input: &str,
+    tilde_pos: usize,
+    entity: &str,
+    entry_id: &str,
+    map: &SymbolMap,
+    cgs: &CGS,
+    out: &mut String,
+) -> Option<usize> {
+    let mut pos = tilde_pos + 1;
+    pos = skip_search_text_value(input, pos)?;
+    if input.as_bytes().get(pos)? != &b'{' {
+        return None;
+    }
+    out.push('~');
+    out.push_str(&input[tilde_pos + 1..pos]);
+    out.push('{');
+    pos += 1;
+    while pos < input.len() {
+        skip_ascii_whitespace(input, &mut pos);
+        if input.as_bytes().get(pos)? == &b'}' {
+            out.push('}');
+            return Some(pos + 1);
+        }
+        let key_start = pos;
+        while pos < input.len() {
+            let b = input.as_bytes()[pos];
+            if b == b'=' || b == b',' || b == b'}' {
+                break;
+            }
+            pos += 1;
+        }
+        let key = input[key_start..pos].trim();
+        let rewritten_key = if is_opaque_param_sym(key) {
+            search_param_wire_for_sym(entity, entry_id, key, map, cgs).unwrap_or_else(|| key.to_string())
+        } else {
+            key.to_string()
+        };
+        out.push_str(&rewritten_key);
+        if input.as_bytes().get(pos)? != &b'=' {
+            return None;
+        }
+        out.push('=');
+        pos += 1;
+        pos = copy_until_pred_comma_or_close(input, pos, out)?;
+        skip_ascii_whitespace(input, &mut pos);
+        if input.as_bytes().get(pos)? == &b',' {
+            out.push(',');
+            pos += 1;
+        }
+    }
+    None
+}
+
+fn is_opaque_param_sym(key: &str) -> bool {
+    key.starts_with('p')
+        && key[1..]
+            .chars()
+            .all(|c| c.is_ascii_digit())
+}
+
+fn skip_search_text_value(input: &str, mut pos: usize) -> Option<usize> {
+    skip_ascii_whitespace(input, &mut pos);
+    match input.as_bytes().get(pos)? {
+        b'"' => {
+            pos += 1;
+            let mut escape = false;
+            while pos < input.len() {
+                let ch = input[pos..].chars().next()?;
+                if escape {
+                    escape = false;
+                } else if ch == '\\' {
+                    escape = true;
+                } else if ch == '"' {
+                    return Some(pos + 1);
+                }
+                pos += ch.len_utf8();
+            }
+            None
+        }
+        b'$' => Some(pos + 1),
+        _ => Some(pos),
+    }
+}
+
+fn skip_ascii_whitespace(input: &str, pos: &mut usize) {
+    while *pos < input.len() && input.as_bytes()[*pos].is_ascii_whitespace() {
+        *pos += 1;
+    }
+}
+
+fn copy_until_pred_comma_or_close(input: &str, mut pos: usize, out: &mut String) -> Option<usize> {
+    let mut depth_paren = 0i32;
+    let mut depth_brace = 0i32;
+    let mut in_string = false;
+    let mut escape = false;
+    while pos < input.len() {
+        let ch = input[pos..].chars().next()?;
+        if in_string {
+            out.push(ch);
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            pos += ch.len_utf8();
+            continue;
+        }
+        match ch {
+            '"' => {
+                in_string = true;
+                out.push(ch);
+            }
+            '(' => {
+                depth_paren += 1;
+                out.push(ch);
+            }
+            ')' => {
+                depth_paren -= 1;
+                out.push(ch);
+            }
+            '{' => {
+                depth_brace += 1;
+                out.push(ch);
+            }
+            '}' if depth_paren == 0 && depth_brace == 0 => return Some(pos),
+            '}' => {
+                depth_brace -= 1;
+                out.push(ch);
+            }
+            ',' if depth_paren == 0 && depth_brace == 0 => return Some(pos),
+            _ => out.push(ch),
+        }
+        pos += ch.len_utf8();
+    }
+    Some(pos)
 }
 
 /// Strip human-only suffixes from pasted prompt examples (`;;` comment may include `=>` result type,

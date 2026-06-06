@@ -119,6 +119,9 @@ pub enum PlanDryOp {
     Limit {
         count: usize,
     },
+    Dedupe {
+        keys: Vec<String>,
+    },
     Render {
         columns: Vec<String>,
         template_chars: usize,
@@ -242,6 +245,13 @@ fn render_plan_dry_op(op: &PlanDryOp) -> String {
             format!("sort {key} {}", if *descending { "desc" } else { "asc" })
         }
         PlanDryOp::Limit { count } => format!("limit {count}"),
+        PlanDryOp::Dedupe { keys } => {
+            if keys.is_empty() {
+                "distinct *".to_string()
+            } else {
+                format!("dedupe {}", keys.join(", "))
+            }
+        }
         PlanDryOp::Render {
             columns,
             template_chars,
@@ -330,6 +340,9 @@ fn compact_op_from_compute(
             descending: *descending,
         },
         ComputeOp::Limit { count } => PlanDryOp::Limit { count: *count },
+        ComputeOp::DedupeBy { keys } => PlanDryOp::Dedupe {
+            keys: keys.iter().map(|k| k.dotted()).collect(),
+        },
         ComputeOp::Render { columns, template } => PlanDryOp::Render {
             columns: columns.iter().map(|c| c.as_str().to_string()).collect(),
             template_chars: template.chars().count(),
@@ -487,6 +500,8 @@ fn render_aggregate_function(function: AggregateFunction) -> &'static str {
         AggregateFunction::Avg => "avg",
         AggregateFunction::Min => "min",
         AggregateFunction::Max => "max",
+        AggregateFunction::First => "first",
+        AggregateFunction::Last => "last",
     }
 }
 

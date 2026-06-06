@@ -4577,12 +4577,16 @@ impl PaginationLoopState {
         let mut any_from_response_absent = false;
         for (name, param) in &pconf.params {
             match param {
-                plasm_compile::PaginationParam::Counter { step, .. } => {
+                plasm_compile::PaginationParam::Counter { step, max, .. } => {
                     if let Some(Some(serde_json::Value::Number(n))) = self.param_values.get(name) {
                         let current = n.as_i64().unwrap_or(0);
+                        let next = current + step;
+                        if max.is_some_and(|m| next > m) {
+                            return Ok(false);
+                        }
                         self.param_values.insert(
                             name.clone(),
-                            Some(serde_json::Value::Number((current + step).into())),
+                            Some(serde_json::Value::Number(next.into())),
                         );
                     }
                 }

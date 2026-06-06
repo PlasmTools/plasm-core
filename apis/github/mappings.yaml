@@ -37,7 +37,7 @@ repo_search:
                   else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
+      page:     {counter: 1, max: 33}
       per_page: {fixed: 30}
 
 user_repos_query:
@@ -224,7 +224,7 @@ issue_search:
                   else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
+      page:     {counter: 1, max: 33}
       per_page: {fixed: 30}
 
 # ── PullRequest ──────────────────────────────────────────────────────────────
@@ -290,7 +290,7 @@ pr_search:
                   else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
+      page:     {counter: 1, max: 33}
       per_page: {fixed: 30}
 
 pr_touching_path_search:
@@ -316,7 +316,7 @@ pr_touching_path_search:
                   else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
+      page:     {counter: 1, max: 33}
       per_page: {fixed: 30}
 
 commit_query:
@@ -720,7 +720,7 @@ user_search:
                   else_expr: { type: const, value: null } }]
   pagination:
     params:
-      page:     {counter: 1}
+      page:     {counter: 1, max: 33}
       per_page: {fixed: 30}
 
 # ── Label ────────────────────────────────────────────────────────────────────
