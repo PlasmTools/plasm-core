@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.86] - 2026-06-06
+
+### Added
+
+- **Row contract:** search/query teaching table separates capability filter `inputs` from `provides` row fields; projection, `group_by`, sort, dedupe, and row filters reject filter-only params with capability-scoped errors.
+- **Fibery hosted MCP:** resolve `YOUR_ACCOUNT.fibery.io` via `FIBERY_HTTP_BACKEND` env or `http_backend` in outbound KV JSON; catalog `hosted_kv` for tenant connect.
+- **Release packaging:** `pokeapi` added to OSS appliance plugin pack list (`scripts/oss-packaged-apis.txt`); SaaS list updated in monorepo `deploy/saas-packaged-apis.txt`.
+
 ## [0.1.85] - 2026-06-06
 
 ### Added

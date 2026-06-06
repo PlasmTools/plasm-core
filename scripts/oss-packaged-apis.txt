@@ -19,6 +19,7 @@ linear
 linkedin
 notion
 outlook
+pokeapi
 proof
 reddit
 slack
