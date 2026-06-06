@@ -622,9 +622,12 @@ mod tests {
     fn peel_dedupe_and_distinct() {
         let (p1, ops1) = peel_postfix_suffixes("repos.dedupe(owner)").unwrap();
         assert_eq!(p1, "repos");
-        assert_eq!(ops1, vec![PlasmPostfixOp::Dedupe {
-            keys: "owner".to_string()
-        }]);
+        assert_eq!(
+            ops1,
+            vec![PlasmPostfixOp::Dedupe {
+                keys: "owner".to_string()
+            }]
+        );
 
         let (p2, ops2) = peel_postfix_suffixes("rows.distinct(owner, id)").unwrap();
         assert_eq!(p2, "rows");

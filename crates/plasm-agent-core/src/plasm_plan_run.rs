@@ -1092,7 +1092,10 @@ fn render_compute_template(compute: &ComputeTemplate) -> String {
                 format!(
                     "dedupe {} keys={}",
                     compute.source,
-                    keys.iter().map(|k| k.dotted()).collect::<Vec<_>>().join(",")
+                    keys.iter()
+                        .map(|k| k.dotted())
+                        .collect::<Vec<_>>()
+                        .join(",")
                 )
             }
         }

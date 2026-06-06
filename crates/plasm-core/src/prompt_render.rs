@@ -2575,6 +2575,199 @@ fn field_is_filter_like(f: &crate::InputFieldSchema) -> bool {
     )
 }
 
+/// Bracket `[p#,…]` from a capability's ordered `provides` (row contract), when non-empty.
+fn capability_row_projection_bracket(
+    cgs: &CGS,
+    cap: &crate::CapabilitySchema,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    ename: &str,
+    surface_filter: Option<&ExposureSurface>,
+) -> Option<String> {
+    let fields = cgs.effective_ordered_response_fields(cap);
+    if fields.is_empty() {
+        return None;
+    }
+    let syms: Vec<String> = fields
+        .iter()
+        .filter(|k| {
+            surface_allows_entity_field(surface_filter, catalog_entry_id, ename, k.as_str())
+        })
+        .map(|k| id_sym_entity(map, catalog_entry_id, ename, k.as_str()))
+        .collect();
+    if syms.is_empty() {
+        return None;
+    }
+    Some(format!("[{}]", syms.join(",")))
+}
+
+/// Opaque `p#` symbols for params appearing in `{…}` / `~"…"{…}` teaching exemplars.
+fn input_param_syms_from_teaching_expr(
+    expr: &str,
+    cap: &crate::CapabilitySchema,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+) -> Vec<String> {
+    let Some(open) = expr.find('{') else {
+        return Vec::new();
+    };
+    let rest = &expr[open + 1..];
+    let close = rest.find('}').unwrap_or(rest.len());
+    let inner = rest[..close].trim();
+    if inner.is_empty() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    for slot in split_top_level_commas(inner) {
+        let slot = slot.trim();
+        let Some((lhs, _)) = slot.split_once('=') else {
+            continue;
+        };
+        let lhs = lhs.trim();
+        if lhs.starts_with('p') && lhs.chars().skip(1).all(|c| c.is_ascii_digit()) {
+            if !out.iter().any(|s: &String| s == lhs) {
+                out.push(lhs.to_string());
+            }
+            continue;
+        }
+        if let Some(is) = &cap.input_schema {
+            if let InputType::Object { fields, .. } = &is.input_type {
+                for f in fields {
+                    let sym = id_sym_cap(map, catalog_entry_id, cap, f.name.as_str());
+                    if sym == lhs && !out.iter().any(|s| s == &sym) {
+                        out.push(sym);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn split_top_level_commas(input: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut depth = 0i32;
+    let mut start = 0usize;
+    for (i, ch) in input.char_indices() {
+        match ch {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                out.push(input[start..i].to_string());
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(input[start..].to_string());
+    out
+}
+
+fn merge_result_gloss_with_row_contract(
+    base_gloss: Option<String>,
+    input_syms: &[String],
+    row_syms: &[String],
+) -> Option<String> {
+    let mut suffix_parts = Vec::new();
+    if !input_syms.is_empty() {
+        suffix_parts.push(format!("inputs: {}", input_syms.join(",")));
+    }
+    if !row_syms.is_empty() {
+        suffix_parts.push(format!("rows: {}", row_syms.join(",")));
+    }
+    let suffix = suffix_parts.join(" · ");
+    match (base_gloss.filter(|s| !s.is_empty()), suffix.is_empty()) {
+        (Some(base), false) => Some(format!("{base} · {suffix}")),
+        (Some(base), true) => Some(base),
+        (None, false) => Some(suffix),
+        (None, true) => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enrich_row_producer_teaching_line(
+    cgs: &CGS,
+    cap: &crate::CapabilitySchema,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    ename: &str,
+    surface_filter: Option<&ExposureSurface>,
+    base_expr: &str,
+    base_gloss: Option<String>,
+) -> (String, Option<String>) {
+    let bracket =
+        capability_row_projection_bracket(cgs, cap, map, catalog_entry_id, ename, surface_filter);
+    let row_syms = bracket
+        .as_ref()
+        .map(|b| {
+            b.trim()
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let input_syms = input_param_syms_from_teaching_expr(base_expr, cap, map, catalog_entry_id);
+    let expr = if let Some(b) = bracket {
+        format!("{}{}", base_expr.trim(), b)
+    } else {
+        base_expr.trim().to_string()
+    };
+    let gloss = merge_result_gloss_with_row_contract(base_gloss, &input_syms, &row_syms);
+    (expr, gloss)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn try_push_row_producer_teaching_example(
+    gloss_emit: &mut Option<GlossScratch<'_>>,
+    teaching_rows: &mut Vec<EntityTeachingExprRow>,
+    collect_meta: bool,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    ename: &str,
+    surface_filter: Option<&ExposureSurface>,
+    cap: &crate::CapabilitySchema,
+    base_expr: &str,
+    base_gloss: Option<String>,
+    cap_leg: Option<String>,
+    relation: Option<&RelationSchema>,
+    omit_capability_prose: bool,
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
+    line_valid_cache_seed: u64,
+    map_arc: Option<std::sync::Arc<SymbolMap>>,
+) -> bool {
+    let (expr, gloss) = enrich_row_producer_teaching_line(
+        cgs,
+        cap,
+        map,
+        catalog_entry_id,
+        ename,
+        surface_filter,
+        base_expr,
+        base_gloss,
+    );
+    try_push_teaching_example(
+        gloss_emit,
+        teaching_rows,
+        collect_meta,
+        cgs,
+        map,
+        &expr,
+        gloss,
+        cap_leg,
+        relation,
+        Some(&cap.name),
+        omit_capability_prose,
+        line_valid_cache,
+        line_valid_cache_seed,
+        map_arc,
+    )
+}
+
 /// One `p#=value` for a **required scope** parameter (same as filter slots).
 fn scope_param_slot(
     f: &InputFieldSchema,
@@ -4395,17 +4588,20 @@ fn collect_entity_teaching_block(
             let mut added = false;
             if let Some(line) = query_expr_maximal(cap, &es, cgs, map, catalog_entry_id) {
                 if local_seen.insert(line.clone())
-                    && try_push_teaching_example(
+                    && try_push_row_producer_teaching_example(
                         gloss_emit,
                         &mut teaching_rows,
                         collect_meta,
                         cgs,
                         map,
+                        catalog_entry_id,
+                        ename,
+                        surface_filter,
+                        cap,
                         &line,
                         qgloss.clone(),
                         cap_leg.clone(),
                         None,
-                        Some(&cap.name),
                         true,
                         line_valid_cache,
                         line_valid_cache_seed,
@@ -4419,17 +4615,20 @@ fn collect_entity_teaching_block(
             if !added {
                 if let Some(line) = query_expr_scope_only(cap, &es, cgs, map, catalog_entry_id) {
                     if local_seen.insert(line.clone())
-                        && try_push_teaching_example(
+                        && try_push_row_producer_teaching_example(
                             gloss_emit,
                             &mut teaching_rows,
                             collect_meta,
                             cgs,
                             map,
+                            catalog_entry_id,
+                            ename,
+                            surface_filter,
+                            cap,
                             &line,
                             qgloss.clone(),
                             cap_leg.clone(),
                             None,
-                            Some(&cap.name),
                             true,
                             line_valid_cache,
                             line_valid_cache_seed,
@@ -4444,17 +4643,20 @@ fn collect_entity_teaching_block(
             if !added {
                 if let Some(line) = query_expr_filters_only(cap, &es, cgs, map, catalog_entry_id) {
                     if local_seen.insert(line.clone())
-                        && try_push_teaching_example(
+                        && try_push_row_producer_teaching_example(
                             gloss_emit,
                             &mut teaching_rows,
                             collect_meta,
                             cgs,
                             map,
+                            catalog_entry_id,
+                            ename,
+                            surface_filter,
+                            cap,
                             &line,
                             qgloss.clone(),
                             cap_leg.clone(),
                             None,
-                            Some(&cap.name),
                             true,
                             line_valid_cache,
                             line_valid_cache_seed,
@@ -4511,14 +4713,29 @@ fn collect_entity_teaching_block(
         let cap_leg = scap.and_then(|cap| {
             capability_legend_for_domain(map, cgs, cap, ename, ident_meta, catalog_entry_id)
         });
+        let (search_line, search_gloss) = scap.map_or_else(
+            || (line.clone(), sg.clone()),
+            |cap| {
+                enrich_row_producer_teaching_line(
+                    cgs,
+                    cap,
+                    map,
+                    catalog_entry_id,
+                    ename,
+                    surface_filter,
+                    &line,
+                    sg.clone(),
+                )
+            },
+        );
         try_push_teaching_example(
             gloss_emit,
             &mut teaching_rows,
             collect_meta,
             cgs,
             map,
-            &line,
-            sg.clone(),
+            &search_line,
+            search_gloss,
             cap_leg.clone(),
             None,
             scap.map(|c| &c.name),
@@ -4531,17 +4748,20 @@ fn collect_entity_teaching_block(
             scap,
             scap.and_then(|cap| search_expr_with_filters(cap, &es, cgs, map, catalog_entry_id)),
         ) {
-            try_push_teaching_example(
+            try_push_row_producer_teaching_example(
                 gloss_emit,
                 &mut teaching_rows,
                 collect_meta,
                 cgs,
                 map,
+                catalog_entry_id,
+                ename,
+                surface_filter,
+                cap,
                 &filter_line,
                 sg,
                 cap_leg,
                 None,
-                Some(&cap.name),
                 true,
                 line_valid_cache,
                 line_valid_cache_seed,
@@ -5261,7 +5481,8 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
 
     s.push_str("Common pitfalls:\n");
     s.push_str(
-        "- Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.\n\
+        "- Row contract: `{…}` / `~\"…\"{…}` inputs fetch or filter rows; only `rows:` fields from the teaching row may be used in `[fields]`, `.group_by`, `.sort`, `.dedupe`, or row `.filter`.\n\
+- Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.\n\
 - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.\n\
         - Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.r#` or `issues.labels` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.\n\
         - Homograph: query filter `p#` and relation `.r#` may share a wire name (e.g. `labels`) — use `.r#`/wire for fanout; `labels = issues.p#` is forgiven when the binding name matches the relation.\n\
@@ -7474,6 +7695,36 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Row producers teach `inputs:` / `rows:` contract on search and query exemplars.
+    #[test]
+    fn row_producer_teaching_includes_inputs_and_rows_contract() {
+        let dir = fixtures_schemas_dir("plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+        assert!(
+            prompt.contains("Row contract:"),
+            "preamble should teach row contract law"
+        );
+        assert!(
+            prompt
+                .lines()
+                .any(|l| { l.contains("~\"text\"") && l.contains('[') && l.contains("rows:") }),
+            "search exemplar should append provides bracket and rows contract:\n{prompt}"
+        );
+        assert!(
+            prompt.lines().any(|l| {
+                l.contains("~\"text\"{")
+                    && l.contains('[')
+                    && l.contains("inputs:")
+                    && l.contains("rows:")
+            }),
+            "filtered search should show brace inputs, row bracket, and contract:\n{prompt}"
+        );
     }
 
     /// Full `apis/linear` prompt. Deterministic for the checked-in catalog; use `INSTA_UPDATE=1`

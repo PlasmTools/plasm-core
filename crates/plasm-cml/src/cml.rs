@@ -267,9 +267,9 @@ impl PaginationParam {
     /// which is absent until the first response is received).
     pub fn initial_value(&self) -> Option<serde_json::Value> {
         match self {
-            PaginationParam::Counter { counter, .. } => {
-                Some(serde_json::Value::Number(serde_json::Number::from(*counter)))
-            }
+            PaginationParam::Counter { counter, .. } => Some(serde_json::Value::Number(
+                serde_json::Number::from(*counter),
+            )),
             PaginationParam::Fixed { fixed } => Some(fixed.clone()),
             PaginationParam::FromResponse { .. } => None,
         }

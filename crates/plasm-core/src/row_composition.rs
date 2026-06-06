@@ -100,7 +100,11 @@ impl RowSuffix {
     pub fn is_terminal_transform(&self) -> bool {
         matches!(
             self,
-            Self::Sort { .. } | Self::Aggregate { .. } | Self::GroupBy { .. } | Self::Dedupe { .. } | Self::Distinct { .. }
+            Self::Sort { .. }
+                | Self::Aggregate { .. }
+                | Self::GroupBy { .. }
+                | Self::Dedupe { .. }
+                | Self::Distinct { .. }
         )
     }
 }

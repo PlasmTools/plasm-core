@@ -43,6 +43,11 @@ langitem_search:
     type: object
     fields:
     - ["q", { type: var, name: q }]
+    - - team_key
+      - type: if
+        condition: { type: exists, var: team_key }
+        then_expr: { type: var, name: team_key }
+        else_expr: { type: const, value: null }
 
 langitem_get:
   method: GET

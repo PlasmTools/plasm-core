@@ -4584,10 +4584,8 @@ impl PaginationLoopState {
                         if max.is_some_and(|m| next > m) {
                             return Ok(false);
                         }
-                        self.param_values.insert(
-                            name.clone(),
-                            Some(serde_json::Value::Number(next.into())),
-                        );
+                        self.param_values
+                            .insert(name.clone(), Some(serde_json::Value::Number(next.into())));
                     }
                 }
                 plasm_compile::PaginationParam::FromResponse { from_response } => {

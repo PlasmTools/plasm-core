@@ -22,7 +22,7 @@ use plasm_core::expr_parser::{
 };
 use plasm_core::query_resolve;
 use plasm_core::row_composition::RowSuffix;
-use plasm_core::schema::{CapabilitySchema, EntityDef};
+use plasm_core::schema::{CapabilitySchema, EntityDef, InputType};
 use plasm_core::CapabilityKind;
 use plasm_core::ChainExpr;
 use plasm_core::ChainStep;
@@ -814,6 +814,50 @@ fn validate_compute_paths_for_dag_source(
     Ok(())
 }
 
+fn capability_input_param_wires(cap: &CapabilitySchema) -> BTreeSet<String> {
+    let Some(is) = &cap.input_schema else {
+        return BTreeSet::new();
+    };
+    let InputType::Object { fields, .. } = &is.input_type else {
+        return BTreeSet::new();
+    };
+    fields.iter().map(|f| f.name.clone()).collect()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn row_contract_field_error(
+    session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    qe: &QualifiedEntityKey,
+    cap: Option<&CapabilitySchema>,
+    path: &FieldPath,
+    wire: &str,
+    allowed_cols: &[String],
+    op_label: &str,
+) -> String {
+    let hint = single_segment_teaching_field_hint(session, symbol_map_cross_cache, qe, path);
+    if let Some(cap) = cap {
+        let inputs = capability_input_param_wires(cap);
+        if inputs.contains(wire) {
+            return format!(
+                "Plasm program {op_label}: `{wire}` is an input on {}, not a row field. {} rows: {}. Use one of those row fields, or fetch each {} first for the full {} row.{hint}",
+                cap.name.as_str(),
+                cap.name.as_str(),
+                allowed_cols.join(", "),
+                qe.entity,
+                qe.entity,
+            );
+        }
+    }
+    format!(
+        "Plasm program {op_label}: field path `{}` is not a row field of the upstream capability output for entity `{}` (catalog entry `{}`); projected columns: {}.{hint}",
+        path.dotted(),
+        qe.entity,
+        qe.entry_id,
+        allowed_cols.join(", "),
+    )
+}
+
 fn validate_compute_paths_for_allowed_set(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
@@ -836,6 +880,18 @@ fn validate_compute_paths_for_allowed_set(
             );
         }
     };
+    let cgs = cgs_for_qualified_entity(session, qe).ok_or_else(|| {
+        format!(
+            "catalog `{}` is not loaded for entity `{}`",
+            qe.entry_id, qe.entity
+        )
+    })?;
+    let cap = match &surface_node.source {
+        DagNodeSource::Surface { parsed, .. } | DagNodeSource::RelationTraversal { parsed, .. } => {
+            capability_for_surface_expr(cgs.as_ref(), &parsed.expr)?
+        }
+        _ => None,
+    };
     for path in paths {
         let mut segs: Vec<String> = path.segments().to_vec();
         if segs.len() == 1 {
@@ -845,7 +901,7 @@ fn validate_compute_paths_for_allowed_set(
                 Some(qe),
                 segs[0].as_str(),
             );
-            segs[0] = wire;
+            segs[0] = wire.clone();
             if allowed.contains(&segs) {
                 continue;
             }
@@ -853,12 +909,21 @@ fn validate_compute_paths_for_allowed_set(
             continue;
         }
         let cols: Vec<String> = allowed.iter().filter_map(|s| s.first().cloned()).collect();
-        return Err(format!(
-            "Plasm program {op_label}: field path `{}` is not a row field of the upstream capability output for entity `{}` (catalog entry `{}`); projected columns: {}.",
-            path.dotted(),
-            qe.entity,
-            qe.entry_id,
-            cols.join(", ")
+        let wire = path.dotted();
+        let wire_for_input = if segs.len() == 1 {
+            segs[0].as_str()
+        } else {
+            wire.as_str()
+        };
+        return Err(row_contract_field_error(
+            session,
+            symbol_map_cross_cache,
+            qe,
+            cap,
+            path,
+            wire_for_input,
+            &cols,
+            op_label,
         ));
     }
     Ok(())
@@ -1073,10 +1138,11 @@ fn postfix_op_to_compute(
                 paths.push(FieldPath::from_dotted(clause.field.as_str())?);
             }
             if !paths.is_empty() {
-                validate_compute_paths_for_entity(
+                validate_compute_paths_for_dag_source(
                     session,
-                    state.cross_cache,
-                    &qe,
+                    state,
+                    staged,
+                    source,
                     &paths,
                     "filter(...)",
                 )?;
@@ -1226,11 +1292,7 @@ fn postfix_op_to_compute(
         }
         PlasmPostfixOp::Distinct { keys: None } => {
             let schema = synthetic_schema_passthrough_rows(session, state, staged, source)?;
-            Ok(mk(
-                ComputeOp::DedupeBy { keys: vec![] },
-                schema,
-                false,
-            ))
+            Ok(mk(ComputeOp::DedupeBy { keys: vec![] }, schema, false))
         }
         PlasmPostfixOp::Projection { fields } => {
             let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
@@ -1243,13 +1305,15 @@ fn postfix_op_to_compute(
             }
             if let Some(qe) = qe {
                 let paths: Vec<FieldPath> = map.values().cloned().collect();
-                validate_compute_paths_for_entity(
+                validate_compute_paths_for_dag_source(
                     session,
-                    state.cross_cache,
-                    &qe,
+                    state,
+                    staged,
+                    source,
                     &paths,
                     "postfix projection",
                 )?;
+                let _ = qe;
             }
             let schema =
                 schema_from_output_fields("PlanProject", map.keys(), SyntheticValueKind::Unknown);
@@ -2520,25 +2584,15 @@ fn compile_surface_node(
                     let synthetic = format!("{label}.{tail_trim}");
                     match peel_postfix_suffixes(&synthetic) {
                         Ok((primary, ops)) if primary.trim() == label && !ops.is_empty() => {
-                            let mut nodes = lower_row_expression(
-                                session,
-                                state,
-                                id,
-                                &synthetic,
-                                Some(id),
-                            )?;
+                            let mut nodes =
+                                lower_row_expression(session, state, id, &synthetic, Some(id))?;
                             return nodes.pop().ok_or_else(|| {
                                 format!("Plasm program `{id}`: postfix continuation `{synthetic}` produced no nodes")
                             });
                         }
                         Ok((_, ops)) if !ops.is_empty() => {
-                            let mut nodes = lower_row_expression(
-                                session,
-                                state,
-                                id,
-                                &synthetic,
-                                Some(id),
-                            )?;
+                            let mut nodes =
+                                lower_row_expression(session, state, id, &synthetic, Some(id))?;
                             return nodes.pop().ok_or_else(|| {
                                 format!("Plasm program `{id}`: postfix continuation `{synthetic}` produced no nodes")
                             });
@@ -2862,7 +2916,13 @@ fn looks_like_surface_postfix_tail(tail: &str) -> bool {
     if !(t.contains('(') || t.contains('{')) {
         return false;
     }
-    let head = t.split('(').next().unwrap_or(t).split('{').next().unwrap_or(t);
+    let head = t
+        .split('(')
+        .next()
+        .unwrap_or(t)
+        .split('{')
+        .next()
+        .unwrap_or(t);
     let name = head.trim().trim_start_matches('.');
     is_known_postfix_method(name)
 }
@@ -2870,8 +2930,15 @@ fn looks_like_surface_postfix_tail(tail: &str) -> bool {
 fn is_known_postfix_method(name: &str) -> bool {
     matches!(
         name,
-        "limit" | "page_size" | "sort" | "filter" | "aggregate" | "group_by" | "dedupe"
-            | "distinct" | "singleton"
+        "limit"
+            | "page_size"
+            | "sort"
+            | "filter"
+            | "aggregate"
+            | "group_by"
+            | "dedupe"
+            | "distinct"
+            | "singleton"
     )
 }
 
@@ -3534,10 +3601,46 @@ bad"#,
         )
         .expect_err("search rows omit relation fields from provides");
         assert!(
-            err.contains("not a row field of the upstream capability output"),
+            err.contains("not a row field of the upstream capability output")
+                || err.contains("not a row field"),
             "{err}"
         );
-        assert!(err.contains("projected columns"), "{err}");
+        assert!(
+            err.contains("projected columns") || err.contains(" rows: "),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn search_group_by_rejects_filter_input_param() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "search-group-by-filter-input",
+            r#"rows = LangItem~"probe"{team_key="eng"}
+bad = rows.group_by(team_key)
+bad"#,
+        )
+        .expect_err("filter params are inputs not row fields");
+        assert!(err.contains("is an input on langitem_search"), "{err}");
+        assert!(err.contains("not a row field"), "{err}");
+    }
+
+    #[test]
+    fn search_projection_rejects_filter_input_param() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "search-projection-filter-input",
+            r#"rows = LangItem~"probe"{team_key="eng"}[team_key]
+rows"#,
+        )
+        .expect_err("filter params are inputs not row fields for projection");
+        assert!(err.contains("is an input on langitem_search"), "{err}");
     }
 
     #[test]

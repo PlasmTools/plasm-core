@@ -156,6 +156,10 @@ capabilities:
       value_ref: nv_langitem_search_q
       required: true
       role: search
+    - name: team_key
+      value_ref: nv_langitem_search_team_key
+      required: false
+      role: filter
     provides:
     - id
     - title
@@ -337,6 +341,9 @@ values:
     type: string
     string_semantics: short
   nv_langitem_search_q:
+    type: string
+    string_semantics: short
+  nv_langitem_search_team_key:
     type: string
     string_semantics: short
   nv_langitem_create_title:

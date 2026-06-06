@@ -3972,9 +3972,7 @@ fn search_entity_token_start(input: &str, tilde_pos: usize) -> usize {
 
 fn resolve_entity_surface(token: &str, map: &SymbolMap) -> (String, String) {
     if let Some(ent) = map.sym_to_entity.get(token) {
-        let entry = map
-            .entry_id_for_entity_symbol(token)
-            .unwrap_or_default();
+        let entry = map.entry_id_for_entity_symbol(token).unwrap_or_default();
         return (ent.clone(), entry);
     }
     (token.to_string(), String::new())
@@ -4035,7 +4033,8 @@ fn rewrite_search_filter_brace(
         }
         let key = input[key_start..pos].trim();
         let rewritten_key = if is_opaque_param_sym(key) {
-            search_param_wire_for_sym(entity, entry_id, key, map, cgs).unwrap_or_else(|| key.to_string())
+            search_param_wire_for_sym(entity, entry_id, key, map, cgs)
+                .unwrap_or_else(|| key.to_string())
         } else {
             key.to_string()
         };
@@ -4056,10 +4055,7 @@ fn rewrite_search_filter_brace(
 }
 
 fn is_opaque_param_sym(key: &str) -> bool {
-    key.starts_with('p')
-        && key[1..]
-            .chars()
-            .all(|c| c.is_ascii_digit())
+    key.starts_with('p') && key[1..].chars().all(|c| c.is_ascii_digit())
 }
 
 fn skip_search_text_value(input: &str, mut pos: usize) -> Option<usize> {
