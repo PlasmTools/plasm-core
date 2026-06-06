@@ -5,6 +5,13 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.89] - 2026-06-07
+
+### Fixed
+
+- **Hosted `plasm-mcp-app` (`plasm-saas`):** mount `/internal/mcp-bindings/v1/put-scoped` (Phoenix Connect binding sync 404 on v0.1.88).
+- **Phoenix Connect:** stage personal MCP `disabled` before host-binding allowlist upsert, then `put-scoped`, then re-enable (agent 409 on active upsert without workspace URL binding).
+
 ## [0.1.88] - 2026-06-07
 
 ### Fixed
