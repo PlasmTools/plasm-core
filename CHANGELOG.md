@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.85] - 2026-06-06
+
+### Added
+
+- **Row transforms:** `.dedupe(keys)`, `.distinct(keys)`, and `.distinct()` postfixes → `ComputeOp::DedupeBy` (in-memory, first-seen per key; full-row hash when no keys).
+- **Aggregates:** `first(field)` and `last(field)` on `.group_by(...)` for representative-row analytics.
+- **Search teaching:** filter exemplars `e#~"text"{p#=…}` in teaching TSV synthesis.
+- **Pagination cap:** optional `max` on CML `PaginationParam::Counter`; GitHub `*_search` mappings cap at page 33 (`per_page=30`, 1000-result API limit).
+
+### Changed
+
+- **Search homographs:** `p#` keys inside `~"{…}"` filter braces expand via Search-cap param map before global wire expansion; Create-only homographs get actionable parse errors.
+- **Binding continuations:** known postfix tails (`dedupe`, `distinct`, …) peel before relation nav; unknown transforms list allowed postfix ops.
+
+### Fixed
+
+- **`repos.dedupe(p#)` misroute:** no longer treated as a bogus relation hop (G2).
+
 ## [0.1.84] - 2026-05-30
 
 ### Added
