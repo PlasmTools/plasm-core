@@ -7,8 +7,8 @@ use plasm_compile::{
 };
 use plasm_core::discovery::CatalogEntryMeta;
 use plasm_core::prompt_render::{
-    render_teaching_bundle, DomainLineKind, TeachingLineMeta, TeachingPromptModel, TeachingPromptSettings,
-    TeachingPromptSource,
+    render_teaching_bundle, DomainLineKind, TeachingLineMeta, TeachingPromptModel,
+    TeachingPromptSettings, TeachingPromptSource,
 };
 use plasm_core::schema::{
     input_variant_body_type, AuthScheme, EntityDef, FieldSchema, InputFieldSchema, InputFieldWire,
@@ -974,7 +974,13 @@ fn validate_entity_names(cgs: &CGS, names: &[String]) -> Result<(), ToolModelBui
 fn render_bundle_for_tool_model(
     cgs: &CGS,
     q: &ToolModelQuery,
-) -> Result<(plasm_core::prompt_render::TeachingPromptBundle, &'static str), ToolModelBuildError> {
+) -> Result<
+    (
+        plasm_core::prompt_render::TeachingPromptBundle,
+        &'static str,
+    ),
+    ToolModelBuildError,
+> {
     let mode = ToolModelFocusMode::parse(&q.focus)?;
     match mode {
         ToolModelFocusMode::All => {

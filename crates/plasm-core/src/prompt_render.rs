@@ -60,9 +60,9 @@ use crate::{
         InputFieldSchema, RelationMaterialization, RelationSchema,
     },
     symbol_tuning::{
-        symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog, TeachingExposureSession,
-        ExposureCapabilityKey, ExposureEntityKey, ExposureSlotKey, ExposureSurface, FocusSpec,
-        IdentMetaKey, IdentMetadata, SymbolMap, SymbolMapCrossRequestCache,
+        symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog, ExposureCapabilityKey,
+        ExposureEntityKey, ExposureSlotKey, ExposureSurface, FocusSpec, IdentMetaKey,
+        IdentMetadata, SymbolMap, SymbolMapCrossRequestCache, TeachingExposureSession,
     },
     CapabilityKind, CapabilityName, EntityFieldName, EntityName, Expr, FieldType, InputType,
     ParameterRole, RelationName, ValueWireFormat, CGS,
@@ -340,8 +340,12 @@ impl<'a> RenderConfig<'a> {
 /// Product-facing **where** teaching symbols are seeded from: catalog [`FocusSpec`] vs execute [`TeachingExposureSession`].
 #[derive(Clone, Copy, Debug)]
 pub enum TeachingPromptSource<'a> {
-    Catalog { focus: FocusSpec<'a> },
-    ExecuteWave { exposure: &'a TeachingExposureSession },
+    Catalog {
+        focus: FocusSpec<'a>,
+    },
+    ExecuteWave {
+        exposure: &'a TeachingExposureSession,
+    },
 }
 
 /// Product-facing knobs for the teaching bundle / TSV (prefer over assembling [`RenderConfig`] at new call sites).
@@ -386,17 +390,19 @@ pub fn render_teaching_bundle(
                 symbol_map_cross_cache: cache,
             },
         ),
-        TeachingPromptSource::ExecuteWave { exposure } => render_teaching_prompt_bundle_for_exposure(
-            cgs,
-            RenderConfig {
-                focus: FocusSpec::All,
-                render_mode,
-                include_domain_execution_model: include,
-                symbol_map_cross_cache: cache,
-            },
-            exposure,
-            None,
-        ),
+        TeachingPromptSource::ExecuteWave { exposure } => {
+            render_teaching_prompt_bundle_for_exposure(
+                cgs,
+                RenderConfig {
+                    focus: FocusSpec::All,
+                    render_mode,
+                    include_domain_execution_model: include,
+                    symbol_map_cross_cache: cache,
+                },
+                exposure,
+                None,
+            )
+        }
     }
 }
 
@@ -554,7 +560,8 @@ pub fn render_teaching_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> Tea
     let _g = span.enter();
 
     if config.uses_symbols() {
-        let exposure = crate::symbol_tuning::teaching_exposure_session_from_focus(cgs, config.focus);
+        let exposure =
+            crate::symbol_tuning::teaching_exposure_session_from_focus(cgs, config.focus);
         return render_teaching_prompt_bundle_for_exposure(cgs, config, &exposure, None);
     }
 
@@ -853,7 +860,8 @@ pub(crate) fn contract_slice_hints_from_exposure(
 /// `plasm_expr`, `Meaning`
 pub fn render_prompt_tsv_with_config(cgs: &CGS, config: RenderConfig<'_>) -> String {
     if config.uses_symbols() {
-        let exposure = crate::symbol_tuning::teaching_exposure_session_from_focus(cgs, config.focus);
+        let exposure =
+            crate::symbol_tuning::teaching_exposure_session_from_focus(cgs, config.focus);
         return render_prompt_tsv_for_single_catalog_exposure(cgs, config, &exposure);
     }
     // Canonical names: 2-hop neighbourhood slice (not execute-parity [`TeachingExposureSession`]).
@@ -6003,7 +6011,7 @@ mod tests {
     };
     use crate::symbol_tuning::{
         entity_slices_for_render, resolve_prompt_surface_entities, symbol_map_for_prompt,
-        TeachingExposureSession, ExposureEntityKey, FocusSpec,
+        ExposureEntityKey, FocusSpec, TeachingExposureSession,
     };
     use crate::CapabilityKind;
     use crate::Cardinality;
@@ -6415,7 +6423,9 @@ mod tests {
         let mut exp = TeachingExposureSession::new(&cgs, "", &["Pet"]);
         let first = pipeline.render_teaching_first_wave_for_session(&cgs, &exp, None);
         assert!(
-            first.lines().any(|l| l.contains(TEACHING_VALID_EXPR_MARKER)),
+            first
+                .lines()
+                .any(|l| l.contains(TEACHING_VALID_EXPR_MARKER)),
             "initial teaching TSV should include global contract marker"
         );
         let (c, table) = split_tsv_teaching_contract_and_table(&first);

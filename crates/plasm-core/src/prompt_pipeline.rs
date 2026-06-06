@@ -5,17 +5,16 @@
 //! [`FocusSpec`](crate::symbol_tuning::FocusSpec) lifetimes stay correct for `Seeds` neighbourhoods.
 
 use crate::prompt_render::{
-    contract_slice_hints_from_exposure, prompt_surface_stats,
-    render_teaching_prompt_bundle_for_exposure, render_teaching_prompt_bundle_for_exposure_federated,
-    render_prompt_surface_from_bundle, render_prompt_tsv_for_single_catalog_exposure,
-    render_prompt_tsv_with_config, ContractSliceHints, TeachingPromptBundle, DomainWaveSurface,
-    PromptRenderMode, PromptSurfaceStats, RenderConfig,
+    contract_slice_hints_from_exposure, prompt_surface_stats, render_prompt_surface_from_bundle,
+    render_prompt_tsv_for_single_catalog_exposure, render_prompt_tsv_with_config,
+    render_teaching_prompt_bundle_for_exposure,
+    render_teaching_prompt_bundle_for_exposure_federated, ContractSliceHints, DomainWaveSurface,
+    PromptRenderMode, PromptSurfaceStats, RenderConfig, TeachingPromptBundle,
 };
 use crate::schema::CGS;
 use crate::symbol_tuning::{
-    expand_expr_for_teaching_session, expand_expr_for_parse, TeachingExposureSession,
-    ExposureEntityKey, FocusSpec, IdentMetaKey, IdentMetadata, SymbolMap,
-    SymbolMapCrossRequestCache,
+    expand_expr_for_parse, expand_expr_for_teaching_session, ExposureEntityKey, FocusSpec,
+    IdentMetaKey, IdentMetadata, SymbolMap, SymbolMapCrossRequestCache, TeachingExposureSession,
 };
 use indexmap::IndexMap;
 use std::collections::HashMap;

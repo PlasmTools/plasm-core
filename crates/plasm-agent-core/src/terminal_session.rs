@@ -6,8 +6,8 @@ use plasm_core::prompt_render::teaching_tsv_table_from_wrapped_prompt;
 use plasm_core::CgsContext;
 use plasm_core::{
     discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions},
-    relation_endpoint_keys, TeachingExposureSession, ExposureEntityKey, PromptPipelineConfig,
-    SymbolMapCrossRequestCache, CGS,
+    relation_endpoint_keys, ExposureEntityKey, PromptPipelineConfig, SymbolMapCrossRequestCache,
+    TeachingExposureSession, CGS,
 };
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT};
 use reqwest::Client;
@@ -20,8 +20,8 @@ use crate::http_execute::{build_capability_exposure_plan, CapabilitySeed};
 use crate::plasm_dag::compile_plasm_expression_to_plan;
 use crate::plasm_plan_run::{expand_program_surface_for_session_lower, parse_plasm_surface_line};
 use crate::terminal_state::{
-    append_teaching_tsv_wave, catalog_cache_path, teaching_tsv_path, write_session_meta, CatalogPin,
-    ExecutionBinding, SessionMeta,
+    append_teaching_tsv_wave, catalog_cache_path, teaching_tsv_path, write_session_meta,
+    CatalogPin, ExecutionBinding, SessionMeta,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -340,8 +340,12 @@ impl ClientSymbolSession {
                 .iter()
                 .map(|k| k.entity.as_str())
                 .collect();
-            self.pipeline
-                .render_teaching_exposure_delta(cgs, exp, &added_refs, Some(&self.sym_cross))
+            self.pipeline.render_teaching_exposure_delta(
+                cgs,
+                exp,
+                &added_refs,
+                Some(&self.sym_cross),
+            )
         } else {
             self.pipeline.render_teaching_exposure_delta_federated(
                 &by_entry,

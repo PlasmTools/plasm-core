@@ -572,7 +572,11 @@ pub fn format_qualified_capabilities(capabilities: &[(String, String)]) -> Strin
 }
 
 /// Append client-rendered teaching TSV rows to `teaching.tsv`.
-pub fn append_teaching_tsv_wave(path: &Path, tsv_fragment: &str, first_write: bool) -> Result<usize> {
+pub fn append_teaching_tsv_wave(
+    path: &Path,
+    tsv_fragment: &str,
+    first_write: bool,
+) -> Result<usize> {
     let fragment = tsv_fragment.trim();
     if fragment.is_empty() {
         return Ok(0);

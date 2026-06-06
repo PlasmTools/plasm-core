@@ -20,10 +20,6 @@
 //! `PLASM_SYMBOL_MAP_LRU_CAP`, default `64`, set `0` to disable) deduplicates identical [`SymbolMap`]
 //! snapshots when the catalog fingerprint and exposure rows match a recent session.
 
-use crate::teaching_term::{
-    method_ref_for_domain_segment, resolve_parameter_slot, TeachingTerm, EntityRef, ParameterSlot,
-    Symbol,
-};
 use crate::identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityName, RelationName,
 };
@@ -31,6 +27,10 @@ use crate::schema::{
     capability_method_label_kebab, input_variant_body_type, resolve_capability_input_param_field,
     union_variant_constructor_symbol, ArrayItemsSchema, CapabilitySchema, InputFieldSchema,
     InputFieldWire, InputType, ParameterRole, StringSemantics, ValueDomainKey, CGS,
+};
+use crate::teaching_term::{
+    method_ref_for_domain_segment, resolve_parameter_slot, EntityRef, ParameterSlot, Symbol,
+    TeachingTerm,
 };
 use crate::CapabilityKind;
 use crate::FieldType;

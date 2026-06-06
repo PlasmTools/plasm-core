@@ -3195,7 +3195,8 @@ fn infer_surface_contract_from_expr(
 > {
     match expr {
         Expr::TeachingValue { .. } => Err(
-            "Expr::TeachingValue is teaching-table-only and cannot appear in execution plans".to_string(),
+            "Expr::TeachingValue is teaching-table-only and cannot appear in execution plans"
+                .to_string(),
         ),
         Expr::Query(q) => Ok((
             PlanNodeKind::Query,
@@ -3377,7 +3378,7 @@ mod tests {
     use crate::plasm_plan_run::{
         evaluate_plasm_plan_dry, render_plasm_plan_dry_text, symbol_map_for_plasm_surface_parse,
     };
-    use plasm_core::{load_schema, CgsContext, TeachingExposureSession, PromptPipelineConfig, CGS};
+    use plasm_core::{load_schema, CgsContext, PromptPipelineConfig, TeachingExposureSession, CGS};
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -3394,7 +3395,8 @@ mod tests {
             "langmatrix".into(),
             Arc::new(CgsContext::entry("langmatrix", cgs.clone())),
         );
-        let exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix", &["LangItem", "LangLine"]);
+        let exp =
+            TeachingExposureSession::new(cgs.as_ref(), "langmatrix", &["LangItem", "LangLine"]);
         ExecuteSession::new(
             "ph".into(),
             "p".into(),
@@ -4277,7 +4279,8 @@ labels"#
             "langmatrix".into(),
             Arc::new(CgsContext::entry("langmatrix", cgs.clone())),
         );
-        let exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix", &["LangItem", "LangTag"]);
+        let exp =
+            TeachingExposureSession::new(cgs.as_ref(), "langmatrix", &["LangItem", "LangTag"]);
         ExecuteSession::new(
             "ph".into(),
             "p".into(),

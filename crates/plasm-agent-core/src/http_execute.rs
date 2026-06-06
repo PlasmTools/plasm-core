@@ -19,10 +19,10 @@ use indexmap::IndexMap;
 use plasm_core::discovery::{CgsCatalog, DiscoveryError};
 use plasm_core::error_render::{render_parse_error_with_feedback, FeedbackStyle};
 use plasm_core::{
-    teaching_tsv_table_from_wrapped_prompt,
     expr_parser::{self, ParsedExpr},
-    normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated, AuthScheme,
-    CgsContext, Expr, PagingHandle, PromptRenderMode, SymbolMap, Value, CGS,
+    normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
+    teaching_tsv_table_from_wrapped_prompt, AuthScheme, CgsContext, Expr, PagingHandle,
+    PromptRenderMode, SymbolMap, Value, CGS,
 };
 use plasm_runtime::{
     auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
@@ -763,7 +763,10 @@ fn format_session_unchanged_one_liner(entity_count: usize) -> String {
     }
 }
 
-fn seeds_fully_exposed(exp: &plasm_core::TeachingExposureSession, seeds: &[CapabilitySeed]) -> bool {
+fn seeds_fully_exposed(
+    exp: &plasm_core::TeachingExposureSession,
+    seeds: &[CapabilitySeed],
+) -> bool {
     seeds
         .iter()
         .all(|s| exp.contains_qualified_entity(s.entry_id.as_str(), s.entity.as_str()))
@@ -1212,15 +1215,19 @@ async fn execute_session_create_response_inner(
                 delta,
             )
         }
-        None => plasm_core::TeachingExposureSession::new(cgs.as_ref(), body.entry_id.as_str(), &refs),
+        None => {
+            plasm_core::TeachingExposureSession::new(cgs.as_ref(), body.entry_id.as_str(), &refs)
+        }
     };
     let sym_cross = st.sessions.symbol_map_cross_cache();
     let teaching_prompt = st
         .engine
         .prompt_pipeline()
         .render_teaching_first_wave_for_session(cgs.as_ref(), &teaching_exposure, Some(sym_cross));
-    let prompt =
-        wrap_teaching_markdown_literal_block(&teaching_prompt, st.engine.prompt_pipeline().render_mode);
+    let prompt = wrap_teaching_markdown_literal_block(
+        &teaching_prompt,
+        st.engine.prompt_pipeline().render_mode,
+    );
     let prompt_hash = PromptHashHex::from_prompt_sha256(&prompt);
     let session_id = ExecuteSessionId::new_random();
     let prompt_hash_str = prompt_hash.to_string();
@@ -1418,7 +1425,12 @@ pub async fn federate_execute_session(
     let delta = st
         .engine
         .prompt_pipeline()
-        .render_teaching_exposure_delta_federated(&by_entry, &exp, &added_qualified, Some(sym_cross));
+        .render_teaching_exposure_delta_federated(
+            &by_entry,
+            &exp,
+            &added_qualified,
+            Some(sym_cross),
+        );
     let mut names_sorted = names.clone();
     names_sorted.sort_unstable();
     let mut wave = String::new();

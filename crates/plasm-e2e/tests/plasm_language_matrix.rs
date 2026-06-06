@@ -583,7 +583,10 @@ fn assert_planning_ir(
                 return Err(format!("expected GroupBy after search, got {:?}", computes));
             };
             if keys.len() != 1 || keys[0].dotted() != "owner" {
-                return Err(format!("expected group key owner on search rows, got {:?}", keys));
+                return Err(format!(
+                    "expected group key owner on search rows, got {:?}",
+                    keys
+                ));
             }
             let q = first_query(&surfaces)?;
             if q.capability_name.as_deref() != Some("langitem_search") {
@@ -866,9 +869,7 @@ fn assert_planning_ir(
                 ));
             }
             if rel["cardinality"].as_str() != Some("one") {
-                return Err(format!(
-                    "expected one-cardinality summary rel, got {rel:?}"
-                ));
+                return Err(format!("expected one-cardinality summary rel, got {rel:?}"));
             }
             let mat = rel
                 .pointer("/materialize/kind")
@@ -881,8 +882,9 @@ fn assert_planning_ir(
             }
         }
         "lang_homograph_lhs_coercion" => {
-            let rel = plan_relation_named(plan, "tags")
-                .ok_or_else(|| "expected `.tags` relation from homograph LHS coercion".to_string())?;
+            let rel = plan_relation_named(plan, "tags").ok_or_else(|| {
+                "expected `.tags` relation from homograph LHS coercion".to_string()
+            })?;
             if rel["source"].as_str() != Some("items") {
                 return Err(format!(
                     "expected tags relation sourced from items, got {rel:?}"
@@ -1797,11 +1799,8 @@ fn matrix_program_for_row(
                 .as_ref()
                 .expect("matrix session domain exposure");
             let map = exp.symbol_map_arc();
-            let r_sym = map.ident_sym_relation_for(
-                language_matrix::MATRIX_ENTRY_ID,
-                "LangItem",
-                "summary",
-            );
+            let r_sym =
+                map.ident_sym_relation_for(language_matrix::MATRIX_ENTRY_ID, "LangItem", "summary");
             assert!(
                 r_sym.starts_with('r'),
                 "expected opaque r# for LangItem.summary, got {r_sym}"

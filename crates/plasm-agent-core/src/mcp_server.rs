@@ -1675,7 +1675,11 @@ impl PlasmMcpHandler {
             .await;
 
         let mut text = String::new();
-        let total_teaching_chars: u64 = out.waves.iter().map(|w| w.teaching_prompt_chars_added).sum();
+        let total_teaching_chars: u64 = out
+            .waves
+            .iter()
+            .map(|w| w.teaching_prompt_chars_added)
+            .sum();
         let exposed_entities: usize = out
             .waves
             .iter()

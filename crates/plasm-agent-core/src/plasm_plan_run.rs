@@ -12,11 +12,11 @@ use plasm_core::symbol_map_cache_key_federated;
 use plasm_core::symbol_map_cache_key_single_catalog;
 use plasm_core::type_check_expr;
 use plasm_core::type_check_expr_federated;
-use plasm_core::TeachingExposureSession;
 use plasm_core::FocusSpec;
 use plasm_core::PromptPipelineConfig;
 use plasm_core::SymbolMap;
 use plasm_core::SymbolMapCrossRequestCache;
+use plasm_core::TeachingExposureSession;
 use plasm_core::TypeError;
 use plasm_core::CGS;
 

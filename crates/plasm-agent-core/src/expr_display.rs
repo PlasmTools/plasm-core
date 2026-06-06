@@ -168,8 +168,8 @@ mod il_snapshots {
     #[test]
     fn il_query_product_federated_matches_single_catalog() {
         use plasm_core::CgsContext;
-        use plasm_core::TeachingExposureSession;
         use plasm_core::FederationDispatch;
+        use plasm_core::TeachingExposureSession;
         use std::sync::Arc;
 
         let cgs = std::sync::Arc::new(tiny_cgs());

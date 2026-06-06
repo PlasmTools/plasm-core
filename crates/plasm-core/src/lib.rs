@@ -88,7 +88,6 @@ pub mod cross_entity;
 pub mod discovery;
 pub mod discovery_adversarial_intents;
 pub mod domain_lexicon;
-pub mod teaching_term;
 pub mod entity_ref_value;
 pub mod error;
 pub mod error_render;
@@ -118,6 +117,7 @@ pub mod step_semantics;
 pub mod string_unescape;
 pub mod summary_render;
 pub mod symbol_tuning;
+pub mod teaching_term;
 pub mod template_interpolate;
 pub mod template_ref;
 pub mod temporal;
@@ -152,10 +152,6 @@ pub use discovery_adversarial_intents::{
     adversarial_case_count, iter_all_cases, DiscoveryAdversarialCase,
     DiscoveryAdversarialFailureKind, CROSS_CUTTING, PER_CATALOG_SELECTION,
 };
-pub use teaching_term::{
-    method_ref_for_domain_segment, resolve_parameter_slot, TeachingTerm, EntityRef, MethodRef,
-    ParameterSlot, Symbol,
-};
 pub use entity_ref_value::{
     normalize_entity_ref_value_for_target, try_narrow_entity_row_to_entity_ref_value,
     EntityRefAtom, EntityRefPayload, EntityRefValueError, ScopeEntityRefNormalizeError,
@@ -184,14 +180,14 @@ pub use preflight::{
     ScopeBind,
 };
 pub use prompt_pipeline::{PromptFocus, PromptPipelineConfig};
-pub use prompt_render::teaching_tsv_table_from_wrapped_prompt;
 pub use prompt_render::render_teaching_bundle;
 pub use prompt_render::render_teaching_prompt_bundle_for_exposure;
 pub use prompt_render::render_teaching_tsv;
 pub use prompt_render::split_tsv_teaching_contract_and_table;
+pub use prompt_render::teaching_tsv_table_from_wrapped_prompt;
+pub use prompt_render::PromptRenderMode;
 pub use prompt_render::TeachingPromptSettings;
 pub use prompt_render::TeachingPromptSource;
-pub use prompt_render::PromptRenderMode;
 pub use prompt_render::TSV_TEACHING_TABLE_HEADER;
 pub use query_resolve::{
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
@@ -206,6 +202,10 @@ pub use row_composition::{
 pub use row_predicate::{
     entity_def_for_row_predicate, parse_row_predicate_list, row_predicate_from_expr,
     type_check_row_predicate, RowComparison, RowPredicate, RowPredicateTypeCtx,
+};
+pub use teaching_term::{
+    method_ref_for_domain_segment, resolve_parameter_slot, EntityRef, MethodRef, ParameterSlot,
+    Symbol, TeachingTerm,
 };
 pub use wire_coercion::{
     binding_value_as_plasm_value, coerce_json_value_for_field_type, coerce_value_for_field_type,
@@ -252,12 +252,12 @@ pub use summary_render::{
     render_intent_with_projection, render_intent_with_projection_federated, render_outcome,
 };
 pub use symbol_tuning::{
-    entity_slices_for_render, expand_expr_for_teaching_session, expand_expr_for_parse,
+    entity_slices_for_render, expand_expr_for_parse, expand_expr_for_teaching_session,
     expand_path_symbols, relation_endpoint_keys, resolve_prompt_surface_entities,
     strip_prompt_expression_annotations, symbol_map_cache_key_federated,
-    symbol_map_cache_key_single_catalog, symbol_map_for_prompt, TeachingExposureSession,
-    ExposedEntitySymbolRow, ExposedRelationSymbolRow, ExposureEntityKey, FocusSpec, SymbolMap,
-    SymbolMapCacheKey, SymbolMapCrossRequestCache,
+    symbol_map_cache_key_single_catalog, symbol_map_for_prompt, ExposedEntitySymbolRow,
+    ExposedRelationSymbolRow, ExposureEntityKey, FocusSpec, SymbolMap, SymbolMapCacheKey,
+    SymbolMapCrossRequestCache, TeachingExposureSession,
 };
 pub use template_interpolate::{
     dollar_interpolation_roots, interpolate_string, interpolate_string_map,

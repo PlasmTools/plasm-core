@@ -83,7 +83,9 @@ impl TeachingTerm {
     #[inline]
     pub fn symbol(&self) -> Symbol {
         match self {
-            TeachingTerm::Entity(_, s) | TeachingTerm::Method(_, s) | TeachingTerm::Parameter(_, s) => *s,
+            TeachingTerm::Entity(_, s)
+            | TeachingTerm::Method(_, s)
+            | TeachingTerm::Parameter(_, s) => *s,
         }
     }
 }

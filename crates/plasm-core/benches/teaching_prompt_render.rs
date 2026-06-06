@@ -10,7 +10,7 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
 use plasm_core::loader::load_schema_dir;
 use plasm_core::prompt_render::{
-    render_teaching_prompt_bundle_for_exposure, render_prompt_tsv_with_config, RenderConfig,
+    render_prompt_tsv_with_config, render_teaching_prompt_bundle_for_exposure, RenderConfig,
 };
 use plasm_core::symbol_tuning::TeachingExposureSession;
 use plasm_core::{relation_endpoint_keys, CGS};

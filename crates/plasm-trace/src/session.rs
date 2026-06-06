@@ -220,7 +220,8 @@ impl SessionTraceData {
                 }
             }
             TraceSegment::TeachingPromptCharsDelta { chars_added } => {
-                self.teaching_prompt_chars = self.teaching_prompt_chars.saturating_add(*chars_added);
+                self.teaching_prompt_chars =
+                    self.teaching_prompt_chars.saturating_add(*chars_added);
             }
             TraceSegment::PlasmResponseCharsDelta { chars_added, .. } => {
                 self.plasm_response_chars = self.plasm_response_chars.saturating_add(*chars_added);

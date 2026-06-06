@@ -520,9 +520,9 @@ fn main() -> anyhow::Result<()> {
                 // Write prompt first so a line-buffered terminal shows teaching table immediately; stats on
                 // stderr last so they stay visible below the bundle (and after tracing lines).
                 print!("{prompt}");
-                std::io::stdout()
-                    .flush()
-                    .context("flush stdout after --print-prompt/--print-prompt-tsv teaching table")?;
+                std::io::stdout().flush().context(
+                    "flush stdout after --print-prompt/--print-prompt-tsv teaching table",
+                )?;
                 eprintln!("\nplasm-eval: schema prompt — {}", st.summary_line_body());
                 std::io::stderr()
                     .flush()
