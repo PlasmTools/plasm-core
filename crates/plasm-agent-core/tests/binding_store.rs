@@ -1,14 +1,17 @@
 //! Integration-style unit tests for scoped binding store helpers.
 
 use indexmap::IndexMap;
-use plasm_agent_core::binding_slots::{BindingScope, bindings_complete_for_entry};
+use plasm_agent_core::binding_slots::{bindings_complete_for_entry, BindingScope};
 use uuid::Uuid;
 
 #[test]
 fn bindings_complete_requires_all_wires_for_fibery() {
     let mut partial = IndexMap::new();
     assert!(!bindings_complete_for_entry("fibery", &partial));
-    partial.insert("catalog_http_origin".into(), "https://acme.fibery.io".into());
+    partial.insert(
+        "catalog_http_origin".into(),
+        "https://acme.fibery.io".into(),
+    );
     assert!(bindings_complete_for_entry("fibery", &partial));
 }
 

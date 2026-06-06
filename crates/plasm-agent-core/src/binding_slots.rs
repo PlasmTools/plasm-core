@@ -126,9 +126,7 @@ const FIBERY_CONNECT: ConnectRequirements = ConnectRequirements {
 const CONNECT_REGISTRY: &[ConnectRequirements] = &[FIBERY_CONNECT];
 
 pub fn connect_requirements_for_entry(entry_id: &str) -> Option<&'static ConnectRequirements> {
-    CONNECT_REGISTRY
-        .iter()
-        .find(|r| r.entry_id == entry_id)
+    CONNECT_REGISTRY.iter().find(|r| r.entry_id == entry_id)
 }
 
 pub fn entry_requires_bindings(entry_id: &str) -> bool {
@@ -155,7 +153,10 @@ pub struct ConnectRequirementsJsonOwned {
 
 fn secret_connect_spec_json(spec: SecretConnectSpec) -> SecretConnectSpecJson {
     match spec.kind {
-        SecretConnectKind::ApiKeyHeader { header, token_prefix } => SecretConnectSpecJson {
+        SecretConnectKind::ApiKeyHeader {
+            header,
+            token_prefix,
+        } => SecretConnectSpecJson {
             kind: SecretConnectKindJson::ApiKeyHeader,
             header: Some(header),
             token_prefix: Some(token_prefix),
@@ -168,7 +169,10 @@ fn secret_connect_spec_json(spec: SecretConnectSpec) -> SecretConnectSpecJson {
     }
 }
 
-fn binding_specs_json(_entry_id: &str, specs: &[BindingConnectSpec]) -> Vec<BindingConnectSpecJson> {
+fn binding_specs_json(
+    _entry_id: &str,
+    specs: &[BindingConnectSpec],
+) -> Vec<BindingConnectSpecJson> {
     specs
         .iter()
         .map(|spec| BindingConnectSpecJson {
@@ -191,7 +195,11 @@ pub struct BindingScope {
 }
 
 impl BindingScope {
-    pub fn new(tenant_id: impl Into<String>, mcp_config_id: Uuid, entry_id: impl Into<String>) -> Self {
+    pub fn new(
+        tenant_id: impl Into<String>,
+        mcp_config_id: Uuid,
+        entry_id: impl Into<String>,
+    ) -> Self {
         Self {
             tenant_id: tenant_id.into(),
             mcp_config_id,
@@ -246,7 +254,9 @@ pub fn normalize_connect_binding_values(
         if raw.is_empty() {
             return Ok(IndexMap::new());
         }
-        return Err(format!("catalog `{entry_id}` does not accept binding values"));
+        return Err(format!(
+            "catalog `{entry_id}` does not accept binding values"
+        ));
     };
     let mut out = IndexMap::new();
     for spec in req.bindings {
@@ -333,10 +343,8 @@ mod tests {
             "catalog_http_origin".into(),
             "https://acme.fibery.io".into(),
         );
-        let map = SessionBindingMap::from_values(
-            BindingScope::new("t1", Uuid::nil(), "fibery"),
-            values,
-        );
+        let map =
+            SessionBindingMap::from_values(BindingScope::new("t1", Uuid::nil(), "fibery"), values);
         let origin = resolve_catalog_http_backend(
             "fibery",
             "https://YOUR_ACCOUNT.fibery.io",

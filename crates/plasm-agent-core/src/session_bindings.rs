@@ -100,17 +100,15 @@ mod tests {
 
     #[test]
     fn repl_binding_from_backend_flag() {
-        let map = repl_session_binding_map(
-            "fibery",
-            "https://acme.fibery.io",
-        )
-        .expect("map");
+        let map = repl_session_binding_map("fibery", "https://acme.fibery.io").expect("map");
         assert_eq!(
             map.get_wire("catalog_http_origin"),
             Some("https://acme.fibery.io")
         );
         assert_eq!(
-            map.cml_env_entries().get("bind_catalog_http_origin").map(String::as_str),
+            map.cml_env_entries()
+                .get("bind_catalog_http_origin")
+                .map(String::as_str),
             Some("https://acme.fibery.io")
         );
     }

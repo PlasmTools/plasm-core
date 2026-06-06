@@ -1297,8 +1297,8 @@ mod tests {
             path: vec!["fields".into()],
         };
         for row in &team_rows {
-            let bind =
-                resolve_overlay_row_bind(&spec.source.steps[1].bind, row, None, None).expect("bind");
+            let bind = resolve_overlay_row_bind(&spec.source.steps[1].bind, row, None, None)
+                .expect("bind");
             assert_eq!(
                 bind.get("team_id").map(String::as_str),
                 Some(row["id"].as_str().unwrap())

@@ -307,12 +307,8 @@ async fn apply_binding_state_to_catalog_rows(
             row.entry_id.clone(),
         );
         row.bindings_complete =
-            plasm_agent_core::binding_store::entry_bindings_complete_scoped(
-                storage,
-                repo,
-                &scope,
-            )
-            .await;
+            plasm_agent_core::binding_store::entry_bindings_complete_scoped(storage, repo, &scope)
+                .await;
     }
 }
 
@@ -506,11 +502,7 @@ async fn run_admin_job(
                     entry_id.clone(),
                 );
                 plasm_agent_core::binding_store::store_scoped_binding_envelope(
-                    storage,
-                    repo,
-                    scope,
-                    normalized,
-                    None,
+                    storage, repo, scope, normalized, None,
                 )
                 .await
                 .map_err(|e| e.to_string())?;

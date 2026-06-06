@@ -112,7 +112,10 @@ mod tests {
     fn parse_binding_kv_roundtrip() {
         let raw = r#"{"version":1,"scope":{"tenant_id":"t1","mcp_config_id":"c1","entry_id":"fibery"},"values":{"catalog_http_origin":"https://acme.fibery.io"}}"#;
         let env = parse_binding_kv_v1(raw).expect("parse");
-        assert_eq!(env.values.get("catalog_http_origin").map(String::as_str), Some("https://acme.fibery.io"));
+        assert_eq!(
+            env.values.get("catalog_http_origin").map(String::as_str),
+            Some("https://acme.fibery.io")
+        );
     }
 
     #[test]

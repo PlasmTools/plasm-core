@@ -178,8 +178,7 @@ async fn get_config_detail_handler(
             &optional,
         );
         for row in &mut rows {
-            crate::mcp_config_readiness::hydrate_catalog_row_connect_status(&st, &cfg, row)
-                .await;
+            crate::mcp_config_readiness::hydrate_catalog_row_connect_status(&st, &cfg, row).await;
         }
         if let Some(obj) = v.as_object_mut() {
             obj.insert(
@@ -221,9 +220,10 @@ async fn get_readiness_gaps_handler(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    let detail = repo.get_config_detail_json(&id).await.map_err(|_| {
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+    let detail = repo
+        .get_config_detail_json(&id)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let optional: Vec<String> = detail
         .as_ref()
         .and_then(|v| v.get("auth_optional_entry_ids"))

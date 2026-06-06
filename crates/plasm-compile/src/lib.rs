@@ -50,10 +50,8 @@ pub type CompileQueryHook =
 pub fn validate_cgs_capability_templates(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
     for (name, cap) in &cgs.capabilities {
         let template_json = &cap.mapping.template.0;
-        parse_capability_template(template_json).map_err(|e| {
-            CmlError::InvalidTemplate {
-                message: format!("capability `{name}`: {e}"),
-            }
+        parse_capability_template(template_json).map_err(|e| CmlError::InvalidTemplate {
+            message: format!("capability `{name}`: {e}"),
         })?;
         let template_text = template_json
             .as_str()

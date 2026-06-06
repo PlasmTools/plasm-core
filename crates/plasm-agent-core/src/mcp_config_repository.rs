@@ -1081,9 +1081,7 @@ mod tests {
             .collect();
         names.sort();
         assert!(
-            names
-                .iter()
-                .any(|n| n.contains("plasm_agent_schema")),
+            names.iter().any(|n| n.contains("plasm_agent_schema")),
             "expected squashed plasm_agent_schema migration, got {names:?}"
         );
         let allowlisted_incrementals = ["20260607000000_project_mcp_entry_bindings.sql"];

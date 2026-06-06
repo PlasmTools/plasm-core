@@ -2250,13 +2250,16 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
                         .with_sticky(false),
                     );
                 } else {
-                submit_inline_admin_job(state, bridge, AdminTaskKind::SavingApiAllowlist, |c| {
-                    AdminJob::SetAllowedApisExact {
-                        corr: c,
-                        config_id: cid,
-                        entry_ids: set,
-                    }
-                });
+                    submit_inline_admin_job(
+                        state,
+                        bridge,
+                        AdminTaskKind::SavingApiAllowlist,
+                        |c| AdminJob::SetAllowedApisExact {
+                            corr: c,
+                            config_id: cid,
+                            entry_ids: set,
+                        },
+                    );
                 }
             }
         }
@@ -2295,23 +2298,23 @@ fn update_normal_key(state: &mut RunState, key: KeyEvent, deps: &UpdateDeps<'_>)
                             .with_sticky(false),
                         );
                     } else {
-                    state.mode = InputMode::ApiSecretEdit {
-                        entry_id: entry_id.clone(),
-                        hosted_kv_key,
-                        buf: String::new(),
-                    };
-                    set_notice(
-                        state,
-                        RunNotice::new(
-                            NoticeSeverity::Info,
-                            "Set API key",
-                            format!("Store an API key secret for {entry_id}."),
-                        )
-                        .with_action_hint(
-                            "Type the secret, then press Enter to save it in local hosted KV.",
-                        )
-                        .with_sticky(false),
-                    );
+                        state.mode = InputMode::ApiSecretEdit {
+                            entry_id: entry_id.clone(),
+                            hosted_kv_key,
+                            buf: String::new(),
+                        };
+                        set_notice(
+                            state,
+                            RunNotice::new(
+                                NoticeSeverity::Info,
+                                "Set API key",
+                                format!("Store an API key secret for {entry_id}."),
+                            )
+                            .with_action_hint(
+                                "Type the secret, then press Enter to save it in local hosted KV.",
+                            )
+                            .with_sticky(false),
+                        );
                     }
                 } else {
                     set_notice(

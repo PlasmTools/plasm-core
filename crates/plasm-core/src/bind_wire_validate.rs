@@ -70,11 +70,7 @@ mod tests {
 
     #[test]
     fn allows_known_bind_wire() {
-        assert!(validate_bind_wire_refs(
-            "{{ bind.catalog_http_origin }}/api",
-            "test"
-        )
-        .is_ok());
+        assert!(validate_bind_wire_refs("{{ bind.catalog_http_origin }}/api", "test").is_ok());
     }
 
     #[test]

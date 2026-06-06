@@ -115,18 +115,15 @@ pub async fn active_config_readiness_gaps(
             })
             .unwrap_or(false);
         gaps.extend(
-            catalog_entry_readiness_gaps(
-                repo,
-                storage,
-                cfg,
-                entry_id,
-                &optional,
-                requires_auth,
-            )
-            .await,
+            catalog_entry_readiness_gaps(repo, storage, cfg, entry_id, &optional, requires_auth)
+                .await,
         );
     }
-    gaps.sort_by(|a, b| a.entry_id.cmp(&b.entry_id).then_with(|| format!("{:?}", a.gap).cmp(&format!("{:?}", b.gap))));
+    gaps.sort_by(|a, b| {
+        a.entry_id
+            .cmp(&b.entry_id)
+            .then_with(|| format!("{:?}", a.gap).cmp(&format!("{:?}", b.gap)))
+    });
     gaps.dedup_by(|a, b| a.entry_id == b.entry_id && a.gap == b.gap);
     gaps
 }

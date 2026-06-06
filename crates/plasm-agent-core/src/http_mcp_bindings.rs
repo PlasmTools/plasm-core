@@ -87,11 +87,7 @@ async fn put_scoped_handler(
         tracing::warn!(error = %e, "binding put: invalid values");
         StatusCode::BAD_REQUEST
     })?;
-    let key_override = body
-        .key
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
+    let key_override = body.key.as_deref().map(str::trim).filter(|s| !s.is_empty());
     if let Some(key) = key_override {
         if !validate_binding_key(key) {
             return Err(StatusCode::BAD_REQUEST);
@@ -131,7 +127,8 @@ async fn delete_scoped_handler(
     let Some(repo) = st.mcp_config_repository() else {
         return Err(StatusCode::SERVICE_UNAVAILABLE);
     };
-    let config_id = Uuid::parse_str(body.mcp_config_id.trim()).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let config_id =
+        Uuid::parse_str(body.mcp_config_id.trim()).map_err(|_| StatusCode::BAD_REQUEST)?;
     let tenant_id = body.tenant_id.trim();
     let entry_id = body.entry_id.trim();
     if tenant_id.is_empty() || entry_id.is_empty() {
@@ -145,7 +142,10 @@ async fn delete_scoped_handler(
     if cfg.tenant_id != tenant_id {
         return Err(StatusCode::FORBIDDEN);
     }
-    if let Ok(Some(key)) = repo.fetch_binding_kv_key_for_scope(config_id, entry_id).await {
+    if let Ok(Some(key)) = repo
+        .fetch_binding_kv_key_for_scope(config_id, entry_id)
+        .await
+    {
         let _ = storage.delete_kv(key.trim()).await;
     }
     Ok(StatusCode::NO_CONTENT)
