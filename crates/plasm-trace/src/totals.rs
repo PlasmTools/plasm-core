@@ -10,7 +10,7 @@ pub struct TraceTotals {
     pub plasm_expressions: u64,
     pub expression_lines: u64,
     pub multi_line_plasm_invocations: u64,
-    pub domain_prompt_chars: u64,
+    pub teaching_prompt_chars: u64,
     pub plasm_invocation_chars: u64,
     pub plasm_response_chars: u64,
     #[serde(default)]
@@ -40,7 +40,7 @@ pub fn totals_from_session_data(data: &SessionTraceData) -> TraceTotals {
             plasm_expressions: data.aggregate_plasm_expressions,
             expression_lines: data.aggregate_expression_lines,
             multi_line_plasm_invocations: data.aggregate_multi_line_plasm_invocations,
-            domain_prompt_chars: data.domain_prompt_chars,
+            teaching_prompt_chars: data.teaching_prompt_chars,
             plasm_invocation_chars: data.plasm_invocation_chars,
             plasm_response_chars: data.plasm_response_chars,
             mcp_resource_read_chars: data.mcp_resource_read_chars,
@@ -60,7 +60,7 @@ pub fn totals_from_session_data(data: &SessionTraceData) -> TraceTotals {
     // Legacy: older persisted traces without aggregate_* — fold the retained record window only.
     let mut t = TraceTotals {
         plasm_tool_calls: data.plasm_call_count,
-        domain_prompt_chars: data.domain_prompt_chars,
+        teaching_prompt_chars: data.teaching_prompt_chars,
         plasm_invocation_chars: data.plasm_invocation_chars,
         plasm_response_chars: data.plasm_response_chars,
         mcp_resource_read_chars: data.mcp_resource_read_chars,
@@ -140,7 +140,7 @@ impl From<TraceTotals> for plasm_observability_contracts::TraceTotals {
             plasm_expressions: t.plasm_expressions,
             expression_lines: t.expression_lines,
             multi_line_plasm_invocations: t.multi_line_plasm_invocations,
-            domain_prompt_chars: t.domain_prompt_chars,
+            teaching_prompt_chars: t.teaching_prompt_chars,
             plasm_invocation_chars: t.plasm_invocation_chars,
             plasm_response_chars: t.plasm_response_chars,
             mcp_resource_read_chars: t.mcp_resource_read_chars,

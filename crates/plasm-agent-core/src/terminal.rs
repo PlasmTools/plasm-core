@@ -761,7 +761,7 @@ async fn run_doctor(profile_name: &str, profile: &TerminalProfile) -> Result<()>
     println!();
     println!("Agent flow: `search` → `context -i \"…\" api:Entity …` → `run`");
     println!(
-        "Local state: {}/hosts/<slug>/current → s/<session_id>/ (domain.tsv, out/NNNN-*/)",
+        "Local state: {}/hosts/<slug>/current → s/<session_id>/ (teaching.tsv, out/NNNN-*/)",
         crate::terminal_state::plasm_root_dir().display()
     );
     Ok(())

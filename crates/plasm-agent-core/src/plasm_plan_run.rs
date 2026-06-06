@@ -12,7 +12,7 @@ use plasm_core::symbol_map_cache_key_federated;
 use plasm_core::symbol_map_cache_key_single_catalog;
 use plasm_core::type_check_expr;
 use plasm_core::type_check_expr_federated;
-use plasm_core::DomainExposureSession;
+use plasm_core::TeachingExposureSession;
 use plasm_core::FocusSpec;
 use plasm_core::PromptPipelineConfig;
 use plasm_core::SymbolMap;
@@ -70,7 +70,7 @@ pub fn session_cgs_layers(session: &ExecuteSession) -> Vec<&CGS> {
     }
 }
 
-/// Resolve a DOMAIN `p#` teaching symbol (or pass through an already-canonical wire name).
+/// Resolve a teaching `p#` teaching symbol (or pass through an already-canonical wire name).
 pub fn resolve_wire_field_token(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
@@ -125,7 +125,7 @@ pub fn symbol_map_for_plasm_surface_parse(
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
 ) -> Arc<SymbolMap> {
     let layers = session_cgs_layers(session);
-    if let Some(e) = session.domain_exposure.as_ref() {
+    if let Some(e) = session.teaching_exposure.as_ref() {
         let key = if symbol_map_cross_cache.is_some() {
             if layers.len() <= 1 {
                 Some(symbol_map_cache_key_single_catalog(session.cgs.as_ref(), e))
@@ -191,7 +191,7 @@ fn cached_entity_row_json(entity: &CachedEntity, cgs: &CGS) -> serde_json::Value
     v
 }
 
-/// Parse one Plasm surface line: strip DOMAIN gloss, expand `e#` / `p#` / `m#` per `pipeline`, then
+/// Parse one Plasm surface line: strip teaching gloss, expand `e#` / `p#` / `m#` per `pipeline`, then
 /// [`plasm_core::expr_parser::parse_with_cgs_layers_program`] (no program-node refs). This is the
 /// single path for HTTP execute and MCP `plasm`.
 pub fn parse_plasm_surface_line(
@@ -211,7 +211,7 @@ fn normalize_query_capabilities_for_session(
 ) -> Result<(), String> {
     if session.contexts_by_entry.len() <= 1 {
         normalize_expr_query_capabilities(expr, session.cgs.as_ref()).map_err(|e| e.to_string())
-    } else if let Some(exposure) = session.domain_exposure.as_ref() {
+    } else if let Some(exposure) = session.teaching_exposure.as_ref() {
         let fed = FederationDispatch::from_contexts_and_exposure(
             session.contexts_by_entry.clone(),
             exposure,
@@ -237,7 +237,7 @@ pub fn parse_plasm_surface_line_program(
         line,
         session.cgs.as_ref(),
         &session.entities,
-        session.domain_exposure.as_ref(),
+        session.teaching_exposure.as_ref(),
     );
     let layers = session_cgs_layers(session);
     let sym_map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
@@ -257,7 +257,7 @@ pub fn parse_plasm_surface_line_program(
     Ok(parsed)
 }
 
-/// Expand DOMAIN gloss tokens the same way as [`parse_plasm_surface_line_program`], for program
+/// Expand teaching gloss tokens the same way as [`parse_plasm_surface_line_program`], for program
 /// lowering paths that peel postfix or slice field lists before building [`Plan`](crate::plasm_plan::Plan) IR.
 ///
 /// Call this **before** any step that turns comma-separated field names into
@@ -272,7 +272,7 @@ pub fn expand_program_surface_for_session_lower(
         fragment,
         session.cgs.as_ref(),
         &session.entities,
-        session.domain_exposure.as_ref(),
+        session.teaching_exposure.as_ref(),
     )
 }
 
@@ -328,7 +328,7 @@ pub(crate) fn entry_scoped_execute_session(
         .map(|name| name.as_str().to_string())
         .collect();
     let focus = [q.entity.as_str()];
-    scoped.domain_exposure = Some(DomainExposureSession::new(
+    scoped.teaching_exposure = Some(TeachingExposureSession::new(
         ctx.cgs.as_ref(),
         q.entry_id.as_str(),
         &focus,
@@ -450,7 +450,7 @@ pub fn dry_run_simulation_for_session(
     let intent = if session.contexts_by_entry.len() <= 1 {
         render_intent_with_projection(&pe.expr, pe.projection.as_deref(), session.cgs.as_ref())
     } else {
-        match session.domain_exposure.as_ref() {
+        match session.teaching_exposure.as_ref() {
             None => render_intent_with_projection(
                 &pe.expr,
                 pe.projection.as_deref(),
@@ -473,7 +473,7 @@ pub fn dry_run_simulation_for_session(
     let il = if session.contexts_by_entry.len() <= 1 {
         expr_display_resolved(&pe.expr, session.cgs.as_ref())
     } else {
-        match session.domain_exposure.as_ref() {
+        match session.teaching_exposure.as_ref() {
             None => expr_display_resolved(&pe.expr, session.cgs.as_ref()),
             Some(exposure) => {
                 let fed = FederationDispatch::from_contexts_and_exposure(
@@ -765,7 +765,7 @@ fn enrich_graph_summary_auth_scoped_reads(
     plan: &Plan<ValidatedPlanState>,
     summary: &mut serde_json::Value,
 ) {
-    let exp = match es.domain_exposure.as_ref() {
+    let exp = match es.teaching_exposure.as_ref() {
         Some(e) => e.clone(),
         None => return,
     };
@@ -825,7 +825,7 @@ pub fn render_plasm_plan_dry_text(
     render_plasm_plan_dry_text_for_session(dry, archive, None)
 }
 
-/// Same as [`render_plasm_plan_dry_text`] with optional execute session for DOMAIN-aware surface expr.
+/// Same as [`render_plasm_plan_dry_text`] with optional execute session for teaching table-aware surface expr.
 pub fn render_plasm_plan_dry_text_for_session(
     dry: &DryPlasmPlanEvaluation,
     archive: Option<PlasmPlanDryRunTextMeta<'_>>,
@@ -1708,7 +1708,7 @@ fn ensure_surface_expr_matches_plan_kind(
             "plan.nodes[{index}] is kind search but expression resolved capability {name:?} with kind {other:?}"
         )),
         (PlanNodeKind::Query, CapabilityKind::Search) => Err(format!(
-            "plan.nodes[{index}] is kind query but expression resolved search capability {name:?}; use a `search` plan node (kind `search`) or a non-search query per DOMAIN"
+            "plan.nodes[{index}] is kind query but expression resolved search capability {name:?}; use a `search` plan node (kind `search`) or a non-search query per teaching table"
         )),
         _ => Ok(()),
     }
@@ -4556,7 +4556,7 @@ mod tests {
     use super::*;
     use plasm_core::load_schema;
     use plasm_core::CgsContext;
-    use plasm_core::DomainExposureSession;
+    use plasm_core::TeachingExposureSession;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -4617,7 +4617,7 @@ mod tests {
             "acme".into(),
             Arc::new(CgsContext::entry("acme", cgs.clone())),
         );
-        let exp = DomainExposureSession::new(cgs.as_ref(), "acme", &["Product", "Category"]);
+        let exp = TeachingExposureSession::new(cgs.as_ref(), "acme", &["Product", "Category"]);
         ExecuteSession::new(
             "ph".into(),
             "p".into(),
@@ -4652,7 +4652,7 @@ mod tests {
             "other".into(),
             Arc::new(CgsContext::entry("other", cgs.clone())),
         );
-        let exp = DomainExposureSession::new(cgs.as_ref(), "acme", &["Product"]);
+        let exp = TeachingExposureSession::new(cgs.as_ref(), "acme", &["Product"]);
         ExecuteSession::new(
             "ph".into(),
             "p".into(),
@@ -4745,7 +4745,7 @@ mod tests {
             "github".into(),
             Arc::new(CgsContext::entry("github", cgs.clone())),
         );
-        let exp = DomainExposureSession::new(cgs.as_ref(), "github", &["Repository", "Commit"]);
+        let exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["Repository", "Commit"]);
         ExecuteSession::new(
             "ph".into(),
             "p".into(),
@@ -4794,10 +4794,10 @@ mod tests {
         assert!(v.get("expr").is_some());
     }
 
-    /// `e#` is session-local (DOMAIN TSV); single-catalog + exposure must not parse `e1` as an entity *name*.
+    /// `e#` is session-local (teaching TSV); single-catalog + exposure must not parse `e1` as an entity *name*.
     /// (`.page_size(n)` is Plasm program postfix sugar; the core line parser does not treat it as Plasm path syntax.)
     #[test]
-    fn parse_resolves_e1_with_domain_exposure() {
+    fn parse_resolves_e1_with_teaching_exposure() {
         let s = test_session();
         let _ =
             parse_parsed_expr_for_session(&s, "e1").expect("e1 => first taught entity (Product)");

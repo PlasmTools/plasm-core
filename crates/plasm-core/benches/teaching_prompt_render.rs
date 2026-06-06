@@ -1,6 +1,6 @@
-//! DOMAIN / teaching TSV synthesis benchmarks (CGS materialization + prompt render).
+//! teaching table / teaching TSV synthesis benchmarks (CGS materialization + prompt render).
 //!
-//! Run (from `plasm-oss/`): `cargo bench -p plasm-core --bench domain_prompt_render`
+//! Run (from `plasm-oss/`): `cargo bench -p plasm-core --bench teaching_prompt_render`
 //!
 //! Fast CI wall-time guard (same hot path, best-of-three):
 //! `cargo test -p plasm-core prompt_matrix_full_tsv_synthesis_benchmark`
@@ -10,9 +10,9 @@ use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criteri
 use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
 use plasm_core::loader::load_schema_dir;
 use plasm_core::prompt_render::{
-    render_domain_prompt_bundle_for_exposure, render_prompt_tsv_with_config, RenderConfig,
+    render_teaching_prompt_bundle_for_exposure, render_prompt_tsv_with_config, RenderConfig,
 };
-use plasm_core::symbol_tuning::DomainExposureSession;
+use plasm_core::symbol_tuning::TeachingExposureSession;
 use plasm_core::{relation_endpoint_keys, CGS};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -35,8 +35,8 @@ fn load_cgs(path: &std::path::Path) -> Arc<CGS> {
     Arc::new(load_schema_dir(path).expect("load schema dir"))
 }
 
-fn domain_prompt_benchmarks(c: &mut Criterion) {
-    let mut group = c.benchmark_group("domain_prompt");
+fn teaching_prompt_benchmarks(c: &mut Criterion) {
+    let mut group = c.benchmark_group("teaching_prompt");
     group.sample_size(30);
     let config = RenderConfig::for_eval(None);
     let validation_config = RenderConfig::for_expression_surface_validation();
@@ -97,13 +97,13 @@ fn domain_prompt_benchmarks(c: &mut Criterion) {
                             read_first_seeded: true,
                         },
                     );
-                    let exposure = DomainExposureSession::new_with_intent_delta(
+                    let exposure = TeachingExposureSession::new_with_intent_delta(
                         cgs.as_ref(),
                         entry,
                         &[entity],
                         delta,
                     );
-                    black_box(render_domain_prompt_bundle_for_exposure(
+                    black_box(render_teaching_prompt_bundle_for_exposure(
                         cgs.as_ref(),
                         config,
                         &exposure,
@@ -126,5 +126,5 @@ fn domain_prompt_benchmarks(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, domain_prompt_benchmarks);
+criterion_group!(benches, teaching_prompt_benchmarks);
 criterion_main!(benches);

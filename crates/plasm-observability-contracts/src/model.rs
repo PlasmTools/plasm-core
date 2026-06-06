@@ -66,7 +66,7 @@ pub struct TraceTotals {
     pub plasm_expressions: u64,
     pub expression_lines: u64,
     pub multi_line_plasm_invocations: u64,
-    pub domain_prompt_chars: u64,
+    pub teaching_prompt_chars: u64,
     pub plasm_invocation_chars: u64,
     pub plasm_response_chars: u64,
     #[serde(default)]

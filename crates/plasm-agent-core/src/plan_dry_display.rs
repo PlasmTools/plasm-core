@@ -357,7 +357,7 @@ fn render_plan_expr_ir_for_session(
     let Some(es) = es else {
         return crate::expr_display::expr_display(&ir.expr);
     };
-    let exp = match es.domain_exposure.as_ref() {
+    let exp = match es.teaching_exposure.as_ref() {
         Some(e) => e.clone(),
         None => return crate::expr_display::expr_display_resolved(&ir.expr, es.cgs.as_ref()),
     };

@@ -108,7 +108,7 @@ When the API returns them on message objects, the domain also exposes optional *
 | **Author context** | Optional `Message.user` when wire payloads include `user` (user id); omitted for some bot/system messages. |
 | **Block Kit / post body** | `message_post` / `message_update` declare `blocks`, `attachments` (`json_text`), `unfurl_links`, `unfurl_media`, `mrkdwn` (post). CML uses `body: { type: var, name: input }` for `chat.postMessage` so the merged create/update **input** object is sent as JSON; optional keys are listed in the domain, not “hidden” passthrough. |
 | **List vs get** | List/query capabilities use explicit **`provides:`** where list rows are strict subsets of the corresponding **get** (or full) shape — see `domain.yaml` (e.g. `user_list` vs `user_info`, `channel_list` vs `channel_info`, `channel_history` / `channel_replies`, `file_list`, `pin_list`, `bookmark_list`, …). |
-| **DOMAIN teaching** | `channel_history` vs `channel_replies` are disambiguated in core (`query_resolve`: required filter-like params such as `ts` participate in capability matching). `provides:` on those caps aligns prompt projection with responses. |
+| **teaching** | `channel_history` vs `channel_replies` are disambiguated in core (`query_resolve`: required filter-like params such as `ts` participate in capability matching). `provides:` on those caps aligns prompt projection with responses. |
 
 ---
 

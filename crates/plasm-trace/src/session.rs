@@ -13,7 +13,7 @@ pub const DEFAULT_TRACE_TIMELINE_MAX_EVENTS: usize = 4096;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionTraceData {
     pub mcp_session_id: String,
-    pub domain_prompt_chars: u64,
+    pub teaching_prompt_chars: u64,
     pub plasm_invocation_chars: u64,
     pub plasm_response_chars: u64,
     #[serde(default)]
@@ -60,7 +60,7 @@ fn default_timeline_cap() -> usize {
 /// head rows and incremental aggregation.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SessionTraceCountersSnapshot {
-    pub domain_prompt_chars: u64,
+    pub teaching_prompt_chars: u64,
     pub plasm_invocation_chars: u64,
     pub plasm_response_chars: u64,
     #[serde(default)]
@@ -89,7 +89,7 @@ pub struct SessionTraceCountersSnapshot {
 impl From<&SessionTraceData> for SessionTraceCountersSnapshot {
     fn from(d: &SessionTraceData) -> Self {
         Self {
-            domain_prompt_chars: d.domain_prompt_chars,
+            teaching_prompt_chars: d.teaching_prompt_chars,
             plasm_invocation_chars: d.plasm_invocation_chars,
             plasm_response_chars: d.plasm_response_chars,
             mcp_resource_read_chars: d.mcp_resource_read_chars,
@@ -116,7 +116,7 @@ impl SessionTraceCountersSnapshot {
     pub fn into_session_data(self, mcp_session_id: impl Into<String>) -> SessionTraceData {
         SessionTraceData {
             mcp_session_id: mcp_session_id.into(),
-            domain_prompt_chars: self.domain_prompt_chars,
+            teaching_prompt_chars: self.teaching_prompt_chars,
             plasm_invocation_chars: self.plasm_invocation_chars,
             plasm_response_chars: self.plasm_response_chars,
             mcp_resource_read_chars: self.mcp_resource_read_chars,
@@ -144,7 +144,7 @@ impl Default for SessionTraceData {
     fn default() -> Self {
         Self {
             mcp_session_id: String::new(),
-            domain_prompt_chars: 0,
+            teaching_prompt_chars: 0,
             plasm_invocation_chars: 0,
             plasm_response_chars: 0,
             mcp_resource_read_chars: 0,
@@ -189,16 +189,16 @@ impl SessionTraceData {
     pub fn apply_event_counters(&mut self, ev: &TraceEvent) {
         match &ev.segment {
             TraceSegment::PlasmContext {
-                domain_prompt_chars_added,
+                teaching_prompt_chars_added,
                 ..
             }
             | TraceSegment::ExpandDomain {
-                domain_prompt_chars_added,
+                teaching_prompt_chars_added,
                 ..
             } => {
-                self.domain_prompt_chars = self
-                    .domain_prompt_chars
-                    .saturating_add(*domain_prompt_chars_added);
+                self.teaching_prompt_chars = self
+                    .teaching_prompt_chars
+                    .saturating_add(*teaching_prompt_chars_added);
             }
             TraceSegment::PlasmInvocation {
                 multi_line,
@@ -219,8 +219,8 @@ impl SessionTraceData {
                         .saturating_add(1);
                 }
             }
-            TraceSegment::DomainPromptCharsDelta { chars_added } => {
-                self.domain_prompt_chars = self.domain_prompt_chars.saturating_add(*chars_added);
+            TraceSegment::TeachingPromptCharsDelta { chars_added } => {
+                self.teaching_prompt_chars = self.teaching_prompt_chars.saturating_add(*chars_added);
             }
             TraceSegment::PlasmResponseCharsDelta { chars_added, .. } => {
                 self.plasm_response_chars = self.plasm_response_chars.saturating_add(*chars_added);

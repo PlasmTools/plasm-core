@@ -61,7 +61,7 @@ curl -sS -H "Authorization: Bearer $PROOF_API_TOKEN" -H 'Accept: application/jso
 
 ## Domain ↔ SDK notes
 
-- **Optimistic locking:** block-level mutations use Proof SDK **`baseRevision`** (integer) from `GET …/snapshot` — typed in DOMAIN via shared `values.nv_proof_int` on `EditorState.revision`. Structured `POST …/edit` paths that surface **`baseUpdatedAt`** should use the same short-string primitive (`values.nv_proof_str`) when that parameter is modeled on the capability.
+- **Optimistic locking:** block-level mutations use Proof SDK **`baseRevision`** (integer) from `GET …/snapshot` — typed in teaching table via shared `values.nv_proof_int` on `EditorState.revision`. Structured `POST …/edit` paths that surface **`baseUpdatedAt`** should use the same short-string primitive (`values.nv_proof_str`) when that parameter is modeled on the capability.
 - **Share token:** optional capability parameter `share_token` is wired as query **`token`** on requests that support link-style access.
 - **Session bind (HTTP/MCP execute):** call **`document_share_bind`** once per document with the share URL (`…/d/{slug}?token=…`) or explicit `share_token`; the host keeps Bearer + mirrored `?token=` in execute session material so later lines stay token-free — see [instance-share-auth.md](../../../docs/instance-share-auth.md).
 - **`baseToken` / `/ops`:** after **`editor_state_get`**, the host stores **`baseToken`** in the same execute session and merges it into CML as **`base_token`** for **`/ops`** bodies (optional **`base_token=`** on a line overrides once). Re-run **`editor_state_get`** after stale-precondition errors; **`document_share_bind`** clears the stored token — see [instance-share-auth.md](../../../docs/instance-share-auth.md#proof-mutation-precondition-basetoken).
@@ -86,9 +86,9 @@ Probed **2026-05** with anonymous requests (no doc secrets):
 
 **Presence:** use **`POST /api/agent/:slug/presence`** with **`Authorization: Bearer`** + **`X-Agent-Id`** and JSON **`{ "status": "online" }`** (default when `presence_status` is omitted). On **`www.proofeditor.ai`**, **`POST /documents/:slug/presence`** returns **404** — Plasm maps **`presence_update`** to **`/api/agent/…`** only. **`…/bridge/presence`** is for the desktop/SDK bridge — it does **not** substitute for agent join on hosted collab UIs.
 
-## Incremental DOMAIN waves (execute / MCP)
+## Incremental teaching waves (execute / MCP)
 
-To keep prompts small and monotonic (`e#` / `m#` / `p#`), open sessions with a **tight seed list** and expand in waves ([incremental-domain-prompts.md](../../../docs/incremental-domain-prompts.md)):
+To keep prompts small and monotonic (`e#` / `m#` / `p#`), open sessions with a **tight seed list** and expand in waves ([incremental-teaching-prompts.md](../../../docs/incremental-teaching-prompts.md)):
 
 1. **Wave 1 — `Document` and/or `ShareLink`:** seed `{api: proof, entity: ShareLink}` when the program calls **`share_link_create`** — the teaching table always includes that create (and any query/get on ShareLink) even when the stable `intent` omits “share link” tokens. Document-only seeds expose Document reads/creates on the seeded entity; relation closure does not add ShareLink without a seed or relation.
 2. **Wave 2 — `EditorState`:** `editor_state_get` for revision / contract / marks before mutating.

@@ -1,6 +1,6 @@
-//! DOMAIN-facing tokens with CGS-backed payloads and a per-session numeric [`Symbol`].
+//! Teaching-table tokens with CGS-backed payloads and a per-session numeric [`Symbol`].
 //!
-//! Carry [`DomainTerm`] in the parser and prompt pipeline; format to `e1` / `m2` / `p3` / `r4` only at
+//! Carry [`TeachingTerm`] in the parser and prompt pipeline; format to `e1` / `m2` / `p3` / `r4` only at
 //! serialization boundaries via [`Display`] (or explicit [`std::fmt::Write`]).
 
 use crate::identity::{CapabilityName, EntityName, PathMethodSegment};
@@ -8,10 +8,10 @@ use crate::schema::{capability_path_method_segment, CapabilitySchema, CGS};
 use std::fmt;
 
 /// Session-local index into the corresponding `e` / `m` / `p` table for this [`SymbolMap`] build.
-/// The **kind** (entity vs method vs parameter) is implied by the enclosing [`DomainTerm`] variant,
+/// The **kind** (entity vs method vs parameter) is implied by the enclosing [`TeachingTerm`] variant,
 /// not by this value.
 ///
-/// [`Display`] on `Symbol` is **digits only** (1-based index). For full `e1` / `m2` / `p3` text, use [`Display`] on [`DomainTerm`].
+/// [`Display`] on `Symbol` is **digits only** (1-based index). For full `e1` / `m2` / `p3` text, use [`Display`] on [`TeachingTerm`].
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct Symbol(pub u32);
 
@@ -71,31 +71,31 @@ pub enum ParameterSlot {
     },
 }
 
-/// DOMAIN token: CGS payload + session [`Symbol`] (tuple per variant).
+/// Teaching-table token: CGS payload + session [`Symbol`] (tuple per variant).
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub enum DomainTerm {
+pub enum TeachingTerm {
     Entity(EntityRef, Symbol),
     Method(MethodRef, Symbol),
     Parameter(ParameterSlot, Symbol),
 }
 
-impl DomainTerm {
+impl TeachingTerm {
     #[inline]
     pub fn symbol(&self) -> Symbol {
         match self {
-            DomainTerm::Entity(_, s) | DomainTerm::Method(_, s) | DomainTerm::Parameter(_, s) => *s,
+            TeachingTerm::Entity(_, s) | TeachingTerm::Method(_, s) | TeachingTerm::Parameter(_, s) => *s,
         }
     }
 }
 
-impl fmt::Display for DomainTerm {
+impl fmt::Display for TeachingTerm {
     /// Symbolic form: `e1`, `m2`, `p3`, `r4` (1-based, matching [`crate::symbol_tuning::SymbolMap`]).
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (prefix, sym) = match self {
-            DomainTerm::Entity(_, s) => ('e', s),
-            DomainTerm::Method(_, s) => ('m', s),
-            DomainTerm::Parameter(ParameterSlot::Relation { .. }, s) => ('r', s),
-            DomainTerm::Parameter(_, s) => ('p', s),
+            TeachingTerm::Entity(_, s) => ('e', s),
+            TeachingTerm::Method(_, s) => ('m', s),
+            TeachingTerm::Parameter(ParameterSlot::Relation { .. }, s) => ('r', s),
+            TeachingTerm::Parameter(_, s) => ('p', s),
         };
         write!(f, "{prefix}{}", sym.0.saturating_add(1))
     }

@@ -35,7 +35,7 @@ where
 /// Hard cap for `domain.yaml` / `mappings.yaml` / combined CGS YAML (defense in depth).
 const MAX_SCHEMA_FILE_BYTES: u64 = 50 * 1024 * 1024;
 
-/// When `PLASM_CGS_FAST_LOAD=1`, skip expression-surface / DOMAIN bundle synthesis at load (structural validate only).
+/// When `PLASM_CGS_FAST_LOAD=1`, skip expression-surface / teaching table bundle synthesis at load (structural validate only).
 pub fn plasm_cgs_fast_load_enabled() -> bool {
     std::env::var("PLASM_CGS_FAST_LOAD").ok().as_deref() == Some("1")
 }
@@ -146,7 +146,7 @@ pub struct DomainEntity {
     /// Relation/embed-only entity — no top-level capabilities (YAML: `abstract: true`).
     #[serde(default, rename = "abstract")]
     pub abstract_entity: bool,
-    /// When false, DOMAIN omits projection bracket exemplars (default: true).
+    /// When false, teaching table omits projection bracket exemplars (default: true).
     #[serde(default = "default_domain_projection_examples")]
     pub domain_projection_examples: bool,
     /// Optional Get capability id for projection exemplar field order (`provides` / default order).
@@ -272,7 +272,7 @@ pub struct DomainCapability {
     pub parameters: Option<Vec<DomainParameter>>,
     /// Entity fields this capability populates in its response.
     /// When absent, defaults are applied by `CGS::effective_provides` (same ordered field list as
-    /// DOMAIN exemplars when `provides` is empty: `id_field` first, then lexicographic rest).
+    /// teaching table exemplars when `provides` is empty: `id_field` first, then lexicographic rest).
     #[serde(default)]
     pub provides: Vec<String>,
     /// Declared response shape for validation (required for `action` unless `provides` is set).
@@ -315,7 +315,7 @@ pub struct DomainParameter {
     /// `filter` (default), `search`, `sort`, `sort_direction`, `response_control`, `scope`.
     #[serde(default)]
     pub role: Option<String>,
-    /// Human-readable hint for prompts; DOMAIN gloss uses `type · description`, else `type · name`.
+    /// Human-readable hint for prompts; teaching gloss uses `type · description`, else `type · name`.
     #[serde(default)]
     pub description: String,
 }

@@ -115,7 +115,7 @@ mod tests {
             plasm_core::load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix"))
                 .expect("matrix"),
         );
-        let exp = plasm_core::DomainExposureSession::new(cgs.as_ref(), "default", &["LangItem"]);
+        let exp = plasm_core::TeachingExposureSession::new(cgs.as_ref(), "default", &["LangItem"]);
         ExecuteSession::new(
             "ph".into(),
             "sess".into(),

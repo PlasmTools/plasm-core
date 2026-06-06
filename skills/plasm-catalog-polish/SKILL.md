@@ -1,6 +1,6 @@
 ---
 name: plasm-catalog-polish
-description: Polish an existing Plasm catalog to be publish-ready. Runs an autonomous diagnostic / fix loop on `apis/<api>/`: CGS validation, mapping checks against the OpenAPI spec when available, DOMAIN prompt hygiene, descriptions and discovery audit, eval coverage, and transport evidence via the e2e-test skill. Iterates until the catalog passes its quality bar, then reports a before / after delta. Use after `plasm-authoring`, `plasm-catalog-reprint`, or any time a catalog is "almost there but not shipped". Trigger phrases: "polish the catalog", "clean up apis/<api>", "make it ship-ready", "fix the descriptions", "fix the eval coverage", "polish".
+description: Polish an existing Plasm catalog to be publish-ready. Runs an autonomous diagnostic / fix loop on `apis/<api>/`: CGS validation, mapping checks against the OpenAPI spec when available, teaching table prompt hygiene, descriptions and discovery audit, eval coverage, and transport evidence via the e2e-test skill. Iterates until the catalog passes its quality bar, then reports a before / after delta. Use after `plasm-authoring`, `plasm-catalog-reprint`, or any time a catalog is "almost there but not shipped". Trigger phrases: "polish the catalog", "clean up apis/<api>", "make it ship-ready", "fix the descriptions", "fix the eval coverage", "polish".
 ---
 
 # Plasm Catalog Polish
@@ -79,11 +79,11 @@ Audit entity `description`, capability `description`, and `output.description` f
 
 - Contains an HTTP method, REST path, status code, or bare `http://` / `https://` URL (except `auth.token_url`).
 - Names other capability ids ("call `foo_query` first").
-- Inventories fields, relations, or projection contents that DOMAIN already prints.
+- Inventories fields, relations, or projection contents that teaching table already prints.
 - Uses tabular jargon ("row", "column") in domain-facing prose.
 - Restates the wire type or enum members that `value_ref` already conveys.
 
-See [plasm-authoring reference.md — DOMAIN-facing descriptions](../plasm-authoring/reference.md#domain-facing-descriptions-entities-and-capabilities).
+See [plasm-authoring reference.md — Teaching-table-facing descriptions](../plasm-authoring/reference.md#domain-facing-descriptions-entities-and-capabilities).
 
 ### 7. Composed reads (`views:`) check
 

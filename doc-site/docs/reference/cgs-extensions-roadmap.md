@@ -4,9 +4,9 @@ Open design notes for evolving **Capability Graph Schema** and adjacent authorin
 
 ---
 
-## 1. Canned DOMAIN / prompt examples per parameter or capability (high signal)
+## 1. Canned teaching table / prompt examples per parameter or capability (high signal)
 
-**Problem:** DOMAIN lines and symbol-tuned examples are synthesized in ``plasm-oss/crates/plasm-core/src/prompt_render.rs``. String parameters always use a literal `"example"` in `invoke_dotted_call_arg_example` (see `FieldType::String` branch). That is correct mechanically but weak pedagogy—e.g. `calculate` would read better as:
+**Problem:** teaching lines and symbol-tuned examples are synthesized in ``plasm-oss/crates/plasm-core/src/prompt_render.rs``. String parameters always use a literal `"example"` in `invoke_dotted_call_arg_example` (see `FieldType::String` branch). That is correct mechanically but weak pedagogy—e.g. `calculate` would read better as:
 
 ```text
 e6.m1(p8="1.5 + 2 * 3")  ;;  Evaluate a safe arithmetic expression
@@ -41,7 +41,7 @@ than `p8="example"`.
 Short ideas worth tracking; expand into separate sections when a line of work starts.
 
 - [ ] **Response-shape hints for non-GET writes** — richer `provides` / decode hints where create/update returns domain-specific projections (partially covered today by `provides:`).
-- [ ] **Per-capability DOMAIN inclusion toggles** — rare cases where an operation is valid but should not appear in the default prompt (with explicit `exclude_from_domain` or similar), if ever needed for size control.
+- [ ] **Per-capability teaching table inclusion toggles** — rare cases where an operation is valid but should not appear in the default prompt (with explicit `exclude_from_domain` or similar), if ever needed for size control.
 - [ ] **Multi-example sets** — rotate or A/B several canonical lines per capability for few-shot diversity (heavier prompt cost).
 - [ ] **Cross-schema example libraries** — reusable YAML snippets for common patterns (pagination, OAuth) without duplicating prose.
 

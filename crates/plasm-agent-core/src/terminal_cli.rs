@@ -77,7 +77,7 @@ pub struct RunArgs {
 
 #[derive(Debug, Args)]
 pub struct ContextArgs {
-    #[arg(long, help = "New client session (fresh domain.tsv)")]
+    #[arg(long, help = "New client session (fresh teaching.tsv)")]
     pub new: bool,
 
     #[arg(long, help = "Print full TSV exposure block")]
@@ -184,7 +184,7 @@ pub enum Cmd {
     },
     #[command(
         about = "Expose entities into the client symbol space",
-        long_about = "Append teaching rows to domain.tsv for the active client session. \
+        long_about = "Append teaching rows to teaching.tsv for the active client session. \
                       Use registry entry_id:Entity seeds (e.g. pokeapi:Pokemon). \
                       With --new, --intent and qualified seeds are required. \
                       Without --new, unqualified entity names may resolve via `plasm search` cache when unique."

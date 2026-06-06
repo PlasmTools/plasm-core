@@ -446,7 +446,7 @@ async fn trace_ingest_worker(
 /// Payload for [`TraceHub::trace_record_plasm_context`].
 #[derive(Debug, Clone)]
 pub struct PlasmContextTrace {
-    pub domain_prompt_chars_added: u64,
+    pub teaching_prompt_chars_added: u64,
     pub reused_session: bool,
     pub mode: String,
     pub entry_id: Option<String>,
@@ -1063,13 +1063,13 @@ impl TraceHub {
         .await;
     }
 
-    pub async fn trace_note_domain_prompt_chars(&self, mcp_key: &str, chars_added: u64) {
+    pub async fn trace_note_teaching_prompt_chars(&self, mcp_key: &str, chars_added: u64) {
         if chars_added == 0 {
             return;
         }
         self.bump_and_emit(
             mcp_key,
-            TraceSegment::DomainPromptCharsDelta { chars_added },
+            TraceSegment::TeachingPromptCharsDelta { chars_added },
         )
         .await;
     }
@@ -1078,7 +1078,7 @@ impl TraceHub {
         self.bump_and_emit(
             mcp_key,
             TraceSegment::PlasmContext {
-                domain_prompt_chars_added: trace.domain_prompt_chars_added,
+                teaching_prompt_chars_added: trace.teaching_prompt_chars_added,
                 reused_session: trace.reused_session,
                 mode: trace.mode,
                 entry_id: trace.entry_id,
@@ -1092,7 +1092,7 @@ impl TraceHub {
     pub async fn trace_record_expand_domain(
         &self,
         mcp_key: &str,
-        domain_prompt_chars_added: u64,
+        teaching_prompt_chars_added: u64,
         entry_id: Option<String>,
         entities: Vec<String>,
         seeds: Vec<String>,
@@ -1100,7 +1100,7 @@ impl TraceHub {
         self.bump_and_emit(
             mcp_key,
             TraceSegment::ExpandDomain {
-                domain_prompt_chars_added,
+                teaching_prompt_chars_added,
                 entry_id,
                 entities,
                 seeds,
@@ -1392,7 +1392,7 @@ mod tests {
     #[test]
     fn plasm_context_record_serializes_metadata() {
         let r = TraceSegment::PlasmContext {
-            domain_prompt_chars_added: 12,
+            teaching_prompt_chars_added: 12,
             reused_session: false,
             mode: "federate".into(),
             entry_id: Some("linear".into()),
@@ -1412,7 +1412,7 @@ mod tests {
     #[test]
     fn expand_domain_record_serializes_metadata() {
         let r = TraceSegment::ExpandDomain {
-            domain_prompt_chars_added: 8,
+            teaching_prompt_chars_added: 8,
             entry_id: Some("petstore".into()),
             entities: vec!["Order".into()],
             seeds: vec!["petstore:Order".into()],

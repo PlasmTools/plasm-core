@@ -94,7 +94,7 @@ That row/effect model is what makes the compact grammar possible. If every API r
 
 At runtime, Plasm can expose that catalog through HTTP, MCP, a REPL, CLI workflows, or embedded Rust crates. The agent sees a compact task language. The runtime keeps the hard parts grounded: validation, execution order, paging, caching, hydration, fan-out, dispatch, auth boundaries, traces, and artifacts.
 
-The agent learns that compact language from a live **DOMAIN** table, not from a wall of prose. In the default symbol-tuned form, DOMAIN is essentially a TSV teaching table:
+The agent learns that compact language from a live **teaching table** table, not from a wall of prose. In the default symbol-tuned form, teaching table is essentially a TSV teaching table:
 
 ```tsv
 plasm_expr	Meaning
@@ -119,7 +119,7 @@ The symbols are deliberately small:
 - `m#` for capability labels on an entity
 - `p#` for fields, relations, parameters, and projection columns
 
-That looks austere, but it has a practical purpose. The prompt can teach `e1{p3="open"}.limit(20)` once, then the agent can reuse that shape without carrying `RepositoryLifecycleStateFilterInput` and a dozen vendor-specific field names through every turn. Within a logical session, symbols are append-only: if `e1` or `p3` has a meaning, later DOMAIN waves do not reassign it.
+That looks austere, but it has a practical purpose. The prompt can teach `e1{p3="open"}.limit(20)` once, then the agent can reuse that shape without carrying `RepositoryLifecycleStateFilterInput` and a dozen vendor-specific field names through every turn. Within a logical session, symbols are append-only: if `e1` or `p3` has a meaning, later teaching waves do not reassign it.
 
 In the catalogs I am testing with, this TSV form is roughly a quarter of the token size of an equivalent JSON-schema-style tool description, and it teaches more of what the agent actually needs for the next step: valid expression shapes, return rows, projection columns, relations, and effects. Projection is not just syntax sugar. It is a context-saving measure. `search[p1,p2]` says "bring back the two columns needed for this task," not "dump the whole product object and let the model sort it out."
 
@@ -144,7 +144,7 @@ That is not meant to be a general-purpose programming language. The Plasm langua
 - call approved actions
 - return inspectable rows
 
-When `search[p1,p2]` appears in the program, the agent is not hand-parsing a vendor payload. It is projecting a typed result set using the columns taught in DOMAIN. When a later step calls `e2(p3="ops").m1(p4=cards.content)`, the effect is still symbol-tuned: `e2` is the channel entity, `m1` is the post-message capability, and `p4` is the message body parameter. The grammar stays small because the operational complexity lives below it.
+When `search[p1,p2]` appears in the program, the agent is not hand-parsing a vendor payload. It is projecting a typed result set using the columns taught in teaching table. When a later step calls `e2(p3="ops").m1(p4=cards.content)`, the effect is still symbol-tuned: `e2` is the channel entity, `m1` is the post-message capability, and `p4` is the message body parameter. The grammar stays small because the operational complexity lives below it.
 
 The compressed program is not the final review artifact. Plasm compiles it into a plan, and that plan is sent back to the agent before live execution. The plan is deliberately more human- and agent-readable than the compact language: it can say which entities will be read, which projections will be materialized, which effects are planned, which catalog owns each step, and whether a step is likely to produce too much data. If the model asks for an unbounded result or a wide object, the plan can warn and ask for a tighter projection before anything runs.
 
@@ -160,7 +160,7 @@ The naive way to give an agent that world is to merge everything into one giant 
 
 Plasm's federation model keeps catalogs distinct while allowing them to join one logical session. A GitHub issue, a Slack message, and a Linear task can all be visible in the same task context, but they still belong to their owning catalog. Symbols are session-local and stable. New context can be added incrementally without changing what earlier symbols meant. Runtime dispatch still resolves through the graph that owns the capability.
 
-This is also where symbol tuning matters. Federation does not require dumping every joined catalog into the prompt at once. DOMAIN ships in waves. If the task starts with GitHub issues, the agent sees the GitHub slice. If Slack context becomes relevant, Plasm can append a Slack slice with new symbols. The old symbols keep their meaning, so the agent and reviewer do not suffer reorder churn.
+This is also where symbol tuning matters. Federation does not require dumping every joined catalog into the prompt at once. teaching table ships in waves. If the task starts with GitHub issues, the agent sees the GitHub slice. If Slack context becomes relevant, Plasm can append a Slack slice with new symbols. The old symbols keep their meaning, so the agent and reviewer do not suffer reorder churn.
 
 That sounds like an implementation detail, but it changes the product surface:
 
@@ -279,7 +279,7 @@ I am especially interested in:
 
 - whether typed API catalogs feel like the right abstraction
 - whether the row-set/effect model is legible in a launch post
-- whether the TSV DOMAIN / symbol-tuning example makes the compact grammar feel concrete
+- whether the teaching TSV / symbol-tuning example makes the compact grammar feel concrete
 - whether federation should be the main headline, or whether it sounds too architectural for a launch post
 - where the authoring model is too heavy
 - what kinds of API domains would make good early catalogs

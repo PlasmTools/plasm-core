@@ -5,7 +5,7 @@ info:
   description: |
     Discovery (`/v1/*`) returns catalog metadata and ranked capabilities with `entry_id` + `entity` (CGS domain).
     Execute (`/execute`) creates a session (`303` + `Location` only); `GET` that URL returns session JSON
-    including the DOMAIN `prompt`; `POST` the same URL runs one or more Plasm expressions sequentially
+    including the teaching-table `prompt`; `POST` the same URL runs one or more Plasm expressions sequentially
     (shared session cache). Single-expression responses are unchanged. Multi-expression batches return
     per-step intent, StepSummary semantics, and query JSON; use
     `Accept: application/json` or `application/x-ndjson` for batches.
@@ -103,7 +103,7 @@ paths:
           description: Unknown `entry_id`
   /execute/{prompt_hash}/{session_id}:
     get:
-      summary: Fetch execute session (DOMAIN prompt + metadata)
+      summary: Fetch execute session (teaching prompt + metadata)
       parameters:
         - name: prompt_hash
           in: path
@@ -187,7 +187,7 @@ components:
           description: UUID simple form (32 hex digits)
         prompt:
           type: string
-          description: Rendered DOMAIN prompt for this session
+          description: Rendered teaching prompt for this session
         entry_id:
           type: string
         entities:
@@ -198,7 +198,7 @@ components:
           type: boolean
           description: |
             When true, this session was satisfied by reusing an existing non-expired session with the same
-            `entry_id` and entity seed set (no new DOMAIN render). Omitted or false for GET session JSON.
+            `entry_id` and entity seed set (no new teaching render). Omitted or false for GET session JSON.
     CatalogEntryMeta:
       type: object
       properties:

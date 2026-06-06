@@ -19,8 +19,8 @@ This document applies the [plasm-authoring skill](../../skills/plasm-authoring/S
 
 - Validating **`domain.yaml` alone** with `plasm schema validate apis/slack/domain.yaml` fails (no `method` in template); always validate the **directory** `apis/slack` so `mappings.yaml` is loaded.
 - The schema-driven CLI binary is **`plasm-cgs`** (`plasm` crate), not a binary named `plasm`.
-- **DOMAIN / `channel_history` vs `channel_replies`:** `Message` had two query capabilities that differ only by required `ts`. The core resolver (`required_predicate_field_names_for_scoped_match` in `query_resolve.rs`) now treats required **filter-like** params (not only scope params) as part of the match key, so `channel` alone resolves to `channel_history` and `channel` + `ts` resolves to `channel_replies`. Loader warnings for those caps are cleared when DOMAIN lines type-check.
-- **`scheduledmessage_create` DOMAIN teaching:** `post_at` is modeled as **`integer`** (Unix seconds), matching Slack’s `post_at` argument and allowing `$` placeholders in synthesized `ScheduledMessage.create(…)` lines (temporal types do not accept the DOMAIN `$` token in shadow-arg parse).
+- **teaching table / `channel_history` vs `channel_replies`:** `Message` had two query capabilities that differ only by required `ts`. The core resolver (`required_predicate_field_names_for_scoped_match` in `query_resolve.rs`) now treats required **filter-like** params (not only scope params) as part of the match key, so `channel` alone resolves to `channel_history` and `channel` + `ts` resolves to `channel_replies`. Loader warnings for those caps are cleared when teaching lines type-check.
+- **`scheduledmessage_create` teaching:** `post_at` is modeled as **`integer`** (Unix seconds), matching Slack’s `post_at` argument and allowing `$` placeholders in synthesized `ScheduledMessage.create(…)` lines (temporal types do not accept the teaching table `$` token in shadow-arg parse).
 
 ---
 
@@ -58,9 +58,9 @@ OAuth extension in `domain.yaml` catalogs Slack scopes and maps **`requirements.
 
 **Done:** Explicit **`provides:`** on list vs get where list rows are strict subsets (e.g. `channel_list`, `channel_history`, `channel_replies`, `user_list`, `file_list`, `reminder_list`, `pin_list`, `usergroup_list`, `scheduledmessage_list`, `bookmark_list`).
 
-### 3.4 DOMAIN / prompt teaching
+### 3.4 teaching table / prompt teaching
 
-**Done:** Per-capability DOMAIN coverage is enforced by `slack_domain_covers_all_capabilities` in `plasm-core` (same pattern as Linear). Query disambiguation for Slack `Message` history vs replies is fixed in `query_resolve.rs` (see §1).
+**Done:** Per-capability teaching table coverage is enforced by `slack_domain_covers_all_capabilities` in `plasm-core` (same pattern as Linear). Query disambiguation for Slack `Message` history vs replies is fixed in `query_resolve.rs` (see §1).
 
 ### 3.5 `entity_ref` audit
 
@@ -93,7 +93,7 @@ Rows are **domain concepts**. “Wire” lists representative Slack methods; exa
 
 **Correctness / contract** — **done:** Block Kit / input merge documented; list vs get `provides:` reconciled.
 
-**Polish / agent UX** — **done:** DOMAIN warnings for `channel_history` / `channel_replies` addressed via resolver + `provides:`; optional `Message.channel`; README / `plasm-cgs` / validate-directory notes.
+**Polish / agent UX** — **done:** teaching table warnings for `channel_history` / `channel_replies` addressed via resolver + `provides:`; optional `Message.channel`; README / `plasm-cgs` / validate-directory notes.
 
 **Expansion** — **done:** Bookmarks + scheduled messages authored (domain → mappings → validate → eval).
 

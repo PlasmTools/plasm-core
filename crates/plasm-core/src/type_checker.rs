@@ -68,7 +68,7 @@ fn entity_ref_predicate_hint(target_name: &str, cgs: &CGS) -> String {
             .join(", ")
     };
     format!(
-        "EntityRef({target_name}) — expected an entity reference or scalar identity ({keys}); use a DOMAIN constructor, `anchor.<relation>`, or those identity fields — values that look like full entity rows without extractable scalars for those slots are not accepted here"
+        "EntityRef({target_name}) — expected an entity reference or scalar identity ({keys}); use a teaching constructor, `anchor.<relation>`, or those identity fields — values that look like full entity rows without extractable scalars for those slots are not accepted here"
     )
 }
 
@@ -333,13 +333,13 @@ pub fn type_check_expr_federated(
     }
 }
 
-/// DOMAIN prompts use bare `$` as a fill-in cue; it must not reach HTTP/EVM transport.
+/// teaching prompts use bare `$` as a fill-in cue; it must not reach HTTP/EVM transport.
 pub fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), TypeError> {
     let err = || {
         TypeError::DomainPlaceholderLiteral {
             field: "expression".to_string(),
             expected_type:
-                "concrete ids and parameter values — replace every `$` from DOMAIN examples before execution"
+                "concrete ids and parameter values — replace every `$` from teaching examples before execution"
                     .to_string(),
             description: None,
         }
@@ -647,7 +647,7 @@ pub fn type_check_get(get: &GetExpr, cgs: &CGS) -> Result<(), TypeError> {
         }
     }
 
-    // Bare `$` in Get keys is allowed for DOMAIN teaching lines; [`ExecutionEngine`] rejects it
+    // Bare `$` in Get keys is allowed for teaching table teaching lines; [`ExecutionEngine`] rejects it
     // before any network I/O so the literal never reaches backends.
 
     Ok(())
@@ -833,13 +833,13 @@ fn type_check_comparison(
     cgs: &CGS,
 ) -> Result<(), TypeError> {
     let value = value.to_value();
-    // DOMAIN teaching form: `p#=` with no RHS parses as null — skip strict checks so
+    // teaching table teaching form: `p#=` with no RHS parses as null — skip strict checks so
     // brace-query witness lines need not repeat concrete literals.
     if matches!(&value, Value::Null) {
         return Ok(());
     }
 
-    // Capability parameters (scope/filter HTTP slots) allow `$` in DOMAIN teaching lines.
+    // Capability parameters (scope/filter HTTP slots) allow `$` in teaching table teaching lines.
     // Check these **before** entity fields: names like `owner`/`repo` are often both entity
     // fields and query scope parameters (e.g. `RepositoryTag{owner=$,repo=$}`).
     if value.is_domain_example_placeholder() && cap_params.iter().any(|p| p.name == field_name) {
@@ -1316,7 +1316,7 @@ fn validate_input_type(
 
         crate::InputType::Union { variants } => {
             if value.is_domain_example_placeholder() {
-                // DOMAIN dotted-call teaching uses `$` / `[$]` as fill-ins; union-shaped invoke slots
+                // teaching table dotted-call teaching uses `$` / `[$]` as fill-ins; union-shaped invoke slots
                 // (e.g. edit/v2 `operations` rows) share the same placeholder convention as scalar params.
                 return Ok(());
             }
@@ -2036,7 +2036,7 @@ mod tests {
     }
 
     /// Scoped queries often reuse names like `owner`/`repo` as HTTP scope params and as entity fields
-    /// (GitHub `RepositoryTag`). DOMAIN lines use `$` in those slots; they must type-check.
+    /// (GitHub `RepositoryTag`). teaching lines use `$` in those slots; they must type-check.
     #[test]
     fn placeholder_dollar_ok_when_scope_param_shadows_entity_field() {
         use crate::schema::{FieldSchema, InputFieldSchema, NamedValueSchema, ParameterRole};
@@ -2643,7 +2643,7 @@ mod tests {
             std::sync::Arc::new(crate::CgsContext::entry("pokeapi", cgs_secondary.clone())),
         );
         let layers: Vec<&CGS> = vec![cgs_primary.as_ref(), cgs_secondary.as_ref()];
-        let mut exp = crate::symbol_tuning::DomainExposureSession::new(
+        let mut exp = crate::symbol_tuning::TeachingExposureSession::new(
             cgs_primary.as_ref(),
             "linear",
             &["LangLine"],
@@ -2676,7 +2676,7 @@ mod tests {
         );
         let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
         let mut exp =
-            crate::symbol_tuning::DomainExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+            crate::symbol_tuning::TeachingExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
         exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
         let fed = FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
 

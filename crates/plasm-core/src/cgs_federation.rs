@@ -4,7 +4,7 @@
 
 use crate::cgs_context::CgsContext;
 use crate::schema::CGS;
-use crate::symbol_tuning::DomainExposureSession;
+use crate::symbol_tuning::TeachingExposureSession;
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -66,11 +66,11 @@ pub struct FederationDispatch {
 pub type CatalogResolver = FederationDispatch;
 
 impl FederationDispatch {
-    /// Build from loaded contexts and a [`DomainExposureSession`] (parallel `entities` /
+    /// Build from loaded contexts and a [`TeachingExposureSession`] (parallel `entities` /
     /// `entity_catalog_entry_ids`).
     pub fn from_contexts_and_exposure(
         by_entry: IndexMap<String, Arc<CgsContext>>,
-        exposure: &DomainExposureSession,
+        exposure: &TeachingExposureSession,
     ) -> Self {
         let mut entity_to_entry: HashMap<String, String> = HashMap::new();
         for (i, ent) in exposure.entities.iter().enumerate() {
@@ -104,7 +104,7 @@ impl FederationDispatch {
         self.by_entry.get(eid).map(|c| c.cgs.http_backend.as_str())
     }
 
-    /// Hint-aware catalog resolution (DOMAIN exposure is prompt-only).
+    /// Hint-aware catalog resolution (teaching exposure is prompt-only).
     pub fn resolve_entity<'a>(
         &'a self,
         entity: &str,
@@ -178,7 +178,7 @@ impl FederationDispatch {
             .map(|(entry_id, _)| entry_id.as_str())
     }
 
-    /// Loaded contexts without DOMAIN exposure (entity → unique owning entry when unambiguous).
+    /// Loaded contexts without teaching exposure (entity → unique owning entry when unambiguous).
     pub fn from_contexts_only(by_entry: IndexMap<String, Arc<CgsContext>>) -> Self {
         let mut entity_to_entry: HashMap<String, String> = HashMap::new();
         for (entry_id, ctx) in &by_entry {
@@ -304,7 +304,7 @@ mod tests {
             Arc::new(CgsContext::entry("linear", cgs.clone())),
         );
         let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
-        let mut exp = DomainExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+        let mut exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
         exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
         let fed = FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
         assert!(fed.cgs_for_entity("LangItem").is_none());

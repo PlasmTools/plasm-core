@@ -39,5 +39,5 @@ name = "schema_load"
 harness = false
 
 [[bench]]
-name = "domain_prompt_render"
+name = "teaching_prompt_render"
 harness = false

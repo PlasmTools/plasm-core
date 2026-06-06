@@ -1,12 +1,12 @@
 ---
-source: plasm-oss/crates/plasm/tests/plasm_cli_server_insta.rs
+source: crates/plasm/tests/plasm_cli_server_insta.rs
 expression: tsv2
 ---
 intent	recorded content
 row	api	entity	description
 1	overshow	RecordedContent	A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text.
-2	overshow	CaptureItem	One capture pipeline item.
-3	overshow	DetectedQuestion	A detected question with optional answers.
-4	overshow	Meeting	A detected meeting.
-5	overshow	PipelineEvent	One pipeline bus event.
-6	overshow	Profile	A person, organisation, or project profile.
+2	overshow	Profile	A person, organisation, or project profile.
+3	overshow	CaptureItem	One capture pipeline item.
+4	overshow	DetectedQuestion	A detected question with optional answers.
+5	overshow	Meeting	A detected meeting.
+6	overshow	PipelineEvent	One pipeline bus event.

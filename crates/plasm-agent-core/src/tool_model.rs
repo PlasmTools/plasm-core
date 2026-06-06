@@ -1,5 +1,5 @@
 //! Explorer / operator projection: same semantics as dynamic CLI (`cli_builder`) plus
-//! [`render_domain_prompt_bundle`](plasm_core::prompt_render::render_domain_prompt_bundle) for DOMAIN metadata.
+//! [`render_teaching_prompt_bundle`](plasm_core::prompt_render::render_teaching_prompt_bundle) for teaching table metadata.
 
 use plasm_compile::{
     pagination_config_for_capability, parse_capability_template, path_var_names_from_request,
@@ -7,8 +7,8 @@ use plasm_compile::{
 };
 use plasm_core::discovery::CatalogEntryMeta;
 use plasm_core::prompt_render::{
-    render_domain_bundle, DomainLineKind, DomainLineMeta, DomainPromptModel, DomainPromptSettings,
-    DomainPromptSource,
+    render_teaching_bundle, DomainLineKind, TeachingLineMeta, TeachingPromptModel, TeachingPromptSettings,
+    TeachingPromptSource,
 };
 use plasm_core::schema::{
     input_variant_body_type, AuthScheme, EntityDef, FieldSchema, InputFieldSchema, InputFieldWire,
@@ -125,7 +125,7 @@ pub struct ToolModelOverview {
 
 #[derive(Debug, Serialize)]
 pub struct ToolModelDomainBlock {
-    pub model: DomainPromptModel,
+    pub model: TeachingPromptModel,
 }
 
 #[derive(Debug, Serialize)]
@@ -167,23 +167,23 @@ pub struct ExplorerProjectionField {
 pub struct ExplorerEntityProjection {
     pub name: String,
     pub description: String,
-    /// GET / DOMAIN projection fields only ([`CGS::default_ordered_entity_field_names`] on `entity.fields` — not `relations`).
+    /// GET / teaching projection fields only ([`CGS::default_ordered_entity_field_names`] on `entity.fields` — not `relations`).
     pub projection: Vec<ExplorerProjectionField>,
     pub verbs: Vec<ExplorerVerb>,
-    /// DOMAIN lines paired with REPL-style parameters (prompt-shaped, not CLI-shaped).
+    /// teaching lines paired with REPL-style parameters (prompt-shaped, not CLI-shaped).
     pub capabilities: Vec<ExplorerCapabilityRow>,
     pub relations: Vec<ExplorerRelation>,
     pub reverse_traversals: Vec<ExplorerReverseTraversal>,
     pub entity_ref_links: Vec<ExplorerEntityRefLink>,
-    pub domain_lines: Vec<DomainLineMeta>,
+    pub domain_lines: Vec<TeachingLineMeta>,
 }
 
-/// One DOMAIN prompt line plus parameters for the matching graph affordance (REPL / execute surface).
+/// One teaching prompt line plus parameters for the matching graph affordance (REPL / execute surface).
 #[derive(Debug, Clone, Serialize)]
 pub struct ExplorerCapabilityRow {
     pub expression: String,
     pub line_kind: String,
-    /// CGS capability id when the DOMAIN line is bound to a single capability (from [`DomainLineMeta::source_capability`]).
+    /// CGS capability id when the teaching table line is bound to a single capability (from [`TeachingLineMeta::source_capability`]).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub capability_name: Option<String>,
     /// CGS `description:` on the bound capability when non-empty.
@@ -974,7 +974,7 @@ fn validate_entity_names(cgs: &CGS, names: &[String]) -> Result<(), ToolModelBui
 fn render_bundle_for_tool_model(
     cgs: &CGS,
     q: &ToolModelQuery,
-) -> Result<(plasm_core::prompt_render::DomainPromptBundle, &'static str), ToolModelBuildError> {
+) -> Result<(plasm_core::prompt_render::TeachingPromptBundle, &'static str), ToolModelBuildError> {
     let mode = ToolModelFocusMode::parse(&q.focus)?;
     match mode {
         ToolModelFocusMode::All => {
@@ -985,12 +985,12 @@ fn render_bundle_for_tool_model(
                 ));
             }
             Ok((
-                render_domain_bundle(
+                render_teaching_bundle(
                     cgs,
-                    DomainPromptSource::Catalog {
+                    TeachingPromptSource::Catalog {
                         focus: FocusSpec::All,
                     },
-                    DomainPromptSettings {
+                    TeachingPromptSettings {
                         include_domain_execution_model: true,
                         symbolic: false,
                         symbol_map_cross_cache: None,
@@ -1007,12 +1007,12 @@ fn render_bundle_for_tool_model(
             }
             validate_entity_names(cgs, &q.entity)?;
             Ok((
-                render_domain_bundle(
+                render_teaching_bundle(
                     cgs,
-                    DomainPromptSource::Catalog {
+                    TeachingPromptSource::Catalog {
                         focus: FocusSpec::Single(q.entity[0].as_str()),
                     },
-                    DomainPromptSettings {
+                    TeachingPromptSettings {
                         include_domain_execution_model: true,
                         symbolic: false,
                         symbol_map_cross_cache: None,
@@ -1030,12 +1030,12 @@ fn render_bundle_for_tool_model(
             validate_entity_names(cgs, &q.entity)?;
             let refs: Vec<&str> = q.entity.iter().map(|s| s.as_str()).collect();
             Ok((
-                render_domain_bundle(
+                render_teaching_bundle(
                     cgs,
-                    DomainPromptSource::Catalog {
+                    TeachingPromptSource::Catalog {
                         focus: FocusSpec::Seeds(&refs),
                     },
-                    DomainPromptSettings {
+                    TeachingPromptSettings {
                         include_domain_execution_model: true,
                         symbolic: false,
                         symbol_map_cross_cache: None,
@@ -1047,7 +1047,7 @@ fn render_bundle_for_tool_model(
     }
 }
 
-/// Build JSON for the explorer UI; mirrors CLI affordances in [`crate::cli_builder`] and DOMAIN model in prompt render.
+/// Build JSON for the explorer UI; mirrors CLI affordances in [`crate::cli_builder`] and teaching model in prompt render.
 pub fn build_tool_model(
     cgs: &CGS,
     meta: &CatalogEntryMeta,
@@ -1129,9 +1129,9 @@ fn auth_scheme_name(scheme: &AuthScheme) -> &'static str {
     }
 }
 
-/// Pair each DOMAIN prompt line with parameters for the matching affordance (query/search/get/…).
-/// Relation-nav DOMAIN lines are omitted — they are listed under `relations` only.
-/// Rows resolve the explorer verb via [`DomainLineMeta::source_capability`] (emitted by prompt render), not line order.
+/// Pair each teaching prompt line with parameters for the matching affordance (query/search/get/…).
+/// Relation-nav teaching lines are omitted — they are listed under `relations` only.
+/// Rows resolve the explorer verb via [`TeachingLineMeta::source_capability`] (emitted by prompt render), not line order.
 /// Create / delete / update / action capabilities per domain, in global [`CGS::capabilities`] order.
 /// Built once per tool-model response so [`project_entity`] does not scan all capabilities per entity.
 fn invoke_capabilities_by_domain<'a>(cgs: &'a CGS) -> HashMap<&'a str, Vec<&'a CapabilitySchema>> {
@@ -1152,7 +1152,7 @@ fn invoke_capabilities_by_domain<'a>(cgs: &'a CGS) -> HashMap<&'a str, Vec<&'a C
 
 fn build_capability_rows(
     cgs: &CGS,
-    domain_lines: &[DomainLineMeta],
+    domain_lines: &[TeachingLineMeta],
     verbs: &[ExplorerVerb],
 ) -> Vec<ExplorerCapabilityRow> {
     let mut by_cap: HashMap<&str, &ExplorerVerb> = HashMap::with_capacity(verbs.len());
@@ -1201,7 +1201,7 @@ fn build_capability_rows(
 fn project_entity(
     cgs: &CGS,
     entity: &EntityDef,
-    domain_lines: Vec<DomainLineMeta>,
+    domain_lines: Vec<TeachingLineMeta>,
     invoke_caps: &[&CapabilitySchema],
 ) -> ExplorerEntityProjection {
     let name = entity.name.clone();
@@ -1677,7 +1677,7 @@ mod tests {
                 .capabilities
                 .iter()
                 .any(|c| c.line_kind == "relation_nav"),
-            "relation DOMAIN lines should not duplicate the Relations section"
+            "relation teaching lines should not duplicate the Relations section"
         );
         let rel = page
             .relations

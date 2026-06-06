@@ -115,7 +115,7 @@ pub(crate) const MCP_PLASM_CONTEXT_TOOL_DESCRIPTION: &str =
     include_str!("mcp_prompt/plasm_context_tool.txt");
 
 /// One-line JSON-schema description for the shared **`program`** parameter on **`plasm`** / **`plasm_run`**.
-pub(crate) const MCP_PROGRAM_PARAM_DESCRIPTION: &str = "Plasm program JSON string (`e#`/`m#`/`p#`/`r#`). Coerced single-liners OK; see initialize **program contract** + `plasm_context` TSV.";
+pub(crate) const MCP_PROGRAM_PARAM_DESCRIPTION: &str = "Plasm program JSON string (`e#`/`m#`/`p#`/`r#`). Newlines preferred; coerced single-liners supported — see initialize **program contract** + `plasm_context` TSV.";
 
 /// MCP initialize workflow text (orchestration + program contract).
 pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = concat!(
@@ -422,7 +422,7 @@ struct PlasmExecBinding {
 #[derive(Clone, Default, Debug)]
 pub(crate) struct McpSessionPlasmStats {
     /// Plasm instructions body from `plasm_context` tool results.
-    domain_prompt_chars: u64,
+    teaching_prompt_chars: u64,
     /// `plasm` / `plasm_run` tool payloads: program string plus optional `reasoning`.
     plasm_invocation_chars: u64,
     /// Successful `plasm` / `plasm_run` tool Markdown bodies.
@@ -573,7 +573,7 @@ impl PlasmMcpHandler {
     ) -> (u64, u64, u64, u64) {
         let ls = self.logical_mutex(transport_key, logical_id).await;
         let g = ls.lock().await;
-        let tp = mcp_chars_to_token_est(g.stats.domain_prompt_chars);
+        let tp = mcp_chars_to_token_est(g.stats.teaching_prompt_chars);
         let ti = mcp_chars_to_token_est(g.stats.plasm_invocation_chars);
         let tr = mcp_chars_to_token_est(g.stats.plasm_response_chars);
         (tp, ti, tr, tp.saturating_add(ti).saturating_add(tr))
@@ -1675,7 +1675,7 @@ impl PlasmMcpHandler {
             .await;
 
         let mut text = String::new();
-        let total_domain_chars: u64 = out.waves.iter().map(|w| w.domain_prompt_chars_added).sum();
+        let total_teaching_chars: u64 = out.waves.iter().map(|w| w.teaching_prompt_chars_added).sum();
         let exposed_entities: usize = out
             .waves
             .iter()
@@ -1695,7 +1695,7 @@ impl PlasmMcpHandler {
         };
         if exposed_entities > 0 {
             text.push_str(&format!(
-                "_Exposed {exposed_entities} entit{} across {catalog_count} catalog(s) (~{total_domain_chars} DOMAIN chars this response)._\n\n",
+                "_Exposed {exposed_entities} entit{} across {catalog_count} catalog(s) (~{total_teaching_chars} teaching chars this response)._\n\n",
                 if exposed_entities == 1 { "y" } else { "ies" }
             ));
         }
@@ -1708,20 +1708,20 @@ impl PlasmMcpHandler {
             }
         }
         for wave in &out.waves {
-            if wave.domain_prompt_chars_added > 0 {
+            if wave.teaching_prompt_chars_added > 0 {
                 let ls = self.logical_mutex(key, &ls_key).await;
                 let mut g = ls.lock().await;
-                g.stats.domain_prompt_chars = g
+                g.stats.teaching_prompt_chars = g
                     .stats
-                    .domain_prompt_chars
-                    .saturating_add(wave.domain_prompt_chars_added);
+                    .teaching_prompt_chars
+                    .saturating_add(wave.teaching_prompt_chars_added);
             }
             self.plasm
                 .trace_hub
                 .trace_record_plasm_context(
                     &ls_key,
                     PlasmContextTrace {
-                        domain_prompt_chars_added: wave.domain_prompt_chars_added,
+                        teaching_prompt_chars_added: wave.teaching_prompt_chars_added,
                         reused_session: wave.reused_session,
                         mode: wave.mode.clone(),
                         entry_id: Some(wave.entry_id.clone()),
@@ -1784,7 +1784,7 @@ impl PlasmMcpHandler {
             let mut loaded: Vec<String> = sess_arc.contexts_by_entry.keys().cloned().collect();
             loaded.sort();
             plasm.insert("catalog_entry_ids".to_string(), json!(loaded));
-            if let Some(exposure) = sess_arc.domain_exposure.as_ref() {
+            if let Some(exposure) = sess_arc.teaching_exposure.as_ref() {
                 let rel_rows = exposure.exposed_relation_symbol_rows();
                 if !rel_rows.is_empty() {
                     plasm.insert("relations".to_string(), json!(rel_rows));
@@ -2388,7 +2388,7 @@ async fn dispatch_plasm_mcp_call_tool_request(
 /// Detect MCP transport sessions that disappeared from the SDK session store (disconnect / DELETE),
 /// finalize logical-session traces that are no longer live, and drop orphaned per-transport state.
 #[allow(private_interfaces)]
-pub(crate) fn spawn_mcp_domain_prompt_session_reporter(
+pub(crate) fn spawn_mcp_teaching_prompt_session_reporter(
     server: &HyperServer,
     plasm: Arc<PlasmHostState>,
     session_states: Arc<RwLock<HashMap<String, Arc<Mutex<McpTransportState>>>>>,
@@ -2442,14 +2442,14 @@ pub(crate) fn spawn_mcp_domain_prompt_session_reporter(
                 .await;
             for ended in &finalized {
                 let stats = stats_for_logical_session(&session_states, ended).await;
-                let tp = mcp_chars_to_token_est(stats.domain_prompt_chars);
+                let tp = mcp_chars_to_token_est(stats.teaching_prompt_chars);
                 let ti = mcp_chars_to_token_est(stats.plasm_invocation_chars);
                 let tr = mcp_chars_to_token_est(stats.plasm_response_chars);
                 let tt = tp.saturating_add(ti).saturating_add(tr);
                 tracing::info!(
                     target: "plasm_agent::mcp",
                     logical_session_id = %ended,
-                    domain_prompt_chars_total = stats.domain_prompt_chars,
+                    teaching_prompt_chars_total = stats.teaching_prompt_chars,
                     plasm_invocation_chars_total = stats.plasm_invocation_chars,
                     plasm_response_chars_total = stats.plasm_response_chars,
                     plasm_call_count_total = stats.plasm_call_count,
@@ -2545,7 +2545,7 @@ pub fn build_mcp_hyper_server_for_merge(plasm: Arc<PlasmHostState>) -> HyperServ
             ..Default::default()
         },
     );
-    spawn_mcp_domain_prompt_session_reporter(&server, Arc::clone(&plasm), session_states);
+    spawn_mcp_teaching_prompt_session_reporter(&server, Arc::clone(&plasm), session_states);
     server
 }
 
@@ -2575,7 +2575,7 @@ pub async fn run_mcp_server(host: &str, port: u16, plasm: Arc<PlasmHostState>) -
             ..Default::default()
         },
     );
-    spawn_mcp_domain_prompt_session_reporter(&server, Arc::clone(&plasm), session_states);
+    spawn_mcp_teaching_prompt_session_reporter(&server, Arc::clone(&plasm), session_states);
     server.start().await
 }
 

@@ -85,7 +85,7 @@ nav:
       - Session reuse: reference/mcp-session-reuse.md
       - Trace correlation: reference/mcp-trace-correlation.md
       - Logical sessions: reference/mcp-logical-sessions.md
-      - Incremental DOMAIN: reference/incremental-domain-prompts.md
+      - Incremental teaching prompts: reference/incremental-teaching-prompts.md
   - Auth:
       - Incoming auth: reference/plasm-mcp-incoming-auth.md
       - Appliance persistence: reference/oss-appliance-mcp-persistence.md

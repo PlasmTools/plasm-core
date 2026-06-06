@@ -170,7 +170,7 @@ pub struct DiscoverySchemaNeighborhood {
     pub entry_id: String,
     /// Distinct [`RankedCandidate::entity`] for this catalog row, plus any `expand_entities` query names that exist in the CGS.
     pub seed_entities: Vec<String>,
-    /// Sorted list suitable for `POST /execute` `entities` — mirrors the focused DOMAIN slice from `:schema` / `RenderConfig::for_eval_seeds`.
+    /// Sorted list suitable for `POST /execute` `entities` — mirrors the focused teaching slice from `:schema` / `RenderConfig::for_eval_seeds`.
     pub focused_entities: Vec<String>,
 }
 
@@ -1074,7 +1074,7 @@ fn seed_entity_surface_always_includes(
         .is_some_and(|pr| pr == cap.name.as_str())
 }
 
-/// Minimal intent-filtered DOMAIN surface for MCP `plasm_context` / incremental expand waves.
+/// Minimal intent-filtered teaching surface for MCP `plasm_context` / incremental expand waves.
 ///
 /// - **Seeded entities** (`entity_batch`): always admit `query` / `search` / `get` on that
 ///   entity’s domain, plus [`EntityDef::primary_read`] when set. Seeded `create` / `update` /
@@ -1884,7 +1884,7 @@ mod tests {
             surface_has_capability(&delta, "ShareLink", "share_link_create"),
             "seeded ShareLink must expose share_link_create when intent scores create"
         );
-        let session = crate::symbol_tuning::DomainExposureSession::new_with_intent_delta(
+        let session = crate::symbol_tuning::TeachingExposureSession::new_with_intent_delta(
             &cgs,
             "proof",
             &["ShareLink"],

@@ -42,7 +42,7 @@ Use Hermit for mock-backed transport checks when an OpenAPI spec is available, t
 ```bash
 hermit --specs path/to/openapi.json --port 9090 --use-examples
 cargo run -p plasm-repl -- --schema apis/<api> --backend http://localhost:9090
-# In-session: expressions from DOMAIN; optional :output table
+# In-session: expressions from teaching table; optional :output table
 ```
 
 ## Core Boundaries

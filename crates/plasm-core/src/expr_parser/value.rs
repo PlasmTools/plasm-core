@@ -9,12 +9,12 @@
 //!   String literals: normal quoted `"` / `'` (with `\\` escapes), plus **structured heredocs** `<<TAG` … `TAG` (tagged,
 //!   bash-inspired) for multiline or quote-heavy payloads without escape rules inside the block. The opener must be
 //!   `<<` immediately followed by a tag (`[A-Za-z_][A-Za-z0-9_]*`) and a newline — not `<<` + newline alone.
-//!   For CGS slots with non-`short` [`crate::schema::StringSemantics`], DOMAIN prompts require a heredoc for those cases;
+//!   For CGS slots with non-`short` [`crate::schema::StringSemantics`], teaching prompts require a heredoc for those cases;
 //!   `string_semantics: short` scalars use normal quotes.
 //! - [`Parser::parse_predicate_value_rhs`] / [`Parser::parse_dotted_call_arg_value_rhs`]: `Entity{…}` and
 //!   dotted-call `method(k=v,…)` allow unquoted phrases (spaces) until top-level `,` or `}` / `)`.
 //!   RHS may also be an **array literal** `[v1, v2]` (comma-separated; same strict [`Parser::parse_value`]
-//!   tokens per element). Unary `Entity($)` is allowed here (DOMAIN fill-in, same as scalar `$`).
+//!   tokens per element). Unary `Entity($)` is allowed here (teaching table fill-in, same as scalar `$`).
 //!
 //! **Binding-substitution matrix (program `node_input`):**
 //! - Predicate `{…}`, dotted-call `(k=v)`, compound ctor `Entity(k=v,…)`, and simple `Entity(id)` **when
@@ -616,7 +616,7 @@ impl<'a> Parser<'a> {
             return self.parse_array_literal();
         }
         // Invoke / predicate array literals need phrase-style RHS so union constructors (`v101{…}`)
-        // and other dotted-call tokens parse without `program_nodes` (DOMAIN teaching lines).
+        // and other dotted-call tokens parse without `program_nodes` (teaching table teaching lines).
         self.parse_predicate_or_dotted_call_arg_value(PhraseClose::ArrayElement)
     }
 

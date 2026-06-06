@@ -110,7 +110,7 @@ pub struct RowState {
     pub provenance: RowProvenance,
 }
 
-/// Hint bundle for federated catalog resolution (DOMAIN exposure is prompt-only).
+/// Hint bundle for federated catalog resolution (teaching exposure is prompt-only).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ResolutionHint<'a> {
     pub owning_cgs: Option<&'a crate::schema::CGS>,

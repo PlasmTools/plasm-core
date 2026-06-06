@@ -91,7 +91,7 @@ impl fmt::Display for RelationSegmentOutcome {
 mod tests {
     use super::*;
     use crate::loader::load_schema_dir;
-    use crate::symbol_tuning::DomainExposureSession;
+    use crate::symbol_tuning::TeachingExposureSession;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -99,7 +99,7 @@ mod tests {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let cgs =
             Arc::new(load_schema_dir(&root.join("../../apis/github")).expect("github apis/github"));
-        let exp = DomainExposureSession::new(cgs.as_ref(), "github", &["Issue"]);
+        let exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["Issue"]);
         let map = exp.symbol_map_arc();
         // SymbolMap snapshot is Arc — clone inner via rebuild for owned test ctx
         let owned = (*map).clone();

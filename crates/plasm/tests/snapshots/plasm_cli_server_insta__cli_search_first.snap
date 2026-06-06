@@ -1,17 +1,17 @@
 ---
-source: crates/plasm/tests/plasm_cli_server_insta.rs
+source: plasm-oss/crates/plasm/tests/plasm_cli_server_insta.rs
 expression: h.norm(&combined_output(&search1))
 ---
 status: exit status: 0
 stdout:
 ```tsv
 api	entity	description
+overshow	Profile	A person, organisation, or project profile.
+overshow	RecordedContent	A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text.
 overshow	CaptureItem	One capture pipeline item.
 overshow	DetectedQuestion	A detected question with optional answers.
 overshow	Meeting	A detected meeting.
 overshow	PipelineEvent	One pipeline bus event.
-overshow	Profile	A person, organisation, or project profile.
-overshow	RecordedContent	A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text.
 ```
 
 

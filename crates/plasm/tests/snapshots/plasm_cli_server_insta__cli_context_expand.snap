@@ -1,10 +1,24 @@
 ---
-source: crates/plasm/tests/plasm_cli_server_insta.rs
+source: plasm-oss/crates/plasm/tests/plasm_cli_server_insta.rs
 expression: h.norm(&combined_output(&expand))
 ---
 status: exit status: 0
 stdout:
+plasm_expr	Meaning
+v7	ref:Profile · int
+v1	int
+v8	str
+v6	select · auto, keyword, natural
+p1	v1 · id
+p5	v1 · limit
+p6	v6 · mode
+p7	v7 · profile_id
+p8	v8 · query
+p4	v8 · id
+e2{p7=e1(p1), p8=$, p5=$, p6=$}[p4]	→ [e2] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
+e2{p7=e1(p1), p8=$, p5=$, p6=$}	→ [e2] · opt: query, limit, mode
+e2~"text"	→ [e2] · opt: content_type, limit, offset, start_time, end_time, app_name, window_name, mi…
 
 stderr:
 Active context: overshow:Profile, overshow:RecordedContent
-mirror: .plasm/s/SESSION8/out/NNNN-context/wave.tsv
+mirror: .plasm/s/SESSION8/out/NNNN-context/wave.tsv (+13 rows)

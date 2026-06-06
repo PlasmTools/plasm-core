@@ -120,9 +120,14 @@ entities:
             seq: score
 capabilities:
   langitem_query:
-    description: List LangItem rows (no required HTTP filters)
+    description: List LangItem rows (optional tags filter homographs tags relation wire)
     kind: query
     entity: LangItem
+    parameters:
+    - name: tags
+      value_ref: nv_langitem_query_tags
+      required: false
+      role: filter
     provides:
     - id
     - title
@@ -326,6 +331,9 @@ values:
     type: string
     string_semantics: short
   nv_langitem_query_owner_owner:
+    type: string
+    string_semantics: short
+  nv_langitem_query_tags:
     type: string
     string_semantics: short
   nv_langitem_search_q:

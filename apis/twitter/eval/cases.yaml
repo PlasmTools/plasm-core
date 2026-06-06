@@ -1,4 +1,4 @@
-# NL eval cases for X API v2 (twitter) CGS — goals reference the DOMAIN surface.
+# NL eval cases for X API v2 (twitter) CGS — goals reference the teaching table surface.
 # Coverage: `cargo run -p plasm-eval -- coverage --schema apis/twitter --cases apis/twitter/eval/cases.yaml`
 
 - id: twitter-read-search-chain

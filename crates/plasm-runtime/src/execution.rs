@@ -64,12 +64,12 @@ pub struct ExecuteSessionMaterial {
     pub ui_origin: Option<String>,
 }
 
-/// Reserved CML env key: 64-char lowercase hex (rendered DOMAIN prompt digest for the row).
+/// Reserved CML env key: 64-char lowercase hex (rendered teaching prompt digest for the row).
 pub const CML_ENV_PLASM_EXECUTE_PROMPT_HASH: &str = "plasm_execute_prompt_hash";
 /// Reserved CML env key: 32-char lowercase hex UUID (simple form) for the execute row.
 pub const CML_ENV_PLASM_EXECUTE_SESSION_ID: &str = "plasm_execute_session_id";
 
-/// DOMAIN prompts use bare `$` as a fill-in cue; it must not reach HTTP/EVM transport.
+/// teaching prompts use bare `$` as a fill-in cue; it must not reach HTTP/EVM transport.
 fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), RuntimeError> {
     reject_domain_placeholder_core(expr).map_err(|source| RuntimeError::TypeError { source })
 }
@@ -157,7 +157,7 @@ pub struct ExecutionConfig {
     pub http_retry_max_backoff_ms: u64,
     /// Wall-clock retry budget per logical HTTP request.
     pub http_retry_total_budget_ms: u64,
-    /// DOMAIN prompt rendering + symbol expansion (REPL `:schema`, HTTP execute session prompt, eval).
+    /// teaching prompt rendering + symbol expansion (REPL `:schema`, HTTP execute session prompt, eval).
     pub prompt_pipeline: PromptPipelineConfig,
 }
 
@@ -656,7 +656,7 @@ impl ExecutionEngine {
         &self.config
     }
 
-    /// Prompt rendering / symbol expansion settings shared with DOMAIN and `expand_expr_for_parse`.
+    /// Prompt rendering / symbol expansion settings shared with teaching table and `expand_expr_for_parse`.
     #[inline]
     pub fn prompt_pipeline(&self) -> &PromptPipelineConfig {
         &self.config.prompt_pipeline
@@ -1068,7 +1068,7 @@ impl ExecutionEngine {
                 Ok(stream)
             }
             Expr::TeachingValue { .. } => Err(RuntimeError::ConfigurationError {
-                message: "`Expr::TeachingValue` is DOMAIN-only (prompt teaching); it cannot be executed"
+                message: "`Expr::TeachingValue` is teaching-table-only (prompt teaching); it cannot be executed"
                     .to_string(),
             }),
         }

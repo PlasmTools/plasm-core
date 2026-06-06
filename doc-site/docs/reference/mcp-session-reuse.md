@@ -2,14 +2,14 @@
 
 This document is the **canonical** description of how `plasm_context`, `plasm`, and execute session reuse interact. The MCP **transport** (`MCP-Session-Id`) does not identify a host agent, window, or subagent. That boundary is always defined by the **host** via the **`intent`** string on `plasm_context` and the resulting **logical session**.
 
-See also: [MCP logical sessions](mcp-logical-sessions.md), [incremental DOMAIN prompts](incremental-domain-prompts.md), [MCP trace correlation](mcp-trace-correlation.md).
+See also: [MCP logical sessions](mcp-logical-sessions.md), [incremental teaching prompts](incremental-teaching-prompts.md), [MCP trace correlation](mcp-trace-correlation.md).
 
 ## 1. Flow
 
 1. **`plasm_context`** with **`intent`** and non-empty **`seeds`**
   - The server is **idempotent** on `(tenant_scope, intent)`: the same string yields the same canonical **`logical_session_id`** and the same per-transport **`logical_session_ref`** (e.g. `s0`).
   - If a live execute session is already bound for that logical id, the server **expands** or **federates** into that session (no fresh-open path).
-  - **Duplicate seeds (already exposed):** if the request does not add new entity picks, the expand path returns a **short notice only**—the full DOMAIN / TSV teaching table is **not** replayed (token-saving). Steady state remains **`plasm`** / **`plasm_run`** with the existing **`logical_session_ref`**.
+  - **Duplicate seeds (already exposed):** if the request does not add new entity picks, the expand path returns a **short notice only**—the full teaching table / TSV teaching table is **not** replayed (token-saving). Steady state remains **`plasm`** / **`plasm_run`** with the existing **`logical_session_ref`**.
   - If there is no binding, or the stored binding points at an **expired or missing** execute row, the server may **open** a new `(prompt_hash, session)`.
   - The **primary** `entry_id` for the first open is chosen in **lexicographic order** among distinct catalog ids in the seed set, so two calls with the same set of catalog seeds in different order still agree on the same primary for `SessionReuseKey` matching.
   - The tool response JSON includes `logical_session_id`, `logical_session_ref`, and `execute_binding: { prompt_hash, session_id }`.
@@ -46,7 +46,7 @@ MCP can retain a **logical** handle (`logical_session_ref`) and a **binding** `(
 
 When that happens, the `plasm_context` result includes:
 
-- Markdown: a prominent notice that the prior in-memory session was missing or expired, that **all earlier `e#` / `m#` / `p#` from this chat are void**, and that the model must re-read the new DOMAIN/TSV from this response only.
+- Markdown: a prominent notice that the prior in-memory session was missing or expired, that **all earlier `e#` / `m#` / `p#` from this chat are void**, and that the model must re-read the new teaching table/TSV from this response only.
 - **`_meta.plasm.continuity`**: on **every** `plasm_context` response, `stale_binding_recovered` (boolean) and `new_symbol_space` (boolean — `true` when a new execute row with a new symbol table was bound, e.g. first open or a non-reused open after an expiry). When `stale_binding_recovered` is true, `previous_execute` may name the old `(prompt_hash, session_id)`. When `new_symbol_space` is true, `discard_cached_plasm_symbols` is also `true` (same meaning as `new_symbol_space` for tool clients that key off a dedicated key).
 
 ## 5. Execute-time projection vs MCP/HTTP result summaries

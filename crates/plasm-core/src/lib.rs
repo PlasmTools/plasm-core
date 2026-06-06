@@ -49,7 +49,7 @@
 //! - [`DeleteExpr`]: remove an entity by reference
 //! - [`InvokeExpr`]: call a capability on an entity (update, action, etc.)
 //! - [`ChainExpr`]: Kleisli composition via EntityRef field navigation
-//! - [`Expr::TeachingValue`]: DOMAIN-only literals (e.g. top-level union constructor `v101{…}`); validated, not executed
+//! - [`Expr::TeachingValue`]: teaching-table-only literals (e.g. top-level union constructor `v101{…}`); validated, not executed
 //!
 //! All expressions are type-checked before execution via [`type_check_expr`].
 //!
@@ -88,7 +88,7 @@ pub mod cross_entity;
 pub mod discovery;
 pub mod discovery_adversarial_intents;
 pub mod domain_lexicon;
-pub mod domain_term;
+pub mod teaching_term;
 pub mod entity_ref_value;
 pub mod error;
 pub mod error_render;
@@ -152,8 +152,8 @@ pub use discovery_adversarial_intents::{
     adversarial_case_count, iter_all_cases, DiscoveryAdversarialCase,
     DiscoveryAdversarialFailureKind, CROSS_CUTTING, PER_CATALOG_SELECTION,
 };
-pub use domain_term::{
-    method_ref_for_domain_segment, resolve_parameter_slot, DomainTerm, EntityRef, MethodRef,
+pub use teaching_term::{
+    method_ref_for_domain_segment, resolve_parameter_slot, TeachingTerm, EntityRef, MethodRef,
     ParameterSlot, Symbol,
 };
 pub use entity_ref_value::{
@@ -184,15 +184,15 @@ pub use preflight::{
     ScopeBind,
 };
 pub use prompt_pipeline::{PromptFocus, PromptPipelineConfig};
-pub use prompt_render::domain_tsv_table_from_wrapped_prompt;
-pub use prompt_render::render_domain_bundle;
-pub use prompt_render::render_domain_prompt_bundle_for_exposure;
-pub use prompt_render::render_domain_tsv;
-pub use prompt_render::split_tsv_domain_contract_and_table;
-pub use prompt_render::DomainPromptSettings;
-pub use prompt_render::DomainPromptSource;
+pub use prompt_render::teaching_tsv_table_from_wrapped_prompt;
+pub use prompt_render::render_teaching_bundle;
+pub use prompt_render::render_teaching_prompt_bundle_for_exposure;
+pub use prompt_render::render_teaching_tsv;
+pub use prompt_render::split_tsv_teaching_contract_and_table;
+pub use prompt_render::TeachingPromptSettings;
+pub use prompt_render::TeachingPromptSource;
 pub use prompt_render::PromptRenderMode;
-pub use prompt_render::TSV_DOMAIN_TABLE_HEADER;
+pub use prompt_render::TSV_TEACHING_TABLE_HEADER;
 pub use query_resolve::{
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
     required_scope_param_names, resolve_query_capability, QueryCapabilityResolveError,
@@ -252,10 +252,10 @@ pub use summary_render::{
     render_intent_with_projection, render_intent_with_projection_federated, render_outcome,
 };
 pub use symbol_tuning::{
-    entity_slices_for_render, expand_expr_for_domain_session, expand_expr_for_parse,
+    entity_slices_for_render, expand_expr_for_teaching_session, expand_expr_for_parse,
     expand_path_symbols, relation_endpoint_keys, resolve_prompt_surface_entities,
     strip_prompt_expression_annotations, symbol_map_cache_key_federated,
-    symbol_map_cache_key_single_catalog, symbol_map_for_prompt, DomainExposureSession,
+    symbol_map_cache_key_single_catalog, symbol_map_for_prompt, TeachingExposureSession,
     ExposedEntitySymbolRow, ExposedRelationSymbolRow, ExposureEntityKey, FocusSpec, SymbolMap,
     SymbolMapCacheKey, SymbolMapCrossRequestCache,
 };

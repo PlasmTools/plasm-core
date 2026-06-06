@@ -18,7 +18,7 @@ from pathlib import Path
 
 ALLOWLIST = [
     "plasm-language-definition.md",
-    "incremental-domain-prompts.md",
+    "incremental-teaching-prompts.md",
     "tool-model-http.md",
     "oss-core-trace-artifacts.md",
     "mcp-session-reuse.md",

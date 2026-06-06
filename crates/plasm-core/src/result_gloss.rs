@@ -1,11 +1,11 @@
-//! CGS-derived **evaluates-to** hints for DOMAIN `;;` comments (`=> [e#]` / `e#` / `=> ()`), not mixed into the expression.
+//! CGS-derived **evaluates-to** hints for teaching table `;;` comments (`=> [e#]` / `e#` / `=> ()`), not mixed into the expression.
 //! Relation navigation lines use the same shape: `expr  ;;  => e#` or `=> [e#]` (see [`result_gloss_for_relation_nav`]).
 
 use crate::schema::{CapabilityKind, CapabilitySchema, CGS};
 
 /// Canonical or symbolic entity name for gloss text (string is the serialization boundary).
 pub fn entity_sym_for_gloss(map: Option<&crate::symbol_tuning::SymbolMap>, entity: &str) -> String {
-    map.and_then(|m| m.try_entity_domain_term(entity))
+    map.and_then(|m| m.try_entity_teaching_term(entity))
         .map(|t| t.to_string())
         .unwrap_or_else(|| entity.to_string())
 }

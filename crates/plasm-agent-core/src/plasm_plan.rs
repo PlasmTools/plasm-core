@@ -927,7 +927,7 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
     }
     if plan.nodes.is_empty() {
         return Err(
-            "plan.nodes must be non-empty: a Plasm program must include at least one executable DAG node (taught `query` / `get` / search / relation forms per DOMAIN); a literal-only final roots line is not executable alone"
+            "plan.nodes must be non-empty: a Plasm program must include at least one executable DAG node (taught `query` / `get` / search / relation forms per teaching table); a literal-only final roots line is not executable alone"
                 .to_string(),
         );
     }

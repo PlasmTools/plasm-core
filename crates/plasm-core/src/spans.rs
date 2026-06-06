@@ -39,7 +39,7 @@ pub(crate) fn schema_assemble(entity_count: usize, capability_count: usize) -> S
     )
 }
 
-// --- DOMAIN prompt render ----------------------------------------------------
+// --- teaching prompt render ----------------------------------------------------
 
 #[inline]
 pub(crate) fn prompt_domain_bundle<F: Debug>(

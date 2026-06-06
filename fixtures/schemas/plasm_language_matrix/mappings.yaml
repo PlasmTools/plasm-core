@@ -7,6 +7,12 @@ langitem_query:
     value: v1
   - type: literal
     value: items
+  query:
+    type: object
+    fields:
+    - [tags, { type: if, condition: { type: exists, var: tags },
+               then_expr: { type: var, name: tags },
+               else_expr: { type: const, value: null } }]
 
 langitem_query_owner:
   method: GET

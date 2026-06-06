@@ -6,7 +6,7 @@ use plasm_core::{FederationDispatch, CGS, DEFAULT_HTTP_BACKEND};
 
 /// Build the same [`CatalogResolver`] / [`FederationDispatch`] used by type-check and live execute.
 pub(crate) fn federation_for_session(session: &ExecuteSession) -> FederationDispatch {
-    if let Some(exp) = session.domain_exposure.as_ref() {
+    if let Some(exp) = session.teaching_exposure.as_ref() {
         FederationDispatch::from_contexts_and_exposure(session.contexts_by_entry.clone(), exp)
     } else {
         FederationDispatch::from_contexts_only(session.contexts_by_entry.clone())
@@ -102,7 +102,7 @@ mod tests {
     use std::sync::Arc;
 
     use indexmap::IndexMap;
-    use plasm_core::{load_schema, CgsContext, DomainExposureSession, CGS};
+    use plasm_core::{load_schema, CgsContext, TeachingExposureSession, CGS};
 
     use super::*;
 
@@ -110,7 +110,7 @@ mod tests {
         primary_id: &str,
         primary: Arc<CGS>,
         extra: Vec<(&str, Arc<CGS>)>,
-        exposure: Option<DomainExposureSession>,
+        exposure: Option<TeachingExposureSession>,
     ) -> ExecuteSession {
         let mut ctxs = IndexMap::new();
         ctxs.insert(
@@ -154,7 +154,7 @@ mod tests {
     #[test]
     fn resolves_from_exposure_first() {
         let cgs = matrix_cgs();
-        let exp = DomainExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+        let exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
         let session = session_with_contexts("github", cgs, vec![], Some(exp));
         let qe = resolve_qualified_entity_key(&session, "LangItem", None).expect("qe");
         assert_eq!(qe.entry_id, "github");
@@ -165,7 +165,7 @@ mod tests {
     fn resolves_unexposed_entity_via_resolving_cgs() {
         let cgs_primary = matrix_cgs();
         let cgs_secondary = matrix_cgs();
-        let exp = DomainExposureSession::new(cgs_primary.as_ref(), "github", &["LangItem"]);
+        let exp = TeachingExposureSession::new(cgs_primary.as_ref(), "github", &["LangItem"]);
         let mut exp = exp;
         let layers: Vec<&CGS> = vec![cgs_primary.as_ref(), cgs_secondary.as_ref()];
         exp.expose_entities(&layers, cgs_secondary.clone(), "linear", &["LangLine"]);

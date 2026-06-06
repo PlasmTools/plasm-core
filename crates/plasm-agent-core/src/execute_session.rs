@@ -1,9 +1,9 @@
 //! In-memory execute sessions: prompt text + CGS + entity seeds, keyed by `(prompt_hash, session_id)`.
-//! Plasm instructions text is built incrementally via [`plasm_core::DomainExposureSession`] (monotonic `e#`/`m#`/`p#`/`r#`).
+//! Plasm instructions text is built incrementally via [`plasm_core::TeachingExposureSession`] (monotonic `e#`/`m#`/`p#`/`r#`).
 
 use indexmap::IndexMap;
 use plasm_core::CgsContext;
-use plasm_core::DomainExposureSession;
+use plasm_core::TeachingExposureSession;
 use plasm_core::FederationDispatch;
 use plasm_core::PagingHandle;
 use plasm_core::CGS;
@@ -213,7 +213,7 @@ impl RunArtifactHotCache {
 /// from MCP transport `MCP-Session-Id`).
 ///
 /// [`Self::context_intent`] participates in reuse when set (MCP `plasm_context`): distinct intents
-/// must not share an execute row whose DOMAIN symbols were filtered for a different wording.
+/// must not share an execute row whose teaching symbols were filtered for a different wording.
 ///
 /// When [`Self::context_intent`] is set, [`Self::ranked_capabilities`] participates in reuse: distinct
 /// ranked gate lists must not share a session row filtered for different mutation picks.
@@ -226,9 +226,9 @@ pub struct SessionReuseKey {
     pub catalog_cgs_hash: String,
     /// Sorted, deduplicated entity names (same convention as HTTP/MCP bodies).
     pub entities: Vec<String>,
-    /// Normalized first-open `plasm_context` intent when capability-scoped DOMAIN is active.
+    /// Normalized first-open `plasm_context` intent when capability-scoped teaching table is active.
     pub context_intent: Option<String>,
-    /// Sorted deduped capability wire names for ranked mutation gating when intent-scoped DOMAIN is active.
+    /// Sorted deduped capability wire names for ranked mutation gating when intent-scoped teaching table is active.
     pub ranked_capabilities: Option<Vec<String>>,
     /// Set when `PLASM_AUTH_RESOLUTION=delegated` so distinct users do not share a session.
     pub principal: Option<String>,
@@ -389,11 +389,11 @@ pub struct ExecuteSession {
     /// When set (registry entry `backend:`), HTTP execution uses this origin instead of global `--backend`.
     pub http_backend: Option<String>,
     /// Entity names exposed in this session (sorted at open; **cumulative** after incremental expand waves
-    /// via [`crate::http_execute::expand_execute_domain_session`], matching [`Self::domain_exposure`].entities).
+    /// via [`crate::http_execute::expand_execute_teaching_session`], matching [`Self::teaching_exposure`].entities).
     pub entities: Vec<String>,
     /// Monotonic symbol map for incremental exposure + expression expand (exact seeds, expanded in waves).
-    pub domain_exposure: Option<DomainExposureSession>,
-    /// Increments on each successful [`expand_execute_domain_session`] wave.
+    pub teaching_exposure: Option<TeachingExposureSession>,
+    /// Increments on each successful [`expand_execute_teaching_session`] wave.
     pub domain_revision: u32,
     /// End-user / tenant id when using delegated credential resolution (`PLASM_AUTH_RESOLUTION=delegated`).
     pub principal: Option<String>,
@@ -401,7 +401,7 @@ pub struct ExecuteSession {
     pub plugin_generation: Option<Arc<LoadedPluginGeneration>>,
     /// Canonical digest of the pinned primary CGS at session open.
     pub catalog_cgs_hash: String,
-    /// Normalized MCP `plasm_context` intent when DOMAIN uses intent-scoped capability exposure (`None` = legacy full closure).
+    /// Normalized MCP `plasm_context` intent when teaching table uses intent-scoped capability exposure (`None` = legacy full closure).
     pub context_intent: Option<String>,
     /// Optional ranked capability-name gate for mutators (aligned with [`SessionReuseKey::ranked_capabilities`]).
     pub ranked_capabilities: Option<Vec<String>>,
@@ -434,7 +434,7 @@ impl ExecuteSession {
         principal_subject: String,
         http_backend: Option<String>,
         entities: Vec<String>,
-        domain_exposure: Option<DomainExposureSession>,
+        teaching_exposure: Option<TeachingExposureSession>,
         principal: Option<String>,
         plugin_generation: Option<Arc<LoadedPluginGeneration>>,
         catalog_cgs_hash: String,
@@ -452,7 +452,7 @@ impl ExecuteSession {
             principal_subject,
             http_backend,
             entities,
-            domain_exposure,
+            teaching_exposure,
             domain_revision: 0,
             principal,
             plugin_generation,

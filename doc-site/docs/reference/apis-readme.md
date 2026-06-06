@@ -10,7 +10,7 @@ This directory holds **split** Plasm CGS trees: each API is a folder with `domai
 
 **Multi-entry runtime:** Author **`apis/<name>/`**, pack to cdylibs when developing from source (`plasm-pack-plugins`), then run **`plasm-server`**. The installer populates **`{appliance}/plugins`**; from a checkout pass **`--plugin-dir`** only when plugins live elsewhere (e.g. `target/plasm-plugins`).
 
-**Federation:** A multi-entry registry lets HTTP/MCP execute sessions load **more than one** API schema in the **same** session (monotonic `e#` / `m#` / `p#`, per-catalog dispatch — **no** CGS merge). See [Incremental DOMAIN](incremental-domain-prompts.md#federated-sessions-multi-catalog).
+**Federation:** A multi-entry registry lets HTTP/MCP execute sessions load **more than one** API schema in the **same** session (monotonic `e#` / `m#` / `p#`, per-catalog dispatch — **no** CGS merge). See [Incremental teaching](incremental-teaching-prompts.md#federated-sessions-multi-catalog).
 
 ---
 

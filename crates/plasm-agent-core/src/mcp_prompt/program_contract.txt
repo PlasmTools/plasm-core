@@ -1,5 +1,5 @@
-**JSON `program` string:** Prefer literal newlines between bindings, then bare comma-separated roots. Single-line space-separated bindings are **coerced**; default return is the **first** binding. (Wire JSON may show `\n`; decoded strings need real newlines for heredocs.)
+**JSON `program` string:** Prefer `\n` between bindings, then bare comma-separated roots. Single-line space-separated bindings are **supported** (not preferred); coercion rewrites a **trailing** root to the **first** binding when it differs (`metadata.coerced_default_return` may be set). Decoded strings need real newlines for heredocs.
 
-**Heredoc:** After `<<TAG` on the opener line, start the body on the next line; close with a line whose trimmed text is `TAG` (or `TAG)` / `TAG,` / `TAG}`). First trimmed-line match closes the heredoc—use a long opaque `TAG` not present in the body.
+**Heredoc:** After `<<TAG`, body on next line; close with trimmed `TAG` (or `TAG)` / `TAG,` / `TAG}`). Use a long opaque `TAG` not in the body.
 
-Symbols: `e#` entity, `m#` method, `p#` field/filter/param, **`r#` relation nav**, `v#` value-domain gloss. Relation fanout: `.wire` or `.r#` — not bare `p#` after `.` on a receiver. Full grammar: **`plasm_context` teaching TSV** preamble.
+Symbols: `e#` entity, `m#` method, `p#` field/filter/param, **`r#` relation nav**, `v#` value-domain. Relation fanout: copy `.r#` or wire from exemplars — not bare `p#` after `.` on a receiver. Homograph: `labels = issues.p#` forgiven only when binding name matches relation wire; prefer exemplar `.r#`/wire. Grammar: **`plasm_context` teaching TSV** preamble.

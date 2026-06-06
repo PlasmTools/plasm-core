@@ -86,7 +86,7 @@ Split **`domain.yaml`** declares a catalog-local registry of **named semantic sl
 - **`required`**, **`description`**, **`path`**, **`derive`** — on fields (and parameter-specific keys: **`role`**, **`description`** on parameters).
 - Presentation / attachment hints (**`agent_presentation`**, **`mime_type_hint`**, **`attachment_media`**) live on the **field slot** when they apply (not duplicated on every reuse of the same value key).
 
-**Semantic slots (authoring judgement):** A **`values:`** key is not "the type `string`" or "the type `integer`" in the abstract — it is a **catalog-local semantic identity**: what DOMAIN gloss, `string_semantics`, `description`, and validation **say** that value *means* in this API. Two different columns can share the same on-wire JSON type (`string`, RFC3339 `date`, …) yet must remain **different keys** when their **meaning** differs (e.g. `owner` vs `repo` vs `html_url`). **Sharing** one key across multiple `value_ref` sites is the same class of decision as **relation cardinality** or **whether two endpoints are one capability**: there is **no** deterministic rule from the wire alone — authors choose when two sites are intentionally **the same domain value space** (one enum, one id space, one taxonomy, aligned gloss). Prefer **distinct keys per field/param by default**; merge only when that identity story is obvious and descriptions stay compatible.
+**Semantic slots (authoring judgement):** A **`values:`** key is not "the type `string`" or "the type `integer`" in the abstract — it is a **catalog-local semantic identity**: what teaching gloss, `string_semantics`, `description`, and validation **say** that value *means* in this API. Two different columns can share the same on-wire JSON type (`string`, RFC3339 `date`, …) yet must remain **different keys** when their **meaning** differs (e.g. `owner` vs `repo` vs `html_url`). **Sharing** one key across multiple `value_ref` sites is the same class of decision as **relation cardinality** or **whether two endpoints are one capability**: there is **no** deterministic rule from the wire alone — authors choose when two sites are intentionally **the same domain value space** (one enum, one id space, one taxonomy, aligned gloss). Prefer **distinct keys per field/param by default**; merge only when that identity story is obvious and descriptions stay compatible.
 
 **Sharing `values` keys:** Only point multiple slots at the **same** `values` key when they are intentionally the same domain concept (e.g. one shared enum, or the same `entity_ref` target meaning the same id space) **and** gloss text is compatible. **Never** merge unrelated strings, integers, or dates solely because the wire type matches — use distinct keys per slot (`nv_<entity>_<field>`, `nv_<capability>_<param>`) so `description` / `string_semantics` stay truthful.
 
@@ -101,7 +101,7 @@ Split **`domain.yaml`** declares a catalog-local registry of **named semantic sl
 
 Combined **`.cgs.yaml`** interchange may still show denormalized **`field_type`** on entity fields for serde round-trips; **authoring** new split domains should use **`values:` + `value_ref`**.
 
-**`description` on `values:` rows:** Optional prose for tooling and DOMAIN gloss. The loader maps `DomainNamedValue.description` into [`NamedValueSchema.description`](../../../crates/plasm-core/src/schema.rs). For **entity fields**, if the field slot's `description` is empty, [`field_schema_from_domain_field`](../../../crates/plasm-core/src/loader.rs) uses the named value's description as [`FieldSchema.description`](../../../crates/plasm-core/src/schema.rs); a **non-empty** slot `description` overrides. For **parameters**, the same precedence applies via [`input_field_schema_from_domain_parameter`](../../../crates/plasm-core/src/loader.rs). Prefer one canonical gloss on the **`values:`** row when a value domain is dedicated to a single slot; use the slot only when you need a one-off override. **Do not** dedupe unrelated primitives into one `values` key just because the wire type matches — conflicting glosses are a sign you split keys incorrectly.
+**`description` on `values:` rows:** Optional prose for tooling and teaching gloss. The loader maps `DomainNamedValue.description` into [`NamedValueSchema.description`](../../../crates/plasm-core/src/schema.rs). For **entity fields**, if the field slot's `description` is empty, [`field_schema_from_domain_field`](../../../crates/plasm-core/src/loader.rs) uses the named value's description as [`FieldSchema.description`](../../../crates/plasm-core/src/schema.rs); a **non-empty** slot `description` overrides. For **parameters**, the same precedence applies via [`input_field_schema_from_domain_parameter`](../../../crates/plasm-core/src/loader.rs). Prefer one canonical gloss on the **`values:`** row when a value domain is dedicated to a single slot; use the slot only when you need a one-off override. **Do not** dedupe unrelated primitives into one `values` key just because the wire type matches — conflicting glosses are a sign you split keys incorrectly.
 
 ### Entities
 
@@ -137,20 +137,20 @@ entities:
     primary_read: <get_capability_id>    # optional — overrides which Get drives projection teaching
 ```
 
-#### DOMAIN-facing descriptions (entities and capabilities)
+#### Teaching-table-facing descriptions (entities and capabilities)
 
-Symbolic DOMAIN / TSV teaching attaches **`entities.<Name>.description`** to the **projection witness** banner line. **`capabilities.<id>.description`** feeds compact capability legends. Both must stay **agentic**: short, imperative, domain-vocabulary — not implementation manuals and not vendor documentation.
+Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`** to the **projection witness** banner line. **`capabilities.<id>.description`** feeds compact capability legends. Both must stay **agentic**: short, imperative, domain-vocabulary — not implementation manuals and not vendor documentation.
 
-**Purpose, not contents:** The type system, relations, **`provides:`**, symbolic **`e#` / `p#`** lines, parameter gloss, and **`discovery:`** already teach **shape**. **`description`** must answer **what this entity is for in agent workflow**: which goal it supports or what class of task it grounds — **without naming relations, fields, or parameters** that already appear on DOMAIN lines.
+**Purpose, not contents:** The type system, relations, **`provides:`**, symbolic **`e#` / `p#`** lines, parameter gloss, and **`discovery:`** already teach **shape**. **`description`** must answer **what this entity is for in agent workflow**: which goal it supports or what class of task it grounds — **without naming relations, fields, or parameters** that already appear on teaching lines.
 
 | Surface | Write | Do **not** write |
 |---------|-------|-------------------|
-| **Entity `description`** | Role / intent only: what class of task or decision this entity grounds — no relation, field, or parameter names that DOMAIN already prints | Payload inventories, relation "next step" hints, lists of related entities, REST-ish tours, capability ids, step-by-step APIs, HTTP status codes, `transport:`, explicit MCP seed instructions |
+| **Entity `description`** | Role / intent only: what class of task or decision this entity grounds — no relation, field, or parameter names that teaching table already prints | Payload inventories, relation "next step" hints, lists of related entities, REST-ish tours, capability ids, step-by-step APIs, HTTP status codes, `transport:`, explicit MCP seed instructions |
 | **Capability `description`** | What this operation **does** or **when** to pick it, in user/domain terms | "Call `foo_query` first", URL paths, error-code trivia (use `discovery.target_terms` for NL hints) |
 
 **`views:` `description`** on a view definition should state **what composed projection** the agent gets — not list inner capability ids.
 
-**DOMAIN projection teaching (default on):** For each entity with a primary Get and non-empty ordered **`F`** from `CGS::domain_projection_heading_fields` in [`crates/plasm-core/src/schema.rs`](../../../crates/plasm-core/src/schema.rs), the prompt renderer puts **`F`** in a single bracket on the entity heading line after `;;`, before the description: `Entity  ;;  [f1,f2,…,fN] -  …`. Expressions still use `Entity(…)[subset]` for actual reads. **`F`** comes from that Get's explicit **`provides:`** list (order preserved); if `provides` is empty, **`F`** defaults to `id_field` first, then remaining fields lexicographically. Set **`domain_projection_examples: false`** to suppress heading brackets. Optional **`primary_read:`** names the **Get capability id** to override which Get defines **`F`**.
+**Teaching projection (default on):** For each entity with a primary Get and non-empty ordered **`F`** from `CGS::domain_projection_heading_fields` in [`crates/plasm-core/src/schema.rs`](../../../crates/plasm-core/src/schema.rs), the prompt renderer puts **`F`** in a single bracket on the entity heading line after `;;`, before the description: `Entity  ;;  [f1,f2,…,fN] -  …`. Expressions still use `Entity(…)[subset]` for actual reads. **`F`** comes from that Get's explicit **`provides:`** list (order preserved); if `provides` is empty, **`F`** defaults to `id_field` first, then remaining fields lexicographically. Set **`domain_projection_examples: false`** to suppress heading brackets. Optional **`primary_read:`** names the **Get capability id** to override which Get defines **`F`**.
 
 **TSV projection witness (query-only entities):** Symbolic `plasm_expr` / `Meaning` teaching uses `CGS::domain_projection_teaching_wire_fields`, which returns the same **`F`** as the heading when a primary Get exists. If there is no Get, **`F`** still comes from `effective_ordered_response_fields` on a representative read capability: the primary unscoped Query, otherwise the first Query by capability name, then Search the same way.
 
@@ -178,7 +178,7 @@ By default, each field is read from a top-level JSON key matching the field name
 | `name_value_array_lookup` | JSON **array** of objects | Find the first element where `match_key_field` equals `equals` (defaults: `match_key_field` = `name`, `value_field` = `value`). Optional `case_insensitive` ASCII fold (RFC 5322 header names). Return `value_field` from that object; if no match, field decodes as null. Fits Gmail `payload.headers`, AWS-style `[{ "Key": "…", "Value": "…" }]` tags, etc. |
 | `object_key_lookup` | JSON **object** | Return `obj[key]`; optional `case_insensitive` resolution of the key string against object keys. |
 
-**`provides` vs full row decode:** HTTP GET responses are decoded using **all** entity fields that have `path` / `derive` wiring. Capability **`provides`** controls summary-vs-complete detection for list/search ([`CGS::effective_provides`](../../../crates/plasm-core/src/schema.rs)) and DOMAIN projection teaching; it does not strip extra decoded fields from the cached entity row.
+**`provides` vs full row decode:** HTTP GET responses are decoded using **all** entity fields that have `path` / `derive` wiring. Capability **`provides`** controls summary-vs-complete detection for list/search ([`CGS::effective_provides`](../../../crates/plasm-core/src/schema.rs)) and teaching projection; it does not strip extra decoded fields from the cached entity row.
 
 **`description` on entities and capabilities:** Optional but recommended when it helps agents. Write **short domain prose** framed for agents choosing tools and traversing the graph, not for humans reading vendor API reference. The same rule applies to `output.description` for `side_effect` actions: state the **domain effect** (e.g. "message moves to Trash"), not the transport shape ("PATCH, empty body", "returns 204"). **Exception:** `auth.token_url` and similar machine OAuth fields may contain a provider token URL.
 
@@ -188,7 +188,7 @@ By default, each field is read from a top-level JSON key matching the field name
 
 Entity field descriptions (and similar gloss fed from slots) must not inventory shapes the schema already teaches (e.g. "map keyed by …", "JSON containing …", repeating `select` alternatives). Prefer **omitting** the field `description` when the parent entity (or `values:` row) carries enough agent-facing meaning; use one sentence only when the slot needs workflow nuance beyond type (staleness, trust boundary, "refresh before …"). Primitive semantics stay on `values:` rows (`string_semantics`, allowed enums, date meaning).
 
-**Prompt-facing copy (symbolic TSV / MCP DOMAIN):** Treat `description` on entities, read capabilities (`query` / `get` / `search`), and `values:` slots as **agent selection hints only**. Do not explain list-vs-detail payload shapes, cursor/page mechanics, request-body JSON shapes, "full vs summary" list entries, or `provides:` behavior there. `create` / `update` / `delete` / `action` capability descriptions may stay richer where they disambiguate `m#` choice.
+**Prompt-facing copy (symbolic TSV / MCP teaching table):** Treat `description` on entities, read capabilities (`query` / `get` / `search`), and `values:` slots as **agent selection hints only**. Do not explain list-vs-detail payload shapes, cursor/page mechanics, request-body JSON shapes, "full vs summary" list entries, or `provides:` behavior there. `create` / `update` / `delete` / `action` capability descriptions may stay richer where they disambiguate `m#` choice.
 
 ### Field Types
 
@@ -280,7 +280,7 @@ entities:
 
 ### Authoring surface: Plasm expressions
 
-Validate catalogs with `plasm-repl`, MCP `execute`, or any host that evaluates Plasm programs against CGS — not by designing command-line flag matrices. Capability `parameters:`, `input_schema`, relations, and `mappings.yaml` define what the compiler and runtime wire to HTTP; DOMAIN teaches the `e#` / `m#` / `p#` shapes agents actually emit.
+Validate catalogs with `plasm-repl`, MCP `execute`, or any host that evaluates Plasm programs against CGS — not by designing command-line flag matrices. Capability `parameters:`, `input_schema`, relations, and `mappings.yaml` define what the compiler and runtime wire to HTTP; teaching table teaches the `e#` / `m#` / `p#` shapes agents actually emit.
 
 `entity_ref` enables forward relation navigation and reverse traversal when query parameters align with FK fields (see [Foreign key fields](#foreign-key-fields-entity_ref)).
 
@@ -303,9 +303,9 @@ capabilities:
 
 Wire shape for each parameter is `values[value_ref]`.
 
-**Capability-level `description:`** (the operation, not each parameter): keep short and imperative; see [DOMAIN-facing descriptions](#domain-facing-descriptions-entities-and-capabilities).
+**Capability-level `description:`** (the operation, not each parameter): keep short and imperative; see [Teaching-table-facing descriptions](#domain-facing-descriptions-entities-and-capabilities).
 
-**`description` on capability parameters:** Optional. When the prompt uses a symbolic `PromptRenderMode` (compact or tsv, via `--symbol-tuning compact|tsv` on `plasm-mcp` / `plasm-repl` / `plasm-eval`), each parameter gets a `p#` gloss line in DOMAIN. The gloss shows the parameter type and, after a middle dot, either this `description` or the wire `name`. Use the same style as entity field descriptions: short domain prose. **Do not** restate `name:`, wire type, or enum members.
+**`description` on capability parameters:** Optional. When the prompt uses a symbolic `PromptRenderMode` (compact or tsv, via `--symbol-tuning compact|tsv` on `plasm-mcp` / `plasm-repl` / `plasm-eval`), each parameter gets a `p#` gloss line in teaching table. The gloss shows the parameter type and, after a middle dot, either this `description` or the wire `name`. Use the same style as entity field descriptions: short domain prose. **Do not** restate `name:`, wire type, or enum members.
 
 ### Parameter Roles
 
@@ -558,7 +558,7 @@ Conformance fixture rows: `fixtures/schemas/plasm_language_matrix_views` (`lang_
 - [ ] `type_map` covers vendor field types; `default` value_ref for unknown types
 - [ ] `skip.values_in` excludes system columns already on bootstrap entity (ids, summary, …)
 - [ ] Matrix fixture under `fixtures/schemas/<name>_schema_overlay/` (JSON sample + bootstrap `domain.yaml`) — **not** `apis/*` in `plasm-core` tests
-- [ ] Bump `version:` when changing overlay spec (affects session pin hash / DOMAIN)
+- [ ] Bump `version:` when changing overlay spec (affects session pin hash / teaching table)
 
 **Reference catalogs:** `apis/fibery/`, `apis/notion/`, `apis/jira/`, `apis/clickup/` (see each README). **Runtime / MCP wiring** (session resolver, TTL cache): monorepo [docs/schema-overlay.md](../../../docs/schema-overlay.md) when working from the private `plasm` repo.
 
@@ -667,7 +667,7 @@ entities:
         value_ref: tag_name
 ```
 
-REPL-style navigation (exact surface comes from DOMAIN for your catalog):
+REPL-style navigation (exact surface comes from teaching table for your catalog):
 
 ```
 Pet(<id>).tags
@@ -830,7 +830,7 @@ When a mapping includes `pagination`, the runtime merges page parameters from `p
 
 **LLM / MCP execute:** paginated queries return one upstream page by default. When more pages exist, the host mints an opaque session handle (`pg1`, `pg2`, …) and surfaces `has_more` plus a compact `page(pgN)` follow-up. Clients continue with `page(pgN)` or `page(pgN, limit=50)`.
 
-**`plasm-repl` / expressions:** use postfix limits / continuation forms taught in DOMAIN, or session `page(...)` — not synthetic `--limit` / `--all`.
+**`plasm-repl` / expressions:** use postfix limits / continuation forms taught in teaching table, or session `page(...)` — not synthetic `--limit` / `--all`.
 
 Default without an explicit continuation: first page only.
 

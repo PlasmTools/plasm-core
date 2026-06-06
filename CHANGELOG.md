@@ -15,13 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **DOMAIN docs / prompt_render:** clarify `r#` vs `p#` pools — relation nav exemplars use `.r#` without duplicate standalone gloss rows; homograph `p#` vs expanded parse documented.
+- **teaching table docs / prompt_render:** clarify `r#` vs `p#` pools — relation nav exemplars use `.r#` without duplicate standalone gloss rows; homograph `p#` vs expanded parse documented.
 
 ## [0.1.83] - 2026-05-30
 
 ### Added
 
-- **Relation `r#` namespace:** separate opaque relation symbols in [`SymbolMap`](crates/plasm-core/src/symbol_tuning.rs); teaching TSV / DOMAIN gloss rows; MCP `_meta.plasm.relations` with `target_entity`.
+- **Relation `r#` namespace:** separate opaque relation symbols in [`SymbolMap`](crates/plasm-core/src/symbol_tuning.rs); teaching TSV / teaching gloss rows; MCP `_meta.plasm.relations` with `target_entity`.
 - **Unified relation-segment resolver:** [`resolve_relation_segment`](crates/plasm-core/src/relation_segment.rs) shared by parser and DAG; homograph `p#` in relation nav rejected with `RelationSegmentWrongRole`.
 - **Forgiving program coercion:** space-separated single-liner programs split into bindings; default return is the first binding (`FlattenedProgram` + plan `metadata.coerced_default_return`); LHS-gated relation continuation forgives wrong opaque tokens when the binding label matches a relation wire.
 
@@ -134,8 +134,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`=>` clarity:** MCP frontmatter pitfalls — binding `=>` only for derive maps and `for_each`; child reads use `binding.p#`. Teaching TSV relation Meaning uses `→` (not executable `=>`). Dry-run derive lines use `derive map … →` (not `map … =>`).
 - **Derive compile guard:** reject `source => Entity(…)` / `eN(…)` surface literals on derive RHS (use `binding.p#` for relation hops).
 - **Dry-run review:** warn when plan includes `source_cardinality: many` relation fanout (`has_relation_many_source_fanout`).
-- **DOMAIN contract:** federation pitfall only when `distinct_catalog_count > 1`; dedupe `$` / `.content` guidance (fill-in + string slots in Common pitfalls only).
-- **DOMAIN contract (slice-conditioned):** gate search, search-only-entity, and federation Common pitfalls by exposure slice (`ContractSliceHints`).
+- **teaching contract:** federation pitfall only when `distinct_catalog_count > 1`; dedupe `$` / `.content` guidance (fill-in + string slots in Common pitfalls only).
+- **teaching contract (slice-conditioned):** gate search, search-only-entity, and federation Common pitfalls by exposure slice (`ContractSliceHints`).
 - **Teaching TSV:** relation nav cap 16→4; skip redundant `.p#` nav when a teaching row already shows relation navigation; multi-arity method exemplars capped at 16 (was 48); Meaning uses `→` / `opt:`; capability gloss `MAX_DESC` 80.
 - **MCP initialize:** trim `workflow_head`; tighten head budget cap to 950; remove unused `plasm_tool_tail.txt`.
 
@@ -148,21 +148,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **DOMAIN teaching:** search exemplars use `e#~"text"` (not `e#~$`); Common pitfalls call out search-only entities and fill-in `$`.
+- **teaching:** search exemplars use `e#~"text"` (not `e#~$`); Common pitfalls call out search-only entities and fill-in `$`.
 - **MCP initialize:** compressed `workflow_head`; fill-in rule folded into `program_contract` grammar line; tool heads head-only again; per-segment char budgets in `mcp_prompt_char_budget`.
-- **DOMAIN contract:** scoped GitHub worked example only when slice includes `Repository` + `Issue`; trimmed Common pitfalls; generic MCP frontmatter omits worked example.
+- **teaching contract:** scoped GitHub worked example only when slice includes `Repository` + `Issue`; trimmed Common pitfalls; generic MCP frontmatter omits worked example.
 - **Teaching TSV:** lazy field gloss (retain `p#`/`v#` referenced by exemplars); cap query exemplars to 2 per entity (primary query first).
 
 ### Added
 
 - **`domain_search_teaching_rows_use_quoted_text_not_dollar`** regression test.
-- **Docs:** DOMAIN `$` / `~"text"` placeholder subsection in incremental-domain-prompts.
+- **Docs:** teaching table `$` / `~"text"` placeholder subsection in incremental-teaching-prompts.
 
 ## [0.1.72] - 2026-05-30
 
 ### Fixed
 
-- **Federated DOMAIN symbols:** teaching TSV and gloss emission use qualified `(entry_id, entity)` lookups (`entity_sym_for`, `ident_sym_*_for`) so colliding wire names (e.g. `github/Issue` + `linear/Issue`) render distinct `e1` / `e2` instead of both `e1`.
+- **Federated teaching table symbols:** teaching TSV and gloss emission use qualified `(entry_id, entity)` lookups (`entity_sym_for`, `ident_sym_*_for`) so colliding wire names (e.g. `github/Issue` + `linear/Issue`) render distinct `e1` / `e2` instead of both `e1`.
 - **Unqualified symbol lookup:** `SymbolMap::entity_sym` / `try_entity_domain_term` return wire names when the same entity label is exposed from multiple catalogs (fail closed for agents inferring from bare `Issue`).
 
 ### Added
@@ -173,15 +173,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
-- **DOMAIN synthesis (full-catalog / `include_domain_execution_model`):** precomputed `SymbolMap` expand tables (no per-call `HashMap` on symbol replace); lazily cached per-entity `CachedManifestNames`; inverted `CgsIncomingNavIndex` for incoming relation nav; `creates_by_anchor` on `CgsCapabilityIndex` (no full-capability scan per entity).
-- **Render path:** `DomainSynthesisSession` shares line-valid cache and gloss state; federated exposure uses `render_domain_table_resolved` (no duplicate entity loop); `ident_meta_by_entity` index for exposure ident metadata lookup.
+- **teaching synthesis (full-catalog / `include_domain_execution_model`):** precomputed `SymbolMap` expand tables (no per-call `HashMap` on symbol replace); lazily cached per-entity `CachedManifestNames`; inverted `CgsIncomingNavIndex` for incoming relation nav; `creates_by_anchor` on `CgsCapabilityIndex` (no full-capability scan per entity).
+- **Render path:** `TeachingSynthesisSession` shares line-valid cache and gloss state; federated exposure uses `render_teaching_table_resolved` (no duplicate entity loop); `ident_meta_by_entity` index for exposure ident metadata lookup.
 - **Regression:** Criterion benches for validation TSV on `plasm_prompt_matrix` and `apis/github` (`domain_prompt_render`).
 
 ## [0.1.70] - 2026-05-30
 
 ### Performance
 
-- **DOMAIN synthesis:** unified line-valid cache stores `ParsedExpr` for both TSV-only and `include_domain_execution_model` paths (no `collect_meta` bypass); nav/projection probes share the same cache.
+- **teaching synthesis:** unified line-valid cache stores `ParsedExpr` for both TSV-only and `include_domain_execution_model` paths (no `collect_meta` bypass); nav/projection probes share the same cache.
 - **CGS indexing:** `named_query_capabilities` uses `CgsCapabilityIndex` instead of scanning all capabilities.
 
 ## [0.1.69] - 2026-05-30
@@ -190,7 +190,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **MCP prompts:** `plasm` / `plasm_run` tool descriptions are head-only; v0.1.68 grammar pitfalls live in the first-wave teaching TSV contract preamble (passes `mcp_prompt_char_budget` again).
 - **Discovery:** MCP `discover_capabilities` defaults to global score-ranked top-N rows (round-robin fair-share opt-in via `DiscoveryTableMode::PerEntryFairShare`).
-- **DOMAIN exposure:** MCP `plasm_context` read-first seeded waves defer weak-scored mutators unless `ranked_capabilities` lists the wire name.
+- **teaching exposure:** MCP `plasm_context` read-first seeded waves defer weak-scored mutators unless `ranked_capabilities` lists the wire name.
 
 ### Added
 
@@ -198,7 +198,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Performance
 
-- **DOMAIN synthesis:** `Arc<SymbolMap>` on line validation (no per-row map clone); `u64` line-valid cache keys; exposure `entity_catalog_ids` map; `capability_manifest` reuse per entity.
+- **teaching synthesis:** `Arc<SymbolMap>` on line validation (no per-row map clone); `u64` line-valid cache keys; exposure `entity_catalog_ids` map; `capability_manifest` reuse per entity.
 - **Regression:** Criterion bench `domain_prompt_render`; CI wall-time guard `prompt_matrix_full_tsv_synthesis_benchmark` (`PLASM_PROMPT_MATRIX_SYNTH_MAX_MS`).
 
 ## [0.1.68] - 2026-05-30
@@ -225,18 +225,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Referential transparency:** unified session `e#` / wire entity constructor parsing across brace predicates, method args, and nested compound slots (`entity_ref_parse`); symbolic `p#` compound keys normalize without wire pre-expand.
 - **Program binding refs:** `issue.p27` / `body.content` lower to `PlasmInputRef` with opaque `p#` path segments resolved to wire field names in program context.
-- **Teaching QA:** DOMAIN rows validate on the opaque agent parse path (`domain_line_validate_symbolic`) in addition to wire-expanded validation.
+- **Teaching QA:** teaching rows validate on the opaque agent parse path (`domain_line_validate_symbolic`) in addition to wire-expanded validation.
 
 ### Changed
 
-- **MCP prompts:** entity-ref RT guidance in tool tail, scoped-search contract examples, and github symbolic DOMAIN snapshot.
+- **MCP prompts:** entity-ref RT guidance in tool tail, scoped-search contract examples, and github symbolic teaching table snapshot.
 
 ## [0.1.65] - 2026-06-01
 
 ### Fixed
 
 - **Templates:** `${}` row-cursor roots skipped in template dependency collection; for_each materialization wires upstream singleton inputs; effect-template interpolation aliases validated; `${}` scanning consolidated in `template_ref`.
-- **Symbol expansion:** method tokens (`.m#`) resolve when entity symbols stay opaque in compact DOMAIN — wire entity name used for anchor-scoped method lookup.
+- **Symbol expansion:** method tokens (`.m#`) resolve when entity symbols stay opaque in compact teaching table — wire entity name used for anchor-scoped method lookup.
 
 ## [0.1.64] - 2026-06-01
 
@@ -276,7 +276,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Federated DOMAIN:** `(entry_id, entity)` qualified keys through exposure, symbol assignment, intent-surface filters, federated render, and parse (`e#` keeps catalog ownership via opaque symbols).
+- **Federated teaching table:** `(entry_id, entity)` qualified keys through exposure, symbol assignment, intent-surface filters, federated render, and parse (`e#` keeps catalog ownership via opaque symbols).
 - **MCP steady state:** identical-seed `plasm_context` returns one-line noop; syntax hints removed from reuse paths.
 
 ### Fixed
@@ -292,7 +292,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Registry aliases:** optional `registry_aliases:` in `domain.yaml` (e.g. `pokemon` → `pokeapi`); `plasm_context` resolves seeds before tenant ACL.
 - **Discover:** entity summaries keyed by `(entry_id, entity)`; MCP table uses round-robin fair-share across catalogs; federated truncation hint improved.
-- **DOMAIN waves:** omit full TSV on reused execute open; intent-gated mutations on seeded entities (reads still always exposed).
+- **teaching waves:** omit full TSV on reused execute open; intent-gated mutations on seeded entities (reads still always exposed).
 - **Dry-run:** projection highlight line; `_meta.plasm.unused_seeds` / `projection_warning`; resolved `cap=` in DAG for federated queries; GitHub auth-scoped repo list boundedness note.
 
 ### Fixed
@@ -320,7 +320,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **GET shadow sugar:** `Entity(id_field=value)` on simple-id entities (e.g. `Pokemon(name="pikachu")`, `EvolutionChain(url="https://…")`) parses as unary GET — not DOMAIN-taught; canonical surface remains `Entity(value)`.
+- **GET shadow sugar:** `Entity(id_field=value)` on simple-id entities (e.g. `Pokemon(name="pikachu")`, `EvolutionChain(url="https://…")`) parses as unary GET — not not taught in the teaching table; canonical surface remains `Entity(value)`.
 
 ### Fixed
 
@@ -414,7 +414,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **DOMAIN exposure:** Explicit `plasm_context` seeds always teach that entity’s `query` / `search` / `get` / `create` (and `primary_read`) even when the stable `intent` lexicon does not score them; ranked-capability gate cannot drop seeded-entity surface (fixes federated Proof `ShareLink` + `share_link_create` without `ranked_capabilities`).
+- **teaching exposure:** Explicit `plasm_context` seeds always teach that entity’s `query` / `search` / `get` / `create` (and `primary_read`) even when the stable `intent` lexicon does not score them; ranked-capability gate cannot drop seeded-entity surface (fixes federated Proof `ShareLink` + `share_link_create` without `ranked_capabilities`).
 
 ## [0.1.47] - 2026-05-28
 
@@ -422,7 +422,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Runtime:** `ResolvedIdentity` binds entity `id_field` names (e.g. `Team.key`) into CML env for GET, preflight, and views.
 - **Language:** `${binding.path}` interpolation in program strings at plan instantiate; `Issue{identifier=…}` rewrites to Get on search-only entities; view template `split` / `split_part` filters and `.split()[n]` desugar.
-- **Planner:** `=>` bare binding resolves to `NodeSymbol` (`.content` in derive context); Minijinja render column inference from `r.field` refs; relation-target mutation closure in intent DOMAIN exposure.
+- **Planner:** `=>` bare binding resolves to `NodeSymbol` (`.content` in derive context); Minijinja render column inference from `r.field` refs; relation-target mutation closure in intent teaching table exposure.
 
 ### Fixed
 
@@ -708,7 +708,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Performance:** Criterion benches for CGS load and typed discovery index (`plasm-core/benches/schema_load`, `plasm-discovery/benches/index_build`).
 - **Performance:** `CatalogIndexCache` on the agent host; OTEL `plasm.discovery.index_cache_total`.
-- **Performance:** `PLASM_CGS_FAST_LOAD=1` skips expression-surface DOMAIN bundle synthesis at load (structural validate only).
+- **Performance:** `PLASM_CGS_FAST_LOAD=1` skips expression-surface teaching table bundle synthesis at load (structural validate only).
 - **Performance:** `PLASM_DISCOVERY_EMBED_CONCURRENCY` env for shared ONNX embedder pool sizing.
 
 ### Changed

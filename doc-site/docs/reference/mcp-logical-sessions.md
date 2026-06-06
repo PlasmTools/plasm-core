@@ -31,5 +31,5 @@ Today, logical session metadata and execute bindings are still **in-memory** in 
 - MCP handler: ``plasm-oss/crates/plasm-agent-core/src/mcp_server.rs``
 - Logical session registry: ``plasm-oss/crates/plasm-agent-core/src/session_identity.rs``
 - Trace correlation: [`docs/mcp-trace-correlation.md`](mcp-trace-correlation.md)
-- Incremental DOMAIN: [`docs/incremental-domain-prompts.md`](incremental-domain-prompts.md)
+- Incremental teaching: [`docs/incremental-teaching-prompts.md`](incremental-teaching-prompts.md)
 - Session reuse and `SessionReuseKey`: [`docs/mcp-session-reuse.md`](mcp-session-reuse.md)

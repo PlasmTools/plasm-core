@@ -11,7 +11,7 @@ use plasm_agent::{
     server_state::CatalogBootstrap,
 };
 use plasm_core::discovery::InMemoryCgsRegistry;
-use plasm_core::{CgsContext, DomainExposureSession};
+use plasm_core::{CgsContext, TeachingExposureSession};
 use plasm_runtime::{ExecutionEngine, ExecutionMode};
 
 pub const MATRIX_ENTRY_ID: &str = "langmatrix";
@@ -49,7 +49,7 @@ pub fn matrix_execute_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
         Arc::new(CgsContext::entry(MATRIX_ENTRY_ID, cgs.clone())),
     );
     let wave: &[&str] = &["LangItem", "LangLine", "LangTag"];
-    let exp = DomainExposureSession::new(cgs.as_ref(), MATRIX_ENTRY_ID, wave);
+    let exp = TeachingExposureSession::new(cgs.as_ref(), MATRIX_ENTRY_ID, wave);
     ExecuteSession::new(
         "matrix_ph".into(),
         String::new(),
@@ -81,7 +81,7 @@ pub fn matrix_federated_duplicate_entity_session(cgs: Arc<plasm_core::CGS>) -> E
         Arc::new(CgsContext::entry("linear", cgs.clone())),
     );
     let layers: Vec<&plasm_core::CGS> = vec![cgs.as_ref(), cgs.as_ref()];
-    let mut exp = DomainExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+    let mut exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
     exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
     ExecuteSession::new(
         "matrix_ph".into(),
@@ -147,7 +147,7 @@ pub fn matrix_federated_relation_target_session(
         Arc::new(CgsContext::entry("pokeapi", cgs_secondary.clone())),
     );
     let layers: Vec<&plasm_core::CGS> = vec![cgs_primary.as_ref(), cgs_secondary.as_ref()];
-    let mut exp = DomainExposureSession::new(cgs_primary.as_ref(), "linear", &["LangLine"]);
+    let mut exp = TeachingExposureSession::new(cgs_primary.as_ref(), "linear", &["LangLine"]);
     exp.expose_entities(&layers, cgs_secondary.clone(), "pokeapi", &["LangItem"]);
     let wave: &[&str] = &["LangItem", "LangLine"];
     ExecuteSession::new(

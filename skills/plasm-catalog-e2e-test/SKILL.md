@@ -32,7 +32,7 @@ Every run emits a short evidence record (in chat or in `apis/<api>/e2e/<timestam
 - Catalog name and `domain.yaml` `version`
 - Tier results: `hermit | live | sandbox | skipped` per tier
 - Skip reasons (no spec, no credentials, vendor refuses sandbox, etc.)
-- Representative Plasm expressions tried (copied from DOMAIN, not invented CLI flags)
+- Representative Plasm expressions tried (copied from teaching table, not invented CLI flags)
 - Decoded outcomes (row counts, first-row shape, first-row identity)
 - Failures grouped by Plasm error (`CmlError::VariableNotFound`, `DecodeError`, HTTP status, auth failure)
 
@@ -98,15 +98,15 @@ BASE=http://localhost:9090            # or http://localhost:9090/api/v3 etc.
 cargo run -p plasm-repl -- --schema apis/<api> --backend "$BASE"
 ```
 
-Inside the REPL, copy expression shapes from DOMAIN. Do **not** invent CLI flags.
+Inside the REPL, copy expression shapes from teaching table. Do **not** invent CLI flags.
 
 ```
-:schema                                  # re-print DOMAIN for the catalog
+:schema                                  # re-print teaching table for the catalog
 :schema <EntityName>                     # focus one entity
-<EntityName>                             # query-all when DOMAIN teaches it as bare
+<EntityName>                             # query-all when teaching table teaches it as bare
 <EntityName>[field1, field2]             # query + projection
 <EntityName>(<id>)                       # get by primary id when teaching is e#(<id>)
-<EntityName>{p#=<value>, …}              # filtered query when DOMAIN teaches keyed params
+<EntityName>{p#=<value>, …}              # filtered query when teaching table teaches keyed params
 <EntityName>(<id>).<relation>            # relation navigation
 ```
 

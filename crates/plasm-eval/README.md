@@ -8,6 +8,6 @@ Plasm is a **general-purpose language and runtime for API mapping** (schema, exp
 
 Catalog behavior belongs in **`apis/<name>/`**, fixtures, and optional **plugins**—expressed as data and schema-driven rules. Code here stays **agnostic**, driven only by loaded CGS and generic IR/types.
 
-**LLM eval (`plasm-eval` default run):** all cases execute **in YAML order** on **one BAML `TranslatePlan` transcript** (DOMAIN/schema only in the first user turn; each case appends a `--- GOAL ---` turn, mirroring `plasm-repl` `:llm`). There is no parallel “job” mode.
+**LLM eval (`plasm-eval` default run):** all cases execute **in YAML order** on **one BAML `TranslatePlan` transcript** (teaching table/schema only in the first user turn; each case appends a `--- GOAL ---` turn, mirroring `plasm-repl` `:llm`). There is no parallel “job” mode.
 
 See [AGENTS.md](../../AGENTS.md) for workspace layout and commands.

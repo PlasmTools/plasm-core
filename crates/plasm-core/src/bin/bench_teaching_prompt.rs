@@ -1,4 +1,4 @@
-//! Benchmark DOMAIN prompt rendering for a CGS directory.
+//! Benchmark teaching prompt rendering for a CGS directory.
 //!
 //! Default schema is `apis/pokeapi` (~50 entities / ~100 capabilities in-repo — heavier than most
 //! single-API bundles; try `apis/clickup` or `fixtures/schemas/pokeapi_mini` for contrasts).
@@ -6,23 +6,23 @@
 //! Does **not** use Criterion; prints wall times to stderr so you can profile with `samply` / `perf`:
 //!
 //! ```text
-//! cargo build -p plasm-core --release --bin bench_domain_prompt
-//! samply record target/release/bench_domain_prompt apis/pokeapi
+//! cargo build -p plasm-core --release --bin bench_teaching_prompt
+//! samply record target/release/bench_teaching_prompt apis/pokeapi
 //! ```
 //!
 //! From the repo root, a relative path is resolved against `crates/plasm-core/../../` (workspace root).
 //!
 //! Usage:
 //! ```text
-//! bench_domain_prompt [schema_dir] [iterations] [warmup]
-//! bench_domain_prompt [iterations] [warmup]   # default schema: apis/pokeapi
+//! bench_teaching_prompt [schema_dir] [iterations] [warmup]
+//! bench_teaching_prompt [iterations] [warmup]   # default schema: apis/pokeapi
 //! ```
 
 use plasm_core::loader::load_schema_dir;
 use plasm_core::prompt_render::{
-    render_domain_prompt_bundle, render_domain_prompt_bundle_for_exposure, RenderConfig,
+    render_teaching_prompt_bundle, render_teaching_prompt_bundle_for_exposure, RenderConfig,
 };
-use plasm_core::symbol_tuning::{domain_exposure_session_from_focus, FocusSpec};
+use plasm_core::symbol_tuning::{teaching_exposure_session_from_focus, FocusSpec};
 use std::env;
 use std::hint::black_box;
 use std::path::{Path, PathBuf};
@@ -99,7 +99,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     eprintln!(
-        "bench_domain_prompt: loading {} …",
+        "bench_teaching_prompt: loading {} …",
         std::fs::canonicalize(&dir)
             .unwrap_or_else(|_| dir.clone())
             .display()
@@ -117,10 +117,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = RenderConfig::for_eval(None);
 
     eprintln!(
-        "  benchmark: render_domain_prompt_bundle (TSV symbols, FocusSpec::All), iters={iters} warmup={warmup}"
+        "  benchmark: render_teaching_prompt_bundle (TSV symbols, FocusSpec::All), iters={iters} warmup={warmup}"
     );
     let mut full_samples = bench_iter(iters, warmup, || {
-        let b = render_domain_prompt_bundle(&cgs, cfg);
+        let b = render_teaching_prompt_bundle(&cgs, cfg);
         black_box(
             b.teaching_blocks
                 .iter()
@@ -130,26 +130,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let med_full = median_ms(&mut full_samples);
     eprintln!(
-        "  render_domain_prompt_bundle: median {:.2} ms (min {:.2}, max {:.2})",
+        "  render_teaching_prompt_bundle: median {:.2} ms (min {:.2}, max {:.2})",
         med_full,
         full_samples.iter().copied().fold(f64::INFINITY, f64::min),
         full_samples.iter().copied().fold(0.0_f64, f64::max),
     );
 
-    eprintln!("  precomputing DomainExposureSession (FocusSpec::All) …");
+    eprintln!("  precomputing TeachingExposureSession (FocusSpec::All) …");
     let t_exp = Instant::now();
-    let exposure = domain_exposure_session_from_focus(&cgs, FocusSpec::All);
+    let exposure = teaching_exposure_session_from_focus(&cgs, FocusSpec::All);
     eprintln!(
-        "  domain_exposure_session_from_focus: {:.2} ms ({} exposed entities)",
+        "  teaching_exposure_session_from_focus: {:.2} ms ({} exposed entities)",
         t_exp.elapsed().as_secs_f64() * 1000.0,
         exposure.entities.len()
     );
 
     eprintln!(
-        "  benchmark: render_domain_prompt_bundle_for_exposure only (reuse session), iters={iters} warmup={warmup}"
+        "  benchmark: render_teaching_prompt_bundle_for_exposure only (reuse session), iters={iters} warmup={warmup}"
     );
     let mut exp_samples = bench_iter(iters, warmup, || {
-        let b = render_domain_prompt_bundle_for_exposure(&cgs, cfg, &exposure, None);
+        let b = render_teaching_prompt_bundle_for_exposure(&cgs, cfg, &exposure, None);
         black_box(
             b.teaching_blocks
                 .iter()
@@ -159,13 +159,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let med_exp = median_ms(&mut exp_samples);
     eprintln!(
-        "  render_domain_prompt_bundle_for_exposure: median {:.2} ms (min {:.2}, max {:.2})",
+        "  render_teaching_prompt_bundle_for_exposure: median {:.2} ms (min {:.2}, max {:.2})",
         med_exp,
         exp_samples.iter().copied().fold(f64::INFINITY, f64::min),
         exp_samples.iter().copied().fold(0.0_f64, f64::max),
     );
     eprintln!(
-        "  delta (full includes fresh DomainExposureSession per iter): {:.2} ms",
+        "  delta (full includes fresh TeachingExposureSession per iter): {:.2} ms",
         med_full - med_exp
     );
 

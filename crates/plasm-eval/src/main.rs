@@ -86,10 +86,10 @@ struct RunArgs {
     /// Load schema + cases only; print prompt stats, no LLM
     #[arg(long, default_value_t = false)]
     dry_run: bool,
-    /// Print full DOMAIN prompt to stdout and exit (no `--cases`; no LLM). Same string as eval / REPL.
+    /// Print full teaching table prompt to stdout and exit (no `--cases`; no LLM). Same string as eval / REPL.
     #[arg(long, default_value_t = false)]
     print_prompt: bool,
-    /// Print DOMAIN prompt as TSV (expression-first table) and exit.
+    /// Print teaching prompt as TSV (expression-first table) and exit.
     #[arg(long, default_value_t = false)]
     print_prompt_tsv: bool,
     /// Total LLM calls per case: 1 = no correction; 2+ = retry with structured errors + hints.
@@ -183,7 +183,7 @@ fn run_one_case(
     max_attempts: u32,
     registry: &ClientRegistry,
     pipeline: &PromptPipelineConfig,
-    // One transcript for the whole run: first user = DOMAIN + goal; later users = `--- GOAL ---` only;
+    // One transcript for the whole run: first user = teaching table + goal; later users = `--- GOAL ---` only;
     // assistant = Plasm `text` only (no `reasoning`) to keep per-request size bounded.
     chat_session: &mut Vec<PlanChatTurn>,
 ) -> anyhow::Result<serde_json::Value> {
@@ -232,9 +232,9 @@ fn run_one_case(
 
         let (validation, lexicon_notes) =
             validate_plan_steps_with_lexicon_detailed(cgs, &texts, &lexicon, pipeline, None);
-        // First user: DOMAIN + `--- GOAL ---`; later users: goal only. Assistant: backtick `text` only
+        // First user: teaching table + `--- GOAL ---`; later users: goal only. Assistant: backtick `text` only
         // (keeps later LLM calls from re-processing long reasoning; full steps stay in `attempt_trace`).
-        // On validation failure we must still append (user, assistant) or correction rounds resend the DOMAIN.
+        // On validation failure we must still append (user, assistant) or correction rounds resend the teaching table.
         let user_hist = if first_turn {
             format!("{prompt}\n--- GOAL ---\n{}", case.goal)
         } else {
@@ -517,12 +517,12 @@ fn main() -> anyhow::Result<()> {
                     pipeline.render_prompt(&cgs, None)
                 };
                 let st = pipeline.prompt_surface_stats(&cgs, None, &prompt);
-                // Write prompt first so a line-buffered terminal shows DOMAIN immediately; stats on
+                // Write prompt first so a line-buffered terminal shows teaching table immediately; stats on
                 // stderr last so they stay visible below the bundle (and after tracing lines).
                 print!("{prompt}");
                 std::io::stdout()
                     .flush()
-                    .context("flush stdout after --print-prompt/--print-prompt-tsv DOMAIN")?;
+                    .context("flush stdout after --print-prompt/--print-prompt-tsv teaching table")?;
                 eprintln!("\nplasm-eval: schema prompt — {}", st.summary_line_body());
                 std::io::stderr()
                     .flush()
@@ -615,7 +615,7 @@ fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyhow::Re
     );
 
     eprintln!(
-        "eval: {} cases, sequential transcript, {} attempt(s)/case (first user: DOMAIN+goal; later: `--- GOAL ---` only; assistant: Plasm `text` only — `attempt_trace` keeps full reasoning)",
+        "eval: {} cases, sequential transcript, {} attempt(s)/case (first user: teaching table+goal; later: `--- GOAL ---` only; assistant: Plasm `text` only — `attempt_trace` keeps full reasoning)",
         case_list.len(),
         max_attempts
     );
@@ -748,7 +748,7 @@ fn write_eval_report_artifacts(
     Ok(())
 }
 
-/// Schema prompt (full DOMAIN bundle) plus one-line summary and grouped failure blocks.
+/// Schema prompt (full teaching table bundle) plus one-line summary and grouped failure blocks.
 fn format_eval_report(model: &str, schema_prompt: &str, report: &[serde_json::Value]) -> String {
     let mut out = String::new();
     let _ = writeln!(out, "model: {}", model);
@@ -756,7 +756,7 @@ fn format_eval_report(model: &str, schema_prompt: &str, report: &[serde_json::Va
     let _ = writeln!(out, "{}", "─".repeat(72));
     let _ = writeln!(
         out,
-        "Plasm schema prompt (eval: DOMAIN only in the **first** user turn; later user turns are `--- GOAL ---` + goal; each assistant turn is the Plasm expression only, no reasoning — keeps requests small.)"
+        "Plasm schema prompt (eval: teaching table only in the **first** user turn; later user turns are `--- GOAL ---` + goal; each assistant turn is the Plasm expression only, no reasoning — keeps requests small.)"
     );
     let _ = writeln!(out, "{}", "─".repeat(72));
     out.push_str(schema_prompt);

@@ -13,11 +13,13 @@
 //!   `.group_by`, `.singleton()`, `.page_size`, bracket projection `[…]`.
 //! - Programs: bindings, node-ref continuation, parallel final roots, `compile_plasm_surface_line_to_plan`
 //!   (single-line surface) vs multi-line DAG programs.
-//! - Relations: `from_parent_get`, `query_scoped`, opaque `r#` nav (not `p#`).
-//! - Programs: flattened single-liner coercion (space-separated bindings; first binding default return).
+//! - Relations: `from_parent_get`, `query_scoped`, opaque `r#` nav (not `p#`), one-cardinality `r#`,
+//!   homograph `p#` forgiven when LHS binding label matches relation wire.
+//! - Programs: flattened single-liner coercion (space-separated bindings; first binding default return);
+//!   same path via `compile_plasm_surface_line_to_plan` when DAG-shaped.
 //! - Render: bracket render `<<TAG`, and passing **`.content`** into a typed string slot (`create`).
 //! - Effects: create / update / delete / zero-arity action (domain-stripped method label), `for_each`.
-//! - DOMAIN: `e#` symbols where applicable.
+//! - teaching table: `e#` symbols where applicable.
 //!
 //! Hermit returns **schema-generated** bodies; live assertions target stable row payloads, not
 //! OpenAPI `example` literals. **Live `run_markdown`** is fenced TSV for row-shaped HTTP results
@@ -107,8 +109,12 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "relation_binding_proof",
     "binding_opaque_relation_ref",
     "relation_opaque_r_symbol",
+    "relation_one_opaque_r",
+    "homograph_lhs_coercion",
     "flattened_single_liner_coercion",
+    "flattened_surface_line_compile",
     "postfix_group_by_sort",
+    "search_then_group_by",
     "dry_live_parity",
 ];
 
@@ -566,6 +572,27 @@ fn assert_planning_ir(
                 return Err(format!("unexpected aggregate: {spec:?}"));
             }
         }
+        "lang_search_then_group_by" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::GroupBy { keys, .. },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::GroupBy { .. }))
+            else {
+                return Err(format!("expected GroupBy after search, got {:?}", computes));
+            };
+            if keys.len() != 1 || keys[0].dotted() != "owner" {
+                return Err(format!("expected group key owner on search rows, got {:?}", keys));
+            }
+            let q = first_query(&surfaces)?;
+            if q.capability_name.as_deref() != Some("langitem_search") {
+                return Err(format!(
+                    "expected langitem_search upstream, got {:?}",
+                    q.capability_name
+                ));
+            }
+        }
         "lang_relation_lines" => {
             if !surfaces
                 .iter()
@@ -809,7 +836,7 @@ fn assert_planning_ir(
                 ));
             }
         }
-        "lang_flattened_single_liner_coercion" => {
+        "lang_flattened_single_liner_coercion" | "lang_flattened_surface_line_compile" => {
             if plan["return"]["node"].as_str() != Some("items") {
                 return Err(format!(
                     "flattened single-liner should return first binding `items`, got {:?}",
@@ -825,7 +852,46 @@ fn assert_planning_ir(
             let rel = plan_relation_named(plan, "tags")
                 .ok_or_else(|| "expected `.tags` relation on flattened program".to_string())?;
             if rel["source"].as_str() != Some("items") {
-                return Err(format!("expected tags relation sourced from items, got {rel:?}"));
+                return Err(format!(
+                    "expected tags relation sourced from items, got {rel:?}"
+                ));
+            }
+        }
+        "lang_relation_one_opaque_r" => {
+            let rel = plan_relation_named(plan, "summary")
+                .ok_or_else(|| "expected `.summary` relation on singleton item".to_string())?;
+            if rel["source_cardinality"].as_str() != Some("single") {
+                return Err(format!(
+                    "expected single source_cardinality for item.summary, got {rel:?}"
+                ));
+            }
+            if rel["cardinality"].as_str() != Some("one") {
+                return Err(format!(
+                    "expected one-cardinality summary rel, got {rel:?}"
+                ));
+            }
+            let mat = rel
+                .pointer("/materialize/kind")
+                .and_then(|k| k.as_str())
+                .unwrap_or("");
+            if mat != "from_parent_get" && mat != "prefer_from_parent_get" {
+                return Err(format!(
+                    "expected embed GET materialize on one-cardinality r# row, got {rel:?}"
+                ));
+            }
+        }
+        "lang_homograph_lhs_coercion" => {
+            let rel = plan_relation_named(plan, "tags")
+                .ok_or_else(|| "expected `.tags` relation from homograph LHS coercion".to_string())?;
+            if rel["source"].as_str() != Some("items") {
+                return Err(format!(
+                    "expected tags relation sourced from items, got {rel:?}"
+                ));
+            }
+            if rel["source_cardinality"].as_str() != Some("many") {
+                return Err(format!(
+                    "expected many source_cardinality for homograph plural fanout, got {rel:?}"
+                ));
             }
         }
         "lang_relation_integer_scoped_bindings" => {
@@ -1283,6 +1349,15 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         expect_markdown_substrings: &["```tsv", "owner"],
     },
     MatrixRow {
+        id: "lang_search_then_group_by",
+        program: "rows = LangItem~\"matrix\"\nby_owner = rows.group_by(owner)\nby_owner",
+        surface_line: false,
+        federated: false,
+        features: &["entity_search", "postfix_group_by", "search_then_group_by"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "owner"],
+    },
+    MatrixRow {
         id: "lang_row_filter_brace",
         program: "items = LangItem\nfiltered = items.filter{owner=\"alice\"}\nfiltered",
         surface_line: false,
@@ -1506,6 +1581,51 @@ tags"#,
         expect_markdown_substrings: &["```tsv", "title"],
     },
     MatrixRow {
+        id: "lang_flattened_surface_line_compile",
+        program: "",
+        surface_line: true,
+        federated: false,
+        features: &[
+            "flattened_surface_line_compile",
+            "flattened_single_liner_coercion",
+            "surface_line_compile",
+            "relation_many_from_plural",
+            "binding_continuation",
+            "dry_live_parity",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "title"],
+    },
+    MatrixRow {
+        id: "lang_relation_one_opaque_r",
+        program: "",
+        surface_line: false,
+        federated: false,
+        features: &[
+            "relation_one_opaque_r",
+            "bind_relation_hop_one_one",
+            "relation_from_parent_get",
+            "dry_live_parity",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv"],
+    },
+    MatrixRow {
+        id: "lang_homograph_lhs_coercion",
+        program: "",
+        surface_line: false,
+        federated: false,
+        features: &[
+            "homograph_lhs_coercion",
+            "relation_many_from_plural",
+            "relation_prefer_from_parent_get",
+            "binding_continuation",
+            "dry_live_parity",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "label"],
+    },
+    MatrixRow {
         id: "lang_relation_integer_scoped_bindings",
         program: r#"items = LangItem
 tags = items.tags_by_score
@@ -1648,24 +1768,63 @@ summary"#,
 ];
 
 /// Rows whose `program` is filled at runtime (opaque `r#`, flattened single-liner).
-fn matrix_program_for_row(row: &MatrixRow, es: &plasm_agent::execute_session::ExecuteSession) -> String {
+fn matrix_program_for_row(
+    row: &MatrixRow,
+    es: &plasm_agent::execute_session::ExecuteSession,
+) -> String {
     match row.id {
         "lang_relation_opaque_r_symbol" => {
             let exp = es
-                .domain_exposure
+                .teaching_exposure
                 .as_ref()
                 .expect("matrix session domain exposure");
             let map = exp.symbol_map_arc();
-            let r_sym = map.ident_sym_relation_for(language_matrix::MATRIX_ENTRY_ID, "LangItem", "tags");
+            let r_sym =
+                map.ident_sym_relation_for(language_matrix::MATRIX_ENTRY_ID, "LangItem", "tags");
             assert!(
                 r_sym.starts_with('r'),
                 "expected opaque r# for LangItem.tags, got {r_sym}"
             );
             format!("items = LangItem\ntags = items.{r_sym}\ntags")
         }
-        "lang_flattened_single_liner_coercion" => {
+        "lang_flattened_single_liner_coercion" | "lang_flattened_surface_line_compile" => {
             // Trailing root `tags` is rewritten to first binding `items`.
             "items = LangItem tags = items.tags tags".to_string()
+        }
+        "lang_relation_one_opaque_r" => {
+            let exp = es
+                .teaching_exposure
+                .as_ref()
+                .expect("matrix session domain exposure");
+            let map = exp.symbol_map_arc();
+            let r_sym = map.ident_sym_relation_for(
+                language_matrix::MATRIX_ENTRY_ID,
+                "LangItem",
+                "summary",
+            );
+            assert!(
+                r_sym.starts_with('r'),
+                "expected opaque r# for LangItem.summary, got {r_sym}"
+            );
+            format!("item = LangItem(\"i1\")\nsummary = item.{r_sym}\nsummary")
+        }
+        "lang_homograph_lhs_coercion" => {
+            let exp = es
+                .teaching_exposure
+                .as_ref()
+                .expect("matrix session domain exposure");
+            let map = exp.symbol_map_arc();
+            let p_sym = map.ident_sym_cap_param_for(
+                language_matrix::MATRIX_ENTRY_ID,
+                "LangItem",
+                "langitem_query",
+                "tags",
+            );
+            assert!(
+                p_sym.starts_with('p'),
+                "expected opaque p# homograph for langitem_query.tags, got {p_sym}"
+            );
+            format!("items = LangItem\ntags = items.{p_sym}\ntags")
         }
         _ => row.program.to_string(),
     }

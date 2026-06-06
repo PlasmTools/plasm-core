@@ -1,8 +1,8 @@
 //! Symbol tuning for LLM prompts: opaque `e#` / `m#` / `p#` / `v#` tokens — each **distinct taught `p#` meaning**
-//! is glossed **once** (the line before its first use in **DOMAIN**); **`v#`** rows teach each CGS `values:` /
+//! is glossed **once** (the line before its first use in **teaching table**); **`v#`** rows teach each CGS `values:` /
 //! `value_ref` domain **once**, and registry-backed `p#` gloss lines teach **`v# · wire`** (and optional
 //! point-of-use prose when it varies); typing and enum ranges stay on the `v#` row.
-//! **DOMAIN** gives entity/method examples (including `e#` per block),
+//! **teaching table** gives entity/method examples (including `e#` per block),
 //! `;;` descriptions (with a short **type** prefix like `date · …` / `bool · …` from CGS), comma-separated
 //! `optional params: …` / `[scope …]` before the prose description (` — `), when present (required args appear in the expression).
 //! Programs use **`p#` only** for keyed slots; `v#` is prompt-teaching for shared value domains.
@@ -10,9 +10,9 @@
 //! [`SymbolMap`] is built from the same entity slice as [`crate::prompt_render`] uses. Call
 //! [`expand_path_symbols`] on model output **before** [`crate::expr_parser::parse`] (`v#` is not expanded).
 //!
-//! **Caching (execute / MCP):** for a fixed loaded [`CGS`] (`catalog_cgs_hash_hex`), almost all DOMAIN
-//! symbol structure is stable. [`DomainExposureSession`] memoizes [`SymbolMap`] behind
-//! [`DomainExposureSession::symbol_map_arc`] and clears that cache whenever [`DomainExposureSession::expose_entities`]
+//! **Caching (execute / MCP):** for a fixed loaded [`CGS`] (`catalog_cgs_hash_hex`), almost all teaching table
+//! symbol structure is stable. [`TeachingExposureSession`] memoizes [`SymbolMap`] behind
+//! [`TeachingExposureSession::symbol_map_arc`] and clears that cache whenever [`TeachingExposureSession::expose_entities`]
 //! runs so wave indices stay consistent. Per-request variance is mostly the append-only entity list and
 //! the derived `e#` / `m#` / `p#` / `v#` table.
 //!
@@ -20,8 +20,8 @@
 //! `PLASM_SYMBOL_MAP_LRU_CAP`, default `64`, set `0` to disable) deduplicates identical [`SymbolMap`]
 //! snapshots when the catalog fingerprint and exposure rows match a recent session.
 
-use crate::domain_term::{
-    method_ref_for_domain_segment, resolve_parameter_slot, DomainTerm, EntityRef, ParameterSlot,
+use crate::teaching_term::{
+    method_ref_for_domain_segment, resolve_parameter_slot, TeachingTerm, EntityRef, ParameterSlot,
     Symbol,
 };
 use crate::identity::{
@@ -40,7 +40,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
 
-/// Which entities drive DOMAIN / symbol-map slicing (REPL `--focus`, eval, HTTP execute sessions).
+/// Which entities drive teaching table / symbol-map slicing (REPL `--focus`, eval, HTTP execute sessions).
 #[derive(Clone, Copy, Debug, Default)]
 pub enum FocusSpec<'a> {
     /// Full schema (no entity subset).
@@ -50,7 +50,7 @@ pub enum FocusSpec<'a> {
     Single(&'a str),
     /// Union of neighbourhoods for several seeds (same CGS).
     Seeds(&'a [&'a str]),
-    /// **Exact** entity list only (no 2-hop union). Used with [`DomainExposureSession`] so DOMAIN and
+    /// **Exact** entity list only (no 2-hop union). Used with [`TeachingExposureSession`] so teaching table and
     /// execution expand use the same monotonic `e#` / `m#` / `p#` as more of the graph is exposed.
     SeedsExact(&'a [&'a str]),
 }
@@ -80,7 +80,7 @@ pub enum IdentRegistryRole {
     CapabilityParam { capability: CapabilityName },
 }
 
-/// Typed metadata for one DOMAIN / symbol slot — **discriminated** so relations and CGS-backed
+/// Typed metadata for one teaching table / symbol slot — **discriminated** so relations and CGS-backed
 /// fields do not share optional `values:` keys (`RegistryBacked` always carries [`ValueDomainKey`]).
 #[derive(Debug, Clone, PartialEq)]
 pub enum IdentMetadata {
@@ -129,7 +129,7 @@ pub enum IdentMetadata {
 pub type IdentMetaKey = (String, EntityName, String);
 use std::fmt::Write;
 
-/// Catalog-qualified entity identity for incremental DOMAIN exposure filtering.
+/// Catalog-qualified entity identity for incremental teaching exposure filtering.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ExposureEntityKey {
     pub entry_id: String,
@@ -228,7 +228,7 @@ fn leaf_capability_param_expand_key(full_path: &str) -> String {
         .unwrap_or_else(|| full_path.to_string())
 }
 
-/// Wire fragment shown after **`v# ·`** in compact registry-backed **`p#`** DOMAIN gloss.
+/// Wire fragment shown after **`v# ·`** in compact registry-backed **`p#`** teaching gloss.
 ///
 /// Nested capability params store full dotted paths (`operations.replace_range.fromRef`, …). Union /
 /// variant prefixes are CGL input shape, not user-facing “types”; teach the **leaf** expand key only,
@@ -284,7 +284,7 @@ fn walk_inline_capability_param_paths(ty: &InputType, prefix: &str, out: &mut BT
 /// Full per-entity closure (legacy HTTP execute / REPL paths): every field, relation, capability, and param.
 ///
 /// [`crate::prompt_render::surface_exposes_relation_nav_target`] admits CGS relation-nav rows toward those
-/// types without requiring a separate DOMAIN block for every hop (e.g. Pokeapi `Type`-only slices).
+/// types without requiring a separate teaching block for every hop (e.g. Pokeapi `Type`-only slices).
 /// Entity-ref **fields** do not add their targets — incremental surfaces omit cross-entity navigation until
 /// those entities are explicitly exposed.
 ///
@@ -493,7 +493,7 @@ pub(crate) fn collect_slot_metas_for_surface(
 
 /// Build [`IdentMetadata`] for a nested or top-level capability input path using live [`CGS`] rows.
 ///
-/// Used by DOMAIN gloss emission when the opaque `p#` maps to a capability slot whose **leaf**
+/// Used by teaching gloss emission when the opaque `p#` maps to a capability slot whose **leaf**
 /// expand key collides with an entity relation wire name (e.g. param `…blocks` vs relation `blocks`).
 pub(crate) fn ident_metadata_for_capability_input_path(
     cgs: &CGS,
@@ -602,7 +602,7 @@ pub fn entity_slices_for_render<'a>(
                 }
             }
         }
-        // `SeedsExact` matches [`DomainExposureSession::entities`] only (no 2-hop neighbourhood).
+        // `SeedsExact` matches [`TeachingExposureSession::entities`] only (no 2-hop neighbourhood).
         // Exposure-bundle rendering ignores `_dim_entities` for this focus mode, so skip the full-schema
         // scan that built `dim` for legacy All/Single/Seeds slices.
         return (full, Vec::new());
@@ -651,10 +651,10 @@ pub fn entity_slices_for_render<'a>(
     (full_entities, dim_entities)
 }
 
-/// Full + dim entity name slices when [`DomainExposureSession`] spans multiple loaded [`crate::schema::CGS`] graphs.
+/// Full + dim entity name slices when [`TeachingExposureSession`] spans multiple loaded [`crate::schema::CGS`] graphs.
 pub fn entity_slices_for_render_federated<'a>(
     cgs_layers: &[&'a CGS],
-    exposure: &'a DomainExposureSession,
+    exposure: &'a TeachingExposureSession,
 ) -> (Vec<&'a str>, Vec<&'a str>) {
     if cgs_layers.is_empty() {
         return (Vec::new(), Vec::new());
@@ -1254,7 +1254,7 @@ impl IdentMetadata {
         }
     }
 
-    /// Gloss for a **`v#` DOMAIN row** — typing from the shared `values:` registry row (`value_row_description`),
+    /// Gloss for a **`v#` teaching table row** — typing from the shared `values:` registry row (`value_row_description`),
     /// not per-slot field/capability prose.
     pub fn render_value_domain_row_gloss(
         &self,
@@ -1334,8 +1334,8 @@ pub(crate) fn entity_ref_value_domain_row_gloss(
     }
 }
 
-/// Short type label for DOMAIN `p#` gloss (matches [`FieldType`] / capability inputs).
-/// Type keyword for a scalar `string` in DOMAIN gloss (`str` vs `markdown`, …).
+/// Short type label for teaching table `p#` gloss (matches [`FieldType`] / capability inputs).
+/// Type keyword for a scalar `string` in teaching gloss (`str` vs `markdown`, …).
 pub(crate) fn string_semantics_gloss_label(sem: Option<StringSemantics>) -> String {
     let s = sem.unwrap_or(StringSemantics::Short);
     s.gloss_type_keyword().unwrap_or("str").to_string()
@@ -1371,7 +1371,7 @@ fn array_element_gloss_label(ai: &ArrayItemsSchema, map: Option<&SymbolMap>) -> 
 }
 
 /// Label for inline capability input shapes (`operations`, nested union bodies) — avoids labeling
-/// typed `array[union]` batches as bare `json` in DOMAIN gloss.
+/// typed `array[union]` batches as bare `json` in teaching gloss.
 fn structural_inline_input_type_label(ty: &InputType, map: Option<&SymbolMap>) -> Option<String> {
     match ty {
         InputType::Array { element_type, .. } => {
@@ -1530,7 +1530,7 @@ pub(crate) fn build_ident_type_map(
     out
 }
 
-/// One `e#` row in the DOMAIN teaching table (entity seeds / federation).
+/// One `e#` row in the teaching table teaching table (entity seeds / federation).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct ExposedEntitySymbolRow {
     pub symbol: String,
@@ -1579,12 +1579,12 @@ pub struct SymbolMap {
     pub(crate) value_sym_to_fp: IndexMap<String, String>,
     /// `p#` → `v#` for registry-backed slots (relations / synthetic slots omit entries).
     pub(crate) p_sym_to_value_sym: HashMap<String, String>,
-    /// Pre-rendered `v#  ;;  …` gloss bodies (DOMAIN teaching only; not used by [`expand_path_symbols`]).
+    /// Pre-rendered `v#  ;;  …` gloss bodies (teaching table teaching only; not used by [`expand_path_symbols`]).
     value_sym_gloss: IndexMap<String, String>,
     /// `(sym, wire)` pairs sorted by symbol length descending — built once per snapshot for [`expand_path_symbols`].
     entity_replacements: Arc<[(String, String)]>,
     ident_replacements: Arc<[(String, String)]>,
-    /// `r#` → relation wire (navigation expand for DOMAIN validation / execute).
+    /// `r#` → relation wire (navigation expand for teaching table validation / execute).
     relation_replacements: Arc<[(String, String)]>,
     /// Method symbols sorted by length descending — built once per snapshot for [`expand_method_tokens`].
     method_syms_sorted: Arc<[String]>,
@@ -1684,7 +1684,7 @@ impl SymbolMap {
         rows
     }
 
-    /// If `token` is a session `e#` symbol (e.g. `e1` from the DOMAIN table), return the canonical entity name.
+    /// If `token` is a session `e#` symbol (e.g. `e1` from the teaching table table), return the canonical entity name.
     #[inline]
     pub fn resolve_session_entity_symbol(&self, token: &str) -> Option<String> {
         self.sym_to_entity.get(token).cloned()
@@ -1700,27 +1700,27 @@ impl SymbolMap {
 
     /// Build maps for all entities in `full_entities` (slice order defines `e1`, `e2`, …).
     ///
-    /// This is a thin wrapper around [`DomainExposureSession::new`] + the session’s shared [`SymbolMap`]:
-    /// one code path for `m#` / `p#` assignment and dotted-call alias metadata (execute / REPL / canonical DOMAIN).
+    /// This is a thin wrapper around [`TeachingExposureSession::new`] + the session’s shared [`SymbolMap`]:
+    /// one code path for `m#` / `p#` assignment and dotted-call alias metadata (execute / REPL / canonical teaching table).
     /// Uniquely owns the memoized map when no other `Arc` handles remain (avoids a full map clone on the hot path).
     pub fn build(cgs: &CGS, full_entities: &[&str]) -> Self {
         let cid = cgs.entry_id.as_deref().unwrap_or("");
-        let arc = DomainExposureSession::new(cgs, cid, full_entities).to_symbol_map();
+        let arc = TeachingExposureSession::new(cgs, cid, full_entities).to_symbol_map();
         Arc::try_unwrap(arc).unwrap_or_else(|a| (*a).clone())
     }
 
-    /// Structured DOMAIN token for one exposed `(registry entry_id, entity)` pair.
+    /// Structured teaching table token for one exposed `(registry entry_id, entity)` pair.
     #[inline]
-    pub fn try_entity_domain_term_for(
+    pub fn try_entity_teaching_term_for(
         &self,
         catalog_entry_id: &str,
         canonical: &str,
-    ) -> Option<DomainTerm> {
+    ) -> Option<TeachingTerm> {
         let sym_str = self
             .qualified_entity_to_sym
             .get(&(catalog_entry_id.to_string(), canonical.to_string()))?;
         let idx = Symbol::parse_index(sym_str, 'e')?;
-        Some(DomainTerm::Entity(
+        Some(TeachingTerm::Entity(
             EntityRef {
                 name: EntityName::new(canonical),
             },
@@ -1728,12 +1728,12 @@ impl SymbolMap {
         ))
     }
 
-    /// Structured DOMAIN token when `canonical` is exposed under **exactly one** catalog row.
+    /// Structured teaching table token when `canonical` is exposed under **exactly one** catalog row.
     ///
     /// Federated sessions with colliding wire names (e.g. `github/Issue` + `linear/Issue`) return
-    /// `None` — use [`Self::try_entity_domain_term_for`] with the owning `entry_id`.
+    /// `None` — use [`Self::try_entity_teaching_term_for`] with the owning `entry_id`.
     #[inline]
-    pub fn try_entity_domain_term(&self, canonical: &str) -> Option<DomainTerm> {
+    pub fn try_entity_teaching_term(&self, canonical: &str) -> Option<TeachingTerm> {
         let mut matches: Vec<_> = self
             .qualified_entity_to_sym
             .iter()
@@ -1744,7 +1744,7 @@ impl SymbolMap {
         }
         let ((_, ent), sym_str) = matches.pop().expect("len 1");
         let idx = Symbol::parse_index(sym_str, 'e')?;
-        Some(DomainTerm::Entity(
+        Some(TeachingTerm::Entity(
             EntityRef {
                 name: EntityName::new(ent.as_str()),
             },
@@ -1754,12 +1754,12 @@ impl SymbolMap {
 
     /// Method token + CGS [`MethodRef`]; requires `cgs` to attach capability identity.
     #[inline]
-    pub fn try_method_domain_term(
+    pub fn try_method_teaching_term(
         &self,
         cgs: &CGS,
         entity: &str,
         kebab: &str,
-    ) -> Option<DomainTerm> {
+    ) -> Option<TeachingTerm> {
         let entry_key = cgs.entry_id.as_deref().unwrap_or("");
         let sym_str = self
             .method_to_sym
@@ -1772,17 +1772,17 @@ impl SymbolMap {
             })?;
         let idx = Symbol::parse_index(sym_str, 'm')?;
         let mref = method_ref_for_domain_segment(cgs, entity, kebab)?;
-        Some(DomainTerm::Method(mref, idx))
+        Some(TeachingTerm::Method(mref, idx))
     }
 
     /// Parameter token + [`ParameterSlot`]; `full_entities` must match the slice used to build this map.
     #[inline]
-    pub fn try_ident_domain_term(
+    pub fn try_ident_teaching_term(
         &self,
         cgs: &CGS,
         full_entities: &[&str],
         name: &str,
-    ) -> Option<DomainTerm> {
+    ) -> Option<TeachingTerm> {
         let slot = resolve_parameter_slot(cgs, full_entities, name)?;
         let entry_key = cgs.entry_id.as_deref().unwrap_or("");
         let sym_str = match &slot {
@@ -1813,13 +1813,13 @@ impl SymbolMap {
             'p'
         };
         let idx = Symbol::parse_index(sym_str, prefix)?;
-        Some(DomainTerm::Parameter(slot, idx))
+        Some(TeachingTerm::Parameter(slot, idx))
     }
 
     /// Opaque `e#` for one exposed `(registry entry_id, entity)` pair.
     #[inline]
     pub fn entity_sym_for(&self, catalog_entry_id: &str, canonical: &str) -> String {
-        self.try_entity_domain_term_for(catalog_entry_id, canonical)
+        self.try_entity_teaching_term_for(catalog_entry_id, canonical)
             .map(|t| t.to_string())
             .unwrap_or_else(|| canonical.to_string())
     }
@@ -1827,7 +1827,7 @@ impl SymbolMap {
     /// Opaque `e#` string — unambiguous wire name only; prefer [`Self::entity_sym_for`] under federation.
     #[inline]
     pub fn entity_sym(&self, canonical: &str) -> String {
-        self.try_entity_domain_term(canonical)
+        self.try_entity_teaching_term(canonical)
             .map(|t| t.to_string())
             .unwrap_or_else(|| canonical.to_string())
     }
@@ -2009,16 +2009,16 @@ impl SymbolMap {
         self.sym_to_relation_wire.contains_key(sym)
     }
 
-    /// DOMAIN term for one relation `r#` on a qualified entity row.
-    pub fn try_relation_domain_term_for(
+    /// teaching table term for one relation `r#` on a qualified entity row.
+    pub fn try_relation_teaching_term_for(
         &self,
         catalog_entry_id: &str,
         entity: &str,
         relation: &str,
-    ) -> Option<DomainTerm> {
+    ) -> Option<TeachingTerm> {
         let sym_str = self.ident_sym_relation_for(catalog_entry_id, entity, relation);
         let idx = Symbol::parse_index(sym_str.as_str(), 'r')?;
-        Some(DomainTerm::Parameter(
+        Some(TeachingTerm::Parameter(
             ParameterSlot::Relation {
                 entity: EntityName::from(entity.to_string()),
                 name: relation.to_string(),
@@ -2033,7 +2033,7 @@ impl SymbolMap {
         self.p_sym_to_value_sym.get(p_sym).map(|s| s.as_str())
     }
 
-    /// Pre-rendered DOMAIN gloss for a `v#` row (after `;;`), if known.
+    /// Pre-rendered teaching gloss for a `v#` row (after `;;`), if known.
     #[inline]
     pub fn value_domain_gloss_for_v_sym(&self, v_sym: &str) -> Option<&str> {
         self.value_sym_gloss.get(v_sym).map(|s| s.as_str())
@@ -2094,7 +2094,7 @@ impl SymbolMap {
         keys.sort_by_key(|k| std::cmp::Reverse(k.len()));
         keys.dedup();
         let mut s = scan_replace(input, &keys, |k| {
-            self.try_entity_domain_term(k)
+            self.try_entity_teaching_term(k)
                 .map(|t| t.to_string())
                 .unwrap_or_else(|| k.to_string())
         });
@@ -2155,7 +2155,7 @@ impl SymbolMap {
             .map(|(_, d, k)| (d.as_str(), k.as_str()))
     }
 
-    /// `[scope …]` fragment for DOMAIN `;;` legends only (no `optional params:` list).
+    /// `[scope …]` fragment for teaching table `;;` legends only (no `optional params:` list).
     /// For [`CapabilityKind::Query`], returns empty (scope is not shown for query-style capabilities).
     pub(crate) fn capability_scope_legend_gloss(
         &self,
@@ -2203,7 +2203,7 @@ impl SymbolMap {
         crate::utf8_trunc::truncate_utf8_owned_with_ellipsis(s, MAX_SIG)
     }
 
-    /// Optional / scope parameter symbols for DOMAIN `;;` legends. Required parameters are omitted — they
+    /// Optional / scope parameter symbols for teaching table `;;` legends. Required parameters are omitted — they
     /// are already shown in the example expression. For [`CapabilityKind::Query`], omits `[scope …]`.
     /// Required invoke slots are defined by preceding `p#` gloss rows; this gloss is **optionality only**.
     pub(crate) fn capability_input_signature_gloss(
@@ -2280,7 +2280,7 @@ impl SymbolMap {
         crate::utf8_trunc::truncate_utf8_owned_with_ellipsis(scope_s, MAX_SIG)
     }
 
-    /// Reserved for future SYMBOL MAP content; **FIELDS** moved inline into **DOMAIN** (see [`build_ident_gloss_map`]).
+    /// Reserved for future SYMBOL MAP content; **FIELDS** moved inline into **teaching table** (see [`build_ident_gloss_map`]).
     pub fn format_legend(&self, _cgs: &CGS) -> String {
         String::new()
     }
@@ -2497,7 +2497,7 @@ fn truncate_desc(s: &str, max: usize) -> String {
     crate::utf8_trunc::truncate_utf8_bytes_with_ellipsis(t, max)
 }
 
-/// Same truncation cap as [`IdentMetadata::render_gloss`] trailing prose (DOMAIN / TSV parity).
+/// Same truncation cap as [`IdentMetadata::render_gloss`] trailing prose (teaching table / TSV parity).
 pub(crate) fn gloss_description_truncated(s: &str) -> String {
     truncate_desc(s, 100)
 }
@@ -2849,20 +2849,20 @@ fn ident_continue(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '_' || c == '-'
 }
 
-/// Build a [`DomainExposureSession`] from REPL/eval [`FocusSpec`], using the **same** `e#`/`m#`/`p#`
+/// Build a [`TeachingExposureSession`] from REPL/eval [`FocusSpec`], using the **same** `e#`/`m#`/`p#`
 /// rules as HTTP/MCP execute: **sorted** entity names, **no** 2-hop neighbourhood expansion.
 ///
 /// This keeps REPL and execute symbol indices aligned when the same seed set is used (`Single(s)`
 /// ≡ one seed, `Seeds` ≡ sorted list). Use multiple seeds or incremental exposure if you need more
-/// entities in DOMAIN.
+/// entities in teaching table.
 ///
 /// The session’s `catalog_entry_id` argument is taken from [`CGS::entry_id`] when set (packed plugins,
-/// registry rows) so [`ExposureSurface`] keys and [`DomainExposureSession::catalog_cgs`] agree — using
+/// registry rows) so [`ExposureSurface`] keys and [`TeachingExposureSession::catalog_cgs`] agree — using
 /// `""` when the graph id is unset (YAML fixtures).
-pub fn domain_exposure_session_from_focus(
+pub fn teaching_exposure_session_from_focus(
     cgs: &CGS,
     focus: FocusSpec<'_>,
-) -> DomainExposureSession {
+) -> TeachingExposureSession {
     // Registry row id for this graph: align with `CGS::entry_id` (packed plugins use the API dir name)
     // so `ExposureSurface` keys and `catalog_cgs` lookups stay consistent.
     let catalog_key = cgs.entry_id.as_deref().unwrap_or("");
@@ -2875,26 +2875,26 @@ pub fn domain_exposure_session_from_focus(
                 .map(|(n, _)| n.as_str())
                 .collect();
             names.sort();
-            DomainExposureSession::new(cgs, catalog_key, &names)
+            TeachingExposureSession::new(cgs, catalog_key, &names)
         }
-        FocusSpec::Single(s) => DomainExposureSession::new(cgs, catalog_key, &[s]),
+        FocusSpec::Single(s) => TeachingExposureSession::new(cgs, catalog_key, &[s]),
         FocusSpec::Seeds(seeds) => {
             if seeds.is_empty() {
-                return domain_exposure_session_from_focus(cgs, FocusSpec::All);
+                return teaching_exposure_session_from_focus(cgs, FocusSpec::All);
             }
             let mut v: Vec<&str> = seeds.to_vec();
             v.sort();
             v.dedup();
-            DomainExposureSession::new(cgs, catalog_key, &v)
+            TeachingExposureSession::new(cgs, catalog_key, &v)
         }
         FocusSpec::SeedsExact(seeds) => {
             if seeds.is_empty() {
-                return domain_exposure_session_from_focus(cgs, FocusSpec::All);
+                return teaching_exposure_session_from_focus(cgs, FocusSpec::All);
             }
             let mut v: Vec<&str> = seeds.to_vec();
             v.sort();
             v.dedup();
-            DomainExposureSession::new(cgs, catalog_key, &v)
+            TeachingExposureSession::new(cgs, catalog_key, &v)
         }
     }
 }
@@ -2908,19 +2908,19 @@ pub fn symbol_map_for_prompt(
     if !symbol_tuning {
         return None;
     }
-    Some(domain_exposure_session_from_focus(cgs, focus).symbol_map_arc())
+    Some(teaching_exposure_session_from_focus(cgs, focus).symbol_map_arc())
 }
 
-/// Owned entity names for prompt surface metrics and DOMAIN line counts, plus optional
-/// [`DomainExposureSession`] when `symbol_tuning` is true (execute-parity slice; mirrors symbolic render modes); otherwise names from
+/// Owned entity names for prompt surface metrics and teaching table line counts, plus optional
+/// [`TeachingExposureSession`] when `symbol_tuning` is true (execute-parity slice; mirrors symbolic render modes); otherwise names from
 /// [`entity_slices_for_render`] (2-hop for `Single` / `Seeds` when not exact).
 pub fn resolve_prompt_surface_entities(
     cgs: &CGS,
     focus: FocusSpec<'_>,
     symbol_tuning: bool,
-) -> (Vec<String>, Option<DomainExposureSession>) {
+) -> (Vec<String>, Option<TeachingExposureSession>) {
     if symbol_tuning {
-        let exp = domain_exposure_session_from_focus(cgs, focus);
+        let exp = teaching_exposure_session_from_focus(cgs, focus);
         let names = exp.entities.clone();
         (names, Some(exp))
     } else {
@@ -2933,8 +2933,8 @@ pub fn resolve_prompt_surface_entities(
 /// Monotonic `e#` / `m#` / `p#` assignment as an execute/MCP session exposes more entity names from
 /// the CGS graph. Indices only **append** — existing symbols never change when new domains appear.
 #[derive(Debug)]
-pub struct DomainExposureSession {
-    /// Cumulative allowed DOMAIN surface for filtered (`intent`) sessions; full closure for legacy paths.
+pub struct TeachingExposureSession {
+    /// Cumulative allowed teaching surface for filtered (`intent`) sessions; full closure for legacy paths.
     pub surface: ExposureSurface,
     /// Entities included in symbol space (order = `e1`, `e2`, …).
     pub entities: Vec<String>,
@@ -2974,7 +2974,7 @@ pub struct DomainExposureSession {
     ident_meta_by_entity: HashMap<(String, EntityName), HashMap<String, IdentMetadata>>,
 }
 
-impl Clone for DomainExposureSession {
+impl Clone for TeachingExposureSession {
     fn clone(&self) -> Self {
         Self {
             surface: self.surface.clone(),
@@ -3008,7 +3008,7 @@ fn slot_meta_is_relation(meta: &IdentMetadata) -> bool {
     matches!(meta, IdentMetadata::Relation { .. })
 }
 
-impl DomainExposureSession {
+impl TeachingExposureSession {
     /// First wave: assign symbols for `entity_names_in_order` (typically sorted seeds from the client).
     /// `catalog_entry_id` is the registry row for this graph (`""` when not using a multi-entry catalog).
     pub fn new(cgs: &CGS, catalog_entry_id: &str, entity_names_in_order: &[&str]) -> Self {
@@ -3650,7 +3650,7 @@ impl DomainExposureSession {
         (built, lru_hit)
     }
 
-    /// Snapshot for [`expand_path_symbols`] — matches DOMAIN lines for this session (same `Arc` as [`Self::symbol_map_arc`]).
+    /// Snapshot for [`expand_path_symbols`] — matches teaching lines for this session (same `Arc` as [`Self::symbol_map_arc`]).
     pub fn to_symbol_map(&self) -> Arc<SymbolMap> {
         self.symbol_map_arc()
     }
@@ -3710,7 +3710,7 @@ impl DomainExposureSession {
     }
 
     /// Owning `(catalog entry id, CGS entity name)` for an exposed **entity name** (aligned with
-    /// `e#` / DOMAIN rows). Prefer [`Self::qualified_entity_for_exposed_entity_pair`] when the
+    /// `e#` / teaching rows). Prefer [`Self::qualified_entity_for_exposed_entity_pair`] when the
     /// catalog is known — bare names are ambiguous under federation.
     pub fn qualified_entity_for_exposed_entity(
         &self,
@@ -3743,7 +3743,7 @@ impl DomainExposureSession {
             .then(|| crate::QualifiedEntityKey::new(entry_id.to_string(), entity_name.to_string()))
     }
 
-    /// Registry `entry_id` for an exposed **entity name** (aligned with `e#` / DOMAIN table order).
+    /// Registry `entry_id` for an exposed **entity name** (aligned with `e#` / teaching table table order).
     ///
     /// In federated sessions, each exposed row is tied to one loaded catalog; this is the
     /// authoritative owning id for that symbol row. Returns `None` if `entity` is not in
@@ -3760,7 +3760,7 @@ impl DomainExposureSession {
     }
 }
 
-fn hash_exposure_session_rows(exposure: &DomainExposureSession) -> u64 {
+fn hash_exposure_session_rows(exposure: &TeachingExposureSession) -> u64 {
     let mut h = DefaultHasher::new();
     for (e, row) in exposure
         .entities
@@ -3784,7 +3784,7 @@ pub struct SymbolMapCacheKey {
 /// Cache key for a single-catalog session (`entry_id` + [`CGS::catalog_cgs_hash_hex`] + exposure rows).
 pub fn symbol_map_cache_key_single_catalog(
     cgs: &CGS,
-    exposure: &DomainExposureSession,
+    exposure: &TeachingExposureSession,
 ) -> SymbolMapCacheKey {
     let mut ch = DefaultHasher::new();
     cgs.entry_id.as_deref().unwrap_or("").hash(&mut ch);
@@ -3798,7 +3798,7 @@ pub fn symbol_map_cache_key_single_catalog(
 /// Cache key when expression parse spans multiple [`CGS`] layers (federation).
 pub fn symbol_map_cache_key_federated(
     layers: &[&CGS],
-    exposure: &DomainExposureSession,
+    exposure: &TeachingExposureSession,
 ) -> SymbolMapCacheKey {
     let mut parts: Vec<String> = layers
         .iter()
@@ -3903,10 +3903,10 @@ impl SymbolMapCrossRequestCache {
     }
 }
 
-/// Expand using a [`DomainExposureSession`] snapshot (HTTP execute / MCP); ignores [`FocusSpec`]. When `symbol_tuning` is false, only annotation stripping runs (canonical / tests).
-pub fn expand_expr_for_domain_session(
+/// Expand using a [`TeachingExposureSession`] snapshot (HTTP execute / MCP); ignores [`FocusSpec`]. When `symbol_tuning` is false, only annotation stripping runs (canonical / tests).
+pub fn expand_expr_for_teaching_session(
     input: &str,
-    session: &DomainExposureSession,
+    session: &TeachingExposureSession,
     symbol_tuning: bool,
 ) -> String {
     let input = input.trim();
@@ -3949,8 +3949,8 @@ pub fn expand_expr_for_parse(
     if !symbol_tuning {
         return input.to_string();
     }
-    let exposure = domain_exposure_session_from_focus(cgs, focus);
-    expand_expr_for_domain_session(input, &exposure, true)
+    let exposure = teaching_exposure_session_from_focus(cgs, focus);
+    expand_expr_for_teaching_session(input, &exposure, true)
 }
 
 #[cfg(test)]
@@ -4137,13 +4137,13 @@ mod tests {
     }
 
     #[test]
-    fn domain_exposure_session_keeps_entity_symbols_stable_across_waves() {
+    fn teaching_exposure_session_keeps_entity_symbols_stable_across_waves() {
         let dir = std::path::Path::new("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
-        let mut s = DomainExposureSession::new(&cgs, "", &["Pet"]);
+        let mut s = TeachingExposureSession::new(&cgs, "", &["Pet"]);
         let pet_sym = s.to_symbol_map().entity_sym("Pet");
         s.expose_entities(&[&cgs], Arc::new(cgs.clone()), "", &["Store"]);
         assert_eq!(pet_sym, s.to_symbol_map().entity_sym("Pet"));
@@ -4153,13 +4153,13 @@ mod tests {
     /// `m#` / `p#` append-only invariants: adding a second entity must not renumber existing method
     /// or field slot symbols for the first entity.
     #[test]
-    fn domain_exposure_session_keeps_method_and_field_symbols_stable_across_waves() {
+    fn teaching_exposure_session_keeps_method_and_field_symbols_stable_across_waves() {
         let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
         if !dir.exists() {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
-        let mut s = DomainExposureSession::new(&cgs, "", &["Profile"]);
+        let mut s = TeachingExposureSession::new(&cgs, "", &["Profile"]);
         let map0 = s.to_symbol_map();
         let display_p = map0.ident_sym_entity_field("Profile", "display_name");
         let get_m = map0.method_sym("Profile", "get");
@@ -4179,7 +4179,7 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
-        let sesh = DomainExposureSession::new(&cgs, "", &["Pet", "Store"]);
+        let sesh = TeachingExposureSession::new(&cgs, "", &["Pet", "Store"]);
         let full_refs: Vec<&str> = sesh.entities.iter().map(|s| s.as_str()).collect();
         let from_exp = sesh.ident_metadata_for_exposure_entities(&full_refs);
         let mut from_build = HashMap::new();
@@ -4197,11 +4197,11 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
-        let exp = DomainExposureSession::new(&cgs, "", &["Pet"]);
+        let exp = TeachingExposureSession::new(&cgs, "", &["Pet"]);
         let key = symbol_map_cache_key_single_catalog(&cgs, &exp);
         let (a, h1) = exp.symbol_map_arc_cross(Some(&cache), Some(key));
         assert_eq!(h1, Some(false));
-        let exp2 = DomainExposureSession::new(&cgs, "", &["Pet"]);
+        let exp2 = TeachingExposureSession::new(&cgs, "", &["Pet"]);
         let (b, h2) = exp2.symbol_map_arc_cross(Some(&cache), Some(key));
         assert_eq!(h2, Some(true));
         assert!(Arc::ptr_eq(&a, &b));
@@ -4215,12 +4215,12 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
-        let exp = DomainExposureSession::new(&cgs, "", &["Pet"]);
+        let exp = TeachingExposureSession::new(&cgs, "", &["Pet"]);
         let key = symbol_map_cache_key_single_catalog(&cgs, &exp);
         let (_, h1) = exp.symbol_map_arc_cross(Some(&cache), Some(key));
         assert_eq!(h1, Some(false));
         cache.clear();
-        let exp2 = DomainExposureSession::new(&cgs, "", &["Pet"]);
+        let exp2 = TeachingExposureSession::new(&cgs, "", &["Pet"]);
         let (_, h2) = exp2.symbol_map_arc_cross(Some(&cache), Some(key));
         assert_eq!(h2, Some(false));
     }
@@ -4643,7 +4643,7 @@ mod tests {
         })
         .unwrap();
         cgs.validate().expect("fixture CGS");
-        let map = DomainExposureSession::new(&cgs, "fixture_entry", &["Widget"]).to_symbol_map();
+        let map = TeachingExposureSession::new(&cgs, "fixture_entry", &["Widget"]).to_symbol_map();
         let p_foo = map.ident_sym_entity_field("Widget", "foo");
         let p_bar = map.ident_sym_entity_field("Widget", "bar");
         let v_foo = map
@@ -4761,7 +4761,7 @@ mod tests {
     }
 
     #[test]
-    fn domain_term_entity_roundtrips_display_with_symbol_map() {
+    fn teaching_term_entity_roundtrips_display_with_symbol_map() {
         let dir = std::path::Path::new("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
@@ -4769,13 +4769,13 @@ mod tests {
         let cgs = load_schema_dir(dir).unwrap();
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let map = SymbolMap::build(&cgs, &full);
-        let dt = map.try_entity_domain_term("Pet").expect("Pet in map");
+        let dt = map.try_entity_teaching_term("Pet").expect("Pet in map");
         assert_eq!(dt.to_string(), map.entity_sym("Pet"));
-        assert!(matches!(dt, crate::DomainTerm::Entity(_, _)));
+        assert!(matches!(dt, crate::TeachingTerm::Entity(_, _)));
     }
 
     #[test]
-    fn domain_term_method_matches_symbol_map_when_cgs_resolves() {
+    fn teaching_term_method_matches_symbol_map_when_cgs_resolves() {
         let dir = std::path::Path::new("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
@@ -4789,10 +4789,10 @@ mod tests {
             return;
         }
         let dt = map
-            .try_method_domain_term(&cgs, "Pet", kebab)
+            .try_method_teaching_term(&cgs, "Pet", kebab)
             .expect("method domain term");
         assert_eq!(dt.to_string(), m_str);
-        assert!(matches!(dt, crate::DomainTerm::Method(_, _)));
+        assert!(matches!(dt, crate::TeachingTerm::Method(_, _)));
     }
 
     #[test]
@@ -4806,7 +4806,7 @@ mod tests {
         let mut cgs_b = cgs_a.clone();
         cgs_b.entry_id = Some("beta".into());
         let arc_b = std::sync::Arc::new(cgs_b);
-        let mut s = DomainExposureSession::new(&cgs_a, "alpha", &["Pet"]);
+        let mut s = TeachingExposureSession::new(&cgs_a, "alpha", &["Pet"]);
         s.expose_entities(&[arc_b.as_ref()], arc_b.clone(), "beta", &["Pet"]);
         assert_eq!(s.entities.len(), 2);
         let map = s.to_symbol_map();
@@ -4828,7 +4828,7 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
-        let legacy = DomainExposureSession::new(&cgs, "overshow", &["Profile", "Meeting"]);
+        let legacy = TeachingExposureSession::new(&cgs, "overshow", &["Profile", "Meeting"]);
         let endpoints =
             relation_endpoint_keys("overshow", &["Profile".to_string(), "Meeting".to_string()]);
         let delta = crate::discovery::derive_intent_exposure_surface_batch(
@@ -4841,7 +4841,7 @@ mod tests {
             crate::discovery::ExposureSurfaceOptions::default(),
         );
         let filtered =
-            DomainExposureSession::new_with_intent_delta(&cgs, "overshow", &["Profile"], delta);
+            TeachingExposureSession::new_with_intent_delta(&cgs, "overshow", &["Profile"], delta);
         assert!(
             filtered.surface.capabilities.len() < legacy.surface.capabilities.len(),
             "expected fewer capabilities when only Profile is seeded vs legacy Profile+Meeting closure"
@@ -4886,7 +4886,7 @@ mod tests {
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
         let layers = [&cgs, &cgs];
-        let mut exp = DomainExposureSession::new(&cgs, "github", &["LangItem"]);
+        let mut exp = TeachingExposureSession::new(&cgs, "github", &["LangItem"]);
         exp.expose_entities(
             &layers,
             std::sync::Arc::new(cgs.clone()),

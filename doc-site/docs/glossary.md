@@ -4,7 +4,7 @@
 |------|---------|
 | **CGS** | Capability Graph Schema — `domain.yaml` semantic model (entities, relations, capabilities; split catalogs use **`values:`** + **`value_ref`**). |
 | **CML** | Capability Mapping Language — `mappings.yaml` wire templates. |
-| **DOMAIN** | Symbol-tuned teaching text (`e#` / `m#` / `p#`) for agents. |
+| **teaching table** | Symbol-tuned teaching text (`e#` / `m#` / `p#`) for agents. |
 | **view** | CGS **`views:`** entry — composed read-only DAG over existing capabilities (not MCP tenant “registry views”). |
 | **schema overlay** | **`schema_overlay:`** block — session-open merge of workspace-specific typed columns or entities. |
 | **registry `entry_id`** | Identifier for one packed catalog / plugin entry in multi-entry mode. |

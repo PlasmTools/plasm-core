@@ -20,8 +20,10 @@ use plasm_core::expr_parser::{
     split_assignment_at_top_level, split_token_top_level, split_top_level, strip_line_comment,
     try_parse_render_tail, validate_program_label, PlasmPostfixOp, RenderTailParse,
 };
+use plasm_core::query_resolve;
 use plasm_core::row_composition::RowSuffix;
-use plasm_core::schema::EntityDef;
+use plasm_core::schema::{CapabilitySchema, EntityDef};
+use plasm_core::CapabilityKind;
 use plasm_core::ChainExpr;
 use plasm_core::ChainStep;
 use plasm_core::EntityKey;
@@ -38,7 +40,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 use std::sync::Arc;
 
-/// Program RHS after session-scoped DOMAIN expansion (`e#` / `p#` / `m#` → wire/catalog text).
+/// Program RHS after session-scoped teaching table expansion (`e#` / `p#` / `m#` → wire/catalog text).
 ///
 /// Construct only via [`Self::new`] at the [`compile_node_expr`] entry so postfix peel and field
 /// lists never see raw gloss tokens when lowering to [`ComputeOp`](crate::plasm_plan::ComputeOp).
@@ -433,8 +435,11 @@ pub fn compile_plasm_surface_line_to_plan(
     name: &str,
     line: &str,
 ) -> Result<serde_json::Value, String> {
-    let mut state = CompileState::new(pipeline, symbol_map_cross_cache);
     let trimmed = line.trim();
+    if is_plasm_dag_source(trimmed) {
+        return compile_plasm_dag_to_plan(pipeline, symbol_map_cross_cache, session, name, trimmed);
+    }
+    let mut state = CompileState::new(pipeline, symbol_map_cross_cache);
     if trimmed.starts_with("return ") {
         return Err(
             "return is not Plasm syntax; write bare comma-separated roots (e.g. `a, b`, not `return a, b`)"
@@ -486,6 +491,93 @@ fn logical_row_field_paths_for_entity(ent: &EntityDef) -> BTreeSet<Vec<String>> 
         set.insert(vec![rel_name.as_str().to_string()]);
     }
     set
+}
+
+fn logical_row_field_paths_from_names(names: &[String]) -> BTreeSet<Vec<String>> {
+    names.iter().map(|n| vec![n.clone()]).collect()
+}
+
+fn resolve_surface_dag_node<'a>(
+    state: &'a CompileState<'_>,
+    staged: &'a [DagNode],
+    mut node_id: String,
+) -> Option<&'a DagNode> {
+    for _ in 0..512 {
+        let node = lookup_dag_node(state, staged, node_id.as_str())?;
+        match &node.source {
+            DagNodeSource::Surface { .. } | DagNodeSource::RelationTraversal { .. } => {
+                return Some(node);
+            }
+            DagNodeSource::Compute { source, .. } => node_id = source.clone(),
+            DagNodeSource::Derive { .. }
+            | DagNodeSource::Data(_)
+            | DagNodeSource::ForEach { .. } => return None,
+        }
+    }
+    None
+}
+
+fn capability_for_surface_expr<'a>(
+    cgs: &'a plasm_core::schema::CGS,
+    expr: &'a Expr,
+) -> Result<Option<&'a CapabilitySchema>, String> {
+    match expr {
+        Expr::Query(q) => {
+            let cap = if let Some(name) = q.capability_name.as_deref() {
+                cgs.get_capability(name).ok_or_else(|| {
+                    format!(
+                        "unknown query capability `{name}` for entity `{}`",
+                        q.entity
+                    )
+                })?
+            } else {
+                query_resolve::resolve_query_capability(q, cgs).map_err(|e| e.to_string())?
+            };
+            Ok(Some(cap))
+        }
+        Expr::Get(g) => Ok(cgs
+            .find_capabilities(g.reference.entity_type.as_str(), CapabilityKind::Get)
+            .into_iter()
+            .next()),
+        Expr::Create(c) => Ok(cgs.get_capability(c.capability.as_str())),
+        Expr::Delete(d) => Ok(cgs.get_capability(d.capability.as_str())),
+        Expr::Invoke(i) => Ok(cgs.get_capability(i.capability.as_str())),
+        Expr::Chain(_) | Expr::TeachingValue { .. } | Expr::Page(_) => Ok(None),
+    }
+}
+
+/// Row keys projected by the upstream surface capability (`provides`), when narrower than the entity.
+fn logical_row_field_paths_for_surface_node(
+    session: &ExecuteSession,
+    node: &DagNode,
+) -> Result<Option<BTreeSet<Vec<String>>>, String> {
+    let (parsed, qe) = match &node.source {
+        DagNodeSource::Surface {
+            parsed,
+            qualified_entity,
+            ..
+        } => (parsed, qualified_entity),
+        DagNodeSource::RelationTraversal {
+            parsed,
+            qualified_entity,
+            ..
+        } => (parsed, qualified_entity),
+        _ => return Ok(None),
+    };
+    let cgs = cgs_for_qualified_entity(session, qe).ok_or_else(|| {
+        format!(
+            "catalog `{}` is not loaded for entity `{}`",
+            qe.entry_id, qe.entity
+        )
+    })?;
+    let Some(cap) = capability_for_surface_expr(cgs.as_ref(), &parsed.expr)? else {
+        return Ok(None);
+    };
+    let provides = cgs.effective_provides(cap);
+    if provides.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(logical_row_field_paths_from_names(&provides)))
 }
 
 fn infer_entity_row_columns(
@@ -703,9 +795,71 @@ fn validate_compute_paths_for_dag_source(
             return validate_compute_paths_for_schema(&schema, paths, op_label);
         }
     }
+    if let Some(surface) = resolve_surface_dag_node(state, staged, source_id.to_string()) {
+        if let Some(allowed) = logical_row_field_paths_for_surface_node(session, surface)? {
+            return validate_compute_paths_for_allowed_set(
+                session,
+                state.cross_cache,
+                surface,
+                &allowed,
+                paths,
+                op_label,
+            );
+        }
+    }
     if let Some(qe) = resolve_qualified_entity_for_dag_source(state, staged, source_id.to_string())
     {
         return validate_compute_paths_for_entity(session, state.cross_cache, &qe, paths, op_label);
+    }
+    Ok(())
+}
+
+fn validate_compute_paths_for_allowed_set(
+    session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    surface_node: &DagNode,
+    allowed: &BTreeSet<Vec<String>>,
+    paths: &[FieldPath],
+    op_label: &str,
+) -> Result<(), String> {
+    let qe = match &surface_node.source {
+        DagNodeSource::Surface {
+            qualified_entity, ..
+        }
+        | DagNodeSource::RelationTraversal {
+            qualified_entity, ..
+        } => qualified_entity,
+        _ => {
+            return Err(
+                "Plasm program internal: validate_compute_paths_for_allowed_set requires surface"
+                    .into(),
+            );
+        }
+    };
+    for path in paths {
+        let mut segs: Vec<String> = path.segments().to_vec();
+        if segs.len() == 1 {
+            let wire = crate::plasm_plan_run::resolve_wire_field_token(
+                session,
+                symbol_map_cross_cache,
+                Some(qe),
+                segs[0].as_str(),
+            );
+            segs[0] = wire;
+            if allowed.contains(&segs) {
+                continue;
+            }
+        } else if allowed.contains(&segs) {
+            continue;
+        }
+        let cols: Vec<String> = allowed.iter().filter_map(|s| s.first().cloned()).collect();
+        return Err(format!(
+            "Plasm program {op_label}: field path `{}` is not a row field of the upstream capability output for entity `{}` (catalog entry `{}`); projected columns: {}.",
+            path.dotted(),
+            qe.entity,
+            qe.entry_id,
+            cols.join(", ")
+        ));
     }
     Ok(())
 }
@@ -989,10 +1143,11 @@ fn postfix_op_to_compute(
                 }
                 let paths: Vec<FieldPath> =
                     aggregates.iter().filter_map(|a| a.field.clone()).collect();
-                validate_compute_paths_for_entity(
+                validate_compute_paths_for_dag_source(
                     session,
-                    state.cross_cache,
-                    qe,
+                    state,
+                    staged,
+                    source,
                     &paths,
                     "aggregate(...)",
                 )?;
@@ -1036,10 +1191,11 @@ fn postfix_op_to_compute(
                 }
                 let mut paths = key_fps.clone();
                 paths.extend(aggregates.iter().filter_map(|a| a.field.clone()));
-                validate_compute_paths_for_entity(
+                validate_compute_paths_for_dag_source(
                     session,
-                    state.cross_cache,
-                    qe,
+                    state,
+                    staged,
+                    source,
                     &paths,
                     "group_by(...)",
                 )?;
@@ -3039,7 +3195,7 @@ fn infer_surface_contract_from_expr(
 > {
     match expr {
         Expr::TeachingValue { .. } => Err(
-            "Expr::TeachingValue is DOMAIN-only and cannot appear in execution plans".to_string(),
+            "Expr::TeachingValue is teaching-table-only and cannot appear in execution plans".to_string(),
         ),
         Expr::Query(q) => Ok((
             PlanNodeKind::Query,
@@ -3221,7 +3377,7 @@ mod tests {
     use crate::plasm_plan_run::{
         evaluate_plasm_plan_dry, render_plasm_plan_dry_text, symbol_map_for_plasm_surface_parse,
     };
-    use plasm_core::{load_schema, CgsContext, DomainExposureSession, PromptPipelineConfig, CGS};
+    use plasm_core::{load_schema, CgsContext, TeachingExposureSession, PromptPipelineConfig, CGS};
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -3238,7 +3394,7 @@ mod tests {
             "langmatrix".into(),
             Arc::new(CgsContext::entry("langmatrix", cgs.clone())),
         );
-        let exp = DomainExposureSession::new(cgs.as_ref(), "langmatrix", &["LangItem", "LangLine"]);
+        let exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix", &["LangItem", "LangLine"]);
         ExecuteSession::new(
             "ph".into(),
             "p".into(),
@@ -3256,6 +3412,26 @@ mod tests {
             None,
             None,
         )
+    }
+
+    #[test]
+    fn search_group_by_rejects_fields_outside_capability_provides() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "search-group-by-relation",
+            r#"rows = LangItem~"probe"
+bad = rows.group_by(summary)
+bad"#,
+        )
+        .expect_err("search rows omit relation fields from provides");
+        assert!(
+            err.contains("not a row field of the upstream capability output"),
+            "{err}"
+        );
+        assert!(err.contains("projected columns"), "{err}");
     }
 
     #[test]
@@ -3296,7 +3472,7 @@ bad"#,
         );
     }
 
-    /// Primary session `entry_id` is `github`, but `LangLine` was exposed from `linear` in DOMAIN
+    /// Primary session `entry_id` is `github`, but `LangLine` was exposed from `linear` in teaching table
     /// — plan `qualified_entity` must use the owning catalog, not the lexicographic primary.
     #[test]
     fn federated_surface_qualified_entity_matches_exposure_catalog() {
@@ -3317,7 +3493,7 @@ bad"#,
             Arc::new(CgsContext::entry("linear", cgs.clone())),
         );
         let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
-        let mut exp = DomainExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+        let mut exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
         exp.expose_entities(&layers, cgs.clone(), "linear", &["LangLine"]);
         let session = ExecuteSession::new(
             "ph".into(),
@@ -3369,7 +3545,7 @@ bad"#,
             Arc::new(CgsContext::entry("linear", cgs.clone())),
         );
         let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
-        let mut exp = DomainExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+        let mut exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
         exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
         let session = ExecuteSession::new(
             "ph".into(),
@@ -3423,7 +3599,7 @@ bad"#,
             Arc::new(CgsContext::entry("pokeapi", cgs_secondary.clone())),
         );
         let layers: Vec<&CGS> = vec![cgs_primary.as_ref(), cgs_secondary.as_ref()];
-        let mut exp = DomainExposureSession::new(cgs_primary.as_ref(), "linear", &["LangLine"]);
+        let mut exp = TeachingExposureSession::new(cgs_primary.as_ref(), "linear", &["LangLine"]);
         exp.expose_entities(&layers, cgs_secondary.clone(), "pokeapi", &["LangItem"]);
         let session = ExecuteSession::new(
             "ph".into(),
@@ -3561,7 +3737,7 @@ author"#;
             "linear".into(),
             Arc::new(CgsContext::entry("linear", cgs.clone())),
         );
-        let exp = DomainExposureSession::new(
+        let exp = TeachingExposureSession::new(
             cgs.as_ref(),
             "linear",
             &["Issue", "IssueContext", "MyWorkSnapshot", "Team", "Comment"],
@@ -3624,43 +3800,46 @@ author"#;
     }
 
     #[test]
-    fn flattened_dag_bindings_get_newline_diagnostic() {
+    fn flattened_dag_bindings_compile_with_coerced_return() {
         let session = test_session();
         let source = r#"item = LangItem("i1") lines = item.lines lines"#;
-        let err = compile_plasm_dag_to_plan(
+        let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
             &session,
             "flattened",
             source,
         )
-        .expect_err("flattened input should fail with diagnostic");
-        assert!(
-            err.contains("real newline characters") && err.contains("Original parse error"),
-            "unexpected: {err}"
-        );
+        .expect("flattened space-separated bindings compile on DAG path");
+        assert_eq!(plan["return"]["node"], "item");
+        assert_eq!(plan["metadata"]["coerced_default_return"], "item");
+        let lines = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "lines")
+            .expect("lines relation node");
+        assert_eq!(lines["relation"]["relation"], "lines");
     }
 
     #[test]
-    fn flattened_dag_assignment_then_root_gets_newline_diagnostic() {
+    fn flattened_dag_assignment_then_root_coerces_first_binding_return() {
         let session = test_session();
         let source = r#"item = LangItem("i1") LangItem.sort(score, desc).limit(2)"#;
-        let err = compile_plasm_dag_to_plan(
+        let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
             &session,
             "flattened-root",
             source,
         )
-        .expect_err("flattened input should fail with diagnostic");
-        assert!(
-            err.contains("Do not separate bindings or final roots with spaces"),
-            "unexpected: {err}"
-        );
+        .expect("flattened assignment + postfix root compiles on DAG path");
+        assert_eq!(plan["return"]["node"], "item");
+        assert_eq!(plan["metadata"]["coerced_default_return"], "item");
     }
 
     #[test]
-    fn flattened_dag_with_multiline_quoted_arg_gets_newline_diagnostic_first() {
+    fn flattened_dag_with_multiline_quoted_arg_errors_before_flatten() {
         let session = test_session();
         let source = "prof = LangItem(\"i1\") LangLine(message=\"long\nbody\")";
         let err = compile_plasm_dag_to_plan(
@@ -3670,9 +3849,10 @@ author"#;
             "flattened-quote",
             source,
         )
-        .expect_err("flattened input should fail with diagnostic");
+        .expect_err("physical newline in quoted arg should fail before flatten");
         assert!(
-            err.contains("one binding per line") && err.contains("tagged heredocs"),
+            err.contains("physical newline inside a quoted Plasm string parameter")
+                && err.contains("tagged heredoc"),
             "unexpected: {err}"
         );
     }
@@ -3757,7 +3937,7 @@ author"#;
             "github".into(),
             Arc::new(CgsContext::entry("github", cgs.clone())),
         );
-        let exp = DomainExposureSession::new(cgs.as_ref(), "github", &["Repository", "Commit"]);
+        let exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["Repository", "Commit"]);
         ExecuteSession::new(
             "ph".into(),
             "p".into(),
@@ -3855,7 +4035,7 @@ commits"#;
             Arc::new(CgsContext::entry("github", cgs.clone())),
         );
         let exp =
-            DomainExposureSession::new(cgs.as_ref(), "github", &["Repository", "Issue", "Label"]);
+            TeachingExposureSession::new(cgs.as_ref(), "github", &["Repository", "Issue", "Label"]);
         ExecuteSession::new(
             "ph".into(),
             "p".into(),
@@ -4020,6 +4200,37 @@ labels"#;
     }
 
     #[test]
+    fn surface_line_compile_matches_dag_for_flattened_single_liner() {
+        let session = test_session();
+        let source = "items = LangItem tags = items.tags tags";
+        let dag = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "flatten-parity-dag",
+            source,
+        )
+        .expect("dag compile");
+        let surface = compile_plasm_surface_line_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "flatten-parity-surface",
+            source,
+        )
+        .expect("surface line compile");
+        assert_eq!(surface["return"], dag["return"]);
+        assert_eq!(
+            surface["metadata"]["coerced_default_return"],
+            dag["metadata"]["coerced_default_return"]
+        );
+        assert_eq!(
+            surface["nodes"].as_array().map(|n| n.len()),
+            dag["nodes"].as_array().map(|n| n.len())
+        );
+    }
+
+    #[test]
     fn relation_plural_opaque_p2_continuation() {
         let session = github_issue_label_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
@@ -4066,7 +4277,7 @@ labels"#
             "langmatrix".into(),
             Arc::new(CgsContext::entry("langmatrix", cgs.clone())),
         );
-        let exp = DomainExposureSession::new(cgs.as_ref(), "langmatrix", &["LangItem", "LangTag"]);
+        let exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix", &["LangItem", "LangTag"]);
         ExecuteSession::new(
             "ph".into(),
             "p".into(),
@@ -4256,7 +4467,7 @@ paged"#;
         assert_eq!(derive["kind"], "derive");
     }
 
-    /// DOMAIN `p#` inside postfix projection must lower to wire field names in `Plan` IR (not
+    /// teaching table `p#` inside postfix projection must lower to wire field names in `Plan` IR (not
     /// survive as literal `p#` paths that dry-run would project as null).
     #[test]
     fn dag_postfix_projection_expands_domain_field_symbols_to_wire_paths() {
@@ -4755,7 +4966,7 @@ x"#;
         }
     }
 
-    /// DOMAIN `p#` indices are session-global; mixing another entity's symbols into a Commit projection
+    /// teaching table `p#` indices are session-global; mixing another entity's symbols into a Commit projection
     /// must fail at compile time instead of producing all-null columns at runtime.
     #[test]
     fn postfix_projection_rejects_foreign_entity_domain_symbols() {

@@ -1,5 +1,5 @@
 ---
-source: crates/plasm/tests/plasm_cli_server_insta.rs
+source: plasm-oss/crates/plasm/tests/plasm_cli_server_insta.rs
 expression: h.norm(&combined_output(&doctor))
 ---
 status: exit status: 0
@@ -17,6 +17,6 @@ HTTP API origin: $SERVER
   GET /v1/health -> 200 OK
 
 Agent flow: `search` → `context -i "…" api:Entity …` → `run`
-Local state: $WORKSPACE/.plasm/hosts/<slug>/current → s/<session_id>/ (domain.tsv, out/NNNN-*/)
+Local state: $WORKSPACE/.plasm/hosts/<slug>/current → s/<session_id>/ (teaching.tsv, out/NNNN-*/)
 
 stderr:

@@ -35,4 +35,4 @@ cargo run -p plasm --bin plasm-mcp -- --plugin-dir target/plasm-plugins --backen
 2. `GET` that URL for `prompt`, `session`, `prompt_hash`.
 3. `POST` the same path with a Plasm line body. For a get-by-name, use **`Pokemon(pikachu)`** (same meaning as CLI `pokemon pikachu`). Plasm does **not** use a `Get(…)` wrapper or `Entity:slug` — those shapes are parse errors or invalid; **`Entity(id)`** is the only get-by-id form. Prefer `Accept: application/json` when you want structured rows.
 
-Expression forms are validated against the DOMAIN prompt for that session; if a line fails to parse, the API returns a problem+json error.
+Expression forms are validated against the teaching table prompt for that session; if a line fails to parse, the API returns a problem+json error.

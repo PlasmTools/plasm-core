@@ -4,7 +4,20 @@ expression: h.norm(&combined_output(&new_ctx))
 ---
 status: exit status: 0
 stdout:
+plasm_expr	Meaning
+v4	ref:Profile · int
+v5	str
+v2	int
+v3	select · auto, keyword, natural
+p2	v2 · limit
+p3	v3 · mode
+p4	v4 · profile_id
+p5	v5 · query
+p1	v5 · id
+e1{p4=Profile($), p5=$, p2=$, p3=$}[p1]	→ [e1] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
+e1{p4=Profile($), p5=$, p2=$, p3=$}	→ [e1] · opt: query, limit, mode
+e1~"text"	→ [e1] · opt: content_type, limit, offset, start_time, end_time, app_name, window_name, mi…
 
 stderr:
 Active context: overshow:RecordedContent
-mirror: .plasm/s/SESSION8/out/NNNN-context/wave.tsv
+mirror: .plasm/s/SESSION8/out/NNNN-context/wave.tsv (+12 rows)

@@ -1,12 +1,12 @@
-//! Client-owned symbol sessions: catalog fetch, local `DomainExposureSession`, DOMAIN TSV rendering.
+//! Client-owned symbol sessions: catalog fetch, local `TeachingExposureSession`, teaching TSV rendering.
 
 use anyhow::{anyhow, Context as _, Result};
 use indexmap::IndexMap;
-use plasm_core::prompt_render::domain_tsv_table_from_wrapped_prompt;
+use plasm_core::prompt_render::teaching_tsv_table_from_wrapped_prompt;
 use plasm_core::CgsContext;
 use plasm_core::{
     discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions},
-    relation_endpoint_keys, DomainExposureSession, ExposureEntityKey, PromptPipelineConfig,
+    relation_endpoint_keys, TeachingExposureSession, ExposureEntityKey, PromptPipelineConfig,
     SymbolMapCrossRequestCache, CGS,
 };
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT};
@@ -20,7 +20,7 @@ use crate::http_execute::{build_capability_exposure_plan, CapabilitySeed};
 use crate::plasm_dag::compile_plasm_expression_to_plan;
 use crate::plasm_plan_run::{expand_program_surface_for_session_lower, parse_plasm_surface_line};
 use crate::terminal_state::{
-    append_domain_tsv_wave, catalog_cache_path, domain_tsv_path, write_session_meta, CatalogPin,
+    append_teaching_tsv_wave, catalog_cache_path, teaching_tsv_path, write_session_meta, CatalogPin,
     ExecutionBinding, SessionMeta,
 };
 
@@ -51,7 +51,7 @@ pub struct ClientSymbolSession {
     pub capabilities: Vec<(String, String)>,
     pub catalogs: IndexMap<String, Arc<CGS>>,
     pub catalog_digests: IndexMap<String, String>,
-    exposure: Option<DomainExposureSession>,
+    exposure: Option<TeachingExposureSession>,
     pub execution: Option<ExecutionBinding>,
     pipeline: PromptPipelineConfig,
     sym_cross: SymbolMapCrossRequestCache,
@@ -257,14 +257,14 @@ impl ClientSymbolSession {
                         None,
                         ExposureSurfaceOptions::default(),
                     );
-                    self.exposure = Some(DomainExposureSession::new_with_intent_delta(
+                    self.exposure = Some(TeachingExposureSession::new_with_intent_delta(
                         cgs.as_ref(),
                         entry_id.as_str(),
                         &refs,
                         delta,
                     ));
                 } else {
-                    self.exposure = Some(DomainExposureSession::new(
+                    self.exposure = Some(TeachingExposureSession::new(
                         cgs.as_ref(),
                         entry_id.as_str(),
                         &refs,
@@ -300,14 +300,14 @@ impl ClientSymbolSession {
                     None,
                     ExposureSurfaceOptions::default(),
                 );
-                self.exposure = Some(DomainExposureSession::new_with_intent_delta(
+                self.exposure = Some(TeachingExposureSession::new_with_intent_delta(
                     cgs.as_ref(),
                     entry_id.as_str(),
                     &refs,
                     delta,
                 ));
             } else {
-                self.exposure = Some(DomainExposureSession::new(
+                self.exposure = Some(TeachingExposureSession::new(
                     cgs.as_ref(),
                     entry_id.as_str(),
                     &refs,
@@ -341,9 +341,9 @@ impl ClientSymbolSession {
                 .map(|k| k.entity.as_str())
                 .collect();
             self.pipeline
-                .render_domain_exposure_delta(cgs, exp, &added_refs, Some(&self.sym_cross))
+                .render_teaching_exposure_delta(cgs, exp, &added_refs, Some(&self.sym_cross))
         } else {
-            self.pipeline.render_domain_exposure_delta_federated(
+            self.pipeline.render_teaching_exposure_delta_federated(
                 &by_entry,
                 exp,
                 &all_new_qualified,
@@ -353,7 +353,7 @@ impl ClientSymbolSession {
 
         let mode = self.pipeline.render_mode;
         let tsv =
-            domain_tsv_table_from_wrapped_prompt(&rendered, mode.markdown_fence_info_string())
+            teaching_tsv_table_from_wrapped_prompt(&rendered, mode.markdown_fence_info_string())
                 .unwrap_or(rendered);
         Ok(tsv)
     }
@@ -407,9 +407,9 @@ impl ClientSymbolSession {
         server: &str,
         tsv_fragment: &str,
     ) -> Result<(PathBuf, usize)> {
-        let path = domain_tsv_path(server, &self.client_session_id);
+        let path = teaching_tsv_path(server, &self.client_session_id);
         let first = !path.exists() || path.metadata().map(|m| m.len()).unwrap_or(0) == 0;
-        let rows = append_domain_tsv_wave(&path, tsv_fragment, first)?;
+        let rows = append_teaching_tsv_wave(&path, tsv_fragment, first)?;
         Ok((path, rows))
     }
 

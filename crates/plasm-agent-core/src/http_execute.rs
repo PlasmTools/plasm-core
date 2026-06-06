@@ -19,7 +19,7 @@ use indexmap::IndexMap;
 use plasm_core::discovery::{CgsCatalog, DiscoveryError};
 use plasm_core::error_render::{render_parse_error_with_feedback, FeedbackStyle};
 use plasm_core::{
-    domain_tsv_table_from_wrapped_prompt,
+    teaching_tsv_table_from_wrapped_prompt,
     expr_parser::{self, ParsedExpr},
     normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated, AuthScheme,
     CgsContext, Expr, PagingHandle, PromptRenderMode, SymbolMap, Value, CGS,
@@ -437,7 +437,7 @@ pub struct CreateExecuteSessionBody {
     /// MCP logical session from `plasm_context` (scopes execute-session reuse + short artifact URIs).
     #[serde(default)]
     pub logical_session_id: Option<Uuid>,
-    /// When set (non-empty after trim), DOMAIN symbols use intent-scoped capability exposure (MCP `plasm_context`).
+    /// When set (non-empty after trim), teaching symbols use intent-scoped capability exposure (MCP `plasm_context`).
     #[serde(default)]
     pub context_intent: Option<String>,
     /// Optional capability wire names for ranked mutation gating when `context_intent` is set.
@@ -479,7 +479,7 @@ pub struct CapabilityWaveOutcome {
     pub entities: Vec<String>,
     pub markdown_delta: String,
     pub reused_session: bool,
-    pub domain_prompt_chars_added: u64,
+    pub teaching_prompt_chars_added: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -517,7 +517,7 @@ pub(crate) struct ExecuteRunQuery {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ExecuteSessionContextBody {
-    /// Optional; when opening intent-scoped DOMAIN via MCP this is required — HTTP expand may omit when session already has intent.
+    /// Optional; when opening intent-scoped teaching table via MCP this is required — HTTP expand may omit when session already has intent.
     #[serde(default)]
     pub intent: Option<String>,
     pub seeds: Vec<CapabilitySeed>,
@@ -746,7 +746,7 @@ pub fn resolve_capability_seeds(
 }
 
 fn relation_endpoint_keys_for_wave(
-    exp: &plasm_core::DomainExposureSession,
+    exp: &plasm_core::TeachingExposureSession,
     batch_entry_id: &str,
     batch_names: &[String],
 ) -> Vec<plasm_core::ExposureEntityKey> {
@@ -763,7 +763,7 @@ fn format_session_unchanged_one_liner(entity_count: usize) -> String {
     }
 }
 
-fn seeds_fully_exposed(exp: &plasm_core::DomainExposureSession, seeds: &[CapabilitySeed]) -> bool {
+fn seeds_fully_exposed(exp: &plasm_core::TeachingExposureSession, seeds: &[CapabilitySeed]) -> bool {
     seeds
         .iter()
         .all(|s| exp.contains_qualified_entity(s.entry_id.as_str(), s.entity.as_str()))
@@ -846,7 +846,7 @@ fn primary_entry_id_for_grouped(grouped: &IndexMap<String, Vec<String>>) -> Stri
 }
 
 /// One-line summary for LLM-facing session waves (MCP + stored `prompt_text`); not a Plasm expression.
-/// Normalize optional MCP intent for DOMAIN filtering and [`SessionReuseKey::context_intent`].
+/// Normalize optional MCP intent for teaching table filtering and [`SessionReuseKey::context_intent`].
 #[inline]
 pub(crate) fn normalize_context_intent_for_domain_filter(raw: Option<&str>) -> Option<String> {
     raw.and_then(|s| {
@@ -922,9 +922,9 @@ pub(crate) fn format_plasm_context_wave_line(entry_id: &str, entities: &[String]
 pub(crate) const ADD_CAPABILITIES_SESSION_REUSE_HINT: &str =
     "_New types added for this logical_session_ref; previously loaded types remain valid._";
 
-/// Wrap DOMAIN / incremental delta in a Markdown fenced block so MCP and other Markdown UIs
+/// Wrap teaching table / incremental delta in a Markdown fenced block so MCP and other Markdown UIs
 /// preserve newlines (CommonMark collapses single newlines in ordinary paragraphs).
-fn wrap_domain_markdown_literal_block(body: &str, render_mode: PromptRenderMode) -> String {
+fn wrap_teaching_markdown_literal_block(body: &str, render_mode: PromptRenderMode) -> String {
     let t = body.trim_end();
     let fence = render_mode.markdown_fence_info_string();
     format!("```{fence}\n{t}\n```\n")
@@ -1062,7 +1062,7 @@ fn patch_cgs_context_outbound_hosted(ctx: CgsContext, hosted_kv_key: &str) -> Cg
 /// Create an execute session; same validation as `POST /execute`, returns session JSON (MCP / internal).
 ///
 /// Reuses an existing non-expired session when `entry_id` and the sorted entity set match a prior open
-/// (same `prompt_hash` / `session` pair), avoiding redundant `render_domain_prompt_bundle` work.
+/// (same `prompt_hash` / `session` pair), avoiding redundant `render_teaching_prompt_bundle` work.
 #[allow(clippy::too_many_arguments)]
 async fn execute_session_create_response_inner(
     st: &PlasmHostState,
@@ -1191,7 +1191,7 @@ async fn execute_session_create_response_inner(
     }
 
     let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-    let domain_exposure = match &domain_filter_intent {
+    let teaching_exposure = match &domain_filter_intent {
         Some(intent_s) => {
             let relation_keys = plasm_core::relation_endpoint_keys(body.entry_id.as_str(), &names);
             let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
@@ -1205,22 +1205,22 @@ async fn execute_session_create_response_inner(
                     read_first_seeded: body.read_first_seeded_exposure,
                 },
             );
-            plasm_core::DomainExposureSession::new_with_intent_delta(
+            plasm_core::TeachingExposureSession::new_with_intent_delta(
                 cgs.as_ref(),
                 body.entry_id.as_str(),
                 &refs,
                 delta,
             )
         }
-        None => plasm_core::DomainExposureSession::new(cgs.as_ref(), body.entry_id.as_str(), &refs),
+        None => plasm_core::TeachingExposureSession::new(cgs.as_ref(), body.entry_id.as_str(), &refs),
     };
     let sym_cross = st.sessions.symbol_map_cross_cache();
-    let domain_prompt = st
+    let teaching_prompt = st
         .engine
         .prompt_pipeline()
-        .render_domain_first_wave_for_session(cgs.as_ref(), &domain_exposure, Some(sym_cross));
+        .render_teaching_first_wave_for_session(cgs.as_ref(), &teaching_exposure, Some(sym_cross));
     let prompt =
-        wrap_domain_markdown_literal_block(&domain_prompt, st.engine.prompt_pipeline().render_mode);
+        wrap_teaching_markdown_literal_block(&teaching_prompt, st.engine.prompt_pipeline().render_mode);
     let prompt_hash = PromptHashHex::from_prompt_sha256(&prompt);
     let session_id = ExecuteSessionId::new_random();
     let prompt_hash_str = prompt_hash.to_string();
@@ -1244,7 +1244,7 @@ async fn execute_session_create_response_inner(
         subj,
         Some(ctx_arc.cgs.http_backend.clone()),
         names.clone(),
-        Some(domain_exposure),
+        Some(teaching_exposure),
         principal_stored.clone(),
         plugin_generation,
         catalog_cgs_hash,
@@ -1282,7 +1282,7 @@ pub async fn execute_session_create_response(
 }
 
 /// Append another registry row’s [`plasm_core::CgsContext`] to an existing execute session (same
-/// `prompt_hash` / `session`); monotonic `e#` / `m#` / `p#` via [`plasm_core::DomainExposureSession`].
+/// `prompt_hash` / `session`); monotonic `e#` / `m#` / `p#` via [`plasm_core::TeachingExposureSession`].
 #[allow(clippy::too_many_arguments)]
 pub async fn federate_execute_session(
     st: &PlasmHostState,
@@ -1358,7 +1358,7 @@ pub async fn federate_execute_session(
     sess.contexts_by_entry
         .insert(new_entry_id.clone(), ctx_arc.clone());
 
-    let Some(mut exp) = sess.domain_exposure.take() else {
+    let Some(mut exp) = sess.teaching_exposure.take() else {
         return Err("session has no incremental exposure state".into());
     };
 
@@ -1395,7 +1395,7 @@ pub async fn federate_execute_session(
     let added_qualified = exp.qualified_entities_since(n0);
 
     if added_qualified.is_empty() {
-        sess.domain_exposure = Some(exp);
+        sess.teaching_exposure = Some(exp);
         st.sessions
             .replace_session(&prompt_hash_p, &session_id_p, sess)
             .await;
@@ -1405,7 +1405,7 @@ pub async fn federate_execute_session(
             entities: names,
             markdown_delta: String::new(),
             reused_session: true,
-            domain_prompt_chars_added: 0,
+            teaching_prompt_chars_added: 0,
         });
     }
 
@@ -1418,7 +1418,7 @@ pub async fn federate_execute_session(
     let delta = st
         .engine
         .prompt_pipeline()
-        .render_domain_exposure_delta_federated(&by_entry, &exp, &added_qualified, Some(sym_cross));
+        .render_teaching_exposure_delta_federated(&by_entry, &exp, &added_qualified, Some(sym_cross));
     let mut names_sorted = names.clone();
     names_sorted.sort_unstable();
     let mut wave = String::new();
@@ -1428,13 +1428,13 @@ pub async fn federate_execute_session(
         &names_sorted,
     ));
     wave.push_str("\n\n");
-    wave.push_str(&wrap_domain_markdown_literal_block(
+    wave.push_str(&wrap_teaching_markdown_literal_block(
         &delta,
         st.engine.prompt_pipeline().render_mode,
     ));
     sess.prompt_text.push_str(&wave);
     sess.entities = exp.entities.clone();
-    sess.domain_exposure = Some(exp);
+    sess.teaching_exposure = Some(exp);
     sess.domain_revision = sess.domain_revision.saturating_add(1);
     st.sessions
         .replace_session(&prompt_hash_p, &session_id_p, sess)
@@ -1446,13 +1446,13 @@ pub async fn federate_execute_session(
         entities: names,
         markdown_delta: wave.clone(),
         reused_session: false,
-        domain_prompt_chars_added: wave.chars().count() as u64,
+        teaching_prompt_chars_added: wave.chars().count() as u64,
     })
 }
 
 #[allow(dead_code)]
 const PLASM_NOOP_EXPRESSION_HINTS: &str = "\
-**Syntax (unchanged):** Search: `Entity~\"text\"` or `Entity.search(key=value, …)` — brace-only `Entity{…}` works when the entity has Search but no Query (e.g. Linear `Issue`). Views: abstract constructors from DOMAIN (`IssueContext(id)`, `MyWorkSnapshot`). Get + relation: `Issue(id).comments`.\n";
+**Syntax (unchanged):** Search: `Entity~\"text\"` or `Entity.search(key=value, …)` — brace-only `Entity{…}` works when the entity has Search but no Query (e.g. Linear `Issue`). Views: abstract constructors from teaching table (`IssueContext(id)`, `MyWorkSnapshot`). Get + relation: `Issue(id).comments`.\n";
 
 fn expand_session_symbol_reminder(n: usize, noop_expand: bool) -> String {
     if noop_expand {
@@ -1469,8 +1469,8 @@ fn expand_session_symbol_reminder(n: usize, noop_expand: bool) -> String {
     }
 }
 
-/// Append expand-wave Plasm instruction blocks for more entity names; [`DomainExposureSession`] keeps `e#`/`m#`/`p#` stable.
-pub async fn expand_execute_domain_session(
+/// Append expand-wave Plasm instruction blocks for more entity names; [`TeachingExposureSession`] keeps `e#`/`m#`/`p#` stable.
+pub async fn expand_execute_teaching_session(
     st: &PlasmHostState,
     principal: Option<&crate::incoming_auth::TenantPrincipal>,
     prompt_hash: &str,
@@ -1497,7 +1497,7 @@ pub async fn expand_execute_domain_session(
     }
     let scope_intent = sess.context_intent.clone();
     let ranked_slice = sess.ranked_capabilities.as_deref();
-    let Some(mut exp) = sess.domain_exposure.take() else {
+    let Some(mut exp) = sess.teaching_exposure.take() else {
         return Err("session has no incremental exposure state".into());
     };
 
@@ -1587,7 +1587,7 @@ pub async fn expand_execute_domain_session(
 
     if added_qualified.is_empty() {
         sess.entities = exp.entities.clone();
-        sess.domain_exposure = Some(exp);
+        sess.teaching_exposure = Some(exp);
         st.sessions
             .replace_session(&prompt_hash_p, &session_id_p, sess)
             .await;
@@ -1604,14 +1604,14 @@ pub async fn expand_execute_domain_session(
             .collect();
         st.engine
             .prompt_pipeline()
-            .render_domain_exposure_delta_federated(
+            .render_teaching_exposure_delta_federated(
                 &by_entry,
                 &exp,
                 &added_qualified,
                 Some(sym_cross),
             )
     } else {
-        st.engine.prompt_pipeline().render_domain_exposure_delta(
+        st.engine.prompt_pipeline().render_teaching_exposure_delta(
             cgs_primary,
             &exp,
             &added,
@@ -1626,13 +1626,13 @@ pub async fn expand_execute_domain_session(
     }
     wave.push_str(&expand_session_symbol_reminder(n_total, false));
     wave.push_str("\n\n");
-    wave.push_str(&wrap_domain_markdown_literal_block(
+    wave.push_str(&wrap_teaching_markdown_literal_block(
         &delta,
         st.engine.prompt_pipeline().render_mode,
     ));
     sess.prompt_text.push_str(&wave);
     sess.entities = exp.entities.clone();
-    sess.domain_exposure = Some(exp);
+    sess.teaching_exposure = Some(exp);
     sess.domain_revision = sess.domain_revision.saturating_add(1);
     st.sessions
         .replace_session(&prompt_hash_p, &session_id_p, sess)
@@ -1750,11 +1750,11 @@ pub(crate) async fn apply_capability_seeds(
                 // First attach: restate teaching-table snapshot only when a **new** execute row opened.
                 let mode = st.engine.prompt_pipeline().render_mode;
                 if mode.is_tsv() {
-                    if let Some(body_tsv) = domain_tsv_table_from_wrapped_prompt(
+                    if let Some(body_tsv) = teaching_tsv_table_from_wrapped_prompt(
                         &created.prompt,
                         mode.markdown_fence_info_string(),
                     ) {
-                        let wrapped = wrap_domain_markdown_literal_block(&body_tsv, mode);
+                        let wrapped = wrap_teaching_markdown_literal_block(&body_tsv, mode);
                         open_md.push_str("\n\n");
                         open_md.push_str(&wrapped);
                     } else {
@@ -1766,7 +1766,7 @@ pub(crate) async fn apply_capability_seeds(
                     open_md.push_str(&created.prompt);
                 }
             }
-            let domain_prompt_chars_added = if created.reused {
+            let teaching_prompt_chars_added = if created.reused {
                 0
             } else {
                 open_md.chars().count() as u64
@@ -1777,7 +1777,7 @@ pub(crate) async fn apply_capability_seeds(
                 entities: primary_entities,
                 markdown_delta: open_md.clone(),
                 reused_session: created.reused,
-                domain_prompt_chars_added,
+                teaching_prompt_chars_added,
             });
             (created.prompt_hash, created.session, true)
         }
@@ -1793,7 +1793,7 @@ pub(crate) async fn apply_capability_seeds(
         )
         .await?;
         if let Some(sess_arc) = st.sessions.get_by_strs(&prompt_hash, &session_id).await {
-            if let Some(ref exp) = sess_arc.domain_exposure {
+            if let Some(ref exp) = sess_arc.teaching_exposure {
                 let catalogs_ready = plan
                     .process_order
                     .iter()
@@ -1811,7 +1811,7 @@ pub(crate) async fn apply_capability_seeds(
                             entities: vec![],
                             markdown_delta: format_session_unchanged_one_liner(n),
                             reused_session: true,
-                            domain_prompt_chars_added: 0,
+                            teaching_prompt_chars_added: 0,
                         }],
                         binding_updated,
                         new_symbol_space: false,
@@ -1849,7 +1849,7 @@ pub(crate) async fn apply_capability_seeds(
             .await?;
             waves.push(wave);
         } else {
-            let md = expand_execute_domain_session(
+            let md = expand_execute_teaching_session(
                 st,
                 principal_incoming,
                 prompt_hash.as_str(),
@@ -1867,7 +1867,7 @@ pub(crate) async fn apply_capability_seeds(
                 mode: "expand".to_string(),
                 entry_id: eid.clone(),
                 entities: entities.clone(),
-                domain_prompt_chars_added: md.chars().count() as u64,
+                teaching_prompt_chars_added: md.chars().count() as u64,
                 markdown_delta: md,
                 reused_session: false,
             });
@@ -1877,13 +1877,13 @@ pub(crate) async fn apply_capability_seeds(
     if waves.len() > 1
         && waves
             .iter()
-            .all(|w| w.domain_prompt_chars_added == 0 && w.markdown_delta.trim().is_empty())
+            .all(|w| w.teaching_prompt_chars_added == 0 && w.markdown_delta.trim().is_empty())
     {
         let n = st
             .sessions
             .get_by_strs(&prompt_hash, &session_id)
             .await
-            .and_then(|s| s.domain_exposure.as_ref().map(|e| e.entities.len()))
+            .and_then(|s| s.teaching_exposure.as_ref().map(|e| e.entities.len()))
             .unwrap_or(0)
             .max(1);
         waves = vec![CapabilityWaveOutcome {
@@ -1892,7 +1892,7 @@ pub(crate) async fn apply_capability_seeds(
             entities: vec![],
             markdown_delta: format_session_unchanged_one_liner(n),
             reused_session: true,
-            domain_prompt_chars_added: 0,
+            teaching_prompt_chars_added: 0,
         }];
     }
 
@@ -2419,7 +2419,7 @@ fn plugin_execute_options_from_session(
 
 /// Upper bound for valid `e#` indices: number of entities exposed in this session (initial open + expand waves).
 fn session_entity_symbol_upper_bound(sess: &ExecuteSession) -> Option<usize> {
-    if let Some(exp) = sess.domain_exposure.as_ref() {
+    if let Some(exp) = sess.teaching_exposure.as_ref() {
         let n = exp.entities.len();
         return (n > 0).then_some(n);
     }
@@ -2508,7 +2508,7 @@ pub(crate) fn parse_plasm_line_for_session(
             line,
             sess.cgs.as_ref(),
             &sess.entities,
-            sess.domain_exposure.as_ref(),
+            sess.teaching_exposure.as_ref(),
         );
         let sym_map = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(
             sess,
@@ -3586,7 +3586,7 @@ async fn get_execute_session_symbols(
     }
     let loaded_catalogs: Vec<String> = sess.contexts_by_entry.keys().cloned().collect();
     let entity_symbols = sess
-        .domain_exposure
+        .teaching_exposure
         .as_ref()
         .map(|ex| ex.symbol_map_arc().exposed_entity_symbol_rows())
         .unwrap_or_default();
@@ -4805,7 +4805,7 @@ mod tests {
         .expect("open");
         assert_eq!(created.entities, vec!["Profile"]);
 
-        let first_wave = expand_execute_domain_session(
+        let first_wave = expand_execute_teaching_session(
             &st,
             None,
             &created.prompt_hash,
@@ -4823,7 +4823,7 @@ mod tests {
         );
         assert!(
             first_wave.contains("```tsv"),
-            "expected fenced DOMAIN (default TSV render): {first_wave}"
+            "expected fenced teaching TSV (default TSV render): {first_wave}"
         );
         assert!(
             first_wave.contains("`e1`…`e2`"),
@@ -4841,7 +4841,7 @@ mod tests {
             "GET /execute and logs use cumulative exposed entities after expand"
         );
 
-        let dup = expand_execute_domain_session(
+        let dup = expand_execute_teaching_session(
             &st,
             None,
             &created.prompt_hash,

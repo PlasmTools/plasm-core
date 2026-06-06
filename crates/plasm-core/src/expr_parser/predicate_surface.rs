@@ -20,7 +20,7 @@
 //!   same offset, matching `Parser::parse_op` in `expr_parser/mod.rs`.
 //! - A clause with **no** such operator, or with an **empty** field or value after split, is
 //!   **skipped** (not an error). That differs from strict parse, which rejects malformed preds.
-//! - **DOMAIN / omitted RHS** (`field,` with null value) is not modelled; strict parse accepts a
+//! - **teaching table / omitted RHS** (`field,` with null value) is not modelled; strict parse accepts a
 //!   null RHS when the next token is `,` or `}` (see `Parser::parse_predicate_rhs_after_op` in
 //!   `expr_parser/mod.rs`).
 //!

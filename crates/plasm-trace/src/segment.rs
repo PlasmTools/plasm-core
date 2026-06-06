@@ -45,7 +45,7 @@ fn is_false(b: &bool) -> bool {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TraceSegment {
     PlasmContext {
-        domain_prompt_chars_added: u64,
+        teaching_prompt_chars_added: u64,
         reused_session: bool,
         #[serde(default, skip_serializing_if = "String::is_empty")]
         mode: String,
@@ -57,7 +57,7 @@ pub enum TraceSegment {
         seeds: Vec<String>,
     },
     ExpandDomain {
-        domain_prompt_chars_added: u64,
+        teaching_prompt_chars_added: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         entry_id: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -103,7 +103,7 @@ pub enum TraceSegment {
         message: String,
     },
     /// Domain prompt character weight without a `plasm_context` / `expand_domain` row (rare; durable parity).
-    DomainPromptCharsDelta { chars_added: u64 },
+    TeachingPromptCharsDelta { chars_added: u64 },
     /// Response markdown character weight (MCP tool body sizing; pairs with successful `plasm` tool).
     PlasmResponseCharsDelta {
         chars_added: u64,

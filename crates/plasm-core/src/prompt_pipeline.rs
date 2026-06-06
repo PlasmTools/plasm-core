@@ -1,4 +1,4 @@
-//! Owned configuration for DOMAIN prompt rendering and symbol expansion — inject via
+//! Owned configuration for teaching prompt rendering and symbol expansion — inject via
 //! `plasm_runtime::ExecutionConfig` (see the `plasm-runtime` crate).
 //!
 //! Use [`PromptPipelineConfig::with_focus_spec`] / [`PromptPipelineConfig::render_prompt`] so
@@ -6,14 +6,14 @@
 
 use crate::prompt_render::{
     contract_slice_hints_from_exposure, prompt_surface_stats,
-    render_domain_prompt_bundle_for_exposure, render_domain_prompt_bundle_for_exposure_federated,
+    render_teaching_prompt_bundle_for_exposure, render_teaching_prompt_bundle_for_exposure_federated,
     render_prompt_surface_from_bundle, render_prompt_tsv_for_single_catalog_exposure,
-    render_prompt_tsv_with_config, ContractSliceHints, DomainPromptBundle, DomainWaveSurface,
+    render_prompt_tsv_with_config, ContractSliceHints, TeachingPromptBundle, DomainWaveSurface,
     PromptRenderMode, PromptSurfaceStats, RenderConfig,
 };
 use crate::schema::CGS;
 use crate::symbol_tuning::{
-    expand_expr_for_domain_session, expand_expr_for_parse, DomainExposureSession,
+    expand_expr_for_teaching_session, expand_expr_for_parse, TeachingExposureSession,
     ExposureEntityKey, FocusSpec, IdentMetaKey, IdentMetadata, SymbolMap,
     SymbolMapCrossRequestCache,
 };
@@ -21,7 +21,7 @@ use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Which entities drive DOMAIN slicing (mirrors [`FocusSpec`](crate::symbol_tuning::FocusSpec) but owned).
+/// Which entities drive teaching table slicing (mirrors [`FocusSpec`](crate::symbol_tuning::FocusSpec) but owned).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum PromptFocus {
     #[default]
@@ -58,7 +58,7 @@ struct FederatedExposureResolver<'exposure, 'cgs> {
 impl<'exposure, 'cgs> FederatedExposureResolver<'exposure, 'cgs> {
     fn new(
         by_entry: &'cgs IndexMap<String, &'cgs CGS>,
-        exposure: &'exposure DomainExposureSession,
+        exposure: &'exposure TeachingExposureSession,
     ) -> Self {
         let mut by_qualified: HashMap<(String, String), &'cgs CGS> = HashMap::new();
         let mut by_entity_unique: HashMap<&str, &'cgs CGS> = HashMap::new();
@@ -129,7 +129,7 @@ impl PromptPipelineConfig {
         f(FocusSpec::Seeds(&refs))
     }
 
-    fn session_symbol_map(&self, exposure: &DomainExposureSession) -> Option<Arc<SymbolMap>> {
+    fn session_symbol_map(&self, exposure: &TeachingExposureSession) -> Option<Arc<SymbolMap>> {
         self.uses_symbols().then(|| exposure.symbol_map_arc())
     }
 
@@ -154,11 +154,11 @@ impl PromptPipelineConfig {
         Some(acc)
     }
 
-    fn render_domain_bundle_surface<'b, F>(
+    fn render_teaching_bundle_surface<'b, F>(
         &self,
-        bundle: &DomainPromptBundle,
+        bundle: &TeachingPromptBundle,
         full_entities: &[&str],
-        exposure: &DomainExposureSession,
+        exposure: &TeachingExposureSession,
         ident_meta: Option<&IdentMetadataMap>,
         resolve: F,
         wave_surface: DomainWaveSurface,
@@ -193,7 +193,7 @@ impl PromptPipelineConfig {
         s
     }
 
-    /// Same as [`RenderConfig::for_eval_canonical`](crate::prompt_render::RenderConfig::for_eval_canonical): canonical DOMAIN names, no `e#`/`p#`/`m#`.
+    /// Same as [`RenderConfig::for_eval_canonical`](crate::prompt_render::RenderConfig::for_eval_canonical): canonical teaching table names, no `e#`/`p#`/`m#`.
     pub fn for_canonical_no_symbols() -> Self {
         Self {
             focus: PromptFocus::All,
@@ -230,14 +230,14 @@ impl PromptPipelineConfig {
         }
     }
 
-    /// DOMAIN prompt string (same rules as [`RenderConfig::for_eval`](crate::prompt_render::RenderConfig::for_eval) + optional REPL focus override; TSV vs markdown follows [`Self::render_mode`]).
+    /// teaching prompt string (same rules as [`RenderConfig::for_eval`](crate::prompt_render::RenderConfig::for_eval) + optional REPL focus override; TSV vs markdown follows [`Self::render_mode`]).
     pub fn render_prompt(&self, cgs: &CGS, repl_focus_override: Option<&str>) -> String {
         self.with_focus_spec(repl_focus_override, |focus| {
             self.render_surface(cgs, self.render_config_for_focus(focus))
         })
     }
 
-    /// DOMAIN prompt TSV table (expression-first grammar teaching surface).
+    /// teaching prompt TSV table (expression-first grammar teaching surface).
     pub fn render_prompt_tsv(&self, cgs: &CGS, repl_focus_override: Option<&str>) -> String {
         self.with_focus_spec(repl_focus_override, |focus| {
             render_prompt_tsv_with_config(cgs, self.render_config_for_focus(focus))
@@ -251,11 +251,11 @@ impl PromptPipelineConfig {
         })
     }
 
-    /// First DOMAIN wave: **exact** seed entities + monotonic [`DomainExposureSession`] symbols (no 2-hop union).
-    pub fn render_domain_first_wave_for_session(
+    /// First teaching wave: **exact** seed entities + monotonic [`TeachingExposureSession`] symbols (no 2-hop union).
+    pub fn render_teaching_first_wave_for_session(
         &self,
         cgs: &CGS,
-        exposure: &DomainExposureSession,
+        exposure: &TeachingExposureSession,
         symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     ) -> String {
         let cfg = RenderConfig {
@@ -265,11 +265,11 @@ impl PromptPipelineConfig {
         render_prompt_tsv_for_single_catalog_exposure(cgs, cfg, exposure)
     }
 
-    /// First DOMAIN wave for a **federated** session: one [`CGS`] per registry `entry_id`.
-    pub fn render_domain_first_wave_for_session_federated<'b>(
+    /// First teaching wave for a **federated** session: one [`CGS`] per registry `entry_id`.
+    pub fn render_teaching_first_wave_for_session_federated<'b>(
         &self,
         by_entry: &'b IndexMap<String, &'b CGS>,
-        exposure: &'b DomainExposureSession,
+        exposure: &'b TeachingExposureSession,
         symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     ) -> String {
         let cfg = RenderConfig {
@@ -277,12 +277,12 @@ impl PromptPipelineConfig {
             ..self.render_config_for_focus(FocusSpec::All)
         };
         let bundle =
-            render_domain_prompt_bundle_for_exposure_federated(by_entry, cfg, exposure, None);
+            render_teaching_prompt_bundle_for_exposure_federated(by_entry, cfg, exposure, None);
         let full_entities: Vec<&str> = exposure.entities.iter().map(|s| s.as_str()).collect();
         let resolver = FederatedExposureResolver::new(by_entry, exposure);
         let ident_meta =
             self.build_ident_meta_for_entities(&full_entities, |entity| resolver.resolve(entity));
-        self.render_domain_bundle_surface(
+        self.render_teaching_bundle_surface(
             &bundle,
             &full_entities,
             exposure,
@@ -292,11 +292,11 @@ impl PromptPipelineConfig {
         )
     }
 
-    /// Incremental DOMAIN: append table blocks for `new_entity_names` only (symbols stable vs `exposure`).
-    pub fn render_domain_exposure_delta(
+    /// Incremental teaching table: append table blocks for `new_entity_names` only (symbols stable vs `exposure`).
+    pub fn render_teaching_exposure_delta(
         &self,
         cgs: &CGS,
-        exposure: &DomainExposureSession,
+        exposure: &TeachingExposureSession,
         new_entity_names: &[&str],
         symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     ) -> String {
@@ -305,9 +305,9 @@ impl PromptPipelineConfig {
             ..self.render_config_for_focus(FocusSpec::All)
         };
         let bundle =
-            render_domain_prompt_bundle_for_exposure(cgs, cfg, exposure, Some(new_entity_names));
+            render_teaching_prompt_bundle_for_exposure(cgs, cfg, exposure, Some(new_entity_names));
         let ident_meta = self.build_ident_meta_for_entities(new_entity_names, |_| cgs);
-        self.render_domain_bundle_surface(
+        self.render_teaching_bundle_surface(
             &bundle,
             new_entity_names,
             exposure,
@@ -317,11 +317,11 @@ impl PromptPipelineConfig {
         )
     }
 
-    /// Incremental DOMAIN for federated sessions (per-entity owning graph).
-    pub fn render_domain_exposure_delta_federated<'b>(
+    /// Incremental teaching table for federated sessions (per-entity owning graph).
+    pub fn render_teaching_exposure_delta_federated<'b>(
         &self,
         by_entry: &'b IndexMap<String, &'b CGS>,
-        exposure: &'b DomainExposureSession,
+        exposure: &'b TeachingExposureSession,
         new_entities: &[ExposureEntityKey],
         symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     ) -> String {
@@ -329,7 +329,7 @@ impl PromptPipelineConfig {
             symbol_map_cross_cache,
             ..self.render_config_for_focus(FocusSpec::All)
         };
-        let bundle = render_domain_prompt_bundle_for_exposure_federated(
+        let bundle = render_teaching_prompt_bundle_for_exposure_federated(
             by_entry,
             cfg,
             exposure,
@@ -344,7 +344,7 @@ impl PromptPipelineConfig {
                 .expect("new entity key");
             resolver.resolve_qualified(key.entry_id.as_str(), key.entity.as_str())
         });
-        self.render_domain_bundle_surface(
+        self.render_teaching_bundle_surface(
             &bundle,
             &entity_names,
             exposure,
@@ -406,16 +406,16 @@ impl PromptPipelineConfig {
         })
     }
 
-    /// Expand using monotonic session symbols ([`DomainExposureSession`]) when present.
+    /// Expand using monotonic session symbols ([`TeachingExposureSession`]) when present.
     pub fn expand_expr_for_session_with_optional_exposure(
         &self,
         line: &str,
         cgs: &CGS,
         entities: &[String],
-        exposure: Option<&DomainExposureSession>,
+        exposure: Option<&TeachingExposureSession>,
     ) -> String {
         if let Some(exp) = exposure {
-            expand_expr_for_domain_session(line, exp, self.uses_symbols())
+            expand_expr_for_teaching_session(line, exp, self.uses_symbols())
         } else {
             self.expand_expr_for_session_entities(line, cgs, entities)
         }

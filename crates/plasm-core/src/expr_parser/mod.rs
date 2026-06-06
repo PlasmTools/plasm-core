@@ -5,18 +5,18 @@
 //! ```text
 //! expr       = source pipeline* projection?
 //! source     = Entity "(" id ")"               — GetExpr
-//!            | Entity "(" id_field "=" value ")" — GetExpr (shadow sugar; not DOMAIN-taught)
+//!            | Entity "(" id_field "=" value ")" — GetExpr (shadow sugar; not not taught in the teaching table)
 //!            | Entity "{" pred ("," pred)* "}"  — QueryExpr with filters
 //!            | Entity "~" quoted_or_bare         — Search QueryExpr
 //!            | Entity                            — QueryExpr::all
-//!            | `v` DIGITS `{` union_ctor_fields `}` — [`Expr::TeachingValue`] (DOMAIN union constructor literal)
+//!            | `v` DIGITS `{` union_ctor_fields `}` — [`Expr::TeachingValue`] (teaching table union constructor literal)
 //!
 //! **Not valid:** `Entity:id` or `Get(Entity, id)` — there is no `Get(` wrapper; use **`Entity(id)`** only.
 //! A typo like `Pokemon:pikachu` is rejected (otherwise it would parse as `Pokemon` + ignored tail → wrong query).
 //!
 //! pipeline   = "." field_name                  — ChainExpr (EntityRef follow) or relation nav
 //!            | "." method "()"                  — zero-arity pipeline: DeleteExpr or InvokeExpr (by capability kind)
-//!            | "." method "(" method_args ")"   — dotted-call alias: Create / Update / Action / Delete with args (see DOMAIN)
+//!            | "." method "(" method_args ")"   — dotted-call alias: Create / Update / Action / Delete with args (see teaching table)
 //!              method_args = dotted_call_args | union_ctor_payload
 //!              dotted_call_args = ε | ".." | key=value ("," key=value)* ["," ".."]
 //!              union_ctor_payload = `v` DIGITS `{` … `}` (sole contents of `( )` when capability root input is `InputType::Union`)
@@ -25,7 +25,7 @@
 //!            | ".^" Entity "{" preds "}"        — reverse traversal with filter
 //!
 //! pred       = field op value?
-//!            | foreign_entity "." field op value?  — cross-entity filter (value may be omitted after `op` for DOMAIN placeholders)
+//!            | foreign_entity "." field op value?  — cross-entity filter (value may be omitted after `op` for teaching placeholders)
 //!
 //! op         = "=" | "!=" | ">" | "<" | ">=" | "<=" | "~"
 //! value      = quoted_string | structured_heredoc | uuid | number | bare_word (bare allows `\\` before delimiters)
@@ -35,7 +35,7 @@
 //! structured_heredoc = `<<` TAG `\n` payload `\n` TAG (tagged heredoc only; TAG matches `[A-Za-z_][A-Za-z0-9_]*`).
 //! The close line may be exactly `TAG`, or `TAG` immediately followed by optional ASCII whitespace and
 //! parser-owned delimiters such as `)`, `}`, `,`, or `})` on that line (e.g. `TAG})` after the body line).
-//! DOMAIN gloss and diagnostics emphasize heredocs for non-`short` string semantics.
+//! teaching gloss and diagnostics emphasize heredocs for non-`short` string semantics.
 //!
 //! projection = "[" field ("," field)* "]"
 //! ```
@@ -45,7 +45,7 @@
 //! Value parsing lives in submodule `value` (file `value.rs` next to this one): strict `Entity(id)` / search
 //! vs lenient predicate and dotted-call arg RHS; see that file for scannerless / fault-tolerant parsing references.
 //!
-//! DOMAIN prompts may show bare `$` as a teaching placeholder; it parses as the string `$`.
+//! teaching prompts may show bare `$` as a teaching placeholder; it parses as the string `$`.
 //! Unary `Entity($)` in `{…}` filters, dotted-call arguments, and array elements matches scalar teaching — a fill-in
 //! for that entity’s identity (the renderer emits `e#($)` the same as other witness placeholders).
 //!
@@ -124,7 +124,7 @@ pub enum ParseErrorKind {
         span_opt: Option<(usize, usize)>,
     },
     IdMustBeStringOrNumber,
-    /// `Entity()` — no id before `)`; singleton GET uses `Entity.method()` from DOMAIN.
+    /// `Entity()` — no id before `)`; singleton GET uses `Entity.method()` from teaching table.
     EmptyGetParens {
         entity: String,
     },
@@ -249,7 +249,7 @@ impl fmt::Display for ParseErrorKind {
             ParseErrorKind::SearchTextMustBeString => write!(f, "search text must be a string"),
             ParseErrorKind::SearchNotSupported { entity } => write!(
                 f,
-                "full-text `~` search is not available for entity '{entity}' (no Search capability); use query {{…}} or Get(id) per that entity's DOMAIN block"
+                "full-text `~` search is not available for entity '{entity}' (no Search capability); use query {{…}} or Get(id) per that entity's teaching block"
             ),
             ParseErrorKind::PredicateFieldNotFound { field, entity, .. } => write!(
                 f,
@@ -395,7 +395,7 @@ pub fn parse(input: &str, cgs: &CGS) -> Result<ParsedExpr, ParseError> {
 }
 
 /// Parse against multiple disjoint [`CGS`] graphs (federated execute). Caller supplies the session
-/// [`crate::symbol_tuning::SymbolMap`] behind [`Arc`] (e.g. [`DomainExposureSession::symbol_map_arc`](crate::symbol_tuning::DomainExposureSession::symbol_map_arc)).
+/// [`crate::symbol_tuning::SymbolMap`] behind [`Arc`] (e.g. [`TeachingExposureSession::symbol_map_arc`](crate::symbol_tuning::TeachingExposureSession::symbol_map_arc)).
 pub fn parse_with_cgs_layers(
     input: &str,
     layers: &[&CGS],
@@ -712,7 +712,7 @@ impl<'a> Parser<'a> {
         Ok(parts)
     }
 
-    /// Shadow sugar (not DOMAIN-taught): `Entity(id_field=value)` on simple-id entities ≡ `Entity(value)`.
+    /// Shadow sugar (not not taught in the teaching table): `Entity(id_field=value)` on simple-id entities ≡ `Entity(value)`.
     ///
     /// Rejects wrong keys and multi-key maps (compound entities use [`Self::parse_strict_compound_key_value_map`]).
     fn try_parse_simple_id_field_get_sugar(
@@ -1100,7 +1100,7 @@ impl<'a> Parser<'a> {
         Ok(map)
     }
 
-    /// Consumes `..` if present (DOMAIN optional-parameter ellipsis).
+    /// Consumes `..` if present (teaching table optional-parameter ellipsis).
     fn try_consume_double_dot(&mut self) -> bool {
         let b = self.input.as_bytes();
         if b.get(self.pos) == Some(&b'.') && b.get(self.pos + 1) == Some(&b'.') {
@@ -1519,7 +1519,7 @@ impl<'a> Parser<'a> {
         Ok(Predicate::comparison(pred_wire, op, val))
     }
 
-    /// Value after a comparison operator in `{…}` — may be omitted (comma or `}` next) for DOMAIN slots.
+    /// Value after a comparison operator in `{…}` — may be omitted (comma or `}` next) for teaching slots.
     fn parse_predicate_rhs_after_op(&mut self) -> Result<Value, ParseError> {
         self.skip_ws();
         if matches!(self.peek_char(), Some(',') | Some('}')) {
@@ -3339,7 +3339,7 @@ mod tests {
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
-    /// Dotted-call args: `(..)` when all parameters are optional (DOMAIN ellipsis).
+    /// Dotted-call args: `(..)` when all parameters are optional (teaching table ellipsis).
     #[test]
     fn parse_dotted_call_optional_only_double_dot_typechecks() {
         let dir = std::path::Path::new("../../apis/clickup");
@@ -3964,7 +3964,7 @@ mod tests {
         );
     }
 
-    /// Unary `Entity($)` parses inside brace-query RHS (DOMAIN fill-in, same as scalar `$`).
+    /// Unary `Entity($)` parses inside brace-query RHS (teaching table fill-in, same as scalar `$`).
     #[test]
     fn parse_accepts_unary_entity_ctor_dollar_in_brace_query() {
         let dir = std::path::Path::new("../../apis/github");
@@ -4443,7 +4443,7 @@ mod tests {
 
     #[test]
     fn federated_issue_collision_parse_uses_opaque_entity_catalog() {
-        use crate::symbol_tuning::DomainExposureSession;
+        use crate::symbol_tuning::TeachingExposureSession;
         use std::path::Path;
         use std::sync::Arc;
 
@@ -4458,7 +4458,7 @@ mod tests {
         let mut cgs_linear = load_schema_dir(&linear_dir).expect("linear");
         cgs_linear.entry_id = Some("linear".into());
         let layers = [&cgs_github, &cgs_linear];
-        let mut exp = DomainExposureSession::new(&cgs_github, "github", &["Issue"]);
+        let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["Issue"]);
         exp.expose_entities(&layers, Arc::new(cgs_linear.clone()), "linear", &["Issue"]);
         let map = exp.symbol_map_arc();
         assert_eq!(

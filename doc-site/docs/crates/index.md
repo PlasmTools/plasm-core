@@ -4,7 +4,7 @@ Workspace layout for **[plasm-core](https://github.com/PlasmTools/plasm-core)**.
 
 | Crate | Role |
 |-------|------|
-| [**plasm-core**](https://docs.rs/plasm-core) | CGS, AST, typecheck, discovery, DOMAIN rendering — **catalog-agnostic**. |
+| [**plasm-core**](https://docs.rs/plasm-core) | CGS, AST, typecheck, discovery, teaching table rendering — **catalog-agnostic**. |
 | [**plasm-cml**](https://docs.rs/plasm-cml) | CML AST and transport parsing (shared with compile). |
 | [**plasm-compile**](https://docs.rs/plasm-compile) | Predicates, decoding, template validation. |
 | [**plasm-runtime**](https://docs.rs/plasm-runtime) | Execution engine, cache, replay, auth resolution. |

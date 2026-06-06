@@ -13,7 +13,7 @@ use plasm_agent::{
     server_state::CatalogBootstrap,
 };
 use plasm_core::discovery::InMemoryCgsRegistry;
-use plasm_core::{CgsContext, DomainExposureSession};
+use plasm_core::{CgsContext, TeachingExposureSession};
 use plasm_runtime::{ExecutionEngine, ExecutionMode};
 
 pub const VIEWS_MATRIX_ENTRY_ID: &str = "langmatrix_views";
@@ -62,7 +62,7 @@ pub fn views_execute_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
         "LangItemLink",
         "LangOwnerFilterDemo",
     ];
-    let exp = DomainExposureSession::new(cgs.as_ref(), VIEWS_MATRIX_ENTRY_ID, wave);
+    let exp = TeachingExposureSession::new(cgs.as_ref(), VIEWS_MATRIX_ENTRY_ID, wave);
     ExecuteSession::new(
         "matrix_views_ph".into(),
         String::new(),

@@ -39,7 +39,7 @@ pub enum Expr {
     #[serde(rename = "page")]
     Page(PageExpr),
 
-    /// DOMAIN-only teaching literal (e.g. top-level union constructor `v101{p#=$,…}`).
+    /// teaching-table-only teaching literal (e.g. top-level union constructor `v101{p#=$,…}`).
     ///
     /// Parsed and type-checked for prompt validation; not executable — the runtime rejects execution.
     #[serde(rename = "teaching_value")]
@@ -459,7 +459,7 @@ impl Ref {
         }
     }
 
-    /// True if any identity slot is still the DOMAIN teaching `$` token (must not reach transport).
+    /// True if any identity slot is still the teaching table teaching `$` token (must not reach transport).
     pub fn contains_domain_placeholder(&self) -> bool {
         match &self.key {
             EntityKey::Simple(id) => id.as_str() == "$",

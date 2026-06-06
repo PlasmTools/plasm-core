@@ -13,13 +13,13 @@ Local schema-driven CLIs are **not** `plasm`; use **`plasm-repl`** (`--schema`),
 
 The **`plasm` client owns the monotonic `e#` / `m#` / `p#` teaching table**, not the HTTP execute session:
 
-- **`plasm context`** fetches catalog CGS via `GET /v1/registry/{entry_id}?include_cgs=true`, builds a local domain exposure session, and appends teaching rows to **`domain.tsv`**.
+- **`plasm context`** fetches catalog CGS via `GET /v1/registry/{entry_id}?include_cgs=true`, builds a local teaching exposure session, and appends teaching rows to **`teaching.tsv`**.
 - **`plasm run`** expands programs against that local symbol state, then POSTs the **expanded** surface to the server (lazy server execute binding for auth/HTTP/paging only).
 - Catalog digest changes require **`plasm context --new`** (no silent symbol reuse).
 
 There is **no** `primary_api` in the agent-facing model — capabilities are always **`api:Entity`** qualified in summaries and `session_meta.txt`.
 
-See also [incremental-domain-prompts.md](incremental-domain-prompts.md) (federated sessions, append-only symbols).
+See also [incremental-teaching-prompts.md](incremental-teaching-prompts.md) (federated sessions, append-only symbols).
 
 ## One-time setup
 
@@ -35,8 +35,8 @@ Profile and session state live under **the current working directory**: `.plasm/
 ## Agent flow
 
 1. **`plasm search "…"`** — MCP-shaped discovery Markdown; **merges** rows into `hosts/<slug>/discovery.tsv` by `(api, entity)`; when a session is active, appends **`out/NNNN-search/`** under that session.
-2. **`plasm context -i "…" pokeapi:Pokemon pokeapi:Move`** — client symbol exposure; prints the **symbol wave** (teaching TSV) on stdout; appends **`domain.tsv`**; records **`out/NNNN-context/`** (`wave.tsv`, `meta.json`); updates **`hosts/<slug>/current`**.
-3. **`plasm context --new -i "…" github:Issue`** — new client session id and fresh **`domain.tsv`** (`entry_id:Entity` seeds required with `--new`).
+2. **`plasm context -i "…" pokeapi:Pokemon pokeapi:Move`** — client symbol exposure; prints the **symbol wave** (teaching TSV) on stdout; appends **`teaching.tsv`**; records **`out/NNNN-context/`** (`wave.tsv`, `meta.json`); updates **`hosts/<slug>/current`**.
+3. **`plasm context --new -i "…" github:Issue`** — new client session id and fresh **`teaching.tsv`** (`entry_id:Entity` seeds required with `--new`).
 4. **`plasm run`** — expand with client symbols, execute on server.
 
 ```text
@@ -61,14 +61,14 @@ With **`--new`**, every seed must be `entry_id:Entity` (e.g. `pokeapi:Pokemon`).
 ```text
 .plasm/
   profiles/default.json
-  grammar.md
+  # Grammar: canonical spec in [Language definition](plasm-language-definition.md) (teaching table/teaching.tsv is the live teaching surface)
   hosts/<8hex>/
     discovery.tsv                  # merged search cache
     current                        # one line: active session id
   s/<8hex>/
     meta.txt                       # intent, catalog digests, capabilities
     symbols.json                   # client symbol authority
-    domain.tsv                     # cumulative teaching TSV (agent reads this)
+    teaching.tsv                     # cumulative teaching TSV (agent reads this)
     catalogs/<api>.json
     latest                         # one line: newest out/NNNN-* dir
     out/
@@ -91,7 +91,7 @@ plasm init
 plasm search "pokeapi pokemon moves"
 plasm context -i "inspect pokemon combat data" pokeapi:Pokemon pokeapi:Move
 # Active context: pokeapi:Pokemon, pokeapi:Move
-# mirror: …/domain.tsv (+N rows)
+# mirror: …/teaching.tsv (+N rows)
 
 plasm context pokeapi:Type                    # expand same client session (after search)
 echo 'e1(p5=pikachu)[p5,p3]' | plasm run --mode plan

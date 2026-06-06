@@ -12,7 +12,7 @@ Imagine an agent should **show issue #42** in a repo.
 
 1. **Conceptually** there is an entity type like `Issue` with fields (`title`, `state`, …) and relations (`repository`, `assignees`).
 2. **Operationally** “show” becomes an HTTP `GET` with path `/repos/{owner}/{repo}/issues/{number}`.
-3. **For the agent**, you don’t hand-write URLs each time—you expose the graph as **DOMAIN** rows (`e1`, `e2`, …) and let the agent write a tiny **Plasm** expression such as `e1.title` or a short pipeline.
+3. **For the agent**, you don’t hand-write URLs each time—you expose the graph as **teaching table** rows (`e1`, `e2`, …) and let the agent write a tiny **Plasm** expression such as `e1.title` or a short pipeline.
 
 Once that clicks, the formal names below are just labels for those layers.
 
@@ -44,11 +44,12 @@ Think of CGS as *the contract the agent reasons about*. It is authored as YAML (
 
 ## Plasm language: what agents actually write
 
-Agents write **Plasm** programs against symbols exposed in **DOMAIN** instructions:
+Agents write **Plasm** programs against symbols exposed in **teaching table** instructions:
 
-- **`e#`** — Entity rows (nouns in context).
-- **`m#`** — Scalar metrics / counts / summaries.
-- **`p#`** — Plans or projections from earlier steps.
+- **`e#`** — Entity types (nouns in the active catalog).
+- **`m#`** — Methods / capabilities (queries, gets, writes, actions).
+- **`p#`** — Fields, capability parameters, and query filters.
+- **`r#`** — Relation navigation hops (fanout to related entities).
 
 Expressions compose with pipes and postfix transforms. Multi-line payloads use tagged **heredocs** — see the [Language definition](reference/plasm-language-definition.md).
 
@@ -72,7 +73,7 @@ Session shaping (`intent`, reuse keys) matters when agents reconnect — see [MC
 
 ## Federation (multiple catalogs in one session)
 
-One logical session can load **multiple registry entries** (different APIs). Symbols stay session-local; dispatch resolves per owning graph—there is **no merged mega-schema**. See [Incremental DOMAIN](reference/incremental-domain-prompts.md#federated-sessions-multi-catalog).
+One logical session can load **multiple registry entries** (different APIs). Symbols stay session-local; dispatch resolves per owning graph—there is **no merged mega-schema**. See [Incremental teaching](reference/incremental-teaching-prompts.md#federated-sessions-multi-catalog).
 
 ---
 

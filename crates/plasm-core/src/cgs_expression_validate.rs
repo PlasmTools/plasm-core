@@ -2,11 +2,11 @@
 //! expression surface.
 //!
 //! Invoked from [`CGS::validate`](crate::schema::CGS::validate). Structural checks run first; witness +
-//! capability coverage share **one** [`crate::prompt_render::render_domain_prompt_bundle`] (same synthesis as eval DOMAIN).
+//! capability coverage share **one** [`crate::prompt_render::render_teaching_prompt_bundle`] (same synthesis as eval teaching table).
 
 use std::collections::{HashMap, HashSet};
 
-use crate::prompt_render::{render_domain_prompt_bundle_for_validation, DomainPromptModel};
+use crate::prompt_render::{render_teaching_prompt_bundle_for_validation, TeachingPromptModel};
 use crate::schema::{CapabilityKind, InputFieldSchema, ParameterRole};
 use crate::{FieldType, SchemaError, ValueWireFormat, CGS};
 
@@ -77,9 +77,9 @@ fn validate_query_search_scope_params_encodable(cgs: &CGS) -> Result<(), SchemaE
     Ok(())
 }
 
-/// One [`render_domain_prompt_bundle`] pass for witness + capability coverage (was ~2× synthesis).
+/// One [`render_teaching_prompt_bundle`] pass for witness + capability coverage (was ~2× synthesis).
 fn validate_expression_surface_from_single_bundle(cgs: &CGS) -> Result<(), SchemaError> {
-    let bundle = render_domain_prompt_bundle_for_validation(cgs);
+    let bundle = render_teaching_prompt_bundle_for_validation(cgs);
     validate_expression_witnesses_from_model(cgs, &bundle.model)?;
     let missing = collect_uncovered_capabilities_with_model(cgs, &bundle.model);
     if !missing.is_empty() {
@@ -90,7 +90,7 @@ fn validate_expression_surface_from_single_bundle(cgs: &CGS) -> Result<(), Schem
 
 fn validate_expression_witnesses_from_model(
     cgs: &CGS,
-    model: &DomainPromptModel,
+    model: &TeachingPromptModel,
 ) -> Result<(), SchemaError> {
     let mut line_counts: HashMap<&str, usize> = HashMap::new();
     for ep in &model.entities {
@@ -112,7 +112,7 @@ fn validate_expression_witnesses_from_model(
 }
 
 /// Collect capability ids taught by teaching lines, using renderer metadata (`source_capability`).
-fn covered_capabilities_from_model(cgs: &CGS, model: &DomainPromptModel) -> HashSet<String> {
+fn covered_capabilities_from_model(cgs: &CGS, model: &TeachingPromptModel) -> HashSet<String> {
     let mut covered = HashSet::new();
     for entity in &model.entities {
         for line in &entity.lines {
@@ -162,7 +162,7 @@ fn covered_capabilities_from_model(cgs: &CGS, model: &DomainPromptModel) -> Hash
 
 fn collect_uncovered_capabilities_with_model(
     cgs: &CGS,
-    model: &DomainPromptModel,
+    model: &TeachingPromptModel,
 ) -> Vec<(String, String)> {
     let covered = covered_capabilities_from_model(cgs, model);
     let mut missing = Vec::new();
@@ -183,7 +183,7 @@ fn collect_uncovered_capabilities_with_model(
 /// Strict per-capability coverage check (for tests). Returns uncovered capability names.
 #[cfg(test)]
 pub(crate) fn uncovered_capabilities(cgs: &CGS) -> Vec<(String, String)> {
-    let bundle = render_domain_prompt_bundle_for_validation(cgs);
+    let bundle = render_teaching_prompt_bundle_for_validation(cgs);
     collect_uncovered_capabilities_with_model(cgs, &bundle.model)
 }
 

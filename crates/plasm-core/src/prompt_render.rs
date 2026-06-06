@@ -5,20 +5,20 @@
 //! Symbolic prompts use `p#` / `v#` glosses emitted before first use (`v#` = shared `values:` domain;
 //! each distinct taught `p#` meaning teaches **`v# · wire`** (and optional point-of-use prose) when the slot uses a `value_ref`, with typing on the `v#` row only).
 //!
-//! This is the prompt string for `plasm-eval` / BAML, REPL startup / `:schema`, HTTP execute session `prompt`, and MCP DOMAIN after `plasm_context`.
+//! This is the prompt string for `plasm-eval` / BAML, REPL startup / `:schema`, HTTP execute session `prompt`, and MCP teaching table after `plasm_context`.
 //! Build via [`render_prompt_with_config`] or [`render_prompt_tsv_with_config`]. Both now emit the
 //! TSV teaching surface. [`RenderConfig::for_eval`] defaults to [`PromptRenderMode::Tsv`] (`e#` /
 //! `m#` / `p#`); legacy compact/canonical modes affect symbol naming only, not the output format.
 //! The prompt opens with a compact pseudo-EBNF **Plasm language contract** (see
-//! [`DOMAIN_VALID_EXPR_MARKER`]) defining the stable syntax surface (`{ }`, `.`, `[ ]`, assignments,
-//! final roots, `;;`, etc.). Catalogue-specific DOMAIN rows then act as many-shot semantic
+//! [`TEACHING_VALID_EXPR_MARKER`]) defining the stable syntax surface (`{ }`, `.`, `[ ]`, assignments,
+//! final roots, `;;`, etc.). Catalogue-specific teaching rows then act as many-shot semantic
 //! instantiations: they teach which concrete `e#` / `m#` / `p#` symbols, fields, methods, scoped
 //! filters, and relations are valid for this catalogue wave. The `~` search form is mentioned in the
 //! contract **only** when at least one entity in the rendered slice has a Search capability (matching
-//! per-entity DOMAIN rows). A mandatory tagged `<<TAG` heredoc bullet appears when the slice includes
+//! per-entity teaching rows). A mandatory tagged `<<TAG` heredoc bullet appears when the slice includes
 //! any non-`short` [`StringSemantics`](crate::StringSemantics).
 //!
-//! **DOMAIN** is **per-entity blocks** of **valid Plasm expressions only** (CGS-validated before emit).
+//! **teaching table** is **per-entity blocks** of **valid Plasm expressions only** (CGS-validated before emit).
 //! In the teaching TSV, the entity `description` is attached to the **first projection witness** for that
 //! entity when one exists, otherwise to the **identity** get row. Rows are phased per block: **`v#` gloss**
 //! (except the deferred synthetic union summary), **`p#` gloss**, **union constructor exemplars**
@@ -30,7 +30,7 @@
 //! Use [`RenderConfig::focus`] to subset entities.
 //!
 //! **Relations** lines teach `Get(id).relation` when that path **parses and type-checks**. With an
-//! [`ExposureSurface`](crate::symbol_tuning::ExposureSurface) filter (incremental DOMAIN waves), **outgoing**
+//! [`ExposureSurface`](crate::symbol_tuning::ExposureSurface) filter (incremental teaching waves), **outgoing**
 //! navigation teaches only targets in the surface entity set, and **incoming** projection-witness bases
 //! (`ParentRecv…[p#,…]`) require the parent entity on the surface plus the same slot checks as outgoing nav;
 //! field gloss rows and `ref:*` typing are unchanged.
@@ -42,9 +42,9 @@
 //! teaching rows (GitHub full prompt stays ~flat; diff churn is mostly `p#` renumbering).
 //! For cardinality-many
 //! edges with `materialize` (`from_parent_get`, `query_scoped`, …) the IR is [`Expr::Chain`](crate::Expr);
-//! many-relations without materialization **fail parse** and are omitted from DOMAIN.
+//! many-relations without materialization **fail parse** and are omitted from teaching table.
 //!
-//! **Validation:** every **single-expression** DOMAIN example (after stripping human-only `  ;;  …` suffixes,
+//! **Validation:** every **single-expression** teaching example (after stripping human-only `  ;;  …` suffixes,
 //! legacy `  =>  ` before `;;`, and legacy relation ` -> …` before `;;`) is checked with **parse →
 //! [`normalize_expr_query_capabilities`](crate::normalize_expr_query_capabilities) → [`type_check_expr`](crate::type_check_expr)** before emission.
 //! Zero-arity pipeline methods emit **one** `…()` expression per line (each line is fully validated).
@@ -60,7 +60,7 @@ use crate::{
         InputFieldSchema, RelationMaterialization, RelationSchema,
     },
     symbol_tuning::{
-        symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog, DomainExposureSession,
+        symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog, TeachingExposureSession,
         ExposureCapabilityKey, ExposureEntityKey, ExposureSlotKey, ExposureSurface, FocusSpec,
         IdentMetaKey, IdentMetadata, SymbolMap, SymbolMapCrossRequestCache,
     },
@@ -120,26 +120,26 @@ impl PromptRenderMode {
     }
 }
 
-/// TSV DOMAIN: first line of the teaching table (`plasm_expr` and `Meaning` columns) including the
+/// teaching TSV: first line of the teaching table (`plasm_expr` and `Meaning` columns) including the
 /// trailing newline, matching [`render_prompt_tsv_from_bundle`].
-pub const TSV_DOMAIN_TABLE_HEADER: &str = "plasm_expr\tMeaning\n";
+pub const TSV_TEACHING_TABLE_HEADER: &str = "plasm_expr\tMeaning\n";
 
-/// Split a TSV DOMAIN string into the optional comment-prefixed Plasm language **contract** block
-/// (InitialTeaching) and the **table body** (from [`TSV_DOMAIN_TABLE_HEADER`] through end).
+/// Split a teaching TSV string into the optional comment-prefixed Plasm language **contract** block
+/// (InitialTeaching) and the **table body** (from [`TSV_TEACHING_TABLE_HEADER`] through end).
 ///
 /// Additive TSV (delta waves) has no contract prefix: returns [`None`] and the full input as body.
 /// If the `plasm_expr`/`Meaning` header is missing, returns [`None`] and the full input (pass-through).
-pub fn split_tsv_domain_contract_and_table(domain_tsv: &str) -> (Option<String>, String) {
-    if let Some(idx) = domain_tsv.find(TSV_DOMAIN_TABLE_HEADER) {
-        let prefix = domain_tsv[..idx].trim_end();
+pub fn split_tsv_teaching_contract_and_table(teaching_tsv: &str) -> (Option<String>, String) {
+    if let Some(idx) = teaching_tsv.find(TSV_TEACHING_TABLE_HEADER) {
+        let prefix = teaching_tsv[..idx].trim_end();
         let contract = if prefix.is_empty() {
             None
         } else {
             Some(prefix.to_string())
         };
-        return (contract, domain_tsv[idx..].to_string());
+        return (contract, teaching_tsv[idx..].to_string());
     }
-    (None, domain_tsv.to_string())
+    (None, teaching_tsv.to_string())
 }
 
 /// Strip a leading markdown fenced block ` ```{fence_info}\\n … \\n``` ` and return inner body.
@@ -150,21 +150,21 @@ pub fn markdown_fence_body_inner<'a>(markdown: &'a str, fence_info: &str) -> Opt
     Some(&rest[..end])
 }
 
-/// DOMAIN TSV table fragment (from [`TSV_DOMAIN_TABLE_HEADER`] onward), dropping optional `#` contract lines inside the fence body.
-pub fn domain_tsv_table_from_wrapped_prompt(prompt: &str, fence_info: &str) -> Option<String> {
+/// teaching TSV table fragment (from [`TSV_TEACHING_TABLE_HEADER`] onward), dropping optional `#` contract lines inside the fence body.
+pub fn teaching_tsv_table_from_wrapped_prompt(prompt: &str, fence_info: &str) -> Option<String> {
     let inner = markdown_fence_body_inner(prompt, fence_info)?;
-    Some(split_tsv_domain_contract_and_table(inner).1)
+    Some(split_tsv_teaching_contract_and_table(inner).1)
 }
 
 /// Invariant for prompts emitted by [`render_prompt_tsv_from_bundle`]: from the `plasm_expr\tMeaning`
 /// header through the end of the table, every non-empty body line that is not a `#` comment uses
 /// **exactly one** tab between the expression column and Meaning ([`DomainTsvEncodedLine::write_line`] only;
 /// middle-dot ` · ` joins gloss fragments **inside** Meaning). Tab U+0009 is emitted solely at that boundary.
-pub(crate) fn validate_domain_tsv_teaching_table(body_from_header: &str) -> Result<(), String> {
+pub(crate) fn validate_teaching_tsv_teaching_table(body_from_header: &str) -> Result<(), String> {
     let mut lines = body_from_header.lines();
     let header = lines
         .next()
-        .ok_or_else(|| "empty DOMAIN TSV table".to_string())?;
+        .ok_or_else(|| "empty teaching TSV table".to_string())?;
     let header = header.strip_suffix('\r').unwrap_or(header);
     if header != "plasm_expr\tMeaning" {
         return Err(format!(
@@ -213,24 +213,24 @@ pub(crate) fn validate_domain_tsv_teaching_table(body_from_header: &str) -> Resu
 }
 
 #[inline]
-fn enforce_domain_tsv_teaching_invariant(prompt: &str) {
-    let Some(idx) = prompt.find(TSV_DOMAIN_TABLE_HEADER) else {
+fn enforce_teaching_tsv_teaching_invariant(prompt: &str) {
+    let Some(idx) = prompt.find(TSV_TEACHING_TABLE_HEADER) else {
         return;
     };
     let body = &prompt[idx..];
-    if let Err(msg) = validate_domain_tsv_teaching_table(body) {
+    if let Err(msg) = validate_teaching_tsv_teaching_table(body) {
         tracing::error!(
             target: "plasm_core::prompt_render",
             error = %msg,
-            "DOMAIN TSV teaching table invariant violated"
+            "teaching TSV teaching table invariant violated"
         );
-        debug_assert!(false, "DOMAIN TSV: {msg}");
+        debug_assert!(false, "teaching TSV: {msg}");
     }
 }
 
-/// Whether DOMAIN **TSV** output includes the global Plasm contract comment block.
+/// Whether teaching table **TSV** output includes the global Plasm contract comment block.
 ///
-/// Execute-session **additive** waves ([`crate::prompt_pipeline::PromptPipelineConfig::render_domain_exposure_delta`])
+/// Execute-session **additive** waves ([`crate::prompt_pipeline::PromptPipelineConfig::render_teaching_exposure_delta`])
 /// must use [`Self::AdditiveWave`] so we do not re-broadcast grammar boilerplate on every capability append.
 /// Full-schema / first-wave teaching uses [`Self::InitialTeaching`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -241,21 +241,21 @@ pub(crate) enum DomainWaveSurface {
     AdditiveWave,
 }
 
-/// Subset + render mode for DOMAIN / symbol expansion.
+/// Subset + render mode for teaching table / symbol expansion.
 ///
-/// Prefer [`DomainPromptSource`] + [`DomainPromptSettings`] with [`render_domain_bundle`] /
-/// [`render_domain_tsv`] for new product integrations; this struct remains the internal carrier
+/// Prefer [`TeachingPromptSource`] + [`TeachingPromptSettings`] with [`render_teaching_bundle`] /
+/// [`render_teaching_tsv`] for new product integrations; this struct remains the internal carrier
 /// used throughout `plasm-core` and for snapshot tests.
 #[derive(Clone, Copy, Debug)]
 pub struct RenderConfig<'a> {
-    /// Subset of entities for DOMAIN / symbol map (see [`FocusSpec`]).
+    /// Subset of entities for teaching table / symbol map (see [`FocusSpec`]).
     pub focus: FocusSpec<'a>,
     /// Prompt render surface: canonical, verbose symbolic, compact symbolic, or TSV symbolic.
     pub render_mode: PromptRenderMode,
-    /// When true, [`render_domain_prompt_bundle`] fills [`DomainPromptModel`] (cross-entity strategy, relation materialization).
+    /// When true, [`render_teaching_prompt_bundle`] fills [`TeachingPromptModel`] (cross-entity strategy, relation materialization).
     /// Reserved for product policy to omit execution metadata later.
     pub include_domain_execution_model: bool,
-    /// When set (same LRU as execute-session expansion), symbolic DOMAIN renders reuse [`SymbolMap`] snapshots across invocations.
+    /// When set (same LRU as execute-session expansion), symbolic teaching table renders reuse [`SymbolMap`] snapshots across invocations.
     pub symbol_map_cross_cache: Option<&'a SymbolMapCrossRequestCache>,
 }
 
@@ -285,10 +285,10 @@ impl<'a> RenderConfig<'a> {
         }
     }
 
-    /// Full-schema DOMAIN synthesis for [`crate::cgs_expression_validate::validate_cgs_expression_surface`].
+    /// Full-schema teaching synthesis for [`crate::cgs_expression_validate::validate_cgs_expression_surface`].
     ///
     /// Uses [`FocusSpec::All`], [`PromptRenderMode::Tsv`], and [`Self::include_domain_execution_model`] `true`
-    /// so [`DomainPromptModel`] lines carry [`DomainLineMeta::source_capability`] metadata the validator
+    /// so [`TeachingPromptModel`] lines carry [`TeachingLineMeta::source_capability`] metadata the validator
     /// relies on for per-capability coverage (keep renderer and validator in agreement).
     pub fn for_expression_surface_validation() -> Self {
         Self {
@@ -309,7 +309,7 @@ impl<'a> RenderConfig<'a> {
         }
     }
 
-    /// Canonical entity/method/field names in DOMAIN (for tests / debugging).
+    /// Canonical entity/method/field names in teaching table (for tests / debugging).
     pub fn for_eval_canonical(focus: Option<&'a str>) -> Self {
         Self {
             focus: FocusSpec::from_optional(focus),
@@ -337,23 +337,23 @@ impl<'a> RenderConfig<'a> {
     }
 }
 
-/// Product-facing **where** DOMAIN symbols are seeded from: catalog [`FocusSpec`] vs execute [`DomainExposureSession`].
+/// Product-facing **where** teaching symbols are seeded from: catalog [`FocusSpec`] vs execute [`TeachingExposureSession`].
 #[derive(Clone, Copy, Debug)]
-pub enum DomainPromptSource<'a> {
+pub enum TeachingPromptSource<'a> {
     Catalog { focus: FocusSpec<'a> },
-    ExecuteWave { exposure: &'a DomainExposureSession },
+    ExecuteWave { exposure: &'a TeachingExposureSession },
 }
 
 /// Product-facing knobs for the teaching bundle / TSV (prefer over assembling [`RenderConfig`] at new call sites).
 #[derive(Clone, Copy, Debug)]
-pub struct DomainPromptSettings<'a> {
+pub struct TeachingPromptSettings<'a> {
     pub include_domain_execution_model: bool,
     /// When false, teaching rows use canonical names (tool explorer / narrow tests); when true, `e#`/`p#`/`m#` symbolic TSV.
     pub symbolic: bool,
     pub symbol_map_cross_cache: Option<&'a SymbolMapCrossRequestCache>,
 }
 
-impl<'a> Default for DomainPromptSettings<'a> {
+impl<'a> Default for TeachingPromptSettings<'a> {
     fn default() -> Self {
         Self {
             include_domain_execution_model: true,
@@ -363,12 +363,12 @@ impl<'a> Default for DomainPromptSettings<'a> {
     }
 }
 
-/// Render DOMAIN [`DomainPromptBundle`] (structured teaching blocks + execution metadata).
-pub fn render_domain_bundle(
+/// Render teaching table [`TeachingPromptBundle`] (structured teaching blocks + execution metadata).
+pub fn render_teaching_bundle(
     cgs: &CGS,
-    source: DomainPromptSource<'_>,
-    settings: DomainPromptSettings<'_>,
-) -> DomainPromptBundle {
+    source: TeachingPromptSource<'_>,
+    settings: TeachingPromptSettings<'_>,
+) -> TeachingPromptBundle {
     let render_mode = if settings.symbolic {
         PromptRenderMode::Tsv
     } else {
@@ -377,7 +377,7 @@ pub fn render_domain_bundle(
     let include = settings.include_domain_execution_model;
     let cache = settings.symbol_map_cross_cache;
     match source {
-        DomainPromptSource::Catalog { focus } => render_domain_prompt_bundle(
+        TeachingPromptSource::Catalog { focus } => render_teaching_prompt_bundle(
             cgs,
             RenderConfig {
                 focus,
@@ -386,7 +386,7 @@ pub fn render_domain_bundle(
                 symbol_map_cross_cache: cache,
             },
         ),
-        DomainPromptSource::ExecuteWave { exposure } => render_domain_prompt_bundle_for_exposure(
+        TeachingPromptSource::ExecuteWave { exposure } => render_teaching_prompt_bundle_for_exposure(
             cgs,
             RenderConfig {
                 focus: FocusSpec::All,
@@ -400,14 +400,14 @@ pub fn render_domain_bundle(
     }
 }
 
-/// Render DOMAIN as the teaching TSV (`plasm_expr` + `Meaning`), including contract header on first wave.
-pub fn render_domain_tsv(
+/// Render teaching table as the teaching TSV (`plasm_expr` + `Meaning`), including contract header on first wave.
+pub fn render_teaching_tsv(
     cgs: &CGS,
-    source: DomainPromptSource<'_>,
-    settings: DomainPromptSettings<'_>,
+    source: TeachingPromptSource<'_>,
+    settings: TeachingPromptSettings<'_>,
 ) -> String {
     match source {
-        DomainPromptSource::Catalog { focus } => {
+        TeachingPromptSource::Catalog { focus } => {
             let render_mode = if settings.symbolic {
                 PromptRenderMode::Tsv
             } else {
@@ -423,7 +423,7 @@ pub fn render_domain_tsv(
                 },
             )
         }
-        DomainPromptSource::ExecuteWave { exposure } => {
+        TeachingPromptSource::ExecuteWave { exposure } => {
             let render_mode = if settings.symbolic {
                 PromptRenderMode::Tsv
             } else {
@@ -440,21 +440,21 @@ pub fn render_domain_tsv(
     }
 }
 
-/// Per-entity DOMAIN lines with execution hints parallel to the rendered prompt strings.
+/// Per-entity teaching lines with execution hints parallel to the rendered prompt strings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
-pub struct DomainPromptModel {
-    pub entities: Vec<EntityDomainPrompt>,
+pub struct TeachingPromptModel {
+    pub entities: Vec<EntityTeachingPrompt>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct EntityDomainPrompt {
+pub struct EntityTeachingPrompt {
     /// Canonical CGS entity name (`Issue`, `Zone`, …) — not the session-local `e#` alias.
     pub entity: String,
-    pub lines: Vec<DomainLineMeta>,
+    pub lines: Vec<TeachingLineMeta>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DomainLineMeta {
+pub struct TeachingLineMeta {
     /// Expression only (no `;;` hints), after the same stripping/expansion as validation.
     pub expression: String,
     pub kind: DomainLineKind,
@@ -537,15 +537,15 @@ impl From<&RelationMaterialization> for RelationMaterializationSummary {
     }
 }
 
-/// [`render_domain_prompt_bundle`] with [`RenderConfig::for_expression_surface_validation`].
+/// [`render_teaching_prompt_bundle`] with [`RenderConfig::for_expression_surface_validation`].
 ///
 /// Centralizes the config [`crate::cgs_expression_validate::validate_cgs_expression_surface`] must stay aligned with.
-pub(crate) fn render_domain_prompt_bundle_for_validation(cgs: &CGS) -> DomainPromptBundle {
-    render_domain_prompt_bundle(cgs, RenderConfig::for_expression_surface_validation())
+pub(crate) fn render_teaching_prompt_bundle_for_validation(cgs: &CGS) -> TeachingPromptBundle {
+    render_teaching_prompt_bundle(cgs, RenderConfig::for_expression_surface_validation())
 }
 
-/// Render DOMAIN (many-shot examples) and structured execution metadata.
-pub fn render_domain_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> DomainPromptBundle {
+/// Render teaching table (many-shot examples) and structured execution metadata.
+pub fn render_teaching_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> TeachingPromptBundle {
     let span = crate::spans::prompt_domain_bundle(
         &config.focus,
         config.uses_symbols(),
@@ -554,8 +554,8 @@ pub fn render_domain_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> Domai
     let _g = span.enter();
 
     if config.uses_symbols() {
-        let exposure = crate::symbol_tuning::domain_exposure_session_from_focus(cgs, config.focus);
-        return render_domain_prompt_bundle_for_exposure(cgs, config, &exposure, None);
+        let exposure = crate::symbol_tuning::teaching_exposure_session_from_focus(cgs, config.focus);
+        return render_teaching_prompt_bundle_for_exposure(cgs, config, &exposure, None);
     }
 
     let wall = Instant::now();
@@ -566,7 +566,7 @@ pub fn render_domain_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> Domai
     tracing::debug!(
         elapsed_ms = t0.elapsed().as_millis() as u64,
         full_entities = full_entities.len(),
-        "render_domain_prompt_bundle phase=entity_slices"
+        "render_teaching_prompt_bundle phase=entity_slices"
     );
 
     let t1 = Instant::now();
@@ -580,7 +580,7 @@ pub fn render_domain_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> Domai
     tracing::debug!(
         elapsed_ms = t1.elapsed().as_millis() as u64,
         has_symbol_map = map_opt.is_some(),
-        "render_domain_prompt_bundle phase=symbol_map"
+        "render_teaching_prompt_bundle phase=symbol_map"
     );
 
     if let Some(ref map) = map_opt {
@@ -589,16 +589,16 @@ pub fn render_domain_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> Domai
         tracing::debug!(
             elapsed_ms = t_leg.elapsed().as_millis() as u64,
             legend_chars = legend.len(),
-            "render_domain_prompt_bundle phase=format_legend"
+            "render_teaching_prompt_bundle phase=format_legend"
         );
     }
 
     let t2 = Instant::now();
-    tracing::debug!("prompt: render_domain_table");
+    tracing::debug!("prompt: render_teaching_table");
     let mut teaching_blocks = Vec::new();
     let mut entities_buf = Vec::new();
     let fill_model = config.include_domain_execution_model;
-    render_domain_table(
+    render_teaching_table(
         cgs,
         &full_entities,
         map_opt.as_deref(),
@@ -612,36 +612,36 @@ pub fn render_domain_prompt_bundle(cgs: &CGS, config: RenderConfig<'_>) -> Domai
     tracing::debug!(
         elapsed_ms = t2.elapsed().as_millis() as u64,
         teaching_entities = teaching_blocks.len(),
-        "render_domain_prompt_bundle phase=domain_table"
+        "render_teaching_prompt_bundle phase=teaching_table"
     );
     let model = if fill_model {
-        DomainPromptModel {
+        TeachingPromptModel {
             entities: entities_buf,
         }
     } else {
-        DomainPromptModel::default()
+        TeachingPromptModel::default()
     };
 
     tracing::debug!(
         teaching_entities = teaching_blocks.len(),
         total_elapsed_ms = wall.elapsed().as_millis() as u64,
-        "render_domain_prompt_bundle done"
+        "render_teaching_prompt_bundle done"
     );
-    DomainPromptBundle {
+    TeachingPromptBundle {
         teaching_blocks,
         model,
     }
 }
 
-/// Like [`render_domain_prompt_bundle_for_exposure`], but each exposed entity is rendered against its
+/// Like [`render_teaching_prompt_bundle_for_exposure`], but each exposed entity is rendered against its
 /// owning catalog graph (`by_entry` keyed by registry `entry_id`, aligned with
-/// [`crate::symbol_tuning::DomainExposureSession::entity_catalog_entry_ids`]).
-pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
+/// [`crate::symbol_tuning::TeachingExposureSession::entity_catalog_entry_ids`]).
+pub fn render_teaching_prompt_bundle_for_exposure_federated<'b>(
     by_entry: &'b IndexMap<String, &'b CGS>,
     config: RenderConfig<'_>,
-    exposure: &'b crate::symbol_tuning::DomainExposureSession,
+    exposure: &'b crate::symbol_tuning::TeachingExposureSession,
     emit_entity_blocks: Option<&[crate::symbol_tuning::ExposureEntityKey]>,
-) -> DomainPromptBundle {
+) -> TeachingPromptBundle {
     let span = crate::spans::prompt_domain_bundle_exposure_federated(
         emit_entity_blocks.is_some(),
         config.uses_symbols(),
@@ -683,7 +683,7 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
         .map(|(entity, entry_id)| (entry_id.clone(), entity.as_str()))
         .collect();
 
-    render_domain_table_resolved(
+    render_teaching_table_resolved(
         |ename| {
             let _ = ename;
             by_entry
@@ -706,27 +706,27 @@ pub fn render_domain_prompt_bundle_for_exposure_federated<'b>(
     );
 
     let model = if fill_model {
-        DomainPromptModel {
+        TeachingPromptModel {
             entities: entities_buf,
         }
     } else {
-        DomainPromptModel::default()
+        TeachingPromptModel::default()
     };
 
-    DomainPromptBundle {
+    TeachingPromptBundle {
         teaching_blocks,
         model,
     }
 }
 
-/// Teaching bundle using [`crate::symbol_tuning::DomainExposureSession`] (monotonic `e#`/`m#`/`p#`).
+/// Teaching bundle using [`crate::symbol_tuning::TeachingExposureSession`] (monotonic `e#`/`m#`/`p#`).
 /// When `emit_entity_blocks` is `Some`, only those entity blocks are rendered (incremental wave).
-pub fn render_domain_prompt_bundle_for_exposure(
+pub fn render_teaching_prompt_bundle_for_exposure(
     cgs: &CGS,
     config: RenderConfig<'_>,
-    exposure: &crate::symbol_tuning::DomainExposureSession,
+    exposure: &crate::symbol_tuning::TeachingExposureSession,
     emit_entity_blocks: Option<&[&str]>,
-) -> DomainPromptBundle {
+) -> TeachingPromptBundle {
     let span = crate::spans::prompt_domain_bundle_exposure(
         emit_entity_blocks.is_some(),
         config.uses_symbols(),
@@ -753,7 +753,7 @@ pub fn render_domain_prompt_bundle_for_exposure(
     let mut teaching_blocks = Vec::new();
     let mut entities_buf = Vec::new();
     let fill_model = config.include_domain_execution_model;
-    render_domain_table_resolved(
+    render_teaching_table_resolved(
         |_| cgs,
         &full_entities,
         map_opt.as_deref(),
@@ -769,14 +769,14 @@ pub fn render_domain_prompt_bundle_for_exposure(
         None::<&IndexMap<String, &CGS>>,
     );
     let model = if fill_model {
-        DomainPromptModel {
+        TeachingPromptModel {
             entities: entities_buf,
         }
     } else {
-        DomainPromptModel::default()
+        TeachingPromptModel::default()
     };
 
-    DomainPromptBundle {
+    TeachingPromptBundle {
         teaching_blocks,
         model,
     }
@@ -785,21 +785,21 @@ pub fn render_domain_prompt_bundle_for_exposure(
 /// Render the Plasm teaching surface for the given CGS and [`RenderConfig`].
 ///
 /// The only prompt-facing teaching form is TSV; this wrapper is retained for older callers that
-/// historically asked for the markdown DOMAIN surface.
+/// historically asked for the markdown teaching surface.
 pub fn render_prompt_with_config(cgs: &CGS, config: RenderConfig<'_>) -> String {
     render_prompt_tsv_with_config(cgs, config)
 }
 
-/// TSV for a **single-catalog** [`DomainExposureSession`]: one [`render_domain_prompt_bundle_for_exposure`]
-/// plus the session’s memoized [`SymbolMap`] / [`DomainExposureSession::ident_metadata_for_exposure_entities`]
+/// TSV for a **single-catalog** [`TeachingExposureSession`]: one [`render_teaching_prompt_bundle_for_exposure`]
+/// plus the session’s memoized [`SymbolMap`] / [`TeachingExposureSession::ident_metadata_for_exposure_entities`]
 /// so bundle rows and TSV metadata cannot drift.
 pub(crate) fn render_prompt_tsv_for_single_catalog_exposure(
     cgs: &CGS,
     config: RenderConfig<'_>,
-    exposure: &DomainExposureSession,
+    exposure: &TeachingExposureSession,
 ) -> String {
     let full_entities: Vec<&str> = exposure.entities.iter().map(|s| s.as_str()).collect();
-    let bundle = render_domain_prompt_bundle_for_exposure(cgs, config, exposure, None);
+    let bundle = render_teaching_prompt_bundle_for_exposure(cgs, config, exposure, None);
     if config.uses_symbols() {
         let key = config
             .symbol_map_cross_cache
@@ -834,7 +834,7 @@ pub(crate) fn render_prompt_tsv_for_single_catalog_exposure(
 }
 
 pub(crate) fn contract_slice_hints_from_exposure(
-    exposure: &crate::symbol_tuning::DomainExposureSession,
+    exposure: &crate::symbol_tuning::TeachingExposureSession,
 ) -> ContractSliceHints {
     let distinct_catalog_count = exposure
         .entity_catalog_entry_ids
@@ -847,20 +847,20 @@ pub(crate) fn contract_slice_hints_from_exposure(
     }
 }
 
-/// Render the DOMAIN teaching surface as TSV with stable, Plasm-expression-first rows.
+/// Render the teaching table teaching surface as TSV with stable, Plasm-expression-first rows.
 ///
 /// Columns:
 /// `plasm_expr`, `Meaning`
 pub fn render_prompt_tsv_with_config(cgs: &CGS, config: RenderConfig<'_>) -> String {
     if config.uses_symbols() {
-        let exposure = crate::symbol_tuning::domain_exposure_session_from_focus(cgs, config.focus);
+        let exposure = crate::symbol_tuning::teaching_exposure_session_from_focus(cgs, config.focus);
         return render_prompt_tsv_for_single_catalog_exposure(cgs, config, &exposure);
     }
-    // Canonical names: 2-hop neighbourhood slice (not execute-parity [`DomainExposureSession`]).
+    // Canonical names: 2-hop neighbourhood slice (not execute-parity [`TeachingExposureSession`]).
     let (full_entity_names, _) =
         crate::symbol_tuning::resolve_prompt_surface_entities(cgs, config.focus, false);
     let full_entities: Vec<&str> = full_entity_names.iter().map(|s| s.as_str()).collect();
-    let bundle = render_domain_prompt_bundle(cgs, config);
+    let bundle = render_teaching_prompt_bundle(cgs, config);
     render_prompt_tsv_from_bundle(
         &bundle,
         &full_entities,
@@ -875,7 +875,7 @@ pub fn render_prompt_tsv_with_config(cgs: &CGS, config: RenderConfig<'_>) -> Str
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_prompt_surface_from_bundle<'b, F>(
-    bundle: &DomainPromptBundle,
+    bundle: &TeachingPromptBundle,
     symbolic: bool,
     full_entities: &[&str],
     symbol_map: Option<&SymbolMap>,
@@ -922,10 +922,10 @@ impl TeachingHeading {
 pub struct TeachingExprLine {
     pub expression: String,
     pub result_type: String,
-    /// `[scope …]` fragment when present (DOMAIN / capability-input legend).
+    /// `[scope …]` fragment when present (teaching table / capability-input legend).
     pub scope: String,
     pub optional_params: String,
-    /// `args: p# wire type req; …` when the compact DOMAIN legend includes it.
+    /// `args: p# wire type req; …` when the compact teaching legend includes it.
     pub compact_args: String,
     pub description: String,
     /// Projection witness row: `e#…[p#,…]` whose result gloss includes `· projection`.
@@ -943,11 +943,11 @@ pub struct TeachingFieldGloss {
     pub is_inline_union_summary: bool,
 }
 
-/// DOMAIN teaching slices plus structured execution metadata for tooling / HTTP/MCP TSV emission.
+/// teaching table teaching slices plus structured execution metadata for tooling / HTTP/MCP TSV emission.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DomainPromptBundle {
+pub struct TeachingPromptBundle {
     pub teaching_blocks: Vec<EntityTeachingBlock>,
-    pub model: DomainPromptModel,
+    pub model: TeachingPromptModel,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -962,7 +962,7 @@ pub struct EntityTeachingExprRow {
     /// Synthesized teaching exemplar (not [`crate::expr_parser`] output).
     #[serde(rename = "parsed")]
     pub teaching_expr: TeachingExprLine,
-    pub meta: DomainLineMeta,
+    pub meta: TeachingLineMeta,
     #[serde(skip, default)]
     dedupe_key: TeachingRowDedupeKey,
 }
@@ -1110,7 +1110,7 @@ fn opaque_pv_symbol_sort_key(sym: &str) -> Option<(u32, u32)> {
 
 #[allow(clippy::too_many_arguments)]
 fn render_prompt_tsv_from_bundle<'b, F>(
-    bundle: &DomainPromptBundle,
+    bundle: &TeachingPromptBundle,
     full_entities: &[&str],
     _symbol_map: Option<&SymbolMap>,
     _ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
@@ -1128,7 +1128,7 @@ where
         out.push_str(&comment_prefix_block(&render_prompt_contract(spec)));
         out.push('\n');
     }
-    out.push_str(TSV_DOMAIN_TABLE_HEADER);
+    out.push_str(TSV_TEACHING_TABLE_HEADER);
     let mut global_p_gloss_emitted: HashMap<String, String> = HashMap::new();
     let gloss_emit_fingerprint =
         |g: &TeachingFieldGloss| format!("{}|{}|{}", g.field_type, g.allowed_values, g.description);
@@ -1180,11 +1180,11 @@ where
                 continue;
             }
             if seen_v_phase_a.insert(g.symbol.clone()) {
-                write_domain_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
+                write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
             }
         }
         // Phase B: `p#` gloss — non-projection numeric order, then projection bracket tail.
-        // `p#` slots for optional query params / invokes appear in DOMAIN gloss lines but are not part
+        // `p#` slots for optional query params / invokes appear in teaching gloss lines but are not part
         // of the scalar projection bracket — emit them in stable numeric `p#` order before projection fields.
         let mut p_non_projection: Vec<&TeachingFieldGloss> = field_gloss_rows
             .iter()
@@ -1210,7 +1210,7 @@ where
                 }
                 global_p_gloss_emitted.insert(g.symbol.clone(), fp);
             }
-            write_domain_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
+            write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
         }
         for sym in &projection_symbols {
             if emitted_p_slot.contains(sym) {
@@ -1227,7 +1227,7 @@ where
                     }
                     global_p_gloss_emitted.insert(sym.clone(), fp);
                 }
-                write_domain_tsv_row(&mut out, DomainTsvRow::FieldGloss(gloss));
+                write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(gloss));
                 emitted_p_slot.insert(sym.clone());
             }
         }
@@ -1237,7 +1237,7 @@ where
             let row = teaching_expr_rows[row_idx];
             let identity_returns_row = Some(row_idx) == identity_idx;
             let attach_entity_heading = Some(row_idx) == entity_desc_attach_idx;
-            write_domain_tsv_row(
+            write_teaching_tsv_row(
                 &mut out,
                 DomainTsvRow::TeachingExpr {
                     line: row,
@@ -1250,7 +1250,7 @@ where
         // Phase D: deferred inline union summary (`union · v101 | …`).
         for g in field_gloss_rows {
             if g.is_inline_union_summary {
-                write_domain_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
+                write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
             }
         }
 
@@ -1267,7 +1267,7 @@ where
             let row = teaching_expr_rows[row_idx];
             let identity_returns_row = Some(row_idx) == identity_idx;
             let attach_entity_heading = Some(row_idx) == entity_desc_attach_idx;
-            write_domain_tsv_row(
+            write_teaching_tsv_row(
                 &mut out,
                 DomainTsvRow::TeachingExpr {
                     line: row,
@@ -1278,13 +1278,13 @@ where
             );
         }
     }
-    enforce_domain_tsv_teaching_invariant(&out);
+    enforce_teaching_tsv_teaching_invariant(&out);
     out
 }
 
 const TSV_MEANING_JOIN: &str = " · ";
 
-/// One logical TSV row before wire encoding ([`write_domain_tsv_row`]).
+/// One logical TSV row before wire encoding ([`write_teaching_tsv_row`]).
 enum DomainTsvRow<'a> {
     TeachingExpr {
         line: &'a TeachingExprLine,
@@ -1366,7 +1366,7 @@ impl FieldGlossMeaningAtom {
     }
 }
 
-/// Sanitized `plasm_expr` column for DOMAIN teaching TSV (no literal tabs; trimmed).
+/// Sanitized `plasm_expr` column for teaching table teaching TSV (no literal tabs; trimmed).
 #[derive(Clone, Debug)]
 struct DomainTsvExprCell(String);
 
@@ -1380,7 +1380,7 @@ impl DomainTsvExprCell {
     }
 }
 
-/// Sanitized `Meaning` column for DOMAIN teaching TSV (no literal tabs; trimmed).
+/// Sanitized `Meaning` column for teaching table teaching TSV (no literal tabs; trimmed).
 #[derive(Clone, Debug)]
 struct DomainTsvMeaningCell(String);
 
@@ -1410,7 +1410,7 @@ impl DomainTsvMeaningCell {
     }
 }
 
-/// One encoded DOMAIN teaching row: sanitized expr, **exactly one** U+0009, sanitized meaning, newline.
+/// One encoded teaching table teaching row: sanitized expr, **exactly one** U+0009, sanitized meaning, newline.
 struct DomainTsvEncodedLine {
     expr: DomainTsvExprCell,
     meaning: DomainTsvMeaningCell,
@@ -1513,7 +1513,7 @@ fn push_teaching_meaning_result_atom(
     }
 }
 
-fn write_domain_tsv_row(out: &mut String, row: DomainTsvRow<'_>) {
+fn write_teaching_tsv_row(out: &mut String, row: DomainTsvRow<'_>) {
     match row {
         DomainTsvRow::TeachingExpr {
             line,
@@ -1869,21 +1869,21 @@ pub struct PromptSurfaceStats {
     /// `o200k_base` ordinary token count (local, no network).
     pub prompt_tokens_o200k: usize,
     /// Capabilities whose [`CapabilitySchema::domain`](crate::schema::CapabilitySchema::domain) lies in
-    /// the same **full** entity slice as DOMAIN (see [`json_tool_surface_counts`] for slice rules).
+    /// the same **full** entity slice as teaching table (see [`json_tool_surface_counts`] for slice rules).
     pub capability_tools: usize,
     /// Per entity in that slice: declared relations plus `EntityRef` fields whose name is not
-    /// already a relation key (same merge as DOMAIN relation / ref navigation).
+    /// already a relation key (same merge as teaching table relation / ref navigation).
     pub navigation_tools: usize,
-    /// Plasm path expression lines actually emitted in DOMAIN (per-entity dedupe only: identical
+    /// Plasm path expression lines actually emitted in teaching table (per-entity dedupe only: identical
     /// lines in one entity block collapse once; the same string may repeat under another entity).
     pub json_tool_estimate: usize,
 }
 
 impl PromptSurfaceStats {
-    /// Shared human-readable metrics for CLI stderr: chars, o200k tokens, DOMAIN tool count.
+    /// Shared human-readable metrics for CLI stderr: chars, o200k tokens, teaching tool count.
     pub fn summary_line_body(&self) -> String {
         format!(
-            "{} chars | ~{} tok (o200k) | ~{} tools (DOMAIN) | {} caps + {} nav (schema); ~{} tok (chars/4)",
+            "{} chars | ~{} tok (o200k) | ~{} tools (teaching table) | {} caps + {} nav (schema); ~{} tok (chars/4)",
             self.prompt_chars,
             self.prompt_tokens_o200k,
             self.json_tool_estimate,
@@ -1927,7 +1927,7 @@ fn cap_nav_counts_from_names(cgs: &CGS, names: &[String]) -> (usize, usize) {
 fn domain_expression_tool_count_resolved(
     cgs: &CGS,
     names: &[String],
-    exposure_opt: Option<&crate::symbol_tuning::DomainExposureSession>,
+    exposure_opt: Option<&crate::symbol_tuning::TeachingExposureSession>,
     symbol_tuning: bool,
 ) -> usize {
     let full_entities: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
@@ -2022,7 +2022,7 @@ fn navigation_edge_count(cgs: &CGS, ent: &EntityDef) -> usize {
     n
 }
 
-// ── DOMAIN (many-shot examples) ───────────────────────────────────────────
+// ── Teaching table (many-shot examples) ───────────────────────────────────────────
 
 /// Owning `entry_id` for an exposed entity wire name when it appears under exactly one catalog row.
 #[inline]
@@ -2039,7 +2039,7 @@ fn catalog_entry_id_for_exposed_entity<'a>(
 
 #[inline]
 fn exposure_qualified_catalog_ids(
-    exposure: &crate::symbol_tuning::DomainExposureSession,
+    exposure: &crate::symbol_tuning::TeachingExposureSession,
 ) -> IndexMap<(&str, &str), ()> {
     exposure
         .entities
@@ -2102,7 +2102,7 @@ const LEGEND_EM_DESC_SEP: &str = " — ";
 
 const PROJECTION_WITNESS_LEGEND_MARK: &str = "· projection";
 
-/// Ordered receiver bases for DOMAIN dotted calls / relation nav on `ent` (`es` = entity symbol).
+/// Ordered receiver bases for teaching table dotted calls / relation nav on `ent` (`es` = entity symbol).
 fn nav_receiver_candidates(
     es: &str,
     ent: &EntityDef,
@@ -2164,7 +2164,7 @@ fn relation_nav_anchor_expr(
     None
 }
 
-/// First receiver such that `recv + suffix` is a valid full DOMAIN expression (e.g. `.m#(…)`).
+/// First receiver such that `recv + suffix` is a valid full teaching table expression (e.g. `.m#(…)`).
 #[allow(clippy::too_many_arguments)]
 fn receiver_for_dotted_suffix(
     es: &str,
@@ -2271,7 +2271,7 @@ fn incoming_relation_nav_bases_to_entity(
     out
 }
 
-/// Maps parsed projection witness to a capability id for DOMAIN coverage (see [`covered_capabilities`]).
+/// Maps parsed projection witness to a capability id for teaching table coverage (see [`covered_capabilities`]).
 fn projection_witness_source_capability<'a>(
     expr: &Expr,
     witness_cap: Option<&'a crate::CapabilitySchema>,
@@ -2415,17 +2415,17 @@ fn try_push_projection_witness_row(
     false
 }
 
-/// In DOMAIN synthetic lines, bare `$` marks a **placeholder** for the real parameter value — use the
+/// In teaching table synthetic lines, bare `$` marks a **placeholder** for the real parameter value — use the
 /// corresponding `p#` gloss line; it is not a literal value to send to the API. Search rows teach
 /// `e#~"text"` (quoted meta-literal); never `e#~$`.
-const DOMAIN_PARAM_VALUE_PLACEHOLDER: &str = "$";
+const TEACHING_PARAM_VALUE_PLACEHOLDER: &str = "$";
 
 fn truncate_inline_desc(s: &str, max: usize) -> String {
     let t = crate::symbol_tuning::trim_description_for_agent_gloss(s).replace('\t', " ");
     crate::utf8_trunc::truncate_utf8_bytes_with_ellipsis(&t, max)
 }
 
-/// Strip authoring noise like ``(constructor `v101`)`` from variant descriptions before DOMAIN Meaning.
+/// Strip authoring noise like ``(constructor `v101`)`` from variant descriptions before teaching table Meaning.
 fn strip_union_constructor_authoring_noise(raw: &str) -> String {
     let mut s = raw.to_string();
     while let Some(start) = s.find("(constructor ") {
@@ -2491,9 +2491,9 @@ fn entity_ref_id_example(
     map: Option<&SymbolMap>,
 ) -> String {
     let target_sym = ent_sym(map, catalog_entry_id, target);
-    let p = DOMAIN_PARAM_VALUE_PLACEHOLDER;
+    let p = TEACHING_PARAM_VALUE_PLACEHOLDER;
     let Some(ent) = cgs.get_entity(target) else {
-        return format!("{target_sym}({})", DOMAIN_PARAM_VALUE_PLACEHOLDER);
+        return format!("{target_sym}({})", TEACHING_PARAM_VALUE_PLACEHOLDER);
     };
     if ent.key_vars.len() > 1 {
         let parts: Vec<String> = ent
@@ -2523,17 +2523,17 @@ fn query_param_slot_example(
 ) -> String {
     let Ok(nv) = f.named_value(cgs) else {
         let n = id_sym_cap(map, catalog_entry_id, cap, f.name.as_str());
-        return format!("{n}={}", DOMAIN_PARAM_VALUE_PLACEHOLDER);
+        return format!("{n}={}", TEACHING_PARAM_VALUE_PLACEHOLDER);
     };
     if matches!(nv.field_type, FieldType::Array) {
-        // Array predicates in DOMAIN teaching use bare `$` so query type-check can apply
+        // Array predicates in teaching table teaching use bare `$` so query type-check can apply
         // capability-param placeholder relaxation (`field=$`) for list-like filters.
         let n = id_sym_cap(map, catalog_entry_id, cap, f.name.as_str());
-        return format!("{n}={}", DOMAIN_PARAM_VALUE_PLACEHOLDER);
+        return format!("{n}={}", TEACHING_PARAM_VALUE_PLACEHOLDER);
     }
     invoke_dotted_call_arg_example(f, cap, cgs, map, catalog_entry_id).unwrap_or_else(|| {
         let n = id_sym_cap(map, catalog_entry_id, cap, f.name.as_str());
-        let p = DOMAIN_PARAM_VALUE_PLACEHOLDER;
+        let p = TEACHING_PARAM_VALUE_PLACEHOLDER;
         match &nv.field_type {
             FieldType::Integer | FieldType::Number | FieldType::Boolean => {
                 format!("{n}={p}")
@@ -2578,7 +2578,7 @@ fn scope_param_slot(
     query_param_slot_example(f, cap, cgs, map, catalog_entry_id)
 }
 
-/// `Entity(k=v,…)` for multi-`key_vars` GET examples (validated like other DOMAIN lines).
+/// `Entity(k=v,…)` for multi-`key_vars` GET examples (validated like other teaching lines).
 fn compound_get_expr_line(
     es: &str,
     ent: &EntityDef,
@@ -2590,7 +2590,7 @@ fn compound_get_expr_line(
         return None;
     }
     let mut parts: Vec<String> = Vec::new();
-    let p = DOMAIN_PARAM_VALUE_PLACEHOLDER;
+    let p = TEACHING_PARAM_VALUE_PLACEHOLDER;
     for kv in &ent.key_vars {
         let f = ent.fields.get(kv)?;
         let sym = id_sym_entity(map, catalog_entry_id, ent.name.as_str(), kv.as_str());
@@ -2621,7 +2621,7 @@ fn compound_get_expr_line(
 }
 
 /// Unary identity GET teaching: [`EntityDef::id_field`] as opaque **`p#`** (`e#(p…)`) when the field has an
-/// allocated DOMAIN ident symbol; otherwise **`e#($)`** (canonical / unresolved gloss).
+/// allocated teaching ident symbol; otherwise **`e#($)`** (canonical / unresolved gloss).
 fn unary_entity_id_teaching_expr_line(
     es: &str,
     ent: &EntityDef,
@@ -2637,7 +2637,7 @@ fn unary_entity_id_teaching_expr_line(
     if map.is_some_and(|m| m.resolve_ident(sym.as_str()).is_some()) {
         format!("{es}({sym})")
     } else {
-        format!("{es}({})", DOMAIN_PARAM_VALUE_PLACEHOLDER)
+        format!("{es}({})", TEACHING_PARAM_VALUE_PLACEHOLDER)
     }
 }
 
@@ -2683,7 +2683,7 @@ fn query_expr_maximal(
     Some(format!("{es}{{{}}}", inner.join(", ")))
 }
 
-/// Filter predicates only (no scope) — one `Entity{p#=…}` line per query cap so DOMAIN shows **filter**
+/// Filter predicates only (no scope) — one `Entity{p#=…}` line per query cap so teaching table shows **filter**
 /// field symbols even when scope+filters are merged on the maximal line.
 fn query_expr_filters_only(
     cap: &crate::CapabilitySchema,
@@ -2748,7 +2748,7 @@ fn path_vars_empty(cap: &crate::CapabilitySchema) -> bool {
 }
 
 /// Cardinality-many relation nav `Source(id).rel` parses to [`Expr::Chain`] when `materialize` is set;
-/// with [`RelationMaterialization::Unavailable`], parse fails — omit DOMAIN lines that cannot validate.
+/// with [`RelationMaterialization::Unavailable`], parse fails — omit teaching lines that cannot validate.
 fn many_relation_nav_emittable(rel_schema: &crate::RelationSchema) -> bool {
     if rel_schema.cardinality != Cardinality::Many {
         return true;
@@ -2762,14 +2762,14 @@ fn many_relation_nav_emittable(rel_schema: &crate::RelationSchema) -> bool {
     )
 }
 
-/// DOMAIN line metadata from an already type-checked [`Expr`] (avoids a second parse in the render hot path).
+/// teaching table line metadata from an already type-checked [`Expr`] (avoids a second parse in the render hot path).
 fn domain_line_execution_meta_from_validated(
     cgs: &CGS,
     work: String,
     relation: Option<&RelationSchema>,
     source_capability: Option<&CapabilityName>,
     expr: &Expr,
-) -> DomainLineMeta {
+) -> TeachingLineMeta {
     let relation_materialization = relation.map(|r| {
         RelationMaterializationSummary::from(
             r.materialize
@@ -2825,7 +2825,7 @@ fn domain_line_execution_meta_from_validated(
         (kind, cross_entity)
     };
 
-    DomainLineMeta {
+    TeachingLineMeta {
         expression: work,
         kind,
         source_capability: source_capability.map(|n| n.to_string()),
@@ -2867,7 +2867,7 @@ fn prompt_line_valid_cache_seed_cgs(cgs: &CGS) -> u64 {
 }
 
 #[inline]
-fn prompt_line_valid_cache_seed_exposure(exposure: &DomainExposureSession) -> u64 {
+fn prompt_line_valid_cache_seed_exposure(exposure: &TeachingExposureSession) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = rustc_hash::FxHasher::default();
     for (entity, entry_id) in exposure
@@ -2933,7 +2933,7 @@ fn try_push_teaching_example(
             &parsed.expr,
         )
     } else {
-        DomainLineMeta {
+        TeachingLineMeta {
             expression: work,
             kind: DomainLineKind::Other,
             source_capability: None,
@@ -3122,7 +3122,7 @@ fn capability_legend_for_domain(
 }
 
 /// Structural invoke RHS inside union constructors (`v101{…}`): keyed by opaque `p#` when a
-/// [`SymbolMap`] is present (TSV DOMAIN); canonical [`RenderMode`] uses wire names.
+/// [`SymbolMap`] is present (teaching TSV); canonical [`RenderMode`] uses wire names.
 fn format_inline_structural_example_symbolic(
     map: Option<&SymbolMap>,
     domain: &str,
@@ -3133,7 +3133,7 @@ fn format_inline_structural_example_symbolic(
 ) -> String {
     match ty {
         crate::InputType::None | crate::InputType::Value { .. } => {
-            DOMAIN_PARAM_VALUE_PLACEHOLDER.to_string()
+            TEACHING_PARAM_VALUE_PLACEHOLDER.to_string()
         }
         crate::InputType::Object { fields, .. } => {
             let mut has_optional = false;
@@ -3172,7 +3172,7 @@ fn format_inline_structural_example_symbolic(
                         let lhs = map
                             .map(|m| m.ident_sym_cap_param(domain, cap_name, &seg))
                             .unwrap_or_else(|| sf.name.clone());
-                        parts.push(format!("{lhs}={}", DOMAIN_PARAM_VALUE_PLACEHOLDER));
+                        parts.push(format!("{lhs}={}", TEACHING_PARAM_VALUE_PLACEHOLDER));
                     }
                 }
             }
@@ -3201,7 +3201,7 @@ fn format_inline_structural_example_symbolic(
                 )
             )
         }
-        crate::InputType::Union { .. } => DOMAIN_PARAM_VALUE_PLACEHOLDER.to_string(),
+        crate::InputType::Union { .. } => TEACHING_PARAM_VALUE_PLACEHOLDER.to_string(),
     }
 }
 
@@ -3254,7 +3254,7 @@ fn format_inline_structural_example_symbolic_required_only(
                 let lhs = map
                     .map(|m| m.ident_sym_cap_param(domain, cap_name, &seg))
                     .unwrap_or_else(|| sf.name.clone());
-                parts.push(format!("{lhs}={}", DOMAIN_PARAM_VALUE_PLACEHOLDER));
+                parts.push(format!("{lhs}={}", TEACHING_PARAM_VALUE_PLACEHOLDER));
             }
         }
     }
@@ -3542,7 +3542,7 @@ fn invoke_dotted_call_arg_example(
     catalog_entry_id: &str,
 ) -> Option<String> {
     let n = id_sym_cap(map, catalog_entry_id, cap, f.name.as_str());
-    let p = DOMAIN_PARAM_VALUE_PLACEHOLDER;
+    let p = TEACHING_PARAM_VALUE_PLACEHOLDER;
     if let crate::InputFieldWire::Inline(ty) = &f.wire {
         return Some(match ty.as_ref() {
             crate::InputType::Array { element_type, .. } => {
@@ -3607,11 +3607,11 @@ fn invoke_dotted_call_arg_example(
             entity_ref_id_example(cgs, catalog_entry_id, target, map)
         )),
         FieldType::Date => match &nv.value_format {
-            // Same placeholder as strings — avoid teaching ISO literals in DOMAIN dotted-call invokes.
+            // Same placeholder as strings — avoid teaching ISO literals in teaching table dotted-call invokes.
             Some(ValueWireFormat::Temporal(_)) => Some(format!(
                 "{n}={p}",
                 n = n,
-                p = DOMAIN_PARAM_VALUE_PLACEHOLDER
+                p = TEACHING_PARAM_VALUE_PLACEHOLDER
             )),
             _ => None,
         },
@@ -3904,7 +3904,7 @@ fn exposure_entity_key_for_surface(
 }
 
 /// Catalog-qualified entity appears in [`ExposureSurface::entities`] (canonical name via CGS keys).
-/// Without a surface (`None`), treated as included (legacy full DOMAIN).
+/// Without a surface (`None`), treated as included (legacy full teaching table).
 #[inline]
 fn surface_includes_exposed_entity(
     surface: Option<&ExposureSurface>,
@@ -3923,7 +3923,7 @@ fn surface_includes_exposed_entity(
 
 /// Relation-navigation rows (`… .r#` or wire toward another CGS entity, or declared relation chains) are only
 /// taught when the **target** entity name appears in [`ExposureSurface::entities`] for the same
-/// `catalog_entry_id`. Without a surface (`None`), navigation is unrestricted (legacy full DOMAIN).
+/// `catalog_entry_id`. Without a surface (`None`), navigation is unrestricted (legacy full teaching table).
 #[inline]
 fn surface_exposes_relation_nav_target(
     surface: Option<&ExposureSurface>,
@@ -4123,7 +4123,7 @@ fn collect_entity_teaching_block(
     let query_cap_refs: Vec<&crate::CapabilitySchema> = query_caps.to_vec();
 
     // Projection witness before other `e#…` lines for this entity (query/get/relation) so the field
-    // narrow `[p#,…]` appears first in DOMAIN.
+    // narrow `[p#,…]` appears first in teaching table.
     if let Some(bracket) = primary_get_projection_bracket
         .as_deref()
         .filter(|b| !b.trim().is_empty())
@@ -4708,7 +4708,7 @@ mod lazy_field_gloss_tests {
     }
 }
 
-/// Count of synthesized DOMAIN example lines for an entity (same pipeline as emission).
+/// Count of synthesized teaching example lines for an entity (same pipeline as emission).
 #[cfg(test)]
 pub(crate) fn domain_example_line_count(cgs: &CGS, ename: &str, map: Option<&SymbolMap>) -> usize {
     let mut line_valid_cache = HashMap::new();
@@ -4731,7 +4731,7 @@ pub(crate) fn domain_example_line_count(cgs: &CGS, ename: &str, map: Option<&Sym
     .len()
 }
 
-/// Raw DOMAIN lines for an entity (for per-capability witness checks).
+/// Raw teaching lines for an entity (for per-capability witness checks).
 #[cfg(test)]
 pub(crate) fn domain_example_lines(
     cgs: &CGS,
@@ -4761,7 +4761,7 @@ pub(crate) fn domain_example_lines(
     .collect()
 }
 
-/// Primary-get projection bracket for the DOMAIN entity heading (when enabled); test-only helper.
+/// Primary-get projection bracket for the teaching table entity heading (when enabled); test-only helper.
 #[cfg(test)]
 #[allow(dead_code)] // Retained for debugging / synthesis parity checks; tests prefer [`domain_projection_bracket_from_final_bundle`].
 fn domain_heading_projection_bracket(
@@ -4815,15 +4815,15 @@ fn domain_projection_bracket_exemplar(
 }
 
 /// [`domain_projection_bracket_exemplar`] reads pre–post-pass teaching synthesis; this uses the same
-/// [`render_domain_prompt_bundle_for_exposure`] path as production prompts (opaque alias rewrite applied).
+/// [`render_teaching_prompt_bundle_for_exposure`] path as production prompts (opaque alias rewrite applied).
 #[cfg(test)]
 fn domain_projection_bracket_from_final_bundle(
     cgs: &CGS,
-    exposure: &crate::symbol_tuning::DomainExposureSession,
+    exposure: &crate::symbol_tuning::TeachingExposureSession,
     config: RenderConfig<'_>,
     ename: &str,
 ) -> Option<String> {
-    let bundle = render_domain_prompt_bundle_for_exposure(cgs, config, exposure, None);
+    let bundle = render_teaching_prompt_bundle_for_exposure(cgs, config, exposure, None);
     let refs: Vec<&str> = exposure.entities.iter().map(|s| s.as_str()).collect();
     let focus = crate::symbol_tuning::FocusSpec::SeedsExact(&refs);
     let (full_entities, _) = crate::symbol_tuning::entity_slices_for_render(cgs, focus);
@@ -4837,8 +4837,8 @@ fn domain_projection_bracket_from_final_bundle(
     projection_bracket_from_teaching_rows(&lines)
 }
 
-/// Turn a DOMAIN scope variant into the **same shape as a path expression**: bare `e#` when unscoped,
-/// else `e#{p#=e#(id),…}` with `*` stripped from scope hints (DOMAIN-only marker).
+/// Turn a teaching scope variant into the **same shape as a path expression**: bare `e#` when unscoped,
+/// else `e#{p#=e#(id),…}` with `*` stripped from scope hints (teaching-table-only marker).
 #[cfg(test)]
 pub(crate) fn query_construct_display(es: &str, scope_variant: &str) -> String {
     if scope_variant == es {
@@ -4853,10 +4853,10 @@ pub(crate) fn query_construct_display(es: &str, scope_variant: &str) -> String {
 }
 
 /// Marker substring for tests; must appear once at the start of the rendered prompt contract.
-pub const DOMAIN_VALID_EXPR_MARKER: &str =
+pub const TEACHING_VALID_EXPR_MARKER: &str =
     "Follow the grammar and the teaching TSV below; reply with one valid plasm_program:";
 
-/// Slice shape for conditioning the DOMAIN contract preamble (first-wave TSV only).
+/// Slice shape for conditioning the teaching table contract preamble (first-wave TSV only).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ContractSliceHints {
     /// Distinct registry `entry_id`s in the exposed slice (1 for single-catalog sessions).
@@ -5076,7 +5076,7 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     };
 
     let mut s = String::new();
-    s.push_str(DOMAIN_VALID_EXPR_MARKER);
+    s.push_str(TEACHING_VALID_EXPR_MARKER);
     s.push_str("\n\n");
 
     s.push_str("Output:\n");
@@ -5320,7 +5320,7 @@ fn rewrite_field_gloss_opaque_tokens(g: &mut TeachingFieldGloss, rep: &HashMap<S
     g.description = crate::symbol_tuning::rewrite_opaque_ident_tokens(&g.description, rep);
 }
 
-/// Tracks `p#` / `v#` gloss lines emitted before DOMAIN example rows (first-use only).
+/// Tracks `p#` / `v#` gloss lines emitted before teaching example rows (first-use only).
 struct FieldGlossEmitState {
     /// Registry-backed opaque `p#`: compact `v# · wire` teaching string already emitted for this symbol.
     /// Slots that share one `p#` but differ in point-of-use description keep distinct strings and may re-teach.
@@ -5339,8 +5339,8 @@ struct FieldGlossEmitState {
     defined_value_domains: HashSet<String>,
 }
 
-/// Shared per-render caches for DOMAIN table synthesis (line validation, gloss dedup, metadata).
-struct DomainSynthesisSession<'a> {
+/// Shared per-render caches for teaching table table synthesis (line validation, gloss dedup, metadata).
+struct TeachingSynthesisSession<'a> {
     line_valid_cache: HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
     gloss_emit_state: FieldGlossEmitState,
@@ -5352,7 +5352,7 @@ struct DomainSynthesisSession<'a> {
     collect_meta: bool,
 }
 
-impl<'a> DomainSynthesisSession<'a> {
+impl<'a> TeachingSynthesisSession<'a> {
     fn new(
         line_valid_cache_seed: u64,
         map: Option<&'a SymbolMap>,
@@ -5386,7 +5386,7 @@ impl<'a> DomainSynthesisSession<'a> {
     fn apply_opaque_alias_rewrites(
         &self,
         teaching_blocks_out: &mut [EntityTeachingBlock],
-        model_out: &mut [EntityDomainPrompt],
+        model_out: &mut [EntityTeachingPrompt],
     ) {
         let rep = merge_opaque_alias_maps(
             &self.gloss_emit_state.registry_p_sym_alias,
@@ -5675,14 +5675,14 @@ fn emit_field_def_lines_before_example(
 
 /// Per-entity many-shot examples — `focus` still subsets *which* entities appear.
 #[allow(clippy::too_many_arguments)]
-fn render_domain_table_resolved<'b, F>(
+fn render_teaching_table_resolved<'b, F>(
     mut resolve: F,
     full_entities: &[&str],
     map: Option<&SymbolMap>,
     map_arc: Option<std::sync::Arc<SymbolMap>>,
-    exposure_for_ident: Option<&DomainExposureSession>,
+    exposure_for_ident: Option<&TeachingExposureSession>,
     teaching_blocks_out: &mut Vec<EntityTeachingBlock>,
-    model_out: &mut Vec<EntityDomainPrompt>,
+    model_out: &mut Vec<EntityTeachingPrompt>,
     fill_model: bool,
     _include_contract_preamble: bool,
     emit_entity_blocks: Option<&[&str]>,
@@ -5718,7 +5718,7 @@ fn render_domain_table_resolved<'b, F>(
         _ => None,
     };
 
-    let mut session = DomainSynthesisSession::new(
+    let mut session = TeachingSynthesisSession::new(
         line_valid_cache_seed,
         map,
         map_arc,
@@ -5728,12 +5728,12 @@ fn render_domain_table_resolved<'b, F>(
         fill_model,
     );
 
-    let render_one = |session: &mut DomainSynthesisSession<'_>,
+    let render_one = |session: &mut TeachingSynthesisSession<'_>,
                       cgs: &CGS,
                       ename: &str,
                       catalog_entry_id: &str,
                       teaching_blocks_out: &mut Vec<EntityTeachingBlock>,
-                      model_out: &mut Vec<EntityDomainPrompt>| {
+                      model_out: &mut Vec<EntityTeachingPrompt>| {
         let mut field_gloss_accum = Vec::new();
         let mut gloss_emit: Option<GlossScratch<'_>> =
             match (session.map, session.ident_meta.as_ref()) {
@@ -5764,17 +5764,17 @@ fn render_domain_table_resolved<'b, F>(
         if block.teaching_rows.is_empty() {
             debug_assert!(
                     false,
-                    "DOMAIN block empty for entity {ename} — CGS::validate should have rejected this via cgs_expression_validate"
+                    "teaching block empty for entity {ename} — CGS::validate should have rejected this via cgs_expression_validate"
                 );
             tracing::warn!(
                 target: "plasm_core::prompt_render",
                 entity = ename,
-                "empty DOMAIN block; schema should have failed CGS::validate"
+                "empty teaching block; schema should have failed CGS::validate"
             );
             return;
         }
         let mut seen_expr: HashSet<TeachingRowDedupeKey> = HashSet::new();
-        let mut emitted_metas: Vec<DomainLineMeta> = Vec::new();
+        let mut emitted_metas: Vec<TeachingLineMeta> = Vec::new();
         let mut kept_rows: Vec<EntityTeachingExprRow> = Vec::new();
         for row in block.teaching_rows {
             if seen_expr.insert(row.dedupe_key.clone()) {
@@ -5790,7 +5790,7 @@ fn render_domain_table_resolved<'b, F>(
             teaching_rows: kept_rows,
         });
         if session.collect_meta {
-            model_out.push(EntityDomainPrompt {
+            model_out.push(EntityTeachingPrompt {
                 entity: ename.to_string(),
                 lines: emitted_metas,
             });
@@ -5848,18 +5848,18 @@ fn render_domain_table_resolved<'b, F>(
 
 /// Per-entity many-shot examples using a single [`CGS`].
 #[allow(clippy::too_many_arguments)]
-fn render_domain_table(
+fn render_teaching_table(
     cgs: &CGS,
     full_entities: &[&str],
     map: Option<&SymbolMap>,
     map_arc: Option<std::sync::Arc<SymbolMap>>,
     teaching_blocks_out: &mut Vec<EntityTeachingBlock>,
-    model_out: &mut Vec<EntityDomainPrompt>,
+    model_out: &mut Vec<EntityTeachingPrompt>,
     fill_model: bool,
     include_contract_preamble: bool,
     emit_entity_blocks: Option<&[&str]>,
 ) {
-    render_domain_table_resolved(
+    render_teaching_table_resolved(
         |_| cgs,
         full_entities,
         map,
@@ -5901,17 +5901,17 @@ fn is_field_gloss_line(trimmed: &str) -> bool {
     rest[len..].trim_start().starts_with(";;")
 }
 
-/// Extract expression strings from the rendered DOMAIN section: **tsv** uses the `plasm_expr` column
+/// Extract expression strings from the rendered teaching section: **tsv** uses the `plasm_expr` column
 /// after the `plasm_expr\tMeaning` header.
 #[cfg(test)]
 fn example_expressions_from_prompt(prompt: &str) -> Vec<String> {
-    if prompt.contains(TSV_DOMAIN_TABLE_HEADER) {
+    if prompt.contains(TSV_TEACHING_TABLE_HEADER) {
         return example_expressions_from_prompt_tsv(prompt);
     }
     let mut out = Vec::new();
     let mut in_domain = false;
     for line in prompt.lines() {
-        if line.contains(DOMAIN_VALID_EXPR_MARKER) {
+        if line.contains(TEACHING_VALID_EXPR_MARKER) {
             in_domain = true;
             continue;
         }
@@ -5964,7 +5964,7 @@ fn example_expressions_from_prompt_tsv(prompt: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut in_table = false;
     for line in prompt.lines() {
-        if line == TSV_DOMAIN_TABLE_HEADER.trim_end() {
+        if line == TSV_TEACHING_TABLE_HEADER.trim_end() {
             in_table = true;
             continue;
         }
@@ -6003,7 +6003,7 @@ mod tests {
     };
     use crate::symbol_tuning::{
         entity_slices_for_render, resolve_prompt_surface_entities, symbol_map_for_prompt,
-        DomainExposureSession, ExposureEntityKey, FocusSpec,
+        TeachingExposureSession, ExposureEntityKey, FocusSpec,
     };
     use crate::CapabilityKind;
     use crate::Cardinality;
@@ -6026,11 +6026,11 @@ mod tests {
         repo_path(&["..", "..", "apis", name])
     }
 
-    /// Locks Proof `Document`-focused symbolic DOMAIN TSV (`apis/proof`): union ctor teaching rows,
+    /// Locks Proof `Document`-focused symbolic teaching TSV (`apis/proof`): union ctor teaching rows,
     /// value-domain gloss, and `document_edit_v2` witness line. Update with
-    /// `INSTA_UPDATE=1 cargo test -p plasm-core proof_document_domain_tsv_snapshot`.
+    /// `INSTA_UPDATE=1 cargo test -p plasm-core proof_document_teaching_tsv_snapshot`.
     #[test]
-    fn proof_document_domain_tsv_snapshot() {
+    fn proof_document_teaching_tsv_snapshot() {
         let dir = apis_dir("proof");
         if !dir.is_dir() {
             eprintln!(
@@ -6042,7 +6042,7 @@ mod tests {
         let cgs = load_schema_dir(&dir).unwrap();
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(Some("Document")));
         with_insta_snapshots(|| {
-            insta::assert_snapshot!("proof_document_domain_tsv", tsv);
+            insta::assert_snapshot!("proof_document_teaching_tsv", tsv);
         });
     }
 
@@ -6076,7 +6076,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing capability {cap_name}"));
             assert!(
                 cap.has_any_required_param(),
-                "{cap_name}: expected at least one required parameter so DOMAIN cannot teach a no-arg bug report"
+                "{cap_name}: expected at least one required parameter so teaching table cannot teach a no-arg bug report"
             );
             let fields = cap.object_params().unwrap_or_else(|| {
                 panic!("{cap_name}: expected merged object input schema from parameters:")
@@ -6193,8 +6193,8 @@ mod tests {
             "page continuation handles are taught by responses and must remain in the contract"
         );
         assert!(
-            !contract.contains("DOMAIN") && !contract.contains(";;") && !contract.contains("p#=v"),
-            "contract must not reintroduce legacy DOMAIN/compact separators or bare-v placeholders:\n{contract}"
+            !contract.contains("teaching table") && !contract.contains(";;") && !contract.contains("p#=v"),
+            "contract must not reintroduce legacy teaching table/compact separators or bare-v placeholders:\n{contract}"
         );
     }
 
@@ -6243,7 +6243,7 @@ mod tests {
         );
     }
 
-    /// Regression: Issue DOMAIN teaches **one** full scalar projection list (all `provides` fields),
+    /// Regression: Issue teaching table teaches **one** full scalar projection list (all `provides` fields),
     /// on the **identity** primary get or on the heading when the get is singleton-only — not a
     /// prefix ladder or a duplicate extra exemplar line.
     #[test]
@@ -6254,7 +6254,7 @@ mod tests {
         }
         let cgs = load_schema_dir(&dir).unwrap();
         let exposure =
-            crate::symbol_tuning::domain_exposure_session_from_focus(&cgs, FocusSpec::All);
+            crate::symbol_tuning::teaching_exposure_session_from_focus(&cgs, FocusSpec::All);
         let surface = Some(&exposure.surface);
         let Some(ent) = cgs.get_entity("Issue") else {
             panic!("missing Issue entity");
@@ -6287,7 +6287,7 @@ mod tests {
             .count();
         assert_eq!(
             bracket_lines, 1,
-            "expect exactly one DOMAIN example line with a full scalar projection list (bracket_lines={})",
+            "expect exactly one teaching example line with a full scalar projection list (bracket_lines={})",
             bracket_lines,
         );
         let out = render_prompt_with_config(&cgs, cfg);
@@ -6301,7 +6301,7 @@ mod tests {
         );
         assert!(
             out.len() > 8_000,
-            "full apis/github DOMAIN+legend should be substantial (got {}); compare `github_api_full_prompt_symbolic` snapshot",
+            "full apis/github teaching table+legend should be substantial (got {}); compare `github_api_full_prompt_symbolic` snapshot",
             out.len()
         );
         // Baseline bumped after `=>` / relation-arrow contract pitfalls in MCP frontmatter.
@@ -6333,7 +6333,7 @@ mod tests {
         }
         let cgs = load_schema_dir(&dir).unwrap();
         let exposure =
-            crate::symbol_tuning::domain_exposure_session_from_focus(&cgs, FocusSpec::All);
+            crate::symbol_tuning::teaching_exposure_session_from_focus(&cgs, FocusSpec::All);
         let surface = Some(&exposure.surface);
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true);
         let cfg = RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact);
@@ -6350,7 +6350,7 @@ mod tests {
             .count();
         assert_eq!(
             bracket_lines, 1,
-            "expect exactly one DOMAIN example line with a full scalar projection list (bracket_lines={})",
+            "expect exactly one teaching example line with a full scalar projection list (bracket_lines={})",
             bracket_lines,
         );
         let out = render_prompt_with_config(&cgs, cfg);
@@ -6368,7 +6368,7 @@ mod tests {
         }
         let cgs = load_schema_dir(&dir).unwrap();
         let exposure =
-            crate::symbol_tuning::domain_exposure_session_from_focus(&cgs, FocusSpec::All);
+            crate::symbol_tuning::teaching_exposure_session_from_focus(&cgs, FocusSpec::All);
         let cfg = RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact);
         let br = domain_projection_bracket_from_final_bundle(&cgs, &exposure, cfg, "Issue")
             .expect("Issue should carry a projection list");
@@ -6412,61 +6412,61 @@ mod tests {
         }
         let cgs = load_schema_dir(&dir).unwrap();
         let pipeline = PromptPipelineConfig::default();
-        let mut exp = DomainExposureSession::new(&cgs, "", &["Pet"]);
-        let first = pipeline.render_domain_first_wave_for_session(&cgs, &exp, None);
+        let mut exp = TeachingExposureSession::new(&cgs, "", &["Pet"]);
+        let first = pipeline.render_teaching_first_wave_for_session(&cgs, &exp, None);
         assert!(
-            first.lines().any(|l| l.contains(DOMAIN_VALID_EXPR_MARKER)),
+            first.lines().any(|l| l.contains(TEACHING_VALID_EXPR_MARKER)),
             "initial teaching TSV should include global contract marker"
         );
-        let (c, table) = split_tsv_domain_contract_and_table(&first);
+        let (c, table) = split_tsv_teaching_contract_and_table(&first);
         assert!(
             c.is_some()
                 && c.as_ref()
-                    .is_some_and(|s| s.contains(DOMAIN_VALID_EXPR_MARKER)),
+                    .is_some_and(|s| s.contains(TEACHING_VALID_EXPR_MARKER)),
             "split should return contract block"
         );
         assert!(
-            table.starts_with(TSV_DOMAIN_TABLE_HEADER),
+            table.starts_with(TSV_TEACHING_TABLE_HEADER),
             "table body should start with plasm_expr/Meaning"
         );
-        let (c2, t2) = split_tsv_domain_contract_and_table(&table);
+        let (c2, t2) = split_tsv_teaching_contract_and_table(&table);
         assert_eq!(c2, None, "table-only TSV has no contract prefix");
         assert_eq!(t2, table);
         exp.expose_entities(&[&cgs], std::sync::Arc::new(cgs.clone()), "", &["Order"]);
-        let delta = pipeline.render_domain_exposure_delta(&cgs, &exp, &["Order"], None);
+        let delta = pipeline.render_teaching_exposure_delta(&cgs, &exp, &["Order"], None);
         assert!(
-            !delta.contains(DOMAIN_VALID_EXPR_MARKER),
+            !delta.contains(TEACHING_VALID_EXPR_MARKER),
             "additive TSV must not repeat global contract comments"
         );
         assert!(
-            delta.contains(TSV_DOMAIN_TABLE_HEADER.trim_end()),
+            delta.contains(TSV_TEACHING_TABLE_HEADER.trim_end()),
             "additive TSV should keep column header"
         );
     }
 
     #[test]
-    fn split_tsv_domain_contract_and_table_table_only() {
+    fn split_tsv_teaching_contract_and_table_table_only() {
         let t = "plasm_expr\tMeaning\na\tb\n";
-        let (c, b) = split_tsv_domain_contract_and_table(t);
+        let (c, b) = split_tsv_teaching_contract_and_table(t);
         assert_eq!(c, None);
         assert_eq!(b, t);
     }
 
     #[test]
-    fn split_tsv_domain_contract_and_table_with_comment_prefix() {
+    fn split_tsv_teaching_contract_and_table_with_comment_prefix() {
         let t = "# Plasm contract line\n# second\n\nplasm_expr\tMeaning\na\tb\n";
-        let (c, b) = split_tsv_domain_contract_and_table(t);
+        let (c, b) = split_tsv_teaching_contract_and_table(t);
         assert_eq!(c.as_deref(), Some("# Plasm contract line\n# second"));
         assert_eq!(b, "plasm_expr\tMeaning\na\tb\n");
     }
 
     #[test]
-    fn rendered_domain_tsv_teaching_rows_single_tab_separator() {
+    fn rendered_teaching_tsv_teaching_rows_single_tab_separator() {
         let dir = fixtures_schemas_dir("plasm_prompt_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
-        let (_, body) = split_tsv_domain_contract_and_table(&tsv);
-        validate_domain_tsv_teaching_table(&body)
+        let (_, body) = split_tsv_teaching_contract_and_table(&tsv);
+        validate_teaching_tsv_teaching_table(&body)
             .expect("every teaching row must be expr\\tMeaning");
     }
 
@@ -6487,8 +6487,8 @@ mod tests {
 
         let warmup = render_prompt_tsv_with_config(&cgs, config);
         assert!(
-            warmup.contains(TSV_DOMAIN_TABLE_HEADER.trim_end()),
-            "warmup must emit TSV DOMAIN header"
+            warmup.contains(TSV_TEACHING_TABLE_HEADER.trim_end()),
+            "warmup must emit teaching TSV header"
         );
 
         let mut best = std::time::Duration::MAX;
@@ -6513,9 +6513,9 @@ mod tests {
         );
     }
 
-    /// Regression: TSV `p#` gloss rows must use [`IdentMetadata`] for the entity owning the DOMAIN
+    /// Regression: TSV `p#` gloss rows must use [`IdentMetadata`] for the entity owning the teaching table
     /// block, not `full_entities[idx]` by YAML insertion order (symbolic bundle uses sorted
-    /// [`DomainExposureSession::entities`]). Overshow has `RecordedContent.id` (string) and
+    /// [`TeachingExposureSession::entities`]). Overshow has `RecordedContent.id` (string) and
     /// `CaptureItem.id` (integer); mis-alignment produced `str · id` for CaptureItem's block.
     #[test]
     fn tsv_symbolic_blocks_align_ident_gloss_with_exposure_entity_order() {
@@ -6532,7 +6532,7 @@ mod tests {
         );
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         let after_header = tsv
-            .split(TSV_DOMAIN_TABLE_HEADER)
+            .split(TSV_TEACHING_TABLE_HEADER)
             .nth(1)
             .expect("tsv plasm_expr/Meaning table");
         let first_block: String = after_header
@@ -6572,7 +6572,7 @@ mod tests {
         );
     }
 
-    /// `Profile.recorded_matches` targets `RecordedContent`, which has Search/Query but no Get — DOMAIN
+    /// `Profile.recorded_matches` targets `RecordedContent`, which has Search/Query but no Get — teaching table
     /// must still teach chain nav for `query_scoped` many relations using a **validated** receiver
     /// (query-scoped `e7{…}` preferred over bare `e7($)` when that is the anchor that type-checks).
     #[test]
@@ -6636,14 +6636,14 @@ mod tests {
         let mut lines = tsv.lines();
         let first = lines.next().expect("tsv frontmatter");
         assert!(
-            first.starts_with("# ") && first.contains(DOMAIN_VALID_EXPR_MARKER),
+            first.starts_with("# ") && first.contains(TEACHING_VALID_EXPR_MARKER),
             "TSV output should begin with comment-prefixed frontmatter"
         );
         let header = tsv
             .lines()
-            .find(|line| *line == TSV_DOMAIN_TABLE_HEADER.trim_end())
+            .find(|line| *line == TSV_TEACHING_TABLE_HEADER.trim_end())
             .expect("tsv header");
-        assert_eq!(header, TSV_DOMAIN_TABLE_HEADER.trim_end());
+        assert_eq!(header, TSV_TEACHING_TABLE_HEADER.trim_end());
         let issue_identity = tsv
             .lines()
             .find(|l| {
@@ -6710,7 +6710,7 @@ mod tests {
         );
         let body = tsv
             .lines()
-            .skip_while(|line| *line != TSV_DOMAIN_TABLE_HEADER.trim_end())
+            .skip_while(|line| *line != TSV_TEACHING_TABLE_HEADER.trim_end())
             .skip(1)
             .collect::<Vec<_>>()
             .join("\n");
@@ -6741,7 +6741,7 @@ mod tests {
                     && cols[0].starts_with('e')
                     && cols[1].to_lowercase().contains("comment")
             })
-            .expect("IssueComment invoke DOMAIN row");
+            .expect("IssueComment invoke teaching table row");
         assert!(
             issue_comment_create_row.contains("[scope")
                 || issue_comment_create_row.contains("scope"),
@@ -6761,7 +6761,7 @@ mod tests {
                     && cols[0].contains(&format!("{p_anon}="))
                     && (cols[1].contains("opt:") || cols[1].contains("[scope"))
             })
-            .expect("Contributor list DOMAIN row (non-projection query exemplar)");
+            .expect("Contributor list teaching table row (non-projection query exemplar)");
         assert!(
             contrib.starts_with('e') && contrib.contains("{p"),
             "contributor query row should be a brace-query exemplar: {contrib:?}"
@@ -6784,14 +6784,14 @@ mod tests {
         }
         let cgs = load_schema_dir(&dir).unwrap();
         let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
-        let Some(idx) = prompt.find(TSV_DOMAIN_TABLE_HEADER) else {
+        let Some(idx) = prompt.find(TSV_TEACHING_TABLE_HEADER) else {
             panic!(
                 "expected {} in rendered prompt",
-                TSV_DOMAIN_TABLE_HEADER.trim_end()
+                TSV_TEACHING_TABLE_HEADER.trim_end()
             );
         };
         let table = &prompt[idx..];
-        validate_domain_tsv_teaching_table(table).expect("TSV teaching invariant");
+        validate_teaching_tsv_teaching_table(table).expect("TSV teaching invariant");
         for line in table.lines().skip(1) {
             let line = line.strip_suffix('\r').unwrap_or(line);
             if line.is_empty() || line.starts_with('#') {
@@ -6799,7 +6799,7 @@ mod tests {
             }
             assert!(
                 !line.contains(";;"),
-                "direct TSV emission must not leak compact DOMAIN transcript tokens: {line:?}"
+                "direct TSV emission must not leak compact teaching table transcript tokens: {line:?}"
             );
         }
     }
@@ -6867,7 +6867,7 @@ mod tests {
                 && parse_trailing_projection_bracket(r.teaching_expr.expression.trim()).is_some()
         });
         let Some(row) = witness_row else {
-            panic!("expected a projection witness row for Zone DOMAIN; lines={lines:?}");
+            panic!("expected a projection witness row for Zone teaching table; lines={lines:?}");
         };
         let expr = row.teaching_expr.expression.as_str();
         let legend = DomainTsvMeaningCell::from_teaching_atoms(teaching_expr_meaning_atoms(
@@ -7137,7 +7137,7 @@ mod tests {
                 && parse_trailing_projection_bracket(r.teaching_expr.expression.trim()).is_some()
         });
         let Some(row) = witness_row else {
-            panic!("expected a projection witness row for Zone DOMAIN");
+            panic!("expected a projection witness row for Zone teaching table");
         };
         let expr = row.teaching_expr.expression.as_str();
         let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
@@ -7153,7 +7153,7 @@ mod tests {
         assert_eq!(
             line.bytes().filter(|b| *b == b'\t').count(),
             1,
-            "DOMAIN row must use exactly one U+0009 column delimiter; line={line:?}"
+            "teaching table row must use exactly one U+0009 column delimiter; line={line:?}"
         );
     }
 
@@ -7172,7 +7172,7 @@ mod tests {
             1,
             "Ruleset entity description should appear exactly once (terminal `.` stripped for agent gloss); excerpt around Ruleset teaching rows should be inspected"
         );
-        let bundle = render_domain_prompt_bundle(&cgs, RenderConfig::for_eval(None));
+        let bundle = render_teaching_prompt_bundle(&cgs, RenderConfig::for_eval(None));
         let (names, _) = resolve_prompt_surface_entities(&cgs, FocusSpec::All, true);
         let idx = names
             .iter()
@@ -7261,7 +7261,7 @@ mod tests {
             panic!("missing WafPackage entity");
         };
         if wp_ent.abstract_entity {
-            // Abstract entities are omitted from default DOMAIN slices — explicit teaching
+            // Abstract entities are omitted from default teaching slices — explicit teaching
             // collection still synthesizes witness rows for tooling/tests.
             let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
             assert!(
@@ -7270,7 +7270,7 @@ mod tests {
                         && !l.is_empty()
                         && l.split_once('\t').is_some_and(|(e, _)| e == expr)
                 }),
-                "abstract WafPackage lines must not appear in default DOMAIN TSV: {expr:?}"
+                "abstract WafPackage lines must not appear in default teaching TSV: {expr:?}"
             );
             return;
         }
@@ -7300,8 +7300,8 @@ mod tests {
         let dir = fixtures_schemas_dir("plasm_prompt_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
-        let Some(idx) = prompt.find(TSV_DOMAIN_TABLE_HEADER) else {
-            panic!("expected DOMAIN TSV header");
+        let Some(idx) = prompt.find(TSV_TEACHING_TABLE_HEADER) else {
+            panic!("expected teaching TSV header");
         };
         fn count_slot_rows(body: &str, prefix: &str) -> usize {
             body.lines()
@@ -7465,12 +7465,12 @@ mod tests {
         let root = fixtures_schemas_dir("plasm_language_matrix");
         let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
         let layers = [&cgs, &cgs];
-        let mut exp = DomainExposureSession::new(&cgs, "github", &["LangItem"]);
+        let mut exp = TeachingExposureSession::new(&cgs, "github", &["LangItem"]);
         exp.expose_entities(&layers, Arc::new(cgs.clone()), "linear", &["LangItem"]);
         let mut by_entry: IndexMap<String, &CGS> = IndexMap::new();
         by_entry.insert("github".into(), &cgs);
         by_entry.insert("linear".into(), &cgs);
-        let bundle = render_domain_prompt_bundle_for_exposure_federated(
+        let bundle = render_teaching_prompt_bundle_for_exposure_federated(
             &by_entry,
             RenderConfig::for_eval(None),
             &exp,
@@ -7502,13 +7502,13 @@ mod tests {
     }
 
     #[test]
-    fn domain_prompt_bundle_tags_relation_nav_materialization() {
+    fn teaching_prompt_bundle_tags_relation_nav_materialization() {
         let dir = apis_dir("pokeapi");
         if !dir.exists() {
             return;
         }
         let cgs = load_schema_dir(&dir).unwrap();
-        let bundle = render_domain_prompt_bundle(&cgs, RenderConfig::for_eval_seeds(&["Type"]));
+        let bundle = render_teaching_prompt_bundle(&cgs, RenderConfig::for_eval_seeds(&["Type"]));
         let found = bundle
             .model
             .entities
@@ -7523,11 +7523,11 @@ mod tests {
             });
         assert!(
             found,
-            "expected a relation DOMAIN line with FromParentGet metadata"
+            "expected a relation teaching line with FromParentGet metadata"
         );
         let mut cfg = RenderConfig::for_eval_canonical(None);
         cfg.include_domain_execution_model = false;
-        let bundle2 = render_domain_prompt_bundle(&cgs, cfg);
+        let bundle2 = render_teaching_prompt_bundle(&cgs, cfg);
         assert!(bundle2.model.entities.is_empty());
     }
 
@@ -7560,7 +7560,7 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(&dir).unwrap();
-        let bundle = render_domain_prompt_bundle(
+        let bundle = render_teaching_prompt_bundle(
             &cgs,
             RenderConfig {
                 focus: FocusSpec::All,
@@ -7574,7 +7574,7 @@ mod tests {
             .entities
             .iter()
             .find(|e| e.entity == "Pet")
-            .expect("Pet DOMAIN block");
+            .expect("Pet teaching block");
         let bound = pet
             .lines
             .iter()
@@ -7582,7 +7582,7 @@ mod tests {
             .count();
         assert!(
             bound > 0,
-            "expected at least one DOMAIN line bound to a CGS capability id"
+            "expected at least one teaching table line bound to a CGS capability id"
         );
         assert!(pet
             .lines
@@ -7615,7 +7615,7 @@ mod tests {
         assert!(!out.contains("EXAMPLES:") && out.contains("plasm_expr\tMeaning"));
     }
 
-    /// `Team(id).spaces` uses `query_scoped` materialization — it parses as [`Expr::Chain`]; DOMAIN shows
+    /// `Team(id).spaces` uses `query_scoped` materialization — it parses as [`Expr::Chain`]; teaching table shows
     /// anchored relation nav plus scoped `Space{…}` under Space.
     #[test]
     fn clickup_domain_includes_materialized_team_spaces_nav() {
@@ -7651,17 +7651,17 @@ mod tests {
         );
         assert!(
             raw.contains("Space{") && raw.contains("team_id"),
-            "Space scoped query with team_id should remain in DOMAIN (canonical)"
+            "Space scoped query with team_id should remain in teaching table (canonical)"
         );
         assert!(
             sym.contains("Space{")
                 || (sym.contains("{p") && sym.contains(&format!("={}(", team_sym)))
                 || raw.contains("Space{"),
-            "Space scoped query should remain in DOMAIN"
+            "Space scoped query should remain in teaching table"
         );
     }
 
-    /// `team_query` is query-shaped (`e1` in DOMAIN); capability prose is intentionally omitted from
+    /// `team_query` is query-shaped (`e1` in teaching table); capability prose is intentionally omitted from
     /// `Meaning` (types teach shape); see `omit_capability_prose` in teaching synthesis.
     #[test]
     fn clickup_domain_gloss_and_symbol_map_queries() {
@@ -7703,20 +7703,20 @@ mod tests {
         );
         assert!(
             !sym.contains("QUERIES\n"),
-            "QUERIES table removed — capability text lives on DOMAIN lines"
+            "QUERIES table removed — capability text lives on teaching lines"
         );
         assert!(
             !sym.contains("METHODS\n"),
-            "METHODS table removed — invoke glosses live on DOMAIN lines"
+            "METHODS table removed — invoke glosses live on teaching lines"
         );
         let domain_start = sym
-            .find(DOMAIN_VALID_EXPR_MARKER)
+            .find(TEACHING_VALID_EXPR_MARKER)
             .expect("valid expressions preamble");
         let domain_block = &sym[domain_start..];
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
         let team_sym = map.entity_sym("Team");
         assert!(
-            domain_block.contains(super::DOMAIN_VALID_EXPR_MARKER),
+            domain_block.contains(super::TEACHING_VALID_EXPR_MARKER),
             "TSV contract should open with valid-expression rules"
         );
         assert!(
@@ -7749,7 +7749,7 @@ mod tests {
         );
         assert!(
             !domain_block.contains("2000-01-01") && !domain_block.contains("p10>=\""),
-            "query DOMAIN brace form must not teach concrete ISO datetimes or `>=` date literals"
+            "query teaching table brace form must not teach concrete ISO datetimes or `>=` date literals"
         );
         assert!(
             !domain_block.contains("List all accessible workspaces"),
@@ -7757,7 +7757,7 @@ mod tests {
         );
     }
 
-    /// User has only pathless singleton `user_get_me` — DOMAIN must show `e#.m#()` (get-me) and not mislead with `e#(42)`.
+    /// User has only pathless singleton `user_get_me` — teaching table must show `e#.m#()` (get-me) and not mislead with `e#(42)`.
     #[test]
     fn clickup_user_singleton_get_me_line_in_domain() {
         let dir = apis_dir("clickup");
@@ -7874,7 +7874,7 @@ mod tests {
     #[test]
     fn prompt_surface_stats_counts_caps_nav_and_domain_tools() {
         let cgs = prompt_stats_fixture_cgs();
-        // Symbolic render modes — same entity slice as execute / [`domain_exposure_session_from_focus`]
+        // Symbolic render modes — same entity slice as execute / [`teaching_exposure_session_from_focus`]
         // (seed-only for Single/Seeds; no 2-hop union).
         let (c_all, n_all) = json_tool_surface_counts(&cgs, FocusSpec::All, true);
         assert_eq!((c_all, n_all), (2, 1));
@@ -7899,7 +7899,7 @@ mod tests {
             exposure_opt.as_ref(),
             cfg.uses_symbols(),
         );
-        // Book: one query line; Shelf: one. Many `shelf` relation is Unmaterialized → no nav line in DOMAIN.
+        // Book: one query line; Shelf: one. Many `shelf` relation is Unmaterialized → no nav line in teaching table.
         assert_eq!(domain_tools, 2);
 
         let prompt = "αβγδε"; // 5 chars → legacy est 1; o200k is model-based
@@ -8004,7 +8004,7 @@ mod tests {
             RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
         );
         let domain = prompt
-            .find(DOMAIN_VALID_EXPR_MARKER)
+            .find(TEACHING_VALID_EXPR_MARKER)
             .map(|i| &prompt[i..])
             .unwrap_or(&prompt);
         let gloss_hits: Vec<_> = domain
@@ -8036,7 +8036,7 @@ mod tests {
             RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact),
         );
         let domain = prompt
-            .find(DOMAIN_VALID_EXPR_MARKER)
+            .find(TEACHING_VALID_EXPR_MARKER)
             .map(|i| &prompt[i..])
             .unwrap_or(&prompt);
         let count = domain
@@ -8056,7 +8056,7 @@ mod tests {
         assert_prompt_examples_valid(dir, RenderConfig::for_eval(None));
     }
 
-    /// DOMAIN lines must **parse**, **resolve** query capabilities where applicable, and **type-check**
+    /// teaching lines must **parse**, **resolve** query capabilities where applicable, and **type-check**
     /// — the same baseline as execution (not merely syntactic validity).
     fn assert_prompt_examples_valid(dir: &std::path::Path, config: RenderConfig<'_>) {
         if !dir.exists() {
@@ -8073,7 +8073,7 @@ mod tests {
         let exprs = example_expressions_from_prompt(&prompt);
         assert!(
             !exprs.is_empty(),
-            "expected DOMAIN section with expressions for {}",
+            "expected teaching section with expressions for {}",
             dir.display()
         );
         for expr in &exprs {
@@ -8083,19 +8083,19 @@ mod tests {
                 .unwrap_or_else(|| expr.clone());
             let mut r = crate::expr_parser::parse(&work, &cgs).unwrap_or_else(|e| {
                 panic!(
-                    "DOMAIN expr should parse for {}: {expr:?} (expanded {work:?})\n{e}",
+                    "teaching table expr should parse for {}: {expr:?} (expanded {work:?})\n{e}",
                     dir.display()
                 );
             });
             if let Err(e) = crate::normalize_expr_query_capabilities(&mut r.expr, &cgs) {
                 panic!(
-                    "DOMAIN expr should resolve query capability for {}: {expr:?} (expanded {work:?})\n{e}",
+                    "teaching table expr should resolve query capability for {}: {expr:?} (expanded {work:?})\n{e}",
                     dir.display()
                 );
             }
             if let Err(e) = crate::type_check_expr(&r.expr, &cgs) {
                 panic!(
-                    "DOMAIN expr should type-check for {}: {expr:?} (expanded {work:?})\n{e}",
+                    "teaching table expr should type-check for {}: {expr:?} (expanded {work:?})\n{e}",
                     dir.display()
                 );
             }
@@ -8147,7 +8147,7 @@ mod tests {
         );
     }
 
-    /// Locks compact DOMAIN + symbol preamble for `fixtures/schemas/overshow_tools`.
+    /// Locks compact teaching table + symbol preamble for `fixtures/schemas/overshow_tools`.
     /// Update with `INSTA_UPDATE=always cargo test -p plasm-core overshow_tools_compact_prompt_snapshot -- --exact`.
     #[test]
     fn overshow_tools_compact_prompt_snapshot() {
@@ -8165,7 +8165,7 @@ mod tests {
         });
     }
 
-    /// Locks TSV DOMAIN render for the same fixture (review diffs with compact snapshot above).
+    /// Locks teaching TSV render for the same fixture (review diffs with compact snapshot above).
     #[test]
     fn overshow_tools_prompt_tsv_snapshot() {
         let dir = fixtures_schemas_dir("overshow_tools");
@@ -8181,18 +8181,18 @@ mod tests {
 
     /// Federated open: colliding wire entity names get distinct `e#` in teaching TSV rows (B1).
     #[test]
-    fn federated_duplicate_entity_wire_names_use_distinct_e_in_domain_tsv() {
+    fn federated_duplicate_entity_wire_names_use_distinct_e_in_teaching_tsv() {
         use std::sync::Arc;
 
         let root = fixtures_schemas_dir("plasm_language_matrix");
         let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
         let layers = [&cgs, &cgs];
-        let mut exp = DomainExposureSession::new(&cgs, "github", &["LangItem"]);
+        let mut exp = TeachingExposureSession::new(&cgs, "github", &["LangItem"]);
         exp.expose_entities(&layers, Arc::new(cgs.clone()), "linear", &["LangItem"]);
         let mut by_entry: IndexMap<String, &CGS> = IndexMap::new();
         by_entry.insert("github".into(), &cgs);
         by_entry.insert("linear".into(), &cgs);
-        let bundle = render_domain_prompt_bundle_for_exposure_federated(
+        let bundle = render_teaching_prompt_bundle_for_exposure_federated(
             &by_entry,
             RenderConfig::for_eval(None),
             &exp,
@@ -8241,12 +8241,12 @@ mod tests {
         let mut cgs_linear = load_schema_dir(&linear_dir).expect("linear");
         cgs_linear.entry_id = Some("linear".into());
         let layers = [&cgs_github, &cgs_linear];
-        let mut exp = DomainExposureSession::new(&cgs_github, "github", &["Issue"]);
+        let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["Issue"]);
         exp.expose_entities(&layers, Arc::new(cgs_linear.clone()), "linear", &["Issue"]);
         let mut by_entry: IndexMap<String, &CGS> = IndexMap::new();
         by_entry.insert("github".into(), &cgs_github);
         by_entry.insert("linear".into(), &cgs_linear);
-        let bundle = render_domain_prompt_bundle_for_exposure_federated(
+        let bundle = render_teaching_prompt_bundle_for_exposure_federated(
             &by_entry,
             RenderConfig::for_eval(None),
             &exp,

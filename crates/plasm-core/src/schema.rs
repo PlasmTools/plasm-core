@@ -104,21 +104,21 @@ pub struct ResourceSchema {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub key_vars: Vec<EntityFieldName>,
     /// When true, this entity is only reached via relations / nested JSON — no top-level capabilities
-    /// or DOMAIN block. YAML key: `abstract`.
+    /// or teaching block. YAML key: `abstract`.
     #[serde(
         default,
         rename = "abstract",
         skip_serializing_if = "std::ops::Not::not"
     )]
     pub abstract_entity: bool,
-    /// When false, DOMAIN omits the `[field,…]` projection list on this entity’s **heading** line (default: true).
+    /// When false, teaching table omits the `[field,…]` projection list on this entity’s **heading** line (default: true).
     #[serde(
         default = "default_domain_projection_examples",
         skip_serializing_if = "domain_projection_examples_is_default"
     )]
     pub domain_projection_examples: bool,
     /// Optional override: capability **id** of a **Get** on this entity that defines ordered `provides` /
-    /// default field order for DOMAIN heading projection teaching. If the id is missing, not a Get, or targets
+    /// default field order for teaching heading projection teaching. If the id is missing, not a Get, or targets
     /// another entity, [`CGS::resolved_primary_get_for_projection`] falls back to [`CGS::primary_get_capability`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_read: Option<String>,
@@ -263,7 +263,7 @@ pub enum AttachmentMediaKind {
 }
 
 impl StringSemantics {
-    /// Keyword used in DOMAIN `p#` gloss for `string` fields/parameters when semantics are set.
+    /// Keyword used in teaching table `p#` gloss for `string` fields/parameters when semantics are set.
     /// [`StringSemantics::Short`] maps to the generic `str` label via [`None`].
     pub fn gloss_type_keyword(self) -> Option<&'static str> {
         match self {
@@ -313,7 +313,7 @@ pub struct ArrayItemsSchema {
 /// shape shared by `value_ref` use sites on entity fields and capability parameters.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NamedValueSchema {
-    /// What this value space represents (authoring / tooling; not agent DOMAIN vocabulary).
+    /// What this value space represents (authoring / tooling; not agent teaching table vocabulary).
     #[serde(default)]
     pub description: String,
     #[serde(with = "serde_yaml::with::singleton_map")]
@@ -764,7 +764,7 @@ pub fn graphql_operation_variable_names(template: &serde_json::Value) -> Vec<Str
     out
 }
 
-/// True when DOMAIN exemplars must use `Entity($)` / an anchored receiver (`Entity($).m()`), not a
+/// True when teaching table exemplars must use `Entity($)` / an anchored receiver (`Entity($).m()`), not a
 /// bare pathless `Entity.get()`-style line.
 ///
 /// Transport-neutral predicate: combines HTTP path `var` segments with GraphQL operation `variables`
@@ -935,7 +935,7 @@ pub struct InputVariantSchema {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// Optional DOMAIN / program constructor prefix (e.g. `v21` for `v21{p10=$,…}`).
+    /// Optional teaching table / program constructor prefix (e.g. `v21` for `v21{p10=$,…}`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub constructor_symbol: Option<String>,
     pub fields: Vec<InputFieldSchema>,
@@ -1088,7 +1088,7 @@ pub fn input_variant_body_type(v: &InputVariantSchema) -> InputType {
     }
 }
 
-/// DOMAIN constructor label for [`InputVariantSchema::constructor_symbol`] (`v101{…}`), when present.
+/// teaching table constructor label for [`InputVariantSchema::constructor_symbol`] (`v101{…}`), when present.
 #[inline]
 pub fn union_variant_constructor_symbol(v: &InputVariantSchema) -> Option<&str> {
     v.constructor_symbol.as_deref()
@@ -2076,20 +2076,20 @@ pub struct EntityDef {
     /// When non-empty with more than one name, [`plasm_core::Ref`] must use [`EntityKey::Compound`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub key_vars: Vec<EntityFieldName>,
-    /// Embed-only / relation target only — excluded from expression witness and DOMAIN full list.
+    /// Embed-only / relation target only — excluded from expression witness and teaching table full list.
     #[serde(
         default,
         rename = "abstract",
         skip_serializing_if = "std::ops::Not::not"
     )]
     pub abstract_entity: bool,
-    /// When false, DOMAIN omits the `[field,…]` projection list on this entity’s **heading** line (default: true).
+    /// When false, teaching table omits the `[field,…]` projection list on this entity’s **heading** line (default: true).
     #[serde(
         default = "default_domain_projection_examples",
         skip_serializing_if = "domain_projection_examples_is_default"
     )]
     pub domain_projection_examples: bool,
-    /// Optional: capability **id** of a **Get** on this entity for DOMAIN heading projection order (see [`CGS::resolved_primary_get_for_projection`]).
+    /// Optional: capability **id** of a **Get** on this entity for teaching heading projection order (see [`CGS::resolved_primary_get_for_projection`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_read: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -4065,16 +4065,16 @@ impl CGS {
     ///
     /// Several helpers derive ordered field names; they are **not** interchangeable:
     ///
-    /// 1. **DOMAIN / prompt teaching** — [`Self::effective_ordered_response_fields`],
+    /// 1. **teaching table / prompt teaching** — [`Self::effective_ordered_response_fields`],
     ///    [`Self::domain_projection_heading_fields`] / [`Self::projection_prompt_field_prefixes`]: use explicit capability `provides` when present;
     ///    otherwise [`Self::default_ordered_entity_field_names`] on the capability’s domain entity
     ///    (`id_field` first, then remaining fields lexicographically).
     /// 2. **Runtime decode, cache, and [`Self::field_providers`]** — [`Self::effective_provides`]:
-    ///    same `provides` vs default rule as (1) so empty-`provides` defaults stay aligned with DOMAIN.
+    ///    same `provides` vs default rule as (1) so empty-`provides` defaults stay aligned with teaching table.
     /// 3. **Short error / CLI hints** — internal `error_render` projection scalars (scalar-only,
-    ///    sorted, `prioritize_projection_scalars`): intentionally **not** the full DOMAIN projection field list.
+    ///    sorted, `prioritize_projection_scalars`): intentionally **not** the full teaching table projection field list.
     ///
-    /// Primary **Get** for an entity — same selection as DOMAIN / CLI use for the main fetch pattern.
+    /// Primary **Get** for an entity — same selection as teaching table / CLI use for the main fetch pattern.
     ///
     /// Picks the first Get (by capability name) that is not a trivial zero-arity pathless invoke,
     /// or falls back to the first Get when all are trivial.
@@ -4092,7 +4092,7 @@ impl CGS {
         Some(get_caps[0])
     }
 
-    /// Ordered field names for DOMAIN heading projection teaching: explicit `provides`, or default entity order when empty.
+    /// Ordered field names for teaching heading projection teaching: explicit `provides`, or default entity order when empty.
     pub fn effective_ordered_response_fields(&self, cap: &CapabilitySchema) -> Vec<String> {
         if !cap.provides.is_empty() {
             return cap.provides.clone();
@@ -4121,10 +4121,10 @@ impl CGS {
         }
     }
 
-    /// Resolve which **Get** supplies ordered `provides` / default field order for DOMAIN heading projection.
+    /// Resolve which **Get** supplies ordered `provides` / default field order for teaching heading projection.
     ///
     /// When `primary_read` is set it must name a [`CapabilityKind::Get`] whose [`CapabilitySchema::domain`]
-    /// is this entity; otherwise falls back to [`Self::primary_get_capability`] (same anchor as the DOMAIN
+    /// is this entity; otherwise falls back to [`Self::primary_get_capability`] (same anchor as the teaching table
     /// get exemplar when multiple Gets exist).
     pub fn resolved_primary_get_for_projection<'a>(
         &'a self,
@@ -4141,10 +4141,10 @@ impl CGS {
         self.primary_get_capability(entity_name)
     }
 
-    /// Ordered **wire** field names for DOMAIN heading projection teaching: primary Get’s
+    /// Ordered **wire** field names for teaching heading projection teaching: primary Get’s
     /// [`Self::effective_ordered_response_fields`] when [`EntityDef::domain_projection_examples`] is on.
     ///
-    /// Independent of how DOMAIN renders the fetch exemplar (e.g. `Entity($)` vs zero-arity `Entity.m#()`);
+    /// Independent of how teaching table renders the fetch exemplar (e.g. `Entity($)` vs zero-arity `Entity.m#()`);
     /// use this (or [`Self::projection_prompt_field_prefixes`]) as the single source for the allowed
     /// scalar set **`F`**.
     pub fn domain_projection_heading_fields(
@@ -4164,7 +4164,7 @@ impl CGS {
         }
     }
 
-    /// Ordered wire field names for **DOMAIN projection witness** teaching (`e#…[p#,…]`).
+    /// Ordered wire field names for **teaching projection witness** teaching (`e#…[p#,…]`).
     ///
     /// Same scalar set semantics as [`Self::domain_projection_heading_fields`] when a primary **Get**
     /// exists; when there is no Get, falls back to **`effective_ordered_response_fields`** from a
@@ -4210,7 +4210,7 @@ impl CGS {
         })
     }
 
-    /// One vector per DOMAIN projection teaching: the **full** ordered field list **`F`** for the
+    /// One vector per teaching table projection teaching: the **full** ordered field list **`F`** for the
     /// entity heading’s `[f1,…,fN]` (canonical order). The renderer places that bracket on the **entity
     /// heading** line after `;;` (not as a separate indented expression line). The Valid expressions
     /// preamble teaches that any non-empty subset of **`F`** is valid; we do not emit every prefix.
@@ -4961,7 +4961,7 @@ mod capability_index_tests {
         let cap = cgs.capabilities.get("issue_get").expect("issue_get");
         assert!(
             cap.domain_exemplar_requires_entity_anchor(),
-            "GraphQL variables.id must force DOMAIN anchor exemplar"
+            "GraphQL variables.id must force teaching table anchor exemplar"
         );
         assert!(
             cap.invoke_requires_explicit_anchor_id(),

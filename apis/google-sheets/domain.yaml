@@ -468,7 +468,7 @@ values:
     target: Spreadsheet
   nv_spreadsheet_batch_update_input:
     type: json
-    description: POST body for spreadsheets/{spreadsheetId}:batchUpdate (BatchUpdateSpreadsheetRequest). Omitted in DOMAIN
+    description: POST body for spreadsheets/{spreadsheetId}:batchUpdate (BatchUpdateSpreadsheetRequest). Omitted in teaching table
       only for parse ergonomics; live calls must send a JSON object including a requests array (for example batch-update(input={requests=[]})
       or a fuller payload).
   nv_spreadsheet_create_locale:

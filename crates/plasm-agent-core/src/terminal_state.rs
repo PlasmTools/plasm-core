@@ -117,8 +117,8 @@ pub fn symbol_state_path(_server: &str, client_session_id: &str) -> PathBuf {
     session_dir(client_session_id).join("symbols.json")
 }
 
-pub fn domain_tsv_path(_server: &str, client_session_id: &str) -> PathBuf {
-    session_dir(client_session_id).join("domain.tsv")
+pub fn teaching_tsv_path(_server: &str, client_session_id: &str) -> PathBuf {
+    session_dir(client_session_id).join("teaching.tsv")
 }
 
 pub fn session_out_dir(client_session_id: &str) -> PathBuf {
@@ -571,8 +571,8 @@ pub fn format_qualified_capabilities(capabilities: &[(String, String)]) -> Strin
         .join(", ")
 }
 
-/// Append client-rendered teaching TSV rows to `domain.tsv`.
-pub fn append_domain_tsv_wave(path: &Path, tsv_fragment: &str, first_write: bool) -> Result<usize> {
+/// Append client-rendered teaching TSV rows to `teaching.tsv`.
+pub fn append_teaching_tsv_wave(path: &Path, tsv_fragment: &str, first_write: bool) -> Result<usize> {
     let fragment = tsv_fragment.trim();
     if fragment.is_empty() {
         return Ok(0);
@@ -659,7 +659,7 @@ name: plasm-cli
 description: >-
   Operates the remote Plasm HTTP terminal (`plasm`): discovery, client-owned symbol context,
   plan-only dry runs, and live execution. Use when the user mentions `plasm init`, `plasm search`,
-  `plasm context`, `plasm run`, `.plasm/` workspace state, domain.tsv teaching tables, or remote
+  `plasm context`, `plasm run`, `.plasm/` workspace state, teaching.tsv teaching tables, or remote
   Plasm execute sessions against plasm-mcp / plasm-server.
 ---
 
@@ -681,7 +681,7 @@ the same renderer MCP hosts use at initialize time. For the standalone grammar f
 1. **`plasm init`** — configure profile under `.plasm/profiles/`; regenerates this skill and grammar.
 2. **`plasm search "<intent>"`** — capability discovery; merges into `.plasm/hosts/<slug>/discovery.tsv`.
 3. **`plasm context -i "<intent>" catalog:Entity …`** — expose entities; appends teaching rows to
-   **`.plasm/s/<session>/domain.tsv`** (client-owned symbol authority). With `--new`, every seed must
+   **`.plasm/s/<session>/teaching.tsv`** (client-owned symbol authority). With `--new`, every seed must
    be `entry_id:Entity` (e.g. `pokeapi:Pokemon`).
 4. **`plasm run --mode plan`** — dry compile/validate only (no live side effects).
 5. **`plasm run`** — live execution after reviewing the plan output.
@@ -691,7 +691,7 @@ Always **`plasm run --mode plan` before live `plasm run`** when side effects are
 ## Read before writing programs
 
 - **Active session pointer:** `.plasm/hosts/<slug>/current` (one line: client session id).
-- **Teaching table (symbols):** `.plasm/s/<session>/domain.tsv` — cumulative `plasm_expr` / `Meaning`
+- **Teaching table (symbols):** `.plasm/s/<session>/teaching.tsv` — cumulative `plasm_expr` / `Meaning`
   rows; monotonic `e#` / `m#` / `p#` for that session.
 - **Session metadata:** `.plasm/s/<session>/meta.txt` — intent, catalog digests, capabilities.
 - **Latest op mirror:** `.plasm/s/<session>/latest` → newest `out/NNNN-*` directory.
@@ -709,7 +709,7 @@ Always **`plasm run --mode plan` before live `plasm run`** when side effects are
   s/<8hex>/
     meta.txt
     symbols.json
-    domain.tsv
+    teaching.tsv
     catalogs/<api>.json
     latest
     out/
@@ -861,13 +861,13 @@ mod tests {
     }
 
     #[test]
-    fn append_domain_tsv_skips_duplicate_header() {
+    fn append_teaching_tsv_skips_duplicate_header() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("domain.tsv");
+        let path = dir.path().join("teaching.tsv");
         let frag = "plasm_expr\tMeaning\ne1\treturns [e1]";
-        let n = append_domain_tsv_wave(&path, frag, true).unwrap();
+        let n = append_teaching_tsv_wave(&path, frag, true).unwrap();
         assert_eq!(n, 1);
-        let n2 = append_domain_tsv_wave(&path, "e2\treturns [e2]", false).unwrap();
+        let n2 = append_teaching_tsv_wave(&path, "e2\treturns [e2]", false).unwrap();
         assert_eq!(n2, 1);
         let raw = std::fs::read_to_string(&path).unwrap();
         assert_eq!(raw.matches("plasm_expr\tMeaning").count(), 1);

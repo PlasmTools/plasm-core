@@ -1,6 +1,6 @@
 //! Structured [`StepError`](crate::step_semantics::StepError) values: **correction** for the LLM, **error** for logs.
 
-use crate::domain_term::{resolve_parameter_slot, ParameterSlot};
+use crate::teaching_term::{resolve_parameter_slot, ParameterSlot};
 use crate::expr_correction::RecoveryHint;
 use crate::expr_parser::{ParseError, ParseErrorKind};
 use crate::query_resolve::QueryCapabilityResolveError;

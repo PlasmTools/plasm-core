@@ -4,15 +4,28 @@ expression: h.mirror_layout_snapshot()
 ---
 tree:
 current:
-dd12084b
-session_dir: s/dd12084b/
+SESSION8
+session_dir: s/SESSION8/
 meta.txt: present
-client_session_id dd12084b
+client_session_id SESSION8
 intent profile query
 catalog overshow DIGEST64
 capability overshow Profile
 capability overshow RecordedContent
 symbols.json: present
+teaching.tsv: present
+plasm_expr	Meaning
+v1	int
+v3	select · person, organisation, project
+p2	v1 · limit
+p3	v3 · profile_type
+p1	v1 · id
+e1[p1]	→ e1 · projection · A person, organisation, or project profile
+e1{p3=$, p2=$}	→ [e1] · opt: profile_type, limit
+e1(p1)	→ e1
+e1{p3=$, p2=$}.r1	relation e1 → [e2] · Content scoped to this profile
+v7	ref:Profile · int
+v8	str
 latest: present
 out/NNNN-context
 out/: 0001-context

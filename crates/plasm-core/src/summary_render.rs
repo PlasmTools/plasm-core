@@ -87,7 +87,7 @@ fn intent_inner(expr: &Expr, cgs: &CGS) -> String {
                 .map(|l| format!(" with per-request limit {l}"))
                 .unwrap_or_default()
         ),
-        Expr::TeachingValue { .. } => "DOMAIN teaching literal".to_string(),
+        Expr::TeachingValue { .. } => "teaching table teaching literal".to_string(),
     }
 }
 
@@ -137,7 +137,7 @@ fn intent_inner_federated(expr: &Expr, fed: &FederationDispatch, fallback: &CGS)
                 .map(|l| format!(" with per-request limit {l}"))
                 .unwrap_or_default()
         ),
-        Expr::TeachingValue { .. } => "DOMAIN teaching literal".to_string(),
+        Expr::TeachingValue { .. } => "teaching table teaching literal".to_string(),
     }
 }
 

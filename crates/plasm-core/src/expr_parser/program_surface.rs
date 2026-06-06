@@ -7,7 +7,7 @@ use super::heredoc_surface::{
     heredoc_surface_step_at, tagged_heredoc_close_kind, HeredocSurfaceStep,
 };
 
-/// Strip trailing `;;` line comments (DOMAIN-style).
+/// Strip trailing `;;` line comments (teaching table-style).
 #[inline]
 pub fn strip_line_comment(line: &str) -> &str {
     line.split_once(";;").map_or(line, |(left, _)| left)
@@ -162,7 +162,7 @@ pub fn looks_like_domain_symbol(label: &str) -> bool {
         && chars.all(|c| c.is_ascii_digit())
 }
 
-/// Valid identifier for a program binding label (not `e1`/`p2`-style DOMAIN symbols).
+/// Valid identifier for a program binding label (not `e1`/`p2`-style teaching symbols).
 pub fn is_valid_program_label(label: &str) -> bool {
     let mut chars = label.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')

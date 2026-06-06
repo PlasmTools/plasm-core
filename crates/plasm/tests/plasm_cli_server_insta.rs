@@ -93,7 +93,19 @@ fn normalize_snapshot(raw: &str, workspace: &Path, server_url: &str) -> String {
     let slug = host_slug(server_url);
     s = s.replace(&format!("/hosts/{slug}/"), "/hosts/HOST_SLUG/");
     s = s.replace(&format!("hosts/{slug}/"), "hosts/HOST_SLUG/");
-    // session ids (8 hex under `.plasm/s/`)
+    // client_session_id lines in meta.txt
+    while let Some(i) = s.find("client_session_id ") {
+        let after = i + "client_session_id ".len();
+        let hex_len = s[after..]
+            .chars()
+            .take_while(|c| c.is_ascii_hexdigit())
+            .count();
+        if hex_len >= 8 {
+            s.replace_range(after..after + hex_len, "SESSION8");
+        } else {
+            break;
+        }
+    }
     let mut scan = 0;
     while scan < s.len() {
         let Some(rel) = s[scan..].find("/s/") else {
@@ -248,12 +260,13 @@ impl CliHarness {
         out.push_str("tree:\n");
         if let Ok(ptr) = std::fs::read_to_string(root.join("current")) {
             out.push_str("current:\n");
-            out.push_str(&self.norm(&ptr));
+            out.push_str("SESSION8\n");
+            let _ = ptr; // session id varies per run; mirror asserts layout only
         }
         if let Some(sid) = self.current_session_id() {
             let sess = self.session_root(&sid);
-            out.push_str(&format!("session_dir: s/{sid}/\n"));
-            for name in ["meta.txt", "symbols.json", "domain.tsv", "latest"] {
+            out.push_str("session_dir: s/SESSION8/\n");
+            for name in ["meta.txt", "symbols.json", "teaching.tsv", "latest"] {
                 let p = sess.join(name);
                 if p.exists() {
                     out.push_str(&format!("{name}: present\n"));

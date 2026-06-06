@@ -136,7 +136,7 @@ pub enum Value {
     Float(f64),
     String(String),
     Array(Vec<Value>),
-    /// Union variant constructor from DOMAIN `v101{field=$,…}`; HTTP lowering injects `wire` discriminator.
+    /// Union variant constructor from teaching table `v101{field=$,…}`; HTTP lowering injects `wire` discriminator.
     UnionCtor {
         #[serde(rename = "__plasm_union_ctor")]
         ctor_label: String,
@@ -195,13 +195,13 @@ impl Value {
         crate::entity_ref_value::EntityRefPayload::try_from_value(self)
     }
 
-    /// True when this is the bare string `$` — a DOMAIN prompt fill-in, not a real API value.
+    /// True when this is the bare string `$` — a teaching prompt fill-in, not a real API value.
     #[inline]
     pub fn is_domain_example_placeholder(&self) -> bool {
         matches!(self, Value::String(s) if s == "$")
     }
 
-    /// True if this value or any nested object/array contains the DOMAIN `$` placeholder.
+    /// True if this value or any nested object/array contains the teaching table `$` placeholder.
     pub fn contains_domain_placeholder_deep(&self) -> bool {
         match self {
             Value::String(s) if s == "$" => true,

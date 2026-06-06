@@ -14,7 +14,7 @@ Inside **multi-line Plasm programs** (bindings + roots), method and predicate RH
 - **Field paths:** `p91=report.content` means “`content` on the materialized output of `report`” when `report` names an in-scope program node.
 - **`for_each` row:** inside `source => Effect(…)`, the row cursor is `_`; use `_.id`, `_.field`, etc. for per-row holes (same hole kind as the plan template contract).
 
-**Entity references in brace predicates:** A field typed as **entity reference** toward another entity expects **identity** for that target (DOMAIN constructor, scalar key fields, or `anchor.<relation>`), not an arbitrary decoded row. When a binding yields a **typed row** for that same target entity, the type checker may **narrow** to identity using the catalog’s key fields (`key_vars` / id) when those scalars appear at the **top level** of the row value.
+**Entity references in brace predicates:** A field typed as **entity reference** toward another entity expects **identity** for that target (teaching table constructor, scalar key fields, or `anchor.<relation>`), not an arbitrary decoded row. When a binding yields a **typed row** for that same target entity, the type checker may **narrow** to identity using the catalog’s key fields (`key_vars` / id) when those scalars appear at the **top level** of the row value.
 
 Examples (program shape):
 
@@ -36,7 +36,7 @@ For nodes whose materialized value is already a scalar row (surface query/get), 
 1. **Transforms are core postfix syntax** — `.limit(n)`, `.sort(field[, desc])`, `.aggregate(…)`, `.group_by(field, …)`, `.singleton()`, `.page_size(n)`, bracket projections `[…]`, and row-to-text template blocks (`<<TAG … TAG`) are part of the same language as `e1{…}` / `e2(…)`.
 2. **Binding is optional** — `expr.limit(20)` is valid without a prior `commits = expr` line when `expr` is a complete surface expression or an in-scope label.
 3. **Artifact-level semantics today** — transforms are applied to materialized row JSON in the plan executor unless an optimizer later pushes work to HTTP (the optimizer must never change what the surface language means).
-4. **No second “DAG language” for users** — diagnostics, MCP copy, and DOMAIN gloss refer to **Plasm programs** or **Plasm expressions**, not “Plasm-DAG” as a distinct syntax tier.
+4. **No second “DAG language” for users** — diagnostics, MCP copy, and teaching gloss refer to **Plasm programs** or **Plasm expressions**, not “Plasm-DAG” as a distinct syntax tier.
 5. **Equivalence** — for any expression `E`, the program `x = E\nx.op(…)` and the single line `E.op(…)` (with the same postfix chain) must lower to the same executable plan shape (modulo synthetic node ids and display strings).
 
 ---
@@ -107,7 +107,7 @@ RHS           = (* postfix peel then path parse *)
 PHYSICAL_LINE = { ? any codepoint except NEWLINE ? } , NEWLINE? ;
 ```
 
-Binding lines use `split_assignment_at_top_level` then **`validate_program_label`** — **`e1` / `p2` / `m3`-style DOMAIN symbols are rejected** as binding names.
+Binding lines use `split_assignment_at_top_level` then **`validate_program_label`** — **`e1` / `p2` / `m3`-style teaching symbols are rejected** as binding names.
 
 ### Postfix chain (per `RHS` fragment)
 
@@ -262,7 +262,7 @@ Structural inline fields are **not** `values:` slots; registry-only consumers ma
 
 ### Surface constructor literals (`v` + digits + `{…}`)
 
-A token **`v`** plus ASCII digits plus a braced map parses as a **union constructor literal** ``Value::UnionCtor`` when it appears in value positions that accept constructors (including **`UNION_CTOR_PAYLOAD`** in method calls, and **standalone** DOMAIN teaching rows as ``Expr::TeachingValue``). Digits align with DOMAIN `constructor_symbol` mnemonics; the type checker ties them to `InputType::Union` variants in scope.
+A token **`v`** plus ASCII digits plus a braced map parses as a **union constructor literal** ``Value::UnionCtor`` when it appears in value positions that accept constructors (including **`UNION_CTOR_PAYLOAD`** in method calls, and **standalone** teaching rows as ``Expr::TeachingValue``). Digits align with teaching table `constructor_symbol` mnemonics; the type checker ties them to `InputType::Union` variants in scope.
 
 ---
 

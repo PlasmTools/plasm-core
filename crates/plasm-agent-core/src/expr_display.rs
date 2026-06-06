@@ -168,7 +168,7 @@ mod il_snapshots {
     #[test]
     fn il_query_product_federated_matches_single_catalog() {
         use plasm_core::CgsContext;
-        use plasm_core::DomainExposureSession;
+        use plasm_core::TeachingExposureSession;
         use plasm_core::FederationDispatch;
         use std::sync::Arc;
 
@@ -178,7 +178,7 @@ mod il_snapshots {
             "acme".to_string(),
             Arc::new(CgsContext::entry("acme", cgs.clone())),
         );
-        let exp = DomainExposureSession::new(cgs.as_ref(), "acme", &["Product"]);
+        let exp = TeachingExposureSession::new(cgs.as_ref(), "acme", &["Product"]);
         let fed = FederationDispatch::from_contexts_and_exposure(ctxs, &exp);
         let pe = parse("Product", cgs.as_ref()).expect("parse");
         let s = expr_display_resolved_federated(&pe.expr, &fed, cgs.as_ref());

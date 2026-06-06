@@ -11,7 +11,7 @@ Plasm CGS/CML for Cloudflare REST v4. **Phase 1** covers **zone-scoped** flows: 
 
 ### `SecurityOverview` (composed read via CGS `views:`)
 
-**`SecurityOverview`** is a **first-class** entity on the default graph: **`Zone → security_overview`** materializes **`security_overview_query`** (**`kind: query`**) backed by **`views.security_overview`**. The DAG runs **`zone_get`**, **`ruleset_query`**, and **`waf_package_query`** (legacy packages), then shapes one row (zone name, ruleset counts, **`kind`** histogram JSON, legacy package count). **`mappings.yaml`** wires **`security_overview_query`** with **`transport: view`** / **`view: security_overview`** — no dedicated Cloudflare path. **`dump_prompt`** and default DOMAIN teaching include **`SecurityOverview`** alongside **`Zone`** / **`Ruleset`**.
+**`SecurityOverview`** is a **first-class** entity on the default graph: **`Zone → security_overview`** materializes **`security_overview_query`** (**`kind: query`**) backed by **`views.security_overview`**. The DAG runs **`zone_get`**, **`ruleset_query`**, and **`waf_package_query`** (legacy packages), then shapes one row (zone name, ruleset counts, **`kind`** histogram JSON, legacy package count). **`mappings.yaml`** wires **`security_overview_query`** with **`transport: view`** / **`view: security_overview`** — no dedicated Cloudflare path. **`dump_prompt`** and default teaching table teaching include **`SecurityOverview`** alongside **`Zone`** / **`Ruleset`**.
 
 Validate after edits:
 

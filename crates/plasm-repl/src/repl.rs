@@ -3,7 +3,7 @@
 //! Run the **`plasm-repl`** binary: `plasm-repl --schema <dir-or-yaml> --backend <url>` (or `--plugin-dir` instead of `--schema`).
 //!
 //! On startup:
-//!   - Renders the same DOMAIN prompt as `plasm-eval` / BAML `TranslatePlan` (one expression per goal)
+//!   - Renders the same teaching prompt as `plasm-eval` / BAML `TranslatePlan` (one expression per goal)
 //!     (see [`plasm_core::PromptPipelineConfig`] on the execution engine). In `:llm` mode the schema prompt is
 //!     sent only for the first NL line of a session; later lines reuse chat history (multi-turn).
 //!   - Enters a readline loop that accepts Plasm path expressions.
@@ -665,7 +665,7 @@ EXPRESSION SYNTAX:
   Entity(k=v,k2=v2,...)   get by compound key (when SCHEMA lists key_vars)
   Entity{{f=v,f>v,...}}    query with filters (= != > < >= <= ~ for contains)
   Entity                  query all
-  Entity~"text"           full-text search only for entities that expose Search in DOMAIN (~ line)
+  Entity~"text"           full-text search only for entities that expose Search in teaching table (~ line)
   .field                  follow EntityRef field → target entity
   .^Entity                reverse: all Entity referencing this via FK
   .^Entity{{preds}}        reverse with filters

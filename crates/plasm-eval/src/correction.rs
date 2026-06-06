@@ -240,7 +240,7 @@ pub fn validate_plan_steps_with_lexicon(
 
 /// Parse + type-check all steps; returns diagnostics (if any) and any deterministic rewrite notes.
 ///
-/// Each step is passed through the same expansion as DOMAIN / REPL ([`PromptPipelineConfig::expand_expr_line`])
+/// Each step is passed through the same expansion as teaching table / REPL ([`PromptPipelineConfig::expand_expr_line`])
 /// **before** parse and lexicon recovery, so `e#` / `p#` / `m#` and `;;` / legacy `=>` stripping match
 /// the interactive path when the same pipeline is used.
 ///
