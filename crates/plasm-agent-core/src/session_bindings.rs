@@ -7,6 +7,7 @@ use auth_framework::storage::AuthStorage;
 
 use crate::binding_slots::{BindingScope, SessionBindingMap};
 use crate::binding_store::{self, BindingLoadError};
+use crate::http_backend::ReplHttpOverride;
 use crate::mcp_config_repository::McpConfigRepository;
 use crate::server_state::PlasmHostState;
 
@@ -71,22 +72,20 @@ pub async fn tenant_bindings_for_entries(
 }
 
 /// Synthetic binding map for local `--backend` / REPL (no MCP scope).
-pub fn repl_session_binding_map(entry_id: &str, http_backend: &str) -> Option<SessionBindingMap> {
-    if !crate::binding_slots::catalog_http_backend_needs_origin(entry_id, http_backend) {
+pub fn repl_session_binding_map(
+    entry_id: &str,
+    override_url: ReplHttpOverride,
+) -> Option<SessionBindingMap> {
+    if !crate::binding_slots::entry_requires_bindings(entry_id) {
         return None;
     }
-    let trimmed = http_backend.trim().trim_end_matches('/');
-    if trimmed.is_empty()
-        || crate::catalog_ownership::is_fibery_account_placeholder_http_backend(trimmed)
-    {
-        return None;
-    }
+    let origin = override_url.to_binding_origin_value();
     let mut values = indexmap::IndexMap::new();
     values.insert(
         crate::binding_slots::BindingSlot::CatalogHttpOrigin
             .wire_name()
             .to_string(),
-        trimmed.to_string(),
+        origin.as_str().to_string(),
     );
     Some(SessionBindingMap {
         scope: None,
@@ -97,10 +96,13 @@ pub fn repl_session_binding_map(entry_id: &str, http_backend: &str) -> Option<Se
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::http_backend::ReplHttpOverride;
 
     #[test]
     fn repl_binding_from_backend_flag() {
-        let map = repl_session_binding_map("fibery", "https://acme.fibery.io").expect("map");
+        let override_url =
+            ReplHttpOverride::from_cli_normalized("https://acme.fibery.io").expect("override");
+        let map = repl_session_binding_map("fibery", override_url).expect("map");
         assert_eq!(
             map.get_wire("catalog_http_origin"),
             Some("https://acme.fibery.io")
@@ -111,5 +113,12 @@ mod tests {
                 .map(String::as_str),
             Some("https://acme.fibery.io")
         );
+    }
+
+    #[test]
+    fn repl_binding_rejects_placeholder_and_non_binding_catalogs() {
+        assert!(ReplHttpOverride::from_cli_normalized("https://YOUR_ACCOUNT.fibery.io").is_err());
+        let github = ReplHttpOverride::from_cli_normalized("https://api.github.com").unwrap();
+        assert!(repl_session_binding_map("github", github).is_none());
     }
 }

@@ -219,6 +219,8 @@ pub fn build_execution_engine_from_matches(
         .map(|s| s.as_str())
         .unwrap_or("http://localhost:1080");
     let backend = crate::backend_normalize::normalize_live_backend_url(schema_path, backend_raw);
+    crate::http_backend::ReplHttpOverride::from_cli_normalized(backend.as_ref())
+        .map_err(|e| AgentError::Argument(e.to_string()))?;
 
     let mode = match matches
         .get_one::<String>("mode")

@@ -32,6 +32,7 @@ pub mod execute_session;
 mod execute_staging;
 pub mod expr_display;
 pub mod http;
+pub mod http_backend;
 pub mod http_discovery;
 pub mod http_execute;
 pub mod http_incoming_context;

@@ -2557,10 +2557,26 @@ async fn materialize_validated_relation_traversal(
             )
             .await
         }
-        RelationMaterialization::Unavailable => Err(format!(
-            "relation `{}` on `{}` has no materialize strategy (Unavailable)",
-            relation.relation.relation, source_mat.entity
-        )),
+        RelationMaterialization::Unavailable => {
+            if let Some(mat) = try_materialize_from_cached_relation_refs(
+                st,
+                es,
+                session_id,
+                node,
+                relation,
+                source_mat,
+                trace,
+            )
+            .await?
+            {
+                Ok(mat)
+            } else {
+                Err(format!(
+                    "relation `{}` on `{}` has no materialize strategy (Unavailable)",
+                    relation.relation.relation, source_mat.entity
+                ))
+            }
+        }
     }
 }
 
@@ -3283,6 +3299,85 @@ async fn materialize_relation_singleton_chain(
         result,
         artifact,
     })
+}
+
+/// When view `relation_outputs` (or other embed paths) populated `CachedEntity.relations`.
+#[allow(clippy::too_many_arguments)]
+async fn try_materialize_from_cached_relation_refs(
+    st: &PlasmHostState,
+    es: &ExecuteSession,
+    session_id: &str,
+    node: &ValidatedPlanNode,
+    relation: &ValidatedRelationTraversalNode,
+    source_mat: &MaterializedNode,
+    trace: Option<&PlasmTraceContext>,
+) -> Result<Option<MaterializedNode>, String> {
+    let rel_name = relation.relation.relation.as_str();
+    let target_entity = relation.relation.target.entity.as_str();
+    let parents = &source_mat.result.entities;
+    if parents.is_empty() || !parents.iter().all(|p| p.relations.contains_key(rel_name)) {
+        return Ok(None);
+    }
+    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
+    let graph = scoped_es.graph_cache.lock().await;
+    let Some(entities) =
+        collect_all_embedded_relation_targets(rel_name, target_entity, parents, &graph)
+    else {
+        return Ok(None);
+    };
+    drop(graph);
+    let count = entities.len();
+    let source_rows: Vec<serde_json::Value> = source_mat.rows.clone();
+    let full_result = ExecutionResult {
+        count,
+        entities: entities.clone(),
+        has_more: false,
+        pagination_resume: None,
+        paging_handle: None,
+        source: ExecutionSource::Cache,
+        stats: ExecutionStats {
+            duration_ms: 0,
+            network_requests: 0,
+            cache_hits: count,
+            cache_misses: 0,
+            ..Default::default()
+        },
+        request_fingerprints: vec![compute_fingerprint(node, &source_rows)],
+    };
+    let artifact = archive_plasm_result_snapshot(
+        st,
+        es,
+        session_id,
+        Some(relation.relation.target.entry_id.as_str()),
+        vec![format!(
+            "plan.relation({}) cached_embed",
+            relation.id.as_str()
+        )],
+        &full_result,
+        trace,
+    )
+    .await?;
+    Ok(Some(MaterializedNode {
+        entry_id: relation.relation.target.entry_id.clone(),
+        entity: relation.relation.target.entity.clone(),
+        display: format!(
+            "plan.relation({}) cached_embed",
+            relation.id.as_str()
+        ),
+        projection: relation.relation.ir.projection.clone(),
+        rows: full_result
+            .entities
+            .iter()
+            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+            .collect(),
+        row_identities: row_identities_from_entities(
+            &scoped_es,
+            target_entity,
+            &full_result.entities,
+        ),
+        result: full_result,
+        artifact: Some(artifact),
+    }))
 }
 
 /// When every parent row has fully resolved embed refs in the session graph.

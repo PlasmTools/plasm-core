@@ -753,7 +753,7 @@ fn relation_endpoint_keys_for_wave(
     exp.relation_endpoint_keys_for_wave(batch_entry_id, batch_names)
 }
 
-fn format_session_unchanged_one_liner(entity_count: usize) -> String {
+pub(crate) fn format_session_unchanged_one_liner(entity_count: usize) -> String {
     if entity_count == 0 {
         "_Session unchanged — no exposed entities yet._\n".to_string()
     } else {
@@ -916,14 +916,75 @@ async fn apply_ranked_capabilities_session_update(
     Ok(())
 }
 
-pub(crate) fn format_plasm_context_wave_line(entry_id: &str, entities: &[String]) -> String {
-    let mut v: Vec<String> = entities.to_vec();
-    v.sort_unstable();
-    format!("Added capabilities from {entry_id}: {}", v.join(", "))
+pub(crate) const STALE_EXECUTE_BINDING_NOTICE: &str = "**Prior Plasm symbol table is void.** The in-memory execute session for this logical handle was missing or expired. A new `(prompt_hash, session)` was opened — **discard** any cached `e#` / `m#` / `p#` or prior teaching-table text from earlier `plasm_context` output in this chat. Re-read the teaching table from this response only. Monotonic `e#` / `m#` / `p#` apply to the **new** session.\n\n";
+
+/// Agent-facing Markdown for `plasm_context`: `logical_session_ref` plus wave bodies only (no telemetry).
+pub(crate) fn build_plasm_context_agent_markdown(
+    logical_session_ref: &str,
+    waves: &[CapabilityWaveOutcome],
+) -> String {
+    let mut body = String::new();
+    for wave in waves {
+        let delta = wave.markdown_delta.trim();
+        if delta.is_empty() {
+            continue;
+        }
+        if !body.is_empty() {
+            body.push_str("\n\n");
+        }
+        body.push_str(delta);
+    }
+    if body.is_empty() {
+        format!("`{logical_session_ref}`\n")
+    } else {
+        format!("`{logical_session_ref}`\n\n{body}\n")
+    }
 }
 
-pub(crate) const ADD_CAPABILITIES_SESSION_REUSE_HINT: &str =
-    "_New types added for this logical_session_ref; previously loaded types remain valid._";
+/// Slim `_meta.plasm` for `plasm_context`: continuity + teaching revision only.
+pub(crate) fn build_plasm_context_tool_meta(
+    logical_session_ref: &str,
+    out: &ApplyCapabilitySeedsOutcome,
+    domain_revision: Option<u32>,
+    relations: Option<serde_json::Value>,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut plasm = serde_json::Map::new();
+    plasm.insert(
+        "logical_session_ref".to_string(),
+        serde_json::json!(logical_session_ref),
+    );
+    let mut continuity = serde_json::Map::new();
+    continuity.insert(
+        "stale_binding_recovered".to_string(),
+        serde_json::json!(out.stale_execute_binding_recovered),
+    );
+    if out.stale_execute_binding_recovered {
+        if let Some((ref ph, ref sid)) = out.stale_binding_previous {
+            continuity.insert(
+                "previous_execute".to_string(),
+                serde_json::json!({ "prompt_hash": ph, "session_id": sid }),
+            );
+        }
+    }
+    continuity.insert(
+        "new_symbol_space".to_string(),
+        serde_json::json!(out.new_symbol_space),
+    );
+    if out.new_symbol_space {
+        continuity.insert("discard_cached_plasm_symbols".to_string(), serde_json::json!(true));
+    }
+    plasm.insert(
+        "continuity".to_string(),
+        serde_json::Value::Object(continuity),
+    );
+    if let Some(rev) = domain_revision {
+        plasm.insert("domain_revision".to_string(), serde_json::json!(rev));
+    }
+    if let Some(rel) = relations {
+        plasm.insert("relations".to_string(), rel);
+    }
+    plasm
+}
 
 /// Wrap teaching table / incremental delta in a Markdown fenced block so MCP and other Markdown UIs
 /// preserve newlines (CommonMark collapses single newlines in ordinary paragraphs).
@@ -1008,20 +1069,21 @@ async fn tenant_outbound_hosted_kv_for_entries(
 async fn migration_legacy_http_backend_from_outbound_key(
     st: &PlasmHostState,
     hosted_kv_key: &str,
-) -> Option<String> {
+) -> Option<crate::http_backend::BindingOriginValue> {
     let storage = st.auth_storage()?;
     let bytes = storage.get_kv(hosted_kv_key.trim()).await.ok()??;
     let raw = String::from_utf8_lossy(&bytes);
     plasm_runtime::hosted_oauth_kv::hosted_outbound_http_backend_from_kv(raw.trim())
+        .map(|s| crate::http_backend::BindingOriginValue::from_legacy_outbound_kv(&s))
 }
 
 async fn resolve_http_backend_for_entry(
     st: &PlasmHostState,
     entry_id: &str,
-    catalog_backend: &str,
+    catalog_backend: &crate::http_backend::CatalogHttpBackend,
     bindings: Option<&crate::binding_slots::SessionBindingMap>,
     outbound_hosted_kv_key: Option<&str>,
-) -> Result<String, String> {
+) -> Result<crate::http_backend::ResolvedHttpOrigin, String> {
     let legacy = if let Some(key) = outbound_hosted_kv_key {
         migration_legacy_http_backend_from_outbound_key(st, key).await
     } else {
@@ -1031,13 +1093,16 @@ async fn resolve_http_backend_for_entry(
         entry_id,
         catalog_backend,
         bindings,
-        legacy.as_deref(),
+        legacy.as_ref(),
     )
 }
 
-fn patch_cgs_context_resolved_http_backend(ctx: CgsContext, resolved: &str) -> CgsContext {
+fn patch_cgs_context_resolved_http_backend(
+    ctx: CgsContext,
+    resolved: &crate::http_backend::ResolvedHttpOrigin,
+) -> CgsContext {
     let mut cgs = (*ctx.cgs).clone();
-    cgs.http_backend = resolved.trim().trim_end_matches('/').to_string();
+    cgs.http_backend = resolved.as_str().to_string();
     CgsContext::new(ctx.prefix.clone(), Arc::new(cgs))
 }
 
@@ -1149,18 +1214,17 @@ async fn execute_session_create_response_inner(
         .and_then(|map| map.get(&body.entry_id))
         .map(|s| s.as_str());
     let entry_bindings = bindings_by_entry.and_then(|m| m.get(&body.entry_id));
+    let catalog_backend =
+        crate::http_backend::CatalogHttpBackend::from_cgs_field(ctx.cgs.http_backend.as_str());
     let http_backend = resolve_http_backend_for_entry(
         st,
         body.entry_id.as_str(),
-        ctx.cgs.http_backend.as_str(),
+        &catalog_backend,
         entry_bindings,
         hosted_kv_key,
     )
     .await?;
-    if crate::binding_slots::catalog_http_backend_needs_origin(
-        body.entry_id.as_str(),
-        ctx.cgs.http_backend.as_str(),
-    ) {
+    if catalog_backend.needs_origin_resolution(body.entry_id.as_str()) {
         ctx = patch_cgs_context_resolved_http_backend(ctx, &http_backend);
     }
     let ctx_arc = Arc::new(ctx);
@@ -1311,7 +1375,7 @@ async fn execute_session_create_response_inner(
         body.entry_id.clone(),
         scope,
         subj,
-        Some(http_backend.clone()),
+        Some(http_backend.as_str().to_string()),
         names.clone(),
         Some(teaching_exposure),
         principal_stored.clone(),
@@ -1409,18 +1473,17 @@ pub async fn federate_execute_session(
         .and_then(|map| map.get(&new_entry_id))
         .map(|s| s.as_str());
     let entry_bindings = bindings_by_entry.and_then(|m| m.get(&new_entry_id));
+    let catalog_backend =
+        crate::http_backend::CatalogHttpBackend::from_cgs_field(ctx.cgs.http_backend.as_str());
     let http_backend = resolve_http_backend_for_entry(
         st,
         new_entry_id.as_str(),
-        ctx.cgs.http_backend.as_str(),
+        &catalog_backend,
         entry_bindings,
         hosted_kv_key,
     )
     .await?;
-    if crate::binding_slots::catalog_http_backend_needs_origin(
-        new_entry_id.as_str(),
-        ctx.cgs.http_backend.as_str(),
-    ) {
+    if catalog_backend.needs_origin_resolution(new_entry_id.as_str()) {
         ctx = patch_cgs_context_resolved_http_backend(ctx, &http_backend);
     }
     let effective_cgs = crate::schema_overlay_session::resolve_schema_overlay_for_host(
@@ -1518,19 +1581,11 @@ pub async fn federate_execute_session(
             &added_qualified,
             Some(sym_cross),
         );
-    let mut names_sorted = names.clone();
-    names_sorted.sort_unstable();
-    let mut wave = String::new();
-    wave.push_str("\n\n");
-    wave.push_str(&format_plasm_context_wave_line(
-        new_entry_id.as_str(),
-        &names_sorted,
-    ));
-    wave.push_str("\n\n");
-    wave.push_str(&wrap_teaching_markdown_literal_block(
+    let wave = wrap_teaching_markdown_literal_block(
         &delta,
         st.engine.prompt_pipeline().render_mode,
-    ));
+    );
+    sess.prompt_text.push_str("\n\n");
     sess.prompt_text.push_str(&wave);
     sess.entities = exp.entities.clone();
     sess.teaching_exposure = Some(exp);
@@ -1547,25 +1602,6 @@ pub async fn federate_execute_session(
         reused_session: false,
         teaching_prompt_chars_added: wave.chars().count() as u64,
     })
-}
-
-#[allow(dead_code)]
-const PLASM_NOOP_EXPRESSION_HINTS: &str = "\
-**Syntax (unchanged):** Search: `Entity~\"text\"` or `Entity.search(key=value, …)` — brace-only `Entity{…}` works when the entity has Search but no Query (e.g. Linear `Issue`). Views: abstract constructors from teaching table (`IssueContext(id)`, `MyWorkSnapshot`). Get + relation: `Issue(id).comments`.\n";
-
-fn expand_session_symbol_reminder(n: usize, noop_expand: bool) -> String {
-    if noop_expand {
-        return format_session_unchanged_one_liner(n);
-    }
-    if n == 0 {
-        "_Follow the TSV teaching table in **this** `plasm_context` response for valid `e#` / `m#` / `p#` shapes._\n"
-            .to_string()
-    } else {
-        format!(
-            "_Symbols `e1`…`e{n}` are append-only for this logical session. Use them with the new teaching-table rows in **this** response._\n",
-            n = n
-        )
-    }
 }
 
 /// Append expand-wave Plasm instruction blocks for more entity names; [`TeachingExposureSession`] keeps `e#`/`m#`/`p#` stable.
@@ -1643,13 +1679,6 @@ pub async fn expand_execute_teaching_session(
     }
 
     let eid_order = process_order_for_expand_group(&groups);
-    let add_lines: Vec<String> = eid_order
-        .iter()
-        .map(|eid| {
-            let ents = groups.get(eid).expect("eid in order is from groups");
-            format_plasm_context_wave_line(eid, &normalize_execute_entity_names(ents.clone()))
-        })
-        .collect();
     for eid in eid_order {
         let Some(ctx) = sess.contexts_by_entry.get(&eid) else {
             return Err(format!(
@@ -1681,8 +1710,6 @@ pub async fn expand_execute_teaching_session(
     }
     let added_qualified = exp.qualified_entities_since(n0);
     let added: Vec<&str> = added_qualified.iter().map(|k| k.entity.as_str()).collect();
-
-    let n_total = exp.entities.len();
 
     if added_qualified.is_empty() {
         sess.entities = exp.entities.clone();
@@ -1717,18 +1744,11 @@ pub async fn expand_execute_teaching_session(
             Some(sym_cross),
         )
     };
-    let mut wave = String::new();
-    wave.push_str("\n\n");
-    if !add_lines.is_empty() {
-        wave.push_str(&add_lines.join("\n"));
-        wave.push_str("\n\n");
-    }
-    wave.push_str(&expand_session_symbol_reminder(n_total, false));
-    wave.push_str("\n\n");
-    wave.push_str(&wrap_teaching_markdown_literal_block(
+    let wave = wrap_teaching_markdown_literal_block(
         &delta,
         st.engine.prompt_pipeline().render_mode,
-    ));
+    );
+    sess.prompt_text.push_str("\n\n");
     sess.prompt_text.push_str(&wave);
     sess.entities = exp.entities.clone();
     sess.teaching_exposure = Some(exp);
@@ -1801,6 +1821,22 @@ pub(crate) async fn apply_capability_seeds(
             crate::session_bindings::tenant_bindings_for_entries(st, cfg.as_ref(), &all_eids)
                 .await?,
         )
+    } else if let Some(engine_base) = st.engine.config().base_url.as_deref() {
+        let override_url = crate::http_backend::ReplHttpOverride::from_engine_base(engine_base)
+            .map_err(|e| format!("invalid engine base_url: {e}"))?;
+        let mut map = HashMap::new();
+        for eid in &all_eids {
+            if let Some(m) =
+                crate::session_bindings::repl_session_binding_map(eid.as_str(), override_url.clone())
+            {
+                map.insert(eid.clone(), m);
+            }
+        }
+        if map.is_empty() {
+            None
+        } else {
+            Some(map)
+        }
     } else {
         None
     };
@@ -1840,38 +1876,24 @@ pub(crate) async fn apply_capability_seeds(
             new_symbol_space = !created.reused;
             let mut open_md = String::new();
             if stale_execute_binding_recovered {
-                open_md.push_str(
-                    "**Prior Plasm symbol table is void.** The in-memory execute session for this logical handle was missing or expired. A new `(prompt_hash, session)` was opened — **discard** any cached `e#` / `m#` / `p#` or prior teaching-table text from earlier `plasm_context` output in this chat. Re-read the teaching table from this response only. Monotonic `e#` / `m#` / `p#` apply to the **new** session.\n\n",
-                );
+                open_md.push_str(STALE_EXECUTE_BINDING_NOTICE);
             }
-            open_md.push_str(&format_plasm_context_wave_line(
-                &created.entry_id,
-                &primary_entities,
-            ));
-            open_md.push_str("\n\n");
-            open_md.push_str(ADD_CAPABILITIES_SESSION_REUSE_HINT);
             if created.reused {
-                open_md.push_str("\n\n");
                 open_md.push_str(&format_session_unchanged_one_liner(
                     created.entities.len().max(1),
                 ));
             } else {
-                // First attach: restate teaching-table snapshot only when a **new** execute row opened.
                 let mode = st.engine.prompt_pipeline().render_mode;
                 if mode.is_tsv() {
                     if let Some(body_tsv) = teaching_tsv_table_from_wrapped_prompt(
                         &created.prompt,
                         mode.markdown_fence_info_string(),
                     ) {
-                        let wrapped = wrap_teaching_markdown_literal_block(&body_tsv, mode);
-                        open_md.push_str("\n\n");
-                        open_md.push_str(&wrapped);
+                        open_md.push_str(&wrap_teaching_markdown_literal_block(&body_tsv, mode));
                     } else {
-                        open_md.push_str("\n\n");
                         open_md.push_str(&created.prompt);
                     }
                 } else {
-                    open_md.push_str("\n\n");
                     open_md.push_str(&created.prompt);
                 }
             }
@@ -3015,13 +3037,26 @@ pub(crate) async fn run_parsed_plasm_line(
     let fed_holder = sess.federation_dispatch();
     let exec_cgs = crate::catalog_ownership::resolve_cgs_for_entity(sess, root_entity, None)
         .map_err(RunLineError::Parse)?;
+    let engine_override = st
+        .engine
+        .config()
+        .base_url
+        .as_deref()
+        .and_then(|b| crate::http_backend::ReplHttpOverride::from_engine_base(b).ok());
+    let catalog_backend = fed_holder
+        .as_ref()
+        .and_then(|fed| fed.http_backend_for_entity(root_entity))
+        .map(crate::http_backend::CatalogHttpBackend::from_cgs_field)
+        .or_else(|| {
+            sess.http_backend
+                .as_deref()
+                .map(crate::http_backend::CatalogHttpBackend::from_cgs_field)
+        });
     let http_backend_for_root = crate::catalog_ownership::plan_http_origin(
-        st.engine.config().base_url.as_deref(),
-        fed_holder
-            .as_ref()
-            .and_then(|fed| fed.http_backend_for_entity(root_entity))
-            .or(sess.http_backend.as_deref()),
-    );
+        engine_override.as_ref(),
+        catalog_backend.as_ref(),
+    )
+    .map(|origin| origin.as_str().to_string());
     let auth_for_exec = exec_cgs.auth.clone();
     let (compile_operation_fn, compile_query_fn, plugin_generation_id) =
         plugin_execute_options_from_session(sess);
@@ -4945,16 +4980,16 @@ mod tests {
         .await
         .expect("expand");
         assert!(
-            first_wave.contains("Added capabilities from overshow: RecordedContent"),
-            "expected add line: {first_wave}"
-        );
-        assert!(
             first_wave.contains("```tsv"),
             "expected fenced teaching TSV (default TSV render): {first_wave}"
         );
         assert!(
-            first_wave.contains("`e1`…`e2`"),
-            "expected e1..eN reminder: {first_wave}"
+            !first_wave.contains("Added capabilities"),
+            "expand wave must not repeat seed accounting: {first_wave}"
+        );
+        assert!(
+            !first_wave.contains("`e1`…`e"),
+            "expand wave must not repeat symbol reminder prose: {first_wave}"
         );
 
         let sess = st
@@ -5007,7 +5042,45 @@ mod tests {
         let s = format_session_unchanged_one_liner(3);
         assert!(s.contains("`e1`…`e3`"));
         assert!(s.contains("plasm_run"));
-        assert!(!s.contains("PLASM_NOOP"));
+    }
+
+    #[test]
+    fn build_plasm_context_agent_markdown_minimal_open_shape() {
+        let waves = vec![CapabilityWaveOutcome {
+            mode: "open".into(),
+            entry_id: "fibery".into(),
+            entities: vec!["Record".into()],
+            markdown_delta: "```tsv\nplasm_expr\tMeaning\ne1\trow\n```\n".into(),
+            reused_session: false,
+            teaching_prompt_chars_added: 10,
+        }];
+        let md = build_plasm_context_agent_markdown("s0", &waves);
+        assert!(md.starts_with("`s0`\n\n"));
+        assert!(md.contains("```tsv"));
+        assert!(!md.contains("Exposed"));
+        assert!(!md.contains("Added capabilities"));
+    }
+
+    #[test]
+    fn build_plasm_context_tool_meta_keeps_slim_agent_keys() {
+        let out = ApplyCapabilitySeedsOutcome {
+            prompt_hash: "ph".into(),
+            session_id: "sid".into(),
+            primary_entry_id: "fibery".into(),
+            principal: None,
+            waves: vec![],
+            binding_updated: true,
+            new_symbol_space: true,
+            stale_execute_binding_recovered: false,
+            stale_binding_previous: None,
+        };
+        let meta = build_plasm_context_tool_meta("s0", &out, Some(2), None);
+        assert!(meta.contains_key("logical_session_ref"));
+        assert!(meta.contains_key("continuity"));
+        assert!(meta.contains_key("domain_revision"));
+        assert!(!meta.contains_key("execute_binding"));
+        assert!(!meta.contains_key("catalog_entry_ids"));
+        assert!(!meta.contains_key("intent"));
     }
 
     #[tokio::test]

@@ -2,7 +2,7 @@
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::QualifiedEntityKey;
-use plasm_core::{FederationDispatch, CGS, DEFAULT_HTTP_BACKEND};
+use plasm_core::{FederationDispatch, CGS};
 
 /// Build the same [`CatalogResolver`] / [`FederationDispatch`] used by type-check and live execute.
 pub(crate) fn federation_for_session(session: &ExecuteSession) -> FederationDispatch {
@@ -68,43 +68,8 @@ pub(crate) fn resolve_cgs_for_entity<'a>(
         })
 }
 
-/// HTTP origin for plan/live execute: engine harness wins over schema placeholder catalog backends.
-pub(crate) fn plan_http_origin(
-    engine_base_url: Option<&str>,
-    catalog_backend: Option<&str>,
-) -> Option<String> {
-    let catalog = catalog_backend.map(str::trim).filter(|s| !s.is_empty());
-    let engine = engine_base_url.map(str::trim).filter(|s| !s.is_empty());
-    match (engine, catalog) {
-        (Some(e), Some(c)) if is_schema_placeholder_http_backend(c) => Some(e.to_string()),
-        (_, Some(c)) => Some(c.to_string()),
-        (Some(e), None) => Some(e.to_string()),
-        _ => None,
-    }
-}
-
-fn is_schema_placeholder_http_backend(url: &str) -> bool {
-    url == DEFAULT_HTTP_BACKEND
-        || url == "http://127.0.0.1:9"
-        || url.starts_with("http://127.0.0.1:9/")
-        || is_fibery_account_placeholder_http_backend(url)
-}
-
-/// Fibery catalogs ship `https://YOUR_ACCOUNT.fibery.io` until connect or host env supplies the workspace host.
-pub(crate) fn is_fibery_account_placeholder_http_backend(url: &str) -> bool {
-    let t = url.trim().trim_end_matches('/');
-    if t.eq_ignore_ascii_case("https://YOUR_ACCOUNT.fibery.io")
-        || t.eq_ignore_ascii_case("http://YOUR_ACCOUNT.fibery.io")
-    {
-        return true;
-    }
-    let lower = t.to_ascii_lowercase();
-    lower
-        .strip_prefix("https://")
-        .or_else(|| lower.strip_prefix("http://"))
-        .and_then(|rest| rest.split('/').next())
-        .is_some_and(|host| host == "your_account.fibery.io")
-}
+/// Re-export for in-crate callers that already import `catalog_ownership`.
+pub(crate) use crate::http_backend::plan_http_origin;
 
 /// Trace/metadata helper: never panics; falls back to primary `entry_id` only when entity exists there.
 pub(crate) fn entry_id_for_entity_trace(session: &ExecuteSession, entity: &str) -> String {
@@ -120,6 +85,8 @@ mod tests {
 
     use indexmap::IndexMap;
     use plasm_core::{load_schema, CgsContext, TeachingExposureSession, CGS};
+
+    use crate::http_backend::{CatalogHttpBackend, ReplHttpOverride, ResolvedHttpOrigin};
 
     use super::*;
 
@@ -218,31 +185,22 @@ mod tests {
 
     #[test]
     fn plan_http_origin_prefers_engine_over_schema_placeholder() {
+        let engine =
+            ReplHttpOverride::from_cli_normalized("http://127.0.0.1:8765").expect("engine");
+        let placeholder = CatalogHttpBackend::from_cgs_field("http://127.0.0.1:9");
         assert_eq!(
-            plan_http_origin(Some("http://127.0.0.1:8765"), Some("http://127.0.0.1:9"),).as_deref(),
+            plan_http_origin(Some(&engine), Some(&placeholder))
+                .as_ref()
+                .map(ResolvedHttpOrigin::as_str),
             Some("http://127.0.0.1:8765")
         );
+        let concrete = CatalogHttpBackend::from_cgs_field("https://api.example.com");
         assert_eq!(
-            plan_http_origin(
-                Some("http://127.0.0.1:8765"),
-                Some("https://api.example.com"),
-            )
-            .as_deref(),
+            plan_http_origin(Some(&engine), Some(&concrete))
+                .as_ref()
+                .map(ResolvedHttpOrigin::as_str),
             Some("https://api.example.com")
         );
-    }
-
-    #[test]
-    fn fibery_placeholder_backend_detected() {
-        assert!(super::is_fibery_account_placeholder_http_backend(
-            "https://YOUR_ACCOUNT.fibery.io"
-        ));
-        assert!(super::is_fibery_account_placeholder_http_backend(
-            "https://your_account.fibery.io/"
-        ));
-        assert!(!super::is_fibery_account_placeholder_http_backend(
-            "https://acme.fibery.io"
-        ));
     }
 
     #[test]

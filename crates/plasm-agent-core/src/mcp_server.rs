@@ -70,8 +70,8 @@ use tokio::sync::{Mutex, RwLock};
 use crate::execute_pipeline::{ExecutePipeline, ExecutionIntent};
 use crate::execute_session::ExecuteSession;
 use crate::http_execute::{
-    apply_capability_seeds, normalize_capability_seeds, ApplyCapabilitySeedsOutcome,
-    CapabilitySeed, RankedCapabilitiesArg,
+    apply_capability_seeds, build_plasm_context_agent_markdown, build_plasm_context_tool_meta,
+    normalize_capability_seeds, ApplyCapabilitySeedsOutcome, CapabilitySeed, RankedCapabilitiesArg,
 };
 use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
 use crate::mcp_plasm_meta::PlasmMetaIndex;
@@ -1674,7 +1674,6 @@ impl PlasmMcpHandler {
             .ensure_logical_session(&ls_key, Some(key), trace_meta)
             .await;
 
-        let mut text = String::new();
         let total_teaching_chars: u64 = out
             .waves
             .iter()
@@ -1697,20 +1696,17 @@ impl PlasmMcpHandler {
             }
             ids.len()
         };
-        if exposed_entities > 0 {
-            text.push_str(&format!(
-                "_Exposed {exposed_entities} entit{} across {catalog_count} catalog(s) (~{total_teaching_chars} teaching chars this response)._\n\n",
-                if exposed_entities == 1 { "y" } else { "ies" }
-            ));
-        }
-        for wave in &out.waves {
-            if !wave.markdown_delta.is_empty() {
-                text.push_str(&wave.markdown_delta);
-                if !text.ends_with('\n') {
-                    text.push('\n');
-                }
-            }
-        }
+        tracing::info!(
+            target: "plasm_agent::mcp",
+            tool = "plasm_context",
+            logical_session_ref = %logical_session_ref,
+            exposed_entities,
+            catalog_count,
+            response_teaching_chars = total_teaching_chars,
+            wave_count = out.waves.len(),
+            "MCP plasm_context response telemetry"
+        );
+        let text = build_plasm_context_agent_markdown(logical_session_ref.as_str(), &out.waves);
         for wave in &out.waves {
             if wave.teaching_prompt_chars_added > 0 {
                 let ls = self.logical_mutex(key, &ls_key).await;
@@ -1739,67 +1735,28 @@ impl PlasmMcpHandler {
                 )
                 .await;
         }
-        let execute_binding =
-            json!({ "prompt_hash": out.prompt_hash, "session_id": out.session_id });
-        let mut plasm = serde_json::Map::new();
-        plasm.insert(
-            "logical_session_id".to_string(),
-            json!(rec.logical_session_id.to_string()),
-        );
-        plasm.insert("execute_binding".to_string(), execute_binding.clone());
-        let mut continuity = serde_json::Map::new();
-        continuity.insert(
-            "stale_binding_recovered".to_string(),
-            json!(out.stale_execute_binding_recovered),
-        );
-        if out.stale_execute_binding_recovered {
-            if let Some((ref ph, ref sid)) = out.stale_binding_previous {
-                continuity.insert(
-                    "previous_execute".to_string(),
-                    json!({ "prompt_hash": ph, "session_id": sid }),
-                );
-            }
-        }
-        continuity.insert("new_symbol_space".to_string(), json!(out.new_symbol_space));
-        if out.new_symbol_space {
-            continuity.insert("discard_cached_plasm_symbols".to_string(), json!(true));
-        }
-        plasm.insert(
-            "continuity".to_string(),
-            serde_json::Value::Object(continuity),
-        );
-        plasm.insert(
-            "logical_session_ref".to_string(),
-            json!(logical_session_ref),
-        );
-        plasm.insert("intent".to_string(), json!(rec.intent.as_str()));
-        plasm.insert("tenant_scope".to_string(), json!(rec.tenant_scope));
-        plasm.insert("domain_wave_count".to_string(), json!(out.waves.len()));
-        if let Some(sess_arc) = self
+        let (domain_revision, relations) = if let Some(sess_arc) = self
             .plasm
             .sessions
             .get_by_strs(&out.prompt_hash, &out.session_id)
             .await
         {
-            plasm.insert(
-                "domain_revision".to_string(),
-                json!(sess_arc.domain_revision),
-            );
-            let mut loaded: Vec<String> = sess_arc.contexts_by_entry.keys().cloned().collect();
-            loaded.sort();
-            plasm.insert("catalog_entry_ids".to_string(), json!(loaded));
-            if let Some(exposure) = sess_arc.teaching_exposure.as_ref() {
-                let rel_rows = exposure.exposed_relation_symbol_rows();
-                if !rel_rows.is_empty() {
-                    plasm.insert("relations".to_string(), json!(rel_rows));
-                }
-            }
-        }
-        if text.is_empty() {
-            text = format!("`{logical_session_ref}`\n");
+            let rel = sess_arc
+                .teaching_exposure
+                .as_ref()
+                .map(|exposure| exposure.exposed_relation_symbol_rows())
+                .filter(|rows| !rows.is_empty())
+                .map(|rows| json!(rows));
+            (Some(sess_arc.domain_revision), rel)
         } else {
-            text = format!("`{logical_session_ref}`\n\n{text}");
-        }
+            (None, None)
+        };
+        let plasm = build_plasm_context_tool_meta(
+            logical_session_ref.as_str(),
+            &out,
+            domain_revision,
+            relations,
+        );
         let mut res = CallToolResult::text_content(vec![TextContent::new(text, None, None)]);
         if !plasm.is_empty() {
             let mut meta = serde_json::Map::new();

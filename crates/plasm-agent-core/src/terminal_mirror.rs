@@ -130,43 +130,44 @@ fn resolved_plan_text_from_value(v: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal_state::test_env::with_plasm_workspace;
     use tempfile::TempDir;
 
     #[test]
     fn write_pair_json_extracts_run_markdown() {
         let tmp = TempDir::new().expect("tempdir");
-        std::env::set_var("PLASM_WORKSPACE", tmp.path());
-        let sid = "a1b2c3d4";
-        let mirror = SessionMirror::open(sid).expect("open");
-        let mut m = mirror;
-        let dir = m.alloc_dir(MirrorOpKind::Run).expect("alloc");
-        let body = br#"{"plan":true,"dry_run":false,"plan_dag":{},"run_markdown":"hello"}"#;
-        let (_, txt) = m.write_pair(&dir, "body", body, None).expect("pair");
-        let text = std::fs::read_to_string(txt).expect("read txt");
-        assert_eq!(text, "hello");
-        std::env::remove_var("PLASM_WORKSPACE");
+        with_plasm_workspace(tmp.path(), || {
+            let sid = "a1b2c3d4";
+            let mirror = SessionMirror::open(sid).expect("open");
+            let mut m = mirror;
+            let dir = m.alloc_dir(MirrorOpKind::Run).expect("alloc");
+            let body = br#"{"plan":true,"dry_run":false,"plan_dag":{},"run_markdown":"hello"}"#;
+            let (_, txt) = m.write_pair(&dir, "body", body, None).expect("pair");
+            let text = std::fs::read_to_string(txt).expect("read txt");
+            assert_eq!(text, "hello");
+        });
     }
 
     #[test]
     fn seq_monotonic_across_alloc() {
         let tmp = TempDir::new().expect("tempdir");
-        std::env::set_var("PLASM_WORKSPACE", tmp.path());
-        let sid = "deadbeef";
-        let mut m = SessionMirror::open(sid).expect("open");
-        let d1 = m.alloc_dir(MirrorOpKind::Search).expect("a1");
-        let d2 = m.alloc_dir(MirrorOpKind::Context).expect("a2");
-        assert!(d1.ends_with("0001-search"));
-        assert!(d2.ends_with("0002-context"));
-        std::env::remove_var("PLASM_WORKSPACE");
+        with_plasm_workspace(tmp.path(), || {
+            let sid = "deadbeef";
+            let mut m = SessionMirror::open(sid).expect("open");
+            let d1 = m.alloc_dir(MirrorOpKind::Search).expect("a1");
+            let d2 = m.alloc_dir(MirrorOpKind::Context).expect("a2");
+            assert!(d1.ends_with("0001-search"));
+            assert!(d2.ends_with("0002-context"));
+        });
     }
 
     #[test]
     fn display_mirror_path_relativizes() {
         let tmp = TempDir::new().expect("tempdir");
-        std::env::set_var("PLASM_WORKSPACE", tmp.path());
-        let p = session_dir("abc12345").join("out/0001-run/body.txt");
-        let shown = crate::terminal_state::display_mirror_path(&p);
-        assert!(shown.contains(".plasm/s/abc12345"));
-        std::env::remove_var("PLASM_WORKSPACE");
+        with_plasm_workspace(tmp.path(), || {
+            let p = session_dir("abc12345").join("out/0001-run/body.txt");
+            let shown = crate::terminal_state::display_mirror_path(&p);
+            assert!(shown.contains(".plasm/s/abc12345"));
+        });
     }
 }

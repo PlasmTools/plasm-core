@@ -4,8 +4,8 @@ expression: context
 ---
 **Open or extend** one logical session: stable **`intent`** + non-empty **`seeds`** (`{api, entity}` per pick). Multi-API: one **`seeds`** array per goal (see MCP initialize).
 
-Returns **`logical_session_ref`** (`s0`, …) then **teaching TSV**: `e#`/`m#`/`p#` gloss rows; relation hops in **exemplar** cells (`receiver.r#` or wire — no standalone `r#` gloss lines). Copy executable `.r#`/wire from the left column; Meaning `relation e# → e#` is pedagogy only. Symbols are session-local and append-only.
+Returns **`logical_session_ref`** (`s0`, …) then **teaching TSV** (fenced): `e#`/`m#`/`p#` gloss rows; relation hops in **exemplar** cells (`receiver.r#` or wire — no standalone `r#` gloss lines). Copy executable `.r#`/wire from the left column; Meaning `relation e# → e#` is pedagogy only. Symbols are session-local and append-only.
 
-**Adding picks:** call again with more `{api, entity}` rows.
+**Adding picks:** call again with more `{api, entity}` rows — delta TSV only (or one-line unchanged notice when seeds are already exposed).
 
-**`_meta.plasm`:** `domain_revision`, continuity flags, `catalog_entry_ids`, **`relations`** `[{sym, wire, entity, target_entity}]` when you need opaque `r#` off-screen — prefer latest exemplar when visible.
+**`_meta.plasm`:** `logical_session_ref`, `continuity`, `domain_revision`, optional **`relations`** when opaque `r#` is off-screen — prefer latest exemplar when visible.

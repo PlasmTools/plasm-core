@@ -76,6 +76,8 @@ pub async fn run_repl_main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|s| s.as_str())
         .unwrap_or("http://localhost:1080");
     let backend = backend_normalize::normalize_live_backend_url(schema_path.as_str(), backend_raw);
+    plasm_agent::http_backend::ReplHttpOverride::from_cli_normalized(backend.as_ref())
+        .map_err(|e| AgentError::Argument(e.to_string()))?;
 
     let mode = match matches
         .get_one::<String>("mode")

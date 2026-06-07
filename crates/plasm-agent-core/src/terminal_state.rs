@@ -747,6 +747,33 @@ pub fn write_plasm_cli_agent_skill(grammar_frontmatter: &str) -> Result<PathBuf>
 }
 
 #[cfg(test)]
+pub(crate) mod test_env {
+    use std::path::Path;
+    use std::sync::{Mutex, MutexGuard};
+
+    static PLASM_WORKSPACE_ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    pub(crate) fn plasm_workspace_env_lock() -> MutexGuard<'static, ()> {
+        PLASM_WORKSPACE_ENV_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Serialize tests that mutate `PLASM_WORKSPACE`; restores prior value on drop.
+    pub(crate) fn with_plasm_workspace<R>(path: &Path, f: impl FnOnce() -> R) -> R {
+        let _guard = plasm_workspace_env_lock();
+        let prev = std::env::var_os("PLASM_WORKSPACE");
+        std::env::set_var("PLASM_WORKSPACE", path);
+        let out = f();
+        match prev {
+            Some(v) => std::env::set_var("PLASM_WORKSPACE", v),
+            None => std::env::remove_var("PLASM_WORKSPACE"),
+        }
+        out
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -755,9 +782,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let want = dir.path().join("proj");
         std::fs::create_dir_all(&want).expect("mkdir");
-        std::env::set_var("PLASM_WORKSPACE", &want);
-        assert_eq!(workspace_dir(), want);
-        std::env::remove_var("PLASM_WORKSPACE");
+        super::test_env::with_plasm_workspace(&want, || {
+            assert_eq!(workspace_dir(), want);
+        });
     }
 
     #[test]
@@ -765,11 +792,11 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let want = dir.path().join("proj");
         std::fs::create_dir_all(&want).expect("mkdir");
-        std::env::set_var("PLASM_WORKSPACE", &want);
-        let p = session_dir("abcd1234").join("out/0001-run/body.txt");
-        let shown = display_mirror_path(&p);
-        assert!(shown.contains(".plasm/s/abcd1234"));
-        std::env::remove_var("PLASM_WORKSPACE");
+        super::test_env::with_plasm_workspace(&want, || {
+            let p = session_dir("abcd1234").join("out/0001-run/body.txt");
+            let shown = display_mirror_path(&p);
+            assert!(shown.contains(".plasm/s/abcd1234"));
+        });
     }
 
     #[test]
@@ -882,10 +909,10 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let want = dir.path().join("proj");
         std::fs::create_dir_all(&want).expect("mkdir");
-        std::env::set_var("PLASM_WORKSPACE", &want);
-        let path = plasm_cli_agent_skill_path();
-        assert_eq!(path, want.join(".plasm/skills/plasm-cli/SKILL.md"));
-        std::env::remove_var("PLASM_WORKSPACE");
+        super::test_env::with_plasm_workspace(&want, || {
+            let path = plasm_cli_agent_skill_path();
+            assert_eq!(path, want.join(".plasm/skills/plasm-cli/SKILL.md"));
+        });
     }
 
     #[test]
@@ -905,13 +932,13 @@ mod tests {
     #[test]
     fn write_plasm_cli_agent_skill_writes_file() {
         let dir = tempfile::tempdir().expect("tempdir");
-        std::env::set_var("PLASM_WORKSPACE", dir.path());
-        let grammar = "contract line one";
-        let path = write_plasm_cli_agent_skill(grammar).expect("write");
-        assert!(path.exists());
-        let raw = std::fs::read_to_string(&path).expect("read");
-        assert!(raw.contains("name: plasm-cli"));
-        assert!(raw.contains("contract line one"));
-        std::env::remove_var("PLASM_WORKSPACE");
+        super::test_env::with_plasm_workspace(dir.path(), || {
+            let grammar = "contract line one";
+            let path = write_plasm_cli_agent_skill(grammar).expect("write");
+            assert!(path.exists());
+            let raw = std::fs::read_to_string(&path).expect("read");
+            assert!(raw.contains("name: plasm-cli"));
+            assert!(raw.contains("contract line one"));
+        });
     }
 }

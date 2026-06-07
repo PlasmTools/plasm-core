@@ -5,6 +5,19 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.95] - 2026-06-07
+
+### Changed
+
+- **MCP `plasm_context` response trim:** agent-facing tool text is `` `{sN}` `` + teaching TSV (or continuity one-liners) only — entity/char accounting moves to logs/traces; `_meta.plasm` keeps `logical_session_ref`, `continuity`, `domain_revision`, and optional `relations`.
+- **HTTP backend provenance:** split `CatalogHttpBackend` (catalog YAML placeholders) from `ReplHttpOverride` (REPL/`--backend`); REPL binding synthesis no longer mis-gates on Fibery account placeholder detection.
+
+### Fixed
+
+- **Views `relation_outputs`:** materialize relation rows from cached entity refs when live fanout is unavailable (fixes `views_digest_relation_outputs` live run).
+- **REPL bindings:** `repl_session_binding_map` resolves from entry connect requirements only, not catalog placeholder heuristics.
+- **Tests:** serialize `PLASM_WORKSPACE` in terminal mirror/state tests; update language-matrix view MCP expectations for slim TSV responses.
+
 ## [0.1.94] - 2026-06-07
 
 ### Fixed

@@ -9,10 +9,12 @@ See also: [MCP logical sessions](mcp-logical-sessions.md), [incremental teaching
 1. **`plasm_context`** with **`intent`** and non-empty **`seeds`**
   - The server is **idempotent** on `(tenant_scope, intent)`: the same string yields the same canonical **`logical_session_id`** and the same per-transport **`logical_session_ref`** (e.g. `s0`).
   - If a live execute session is already bound for that logical id, the server **expands** or **federates** into that session (no fresh-open path).
+  - **First open** (new execute row): `` `{sN}` `` + optional stale-binding notice + fenced **full** teaching TSV only — no entity-count or char accounting in the body.
+  - **Expand** (new entities on an existing binding): `` `{sN}` `` + fenced **delta** TSV only.
   - **Duplicate seeds (already exposed):** if the request does not add new entity picks, the expand path returns a **short notice only**—the full teaching table / TSV teaching table is **not** replayed (token-saving). Steady state remains **`plasm`** / **`plasm_run`** with the existing **`logical_session_ref`**.
   - If there is no binding, or the stored binding points at an **expired or missing** execute row, the server may **open** a new `(prompt_hash, session)`.
   - The **primary** `entry_id` for the first open is chosen in **lexicographic order** among distinct catalog ids in the seed set, so two calls with the same set of catalog seeds in different order still agree on the same primary for `SessionReuseKey` matching.
-  - The tool response JSON includes `logical_session_id`, `logical_session_ref`, and `execute_binding: { prompt_hash, session_id }`.
+  - **`_meta.plasm`** (model-visible): `logical_session_ref`, `continuity`, `domain_revision`, optional `relations`. Execute binding ids and catalog lists are server/trace metadata only — agents use **`logical_session_ref`** with **`plasm`** / **`plasm_run`**.
 2. **`plasm`** with **`logical_session_ref`** and **`program`**
   - Steady state for most user turns: use **`plasm`** only; do not repeat `plasm_context` unless you need a new **`intent`** or new seeds.
 

@@ -291,34 +291,31 @@ pub fn bindings_complete_for_entry(entry_id: &str, values: &IndexMap<String, Str
     })
 }
 
-/// Whether catalog `http_backend` is a host-recognized placeholder requiring session bindings.
-pub fn catalog_http_backend_needs_origin(entry_id: &str, catalog_backend: &str) -> bool {
-    if !entry_requires_bindings(entry_id) {
-        return false;
-    }
-    crate::catalog_ownership::is_fibery_account_placeholder_http_backend(catalog_backend)
-        || catalog_backend.contains("YOUR_ACCOUNT")
-}
-
 /// Resolve effective HTTP origin from catalog backend + session bindings (+ legacy outbound KV).
 pub fn resolve_catalog_http_backend(
     entry_id: &str,
-    catalog_backend: &str,
+    catalog_backend: &crate::http_backend::CatalogHttpBackend,
     bindings: Option<&SessionBindingMap>,
-    legacy_outbound_http_backend: Option<&str>,
-) -> Result<String, String> {
-    if !catalog_http_backend_needs_origin(entry_id, catalog_backend) {
-        return Ok(catalog_backend.to_string());
+    legacy_outbound_http_backend: Option<&crate::http_backend::BindingOriginValue>,
+) -> Result<crate::http_backend::ResolvedHttpOrigin, String> {
+    if !catalog_backend.needs_origin_resolution(entry_id) {
+        return Ok(crate::http_backend::ResolvedHttpOrigin::from_catalog(
+            catalog_backend,
+        ));
     }
     if let Some(map) = bindings {
         if let Some(origin) = map.get_wire(BindingSlot::CatalogHttpOrigin.wire_name()) {
-            return Ok(origin.to_string());
+            return Ok(crate::http_backend::ResolvedHttpOrigin::from_resolved_str(
+                origin,
+            ));
         }
     }
     if let Some(legacy) = legacy_outbound_http_backend {
-        let trimmed = legacy.trim();
+        let trimmed = legacy.as_str();
         if !trimmed.is_empty() {
-            return Ok(trimmed.trim_end_matches('/').to_string());
+            return Ok(crate::http_backend::ResolvedHttpOrigin::from_resolved_str(
+                trimmed,
+            ));
         }
     }
     Err(format!(
@@ -347,11 +344,13 @@ mod tests {
             SessionBindingMap::from_values(BindingScope::new("t1", Uuid::nil(), "fibery"), values);
         let origin = resolve_catalog_http_backend(
             "fibery",
-            "https://YOUR_ACCOUNT.fibery.io",
+            &crate::http_backend::CatalogHttpBackend::from_cgs_field(
+                "https://YOUR_ACCOUNT.fibery.io",
+            ),
             Some(&map),
             None,
         )
         .expect("resolve");
-        assert_eq!(origin, "https://acme.fibery.io");
+        assert_eq!(origin.as_str(), "https://acme.fibery.io");
     }
 }
