@@ -1,4 +1,4 @@
-use crate::api_error_detail::graphql_errors_summary;
+use crate::api_error_detail::{fibery_command_envelope_hint, graphql_errors_summary};
 use crate::evm::{execute_evm_call, execute_evm_logs};
 use crate::http_resilience::{HttpResiliencePolicy, ResilientHttpTransport};
 use crate::http_transport::{HttpTransport, ReqwestHttpTransport};
@@ -5183,6 +5183,60 @@ fn narrow_http_graphql_response_for_entity_decode(
     }
 }
 
+/// Fibery `/api/commands` and similar APIs return `{ "success": bool, "result": … }` on HTTP 200.
+/// Surface command failures and empty query rows before CML `items_path` narrowing turns them into
+/// opaque "missing path segment" configuration errors.
+fn preflight_command_envelope_for_single_entity_narrow(
+    response: &serde_json::Value,
+    cml: &CmlRequest,
+) -> Result<(), RuntimeError> {
+    let Some(r) = cml.response.as_ref().filter(|r| r.single) else {
+        return Ok(());
+    };
+    let Some(success) = response.get("success").and_then(|v| v.as_bool()) else {
+        return Ok(());
+    };
+    let Some(result) = response.get("result") else {
+        return Ok(());
+    };
+    if !success {
+        let name = result
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("command.error");
+        let message = result
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Fibery command failed");
+        return Err(RuntimeError::RequestError {
+            message: format!("Fibery command failed ({name}): {message}"),
+            attempts: 1,
+        });
+    }
+    let Some(path) = r.items_path.as_ref().filter(|p| !p.is_empty()) else {
+        return Ok(());
+    };
+    if path.len() < 2 || path[0] != "result" {
+        return Ok(());
+    }
+    let Some(index_key) = path.get(1) else {
+        return Ok(());
+    };
+    if index_key.parse::<usize>().is_err() {
+        return Ok(());
+    }
+    if result.as_array().is_some_and(|a| a.is_empty()) {
+        return Err(RuntimeError::RequestError {
+            message: "Fibery command succeeded but returned no rows (empty `result` array). \
+                      For `user_get_me`, the API token may not resolve `$my-id` — use a personal \
+                      workspace API token from Fibery → API Tokens and reconnect in Plasm."
+                .into(),
+            attempts: 1,
+        });
+    }
+    Ok(())
+}
+
 /// For mappings that declare `response.single` + `items_path` (e.g. GraphQL `{ data: { issue: { ... } } }`),
 /// or `response.single` + top-level `items` (e.g. Cloudflare v4 `{ result: { ... } }` via `items: result`),
 /// take the entity object at that path. Used for GET/detail, create, and update **invoke** decoding—
@@ -5191,6 +5245,7 @@ fn extract_single_entity_payload_from_response(
     response: serde_json::Value,
     cml: &CmlRequest,
 ) -> Result<serde_json::Value, RuntimeError> {
+    preflight_command_envelope_for_single_entity_narrow(&response, cml)?;
     if let Some(ref r) = cml.response {
         if r.single {
             let mut cur: &serde_json::Value = &response;
@@ -5209,6 +5264,11 @@ fn extract_single_entity_payload_from_response(
                                     msg.push_str(
                                         " (response `data` is null; often paired with GraphQL `errors`)",
                                     );
+                                } else if let Some(fibery) =
+                                    fibery_command_envelope_hint(&response, key)
+                                {
+                                    msg.push_str(" — ");
+                                    msg.push_str(&fibery);
                                 }
                                 return Err(RuntimeError::ConfigurationError { message: msg });
                             }
@@ -7180,9 +7240,8 @@ mod tests {
             "../../../../fixtures/schemas/fibery_schema_overlay/sample_user_get_me.json"
         ))
         .expect("sample user_get_me JSON");
-        let narrowed =
-            narrow_http_graphql_response_for_entity_decode(&capability_template, body)
-                .expect("narrow user_get_me");
+        let narrowed = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
+            .expect("narrow user_get_me");
         let decoder = create_entity_decoder_for_capability(
             "User",
             &cgs,
@@ -7223,9 +7282,8 @@ mod tests {
             "../../../../fixtures/schemas/fibery_schema_overlay/sample_entity_create.json"
         ))
         .expect("sample entity_create JSON");
-        let narrowed =
-            narrow_http_graphql_response_for_entity_decode(&capability_template, body)
-                .expect("narrow entity_create");
+        let narrowed = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
+            .expect("narrow entity_create");
         let mut ambient = indexmap::IndexMap::new();
         ambient.insert("database".into(), "Cricket/Player".into());
         let decoder = create_entity_decoder_for_capability(
@@ -7270,6 +7328,60 @@ mod tests {
             body_str.contains("$my-id"),
             "user_get_me must filter on authenticated user via $my-id: {body_str}"
         );
+        assert!(
+            body_str.contains("\"params\""),
+            "user_get_me must include empty params object for Fibery param resolution: {body_str}"
+        );
+        let body: serde_json::Value = serde_json::from_str(&body_str).expect("parse body json");
+        let where_clause = body
+            .get("args")
+            .and_then(|a| a.get("query"))
+            .and_then(|q| q.get("q/where"))
+            .expect("q/where in compiled body");
+        assert_eq!(
+            where_clause,
+            &serde_json::json!(["=", ["fibery/id"], "$my-id"])
+        );
+    }
+
+    #[test]
+    fn fibery_command_envelope_preflight_surfaces_success_false() {
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+        let cgs = load_schema_dir(&dir).expect("load fibery catalog");
+        let cap = cgs.get_capability("user_get_me").expect("user_get_me");
+        let capability_template =
+            parse_capability_template(&cap.mapping.template).expect("parse template");
+        let body = serde_json::json!({
+            "success": false,
+            "result": {
+                "name": "entity.error/schema-type-not-found",
+                "message": "fibery/user database was not found."
+            }
+        });
+        let err = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
+            .expect_err("success:false must fail before narrowing");
+        let msg = format!("{err}");
+        assert!(msg.contains("entity.error/schema-type-not-found"), "{msg}");
+        assert!(msg.contains("fibery/user database was not found"), "{msg}");
+    }
+
+    #[test]
+    fn fibery_command_envelope_preflight_surfaces_empty_result_array() {
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+        let cgs = load_schema_dir(&dir).expect("load fibery catalog");
+        let cap = cgs.get_capability("user_get_me").expect("user_get_me");
+        let capability_template =
+            parse_capability_template(&cap.mapping.template).expect("parse template");
+        let body = serde_json::json!({ "success": true, "result": [] });
+        let err = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
+            .expect_err("empty result[] must fail with actionable message");
+        let msg = format!("{err}");
+        assert!(msg.contains("no rows"), "{msg}");
+        assert!(msg.contains("$my-id"), "{msg}");
     }
 
     #[test]

@@ -108,6 +108,28 @@ pub fn graphql_errors_summary(value: &Value) -> Option<String> {
     Some(cap_detail(&joined, MAX_API_ERROR_DETAIL_CHARS))
 }
 
+/// Fibery `/api/commands` envelope: when `success` is false, `result` is an error object (not an array).
+/// Helps explain "missing path segment `0`" when narrowing assumed a query row array.
+pub fn fibery_command_envelope_hint(value: &Value, missing_segment: &str) -> Option<String> {
+    if missing_segment != "0" {
+        return None;
+    }
+    let success = value.get("success")?.as_bool()?;
+    if success {
+        return None;
+    }
+    let result = value.get("result")?;
+    let name = result
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("command.error");
+    let message = result
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Fibery command failed");
+    Some(format!("Fibery command failed ({name}): {message}"))
+}
+
 /// Single bounded string for logs and `RuntimeError` (joins [`json_api_error_lines`] with `; `).
 pub fn summarize_json_error_body(value: &Value) -> String {
     let lines = json_api_error_lines(value);
@@ -158,6 +180,20 @@ pub fn summarize_text_error_body(bytes: &[u8], _content_type: Option<&str>) -> S
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn fibery_command_envelope_hint_on_success_false() {
+        let v = json!({
+            "success": false,
+            "result": {
+                "name": "entity.error/foo",
+                "message": "bar"
+            }
+        });
+        let hint = fibery_command_envelope_hint(&v, "0").expect("hint");
+        assert!(hint.contains("entity.error/foo"));
+        assert!(hint.contains("bar"));
+    }
 
     #[test]
     fn github_style_message() {

@@ -5,6 +5,17 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.92] - 2026-06-07
+
+### Fixed
+
+- **Fibery `user_get_me`:** add empty `params: {}` to command args; trim `q/select` to `fibery/id`, `user/name`, `user/email`.
+- **Runtime:** preflight Fibery `{ success, result }` envelopes before single-entity narrowing — surface `success: false` command errors and empty `result: []` (`$my-id` unmatched) instead of opaque “missing path segment `0`”.
+
+### Added
+
+- **`scripts/fibery-curl-triad.sh`:** A/B/C curl probes for schema, `fibery/user` list, and `$my-id` get-me.
+
 ## [0.1.91] - 2026-06-07
 
 ### Fixed

@@ -104,8 +104,6 @@ user_get_me:
                         - fibery/id
                         - user/name
                         - user/email
-                        - user/role
-                        - "user/admin?"
                   - - q/where
                     - type: const
                       value:
@@ -115,6 +113,9 @@ user_get_me:
                   - - q/limit
                     - type: const
                       value: 1
+            - - params
+              - type: object
+                fields: []
   response:
     items_path:
       - result

@@ -61,7 +61,8 @@ REST paths outside `/api/commands` use their own shapes (`/api/search/v2` → `i
 
 ### Query DSL and `input` passthrough
 
-- **`user_get_me`** uses Fibery’s `$my-id` in `q/where` (resolved from the API token — do not remove).
+- **`user_get_me`** uses Fibery’s `$my-id` in `q/where` (resolved from the API token — do not remove). The mapping also sends an empty `params: {}` object (Fibery command args shape).
+- **Troubleshooting `user_get_me`:** If schema reads and `Record(database="fibery/user")` work but `User.get-me()` returns no rows, auth is fine — the token is not binding `$my-id`. Generate a **personal** API token from Fibery → **API Tokens** (same user you expect in `fibery/user`), reconnect in Plasm, and rerun [`scripts/fibery-curl-triad.sh`](../../../scripts/fibery-curl-triad.sh) probe **C**.
 - **`entity_get`** binds `$entity-id` via `params` from the Plasm `id` argument.
 - Default **`entity_query`** / **`entity_get`** `q/select` is only `fibery/id` + `fibery/public-id`. For full rows or custom filters, pass capability parameter **`input`** with a complete Fibery query object (`args` passthrough).
 
@@ -132,10 +133,12 @@ curl -sS -X POST "$FIBERY_HOST/api/commands" \
   -H "Authorization: $FIBERY_TOKEN" -H 'Content-Type: application/json' \
   -d '{"command":"fibery.schema/query","args":{"with-description?":false}}' | jq '.success, (.result|length)'
 
-# Current user (query array in result)
+# Current user (query array in result; includes empty params)
 curl -sS -X POST "$FIBERY_HOST/api/commands" \
   -H "Authorization: $FIBERY_TOKEN" -H 'Content-Type: application/json' \
-  -d '{"command":"fibery.entity/query","args":{"query":{"q/from":"fibery/user","q/select":["fibery/id","user/name","user/email"],"q/where":["=",["fibery/id"],"$my-id"],"q/limit":1}}}' | jq .
+  -d '{"command":"fibery.entity/query","args":{"query":{"q/from":"fibery/user","q/select":["fibery/id","user/name","user/email"],"q/where":["=",["fibery/id"],"$my-id"],"q/limit":1},"params":{}}}' | jq .
+
+# Triad script (A/B/C probes): ../../../scripts/fibery-curl-triad.sh
 
 # List rows (minimal select)
 curl -sS -X POST "$FIBERY_HOST/api/commands" \
