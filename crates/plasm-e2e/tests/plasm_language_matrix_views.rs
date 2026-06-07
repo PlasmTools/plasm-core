@@ -354,8 +354,25 @@ async fn plasm_language_matrix_views_cgs_templates_validate() {
     plasm_compile::validate_cgs_capability_templates(&cgs).expect("capability CML templates");
 }
 
-#[tokio::test]
-async fn plasm_language_matrix_views_live_runs() {
+#[test]
+fn plasm_language_matrix_views_live_runs() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("matrix views live runtime");
+            rt.block_on(async {
+                plasm_language_matrix_views_live_runs_impl().await;
+            });
+        })
+        .expect("spawn matrix views live thread")
+        .join()
+        .expect("matrix views live thread join");
+}
+
+async fn plasm_language_matrix_views_live_runs_impl() {
     let base = hermit_lang_matrix::language_matrix_hermit_base_url().await;
     let cgs = language_matrix_views::load_language_matrix_views_cgs();
     plasm_compile::validate_cgs_capability_templates(&cgs).expect("templates");
