@@ -15,8 +15,8 @@ use std::time::Duration;
 use long_operation::{
     assert_async_accept, assert_cancelled, assert_review_gate_error, assert_running_wait,
     assert_terminal_success, cancel_program, continuity_phase, dry_verdict, markdown_text,
-    operation_handle_from_accept, plan_commit_ref, wait_program, BOUNDED_LANG_ITEM, LongOpFixture,
-    RunOpts, Surface, SLOW_LANG_ITEM, UNBOUNDED_LANG_ITEM,
+    operation_handle_from_accept, plan_commit_ref, wait_program, LongOpFixture, RunOpts, Surface,
+    BOUNDED_LANG_ITEM, SLOW_LANG_ITEM, UNBOUNDED_LANG_ITEM,
 };
 
 async fn accept_async(

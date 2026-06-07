@@ -126,8 +126,8 @@ mod view_execution;
 mod view_template;
 mod view_typestate;
 
-mod runtime_metrics;
 mod cancel_signal;
+mod runtime_metrics;
 mod spans;
 
 pub use api_error_detail::{

@@ -2,7 +2,7 @@
 
 use crate::execute_session::ExecuteSession;
 use crate::plan_dry_display::{PlanDryReview, PlanDryVerdict};
-use crate::plasm_plan_run::{DryPlasmPlanEvaluation, PlasmPlanRunResult, plan_semantic_dag_json};
+use crate::plasm_plan_run::{plan_semantic_dag_json, DryPlasmPlanEvaluation, PlasmPlanRunResult};
 use plasm_core::{OperationHandle, PlanCommitId, PlanCommitRef};
 use plasm_runtime::CancelSignal;
 use serde_json::json;
@@ -271,7 +271,10 @@ pub fn operation_accept_markdown(
     )
 }
 
-pub fn operation_running_markdown(handle: &OperationHandle, progress: &OperationProgress) -> String {
+pub fn operation_running_markdown(
+    handle: &OperationHandle,
+    progress: &OperationProgress,
+) -> String {
     let step = if progress.step_total > 0 {
         format!("step {}/{}", progress.step, progress.step_total)
     } else {
@@ -287,10 +290,7 @@ pub fn operation_running_markdown(handle: &OperationHandle, progress: &Operation
     } else {
         String::new()
     };
-    format!(
-        "```text\n`{}` · {step}{label}{rows}\n```",
-        handle.as_str()
-    )
+    format!("```text\n`{}` · {step}{label}{rows}\n```", handle.as_str())
 }
 
 pub fn operation_cancelled_markdown(handle: &OperationHandle) -> String {
@@ -315,10 +315,7 @@ pub fn operation_meta_object(
             OperationPhase::Cancelled => "cancelled",
         }),
     );
-    continuity.insert(
-        "operation_handle".into(),
-        json!(handle.as_str()),
-    );
+    continuity.insert("operation_handle".into(), json!(handle.as_str()));
     if let Some(pc) = plan_commit_ref {
         continuity.insert("plan_commit_ref".into(), json!(pc.as_str()));
     }
@@ -407,9 +404,9 @@ pub fn resolve_operation_storage_handle(
     let is_ns = handle.logical_session_ref().is_some();
     match (mcp_slot, is_ns) {
         (Some(r), true) => {
-            let slot = handle.logical_session_ref().ok_or_else(|| {
-                format!("invalid namespaced operation handle `{s}`")
-            })?;
+            let slot = handle
+                .logical_session_ref()
+                .ok_or_else(|| format!("invalid namespaced operation handle `{s}`"))?;
             if slot != r {
                 return Err(format!(
                     "operation handle slot `{slot}` does not match current logical_session_ref `{r}`"
@@ -438,14 +435,9 @@ pub(crate) fn try_parse_operation_continuation(
     }
     let layers = crate::plasm_plan_run::session_cgs_layers(es);
     let map = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(es, None);
-    let parsed = plasm_core::expr_parser::parse_with_cgs_layers_program(
-        trimmed,
-        &layers,
-        map,
-        None,
-        false,
-    )
-    .ok()?;
+    let parsed =
+        plasm_core::expr_parser::parse_with_cgs_layers_program(trimmed, &layers, map, None, false)
+            .ok()?;
     match parsed.expr {
         plasm_core::Expr::Wait(_) | plasm_core::Expr::Cancel(_) => Some(parsed.expr),
         _ => None,
@@ -506,7 +498,11 @@ mod tests {
 
     #[test]
     fn plan_requires_review_gate_blocks_without_force_or_commit() {
-        assert!(plan_requires_review_gate(PlanDryVerdict::Review, false, None));
+        assert!(plan_requires_review_gate(
+            PlanDryVerdict::Review,
+            false,
+            None
+        ));
         assert!(!plan_requires_review_gate(
             PlanDryVerdict::Review,
             true,

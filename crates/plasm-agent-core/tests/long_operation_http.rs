@@ -5,11 +5,11 @@ use std::sync::Arc;
 
 use axum::body::Body;
 use axum::http::{header::CONTENT_TYPE, header::LOCATION, Request, StatusCode};
-use axum::Router;
 use axum::Extension;
+use axum::Router;
 use plasm_agent_core::execute_path_ids::PromptHashHex;
 use plasm_agent_core::http::{build_plasm_host_state, PlasmHostBootstrap};
-use plasm_agent_core::http_execute::{CreateExecuteSessionResponse, execute_routes};
+use plasm_agent_core::http_execute::{execute_routes, CreateExecuteSessionResponse};
 use plasm_agent_core::incoming_auth::IncomingPrincipal;
 use plasm_agent_core::run_artifacts::RunArtifactStore;
 use plasm_agent_core::server_state::CatalogBootstrap;
@@ -19,7 +19,8 @@ use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 use tower::ServiceExt;
 
 fn langmatrix_host_state() -> plasm_agent_core::server_state::PlasmHostState {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
+    let dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
     let reg = InMemoryCgsRegistry::from_pairs(vec![(
         "langmatrix".into(),

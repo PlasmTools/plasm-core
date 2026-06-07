@@ -84,7 +84,11 @@ pub struct RunArgs {
     #[arg(long, help = "Bypass dry-run review soft gate on live execute")]
     pub force: bool,
 
-    #[arg(long, value_name = "PCN", help = "Plan commit ref (pcN) from a prior plan dry-run")]
+    #[arg(
+        long,
+        value_name = "PCN",
+        help = "Plan commit ref (pcN) from a prior plan dry-run"
+    )]
     pub plan_commit_ref: Option<String>,
 }
 

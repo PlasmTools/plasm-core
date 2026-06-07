@@ -2976,7 +2976,8 @@ async fn materialize_prefer_from_parent_get_relation(
                         | crate::http_execute::RunLineError::Normalize(d)
                         | crate::http_execute::RunLineError::Projection(d) => d,
                         crate::http_execute::RunLineError::Operation(_) => {
-                            "operation continuation is not valid inside a plan surface node".to_string()
+                            "operation continuation is not valid inside a plan surface node"
+                                .to_string()
                         }
                         crate::http_execute::RunLineError::Runtime(e, src) => {
                             format!("{e}\nsource expression: {src}")

@@ -554,10 +554,7 @@ impl Expr {
             Expr::Delete(d) => d.catalog_entry_id.as_deref(),
             Expr::Invoke(i) => i.catalog_entry_id.as_deref(),
             Expr::Chain(c) => c.source.session_catalog_entry_id(),
-            Expr::Page(_)
-            | Expr::Wait(_)
-            | Expr::Cancel(_)
-            | Expr::TeachingValue { .. } => None,
+            Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => None,
         }
     }
 
@@ -584,10 +581,7 @@ impl Expr {
                     .clone()
                     .with_session_catalog_entry_id(catalog_entry_id);
             }
-            Expr::Page(_)
-            | Expr::Wait(_)
-            | Expr::Cancel(_)
-            | Expr::TeachingValue { .. } => {}
+            Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => {}
         }
         self
     }

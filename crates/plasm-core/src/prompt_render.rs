@@ -3021,7 +3021,11 @@ fn domain_line_execution_meta_from_validated(
             Expr::Get(_) => DomainLineKind::Get,
             Expr::Query(_) => DomainLineKind::Query,
             Expr::Create(_) | Expr::Delete(_) | Expr::Invoke(_) => DomainLineKind::Method,
-            Expr::Chain(_) | Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => DomainLineKind::Other,
+            Expr::Chain(_)
+            | Expr::Page(_)
+            | Expr::Wait(_)
+            | Expr::Cancel(_)
+            | Expr::TeachingValue { .. } => DomainLineKind::Other,
         };
         let cross_entity = if let Expr::Query(q) = expr {
             if let (Some(pred), Some(ent_def)) = (&q.predicate, cgs.get_entity(q.entity.as_str())) {
@@ -5444,7 +5448,10 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         s,
         "node          ::= (plasm_expr | ident) postfix* row_template? | ident \"=>\" value_or_template"
     );
-    let _ = writeln!(s, "plasm_expr    ::= entity_expr [projection] | page | wait | cancel");
+    let _ = writeln!(
+        s,
+        "plasm_expr    ::= entity_expr [projection] | page | wait | cancel"
+    );
     let _ = writeln!(s, "entity_expr   ::= {}", entity_expr_rhs);
     let _ = writeln!(s, "query_all     ::= {}", query_all_form);
     let _ = writeln!(s, "get           ::= {}", get_form);

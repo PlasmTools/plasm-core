@@ -4,7 +4,7 @@ use crate::http_resilience::{HttpResiliencePolicy, ResilientHttpTransport};
 use crate::http_transport::{HttpTransport, ReqwestHttpTransport};
 use crate::materialization::{CacheTelemetry, ExecutionCacheConsult, SessionMaterialization};
 use crate::preflight::{apply_preflight_steps, PreflightInvoke};
-use crate::{AuthResolver, CancelSignal, CachedEntity, EntityCompleteness, RuntimeError};
+use crate::{AuthResolver, CachedEntity, CancelSignal, EntityCompleteness, RuntimeError};
 use indexmap::IndexMap;
 use plasm_compile::{
     compile_operation, compile_query, decode_entities, parse_capability_template,
@@ -650,10 +650,11 @@ impl ExecutionEngine {
                                     .scope(Some(plugin_hooks), async move {
                                         EXECUTION_AUTH_RESOLVER
                                             .scope(auth_override, async move {
-                                                EXECUTION_CANCEL.scope(cancel, async move {
-                                                    EXECUTION_HTTP_BASE.scope(base, fut).await
-                                                })
-                                                .await
+                                                EXECUTION_CANCEL
+                                                    .scope(cancel, async move {
+                                                        EXECUTION_HTTP_BASE.scope(base, fut).await
+                                                    })
+                                                    .await
                                             })
                                             .await
                                     })

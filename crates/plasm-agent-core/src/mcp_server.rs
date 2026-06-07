@@ -47,10 +47,10 @@ use tracing::Instrument;
 use async_trait::async_trait;
 use base64::Engine as _;
 use plasm_core::discovery::{CapabilityQuery, CgsCatalog, DiscoveryError};
-use plasm_core::PlanCommitRef;
-use plasm_runtime::CancelSignal;
 use plasm_core::CgsDiscovery;
+use plasm_core::PlanCommitRef;
 use plasm_discovery::DiscoveryQuery;
+use plasm_runtime::CancelSignal;
 use rust_mcp_sdk::error::SdkResult;
 use rust_mcp_sdk::event_store::InMemoryEventStore;
 use rust_mcp_sdk::mcp_server::hyper_server;
@@ -76,17 +76,17 @@ use crate::http_execute::{
     normalize_capability_seeds, try_dispatch_operation_program, ApplyCapabilitySeedsOutcome,
     CapabilitySeed, RankedCapabilitiesArg,
 };
+use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
+use crate::mcp_plasm_meta::PlasmMetaIndex;
+use crate::mcp_policy;
+use crate::mcp_runtime_config::McpRuntimeConfig;
+use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
 use crate::operation::{
     compute_plan_commit_id_from_dry, operation_accept_markdown, plan_commit_meta,
     plan_requires_review_gate, spawn_async_plan_run, verify_plan_commit_for_dry, PlanCommitRecord,
     PLAN_COMMIT_TTL,
 };
 use crate::plan_dry_display::build_plan_dry_compact_view;
-use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
-use crate::mcp_plasm_meta::PlasmMetaIndex;
-use crate::mcp_policy;
-use crate::mcp_runtime_config::McpRuntimeConfig;
-use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
 use crate::plasm_dag::compile_plasm_expression_to_plan;
 use crate::plasm_plan::parse_and_validate_plan_json;
 use crate::plasm_plan_run::{
@@ -1258,10 +1258,7 @@ impl PlasmMcpHandler {
             .get("reasoning")
             .and_then(|x| x.as_str())
             .filter(|s| !s.is_empty());
-        let wait_live = v
-            .get("wait")
-            .and_then(|x| x.as_bool())
-            .unwrap_or(true);
+        let wait_live = v.get("wait").and_then(|x| x.as_bool()).unwrap_or(true);
         let force_run = v.get("force").and_then(|x| x.as_bool()).unwrap_or(false);
         let plan_commit_ref = v
             .get("plan_commit_ref")

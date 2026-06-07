@@ -26,9 +26,9 @@ use plasm_core::{
 };
 use plasm_runtime::{
     auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
-    CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecuteSessionMaterial, ExecutionResult,
-    ExecutionSource, ExecutionStats, QueryPaginationResumeData, RuntimeError,
-    CancelSignal, SessionMaterialization, StreamConsumeOpts,
+    CancelSignal, CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecuteSessionMaterial,
+    ExecutionResult, ExecutionSource, ExecutionStats, QueryPaginationResumeData, RuntimeError,
+    SessionMaterialization, StreamConsumeOpts,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -378,8 +378,7 @@ pub async fn handle_wait_operation(
     };
     match snapshot {
         crate::operation::OperationPollSnapshot::Running(progress) => {
-            let markdown =
-                crate::operation::operation_running_markdown(&key, &progress);
+            let markdown = crate::operation::operation_running_markdown(&key, &progress);
             let mut meta = serde_json::Map::new();
             meta.insert(
                 "plasm".into(),
@@ -403,9 +402,7 @@ pub async fn handle_wait_operation(
                 return_steps: Vec::new(),
             })
         }
-        crate::operation::OperationPollSnapshot::Succeeded(result) => {
-            Ok((*result).clone())
-        }
+        crate::operation::OperationPollSnapshot::Succeeded(result) => Ok((*result).clone()),
         crate::operation::OperationPollSnapshot::Failed(error) => Err(error),
         crate::operation::OperationPollSnapshot::Cancelled(progress) => {
             let markdown = crate::operation::operation_cancelled_markdown(&key);
@@ -446,14 +443,9 @@ pub async fn handle_cancel_operation(
         .and_then(|t| t.logical_session_ref.as_deref())
         .unwrap_or("s0");
     if !sess.cancel_operation(&key) {
-        return Err(format!(
-            "unknown operation handle `{}`",
-            key.as_str()
-        ));
+        return Err(format!("unknown operation handle `{}`", key.as_str()));
     }
-    let progress = sess
-        .get_operation_progress(&key)
-        .unwrap_or_default();
+    let progress = sess.get_operation_progress(&key).unwrap_or_default();
     let markdown = crate::operation::operation_cancelled_markdown(&key);
     let mut meta = serde_json::Map::new();
     meta.insert(
@@ -4643,11 +4635,8 @@ async fn post_run_execute_session(
             verdict: compact.verdict,
             expires_at: std::time::Instant::now() + crate::operation::PLAN_COMMIT_TTL,
         });
-        let mut plasm_meta = crate::operation::plan_commit_meta(
-            &commit_ref,
-            &dry.review,
-            compact.verdict,
-        );
+        let mut plasm_meta =
+            crate::operation::plan_commit_meta(&commit_ref, &dry.review, compact.verdict);
         plasm_meta.insert("dry_run".into(), serde_json::json!(true));
         plasm_meta.insert("plan".into(), plan_json.clone());
         let preview = serde_json::json!({

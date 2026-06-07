@@ -75,10 +75,7 @@ mod tests {
     fn parse_and_mint_namespaced_operation() {
         let h = OperationHandle::mint_namespaced("s0", 1);
         assert_eq!(h.as_str(), "s0_o1");
-        assert_eq!(
-            OperationHandle::parse("s0_o1").expect("parse"),
-            h
-        );
+        assert_eq!(OperationHandle::parse("s0_o1").expect("parse"), h);
         assert_eq!(h.logical_session_ref(), Some("s0"));
     }
 

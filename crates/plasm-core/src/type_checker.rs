@@ -189,8 +189,9 @@ fn type_check_operation_handle(handle: &crate::OperationHandle) -> Result<(), Ty
         return Err(TypeError::IncompatibleValue {
             field: "handle".to_string(),
             value_type: handle.as_str().to_string(),
-            field_type: "opaque operation handle: namespaced `s0_o1` (MCP logical session slot + sequence)"
-                .to_string(),
+            field_type:
+                "opaque operation handle: namespaced `s0_o1` (MCP logical session slot + sequence)"
+                    .to_string(),
         });
     }
     Ok(())

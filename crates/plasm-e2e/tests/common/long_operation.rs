@@ -20,7 +20,9 @@ pub const BOUNDED_LANG_ITEM: &str = "LangItem.limit(2)";
 pub const SLOW_LANG_ITEM: &str = "LangItem.page_size(1).limit(10)";
 
 async fn spawn_unified_server() -> (String, JoinHandle<()>) {
-    let hermit = hermit_lang_matrix::language_matrix_hermit_base_url().await.clone();
+    let hermit = hermit_lang_matrix::language_matrix_hermit_base_url()
+        .await
+        .clone();
     let cgs = language_matrix::load_language_matrix_cgs();
     let engine = ExecutionEngine::new(ExecutionConfig {
         base_url: Some(hermit),
@@ -99,11 +101,11 @@ impl LongOpFixture {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .expect("reqwest client");
-        let (http_prompt_hash, http_session_id) =
-            http_open_session(&client, &base_url).await.expect("http open session");
+        let (http_prompt_hash, http_session_id) = http_open_session(&client, &base_url)
+            .await
+            .expect("http open session");
         let mcp_transport_id = mcp_initialize(&client, &base_url).await;
-        let logical_session_ref =
-            mcp_plasm_context(&client, &base_url, &mcp_transport_id).await;
+        let logical_session_ref = mcp_plasm_context(&client, &base_url, &mcp_transport_id).await;
         Self {
             base_url,
             client,
@@ -122,21 +124,19 @@ impl LongOpFixture {
 
     pub async fn plan_dry(&self, surface: Surface, program: &str) -> Value {
         match surface {
-            Surface::Http => {
-                http_post_program(
-                    &self.client,
-                    &self.base_url,
-                    &self.http_prompt_hash,
-                    &self.http_session_id,
-                    program,
-                    RunOpts {
-                        plan_only: true,
-                        ..Default::default()
-                    },
-                )
-                .await
-                .expect("http plan dry")
-            }
+            Surface::Http => http_post_program(
+                &self.client,
+                &self.base_url,
+                &self.http_prompt_hash,
+                &self.http_session_id,
+                program,
+                RunOpts {
+                    plan_only: true,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("http plan dry"),
             Surface::Mcp => {
                 let body = mcp_tool_call(
                     &self.client,
@@ -186,17 +186,15 @@ impl LongOpFixture {
                 if let Some(pc) = opts.plan_commit_ref {
                     args["plan_commit_ref"] = json!(pc);
                 }
-                Ok(
-                    mcp_tool_call(
-                        &self.client,
-                        &self.base_url,
-                        &self.mcp_transport_id,
-                        self.next_rpc_id(),
-                        "plasm_run",
-                        args,
-                    )
-                    .await,
+                Ok(mcp_tool_call(
+                    &self.client,
+                    &self.base_url,
+                    &self.mcp_transport_id,
+                    self.next_rpc_id(),
+                    "plasm_run",
+                    args,
                 )
+                .await)
                 .and_then(|body| {
                     if let Some(err) = body.get("_run_error").and_then(|v| v.as_str()) {
                         Err(err.to_string())
@@ -476,20 +474,21 @@ pub fn plasm_meta(body: &Value) -> &Value {
     if let Some(plasm) = body.get("_meta").and_then(|m| m.get("plasm")) {
         return plasm;
     }
-    body.get("_meta")
-        .expect("missing _meta or _meta.plasm")
+    body.get("_meta").expect("missing _meta or _meta.plasm")
 }
 
 pub fn markdown_text(body: &Value) -> &str {
     body.get("run_markdown")
         .and_then(|v| v.as_str())
-        .or_else(|| body.get("mcp_result").and_then(|r| {
-            r.get("content")
-                .and_then(|c| c.as_array())
-                .and_then(|a| a.first())
-                .and_then(|c| c.get("text"))
-                .and_then(|t| t.as_str())
-        }))
+        .or_else(|| {
+            body.get("mcp_result").and_then(|r| {
+                r.get("content")
+                    .and_then(|c| c.as_array())
+                    .and_then(|a| a.first())
+                    .and_then(|c| c.get("text"))
+                    .and_then(|t| t.as_str())
+            })
+        })
         .unwrap_or("")
 }
 
@@ -508,9 +507,7 @@ pub fn plan_commit_ref(body: &Value) -> Option<String> {
 }
 
 pub fn dry_verdict(body: &Value) -> Option<&str> {
-    plasm_meta(body)
-        .get("dry_verdict")
-        .and_then(|v| v.as_str())
+    plasm_meta(body).get("dry_verdict").and_then(|v| v.as_str())
 }
 
 pub fn operation_handle_from_accept(body: &Value) -> String {
@@ -582,7 +579,10 @@ pub fn assert_terminal_success(body: &Value) {
             .is_some_and(|a| !a.is_empty());
     let md = markdown_text(body);
     assert!(
-        has_rows || (!md.is_empty() && !md.contains("cancelled") && continuity_phase(body) != Some("running")),
+        has_rows
+            || (!md.is_empty()
+                && !md.contains("cancelled")
+                && continuity_phase(body) != Some("running")),
         "expected terminal success body: {body}"
     );
 }
@@ -594,7 +594,10 @@ pub fn assert_cancelled(body: &Value) {
         "expected cancelled continuity: {body}"
     );
     let md = markdown_text(body);
-    assert!(md.contains("cancelled"), "expected cancelled markdown: {md}");
+    assert!(
+        md.contains("cancelled"),
+        "expected cancelled markdown: {md}"
+    );
 }
 
 pub fn assert_review_gate_error(err: &str) {

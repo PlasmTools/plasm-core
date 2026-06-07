@@ -1901,7 +1901,9 @@ fn plasm_language_matrix_live_runs() {
                 .build()
                 .expect("matrix live runtime");
             rt.block_on(async {
-                let base = hermit_lang_matrix::language_matrix_hermit_base_url().await.clone();
+                let base = hermit_lang_matrix::language_matrix_hermit_base_url()
+                    .await
+                    .clone();
                 plasm_language_matrix_live_runs_impl(base).await;
             });
         })

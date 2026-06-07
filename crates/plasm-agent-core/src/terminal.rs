@@ -908,8 +908,8 @@ pub async fn run_terminal() -> Result<()> {
             let program = line.trim().to_string();
             let is_operation_continuation =
                 program.starts_with("wait(") || program.starts_with("cancel(");
-            let post_program_live = is_operation_continuation
-                || (run.mode == RunModeCli::Run && !run.wait);
+            let post_program_live =
+                is_operation_continuation || (run.mode == RunModeCli::Run && !run.wait);
             let run_mode = run.mode.into();
             let mode_kind = if run_mode == ResolvedPlanRunMode::Plan {
                 MirrorOpKind::Plan
