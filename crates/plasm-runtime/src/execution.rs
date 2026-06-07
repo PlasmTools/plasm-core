@@ -7167,6 +7167,112 @@ mod tests {
     }
 
     #[test]
+    fn fibery_user_get_me_narrowing_decodes_first_result_row() {
+        use plasm_compile::decode_entities;
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+        let cgs = load_schema_dir(&dir).expect("load fibery catalog");
+        let cap = cgs.get_capability("user_get_me").expect("user_get_me");
+        let capability_template =
+            parse_capability_template(&cap.mapping.template).expect("parse template");
+        let body: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/schemas/fibery_schema_overlay/sample_user_get_me.json"
+        ))
+        .expect("sample user_get_me JSON");
+        let narrowed =
+            narrow_http_graphql_response_for_entity_decode(&capability_template, body)
+                .expect("narrow user_get_me");
+        let decoder = create_entity_decoder_for_capability(
+            "User",
+            &cgs,
+            Some("user_get_me"),
+            None,
+            None,
+            None,
+        );
+        let entities = decode_entities(&decoder, &narrowed).expect("decode User");
+        assert_eq!(entities.len(), 1);
+        assert_eq!(
+            entities[0].fields.get("id"),
+            Some(&plasm_core::Value::String(
+                "7dcf4730-82d2-11e9-8a28-82a9c787ee9d".into()
+            ))
+        );
+        assert_eq!(
+            entities[0].fields.get("name"),
+            Some(&plasm_core::Value::String("Arthur Dent".into()))
+        );
+        assert_eq!(
+            entities[0].fields.get("email"),
+            Some(&plasm_core::Value::String("arthur@example.com".into()))
+        );
+    }
+
+    #[test]
+    fn fibery_entity_create_narrowing_decodes_result_object() {
+        use plasm_compile::decode_entities;
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+        let cgs = load_schema_dir(&dir).expect("load fibery catalog");
+        let cap = cgs.get_capability("entity_create").expect("entity_create");
+        let capability_template =
+            parse_capability_template(&cap.mapping.template).expect("parse template");
+        let body: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/schemas/fibery_schema_overlay/sample_entity_create.json"
+        ))
+        .expect("sample entity_create JSON");
+        let narrowed =
+            narrow_http_graphql_response_for_entity_decode(&capability_template, body)
+                .expect("narrow entity_create");
+        let mut ambient = indexmap::IndexMap::new();
+        ambient.insert("database".into(), "Cricket/Player".into());
+        let decoder = create_entity_decoder_for_capability(
+            "Record",
+            &cgs,
+            Some("entity_create"),
+            None,
+            None,
+            Some(&ambient),
+        );
+        let entities = decode_entities(&decoder, &narrowed).expect("decode Record");
+        assert_eq!(entities.len(), 1);
+        assert_eq!(
+            entities[0].fields.get("id"),
+            Some(&plasm_core::Value::String(
+                "d17390c4-98c8-11e9-a2a3-2a2ae2dbcce4".into()
+            ))
+        );
+        assert_eq!(
+            entities[0].fields.get("public_id"),
+            Some(&plasm_core::Value::String("6".into()))
+        );
+    }
+
+    #[test]
+    fn fibery_user_get_me_compile_preserves_my_id_filter() {
+        use plasm_compile::CompiledOperation;
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+        let cgs = load_schema_dir(&dir).expect("load fibery catalog");
+        let cap = cgs.get_capability("user_get_me").expect("user_get_me");
+        let capability_template =
+            parse_capability_template(&cap.mapping.template).expect("parse template");
+        let compiled = compile_operation_dispatch(&capability_template, &CmlEnv::new())
+            .expect("compile user_get_me");
+        let CompiledOperation::Http(req) = compiled else {
+            panic!("expected HTTP compiled operation");
+        };
+        let body_str = serde_json::to_string(&req.body).expect("serialize body");
+        assert!(
+            body_str.contains("$my-id"),
+            "user_get_me must filter on authenticated user via $my-id: {body_str}"
+        );
+    }
+
+    #[test]
     fn github_issue_query_decoder_includes_embedded_labels_relation() {
         use plasm_compile::decode_entities;
         use plasm_compile::DecodedRelation;

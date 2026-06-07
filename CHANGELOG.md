@@ -5,6 +5,13 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.91] - 2026-06-07
+
+### Fixed
+
+- **Fibery catalog:** correct CML response narrowing for the `{ success, result }` command envelope — `user_get_me` / `entity_get` use `items_path: [result, "0"]`; entity and schema-batch creates use `items: result` + `single: true` (fixes singleton GET and create/update decode without OpenAPI validation).
+- **Fibery docs:** response-envelope table, discover vs overlay, curl smoke tests, eval index; add Fibery to `apis/README.md` catalog table.
+
 ## [0.1.90] - 2026-06-07
 
 ### Fixed

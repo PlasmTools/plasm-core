@@ -23,6 +23,7 @@ This directory holds **split** Plasm CGS trees: each API is a folder with `domai
 | [cloudflare](cloudflare/)           | Cloudflare REST v4 (Phase 1: zones, **`Zone → security_overview`** view + rulesets, phase entrypoints, WAF packages; Bearer token; Hermit slice in-tree) |
 | [dnd5e](dnd5e/)                     | D&D 5e SRD public API                                                                                                           |
 | [evm-erc20](evm-erc20/)             | EVM ERC-20 reads (on-chain, not REST)                                                                                           |
+| [fibery](fibery/)                   | Fibery HTTP API (workspace schema overlay, rows, documents, views, webhooks; per-account host + API token)                      |
 | [flightaware-aeroapi](flightaware-aeroapi/) | FlightAware AeroAPI v4 (`x-apikey`; airborne search + ident flight summaries; OpenAPI from FlightAware)                         |
 | [github](github/)                   | GitHub REST (repos, issues, PRs, commits, branches, reviews, files—see README)                                                  |
 | [grafana](grafana/)                 | Grafana HTTP API v5 (core + RBAC, datasource explorers, Sift/Incident/OnCall plugins, assembled deeplinks, panel render/query; bearer token) |

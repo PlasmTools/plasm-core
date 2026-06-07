@@ -116,7 +116,9 @@ user_get_me:
                     - type: const
                       value: 1
   response:
-    items: result
+    items_path:
+      - result
+      - "0"
     single: true
 
 # ── Entities ─────────────────────────────────────────────────────────────────
@@ -200,7 +202,9 @@ entity_get:
                     - type: var
                       name: id
   response:
-    items: result
+    items_path:
+      - result
+      - "0"
     single: true
 
 entity_create:
@@ -225,7 +229,9 @@ entity_create:
             - - entity
               - type: var
                 name: input
-  response: single
+  response:
+    items: result
+    single: true
 
 entity_update:
   method: POST
@@ -249,7 +255,9 @@ entity_update:
             - - entity
               - type: var
                 name: input
-  response: single
+  response:
+    items: result
+    single: true
 
 entity_delete:
   method: POST
@@ -614,7 +622,9 @@ space_create:
       - - args
         - type: var
           name: input
-  response: single
+  response:
+    items: result
+    single: true
 
 space_delete:
   method: POST
@@ -650,7 +660,9 @@ database_create:
       - - args
         - type: var
           name: input
-  response: single
+  response:
+    items: result
+    single: true
 
 database_rename:
   method: POST
@@ -668,7 +680,9 @@ database_rename:
       - - args
         - type: var
           name: input
-  response: single
+  response:
+    items: result
+    single: true
 
 database_delete:
   method: POST
@@ -704,7 +718,9 @@ field_create_primitive:
       - - args
         - type: var
           name: input
-  response: single
+  response:
+    items: result
+    single: true
 
 field_create_relation:
   method: POST
@@ -722,7 +738,9 @@ field_create_relation:
       - - args
         - type: var
           name: input
-  response: single
+  response:
+    items: result
+    single: true
 
 field_create_select:
   method: POST
@@ -740,7 +758,9 @@ field_create_select:
       - - args
         - type: var
           name: input
-  response: single
+  response:
+    items: result
+    single: true
 
 field_update_select:
   method: POST
@@ -758,7 +778,9 @@ field_update_select:
       - - args
         - type: var
           name: input
-  response: single
+  response:
+    items: result
+    single: true
 
 field_create_workflow:
   method: POST
@@ -776,7 +798,9 @@ field_create_workflow:
       - - args
         - type: var
           name: input
-  response: single
+  response:
+    items: result
+    single: true
 
 field_delete:
   method: POST
@@ -931,7 +955,9 @@ view_fetch_data:
               - - publicId
                 - type: var
                   name: public_id
-  response: single
+  response:
+    items: result
+    single: true
 
 # ── Webhooks ─────────────────────────────────────────────────────────────────
 
