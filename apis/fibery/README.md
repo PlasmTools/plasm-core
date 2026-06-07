@@ -57,7 +57,7 @@ Plasm CML must **narrow** `result` before entity decode (there is no OpenAPI spe
 
 **Do not** use root `response: single` for command responses that return `{ success, result: {…} }` — decode would target the envelope, not the row.
 
-REST paths outside `/api/commands` use their own shapes (`/api/search/v2` → `items`, `/api/webhooks/v2`, `/api/documents/{secret}` raw body, JSON-RPC `result` for views).
+REST paths outside `/api/commands` use their own shapes (`/api/search/v2` → `items`, `/api/webhooks/v2`, `/api/documents/{secret}` raw body, JSON-RPC **`result` as a bare array** for views — not `result.views`).
 
 ### Query DSL and `input` passthrough
 
@@ -114,7 +114,7 @@ See [incremental-teaching-prompts.md](../../../docs/incremental-teaching-prompts
 | **Multipart file upload** | `POST /api/files` (local multipart) is **not** mapped; use `file_upload_from_url` or upload outside Plasm |
 | **GraphQL** | Per-space GraphQL omitted; use `entity_query` command DSL |
 | **OAuth** | Static API token only |
-| **BM-25 search** | `entity_search` maps to `/api/search/v2`; confirm on your workspace tier |
+| **BM-25 search** | `entity_search` maps to `/api/search/v2`; many workspaces return HTTP **404** (tier not enabled) — use `entity_query` / history instead |
 | **Rich text on create** | Use `document_set` after `entity_create` |
 | **Eval database names** | Cases fb-03…fb-10 reference example workspaces (`Cricket/Player`, `CRM/Lead`, …) — substitute names from your live schema |
 
@@ -166,6 +166,12 @@ cargo run -p plasm-eval -- coverage --schema apis/fibery --cases apis/fibery/eva
 | fb-08 | Webhooks list (`Webhook`) |
 | fb-09 | Database context view (`DatabaseContext`) |
 | fb-10 | Create row (`Record`) |
+| fb-11 | Update row (`Record`) |
+| fb-12 | Delete row (`Record`) |
+| fb-13 | Saved views list (`View`) |
+| fb-14 | Database → fields chain |
+| fb-15 | Row + document (`RecordWithDocument`) |
+| fb-16 | File import from URL (`File`) |
 
 ---
 

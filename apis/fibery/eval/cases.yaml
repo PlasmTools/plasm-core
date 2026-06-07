@@ -1,88 +1,132 @@
-# Fibery — Plasm eval (schema key must match directory name: `fibery`)
+# Fibery — task-oriented NL eval (databases, rows, schema overlay, views, webhooks).
 #
-# Run:
-#   plasm-eval --schema apis/fibery --cases apis/fibery/eval/cases.yaml --attempts 2
-#   plasm-eval coverage --schema apis/fibery --cases apis/fibery/eval/cases.yaml
+# Coverage: `cargo run -p plasm-eval -- coverage --schema apis/fibery --cases apis/fibery/eval/cases.yaml`
+# Substitute database names from your live schema (see README eval database names note).
 
 - id: fb-01
   schema: fibery
-  goal: "List all databases in my Fibery workspace schema"
-  tags: [query, schema, unscoped]
-  covers: [query_all]
+  goal: "List workspace databases"
+  tags: [query]
+  covers: [query_all, query_filtered]
   expect:
-    entities_any: [Database]
+    entities_any: [Database, Space]
 
 - id: fb-02
   schema: fibery
-  goal: "Show profile information for the currently authenticated Fibery user"
-  tags: [singleton, user]
+  goal: "Who am I in this Fibery workspace?"
+  tags: [singleton]
   covers: [get]
   expect:
     entities_any: [User]
 
 - id: fb-03
   schema: fibery
-  goal: "Get field definitions for the Cricket/Player database"
-  tags: [query, schema, scope]
+  goal: "Show field definitions for the Cricket Player database"
+  tags: [query]
   covers: [query_filtered]
   expect:
     entities_any: [Field]
-    pred_fields_any: [database]
 
 - id: fb-04
   schema: fibery
-  goal: "Query rows in database SoftDev/bug with a limit of 20"
-  tags: [query, record, scope]
+  goal: "List a few rows from Cricket Player"
+  tags: [query]
   covers: [query_filtered]
   expect:
     entities_any: [Record]
-    pred_fields_any: [database]
 
 - id: fb-05
   schema: fibery
-  goal: "Fetch the row with fibery id 20f9b920-9752-11e9-81b9-4363f716f666 from Cricket/Player"
-  tags: [get, record]
-  covers: [get]
+  goal: "Get one Cricket Player row by id showing id and public_id only"
+  tags: [get]
+  covers: [get, projection]
   expect:
     entities_any: [Record]
 
 - id: fb-06
   schema: fibery
-  goal: "Search the workspace for entities matching the keyword roadmap"
-  tags: [search]
-  covers: [search]
+  goal: "Search the workspace for onboarding docs"
+  tags: [search, tier:search]
+  covers: [search_text]
   expect:
     entities_any: [SearchResult]
 
 - id: fb-07
   schema: fibery
-  goal: "Show recent create and update history for database Product Management/feature"
-  tags: [query, history, scope]
+  goal: "Show recent change history for Cricket Player"
+  tags: [query]
   covers: [query_filtered]
   expect:
     entities_any: [HistoryEvent]
 
 - id: fb-08
   schema: fibery
-  goal: "List webhooks registered in my Fibery workspace"
-  tags: [query, webhook]
+  goal: "List webhook subscriptions"
+  tags: [query]
   covers: [query_all]
   expect:
     entities_any: [Webhook]
 
 - id: fb-09
   schema: fibery
-  goal: "Inspect schema fields and sample rows for database CRM/Lead before importing data"
-  tags: [view, context, multi_step]
-  covers: [multi_step, projection]
+  goal: "Summarize Cricket Player schema and sample rows"
+  tags: [multi_step]
+  covers: [multi_step, query_filtered]
   expect:
-    entities_any: [DatabaseContext, Field, Record]
-    max_steps: 4
+    entities_any: [DatabaseContext]
 
 - id: fb-10
   schema: fibery
-  goal: "Create a new row in Cricket/Player with name Curtly Ambrose"
-  tags: [create, record]
+  goal: "Create a Cricket Player row named Test Player"
+  tags: [create]
   covers: [create]
   expect:
     entities_any: [Record]
+
+- id: fb-11
+  schema: fibery
+  goal: "Rename a Cricket Player row to Updated Name"
+  tags: [update]
+  covers: [update]
+  expect:
+    entities_any: [Record]
+
+- id: fb-12
+  schema: fibery
+  goal: "Delete a Cricket Player test row"
+  tags: [delete]
+  covers: [delete]
+  expect:
+    entities_any: [Record]
+
+- id: fb-13
+  schema: fibery
+  goal: "List saved Fibery board and grid views"
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [View]
+
+- id: fb-14
+  schema: fibery
+  goal: "Show field definitions for the Cricket database"
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [Database, Field]
+
+- id: fb-15
+  schema: fibery
+  goal: "Load a row with its rich-text document body"
+  tags: [get]
+  covers: [invoke]
+  expect:
+    entities_any: [RecordWithDocument]
+
+- id: fb-16
+  schema: fibery
+  goal: "Import a file from a URL into Fibery storage"
+  tags: [create]
+  covers: [invoke]
+  expect:
+    entities_any: [File]

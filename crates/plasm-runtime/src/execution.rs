@@ -21,11 +21,11 @@ use plasm_core::{
     },
     reject_domain_placeholder_in_executable as reject_domain_placeholder_core,
     resolve_query_capability as resolve_query_capability_core, type_check_expr,
-    type_check_expr_federated, CapabilityParamName, CapabilitySchema, ChainStep, EntityDef,
-    EntityFieldName, EntityKey, EntityName, Expr, FieldType, GetExpr, InputType, InvokeExpr,
-    InvokeInputPayload, ParameterRole, Predicate, PromptPipelineConfig, QueryExpr, QueryPagination,
-    Ref, RelationMaterialization, RelationRowResolution, RelationSchema, RelationScopedFallback,
-    Value, CGS,
+    type_check_expr_federated, CapabilityKind, CapabilityParamName, CapabilitySchema, ChainStep,
+    EntityDef, EntityFieldName, EntityKey, EntityName, Expr, FieldType, GetExpr, InputType,
+    InvokeExpr, InvokeInputPayload, ParameterRole, Predicate, PromptPipelineConfig, QueryExpr,
+    QueryPagination, Ref, RelationMaterialization, RelationRowResolution, RelationSchema,
+    RelationScopedFallback, Value, CGS,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
@@ -2419,19 +2419,14 @@ impl ExecutionEngine {
                 .await?;
                 let response =
                     narrow_http_graphql_response_for_entity_decode(&capability_template, response)?;
-                let decoder = create_entity_decoder(&create.entity, cgs, None, None, None);
-                let decoded = match decode_entities(&decoder, &response) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        tracing::warn!(
-                            entity = %create.entity,
-                            capability = %create.capability,
-                            error = ?e,
-                            "create response entity decode failed; returning empty entities"
-                        );
-                        Vec::new()
-                    }
-                };
+                let decoder = mutating_capability_response_decoder(
+                    create.entity.as_str(),
+                    create.capability.as_str(),
+                    cgs,
+                    &env,
+                    None,
+                );
+                let decoded = decode_entities(&decoder, &response)?;
 
                 let timestamp = current_timestamp();
                 let entities: Vec<CachedEntity> = decoded
@@ -2514,11 +2509,12 @@ impl ExecutionEngine {
         match mode {
             ExecutionMode::Live => {
                 ensure_http_operation(&compiled, "delete")?;
-                let (_response, _) = with_dispatch_entity(
+                let (response, _) = with_dispatch_entity(
                     Some(delete.target.entity_type.as_str()),
                     self.execute_operation_full(&compiled),
                 )
                 .await?;
+                preflight_fibery_command_envelope(&response)?;
 
                 // Remove from cache if present
                 mat.remove(&delete.target);
@@ -2609,6 +2605,7 @@ impl ExecutionEngine {
                 message: e.to_string(),
             }
         })?;
+        merge_entity_id_from_into_input_env(&mut env, target_ent, capability);
 
         apply_preflight_steps(
             self,
@@ -2644,13 +2641,12 @@ impl ExecutionEngine {
                 // the cache's additive merge preserves existing fields from other
                 // projections (e.g. url, timestamps from page_get).
                 let rid = invoke.target.simple_id().map(|s| s.as_str());
-                let identity_ambient = decode_identity_ambient_for_ref(&invoke.target, &env);
-                let decoder = create_entity_decoder(
-                    &invoke.target.entity_type,
+                let decoder = mutating_capability_response_decoder(
+                    invoke.target.entity_type.as_str(),
+                    invoke.capability.as_str(),
                     cgs,
-                    None,
+                    &env,
                     rid,
-                    Some(&identity_ambient),
                 );
                 let decoded = decode_entities(&decoder, &response).unwrap_or_default();
 
@@ -5183,16 +5179,9 @@ fn narrow_http_graphql_response_for_entity_decode(
     }
 }
 
-/// Fibery `/api/commands` and similar APIs return `{ "success": bool, "result": … }` on HTTP 200.
-/// Surface command failures and empty query rows before CML `items_path` narrowing turns them into
-/// opaque "missing path segment" configuration errors.
-fn preflight_command_envelope_for_single_entity_narrow(
-    response: &serde_json::Value,
-    cml: &CmlRequest,
-) -> Result<(), RuntimeError> {
-    let Some(r) = cml.response.as_ref().filter(|r| r.single) else {
-        return Ok(());
-    };
+/// Fibery `/api/commands` returns `{ "success": bool, "result": … }` on HTTP 200 even when the
+/// command failed. Surface `success: false` before callers treat the HTTP round-trip as success.
+fn preflight_fibery_command_envelope(response: &serde_json::Value) -> Result<(), RuntimeError> {
     let Some(success) = response.get("success").and_then(|v| v.as_bool()) else {
         return Ok(());
     };
@@ -5213,6 +5202,23 @@ fn preflight_command_envelope_for_single_entity_narrow(
             attempts: 1,
         });
     }
+    Ok(())
+}
+
+/// Fibery `/api/commands` and similar APIs return `{ "success": bool, "result": … }` on HTTP 200.
+/// Surface command failures and empty query rows before CML `items_path` narrowing turns them into
+/// opaque "missing path segment" configuration errors.
+fn preflight_command_envelope_for_single_entity_narrow(
+    response: &serde_json::Value,
+    cml: &CmlRequest,
+) -> Result<(), RuntimeError> {
+    let Some(r) = cml.response.as_ref().filter(|r| r.single) else {
+        return Ok(());
+    };
+    preflight_fibery_command_envelope(response)?;
+    let Some(result) = response.get("result") else {
+        return Ok(());
+    };
     let Some(path) = r.items_path.as_ref().filter(|p| !p.is_empty()) else {
         return Ok(());
     };
@@ -5649,6 +5655,58 @@ fn decode_identity_ambient_for_ref(reference: &Ref, env: &CmlEnv) -> IndexMap<St
         m.entry(k).or_insert(v);
     }
     m
+}
+
+/// When an update capability passes a JSON patch object as `input`, merge the entity's primary wire
+/// id (`id_from`) from the resolved `id` env slot so vendors like Fibery receive `{ fibery/id, … }`.
+fn merge_entity_id_from_into_input_env(
+    env: &mut CmlEnv,
+    ent: Option<&EntityDef>,
+    capability: &CapabilitySchema,
+) {
+    if !matches!(capability.kind, CapabilityKind::Update) {
+        return;
+    }
+    let Some(ent) = ent else {
+        return;
+    };
+    let Some(id_from) = ent.id_from.as_ref().filter(|p| !p.is_empty()) else {
+        return;
+    };
+    let Some(wire_key) = id_from.first() else {
+        return;
+    };
+    let Some(Value::String(id)) = env.get("id").cloned() else {
+        return;
+    };
+    let Some(input_val) = env.get_mut("input") else {
+        return;
+    };
+    let Value::Object(map) = input_val else {
+        return;
+    };
+    map.entry(wire_key.clone())
+        .or_insert_with(|| Value::String(id));
+}
+
+/// Decoder for create/update/action invoke responses: capability name + CML env ambient (e.g. overlay
+/// `database` scope) drive overlay entity resolution.
+fn mutating_capability_response_decoder(
+    entity_type: &str,
+    capability_name: &str,
+    cgs: &CGS,
+    env: &CmlEnv,
+    request_identity: Option<&str>,
+) -> plasm_compile::EntityDecoder {
+    let identity_ambient = cml_env_to_identity_strings(env);
+    create_entity_decoder_for_capability(
+        entity_type,
+        cgs,
+        Some(capability_name),
+        None,
+        request_identity,
+        Some(&identity_ambient),
+    )
 }
 
 /// Create a decoder for an entity type, driven by the CGS schema.
@@ -7284,16 +7342,13 @@ mod tests {
         .expect("sample entity_create JSON");
         let narrowed = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
             .expect("narrow entity_create");
-        let mut ambient = indexmap::IndexMap::new();
-        ambient.insert("database".into(), "Cricket/Player".into());
-        let decoder = create_entity_decoder_for_capability(
-            "Record",
-            &cgs,
-            Some("entity_create"),
-            None,
-            None,
-            Some(&ambient),
+        let mut env = CmlEnv::new();
+        env.insert(
+            "database".into(),
+            plasm_core::Value::String("Cricket/Player".into()),
         );
+        let decoder =
+            mutating_capability_response_decoder("Record", "entity_create", &cgs, &env, None);
         let entities = decode_entities(&decoder, &narrowed).expect("decode Record");
         assert_eq!(entities.len(), 1);
         assert_eq!(
@@ -7305,6 +7360,144 @@ mod tests {
         assert_eq!(
             entities[0].fields.get("public_id"),
             Some(&plasm_core::Value::String("6".into()))
+        );
+    }
+
+    #[test]
+    fn fibery_entity_update_merge_injects_fibery_id_into_input() {
+        use plasm_compile::CompiledOperation;
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+        let cgs = load_schema_dir(&dir).expect("load fibery catalog");
+        let cap = cgs.get_capability("entity_update").expect("entity_update");
+        let capability_template =
+            parse_capability_template(&cap.mapping.template).expect("parse template");
+        let mut env = CmlEnv::new();
+        env.insert(
+            "id".into(),
+            plasm_core::Value::String("d17390c4-98c8-11e9-a2a3-2a2ae2dbcce4".into()),
+        );
+        env.insert(
+            "database".into(),
+            plasm_core::Value::String("Cricket/Player".into()),
+        );
+        env.insert(
+            "input".into(),
+            plasm_core::Value::Object(indexmap::IndexMap::from([(
+                "Cricket/Name".into(),
+                plasm_core::Value::String("Renamed".into()),
+            )])),
+        );
+        let target_ent = cgs.get_entity("Record");
+        merge_entity_id_from_into_input_env(&mut env, target_ent, cap);
+        let compiled = compile_operation_dispatch(&capability_template, &env).expect("compile");
+        let CompiledOperation::Http(req) = compiled else {
+            panic!("expected HTTP compiled operation");
+        };
+        let body_str = serde_json::to_string(&req.body).expect("serialize body");
+        assert!(
+            body_str.contains("fibery/id"),
+            "entity_update must include fibery/id in entity body: {body_str}"
+        );
+        assert!(
+            body_str.contains("d17390c4-98c8-11e9-a2a3-2a2ae2dbcce4"),
+            "entity_update must bind id param into entity: {body_str}"
+        );
+    }
+
+    #[test]
+    fn fibery_entity_delete_compiles_fibery_id_and_database() {
+        use plasm_compile::CompiledOperation;
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+        let cgs = load_schema_dir(&dir).expect("load fibery catalog");
+        let cap = cgs.get_capability("entity_delete").expect("entity_delete");
+        let capability_template =
+            parse_capability_template(&cap.mapping.template).expect("parse template");
+        let mut env = CmlEnv::new();
+        env.insert(
+            "id".into(),
+            plasm_core::Value::String("d17390c4-98c8-11e9-a2a3-2a2ae2dbcce4".into()),
+        );
+        env.insert(
+            "database".into(),
+            plasm_core::Value::String("Cricket/Player".into()),
+        );
+        let compiled = compile_operation_dispatch(&capability_template, &env).expect("compile");
+        let CompiledOperation::Http(req) = compiled else {
+            panic!("expected HTTP compiled operation");
+        };
+        let body_str = serde_json::to_string(&req.body).expect("serialize body");
+        assert!(
+            body_str.contains("fibery.entity/delete"),
+            "delete command name: {body_str}"
+        );
+        assert!(
+            body_str.contains("Cricket/Player"),
+            "delete must include database type: {body_str}"
+        );
+        assert!(
+            body_str.contains("d17390c4-98c8-11e9-a2a3-2a2ae2dbcce4"),
+            "delete must include fibery/id: {body_str}"
+        );
+    }
+
+    #[test]
+    fn fibery_entity_delete_envelope_surfaces_success_false() {
+        let body = serde_json::json!({
+            "success": false,
+            "result": {
+                "name": "entity.error/not-found",
+                "message": "Entity not found"
+            }
+        });
+        let err = preflight_fibery_command_envelope(&body)
+            .expect_err("delete envelope success:false must fail");
+        let msg = format!("{err}");
+        assert!(msg.contains("entity.error/not-found"), "{msg}");
+        assert!(msg.contains("Entity not found"), "{msg}");
+    }
+
+    #[test]
+    fn fibery_view_query_decodes_result_array() {
+        use plasm_compile::decode_entities;
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+        let cgs = load_schema_dir(&dir).expect("load fibery catalog");
+        let cap = cgs.get_capability("view_query").expect("view_query");
+        let capability_template =
+            parse_capability_template(&cap.mapping.template).expect("parse template");
+        let cml = match &capability_template {
+            plasm_compile::CapabilityTemplate::Http(c) => c,
+            _ => panic!("expected HTTP template"),
+        };
+        let body: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/schemas/fibery_schema_overlay/sample_view_query.json"
+        ))
+        .expect("sample view_query JSON");
+        let normalized = prepare_http_query_response(body, cml, &CmlEnv::new());
+        let decoder = create_entity_decoder_for_capability(
+            "View",
+            &cgs,
+            Some("view_query"),
+            Some(http_collection_source(cml)),
+            None,
+            None,
+        );
+        let entities = decode_entities(&decoder, &normalized).expect("decode View rows");
+        assert_eq!(entities.len(), 1);
+        assert_eq!(
+            entities[0].fields.get("id"),
+            Some(&plasm_core::Value::String(
+                "43addb30-1fd0-11ee-9009-a7c752e861c6".into()
+            ))
+        );
+        assert_eq!(
+            entities[0].fields.get("name"),
+            Some(&plasm_core::Value::String("Supa Doc".into()))
         );
     }
 

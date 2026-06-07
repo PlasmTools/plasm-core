@@ -854,9 +854,6 @@ view_query:
             fields: []
   response:
     items: result
-    items_path:
-      - result
-      - views
 
 view_create:
   method: POST

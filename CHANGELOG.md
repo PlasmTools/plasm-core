@@ -5,6 +5,20 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.93] - 2026-06-07
+
+### Fixed
+
+- **Fibery create/update/delete:** `execute_create` and invoke responses use capability-aware decoders with overlay `database` ambient; create decode errors propagate instead of returning empty rows.
+- **Fibery `entity_update`:** runtime merges `id_from` wire key (`fibery/id`) into JSON `input` patch objects before compile.
+- **Fibery `entity_delete`:** surface Fibery `{ success: false }` command envelope failures on delete.
+- **Fibery `view_query`:** JSON-RPC response decode uses `result` array directly (remove erroneous `result.views` path segment).
+
+### Added
+
+- **Fibery eval:** `apis/fibery/eval/cases.yaml` (fb-01…fb-16) with correct `search_text` coverage token.
+- **Fixtures/tests:** `sample_view_query.json`; runtime tests for update id merge, delete compile, view list decode.
+
 ## [0.1.92] - 2026-06-07
 
 ### Fixed
