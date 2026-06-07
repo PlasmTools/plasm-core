@@ -5,6 +5,14 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.94] - 2026-06-07
+
+### Fixed
+
+- **Parser:** zero-arity `Entity(scope).delete()` on compound-key entities (Fibery `Record`) preserves the receiver [`Ref`] instead of defaulting id to `"0"` (fixes `entity.error/schema-type-not-found` for `"0" database`).
+- **Parser:** dotted-call delete with arguments emits [`DeleteExpr`](plasm-oss/crates/plasm-core/src/expr.rs) (runs `execute_delete`) instead of misrouting through [`InvokeExpr`](plasm-oss/crates/plasm-core/src/expr.rs).
+- **Parser:** zero-arity update/action invoke on a `Get` receiver preserves compound/simple refs when the CML template has no path vars.
+
 ## [0.1.93] - 2026-06-07
 
 ### Fixed

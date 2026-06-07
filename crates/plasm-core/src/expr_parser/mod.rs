@@ -996,20 +996,20 @@ impl<'a> Parser<'a> {
         let needs_anchor_id = template_invoke_requires_explicit_anchor_id(&cap.mapping.template.0);
 
         if cap.kind == CapabilityKind::Delete {
+            if let Expr::Get(g) = &source {
+                return Ok(Expr::Delete(DeleteExpr::with_target_path_vars(
+                    cap_name,
+                    g.reference.clone(),
+                    g.path_vars.clone(),
+                )));
+            }
             if !needs_anchor_id {
                 return Ok(Expr::Delete(DeleteExpr::new(cap_name, entity, "0")));
             }
-            let Expr::Get(g) = &source else {
-                return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
-                    entity: entity.clone(),
-                    label: label.clone(),
-                }));
-            };
-            return Ok(Expr::Delete(DeleteExpr::with_target_path_vars(
-                cap_name,
-                g.reference.clone(),
-                g.path_vars.clone(),
-            )));
+            return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
+                entity: entity.clone(),
+                label: label.clone(),
+            }));
         }
         if cap.kind == CapabilityKind::Get {
             let invoke_id = if !needs_anchor_id {
@@ -1030,6 +1030,14 @@ impl<'a> Parser<'a> {
 
         // Update / Action / other invoke kinds: preserve compound [`Ref`] from `Entity(id).method()`.
         if !needs_anchor_id {
+            if let Expr::Get(g) = &source {
+                return Ok(Expr::Invoke(InvokeExpr::with_target_path_vars(
+                    cap_name,
+                    g.reference.clone(),
+                    None,
+                    g.path_vars.clone(),
+                )));
+            }
             return Ok(Expr::Invoke(InvokeExpr::new(cap_name, entity, "0", None)));
         }
         let Expr::Get(g) = &source else {
@@ -1349,7 +1357,23 @@ impl<'a> Parser<'a> {
             CapabilityKind::Create => {
                 Ok(Expr::Create(CreateExpr::new(cap_name, cap_domain, input)))
             }
-            CapabilityKind::Update | CapabilityKind::Action | CapabilityKind::Delete => {
+            CapabilityKind::Delete => {
+                let Expr::Get(g) = &source else {
+                    return Err(self.err(ParseErrorKind::Other {
+                        message: "delete with arguments requires Entity(id) on the left".into(),
+                    }));
+                };
+                let path_vars = match input {
+                    Value::Object(map) if !map.is_empty() => Some(map),
+                    _ => g.path_vars.clone(),
+                };
+                Ok(Expr::Delete(DeleteExpr::with_target_path_vars(
+                    cap_name,
+                    g.reference.clone(),
+                    path_vars,
+                )))
+            }
+            CapabilityKind::Update | CapabilityKind::Action => {
                 let Expr::Get(g) = &source else {
                     return Err(self.err(ParseErrorKind::Other {
                         message: "invoke with arguments requires Entity(id) on the left".into(),
@@ -3567,6 +3591,54 @@ mod tests {
             Some("sheet-id-9")
         );
         assert!(inv.input.is_none());
+        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
+    }
+
+    /// Fibery `entity_delete` has no HTTP path vars; zero-arity delete must still keep compound scope.
+    #[test]
+    fn parse_zero_arity_fibery_record_delete_preserves_compound_ref() {
+        let dir = std::path::Path::new("../../apis/fibery");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let line = concat!(
+            "Record(database=\"Product Development/Bug\",id=\"019ea239-59d4-7374-b684-ac61b0dd28ec\")",
+            ".entity-delete()",
+        );
+        let r = parse(line, &cgs).unwrap();
+        let Expr::Delete(del) = &r.expr else {
+            panic!("expected Delete, got {:?}", r.expr);
+        };
+        assert_eq!(del.capability.as_str(), "entity_delete");
+        let parts = del.target.compound_parts().expect("compound Record ref");
+        assert_eq!(
+            parts.get("database").map(String::as_str),
+            Some("Product Development/Bug")
+        );
+        assert_eq!(
+            parts.get("id").map(String::as_str),
+            Some("019ea239-59d4-7374-b684-ac61b0dd28ec")
+        );
+        crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
+    }
+
+    #[test]
+    fn parse_dotted_fibery_record_delete_with_scope_args_is_delete_not_invoke() {
+        let dir = std::path::Path::new("../../apis/fibery");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let line = concat!(
+            "Record(database=\"Product Development/Bug\",id=\"019ea239-59d4-7374-b684-ac61b0dd28ec\")",
+            ".entity-delete(database=\"Product Development/Bug\",id=\"019ea239-59d4-7374-b684-ac61b0dd28ec\")",
+        );
+        let r = parse(line, &cgs).unwrap();
+        let Expr::Delete(del) = &r.expr else {
+            panic!("expected Delete, got {:?}", r.expr);
+        };
+        assert_eq!(del.capability.as_str(), "entity_delete");
         crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap();
     }
 
