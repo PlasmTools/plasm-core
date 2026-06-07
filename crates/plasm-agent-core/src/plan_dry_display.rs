@@ -685,6 +685,14 @@ fn next_synthetic_plan_label(
     }
 }
 
+/// Node id → compact display label (`r1`, `c1`, …) for async operation progress lines.
+pub(crate) fn plan_node_display_map(
+    plan: &Plan<ValidatedPlanState>,
+    topological_order: &[String],
+) -> HashMap<String, String> {
+    build_plan_node_display_map(plan, topological_order)
+}
+
 fn build_plan_node_display_map(
     plan: &Plan<ValidatedPlanState>,
     topological_order: &[String],

@@ -69,6 +69,9 @@ pub mod oauth_provider_pull;
 pub mod oauth_provider_repository;
 pub mod oauth_runtime_source;
 pub mod operation;
+mod operation_progress;
+#[cfg(test)]
+mod operation_progress_coalesce_integration;
 pub mod oss_local_state;
 pub mod outbound_secret_provider;
 pub mod output;

@@ -17,6 +17,7 @@ use crate::local_trace_archive::LocalTraceArchive;
 use crate::mcp_config_repository::McpConfigRepository;
 use crate::mcp_transport_auth::McpTransportAuth;
 use crate::oauth_link_catalog::OauthLinkCatalog;
+use crate::operation_progress::OperationProgressHub;
 use crate::run_artifacts::RunArtifactStore;
 use crate::session_graph_persistence::SessionGraphPersistence;
 use crate::session_identity::LogicalSessionRegistry;
@@ -65,6 +66,8 @@ pub struct PlasmOssHostState {
     pub incoming_auth_device: Arc<IncomingAuthDeviceStore>,
     /// MCP transport session traces (demo/debug; in-memory).
     pub trace_hub: Arc<TraceHub>,
+    /// Queued MCP `notifications/plasm/op` payloads (drained by MCP session reporter).
+    pub op_progress_hub: Arc<OperationProgressHub>,
     /// Effective [`TraceHubConfig`] after startup (matches [`TraceHub::bounds`] on the hub).
     pub trace_hub_config: TraceHubConfig,
     /// Best-effort POST of audit batches to the trace sink (`PLASM_TRACE_SINK_URL` when using [`EnvTraceIngestClient`]).

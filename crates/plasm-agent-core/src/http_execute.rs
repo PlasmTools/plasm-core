@@ -10,9 +10,11 @@ use axum::extract::rejection::PathRejection;
 use axum::extract::{Extension, FromRequestParts, Path, Query};
 use axum::http::header::{ACCEPT, CONTENT_TYPE, LOCATION};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use futures_util::stream::{self, Stream, StreamExt};
 use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use http_problem::Problem;
 use indexmap::IndexMap;
@@ -26,12 +28,13 @@ use plasm_core::{
 };
 use plasm_runtime::{
     auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
-    CancelSignal, CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecuteSessionMaterial,
-    ExecutionResult, ExecutionSource, ExecutionStats, QueryPaginationResumeData, RuntimeError,
+    CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecuteSessionMaterial, ExecutionResult,
+    ExecutionSource, ExecutionStats, QueryPaginationResumeData, RuntimeError,
     SessionMaterialization, StreamConsumeOpts,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tracing::Instrument;
@@ -377,20 +380,12 @@ pub async fn handle_wait_operation(
         ));
     };
     match snapshot {
-        crate::operation::OperationPollSnapshot::Running(progress) => {
-            let markdown = crate::operation::operation_running_markdown(&key, &progress);
+        crate::operation::OperationPollSnapshot::Running(_) => {
+            let Some((markdown, plasm_meta, _unchanged)) = sess.operation_poll_parts(&key) else {
+                return Err(format!("unknown operation handle `{}`", key.as_str()));
+            };
             let mut meta = serde_json::Map::new();
-            meta.insert(
-                "plasm".into(),
-                serde_json::Value::Object(crate::operation::operation_meta_object(
-                    logical_session_ref,
-                    &key,
-                    crate::operation::OperationPhase::Running,
-                    Some(&progress),
-                    None,
-                    None,
-                )),
-            );
+            meta.insert("plasm".into(), serde_json::Value::Object(plasm_meta));
             Ok(crate::plasm_plan_run::PlasmPlanRunResult {
                 version: serde_json::json!({}),
                 node_results: Vec::new(),
@@ -405,16 +400,19 @@ pub async fn handle_wait_operation(
         crate::operation::OperationPollSnapshot::Succeeded(result) => Ok((*result).clone()),
         crate::operation::OperationPollSnapshot::Failed(error) => Err(error),
         crate::operation::OperationPollSnapshot::Cancelled(progress) => {
-            let markdown = crate::operation::operation_cancelled_markdown(&key);
+            let markdown = crate::operation::operation_cancelled_markdown(&key, Some(&progress));
+            let seq = sess
+                .operation_progress_snapshot_line(&key)
+                .map(|(n, _)| n)
+                .unwrap_or(1);
             let mut meta = serde_json::Map::new();
             meta.insert(
                 "plasm".into(),
                 serde_json::Value::Object(crate::operation::operation_meta_object(
-                    logical_session_ref,
                     &key,
-                    crate::operation::OperationPhase::Cancelled,
+                    crate::operation_progress::OpWireSig::Cancelled,
+                    seq,
                     Some(&progress),
-                    None,
                     None,
                 )),
             );
@@ -439,23 +437,26 @@ pub async fn handle_cancel_operation(
     handle: &plasm_core::OperationHandle,
 ) -> Result<crate::plasm_plan_run::PlasmPlanRunResult, String> {
     let key = crate::operation::resolve_operation_storage_handle(trace, handle)?;
-    let logical_session_ref = trace
+    let _logical_session_ref = trace
         .and_then(|t| t.logical_session_ref.as_deref())
         .unwrap_or("s0");
-    if !sess.cancel_operation(&key) {
+    if !sess.cancel_operation(&key, None) {
         return Err(format!("unknown operation handle `{}`", key.as_str()));
     }
     let progress = sess.get_operation_progress(&key).unwrap_or_default();
-    let markdown = crate::operation::operation_cancelled_markdown(&key);
+    let markdown = crate::operation::operation_cancelled_markdown(&key, Some(&progress));
+    let seq = sess
+        .operation_progress_snapshot_line(&key)
+        .map(|(n, _)| n)
+        .unwrap_or(1);
     let mut meta = serde_json::Map::new();
     meta.insert(
         "plasm".into(),
         serde_json::Value::Object(crate::operation::operation_meta_object(
-            logical_session_ref,
             &key,
-            crate::operation::OperationPhase::Cancelled,
+            crate::operation_progress::OpWireSig::Cancelled,
+            seq,
             Some(&progress),
-            None,
             None,
         )),
     );
@@ -4134,6 +4135,10 @@ pub fn execute_routes() -> Router {
     Router::new()
         .route("/execute", post(post_create_execute_session))
         .route(
+            "/execute/{prompt_hash}/{session_id}/operations/{operation_handle}/stream",
+            get(get_operation_progress_stream),
+        )
+        .route(
             "/execute/{prompt_hash}/{session_id}/artifacts/{run_id}",
             get(get_execute_run_artifact),
         )
@@ -4161,6 +4166,95 @@ pub fn execute_routes() -> Router {
             "/execute/{prompt_hash}/{session_id}",
             get(get_execute_session).post(post_run_execute_session),
         )
+}
+
+#[derive(Deserialize)]
+struct OperationStreamPath {
+    prompt_hash: String,
+    session_id: String,
+    operation_handle: String,
+}
+
+async fn get_operation_progress_stream(
+    Extension(st): Extension<crate::server_state::PlasmHostState>,
+    Path(path): Path<OperationStreamPath>,
+) -> Result<Response, Response> {
+    let ph: PromptHashHex = path.prompt_hash.parse::<PromptHashHex>().map_err(|e| {
+        problem_response_invalid_execute_path(StatusCode::BAD_REQUEST, e.to_string())
+    })?;
+    let sid: ExecuteSessionId = path.session_id.parse::<ExecuteSessionId>().map_err(|e| {
+        problem_response_invalid_execute_path(StatusCode::BAD_REQUEST, e.to_string())
+    })?;
+    let handle =
+        plasm_core::OperationHandle::parse(path.operation_handle.as_str()).map_err(|e| {
+            problem_response(
+                Problem::custom(
+                    ProblemStatus::BAD_REQUEST,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                )
+                .with_title("Bad Request")
+                .with_detail(e.to_string()),
+            )
+        })?;
+    let Some(sess) = st.sessions.get(&ph, &sid).await else {
+        return Err(problem_response(
+            Problem::custom(
+                ProblemStatus::NOT_FOUND,
+                Uri::from_static(problem_types::EXECUTE_UNKNOWN_SESSION),
+            )
+            .with_title("Not Found")
+            .with_detail("execute session not found or expired"),
+        ));
+    };
+    let Some((seq, line)) = sess.operation_progress_snapshot_line(&handle) else {
+        return Err(problem_response(
+            Problem::custom(
+                ProblemStatus::NOT_FOUND,
+                Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+            )
+            .with_title("Not Found")
+            .with_detail(format!("unknown operation handle `{}`", handle.as_str())),
+        ));
+    };
+    let Some(rx) = sess.operation_progress_subscribe(&handle) else {
+        return Err(problem_response(
+            Problem::custom(
+                ProblemStatus::NOT_FOUND,
+                Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+            )
+            .with_title("Not Found")
+            .with_detail(format!("unknown operation handle `{}`", handle.as_str())),
+        ));
+    };
+    let first = stream::once(async move {
+        Ok::<Event, Infallible>(Event::default().event("snapshot").data(line))
+    });
+    let body: std::pin::Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>> =
+        Box::pin(first.chain(stream::unfold(
+            (rx, seq),
+            |(mut rx, mut last_seq)| async move {
+                loop {
+                    match rx.recv().await {
+                        Ok(ev) => {
+                            if ev.seq <= last_seq {
+                                continue;
+                            }
+                            last_seq = ev.seq;
+                            let event_name = if ev.terminal { "terminal" } else { "progress" };
+                            return Some((
+                                Ok(Event::default().event(event_name).data(ev.line)),
+                                (rx, last_seq),
+                            ));
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+                    }
+                }
+            },
+        )));
+    Ok(Sse::new(body)
+        .keep_alive(KeepAlive::default())
+        .into_response())
 }
 
 async fn post_create_execute_session(
@@ -4713,33 +4807,50 @@ async fn post_run_execute_session(
         }
     }
 
-    if !wait_live {
+    if crate::operation::should_spawn_async_live_run(wait_live, compact.verdict) {
+        let auto_async = crate::operation::live_run_should_auto_async(compact.verdict, wait_live);
+        if let Err(e) = sess.try_begin_live_program_run() {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::BAD_REQUEST,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                )
+                .with_title("Bad Request")
+                .with_detail(e),
+            );
+        }
         let handle = sess.mint_operation_handle("s0");
-        crate::operation::spawn_async_plan_run(
+        let accept = crate::operation::op_accept_context_from_validated(
+            plan_commit_ref.clone(),
+            Some(compact.verdict),
+            auto_async,
+            None,
+            &validated,
+        );
+        if let Err(e) = crate::operation::spawn_async_plan_run(
             Arc::clone(&sess),
             Arc::new(st.clone()),
             ph_str.clone(),
             sid_str.clone(),
             validated,
             handle.clone(),
-            CancelSignal::new(),
-        );
-        let markdown = crate::operation::operation_accept_markdown(
+            plasm_runtime::CancelSignal::new(),
+            accept,
+        ) {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::BAD_REQUEST,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                )
+                .with_title("Bad Request")
+                .with_detail(e),
+            );
+        }
+        let (markdown, meta) = crate::operation::async_live_run_accept_parts(
             &handle,
             plan_commit_ref.as_ref(),
-            Some(compact.verdict),
-        );
-        let mut meta = serde_json::Map::new();
-        meta.insert(
-            "plasm".into(),
-            serde_json::Value::Object(crate::operation::operation_meta_object(
-                "s0",
-                &handle,
-                crate::operation::OperationPhase::Running,
-                None,
-                plan_commit_ref.as_ref(),
-                Some(compact.verdict),
-            )),
+            compact.verdict,
+            auto_async,
         );
         return respond_plan_run_live_result(
             kind,
@@ -4757,7 +4868,17 @@ async fn post_run_execute_session(
         );
     }
 
-    match crate::execute_pipeline::ExecutePipeline::run_program(
+    if let Err(e) = sess.begin_sync_live_run() {
+        return problem_response(
+            Problem::custom(
+                ProblemStatus::BAD_REQUEST,
+                Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+            )
+            .with_title("Bad Request")
+            .with_detail(e),
+        );
+    }
+    let sync_result = crate::execute_pipeline::ExecutePipeline::run_program(
         &sess,
         &st,
         ph_str.as_str(),
@@ -4766,8 +4887,9 @@ async fn post_run_execute_session(
         crate::execute_pipeline::ExecutionIntent::Live,
         None,
     )
-    .await
-    {
+    .await;
+    sess.end_sync_live_run();
+    match sync_result {
         Ok(result) => respond_plan_run_live_result(kind, &result, &sess),
         Err(e) => problem_response(
             Problem::custom(

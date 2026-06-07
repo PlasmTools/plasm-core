@@ -138,7 +138,7 @@ impl ToolModelExecuteContinuations {
         Self {
             summary: "LLM execute uses host continuation expressions — not raw API pagination cursors or background job ids.".into(),
             pagination: append_llm_pagination_execute_note(String::new()),
-            long_operations: "Async plan runs: start live execute with wait=false, then poll wait(sN_oM) or cancel cancel(sN_oM). HTTP execute without MCP plasm_context uses synthetic session slot s0 (s0_oN).".into(),
+            long_operations: "Async plan runs: wait=false or review auto-async → compact op lines (`+` accept · `~` running · `=` unchanged · `!` done). Poll wait(sN_oM) every few seconds; optional GET .../operations/{handle}/stream SSE or MCP notifications/plasm/op.".into(),
             review_gate: "When plan dry-run verdict is review, pass plan_commit_ref (pcN) from matching plan dry-run or force=true before live execute. Commit ids hash semantic plan DAG only.".into(),
         }
     }

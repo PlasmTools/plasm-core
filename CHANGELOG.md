@@ -5,6 +5,22 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.97] - 2026-06-07
+
+### Added
+
+- **Operation progress (poll + push):** token-minimal wire lines (`+` accept · `~` running · `=` unchanged · `!`/`x`/`?` terminal) and short-key `_meta.plasm.op` on poll responses.
+- **HTTP SSE:** `GET /execute/{prompt_hash}/{session}/operations/{handle}/stream` — plain wire line in `data` (`snapshot` / `progress` / `terminal` events).
+- **MCP push:** `notifications/plasm/op` with `{ line, n }` (optional `c` on accept).
+- **Tests:** coalesce integration (`ExecutionScope` → broadcast + MCP hub); push E2E (HTTP SSE + MCP notification).
+
+### Changed
+
+- **`wait`/`cancel` poll responses:** compact op lines instead of verbose poll copy; unchanged polls emit `=` without repeating instructions.
+- **Tool-model `execute.long_operations`:** documents compact op sigs and optional SSE/MCP push surfaces.
+- **MCP workflow tail:** compact op sigs for long-running runs.
+- **E2E harness:** shared-server respawn when background task exits; stricter running poll assertions.
+
 ## [0.1.96] - 2026-06-07
 
 ### Added

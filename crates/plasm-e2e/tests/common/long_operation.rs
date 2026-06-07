@@ -1,5 +1,6 @@
 //! Hermit + unified HTTP/MCP server harness for long-operation E2E tests.
 
+#![allow(clippy::type_complexity)]
 use std::time::Duration;
 
 use plasm_agent::http::{serve_discovery_execute_and_mcp_unified, DiscoveryHttpServeOpts};
@@ -49,14 +50,22 @@ async fn spawn_unified_server() -> (String, JoinHandle<()>) {
     (base, handle)
 }
 
-static SHARED_SERVER: OnceCell<(String, JoinHandle<()>)> = OnceCell::const_new();
+static SHARED_SERVER: OnceCell<tokio::sync::Mutex<Option<(String, JoinHandle<()>)>>> =
+    OnceCell::const_new();
 
 async fn shared_server_base_url() -> String {
-    SHARED_SERVER
-        .get_or_init(|| async { spawn_unified_server().await })
-        .await
-        .0
-        .clone()
+    let lock = SHARED_SERVER
+        .get_or_init(|| async { tokio::sync::Mutex::new(None) })
+        .await;
+    let mut guard = lock.lock().await;
+    let needs_spawn = match guard.as_ref() {
+        None => true,
+        Some((_, handle)) => handle.is_finished(),
+    };
+    if needs_spawn {
+        *guard = Some(spawn_unified_server().await);
+    }
+    guard.as_ref().expect("shared server slot").0.clone()
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,7 +95,7 @@ impl Default for RunOpts {
 
 pub struct LongOpFixture {
     pub base_url: String,
-    client: reqwest::Client,
+    pub client: reqwest::Client,
     pub http_prompt_hash: String,
     pub http_session_id: String,
     pub mcp_transport_id: String,
@@ -495,8 +504,21 @@ pub fn markdown_text(body: &Value) -> &str {
 pub fn continuity_phase(body: &Value) -> Option<&str> {
     plasm_meta(body)
         .get("continuity")
-        .and_then(|c| c.get("phase"))
+        .and_then(|c| c.get("p").or_else(|| c.get("phase")))
         .and_then(|v| v.as_str())
+}
+
+fn continuity_handle(body: &Value) -> Option<&str> {
+    plasm_meta(body)
+        .get("continuity")
+        .and_then(|c| c.get("h").or_else(|| c.get("operation_handle")))
+        .and_then(|v| v.as_str())
+}
+
+pub fn operation_handle_from_accept(body: &Value) -> String {
+    continuity_handle(body)
+        .expect("operation handle in accept response")
+        .to_string()
 }
 
 pub fn plan_commit_ref(body: &Value) -> Option<String> {
@@ -508,15 +530,6 @@ pub fn plan_commit_ref(body: &Value) -> Option<String> {
 
 pub fn dry_verdict(body: &Value) -> Option<&str> {
     plasm_meta(body).get("dry_verdict").and_then(|v| v.as_str())
-}
-
-pub fn operation_handle_from_accept(body: &Value) -> String {
-    plasm_meta(body)
-        .get("continuity")
-        .and_then(|c| c.get("operation_handle"))
-        .and_then(|v| v.as_str())
-        .expect("operation_handle in accept response")
-        .to_string()
 }
 
 pub fn wait_program(handle: &str) -> String {
@@ -534,19 +547,19 @@ pub fn assert_async_accept(body: &Value, handle_prefix: &str) {
         "expected async accept markdown with `{handle_prefix}`: {md}"
     );
     assert!(
-        md.contains("wait(") || md.contains("Poll:"),
-        "expected wait hint in markdown: {md}"
+        md.contains('+') || md.contains("wait("),
+        "expected compact accept line: {md}"
+    );
+    assert!(
+        !md.contains("Poll:"),
+        "accept must not repeat poll instructions: {md}"
     );
     assert_eq!(
         continuity_phase(body),
         Some("running"),
         "expected continuity.phase=running: {body}"
     );
-    let handle = plasm_meta(body)
-        .get("continuity")
-        .and_then(|c| c.get("operation_handle"))
-        .and_then(|v| v.as_str())
-        .expect("operation_handle");
+    let handle = continuity_handle(body).expect("operation handle");
     assert!(
         handle.starts_with(handle_prefix),
         "expected handle prefix {handle_prefix}, got {handle}"
@@ -558,9 +571,182 @@ pub fn assert_running_wait(body: &Value) {
     assert_eq!(phase, Some("running"), "expected running wait: {body}");
     let md = markdown_text(body);
     assert!(
-        md.contains("running") || md.contains("step"),
-        "expected running/progress markdown: {md}"
+        md.contains('~') || md.contains('='),
+        "expected compact running/unchanged markdown (~ or =): {md}"
     );
+    assert!(
+        !md.contains("Poll:"),
+        "running poll must not repeat instructions: {md}"
+    );
+    if let Some(op) = plasm_meta(body).get("op") {
+        assert!(op.get("n").is_some(), "short-key op.n required: {op}");
+        if md.contains('=') {
+            assert!(
+                op.get("=").is_some(),
+                "unchanged poll should set op.= : {op}"
+            );
+        }
+    } else if md.contains('~') {
+        panic!("running poll with ~ should include _meta.plasm.op: {body}");
+    }
+}
+
+/// One SSE frame from `text/event-stream` (operation progress or MCP).
+#[derive(Debug, Clone)]
+pub struct SseEvent {
+    pub event: Option<String>,
+    pub data: String,
+}
+
+pub fn parse_sse_events(text: &str) -> Vec<SseEvent> {
+    let mut out = Vec::new();
+    let mut event_name: Option<String> = None;
+    let mut data_lines: Vec<String> = Vec::new();
+    for line in text.lines() {
+        if line.is_empty() {
+            if !data_lines.is_empty() {
+                out.push(SseEvent {
+                    event: event_name.take(),
+                    data: data_lines.join("\n"),
+                });
+                data_lines.clear();
+            }
+            continue;
+        }
+        if let Some(ev) = line.strip_prefix("event: ") {
+            event_name = Some(ev.to_string());
+        } else if let Some(d) = line.strip_prefix("data: ") {
+            data_lines.push(d.to_string());
+        }
+    }
+    if !data_lines.is_empty() {
+        out.push(SseEvent {
+            event: event_name,
+            data: data_lines.join("\n"),
+        });
+    }
+    out
+}
+
+pub fn assert_plain_op_wire_line(data: &str) {
+    assert!(
+        data.contains('`'),
+        "expected backtick wire line, got: {data}"
+    );
+    assert!(
+        !data.trim_start().starts_with('{'),
+        "progress SSE data must be plain line, not JSON: {data}"
+    );
+}
+
+/// Collect operation-progress SSE until `terminal` or timeout.
+pub async fn http_collect_operation_sse_events(
+    client: &reqwest::Client,
+    base_url: &str,
+    prompt_hash: &str,
+    session_id: &str,
+    handle: &str,
+    timeout: Duration,
+) -> Vec<SseEvent> {
+    let url = format!("{base_url}/execute/{prompt_hash}/{session_id}/operations/{handle}/stream");
+    let resp = client
+        .get(&url)
+        .header("accept", "text/event-stream")
+        .send()
+        .await
+        .expect("operation SSE GET");
+    assert_eq!(resp.status(), StatusCode::OK, "operation SSE status");
+    let mut buf = String::new();
+    let deadline = std::time::Instant::now() + timeout;
+    let mut resp = resp;
+    while std::time::Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_millis(500), resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                buf.push_str(&String::from_utf8_lossy(&chunk));
+                let events = parse_sse_events(&buf);
+                if events
+                    .iter()
+                    .any(|e| e.event.as_deref() == Some("terminal"))
+                {
+                    return events;
+                }
+            }
+            Ok(Ok(None)) => break,
+            Ok(Err(e)) => panic!("operation SSE chunk error: {e}"),
+            Err(_) => continue,
+        }
+    }
+    parse_sse_events(&buf)
+}
+
+pub fn mcp_notification_from_sse_data(data: &str) -> Option<Value> {
+    let j: Value = serde_json::from_str(data).ok()?;
+    if j.get("method").and_then(|m| m.as_str()) != Some("notifications/plasm/op") {
+        return None;
+    }
+    j.get("params").cloned()
+}
+
+/// Open MCP GET stream and collect `notifications/plasm/op` until `deadline`.
+pub async fn mcp_collect_op_notifications(
+    client: &reqwest::Client,
+    base_url: &str,
+    mcp_session_id: &str,
+    deadline: Duration,
+) -> Vec<Value> {
+    let resp = client
+        .get(format!("{base_url}/mcp"))
+        .header("MCP-Session-Id", mcp_session_id)
+        .header("accept", "text/event-stream")
+        .send()
+        .await
+        .expect("mcp GET stream");
+    assert_eq!(resp.status(), StatusCode::OK, "mcp GET stream status");
+    let mut buf = String::new();
+    let mut out = Vec::new();
+    let until = std::time::Instant::now() + deadline;
+    let mut resp = resp;
+    while std::time::Instant::now() < until {
+        match tokio::time::timeout(Duration::from_millis(500), resp.chunk()).await {
+            Ok(Ok(Some(chunk))) => {
+                buf.push_str(&String::from_utf8_lossy(&chunk));
+                for ev in parse_sse_events(&buf) {
+                    if let Some(params) = mcp_notification_from_sse_data(&ev.data) {
+                        out.push(params);
+                    }
+                }
+            }
+            Ok(Ok(None)) => break,
+            Ok(Err(e)) => panic!("mcp SSE chunk error: {e}"),
+            Err(_) => continue,
+        }
+    }
+    out
+}
+
+pub fn assert_mcp_op_notification_params(params: &Value) {
+    assert!(
+        params.get("line").and_then(|v| v.as_str()).is_some(),
+        "notification params.line required: {params}"
+    );
+    assert!(
+        params.get("n").is_some(),
+        "notification params.n required: {params}"
+    );
+    let extra: Vec<_> = params
+        .as_object()
+        .map(|m| {
+            m.keys()
+                .filter(|k| *k != "line" && *k != "n" && *k != "c")
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        extra.is_empty(),
+        "notification params should be line+n (+ optional c): {params}"
+    );
+    assert_plain_op_wire_line(params.get("line").and_then(|v| v.as_str()).unwrap());
 }
 
 pub fn assert_terminal_success(body: &Value) {
@@ -595,7 +781,7 @@ pub fn assert_cancelled(body: &Value) {
     );
     let md = markdown_text(body);
     assert!(
-        md.contains("cancelled"),
+        md.contains('x') || md.contains("cancelled"),
         "expected cancelled markdown: {md}"
     );
 }

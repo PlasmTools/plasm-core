@@ -29,9 +29,11 @@ Tokens expire after **10 minutes** (`PLAN_COMMIT_TTL`). Re-run plan dry-run afte
 ## Agent workflow (MCP)
 
 1. **`plasm`** — dry-run; returns `plan_commit_ref` (`pc0`, …) and `dry_review` / `dry_verdict` in `_meta.plasm` when the plan needs review.
-2. **`plasm_run`** — live execute (blocking by default).
+2. **`plasm_run`** — live execute.
    - On **`review`** verdict: blocked unless `plan_commit_ref` matches the current program or `force: true`.
-   - With **`wait: false`**: returns immediately with `wait(s0_oN)`; poll via `plasm_run` + `wait(s0_oN)`; cancel via `cancel(s0_oN)`.
+   - **Review/unbounded plans auto-async** when `wait` is omitted — returns `wait(s0_oN)` immediately; poll via `plasm_run` + `wait(s0_oN)`; cancel via `cancel(s0_oN)`.
+   - With **`wait: false`**: same async accept on any plan.
+   - Bounded **ok** verdict plans with default `wait` remain synchronous (fast path).
 3. **`resources/read`** — full run snapshots when Markdown summarizes away fields.
 
 ### Examples
@@ -73,12 +75,34 @@ plasm run -e 'wait(s0_o1)'
 plasm run -e 'cancel(s0_o1)'
 ```
 
+## Agent-facing progress (poll + push)
+
+Compact **one-line** updates — not repeated poll/cancel instructions:
+
+| Sig | Meaning |
+|-----|---------|
+| `+` | accept / started |
+| `~` | running (coalesced; row updates at most every ~2s per step) |
+| `=` | unchanged — poll again later (3–5s recommended) |
+| `!` | succeeded |
+| `x` | cancelled |
+| `?` | failed |
+
+**Poll:** `wait(s0_oN)` / HTTP `POST` with the same program — `_meta.plasm.op` uses short keys (`n`, `~`, `s`, `l`, `r`).
+
+**Push (optional):**
+
+- HTTP SSE: `GET /execute/{prompt_hash}/{session}/operations/{handle}/stream` — `data` is the plain wire line (`snapshot` / `progress` / `terminal` events).
+- MCP: `notifications/plasm/op` with `{ "line", "n" }` (optional `"c"` on accept).
+
 ## Internal observability
 
-Trace hub SSE and internal HTTP operation APIs are for Phoenix/SRE only — not exposed in agent-facing Markdown or `_meta.plasm`.
+Trace hub SSE remains for Phoenix/SRE timeline detail — separate from the compact agent lines above.
 
 ## Tests
 
 - Dual-surface E2E: `cargo test -p plasm-e2e --test long_operation_e2e`
 - HTTP oneshot smokes: `cargo test -p plasm-agent-core --test long_operation_http`
+- Push E2E (SSE + MCP): `cargo test -p plasm-e2e --test operation_progress_push_e2e`
+- Coalesce integration: `cargo test -p plasm-agent-core coalesce`
 - Commit-id + hash perf guard: `cargo test -p plasm-agent-core plan_commit_semantic_dag_hash_benchmark`

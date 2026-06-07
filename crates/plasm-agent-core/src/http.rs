@@ -32,6 +32,7 @@ use crate::incoming_auth::incoming_auth_http_middleware;
 use crate::incoming_auth::IncomingAuthVerifier;
 use crate::incoming_auth_device::incoming_auth_device_public_routes;
 use crate::local_trace_archive::LocalTraceArchive;
+use crate::operation_progress::OperationProgressHub;
 use crate::run_artifacts::RunArtifactStore;
 use crate::server_state::{CatalogBootstrap, PlasmHostState, PlasmOssHostState};
 use crate::session_graph_persistence::SessionGraphPersistence;
@@ -105,6 +106,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
     let trace_hub_config = TraceHubConfig {
         bounds: trace_hub.bounds(),
     };
+    let op_progress_hub = OperationProgressHub::new();
     PlasmHostState {
         oss: PlasmOssHostState {
             engine: Arc::new(engine),
@@ -119,6 +121,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             incoming_auth,
             incoming_auth_device: Arc::new(crate::incoming_auth_device::IncomingAuthDeviceStore),
             trace_hub,
+            op_progress_hub,
             trace_hub_config,
             trace_ingest,
             local_trace_archive,

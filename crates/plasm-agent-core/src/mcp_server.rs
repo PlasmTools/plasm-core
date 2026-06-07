@@ -57,14 +57,14 @@ use rust_mcp_sdk::mcp_server::hyper_server;
 use rust_mcp_sdk::mcp_server::{
     HyperServer, HyperServerOptions, ServerHandler, ToMcpServerHandler,
 };
-use rust_mcp_sdk::schema::{schema_utils::CallToolError, ToolExecution, ToolExecutionTaskSupport};
+use rust_mcp_sdk::schema::schema_utils::{CallToolError, CustomNotification};
 use rust_mcp_sdk::schema::{
     BlobResourceContents, CallToolRequestParams, CallToolResult, ContentBlock, Implementation,
     InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
     PaginatedRequestParams, ProtocolVersion, ReadResourceContent, ReadResourceRequestParams,
     ReadResourceResult, ResourceTemplate, RpcError, ServerCapabilities,
     ServerCapabilitiesResources, ServerCapabilitiesTools, TextContent, TextResourceContents, Tool,
-    ToolAnnotations, ToolInputSchema,
+    ToolAnnotations, ToolExecution, ToolExecutionTaskSupport, ToolInputSchema,
 };
 use rust_mcp_sdk::McpServer;
 use tokio::sync::{Mutex, RwLock};
@@ -82,9 +82,10 @@ use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
 use crate::operation::{
-    compute_plan_commit_id_from_dry, operation_accept_markdown, plan_commit_meta,
-    plan_requires_review_gate, spawn_async_plan_run, verify_plan_commit_for_dry, PlanCommitRecord,
-    PLAN_COMMIT_TTL,
+    async_live_run_accept_parts, compute_plan_commit_id_from_dry, live_run_should_auto_async,
+    op_accept_context_from_validated, plan_commit_meta, plan_requires_review_gate,
+    should_spawn_async_live_run, spawn_async_plan_run, verify_plan_commit_for_dry,
+    PlanCommitRecord, PLAN_COMMIT_TTL,
 };
 use crate::plan_dry_display::build_plan_dry_compact_view;
 use crate::plasm_dag::compile_plasm_expression_to_plan;
@@ -807,7 +808,7 @@ impl PlasmMcpHandler {
         plasm_run_props.insert(
             "wait".into(),
             json_schema_bool_type(
-                "When **false**, start live execute in the background and return an operation handle immediately (`wait(sN_oM)`). Default **true** (blocking).",
+                "When **false**, start live execute in the background and return an operation handle immediately (`wait(sN_oM)`). Default **true** for bounded ok plans; **review** plans auto-async even when omitted.",
             ),
         );
         plasm_run_props.insert(
@@ -1412,8 +1413,18 @@ impl PlasmMcpHandler {
                                 if let Some(pc) = plan_commit_ref.as_ref() {
                                     verify_plan_commit_for_dry(&es, pc, &dry_gate)?;
                                 }
-                                if !wait_live {
+                                let auto_async =
+                                    live_run_should_auto_async(compact.verdict, wait_live);
+                                if should_spawn_async_live_run(wait_live, compact.verdict) {
+                                    es.try_begin_live_program_run()?;
                                     let handle = es.mint_operation_handle(session_ref.as_str());
+                                    let accept = op_accept_context_from_validated(
+                                        plan_commit_ref.clone(),
+                                        Some(compact.verdict),
+                                        auto_async,
+                                        Some(key.to_string()),
+                                        &validated,
+                                    );
                                     spawn_async_plan_run(
                                         Arc::clone(&es),
                                         Arc::clone(&self.plasm),
@@ -1422,25 +1433,13 @@ impl PlasmMcpHandler {
                                         validated,
                                         handle.clone(),
                                         CancelSignal::new(),
-                                    );
-                                    let markdown = operation_accept_markdown(
+                                        accept,
+                                    )?;
+                                    let (markdown, meta) = async_live_run_accept_parts(
                                         &handle,
                                         plan_commit_ref.as_ref(),
-                                        Some(compact.verdict),
-                                    );
-                                    let mut meta = serde_json::Map::new();
-                                    meta.insert(
-                                        "plasm".into(),
-                                        serde_json::Value::Object(
-                                            crate::operation::operation_meta_object(
-                                                session_ref.as_str(),
-                                                &handle,
-                                                crate::operation::OperationPhase::Running,
-                                                None,
-                                                plan_commit_ref.as_ref(),
-                                                Some(compact.verdict),
-                                            ),
-                                        ),
+                                        compact.verdict,
+                                        auto_async,
                                     );
                                     return Ok(PlasmPlanRunResult {
                                         version: serde_json::json!({}),
@@ -1453,7 +1452,8 @@ impl PlasmMcpHandler {
                                         return_steps: Vec::new(),
                                     });
                                 }
-                                match ExecutePipeline::run_program(
+                                es.begin_sync_live_run()?;
+                                let sync_result = ExecutePipeline::run_program(
                                     &es,
                                     self.plasm.as_ref(),
                                     &b.prompt_hash,
@@ -1466,8 +1466,9 @@ impl PlasmMcpHandler {
                                         sink: sink.clone(),
                                     }),
                                 )
-                                .await
-                                {
+                                .await;
+                                es.end_sync_live_run();
+                                match sync_result {
                                     Ok(out) => {
                                         trace_archive_and_emit_code_plan_execute(
                                             &self.plasm.trace_hub,
@@ -2499,6 +2500,22 @@ pub(crate) fn spawn_mcp_teaching_prompt_session_reporter(
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             interval.tick().await;
+            for pending in plasm.op_progress_hub.drain_mcp_pending() {
+                let mut op_params = serde_json::Map::new();
+                op_params.insert("line".into(), json!(pending.line));
+                op_params.insert("n".into(), json!(pending.n));
+                if let Some(c) = pending.plan_commit {
+                    op_params.insert("c".into(), json!(c));
+                }
+                if let Some(transport) = store.get(&pending.transport_key).await {
+                    let _ = transport
+                        .notify_custom(CustomNotification {
+                            method: "notifications/plasm/op".into(),
+                            params: Some(op_params),
+                        })
+                        .await;
+                }
+            }
             let current: HashSet<String> = store.keys().await.into_iter().collect();
             let mut live_trace_keys: HashSet<String> = HashSet::new();
             {

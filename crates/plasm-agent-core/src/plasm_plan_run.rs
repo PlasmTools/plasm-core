@@ -2132,6 +2132,9 @@ async fn run_validated_plan_phased(
                     surface.page_size,
                 )
                 .await?;
+                if let Some(scope) = execution_scope {
+                    scope.add_rows_materialized(result.entities.len());
+                }
                 if let Some(cap) = surface.page_size {
                     if result.entities.len() > cap {
                         result.entities.truncate(cap);

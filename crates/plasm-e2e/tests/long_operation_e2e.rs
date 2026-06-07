@@ -8,13 +8,14 @@ mod hermit_lang_matrix;
 mod language_matrix;
 
 #[path = "common/long_operation.rs"]
+#[allow(dead_code)]
 mod long_operation;
 
 use std::time::Duration;
 
 use long_operation::{
     assert_async_accept, assert_cancelled, assert_review_gate_error, assert_running_wait,
-    assert_terminal_success, cancel_program, continuity_phase, dry_verdict, markdown_text,
+    assert_terminal_success, cancel_program, continuity_phase, dry_verdict,
     operation_handle_from_accept, plan_commit_ref, wait_program, LongOpFixture, RunOpts, Surface,
     BOUNDED_LANG_ITEM, SLOW_LANG_ITEM, UNBOUNDED_LANG_ITEM,
 };
@@ -132,12 +133,7 @@ async fn long_operation_dual_surface_e2e() {
                 .expect("wait");
             if continuity_phase(&body) == Some("running") {
                 saw_running = true;
-                let md = markdown_text(&body);
-                let op = long_operation::plasm_meta(&body).get("operation");
-                assert!(
-                    md.contains("step") || md.contains("running") || op.is_some(),
-                    "expected running/progress: {body}"
-                );
+                assert_running_wait(&body);
                 break;
             }
             if continuity_phase(&body) != Some("running") {
@@ -253,6 +249,33 @@ async fn long_operation_dual_surface_e2e() {
             },
         )
         .await;
+        poll_wait_terminal(&fixture, surface, &handle).await;
+        fixture.cleanup().await;
+    }
+
+    for surface in [Surface::Http, Surface::Mcp] {
+        let dry = fixture.plan_dry(surface, UNBOUNDED_LANG_ITEM).await;
+        let pc = plan_commit_ref(&dry).expect("pc from dry run");
+        let body = fixture
+            .run_program(
+                surface,
+                UNBOUNDED_LANG_ITEM,
+                RunOpts {
+                    plan_commit_ref: Some(pc),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("review plan_commit_ref auto-async accept");
+        assert_async_accept(&body, &fixture.logical_session_ref);
+        assert_eq!(
+            body.get("_meta")
+                .and_then(|m| m.get("plasm"))
+                .and_then(|p| p.get("auto_async"))
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        let handle = operation_handle_from_accept(&body);
         poll_wait_terminal(&fixture, surface, &handle).await;
         fixture.cleanup().await;
     }

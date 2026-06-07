@@ -163,6 +163,109 @@ async fn wait_unknown_handle_is_400() {
 }
 
 #[tokio::test]
+async fn review_plan_auto_async_without_wait_false() {
+    let app = test_app(langmatrix_host_state());
+    let (ph, sid) = open_langitem_session(&app).await;
+    let plan_uri = format!("/execute/{ph}/{sid}?mode=plan");
+    let plan_req = Request::builder()
+        .method("POST")
+        .uri(&plan_uri)
+        .header("accept", "application/json")
+        .header("content-type", "text/plain; charset=utf-8")
+        .body(Body::from("LangItem"))
+        .unwrap();
+    let plan_res = app.clone().oneshot(plan_req).await.unwrap();
+    assert_eq!(plan_res.status(), StatusCode::OK);
+    let plan_body = axum::body::to_bytes(plan_res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let plan_doc: serde_json::Value = serde_json::from_slice(&plan_body).unwrap();
+    let pc = plan_doc
+        .get("_meta")
+        .and_then(|m| m.get("plasm"))
+        .and_then(|p| p.get("plan_commit_ref"))
+        .and_then(|v| v.as_str())
+        .expect("plan_commit_ref");
+    let live_uri = format!("/execute/{ph}/{sid}?plan_commit_ref={pc}");
+    let live_req = Request::builder()
+        .method("POST")
+        .uri(&live_uri)
+        .header("accept", "application/json")
+        .body(Body::from("LangItem"))
+        .unwrap();
+    let live_res = app.oneshot(live_req).await.unwrap();
+    assert_eq!(live_res.status(), StatusCode::OK);
+    let live_body = axum::body::to_bytes(live_res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let live_doc: serde_json::Value = serde_json::from_slice(&live_body).unwrap();
+    assert_eq!(
+        live_doc.get("operation").and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        live_doc
+            .get("_meta")
+            .and_then(|m| m.get("plasm"))
+            .and_then(|p| p.get("auto_async"))
+            .and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    let md = live_doc
+        .get("run_markdown")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(md.contains("s0_o"), "markdown: {md}");
+}
+
+#[tokio::test]
+async fn concurrent_live_run_rejected_while_async_inflight() {
+    let app = test_app(langmatrix_host_state());
+    let (ph, sid) = open_langitem_session(&app).await;
+    let start_uri = format!("/execute/{ph}/{sid}?wait=false&force=true");
+    let start_req = Request::builder()
+        .method("POST")
+        .uri(&start_uri)
+        .header("accept", "application/json")
+        .body(Body::from("LangItem.page_size(1).limit(10)"))
+        .unwrap();
+    let start_res = app.clone().oneshot(start_req).await.unwrap();
+    assert_eq!(start_res.status(), StatusCode::OK);
+    let start_body = axum::body::to_bytes(start_res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let start_doc: serde_json::Value = serde_json::from_slice(&start_body).unwrap();
+    let handle = start_doc
+        .get("_meta")
+        .and_then(|m| m.get("plasm"))
+        .and_then(|p| p.get("continuity"))
+        .and_then(|c| c.get("h"))
+        .and_then(|v| v.as_str())
+        .expect("operation handle");
+    let second_uri = format!("/execute/{ph}/{sid}?force=true");
+    let second_req = Request::builder()
+        .method("POST")
+        .uri(&second_uri)
+        .header("accept", "application/json")
+        .body(Body::from("LangItem.limit(2)"))
+        .unwrap();
+    let second_res = app.oneshot(second_req).await.unwrap();
+    assert_eq!(second_res.status(), StatusCode::BAD_REQUEST);
+    let second_body = axum::body::to_bytes(second_res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let second_doc: serde_json::Value = serde_json::from_slice(&second_body).unwrap();
+    let detail = second_doc
+        .get("detail")
+        .and_then(|d| d.as_str())
+        .unwrap_or("");
+    assert!(
+        detail.contains("operation_in_flight") && detail.contains(handle),
+        "detail: {detail}"
+    );
+}
+
+#[tokio::test]
 async fn wait_false_async_accept_returns_operation_json() {
     let app = test_app(langmatrix_host_state());
     let (ph, sid) = open_langitem_session(&app).await;
@@ -194,4 +297,64 @@ async fn wait_false_async_accept_returns_operation_json() {
         .and_then(|v| v.as_str())
         .unwrap_or("");
     assert!(md.contains("s0_o"), "markdown: {md}");
+    assert!(md.contains('+'), "compact accept: {md}");
+    assert!(
+        !md.contains("Poll:"),
+        "no poll instructions on accept: {md}"
+    );
+}
+
+#[tokio::test]
+async fn wait_poll_unchanged_returns_compact_equals_line() {
+    let app = test_app(langmatrix_host_state());
+    let (ph, sid) = open_langitem_session(&app).await;
+    let start_uri = format!("/execute/{ph}/{sid}?wait=false&force=true");
+    let start_req = Request::builder()
+        .method("POST")
+        .uri(&start_uri)
+        .header("accept", "application/json")
+        .body(Body::from("LangItem.limit(2)"))
+        .unwrap();
+    let start_res = app.clone().oneshot(start_req).await.unwrap();
+    assert_eq!(start_res.status(), StatusCode::OK);
+    let start_body = axum::body::to_bytes(start_res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let start_doc: serde_json::Value = serde_json::from_slice(&start_body).unwrap();
+    let handle = start_doc
+        .get("_meta")
+        .and_then(|m| m.get("plasm"))
+        .and_then(|p| p.get("continuity"))
+        .and_then(|c| c.get("h"))
+        .and_then(|v| v.as_str())
+        .expect("handle");
+    let wait_uri = format!("/execute/{ph}/{sid}");
+    let wait_req = Request::builder()
+        .method("POST")
+        .uri(&wait_uri)
+        .header("accept", "application/json")
+        .body(Body::from(format!("wait({handle})")))
+        .unwrap();
+    let wait_res = app.clone().oneshot(wait_req).await.unwrap();
+    assert_eq!(wait_res.status(), StatusCode::OK);
+    let wait_body = axum::body::to_bytes(wait_res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let wait_doc: serde_json::Value = serde_json::from_slice(&wait_body).unwrap();
+    let md = wait_doc
+        .get("run_markdown")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        md.contains('`') && (md.contains('=') || md.contains('~')),
+        "progress line: {md}"
+    );
+    assert!(!md.contains("Poll:"), "no poll instructions on wait: {md}");
+    if let Some(op) = wait_doc
+        .get("_meta")
+        .and_then(|m| m.get("plasm"))
+        .and_then(|p| p.get("op"))
+    {
+        assert!(op.get("n").is_some(), "short-key op meta: {op}");
+    }
 }

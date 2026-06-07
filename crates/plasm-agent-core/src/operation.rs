@@ -1,12 +1,17 @@
 //! Long-running async plan operations (`s0_oN`) and dry-run plan commit tokens (`pcN`).
 
 use crate::execute_session::ExecuteSession;
+use crate::operation_progress::{
+    op_plasm_meta_short, render_op_wire_line, render_op_wire_markdown, OpWireSig,
+};
 use crate::plan_dry_display::{PlanDryReview, PlanDryVerdict};
 use crate::plasm_plan_run::{plan_semantic_dag_json, DryPlasmPlanEvaluation, PlasmPlanRunResult};
+use crate::server_state::PlasmHostState;
 use plasm_core::{OperationHandle, PlanCommitId, PlanCommitRef};
 use plasm_runtime::CancelSignal;
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
@@ -35,6 +40,18 @@ pub fn plan_requires_review_gate(
     plan_commit_ref: Option<&PlanCommitRef>,
 ) -> bool {
     verdict == PlanDryVerdict::Review && !force && plan_commit_ref.is_none()
+}
+
+/// Review/unbounded plans must not block MCP/HTTP handlers when `wait` defaults to true.
+#[must_use]
+pub fn live_run_should_auto_async(verdict: PlanDryVerdict, wait_live: bool) -> bool {
+    wait_live && verdict == PlanDryVerdict::Review
+}
+
+/// Whether live execute should spawn a background operation (explicit `wait=false` or auto-async).
+#[must_use]
+pub fn should_spawn_async_live_run(wait_live: bool, verdict: PlanDryVerdict) -> bool {
+    !wait_live || live_run_should_auto_async(verdict, wait_live)
 }
 
 pub fn verify_plan_commit_for_run(
@@ -149,6 +166,26 @@ impl ExecutionScope {
         }
     }
 
+    pub fn add_rows_materialized(&self, rows: usize) {
+        if rows == 0 {
+            return;
+        }
+        let progress = if let Some(p) = &self.progress {
+            p.lock()
+                .ok()
+                .map(|mut g| {
+                    g.rows_materialized = g.rows_materialized.saturating_add(rows as u64);
+                    g.clone()
+                })
+                .unwrap_or_default()
+        } else {
+            return;
+        };
+        if let Some((es, handle)) = &self.operation_sink {
+            es.update_operation_progress(handle, progress);
+        }
+    }
+
     pub fn cancellation_token(&self) -> CancellationToken {
         self.token.clone()
     }
@@ -192,6 +229,25 @@ pub struct OperationState {
     pub progress: OperationProgress,
     pub result: Option<Arc<PlasmPlanRunResult>>,
     pub error: Option<String>,
+    pub agent_emit: crate::operation_progress::OperationAgentEmitState,
+    pub display_map: HashMap<String, String>,
+    pub plan_commit_ref: Option<PlanCommitRef>,
+    pub dry_verdict: Option<PlanDryVerdict>,
+    pub auto_async: bool,
+    pub mcp_transport_key: Option<String>,
+    pub progress_host: Option<std::sync::Weak<PlasmHostState>>,
+    pub progress_tx: tokio::sync::broadcast::Sender<crate::operation_progress::OpProgressEvent>,
+}
+
+/// Context captured when an async live run is accepted (accept line + push routing).
+#[derive(Clone, Default)]
+pub struct OpAcceptContext {
+    pub plan_commit_ref: Option<PlanCommitRef>,
+    pub dry_verdict: Option<PlanDryVerdict>,
+    pub auto_async: bool,
+    pub mcp_transport_key: Option<String>,
+    pub display_map: HashMap<String, String>,
+    pub host: Option<std::sync::Weak<PlasmHostState>>,
 }
 
 /// Narrow poll snapshot for `wait(...)` — avoids cloning cancel signals and full operation state.
@@ -249,103 +305,109 @@ pub fn compute_plan_commit_id_from_dry(dry: &DryPlasmPlanEvaluation) -> PlanComm
     compute_plan_commit_id_from_semantic(&plan_semantic_dag_json(dry))
 }
 
+/// Build accept metadata for async plan runs (display map + optional MCP transport).
+pub fn op_accept_context_from_validated(
+    plan_commit_ref: Option<PlanCommitRef>,
+    dry_verdict: Option<PlanDryVerdict>,
+    auto_async: bool,
+    mcp_transport_key: Option<String>,
+    validated: &crate::plasm_plan::ValidatedPlan,
+) -> OpAcceptContext {
+    let order: Vec<String> = validated
+        .topological_order()
+        .iter()
+        .map(|id| id.as_str().to_string())
+        .collect();
+    let display_map = crate::plan_dry_display::plan_node_display_map(validated.artifact(), &order);
+    OpAcceptContext {
+        plan_commit_ref,
+        dry_verdict,
+        auto_async,
+        mcp_transport_key,
+        display_map,
+        host: None,
+    }
+}
+
 pub fn operation_accept_markdown(
     handle: &OperationHandle,
     plan_commit_ref: Option<&PlanCommitRef>,
     dry_verdict: Option<PlanDryVerdict>,
+    _auto_async: bool,
 ) -> String {
-    let verdict = dry_verdict
-        .map(|v| match v {
-            PlanDryVerdict::Ok => "ok",
-            PlanDryVerdict::Review => "review",
-        })
-        .unwrap_or("ok");
-    let pc = plan_commit_ref
-        .map(|r| format!(" · plan `{r}`"))
-        .unwrap_or_default();
-    format!(
-        "```text\n`{}` · verdict {verdict}{pc}\nPoll: `plasm_run` with `wait({})` · Cancel: `plasm_run` with `cancel({})`\n```",
-        handle.as_str(),
-        handle.as_str(),
-        handle.as_str()
-    )
+    let line = render_op_wire_line(
+        handle,
+        OpWireSig::Accept,
+        None,
+        plan_commit_ref,
+        dry_verdict,
+        None,
+    );
+    render_op_wire_markdown(&line)
 }
 
 pub fn operation_running_markdown(
     handle: &OperationHandle,
     progress: &OperationProgress,
+    unchanged: bool,
 ) -> String {
-    let step = if progress.step_total > 0 {
-        format!("step {}/{}", progress.step, progress.step_total)
+    let sig = if unchanged {
+        OpWireSig::Unchanged
     } else {
-        "running".to_string()
+        OpWireSig::Running
     };
-    let label = progress
-        .label
-        .as_deref()
-        .map(|l| format!(" · `{l}`"))
-        .unwrap_or_default();
-    let rows = if progress.rows_materialized > 0 {
-        format!(" · {} rows materialized", progress.rows_materialized)
-    } else {
-        String::new()
-    };
-    format!("```text\n`{}` · {step}{label}{rows}\n```", handle.as_str())
+    let line = render_op_wire_line(handle, sig, Some(progress), None, None, None);
+    render_op_wire_markdown(&line)
 }
 
-pub fn operation_cancelled_markdown(handle: &OperationHandle) -> String {
-    format!("```text\n`{}` · cancelled\n```", handle.as_str())
-}
-
-pub fn operation_meta_object(
-    logical_session_ref: &str,
+pub fn operation_terminal_markdown(
     handle: &OperationHandle,
     phase: OperationPhase,
     progress: Option<&OperationProgress>,
+    error: Option<&str>,
+) -> String {
+    let sig = match phase {
+        OperationPhase::Succeeded => OpWireSig::Done,
+        OperationPhase::Cancelled => OpWireSig::Cancelled,
+        OperationPhase::Failed => OpWireSig::Failed,
+        OperationPhase::Running => OpWireSig::Running,
+    };
+    let line = render_op_wire_line(handle, sig, progress, None, None, error);
+    render_op_wire_markdown(&line)
+}
+
+pub fn operation_cancelled_markdown(
+    handle: &OperationHandle,
+    progress: Option<&OperationProgress>,
+) -> String {
+    operation_terminal_markdown(handle, OperationPhase::Cancelled, progress, None)
+}
+
+pub fn operation_meta_object(
+    handle: &OperationHandle,
+    sig: OpWireSig,
+    seq: u64,
+    progress: Option<&OperationProgress>,
     plan_commit_ref: Option<&PlanCommitRef>,
-    dry_verdict: Option<PlanDryVerdict>,
 ) -> serde_json::Map<String, serde_json::Value> {
-    let mut continuity = serde_json::Map::new();
-    continuity.insert(
-        "phase".into(),
-        json!(match phase {
-            OperationPhase::Running => "running",
-            OperationPhase::Succeeded => "succeeded",
-            OperationPhase::Failed => "failed",
-            OperationPhase::Cancelled => "cancelled",
-        }),
-    );
-    continuity.insert("operation_handle".into(), json!(handle.as_str()));
-    if let Some(pc) = plan_commit_ref {
-        continuity.insert("plan_commit_ref".into(), json!(pc.as_str()));
+    op_plasm_meta_short(handle, sig, seq, progress, plan_commit_ref)
+}
+
+/// Markdown + `_meta.plasm` for an async live-run accept (`wait=false` or auto-async).
+pub fn async_live_run_accept_parts(
+    handle: &OperationHandle,
+    plan_commit_ref: Option<&PlanCommitRef>,
+    verdict: PlanDryVerdict,
+    auto_async: bool,
+) -> (String, serde_json::Map<String, serde_json::Value>) {
+    let markdown = operation_accept_markdown(handle, plan_commit_ref, Some(verdict), auto_async);
+    let mut meta = serde_json::Map::new();
+    let mut plasm = operation_meta_object(handle, OpWireSig::Accept, 1, None, plan_commit_ref);
+    if auto_async {
+        plasm.insert("auto_async".into(), json!(true));
     }
-    if let Some(v) = dry_verdict {
-        continuity.insert(
-            "dry_verdict".into(),
-            json!(match v {
-                PlanDryVerdict::Ok => "ok",
-                PlanDryVerdict::Review => "review",
-            }),
-        );
-    }
-    let mut op = serde_json::Map::new();
-    if let Some(p) = progress {
-        op.insert("step".into(), json!(p.step));
-        op.insert("step_total".into(), json!(p.step_total));
-        if let Some(ref l) = p.label {
-            op.insert("label".into(), json!(l));
-        }
-        if p.rows_materialized > 0 {
-            op.insert("rows_materialized".into(), json!(p.rows_materialized));
-        }
-    }
-    let mut plasm = serde_json::Map::new();
-    plasm.insert("logical_session_ref".into(), json!(logical_session_ref));
-    plasm.insert("continuity".into(), serde_json::Value::Object(continuity));
-    if !op.is_empty() {
-        plasm.insert("operation".into(), serde_json::Value::Object(op));
-    }
-    plasm
+    meta.insert("plasm".into(), serde_json::Value::Object(plasm));
+    (markdown, meta)
 }
 
 pub fn plan_commit_meta(
@@ -445,6 +507,7 @@ pub(crate) fn try_parse_operation_continuation(
 }
 
 /// Start a background live plan run; poll with `wait(handle)` / cancel with `cancel(handle)`.
+#[allow(clippy::too_many_arguments)]
 pub fn spawn_async_plan_run(
     es: Arc<ExecuteSession>,
     st: Arc<crate::server_state::PlasmHostState>,
@@ -453,19 +516,13 @@ pub fn spawn_async_plan_run(
     validated: crate::plasm_plan::ValidatedPlan,
     handle: OperationHandle,
     cancel: CancelSignal,
-) {
-    es.register_operation(
-        handle.clone(),
-        OperationState {
-            phase: OperationPhase::Running,
-            cancel: cancel.clone(),
-            started_at: Instant::now(),
-            progress: OperationProgress::default(),
-            result: None,
-            error: None,
-        },
-    );
+    accept: OpAcceptContext,
+) -> Result<(), String> {
+    let mut accept = accept;
+    accept.host = Some(Arc::downgrade(&st));
+    es.try_begin_async_operation(handle.clone(), cancel.clone(), accept)?;
     let scope = ExecutionScope::for_async_operation(Arc::clone(&es), handle.clone(), cancel);
+    es.emit_op_accept(&handle, &st)?;
     tokio::spawn(async move {
         let result = crate::plasm_plan_run::run_validated_plasm_plan(
             es.as_ref(),
@@ -479,22 +536,33 @@ pub fn spawn_async_plan_run(
         )
         .await;
         match result {
-            Ok(out) => es.finalize_operation_succeeded(&handle, out),
+            Ok(out) => es.finalize_operation_succeeded(&handle, out, Some(st.as_ref())),
             Err(e) => {
                 if scope.cancel.is_cancelled() {
-                    es.cancel_operation(&handle);
+                    es.cancel_operation(&handle, Some(st.as_ref()));
                 } else {
-                    es.finalize_operation_failed(&handle, e);
+                    es.finalize_operation_failed(&handle, e, Some(st.as_ref()));
                 }
             }
         }
     });
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use plasm_core::PlanCommitRef;
+
+    #[test]
+    fn live_run_should_auto_async_only_for_review_with_default_wait() {
+        assert!(live_run_should_auto_async(PlanDryVerdict::Review, true));
+        assert!(!live_run_should_auto_async(PlanDryVerdict::Review, false));
+        assert!(!live_run_should_auto_async(PlanDryVerdict::Ok, true));
+        assert!(should_spawn_async_live_run(false, PlanDryVerdict::Ok));
+        assert!(should_spawn_async_live_run(true, PlanDryVerdict::Review));
+        assert!(!should_spawn_async_live_run(true, PlanDryVerdict::Ok));
+    }
 
     #[test]
     fn plan_requires_review_gate_blocks_without_force_or_commit() {

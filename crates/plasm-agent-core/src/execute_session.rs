@@ -13,7 +13,7 @@ use plasm_plugin_host::LoadedPluginGeneration;
 use plasm_runtime::{CachedEntity, GraphCache, MutexGraphCacheSession, QueryPaginationResumeData};
 use std::collections::{HashMap, VecDeque};
 use std::env;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex as StdMutex;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -428,6 +428,8 @@ pub struct ExecuteSession {
     /// Dry-run plan acceptance tokens (`pcN`) for soft-gate live execute.
     plan_commits: Arc<StdMutex<HashMap<PlanCommitRef, crate::operation::PlanCommitRecord>>>,
     plan_commit_next: Arc<AtomicU64>,
+    /// True while a synchronous (blocking) live plan run holds the execute session.
+    sync_live_run_inflight: Arc<AtomicBool>,
     /// Per-catalog session binding maps (MCP connect / REPL `--backend`).
     pub bindings_by_entry: indexmap::IndexMap<String, crate::binding_slots::SessionBindingMap>,
 }
@@ -520,6 +522,7 @@ impl ExecuteSession {
             operation_handle_next: Arc::new(AtomicU64::new(0)),
             plan_commits: Arc::new(StdMutex::new(HashMap::new())),
             plan_commit_next: Arc::new(AtomicU64::new(0)),
+            sync_live_run_inflight: Arc::new(AtomicBool::new(false)),
             bindings_by_entry,
         }
     }
@@ -641,6 +644,115 @@ impl ExecuteSession {
             .insert(handle, state);
     }
 
+    fn running_operation_handle(&self) -> Option<OperationHandle> {
+        self.operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|(_, op)| op.phase == crate::operation::OperationPhase::Running)
+            .map(|(h, _)| h.clone())
+    }
+
+    fn live_run_inflight_error(&self) -> Option<String> {
+        if let Some(h) = self.running_operation_handle() {
+            return Some(format!(
+                "operation_in_flight: poll `wait({})` or `cancel({})` before starting another live run",
+                h.as_str(),
+                h.as_str()
+            ));
+        }
+        if self.sync_live_run_inflight.load(Ordering::Acquire) {
+            return Some(
+                "operation_in_flight: a synchronous live run is in progress on this execute session"
+                    .to_string(),
+            );
+        }
+        None
+    }
+
+    /// Reject a second live program when an async op is running or sync execute holds the session.
+    pub fn try_begin_live_program_run(&self) -> Result<(), String> {
+        if let Some(err) = self.live_run_inflight_error() {
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    /// Register an async operation after checking no other live run is in flight.
+    pub fn try_begin_async_operation(
+        &self,
+        handle: OperationHandle,
+        cancel: plasm_runtime::CancelSignal,
+        accept: crate::operation::OpAcceptContext,
+    ) -> Result<(), String> {
+        let mut map = self
+            .operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if map
+            .values()
+            .any(|op| op.phase == crate::operation::OperationPhase::Running)
+        {
+            if let Some(h) = map
+                .iter()
+                .find(|(_, op)| op.phase == crate::operation::OperationPhase::Running)
+                .map(|(h, _)| h.clone())
+            {
+                return Err(format!(
+                    "operation_in_flight: poll `wait({})` or `cancel({})` before starting another live run",
+                    h.as_str(),
+                    h.as_str()
+                ));
+            }
+        }
+        if self.sync_live_run_inflight.load(Ordering::Acquire) {
+            return Err(
+                "operation_in_flight: a synchronous live run is in progress on this execute session"
+                    .to_string(),
+            );
+        }
+        let (progress_tx, _) = tokio::sync::broadcast::channel(64);
+        map.insert(
+            handle,
+            crate::operation::OperationState {
+                phase: crate::operation::OperationPhase::Running,
+                cancel,
+                started_at: Instant::now(),
+                progress: crate::operation::OperationProgress::default(),
+                result: None,
+                error: None,
+                agent_emit: crate::operation_progress::OperationAgentEmitState::default(),
+                display_map: accept.display_map,
+                plan_commit_ref: accept.plan_commit_ref,
+                dry_verdict: accept.dry_verdict,
+                auto_async: accept.auto_async,
+                mcp_transport_key: accept.mcp_transport_key,
+                progress_host: accept.host,
+                progress_tx,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn begin_sync_live_run(&self) -> Result<(), String> {
+        self.try_begin_live_program_run()?;
+        if self
+            .sync_live_run_inflight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(
+                "operation_in_flight: a synchronous live run is in progress on this execute session"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    pub fn end_sync_live_run(&self) {
+        self.sync_live_run_inflight.store(false, Ordering::Release);
+    }
+
     pub fn get_operation(
         &self,
         handle: &OperationHandle,
@@ -698,22 +810,233 @@ impl ExecuteSession {
     pub fn update_operation_progress(
         &self,
         handle: &OperationHandle,
-        progress: crate::operation::OperationProgress,
+        mut progress: crate::operation::OperationProgress,
     ) {
-        if let Some(op) = self
+        let mut map = self
             .operation_by_handle
             .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .get_mut(handle)
-        {
-            op.progress = progress;
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(op) = map.get_mut(handle) else {
+            return;
+        };
+        if let Some(ref node_id) = progress.label {
+            if let Some(display) = op.display_map.get(node_id) {
+                progress.label = Some(display.clone());
+            }
         }
+        op.progress = progress;
+        let host = op.progress_host.as_ref().and_then(|w| w.upgrade());
+        drop(map);
+        let st_ref = host.as_deref();
+        let _ = self.try_emit_op_running(handle, st_ref);
+    }
+
+    fn fanout_op_line(
+        &self,
+        handle: &OperationHandle,
+        line: &str,
+        seq: u64,
+        terminal: bool,
+        st: Option<&crate::server_state::PlasmHostState>,
+    ) {
+        if let Some(op) = self.get_operation(handle) {
+            let _ = op
+                .progress_tx
+                .send(crate::operation_progress::OpProgressEvent {
+                    seq,
+                    line: line.to_string(),
+                    terminal,
+                });
+            if let (Some(st), Some(tk)) = (st, op.mcp_transport_key.as_deref()) {
+                st.op_progress_hub
+                    .queue_mcp_notify(tk, line, seq, op.plan_commit_ref.as_ref());
+            }
+        }
+    }
+
+    pub fn emit_op_accept(
+        &self,
+        handle: &OperationHandle,
+        st: &crate::server_state::PlasmHostState,
+    ) -> Result<(), String> {
+        let mut map = self
+            .operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(op) = map.get_mut(handle) else {
+            return Err(format!("unknown operation handle `{}`", handle.as_str()));
+        };
+        op.agent_emit.seq = 1;
+        let line = crate::operation_progress::render_op_wire_line(
+            handle,
+            crate::operation_progress::OpWireSig::Accept,
+            None,
+            op.plan_commit_ref.as_ref(),
+            op.dry_verdict,
+            None,
+        );
+        op.agent_emit.last_line = line.clone();
+        op.agent_emit.last_emit_at = Instant::now();
+        drop(map);
+        self.fanout_op_line(handle, &line, 1, false, Some(st));
+        Ok(())
+    }
+
+    fn try_emit_op_running(
+        &self,
+        handle: &OperationHandle,
+        st: Option<&crate::server_state::PlasmHostState>,
+    ) -> bool {
+        let mut map = self
+            .operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(op) = map.get_mut(handle) else {
+            return false;
+        };
+        if op.phase != crate::operation::OperationPhase::Running {
+            return false;
+        }
+        let snapshot = crate::operation_progress::OpAgentSnapshot::from_running(&op.progress);
+        if !crate::operation_progress::should_emit_agent_progress(
+            op.agent_emit.last_emitted,
+            snapshot,
+            op.agent_emit.last_emit_at,
+        ) {
+            return false;
+        }
+        op.agent_emit.seq = op.agent_emit.seq.saturating_add(1);
+        op.agent_emit.last_emitted = snapshot;
+        op.agent_emit.last_emit_at = Instant::now();
+        let line = crate::operation_progress::render_op_wire_line(
+            handle,
+            crate::operation_progress::OpWireSig::Running,
+            Some(&op.progress),
+            None,
+            None,
+            None,
+        );
+        op.agent_emit.last_line = line.clone();
+        let seq = op.agent_emit.seq;
+        drop(map);
+        self.fanout_op_line(handle, &line, seq, false, st);
+        true
+    }
+
+    fn emit_op_terminal(
+        &self,
+        handle: &OperationHandle,
+        phase: crate::operation::OperationPhase,
+        st: Option<&crate::server_state::PlasmHostState>,
+    ) {
+        let mut map = self
+            .operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(op) = map.get_mut(handle) else {
+            return;
+        };
+        op.agent_emit.seq = op.agent_emit.seq.saturating_add(1);
+        let sig = match phase {
+            crate::operation::OperationPhase::Succeeded => {
+                crate::operation_progress::OpWireSig::Done
+            }
+            crate::operation::OperationPhase::Cancelled => {
+                crate::operation_progress::OpWireSig::Cancelled
+            }
+            crate::operation::OperationPhase::Failed => {
+                crate::operation_progress::OpWireSig::Failed
+            }
+            crate::operation::OperationPhase::Running => return,
+        };
+        let line = crate::operation_progress::render_op_wire_line(
+            handle,
+            sig,
+            Some(&op.progress),
+            None,
+            None,
+            op.error.as_deref(),
+        );
+        op.agent_emit.last_line = line.clone();
+        let seq = op.agent_emit.seq;
+        drop(map);
+        self.fanout_op_line(handle, &line, seq, true, st);
+    }
+
+    pub fn operation_progress_subscribe(
+        &self,
+        handle: &OperationHandle,
+    ) -> Option<tokio::sync::broadcast::Receiver<crate::operation_progress::OpProgressEvent>> {
+        self.operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(handle)
+            .map(|op| op.progress_tx.subscribe())
+    }
+
+    pub fn operation_progress_snapshot_line(
+        &self,
+        handle: &OperationHandle,
+    ) -> Option<(u64, String)> {
+        self.operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(handle)
+            .map(|op| (op.agent_emit.seq, op.agent_emit.last_line.clone()))
+    }
+
+    pub fn operation_poll_parts(
+        &self,
+        handle: &OperationHandle,
+    ) -> Option<(String, serde_json::Map<String, serde_json::Value>, bool)> {
+        let map = self
+            .operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let op = map.get(handle)?;
+        if op.phase != crate::operation::OperationPhase::Running {
+            return None;
+        }
+        let snapshot = crate::operation_progress::OpAgentSnapshot::from_running(&op.progress);
+        let unchanged = snapshot == op.agent_emit.last_emitted && op.agent_emit.seq > 0;
+        let sig = if unchanged {
+            crate::operation_progress::OpWireSig::Unchanged
+        } else {
+            crate::operation_progress::OpWireSig::Running
+        };
+        let markdown = if unchanged {
+            crate::operation_progress::render_op_wire_markdown(
+                &crate::operation_progress::render_op_wire_line(
+                    handle,
+                    sig,
+                    Some(&op.progress),
+                    None,
+                    None,
+                    None,
+                ),
+            )
+        } else {
+            crate::operation::operation_running_markdown(handle, &op.progress, false)
+        };
+        let meta = if unchanged {
+            crate::operation_progress::op_poll_unchanged_meta(op.agent_emit.seq)
+        } else {
+            crate::operation::operation_meta_object(
+                handle,
+                crate::operation_progress::OpWireSig::Running,
+                op.agent_emit.seq,
+                Some(&op.progress),
+                op.plan_commit_ref.as_ref(),
+            )
+        };
+        Some((markdown, meta, unchanged))
     }
 
     pub fn finalize_operation_succeeded(
         &self,
         handle: &OperationHandle,
         result: crate::plasm_plan_run::PlasmPlanRunResult,
+        st: Option<&crate::server_state::PlasmHostState>,
     ) {
         if let Some(op) = self
             .operation_by_handle
@@ -721,24 +1044,41 @@ impl ExecuteSession {
             .unwrap_or_else(|e| e.into_inner())
             .get_mut(handle)
         {
+            if op.phase != crate::operation::OperationPhase::Running {
+                return;
+            }
             op.phase = crate::operation::OperationPhase::Succeeded;
             op.result = Some(Arc::new(result));
         }
+        self.emit_op_terminal(handle, crate::operation::OperationPhase::Succeeded, st);
     }
 
-    pub fn finalize_operation_failed(&self, handle: &OperationHandle, error: String) {
+    pub fn finalize_operation_failed(
+        &self,
+        handle: &OperationHandle,
+        error: String,
+        st: Option<&crate::server_state::PlasmHostState>,
+    ) {
         if let Some(op) = self
             .operation_by_handle
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .get_mut(handle)
         {
+            if op.phase != crate::operation::OperationPhase::Running {
+                return;
+            }
             op.phase = crate::operation::OperationPhase::Failed;
             op.error = Some(error);
         }
+        self.emit_op_terminal(handle, crate::operation::OperationPhase::Failed, st);
     }
 
-    pub fn cancel_operation(&self, handle: &OperationHandle) -> bool {
+    pub fn cancel_operation(
+        &self,
+        handle: &OperationHandle,
+        st: Option<&crate::server_state::PlasmHostState>,
+    ) -> bool {
         let mut map = self
             .operation_by_handle
             .lock()
@@ -751,6 +1091,8 @@ impl ExecuteSession {
         }
         op.cancel.cancel();
         op.phase = crate::operation::OperationPhase::Cancelled;
+        drop(map);
+        self.emit_op_terminal(handle, crate::operation::OperationPhase::Cancelled, st);
         true
     }
 
@@ -1352,5 +1694,59 @@ mod tests {
                 last_requested_to_block: None,
             },
         }
+    }
+
+    #[test]
+    fn finalize_after_cancel_keeps_cancelled_phase() {
+        let cgs = Arc::new(CGS::new());
+        let mut ctxs = IndexMap::new();
+        ctxs.insert(
+            "default".into(),
+            Arc::new(CgsContext::entry("default", cgs.clone())),
+        );
+        let es = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs,
+            ctxs,
+            "default".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Pet".into()],
+            None,
+            None,
+            None,
+            "hash".into(),
+            None,
+            None,
+        );
+        let handle = es.mint_operation_handle("s0");
+        es.try_begin_async_operation(
+            handle.clone(),
+            plasm_runtime::CancelSignal::new(),
+            crate::operation::OpAcceptContext::default(),
+        )
+        .expect("register op");
+        assert!(es.cancel_operation(&handle, None));
+        es.finalize_operation_succeeded(
+            &handle,
+            crate::plasm_plan_run::PlasmPlanRunResult {
+                version: serde_json::json!({}),
+                node_results: Vec::new(),
+                graph_summary: serde_json::json!({}),
+                plan_dag: serde_json::json!({}),
+                code_plan_run_artifacts: Vec::new(),
+                run_markdown: None,
+                run_plasm_meta: None,
+                return_steps: Vec::new(),
+            },
+            None,
+        );
+        let snap = es.get_operation_poll_snapshot(&handle).expect("snapshot");
+        assert!(matches!(
+            snap,
+            crate::operation::OperationPollSnapshot::Cancelled(_)
+        ));
     }
 }
