@@ -277,7 +277,7 @@ fn discovery_markdown_body(
         s.push_str("\n```\n\n");
         if omission.truncated {
             s.push_str(&format!(
-                "_Showing top {} discovery rows ({} omitted). Narrow `intent`, pass seeds you already know, or use `typed: true` if the entity is ambiguous._\n\n",
+                "_Showing top {} discovery rows ({} omitted). Narrow `intent` or pass seeds you already know._\n\n",
                 omission.shown, omission.omitted
             ));
         }

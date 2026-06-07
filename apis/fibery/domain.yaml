@@ -81,6 +81,8 @@ entities:
           param: space_name
   Database:
     id_field: qualified_name
+    id_from:
+      - fibery/name
     description: A Fibery database (API type) from workspace schema metadata.
     fields:
       qualified_name:
@@ -115,6 +117,8 @@ entities:
           param: database
   Field:
     id_field: id
+    id_from:
+      - fibery/id
     description: A field definition on a Fibery database.
     fields:
       id:
@@ -137,6 +141,8 @@ entities:
         value_ref: nv_fibery_database_name
   Record:
     id_field: id
+    id_from:
+      - fibery/id
     key_vars:
       - database
       - id
@@ -165,6 +171,8 @@ entities:
         agent_presentation: reference_only
   User:
     id_field: id
+    id_from:
+      - fibery/id
     description: A Fibery workspace member.
     fields:
       id:
@@ -194,6 +202,8 @@ entities:
           - user/admin?
   File:
     id_field: id
+    id_from:
+      - fibery/id
     description: A Fibery file entity backed by object storage.
     fields:
       id:
@@ -223,6 +233,8 @@ entities:
           - fibery/content-length
   View:
     id_field: id
+    id_from:
+      - fibery/id
     description: A saved Fibery view (board, grid, document, timeline, etc.).
     fields:
       id:

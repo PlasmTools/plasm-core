@@ -5,6 +5,16 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.90] - 2026-06-07
+
+### Fixed
+
+- **Fibery catalog:** add `id_from` wire paths (`fibery/name`, `fibery/id`) so `schema_query` and entity reads decode live API rows (fixes MCP `plasm_run` “No valid ID field” after Connect).
+
+### Changed
+
+- **MCP `discover_capabilities`:** initialize workflow and tool copy default to fenced TSV; `typed: true` is opt-in for structured disambiguation only.
+
 ## [0.1.89] - 2026-06-07
 
 ### Fixed

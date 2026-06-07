@@ -734,7 +734,7 @@ impl PlasmMcpHandler {
         discover_props.insert(
             "typed".into(),
             json_schema_bool_type(
-                "If **true**, response is fenced **`json`** (`DiscoveryDecision`) for structured disambiguation instead of the capability table.",
+                "If **true**, response is fenced **`json`** (`DiscoveryDecision`) for structured disambiguation **instead of the default TSV table**. Leave unset/false for normal discovery.",
             ),
         );
         discover_props.insert(
@@ -821,7 +821,7 @@ impl PlasmMcpHandler {
                 name: "discover_capabilities".into(),
                 title: Some("Resolve intent to capabilities".into()),
                 description: Some(
-                    "Resolve one user goal to catalog capabilities (`api`, `entity`, `description` table). **One `intent` string per goal** — see MCP initialize workflow. Skip when you already know every `api`/`entity`. **`typed: true`** returns fenced **`json`** (`DiscoveryDecision`) instead of the table.".into(),
+                    "Resolve one user goal to catalog capabilities. **Default:** fenced **`tsv`** table (`api`, `entity`, `description`). **One `intent` string per goal** — see MCP initialize workflow. Skip when you already know every `api`/`entity`. Set **`typed: true`** only when the TSV ambiguity note requires structured disambiguation (returns fenced **`json`** instead).".into(),
                 ),
                 input_schema: ToolInputSchema::new(vec!["intent".into()], Some(discover_props), None),
                 annotations: Some(ToolAnnotations {

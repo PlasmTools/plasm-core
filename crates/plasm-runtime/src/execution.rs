@@ -7132,6 +7132,41 @@ mod tests {
     }
 
     #[test]
+    fn fibery_schema_query_decodes_database_rows_from_fibery_name_id_path() {
+        use plasm_compile::decode_entities;
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/fibery");
+        let cgs = load_schema_dir(&dir).expect("load fibery catalog");
+        let cap = cgs.get_capability("schema_query").expect("schema_query");
+        let capability_template =
+            parse_capability_template(&cap.mapping.template).expect("parse template");
+        let cml = match &capability_template {
+            plasm_compile::CapabilityTemplate::Http(c) => c,
+            _ => panic!("expected HTTP template"),
+        };
+        let json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../fixtures/schemas/fibery_schema_overlay/sample_schema_query.json"
+        ))
+        .expect("sample schema JSON");
+        let normalized = prepare_http_query_response(json, cml, &CmlEnv::new());
+        let decoder = create_entity_decoder_for_capability(
+            "Database",
+            &cgs,
+            Some("schema_query"),
+            Some(http_collection_source(cml)),
+            None,
+            None,
+        );
+        let entities = decode_entities(&decoder, &normalized).expect("decode Database rows");
+        assert_eq!(entities.len(), 1);
+        assert_eq!(
+            entities[0].fields.get("qualified_name"),
+            Some(&plasm_core::Value::String("Cricket/Player".into()))
+        );
+    }
+
+    #[test]
     fn github_issue_query_decoder_includes_embedded_labels_relation() {
         use plasm_compile::decode_entities;
         use plasm_compile::DecodedRelation;

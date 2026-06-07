@@ -1,10 +1,10 @@
 ---
-source: plasm-oss/crates/plasm-agent-core/src/mcp_server.rs
+source: crates/plasm-agent-core/src/mcp_server.rs
 expression: "super::mcp_server_initialize_instructions()"
 ---
 Plasm MCP tools (in order): **`plasm_context`** (session + teaching TSV), **`plasm`** (dry-run plan), **`plasm_run`** (live execute), **`discover_capabilities`** (when **`api`/`entity`** unknown).
      **One goal → one stable **`intent`** → one **`plasm_context`**.** `logical_session_ref` (`s0`, …) is per goal, not per API. Multi-API: one **`seeds`** array (see **`plasm_context`** tool).
-     **`discover_capabilities`**: one **`intent`** per goal. Reply table → merge into **`plasm_context`** **`seeds`**. Retry if entities missing; **`typed: true`** when ambiguous.
+     **`discover_capabilities`**: one **`intent`** per goal. **Default response is fenced `tsv`** (`api` / `entity` / `description`) — do **not** pass **`typed`** unless the TSV ambiguity note requires structured disambiguation. Merge rows into **`plasm_context`** **`seeds`**; retry with a narrower `intent` if entities are missing.
      **`plasm_context`**: **`intent`** + **`seeds`**; returns **`logical_session_ref`** + teaching TSV. **Steady state:** reuse ref with **`plasm`** / **`plasm_run`**; do not repeat identical **`seeds`**.
 **JSON `program` string:** Prefer `\n` between bindings, then bare comma-separated roots. Single-line space-separated bindings are **supported** (not preferred); coercion rewrites a **trailing** root to the **first** binding when it differs (`metadata.coerced_default_return` may be set). Decoded strings need real newlines for heredocs.
 
