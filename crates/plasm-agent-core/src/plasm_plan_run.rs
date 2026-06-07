@@ -2559,13 +2559,7 @@ async fn materialize_validated_relation_traversal(
         }
         RelationMaterialization::Unavailable => {
             if let Some(mat) = try_materialize_from_cached_relation_refs(
-                st,
-                es,
-                session_id,
-                node,
-                relation,
-                source_mat,
-                trace,
+                st, es, session_id, node, relation, source_mat, trace,
             )
             .await?
             {
@@ -3360,10 +3354,7 @@ async fn try_materialize_from_cached_relation_refs(
     Ok(Some(MaterializedNode {
         entry_id: relation.relation.target.entry_id.clone(),
         entity: relation.relation.target.entity.clone(),
-        display: format!(
-            "plan.relation({}) cached_embed",
-            relation.id.as_str()
-        ),
+        display: format!("plan.relation({}) cached_embed", relation.id.as_str()),
         projection: relation.relation.ir.projection.clone(),
         rows: full_result
             .entities

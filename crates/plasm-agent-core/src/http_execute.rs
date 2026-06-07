@@ -971,7 +971,10 @@ pub(crate) fn build_plasm_context_tool_meta(
         serde_json::json!(out.new_symbol_space),
     );
     if out.new_symbol_space {
-        continuity.insert("discard_cached_plasm_symbols".to_string(), serde_json::json!(true));
+        continuity.insert(
+            "discard_cached_plasm_symbols".to_string(),
+            serde_json::json!(true),
+        );
     }
     plasm.insert(
         "continuity".to_string(),
@@ -1581,10 +1584,8 @@ pub async fn federate_execute_session(
             &added_qualified,
             Some(sym_cross),
         );
-    let wave = wrap_teaching_markdown_literal_block(
-        &delta,
-        st.engine.prompt_pipeline().render_mode,
-    );
+    let wave =
+        wrap_teaching_markdown_literal_block(&delta, st.engine.prompt_pipeline().render_mode);
     sess.prompt_text.push_str("\n\n");
     sess.prompt_text.push_str(&wave);
     sess.entities = exp.entities.clone();
@@ -1744,10 +1745,8 @@ pub async fn expand_execute_teaching_session(
             Some(sym_cross),
         )
     };
-    let wave = wrap_teaching_markdown_literal_block(
-        &delta,
-        st.engine.prompt_pipeline().render_mode,
-    );
+    let wave =
+        wrap_teaching_markdown_literal_block(&delta, st.engine.prompt_pipeline().render_mode);
     sess.prompt_text.push_str("\n\n");
     sess.prompt_text.push_str(&wave);
     sess.entities = exp.entities.clone();
@@ -1826,9 +1825,10 @@ pub(crate) async fn apply_capability_seeds(
             .map_err(|e| format!("invalid engine base_url: {e}"))?;
         let mut map = HashMap::new();
         for eid in &all_eids {
-            if let Some(m) =
-                crate::session_bindings::repl_session_binding_map(eid.as_str(), override_url.clone())
-            {
+            if let Some(m) = crate::session_bindings::repl_session_binding_map(
+                eid.as_str(),
+                override_url.clone(),
+            ) {
                 map.insert(eid.clone(), m);
             }
         }
