@@ -5,6 +5,30 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.96] - 2026-06-07
+
+### Added
+
+- **Long-running plan execute:** `wait(sN_oM)` and `cancel(sN_oM)` continuations (same model as `page(sN_pgM)`); cooperative cancel and progress polling for in-flight async plans.
+- **`plan_commit_ref` (`pcN`) review gate:** dry-run mints content-addressed tokens over the **semantic plan DAG** only (`version`, `nodes`, `edges`, `topological_order`, `returns`); volatile plan `name` / `summary` excluded from commit id.
+- **HTTP execute:** `?mode=plan`, `?wait=false`, `?force=true`, `?plan_commit_ref=pcN`; synthetic logical session `s0` for operation handles without MCP `plasm_context`.
+- **MCP `plasm` / `plasm_run`:** `wait`, `force`, and `plan_commit_ref` tool args; teaching TSV preamble for wait/cancel handles.
+- **CLI:** `plasm run --mode plan`, `--wait`, `--force`, `--plan-commit-ref`.
+- **Tool-model HTTP:** additive `execute` block on `GET /v1/registry/:entry_id/tool-model` (continuations + review gate notes).
+- **E2E:** dual-surface `long_operation_e2e` (HTTP + MCP); HTTP smokes in `long_operation_http`.
+- **Doc-site:** [plasm-long-operations.md](doc-site/docs/reference/plasm-long-operations.md).
+
+### Changed
+
+- **pokeapi eval:** rewrite `apis/pokeapi/eval/cases.yaml` for long-op / review-gate coverage.
+- **MCP prompt char budget:** trim `workflow_tail.txt` and `program_contract.txt` for wait/cancel workflow copy.
+- **Teaching TSV / snapshots:** GitHub prompt baseline ~31k; projection witness invariant tests.
+
+### Fixed
+
+- **`plasm-eval`:** `Wait` / `Cancel` expression coverage in eval harness.
+- **Language matrix live runs:** run on 16MB stack thread to avoid debug stack overflow.
+
 ## [0.1.95] - 2026-06-07
 
 ### Changed

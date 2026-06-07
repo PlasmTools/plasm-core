@@ -184,6 +184,26 @@ fn validate_multiselect_value(
     Ok(())
 }
 
+fn type_check_operation_handle(handle: &crate::OperationHandle) -> Result<(), TypeError> {
+    if crate::OperationHandle::parse(handle.as_str()).is_err() {
+        return Err(TypeError::IncompatibleValue {
+            field: "handle".to_string(),
+            value_type: handle.as_str().to_string(),
+            field_type: "opaque operation handle: namespaced `s0_o1` (MCP logical session slot + sequence)"
+                .to_string(),
+        });
+    }
+    Ok(())
+}
+
+fn type_check_wait(wait: &crate::WaitExpr) -> Result<(), TypeError> {
+    type_check_operation_handle(&wait.handle)
+}
+
+fn type_check_cancel(cancel: &crate::CancelExpr) -> Result<(), TypeError> {
+    type_check_operation_handle(&cancel.handle)
+}
+
 fn type_check_page(page: &PageExpr) -> Result<(), TypeError> {
     if crate::PagingHandle::parse(page.handle.as_str()).is_err() {
         return Err(TypeError::IncompatibleValue {
@@ -232,6 +252,8 @@ pub fn type_check_expr(expr: &Expr, cgs: &CGS) -> Result<(), TypeError> {
         Expr::Invoke(invoke) => type_check_invoke(invoke, cgs),
         Expr::Chain(chain) => type_check_chain(chain, cgs),
         Expr::Page(page) => type_check_page(page),
+        Expr::Wait(wait) => type_check_wait(wait),
+        Expr::Cancel(cancel) => type_check_cancel(cancel),
         Expr::TeachingValue { .. } => Ok(()),
     }
 }
@@ -310,6 +332,8 @@ pub fn type_check_expr_federated(
             )?,
         ),
         Expr::Page(page) => type_check_page(page),
+        Expr::Wait(wait) => type_check_wait(wait),
+        Expr::Cancel(cancel) => type_check_cancel(cancel),
         Expr::Delete(delete) => type_check_delete(
             delete,
             resolve_cgs_for_catalog_entity(
@@ -396,7 +420,7 @@ pub fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), TypeEr
                 return Err(err());
             }
         }
-        Expr::Query(_) | Expr::Page(_) => {}
+        Expr::Query(_) | Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) => {}
     }
     Ok(())
 }

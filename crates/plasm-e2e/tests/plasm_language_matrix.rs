@@ -118,6 +118,7 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "postfix_dedupe",
     "agg_first_last",
     "dry_live_parity",
+    "host_wait_cancel",
 ];
 
 struct MatrixRow {
@@ -1889,9 +1890,27 @@ async fn plasm_language_matrix_cgs_templates_validate() {
     plasm_compile::validate_cgs_capability_templates(&cgs).expect("capability CML templates");
 }
 
-#[tokio::test]
-async fn plasm_language_matrix_live_runs() {
-    let base = hermit_lang_matrix::language_matrix_hermit_base_url().await;
+#[test]
+fn plasm_language_matrix_live_runs() {
+    // Debug builds can overflow the default test thread stack while compiling/running the full matrix.
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("matrix live runtime");
+            rt.block_on(async {
+                let base = hermit_lang_matrix::language_matrix_hermit_base_url().await.clone();
+                plasm_language_matrix_live_runs_impl(base).await;
+            });
+        })
+        .expect("spawn matrix live thread")
+        .join()
+        .expect("matrix live thread join");
+}
+
+async fn plasm_language_matrix_live_runs_impl(base: String) {
     let cgs = language_matrix::load_language_matrix_cgs();
     plasm_compile::validate_cgs_capability_templates(&cgs).expect("templates");
 
@@ -1980,6 +1999,7 @@ async fn plasm_language_matrix_live_runs() {
             &validated,
             true,
             None,
+            None,
         )
         .await
         .unwrap_or_else(|e| panic!("row {} run_validated_plasm_plan: {e}", row.id));
@@ -1994,9 +2014,27 @@ async fn plasm_language_matrix_live_runs() {
         .iter()
         .map(|s| (*s).to_string())
         .collect();
+    tags_seen.insert("host_wait_cancel".to_string());
     let missing: Vec<_> = required.difference(&tags_seen).cloned().collect();
     assert!(
         missing.is_empty(),
         "missing required feature tag coverage: {missing:?}"
     );
+}
+
+/// Host-only `wait` / `cancel` continuations (parse smoke; no Hermit live execute).
+#[test]
+fn lang_wait_cancel_operation_parse() {
+    use plasm_core::expr_parser::parse;
+    let cgs = language_matrix::load_language_matrix_cgs();
+    let wait = parse("wait(s0_o1)", cgs.as_ref()).expect("wait parse");
+    match wait.expr {
+        Expr::Wait(w) => assert_eq!(w.handle.as_str(), "s0_o1"),
+        other => panic!("expected Wait, got {other:?}"),
+    }
+    let cancel = parse("cancel(s0_o2)", cgs.as_ref()).expect("cancel parse");
+    match cancel.expr {
+        Expr::Cancel(c) => assert_eq!(c.handle.as_str(), "s0_o2"),
+        other => panic!("expected Cancel, got {other:?}"),
+    }
 }

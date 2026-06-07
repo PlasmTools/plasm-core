@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm-core/src/prompt_render.rs
+source: crates/plasm-core/src/prompt_render.rs
 expression: tsv
 ---
 # Follow the grammar and the teaching TSV below; reply with one valid plasm_program:
@@ -28,6 +28,7 @@ expression: tsv
 # - Projection rows ending `[p#,…]` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
 # - Relation rows end with `.r#`/`.wire`; apply them to any executable receiver row for that same entity type.
 # - `page(sN_pgM)` uses a continuation handle returned by a prior response; copy the handle exactly and optionally add `, limit=N`.
+# - `wait(sN_oM)` polls an in-flight async plan run; `cancel(sN_oM)` cancels it — copy handles from accept responses. Start live execute with `wait: false`; when dry verdict is **review**, pass `plan_commit_ref` (`pcN`) from plan dry-run or `force: true`.
 #
 # Grammar:
 # plasm_program ::= plasm_expr | binding+ roots
@@ -35,7 +36,7 @@ expression: tsv
 # roots         ::= root ("," root)*
 # root          ::= ident | plasm_expr
 # node          ::= (plasm_expr | ident) postfix* row_template? | ident "=>" value_or_template
-# plasm_expr    ::= entity_expr [projection] | page
+# plasm_expr    ::= entity_expr [projection] | page | wait | cancel
 # entity_expr   ::= query_all | get | query | relation | method | create_action | search
 # query_all     ::= e#
 # get           ::= e#(<id>) or e#(p#=<value>, p#=<value>)
@@ -43,13 +44,15 @@ expression: tsv
 # relation      ::= <receiver>.r# | <receiver>.wire
 # method        ::= e#(<id>).m#() or e#(<id>).m#(p#=<value>, …)
 # create_action ::= e#.m#(p#=<value>, …)
-# search        ::= e#~"text"
+# search        ::= e#~"text"[{p#=…}]?
 # page          ::= page(sN_pgM) | page(sN_pgM, limit=N)
+# wait          ::= wait(sN_oM)
+# cancel        ::= cancel(sN_oM)
 # projection    ::= e#(<id>)[p#,…] | "[" fields "]"
-# postfix       ::= ".limit(N)" | ".page_size(N)" | ".sort(field[, dir])" | ".filter{…}" | ".filter(…)" | ".aggregate(specs)" | ".group_by(field, specs)" | ".singleton()" | "[" fields "]"
+# postfix       ::= ".limit(N)" | ".page_size(N)" | ".sort(field[, dir])" | ".filter{…}" | ".filter(…)" | ".aggregate(specs)" | ".group_by(field, specs)" | ".dedupe(field[, …])" | ".distinct(field[, …])" | ".distinct()" | ".singleton()" | "[" fields "]"
 # row_template  ::= ("[" fields "]")? "<<TAG" template_body "TAG"
 # fields        ::= [p#,…]
-# specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) [, ...]
+# specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) | name=first(field) | name=last(field) [, ...]
 # dir           ::= desc | asc | descending | ascending
 # value_or_template ::= literal | ident | ident.field | _.field | [elem, ...] | heredoc
 # literal       ::= quoted string | number | bool | null
@@ -65,6 +68,7 @@ expression: tsv
 # - `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `m#(..., p#=<<TXT` + newline body + `TXT` newline `)`.
 #
 # Common pitfalls:
+# - Row contract: `{…}` / `~"…"{…}` inputs fetch or filter rows; only `rows:` fields from the teaching row may be used in `[fields]`, `.group_by`, `.sort`, `.dedupe`, or row `.filter`.
 # - Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.
 # - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.
 # - Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.r#` or `issues.labels` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.
@@ -90,7 +94,7 @@ p1	v1 · content_type
 p7	v7 · text_preview
 e1[p2,p1,p7]	→ e1 · projection · One capture pipeline item
 e1(p2=$, p1=$)	→ e1
-e1{p5=$, p3=$, p6=$, p4=$}	→ [e1] · opt: p5, p3, p6, p4
+e1{p5=$, p3=$, p6=$, p4=$}[p2,p1,p7]	→ [e1] · inputs: p5,p3,p6,p4 · rows: p2,p1,p7 · opt: p5, p3, p6, p4
 v9	bool
 p8	v7 · id
 p9	v9 · screen_capture_running
@@ -109,7 +113,7 @@ p10	v7 · id
 p18	v18 · question_text
 p19	v9 · resolved
 e3[p10,p18,p19]	→ e3 · projection · A detected question with optional answers
-e3{p17=$, p11=$, p16=$, p12=$, p14=$, p13=$, p15=$}	→ [e3] · opt: p17, p11, p16, p12, p14, p13, p15
+e3{p17=$, p11=$, p16=$, p12=$, p14=$, p13=$, p15=$}[p10,p18,p19]	→ [e3] · inputs: p17,p11,p16,p12,p14,p13,p15 · rows: p10,p18,p19 · opt: p17, p11, p16, p12, p14, p13, p15
 v26	select · active, ended, cancelled
 p22	v6 · end_date
 p23	v2 · limit
@@ -119,7 +123,7 @@ p20	v2 · meeting_id
 p26	v26 · status
 p27	v18 · summary
 e4[p21,p20,p26,p27]	→ e4 · projection · A detected meeting
-e4{p26=$, p24=$, p22=$, p23=$}	→ [e4] · opt: p26, p24, p22, p23
+e4{p26=$, p24=$, p22=$, p23=$}[p21,p20,p26,p27]	→ [e4] · inputs: p26,p24,p22,p23 · rows: p21,p20,p26,p27 · opt: p26, p24, p22, p23
 e4(p21)	→ e4
 v34	select · debug, info, warning, error, critical
 p30	v2 · limit
@@ -130,7 +134,7 @@ p28	v7 · id
 p29	v7 · name
 p34	v34 · severity
 e5[p28,p29,p34]	→ e5 · projection · One pipeline bus event
-e5{p32=$, p33=$, p31=$, p30=$}	→ [e5] · opt: p32, p33, p31, p30
+e5{p32=$, p33=$, p31=$, p30=$}[p28,p29,p34]	→ [e5] · inputs: p32,p33,p31,p30 · rows: p28,p29,p34 · opt: p32, p33, p31, p30
 p35	v7 · id
 p36	v7 · workers
 e6(p35)[p35,p36]	→ e6 · projection · Pipeline health snapshot
@@ -141,7 +145,7 @@ p38	v2 · id
 p37	v7 · display_name
 p39	v39 · profile_type
 e7[p38,p37,p39]	→ e7 · projection · A person, organisation, or project profile
-e7{p39=$, p40=$}	→ [e7] · opt: p39, p40
+e7{p39=$, p40=$}[p38,p37,p39]	→ [e7] · inputs: p39,p40 · rows: p38,p37,p39 · opt: p39, p40
 e7(p38)	→ e7
 e7{p39=$, p40=$}.r1	relation e7 → [e9] · Content scoped to this profile
 p46	v7 · slug
@@ -152,6 +156,11 @@ v53	select · all, ocr, audio, ui
 p56	v2 · limit
 p57	v57 · mode
 p59	v7 · query
+p62	v6 · end_time
+p64	v2 · max_length
+p65	v2 · min_length
+p66	v2 · offset
+p68	v6 · start_time
 p54	v7 · id
 p51	v7 · app_name
 p52	v6 · captured_at
@@ -160,6 +169,7 @@ p58	v58 · profile_id
 p70	v18 · text
 p71	v7 · window_name
 e9{p58=e7(p38), p59=$, p56=$, p57=$}[p54,p51,p52,p53,p58,p70,p71]	→ [e9] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
-e9{p58=e7(p38), p59=$, p56=$, p57=$}	→ [e9] · opt: p59, p56, p57
-e9~"text"	→ [e9] · opt: p53, p56, p66, p68, p62, p51, p71, p65, p64
+e9{p58=e7(p38), p59=$, p56=$, p57=$}[p54,p51,p52,p53,p58,p70,p71]	→ [e9] · inputs: p58,p59,p56,p57 · rows: p54,p51,p52,p53,p58,p70,p71 · opt: p59, p56, p57
+e9~"text"[p54,p51,p52,p53,p58,p70,p71]	→ [e9] · rows: p54,p51,p52,p53,p58,p70,p71 · opt: p53, p56, p66, p68, p62, p51, p71, p65, p64
+e9~"text"{p53=$, p56=$, p66=$, p68=$, p62=$, p51=$, p71=$, p65=$, p64=$}[p54,p51,p52,p53,p58,p70,p71]	→ [e9] · inputs: p53,p56,p66,p68,p62,p51,p71,p65,p64 · rows: p54,p51,p52,p53,p58,p70,p71 · opt: p53, p56, p66, p68, p62, p51, p71, p65, p64
 e9{p58=e7(p38), p59=$, p56=$, p57=$}.p58	relation e9 → e7

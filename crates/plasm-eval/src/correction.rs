@@ -161,6 +161,7 @@ fn expr_contains_domain_placeholder(expr: &Expr) -> bool {
                 )
         }
         Expr::Page(p) => p.handle.as_str() == "$",
+        Expr::Wait(_) | Expr::Cancel(_) => false,
         Expr::TeachingValue { value } => value.contains_domain_placeholder_deep(),
     }
 }

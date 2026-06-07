@@ -118,5 +118,10 @@ pub fn step_error_from_runtime(err: &RuntimeError, cgs: &CGS) -> StepError {
             ),
             None,
         ),
+        RuntimeError::Cancelled => StepError::new(
+            StepErrorCategory::Runtime,
+            "operation cancelled".to_string(),
+            None,
+        ),
     }
 }

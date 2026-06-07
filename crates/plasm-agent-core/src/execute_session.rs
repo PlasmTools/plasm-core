@@ -4,7 +4,9 @@
 use indexmap::IndexMap;
 use plasm_core::CgsContext;
 use plasm_core::FederationDispatch;
+use plasm_core::OperationHandle;
 use plasm_core::PagingHandle;
+use plasm_core::PlanCommitRef;
 use plasm_core::TeachingExposureSession;
 use plasm_core::CGS;
 use plasm_plugin_host::LoadedPluginGeneration;
@@ -420,6 +422,12 @@ pub struct ExecuteSession {
     paging_handle_next: Arc<AtomicU64>,
     /// Serializes `page(pg#)` peek → execute → upsert so concurrent clients cannot corrupt continuation state.
     pub(crate) paging_op_lock: Arc<tokio::sync::Mutex<()>>,
+    /// Opaque `sN_oM` handles → in-flight or terminal async plan runs ([`plasm_core::Expr::Wait`] / [`Cancel`](plasm_core::Expr::Cancel)).
+    operation_by_handle: Arc<StdMutex<HashMap<OperationHandle, crate::operation::OperationState>>>,
+    operation_handle_next: Arc<AtomicU64>,
+    /// Dry-run plan acceptance tokens (`pcN`) for soft-gate live execute.
+    plan_commits: Arc<StdMutex<HashMap<PlanCommitRef, crate::operation::PlanCommitRecord>>>,
+    plan_commit_next: Arc<AtomicU64>,
     /// Per-catalog session binding maps (MCP connect / REPL `--backend`).
     pub bindings_by_entry: indexmap::IndexMap<String, crate::binding_slots::SessionBindingMap>,
 }
@@ -508,6 +516,10 @@ impl ExecuteSession {
             paging_resume_by_handle: Arc::new(StdMutex::new(HashMap::new())),
             paging_handle_next: Arc::new(AtomicU64::new(0)),
             paging_op_lock: Arc::new(tokio::sync::Mutex::new(())),
+            operation_by_handle: Arc::new(StdMutex::new(HashMap::new())),
+            operation_handle_next: Arc::new(AtomicU64::new(0)),
+            plan_commits: Arc::new(StdMutex::new(HashMap::new())),
+            plan_commit_next: Arc::new(AtomicU64::new(0)),
             bindings_by_entry,
         }
     }
@@ -610,6 +622,159 @@ impl ExecuteSession {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(handle);
+    }
+
+    /// Mint the next monotonic operation handle for MCP logical session `sN`.
+    pub fn mint_operation_handle(&self, logical_session_ref: &str) -> OperationHandle {
+        let n = self.operation_handle_next.fetch_add(1, Ordering::Relaxed) + 1;
+        OperationHandle::mint_namespaced(logical_session_ref, n)
+    }
+
+    pub fn register_operation(
+        &self,
+        handle: OperationHandle,
+        state: crate::operation::OperationState,
+    ) {
+        self.operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(handle, state);
+    }
+
+    pub fn get_operation(
+        &self,
+        handle: &OperationHandle,
+    ) -> Option<crate::operation::OperationState> {
+        self.operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(handle)
+            .cloned()
+    }
+
+    pub fn get_operation_poll_snapshot(
+        &self,
+        handle: &OperationHandle,
+    ) -> Option<crate::operation::OperationPollSnapshot> {
+        self.operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(handle)
+            .map(|op| match op.phase {
+                crate::operation::OperationPhase::Running => {
+                    crate::operation::OperationPollSnapshot::Running(op.progress.clone())
+                }
+                crate::operation::OperationPhase::Succeeded => {
+                    crate::operation::OperationPollSnapshot::Succeeded(
+                        op.result
+                            .clone()
+                            .expect("succeeded operation missing stored result"),
+                    )
+                }
+                crate::operation::OperationPhase::Failed => {
+                    crate::operation::OperationPollSnapshot::Failed(
+                        op.error
+                            .clone()
+                            .unwrap_or_else(|| "operation failed".to_string()),
+                    )
+                }
+                crate::operation::OperationPhase::Cancelled => {
+                    crate::operation::OperationPollSnapshot::Cancelled(op.progress.clone())
+                }
+            })
+    }
+
+    pub fn get_operation_progress(
+        &self,
+        handle: &OperationHandle,
+    ) -> Option<crate::operation::OperationProgress> {
+        self.operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(handle)
+            .map(|op| op.progress.clone())
+    }
+
+    pub fn update_operation_progress(
+        &self,
+        handle: &OperationHandle,
+        progress: crate::operation::OperationProgress,
+    ) {
+        if let Some(op) = self
+            .operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(handle)
+        {
+            op.progress = progress;
+        }
+    }
+
+    pub fn finalize_operation_succeeded(
+        &self,
+        handle: &OperationHandle,
+        result: crate::plasm_plan_run::PlasmPlanRunResult,
+    ) {
+        if let Some(op) = self
+            .operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(handle)
+        {
+            op.phase = crate::operation::OperationPhase::Succeeded;
+            op.result = Some(Arc::new(result));
+        }
+    }
+
+    pub fn finalize_operation_failed(&self, handle: &OperationHandle, error: String) {
+        if let Some(op) = self
+            .operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(handle)
+        {
+            op.phase = crate::operation::OperationPhase::Failed;
+            op.error = Some(error);
+        }
+    }
+
+    pub fn cancel_operation(&self, handle: &OperationHandle) -> bool {
+        let mut map = self
+            .operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(op) = map.get_mut(handle) else {
+            return false;
+        };
+        if op.phase != crate::operation::OperationPhase::Running {
+            return true;
+        }
+        op.cancel.cancel();
+        op.phase = crate::operation::OperationPhase::Cancelled;
+        true
+    }
+
+    pub fn mint_plan_commit_ref(&self) -> PlanCommitRef {
+        let n = self.plan_commit_next.fetch_add(1, Ordering::Relaxed);
+        PlanCommitRef::mint(n)
+    }
+
+    pub fn register_plan_commit(&self, record: crate::operation::PlanCommitRecord) {
+        self.plan_commits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(record.commit_ref.clone(), record);
+    }
+
+    pub fn get_plan_commit(
+        &self,
+        commit_ref: &PlanCommitRef,
+    ) -> Option<crate::operation::PlanCommitRecord> {
+        self.plan_commits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(commit_ref)
+            .cloned()
     }
 
     /// Multi-catalog dispatch for execute (HTTP backend + auth per owning graph).

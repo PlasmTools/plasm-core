@@ -2,4 +2,4 @@
 
 **Heredoc:** After `<<TAG`, body on next line; close with trimmed `TAG` (or `TAG)` / `TAG,` / `TAG}`). Use a long opaque `TAG` not in the body.
 
-Symbols: `e#` entity, `m#` method, `p#` field/filter/param, **`r#` relation nav**, `v#` value-domain. Relation fanout: copy `.r#` or wire from exemplars — not bare `p#` after `.` on a receiver. Homograph: `labels = issues.p#` forgiven only when binding name matches relation wire; prefer exemplar `.r#`/wire. Grammar: **`plasm_context` teaching TSV** preamble.
+Symbols: `e#` entity, `m#` method, `p#` field/filter/param, **`r#` relation nav**, `v#` value-domain. Relation fanout: copy `.r#` or wire from exemplars — not bare `p#` after `.` on a receiver. Homograph: `labels = issues.p#` forgiven only when binding name matches relation wire; prefer exemplar `.r#`/wire. Grammar: **`plasm_context` teaching TSV** preamble (`page`/`wait`/`cancel`/`pcN` in contract + tail).

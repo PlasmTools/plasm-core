@@ -474,6 +474,7 @@ fn collect_expr_forms(expr: &Expr, cgs: &CGS, out: &mut HashSet<EvalFormId>) {
         Expr::Page(_) => {
             out.insert(EvalFormId::PageNext);
         }
+        Expr::Wait(_) | Expr::Cancel(_) => {}
         Expr::TeachingValue { .. } => {}
     }
 }

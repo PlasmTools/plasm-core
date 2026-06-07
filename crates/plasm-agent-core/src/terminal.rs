@@ -23,7 +23,7 @@ use crate::resolved_plan_http::{
     ResolvedPlanProtocolVersion, ResolvedPlanRequest, ResolvedPlanRunMode,
     RESOLVED_PLAN_CONTENT_TYPE,
 };
-use crate::terminal_cli::{validate_context_args, Cli, Cmd};
+use crate::terminal_cli::{validate_context_args, Cli, Cmd, RunModeCli};
 use crate::terminal_mirror::{mirror_eprintln, MirrorOpKind, SessionMirror};
 use crate::terminal_session::ClientSymbolSession;
 use crate::terminal_state::{
@@ -380,6 +380,41 @@ async fn send_bytes(
     let hdrs = res.headers().clone();
     let bytes = res.bytes().await?.to_vec();
     Ok((status, hdrs, bytes))
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn post_execute_program(
+    client: &Client,
+    server: &str,
+    profile: &TerminalProfile,
+    prompt_hash: &str,
+    session: &str,
+    program: &str,
+    accept: &str,
+    wait: bool,
+    force: bool,
+    plan_commit_ref: Option<&str>,
+) -> Result<(StatusCode, HeaderMap, Vec<u8>)> {
+    let mut query = format!("wait={wait}");
+    if force {
+        query.push_str("&force=true");
+    }
+    if let Some(pc) = plan_commit_ref.map(str::trim).filter(|s| !s.is_empty()) {
+        query.push_str("&plan_commit_ref=");
+        query.push_str(pc);
+    }
+    let path = format!("/execute/{prompt_hash}/{session}?{query}");
+    send_bytes(
+        client,
+        server,
+        profile,
+        Method::POST,
+        &path,
+        Some(accept),
+        Some("text/plain"),
+        Some(program.as_bytes().to_vec()),
+    )
+    .await
 }
 
 async fn http_create_session(
@@ -871,12 +906,10 @@ pub async fn run_terminal() -> Result<()> {
             let line =
                 String::from_utf8(body).map_err(|_| anyhow!("run: program must be UTF-8"))?;
             let program = line.trim().to_string();
-            let plan_json = sym
-                .compile_program_to_plan(&program)
-                .context("compile program to plan")?;
-            parse_and_validate_plan_json(&plan_json).map_err(|e| anyhow!("plan: {e}"))?;
-            let plan_bytes =
-                serde_json::to_vec_pretty(&plan_json).map_err(|e| anyhow!("plan json: {e}"))?;
+            let is_operation_continuation =
+                program.starts_with("wait(") || program.starts_with("cancel(");
+            let post_program_live = is_operation_continuation
+                || (run.mode == RunModeCli::Run && !run.wait);
             let run_mode = run.mode.into();
             let mode_kind = if run_mode == ResolvedPlanRunMode::Plan {
                 MirrorOpKind::Plan
@@ -886,13 +919,67 @@ pub async fn run_terminal() -> Result<()> {
             let mut session_mirror = SessionMirror::open(&sym.client_session_id)?;
             let op_dir = session_mirror.alloc_dir(mode_kind)?;
             session_mirror.write_file(&op_dir, "program.plasm", program.as_bytes())?;
-            session_mirror.write_file(&op_dir, "plan.json", &plan_bytes)?;
             let client = Client::builder()
                 .build()
                 .map_err(|e| anyhow!("http client: {e}"))?;
             let binding = ensure_execution_binding(&client, &server, &profile, &mut sym).await?;
             let ph = binding.prompt_hash.trim();
             let sid = binding.session.trim();
+            if post_program_live {
+                let (st, rh, out) = post_execute_program(
+                    &client,
+                    &server,
+                    &profile,
+                    ph,
+                    sid,
+                    &program,
+                    run.accept.as_accept_header(),
+                    run.wait,
+                    run.force,
+                    run.plan_commit_ref.as_deref(),
+                )
+                .await?;
+                let accept_hint = run.accept.as_accept_header();
+                let (_, body_txt) =
+                    session_mirror.write_pair(&op_dir, "body", &out, Some(accept_hint))?;
+                let rel = session_mirror.rel_dir_for_display(&op_dir);
+                session_mirror.update_latest_pointer(&rel)?;
+                mirror_eprintln(&body_txt);
+                if !st.is_success() {
+                    eprintln!("run: HTTP {}", st);
+                    std::io::stdout().write_all(&out)?;
+                    std::process::exit(1);
+                }
+                std::io::stdout().write_all(&out)?;
+                if !out.ends_with(b"\n") {
+                    println!();
+                }
+                if run_mode != ResolvedPlanRunMode::Plan {
+                    if let Some(rid) = extract_run_id_from_response(&rh, &out) {
+                        let _ = mirror_run_snapshot(
+                            &client,
+                            &MirrorRunSnapshotCtx {
+                                server: &server,
+                                profile: &profile,
+                                client_session_id: &sym.client_session_id,
+                                prompt_hash: ph,
+                                session: sid,
+                                run_id: &rid,
+                                op_dir: &op_dir,
+                            },
+                        )
+                        .await;
+                    }
+                }
+                return Ok(());
+            }
+            let plan_json = sym
+                .compile_program_to_plan(&program)
+                .context("compile program to plan")?;
+            parse_and_validate_plan_json(&plan_json).map_err(|e| anyhow!("plan: {e}"))?;
+            let plan_bytes =
+                serde_json::to_vec_pretty(&plan_json).map_err(|e| anyhow!("plan json: {e}"))?;
+            session_mirror.write_file(&op_dir, "plan.json", &plan_bytes)?;
             let req = ResolvedPlanRequest {
                 protocol_version: ResolvedPlanProtocolVersion::V1.as_u16(),
                 client_session_id: sym.client_session_id.clone(),

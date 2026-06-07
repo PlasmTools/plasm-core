@@ -4,7 +4,7 @@ use crate::http_resilience::{HttpResiliencePolicy, ResilientHttpTransport};
 use crate::http_transport::{HttpTransport, ReqwestHttpTransport};
 use crate::materialization::{CacheTelemetry, ExecutionCacheConsult, SessionMaterialization};
 use crate::preflight::{apply_preflight_steps, PreflightInvoke};
-use crate::{AuthResolver, CachedEntity, EntityCompleteness, RuntimeError};
+use crate::{AuthResolver, CancelSignal, CachedEntity, EntityCompleteness, RuntimeError};
 use indexmap::IndexMap;
 use plasm_compile::{
     compile_operation, compile_query, decode_entities, parse_capability_template,
@@ -309,6 +309,23 @@ tokio::task_local! {
 }
 
 tokio::task_local! {
+    /// Cooperative cancellation for pagination/hydration loops during one execute task scope.
+    static EXECUTION_CANCEL: Option<CancelSignal>;
+}
+
+/// Checked between pagination pages and hydrate batches inside an execute task scope.
+#[inline]
+pub fn cooperative_cancel_check() -> Result<(), RuntimeError> {
+    if EXECUTION_CANCEL
+        .try_with(|c| c.as_ref().is_some_and(CancelSignal::is_cancelled))
+        .unwrap_or(false)
+    {
+        return Err(RuntimeError::Cancelled);
+    }
+    Ok(())
+}
+
+tokio::task_local! {
     /// When [`ExecuteOptions::federation`] is set, per-catalog HTTP backends apply per outbound request.
     static EXECUTION_FEDERATION: Option<std::sync::Arc<plasm_core::FederationDispatch>>;
 }
@@ -536,6 +553,8 @@ pub struct ExecuteOptions {
     /// ([`merge_plasm_execute_session_share_token_env`]) and Proof `proof_base_token` as `base_token`
     /// ([`merge_plasm_execute_session_proof_base_token_env`]).
     pub execute_session: Option<std::sync::Arc<ExecuteSessionMaterial>>,
+    /// Cooperative cancellation checked between pagination/hydration batches.
+    pub cancel: Option<CancelSignal>,
 }
 
 impl std::fmt::Debug for ExecuteOptions {
@@ -606,6 +625,7 @@ impl ExecutionEngine {
     }
 
     /// Task locals for fingerprint sink, HTTP base URL, auth override, compile-plugin hooks (one nested region).
+    #[allow(clippy::too_many_arguments)]
     async fn run_in_execute_task_scopes<Fut, T>(
         base: Arc<str>,
         auth_override: Option<Arc<AuthResolver>>,
@@ -613,6 +633,7 @@ impl ExecutionEngine {
         request_fingerprint_sink: Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>,
         federation: Option<std::sync::Arc<plasm_core::FederationDispatch>>,
         execute_session: Option<std::sync::Arc<ExecuteSessionMaterial>>,
+        cancel: Option<CancelSignal>,
         fut: Fut,
     ) -> T
     where
@@ -629,7 +650,10 @@ impl ExecutionEngine {
                                     .scope(Some(plugin_hooks), async move {
                                         EXECUTION_AUTH_RESOLVER
                                             .scope(auth_override, async move {
-                                                EXECUTION_HTTP_BASE.scope(base, fut).await
+                                                EXECUTION_CANCEL.scope(cancel, async move {
+                                                    EXECUTION_HTTP_BASE.scope(base, fut).await
+                                                })
+                                                .await
                                             })
                                             .await
                                     })
@@ -786,6 +810,7 @@ impl ExecutionEngine {
                 compile_operation_fn: None,
                 compile_query_fn: None,
             },
+            None,
             None,
             None,
             None,
@@ -960,6 +985,7 @@ impl ExecutionEngine {
         Box<dyn std::future::Future<Output = Result<ExecutionResult, RuntimeError>> + Send + 'a>,
     > {
         Box::pin(async move {
+            crate::check_cancel(opts.cancel.as_ref())?;
             let start_time = std::time::Instant::now();
             let base = self.resolve_http_base_from_opts(&opts);
             let auth_override = opts.auth_resolver_override.clone();
@@ -967,6 +993,7 @@ impl ExecutionEngine {
             let fp_sink = opts.request_fingerprint_sink.clone();
             let federation = opts.federation.clone();
             let execute_session = opts.execute_session.clone();
+            let cancel = opts.cancel.clone();
             let mut result = Self::run_in_execute_task_scopes(
                 base,
                 auth_override,
@@ -974,6 +1001,7 @@ impl ExecutionEngine {
                 fp_sink.clone(),
                 federation,
                 execute_session,
+                cancel,
                 async move {
                     let mut stream = self.execute_stream(expr, cgs, mat, mode, consume, opts)?;
                     collect_query_stream(&mut stream).await
@@ -1012,6 +1040,14 @@ impl ExecutionEngine {
             Expr::Query(query) => self.query_to_stream(query, cgs, mat, execution_mode, consume),
             Expr::Page(_) => Err(RuntimeError::ConfigurationError {
                 message: "`page(pg#)` continuations are executed via `ExecutionEngine::execute_pagination_resume`"
+                    .to_string(),
+            }),
+            Expr::Wait(_) => Err(RuntimeError::ConfigurationError {
+                message: "`wait(sN_oM)` continuations are executed by the agent host (async plan poll)"
+                    .to_string(),
+            }),
+            Expr::Cancel(_) => Err(RuntimeError::ConfigurationError {
+                message: "`cancel(sN_oM)` continuations are executed by the agent host (async plan cancel)"
                     .to_string(),
             }),
             Expr::Get(get) => {
@@ -1413,6 +1449,7 @@ impl ExecutionEngine {
             let mut accumulated_total = 0usize;
 
             loop {
+                cooperative_cancel_check()?;
                 if pages >= MAX_PAGES {
                     Err(RuntimeError::ConfigurationError {
                         message: format!(
@@ -1657,6 +1694,7 @@ impl ExecutionEngine {
             let fp_sink = opts.request_fingerprint_sink.clone();
             let federation = opts.federation.clone();
             let execute_session = opts.execute_session.clone();
+            let cancel = opts.cancel.clone();
             let mut result = Self::run_in_execute_task_scopes(
                 base,
                 auth_override,
@@ -1664,6 +1702,7 @@ impl ExecutionEngine {
                 fp_sink.clone(),
                 federation,
                 execute_session,
+                cancel,
                 async move {
                     let mut stream = self
                         .execute_pagination_resume_stream(resume, cgs, mat, mode, consume, &opts)?;
@@ -2330,6 +2369,7 @@ impl ExecutionEngine {
         .buffer_unordered(concurrency);
 
         while let Some(res) = stream.next().await {
+            cooperative_cancel_check()?;
             let (entity, source) = res?;
             if source == ExecutionSource::Live {
                 extra_network += 1;
@@ -3034,6 +3074,7 @@ impl ExecutionEngine {
             .buffer_unordered(concurrency);
 
             while let Some(res) = stream.next().await {
+                cooperative_cancel_check()?;
                 let (entity, source) = res?;
                 if source == ExecutionSource::Live {
                     any_live = true;
@@ -3117,6 +3158,7 @@ impl ExecutionEngine {
             .buffer_unordered(concurrency);
 
             while let Some(res) = stream.next().await {
+                cooperative_cancel_check()?;
                 let (parent_idx, result, branch) = res?;
                 mat.absorb_branch(branch)?;
                 if result.source == ExecutionSource::Live {
@@ -3478,6 +3520,7 @@ impl ExecutionEngine {
         let mut extra_network = 0usize;
         let mut extra_cache_hits = 0usize;
         while let Some(res) = stream.next().await {
+            cooperative_cancel_check()?;
             let (entity, source) = res?;
             if source == ExecutionSource::Live {
                 any_live = true;
@@ -3646,6 +3689,7 @@ impl ExecutionEngine {
             .buffer_unordered(concurrency);
 
             while let Some(res) = stream.next().await {
+                cooperative_cancel_check()?;
                 let (entity, source) = res?;
                 if source == ExecutionSource::Live {
                     any_live = true;
@@ -3715,6 +3759,7 @@ impl ExecutionEngine {
         let fp_sink = opts.request_fingerprint_sink.clone();
         let federation = opts.federation.clone();
         let execute_session = opts.execute_session.clone();
+        let cancel = opts.cancel.clone();
         Self::run_in_execute_task_scopes(
             base,
             auth_override,
@@ -3722,6 +3767,7 @@ impl ExecutionEngine {
             fp_sink,
             federation,
             execute_session,
+            cancel,
             async {
                 use futures_util::stream::{self, StreamExt};
 
@@ -3828,6 +3874,7 @@ impl ExecutionEngine {
                         .buffer_unordered(concurrency);
 
                         while let Some(res) = stream.next().await {
+                            cooperative_cancel_check()?;
                             match res {
                                 Ok((_result, branch)) => {
                                     mat.absorb_branch(branch)?;

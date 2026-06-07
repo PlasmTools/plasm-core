@@ -28,7 +28,7 @@ use plasm_runtime::{
     auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
     CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecuteSessionMaterial, ExecutionResult,
     ExecutionSource, ExecutionStats, QueryPaginationResumeData, RuntimeError,
-    SessionMaterialization, StreamConsumeOpts,
+    CancelSignal, SessionMaterialization, StreamConsumeOpts,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -360,6 +360,150 @@ fn append_paging_hint_markdown(
     )
 }
 
+/// Poll an in-flight async plan operation (`wait(sN_oM)`).
+pub async fn handle_wait_operation(
+    sess: &ExecuteSession,
+    trace: Option<&PlasmTraceContext>,
+    handle: &plasm_core::OperationHandle,
+) -> Result<crate::plasm_plan_run::PlasmPlanRunResult, String> {
+    let key = crate::operation::resolve_operation_storage_handle(trace, handle)?;
+    let logical_session_ref = trace
+        .and_then(|t| t.logical_session_ref.as_deref())
+        .unwrap_or("s0");
+    let Some(snapshot) = sess.get_operation_poll_snapshot(&key) else {
+        return Err(format!(
+            "unknown operation handle `{}` — stale continuation or wrong logical session; use `wait({logical_session_ref}_oN)` from the latest tool result",
+            key.as_str()
+        ));
+    };
+    match snapshot {
+        crate::operation::OperationPollSnapshot::Running(progress) => {
+            let markdown =
+                crate::operation::operation_running_markdown(&key, &progress);
+            let mut meta = serde_json::Map::new();
+            meta.insert(
+                "plasm".into(),
+                serde_json::Value::Object(crate::operation::operation_meta_object(
+                    logical_session_ref,
+                    &key,
+                    crate::operation::OperationPhase::Running,
+                    Some(&progress),
+                    None,
+                    None,
+                )),
+            );
+            Ok(crate::plasm_plan_run::PlasmPlanRunResult {
+                version: serde_json::json!({}),
+                node_results: Vec::new(),
+                graph_summary: serde_json::json!({}),
+                plan_dag: serde_json::json!({}),
+                code_plan_run_artifacts: Vec::new(),
+                run_markdown: Some(markdown),
+                run_plasm_meta: Some(meta),
+                return_steps: Vec::new(),
+            })
+        }
+        crate::operation::OperationPollSnapshot::Succeeded(result) => {
+            Ok((*result).clone())
+        }
+        crate::operation::OperationPollSnapshot::Failed(error) => Err(error),
+        crate::operation::OperationPollSnapshot::Cancelled(progress) => {
+            let markdown = crate::operation::operation_cancelled_markdown(&key);
+            let mut meta = serde_json::Map::new();
+            meta.insert(
+                "plasm".into(),
+                serde_json::Value::Object(crate::operation::operation_meta_object(
+                    logical_session_ref,
+                    &key,
+                    crate::operation::OperationPhase::Cancelled,
+                    Some(&progress),
+                    None,
+                    None,
+                )),
+            );
+            Ok(crate::plasm_plan_run::PlasmPlanRunResult {
+                version: serde_json::json!({}),
+                node_results: Vec::new(),
+                graph_summary: serde_json::json!({}),
+                plan_dag: serde_json::json!({}),
+                code_plan_run_artifacts: Vec::new(),
+                run_markdown: Some(markdown),
+                run_plasm_meta: Some(meta),
+                return_steps: Vec::new(),
+            })
+        }
+    }
+}
+
+/// Cancel an in-flight async plan operation (`cancel(sN_oM)`).
+pub async fn handle_cancel_operation(
+    sess: &ExecuteSession,
+    trace: Option<&PlasmTraceContext>,
+    handle: &plasm_core::OperationHandle,
+) -> Result<crate::plasm_plan_run::PlasmPlanRunResult, String> {
+    let key = crate::operation::resolve_operation_storage_handle(trace, handle)?;
+    let logical_session_ref = trace
+        .and_then(|t| t.logical_session_ref.as_deref())
+        .unwrap_or("s0");
+    if !sess.cancel_operation(&key) {
+        return Err(format!(
+            "unknown operation handle `{}`",
+            key.as_str()
+        ));
+    }
+    let progress = sess
+        .get_operation_progress(&key)
+        .unwrap_or_default();
+    let markdown = crate::operation::operation_cancelled_markdown(&key);
+    let mut meta = serde_json::Map::new();
+    meta.insert(
+        "plasm".into(),
+        serde_json::Value::Object(crate::operation::operation_meta_object(
+            logical_session_ref,
+            &key,
+            crate::operation::OperationPhase::Cancelled,
+            Some(&progress),
+            None,
+            None,
+        )),
+    );
+    Ok(crate::plasm_plan_run::PlasmPlanRunResult {
+        version: serde_json::json!({}),
+        node_results: Vec::new(),
+        graph_summary: serde_json::json!({}),
+        plan_dag: serde_json::json!({}),
+        code_plan_run_artifacts: Vec::new(),
+        run_markdown: Some(markdown),
+        run_plasm_meta: Some(meta),
+        return_steps: Vec::new(),
+    })
+}
+
+/// Default logical-session slot for HTTP execute long-op handles (`s0_oN`) when no MCP `plasm_context`.
+fn http_operation_trace() -> crate::trace_sink_emit::PlasmTraceContext {
+    crate::trace_sink_emit::PlasmTraceContext {
+        trace_id: Uuid::nil(),
+        call_index: None,
+        mcp_session_id: None,
+        logical_session_id: None,
+        logical_session_ref: Some("s0".into()),
+    }
+}
+
+/// Dispatch `wait(...)` / `cancel(...)` program bodies before plan compile.
+pub async fn try_dispatch_operation_program(
+    sess: &ExecuteSession,
+    trace: Option<&PlasmTraceContext>,
+    program: &str,
+) -> Option<Result<crate::plasm_plan_run::PlasmPlanRunResult, String>> {
+    let expr = crate::operation::try_parse_operation_continuation(sess, program)?;
+    Some(match expr {
+        Expr::Wait(w) => handle_wait_operation(sess, trace, &w.handle).await,
+        Expr::Cancel(c) => handle_cancel_operation(sess, trace, &c.handle).await,
+        _ => None?,
+    })
+}
+
 fn tool_meta_from_handles(
     handles: &[RunArtifactHandle],
     omitted_from_summary: &[String],
@@ -513,6 +657,15 @@ pub(crate) struct ExecuteRunQuery {
     /// When `plan` (case-insensitive), compile/type-check only — no live HTTP side effects (see also `X-Plasm-Run-Mode`).
     #[serde(default)]
     pub mode: Option<String>,
+    /// When `false`, start live execute in the background and return `wait(sN_oM)` immediately.
+    #[serde(default)]
+    pub wait: Option<bool>,
+    /// Bypass dry-run **review** soft gate (prefer `plan_commit_ref` from plan dry-run).
+    #[serde(default)]
+    pub force: Option<bool>,
+    /// Plan acceptance token (`pcN`) from a matching plan dry-run.
+    #[serde(default)]
+    pub plan_commit_ref: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -2063,6 +2216,8 @@ fn trace_expr_api_meta(expr: &plasm_core::Expr) -> (Option<String>, String) {
         ),
         Expr::Chain(_) => (None, "chain".to_string()),
         Expr::Page(p) => (None, format!("page {}", p.handle)),
+        Expr::Wait(w) => (None, format!("wait {}", w.handle)),
+        Expr::Cancel(c) => (None, format!("cancel {}", c.handle)),
         Expr::TeachingValue { .. } => (None, "teaching_value".to_string()),
     }
 }
@@ -2144,6 +2299,7 @@ fn run_line_error_string(e: RunLineError) -> String {
         RunLineError::Runtime(e, src) => format!("{e}\nsource expression: {src}"),
         RunLineError::ArtifactSerialization(e) => format!("artifact serialization failed: {e}"),
         RunLineError::ArtifactPersist(d) => format!("run artifact persist failed: {d}"),
+        RunLineError::Operation(_) => "operation continuation".to_string(),
     }
 }
 
@@ -2600,6 +2756,9 @@ pub(crate) enum RunLineError {
     ArtifactSerialization(serde_json::Error),
     /// Durable run snapshot write failed (object store / memory backend).
     ArtifactPersist(String),
+    /// Async operation continuation (`wait` / `cancel`) — success payload via `Err` channel for unified ingress.
+    #[allow(dead_code)]
+    Operation(Box<crate::plasm_plan_run::PlasmPlanRunResult>),
 }
 
 #[allow(dead_code)]
@@ -2611,6 +2770,7 @@ fn run_line_error_metric_labels(err: &RunLineError) -> (&'static str, &'static s
         RunLineError::Runtime(_, _) => ("execute", "runtime"),
         RunLineError::ArtifactSerialization(_) => ("artifact", "serialization"),
         RunLineError::ArtifactPersist(_) => ("artifact", "persist"),
+        RunLineError::Operation(_) => ("operation", "continuation"),
     }
 }
 
@@ -2899,6 +3059,22 @@ pub(crate) async fn run_parsed_plasm_line(
             plasm_core::PreflightToken::VERIFIED
         }
     };
+    match &parsed.expr {
+        Expr::Wait(w) => {
+            let out = handle_wait_operation(sess, trace, &w.handle)
+                .await
+                .map_err(RunLineError::Parse)?;
+            return Err(RunLineError::Operation(Box::new(out)));
+        }
+        Expr::Cancel(c) => {
+            let out = handle_cancel_operation(sess, trace, &c.handle)
+                .await
+                .map_err(RunLineError::Parse)?;
+            return Err(RunLineError::Operation(Box::new(out)));
+        }
+        _ => {}
+    }
+
     let wall = Instant::now();
     let mut log_expr = format!("→ {}", crate::expr_display::expr_display(&parsed.expr));
     if let Some(ref proj) = parsed.projection {
@@ -3106,6 +3282,7 @@ pub(crate) async fn run_parsed_plasm_line(
             ui_origin: http_backend_for_root.clone(),
             catalog_bind,
         })),
+        cancel: crate::operation::plan_execute_cancel_signal(),
     };
 
     let mut result = match try_proof_document_share_bind(sess, exec_cgs, &parsed.expr).await? {
@@ -4222,6 +4399,35 @@ fn respond_plan_run_live_result(
 ) -> Response {
     let steps = &result.return_steps;
     if steps.is_empty() {
+        if result.run_markdown.is_some() || result.run_plasm_meta.is_some() {
+            let payload = serde_json::json!({
+                "operation": true,
+                "run_markdown": result.run_markdown,
+                "_meta": result
+                    .run_plasm_meta
+                    .as_ref()
+                    .map(|m| serde_json::Value::Object(m.clone())),
+                "plan_dag": result.plan_dag,
+            });
+            if let ExecResponseKind::Table = kind {
+                let md = result.run_markdown.as_deref().unwrap_or("");
+                return (
+                    StatusCode::OK,
+                    [(CONTENT_TYPE, "text/plain; charset=utf-8")],
+                    md.to_string(),
+                )
+                    .into_response();
+            }
+            if matches!(kind, ExecResponseKind::Toon | ExecResponseKind::Ndjson) {
+                return respond_plan_payload(kind, payload);
+            }
+            return (
+                StatusCode::OK,
+                [(CONTENT_TYPE, "application/json; charset=utf-8")],
+                Json(payload),
+            )
+                .into_response();
+        }
         return problem_response(
             Problem::custom(
                 ProblemStatus::INTERNAL_SERVER_ERROR,
@@ -4353,6 +4559,22 @@ async fn post_run_execute_session(
         }
     };
 
+    if let Some(op_result) =
+        try_dispatch_operation_program(&sess, Some(&http_operation_trace()), &program).await
+    {
+        return match op_result {
+            Ok(result) => respond_plan_run_live_result(kind, &result, &sess),
+            Err(e) => problem_response(
+                Problem::custom(
+                    ProblemStatus::BAD_REQUEST,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                )
+                .with_title("Bad Request")
+                .with_detail(e),
+            ),
+        };
+    }
+
     let plan_only = run_mode_is_plan(&headers, &run_q);
     let plan_name = "http_execute_program";
     let pipeline = st.engine.prompt_pipeline();
@@ -4405,18 +4627,147 @@ async fn post_run_execute_session(
                 );
             }
         };
+        let plan_json = crate::plasm_plan_run::plasm_plan_dag_json(&dry);
+        let compact = crate::plan_dry_display::build_plan_dry_compact_view(
+            dry.validated_plan(),
+            &dry.topological_order,
+            &dry.review,
+            &dry.graph_summary,
+            Some(&sess),
+        );
+        let commit_ref = sess.mint_plan_commit_ref();
+        sess.register_plan_commit(crate::operation::PlanCommitRecord {
+            commit_ref: commit_ref.clone(),
+            commit_id: crate::operation::compute_plan_commit_id_from_dry(&dry),
+            dry_review: dry.review.clone(),
+            verdict: compact.verdict,
+            expires_at: std::time::Instant::now() + crate::operation::PLAN_COMMIT_TTL,
+        });
+        let mut plasm_meta = crate::operation::plan_commit_meta(
+            &commit_ref,
+            &dry.review,
+            compact.verdict,
+        );
+        plasm_meta.insert("dry_run".into(), serde_json::json!(true));
+        plasm_meta.insert("plan".into(), plan_json.clone());
         let preview = serde_json::json!({
             "plan": true,
-            "plan_dag": crate::plasm_plan_run::plasm_plan_dag_json(&dry),
+            "plan_dag": plan_json,
             "node_results": dry.node_results,
             "graph_summary": dry.graph_summary,
             "source": program,
+            "_meta": {
+                "plasm": plasm_meta,
+            },
         });
         return respond_plan_payload(kind, preview);
     }
 
+    let wait_live = run_q.wait.unwrap_or(true);
+    let force_run = run_q.force.unwrap_or(false);
+    let plan_commit_ref = run_q
+        .plan_commit_ref
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .and_then(plasm_core::PlanCommitRef::parse);
     let ph_str = prompt_hash.to_string();
     let sid_str = session_id.to_string();
+
+    let dry_gate = match crate::plasm_plan_run::evaluate_validated_plasm_plan_dry(&sess, &validated)
+    {
+        Ok(d) => d,
+        Err(e) => {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::BAD_REQUEST,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                )
+                .with_title("Bad Request")
+                .with_detail(e),
+            );
+        }
+    };
+    let compact = crate::plan_dry_display::build_plan_dry_compact_view(
+        dry_gate.validated_plan(),
+        &dry_gate.topological_order,
+        &dry_gate.review,
+        &dry_gate.graph_summary,
+        Some(&sess),
+    );
+    if crate::operation::plan_requires_review_gate(
+        compact.verdict,
+        force_run,
+        plan_commit_ref.as_ref(),
+    ) {
+        return problem_response(
+            Problem::custom(
+                ProblemStatus::BAD_REQUEST,
+                Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+            )
+            .with_title("Bad Request")
+            .with_detail(
+                "plan_requires_review: call plan dry-run first, then pass plan_commit_ref or force=true",
+            ),
+        );
+    }
+    if let Some(pc) = plan_commit_ref.as_ref() {
+        if let Err(e) = crate::operation::verify_plan_commit_for_dry(&sess, pc, &dry_gate) {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::BAD_REQUEST,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                )
+                .with_title("Bad Request")
+                .with_detail(e),
+            );
+        }
+    }
+
+    if !wait_live {
+        let handle = sess.mint_operation_handle("s0");
+        crate::operation::spawn_async_plan_run(
+            Arc::clone(&sess),
+            Arc::new(st.clone()),
+            ph_str.clone(),
+            sid_str.clone(),
+            validated,
+            handle.clone(),
+            CancelSignal::new(),
+        );
+        let markdown = crate::operation::operation_accept_markdown(
+            &handle,
+            plan_commit_ref.as_ref(),
+            Some(compact.verdict),
+        );
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            "plasm".into(),
+            serde_json::Value::Object(crate::operation::operation_meta_object(
+                "s0",
+                &handle,
+                crate::operation::OperationPhase::Running,
+                None,
+                plan_commit_ref.as_ref(),
+                Some(compact.verdict),
+            )),
+        );
+        return respond_plan_run_live_result(
+            kind,
+            &crate::plasm_plan_run::PlasmPlanRunResult {
+                version: serde_json::json!({}),
+                node_results: Vec::new(),
+                graph_summary: serde_json::json!({}),
+                plan_dag: plan,
+                code_plan_run_artifacts: Vec::new(),
+                run_markdown: Some(markdown),
+                run_plasm_meta: Some(meta),
+                return_steps: Vec::new(),
+            },
+            &sess,
+        );
+    }
+
     match crate::execute_pipeline::ExecutePipeline::run_program(
         &sess,
         &st,

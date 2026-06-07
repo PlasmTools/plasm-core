@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm-core/src/prompt_render.rs
+source: crates/plasm-core/src/prompt_render.rs
 expression: prompt
 ---
 # Follow the grammar and the teaching TSV below; reply with one valid plasm_program:
@@ -28,6 +28,7 @@ expression: prompt
 # - Projection rows ending `[p#,…]` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
 # - Relation rows end with `.r#`/`.wire`; apply them to any executable receiver row for that same entity type.
 # - `page(sN_pgM)` uses a continuation handle returned by a prior response; copy the handle exactly and optionally add `, limit=N`.
+# - `wait(sN_oM)` polls an in-flight async plan run; `cancel(sN_oM)` cancels it — copy handles from accept responses. Start live execute with `wait: false`; when dry verdict is **review**, pass `plan_commit_ref` (`pcN`) from plan dry-run or `force: true`.
 #
 # Grammar:
 # plasm_program ::= plasm_expr | binding+ roots
@@ -35,7 +36,7 @@ expression: prompt
 # roots         ::= root ("," root)*
 # root          ::= ident | plasm_expr
 # node          ::= (plasm_expr | ident) postfix* row_template? | ident "=>" value_or_template
-# plasm_expr    ::= entity_expr [projection] | page
+# plasm_expr    ::= entity_expr [projection] | page | wait | cancel
 # entity_expr   ::= query_all | get | query | relation | method | create_action | search
 # query_all     ::= e#
 # get           ::= e#(<id>) or e#(p#=<value>, p#=<value>)
@@ -43,13 +44,15 @@ expression: prompt
 # relation      ::= <receiver>.r# | <receiver>.wire
 # method        ::= e#(<id>).m#() or e#(<id>).m#(p#=<value>, …)
 # create_action ::= e#.m#(p#=<value>, …)
-# search        ::= e#~"text"
+# search        ::= e#~"text"[{p#=…}]?
 # page          ::= page(sN_pgM) | page(sN_pgM, limit=N)
+# wait          ::= wait(sN_oM)
+# cancel        ::= cancel(sN_oM)
 # projection    ::= e#(<id>)[p#,…] | "[" fields "]"
-# postfix       ::= ".limit(N)" | ".page_size(N)" | ".sort(field[, dir])" | ".filter{…}" | ".filter(…)" | ".aggregate(specs)" | ".group_by(field, specs)" | ".singleton()" | "[" fields "]"
+# postfix       ::= ".limit(N)" | ".page_size(N)" | ".sort(field[, dir])" | ".filter{…}" | ".filter(…)" | ".aggregate(specs)" | ".group_by(field, specs)" | ".dedupe(field[, …])" | ".distinct(field[, …])" | ".distinct()" | ".singleton()" | "[" fields "]"
 # row_template  ::= ("[" fields "]")? "<<TAG" template_body "TAG"
 # fields        ::= [p#,…]
-# specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) [, ...]
+# specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) | name=first(field) | name=last(field) [, ...]
 # dir           ::= desc | asc | descending | ascending
 # value_or_template ::= literal | ident | ident.field | _.field | [elem, ...] | heredoc
 # literal       ::= quoted string | number | bool | null
@@ -69,6 +72,7 @@ expression: prompt
 # - `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `m#(..., p#=<<TXT` + newline body + `TXT` newline `)`.
 #
 # Common pitfalls:
+# - Row contract: `{…}` / `~"…"{…}` inputs fetch or filter rows; only `rows:` fields from the teaching row may be used in `[fields]`, `.group_by`, `.sort`, `.dedupe`, or row `.filter`.
 # - Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.
 # - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.
 # - Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.r#` or `issues.labels` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.
@@ -97,7 +101,7 @@ p114	v87 · protected
 p20	v9 · html_url
 e1{p23=e17(p7=$, p22=$)}[p7,p22,p220,p17,p114,p20]	→ [e1] · projection · Git branch
 e1(p7=$, p22=$, p220=$)	→ e1
-e1{p23=e17(p7=$, p22=$)}	→ [e1]
+e1{p23=e17(p7=$, p22=$)}[p220,p17,p20,p7,p114,p22]	→ [e1] · inputs: p23 · rows: p220,p17,p20,p7,p114,p22
 v88	date
 v100	markdown
 v89	int
@@ -117,7 +121,7 @@ p164	v89 · stats_deletions
 p167	v89 · total_changes
 e2{p23=e17(p7=$, p22=$), p19=$, p223=$, p199=$, p200=$, p128=$, p131=$}[p7,p22,p19,p191,p20,p235,p118,p119,p134,p163,p164,p167]	→ [e2] · projection · A repository commit with message, times, and relations to author and committer users and to changed files
 e2(p7=$, p22=$, p19=$)	→ e2
-e2{p23=e17(p7=$, p22=$), p19=$, p223=$, p199=$, p200=$, p128=$, p131=$}	→ [e2] · opt: p19, p223, p199, p200, p128, p131
+e2{p23=e17(p7=$, p22=$), p19=$, p223=$, p199=$, p200=$, p128=$, p131=$}[p7,p22,p19,p191,p20,p235,p118,p119,p134,p163,p164,p167]	→ [e2] · inputs: p23,p19,p223,p199,p200,p128,p131 · rows: p7,p22,p19,p191,p20,p235,p118,p119,p134,p163,p164,p167 · opt: p19, p223, p199, p200, p128, p131
 e2(p7=$, p22=$, p19=$).r2	relation e2 → e19 · GitHub user for the commit author, when the API provides one
 e2(p7=$, p22=$, p19=$).r3	relation e2 → e19 · GitHub user for the committer, when the API provides one
 v3	bool · Count anonymous contributions too
@@ -125,7 +129,7 @@ p3	v3 · anon
 p5	v4 · login
 p136	v89 · contributions
 e3{p23=e17(p7=$, p22=$), p3=$}[p5,p136,p7,p22]	→ [e3] · projection · Repository contributor with commit stats
-e3{p23=e17(p7=$, p22=$), p3=$}	→ [e3] · opt: p3
+e3{p23=e17(p7=$, p22=$), p3=$}[p5,p136,p7,p22]	→ [e3] · inputs: p23,p3 · rows: p5,p136,p7,p22 · opt: p3
 v7	date · Timestamp when a GitHub resource was created
 v13	date · Timestamp when a GitHub resource was last updated
 p211	v101 · id
@@ -135,7 +139,7 @@ p135	v89 · comments
 p15	v7 · created_at
 p24	v13 · updated_at
 e4[p211,p189,p20,p115,p135,p15,p24]	→ e4 · projection · A user gist
-e4	→ [e4]
+e4[p211,p135,p15,p189,p20,p115,p24]	→ [e4] · rows: p211,p135,p15,p189,p20,p115,p24
 e4(p211)	→ e4
 e4.r4	relation e4 → e19
 v95	select · all, closed, open
@@ -164,9 +168,12 @@ p38	v26 · since
 p42	v30 · sub_issue_id
 p43	v31 · sub_issue_id
 p46	v34 · sub_issue_id
+p108	v87 · issue_type_is_enabled
 p180	v95 · state
+p213	v101 · issue_type_node_id
 p214	v101 · labels
 p219	v101 · milestone
+p226	v101 · repository_url
 p141	v89 · id
 p36	v24 · number
 p233	v101 · title
@@ -192,9 +199,9 @@ e5.m11(p23=e17(p7=$, p22=$), p233=$,..)	→ e5 · [scope p23→e17] · opt: p187
 e5(p7=$, p22=$, p36=$).m16(p42=$,..)	→ () · opt: p41 · Add an existing issue as a sub-issue of this issue
 e5(p7=$, p22=$, p36=$).m18(p43=$)	→ () · Remove a sub-issue from this parent issue
 e5(p7=$, p22=$, p36=$).m19(p46=$,..)	→ () · opt: p44, p45 · Reorder a sub-issue within this parent issue
-e5{p23=e17(p7=$, p22=$), p180=$, p37=e19(p5), p214=$, p219=$, p38=$}	→ [e5] · opt: p180, p37, p214, p219, p38
-e5{p7=$, p22=$, p35=$}	→ [e5]
-e5~"text"	→ [e5]
+e5{p23=e17(p7=$, p22=$), p180=$, p37=e19(p5), p214=$, p219=$, p38=$}[p141,p187,p14,p135,p15,p20,p179,p143,p108,p212,p213,p109,p36,p7,p22,p226,p175,p40,p165,p47,p166,p233,p24]	→ [e5] · inputs: p23,p180,p37,p214,p219,p38 · rows: p141,p187,p14,p135,p15,p20,p179,p143,p108,p212,p213,p109,p36,p7,p22,p226,p175,p40,p165,p47,p166,p233,p24 · opt: p180, p37, p214, p219, p38
+e5{p7=$, p22=$, p35=$}[p141,p187,p14,p135,p15,p20,p179,p143,p108,p212,p213,p109,p36,p7,p22,p226,p175,p40,p165,p47,p166,p233,p24]	→ [e5] · inputs: p7,p22,p35 · rows: p141,p187,p14,p135,p15,p20,p179,p143,p108,p212,p213,p109,p36,p7,p22,p226,p175,p40,p165,p47,p166,p233,p24
+e5~"text"[p141,p187,p14,p135,p15,p20,p179,p143,p108,p212,p213,p109,p36,p7,p22,p226,p175,p40,p165,p47,p166,p233,p24]	→ [e5] · rows: p141,p187,p14,p135,p15,p20,p179,p143,p108,p212,p213,p109,p36,p7,p22,p226,p175,p40,p165,p47,p166,p233,p24
 e5(p7=$, p22=$, p36=$).r10	relation e5 → e19
 e5(p7=$, p22=$, p36=$).r8	relation e5 → [e8] · Labels on the issue. List and GET issue responses embed a `labels` array on the wire; use those when present. For aut…
 e5(p7=$, p22=$, p36=$).r9	relation e5 → e9
@@ -204,15 +211,15 @@ e6{p23=e17(p7=$, p22=$), p35=$, p31=$}[p141,p187,p15,p20,p24]	→ [e6] · projec
 e6.m21(p23=e17(p7=$, p22=$), p35=$, p187=$)	→ e6 · [scope p23→e17, p35] · Post a comment on an issue or pull request thread
 e6(p141).m22(p23=e17(p7=$, p22=$))	→ () · [scope p23→e17] · Delete an issue or pull request timeline comment
 e6(p141).m24(p23=e17(p7=$, p22=$), p187=$)	→ e6 · [scope p23→e17] · Update an issue or pull request comment
-e6{p23=e17(p7=$, p22=$), p35=$, p31=$}	→ [e6] · opt: p31
-e6{p23=e17(p7=$, p22=$), p31=$}	→ [e6] · opt: p31
+e6{p23=e17(p7=$, p22=$), p35=$, p31=$}[p141,p187,p15,p20,p24]	→ [e6] · inputs: p23,p35,p31 · rows: p141,p187,p15,p20,p24 · opt: p31
+e6{p23=e17(p7=$, p22=$), p31=$}[p141,p187,p15,p20,p24]	→ [e6] · inputs: p23,p31 · rows: p141,p187,p15,p20,p24 · opt: p31
 e6{p23=e17(p7=$, p22=$), p35=$, p31=$}.r5	relation e6 → e19
 p178	v94 · color
 p107	v87 · is_enabled
 p221	v101 · node_id
 p6	v4 · org
 e7{p6=$}[p141,p178,p15,p189,p107,p220,p221,p6,p24]	→ [e7] · projection · Organization-scoped issue type
-e7{p6=$}	→ [e7]
+e7{p6=$}[p141,p178,p15,p189,p107,p220,p221,p6,p24]	→ [e7] · inputs: p6 · rows: p141,p178,p15,p189,p107,p220,p221,p6,p24
 p201	v101 · color
 p102	v87 · default
 e8{p7=$, p22=$, p35=$}[p220,p7,p22,p141,p189,p201,p102]	→ [e8] · projection · Label for issues and PRs
@@ -220,8 +227,8 @@ e8(p7=$, p22=$, p220=$)	→ e8
 e8(p7=$, p22=$, p220=$).m28()	→ () · Delete a label from a repository
 e8(p7=$, p22=$, p220=$).m32()	→ e8 · opt: p55, p54, p189 · Update a label
 e8.m27(p23=e17(p7=$, p22=$), p220=$,..)	→ e8 · [scope p23→e17] · opt: p54, p189 · Create a label in a repository
-e8{p7=$, p22=$, p35=$}	→ [e8]
-e8{p23=e17(p7=$, p22=$)}	→ [e8]
+e8{p7=$, p22=$, p35=$}[p220,p201,p102,p189,p141,p7,p22]	→ [e8] · inputs: p7,p22,p35 · rows: p220,p201,p102,p189,p141,p7,p22
+e8{p23=e17(p7=$, p22=$)}[p220,p201,p102,p189,p141,p7,p22]	→ [e8] · inputs: p23 · rows: p220,p201,p102,p189,p141,p7,p22
 p147	v89 · number
 p148	v89 · open_issues
 p133	v89 · closed_issues
@@ -231,7 +238,7 @@ e9(p7=$, p22=$, p147=$)	→ e9
 e9(p7=$, p22=$, p147=$).m34()	→ () · Delete a milestone from a repository
 e9(p7=$, p22=$, p147=$).m37()	→ e9 · opt: p233, p189, p175, p121 · Update milestone
 e9.m33(p23=e17(p7=$, p22=$), p233=$,..)	→ e9 · [scope p23→e17] · opt: p189, p175, p121 · Create a milestone in a repository
-e9{p23=e17(p7=$, p22=$), p180=$}	→ [e9] · opt: p180
+e9{p23=e17(p7=$, p22=$), p180=$}[p147,p14,p133,p15,p189,p121,p20,p141,p148,p7,p22,p175,p233,p24]	→ [e9] · inputs: p23,p180 · rows: p147,p14,p133,p15,p189,p121,p20,p141,p148,p7,p22,p175,p233,p24 · opt: p180
 v46	date · Only notifications updated at or after this time
 v45	date · Only notifications updated before this time
 p57	v45 · before
@@ -244,7 +251,7 @@ p123	v88 · last_read_at
 p229	v101 · subscription_url
 e10[p211,p117,p225,p24,p123,p235,p229]	→ e10 · projection · A notification
 e10(p211).m39()	→ () · Mark a notification thread as read
-e10{p100=$, p111=$, p58=$, p57=$}	→ [e10] · opt: p100, p111, p58, p57
+e10{p100=$, p111=$, p58=$, p57=$}[p211,p123,p225,p229,p117,p24,p235]	→ [e10] · inputs: p100,p111,p58,p57 · rows: p211,p123,p225,p229,p117,p24,p235 · opt: p100, p111, p58, p57
 e10(p211)	→ e10
 p198	v101 · blog
 p216	v101 · location
@@ -261,11 +268,17 @@ v72	int · Repository-local pull request number
 v52	str · Head branch, or user:branch for a fork
 v51	str · Branch you want to merge into
 v70	str · Path or file name fragment to search for
+p16	v8 · base_sha
+p18	v8 · head_sha
 p63	v51 · base
 p64	v52 · head
 p82	v70 · q
+p110	v87 · mergeable
 p196	v101 · base
+p197	v101 · base_ref
 p209	v101 · head
+p210	v101 · head_ref
+p217	v101 · mergeable_state
 p84	v72 · number
 p103	v87 · draft
 p124	v88 · merged_at
@@ -275,9 +288,9 @@ e12(p7=$, p22=$, p84=$).m44()	→ () · opt: p203, p188, p67 · Merge a pull req
 e12(p7=$, p22=$, p84=$).m45()	→ e12 · opt: p233, p187, p175, p68 · Update a pull request
 e12(p7=$, p22=$, p84=$).m49()	→ () · opt: p83 · Update a pull request branch from its base branch
 e12.m42(p23=e17(p7=$, p22=$), p233=$, p64=$, p63=$,..)	→ e12 · [scope p23→e17] · opt: p187, p103, p66, p65 · Open a PR (head into base)
-e12{p23=e17(p7=$, p22=$), p180=$, p209=$, p196=$}	→ [e12] · opt: p180, p209, p196
-e12{p23=e17(p7=$, p22=$), p82=$}	→ [e12]
-e12~"text"	→ [e12]
+e12{p23=e17(p7=$, p22=$), p180=$, p209=$, p196=$}[p141,p197,p16,p187,p14,p15,p103,p210,p18,p20,p109,p110,p217,p124,p84,p7,p22,p226,p175,p233,p24]	→ [e12] · inputs: p23,p180,p209,p196 · rows: p141,p197,p16,p187,p14,p15,p103,p210,p18,p20,p109,p110,p217,p124,p84,p7,p22,p226,p175,p233,p24 · opt: p180, p209, p196
+e12{p23=e17(p7=$, p22=$), p82=$}[p141,p197,p16,p187,p14,p15,p103,p210,p18,p20,p109,p110,p217,p124,p84,p7,p22,p226,p175,p233,p24]	→ [e12] · inputs: p23,p82 · rows: p141,p197,p16,p187,p14,p15,p103,p210,p18,p20,p109,p110,p217,p124,p84,p7,p22,p226,p175,p233,p24
+e12~"text"[p141,p197,p16,p187,p14,p15,p103,p210,p18,p20,p109,p110,p217,p124,p84,p7,p22,p226,p175,p233,p24]	→ [e12] · rows: p141,p197,p16,p187,p14,p15,p103,p210,p18,p20,p109,p110,p217,p124,p84,p7,p22,p226,p175,p233,p24
 e12(p7=$, p22=$, p84=$).r19	relation e12 → e19
 e12(p7=$, p22=$, p84=$).r16	relation e12 → [e13]
 e12(p7=$, p22=$, p84=$).r15	relation e12 → e9
@@ -290,7 +303,7 @@ p137	v89 · deletions
 p192	v100 · patch
 p176	v92 · status
 e13{p7=$, p22=$, p85=$}[p208,p132,p137,p192,p19,p176]	→ [e13] · projection · A file entry in a pull request diff
-e13{p7=$, p22=$, p85=$}	→ [e13]
+e13{p7=$, p22=$, p85=$}[p208,p132,p137,p192,p19,p176]	→ [e13] · inputs: p7,p22,p85 · rows: p208,p132,p137,p192,p19,p176
 v74	select · APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING
 p87	v74 · state
 p202	v101 · commit_id
@@ -300,12 +313,17 @@ e14(p7=$, p22=$, p85=$, p141=$)	→ e14
 e14(p7=$, p22=$, p85=$, p141=$).m52()	→ () · Delete a pending pull request review
 e14.m51(p23=e17(p7=$, p22=$), p85=$,..)	→ e14 · [scope p23→e17, p85] · opt: p187, p79, p80 · Create or submit a pull request review
 e14(p7=$, p22=$, p85=$, p141=$).m55(p80=$,..)	→ () · opt: p187 · Submit an existing pending pull request review
-e14{p7=$, p22=$, p85=$}	→ [e14]
+e14{p7=$, p22=$, p85=$}[p141,p187,p202,p20,p7,p85,p22,p87,p130]	→ [e14] · inputs: p7,p22,p85 · rows: p141,p187,p202,p20,p7,p85,p22,p87,p130
 e14(p7=$, p22=$, p85=$, p141=$).r13	relation e14 → e12
 e14(p7=$, p22=$, p85=$, p141=$).r14	relation e14 → e19
 v97	select · LEFT, RIGHT
 v73	select · line, file
 p78	v20 · since
+p142	v89 · in_reply_to_id
+p150	v89 · original_line
+p151	v89 · original_position
+p152	v89 · position
+p222	v101 · original_commit_id
 p190	v100 · diff_hunk
 p155	v89 · review_id
 p144	v89 · line
@@ -316,7 +334,7 @@ p86	v73 · subject_type
 e15{p7=$, p22=$, p85=$, p78=$}[p141,p7,p22,p187,p223,p190,p202,p85,p155,p144,p182,p162,p183,p86,p20,p15,p24]	→ [e15] · projection · Inline comment on a pull request review diff
 e15(p7=$, p22=$, p141=$)	→ e15
 e15.m56(p23=e17(p7=$, p22=$), p85=$, p187=$,..)	→ e15 · [scope p23→e17, p85] · opt: p70, p73, p72, p182, p75, p183, p86, p71 · Add or reply to an inline review comment
-e15{p7=$, p22=$, p85=$, p78=$}	→ [e15] · opt: p78
+e15{p7=$, p22=$, p85=$, p78=$}[p141,p187,p202,p15,p190,p20,p142,p144,p222,p150,p151,p7,p223,p152,p85,p22,p155,p182,p162,p183,p86,p24]	→ [e15] · inputs: p7,p22,p85,p78 · rows: p141,p187,p202,p15,p190,p20,p142,p144,p222,p150,p151,p7,p223,p152,p85,p22,p155,p182,p162,p183,p86,p24 · opt: p78
 e15(p7=$, p22=$, p141=$).r12	relation e15 → e19
 p230	v101 · tag_name
 p112	v87 · prerelease
@@ -326,7 +344,7 @@ e16(p7=$, p22=$, p141=$)	→ e16
 e16(p7=$, p22=$, p141=$).m60()	→ () · Delete a release by id in a repository
 e16(p7=$, p22=$, p141=$).m63()	→ e16 · opt: p230, p220, p187, p103, p112, p232 · Update an existing release
 e16.m59(p23=e17(p7=$, p22=$), p230=$,..)	→ e16 · [scope p23→e17] · opt: p220, p187, p103, p112, p89, p88 · Create a GitHub release (tag)
-e16{p23=e17(p7=$, p22=$)}	→ [e16]
+e16{p23=e17(p7=$, p22=$)}[p141,p187,p15,p103,p20,p220,p7,p112,p125,p22,p230]	→ [e16] · inputs: p23 · rows: p141,p187,p15,p103,p20,p220,p7,p112,p125,p22,p230
 e16(p7=$, p22=$, p141=$).r21	relation e16 → e19
 v10	str · Repository identifier in owner/name form
 v84	select · public, private, internal
@@ -354,9 +372,9 @@ e17[p141,p7,p22,p21,p189,p113,p105,p215,p161,p140,p149,p12,p101,p97,p15,p24,p126
 e17(p7=$, p22=$)	→ e17
 e17(p7=$, p22=$).m67(p23=e17(p7=$, p22=$), p223=$, p218=$, p19=$,..)	→ () · [scope p23→e17] · opt: p11 · Delete a file from a repository
 e17(p7=$, p22=$).m68(p23=e17(p7=$, p22=$), p223=$, p218=$, p93=$,..)	→ () · [scope p23→e17] · opt: p11, p19 · Create or update a file in a repository
-e17{p2=$, p1=$}	→ [e17] · opt: p2, p1
-e17{p6=$, p61=$}	→ [e17]
-e17~"text"	→ [e17]
+e17{p2=$, p1=$}[p141,p101,p15,p12,p189,p105,p140,p21,p20,p215,p149,p7,p113,p126,p22,p161,p24,p97]	→ [e17] · inputs: p2,p1 · rows: p141,p101,p15,p12,p189,p105,p140,p21,p20,p215,p149,p7,p113,p126,p22,p161,p24,p97 · opt: p2, p1
+e17{p6=$, p61=$}[p141,p101,p15,p12,p189,p105,p140,p21,p20,p215,p149,p7,p113,p126,p22,p161,p24,p97]	→ [e17] · inputs: p6,p61 · rows: p141,p101,p15,p12,p189,p105,p140,p21,p20,p215,p149,p7,p113,p126,p22,p161,p24,p97
+e17~"text"[p141,p101,p15,p12,p189,p105,p140,p21,p20,p215,p149,p7,p113,p126,p22,p161,p24,p97]	→ [e17] · rows: p141,p101,p15,p12,p189,p105,p140,p21,p20,p215,p149,p7,p113,p126,p22,p161,p24,p97
 e17(p7=$, p22=$).r22	relation e17 → [e1]
 e17(p7=$, p22=$).r23	relation e17 → [e2]
 e17(p7=$, p22=$).r24	relation e17 → [e3]
@@ -364,7 +382,7 @@ e17(p7=$, p22=$).r25	relation e17 → e19
 p231	v101 · tarball_url
 p236	v101 · zipball_url
 e18{p23=e17(p7=$, p22=$)}[p220,p17,p7,p22,p231,p236]	→ [e18] · projection · Git tag in a repository (not a GitHub Release)
-e18{p23=e17(p7=$, p22=$)}	→ [e18]
+e18{p23=e17(p7=$, p22=$)}[p220,p17,p7,p22,p231,p236]	→ [e18] · inputs: p23 · rows: p220,p17,p7,p22,p231,p236
 v47	select · 2fa_disabled, 2fa_insecure, all
 v48	select · all, admin, member
 v77	select · outside, direct, all
@@ -377,10 +395,10 @@ p106	v87 · hireable
 p116	v87 · site_admin
 e19{p6=$, p59=$, p60=$}[p5,p141,p220,p204,p198,p216,p206,p186,p154,p153,p106,p116,p20,p194,p15]	→ [e19] · projection · A GitHub user account
 e19.m75()	→ e19
-e19{p6=$, p59=$, p60=$}	→ [e19] · opt: p59, p60
-e19{p23=e17(p7=$, p22=$), p90=$}	→ [e19] · opt: p90
+e19{p6=$, p59=$, p60=$}[p5,p194,p186,p198,p204,p15,p206,p106,p20,p141,p216,p220,p153,p154,p116]	→ [e19] · inputs: p6,p59,p60 · rows: p5,p194,p186,p198,p204,p15,p206,p106,p20,p141,p216,p220,p153,p154,p116 · opt: p59, p60
+e19{p23=e17(p7=$, p22=$), p90=$}[p5,p194,p186,p198,p204,p15,p206,p106,p20,p141,p216,p220,p153,p154,p116]	→ [e19] · inputs: p23,p90 · rows: p5,p194,p186,p198,p204,p15,p206,p106,p20,p141,p216,p220,p153,p154,p116 · opt: p90
 e19(p5)	→ e19
-e19~"text"	→ [e19]
+e19~"text"[p5,p194,p186,p198,p204,p15,p206,p106,p20,p141,p216,p220,p153,p154,p116]	→ [e19] · rows: p5,p194,p186,p198,p204,p15,p206,p106,p20,p141,p216,p220,p153,p154,p116
 v110	select · active, deleted, disabled_fork, disabled_inactivity, disabled_manually
 v102	str · Branch, tag, or commit SHA to run the workflow on
 p237	v102 · ref
@@ -389,7 +407,7 @@ p195	v101 · badge_url
 e20{p7=$, p22=$}[p141,p7,p22,p221,p220,p223,p245,p15,p24,p20,p195]	→ [e20] · projection · A workflow in a repository
 e20(p7=$, p22=$, p141=$)	→ e20
 e20(p7=$, p22=$, p141=$).m79(p237=$)	→ () · Trigger a workflow dispatch event for a workflow
-e20{p7=$, p22=$}	→ [e20]
+e20{p7=$, p22=$}[p141,p195,p15,p20,p220,p221,p7,p223,p22,p245,p24]	→ [e20] · inputs: p7,p22 · rows: p141,p195,p15,p20,p220,p221,p7,p223,p22,p245,p24
 e20(p7=$, p22=$, p141=$).r34	relation e20 → [e23]
 p193	v101 · archive_download_url
 p104	v87 · expired
@@ -397,7 +415,7 @@ p122	v88 · expires_at
 p158	v89 · run_id
 p160	v89 · size_in_bytes
 e21{p7=$, p22=$, p158=$}[p141,p193,p15,p104,p122,p220,p7,p22,p158,p160,p24]	→ [e21] · projection · Downloadable artifact from a workflow run
-e21{p7=$, p22=$, p158=$}	→ [e21]
+e21{p7=$, p22=$, p158=$}[p141,p193,p15,p104,p122,p220,p7,p22,p158,p160,p24]	→ [e21] · inputs: p7,p22,p158 · rows: p141,p193,p15,p104,p122,p220,p7,p22,p158,p160,p24
 v104	select · latest, all
 v99	select · action_required, cancelled, failure, neutral, skipped, stale, startup_failure, success, timed_out
 v103	array[str]
@@ -412,7 +430,7 @@ p228	v101 · runner_name
 p129	v88 · started_at
 p184	v98 · status
 e22{p7=$, p22=$, p158=$, p239=$}[p141,p120,p185,p20,p238,p220,p7,p22,p156,p158,p227,p228,p129,p184]	→ [e22] · projection · A GitHub Actions job within a workflow run
-e22{p7=$, p22=$, p158=$, p239=$}	→ [e22] · opt: p239
+e22{p7=$, p22=$, p158=$, p239=$}[p141,p120,p185,p20,p238,p220,p7,p22,p156,p158,p227,p228,p129,p184]	→ [e22] · inputs: p7,p22,p158,p239 · rows: p141,p120,p185,p20,p238,p220,p7,p22,p156,p158,p227,p228,p129,p184 · opt: p239
 v105	str · Event type that triggered the workflow
 v106	select · completed, action_required, cancelled, failure, neutral, skipped, stale, success, timed_out, in_progress, queued, requested, waiting
 v108	select · check_run, check_suite, create, delete, deployment, deployment_status, dynamic, fork, gollum, issue_comment, issues, label, member, membership, milestone, page_build, project, project_card, project_column, public, pull_request, pull_request_review, pull_request_review_comment, pull_request_target, push, registry_package, release, repository_dispatch, status, team_add, watch, workflow_dispatch, workflow_run
@@ -426,7 +444,6 @@ p172	v89 · workflow_id
 p159	v89 · run_number
 p205	v101 · display_title
 p13	v5 · head_branch
-p18	v8 · head_sha
 p4	v4 · actor_login
 p8	v4 · triggering_actor_login
 p127	v88 · run_started_at
@@ -436,8 +453,8 @@ e23(p7=$, p22=$, p141=$).m85()	→ () · Cancel an in-progress workflow run
 e23(p7=$, p22=$, p141=$).m87()	→ () · Delete stored logs for a workflow run
 e23(p7=$, p22=$, p141=$).m89()	→ () · Rerun all jobs in a workflow run
 e23(p7=$, p22=$, p141=$).m90()	→ () · Rerun only failed jobs in a workflow run
-e23{p7=$, p22=$, p172=$, p11=$, p240=$, p241=$}	→ [e23] · opt: p11, p240, p241
-e23{p7=$, p22=$, p11=$, p243=$, p241=$, p242=e19(p5), p18=$}	→ [e23] · opt: p11, p243, p241, p242, p18
+e23{p7=$, p22=$, p172=$, p11=$, p240=$, p241=$}[p141,p4,p185,p15,p205,p207,p13,p18,p20,p220,p7,p223,p22,p156,p159,p127,p184,p8,p24,p172]	→ [e23] · inputs: p7,p22,p172,p11,p240,p241 · rows: p141,p4,p185,p15,p205,p207,p13,p18,p20,p220,p7,p223,p22,p156,p159,p127,p184,p8,p24,p172 · opt: p11, p240, p241
+e23{p7=$, p22=$, p11=$, p243=$, p241=$, p242=e19(p5), p18=$}[p141,p4,p185,p15,p205,p207,p13,p18,p20,p220,p7,p223,p22,p156,p159,p127,p184,p8,p24,p172]	→ [e23] · inputs: p7,p22,p11,p243,p241,p242,p18 · rows: p141,p4,p185,p15,p205,p207,p13,p18,p20,p220,p7,p223,p22,p156,p159,p127,p184,p8,p24,p172 · opt: p11, p243, p241, p242, p18
 e23(p7=$, p22=$, p141=$).r28	relation e23 → e19
 e23(p7=$, p22=$, p141=$).r30	relation e23 → [e21]
 e23(p7=$, p22=$, p141=$).r31	relation e23 → [e22]

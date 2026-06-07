@@ -459,6 +459,7 @@ fn collect_expr(
             entities.insert(c.entity.to_string());
         }
         Expr::Page(_) => {}
+        Expr::Wait(_) | Expr::Cancel(_) => {}
         Expr::TeachingValue { .. } => {}
     }
 }

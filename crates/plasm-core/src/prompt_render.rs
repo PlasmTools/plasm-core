@@ -3021,7 +3021,7 @@ fn domain_line_execution_meta_from_validated(
             Expr::Get(_) => DomainLineKind::Get,
             Expr::Query(_) => DomainLineKind::Query,
             Expr::Create(_) | Expr::Delete(_) | Expr::Invoke(_) => DomainLineKind::Method,
-            Expr::Chain(_) | Expr::Page(_) | Expr::TeachingValue { .. } => DomainLineKind::Other,
+            Expr::Chain(_) | Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => DomainLineKind::Other,
         };
         let cross_entity = if let Expr::Query(q) = expr {
             if let (Some(pred), Some(ent_def)) = (&q.predicate, cgs.get_entity(q.entity.as_str())) {
@@ -5043,6 +5043,36 @@ pub(crate) fn domain_example_lines(
     .collect()
 }
 
+/// Count canonical `· projection ·` witness rows (one per entity; query/search may reuse the bracket suffix).
+#[cfg(test)]
+fn count_projection_teaching_witness_rows(
+    cgs: &CGS,
+    ename: &str,
+    map: Option<&SymbolMap>,
+    surface_filter: Option<&ExposureSurface>,
+) -> usize {
+    let mut line_valid_cache = HashMap::new();
+    let mut gloss_emit_none = None;
+    let seed = prompt_line_valid_cache_seed_cgs(cgs);
+    collect_entity_teaching_block(
+        cgs,
+        ename,
+        map,
+        None,
+        false,
+        &mut line_valid_cache,
+        seed,
+        None,
+        &mut gloss_emit_none,
+        surface_filter,
+        None,
+    )
+    .teaching_rows
+    .iter()
+    .filter(|r| r.teaching_expr.is_projection_teaching)
+    .count()
+}
+
 /// Primary-get projection bracket for the teaching table entity heading (when enabled); test-only helper.
 #[cfg(test)]
 #[allow(dead_code)] // Retained for debugging / synthesis parity checks; tests prefer [`domain_projection_bracket_from_final_bundle`].
@@ -5402,7 +5432,8 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         projection = projection
     );
     s.push_str("- Relation rows end with `.r#`/`.wire`; apply them to any executable receiver row for that same entity type.\n");
-    s.push_str("- `page(sN_pgM)` uses a continuation handle returned by a prior response; copy the handle exactly and optionally add `, limit=N`.\n\n");
+    s.push_str("- `page(sN_pgM)` uses a continuation handle returned by a prior response; copy the handle exactly and optionally add `, limit=N`.\n");
+    s.push_str("- `wait(sN_oM)` polls an in-flight async plan run; `cancel(sN_oM)` cancels it — copy handles from accept responses. Start live execute with `wait: false`; when dry verdict is **review**, pass `plan_commit_ref` (`pcN`) from plan dry-run or `force: true`.\n\n");
 
     s.push_str("Grammar:\n");
     let _ = writeln!(s, "plasm_program ::= plasm_expr | binding+ roots");
@@ -5413,7 +5444,7 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         s,
         "node          ::= (plasm_expr | ident) postfix* row_template? | ident \"=>\" value_or_template"
     );
-    let _ = writeln!(s, "plasm_expr    ::= entity_expr [projection] | page");
+    let _ = writeln!(s, "plasm_expr    ::= entity_expr [projection] | page | wait | cancel");
     let _ = writeln!(s, "entity_expr   ::= {}", entity_expr_rhs);
     let _ = writeln!(s, "query_all     ::= {}", query_all_form);
     let _ = writeln!(s, "get           ::= {}", get_form);
@@ -5425,6 +5456,8 @@ fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         let _ = writeln!(s, "search        ::= {}", search_form);
     }
     let _ = writeln!(s, "page          ::= page(sN_pgM) | page(sN_pgM, limit=N)");
+    let _ = writeln!(s, "wait          ::= wait(sN_oM)");
+    let _ = writeln!(s, "cancel        ::= cancel(sN_oM)");
     let _ = writeln!(
         s,
         "projection    ::= {} | \"[\" fields \"]\"",
@@ -6476,6 +6509,10 @@ mod tests {
             "page continuation handles are taught by responses and must remain in the contract"
         );
         assert!(
+            contract.contains("wait(sN_oM)") && contract.contains("cancel(sN_oM)"),
+            "async plan continuation handles must remain in the contract"
+        );
+        assert!(
             !contract.contains("teaching table") && !contract.contains(";;") && !contract.contains("p#=v"),
             "contract must not reintroduce legacy teaching table/compact separators or bare-v placeholders:\n{contract}"
         );
@@ -6526,9 +6563,8 @@ mod tests {
         );
     }
 
-    /// Regression: Issue teaching table teaches **one** full scalar projection list (all `provides` fields),
-    /// on the **identity** primary get or on the heading when the get is singleton-only — not a
-    /// prefix ladder or a duplicate extra exemplar line.
+    /// Regression: Issue teaching table teaches **one** canonical `· projection ·` witness row.
+    /// Scoped query/search exemplars may **reuse** the same trailing `[p#,…]` suffix.
     #[test]
     fn github_issue_domain_emits_single_full_projection_exemplar() {
         let dir = apis_dir("github");
@@ -6564,14 +6600,18 @@ mod tests {
             "unexpected projection bracket: {br}"
         );
         let lines = domain_example_lines(&cgs, "Issue", map.as_deref(), surface);
-        let bracket_lines = lines
-            .iter()
-            .filter(|l| l.contains("[p") && l.contains(']'))
-            .count();
         assert_eq!(
-            bracket_lines, 1,
-            "expect exactly one teaching example line with a full scalar projection list (bracket_lines={})",
-            bracket_lines,
+            count_projection_teaching_witness_rows(&cgs, "Issue", map.as_deref(), surface),
+            1,
+            "expect exactly one `· projection ·` witness row per entity"
+        );
+        let trailing_projection_rows = lines
+            .iter()
+            .filter(|l| parse_trailing_projection_bracket(l.trim()).is_some())
+            .count();
+        assert!(
+            trailing_projection_rows > 1,
+            "scoped query/search exemplars reuse the canonical projection suffix (got {trailing_projection_rows} trailing bracket rows)"
         );
         let out = render_prompt_with_config(&cgs, cfg);
         assert!(
@@ -6587,11 +6627,9 @@ mod tests {
             "full apis/github teaching table+legend should be substantial (got {}); compare `github_api_full_prompt_symbolic` snapshot",
             out.len()
         );
-        // Baseline bumped after `=>` / relation-arrow contract pitfalls in MCP frontmatter.
-        // v0.1.83 `r#` pool: relation nav exemplars use `.r#` instead of `.p#`; `p#` renumbers but
-        // row count stays ~flat (no duplicate standalone relation gloss rows).
-        const GITHUB_FULL_PROMPT_BASELINE_V0173: usize = 25_850;
-        const GITHUB_FULL_PROMPT_BASELINE_V0179: usize = 24_850;
+        // Baseline bumped after wait/cancel continuation contract + projection suffix on scoped query/search exemplars.
+        const GITHUB_FULL_PROMPT_BASELINE_V0173: usize = 32_000;
+        const GITHUB_FULL_PROMPT_BASELINE_V0179: usize = 31_000;
         assert!(
             out.len() <= GITHUB_FULL_PROMPT_BASELINE_V0179,
             "github full prompt regressed above v0.1.79 baseline (got {} bytes, baseline {})",
@@ -6627,14 +6665,18 @@ mod tests {
             "unexpected projection bracket: {br}"
         );
         let lines = domain_example_lines(&cgs, "Issue", map.as_deref(), surface);
-        let bracket_lines = lines
-            .iter()
-            .filter(|l| l.contains("[p") && l.contains(']'))
-            .count();
         assert_eq!(
-            bracket_lines, 1,
-            "expect exactly one teaching example line with a full scalar projection list (bracket_lines={})",
-            bracket_lines,
+            count_projection_teaching_witness_rows(&cgs, "Issue", map.as_deref(), surface),
+            1,
+            "expect exactly one `· projection ·` witness row per entity"
+        );
+        let trailing_projection_rows = lines
+            .iter()
+            .filter(|l| parse_trailing_projection_bracket(l.trim()).is_some())
+            .count();
+        assert!(
+            trailing_projection_rows > 1,
+            "scoped exemplars reuse projection suffix on Linear Issue (got {trailing_projection_rows})"
         );
         let out = render_prompt_with_config(&cgs, cfg);
         assert!(
@@ -7040,13 +7082,27 @@ mod tests {
             .find(|l| {
                 let cols: Vec<&str> = l.split('\t').collect();
                 cols.len() == 2
-                    && parse_trailing_projection_bracket(cols[0].trim()).is_none()
                     && cols[0].starts_with(&format!("{contrib_ent}{{"))
                     && cols[0].contains(&format!("{p_repo}="))
                     && cols[0].contains(&format!("{p_anon}="))
-                    && (cols[1].contains("opt:") || cols[1].contains("[scope"))
+                    && cols[1].contains("inputs:")
             })
-            .expect("Contributor list teaching table row (non-projection query exemplar)");
+            .or_else(|| {
+                tsv.lines().find(|l| {
+                    let cols: Vec<&str> = l.split('\t').collect();
+                    cols.len() == 2
+                        && cols[0].starts_with(&format!("{contrib_ent}{{"))
+                        && cols[0].contains(&format!("{p_repo}="))
+                        && cols[0].contains(&format!("{p_anon}="))
+                        && (cols[1].contains("opt:") || cols[1].contains("[scope"))
+                })
+            })
+            .expect("Contributor scoped query teaching table row");
+        assert!(
+            parse_trailing_projection_bracket(contrib.split('\t').next().unwrap_or("").trim())
+                .is_some(),
+            "Contributor scoped query should carry the canonical projection suffix: {contrib:?}"
+        );
         assert!(
             contrib.starts_with('e') && contrib.contains("{p"),
             "contributor query row should be a brace-query exemplar: {contrib:?}"
@@ -7056,8 +7112,8 @@ mod tests {
             "capability legends omit inline `args:`; contributor row was: {contrib:?}"
         );
         assert!(
-            contrib.contains("opt:") || contrib.contains("[scope"),
-            "contributor query Meaning should carry optionality or scope context: {contrib:?}"
+            contrib.contains("opt:") || contrib.contains("[scope") || contrib.contains("inputs:"),
+            "contributor query Meaning should carry optionality, scope, or inputs legend: {contrib:?}"
         );
     }
 

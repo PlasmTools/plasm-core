@@ -64,6 +64,9 @@ pub enum RuntimeError {
 
     #[error("Authentication error: {message}")]
     AuthenticationError { message: String },
+
+    #[error("Execution cancelled")]
+    Cancelled,
 }
 
 impl RuntimeError {

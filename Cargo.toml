@@ -27,7 +27,7 @@ resolver = "2"
 
 # Single SemVer for the OSS workspace (see monorepo RELEASING.md on PlasmTools/plasm).
 [workspace.package]
-version = "0.1.95"
+version = "0.1.96"
 edition = "2021"
 
 [workspace.dependencies]
@@ -48,6 +48,7 @@ futures-util = { version = "0.3", default-features = false, features = [
     "std",
 ] }
 tokio = { version = "1.0", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 reqwest = { version = "0.12", default-features = false, features = [
     "json",
     "multipart",

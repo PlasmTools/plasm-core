@@ -127,6 +127,7 @@ mod view_template;
 mod view_typestate;
 
 mod runtime_metrics;
+mod cancel_signal;
 mod spans;
 
 pub use api_error_detail::{
@@ -140,6 +141,7 @@ pub use auth_resolution::{
     AuthResolutionMode,
 };
 pub use cache::*;
+pub use cancel_signal::{check_cancel, CancelSignal};
 pub use error::*;
 pub use evm::*;
 pub use execution::*;

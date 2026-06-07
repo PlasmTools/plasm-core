@@ -249,7 +249,7 @@ fn collect_expr_for_template_uses(
                 collect_expr_for_template_uses(acc, expr.as_ref(), ctx);
             }
         }
-        Expr::Page(_) => {}
+        Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) => {}
         Expr::TeachingValue { value } => {
             collect_value_for_template_uses(acc, value, ctx);
         }
@@ -542,7 +542,11 @@ fn capability_for_surface_expr<'a>(
         Expr::Create(c) => Ok(cgs.get_capability(c.capability.as_str())),
         Expr::Delete(d) => Ok(cgs.get_capability(d.capability.as_str())),
         Expr::Invoke(i) => Ok(cgs.get_capability(i.capability.as_str())),
-        Expr::Chain(_) | Expr::TeachingValue { .. } | Expr::Page(_) => Ok(None),
+        Expr::Chain(_)
+        | Expr::TeachingValue { .. }
+        | Expr::Page(_)
+        | Expr::Wait(_)
+        | Expr::Cancel(_) => Ok(None),
     }
 }
 
@@ -3408,6 +3412,10 @@ fn infer_surface_contract_from_expr(
             EffectClass::Read,
             crate::plasm_plan::ResultShape::Page,
         )),
+        Expr::Wait(_) | Expr::Cancel(_) => Err(
+            "`wait` / `cancel` are host operation continuations and cannot appear in compiled plan surfaces"
+                .to_string(),
+        ),
     }
 }
 

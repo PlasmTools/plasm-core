@@ -1,4 +1,5 @@
      **`plasm`** is **plan-only** (no live HTTP). Prefer **one** `program` per call (comma-separated roots on the final line for multi-return). Multi-root answers: review with **`plasm`**, execute with **`plasm_run`**. Never prefix roots with `return`.
-     **`plasm_run`**: same arguments as **`plasm`**. Call **only after** the **`plasm`** dry-run plan matches intent—this tool performs **live** HTTP/API execution (and may return run snapshot URIs).
-     **Paging:** follow **`page(s0_pgN)`** / `_meta.plasm.paging` in the same logical session for more rows.
-     **Run snapshots:** `plasm://…` URIs are MCP **`resources/read`** targets, not Plasm expressions — call **`resources/read`** for full JSON when the summary points there.
+     **`plasm_run`**: same args as **`plasm`**; live HTTP after plan review. May return run snapshot URIs.
+     **Paging:** **`page(s0_pgN)`** / `_meta.plasm.paging` in the same logical session.
+     **Long ops:** **`wait(s0_oN)`** poll · **`cancel(s0_oN)`** cancel · start with **`wait: false`**; **`pcN`** or **`force: true`** on **review** verdict.
+     **Snapshots:** `plasm://…` → **`resources/read`** when Markdown points there.

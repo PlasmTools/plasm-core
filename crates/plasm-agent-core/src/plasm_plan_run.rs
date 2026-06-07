@@ -505,7 +505,7 @@ pub struct PlasmPlanRunHooks<'a> {
 
 /// Outcome of [`ExecutePipeline::run_program`]: the same `node_results` / optional run payload shape as an MCP
 /// live `plasm_run` response (fenced JSON), without Markdown framing.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct PlasmPlanRunResult {
     pub version: serde_json::Value,
     /// One entry per `plan.nodes[]` with `ir`, `simulation`, and optional `id`.
@@ -849,9 +849,9 @@ pub fn plan_dry_compact_view(
     )
 }
 
-/// Structured DAG payload for trace/UI renderers. This is the machine-readable companion to the
-/// compact dry-run text, so clients do not have to parse Markdown to draw plan topology.
-pub fn plasm_plan_dag_json(dry: &DryPlasmPlanEvaluation) -> serde_json::Value {
+/// Semantic plan DAG (`version`, `nodes`, `edges`, `topological_order`, `returns`) — stable input
+/// for plan commit-id hashing (excludes session-local `name` and dry-run `summary`).
+pub fn plan_semantic_dag_json(dry: &DryPlasmPlanEvaluation) -> serde_json::Value {
     let plan = dry.validated_plan();
     let nodes = plan
         .nodes
@@ -879,13 +879,23 @@ pub fn plasm_plan_dag_json(dry: &DryPlasmPlanEvaluation) -> serde_json::Value {
     }
     serde_json::json!({
         "version": plan.version,
-        "name": dry.name.clone(),
         "nodes": nodes,
         "edges": edges,
         "topological_order": dry.topological_order.clone(),
         "returns": render_return_lines(&plan.return_value),
-        "summary": dry.graph_summary.clone(),
     })
+}
+
+/// Structured DAG payload for trace/UI renderers. This is the machine-readable companion to the
+/// compact dry-run text, so clients do not have to parse Markdown to draw plan topology.
+pub fn plasm_plan_dag_json(dry: &DryPlasmPlanEvaluation) -> serde_json::Value {
+    let mut obj = plan_semantic_dag_json(dry)
+        .as_object()
+        .expect("semantic plan DAG is an object")
+        .clone();
+    obj.insert("name".into(), serde_json::json!(dry.name));
+    obj.insert("summary".into(), dry.graph_summary.clone());
+    serde_json::Value::Object(obj)
 }
 
 fn node_dependencies(node: &ValidatedPlanNode) -> Vec<String> {
@@ -1944,6 +1954,7 @@ fn validated_inputs_json(inputs: &[ValidatedPlanDataInput]) -> Vec<serde_json::V
 }
 
 /// Plasm program **plan** execution over a proof-bearing validated artifact.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_validated_plasm_plan(
     es: &ExecuteSession,
     st: &PlasmHostState,
@@ -1952,6 +1963,7 @@ pub async fn run_validated_plasm_plan(
     validated: &ValidatedPlan,
     run: bool,
     mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
+    execution_scope: Option<&crate::operation::ExecutionScope>,
 ) -> Result<PlasmPlanRunResult, String> {
     let dry = evaluate_validated_plasm_plan_dry(es, validated)?;
     if !run {
@@ -1967,7 +1979,7 @@ pub async fn run_validated_plasm_plan(
             return_steps: Vec::new(),
         });
     }
-    run_validated_plan_phased(
+    run_validated_plasm_plan_scoped(
         es,
         st,
         prompt_hash,
@@ -1975,7 +1987,36 @@ pub async fn run_validated_plasm_plan(
         validated,
         dry,
         mcp_tool_hooks,
+        execution_scope,
     )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_validated_plasm_plan_scoped(
+    es: &ExecuteSession,
+    st: &PlasmHostState,
+    prompt_hash: &str,
+    session_id: &str,
+    validated: &ValidatedPlan,
+    dry: DryPlasmPlanEvaluation,
+    mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
+    execution_scope: Option<&crate::operation::ExecutionScope>,
+) -> Result<PlasmPlanRunResult, String> {
+    let cancel = execution_scope.map(|s| s.cancel.clone());
+    crate::operation::with_plan_execute_cancel(cancel, async {
+        run_validated_plan_phased(
+            es,
+            st,
+            prompt_hash,
+            session_id,
+            validated,
+            dry,
+            mcp_tool_hooks,
+            execution_scope,
+        )
+        .await
+    })
     .await
 }
 
@@ -2001,6 +2042,7 @@ struct MaterializedInputRow {
     row_identity: Option<plasm_core::RowIdentity>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_validated_plan_phased(
     es: &ExecuteSession,
     st: &PlasmHostState,
@@ -2009,6 +2051,7 @@ async fn run_validated_plan_phased(
     validated: &ValidatedPlan,
     dry: DryPlasmPlanEvaluation,
     mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
+    execution_scope: Option<&crate::operation::ExecutionScope>,
 ) -> Result<PlasmPlanRunResult, String> {
     let _ = prompt_hash;
     let mut materialized: BTreeMap<PlanNodeId, MaterializedNode> = BTreeMap::new();
@@ -2022,7 +2065,17 @@ async fn run_validated_plan_phased(
         sink = Some(hooks.sink);
         meta_index = Some(hooks.meta_index);
     }
-    for node_id in validated.topological_order() {
+    let topo = validated.topological_order();
+    let step_total = topo.len() as u32;
+    for (step_idx, node_id) in topo.iter().enumerate() {
+        if let Some(scope) = execution_scope {
+            scope.check()?;
+            scope.set_progress(
+                step_idx as u32 + 1,
+                step_total,
+                Some(node_id.as_str().to_string()),
+            );
+        }
         let idx = validated
             .node_index(node_id)
             .ok_or_else(|| format!("validated node {:?} missing index", node_id.as_str()))?;
@@ -2922,6 +2975,9 @@ async fn materialize_prefer_from_parent_get_relation(
                         crate::http_execute::RunLineError::Parse(d)
                         | crate::http_execute::RunLineError::Normalize(d)
                         | crate::http_execute::RunLineError::Projection(d) => d,
+                        crate::http_execute::RunLineError::Operation(_) => {
+                            "operation continuation is not valid inside a plan surface node".to_string()
+                        }
                         crate::http_execute::RunLineError::Runtime(e, src) => {
                             format!("{e}\nsource expression: {src}")
                         }
@@ -3478,6 +3534,9 @@ async fn materialize_relation_scoped_fanout(
                 crate::http_execute::RunLineError::Parse(d)
                 | crate::http_execute::RunLineError::Normalize(d)
                 | crate::http_execute::RunLineError::Projection(d) => d,
+                crate::http_execute::RunLineError::Operation(_) => {
+                    "operation continuation is not valid inside a plan surface node".to_string()
+                }
                 crate::http_execute::RunLineError::Runtime(e, src) => {
                     format!("{e}\nsource expression: {src}")
                 }

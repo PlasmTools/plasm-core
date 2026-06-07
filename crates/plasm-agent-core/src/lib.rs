@@ -68,6 +68,7 @@ pub mod oauth_provider_model;
 pub mod oauth_provider_pull;
 pub mod oauth_provider_repository;
 pub mod oauth_runtime_source;
+pub mod operation;
 pub mod oss_local_state;
 pub mod outbound_secret_provider;
 pub mod output;

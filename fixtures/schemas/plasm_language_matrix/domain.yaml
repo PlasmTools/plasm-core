@@ -292,6 +292,10 @@ capabilities:
     - id
     - item_id
     - note
+# Host continuations (language matrix parse smoke; not CGS capabilities):
+#   page(sN_pgM) — paginated query batch (see teaching TSV preamble)
+#   wait(sN_oM)  — poll async plan run (see docs/plasm-long-operations.md)
+#   cancel(sN_oM) — cooperative cancel of that operation
 values:
   nv_lang_detail_id:
     type: string

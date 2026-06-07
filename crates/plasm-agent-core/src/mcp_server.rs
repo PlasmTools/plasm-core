@@ -47,6 +47,8 @@ use tracing::Instrument;
 use async_trait::async_trait;
 use base64::Engine as _;
 use plasm_core::discovery::{CapabilityQuery, CgsCatalog, DiscoveryError};
+use plasm_core::PlanCommitRef;
+use plasm_runtime::CancelSignal;
 use plasm_core::CgsDiscovery;
 use plasm_discovery::DiscoveryQuery;
 use rust_mcp_sdk::error::SdkResult;
@@ -71,8 +73,15 @@ use crate::execute_pipeline::{ExecutePipeline, ExecutionIntent};
 use crate::execute_session::ExecuteSession;
 use crate::http_execute::{
     apply_capability_seeds, build_plasm_context_agent_markdown, build_plasm_context_tool_meta,
-    normalize_capability_seeds, ApplyCapabilitySeedsOutcome, CapabilitySeed, RankedCapabilitiesArg,
+    normalize_capability_seeds, try_dispatch_operation_program, ApplyCapabilitySeedsOutcome,
+    CapabilitySeed, RankedCapabilitiesArg,
 };
+use crate::operation::{
+    compute_plan_commit_id_from_dry, operation_accept_markdown, plan_commit_meta,
+    plan_requires_review_gate, spawn_async_plan_run, verify_plan_commit_for_dry, PlanCommitRecord,
+    PLAN_COMMIT_TTL,
+};
+use crate::plan_dry_display::build_plan_dry_compact_view;
 use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_policy;
@@ -794,6 +803,25 @@ impl PlasmMcpHandler {
             "reasoning".into(),
             json_schema_string_type("Optional short note explaining the intent of this call."),
         );
+        let mut plasm_run_props = plasm_program_props.clone();
+        plasm_run_props.insert(
+            "wait".into(),
+            json_schema_bool_type(
+                "When **false**, start live execute in the background and return an operation handle immediately (`wait(sN_oM)`). Default **true** (blocking).",
+            ),
+        );
+        plasm_run_props.insert(
+            "force".into(),
+            json_schema_bool_type(
+                "Bypass the dry-run **review** soft gate for unbounded or risky plans. Prefer `plan_commit_ref` from a prior `plasm` dry-run when possible.",
+            ),
+        );
+        plasm_run_props.insert(
+            "plan_commit_ref".into(),
+            json_schema_string_type(
+                "Plan acceptance token (`pcN`) from a matching `plasm` dry-run. Required when dry verdict is **review** unless `force: true`.",
+            ),
+        );
 
         let mut tools = vec![
             Tool {
@@ -864,7 +892,7 @@ impl PlasmMcpHandler {
             description: Some(MCP_PLASM_RUN_TOOL_DESCRIPTION.into()),
             input_schema: ToolInputSchema::new(
                 vec!["logical_session_ref".into(), "program".into()],
-                Some(plasm_program_props),
+                Some(plasm_run_props),
                 None,
             ),
             annotations: Some(ToolAnnotations {
@@ -883,6 +911,16 @@ impl PlasmMcpHandler {
     }
 }
 
+fn json_schema_bool_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
+    let mut m = serde_json::Map::new();
+    m.insert("type".into(), serde_json::json!("boolean"));
+    m.insert(
+        "description".into(),
+        serde_json::Value::String(description.to_string()),
+    );
+    m
+}
+
 fn json_schema_string_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
     m.insert("type".into(), serde_json::json!("string"));
@@ -898,16 +936,6 @@ fn json_schema_non_empty_string_type(
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut m = json_schema_string_type(description);
     m.insert("minLength".into(), serde_json::json!(1));
-    m
-}
-
-fn json_schema_bool_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
-    let mut m = serde_json::Map::new();
-    m.insert("type".into(), serde_json::json!("boolean"));
-    m.insert(
-        "description".into(),
-        serde_json::Value::String(description.to_string()),
-    );
     m
 }
 
@@ -1230,6 +1258,15 @@ impl PlasmMcpHandler {
             .get("reasoning")
             .and_then(|x| x.as_str())
             .filter(|s| !s.is_empty());
+        let wait_live = v
+            .get("wait")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(true);
+        let force_run = v.get("force").and_then(|x| x.as_bool()).unwrap_or(false);
+        let plan_commit_ref = v
+            .get("plan_commit_ref")
+            .and_then(|x| x.as_str())
+            .and_then(PlanCommitRef::parse);
         let plasm_tool_span = if dry_run_only {
             crate::spans::mcp_tool_plasm(false, 1, session_ref.as_str())
         } else {
@@ -1334,6 +1371,11 @@ impl PlasmMcpHandler {
                         .to_string(),
                 );
             };
+            if let Some(op_result) =
+                try_dispatch_operation_program(&es, Some(&mcp_trace), &program).await
+            {
+                return op_result;
+            }
             let plan_name = format!("plasm_dag_call_{call_count}");
             let pipeline = self.plasm.engine.prompt_pipeline();
             let cross = self.plasm.sessions.symbol_map_cross_cache();
@@ -1350,6 +1392,70 @@ impl PlasmMcpHandler {
                         match parse_and_validate_plan_json(&plan) {
                             Err(e) => Err(e),
                             Ok(validated) => {
+                                let plan_json = plan.clone();
+                                let dry_gate =
+                                    evaluate_validated_plasm_plan_dry(&es, &validated)?;
+                                let compact = build_plan_dry_compact_view(
+                                    dry_gate.validated_plan(),
+                                    &dry_gate.topological_order,
+                                    &dry_gate.review,
+                                    &dry_gate.graph_summary,
+                                    Some(&es),
+                                );
+                                if plan_requires_review_gate(
+                                    compact.verdict,
+                                    force_run,
+                                    plan_commit_ref.as_ref(),
+                                ) {
+                                    return Err(
+                                        "plan_requires_review: call `plasm` dry-run first, then pass `plan_commit_ref` or `force: true` on `plasm_run`"
+                                            .to_string(),
+                                    );
+                                }
+                                if let Some(pc) = plan_commit_ref.as_ref() {
+                                    verify_plan_commit_for_dry(&es, pc, &dry_gate)?;
+                                }
+                                if !wait_live {
+                                    let handle = es.mint_operation_handle(session_ref.as_str());
+                                    spawn_async_plan_run(
+                                        Arc::clone(&es),
+                                        Arc::clone(&self.plasm),
+                                        b.prompt_hash.clone(),
+                                        b.session_id.clone(),
+                                        validated,
+                                        handle.clone(),
+                                        CancelSignal::new(),
+                                    );
+                                    let markdown = operation_accept_markdown(
+                                        &handle,
+                                        plan_commit_ref.as_ref(),
+                                        Some(compact.verdict),
+                                    );
+                                    let mut meta = serde_json::Map::new();
+                                    meta.insert(
+                                        "plasm".into(),
+                                        serde_json::Value::Object(
+                                            crate::operation::operation_meta_object(
+                                                session_ref.as_str(),
+                                                &handle,
+                                                crate::operation::OperationPhase::Running,
+                                                None,
+                                                plan_commit_ref.as_ref(),
+                                                Some(compact.verdict),
+                                            ),
+                                        ),
+                                    );
+                                    return Ok(PlasmPlanRunResult {
+                                        version: serde_json::json!({}),
+                                        node_results: Vec::new(),
+                                        graph_summary: serde_json::json!({}),
+                                        plan_dag: plan_json,
+                                        code_plan_run_artifacts: Vec::new(),
+                                        run_markdown: Some(markdown),
+                                        run_plasm_meta: Some(meta),
+                                        return_steps: Vec::new(),
+                                    });
+                                }
                                 match ExecutePipeline::run_program(
                                     &es,
                                     self.plasm.as_ref(),
@@ -1401,6 +1507,21 @@ impl PlasmMcpHandler {
                                         );
                                         let markdown = format!("```text\n{dry_text}\n```");
                                         let plan_json = plasm_plan_dag_json(&dry);
+                                        let compact = build_plan_dry_compact_view(
+                                            dry.validated_plan(),
+                                            &dry.topological_order,
+                                            &dry.review,
+                                            &dry.graph_summary,
+                                            Some(&es),
+                                        );
+                                        let commit_ref = es.mint_plan_commit_ref();
+                                        es.register_plan_commit(PlanCommitRecord {
+                                            commit_ref: commit_ref.clone(),
+                                            commit_id: compute_plan_commit_id_from_dry(&dry),
+                                            dry_review: dry.review.clone(),
+                                            verdict: compact.verdict,
+                                            expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
+                                        });
                                         trace_archive_and_emit_code_plan_evaluate(
                                             &self.plasm.trace_hub,
                                             &self.plasm.run_artifacts,
@@ -1418,6 +1539,11 @@ impl PlasmMcpHandler {
                                         let mut plasm_obj = serde_json::Map::new();
                                         plasm_obj.insert("dry_run".into(), serde_json::json!(true));
                                         plasm_obj.insert("plan".into(), plan_json.clone());
+                                        plasm_obj.extend(plan_commit_meta(
+                                            &commit_ref,
+                                            &dry.review,
+                                            compact.verdict,
+                                        ));
                                         if dry
                                             .graph_summary
                                             .get("dry_review")

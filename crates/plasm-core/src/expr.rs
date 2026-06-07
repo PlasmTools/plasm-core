@@ -1,5 +1,6 @@
 use crate::cgs_federation::QualifiedEntityKey;
 use crate::identity::{CapabilityName, EntityId, EntityName};
+use crate::operation_handle::OperationHandle;
 use crate::paging_handle::PagingHandle;
 use crate::typed_invoke::InvokeInputPayload;
 use crate::{Predicate, Value, CGS};
@@ -9,6 +10,9 @@ use std::collections::BTreeMap;
 
 /// Sentinel returned by [`Expr::primary_entity`] for [`Expr::Page`] (not a CGS entity name).
 pub const PAGE_EXPR_PRIMARY_ENTITY: &str = "__page__";
+
+/// Sentinel for [`Expr::Wait`] / [`Expr::Cancel`] (host operation continuations).
+pub const OPERATION_EXPR_PRIMARY_ENTITY: &str = "__operation__";
 
 /// Top-level expression types in the Plasm IR.
 ///
@@ -39,6 +43,14 @@ pub enum Expr {
     #[serde(rename = "page")]
     Page(PageExpr),
 
+    /// Poll/resume an in-flight async plan run (`wait(s0_o1)` MCP).
+    #[serde(rename = "wait")]
+    Wait(WaitExpr),
+
+    /// Cancel an in-flight async plan run (`cancel(s0_o1)` MCP).
+    #[serde(rename = "cancel")]
+    Cancel(CancelExpr),
+
     /// teaching-table-only teaching literal (e.g. top-level union constructor `v101{p#=$,…}`).
     ///
     /// Parsed and type-checked for prompt validation; not executable — the runtime rejects execution.
@@ -57,6 +69,18 @@ pub struct PageExpr {
     /// Optional per-batch entity cap (clamps the upstream page size for this request only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
+}
+
+/// Poll/resume in-flight async plan execution (host-only continuation).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WaitExpr {
+    pub handle: OperationHandle,
+}
+
+/// Cancel in-flight async plan execution (host-only).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CancelExpr {
+    pub handle: OperationHandle,
 }
 
 /// Starting position for paginated query execution (CML `pagination` block).
@@ -513,6 +537,14 @@ impl Expr {
         Expr::Page(page)
     }
 
+    pub fn wait(wait: WaitExpr) -> Self {
+        Expr::Wait(wait)
+    }
+
+    pub fn cancel(cancel: CancelExpr) -> Self {
+        Expr::Cancel(cancel)
+    }
+
     /// Registry `entry_id` when the surface entity token was a session `e#` symbol.
     pub fn session_catalog_entry_id(&self) -> Option<&str> {
         match self {
@@ -522,7 +554,10 @@ impl Expr {
             Expr::Delete(d) => d.catalog_entry_id.as_deref(),
             Expr::Invoke(i) => i.catalog_entry_id.as_deref(),
             Expr::Chain(c) => c.source.session_catalog_entry_id(),
-            Expr::Page(_) | Expr::TeachingValue { .. } => None,
+            Expr::Page(_)
+            | Expr::Wait(_)
+            | Expr::Cancel(_)
+            | Expr::TeachingValue { .. } => None,
         }
     }
 
@@ -549,7 +584,10 @@ impl Expr {
                     .clone()
                     .with_session_catalog_entry_id(catalog_entry_id);
             }
-            Expr::Page(_) | Expr::TeachingValue { .. } => {}
+            Expr::Page(_)
+            | Expr::Wait(_)
+            | Expr::Cancel(_)
+            | Expr::TeachingValue { .. } => {}
         }
         self
     }
@@ -564,6 +602,7 @@ impl Expr {
             Expr::Invoke(i) => i.target.entity_type.as_str(),
             Expr::Chain(c) => c.source.primary_entity(),
             Expr::Page(_) => PAGE_EXPR_PRIMARY_ENTITY,
+            Expr::Wait(_) | Expr::Cancel(_) => OPERATION_EXPR_PRIMARY_ENTITY,
             Expr::TeachingValue { .. } => "__teaching_value__",
         }
     }
@@ -591,6 +630,8 @@ pub fn lift_invoke_payloads_in_expr(expr: &mut Expr, cgs: &CGS) {
         | Expr::Get(_)
         | Expr::Delete(_)
         | Expr::Page(_)
+        | Expr::Wait(_)
+        | Expr::Cancel(_)
         | Expr::TeachingValue { .. } => {}
         Expr::Create(create) => {
             if let Some(cap) = cgs.get_capability(&create.capability) {

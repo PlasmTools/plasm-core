@@ -73,6 +73,19 @@ pub struct RunArgs {
         help = "Plasm program file; read stdin when omitted"
     )]
     pub file: Option<PathBuf>,
+
+    #[arg(
+        long,
+        default_value_t = true,
+        help = "When false, start live run in background and return wait(sN_oM) immediately"
+    )]
+    pub wait: bool,
+
+    #[arg(long, help = "Bypass dry-run review soft gate on live execute")]
+    pub force: bool,
+
+    #[arg(long, value_name = "PCN", help = "Plan commit ref (pcN) from a prior plan dry-run")]
+    pub plan_commit_ref: Option<String>,
 }
 
 #[derive(Debug, Args)]

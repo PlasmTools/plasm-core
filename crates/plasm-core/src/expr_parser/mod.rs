@@ -1909,12 +1909,53 @@ impl<'a> Parser<'a> {
         Ok(Expr::Page(PageExpr { handle, limit }))
     }
 
+    fn parse_operation_handle_invocation(
+        &mut self,
+        kind: &'static str,
+    ) -> Result<Expr, ParseError> {
+        self.expect_char('(')?;
+        self.skip_ws();
+        let handle_raw = self.parse_ident()?;
+        let handle = crate::OperationHandle::parse(&handle_raw).map_err(|e| {
+            self.err(ParseErrorKind::Other {
+                message: e.to_string(),
+            })
+        })?;
+        self.skip_ws();
+        self.expect_char(')')?;
+        if kind == "wait" {
+            Ok(Expr::Wait(crate::WaitExpr { handle }))
+        } else {
+            Ok(Expr::Cancel(crate::CancelExpr { handle }))
+        }
+    }
+
+    fn parse_wait_invocation(&mut self) -> Result<Expr, ParseError> {
+        self.parse_operation_handle_invocation("wait")
+    }
+
+    fn parse_cancel_invocation(&mut self) -> Result<Expr, ParseError> {
+        self.parse_operation_handle_invocation("cancel")
+    }
+
     fn parse_source(&mut self) -> Result<Expr, ParseError> {
         let (raw, span_start, span_end) = self.parse_ident_with_span()?;
         if raw == "page" {
             self.skip_ws();
             if self.peek_char() == Some('(') {
                 return self.parse_page_invocation();
+            }
+        }
+        if raw == "wait" {
+            self.skip_ws();
+            if self.peek_char() == Some('(') {
+                return self.parse_wait_invocation();
+            }
+        }
+        if raw == "cancel" {
+            self.skip_ws();
+            if self.peek_char() == Some('(') {
+                return self.parse_cancel_invocation();
             }
         }
         self.skip_ws();
@@ -2704,6 +2745,32 @@ mod tests {
         };
         assert_eq!(p.handle.as_str(), "s0_pg1");
         assert_eq!(p.limit, None);
+    }
+
+    #[test]
+    fn parse_wait_operation_continuation() {
+        if !has_petstore() {
+            return;
+        }
+        let cgs = petstore_cgs();
+        let r = parse("wait(s0_o1)", &cgs).unwrap();
+        let Expr::Wait(w) = &r.expr else {
+            panic!("expected Wait, got {:?}", r.expr);
+        };
+        assert_eq!(w.handle.as_str(), "s0_o1");
+    }
+
+    #[test]
+    fn parse_cancel_operation_continuation() {
+        if !has_petstore() {
+            return;
+        }
+        let cgs = petstore_cgs();
+        let r = parse("cancel(s0_o2)", &cgs).unwrap();
+        let Expr::Cancel(c) = &r.expr else {
+            panic!("expected Cancel, got {:?}", r.expr);
+        };
+        assert_eq!(c.handle.as_str(), "s0_o2");
     }
 
     #[test]

@@ -130,6 +130,8 @@ pub mod typed_row;
 pub mod value;
 
 mod o200k_token_count;
+mod operation_handle;
+mod plan_commit;
 mod spans;
 mod utf8_trunc;
 mod wire_coercion;
@@ -159,8 +161,9 @@ pub use entity_ref_value::{
 };
 pub use error::{NormalizationError, SchemaError, TypeError};
 pub use expr::{
-    lift_invoke_payloads_in_expr, ChainExpr, ChainStep, CreateExpr, DeleteExpr, EntityKey, Expr,
-    GetExpr, InvokeExpr, PageExpr, QueryExpr, QueryPagination, Ref, PAGE_EXPR_PRIMARY_ENTITY,
+    lift_invoke_payloads_in_expr, CancelExpr, ChainExpr, ChainStep, CreateExpr, DeleteExpr,
+    EntityKey, Expr, GetExpr, InvokeExpr, PageExpr, QueryExpr, QueryPagination, Ref,
+    WaitExpr, OPERATION_EXPR_PRIMARY_ENTITY, PAGE_EXPR_PRIMARY_ENTITY,
 };
 pub use expr_sugar::rewrite_id_field_brace_query_to_get;
 pub use identity::{
@@ -172,9 +175,11 @@ pub use loader::{
     load_split_schema, plasm_cgs_fast_load_enabled, PathSchemaSource, SchemaSource,
 };
 pub use normalizer::{is_normalized, normalize};
+pub use operation_handle::{OperationHandle, OperationHandleParseError};
 pub use paging_handle::{
     is_valid_logical_session_ref_segment, PagingHandle, PagingHandleParseError,
 };
+pub use plan_commit::{PlanCommitId, PlanCommitRef};
 pub use predicate::Predicate;
 pub use preflight::{
     validate_capability_preflight, PickSpec, PreflightFieldPath, PreflightPlan, PreflightStep,

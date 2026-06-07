@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm-core/src/prompt_render.rs
+source: crates/plasm-core/src/prompt_render.rs
 expression: render_plasm_mcp_language_frontmatter()
 ---
 Follow the grammar and the teaching TSV below; reply with one valid plasm_program:
@@ -28,6 +28,7 @@ Symbol and fill rules:
 - Projection rows ending `[p#,…]` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
 - Relation rows end with `.r#`/`.wire`; apply them to any executable receiver row for that same entity type.
 - `page(sN_pgM)` uses a continuation handle returned by a prior response; copy the handle exactly and optionally add `, limit=N`.
+- `wait(sN_oM)` polls an in-flight async plan run; `cancel(sN_oM)` cancels it — copy handles from accept responses. Start live execute with `wait: false`; when dry verdict is **review**, pass `plan_commit_ref` (`pcN`) from plan dry-run or `force: true`.
 
 Grammar:
 plasm_program ::= plasm_expr | binding+ roots
@@ -35,7 +36,7 @@ binding       ::= ident "=" node
 roots         ::= root ("," root)*
 root          ::= ident | plasm_expr
 node          ::= (plasm_expr | ident) postfix* row_template? | ident "=>" value_or_template
-plasm_expr    ::= entity_expr [projection] | page
+plasm_expr    ::= entity_expr [projection] | page | wait | cancel
 entity_expr   ::= query_all | get | query | relation | method | create_action | search
 query_all     ::= e#
 get           ::= e#(<id>) or e#(p#=<value>, p#=<value>)
@@ -43,13 +44,15 @@ query         ::= e#{p#=<value>, …}
 relation      ::= <receiver>.r# | <receiver>.wire
 method        ::= e#(<id>).m#() or e#(<id>).m#(p#=<value>, …)
 create_action ::= e#.m#(p#=<value>, …)
-search        ::= e#~"text"
+search        ::= e#~"text"[{p#=…}]?
 page          ::= page(sN_pgM) | page(sN_pgM, limit=N)
+wait          ::= wait(sN_oM)
+cancel        ::= cancel(sN_oM)
 projection    ::= e#(<id>)[p#,…] | "[" fields "]"
-postfix       ::= ".limit(N)" | ".page_size(N)" | ".sort(field[, dir])" | ".filter{…}" | ".filter(…)" | ".aggregate(specs)" | ".group_by(field, specs)" | ".singleton()" | "[" fields "]"
+postfix       ::= ".limit(N)" | ".page_size(N)" | ".sort(field[, dir])" | ".filter{…}" | ".filter(…)" | ".aggregate(specs)" | ".group_by(field, specs)" | ".dedupe(field[, …])" | ".distinct(field[, …])" | ".distinct()" | ".singleton()" | "[" fields "]"
 row_template  ::= ("[" fields "]")? "<<TAG" template_body "TAG"
 fields        ::= [p#,…]
-specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) [, ...]
+specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) | name=first(field) | name=last(field) [, ...]
 dir           ::= desc | asc | descending | ascending
 value_or_template ::= literal | ident | ident.field | _.field | [elem, ...] | heredoc
 literal       ::= quoted string | number | bool | null
@@ -65,6 +68,7 @@ Composition rules:
 - `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `m#(..., p#=<<TXT` + newline body + `TXT` newline `)`.
 
 Common pitfalls:
+- Row contract: `{…}` / `~"…"{…}` inputs fetch or filter rows; only `rows:` fields from the teaching row may be used in `[fields]`, `.group_by`, `.sort`, `.dedupe`, or row `.filter`.
 - Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.
 - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.
 - Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.r#` or `issues.labels` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.

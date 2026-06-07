@@ -52,6 +52,7 @@ impl ExecutePipeline {
             validated,
             intent.is_live(),
             mcp_tool_hooks,
+            None,
         )
         .await
     }

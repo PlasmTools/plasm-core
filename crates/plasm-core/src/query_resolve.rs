@@ -330,6 +330,8 @@ pub fn normalize_expr_query_capabilities(
         | crate::Expr::Delete(_)
         | crate::Expr::Invoke(_)
         | crate::Expr::Page(_)
+        | crate::Expr::Wait(_)
+        | crate::Expr::Cancel(_)
         | crate::Expr::TeachingValue { .. } => Ok(()),
     }
 }
@@ -369,6 +371,8 @@ pub fn normalize_expr_query_capabilities_federated(
         | crate::Expr::Delete(_)
         | crate::Expr::Invoke(_)
         | crate::Expr::Page(_)
+        | crate::Expr::Wait(_)
+        | crate::Expr::Cancel(_)
         | crate::Expr::TeachingValue { .. } => Ok(()),
     }
 }

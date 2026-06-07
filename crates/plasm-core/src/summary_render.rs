@@ -87,6 +87,8 @@ fn intent_inner(expr: &Expr, cgs: &CGS) -> String {
                 .map(|l| format!(" with per-request limit {l}"))
                 .unwrap_or_default()
         ),
+        Expr::Wait(w) => format!("Poll async operation `{}`", w.handle),
+        Expr::Cancel(c) => format!("Cancel async operation `{}`", c.handle),
         Expr::TeachingValue { .. } => "teaching table teaching literal".to_string(),
     }
 }
@@ -137,6 +139,8 @@ fn intent_inner_federated(expr: &Expr, fed: &FederationDispatch, fallback: &CGS)
                 .map(|l| format!(" with per-request limit {l}"))
                 .unwrap_or_default()
         ),
+        Expr::Wait(w) => format!("Poll async operation `{}`", w.handle),
+        Expr::Cancel(c) => format!("Cancel async operation `{}`", c.handle),
         Expr::TeachingValue { .. } => "teaching table teaching literal".to_string(),
     }
 }
@@ -215,6 +219,18 @@ pub fn expr_simulation_bindings(expr: &Expr) -> serde_json::Value {
                 "limit": p.limit
             })
         }
+        Expr::Wait(w) => {
+            json!({
+                "op": "wait",
+                "handle": w.handle
+            })
+        }
+        Expr::Cancel(c) => {
+            json!({
+                "op": "cancel",
+                "handle": c.handle
+            })
+        }
         Expr::Chain(c) => {
             let step = match &c.step {
                 ChainStep::AutoGet => json!("auto_get"),
@@ -262,7 +278,7 @@ fn primary_entity(expr: &Expr) -> Option<String> {
         Expr::Create(c) => Some(c.entity.to_string()),
         Expr::Delete(d) => Some(d.target.entity_type.to_string()),
         Expr::Invoke(i) => Some(i.target.entity_type.to_string()),
-        Expr::Page(_) | Expr::TeachingValue { .. } => None,
+        Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => None,
     }
 }
 
@@ -276,6 +292,8 @@ fn operation_kind(expr: &Expr) -> Option<String> {
             Expr::Delete(_) => "delete",
             Expr::Invoke(_) => "invoke",
             Expr::Page(_) => "page",
+            Expr::Wait(_) => "wait",
+            Expr::Cancel(_) => "cancel",
             Expr::TeachingValue { .. } => "teaching_value",
         }
         .to_string(),
@@ -345,6 +363,8 @@ fn outcome_line(expr: &Expr, ctx: &OutcomeContext, cgs: &CGS) -> String {
                 )
             }
         }
+        Expr::Wait(w) => format!("Polled operation `{}` ({stats})", w.handle),
+        Expr::Cancel(c) => format!("Cancelled operation `{}` ({stats})", c.handle),
         Expr::TeachingValue { .. } => format!("Teaching literal ({stats})"),
     }
 }

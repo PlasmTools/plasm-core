@@ -123,6 +123,27 @@ pub struct ToolModelOverview {
     pub verb_count: usize,
 }
 
+/// Static execute-surface notes for Phoenix Tool Explorer and operator docs (not per-entity CGS).
+#[derive(Debug, Serialize)]
+pub struct ToolModelExecuteContinuations {
+    /// Pagination, async plan runs, and review-gate tokens — same model as MCP/HTTP execute.
+    pub summary: String,
+    pub pagination: String,
+    pub long_operations: String,
+    pub review_gate: String,
+}
+
+impl ToolModelExecuteContinuations {
+    fn standard() -> Self {
+        Self {
+            summary: "LLM execute uses host continuation expressions — not raw API pagination cursors or background job ids.".into(),
+            pagination: append_llm_pagination_execute_note(String::new()),
+            long_operations: "Async plan runs: start live execute with wait=false, then poll wait(sN_oM) or cancel cancel(sN_oM). HTTP execute without MCP plasm_context uses synthetic session slot s0 (s0_oN).".into(),
+            review_gate: "When plan dry-run verdict is review, pass plan_commit_ref (pcN) from matching plan dry-run or force=true before live execute. Commit ids hash semantic plan DAG only.".into(),
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct ToolModelDomainBlock {
     pub model: TeachingPromptModel,
@@ -133,6 +154,7 @@ pub struct ToolModelResponse {
     pub entry: CatalogEntryMeta,
     pub focus: ToolModelFocusBlock,
     pub overview: ToolModelOverview,
+    pub execute: ToolModelExecuteContinuations,
     pub auth: ToolModelAuthBlock,
     pub entities: Vec<ExplorerEntityProjection>,
     pub domain: ToolModelDomainBlock,
@@ -1111,6 +1133,7 @@ pub fn build_tool_model(
             relation_edge_count,
             verb_count,
         },
+        execute: ToolModelExecuteContinuations::standard(),
         auth: ToolModelAuthBlock {
             scheme,
             auth,
@@ -1539,6 +1562,9 @@ mod tests {
         };
         let m = build_tool_model(&cgs, &meta, &q).expect("ok");
         assert!(!m.entities.is_empty());
+        assert!(m.execute.summary.contains("continuation"));
+        assert!(m.execute.long_operations.contains("wait(sN_oM)"));
+        assert!(m.execute.review_gate.contains("plan_commit_ref"));
         assert_eq!(m.entities.len(), m.domain.model.entities.len());
         assert_eq!(m.focus.mode, "all");
         assert!(m.overview.verb_count > 0);
