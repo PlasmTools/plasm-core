@@ -1,6 +1,8 @@
-# Incoming authentication (optional)
+# plasm-mcp incoming (inbound) authentication
 
-Optional **JWT** (`Authorization: Bearer`) and/or **API keys** (`X-API-Key`) for HTTP discovery/execute routes and MCP tools when **`plasm-server`** is started with incoming auth enabled.
+**Architecture context:** `saas-architecture.md` (§0.4 — inbound identity vs MCP transport vs outbound provider auth).
+
+`plasm-mcp` can require **JWT** (`Authorization: Bearer`) and/or **API keys** (`X-API-Key`) for HTTP discovery/execute routes and for MCP tools (see below).
 
 Outbound CGS/API credentials are unchanged (`AuthResolver`, `AuthScheme` in YAML).
 
@@ -47,7 +49,7 @@ Execute sessions are keyed by **tenant scope** from the principal; cross-tenant 
 
 ## MCP
 
-**Tenant MCP transport** (graph allowlists for the appliance) is separate: use a provisioned **API key** as `Authorization: Bearer <api_key>` on Streamable HTTP. See [Appliance quick start](../appliance/quickstart.md) and [OSS appliance MCP persistence](oss-appliance-mcp-persistence.md).
+**Tenant MCP transport** (graph allowlists pushed from the control plane) is separate: use a provisioned **API key** as `Authorization: Bearer <api_key>` on Streamable HTTP. See ``docs/plasm-mcp-tenant-configuration.md``.
 
 **Incoming (inbound) auth** for execute sessions: Streamable HTTP does not pass `Authorization` to tool handlers, so clients must call the tool **`plasm_incoming_auth`** once per MCP transport session with **exactly one** of:
 
@@ -70,4 +72,26 @@ For local development, **`just local-web`** exports **`PLASM_WEB_DEV_AUTO_BEARER
 
 The SaaS shell resolves tenant/workspace/project from **`GET /v1/incoming-auth/context`** (Rust-owned principal + workspace/project list). Phoenix does not maintain parallel user or membership tables for that flow.
 
-Configure `PLASM_MCP_HTTP_BASE_URL` (see `web/config/runtime.exs`, default `http://127.0.0.1:3000` with `just local-web`; see [../reference/cli-and-env.md](../reference/cli-and-env.md)).
+Configure `PLASM_MCP_HTTP_BASE_URL` (see `web/config/runtime.exs`, default `http://127.0.0.1:3000` with `just local-web`; see `env-profiles.md`).
+
+## CLI device login (SaaS / hosted platform)
+
+Headless **`plasm login`** and platform **`plasm init`** use RFC 8628-style device authorization against the **incoming-auth** HTTP API (execute JWT), not MCP Streamable HTTP OAuth (`/mcp/oauth/*`).
+
+| Step | Endpoint / URL |
+|------|----------------|
+| CLI starts session | `POST {server}/v1/incoming-auth/device/start` |
+| User opens browser | `{PLASM_PUBLIC_WEB_ORIGIN}/device?user_code=XXXX-XXXX` (paste-friendly single field, then GitHub) |
+| Phoenix completes | `POST /internal/incoming-auth/v1/device/complete` (control-plane secret) |
+| CLI polls token | `POST {server}/v1/incoming-auth/device/poll` |
+
+**Hosted `server` URL:** use the agent HTTP prefix on the public host, e.g. **`https://platform.plasm.tools/plasm/http`** (not bare `https://platform.plasm.tools` — ingress serves `/plasm/http/…` → agent `/v1/…`).
+
+| Variable | Role |
+|----------|------|
+| `PLASM_PUBLIC_WEB_ORIGIN` | Phoenix origin for `verification_uri` (e.g. `https://platform.plasm.tools`). Set on **plasm-mcp** in Helm via `plasmWebPublicBaseUrl`. |
+| `PLASM_AUTH_STORAGE_URL` | **Required** for device sessions (auth-framework KV; multi-replica safe). |
+| `PLASM_AUTH_JWT_SECRET` | Signs polled `access_token` JWTs. |
+| `PLASM_MCP_CONTROL_PLANE_SECRET` | Phoenix → agent `device/complete`. |
+
+Device sessions are stored only in **auth-framework KV** (no in-process fallback). If `auth_storage` is unset, device routes return **503** `device_auth_storage_unavailable`.

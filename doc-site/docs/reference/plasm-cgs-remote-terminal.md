@@ -1,9 +1,6 @@
 # Remote Plasm terminal (`plasm`)
 
-!!! tip "Server URL"
-    Point the client at a running **`plasm-server`** appliance. See [Appliance quick start](../appliance/quickstart.md) for install, MCP keys, and the HTTP listener URL.
-
-The **`plasm`** binary (`cargo run -p plasm --bin plasm`) is the **remote HTTP terminal** for Plasm: discovery and execution over HTTP against **`plasm-server`**. The CLI is **agent-first**: configure once with **`plasm init`**, then **`search` → `context` → `run`**.
+The **`plasm`** binary (from the [`plasm`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm/Cargo.toml) crate, `cargo run -p plasm --bin plasm`) is the **remote HTTP terminal** for Plasm: discovery and execution over HTTP (`plasm-mcp` / `plasm-server`). The CLI is **agent-first**: configure once with **`plasm init`**, then **`search` → `context` → `run`**.
 
 *(This document’s filename is historical; the former binary name was `plasm-cgs`.)*
 
@@ -13,7 +10,7 @@ Local schema-driven CLIs are **not** `plasm`; use **`plasm-repl`** (`--schema`),
 
 The **`plasm` client owns the monotonic `e#` / `m#` / `p#` teaching table**, not the HTTP execute session:
 
-- **`plasm context`** fetches catalog CGS via `GET /v1/registry/{entry_id}?include_cgs=true`, builds a local teaching exposure session, and appends teaching rows to **`teaching.tsv`**.
+- **`plasm context`** fetches catalog CGS via `GET /v1/registry/{entry_id}?include_cgs=true`, builds a local [`TeachingExposureSession`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/symbol_tuning.rs), and appends teaching rows to **`teaching.tsv`**.
 - **`plasm run`** expands programs against that local symbol state, then POSTs the **expanded** surface to the server (lazy server execute binding for auth/HTTP/paging only).
 - Catalog digest changes require **`plasm context --new`** (no silent symbol reuse).
 
@@ -61,7 +58,7 @@ With **`--new`**, every seed must be `entry_id:Entity` (e.g. `pokeapi:Pokemon`).
 ```text
 .plasm/
   profiles/default.json
-  # Grammar: canonical spec in [Language definition](plasm-language-definition.md) (teaching table/teaching.tsv is the live teaching surface)
+  # Grammar: canonical spec at docs/reference/plasm-language-definition.md (teaching table/teaching.tsv is the live teaching surface)
   hosts/<8hex>/
     discovery.tsv                  # merged search cache
     current                        # one line: active session id
@@ -101,6 +98,8 @@ plasm context --new -i "github issues" github:Issue
 ```
 
 Paging: `e1[p5]` then `page(pg1)[p5]` in the same client session (server holds pagination handles).
+
+Long-running plan execute: `--mode plan` for dry-run + `plan_commit_ref`; `--wait=false` to accept `wait(s0_oN)` and poll with `plasm run -e 'wait(s0_o1)'` / cancel with `cancel(s0_o1)`. See [plasm-long-operations.md](plasm-long-operations.md).
 
 **`plasm context`** always prints the new symbol wave (TSV) on stdout; **`--verbose`** adds a stderr banner before the wave.
 

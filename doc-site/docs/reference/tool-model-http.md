@@ -2,7 +2,7 @@
 
 `plasm` exposes an operator-facing JSON projection aligned with teaching table prompt rendering and the dynamic CLI (`cli_builder`), not raw CGS parsing in clients.
 
-Phoenix **Tool Explorer** (`/tools/:entry_id`), project MCP configuration, and outbound OAuth flows consume this endpoint via [`PlasmWeb.PlasmMcpDataPlane.fetch_tool_model/3`](web/lib/plasm_web/plasm_mcp_data_plane.ex). See [phoenix-client-route-map.md](phoenix-client-route-map.md).
+Hosted **Tool Explorer** (`/tools/:entry_id`), project MCP configuration, and outbound OAuth flows consume this endpoint via `PlasmWeb.PlasmMcpDataPlane.fetch_tool_model/3` on [Plasm Cloud](https://platform.plasm.tools).
 
 ## `GET /v1/registry/{entry_id}/tool-model`
 

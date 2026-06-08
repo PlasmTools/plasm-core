@@ -26,9 +26,9 @@ Sources under `docs/` are **allowlisted**. Maintainer workflow:
 1. Edit canonical markdown under the **private monorepo** `docs/` and **`plasm-oss/skills/plasm-authoring/`** (authoring reference + SKILL) as needed.
 2. Run **`python scripts/sync_allowlisted_docs.py`** from `doc-site/` with monorepo root containing sibling `docs/` and `plasm-oss/skills/` (paths adjusted in the script).
 3. Commit updates under **`doc-site/docs/`** so the OSS repo stays self-contained for CI.
-4. Re-apply **link sanitization** on synced pages (monorepo-relative paths → doc-site or GitHub links). Do **not** edit committed snapshots under `doc-site/docs/authoring/` or `doc-site/docs/reference/` directly — change upstream sources and re-sync.
+4. Re-run **`python scripts/sync_allowlisted_docs.py`** after upstream edits; link sanitization runs automatically.
 
-**Allowlisted reference docs** (from monorepo `docs/`): language, MCP, auth, plugins, plus **`schema-overlay.md`**, **`plasm-cgs-remote-terminal.md`**, and **`appliance-surface-inventory.md`**.
+**Allowlisted reference docs** (from monorepo `docs/`): language (`plasm-language-definition.md`, `plasm-row-compute.md`, `plasm-long-operations.md`), MCP, auth, plugins, plus **`schema-overlay.md`**, **`plasm-cgs-remote-terminal.md`**, and **`appliance-surface-inventory.md`**. The sync script sanitizes monorepo-relative links to GitHub URLs or published doc paths automatically.
 
 **OSS release surface in prose:** document **`plasm-server`**, **`plasm`** (remote terminal), and dev tooling (`plasm-cgs`, `plasm-repl`). Do not teach **`plasm-mcp`** as an operator-facing product in hand-written pages; sanitize synced copies where they still mention it for historical context.
 

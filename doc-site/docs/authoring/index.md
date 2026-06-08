@@ -45,7 +45,7 @@ The companion Cursor agent at [`.cursor/agents/plasm-forge.md`](https://github.c
 
 ### Authoring with an agent (Cursor / Claude / Codex)
 
-Point the agent at **this skill** ([SKILL.md](https://github.com/PlasmTools/plasm-core/tree/main/skills/plasm-authoring/SKILL.md) + [reference.md](reference.md)) as the single source of truth. The agent prompt should be minimal — for example: read the OpenAPI spec the user provides, then follow the loop above until `domain.yaml` and `mappings.yaml` cover the API surface the user asked for, validating and testing as in Steps 4–6.
+Point the agent at **this skill** ([SKILL.md](index.md) + [reference.md](reference.md)) as the single source of truth. The agent prompt should be minimal — for example: read the OpenAPI spec the user provides, then follow the loop above until `domain.yaml` and `mappings.yaml` cover the API surface the user asked for, validating and testing as in Steps 4–6.
 
 **Do not** paste parallel API-specific runbooks (phased tag lists, per-vendor checklists, or duplicate rules) into the prompt; large specs are handled by **repeated passes through the same loop** (read a slice of the spec, extend the two YAML files, validate, test, repeat).
 
@@ -129,7 +129,7 @@ Write the domain model. No HTTP details here — only what exists and what you c
 
 **`description` strings:** On entities, capabilities, and `output` for side-effect actions, write **concise language for an agentic surface**: what the **entity** or operation is **for** in the task (goal, anchor, decision), not an inventory of typed fields and relations — the schema and teaching table already show those. Avoid tabular jargon (**"row"**) in Teaching-table-facing prose. Avoid embedding REST paths, methods, status codes, bare **`http://`** / **`https://`** links, or "see GET /…" notes — those belong in **`mappings.yaml`** comments or vendor docs, not in the CGS. **`auth.token_url`** in `domain.yaml` is the intentional exception (machine OAuth endpoint string). **Do not** repeat shapes already taught by **`value_ref`**, projection **`provides:`**, **`input_schema`** unions, or parameter names — omit field / parameter descriptions when types carry the story (see [reference.md — Gloss: do not restate typed structure](reference.md#gloss-do-not-restate-typed-structure)).
 
-**Agentic teaching table copy (execute / MCP teaching):** The prompt renderer attaches **entity `description`** to the symbolic teaching table (projection witness / banner). Treat it as **imperative surface**, not a manual or vendor doc: **one or two short sentences** on **purpose** (why an agent would focus this **entity**) — **never** name **relations** or **fields** that already show up as **`p#`** arrows, bracket projections, or typed columns (that duplicates the graph and confuses "banner" with "nav map"). **Do not** summarize projection contents ("includes refs to …", "typed booleans plus …") — `p#`, relations, and types already do that. **Do not** name other capability ids, spell out call sequences ("use X then Y"), cite **`transport:`**, document HTTP error semantics, or tell agents how to seed MCP — **`discovery:`** blocks (**`operation_terms`**, **`target_terms`**, **`qualifier_terms`** on entities/capabilities), **`apis/<api>/README.md`**, and eval cases carry that operational guidance. Capability **`description:`** should state **effect** or **when to use** in domain terms; move cross-capability playbooks into **`discovery`** on the relevant capability. See [reference.md — Teaching-table-facing descriptions](reference.md#domain-facing-descriptions-entities-and-capabilities).
+**Agentic teaching table copy (execute / MCP teaching):** The prompt renderer attaches **entity `description`** to the symbolic teaching table (projection witness / banner). Treat it as **imperative surface**, not a manual or vendor doc: **one or two short sentences** on **purpose** (why an agent would focus this **entity**) — **never** name **relations** or **fields** that already show up as **`p#`** arrows, bracket projections, or typed columns (that duplicates the graph and confuses "banner" with "nav map"). **Do not** summarize projection contents ("includes refs to …", "typed booleans plus …") — `p#`, relations, and types already do that. **Do not** name other capability ids, spell out call sequences ("use X then Y"), cite **`transport:`**, document HTTP error semantics, or tell agents how to seed MCP — **`discovery:`** blocks (**`operation_terms`**, **`target_terms`**, **`qualifier_terms`** on entities/capabilities), **`apis/<api>/README.md`**, and eval cases carry that operational guidance. Capability **`description:`** should state **effect** or **when to use** in domain terms; move cross-capability playbooks into **`discovery`** on the relevant capability. See [reference.md — Teaching-table-facing descriptions](reference.md#teaching-table-facing-descriptions-entities-and-capabilities).
 
 ```yaml
 values:
@@ -334,7 +334,7 @@ See [reference.md](reference.md) for the full pattern catalogue (index-only, fil
 
 ### Scoped relation traversal (`materialize`)
 
-When an API uses sub-resource URLs (`/parent/{id}/children`), set **`materialize`** on the **many** relation so chain traversal fills the target query's scope parameter(s). See [reference.md — Relations and Navigation](reference.md#relations-and-navigation).
+When an API uses sub-resource URLs (`/parent/{id}/children`), set **`materialize`** on the **many** relation so chain traversal fills the target query's scope parameter(s). See [reference.md — Scoped many-relations](reference.md#scoped-many-relations--materialize-query_scoped--query_scoped_bindings).
 
 ### EntityRef fields
 
@@ -388,7 +388,7 @@ pet_create:
 
 ### Pagination & hydration
 
-**Pagination** — declare only in **`mappings.yaml`** (`pagination` block on **query** capabilities). See [reference.md — Pagination](reference.md).
+**Pagination** — declare only in **`mappings.yaml`** (`pagination` block on **query** capabilities). Infer `style`, wire param names, and JSON paths per [reference.md — Pagination](reference.md#pagination-cml--mappingsyaml-only). The runtime merges **`pagination.params`** into follow-up HTTP requests; **`pagination:`** in CML is the single authoring surface for paging behavior.
 
 **Hydration** — after a query, if the entity has both `query` and `get`, the runtime **by default** fetches full rows via `get` unless `QueryExpr.hydrate = Some(false)` or the engine disables hydrate. No extra CGS flag. See [reference.md — Query result hydration](reference.md#query-result-hydration-runtime).
 

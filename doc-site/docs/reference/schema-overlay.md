@@ -4,12 +4,12 @@ Catalogs with dynamic workspace schema declare a **`schema_overlay:`** block in 
 
 1. Executes the declared **`source`** pipeline via the normal CML/HTTP stack (same auth and backend as the session).
 2. Projects rows from the merged JSON response into entity definitions using Minijinja templates and JSON paths.
-3. Merges the overlay with `CGS::with_overlay` and pins the session with `effective_catalog_cgs_hash_hex`. **`augment_base`** merges dynamic fields into the existing bootstrap entity name; **`per_scope_entity`** adds new typed entities.
+3. Merges the overlay with [`CGS::with_overlay`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema_overlay.rs) and pins the session with [`effective_catalog_cgs_hash_hex`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema_overlay.rs). **`augment_base`** merges dynamic fields into the existing bootstrap entity name; **`per_scope_entity`** adds new typed entities.
 4. Routes decode for scoped capabilities through **`decode.scope`** → **`schema_overlay_scope_index`**.
 
 No vendor-specific logic lives in `plasm-core` or `plasm-agent-core`; catalogs express *what* to project. **Overlay configuration always comes from vendor API responses** — not env vars, HTTP bodies, or MCP seed fields.
 
-**Authoring:** When to add `schema_overlay:` to a catalog — bootstrap shape, projection modes, checklists, and reference APIs — is documented in [Authoring reference — Runtime schema overlay](../authoring/reference.md#runtime-schema-overlay-schema_overlay). This file covers runtime behavior and spec keys.
+**Authoring:** When to add `schema_overlay:` to a catalog — bootstrap shape, projection modes, checklists, and reference APIs — is documented in [plasm-oss/skills/plasm-authoring/reference.md](../authoring/reference.md#runtime-schema-overlay-schema_overlay) (canonical skill; monorepo path). This file covers runtime behavior and spec keys.
 
 ## Spec
 
@@ -93,24 +93,24 @@ Agents and MCP clients supply **`{ api, entity }` seeds only** — no parallel o
 
 ## Session resolver
 
-``schema_overlay_session.rs`` runs before entity validation when opening execute sessions:
+[`schema_overlay_session.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-agent-core/src/schema_overlay_session.rs) runs before entity validation when opening execute sessions:
 
 | Surface | Entry point |
 |---------|-------------|
-| HTTP `POST /execute` | ``http_execute.rs`` |
-| MCP `plasm_context` | same execute session create (via ``apply_capability_seeds``) |
-| Federated attach | ``federate_execute_session`` |
+| HTTP `POST /execute` | [`http_execute.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-agent-core/src/http_execute.rs) |
+| MCP `plasm_context` | same execute session create (via [`apply_capability_seeds`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-agent-core/src/http_execute.rs)) |
+| Federated attach | [`federate_execute_session`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-agent-core/src/http_execute.rs) |
 | Remote `plasm` CLI | HTTP client → server execute path above |
-| Local `plasm-repl` | ``plasm-repl/src/lib.rs`` at startup |
+| Local `plasm-repl` | [`plasm-repl/src/lib.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-repl/src/lib.rs) at startup |
 
 Optional TTL cache: `PLASM_SCHEMA_OVERLAY_TTL_SECS` (default **600**). Multi-step pipelines cache on a digest of all step HTTP responses.
 
 ## Reference catalogs
 
-- `Fibery` — `per_scope_entity`, array field catalog, `top_level_key` extract
-- `Notion` — `per_scope_entity`, `object_map` on `properties`, `path_segments` extract
-- `Jira` — `project_query` → `issue_createmeta_get` per project, `nested_items_path` on createmeta
-- `ClickUp` — `team_query` → `custom_field_query` per team, `augment_base` on `Task`
+- [Fibery](https://github.com/PlasmTools/plasm-core/tree/main/apis/fibery/domain.yaml) — `per_scope_entity`, array field catalog, `top_level_key` extract
+- [Notion](https://github.com/PlasmTools/plasm-core/tree/main/apis/notion/domain.yaml) — `per_scope_entity`, `object_map` on `properties`, `path_segments` extract
+- [Jira](https://github.com/PlasmTools/plasm-core/tree/main/apis/jira/domain.yaml) — `project_query` → `issue_createmeta_get` per project, `nested_items_path` on createmeta
+- [ClickUp](https://github.com/PlasmTools/plasm-core/tree/main/apis/clickup/domain.yaml) — `team_query` → `custom_field_query` per team, `augment_base` on `Task`
 
 **Note:** `decode.scope` ambient params (e.g. Notion `database_id` on `database_query`) are **operational** — they route decode during program execution after schema was already fetched. They are not overlay configuration.
 
@@ -128,11 +128,11 @@ Optional TTL cache: `PLASM_SCHEMA_OVERLAY_TTL_SECS` (default **600**). Multi-ste
 
 Matrix fixtures (no `apis/*` in core tests):
 
-- ``fixtures/schemas/fibery_schema_overlay/``
-- ``fixtures/schemas/notion_schema_overlay/``
-- ``fixtures/schemas/jira_schema_overlay/``
-- ``fixtures/schemas/augment_base_overlay/``
-- ``fixtures/schemas/clickup_schema_overlay/``
+- [`fixtures/schemas/fibery_schema_overlay/`](https://github.com/PlasmTools/plasm-core/tree/main/fixtures/schemas/fibery_schema_overlay/)
+- [`fixtures/schemas/notion_schema_overlay/`](https://github.com/PlasmTools/plasm-core/tree/main/fixtures/schemas/notion_schema_overlay/)
+- [`fixtures/schemas/jira_schema_overlay/`](https://github.com/PlasmTools/plasm-core/tree/main/fixtures/schemas/jira_schema_overlay/)
+- [`fixtures/schemas/augment_base_overlay/`](https://github.com/PlasmTools/plasm-core/tree/main/fixtures/schemas/augment_base_overlay/)
+- [`fixtures/schemas/clickup_schema_overlay/`](https://github.com/PlasmTools/plasm-core/tree/main/fixtures/schemas/clickup_schema_overlay/)
 
 ```bash
 cargo test -p plasm-core schema_overlay

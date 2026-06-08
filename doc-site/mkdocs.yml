@@ -77,6 +77,8 @@ nav:
   - Glossary: glossary.md
   - Language:
       - Language definition: reference/plasm-language-definition.md
+      - Row compute: reference/plasm-row-compute.md
+      - Long operations: reference/plasm-long-operations.md
       - Correction catalogue: reference/correction-catalogue.md
   - Service endpoints:
       - Tool model: reference/tool-model-http.md

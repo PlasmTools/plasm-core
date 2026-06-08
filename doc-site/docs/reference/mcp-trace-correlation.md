@@ -22,7 +22,7 @@ Production MCP tools use `**trace_id_for_mcp_logical_session`** and `TraceHub::e
 
 **Operational notes:**
 
-- **Iceberg / trace sink:** Historical rows keep old `trace_id` values; new ingests use v2. `**GET /v1/traces/{id}`** detail is built only from `event_kind = mcp_trace_segment` rows (payload = canonical ``TraceEvent``); older audit kinds are not interpreted.
+- **Iceberg / trace sink:** Historical rows keep old `trace_id` values; new ingests use v2. `**GET /v1/traces/{id}`** detail is built only from `event_kind = mcp_trace_segment` rows (payload = canonical `[TraceEvent](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-trace/src/lib.rs)`); older audit kinds are not interpreted.
 - **Cross-release dashboards:** key by `tenant_id` + `mcp_session_id` (and timestamps) if they must join v1/v2 `trace_id` roots, or re-backfill v2 ids if you adopt a one-off migration job.
 - **In-memory `TraceHub`:** Process restart clears prior ids; only one format exists per deployment after upgrade.
 - **SSE:** Completed traces expose snapshot `seq` equal to the last emitted sequence (including `terminal`); see `TraceHub::sse_snapshot_payload`.

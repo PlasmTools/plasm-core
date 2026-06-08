@@ -6,7 +6,7 @@ Open design notes for evolving **Capability Graph Schema** and adjacent authorin
 
 ## 1. Canned teaching table / prompt examples per parameter or capability (high signal)
 
-**Problem:** teaching lines and symbol-tuned examples are synthesized in ``plasm-oss/crates/plasm-core/src/prompt_render.rs``. String parameters always use a literal `"example"` in `invoke_dotted_call_arg_example` (see `FieldType::String` branch). That is correct mechanically but weak pedagogy—e.g. `calculate` would read better as:
+**Problem:** teaching table lines and symbol-tuned examples are synthesized in [`plasm-oss/crates/plasm-core/src/prompt_render.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/prompt_render.rs). String parameters always use a literal `"example"` in `invoke_dotted_call_arg_example` (see `FieldType::String` branch). That is correct mechanically but weak pedagogy—e.g. `calculate` would read better as:
 
 ```text
 e6.m1(p8="1.5 + 2 * 3")  ;;  Evaluate a safe arithmetic expression
@@ -49,7 +49,7 @@ Short ideas worth tracking; expand into separate sections when a line of work st
 
 ## 3. How this ties to authoring
 
-When extending CGS, keep **domain.yaml** as semantic truth and **mappings.yaml** as transport; prompt-only data should stay **optional** and **downgrade gracefully** to current behavior when absent (per [Authoring tutorial](../authoring/index.md)).
+When extending CGS, keep **domain.yaml** as semantic truth and **mappings.yaml** as transport; prompt-only data should stay **optional** and **downgrade gracefully** to current behavior when absent (per [plasm forge skill](https://github.com/PlasmTools/plasm-core/tree/main/skills/plasm-forge/SKILL.md)).
 
 ---
 
