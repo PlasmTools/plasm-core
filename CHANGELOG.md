@@ -5,6 +5,22 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.98] - 2026-06-07
+
+### Added
+
+- **Session graph spill + plan rehydrate:** when `PLASM_GRAPH_CACHE_URL` is set, paginated fetch-all spills durable graph page deltas (v2 JSON), trims in-process hot cache (`PLASM_GRAPH_HOT_MAX_ENTITIES`, default **2048**), and plan compute rehydrates via `MaterializedRowSource` (streaming `limit` / full `aggregate`).
+- **OTLP metrics + spans:** `plasm.runtime.graph.page_spill.*`, `plasm.runtime.graph.hot_cache.evictions_total`, `plasm.execute.graph.*` (delta append, rehydrate, snapshot finalize).
+- **E2E:** `cargo test -p plasm-e2e --test graph_spill_e2e` (Hermit pokeapi_mini + `file://` persistence).
+
+### Changed
+
+- **Unified session delta seq:** graph page deltas and run artifact appends share `SessionCore::alloc_delta_seq` (no collision with run artifact seqs).
+
+### Operations
+
+- **No object-store GC** for graph deltas/snapshots yet — use bucket lifecycle rules or manual cleanup. Run artifacts retain existing `PLASM_RUN_ARTIFACTS_*` retention.
+
 ## [0.1.97] - 2026-06-07
 
 ### Added

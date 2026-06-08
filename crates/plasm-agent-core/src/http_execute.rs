@@ -3276,7 +3276,14 @@ pub(crate) async fn run_parsed_plasm_line(
             catalog_bind,
         })),
         cancel: crate::operation::plan_execute_cancel_signal(),
+        graph_page_spill: crate::graph_page_spill_host::graph_page_spill_for_execute(
+            st.session_graph_persistence.as_ref(),
+            sess.core.clone(),
+            sess.prompt_hash.as_str(),
+            session_id,
+        ),
     };
+    let graph_spill_active = exec_opts.graph_page_spill.is_some();
 
     let mut result = match try_proof_document_share_bind(sess, exec_cgs, &parsed.expr).await? {
         Some(r) => r,
@@ -3291,6 +3298,7 @@ pub(crate) async fn run_parsed_plasm_line(
                     fetch_all: false,
                     max_items: page.limit,
                     one_page: true,
+                    ..Default::default()
                 };
                 st.engine
                     .execute_pagination_resume(
@@ -3309,6 +3317,7 @@ pub(crate) async fn run_parsed_plasm_line(
                     exec_cgs,
                     &parsed.expr,
                     host_page_size,
+                    graph_spill_active,
                 );
                 st.engine
                     .execute(

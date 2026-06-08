@@ -467,6 +467,7 @@ fn attach_query_pagination_if_present(
         fetch_all,
         max_items,
         one_page: false,
+        ..Default::default()
     };
 
     if !fetch_all

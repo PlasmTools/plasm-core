@@ -30,3 +30,13 @@ pub(crate) fn projection_hydrate(entity_type: &str, provider_count: usize) -> Sp
         provider_group_count = provider_count,
     )
 }
+
+/// Spill one paginated graph page to durable storage and trim the in-process hot cache.
+#[inline]
+pub(crate) fn graph_page_spill(page_index: usize, entity_count: usize) -> Span {
+    tracing::debug_span!(
+        "plasm_runtime.graph.page_spill",
+        page_index = page_index,
+        entity_count = entity_count,
+    )
+}

@@ -79,9 +79,11 @@ fn reject_domain_placeholder_in_executable(expr: &Expr) -> Result<(), RuntimeErr
 /// Drain a [`QueryStream`] into a single [`ExecutionResult`].
 pub async fn collect_query_stream(
     stream: &mut QueryStream<'_>,
+    consume: &StreamConsumeOpts,
 ) -> Result<ExecutionResult, RuntimeError> {
     use futures_util::StreamExt;
     let mut all_entities = Vec::new();
+    let mut total_rows = 0usize;
     let mut total_net = 0usize;
     let mut any_live = false;
     let mut last_has_more = false;
@@ -96,16 +98,32 @@ pub async fn collect_query_stream(
         if page.stats.network_requests > 0 {
             any_live = true;
         }
-        all_entities.extend(page.entities);
+        total_rows = total_rows.saturating_add(if consume.graph_backed_result && page.entities.is_empty() {
+            page.stats.cache_misses
+        } else {
+            page.entities.len()
+        });
+        if !consume.graph_backed_result {
+            all_entities.extend(page.entities);
+        }
         if page.stats.network_requests == 0 && page.stats.cache_hits > 0 {
             // page carried consult hits
         }
     }
-    let count = all_entities.len();
+    let count = if consume.graph_backed_result {
+        total_rows
+    } else {
+        all_entities.len()
+    };
+    let entities = if consume.graph_backed_result {
+        Vec::new()
+    } else {
+        all_entities
+    };
     let mut stats = ExecutionStats::from_telemetry(CacheTelemetry::default(), total_net);
     stats.record_rows_materialized(count);
     Ok(ExecutionResult {
-        entities: all_entities,
+        entities,
         count,
         has_more: last_has_more,
         pagination_resume: last_resume,
@@ -118,6 +136,43 @@ pub async fn collect_query_stream(
         stats,
         request_fingerprints: Vec::new(),
     })
+}
+
+async fn graph_spill_page_and_trim_hot(
+    spill: &crate::graph_page_spill::GraphPageSpillHandle,
+    mat: &mut SessionMaterialization,
+    page_index: usize,
+    page_entities: &[CachedEntity],
+) -> Result<(), RuntimeError> {
+    use std::time::Instant;
+
+    let span = crate::spans::graph_page_spill(page_index, page_entities.len());
+    let _guard = span.enter();
+    let started = Instant::now();
+    match spill.append_page(page_index, page_entities).await {
+        Ok(()) => {
+            let cap = spill.hot_bounds().max_hot_entities;
+            let evicted = mat.graph_mut().evict_to_hot_limit(cap);
+            crate::runtime_metrics::record_graph_page_spill(
+                "success",
+                page_index,
+                page_entities.len(),
+                evicted,
+                started.elapsed(),
+            );
+            Ok(())
+        }
+        Err(e) => {
+            crate::runtime_metrics::record_graph_page_spill(
+                "error",
+                page_index,
+                0,
+                0,
+                started.elapsed(),
+            );
+            Err(e)
+        }
+    }
 }
 
 /// Execution modes for the runtime
@@ -246,6 +301,9 @@ pub struct StreamConsumeOpts {
     /// clamping page size to `max_items` (LLM paging batches). When unset, `max_items` alone spans
     /// multiple upstream pages until the budget is satisfied (CLI `--limit`).
     pub one_page: bool,
+    /// When true, paginated reads keep rows in session graph (+ optional spill) only — do not
+    /// duplicate every page into [`ExecutionResult::entities`].
+    pub graph_backed_result: bool,
 }
 
 /// Snapshot of [`PaginationLoopState`] for opaque LLM paging continuations (host-only; not for wire serde).
@@ -555,6 +613,8 @@ pub struct ExecuteOptions {
     pub execute_session: Option<std::sync::Arc<ExecuteSessionMaterial>>,
     /// Cooperative cancellation checked between pagination/hydration batches.
     pub cancel: Option<CancelSignal>,
+    /// When set, each paginated graph page is appended to durable storage and hot RAM is trimmed.
+    pub graph_page_spill: Option<crate::graph_page_spill::GraphPageSpillHandle>,
 }
 
 impl std::fmt::Debug for ExecuteOptions {
@@ -575,6 +635,7 @@ impl std::fmt::Debug for ExecuteOptions {
             .field("federation", &self.federation.is_some())
             .field("preflight", &self.preflight.is_some())
             .field("execute_session", &self.execute_session.is_some())
+            .field("graph_page_spill", &self.graph_page_spill.is_some())
             .finish()
     }
 }
@@ -1004,8 +1065,8 @@ impl ExecutionEngine {
                 execute_session,
                 cancel,
                 async move {
-                    let mut stream = self.execute_stream(expr, cgs, mat, mode, consume, opts)?;
-                    collect_query_stream(&mut stream).await
+                    let mut stream = self.execute_stream(expr, cgs, mat, mode, consume.clone(), opts)?;
+                    collect_query_stream(&mut stream, &consume).await
                 },
             )
             .await?;
@@ -1038,7 +1099,14 @@ impl ExecutionEngine {
         let execution_mode = mode.unwrap_or(self.config.default_mode);
         let chain_consume = consume.clone();
         match expr {
-            Expr::Query(query) => self.query_to_stream(query, cgs, mat, execution_mode, consume),
+            Expr::Query(query) => self.query_to_stream(
+                query,
+                cgs,
+                mat,
+                execution_mode,
+                consume,
+                opts.graph_page_spill.clone(),
+            ),
             Expr::Page(_) => Err(RuntimeError::ConfigurationError {
                 message: "`page(pg#)` continuations are executed via `ExecutionEngine::execute_pagination_resume`"
                     .to_string(),
@@ -1137,6 +1205,7 @@ impl ExecutionEngine {
         mat: &'a mut SessionMaterialization,
         mode: ExecutionMode,
         consume: StreamConsumeOpts,
+        graph_page_spill: Option<crate::graph_page_spill::GraphPageSpillHandle>,
     ) -> Result<QueryStream<'a>, RuntimeError> {
         if let Some(pred) = &query.predicate {
             if let Some(source_entity) = cgs.get_entity(&query.entity) {
@@ -1206,6 +1275,7 @@ impl ExecutionEngine {
                 capability,
                 consume,
                 None,
+                graph_page_spill,
             );
         }
 
@@ -1221,8 +1291,8 @@ impl ExecutionEngine {
         mode: ExecutionMode,
         consume: StreamConsumeOpts,
     ) -> Result<ExecutionResult, RuntimeError> {
-        let mut stream = self.query_to_stream(query, cgs, mat, mode, consume)?;
-        collect_query_stream(&mut stream).await
+        let mut stream = self.query_to_stream(query, cgs, mat, mode, consume.clone(), None)?;
+        collect_query_stream(&mut stream, &consume).await
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1393,6 +1463,7 @@ impl ExecutionEngine {
         capability: &'a CapabilitySchema,
         consume: StreamConsumeOpts,
         resume_state: Option<PaginationLoopState>,
+        graph_page_spill: Option<crate::graph_page_spill::GraphPageSpillHandle>,
     ) -> Result<QueryStream<'a>, RuntimeError> {
         const MAX_PAGES: usize = 10_000;
 
@@ -1444,6 +1515,7 @@ impl ExecutionEngine {
             None => PaginationLoopState::new(&pconf, &user, &consume)?,
         };
         let capability = capability.clone();
+        let graph_backed = consume.graph_backed_result;
 
         let stream = Box::pin(async_stream::try_stream! {
             let mut pages = 0usize;
@@ -1552,6 +1624,16 @@ impl ExecutionEngine {
                 let page_http = if http_live { 1 } else { 0 };
                 let page_net = page_http + extra_net;
                 let page_cache_misses = entities.len();
+                if graph_backed {
+                    if let Some(ref spill) = graph_page_spill {
+                        graph_spill_page_and_trim_hot(spill, mat, pages, &entities).await?;
+                    }
+                }
+                let yield_entities = if graph_backed {
+                    Vec::new()
+                } else {
+                    entities
+                };
 
                 if single_http_roundtrip {
                     let continue_pages = state.advance_after_page(
@@ -1575,7 +1657,7 @@ impl ExecutionEngine {
                         None
                     };
                     yield PageResult {
-                        entities,
+                        entities: yield_entities,
                         page_index: pages,
                         has_more: continue_pages,
                         pagination_resume,
@@ -1591,7 +1673,7 @@ impl ExecutionEngine {
                 }
                 if truncated {
                     yield PageResult {
-                        entities,
+                        entities: yield_entities,
                         page_index: pages,
                         has_more: false,
                         pagination_resume: None,
@@ -1610,7 +1692,7 @@ impl ExecutionEngine {
                     .is_some_and(|m| accumulated_total >= m)
                 {
                     yield PageResult {
-                        entities,
+                        entities: yield_entities,
                         page_index: pages,
                         has_more: false,
                         pagination_resume: None,
@@ -1626,7 +1708,7 @@ impl ExecutionEngine {
                 }
                 if full_page_len == 0 && !matches!(pconf.location, plasm_compile::PaginationLocation::BlockRange) {
                     yield PageResult {
-                        entities,
+                        entities: yield_entities,
                         page_index: pages,
                         has_more: false,
                         pagination_resume: None,
@@ -1651,7 +1733,7 @@ impl ExecutionEngine {
                 )?;
 
                 yield PageResult {
-                    entities,
+                    entities: yield_entities,
                     page_index: pages,
                     has_more: continue_pages,
                     pagination_resume: None,
@@ -1706,8 +1788,8 @@ impl ExecutionEngine {
                 cancel,
                 async move {
                     let mut stream = self
-                        .execute_pagination_resume_stream(resume, cgs, mat, mode, consume, &opts)?;
-                    collect_query_stream(&mut stream).await
+                        .execute_pagination_resume_stream(resume, cgs, mat, mode, consume.clone(), &opts)?;
+                    collect_query_stream(&mut stream, &consume).await
                 },
             )
             .await?;
@@ -1766,6 +1848,7 @@ impl ExecutionEngine {
             capability,
             consume,
             Some(state),
+            opts.graph_page_spill.clone(),
         )
     }
 
@@ -1819,6 +1902,7 @@ impl ExecutionEngine {
                                     fetch_all: true,
                                     max_items: None,
                                     one_page: false,
+                                    graph_backed_result: false,
                                 },
                             )
                             .await?;
@@ -6869,6 +6953,7 @@ mod tests {
             fetch_all: false,
             max_items: None,
             one_page: false,
+            ..Default::default()
         };
         // block_range + explicit to_block → NOT single HTTP round-trip (multi-page range query)
         let single_http_roundtrip = !consume.fetch_all
@@ -6901,6 +6986,7 @@ mod tests {
             fetch_all: false,
             max_items: None,
             one_page: false,
+            ..Default::default()
         };
         // block_range without to_block → not a single HTTP round-trip (BlockRange is always multi-step)
         let single_http_roundtrip = !consume.fetch_all

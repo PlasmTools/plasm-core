@@ -14,6 +14,7 @@ pub(crate) fn stream_consume_for_read(
     cgs: &CGS,
     expr: &Expr,
     host_page_size: Option<usize>,
+    graph_page_spill: bool,
 ) -> StreamConsumeOpts {
     if host_page_size.is_some() {
         return StreamConsumeOpts::default();
@@ -23,6 +24,7 @@ pub(crate) fn stream_consume_for_read(
             fetch_all: true,
             max_items: None,
             one_page: false,
+            graph_backed_result: graph_page_spill,
         }
     } else {
         StreamConsumeOpts::default()
@@ -77,7 +79,7 @@ mod tests {
             capability_name: None,
             catalog_entry_id: None,
         };
-        let consume = stream_consume_for_read(cgs.as_ref(), &Expr::Query(q), None);
+        let consume = stream_consume_for_read(cgs.as_ref(), &Expr::Query(q), None, false);
         assert!(consume.fetch_all);
         assert!(!consume.one_page);
     }
@@ -97,7 +99,7 @@ mod tests {
             capability_name: None,
             catalog_entry_id: None,
         };
-        let consume = stream_consume_for_read(cgs.as_ref(), &Expr::Query(q), Some(10));
+        let consume = stream_consume_for_read(cgs.as_ref(), &Expr::Query(q), Some(10), false);
         assert!(!consume.fetch_all);
     }
 }

@@ -119,6 +119,23 @@ pub(crate) fn mcp_resource_read() -> Span {
     tracing::info_span!("plasm_agent.mcp.resource.read")
 }
 
+#[inline]
+pub(crate) fn execute_graph_snapshot_finalize(through_seq: u64) -> Span {
+    tracing::info_span!(
+        "plasm_agent.graph.snapshot_finalize",
+        through_seq = through_seq,
+    )
+}
+
+#[inline]
+pub(crate) fn execute_graph_rehydrate(mode: &'static str, logical_count: usize) -> Span {
+    tracing::debug_span!(
+        "plasm_agent.graph.rehydrate",
+        mode = mode,
+        logical_count = logical_count,
+    )
+}
+
 // --- Security (control plane, transport identity, tenant binding) ------------
 //
 // Never attach secrets (API key material, JWTs, `Authorization`) to spans or logs here.

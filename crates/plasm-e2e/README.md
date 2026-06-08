@@ -19,6 +19,7 @@ Plasm **surface language + DAG semantics** for real multi-line programs live in 
 | **Compiler / plan invariants** | `plasm-agent-core` `plasm_dag` `#[cfg(test)]` (+ `evaluate_plasm_plan_dry`) | Staging, diagnostics, plan JSON shape **without HTTP**. Keep **small**; if it asserts “this program means X” for authors, add or reference a **matrix entry**.                |
 | **Parser micro-cases**         | `plasm-core` `expr_parser` (+ `postfix`)                                    | Lexer edge cases, error spans, postfix peel order, tiny AST — **minimal CGS**. Semantic “this Plasm line means X” should **mirror** a matrix entry in a comment or test name. |
 | **Integration smoke**          | `cargo test -p plasm-e2e --test hermit_e2e`                                 | Hermit + engine + cache + CLI over **fixture/vendor** CGS — **not** the unified language conformance suite.                                                                 |
+| **Graph spill / rehydrate**    | `cargo test -p plasm-e2e --test graph_spill_e2e`                            | Hermit pokeapi_mini + `file://` `PLASM_GRAPH_CACHE_URL`, hot cap, paginated spill, plan `limit` + `aggregate(count)` rehydrate (runs in CI via `cargo nextest -p plasm-e2e`). |
 
 
 See [AGENTS.md](../../AGENTS.md) for workspace layout and commands.

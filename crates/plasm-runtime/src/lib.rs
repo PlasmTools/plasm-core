@@ -107,6 +107,7 @@ pub mod cache;
 pub mod error;
 pub mod evm;
 pub mod execution;
+pub mod graph_page_spill;
 pub mod hosted_oauth_kv;
 pub mod http_config;
 pub mod http_resilience;
@@ -156,7 +157,7 @@ pub use http_resilience::{HttpResiliencePolicy, ResilientHttpTransport};
 pub use http_transport::{HttpTransport, ReqwestHttpTransport};
 pub use materialization::{
     CacheDecision, CacheTelemetry, EntityGraphSnapshot, ExecutionCacheConsult, FanoutCoordinator,
-    SessionMaterialization, SessionResponseStore, StoredResponse,
+    MaterializedRowSource, SessionMaterialization, SessionResponseStore, StoredResponse,
 };
 pub use mockserver::*;
 pub use oauth_client::{
@@ -168,4 +169,5 @@ pub use oauth_token_debug::TokenEndpointResponseSummary;
 pub use query_index::{QueryCacheKey, QueryIndex};
 pub use replay::*;
 pub use runtime_error_render::step_error_from_runtime;
+pub use graph_page_spill::{GraphHotCacheBounds, GraphPageDelta, GraphPageSpill, GraphPageSpillHandle};
 pub use session_graph_cache::MutexGraphCacheSession;

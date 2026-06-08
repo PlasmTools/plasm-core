@@ -46,11 +46,12 @@ use crate::trace_sink_emit::PlasmTraceContext;
 use indexmap::IndexMap;
 use plasm_core::{
     flatten_from_parent_get_source_rows, resolve_relation_row_resolution, CapabilityKind,
-    EntityKey, EntityName, Expr, Ref, RelationMaterialization, RelationRowResolution,
+    EntityName, Expr, Ref, RelationMaterialization, RelationRowResolution,
     TypedFieldValue, Value,
 };
 use plasm_runtime::{
-    CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
+    entity_to_row_json, CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource,
+    ExecutionStats, MaterializedRowSource,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -148,47 +149,7 @@ pub fn symbol_map_for_plasm_surface_parse(
 /// key on list-shaped summaries even when [`Ref`] carries identity — merge so `_.id` (and compound
 /// slots) resolve consistently.
 fn cached_entity_row_json(entity: &CachedEntity, cgs: &CGS) -> serde_json::Value {
-    let mut v = entity.payload_to_json();
-    let Some(obj) = v.as_object_mut() else {
-        return v;
-    };
-    let slot = entity.reference.primary_slot_str();
-    if slot.is_empty() {
-        return v;
-    }
-    fn slot_needed(existing: Option<&serde_json::Value>) -> bool {
-        match existing {
-            None | Some(serde_json::Value::Null) => true,
-            Some(serde_json::Value::String(s)) => s.is_empty(),
-            _ => false,
-        }
-    }
-    match &entity.reference.key {
-        EntityKey::Simple(_) => {
-            let id_name = cgs
-                .get_entity(entity.reference.entity_type.as_str())
-                .map(|e| e.id_field.as_str().to_string())
-                .unwrap_or_else(|| "id".to_string());
-            if slot_needed(obj.get(&id_name)) {
-                obj.insert(id_name, serde_json::Value::String(slot));
-            }
-        }
-        EntityKey::Compound(parts) => {
-            let ent = cgs.get_entity(entity.reference.entity_type.as_str());
-            for (k, val) in parts {
-                if val.is_empty() {
-                    continue;
-                }
-                if slot_needed(obj.get(k.as_str())) {
-                    let json = ent
-                        .map(|e| plasm_core::identity_slot_to_json(cgs, e, k.as_str(), val))
-                        .unwrap_or_else(|| serde_json::Value::String(val.clone()));
-                    obj.insert(k.clone(), json);
-                }
-            }
-        }
-    }
-    v
+    entity_to_row_json(entity, Some(cgs))
 }
 
 /// Parse one Plasm surface line: strip teaching gloss, expand `e#` / `p#` / `m#` per `pipeline`, then
@@ -2025,6 +1986,7 @@ struct MaterializedNode {
     entry_id: String,
     entity: String,
     result: ExecutionResult,
+    row_source: MaterializedRowSource,
     /// Raw row values for downstream language semantics. Synthetic scalar bindings stay scalar here
     /// even though display/publication wraps them as `{ "value": ... }` cached entities.
     rows: Vec<serde_json::Value>,
@@ -2033,6 +1995,10 @@ struct MaterializedNode {
     artifact: Option<crate::run_artifacts::RunArtifactHandle>,
     display: String,
     projection: Option<Vec<String>>,
+}
+
+fn inline_row_source(rows: &[serde_json::Value]) -> MaterializedRowSource {
+    MaterializedRowSource::Inline(rows.to_vec())
 }
 
 struct MaterializedInputRow {
@@ -2132,14 +2098,40 @@ async fn run_validated_plan_phased(
                     surface.page_size,
                 )
                 .await?;
-                if let Some(scope) = execution_scope {
-                    scope.add_rows_materialized(result.entities.len());
-                }
                 if let Some(cap) = surface.page_size {
                     if result.entities.len() > cap {
                         result.entities.truncate(cap);
                         result.count = result.entities.len();
                     }
+                }
+                let entity_type = surface
+                    .qualified_entity
+                    .as_ref()
+                    .map(|q| q.entity.as_str())
+                    .unwrap_or_else(|| node.id().as_str());
+                let row_source = crate::graph_rehydrate::materialize_surface_rows(
+                    &scoped_es,
+                    st,
+                    scoped_es.cgs.as_ref(),
+                    entity_type,
+                    &result,
+                )
+                .await;
+                let mat_entities = crate::graph_rehydrate::materialized_entities_for_surface(
+                    &scoped_es,
+                    st,
+                    session_id,
+                    scoped_es.cgs.as_ref(),
+                    entity_type,
+                    &result,
+                )
+                .await;
+                let mat_rows = match &row_source {
+                    MaterializedRowSource::Inline(rows) => rows.clone(),
+                    MaterializedRowSource::GraphBacked { .. } => Vec::new(),
+                };
+                if let Some(scope) = execution_scope {
+                    scope.add_rows_materialized(result.count.max(result.entities.len()));
                 }
                 if let Some(sink) = sink.as_ref() {
                     trace_record_plasm_line(sink, idx, expr_label, &parsed, &result, &scoped_es)
@@ -2167,15 +2159,12 @@ async fn run_validated_plan_phased(
                         .unwrap_or_else(|| node.id().as_str().to_string()),
                     display: crate::expr_display::expr_display(&parsed.expr),
                     projection: parsed.projection,
-                    rows: result
-                        .entities
-                        .iter()
-                        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-                        .collect(),
+                    row_source,
+                    rows: mat_rows,
                     row_identities: row_identities_from_entities(
                         &scoped_es,
                         parsed.expr.primary_entity(),
-                        &result.entities,
+                        &mat_entities,
                     ),
                     result,
                     artifact,
@@ -2202,7 +2191,8 @@ async fn run_validated_plan_phased(
                     .get(&derive.source)
                     .map(|m| m.entry_id.clone())
                     .unwrap_or_else(|| es.entry_id.clone());
-                let source_rows = materialized_rows(&materialized, &derive.source)?;
+                let source_rows = materialized_rows(es, st, session_id, &materialized, &derive.source)
+                    .await?;
                 let input_rows = materialized_singleton_inputs(&materialized, &derive.inputs)?;
                 let mut rows = Vec::with_capacity(source_rows.len());
                 for row in source_rows {
@@ -2237,10 +2227,25 @@ async fn run_validated_plan_phased(
                     .ok()
                     .and_then(|source| materialized.get(&source).map(|m| m.entry_id.clone()))
                     .unwrap_or_else(|| es.entry_id.clone());
-                let rows = eval_compute(&compute.compute, &materialized)?;
-                let source = PlanNodeId::new(compute.compute.source.clone())?;
+                let source_id = PlanNodeId::new(compute.compute.source.clone())?;
+                let source_mat = materialized.get(&source_id).ok_or_else(|| {
+                    format!(
+                        "source node {:?} has not been materialized",
+                        source_id.as_str()
+                    )
+                })?;
+                let scoped_cgs = es.cgs.as_ref();
+                let rows = eval_compute_with_row_source(
+                    &compute.compute,
+                    &source_mat.row_source,
+                    es,
+                    st,
+                    session_id,
+                    scoped_cgs,
+                )
+                .await?;
                 let row_identities = propagate_row_identities(
-                    &source,
+                    &source_id,
                     &compute.compute.op,
                     &materialized,
                     rows.len(),
@@ -2461,6 +2466,7 @@ async fn materialize_synthetic_node(
         entity: entity.clone(),
         display: synthetic_node_display(node),
         projection: synthetic_projection(node),
+        row_source: MaterializedRowSource::Inline(rows.clone()),
         rows,
         row_identities,
         result: ExecutionResult {
@@ -2507,7 +2513,14 @@ async fn materialize_validated_relation_traversal(
             relation.relation.source.as_str()
         )
     })?;
-    let source_rows = source_mat.rows.clone();
+    let source_rows = crate::graph_rehydrate::resolve_row_source_rows(
+        &source_mat.row_source,
+        es,
+        st,
+        session_id,
+        es.cgs.as_ref(),
+    )
+    .await?;
     match &relation.relation.materialize {
         RelationMaterialization::FromParentGet { .. } => try_materialize_from_parent_get_relation(
             st,
@@ -2715,6 +2728,7 @@ async fn try_materialize_from_parent_get_relation(
         entity: relation.relation.target.entity.clone(),
         display,
         projection: relation.relation.ir.projection.clone(),
+        row_source: inline_row_source(&rows),
         rows,
         row_identities,
         result: full_result,
@@ -2842,6 +2856,13 @@ async fn materialize_prefer_from_parent_get_relation(
                         relation.id.as_str()
                     ),
                     projection: relation.relation.ir.projection.clone(),
+                    row_source: inline_row_source(
+                        &full_result
+                            .entities
+                            .iter()
+                            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+                            .collect::<Vec<_>>(),
+                    ),
                     rows: full_result
                         .entities
                         .iter()
@@ -3041,6 +3062,11 @@ async fn materialize_prefer_from_parent_get_relation(
         trace,
     )
     .await?;
+    let rows: Vec<_> = full_result
+        .entities
+        .iter()
+        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+        .collect();
     Ok(MaterializedNode {
         entry_id: relation.relation.target.entry_id.clone(),
         entity: relation.relation.target.entity.clone(),
@@ -3049,11 +3075,8 @@ async fn materialize_prefer_from_parent_get_relation(
             relation.id.as_str()
         ),
         projection: relation.relation.ir.projection.clone(),
-        rows: full_result
-            .entities
-            .iter()
-            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-            .collect(),
+        row_source: inline_row_source(&rows),
+        rows,
         row_identities: row_identities_from_entities(
             &scoped_es,
             target_entity,
@@ -3064,7 +3087,10 @@ async fn materialize_prefer_from_parent_get_relation(
     })
 }
 
-fn materialized_rows(
+async fn materialized_rows(
+    es: &ExecuteSession,
+    st: &PlasmHostState,
+    session_id: &str,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     source: &PlanNodeId,
 ) -> Result<Vec<serde_json::Value>, String> {
@@ -3074,7 +3100,143 @@ fn materialized_rows(
             source.as_str()
         )
     })?;
-    Ok(mat.rows.clone())
+    crate::graph_rehydrate::resolve_row_source_rows(
+        &mat.row_source,
+        es,
+        st,
+        session_id,
+        es.cgs.as_ref(),
+    )
+    .await
+}
+
+fn compute_needs_full_materialize(op: &ComputeOp) -> bool {
+    matches!(
+        op,
+        ComputeOp::Sort { .. }
+            | ComputeOp::GroupBy { .. }
+            | ComputeOp::Aggregate { .. }
+            | ComputeOp::DedupeBy { .. }
+            | ComputeOp::Render { .. }
+    )
+}
+
+async fn eval_compute_with_row_source(
+    compute: &ComputeTemplate,
+    row_source: &MaterializedRowSource,
+    es: &ExecuteSession,
+    st: &PlasmHostState,
+    session_id: &str,
+    cgs: &CGS,
+) -> Result<Vec<serde_json::Value>, String> {
+    match row_source {
+        MaterializedRowSource::Inline(rows) => eval_compute_from_rows(compute, rows),
+        MaterializedRowSource::GraphBacked {
+            entity_type,
+            logical_count,
+        } => {
+            if compute_needs_full_materialize(&compute.op) {
+                let rows = crate::graph_rehydrate::rehydrate_rows(
+                    es,
+                    st,
+                    session_id,
+                    entity_type,
+                    *logical_count,
+                    cgs,
+                )
+                .await?;
+                return eval_compute_from_rows(compute, &rows);
+            }
+            eval_compute_streaming(compute, es, st, session_id, entity_type, cgs).await
+        }
+    }
+}
+
+async fn eval_compute_streaming(
+    compute: &ComputeTemplate,
+    es: &ExecuteSession,
+    st: &PlasmHostState,
+    session_id: &str,
+    entity_type: &str,
+    cgs: &CGS,
+) -> Result<Vec<serde_json::Value>, String> {
+    let mut out = Vec::new();
+    let limit = match &compute.op {
+        ComputeOp::Limit { count } => Some(*count),
+        _ => None,
+    };
+    crate::graph_rehydrate::stream_entity_rows(es, st, session_id, entity_type, cgs, |row| {
+        match &compute.op {
+            ComputeOp::Filter { predicates } => {
+                if predicates.iter().all(|p| predicate_matches(row, p)) {
+                    out.push(row.clone());
+                }
+            }
+            ComputeOp::Limit { .. } => out.push(row.clone()),
+            ComputeOp::Project { fields } => {
+                let mut obj = serde_json::Map::new();
+                for (name, path) in fields {
+                    obj.insert(
+                        name.as_str().to_string(),
+                        value_at_path(row, path)
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                    );
+                }
+                out.push(serde_json::Value::Object(obj));
+            }
+            _ => {}
+        }
+        limit.is_some_and(|cap| out.len() >= cap)
+    })
+    .await?;
+    if let ComputeOp::Limit { count } = &compute.op {
+        out.truncate(*count);
+    }
+    Ok(out)
+}
+
+fn eval_compute_from_rows(
+    compute: &ComputeTemplate,
+    rows: &[serde_json::Value],
+) -> Result<Vec<serde_json::Value>, String> {
+    match &compute.op {
+        ComputeOp::Project { fields } => rows
+            .iter()
+            .map(|row| {
+                let mut out = serde_json::Map::new();
+                for (name, path) in fields {
+                    out.insert(
+                        name.as_str().to_string(),
+                        value_at_path(row, path)
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null),
+                    );
+                }
+                Ok(serde_json::Value::Object(out))
+            })
+            .collect(),
+        ComputeOp::Filter { predicates } => Ok(rows
+            .iter()
+            .filter(|row| predicates.iter().all(|p| predicate_matches(row, p)))
+            .cloned()
+            .collect()),
+        ComputeOp::GroupBy { keys, aggregates } => group_rows(rows, keys, aggregates),
+        ComputeOp::Aggregate { aggregates } => aggregate_rows(rows, aggregates),
+        ComputeOp::Sort { key, descending } => {
+            let mut sorted = rows.to_vec();
+            sorted.sort_by(|a, b| {
+                cmp_json_sort_values(value_at_path(a, key), value_at_path(b, key))
+            });
+            if *descending {
+                sorted.reverse();
+            }
+            Ok(sorted)
+        }
+        ComputeOp::Limit { count } => Ok(rows.iter().take(*count).cloned().collect()),
+        ComputeOp::DedupeBy { keys } => dedupe_rows(rows, keys),
+        ComputeOp::Render { columns, template } => render_compute(rows, columns, template),
+    }
 }
 
 fn materialized_singleton_inputs(
@@ -3335,16 +3497,18 @@ async fn materialize_relation_singleton_chain(
     if let Some(sink) = sink {
         trace_record_plasm_line(sink, node_index, expr_label, &parsed, &result, &scoped_es).await;
     }
+    let rows: Vec<_> = result
+        .entities
+        .iter()
+        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+        .collect();
     Ok(MaterializedNode {
         entry_id: relation.relation.target.entry_id.clone(),
         entity: relation.relation.target.entity.clone(),
         display: crate::expr_display::expr_display(&parsed.expr),
         projection: parsed.projection,
-        rows: result
-            .entities
-            .iter()
-            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-            .collect(),
+        row_source: inline_row_source(&rows),
+        rows,
         row_identities: row_identities_from_entities(
             &scoped_es,
             relation.relation.target.entity.as_str(),
@@ -3411,16 +3575,18 @@ async fn try_materialize_from_cached_relation_refs(
         trace,
     )
     .await?;
+    let rows: Vec<_> = full_result
+        .entities
+        .iter()
+        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+        .collect();
     Ok(Some(MaterializedNode {
         entry_id: relation.relation.target.entry_id.clone(),
         entity: relation.relation.target.entity.clone(),
         display: format!("plan.relation({}) cached_embed", relation.id.as_str()),
         projection: relation.relation.ir.projection.clone(),
-        rows: full_result
-            .entities
-            .iter()
-            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-            .collect(),
+        row_source: inline_row_source(&rows),
+        rows,
         row_identities: row_identities_from_entities(
             &scoped_es,
             target_entity,
@@ -3604,16 +3770,18 @@ async fn materialize_relation_scoped_fanout(
         relation.id.as_str(),
         source_rows.len()
     );
+    let rows: Vec<_> = full_result
+        .entities
+        .iter()
+        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+        .collect();
     Ok(MaterializedNode {
         entry_id: relation.relation.target.entry_id.clone(),
         entity: relation.relation.target.entity.clone(),
         display,
         projection: relation.relation.ir.projection.clone(),
-        rows: full_result
-            .entities
-            .iter()
-            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-            .collect(),
+        row_source: inline_row_source(&rows),
+        rows,
         row_identities: row_identities_from_entities(
             &scoped_es,
             relation.relation.target.entity.as_str(),
@@ -3962,7 +4130,8 @@ async fn materialize_for_each_node(
     trace: Option<&PlasmTraceContext>,
     sink: Option<&McpPlasmTraceSink>,
 ) -> Result<MaterializedNode, String> {
-    let source_rows = materialized_rows(materialized, &for_each.source)?;
+    let source_rows =
+        materialized_rows(es, st, session_id, materialized, &for_each.source).await?;
     let input_rows = materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each))?;
     let mut parsed_steps = Vec::with_capacity(source_rows.len());
     let mut expressions = Vec::with_capacity(source_rows.len());
@@ -4064,6 +4233,13 @@ async fn materialize_for_each_node(
     Ok(MaterializedNode {
         entry_id: for_each.effect_template.qualified_entity.entry_id.clone(),
         entity: for_each.effect_template.qualified_entity.entity.clone(),
+        row_source: inline_row_source(
+            &result
+                .entities
+                .iter()
+                .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+                .collect::<Vec<_>>(),
+        ),
         rows: result
             .entities
             .iter()
@@ -4105,50 +4281,6 @@ fn plan_value_to_rows(value: &PlanValue) -> Result<Vec<serde_json::Value>, Strin
         serde_json::Value::Array(items) => items,
         other => vec![other],
     })
-}
-
-fn eval_compute(
-    compute: &ComputeTemplate,
-    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-) -> Result<Vec<serde_json::Value>, String> {
-    let source = PlanNodeId::new(compute.source.clone())?;
-    let rows = materialized_rows(materialized, &source)?;
-    match &compute.op {
-        ComputeOp::Project { fields } => rows
-            .iter()
-            .map(|row| {
-                let mut out = serde_json::Map::new();
-                for (name, path) in fields {
-                    out.insert(
-                        name.as_str().to_string(),
-                        value_at_path(row, path)
-                            .cloned()
-                            .unwrap_or(serde_json::Value::Null),
-                    );
-                }
-                Ok(serde_json::Value::Object(out))
-            })
-            .collect(),
-        ComputeOp::Filter { predicates } => rows
-            .into_iter()
-            .filter(|row| predicates.iter().all(|p| predicate_matches(row, p)))
-            .map(Ok)
-            .collect(),
-        ComputeOp::GroupBy { keys, aggregates } => group_rows(&rows, keys, aggregates),
-        ComputeOp::Aggregate { aggregates } => aggregate_rows(&rows, aggregates),
-        ComputeOp::Sort { key, descending } => {
-            let mut sorted = rows;
-            sorted
-                .sort_by(|a, b| cmp_json_sort_values(value_at_path(a, key), value_at_path(b, key)));
-            if *descending {
-                sorted.reverse();
-            }
-            Ok(sorted)
-        }
-        ComputeOp::Limit { count } => Ok(rows.into_iter().take(*count).collect()),
-        ComputeOp::DedupeBy { keys } => dedupe_rows(&rows, keys),
-        ComputeOp::Render { columns, template } => render_compute(&rows, columns, template),
-    }
 }
 
 enum EvalScope<'a> {
@@ -4800,6 +4932,7 @@ mod tests {
                     },
                     request_fingerprints: vec![],
                 },
+                row_source: MaterializedRowSource::Inline(vec![row.clone()]),
                 rows: vec![row.clone()],
                 row_identities: vec![None],
                 artifact: None,
@@ -6111,6 +6244,7 @@ mod tests {
                     },
                     request_fingerprints: vec![],
                 },
+                row_source: MaterializedRowSource::Inline(vec![serde_json::json!({"content": "STATS"})]),
                 rows: vec![serde_json::json!({"content": "STATS"})],
                 row_identities: vec![None],
                 artifact: None,

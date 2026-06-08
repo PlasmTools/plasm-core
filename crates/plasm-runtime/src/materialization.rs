@@ -178,6 +178,31 @@ impl std::ops::DerefMut for SessionMaterialization {
     }
 }
 
+/// Where plan compute reads rows after surface materialization.
+#[derive(Debug, Clone)]
+pub enum MaterializedRowSource {
+    /// Rows fully in memory (small / non-graph-backed).
+    Inline(Vec<serde_json::Value>),
+    /// Hot graph + spilled pages; `logical_count` from [`crate::ExecutionResult::count`].
+    GraphBacked {
+        entity_type: String,
+        logical_count: usize,
+    },
+}
+
+impl MaterializedRowSource {
+    pub fn inline_rows(&self) -> Option<&[serde_json::Value]> {
+        match self {
+            Self::Inline(rows) => Some(rows.as_slice()),
+            Self::GraphBacked { .. } => None,
+        }
+    }
+
+    pub fn is_graph_backed(&self) -> bool {
+        matches!(self, Self::GraphBacked { .. })
+    }
+}
+
 /// Outcome of a cache consult before HTTP.
 #[derive(Debug, Clone)]
 pub enum CacheDecision {

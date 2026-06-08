@@ -85,6 +85,8 @@ pub struct GraphCache {
     version_counter: u64,
     /// Entity type index for efficient queries
     type_index: HashMap<EntityName, Vec<Ref>>,
+    /// FIFO insertion order for hot-RAM eviction after durable page spill.
+    insertion_order: Vec<Ref>,
 }
 
 /// Options for cache operations
@@ -189,6 +191,91 @@ impl CachedEntity {
             );
         }
         serde_json::Value::Object(obj)
+    }
+
+    /// Row-shaped JSON for plan evaluation, spill pages, and snapshots (CGS-aware id slots).
+    pub fn to_row_json(&self, cgs: Option<&plasm_core::CGS>) -> serde_json::Value {
+        entity_to_row_json(self, cgs)
+    }
+
+    /// Restore a cached entity from a spill/snapshot row (v1 lossy or v2 with `_ref`).
+    pub fn from_row_json(
+        entity_type: &str,
+        row: &serde_json::Value,
+        cgs: &plasm_core::CGS,
+    ) -> Result<Self, RuntimeError> {
+        let obj = row.as_object().ok_or_else(|| RuntimeError::CacheError {
+            message: "row must be a JSON object".into(),
+        })?;
+        let reference = if let Some(r) = obj.get("_ref").and_then(|v| v.as_str()) {
+            Ref::from_string(r).ok_or_else(|| RuntimeError::CacheError {
+                message: format!("invalid _ref `{r}`"),
+            })?
+        } else {
+            build_ref_from_row(entity_type, obj, cgs)?
+        };
+        let mut fields = IndexMap::new();
+        let mut relations = IndexMap::new();
+        let entity_def = cgs.get_entity(entity_type);
+        let id_field = entity_def.map(|e| e.id_field.as_str()).unwrap_or("id");
+        let relation_names: std::collections::HashSet<String> = entity_def
+            .map(|e| {
+                e.relations
+                    .keys()
+                    .map(|k| k.as_str().to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (k, v) in obj {
+            if matches!(
+                k.as_str(),
+                "_ref" | "_version" | "_last_updated" | "_completeness"
+            ) {
+                continue;
+            }
+            if relation_names.contains(k) {
+                if let Some(arr) = v.as_array() {
+                    let refs: Vec<Ref> = arr
+                        .iter()
+                        .filter_map(|item| item.as_str().and_then(Ref::from_string))
+                        .collect();
+                    if !refs.is_empty() {
+                        relations.insert(k.clone(), refs);
+                    }
+                }
+                continue;
+            }
+            if k == id_field {
+                continue;
+            }
+            if let Ok(tf) = serde_json::from_value::<TypedFieldValue>(v.clone()) {
+                fields.insert(k.clone(), tf);
+            }
+        }
+        let completeness = obj
+            .get("_completeness")
+            .and_then(|v| v.as_str())
+            .map(|s| match s {
+                "summary" => EntityCompleteness::Summary,
+                _ => EntityCompleteness::Complete,
+            })
+            .unwrap_or(EntityCompleteness::Summary);
+        let version = obj
+            .get("_version")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1);
+        let last_updated = obj
+            .get("_last_updated")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1);
+        Ok(Self {
+            reference,
+            fields,
+            relations,
+            last_updated,
+            version,
+            completeness,
+        })
     }
 
     /// Merge another entity into this one (keeping the most recent data)
@@ -329,6 +416,107 @@ impl CacheStore for GraphCache {
     }
 }
 
+fn slot_needed(existing: Option<&serde_json::Value>) -> bool {
+    match existing {
+        None | Some(serde_json::Value::Null) => true,
+        Some(serde_json::Value::String(s)) => s.is_empty(),
+        _ => false,
+    }
+}
+
+fn build_ref_from_row(
+    entity_type: &str,
+    obj: &serde_json::Map<String, serde_json::Value>,
+    cgs: &plasm_core::CGS,
+) -> Result<Ref, RuntimeError> {
+    let ent = cgs.get_entity(entity_type).ok_or_else(|| RuntimeError::CacheError {
+        message: format!("unknown entity type `{entity_type}`"),
+    })?;
+    if ent.key_vars.len() <= 1 {
+        let id_name = ent.id_field.as_str();
+        let id = obj
+            .get(id_name)
+            .or_else(|| obj.get("id"))
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RuntimeError::CacheError {
+                message: format!("row missing id field `{id_name}`"),
+            })?;
+        return Ok(Ref::new(entity_type, id));
+    }
+    let mut parts = std::collections::BTreeMap::new();
+    for kv in &ent.key_vars {
+        let val = obj.get(kv.as_str()).and_then(|v| v.as_str()).ok_or_else(|| {
+            RuntimeError::CacheError {
+                message: format!("row missing compound key `{kv}`"),
+            }
+        })?;
+        parts.insert(kv.to_string(), val.to_string());
+    }
+    Ok(Ref::compound(entity_type, parts))
+}
+
+/// Row-shaped JSON for plan evaluation, spill pages, and snapshots (CGS-aware id slots).
+pub fn entity_to_row_json(entity: &CachedEntity, cgs: Option<&plasm_core::CGS>) -> serde_json::Value {
+    let mut v = entity.payload_to_json();
+    let Some(obj) = v.as_object_mut() else {
+        return v;
+    };
+    obj.insert(
+        "_ref".to_string(),
+        serde_json::Value::String(entity.reference.to_string()),
+    );
+    obj.insert(
+        "_version".to_string(),
+        serde_json::Value::Number(entity.version.into()),
+    );
+    obj.insert(
+        "_last_updated".to_string(),
+        serde_json::Value::Number(entity.last_updated.into()),
+    );
+    obj.insert(
+        "_completeness".to_string(),
+        serde_json::Value::String(match entity.completeness {
+            EntityCompleteness::Summary => "summary",
+            EntityCompleteness::Complete => "complete",
+        }.to_string()),
+    );
+    let slot = entity.reference.primary_slot_str();
+    if slot.is_empty() {
+        return v;
+    }
+    let Some(cgs) = cgs else {
+        obj.entry("id".to_string())
+            .or_insert_with(|| serde_json::Value::String(slot));
+        return v;
+    };
+    match &entity.reference.key {
+        plasm_core::EntityKey::Simple(_) => {
+            let id_name = cgs
+                .get_entity(entity.reference.entity_type.as_str())
+                .map(|e| e.id_field.as_str().to_string())
+                .unwrap_or_else(|| "id".to_string());
+            if slot_needed(obj.get(&id_name)) {
+                obj.insert(id_name, serde_json::Value::String(slot));
+            }
+        }
+        plasm_core::EntityKey::Compound(parts) => {
+            let ent = cgs.get_entity(entity.reference.entity_type.as_str());
+            for (k, val) in parts {
+                if val.is_empty() {
+                    continue;
+                }
+                if slot_needed(obj.get(k.as_str())) {
+                    let json = ent
+                        .map(|e| plasm_core::identity_slot_to_json(cgs, e, k.as_str(), val))
+                        .unwrap_or_else(|| serde_json::Value::String(val.clone()));
+                    obj.insert(k.clone(), json);
+                }
+            }
+        }
+    }
+    v
+}
+
 impl GraphCache {
     /// Create a new empty graph cache
     pub fn new() -> Self {
@@ -336,6 +524,7 @@ impl GraphCache {
             entities: HashMap::new(),
             version_counter: 0,
             type_index: HashMap::new(),
+            insertion_order: Vec::new(),
         }
     }
 
@@ -381,7 +570,8 @@ impl GraphCache {
         } else {
             let mut new_entity = entity;
             new_entity.last_updated = timestamp;
-            self.entities.insert(reference, new_entity);
+            self.entities.insert(reference.clone(), new_entity);
+            self.insertion_order.push(reference);
             Ok(true)
         }
     }
@@ -432,8 +622,20 @@ impl GraphCache {
         if let Some(refs) = self.type_index.get_mut(&reference.entity_type) {
             refs.retain(|r| r != reference);
         }
-
+        self.insertion_order.retain(|r| r != reference);
         self.entities.remove(reference)
+    }
+
+    /// Drop oldest inserted entities until at most `max_hot` rows remain (after durable spill).
+    pub fn evict_to_hot_limit(&mut self, max_hot: usize) -> usize {
+        let mut evicted = 0usize;
+        while self.entities.len() > max_hot && !self.insertion_order.is_empty() {
+            let oldest = self.insertion_order.remove(0);
+            if self.remove(&oldest).is_some() {
+                evicted += 1;
+            }
+        }
+        evicted
     }
 
     /// Clear all entities of a specific type
@@ -449,6 +651,7 @@ impl GraphCache {
     pub fn clear(&mut self) {
         self.entities.clear();
         self.type_index.clear();
+        self.insertion_order.clear();
         self.version_counter = 0;
     }
 
@@ -843,5 +1046,35 @@ mod tests {
                 assert_i1_key_reference(&a);
             }
         }
+    }
+
+    #[test]
+    fn row_json_roundtrip_preserves_ref_and_fields() {
+        use plasm_core::CGS;
+        let entity = create_test_entity("test-1", "TestEntity");
+        let cgs = CGS::new();
+        let row = entity_to_row_json(&entity, Some(&cgs));
+        let restored =
+            CachedEntity::from_row_json("TestEntity", &row, &cgs).expect("from_row_json");
+        assert_eq!(restored.reference, entity.reference);
+        assert_eq!(
+            restored.get_field("name").map(TypedFieldValue::to_value),
+            entity.get_field("name").map(TypedFieldValue::to_value),
+        );
+    }
+
+    #[test]
+    fn evict_to_hot_limit_drops_oldest_insertions() {
+        let mut cache = GraphCache::new();
+        for i in 0..5 {
+            cache
+                .insert(create_test_entity(&format!("e{i}"), "TestEntity"))
+                .unwrap();
+        }
+        assert_eq!(cache.stats().total_entities, 5);
+        assert_eq!(cache.evict_to_hot_limit(3), 2);
+        assert_eq!(cache.stats().total_entities, 3);
+        assert!(!cache.contains(&Ref::new("TestEntity", "e0")));
+        assert!(cache.contains(&Ref::new("TestEntity", "e4")));
     }
 }

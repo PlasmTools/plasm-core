@@ -1529,10 +1529,24 @@ fn lower_suffix_stream(
         }
     }
 
+    if let Some(ps) = tail_page_size {
+        if let Some(first_surface) = out.iter_mut().find(|n| {
+            matches!(
+                n.source,
+                DagNodeSource::Surface { .. } | DagNodeSource::RelationTraversal { .. }
+            )
+        }) {
+            first_surface.page_size = Some(ps);
+        }
+    }
     if let Some(last) = out.last_mut() {
         last.singleton |= tail_singleton;
-        last.page_size = tail_page_size.or(last.page_size);
         last.expr = full_rhs.to_string();
+        if let Some(ps) = tail_page_size {
+            last.page_size = Some(ps);
+        } else {
+            last.page_size = tail_page_size.or(last.page_size);
+        }
     }
 
     Ok(out)

@@ -318,6 +318,12 @@ impl SessionCore {
         self.graph_cache.clone()
     }
 
+    pub async fn alloc_delta_seq(&self) -> DeltaSeq {
+        let mut g = self.state.lock().await;
+        g.seq.0 += 1;
+        g.seq
+    }
+
     pub async fn append_run_artifact(
         &self,
         run_id: RunArtifactId,
@@ -325,9 +331,8 @@ impl SessionCore {
         resource_index: u64,
         payload: ArtifactPayload,
     ) -> Arc<SessionRunArtifact> {
+        let seq = self.alloc_delta_seq().await;
         let mut g = self.state.lock().await;
-        g.seq.0 += 1;
-        let seq = g.seq;
         let (item, evicted) = g
             .run_artifacts
             .insert(run_id, epoch, resource_index, seq, payload);
@@ -1416,8 +1421,12 @@ async fn finalize_session_once(
     }
     if let Some(persistence) = release_graph_persistence {
         let through_seq = sess.core.tip_seq().await.0;
+        let span = crate::spans::execute_graph_snapshot_finalize(through_seq);
+        let _guard = span.enter();
+        let started = std::time::Instant::now();
         let cache = sess.graph_cache.lock().await;
-        persistence
+        let entity_count = cache.stats().total_entities;
+        match persistence
             .write_snapshot(
                 sess.prompt_hash.as_str(),
                 session_id,
@@ -1425,7 +1434,24 @@ async fn finalize_session_once(
                 "application/json",
                 &cache,
             )
-            .await?;
+            .await
+        {
+            Ok(()) => {
+                crate::graph_cache_metrics::record_graph_snapshot(
+                    "success",
+                    entity_count,
+                    started.elapsed(),
+                );
+            }
+            Err(e) => {
+                crate::graph_cache_metrics::record_graph_snapshot(
+                    "error",
+                    entity_count,
+                    started.elapsed(),
+                );
+                return Err(e);
+            }
+        }
     }
     Ok(())
 }
@@ -1551,6 +1577,23 @@ mod tests {
             .await
             .expect("run artifact exists");
         assert_eq!(got.payload, payload);
+    }
+
+    #[tokio::test]
+    async fn delta_seq_monotonic_across_alloc_and_run_artifacts() {
+        let core = SessionCore::new();
+        assert_eq!(core.alloc_delta_seq().await, DeltaSeq(1));
+        let run_id = RunArtifactId::from_bytes([0xab; 32]);
+        let payload = ArtifactPayload {
+            metadata: ArtifactPayloadMetadata::json_default(),
+            bytes: axum::body::Bytes::from_static(b"{}"),
+        };
+        let art = core
+            .append_run_artifact(run_id, GraphEpoch(0), 1, payload)
+            .await;
+        assert_eq!(art.seq, DeltaSeq(2));
+        assert_eq!(core.alloc_delta_seq().await, DeltaSeq(3));
+        assert_eq!(core.tip_seq().await, DeltaSeq(3));
     }
 
     #[tokio::test]
