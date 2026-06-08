@@ -46,8 +46,7 @@ use crate::trace_sink_emit::PlasmTraceContext;
 use indexmap::IndexMap;
 use plasm_core::{
     flatten_from_parent_get_source_rows, resolve_relation_row_resolution, CapabilityKind,
-    EntityName, Expr, Ref, RelationMaterialization, RelationRowResolution,
-    TypedFieldValue, Value,
+    EntityName, Expr, Ref, RelationMaterialization, RelationRowResolution, TypedFieldValue, Value,
 };
 use plasm_runtime::{
     entity_to_row_json, CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource,
@@ -2191,8 +2190,8 @@ async fn run_validated_plan_phased(
                     .get(&derive.source)
                     .map(|m| m.entry_id.clone())
                     .unwrap_or_else(|| es.entry_id.clone());
-                let source_rows = materialized_rows(es, st, session_id, &materialized, &derive.source)
-                    .await?;
+                let source_rows =
+                    materialized_rows(es, st, session_id, &materialized, &derive.source).await?;
                 let input_rows = materialized_singleton_inputs(&materialized, &derive.inputs)?;
                 let mut rows = Vec::with_capacity(source_rows.len());
                 for row in source_rows {
@@ -3225,9 +3224,8 @@ fn eval_compute_from_rows(
         ComputeOp::Aggregate { aggregates } => aggregate_rows(rows, aggregates),
         ComputeOp::Sort { key, descending } => {
             let mut sorted = rows.to_vec();
-            sorted.sort_by(|a, b| {
-                cmp_json_sort_values(value_at_path(a, key), value_at_path(b, key))
-            });
+            sorted
+                .sort_by(|a, b| cmp_json_sort_values(value_at_path(a, key), value_at_path(b, key)));
             if *descending {
                 sorted.reverse();
             }
@@ -4130,8 +4128,7 @@ async fn materialize_for_each_node(
     trace: Option<&PlasmTraceContext>,
     sink: Option<&McpPlasmTraceSink>,
 ) -> Result<MaterializedNode, String> {
-    let source_rows =
-        materialized_rows(es, st, session_id, materialized, &for_each.source).await?;
+    let source_rows = materialized_rows(es, st, session_id, materialized, &for_each.source).await?;
     let input_rows = materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each))?;
     let mut parsed_steps = Vec::with_capacity(source_rows.len());
     let mut expressions = Vec::with_capacity(source_rows.len());
@@ -6244,7 +6241,9 @@ mod tests {
                     },
                     request_fingerprints: vec![],
                 },
-                row_source: MaterializedRowSource::Inline(vec![serde_json::json!({"content": "STATS"})]),
+                row_source: MaterializedRowSource::Inline(vec![
+                    serde_json::json!({"content": "STATS"}),
+                ]),
                 rows: vec![serde_json::json!({"content": "STATS"})],
                 row_identities: vec![None],
                 artifact: None,

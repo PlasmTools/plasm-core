@@ -98,11 +98,12 @@ pub async fn collect_query_stream(
         if page.stats.network_requests > 0 {
             any_live = true;
         }
-        total_rows = total_rows.saturating_add(if consume.graph_backed_result && page.entities.is_empty() {
-            page.stats.cache_misses
-        } else {
-            page.entities.len()
-        });
+        total_rows =
+            total_rows.saturating_add(if consume.graph_backed_result && page.entities.is_empty() {
+                page.stats.cache_misses
+            } else {
+                page.entities.len()
+            });
         if !consume.graph_backed_result {
             all_entities.extend(page.entities);
         }
@@ -1065,7 +1066,8 @@ impl ExecutionEngine {
                 execute_session,
                 cancel,
                 async move {
-                    let mut stream = self.execute_stream(expr, cgs, mat, mode, consume.clone(), opts)?;
+                    let mut stream =
+                        self.execute_stream(expr, cgs, mat, mode, consume.clone(), opts)?;
                     collect_query_stream(&mut stream, &consume).await
                 },
             )
@@ -1787,8 +1789,14 @@ impl ExecutionEngine {
                 execute_session,
                 cancel,
                 async move {
-                    let mut stream = self
-                        .execute_pagination_resume_stream(resume, cgs, mat, mode, consume.clone(), &opts)?;
+                    let mut stream = self.execute_pagination_resume_stream(
+                        resume,
+                        cgs,
+                        mat,
+                        mode,
+                        consume.clone(),
+                        &opts,
+                    )?;
                     collect_query_stream(&mut stream, &consume).await
                 },
             )

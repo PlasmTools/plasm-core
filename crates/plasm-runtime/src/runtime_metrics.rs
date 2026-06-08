@@ -138,7 +138,8 @@ pub(crate) fn record_graph_page_spill(
     if result == "success" {
         m.graph_page_spill_pages.add(1, attrs);
         if entities_spilled > 0 {
-            m.graph_page_spill_entities.add(entities_spilled as u64, attrs);
+            m.graph_page_spill_entities
+                .add(entities_spilled as u64, attrs);
         }
         if evicted > 0 {
             m.graph_hot_cache_evictions.add(evicted as u64, &[]);

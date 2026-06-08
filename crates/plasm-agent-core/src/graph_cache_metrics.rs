@@ -85,10 +85,7 @@ fn instruments() -> &'static GraphCacheInstruments {
 }
 
 /// Record a successful durable graph page delta append.
-pub(crate) fn record_graph_delta_page_append(
-    entity_count: usize,
-    duration: Duration,
-) {
+pub(crate) fn record_graph_delta_page_append(entity_count: usize, duration: Duration) {
     let bucket = entity_count_bucket(entity_count);
     let attrs = &[KeyValue::new("entity_count_bucket", bucket)];
     let m = instruments();

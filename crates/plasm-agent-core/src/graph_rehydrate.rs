@@ -87,8 +87,7 @@ pub(crate) async fn rehydrate_rows(
     logical_count: usize,
     cgs: &CGS,
 ) -> Result<Vec<serde_json::Value>, String> {
-    let entities =
-        rehydrate_entities(es, st, session_id, entity_type, logical_count, cgs).await?;
+    let entities = rehydrate_entities(es, st, session_id, entity_type, logical_count, cgs).await?;
     Ok(entities
         .iter()
         .map(|e| entity_to_row_json(e, Some(cgs)))
@@ -116,7 +115,12 @@ where
         let row = entity_to_row_json(entity, Some(cgs));
         rows_seen += 1;
         if on_row(&row) {
-            crate::graph_cache_metrics::record_graph_rehydrate("stream", rows_seen, 0, started.elapsed());
+            crate::graph_cache_metrics::record_graph_rehydrate(
+                "stream",
+                rows_seen,
+                0,
+                started.elapsed(),
+            );
             return Ok(());
         }
     }
@@ -181,9 +185,10 @@ async fn rehydrate_entities(
     let _guard = span.enter();
     let started = Instant::now();
 
-    let persistence = st.session_graph_persistence.as_ref().ok_or_else(|| {
-        "graph rehydrate requires PLASM_GRAPH_CACHE_URL".to_string()
-    })?;
+    let persistence = st
+        .session_graph_persistence
+        .as_ref()
+        .ok_or_else(|| "graph rehydrate requires PLASM_GRAPH_CACHE_URL".to_string())?;
     let pages = persistence
         .read_graph_pages(es.prompt_hash.as_str(), session_id)
         .await?;

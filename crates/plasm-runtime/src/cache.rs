@@ -219,12 +219,7 @@ impl CachedEntity {
         let entity_def = cgs.get_entity(entity_type);
         let id_field = entity_def.map(|e| e.id_field.as_str()).unwrap_or("id");
         let relation_names: std::collections::HashSet<String> = entity_def
-            .map(|e| {
-                e.relations
-                    .keys()
-                    .map(|k| k.as_str().to_string())
-                    .collect()
-            })
+            .map(|e| e.relations.keys().map(|k| k.as_str().to_string()).collect())
             .unwrap_or_default();
         for (k, v) in obj {
             if matches!(
@@ -260,10 +255,7 @@ impl CachedEntity {
                 _ => EntityCompleteness::Complete,
             })
             .unwrap_or(EntityCompleteness::Summary);
-        let version = obj
-            .get("_version")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1);
+        let version = obj.get("_version").and_then(|v| v.as_u64()).unwrap_or(1);
         let last_updated = obj
             .get("_last_updated")
             .and_then(|v| v.as_u64())
@@ -429,9 +421,11 @@ fn build_ref_from_row(
     obj: &serde_json::Map<String, serde_json::Value>,
     cgs: &plasm_core::CGS,
 ) -> Result<Ref, RuntimeError> {
-    let ent = cgs.get_entity(entity_type).ok_or_else(|| RuntimeError::CacheError {
-        message: format!("unknown entity type `{entity_type}`"),
-    })?;
+    let ent = cgs
+        .get_entity(entity_type)
+        .ok_or_else(|| RuntimeError::CacheError {
+            message: format!("unknown entity type `{entity_type}`"),
+        })?;
     if ent.key_vars.len() <= 1 {
         let id_name = ent.id_field.as_str();
         let id = obj
@@ -445,18 +439,22 @@ fn build_ref_from_row(
     }
     let mut parts = std::collections::BTreeMap::new();
     for kv in &ent.key_vars {
-        let val = obj.get(kv.as_str()).and_then(|v| v.as_str()).ok_or_else(|| {
-            RuntimeError::CacheError {
+        let val = obj
+            .get(kv.as_str())
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| RuntimeError::CacheError {
                 message: format!("row missing compound key `{kv}`"),
-            }
-        })?;
+            })?;
         parts.insert(kv.to_string(), val.to_string());
     }
     Ok(Ref::compound(entity_type, parts))
 }
 
 /// Row-shaped JSON for plan evaluation, spill pages, and snapshots (CGS-aware id slots).
-pub fn entity_to_row_json(entity: &CachedEntity, cgs: Option<&plasm_core::CGS>) -> serde_json::Value {
+pub fn entity_to_row_json(
+    entity: &CachedEntity,
+    cgs: Option<&plasm_core::CGS>,
+) -> serde_json::Value {
     let mut v = entity.payload_to_json();
     let Some(obj) = v.as_object_mut() else {
         return v;
@@ -475,10 +473,13 @@ pub fn entity_to_row_json(entity: &CachedEntity, cgs: Option<&plasm_core::CGS>) 
     );
     obj.insert(
         "_completeness".to_string(),
-        serde_json::Value::String(match entity.completeness {
-            EntityCompleteness::Summary => "summary",
-            EntityCompleteness::Complete => "complete",
-        }.to_string()),
+        serde_json::Value::String(
+            match entity.completeness {
+                EntityCompleteness::Summary => "summary",
+                EntityCompleteness::Complete => "complete",
+            }
+            .to_string(),
+        ),
     );
     let slot = entity.reference.primary_slot_str();
     if slot.is_empty() {

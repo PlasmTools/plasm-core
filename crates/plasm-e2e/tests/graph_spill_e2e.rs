@@ -165,11 +165,7 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
     let cgs = load_pokeapi_mini_cgs();
     let engine = make_engine(&base);
     let es = pokeapi_execute_session(cgs.clone());
-    let st = pokeapi_host_state(
-        make_engine(&base),
-        cgs.clone(),
-        env.persistence.clone(),
-    );
+    let st = pokeapi_host_state(make_engine(&base), cgs.clone(), env.persistence.clone());
 
     let spill = graph_page_spill_for_execute(
         Some(&env.persistence),
@@ -225,7 +221,10 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
         "expected at least one durable graph page delta after paginated spill"
     );
 
-    assert!(total > HOT_MAX, "Hermit should return enough berries to force spill (total={total}, hot_max={HOT_MAX})");
+    assert!(
+        total > HOT_MAX,
+        "Hermit should return enough berries to force spill (total={total}, hot_max={HOT_MAX})"
+    );
 
     drop(mat);
 

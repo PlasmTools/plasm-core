@@ -146,6 +146,9 @@ pub use cancel_signal::{check_cancel, CancelSignal};
 pub use error::*;
 pub use evm::*;
 pub use execution::*;
+pub use graph_page_spill::{
+    GraphHotCacheBounds, GraphPageDelta, GraphPageSpill, GraphPageSpillHandle,
+};
 pub use hosted_oauth_kv::{
     build_oauth_token_http_client, classify_hosted_bearer_utf8, parse_outbound_oauth_kv_v1,
     post_oauth_token_form_json, resolve_hosted_bearer_default_no_refresh,
@@ -169,5 +172,4 @@ pub use oauth_token_debug::TokenEndpointResponseSummary;
 pub use query_index::{QueryCacheKey, QueryIndex};
 pub use replay::*;
 pub use runtime_error_render::step_error_from_runtime;
-pub use graph_page_spill::{GraphHotCacheBounds, GraphPageDelta, GraphPageSpill, GraphPageSpillHandle};
 pub use session_graph_cache::MutexGraphCacheSession;

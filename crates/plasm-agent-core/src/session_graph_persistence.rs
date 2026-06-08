@@ -170,8 +170,15 @@ impl SessionGraphPersistence {
             .read_graph_pages(prompt_hash, session_id)
             .await
             .unwrap_or_default();
-        self.write_snapshot_merged(prompt_hash, session_id, through_seq, content_type, cache, &pages)
-            .await
+        self.write_snapshot_merged(
+            prompt_hash,
+            session_id,
+            through_seq,
+            content_type,
+            cache,
+            &pages,
+        )
+        .await
     }
 
     pub async fn write_snapshot_merged(
