@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm/tests/plasm_cli_server_insta.rs
+source: crates/plasm/tests/plasm_cli_server_insta.rs
 expression: h.norm(&combined_output(&expand))
 ---
 status: exit status: 0
@@ -9,16 +9,27 @@ v7	ref:Profile · int
 v1	int
 v8	str
 v6	select · auto, keyword, natural
+v10	select · all, ocr, audio, ui
+v17	date
 p1	v1 · id
 p5	v1 · limit
 p6	v6 · mode
 p7	v7 · profile_id
 p8	v8 · query
+p9	v8 · app_name
+p10	v10 · content_type
+p11	v17 · end_time
+p13	v1 · max_length
+p14	v1 · min_length
+p15	v1 · offset
+p17	v17 · start_time
+p18	v8 · window_name
 p4	v8 · id
 e2{p7=e1(p1), p8=$, p5=$, p6=$}[p4]	→ [e2] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
-e2{p7=e1(p1), p8=$, p5=$, p6=$}	→ [e2] · opt: query, limit, mode
-e2~"text"	→ [e2] · opt: content_type, limit, offset, start_time, end_time, app_name, window_name, mi…
+e2{p7=e1(p1), p8=$, p5=$, p6=$}[p4]	→ [e2] · inputs: p7,p8,p5,p6 · rows: p4 · opt: query, limit, mode
+e2~"text"[p4]	→ [e2] · rows: p4 · opt: content_type, limit, offset, start_time, end_time, app_name, window_name, mi…
+e2~"text"{p10=$, p5=$, p15=$, p17=$, p11=$, p9=$, p18=$, p14=$, p13=$}[p4]	→ [e2] · inputs: p10,p5,p15,p17,p11,p9,p18,p14,p13 · rows: p4 · opt: content_type, limit, offset, start_time, end_time, app_name, window_name, mi…
 
 stderr:
 Active context: overshow:Profile, overshow:RecordedContent
-mirror: .plasm/s/SESSION8/out/NNNN-context/wave.tsv (+13 rows)
+mirror: .plasm/s/SESSION8/out/NNNN-context/wave.tsv (+24 rows)

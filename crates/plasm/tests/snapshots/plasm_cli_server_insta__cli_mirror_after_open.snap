@@ -21,7 +21,7 @@ p2	v1 · limit
 p3	v3 · profile_type
 p1	v1 · id
 e1[p1]	→ e1 · projection · A person, organisation, or project profile
-e1{p3=$, p2=$}	→ [e1] · opt: profile_type, limit
+e1{p3=$, p2=$}[p1]	→ [e1] · inputs: p3,p2 · rows: p1 · opt: profile_type, limit
 e1(p1)	→ e1
 e1{p3=$, p2=$}.r1	relation e1 → [e2] · Content scoped to this profile
 v7	ref:Profile · int
