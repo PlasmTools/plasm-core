@@ -57,6 +57,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 max_items: None,
                 one_page: false,
                 graph_backed_result: false,
+                ..Default::default()
             },
             ExecuteOptions::default(),
         )

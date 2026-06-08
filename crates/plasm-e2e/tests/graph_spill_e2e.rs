@@ -190,6 +190,7 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
                 max_items: None,
                 one_page: false,
                 graph_backed_result: true,
+                ..Default::default()
             },
             ExecuteOptions {
                 graph_page_spill: Some(spill),
