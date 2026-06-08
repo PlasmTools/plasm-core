@@ -338,6 +338,7 @@ async fn pokeapi_berry_query_paginates_with_cml() {
                 fetch_all: true,
                 max_items: None,
                 one_page: false,
+                graph_backed_result: false,
             },
             ExecuteOptions::default(),
         )

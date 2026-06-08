@@ -73,6 +73,7 @@ async fn evm_logs_query_transfer_events_works() {
                 fetch_all: true,
                 max_items: None,
                 one_page: false,
+                graph_backed_result: false,
             },
             ExecuteOptions::default(),
         )
@@ -115,6 +116,7 @@ async fn evm_logs_block_range_pagination_works() {
                 fetch_all: true,
                 max_items: None,
                 one_page: false,
+                graph_backed_result: false,
             },
             ExecuteOptions::default(),
         )
