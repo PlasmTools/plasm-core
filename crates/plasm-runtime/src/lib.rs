@@ -117,11 +117,14 @@ pub mod materialization;
 pub mod mockserver;
 pub mod oauth_client;
 pub mod oauth_token_debug;
+pub mod paginated_collect;
 pub mod preflight;
 pub mod query_index;
 pub mod replay;
+pub mod row_predicate;
 pub mod runtime_error_render;
 pub mod session_graph_cache;
+pub mod top_k;
 
 mod view_execution;
 mod view_template;
@@ -171,5 +174,9 @@ pub use oauth_client::{
 pub use oauth_token_debug::TokenEndpointResponseSummary;
 pub use query_index::{QueryCacheKey, QueryIndex};
 pub use replay::*;
+pub use row_predicate::{
+    json_matches_predicate, json_predicate_matches, JsonRowPredicate, JsonRowPredicateOp,
+};
 pub use runtime_error_render::step_error_from_runtime;
 pub use session_graph_cache::MutexGraphCacheSession;
+pub use top_k::TopKSpec;

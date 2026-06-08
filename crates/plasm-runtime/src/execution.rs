@@ -291,6 +291,13 @@ impl ExecutionStats {
     }
 }
 
+/// Stop paginating once this many rows satisfy [`Self::row_match_budget`] predicates.
+#[derive(Debug, Clone)]
+pub struct RowMatchBudget {
+    pub count: usize,
+    pub predicates: Vec<crate::row_predicate::JsonRowPredicate>,
+}
+
 /// Out-of-band consumption controls: how many pages / entities to pull (not part of the IR).
 #[derive(Debug, Clone, Default)]
 pub struct StreamConsumeOpts {
@@ -305,7 +312,13 @@ pub struct StreamConsumeOpts {
     /// When true, paginated reads keep rows in session graph (+ optional spill) only — do not
     /// duplicate every page into [`ExecutionResult::entities`].
     pub graph_backed_result: bool,
+    /// Row-level filter budget: keep paginating until `count` matching rows are materialized.
+    pub row_match_budget: Option<RowMatchBudget>,
+    /// Streaming top-k over all pages (sort+limit pushdown); memory O(k).
+    pub top_k: Option<crate::top_k::TopKSpec>,
 }
+
+pub type RowsProgressFn = std::sync::Arc<dyn Fn(usize) + Send + Sync>;
 
 /// Snapshot of [`PaginationLoopState`] for opaque LLM paging continuations (host-only; not for wire serde).
 #[derive(Debug, Clone, PartialEq)]
@@ -370,6 +383,21 @@ tokio::task_local! {
 tokio::task_local! {
     /// Cooperative cancellation for pagination/hydration loops during one execute task scope.
     static EXECUTION_CANCEL: Option<CancelSignal>;
+}
+
+tokio::task_local! {
+    static EXECUTION_ROWS_PROGRESS: Option<RowsProgressFn>;
+}
+
+/// Report newly materialized rows to the host progress sink when scoped.
+#[inline]
+pub fn report_rows_materialized(count: usize) {
+    if count == 0 {
+        return;
+    }
+    if let Ok(Some(cb)) = EXECUTION_ROWS_PROGRESS.try_with(|c| c.clone()) {
+        cb(count);
+    }
 }
 
 /// Checked between pagination pages and hydrate batches inside an execute task scope.
@@ -616,6 +644,8 @@ pub struct ExecuteOptions {
     pub cancel: Option<CancelSignal>,
     /// When set, each paginated graph page is appended to durable storage and hot RAM is trimmed.
     pub graph_page_spill: Option<crate::graph_page_spill::GraphPageSpillHandle>,
+    /// Incremental row materialization callback (async plan progress during pagination).
+    pub rows_progress: Option<RowsProgressFn>,
 }
 
 impl std::fmt::Debug for ExecuteOptions {
@@ -637,6 +667,7 @@ impl std::fmt::Debug for ExecuteOptions {
             .field("preflight", &self.preflight.is_some())
             .field("execute_session", &self.execute_session.is_some())
             .field("graph_page_spill", &self.graph_page_spill.is_some())
+            .field("rows_progress", &self.rows_progress.is_some())
             .finish()
     }
 }
@@ -696,6 +727,7 @@ impl ExecutionEngine {
         federation: Option<std::sync::Arc<plasm_core::FederationDispatch>>,
         execute_session: Option<std::sync::Arc<ExecuteSessionMaterial>>,
         cancel: Option<CancelSignal>,
+        rows_progress: Option<RowsProgressFn>,
         fut: Fut,
     ) -> T
     where
@@ -714,7 +746,13 @@ impl ExecutionEngine {
                                             .scope(auth_override, async move {
                                                 EXECUTION_CANCEL
                                                     .scope(cancel, async move {
-                                                        EXECUTION_HTTP_BASE.scope(base, fut).await
+                                                        EXECUTION_ROWS_PROGRESS
+                                                            .scope(rows_progress, async move {
+                                                                EXECUTION_HTTP_BASE
+                                                                    .scope(base, fut)
+                                                                    .await
+                                                            })
+                                                            .await
                                                     })
                                                     .await
                                             })
@@ -873,6 +911,7 @@ impl ExecutionEngine {
                 compile_operation_fn: None,
                 compile_query_fn: None,
             },
+            None,
             None,
             None,
             None,
@@ -1057,6 +1096,7 @@ impl ExecutionEngine {
             let federation = opts.federation.clone();
             let execute_session = opts.execute_session.clone();
             let cancel = opts.cancel.clone();
+            let rows_progress = opts.rows_progress.clone();
             let mut result = Self::run_in_execute_task_scopes(
                 base,
                 auth_override,
@@ -1065,6 +1105,7 @@ impl ExecutionEngine {
                 federation,
                 execute_session,
                 cancel,
+                rows_progress,
                 async move {
                     let mut stream =
                         self.execute_stream(expr, cgs, mat, mode, consume.clone(), opts)?;
@@ -1522,6 +1563,7 @@ impl ExecutionEngine {
         let stream = Box::pin(async_stream::try_stream! {
             let mut pages = 0usize;
             let mut accumulated_total = 0usize;
+            let mut collector = crate::paginated_collect::PageCollector::new(&consume);
 
             loop {
                 cooperative_cancel_check()?;
@@ -1597,7 +1639,9 @@ impl ExecutionEngine {
                     .collect();
                 accumulated_total += page_cached.len();
 
-                mat.merge(page_cached.clone())?;
+                if !collector.skips_pre_page_merge() {
+                    mat.merge(page_cached.clone())?;
+                }
 
                 let hydrate_run = query.hydrate.unwrap_or(self.config.hydrate);
                 let (hydrated, extra_net) = self
@@ -1623,18 +1667,29 @@ impl ExecutionEngine {
                     None => hydrated,
                 };
 
+                let ingest = collector.ingest_page(entities);
+                if !ingest.merge_into_mat.is_empty() {
+                    mat.merge(ingest.merge_into_mat.clone())?;
+                }
+                report_rows_materialized(ingest.progress_rows);
+
                 let page_http = if http_live { 1 } else { 0 };
                 let page_net = page_http + extra_net;
-                let page_cache_misses = entities.len();
+                let page_cache_misses = ingest.progress_rows;
                 if graph_backed {
                     if let Some(ref spill) = graph_page_spill {
-                        graph_spill_page_and_trim_hot(spill, mat, pages, &entities).await?;
+                        let spill_rows = if ingest.yield_entities.is_empty() && !collector.skips_pre_page_merge() {
+                            page_cached.clone()
+                        } else {
+                            ingest.yield_entities.clone()
+                        };
+                        graph_spill_page_and_trim_hot(spill, mat, pages, &spill_rows).await?;
                     }
                 }
                 let yield_entities = if graph_backed {
                     Vec::new()
                 } else {
-                    entities
+                    ingest.yield_entities
                 };
 
                 if single_http_roundtrip {
@@ -1708,6 +1763,22 @@ impl ExecutionEngine {
                     };
                     break;
                 }
+                if ingest.row_match_budget_satisfied {
+                    yield PageResult {
+                        entities: yield_entities,
+                        page_index: pages,
+                        has_more: false,
+                        pagination_resume: None,
+                        stats: ExecutionStats {
+                            duration_ms: 0,
+                            network_requests: page_net,
+                            cache_hits: 0,
+                            cache_misses: page_cache_misses,
+                        ..Default::default()
+                        },
+                    };
+                    break;
+                }
                 if full_page_len == 0 && !matches!(pconf.location, plasm_compile::PaginationLocation::BlockRange) {
                     yield PageResult {
                         entities: yield_entities,
@@ -1754,6 +1825,22 @@ impl ExecutionEngine {
                     break;
                 }
             }
+
+            if let Some(final_entities) = collector.finish() {
+                mat.merge(final_entities.clone())?;
+                let yield_entities = if graph_backed {
+                    Vec::new()
+                } else {
+                    final_entities
+                };
+                yield PageResult {
+                    entities: yield_entities,
+                    page_index: pages,
+                    has_more: false,
+                    pagination_resume: None,
+                    stats: ExecutionStats::default(),
+                };
+            }
         });
 
         Ok(stream)
@@ -1780,6 +1867,7 @@ impl ExecutionEngine {
             let federation = opts.federation.clone();
             let execute_session = opts.execute_session.clone();
             let cancel = opts.cancel.clone();
+            let rows_progress = opts.rows_progress.clone();
             let mut result = Self::run_in_execute_task_scopes(
                 base,
                 auth_override,
@@ -1788,6 +1876,7 @@ impl ExecutionEngine {
                 federation,
                 execute_session,
                 cancel,
+                rows_progress,
                 async move {
                     let mut stream = self.execute_pagination_resume_stream(
                         resume,
@@ -1911,6 +2000,7 @@ impl ExecutionEngine {
                                     max_items: None,
                                     one_page: false,
                                     graph_backed_result: false,
+                                    ..Default::default()
                                 },
                             )
                             .await?;
@@ -3853,6 +3943,7 @@ impl ExecutionEngine {
         let federation = opts.federation.clone();
         let execute_session = opts.execute_session.clone();
         let cancel = opts.cancel.clone();
+        let rows_progress = opts.rows_progress.clone();
         Self::run_in_execute_task_scopes(
             base,
             auth_override,
@@ -3861,6 +3952,7 @@ impl ExecutionEngine {
             federation,
             execute_session,
             cancel,
+            rows_progress,
             async {
                 use futures_util::stream::{self, StreamExt};
 

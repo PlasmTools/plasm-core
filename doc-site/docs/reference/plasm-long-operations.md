@@ -32,6 +32,7 @@ Tokens expire after **10 minutes** (`PLAN_COMMIT_TTL`). Re-run plan dry-run afte
 2. **`plasm_run`** — live execute.
    - On **`review`** verdict: blocked unless `plan_commit_ref` matches the current program or `force: true`.
    - **Review/unbounded plans auto-async** when `wait` is omitted — returns `wait(s0_oN)` immediately; poll via `plasm_run` + `wait(s0_oN)`; cancel via `cancel(s0_oN)`.
+   - **Expensive** plans (unbounded paginated reads, relation fanout, mutating for_each) auto-async on default `wait`. Advisory review alone (e.g. get + project, unused seeds) stays **sync**.
    - With **`wait: false`**: same async accept on any plan.
    - Bounded **ok** verdict plans with default `wait` remain synchronous (fast path).
 3. **`resources/read`** — full run snapshots when Markdown summarizes away fields.
@@ -83,7 +84,7 @@ Compact **one-line** updates — not repeated poll/cancel instructions:
 |-----|---------|
 | `+` | accept / started |
 | `~` | running (coalesced; row updates at most every ~2s per step) |
-| `=` | unchanged — poll again later (3–5s recommended) |
+| `=` | unchanged — poll again later (3–5s recommended); includes step/rows when progress advanced |
 | `!` | succeeded |
 | `x` | cancelled |
 | `?` | failed |

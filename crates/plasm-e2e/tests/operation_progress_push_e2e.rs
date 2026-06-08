@@ -62,8 +62,23 @@ async fn spawn_mcp_op_notification_listener(
     rx
 }
 
-#[tokio::test]
-async fn operation_progress_push_http_sse_and_mcp_notifications() {
+#[test]
+fn operation_progress_push_http_sse_and_mcp_notifications() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            rt.block_on(operation_progress_push_http_sse_and_mcp_notifications_async());
+        })
+        .expect("spawn operation_progress_push e2e thread")
+        .join()
+        .expect("join");
+}
+
+async fn operation_progress_push_http_sse_and_mcp_notifications_async() {
     let fixture = LongOpFixture::setup().await;
 
     let handle = {

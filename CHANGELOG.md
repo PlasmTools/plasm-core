@@ -5,6 +5,25 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.100] - 2026-06-08
+
+### Added
+
+- **Limit pushdown:** `.limit` / filter+limit / sort+limit read budgets on surface nodes (`plan_read_bounds`, `stream_consume`); streaming top-k and row-match collection via `PageCollector` (`paginated_collect`, `top_k`, `row_predicate`).
+- **E2E:** `cargo test -p plasm-e2e --test limit_pushdown_e2e` (Hermit pokeapi_mini).
+
+### Changed
+
+- **Selective auto-async:** only **expensive** review plans (unbounded paginated reads, relation fanout, mutating for_each) auto-async on default `wait`; advisory review alone stays sync.
+- **Progress:** `=` unchanged polls include step/rows; explicit `rows_progress` param (removed task-local); `sync_rows_materialized` fixes double row counting during async pagination.
+- **`effective_host_page_size()`** merges explicit `.page_size` with pushed read budgets.
+
+### Fixed
+
+- **Fail-closed predicate lowering** for unsupported plan predicate values (pushdown and in-plan filter eval share `row_predicate`).
+- **Top-k min-heap ordering** for descending sort keys.
+- **E2E stack guards:** `long_operation_e2e` and `operation_progress_push_e2e` run on 16MB stack threads (debug overflow).
+
 ## [0.1.99] - 2026-06-08
 
 ### Changed

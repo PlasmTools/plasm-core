@@ -435,6 +435,7 @@ pub struct ValidatedSurfaceNode {
     pub(crate) uses_result: Vec<PlanResultUse>,
     pub(crate) approval: Option<String>,
     pub(crate) page_size: Option<usize>,
+    pub(crate) pushed_read_budget: Option<crate::plan_read_bounds::PushedReadBudget>,
 }
 
 #[derive(Debug, Clone)]
@@ -613,6 +614,10 @@ impl ValidatedPlanArtifact {
 
     pub fn approval_gates(&self) -> &[PlanNodeId] {
         &self.approval_gates
+    }
+
+    pub(crate) fn nodes_mut(&mut self) -> &mut [ValidatedPlanNode] {
+        &mut self.artifact.nodes
     }
 }
 
@@ -1240,7 +1245,7 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
         })
         .map(|n| PlanNodeId::new(n.id.clone()))
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(ValidatedPlan {
+    let mut validated = ValidatedPlan {
         artifact: Plan {
             version: plan.version,
             kind: plan.kind,
@@ -1253,7 +1258,9 @@ pub fn validate_plan_artifact(plan: &Plan) -> Result<ValidatedPlan, String> {
         topo,
         node_indices,
         approval_gates,
-    })
+    };
+    crate::plan_read_bounds::apply_read_budgets(&mut validated);
+    Ok(validated)
 }
 
 fn validated_node_from_raw(
@@ -1298,6 +1305,7 @@ fn validated_node_from_raw(
                 uses_result,
                 approval: node.approval.clone(),
                 page_size: node.page_size,
+                pushed_read_budget: None,
             }))
         }
         PlanNodeKind::Data => Ok(ValidatedPlanNode::Data(ValidatedDataNode {

@@ -28,6 +28,14 @@ where
     PLAN_EXECUTE_CANCEL.scope(cancel, fut).await
 }
 
+pub async fn with_plan_execute_scope<Fut, T>(scope: Option<&ExecutionScope>, fut: Fut) -> T
+where
+    Fut: std::future::Future<Output = T>,
+{
+    let cancel = scope.map(|s| s.cancel.clone());
+    with_plan_execute_cancel(cancel, fut).await
+}
+
 pub(crate) fn plan_execute_cancel_signal() -> Option<CancelSignal> {
     PLAN_EXECUTE_CANCEL.try_with(|c| c.clone()).ok().flatten()
 }
@@ -44,14 +52,14 @@ pub fn plan_requires_review_gate(
 
 /// Review/unbounded plans must not block MCP/HTTP handlers when `wait` defaults to true.
 #[must_use]
-pub fn live_run_should_auto_async(verdict: PlanDryVerdict, wait_live: bool) -> bool {
-    wait_live && verdict == PlanDryVerdict::Review
+pub fn live_run_should_auto_async(review: &PlanDryReview, wait_live: bool) -> bool {
+    wait_live && review.execution_is_expensive()
 }
 
 /// Whether live execute should spawn a background operation (explicit `wait=false` or auto-async).
 #[must_use]
-pub fn should_spawn_async_live_run(wait_live: bool, verdict: PlanDryVerdict) -> bool {
-    !wait_live || live_run_should_auto_async(verdict, wait_live)
+pub fn should_spawn_async_live_run(wait_live: bool, review: &PlanDryReview) -> bool {
+    !wait_live || live_run_should_auto_async(review, wait_live)
 }
 
 pub fn verify_plan_commit_for_run(
@@ -184,6 +192,33 @@ impl ExecutionScope {
         if let Some((es, handle)) = &self.operation_sink {
             es.update_operation_progress(handle, progress);
         }
+    }
+
+    /// Set row count to `rows` (final sync after pagination; avoids double-counting incremental progress).
+    pub fn sync_rows_materialized(&self, rows: usize) {
+        let progress = if let Some(p) = &self.progress {
+            p.lock()
+                .ok()
+                .map(|mut g| {
+                    g.rows_materialized = rows as u64;
+                    g.clone()
+                })
+                .unwrap_or_default()
+        } else {
+            return;
+        };
+        if let Some((es, handle)) = &self.operation_sink {
+            es.update_operation_progress(handle, progress);
+        }
+    }
+
+    #[must_use]
+    pub fn rows_progress_fn(&self) -> Option<plasm_runtime::RowsProgressFn> {
+        self.progress.as_ref()?;
+        let scope = self.clone();
+        Some(std::sync::Arc::new(move |n: usize| {
+            scope.add_rows_materialized(n)
+        }))
     }
 
     pub fn cancellation_token(&self) -> CancellationToken {
@@ -555,13 +590,38 @@ mod tests {
     use plasm_core::PlanCommitRef;
 
     #[test]
-    fn live_run_should_auto_async_only_for_review_with_default_wait() {
-        assert!(live_run_should_auto_async(PlanDryVerdict::Review, true));
-        assert!(!live_run_should_auto_async(PlanDryVerdict::Review, false));
-        assert!(!live_run_should_auto_async(PlanDryVerdict::Ok, true));
-        assert!(should_spawn_async_live_run(false, PlanDryVerdict::Ok));
-        assert!(should_spawn_async_live_run(true, PlanDryVerdict::Review));
-        assert!(!should_spawn_async_live_run(true, PlanDryVerdict::Ok));
+    fn live_run_should_auto_async_only_for_expensive_review_with_default_wait() {
+        let expensive = PlanDryReview {
+            has_unbounded_read_root: true,
+            has_paginated_list_fetch_all_default: false,
+            ..PlanDryReview::default()
+        };
+        let advisory = PlanDryReview {
+            has_full_collection_compute: true,
+            ..PlanDryReview::default()
+        };
+        assert!(live_run_should_auto_async(&expensive, true));
+        assert!(!live_run_should_auto_async(&expensive, false));
+        assert!(!live_run_should_auto_async(&advisory, true));
+        assert!(should_spawn_async_live_run(false, &advisory));
+        assert!(should_spawn_async_live_run(true, &expensive));
+        assert!(!should_spawn_async_live_run(true, &advisory));
+    }
+
+    #[test]
+    fn sync_rows_materialized_replaces_not_accumulates() {
+        let progress = Arc::new(StdMutex::new(OperationProgress::default()));
+        let scope = ExecutionScope {
+            cancel: CancelSignal::new(),
+            token: CancellationToken::new(),
+            progress: Some(Arc::clone(&progress)),
+            operation_sink: None,
+        };
+        scope.add_rows_materialized(50);
+        scope.add_rows_materialized(50);
+        assert_eq!(progress.lock().unwrap().rows_materialized, 100);
+        scope.sync_rows_materialized(42);
+        assert_eq!(progress.lock().unwrap().rows_materialized, 42);
     }
 
     #[test]

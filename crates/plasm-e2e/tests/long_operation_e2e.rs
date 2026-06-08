@@ -52,8 +52,23 @@ async fn poll_wait_terminal(fixture: &LongOpFixture, surface: Surface, handle: &
     assert_terminal_success(terminal.as_ref().unwrap());
 }
 
-#[tokio::test]
-async fn long_operation_dual_surface_e2e() {
+#[test]
+fn long_operation_dual_surface_e2e() {
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            rt.block_on(long_operation_dual_surface_e2e_async());
+        })
+        .expect("spawn long_operation e2e thread")
+        .join()
+        .expect("join");
+}
+
+async fn long_operation_dual_surface_e2e_async() {
     let fixture = LongOpFixture::setup().await;
 
     for surface in [Surface::Http, Surface::Mcp] {

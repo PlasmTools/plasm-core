@@ -154,6 +154,8 @@ Layout:
 
 Payloads are treated as arbitrary bytes with typed metadata (`content_type`, optional `content_encoding`, `schema_version`, `producer`); JSON is only one codec option.
 
+Optional hot RAM cap during paginated reads: **`PLASM_GRAPH_HOT_MAX_ENTITIES`** (default **2048** when persistence is active). Override in Helm via `objectStore.graphHotMaxEntities` on the `plasm-mcp` chart.
+
 ## Operational backlog
 
 - **PluginManager:** on each **`reload`**, the host clears prior entries from its generation map so dylibs can unload once no execute session still holds a pinned `Arc` to [`LoadedPluginGeneration`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-plugin-host/src/lib.rs).

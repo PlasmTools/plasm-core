@@ -2323,6 +2323,8 @@ pub async fn execute_plasm_parsed_expr(
     trace: Option<&PlasmTraceContext>,
     line_index: i64,
     host_page_size: Option<usize>,
+    surface_read_budget: Option<crate::plan_read_bounds::PushedReadBudget>,
+    rows_progress: Option<plasm_runtime::RowsProgressFn>,
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), String> {
     crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(sess, source_label, &parsed)
         .map_err(|e| run_line_error_string(RunLineError::Parse(e)))?;
@@ -2337,6 +2339,8 @@ pub async fn execute_plasm_parsed_expr(
         trace,
         line_index,
         host_page_size,
+        surface_read_budget,
+        rows_progress,
         Some(plasm_core::PreflightToken::VERIFIED),
     )
     .await
@@ -3042,6 +3046,8 @@ pub(crate) async fn run_parsed_plasm_line(
     trace: Option<&PlasmTraceContext>,
     line_index: i64,
     host_page_size: Option<usize>,
+    surface_read_budget: Option<crate::plan_read_bounds::PushedReadBudget>,
+    rows_progress: Option<plasm_runtime::RowsProgressFn>,
     preflight: Option<plasm_core::PreflightToken>,
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), RunLineError> {
     let preflight_token = match preflight {
@@ -3282,6 +3288,7 @@ pub(crate) async fn run_parsed_plasm_line(
             sess.prompt_hash.as_str(),
             session_id,
         ),
+        rows_progress: rows_progress.clone(),
     };
     let graph_spill_active = exec_opts.graph_page_spill.is_some();
 
@@ -3313,12 +3320,14 @@ pub(crate) async fn run_parsed_plasm_line(
                     .await
             }
             _ => {
-                let consume = crate::stream_consume::stream_consume_for_read(
+                let consume = crate::stream_consume::stream_consume_for_surface_read(
                     exec_cgs,
                     &parsed.expr,
                     host_page_size,
+                    surface_read_budget.as_ref(),
                     graph_spill_active,
-                );
+                )
+                .map_err(RunLineError::Parse)?;
                 st.engine
                     .execute(
                         &parsed.expr,
@@ -4816,8 +4825,8 @@ async fn post_run_execute_session(
         }
     }
 
-    if crate::operation::should_spawn_async_live_run(wait_live, compact.verdict) {
-        let auto_async = crate::operation::live_run_should_auto_async(compact.verdict, wait_live);
+    if crate::operation::should_spawn_async_live_run(wait_live, &dry_gate.review) {
+        let auto_async = crate::operation::live_run_should_auto_async(&dry_gate.review, wait_live);
         if let Err(e) = sess.try_begin_live_program_run() {
             return problem_response(
                 Problem::custom(

@@ -1350,6 +1350,8 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDry
                         has_narrowed_filter_root = true;
                     }
                 }
+                ValidatedPlanNode::Surface(surface)
+                    if surface.page_size.is_some() || surface.pushed_read_budget.is_some() => {}
                 _ => {
                     has_unbounded_read_root = true;
                 }
@@ -1364,7 +1366,8 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDry
             }
         }
         if let ValidatedPlanNode::Surface(surface) = n {
-            if surface.page_size.is_none()
+            let read_bounded = surface.page_size.is_some() || surface.pushed_read_budget.is_some();
+            if !read_bounded
                 && matches!(surface.kind, PlanNodeKind::Query | PlanNodeKind::Search)
                 && matches!(
                     surface.result_shape,
@@ -1420,7 +1423,10 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDry
         boundedness_facts.push("Root read narrowed by API-side filters".to_string());
     }
     if has_explicit_limit {
-        boundedness_facts.push("Explicit .limit truncation in the compute chain".to_string());
+        boundedness_facts.push(
+            "Explicit .limit(n) pushes read budget upstream (page_size / top-k / row filter early-stop)."
+                .to_string(),
+        );
     }
     if has_paginated_list_fetch_all_default {
         boundedness_facts.push(
@@ -1476,6 +1482,7 @@ fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDry
         has_foreach_fanout_risk,
         has_relation_many_source_fanout,
         has_query_limit_row_filter: plan_has_query_limit_row_filter_chain(plan),
+        has_paginated_list_fetch_all_default,
         unused_seeds: Vec::new(),
     };
 
@@ -1963,8 +1970,7 @@ async fn run_validated_plasm_plan_scoped(
     mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
 ) -> Result<PlasmPlanRunResult, String> {
-    let cancel = execution_scope.map(|s| s.cancel.clone());
-    crate::operation::with_plan_execute_cancel(cancel, async {
+    crate::operation::with_plan_execute_scope(execution_scope, async {
         run_validated_plan_phased(
             es,
             st,
@@ -2086,6 +2092,8 @@ async fn run_validated_plan_phased(
                     .unwrap_or("<ir>");
                 let scoped_es =
                     entry_scoped_execute_session(es, surface.qualified_entity.as_ref())?;
+                let host_page = crate::plan_read_bounds::effective_host_page_size(surface);
+                let rows_progress = execution_scope.and_then(|s| s.rows_progress_fn());
                 let (parsed, mut result, artifact) = execute_plasm_parsed_expr(
                     st,
                     &scoped_es,
@@ -2094,10 +2102,12 @@ async fn run_validated_plan_phased(
                     parsed,
                     trace.as_ref(),
                     idx as i64,
-                    surface.page_size,
+                    host_page,
+                    surface.pushed_read_budget.clone(),
+                    rows_progress,
                 )
                 .await?;
-                if let Some(cap) = surface.page_size {
+                if let Some(cap) = host_page {
                     if result.entities.len() > cap {
                         result.entities.truncate(cap);
                         result.count = result.entities.len();
@@ -2130,7 +2140,7 @@ async fn run_validated_plan_phased(
                     MaterializedRowSource::GraphBacked { .. } => Vec::new(),
                 };
                 if let Some(scope) = execution_scope {
-                    scope.add_rows_materialized(result.count.max(result.entities.len()));
+                    scope.sync_rows_materialized(result.count.max(result.entities.len()));
                 }
                 if let Some(sink) = sink.as_ref() {
                     trace_record_plasm_line(sink, idx, expr_label, &parsed, &result, &scoped_es)
@@ -2991,6 +3001,8 @@ async fn materialize_prefer_from_parent_get_relation(
                         trace,
                         trace_line_index as i64,
                         None,
+                        None,
+                        None,
                         Some(plasm_core::PreflightToken::VERIFIED),
                     )
                     .await
@@ -3490,6 +3502,8 @@ async fn materialize_relation_singleton_chain(
         trace,
         node_index as i64,
         None,
+        None,
+        None,
     )
     .await?;
     if let Some(sink) = sink {
@@ -3694,6 +3708,8 @@ async fn materialize_relation_scoped_fanout(
                 parsed,
                 trace,
                 trace_line_index as i64,
+                None,
+                None,
                 None,
                 Some(plasm_core::PreflightToken::VERIFIED),
             )
@@ -4170,6 +4186,8 @@ async fn materialize_for_each_node(
             trace,
             trace_line_index as i64,
             None,
+            None,
+            None,
         )
         .await?;
         if let Some(sink) = sink {
@@ -4506,35 +4524,9 @@ fn value_at_segments<'a>(
 }
 
 fn predicate_matches(row: &serde_json::Value, pred: &crate::plasm_plan::PlanPredicate) -> bool {
-    let Ok(path) = FieldPath::new(pred.field_path.clone()) else {
-        return false;
-    };
-    let lhs = value_at_path(row, &path).unwrap_or(&serde_json::Value::Null);
-    let rhs = match &pred.value {
-        PlanValue::Literal { value } => value,
-        PlanValue::EntityRefKey { key, .. } => match key.as_ref() {
-            PlanValue::Literal { value } => value,
-            _ => return false,
-        },
-        _ => return false,
-    };
-    match pred.op {
-        crate::plasm_plan::PlanPredicateOp::Eq => lhs == rhs,
-        crate::plasm_plan::PlanPredicateOp::Ne => lhs != rhs,
-        crate::plasm_plan::PlanPredicateOp::Exists => !lhs.is_null(),
-        crate::plasm_plan::PlanPredicateOp::Contains => lhs
-            .as_str()
-            .zip(rhs.as_str())
-            .map(|(l, r)| l.contains(r))
-            .unwrap_or(false),
-        crate::plasm_plan::PlanPredicateOp::In => rhs
-            .as_array()
-            .map(|items| items.iter().any(|item| item == lhs))
-            .unwrap_or(false),
-        crate::plasm_plan::PlanPredicateOp::Lt => json_number(lhs) < json_number(rhs),
-        crate::plasm_plan::PlanPredicateOp::Lte => json_number(lhs) <= json_number(rhs),
-        crate::plasm_plan::PlanPredicateOp::Gt => json_number(lhs) > json_number(rhs),
-        crate::plasm_plan::PlanPredicateOp::Gte => json_number(lhs) >= json_number(rhs),
+    match crate::plan_read_bounds::plan_predicate_to_json(pred) {
+        Ok(json_pred) => plasm_runtime::json_matches_predicate(row, &json_pred),
+        Err(_) => false,
     }
 }
 

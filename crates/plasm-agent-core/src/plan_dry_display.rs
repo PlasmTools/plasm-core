@@ -27,10 +27,20 @@ pub struct PlanDryReview {
     pub has_relation_many_source_fanout: bool,
     /// `query` surface → `.limit` → `.filter` on materialized rows (fetch vs row filter nudge).
     pub has_query_limit_row_filter: bool,
+    /// Paginated list/search surface without pushed read budget or explicit page_size.
+    pub has_paginated_list_fetch_all_default: bool,
     pub unused_seeds: Vec<String>,
 }
 
 impl PlanDryReview {
+    /// True when live execute should auto-async (unbounded / expensive reads), not advisory review alone.
+    pub fn execution_is_expensive(&self) -> bool {
+        self.has_unbounded_read_root
+            || self.has_paginated_list_fetch_all_default
+            || self.has_relation_many_source_fanout
+            || self.has_foreach_fanout_risk
+    }
+
     pub fn needs_review(&self, return_unbounded_root: bool) -> bool {
         self.has_unprojected_multi_row_read
             || self.has_unbounded_read_root

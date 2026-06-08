@@ -171,7 +171,26 @@ pub fn render_op_wire_line(
             }
             out
         }
-        OpWireSig::Unchanged => format!("`{h}` ="),
+        OpWireSig::Unchanged => {
+            let default_progress = OperationProgress::default();
+            let p = progress.unwrap_or(&default_progress);
+            let mut out = format!("`{h}` =");
+            if p.step_total > 0 {
+                let _ = std::fmt::Write::write_fmt(
+                    &mut out,
+                    format_args!(" {}/{}", p.step.max(1), p.step_total),
+                );
+            }
+            if let Some(ref l) = p.label {
+                out.push(' ');
+                out.push_str(l);
+            }
+            if p.rows_materialized > 0 {
+                let _ =
+                    std::fmt::Write::write_fmt(&mut out, format_args!(" {}r", p.rows_materialized));
+            }
+            out
+        }
         OpWireSig::Done => {
             let rows = progress.map(|p| p.rows_materialized).unwrap_or(0);
             if rows > 0 {
@@ -246,6 +265,17 @@ pub fn op_plasm_meta_short(
         }
         OpWireSig::Unchanged => {
             op.insert("=".into(), json!(1));
+            if let Some(p) = progress {
+                if p.step_total > 0 {
+                    op.insert(
+                        "s".into(),
+                        json!(format!("{}/{}", p.step.max(1), p.step_total)),
+                    );
+                }
+                if p.rows_materialized > 0 {
+                    op.insert("r".into(), json!(p.rows_materialized));
+                }
+            }
         }
         OpWireSig::Done => {
             op.insert("!".into(), json!(1));
@@ -271,11 +301,25 @@ pub fn op_plasm_meta_short(
     plasm
 }
 
-pub fn op_poll_unchanged_meta(seq: u64) -> Map<String, Value> {
+pub fn op_poll_unchanged_meta(
+    seq: u64,
+    progress: Option<&OperationProgress>,
+) -> Map<String, Value> {
     let mut plasm = Map::new();
     let mut op = Map::new();
     op.insert("n".into(), json!(seq));
     op.insert("=".into(), json!(1));
+    if let Some(p) = progress {
+        if p.step_total > 0 {
+            op.insert(
+                "s".into(),
+                json!(format!("{}/{}", p.step.max(1), p.step_total)),
+            );
+        }
+        if p.rows_materialized > 0 {
+            op.insert("r".into(), json!(p.rows_materialized));
+        }
+    }
     plasm.insert("op".into(), Value::Object(op));
     plasm
 }
@@ -284,6 +328,25 @@ pub fn op_poll_unchanged_meta(seq: u64) -> Map<String, Value> {
 mod tests {
     use super::*;
     use plasm_core::OperationHandle;
+
+    #[test]
+    fn op_poll_unchanged_meta_includes_step_and_rows() {
+        let prog = OperationProgress {
+            step: 2,
+            step_total: 5,
+            label: Some("r1".into()),
+            rows_materialized: 42,
+        };
+        let meta = op_poll_unchanged_meta(7, Some(&prog));
+        let op = meta
+            .get("op")
+            .and_then(|v| v.as_object())
+            .expect("op object");
+        assert_eq!(op.get("n").and_then(|v| v.as_u64()), Some(7));
+        assert_eq!(op.get("=").and_then(|v| v.as_u64()), Some(1));
+        assert_eq!(op.get("s").and_then(|v| v.as_str()), Some("2/5"));
+        assert_eq!(op.get("r").and_then(|v| v.as_u64()), Some(42));
+    }
 
     #[test]
     fn wire_line_all_sigs() {
@@ -308,8 +371,8 @@ mod tests {
             "`s0_o1` ~ 2/5 r1 42r"
         );
         assert_eq!(
-            render_op_wire_line(&h, OpWireSig::Unchanged, None, None, None, None),
-            "`s0_o1` ="
+            render_op_wire_line(&h, OpWireSig::Unchanged, Some(&prog), None, None, None),
+            "`s0_o1` = 2/5 r1 42r"
         );
         assert_eq!(
             render_op_wire_line(&h, OpWireSig::Done, Some(&prog), None, None, None),

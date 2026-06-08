@@ -1024,7 +1024,7 @@ impl ExecuteSession {
             crate::operation::operation_running_markdown(handle, &op.progress, false)
         };
         let meta = if unchanged {
-            crate::operation_progress::op_poll_unchanged_meta(op.agent_emit.seq)
+            crate::operation_progress::op_poll_unchanged_meta(op.agent_emit.seq, Some(&op.progress))
         } else {
             crate::operation::operation_meta_object(
                 handle,
