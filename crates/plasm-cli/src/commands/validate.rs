@@ -132,6 +132,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                             fetch_all: false,
                             max_items: Some(VALIDATION_PAGINATION_MAX_ITEMS),
                             one_page: false,
+                            graph_backed_result: false,
                         },
                     )
                     .await,
@@ -332,6 +333,7 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                             fetch_all: false,
                             max_items: Some(VALIDATION_PAGINATION_MAX_ITEMS),
                             one_page: false,
+                            graph_backed_result: false,
                         }
                     } else {
                         StreamConsumeOpts::default()
