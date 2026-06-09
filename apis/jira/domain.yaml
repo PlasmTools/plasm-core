@@ -97,7 +97,7 @@ schema_overlay:
 entities:
   Issue:
     id_field: key
-    description: A Jira issue (bug, story, task, epic, etc.)
+    description: A Jira issue (bug, story, task, epic, etc.).
     fields:
       key:
         required: true
@@ -229,7 +229,7 @@ entities:
           - wildcard: true
   Project:
     id_field: key
-    description: A Jira project
+    description: A Jira project.
     fields:
       key:
         required: true
@@ -270,7 +270,7 @@ entities:
           param: projectIdOrKey
   User:
     id_field: accountId
-    description: A Jira user account
+    description: A Jira user account.
     fields:
       accountId:
         required: true
@@ -292,7 +292,7 @@ entities:
         value_ref: nv_wire_str_short
   Comment:
     id_field: id
-    description: A comment on a Jira issue
+    description: A comment on a Jira issue.
     fields:
       id:
         required: true
@@ -316,7 +316,7 @@ entities:
         value_ref: nv_wire_date_rfc3339
   Priority:
     id_field: id
-    description: An issue priority level
+    description: An issue priority level.
     fields:
       id:
         required: true
@@ -335,7 +335,7 @@ entities:
         value_ref: nv_wire_str_short
   Status:
     id_field: id
-    description: An issue workflow status
+    description: An issue workflow status.
     fields:
       id:
         required: true
@@ -352,7 +352,7 @@ entities:
         value_ref: nv_wire_str_short
   IssueType:
     id_field: id
-    description: An issue type (Bug, Story, Task, Epic, etc.)
+    description: An issue type (Bug, Story, Task, Epic, etc.).
     fields:
       id:
         required: true
@@ -371,7 +371,7 @@ entities:
         value_ref: nv_wire_int
   Worklog:
     id_field: id
-    description: A time-tracking worklog entry on a Jira issue
+    description: A time-tracking worklog entry on a Jira issue.
     fields:
       id:
         required: true
@@ -407,7 +407,7 @@ entities:
         value_ref: nv_wire_date_rfc3339
   Changelog:
     id_field: id
-    description: An audit-log entry recording field changes on a Jira issue
+    description: An audit-log entry recording field changes on a Jira issue.
     fields:
       id:
         required: true
@@ -428,7 +428,7 @@ entities:
         value_ref: nv_changelog_items
   RemoteLink:
     id_field: id
-    description: A remote link attached to a Jira issue (external tracker, document, etc.)
+    description: A remote link attached to a Jira issue (external tracker, document, etc.).
     fields:
       id:
         required: true
@@ -461,7 +461,7 @@ entities:
         value_ref: nv_wire_str_short
   Transition:
     id_field: id
-    description: An available workflow transition for a Jira issue
+    description: An available workflow transition for a Jira issue.
     fields:
       id:
         required: true
@@ -483,7 +483,7 @@ entities:
         value_ref: nv_wire_bool
   Component:
     id_field: id
-    description: A project component grouping issues within a Jira project
+    description: A project component grouping issues within a Jira project.
     fields:
       id:
         required: true
@@ -510,7 +510,7 @@ entities:
         value_ref: nv_wire_str_short
   Version:
     id_field: id
-    description: A project version (fix version / affects version)
+    description: A project version (fix version / affects version).
     fields:
       id:
         required: true
@@ -771,7 +771,7 @@ entities:
   SprintBoardSnapshot:
     id_field: sprint_id
     primary_read: sprint_board_snapshot_get
-    description: Sprint metadata plus issues scheduled in that sprint (board snapshot).
+    description: Sprint board snapshot.
     fields:
       sprint_id:
         required: true
@@ -802,7 +802,6 @@ capabilities:
   issue_get:
     kind: get
     entity: Issue
-    description: Get a single issue by key or ID (e.g. PROJ-123)
     provides:
     - key
     - id
@@ -828,7 +827,7 @@ capabilities:
   issue_jql:
     kind: search
     entity: Issue
-    description: Search issues with JQL—filter, sort, and shape the result set; optional field and expansion hints narrow
+    description: Search issues with JQL—filter, sort, and shape the result set; optional field and expansion hints narrow.
       or enrich what comes back per issue.
     parameters:
     - name: jql
@@ -912,7 +911,6 @@ capabilities:
   project_get:
     kind: get
     entity: Project
-    description: Get a project by key or ID
     provides:
     - key
     - id
@@ -926,7 +924,7 @@ capabilities:
   project_query:
     kind: query
     entity: Project
-    description: List and search projects
+    description: List and search projects.
     parameters:
     - name: query
       value_ref: nv_wire_str_short
@@ -945,7 +943,7 @@ capabilities:
   project_version_query:
     kind: query
     entity: Version
-    description: List versions for a project
+    description: List versions for a project.
     parameters:
     - name: projectIdOrKey
       value_ref: nv_project_version_query_project_id_or_key
@@ -987,7 +985,7 @@ capabilities:
   user_search:
     kind: search
     entity: User
-    description: Search for users by display name or accountId
+    description: Search for users by display name or accountId.
     parameters:
     - name: query
       value_ref: nv_wire_str_short
@@ -1019,7 +1017,7 @@ capabilities:
   comment_query:
     kind: query
     entity: Comment
-    description: List comments on an issue
+    description: List comments on an issue.
     parameters:
     - name: issueIdOrKey
       value_ref: nv_comment_query_issue_id_or_key
@@ -1032,7 +1030,7 @@ capabilities:
   priority_query:
     kind: query
     entity: Priority
-    description: List issue priorities
+    description: List issue priorities.
     parameters:
     - name: priorityName
       value_ref: nv_wire_str_short
@@ -1040,7 +1038,7 @@ capabilities:
   priority_get:
     kind: get
     entity: Priority
-    description: Get a priority by ID
+    description: Get a priority.
     provides:
     - id
     - name
@@ -1050,11 +1048,11 @@ capabilities:
   status_query:
     kind: query
     entity: Status
-    description: List workflow statuses
+    description: List workflow statuses.
   status_get:
     kind: get
     entity: Status
-    description: Get a status by ID or name
+    description: Get a status or name.
     provides:
     - id
     - name
@@ -1063,11 +1061,11 @@ capabilities:
   issuetype_query:
     kind: query
     entity: IssueType
-    description: List issue types
+    description: List issue types.
   issuetype_get:
     kind: get
     entity: IssueType
-    description: Get an issue type by ID
+    description: Get an issue type.
     provides:
     - id
     - name
@@ -1077,7 +1075,7 @@ capabilities:
   worklog_query:
     kind: query
     entity: Worklog
-    description: List worklogs (time-tracking entries) for an issue
+    description: List worklogs (time-tracking entries) for an issue.
     parameters:
     - name: issueIdOrKey
       value_ref: nv_worklog_query_issue_id_or_key
@@ -1092,7 +1090,7 @@ capabilities:
   changelog_query:
     kind: query
     entity: Changelog
-    description: List changelog entries (field change history) for an issue
+    description: List changelog entries (field change history) for an issue.
     parameters:
     - name: issueIdOrKey
       value_ref: nv_changelog_query_issue_id_or_key
@@ -1101,7 +1099,7 @@ capabilities:
   remotelink_query:
     kind: query
     entity: RemoteLink
-    description: List remote links attached to an issue
+    description: List remote links attached to an issue.
     parameters:
     - name: issueIdOrKey
       value_ref: nv_remotelink_query_issue_id_or_key
@@ -1110,7 +1108,7 @@ capabilities:
   transition_query:
     kind: query
     entity: Transition
-    description: List available workflow transitions for an issue
+    description: List available workflow transitions for an issue.
     parameters:
     - name: issueIdOrKey
       value_ref: nv_transition_query_issue_id_or_key
@@ -1119,7 +1117,7 @@ capabilities:
   component_query:
     kind: query
     entity: Component
-    description: List components for a project
+    description: List components for a project.
     parameters:
     - name: projectIdOrKey
       value_ref: nv_component_query_project_id_or_key
@@ -1136,7 +1134,7 @@ capabilities:
   component_get:
     kind: get
     entity: Component
-    description: Get a component by ID
+    description: Get a component.
     provides:
     - id
     - name
@@ -1201,7 +1199,7 @@ capabilities:
   issue_bulk_fetch:
     kind: query
     entity: Issue
-    description: Load several issues by key or id in one round-trip for dashboards or migration tools.
+    description: Load several issues or id in one round-trip for dashboards or migration tools.
     parameters:
     - name: issue_keys
       value_ref: nv_issue_bulk_fetch_issue_keys
@@ -1249,7 +1247,7 @@ capabilities:
   group_get:
     kind: get
     entity: Group
-    description: Look up one group by id or name.
+    description: Look up one group or name.
     provides:
     - groupId
     - name
@@ -1260,7 +1258,7 @@ capabilities:
   mypermissions_get:
     kind: get
     entity: MyPermissionSet
-    description: Whether the current identity has common project and issue permissions (broader or scoped checks may need
+    description: Whether the current identity has common project and issue permissions (broader or scoped checks may need.
       a tailored permission list in tooling).
     provides:
     - permissions
@@ -1276,7 +1274,7 @@ capabilities:
   filter_get:
     kind: get
     entity: SavedFilter
-    description: Load a saved filter by id.
+    description: Load a saved filter.
     provides:
     - id
     - name
@@ -1295,7 +1293,7 @@ capabilities:
   dashboard_get:
     kind: get
     entity: Dashboard
-    description: Open a dashboard by id for gadget placement and sharing.
+    description: Open a dashboard for gadget placement and sharing.
     provides:
     - id
     - name
@@ -1343,7 +1341,7 @@ capabilities:
   webhook_register:
     kind: action
     entity: Webhook
-    description: Register webhook subscriptions that post Jira events to your HTTPS endpoint (response lists created ids and
+    description: Register webhook subscriptions that post Jira events to your HTTPS endpoint (response lists created ids and.
       any registration errors).
     output:
       type: side_effect
@@ -1380,7 +1378,7 @@ capabilities:
   issue_transition_context_get:
     kind: get
     entity: IssueTransitionContext
-    description: Transition readiness snapshot scoped by issue key.
+    description: Transition readiness snapshot.
     provides:
     - issue_key
     - summary
@@ -1429,7 +1427,7 @@ capabilities:
   sprint_board_snapshot_get:
     kind: get
     entity: SprintBoardSnapshot
-    description: Sprint board snapshot scoped by sprint id.
+    description: Sprint board snapshot.
     provides:
     - sprint_id
     - name
@@ -1439,7 +1437,7 @@ capabilities:
     - issue_count
 views:
   issue_transition_context:
-    description: Issue triage row with transition count and refs to available workflow moves.
+    description: Issue triage snapshot with transition count and refs to available workflow moves.
     capability: issue_transition_context_query
     entity: IssueTransitionContext
     scope:
@@ -1530,7 +1528,7 @@ views:
         kind: node_single_row
         node: issue_row
   sprint_board_snapshot:
-    description: Sprint row plus issues matched by JQL sprint filter (cycle board pattern).
+    description: Sprint board snapshot (JQL sprint filter).
     capability: sprint_board_snapshot_query
     entity: SprintBoardSnapshot
     scope:
@@ -1904,7 +1902,7 @@ values:
   nv_issue_create_description:
     type: string
     string_semantics: markdown
-    description: Optional plain-text description; Jira Cloud may require Atlassian Document Format instead—if create fails,
+    description: Optional plain-text description; Jira Cloud may require Atlassian Document Format instead—if create fails.
       leave empty and edit in the UI or use issue update.
   nv_issue_create_issue_type:
     type: string
@@ -1925,7 +1923,7 @@ values:
   nv_issue_jql_expand:
     type: string
     string_semantics: short
-    description: Names of optional expansions to include (Jira-specific; often comma-separated, e.g. renderedFields or names
+    description: Names of optional expansions to include (Jira-specific; often comma-separated, e.g. renderedFields or names.
       of entities to hydrate).
   nv_issue_jql_jql:
     type: string
@@ -2058,7 +2056,7 @@ values:
     type: array
     items:
       value_ref: nv_wire_str_short
-    description: Issue field ids to include in each issue (e.g. summary, status, assignee). Omit for server defaults; repeat
+    description: Issue field ids to include in each issue. Omit for server defaults; repeat.
       the flag for multiple values (--fields summary --fields status).
   nv_issue_labels:
     type: array

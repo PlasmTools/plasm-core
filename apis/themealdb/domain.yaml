@@ -5,7 +5,7 @@ http_backend: https://www.themealdb.com
 entities:
   Meal:
     id_field: idMeal
-    description: A recipe in the meal database; idMeal is the numeric string ID
+    description: A recipe in the meal database; idMeal is the numeric string ID.
     fields:
       idMeal:
         required: true
@@ -27,7 +27,7 @@ entities:
         value_ref: nv_meal_str_tags
 capabilities:
   meal_search:
-    description: Search meals by name using the s parameter
+    description: Search meals by name using the s parameter.
     kind: search
     entity: Meal
     parameters:
@@ -36,7 +36,7 @@ capabilities:
       required: true
       role: search
   meal_filter:
-    description: Filter meals by category, area, or ingredient
+    description: Filter meals by category, area, or ingredient.
     kind: query
     entity: Meal
     parameters:
@@ -53,7 +53,7 @@ capabilities:
       required: false
       role: filter
   meal_get:
-    description: Retrieve full meal detail including ingredients by ID
+    description: Retrieve full meal detail including ingredients.
     kind: get
     entity: Meal
     provides:
@@ -67,27 +67,27 @@ values:
   nv_meal_id_meal:
     type: string
     string_semantics: short
-    description: Unique numeric string identifier for the meal
+    description: Unique numeric string identifier for the meal.
   nv_meal_str_area:
     type: string
     string_semantics: short
-    description: Country of origin (e.g. British, Italian, Japanese)
+    description: Country of origin (e.g. British, Italian, Japanese).
   nv_meal_str_category:
     type: string
     string_semantics: short
-    description: Cuisine category (e.g. Chicken, Seafood, Dessert)
+    description: Cuisine category (e.g. Chicken, Seafood, Dessert).
   nv_meal_str_meal:
     type: string
     string_semantics: short
-    description: The recipe or dish name
+    description: The recipe or dish name.
   nv_meal_str_meal_thumb:
     type: string
     string_semantics: short
-    description: URL of the meal thumbnail image
+    description: URL of the meal thumbnail image.
   nv_meal_str_tags:
     type: string
     string_semantics: short
-    description: Comma-separated tags for the meal
+    description: Comma-separated tags for the meal.
   nv_wire_str_short:
     type: string
     string_semantics: short

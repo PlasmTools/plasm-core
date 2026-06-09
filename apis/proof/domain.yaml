@@ -85,7 +85,7 @@ entities:
           blocks_key: blocks
           ref_field: ref
           segment: mt1
-        description: Mutation precondition token (mt1 snapshot-hash segment)—from wire baseToken when set; otherwise parsed from the first block ref (colon-separated snapshot ref). The host caches it for /ops after editor_state_get.
+        description: Mutation precondition token (mt1 snapshot-hash segment)—from wire baseToken when set; otherwise parsed from the first block ref (colon-separated snapshot ref). The host caches it for /ops after editor_state_get
       collab:
         value_ref: nv_proof_json
         required: false
@@ -97,7 +97,7 @@ entities:
 
   Block:
     id_field: ref
-    description: One chunk of the document in the current snapshot. Refresh the snapshot after others edit before you change structure again.
+    description: One chunk of the document in the current snapshot. Refresh the snapshot after others edit before you change structure again
     domain_projection_examples: false
     fields:
       ref:
@@ -880,7 +880,7 @@ values:
   nv_proof_base_token:
     type: string
     string_semantics: short
-    description: mt1 precondition string exposed on EditorState (wire baseToken or derived from block refs); host stores it after editor_state_get—pass only to override.
+    description: mt1 precondition string exposed on EditorState (wire baseToken or derived from block refs); host stores it after editor_state_get—pass only to override
 
   nv_proof_block_ref:
     type: string
@@ -896,7 +896,7 @@ values:
   nv_proof_str:
     type: string
     string_semantics: short
-    description: Short text (ids, titles, tokens, filters).
+    description: Short text.
 
   nv_proof_markdown:
     type: string

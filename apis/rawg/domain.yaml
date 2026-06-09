@@ -3,7 +3,7 @@ http_backend: https://api.rawg.io
 entities:
   Game:
     id_field: id
-    description: A video game entry in the RAWG database
+    description: A video game entry in the RAWG database.
     fields:
       id:
         required: true
@@ -34,7 +34,7 @@ entities:
         value_ref: nv_game_background_image
 capabilities:
   game_query:
-    description: Search and filter the RAWG games catalog
+    description: Search and filter the RAWG games catalog.
     kind: query
     entity: Game
     parameters:
@@ -75,7 +75,7 @@ capabilities:
       required: false
       role: sort
   game_get:
-    description: Retrieve full details for a single game
+    description: Retrieve full details for a single game.
     kind: get
     entity: Game
     provides:
@@ -97,34 +97,34 @@ values:
   nv_game_background_image:
     type: string
     string_semantics: short
-    description: URL of the game's background image
+    description: URL of the game's background image.
   nv_game_id:
     type: integer
-    description: Unique RAWG game identifier
+    description: Unique RAWG game identifier.
   nv_game_metacritic:
     type: integer
-    description: Metacritic aggregated score
+    description: Metacritic aggregated score.
   nv_game_name:
     type: string
     string_semantics: short
-    description: Game title
+    description: Game title.
   nv_game_playtime:
     type: integer
-    description: Average playtime in hours
+    description: Average playtime in hours.
   nv_game_rating:
     type: number
-    description: Average user rating
+    description: Average user rating.
   nv_game_released:
     type: date
     value_format: iso8601_date
-    description: Game release date (RAWG returns YYYY-MM-DD or null)
+    description: Game release date (RAWG returns YYYY-MM-DD or null).
   nv_game_slug:
     type: string
     string_semantics: short
-    description: URL-friendly game identifier
+    description: URL-friendly game identifier.
   nv_game_tba:
     type: boolean
-    description: Whether the release date is to be announced
+    description: Whether the release date is to be announced.
   nv_wire_str_short:
     type: string
     string_semantics: short

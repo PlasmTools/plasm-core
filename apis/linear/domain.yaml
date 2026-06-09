@@ -3,7 +3,7 @@ http_backend: https://api.linear.app
 entities:
   Team:
     id_field: key
-    description: A Linear team (workspace grouping); agents address teams by short key (e.g. ENG).
+    description: A Linear team (workspace grouping).
     fields:
       id:
         required: true
@@ -82,7 +82,7 @@ entities:
     relations: {}
   Label:
     id_field: name
-    description: An issue label (addressed by name in filters and writes).
+    description: An issue label.
     fields:
       id:
         required: true
@@ -111,7 +111,7 @@ entities:
   Issue:
     id_field: identifier
     primary_read: issue_get
-    description: A Linear issue (task, bug, or feature); use human identifier (e.g. ENG-42).
+    description: A Linear work item (task, bug, or feature).
     fields:
       id:
         required: true
@@ -235,7 +235,7 @@ entities:
     abstract: true
     id_field: issue_identifier
     primary_read: issue_context_get
-    description: One issue plus its comments and relation hooks for triage.
+    description: Bundle for triaging one issue.
     fields:
       issue_identifier:
         required: true
@@ -280,7 +280,7 @@ entities:
     abstract: true
     id_field: project_id
     primary_read: project_context_get
-    description: Project row plus recent status updates.
+    description: Project with recent status updates.
     fields:
       project_id:
         required: true
@@ -343,7 +343,7 @@ capabilities:
   issue_search:
     kind: search
     entity: Issue
-    description: Find issues by title text and name-typed filters (team key, state, label, assignee).
+    description: Find issues by title and filter criteria.
     parameters:
     - name: q
       value_ref: nv_issue_search_q
@@ -384,7 +384,6 @@ capabilities:
   issue_get:
     kind: get
     entity: Issue
-    description: Load one issue by identifier (e.g. ENG-42).
     provides:
     - id
     - identifier
@@ -430,7 +429,6 @@ capabilities:
   team_get:
     kind: get
     entity: Team
-    description: Fetch one team by key (e.g. ENG).
     provides:
     - id
     - key
@@ -446,7 +444,6 @@ capabilities:
   project_get:
     kind: get
     entity: Project
-    description: Fetch one project by id.
     provides:
     - id
     - name
@@ -467,7 +464,7 @@ capabilities:
   cycle_query:
     kind: query
     entity: Cycle
-    description: List cycles for a team (by team key).
+    description: List cycles for a team.
     parameters:
     - name: team_key
       value_ref: nv_team_key
@@ -481,7 +478,6 @@ capabilities:
   cycle_get:
     kind: get
     entity: Cycle
-    description: Fetch one cycle by id.
     provides:
     - id
     - number
@@ -491,7 +487,7 @@ capabilities:
   workflow_state_query:
     kind: query
     entity: WorkflowState
-    description: List workflow columns for a team (by team key).
+    description: List workflow columns for a team.
     parameters:
     - name: team_key
       value_ref: nv_team_key
@@ -511,7 +507,7 @@ capabilities:
   comment_by_issue_query:
     kind: query
     entity: Comment
-    description: List comments on an issue (scoped by issue identifier).
+    description: List comments on an issue.
     parameters:
     - name: issue
       value_ref: nv_issue_ref
@@ -535,7 +531,6 @@ capabilities:
   document_get:
     kind: get
     entity: Document
-    description: Fetch one document by id.
     provides:
     - id
     - title
@@ -563,7 +558,6 @@ capabilities:
   initiative_get:
     kind: get
     entity: Initiative
-    description: Fetch one initiative by id.
     provides:
     - id
     - name
@@ -658,7 +652,7 @@ capabilities:
   issue_create:
     kind: create
     entity: Issue
-    description: Create an issue on a team (by team key).
+    description: Create an issue.
     provides:
     - identifier
     - title
@@ -730,7 +724,7 @@ capabilities:
   issue_update:
     kind: update
     entity: Issue
-    description: Update issue fields (state, assignee, labels, priority, …) by identifier.
+    description: Change issue workflow, ownership, labels, or priority.
     provides:
     - identifier
     - title
@@ -817,7 +811,7 @@ capabilities:
   comment_create:
     kind: create
     entity: Comment
-    description: Add a comment on an issue (scoped by issue identifier).
+    description: Add a comment on an issue.
     provides:
     - id
     - body
@@ -831,7 +825,7 @@ capabilities:
   project_create:
     kind: create
     entity: Project
-    description: Create a project on a team (by team key).
+    description: Create a project on a team.
     provides:
     - id
     - name
@@ -862,7 +856,7 @@ capabilities:
   issue_context_query:
     kind: query
     entity: IssueContext
-    description: Load issue context (issue + comments) for one identifier.
+    description: Triage bundle for one issue.
     parameters:
     - name: issue_identifier
       value_ref: nv_issue_identifier
@@ -875,7 +869,7 @@ capabilities:
   issue_context_get:
     kind: get
     entity: IssueContext
-    description: Issue context when scoped by identifier.
+    description: Triage bundle for one issue.
     provides:
     - issue_identifier
     - title
@@ -897,7 +891,7 @@ capabilities:
   project_context_query:
     kind: query
     entity: ProjectContext
-    description: Project plus recent status updates.
+    description: Project with recent status updates.
     parameters:
     - name: project
       value_ref: nv_project_id
@@ -910,7 +904,7 @@ capabilities:
   project_context_get:
     kind: get
     entity: ProjectContext
-    description: Project context by project id.
+    description: Project context snapshot.
     provides:
     - project_id
     - name
@@ -918,7 +912,7 @@ capabilities:
   issue_navigation_link_query:
     kind: query
     entity: IssueNavigationLink
-    description: Assemble the Linear web URL for an issue identifier.
+    description: Shareable web URL for an issue.
     parameters:
     - name: issue_identifier
       value_ref: nv_issue_identifier
@@ -938,7 +932,7 @@ capabilities:
   cycle_board_snapshot_query:
     kind: query
     entity: CycleBoardSnapshot
-    description: Cycle board (cycle + issues in iteration).
+    description: Cycle board snapshot.
     parameters:
     - name: cycle
       value_ref: nv_cycle_id
@@ -957,7 +951,7 @@ capabilities:
     - issue_count
 views:
   issue_context:
-    description: Issue row plus comments for one identifier.
+    description: Triage snapshot for one issue.
     capability: issue_context_query
     entity: IssueContext
     scope:
@@ -1037,7 +1031,7 @@ views:
         kind: node_all_rows
         node: assigned_issues
   project_context:
-    description: Project plus status updates.
+    description: Project status snapshot.
     capability: project_context_query
     entity: ProjectContext
     scope:
@@ -1081,7 +1075,7 @@ views:
         kind: node_all_rows
         node: status_updates
   issue_navigation_link:
-    description: Linear web URL from issue identifier.
+    description: Shareable web URL for an issue.
     capability: issue_navigation_link_query
     entity: IssueNavigationLink
     scope:
@@ -1115,7 +1109,7 @@ views:
         kind: node_single_row
         node: issue_row
   cycle_board_snapshot:
-    description: Cycle plus issues in that iteration.
+    description: Cycle board snapshot.
     capability: cycle_board_snapshot_query
     entity: CycleBoardSnapshot
     scope:
@@ -1321,17 +1315,17 @@ values:
   nv_team_key:
     type: string
     string_semantics: short
-    description: Team short key (e.g. ENG).
+    description: Team short key.
   nv_team_id:
     type: uuid
   nv_issue_identifier:
     type: string
     string_semantics: short
-    description: Human-visible issue key (e.g. ENG-42).
+    description: Human-visible issue key.
   nv_issue_ref:
     type: entity_ref
     target: Issue
-    description: Issue anchor (human identifier, e.g. ENG-42).
+    description: Issue anchor.
   nv_issue_id:
     type: uuid
   nv_state_name:
@@ -1350,7 +1344,7 @@ values:
   nv_issue_create_team:
     type: entity_ref
     target: Team
-    description: Owning team (by team key).
+    description: Owning team.
   nv_label_id:
     type: uuid
   nv_comment_id:

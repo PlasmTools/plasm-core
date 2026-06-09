@@ -989,7 +989,6 @@ capabilities:
   dashboard_summary_get:
     kind: get
     entity: DashboardSummary
-    description: Fetch one dashboard summary by uid.
     provides:
       - uid
       - title

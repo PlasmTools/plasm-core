@@ -166,7 +166,7 @@ entities:
         value_ref: nv_feat_desc
   ClassLevel:
     id_field: index
-    description: Progression row for one class level (hit dice, proficiencies, class-specific knobs).
+    description: Progression entry for one class level (hit dice, proficiencies, class-specific knobs).
     fields:
       index:
         required: true
@@ -194,7 +194,7 @@ entities:
         value_ref: nv_class_level_updated_at
     relations:
       class:
-        description: Class this level row belongs to.
+        description: Class this level entry belongs to.
         target: Class
         cardinality: one
       features:
@@ -209,7 +209,7 @@ entities:
           - key: index
   SubclassLevel:
     id_field: index
-    description: Progression row for a subclass at a given character level.
+    description: Progression entry for a subclass at a given character level.
     fields:
       index:
         required: true
@@ -231,7 +231,7 @@ entities:
         value_ref: nv_subclass_level_updated_at
     relations:
       subclass:
-        description: Subclass owning this progression row.
+        description: Subclass owning this progression entry.
         target: Subclass
         cardinality: one
       features:
@@ -1255,7 +1255,7 @@ values:
     description: Composite index such as barbarian-3.
   nv_class_level_level:
     type: integer
-    description: Character level represented by this row.
+    description: Character level represented by this entry.
   nv_class_level_prof_bonus:
     type: integer
     description: Proficiency bonus at this level.
@@ -1276,7 +1276,7 @@ values:
   nv_class_level_url:
     type: string
     string_semantics: short
-    description: Canonical API URL for this resource row.
+    description: Canonical API URL for this resource.
   nv_class_multiclassing_index:
     type: string
     string_semantics: short
@@ -1661,10 +1661,10 @@ values:
   nv_subclass_level_index:
     type: string
     string_semantics: short
-    description: Composite index for the subclass level row.
+    description: Composite index for the subclass level entry.
   nv_subclass_level_level:
     type: integer
-    description: Character level for this row.
+    description: Character level for this entry.
   nv_subclass_level_prof_bonus:
     type: integer
     description: Proficiency bonus at this level.

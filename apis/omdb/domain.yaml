@@ -3,7 +3,7 @@ http_backend: http://www.omdbapi.com
 entities:
   Movie:
     id_field: imdbID
-    description: A movie, series, or episode from the OMDb database
+    description: A movie, series, or episode from the OMDb database.
     fields:
       imdbID:
         required: true
@@ -37,7 +37,7 @@ entities:
         value_ref: nv_movie_poster
 capabilities:
   movie_get:
-    description: Fetch full movie details by IMDb ID
+    description: Fetch full movie details by IMDb ID.
     kind: get
     entity: Movie
     provides:
@@ -52,7 +52,7 @@ capabilities:
     - imdbRating
     - Poster
   movie_search:
-    description: Search movies by title keywords
+    description: Search movies by title keywords.
     kind: search
     entity: Movie
     parameters:
@@ -69,7 +69,7 @@ capabilities:
       required: false
       role: filter
   movie_get_by_title:
-    description: Look up a single movie by exact title match
+    description: Look up a single movie by exact title match.
     kind: query
     entity: Movie
     parameters:
@@ -94,11 +94,11 @@ values:
   nv_movie_director:
     type: string
     string_semantics: short
-    description: Name of the director(s)
+    description: Name of the director(s).
   nv_movie_genre:
     type: string
     string_semantics: short
-    description: Comma-separated list of genres
+    description: Comma-separated list of genres.
   nv_movie_get_by_title_plot:
     type: select
     allowed_values:
@@ -107,23 +107,23 @@ values:
   nv_movie_imdb_id:
     type: string
     string_semantics: short
-    description: IMDb identifier (e.g. tt1285016)
+    description: IMDb identifier (e.g. tt1285016).
   nv_movie_imdb_rating:
     type: string
     string_semantics: short
-    description: Average user rating on IMDb (0-10)
+    description: Average user rating on IMDb (0-10).
   nv_movie_plot:
     type: string
     string_semantics: markdown
-    description: Short or full plot summary
+    description: Short or full plot summary.
   nv_movie_poster:
     type: string
     string_semantics: short
-    description: URL of the movie poster image
+    description: URL of the movie poster image.
   nv_movie_rated:
     type: string
     string_semantics: short
-    description: Content rating (e.g. PG-13, R)
+    description: Content rating (e.g. PG-13, R).
   nv_movie_search_type:
     type: select
     allowed_values:
@@ -133,18 +133,18 @@ values:
   nv_movie_title:
     type: string
     string_semantics: short
-    description: Official title of the movie or series
+    description: Official title of the movie or series.
   nv_movie_type:
     type: select
     allowed_values:
     - movie
     - series
     - episode
-    description: 'Media type: movie, series, or episode'
+    description: 'Media type: movie, series, or episode.'
   nv_movie_year:
     type: string
     string_semantics: short
-    description: Release year or year range for series
+    description: Release year or year range for series.
   nv_wire_str_short:
     type: string
     string_semantics: short

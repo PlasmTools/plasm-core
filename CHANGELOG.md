@@ -5,6 +5,12 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.101] - 2026-06-09
+
+### Changed
+
+- **Catalog description hygiene:** teaching-table-facing `description` prose across `apis/*/domain.yaml` — drop identity restatement, eval-key examples, field inventories, generic get boilerplate, and tabular jargon; CI lint `scripts/check_catalog_description_hygiene.py` (warn tier) via monorepo `scripts/guards/check_catalog_description_hygiene.sh`.
+
 ## [0.1.100] - 2026-06-08
 
 ### Added

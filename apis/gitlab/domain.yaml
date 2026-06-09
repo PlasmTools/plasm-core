@@ -3,7 +3,7 @@ http_backend: https://gitlab.com
 entities:
   Project:
     id_field: id
-    description: GitLab project (repository namespace)
+    description: GitLab project (repository namespace).
     fields:
       id:
         required: true
@@ -64,7 +64,7 @@ entities:
     key_vars:
     - project_id
     - iid
-    description: GitLab issue (project-scoped IID plus global id)
+    description: GitLab issue (project IID and global id).
     fields:
       id:
         required: true
@@ -122,7 +122,7 @@ entities:
     key_vars:
     - project_id
     - iid
-    description: GitLab merge request
+    description: GitLab merge request.
     fields:
       id:
         required: true
@@ -187,7 +187,7 @@ entities:
     - project_id
     - iid
     - id
-    description: Comment on a project issue
+    description: Comment on a project issue.
     fields:
       project_id:
         required: true
@@ -216,7 +216,7 @@ entities:
     - project_id
     - iid
     - id
-    description: Comment on a merge request
+    description: Comment on a merge request.
     fields:
       project_id:
         required: true
@@ -242,7 +242,7 @@ entities:
     - project_id
     - iid
     - id
-    description: Emoji reaction on an issue
+    description: Emoji reaction on an issue.
     fields:
       project_id:
         required: true
@@ -268,7 +268,7 @@ entities:
     - project_id
     - iid
     - id
-    description: Emoji reaction on a merge request
+    description: Emoji reaction on a merge request.
     fields:
       project_id:
         required: true
@@ -292,7 +292,7 @@ capabilities:
   project_query:
     kind: query
     entity: Project
-    description: List projects visible to the authenticated account
+    description: List projects visible to the authenticated account.
     parameters:
     - name: search
       value_ref: nv_wire_str_short
@@ -332,7 +332,6 @@ capabilities:
   project_get:
     kind: get
     entity: Project
-    description: Fetch one project by numeric id or URL-encoded path
     parameters:
     - name: statistics
       value_ref: nv_wire_bool
@@ -357,7 +356,7 @@ capabilities:
   issue_query:
     kind: query
     entity: Issue
-    description: List issues for the current user across projects
+    description: List issues for the current user across projects.
     parameters:
     - name: state
       value_ref: nv_wire_sel_c4015a1a98023521
@@ -380,7 +379,7 @@ capabilities:
   issue_for_project_query:
     kind: query
     entity: Issue
-    description: List issues within a single project
+    description: List issues within a single project.
     parameters:
     - name: project_id
       value_ref: nv_issue_for_project_query_project_id
@@ -404,7 +403,7 @@ capabilities:
   issue_get:
     kind: get
     entity: Issue
-    description: Fetch a project issue by project and IID
+    description: Fetch a project issue by project and IID.
     provides:
     - id
     - iid
@@ -422,7 +421,7 @@ capabilities:
   merge_request_query:
     kind: query
     entity: MergeRequest
-    description: List merge requests visible to the authenticated user
+    description: List merge requests visible to the authenticated user.
     parameters:
     - name: state
       value_ref: nv_wire_sel_e25280eac2a90f88
@@ -441,7 +440,7 @@ capabilities:
   merge_request_for_project_query:
     kind: query
     entity: MergeRequest
-    description: List merge requests for a project
+    description: List merge requests for a project.
     parameters:
     - name: project_id
       value_ref: nv_merge_request_for_project_query_project_id
@@ -461,7 +460,7 @@ capabilities:
   merge_request_get:
     kind: get
     entity: MergeRequest
-    description: Fetch a merge request by project and IID
+    description: Fetch a merge request by project and IID.
     provides:
     - id
     - iid
@@ -481,7 +480,7 @@ capabilities:
   project_create:
     kind: create
     entity: Project
-    description: Create a new project under the authenticated user or namespace
+    description: Create a new project under the authenticated user or namespace.
     parameters:
     - name: name
       value_ref: nv_wire_str_short
@@ -513,7 +512,7 @@ capabilities:
   project_update:
     kind: update
     entity: Project
-    description: Update project attributes
+    description: Update project attributes.
     parameters:
     - name: name
       value_ref: nv_wire_str_short
@@ -542,11 +541,11 @@ capabilities:
   project_delete:
     kind: delete
     entity: Project
-    description: Delete a project asynchronously
+    description: Delete a project asynchronously.
   issue_create:
     kind: create
     entity: Issue
-    description: Create an issue in a project
+    description: Create an issue in a project.
     parameters:
     - name: project_id
       value_ref: nv_issue_create_project_id
@@ -575,7 +574,7 @@ capabilities:
   issue_update:
     kind: update
     entity: Issue
-    description: Update an existing issue
+    description: Update an existing issue.
     parameters:
     - name: title
       value_ref: nv_wire_str_short
@@ -607,11 +606,11 @@ capabilities:
   issue_delete:
     kind: delete
     entity: Issue
-    description: Delete a project issue
+    description: Delete a project issue.
   merge_request_create:
     kind: create
     entity: MergeRequest
-    description: Open a new merge request
+    description: Open a new merge request.
     parameters:
     - name: project_id
       value_ref: nv_merge_request_create_project_id
@@ -643,7 +642,7 @@ capabilities:
   merge_request_update:
     kind: update
     entity: MergeRequest
-    description: Update merge request fields
+    description: Update merge request fields.
     parameters:
     - name: title
       value_ref: nv_wire_str_short
@@ -666,11 +665,11 @@ capabilities:
   merge_request_delete:
     kind: delete
     entity: MergeRequest
-    description: Delete a merge request
+    description: Delete a merge request.
   merge_request_merge:
     kind: action
     entity: MergeRequest
-    description: Merge the merge request when allowed
+    description: Merge the merge request when allowed.
     parameters:
     - name: merge_commit_message
       value_ref: nv_wire_str_short
@@ -700,35 +699,35 @@ capabilities:
   issue_subscribe:
     kind: action
     entity: Issue
-    description: Subscribe the authenticated user to the issue
+    description: Subscribe the authenticated user to the issue.
     output:
       type: side_effect
       description: Subscribes the current user to issue notifications; response is not mapped onto Issue fields.
   issue_unsubscribe:
     kind: action
     entity: Issue
-    description: Unsubscribe the authenticated user from the issue
+    description: Unsubscribe the authenticated user from the issue.
     output:
       type: side_effect
       description: Unsubscribes the current user from issue notifications.
   merge_request_subscribe:
     kind: action
     entity: MergeRequest
-    description: Subscribe the authenticated user to the merge request
+    description: Subscribe the authenticated user to the merge request.
     output:
       type: side_effect
       description: Subscribes the current user to merge request notifications.
   merge_request_unsubscribe:
     kind: action
     entity: MergeRequest
-    description: Unsubscribe from the merge request
+    description: Unsubscribe from the merge request.
     output:
       type: side_effect
       description: Unsubscribes the current user from merge request notifications.
   issue_time_stats:
     kind: action
     entity: Issue
-    description: Refresh time tracking estimates and spent time for the issue
+    description: Refresh time tracking estimates and spent time for the issue.
     provides:
     - time_estimate
     - total_time_spent
@@ -737,7 +736,7 @@ capabilities:
   merge_request_time_stats:
     kind: action
     entity: MergeRequest
-    description: Refresh time tracking estimates for the merge request
+    description: Refresh time tracking estimates for the merge request.
     provides:
     - time_estimate
     - total_time_spent
@@ -746,7 +745,7 @@ capabilities:
   issue_note_for_issue_query:
     kind: query
     entity: IssueNote
-    description: List notes on a project issue
+    description: List notes on a project issue.
     parameters:
     - name: project_id
       value_ref: nv_issue_note_for_issue_query_project_id
@@ -758,7 +757,6 @@ capabilities:
   issue_note_get:
     kind: get
     entity: IssueNote
-    description: Fetch one issue note
     provides:
     - id
     - body
@@ -768,7 +766,7 @@ capabilities:
   issue_note_create:
     kind: create
     entity: IssueNote
-    description: Add a note to an issue
+    description: Add a note to an issue.
     parameters:
     - name: project_id
       value_ref: nv_issue_note_create_project_id
@@ -785,7 +783,7 @@ capabilities:
   issue_note_update:
     kind: update
     entity: IssueNote
-    description: Edit an issue note
+    description: Edit an issue note.
     parameters:
     - name: body
       value_ref: nv_wire_str_markdown
@@ -793,11 +791,11 @@ capabilities:
   issue_note_delete:
     kind: delete
     entity: IssueNote
-    description: Delete an issue note
+    description: Delete an issue note.
   merge_request_note_for_mr_query:
     kind: query
     entity: MergeRequestNote
-    description: List notes on a merge request
+    description: List notes on a merge request.
     parameters:
     - name: project_id
       value_ref: nv_merge_request_note_for_mr_query_project_id
@@ -809,7 +807,6 @@ capabilities:
   merge_request_note_get:
     kind: get
     entity: MergeRequestNote
-    description: Fetch one merge request note
     provides:
     - id
     - body
@@ -818,7 +815,7 @@ capabilities:
   merge_request_note_create:
     kind: create
     entity: MergeRequestNote
-    description: Add a note to a merge request
+    description: Add a note to a merge request.
     parameters:
     - name: project_id
       value_ref: nv_merge_request_note_create_project_id
@@ -832,7 +829,7 @@ capabilities:
   merge_request_note_update:
     kind: update
     entity: MergeRequestNote
-    description: Edit a merge request note
+    description: Edit a merge request note.
     parameters:
     - name: body
       value_ref: nv_wire_str_markdown
@@ -840,11 +837,11 @@ capabilities:
   merge_request_note_delete:
     kind: delete
     entity: MergeRequestNote
-    description: Delete a merge request note
+    description: Delete a merge request note.
   issue_award_emoji_for_issue_query:
     kind: query
     entity: IssueAwardEmoji
-    description: List award emoji on an issue
+    description: List award emoji on an issue.
     parameters:
     - name: project_id
       value_ref: nv_issue_award_emoji_for_issue_query_project_id
@@ -856,7 +853,6 @@ capabilities:
   issue_award_emoji_get:
     kind: get
     entity: IssueAwardEmoji
-    description: Fetch one award emoji on an issue
     provides:
     - id
     - name
@@ -865,7 +861,7 @@ capabilities:
   issue_award_emoji_create:
     kind: create
     entity: IssueAwardEmoji
-    description: Add an emoji reaction to an issue
+    description: Add an emoji reaction to an issue.
     parameters:
     - name: project_id
       value_ref: nv_issue_award_emoji_create_project_id
@@ -879,11 +875,11 @@ capabilities:
   issue_award_emoji_delete:
     kind: delete
     entity: IssueAwardEmoji
-    description: Remove an award emoji from an issue
+    description: Remove an award emoji from an issue.
   merge_request_award_emoji_for_mr_query:
     kind: query
     entity: MergeRequestAwardEmoji
-    description: List award emoji on a merge request
+    description: List award emoji on a merge request.
     parameters:
     - name: project_id
       value_ref: nv_merge_request_award_emoji_for_mr_query_project_id
@@ -895,7 +891,6 @@ capabilities:
   merge_request_award_emoji_get:
     kind: get
     entity: MergeRequestAwardEmoji
-    description: Fetch one award emoji on a merge request
     provides:
     - id
     - name
@@ -904,7 +899,7 @@ capabilities:
   merge_request_award_emoji_create:
     kind: create
     entity: MergeRequestAwardEmoji
-    description: Add an emoji reaction to a merge request
+    description: Add an emoji reaction to a merge request.
     parameters:
     - name: project_id
       value_ref: nv_merge_request_award_emoji_create_project_id
@@ -918,7 +913,7 @@ capabilities:
   merge_request_award_emoji_delete:
     kind: delete
     entity: MergeRequestAwardEmoji
-    description: Remove an award emoji from a merge request
+    description: Remove an award emoji from a merge request.
 auth:
   scheme: api_key_header
   header: PRIVATE-TOKEN

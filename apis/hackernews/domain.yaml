@@ -5,7 +5,7 @@ http_backend: https://hacker-news.firebaseio.com
 entities:
   Item:
     id_field: id
-    description: A Hacker News item (story, comment, job, poll, or poll option). Use item_search (Algolia) to discover ids
+    description: A Hacker News item (story, comment, job, poll, or poll option). Use item_search (Algolia) to discover ids.
       from text, then item_get for full rows from Firebase. Feed endpoints return only numeric ids; use item_get to load title,
       text, score, and comment trees. Direct replies are listed under kids as further item ids. Poll posts expose poll option
       ids under parts; each option is another Item row.
@@ -54,7 +54,7 @@ entities:
         value_ref: nv_item_dead
     relations:
       kids:
-        description: Direct child item ids (typically comments under a story)
+        description: Direct child item ids (typically comments under a story).
         target: Item
         cardinality: many
         materialize:
@@ -63,7 +63,7 @@ entities:
           - key: kids
           - wildcard: true
       poll_options:
-        description: Poll option rows referenced by parts (each id is an Item)
+        description: Poll option rows referenced by parts (each id is an Item).
         target: Item
         cardinality: many
         materialize:
@@ -73,7 +73,7 @@ entities:
           - wildcard: true
   User:
     id_field: id
-    description: A Hacker News user profile keyed by username. The submitted list holds item ids only; fetch each via item_get
+    description: A Hacker News user profile keyed by username. The submitted list holds item ids only; fetch each via item_get.
       when you need titles or comment bodies.
     fields:
       id:
@@ -93,7 +93,7 @@ entities:
         value_ref: nv_user_delay
     relations:
       submitted:
-        description: Item ids this user has submitted
+        description: Item ids this user has submitted.
         target: Item
         cardinality: many
         materialize:
@@ -103,7 +103,7 @@ entities:
           - wildcard: true
   MaxItemId:
     id_field: id
-    description: Current largest item id reported by maxitem.json (a bare JSON integer on the wire). Hydrate the referenced
+    description: Current largest item id reported by maxitem.json (a bare JSON integer on the wire). Hydrate the referenced.
       row with item_get when you need the full record.
     fields:
       id:
@@ -111,7 +111,7 @@ entities:
         value_ref: nv_max_item_id_id
   RecentUpdatedItem:
     id_field: id
-    description: Item ids listed under updates.json items (live slice of ids with recent activity). Each row is an id only;
+    description: Item ids listed under updates.json items (live slice of ids with recent activity). Each entry is an id only.
       use item_get for payloads.
     fields:
       id:
@@ -119,7 +119,7 @@ entities:
         value_ref: nv_recent_updated_item_id
   RecentUpdatedUser:
     id_field: id
-    description: Usernames listed under updates.json profiles (accounts whose profile data changed). Each row is the username
+    description: Usernames listed under updates.json profiles (accounts whose profile data changed). Each entry is the username.
       string only; use user_get for karma and about text.
     fields:
       id:
@@ -127,7 +127,7 @@ entities:
         value_ref: nv_recent_updated_user_id
 capabilities:
   item_search:
-    description: Full-text search over HN via the public Algolia index (https://hn.algolia.com/api). Returns story Item rows
+    description: Full-text search over HN via the public Algolia index (https://hn.algolia.com/api). Returns story Item rows.
       with id from objectID and title/url from the hit; use item_get to hydrate the full Firebase record, kids, and score.
     kind: search
     entity: Item
@@ -153,7 +153,7 @@ capabilities:
       required: false
       role: response_control
   item_search_by_date:
-    description: Same as item_search but sorted by time (search_by_date). Use for recency; combine with item_get for full
+    description: Same as item_search but sorted by time (search_by_date). Use for recency; combine with item_get for full.
       items.
     kind: search
     entity: Item
@@ -179,7 +179,7 @@ capabilities:
       required: false
       role: response_control
   item_feed_query:
-    description: Ordered list of item ids for a public feed (top, new, best, ask, show, or job). Each row is an Item id only;
+    description: Ordered list of item ids for a public feed (top, new, best, ask, show, or job). Each entry is an Item id only.
       hydrate with item_get for full records and kids.
     kind: query
     entity: Item
@@ -191,25 +191,24 @@ capabilities:
       required: true
       role: filter
   max_item_id_query:
-    description: Current largest item id (maxitem.json)
+    description: Current largest item id (maxitem.json).
     kind: query
     entity: MaxItemId
     provides:
     - id
   recent_updated_item_query:
-    description: Item ids from the live updates snapshot (updates.json items array)
+    description: Item ids from the live updates snapshot (updates.json items array).
     kind: query
     entity: RecentUpdatedItem
     provides:
     - id
   recent_updated_user_query:
-    description: Usernames from the live updates snapshot (updates.json profiles array)
+    description: Usernames from the live updates snapshot (updates.json profiles array).
     kind: query
     entity: RecentUpdatedUser
     provides:
     - id
   item_get:
-    description: Load one item by numeric id including kids and parts id lists when present
     kind: get
     entity: Item
     provides:
@@ -228,7 +227,7 @@ capabilities:
     - deleted
     - dead
   user_get:
-    description: Load a user profile by username
+    description: Load a user profile by username.
     kind: get
     entity: User
     provides:
@@ -241,16 +240,16 @@ values:
   nv_item_by:
     type: string
     string_semantics: short
-    description: Username of the author when present
+    description: Username of the author when present.
   nv_item_dead:
     type: boolean
-    description: Whether the item is dead
+    description: Whether the item is dead.
   nv_item_deleted:
     type: boolean
-    description: Whether the item was deleted
+    description: Whether the item was deleted.
   nv_item_descendants:
     type: integer
-    description: Comment count for stories when known
+    description: Comment count for stories when known.
   nv_item_feed_query_feed:
     type: select
     allowed_values:
@@ -262,62 +261,62 @@ values:
     - job
   nv_item_id:
     type: integer
-    description: Numeric item id used in Firebase paths
+    description: Numeric item id used in Firebase paths.
   nv_item_parent:
     type: integer
-    description: Parent item id for comments and poll options
+    description: Parent item id for comments and poll options.
   nv_item_poll:
     type: integer
-    description: Poll id when this item is a story that hosts a poll
+    description: Poll id when this item is a story that hosts a poll.
   nv_item_score:
     type: integer
-    description: Net votes for stories and jobs when present
+    description: Net votes for stories and jobs when present.
   nv_item_text:
     type: string
     string_semantics: markdown
-    description: Comment or story text payload when present
+    description: Comment or story text payload when present.
   nv_item_time:
     type: integer
-    description: Unix time the item was created
+    description: Unix time the item was created.
   nv_item_title:
     type: string
     string_semantics: short
-    description: Story or job title when applicable
+    description: Story or job title when applicable.
   nv_item_type:
     type: string
     string_semantics: short
-    description: Wire kind such as story, comment, job, poll, or pollopt
+    description: Wire kind such as story, comment, job, poll, or pollopt.
   nv_item_url:
     type: string
     string_semantics: short
-    description: Outbound link for link posts when present
+    description: Outbound link for link posts when present.
   nv_max_item_id_id:
     type: integer
-    description: Largest item id currently allocated on HN
+    description: Largest item id currently allocated on HN.
   nv_recent_updated_item_id:
     type: integer
-    description: Item id from the live updates snapshot
+    description: Item id from the live updates snapshot.
   nv_recent_updated_user_id:
     type: string
     string_semantics: short
-    description: Username from the live updates snapshot
+    description: Username from the live updates snapshot.
   nv_user_about:
     type: string
     string_semantics: markdown
-    description: Self-description text when set
+    description: Self-description text when set.
   nv_user_created:
     type: integer
-    description: Unix time the account was created
+    description: Unix time the account was created.
   nv_user_delay:
     type: integer
-    description: Account delay setting when present
+    description: Account delay setting when present.
   nv_user_id:
     type: string
     string_semantics: short
-    description: Unique username
+    description: Unique username.
   nv_user_karma:
     type: integer
-    description: User karma score
+    description: User karma score.
   nv_wire_int:
     type: integer
   nv_wire_str_short:
@@ -327,4 +326,4 @@ values:
     type: array
     items:
       value_ref: nv_wire_int
-    description: Poll option item ids when type is poll (empty or absent otherwise)
+    description: Poll option item ids when type is poll (empty or absent otherwise).

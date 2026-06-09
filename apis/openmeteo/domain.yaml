@@ -7,7 +7,7 @@ entities:
     id_field: id
     id_from:
     - latitude
-    description: Weather forecast data for a geographic location
+    description: Weather forecast data for a geographic location.
     fields:
       latitude:
         required: true
@@ -23,7 +23,7 @@ entities:
         value_ref: nv_forecast_elevation
 capabilities:
   weather_forecast:
-    description: Fetch weather forecast for a lat/lon coordinate
+    description: Fetch weather forecast for a lat/lon coordinate.
     kind: query
     entity: Forecast
     parameters:
@@ -58,17 +58,17 @@ capabilities:
 values:
   nv_forecast_elevation:
     type: number
-    description: Terrain elevation in metres
+    description: Terrain elevation in metres.
   nv_forecast_latitude:
     type: number
-    description: Decimal latitude of the forecast location
+    description: Decimal latitude of the forecast location.
   nv_forecast_longitude:
     type: number
-    description: Decimal longitude of the forecast location
+    description: Decimal longitude of the forecast location.
   nv_forecast_timezone:
     type: string
     string_semantics: short
-    description: IANA timezone name for the location
+    description: IANA timezone name for the location.
   nv_weather_forecast_current_weather:
     type: boolean
   nv_weather_forecast_past_days:

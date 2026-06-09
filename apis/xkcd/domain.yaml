@@ -5,7 +5,7 @@ http_backend: https://xkcd.com
 entities:
   Comic:
     id_field: num
-    description: An XKCD webcomic strip
+    description: An XKCD webcomic strip.
     fields:
       num:
         required: true
@@ -42,7 +42,7 @@ entities:
         value_ref: nv_comic_link
 capabilities:
   comic_get:
-    description: Retrieve a single XKCD comic by its number
+    description: Retrieve a single XKCD comic by its number.
     kind: get
     entity: Comic
     provides:
@@ -60,44 +60,44 @@ capabilities:
 values:
   nv_comic_num:
     type: integer
-    description: Sequential comic number used as its ID
+    description: Sequential comic number used as its ID.
   nv_comic_title:
     type: string
     string_semantics: short
-    description: Published title of the comic
+    description: Published title of the comic.
   nv_comic_safe_title:
     type: string
     string_semantics: markdown
-    description: URL-safe version of the title
+    description: URL-safe version of the title.
   nv_comic_alt:
     type: string
     string_semantics: markdown
-    description: Hover-text (alt text) displayed on mouseover
+    description: Hover-text (alt text) displayed on mouseover.
   nv_comic_img:
     type: string
     string_semantics: short
-    description: Direct URL to the comic image file
+    description: Direct URL to the comic image file.
   nv_comic_transcript:
     type: string
     string_semantics: markdown
-    description: Text transcript of the comic content
+    description: Text transcript of the comic content.
   nv_comic_year:
     type: string
     string_semantics: short
-    description: Year the comic was published
+    description: Year the comic was published.
   nv_comic_month:
     type: string
     string_semantics: short
-    description: Month the comic was published
+    description: Month the comic was published.
   nv_comic_day:
     type: string
     string_semantics: short
-    description: Day of the month the comic was published
+    description: Day of the month the comic was published.
   nv_comic_news:
     type: string
     string_semantics: short
-    description: Associated news or blog text, if any
+    description: Associated news or blog text, if any.
   nv_comic_link:
     type: string
     string_semantics: short
-    description: External link related to the comic
+    description: External link related to the comic.

@@ -333,7 +333,7 @@ capabilities:
       required: true
     output:
       type: side_effect
-      description: Inserts a new public comment under the post identified by this row’s fullname.
+      description: Inserts a new public comment under the post identified by this fullname.
 oauth:
   provider: reddit
   scopes:

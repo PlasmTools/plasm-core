@@ -102,7 +102,7 @@ entities:
       comments:
         target: Comment
         cardinality: many
-        description: Comments on this page
+        description: Comments on this page.
         materialize:
           kind: query_scoped
           capability: comment_query
@@ -142,7 +142,7 @@ entities:
       pages:
         target: Page
         cardinality: many
-        description: Pages (rows) within this database
+        description: Pages (rows) within this database.
         materialize:
           kind: query_scoped
           capability: database_query
@@ -188,7 +188,7 @@ entities:
         cardinality: one
 capabilities:
   page_get:
-    description: Retrieve page metadata (id, url, timestamps, properties structure) by ID.
+    description: Retrieve page metadata (id, url, timestamps, properties structure).
     kind: get
     entity: Page
     provides:
@@ -352,33 +352,33 @@ values:
   nv_comment_query_block_id:
     type: string
     string_semantics: short
-    description: ID of the page whose comments to retrieve
+    description: ID of the page whose comments to retrieve.
   nv_database_in_trash:
     type: boolean
   nv_database_is_inline:
     type: boolean
-    description: True if the database is displayed inline in its parent page
+    description: True if the database is displayed inline in its parent page.
   nv_database_query_database_id:
     type: string
     string_semantics: short
-    description: ID of the database to query
+    description: ID of the database to query.
   nv_database_query_page_size:
     type: integer
-    description: Number of results per page (max 100)
+    description: Number of results per page (max 100).
   nv_database_search_query:
     type: string
     string_semantics: short
     description: Title text to search for. Omit to retrieve all accessible databases.
   nv_page_archived:
     type: boolean
-    description: Deprecated alias for in_trash
+    description: Deprecated alias for in_trash.
   nv_page_id:
     type: string
     string_semantics: short
-    description: UUIDv4 page identifier
+    description: UUIDv4 page identifier.
   nv_page_in_trash:
     type: boolean
-    description: True if this page has been trashed
+    description: True if this page has been trashed.
   nv_page_markdown:
     type: string
     string_semantics: markdown
@@ -386,7 +386,7 @@ values:
   nv_page_public_url:
     type: string
     string_semantics: short
-    description: Public web URL if the page is published, otherwise null
+    description: Public web URL if the page is published, otherwise null.
   nv_page_search_query:
     type: string
     string_semantics: short
@@ -397,11 +397,11 @@ values:
   nv_page_url:
     type: string
     string_semantics: short
-    description: Canonical Notion URL for this page
+    description: Canonical Notion URL for this page.
   nv_user_email:
     type: string
     string_semantics: short
-    description: Only available when integration has user email capabilities
+    description: Only available when integration has user email capabilities.
   nv_user_type:
     type: select
     allowed_values:
@@ -418,7 +418,7 @@ values:
     type: boolean
   nv_notion_property_json:
     type: json
-    description: Unmapped Notion property payload
+    description: Unmapped Notion property payload.
   nv_wire_sel_54ee3732e356907b:
     type: select
     allowed_values:

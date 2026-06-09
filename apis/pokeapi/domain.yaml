@@ -8,7 +8,7 @@ registry_aliases:
 entities:
   Ability:
     id_field: name
-    description: A special power a Pokémon can have
+    description: A special power a Pokémon can have.
     fields:
       id:
         required: false
@@ -24,11 +24,11 @@ entities:
         value_ref: nv_ability_is_main_series
     relations:
       generation:
-        description: Generation this ability was introduced
+        description: Generation this ability was introduced.
         target: Generation
         cardinality: one
       pokemon:
-        description: Pokémon that can have this ability
+        description: Pokémon that can have this ability.
         target: Pokemon
         cardinality: many
         materialize:
@@ -39,7 +39,7 @@ entities:
           - key: pokemon
   Berry:
     id_field: name
-    description: A berry item found in the Pokémon world
+    description: A berry item found in the Pokémon world.
     fields:
       id:
         required: false
@@ -70,20 +70,20 @@ entities:
         value_ref: nv_berry_soil_dryness
     relations:
       firmness:
-        description: Firmness category of this berry
+        description: Firmness category of this berry.
         target: BerryFirmness
         cardinality: one
       item:
-        description: Corresponding item resource
+        description: Corresponding item resource.
         target: Item
         cardinality: one
       natural_gift_type:
-        description: Type granted by Natural Gift
+        description: Type granted by Natural Gift.
         target: Type
         cardinality: one
   BerryFirmness:
     id_field: name
-    description: Firmness rating for berries
+    description: Firmness rating for berries.
     fields:
       id:
         required: false
@@ -96,12 +96,12 @@ entities:
         value_ref: nv_berry_firmness_url
     relations:
       berries:
-        description: Berries with this firmness
+        description: Berries with this firmness.
         target: Berry
         cardinality: many
   BerryFlavor:
     id_field: name
-    description: A flavor profile for berries
+    description: A flavor profile for berries.
     fields:
       id:
         required: false
@@ -114,12 +114,12 @@ entities:
         value_ref: nv_berry_flavor_url
     relations:
       contest_type:
-        description: Contest type linked to this flavor
+        description: Contest type linked to this flavor.
         target: ContestType
         cardinality: one
   Characteristic:
     id_field: url
-    description: A genetic characteristic from IVs
+    description: A genetic characteristic from IVs.
     fields:
       id:
         required: false
@@ -135,12 +135,12 @@ entities:
         value_ref: nv_characteristic_possible_values
     relations:
       highest_stat:
-        description: Stat this characteristic indicates
+        description: Stat this characteristic indicates.
         target: Stat
         cardinality: one
   ContestType:
     id_field: name
-    description: A Pokémon contest category
+    description: A Pokémon contest category.
     fields:
       id:
         required: false
@@ -153,12 +153,12 @@ entities:
         value_ref: nv_contest_type_url
     relations:
       berry_flavor:
-        description: Berry flavor linked to this contest type
+        description: Berry flavor linked to this contest type.
         target: BerryFlavor
         cardinality: one
   ContestEffect:
     id_field: url
-    description: Effect of a move in a Pokémon contest
+    description: Effect of a move in a Pokémon contest.
     fields:
       id:
         required: false
@@ -174,7 +174,7 @@ entities:
         value_ref: nv_contest_effect_jam
   EggGroup:
     id_field: name
-    description: A breeding compatibility group
+    description: A breeding compatibility group.
     fields:
       id:
         required: false
@@ -187,12 +187,12 @@ entities:
         value_ref: nv_egg_group_url
     relations:
       pokemon_species:
-        description: Species in this egg group
+        description: Species in this egg group.
         target: PokemonSpecies
         cardinality: many
   EncounterMethod:
     id_field: name
-    description: Method of encountering wild Pokémon
+    description: Method of encountering wild Pokémon.
     fields:
       id:
         required: false
@@ -208,7 +208,7 @@ entities:
         value_ref: nv_encounter_method_order
   EncounterCondition:
     id_field: name
-    description: A condition affecting wild encounters
+    description: A condition affecting wild encounters.
     fields:
       id:
         required: false
@@ -221,12 +221,12 @@ entities:
         value_ref: nv_encounter_condition_url
     relations:
       values:
-        description: Possible values for this condition
+        description: Possible values for this condition.
         target: EncounterConditionValue
         cardinality: many
   EncounterConditionValue:
     id_field: name
-    description: A specific value for an encounter condition
+    description: A specific value for an encounter condition.
     fields:
       id:
         required: false
@@ -239,12 +239,12 @@ entities:
         value_ref: nv_encounter_condition_value_url
     relations:
       condition:
-        description: Parent encounter condition
+        description: Parent encounter condition.
         target: EncounterCondition
         cardinality: one
   EvolutionChain:
     id_field: url
-    description: A chain of Pokémon evolution stages
+    description: A chain of Pokémon evolution stages.
     fields:
       id:
         required: false
@@ -254,12 +254,12 @@ entities:
         value_ref: nv_evolution_chain_url
     relations:
       baby_trigger_item:
-        description: Item that triggers baby Pokémon breeding
+        description: Item that triggers baby Pokémon breeding.
         target: Item
         cardinality: one
   EvolutionTrigger:
     id_field: name
-    description: An event that triggers evolution
+    description: An event that triggers evolution.
     fields:
       id:
         required: false
@@ -272,12 +272,12 @@ entities:
         value_ref: nv_evolution_trigger_url
     relations:
       pokemon_species:
-        description: Species that evolve via this trigger
+        description: Species that evolve via this trigger.
         target: PokemonSpecies
         cardinality: many
   Generation:
     id_field: name
-    description: A game generation (e.g. Gen I, Gen II)
+    description: A game generation (e.g. Gen I, Gen II).
     fields:
       id:
         required: false
@@ -290,12 +290,12 @@ entities:
         value_ref: nv_generation_url
     relations:
       main_region:
-        description: Primary region for this generation
+        description: Primary region for this generation.
         target: Region
         cardinality: one
   Gender:
     id_field: name
-    description: A Pokémon gender option
+    description: A Pokémon gender option.
     fields:
       id:
         required: false
@@ -308,16 +308,16 @@ entities:
         value_ref: nv_gender_url
     relations:
       pokemon_species_details:
-        description: Species with gender-specific details
+        description: Species with gender-specific details.
         target: PokemonSpecies
         cardinality: many
       required_for_evolution:
-        description: Species requiring this gender to evolve
+        description: Species requiring this gender to evolve.
         target: PokemonSpecies
         cardinality: many
   GrowthRate:
     id_field: name
-    description: An experience growth rate curve
+    description: An experience growth rate curve.
     fields:
       id:
         required: false
@@ -333,12 +333,12 @@ entities:
         value_ref: nv_growth_rate_formula
     relations:
       pokemon_species:
-        description: Species that use this growth rate
+        description: Species that use this growth rate.
         target: PokemonSpecies
         cardinality: many
   Item:
     id_field: name
-    description: A collectible item in the Pokémon world
+    description: A collectible item in the Pokémon world.
     fields:
       id:
         required: false
@@ -357,20 +357,20 @@ entities:
         value_ref: nv_item_fling_power
     relations:
       fling_effect:
-        description: Effect when used with Fling
+        description: Effect when used with Fling.
         target: ItemFlingEffect
         cardinality: one
       category:
-        description: Item category classification
+        description: Item category classification.
         target: ItemCategory
         cardinality: one
       baby_trigger_for:
-        description: Evolution chain this item triggers
+        description: Evolution chain this item triggers.
         target: EvolutionChain
         cardinality: one
   ItemCategory:
     id_field: name
-    description: A category grouping for items
+    description: A category grouping for items.
     fields:
       id:
         required: false
@@ -383,16 +383,16 @@ entities:
         value_ref: nv_item_category_url
     relations:
       pocket:
-        description: Bag pocket this category belongs to
+        description: Bag pocket this category belongs to.
         target: ItemPocket
         cardinality: one
       items:
-        description: Items in this category
+        description: Items in this category.
         target: Item
         cardinality: many
   ItemAttribute:
     id_field: name
-    description: A trait or property of items
+    description: A trait or property of items.
     fields:
       id:
         required: false
@@ -405,12 +405,12 @@ entities:
         value_ref: nv_item_attribute_url
     relations:
       items:
-        description: Items with this attribute
+        description: Items with this attribute.
         target: Item
         cardinality: many
   ItemFlingEffect:
     id_field: name
-    description: Effect when an item is flung in battle
+    description: Effect when an item is flung in battle.
     fields:
       id:
         required: false
@@ -423,12 +423,12 @@ entities:
         value_ref: nv_item_fling_effect_url
     relations:
       items:
-        description: Items with this fling effect
+        description: Items with this fling effect.
         target: Item
         cardinality: many
   ItemPocket:
     id_field: name
-    description: A pocket in the player's bag
+    description: A pocket in the player's bag.
     fields:
       id:
         required: false
@@ -441,12 +441,12 @@ entities:
         value_ref: nv_item_pocket_url
     relations:
       categories:
-        description: Item categories in this pocket
+        description: Item categories in this pocket.
         target: ItemCategory
         cardinality: many
   Language:
     id_field: name
-    description: A language for localized game text
+    description: A language for localized game text.
     fields:
       id:
         required: false
@@ -468,7 +468,7 @@ entities:
         value_ref: nv_language_iso3166
   Location:
     id_field: name
-    description: A location in the Pokémon world
+    description: A location in the Pokémon world.
     fields:
       id:
         required: false
@@ -481,16 +481,16 @@ entities:
         value_ref: nv_location_url
     relations:
       region:
-        description: Region this location belongs to
+        description: Region this location belongs to.
         target: Region
         cardinality: one
       areas:
-        description: Sub-areas within this location
+        description: Sub-areas within this location.
         target: LocationArea
         cardinality: many
   LocationArea:
     id_field: name
-    description: A sub-area within a location
+    description: A sub-area within a location.
     fields:
       id:
         required: false
@@ -506,12 +506,12 @@ entities:
         value_ref: nv_location_area_game_index
     relations:
       location:
-        description: Parent location
+        description: Parent location.
         target: Location
         cardinality: one
   Machine:
     id_field: url
-    description: A TM or HM that teaches a move
+    description: A TM or HM that teaches a move.
     fields:
       id:
         required: false
@@ -521,20 +521,20 @@ entities:
         value_ref: nv_machine_url
     relations:
       item:
-        description: Item form of this machine
+        description: Item form of this machine.
         target: Item
         cardinality: one
       version_group:
-        description: Version group this machine appears in
+        description: Version group this machine appears in.
         target: VersionGroup
         cardinality: one
       move:
-        description: Move this machine teaches
+        description: Move this machine teaches.
         target: Move
         cardinality: one
   Move:
     id_field: name
-    description: An attack or technique usable in battle
+    description: An attack or technique usable in battle.
     fields:
       id:
         required: false
@@ -562,35 +562,35 @@ entities:
         value_ref: nv_move_power
     relations:
       contest_type:
-        description: Contest type this move belongs to
+        description: Contest type this move belongs to.
         target: ContestType
         cardinality: one
       contest_effect:
-        description: Effect in Pokémon contests
+        description: Effect in Pokémon contests.
         target: ContestEffect
         cardinality: one
       damage_class:
-        description: Physical, special, or status
+        description: Physical, special, or status.
         target: MoveDamageClass
         cardinality: one
       generation:
-        description: Generation this move was introduced
+        description: Generation this move was introduced.
         target: Generation
         cardinality: one
       super_contest_effect:
-        description: Effect in Super Contests
+        description: Effect in Super Contests.
         target: SuperContestEffect
         cardinality: one
       target:
-        description: Targeting mode for this move
+        description: Targeting mode for this move.
         target: MoveTarget
         cardinality: one
       type:
-        description: Elemental type of this move
+        description: Elemental type of this move.
         target: Type
         cardinality: one
       ailment:
-        description: Status ailment this move inflicts
+        description: Status ailment this move inflicts.
         target: MoveAilment
         cardinality: one
         materialize:
@@ -600,7 +600,7 @@ entities:
           - key: ailment
   MoveAilment:
     id_field: name
-    description: A status condition caused by moves
+    description: A status condition caused by moves.
     fields:
       id:
         required: false
@@ -613,12 +613,12 @@ entities:
         value_ref: nv_move_ailment_url
     relations:
       moves:
-        description: Moves that cause this ailment
+        description: Moves that cause this ailment.
         target: Move
         cardinality: many
   MoveBattleStyle:
     id_field: name
-    description: A battle style for move preferences
+    description: A battle style for move preferences.
     fields:
       id:
         required: false
@@ -631,7 +631,7 @@ entities:
         value_ref: nv_move_battle_style_url
   MoveCategory:
     id_field: name
-    description: A meta-category grouping for moves
+    description: A meta-category grouping for moves.
     fields:
       id:
         required: false
@@ -644,12 +644,12 @@ entities:
         value_ref: nv_move_category_url
     relations:
       moves:
-        description: Moves in this category
+        description: Moves in this category.
         target: Move
         cardinality: many
   MoveDamageClass:
     id_field: name
-    description: Physical, special, or status classification
+    description: Physical, special, or status classification.
     fields:
       id:
         required: false
@@ -662,12 +662,12 @@ entities:
         value_ref: nv_move_damage_class_url
     relations:
       moves:
-        description: Moves with this damage class
+        description: Moves with this damage class.
         target: Move
         cardinality: many
   MoveLearnMethod:
     id_field: name
-    description: How a Pokémon can learn a move
+    description: How a Pokémon can learn a move.
     fields:
       id:
         required: false
@@ -680,12 +680,12 @@ entities:
         value_ref: nv_move_learn_method_url
     relations:
       version_groups:
-        description: Version groups using this learn method
+        description: Version groups using this learn method.
         target: VersionGroup
         cardinality: many
   MoveTarget:
     id_field: name
-    description: What a move can target in battle
+    description: What a move can target in battle.
     fields:
       id:
         required: false
@@ -698,12 +698,12 @@ entities:
         value_ref: nv_move_target_url
     relations:
       moves:
-        description: Moves with this target type
+        description: Moves with this target type.
         target: Move
         cardinality: many
   Nature:
     id_field: name
-    description: A nature affecting stat growth
+    description: A nature affecting stat growth.
     fields:
       id:
         required: false
@@ -716,28 +716,28 @@ entities:
         value_ref: nv_nature_url
     relations:
       decreased_stat:
-        description: Stat decreased by this nature
+        description: Stat decreased by this nature.
         target: Stat
         cardinality: one
       increased_stat:
-        description: Stat increased by this nature
+        description: Stat increased by this nature.
         target: Stat
         cardinality: one
       likes_flavor:
-        description: Flavor preferred by this nature
+        description: Flavor preferred by this nature.
         target: BerryFlavor
         cardinality: one
       hates_flavor:
-        description: Flavor disliked by this nature
+        description: Flavor disliked by this nature.
         target: BerryFlavor
         cardinality: one
       berries:
-        description: Berries associated with this nature
+        description: Berries associated with this nature.
         target: Berry
         cardinality: many
   PalParkArea:
     id_field: name
-    description: An area in Pal Park for migration
+    description: An area in Pal Park for migration.
     fields:
       id:
         required: false
@@ -750,12 +750,12 @@ entities:
         value_ref: nv_pal_park_area_url
     relations:
       pokemon_species:
-        description: Species found in this area
+        description: Species found in this area.
         target: PokemonSpecies
         cardinality: many
   Pokedex:
     id_field: name
-    description: A regional Pokédex catalog
+    description: A regional Pokédex catalog.
     fields:
       id:
         required: false
@@ -771,12 +771,12 @@ entities:
         value_ref: nv_pokedex_is_main_series
     relations:
       region:
-        description: Region this Pokédex covers
+        description: Region this Pokédex covers.
         target: Region
         cardinality: one
   Pokemon:
     id_field: name
-    description: A Pokémon with base stats and forms
+    description: A Pokémon with base stats and forms.
     fields:
       id:
         required: false
@@ -804,11 +804,11 @@ entities:
         value_ref: nv_pokemon_weight
     relations:
       species:
-        description: Species this Pokémon belongs to
+        description: Species this Pokémon belongs to.
         target: PokemonSpecies
         cardinality: one
       forms:
-        description: Visual forms of this Pokémon
+        description: Visual forms of this Pokémon.
         target: PokemonForm
         cardinality: many
         materialize:
@@ -817,7 +817,7 @@ entities:
           - key: forms
           - wildcard: true
       abilities:
-        description: Abilities this Pokémon can have
+        description: Abilities this Pokémon can have.
         target: Ability
         cardinality: many
         materialize:
@@ -827,7 +827,7 @@ entities:
           - wildcard: true
           - key: ability
       types:
-        description: Elemental types of this Pokémon
+        description: Elemental types of this Pokémon.
         target: Type
         cardinality: many
         materialize:
@@ -837,7 +837,7 @@ entities:
           - wildcard: true
           - key: type
       moves:
-        description: Moves this Pokémon can learn
+        description: Moves this Pokémon can learn.
         target: Move
         cardinality: many
         materialize:
@@ -848,7 +848,7 @@ entities:
           - key: move
   PokemonColor:
     id_field: name
-    description: A color used to categorize Pokémon
+    description: A color used to categorize Pokémon.
     fields:
       id:
         required: false
@@ -861,12 +861,12 @@ entities:
         value_ref: nv_pokemon_color_url
     relations:
       pokemon_species:
-        description: Species with this body color
+        description: Species with this body color.
         target: PokemonSpecies
         cardinality: many
   PokemonEncounter:
     id_field: url
-    description: Where a specific Pokémon can be found
+    description: Where a specific Pokémon can be found.
     id_from: location_area.url
     fields:
       pokemon_id:
@@ -874,12 +874,12 @@ entities:
         value_ref: nv_pokemon_encounter_pokemon_id
     relations:
       location_area:
-        description: Area where this encounter occurs
+        description: Area where this encounter occurs.
         target: LocationArea
         cardinality: one
   PokemonForm:
     id_field: name
-    description: A visual variant of a Pokémon
+    description: A visual variant of a Pokémon.
     fields:
       id:
         required: false
@@ -910,16 +910,16 @@ entities:
         value_ref: nv_pokemon_form_form_name
     relations:
       pokemon:
-        description: Base Pokémon for this form
+        description: Base Pokémon for this form.
         target: Pokemon
         cardinality: one
       version_group:
-        description: Version group this form was introduced
+        description: Version group this form was introduced.
         target: VersionGroup
         cardinality: one
   PokemonHabitat:
     id_field: name
-    description: A habitat where Pokémon live
+    description: A habitat where Pokémon live.
     fields:
       id:
         required: false
@@ -932,12 +932,12 @@ entities:
         value_ref: nv_pokemon_habitat_url
     relations:
       pokemon_species:
-        description: Species found in this habitat
+        description: Species found in this habitat.
         target: PokemonSpecies
         cardinality: many
   PokemonShape:
     id_field: name
-    description: A body shape classification for Pokémon
+    description: A body shape classification for Pokémon.
     fields:
       id:
         required: false
@@ -950,12 +950,12 @@ entities:
         value_ref: nv_pokemon_shape_url
     relations:
       pokemon_species:
-        description: Species with this body shape
+        description: Species with this body shape.
         target: PokemonSpecies
         cardinality: many
   PokemonSpecies:
     id_field: name
-    description: A Pokémon species with lore and breeding data
+    description: A Pokémon species with lore and breeding data.
     fields:
       id:
         required: false
@@ -998,48 +998,48 @@ entities:
         value_ref: nv_pokemon_species_forms_switchable
     relations:
       color:
-        description: Body color of this species
+        description: Body color of this species.
         target: PokemonColor
         cardinality: one
       evolution_chain:
-        description: Evolution chain this species belongs to
+        description: Evolution chain this species belongs to.
         target: EvolutionChain
         cardinality: one
       evolves_from_species:
-        description: Species this one evolves from
+        description: Species this one evolves from.
         target: PokemonSpecies
         cardinality: one
       generation:
-        description: Generation this species was introduced
+        description: Generation this species was introduced.
         target: Generation
         cardinality: one
       growth_rate:
-        description: Experience growth rate curve
+        description: Experience growth rate curve.
         target: GrowthRate
         cardinality: one
       habitat:
-        description: Natural habitat of this species
+        description: Natural habitat of this species.
         target: PokemonHabitat
         cardinality: one
       shape:
-        description: Body shape classification
+        description: Body shape classification.
         target: PokemonShape
         cardinality: one
       egg_groups:
-        description: Breeding compatibility groups
+        description: Breeding compatibility groups.
         target: EggGroup
         cardinality: many
       varieties:
-        description: Pokémon variants of this species
+        description: Pokémon variants of this species.
         target: Pokemon
         cardinality: many
       pal_park_areas:
-        description: Pal Park areas for migration
+        description: Pal Park areas for migration.
         target: PalParkArea
         cardinality: many
   PokeathlonStat:
     id_field: name
-    description: A stat used in Pokéathlon events
+    description: A stat used in Pokéathlon events.
     fields:
       id:
         required: false
@@ -1052,7 +1052,7 @@ entities:
         value_ref: nv_pokeathlon_stat_url
   Region:
     id_field: name
-    description: A geographic region in the Pokémon world
+    description: A geographic region in the Pokémon world.
     fields:
       id:
         required: false
@@ -1065,24 +1065,24 @@ entities:
         value_ref: nv_region_url
     relations:
       locations:
-        description: Locations within this region
+        description: Locations within this region.
         target: Location
         cardinality: many
       main_generation:
-        description: Primary generation for this region
+        description: Primary generation for this region.
         target: Generation
         cardinality: one
       pokedexes:
-        description: Pokédex catalogs for this region
+        description: Pokédex catalogs for this region.
         target: Pokedex
         cardinality: many
       version_groups:
-        description: Version groups set in this region
+        description: Version groups set in this region.
         target: VersionGroup
         cardinality: many
   Stat:
     id_field: name
-    description: A base stat (HP, Attack, etc.)
+    description: A base stat (HP, Attack, etc.).
     fields:
       id:
         required: false
@@ -1101,12 +1101,12 @@ entities:
         value_ref: nv_stat_is_battle_only
     relations:
       move_damage_class:
-        description: Damage class linked to this stat
+        description: Damage class linked to this stat.
         target: MoveDamageClass
         cardinality: one
   SuperContestEffect:
     id_field: url
-    description: An effect in Super Contest shows
+    description: An effect in Super Contest shows.
     fields:
       id:
         required: false
@@ -1119,12 +1119,12 @@ entities:
         value_ref: nv_super_contest_effect_appeal
     relations:
       moves:
-        description: Moves with this super contest effect
+        description: Moves with this super contest effect.
         target: Move
         cardinality: many
   Type:
     id_field: name
-    description: An elemental type (Fire, Water, etc.)
+    description: An elemental type (Fire, Water, etc.).
     fields:
       id:
         required: false
@@ -1137,15 +1137,15 @@ entities:
         value_ref: nv_type_url
     relations:
       generation:
-        description: Generation this type was introduced
+        description: Generation this type was introduced.
         target: Generation
         cardinality: one
       move_damage_class:
-        description: Default damage class for this type
+        description: Default damage class for this type.
         target: MoveDamageClass
         cardinality: one
       moves:
-        description: Moves of this elemental type
+        description: Moves of this elemental type.
         target: Move
         cardinality: many
         materialize:
@@ -1154,7 +1154,7 @@ entities:
           - key: moves
           - wildcard: true
       pokemon:
-        description: Pokémon with this type
+        description: Pokémon with this type.
         target: Pokemon
         cardinality: many
         materialize:
@@ -1165,7 +1165,7 @@ entities:
           - key: pokemon
   Version:
     id_field: name
-    description: A specific game version (e.g. Red, Blue)
+    description: A specific game version (e.g. Red, Blue).
     fields:
       id:
         required: false
@@ -1178,12 +1178,12 @@ entities:
         value_ref: nv_version_url
     relations:
       version_group:
-        description: Version group this belongs to
+        description: Version group this belongs to.
         target: VersionGroup
         cardinality: one
   VersionGroup:
     id_field: name
-    description: A set of related game versions
+    description: A set of related game versions.
     fields:
       id:
         required: false
@@ -1199,16 +1199,16 @@ entities:
         value_ref: nv_version_group_order
     relations:
       generation:
-        description: Generation this version group belongs to
+        description: Generation this version group belongs to.
         target: Generation
         cardinality: one
 capabilities:
   ability_query:
-    description: List all Pokémon abilities
+    description: List all Pokémon abilities.
     kind: query
     entity: Ability
   ability_get:
-    description: Get an ability by name or ID
+    description: Get an ability by name or ID.
     kind: get
     entity: Ability
     provides:
@@ -1217,11 +1217,11 @@ capabilities:
     - url
     - is_main_series
   berry_query:
-    description: List all berries
+    description: List all berries.
     kind: query
     entity: Berry
   berry_get:
-    description: Get a berry by name or ID
+    description: Get a berry by name or ID.
     kind: get
     entity: Berry
     provides:
@@ -1235,11 +1235,11 @@ capabilities:
     - smoothness
     - soil_dryness
   berryfirmness_query:
-    description: List all berry firmness levels
+    description: List all berry firmness levels.
     kind: query
     entity: BerryFirmness
   berryfirmness_get:
-    description: Get a berry firmness by name or ID
+    description: Get a berry firmness by name or ID.
     kind: get
     entity: BerryFirmness
     provides:
@@ -1247,11 +1247,11 @@ capabilities:
     - id
     - url
   berryflavor_query:
-    description: List all berry flavors
+    description: List all berry flavors.
     kind: query
     entity: BerryFlavor
   berryflavor_get:
-    description: Get a berry flavor by name or ID
+    description: Get a berry flavor by name or ID.
     kind: get
     entity: BerryFlavor
     provides:
@@ -1259,11 +1259,11 @@ capabilities:
     - id
     - url
   characteristic_query:
-    description: List all genetic characteristics
+    description: List all genetic characteristics.
     kind: query
     entity: Characteristic
   characteristic_get:
-    description: Get a characteristic by ID
+    description: Get a characteristic.
     kind: get
     entity: Characteristic
     provides:
@@ -1272,11 +1272,11 @@ capabilities:
     - gene_modulo
     - possible_values
   contesttype_query:
-    description: List all contest types
+    description: List all contest types.
     kind: query
     entity: ContestType
   contesttype_get:
-    description: Get a contest type by name or ID
+    description: Get a contest type by name or ID.
     kind: get
     entity: ContestType
     provides:
@@ -1284,11 +1284,11 @@ capabilities:
     - id
     - url
   contesteffect_query:
-    description: List all contest effects
+    description: List all contest effects.
     kind: query
     entity: ContestEffect
   contesteffect_get:
-    description: Get a contest effect by ID
+    description: Get a contest effect.
     kind: get
     entity: ContestEffect
     provides:
@@ -1297,11 +1297,11 @@ capabilities:
     - appeal
     - jam
   egggroup_query:
-    description: List all egg groups
+    description: List all egg groups.
     kind: query
     entity: EggGroup
   egggroup_get:
-    description: Get an egg group by name or ID
+    description: Get an egg group by name or ID.
     kind: get
     entity: EggGroup
     provides:
@@ -1309,11 +1309,11 @@ capabilities:
     - id
     - url
   encountermethod_query:
-    description: List all encounter methods
+    description: List all encounter methods.
     kind: query
     entity: EncounterMethod
   encountermethod_get:
-    description: Get an encounter method by name or ID
+    description: Get an encounter method by name or ID.
     kind: get
     entity: EncounterMethod
     provides:
@@ -1322,11 +1322,11 @@ capabilities:
     - url
     - order
   encountercondition_query:
-    description: List all encounter conditions
+    description: List all encounter conditions.
     kind: query
     entity: EncounterCondition
   encountercondition_get:
-    description: Get an encounter condition by name or ID
+    description: Get an encounter condition by name or ID.
     kind: get
     entity: EncounterCondition
     provides:
@@ -1334,11 +1334,11 @@ capabilities:
     - id
     - url
   encounterconditionvalue_query:
-    description: List all encounter condition values
+    description: List all encounter condition values.
     kind: query
     entity: EncounterConditionValue
   encounterconditionvalue_get:
-    description: Get an encounter condition value by name or ID
+    description: Get an encounter condition value by name or ID.
     kind: get
     entity: EncounterConditionValue
     provides:
@@ -1346,22 +1346,22 @@ capabilities:
     - id
     - url
   evolutionchain_query:
-    description: List all evolution chains
+    description: List all evolution chains.
     kind: query
     entity: EvolutionChain
   evolutionchain_get:
-    description: Get an evolution chain by ID
+    description: Get an evolution chain.
     kind: get
     entity: EvolutionChain
     provides:
     - url
     - id
   evolutiontrigger_query:
-    description: List all evolution triggers
+    description: List all evolution triggers.
     kind: query
     entity: EvolutionTrigger
   evolutiontrigger_get:
-    description: Get an evolution trigger by name or ID
+    description: Get an evolution trigger by name or ID.
     kind: get
     entity: EvolutionTrigger
     provides:
@@ -1369,11 +1369,11 @@ capabilities:
     - id
     - url
   generation_query:
-    description: List all game generations
+    description: List all game generations.
     kind: query
     entity: Generation
   generation_get:
-    description: Get a generation by name or ID
+    description: Get a generation by name or ID.
     kind: get
     entity: Generation
     provides:
@@ -1381,11 +1381,11 @@ capabilities:
     - id
     - url
   gender_query:
-    description: List all gender categories
+    description: List all gender categories.
     kind: query
     entity: Gender
   gender_get:
-    description: Get a gender by name or ID
+    description: Get a gender by name or ID.
     kind: get
     entity: Gender
     provides:
@@ -1393,11 +1393,11 @@ capabilities:
     - id
     - url
   growthrate_query:
-    description: List all experience growth rates
+    description: List all experience growth rates.
     kind: query
     entity: GrowthRate
   growthrate_get:
-    description: Get a growth rate by name or ID
+    description: Get a growth rate by name or ID.
     kind: get
     entity: GrowthRate
     provides:
@@ -1406,11 +1406,11 @@ capabilities:
     - url
     - formula
   item_query:
-    description: List all items
+    description: List all items.
     kind: query
     entity: Item
   item_get:
-    description: Get an item by name or ID
+    description: Get an item by name or ID.
     kind: get
     entity: Item
     provides:
@@ -1420,11 +1420,11 @@ capabilities:
     - cost
     - fling_power
   itemcategory_query:
-    description: List all item categories
+    description: List all item categories.
     kind: query
     entity: ItemCategory
   itemcategory_get:
-    description: Get an item category by name or ID
+    description: Get an item category by name or ID.
     kind: get
     entity: ItemCategory
     provides:
@@ -1432,11 +1432,11 @@ capabilities:
     - id
     - url
   itemattribute_query:
-    description: List all item attributes
+    description: List all item attributes.
     kind: query
     entity: ItemAttribute
   itemattribute_get:
-    description: Get an item attribute by name or ID
+    description: Get an item attribute by name or ID.
     kind: get
     entity: ItemAttribute
     provides:
@@ -1444,11 +1444,11 @@ capabilities:
     - id
     - url
   itemflingeffect_query:
-    description: List all item fling effects
+    description: List all item fling effects.
     kind: query
     entity: ItemFlingEffect
   itemflingeffect_get:
-    description: Get an item fling effect by name or ID
+    description: Get an item fling effect by name or ID.
     kind: get
     entity: ItemFlingEffect
     provides:
@@ -1456,11 +1456,11 @@ capabilities:
     - id
     - url
   itempocket_query:
-    description: List all bag pockets
+    description: List all bag pockets.
     kind: query
     entity: ItemPocket
   itempocket_get:
-    description: Get a bag pocket by name or ID
+    description: Get a bag pocket by name or ID.
     kind: get
     entity: ItemPocket
     provides:
@@ -1468,11 +1468,11 @@ capabilities:
     - id
     - url
   language_query:
-    description: List all game languages
+    description: List all game languages.
     kind: query
     entity: Language
   language_get:
-    description: Get a language by name or ID
+    description: Get a language by name or ID.
     kind: get
     entity: Language
     provides:
@@ -1483,11 +1483,11 @@ capabilities:
     - iso639
     - iso3166
   location_query:
-    description: List all locations
+    description: List all locations.
     kind: query
     entity: Location
   location_get:
-    description: Get a location by name or ID
+    description: Get a location by name or ID.
     kind: get
     entity: Location
     provides:
@@ -1495,11 +1495,11 @@ capabilities:
     - id
     - url
   locationarea_query:
-    description: List all location areas
+    description: List all location areas.
     kind: query
     entity: LocationArea
   locationarea_get:
-    description: Get a location area by name or ID
+    description: Get a location area by name or ID.
     kind: get
     entity: LocationArea
     provides:
@@ -1508,22 +1508,22 @@ capabilities:
     - url
     - game_index
   machine_query:
-    description: List all TM/HM machines
+    description: List all TM/HM machines.
     kind: query
     entity: Machine
   machine_get:
-    description: Get a machine by ID
+    description: Get a machine.
     kind: get
     entity: Machine
     provides:
     - url
     - id
   move_query:
-    description: List all moves
+    description: List all moves.
     kind: query
     entity: Move
   move_get:
-    description: Get a move by name or ID
+    description: Get a move by name or ID.
     kind: get
     entity: Move
     provides:
@@ -1536,11 +1536,11 @@ capabilities:
     - priority
     - power
   moveailment_query:
-    description: List all move ailments
+    description: List all move ailments.
     kind: query
     entity: MoveAilment
   moveailment_get:
-    description: Get a move ailment by name or ID
+    description: Get a move ailment by name or ID.
     kind: get
     entity: MoveAilment
     provides:
@@ -1548,11 +1548,11 @@ capabilities:
     - id
     - url
   movebattlestyle_query:
-    description: List all battle styles
+    description: List all battle styles.
     kind: query
     entity: MoveBattleStyle
   movebattlestyle_get:
-    description: Get a battle style by name or ID
+    description: Get a battle style by name or ID.
     kind: get
     entity: MoveBattleStyle
     provides:
@@ -1560,11 +1560,11 @@ capabilities:
     - id
     - url
   movecategory_query:
-    description: List all move categories
+    description: List all move categories.
     kind: query
     entity: MoveCategory
   movecategory_get:
-    description: Get a move category by name or ID
+    description: Get a move category by name or ID.
     kind: get
     entity: MoveCategory
     provides:
@@ -1572,11 +1572,11 @@ capabilities:
     - id
     - url
   movedamageclass_query:
-    description: List all damage classes
+    description: List all damage classes.
     kind: query
     entity: MoveDamageClass
   movedamageclass_get:
-    description: Get a damage class by name or ID
+    description: Get a damage class by name or ID.
     kind: get
     entity: MoveDamageClass
     provides:
@@ -1584,11 +1584,11 @@ capabilities:
     - id
     - url
   movelearnmethod_query:
-    description: List all move learn methods
+    description: List all move learn methods.
     kind: query
     entity: MoveLearnMethod
   movelearnmethod_get:
-    description: Get a move learn method by name or ID
+    description: Get a move learn method by name or ID.
     kind: get
     entity: MoveLearnMethod
     provides:
@@ -1596,11 +1596,11 @@ capabilities:
     - id
     - url
   movetarget_query:
-    description: List all move targets
+    description: List all move targets.
     kind: query
     entity: MoveTarget
   movetarget_get:
-    description: Get a move target by name or ID
+    description: Get a move target by name or ID.
     kind: get
     entity: MoveTarget
     provides:
@@ -1608,11 +1608,11 @@ capabilities:
     - id
     - url
   nature_query:
-    description: List all natures
+    description: List all natures.
     kind: query
     entity: Nature
   nature_get:
-    description: Get a nature by name or ID
+    description: Get a nature by name or ID.
     kind: get
     entity: Nature
     provides:
@@ -1620,11 +1620,11 @@ capabilities:
     - id
     - url
   palparkarea_query:
-    description: List all Pal Park areas
+    description: List all Pal Park areas.
     kind: query
     entity: PalParkArea
   palparkarea_get:
-    description: Get a Pal Park area by name or ID
+    description: Get a Pal Park area by name or ID.
     kind: get
     entity: PalParkArea
     provides:
@@ -1632,11 +1632,11 @@ capabilities:
     - id
     - url
   pokedex_query:
-    description: List all Pokédex catalogs
+    description: List all Pokédex catalogs.
     kind: query
     entity: Pokedex
   pokedex_get:
-    description: Get a Pokédex by name or ID
+    description: Get a Pokédex by name or ID.
     kind: get
     entity: Pokedex
     provides:
@@ -1654,11 +1654,11 @@ capabilities:
       required: true
       role: scope
   pokemon_query:
-    description: List all Pokémon
+    description: List all Pokémon.
     kind: query
     entity: Pokemon
   pokemon_get:
-    description: Get a Pokémon by name or ID
+    description: Get a Pokémon by name or ID.
     kind: get
     entity: Pokemon
     provides:
@@ -1671,11 +1671,11 @@ capabilities:
     - order
     - weight
   pokemoncolor_query:
-    description: List all Pokémon colors
+    description: List all Pokémon colors.
     kind: query
     entity: PokemonColor
   pokemoncolor_get:
-    description: Get a Pokémon color by name or ID
+    description: Get a Pokémon color by name or ID.
     kind: get
     entity: PokemonColor
     provides:
@@ -1683,11 +1683,11 @@ capabilities:
     - id
     - url
   pokemonform_query:
-    description: List all Pokémon forms
+    description: List all Pokémon forms.
     kind: query
     entity: PokemonForm
   pokemonform_get:
-    description: Get a Pokémon form by name or ID
+    description: Get a Pokémon form by name or ID.
     kind: get
     entity: PokemonForm
     provides:
@@ -1701,11 +1701,11 @@ capabilities:
     - is_mega
     - form_name
   pokemonhabitat_query:
-    description: List all Pokémon habitats
+    description: List all Pokémon habitats.
     kind: query
     entity: PokemonHabitat
   pokemonhabitat_get:
-    description: Get a Pokémon habitat by name or ID
+    description: Get a Pokémon habitat by name or ID.
     kind: get
     entity: PokemonHabitat
     provides:
@@ -1713,11 +1713,11 @@ capabilities:
     - id
     - url
   pokemonshape_query:
-    description: List all Pokémon body shapes
+    description: List all Pokémon body shapes.
     kind: query
     entity: PokemonShape
   pokemonshape_get:
-    description: Get a Pokémon shape by name or ID
+    description: Get a Pokémon shape by name or ID.
     kind: get
     entity: PokemonShape
     provides:
@@ -1725,11 +1725,11 @@ capabilities:
     - id
     - url
   pokemonspecies_query:
-    description: List all Pokémon species
+    description: List all Pokémon species.
     kind: query
     entity: PokemonSpecies
   pokemonspecies_get:
-    description: Get a Pokémon species by name or ID
+    description: Get a Pokémon species by name or ID.
     kind: get
     entity: PokemonSpecies
     provides:
@@ -1747,11 +1747,11 @@ capabilities:
     - has_gender_differences
     - forms_switchable
   pokeathlonstat_query:
-    description: List all Pokéathlon stats
+    description: List all Pokéathlon stats.
     kind: query
     entity: PokeathlonStat
   pokeathlonstat_get:
-    description: Get a Pokéathlon stat by name or ID
+    description: Get a Pokéathlon stat by name or ID.
     kind: get
     entity: PokeathlonStat
     provides:
@@ -1759,11 +1759,11 @@ capabilities:
     - id
     - url
   region_query:
-    description: List all regions
+    description: List all regions.
     kind: query
     entity: Region
   region_get:
-    description: Get a region by name or ID
+    description: Get a region by name or ID.
     kind: get
     entity: Region
     provides:
@@ -1771,11 +1771,11 @@ capabilities:
     - id
     - url
   stat_query:
-    description: List all base stats
+    description: List all base stats.
     kind: query
     entity: Stat
   stat_get:
-    description: Get a stat by name or ID
+    description: Get a stat by name or ID.
     kind: get
     entity: Stat
     provides:
@@ -1785,11 +1785,11 @@ capabilities:
     - game_index
     - is_battle_only
   supercontesteffect_query:
-    description: List all super contest effects
+    description: List all super contest effects.
     kind: query
     entity: SuperContestEffect
   supercontesteffect_get:
-    description: Get a super contest effect by ID
+    description: Get a super contest effect.
     kind: get
     entity: SuperContestEffect
     provides:
@@ -1797,11 +1797,11 @@ capabilities:
     - id
     - appeal
   type_query:
-    description: List all elemental types
+    description: List all elemental types.
     kind: query
     entity: Type
   type_get:
-    description: Get an elemental type by name or ID
+    description: Get an elemental type by name or ID.
     kind: get
     entity: Type
     provides:
@@ -1809,11 +1809,11 @@ capabilities:
     - id
     - url
   version_query:
-    description: List all game versions
+    description: List all game versions.
     kind: query
     entity: Version
   version_get:
-    description: Get a game version by name or ID
+    description: Get a game version by name or ID.
     kind: get
     entity: Version
     provides:
@@ -1821,11 +1821,11 @@ capabilities:
     - id
     - url
   versiongroup_query:
-    description: List all version groups
+    description: List all version groups.
     kind: query
     entity: VersionGroup
   versiongroup_get:
-    description: Get a version group by name or ID
+    description: Get a version group by name or ID.
     kind: get
     entity: VersionGroup
     provides:
@@ -1836,674 +1836,674 @@ capabilities:
 values:
   nv_ability_id:
     type: integer
-    description: Numeric ability identifier
+    description: Numeric ability identifier.
   nv_ability_name:
     type: string
     string_semantics: short
-    description: Ability name (unique key)
+    description: Ability name (unique key).
   nv_ability_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_ability_is_main_series:
     type: boolean
-    description: Whether this ability is from the main series
+    description: Whether this ability is from the main series.
   nv_berry_id:
     type: integer
-    description: Numeric berry identifier
+    description: Numeric berry identifier.
   nv_berry_name:
     type: string
     string_semantics: short
-    description: Berry name (unique key)
+    description: Berry name (unique key).
   nv_berry_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_berry_growth_time:
     type: integer
-    description: Hours for one growth stage
+    description: Hours for one growth stage.
   nv_berry_max_harvest:
     type: integer
-    description: Maximum number harvestable at once
+    description: Maximum number harvestable at once.
   nv_berry_natural_gift_power:
     type: integer
-    description: Power of Natural Gift when held
+    description: Power of Natural Gift when held.
   nv_berry_size:
     type: integer
-    description: Size of the berry in millimeters
+    description: Size of the berry in millimeters.
   nv_berry_smoothness:
     type: integer
-    description: Smoothness value for Pokéblocks
+    description: Smoothness value for Pokéblocks.
   nv_berry_soil_dryness:
     type: integer
-    description: Rate at which soil dries with this berry
+    description: Rate at which soil dries with this berry.
   nv_berry_firmness_id:
     type: integer
-    description: Numeric firmness identifier
+    description: Numeric firmness identifier.
   nv_berry_firmness_name:
     type: string
     string_semantics: short
-    description: Firmness name (unique key)
+    description: Firmness name (unique key).
   nv_berry_firmness_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_berry_flavor_id:
     type: integer
-    description: Numeric flavor identifier
+    description: Numeric flavor identifier.
   nv_berry_flavor_name:
     type: string
     string_semantics: short
-    description: Flavor name (unique key)
+    description: Flavor name (unique key).
   nv_berry_flavor_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_characteristic_id:
     type: integer
-    description: Numeric characteristic identifier
+    description: Numeric characteristic identifier.
   nv_characteristic_url:
     type: string
     string_semantics: short
-    description: API resource URL (unique key)
+    description: API resource URL (unique key).
   nv_characteristic_gene_modulo:
     type: integer
-    description: Remainder when dividing highest IV by 5
+    description: Remainder when dividing highest IV by 5.
   nv_characteristic_possible_values_item:
     type: string
   nv_characteristic_possible_values:
     type: array
     items:
       value_ref: nv_characteristic_possible_values_item
-    description: Possible IV values for this characteristic
+    description: Possible IV values for this characteristic.
   nv_contest_type_id:
     type: integer
-    description: Numeric contest type identifier
+    description: Numeric contest type identifier.
   nv_contest_type_name:
     type: string
     string_semantics: short
-    description: Contest type name (unique key)
+    description: Contest type name (unique key).
   nv_contest_type_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_contest_effect_id:
     type: integer
-    description: Numeric contest effect identifier
+    description: Numeric contest effect identifier.
   nv_contest_effect_url:
     type: string
     string_semantics: short
-    description: API resource URL (unique key)
+    description: API resource URL (unique key).
   nv_contest_effect_appeal:
     type: integer
-    description: Appeal points gained in contest
+    description: Appeal points gained in contest.
   nv_contest_effect_jam:
     type: integer
-    description: Jam points caused to opponents
+    description: Jam points caused to opponents.
   nv_egg_group_id:
     type: integer
-    description: Numeric egg group identifier
+    description: Numeric egg group identifier.
   nv_egg_group_name:
     type: string
     string_semantics: short
-    description: Egg group name (unique key)
+    description: Egg group name (unique key).
   nv_egg_group_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_encounter_method_id:
     type: integer
-    description: Numeric encounter method identifier
+    description: Numeric encounter method identifier.
   nv_encounter_method_name:
     type: string
     string_semantics: short
-    description: Method name (unique key)
+    description: Method name (unique key).
   nv_encounter_method_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_encounter_method_order:
     type: integer
-    description: Display sort order
+    description: Display sort order.
   nv_encounter_condition_id:
     type: integer
-    description: Numeric condition identifier
+    description: Numeric condition identifier.
   nv_encounter_condition_name:
     type: string
     string_semantics: short
-    description: Condition name (unique key)
+    description: Condition name (unique key).
   nv_encounter_condition_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_encounter_condition_value_id:
     type: integer
-    description: Numeric condition value identifier
+    description: Numeric condition value identifier.
   nv_encounter_condition_value_name:
     type: string
     string_semantics: short
-    description: Value name (unique key)
+    description: Value name (unique key).
   nv_encounter_condition_value_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_evolution_chain_id:
     type: integer
-    description: Numeric evolution chain identifier
+    description: Numeric evolution chain identifier.
   nv_evolution_chain_url:
     type: string
     string_semantics: short
-    description: API resource URL (unique key)
+    description: API resource URL (unique key).
   nv_evolution_trigger_id:
     type: integer
-    description: Numeric trigger identifier
+    description: Numeric trigger identifier.
   nv_evolution_trigger_name:
     type: string
     string_semantics: short
-    description: Trigger name (unique key)
+    description: Trigger name (unique key).
   nv_evolution_trigger_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_generation_id:
     type: integer
-    description: Numeric generation identifier
+    description: Numeric generation identifier.
   nv_generation_name:
     type: string
     string_semantics: short
-    description: Generation name (unique key)
+    description: Generation name (unique key).
   nv_generation_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_gender_id:
     type: integer
-    description: Numeric gender identifier
+    description: Numeric gender identifier.
   nv_gender_name:
     type: string
     string_semantics: short
-    description: Gender name (unique key)
+    description: Gender name (unique key).
   nv_gender_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_growth_rate_id:
     type: integer
-    description: Numeric growth rate identifier
+    description: Numeric growth rate identifier.
   nv_growth_rate_name:
     type: string
     string_semantics: short
-    description: Growth rate name (unique key)
+    description: Growth rate name (unique key).
   nv_growth_rate_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_growth_rate_formula:
     type: string
     string_semantics: short
-    description: Mathematical formula for leveling
+    description: Mathematical formula for leveling.
   nv_item_id:
     type: integer
-    description: Numeric item identifier
+    description: Numeric item identifier.
   nv_item_name:
     type: string
     string_semantics: short
-    description: Item name (unique key)
+    description: Item name (unique key).
   nv_item_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_item_cost:
     type: integer
-    description: Price in Pokémon currency
+    description: Price in Pokémon currency.
   nv_item_fling_power:
     type: integer
-    description: Power when used with Fling
+    description: Power when used with Fling.
   nv_item_category_id:
     type: integer
-    description: Numeric category identifier
+    description: Numeric category identifier.
   nv_item_category_name:
     type: string
     string_semantics: short
-    description: Category name (unique key)
+    description: Category name (unique key).
   nv_item_category_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_item_attribute_id:
     type: integer
-    description: Numeric attribute identifier
+    description: Numeric attribute identifier.
   nv_item_attribute_name:
     type: string
     string_semantics: short
-    description: Attribute name (unique key)
+    description: Attribute name (unique key).
   nv_item_attribute_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_item_fling_effect_id:
     type: integer
-    description: Numeric fling effect identifier
+    description: Numeric fling effect identifier.
   nv_item_fling_effect_name:
     type: string
     string_semantics: short
-    description: Fling effect name (unique key)
+    description: Fling effect name (unique key).
   nv_item_fling_effect_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_item_pocket_id:
     type: integer
-    description: Numeric pocket identifier
+    description: Numeric pocket identifier.
   nv_item_pocket_name:
     type: string
     string_semantics: short
-    description: Pocket name (unique key)
+    description: Pocket name (unique key).
   nv_item_pocket_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_language_id:
     type: integer
-    description: Numeric language identifier
+    description: Numeric language identifier.
   nv_language_name:
     type: string
     string_semantics: short
-    description: Language name (unique key)
+    description: Language name (unique key).
   nv_language_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_language_official:
     type: boolean
-    description: Whether this is an official game language
+    description: Whether this is an official game language.
   nv_language_iso639:
     type: string
     string_semantics: short
-    description: ISO 639 language code
+    description: ISO 639 language code.
   nv_language_iso3166:
     type: string
     string_semantics: short
-    description: ISO 3166 country code
+    description: ISO 3166 country code.
   nv_location_id:
     type: integer
-    description: Numeric location identifier
+    description: Numeric location identifier.
   nv_location_name:
     type: string
     string_semantics: short
-    description: Location name (unique key)
+    description: Location name (unique key).
   nv_location_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_location_area_id:
     type: integer
-    description: Numeric area identifier
+    description: Numeric area identifier.
   nv_location_area_name:
     type: string
     string_semantics: short
-    description: Area name (unique key)
+    description: Area name (unique key).
   nv_location_area_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_location_area_game_index:
     type: integer
-    description: Internal game index for this area
+    description: Internal game index for this area.
   nv_machine_id:
     type: integer
-    description: Numeric machine identifier
+    description: Numeric machine identifier.
   nv_machine_url:
     type: string
     string_semantics: short
-    description: API resource URL (unique key)
+    description: API resource URL (unique key).
   nv_move_id:
     type: integer
-    description: Numeric move identifier
+    description: Numeric move identifier.
   nv_move_name:
     type: string
     string_semantics: short
-    description: Move name (unique key)
+    description: Move name (unique key).
   nv_move_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_move_accuracy:
     type: integer
-    description: Move accuracy percentage
+    description: Move accuracy percentage.
   nv_move_effect_chance:
     type: integer
-    description: Chance of secondary effect occurring
+    description: Chance of secondary effect occurring.
   nv_move_pp:
     type: integer
-    description: Base power points
+    description: Base power points.
   nv_move_priority:
     type: integer
-    description: Move priority bracket
+    description: Move priority bracket.
   nv_move_power:
     type: integer
-    description: Base power of the move
+    description: Base power of the move.
   nv_move_ailment_id:
     type: integer
-    description: Numeric ailment identifier
+    description: Numeric ailment identifier.
   nv_move_ailment_name:
     type: string
     string_semantics: short
-    description: Ailment name (unique key)
+    description: Ailment name (unique key).
   nv_move_ailment_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_move_battle_style_id:
     type: integer
-    description: Numeric battle style identifier
+    description: Numeric battle style identifier.
   nv_move_battle_style_name:
     type: string
     string_semantics: short
-    description: Battle style name (unique key)
+    description: Battle style name (unique key).
   nv_move_battle_style_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_move_category_id:
     type: integer
-    description: Numeric category identifier
+    description: Numeric category identifier.
   nv_move_category_name:
     type: string
     string_semantics: short
-    description: Category name (unique key)
+    description: Category name (unique key).
   nv_move_category_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_move_damage_class_id:
     type: integer
-    description: Numeric damage class identifier
+    description: Numeric damage class identifier.
   nv_move_damage_class_name:
     type: string
     string_semantics: short
-    description: Damage class name (unique key)
+    description: Damage class name (unique key).
   nv_move_damage_class_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_move_learn_method_id:
     type: integer
-    description: Numeric learn method identifier
+    description: Numeric learn method identifier.
   nv_move_learn_method_name:
     type: string
     string_semantics: short
-    description: Learn method name (unique key)
+    description: Learn method name (unique key).
   nv_move_learn_method_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_move_target_id:
     type: integer
-    description: Numeric target identifier
+    description: Numeric target identifier.
   nv_move_target_name:
     type: string
     string_semantics: short
-    description: Target name (unique key)
+    description: Target name (unique key).
   nv_move_target_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_nature_id:
     type: integer
-    description: Numeric nature identifier
+    description: Numeric nature identifier.
   nv_nature_name:
     type: string
     string_semantics: short
-    description: Nature name (unique key)
+    description: Nature name (unique key).
   nv_nature_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_pal_park_area_id:
     type: integer
-    description: Numeric Pal Park area identifier
+    description: Numeric Pal Park area identifier.
   nv_pal_park_area_name:
     type: string
     string_semantics: short
-    description: Area name (unique key)
+    description: Area name (unique key).
   nv_pal_park_area_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_pokedex_id:
     type: integer
-    description: Numeric Pokédex identifier
+    description: Numeric Pokédex identifier.
   nv_pokedex_name:
     type: string
     string_semantics: short
-    description: Pokédex name (unique key)
+    description: Pokédex name (unique key).
   nv_pokedex_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_pokedex_is_main_series:
     type: boolean
-    description: Whether from the main game series
+    description: Whether from the main game series.
   nv_pokemon_id:
     type: integer
-    description: National Pokédex number
+    description: National Pokédex number.
   nv_pokemon_name:
     type: string
     string_semantics: short
-    description: Pokémon name (unique key)
+    description: Pokémon name (unique key).
   nv_pokemon_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_pokemon_base_experience:
     type: integer
-    description: Base experience yield when defeated
+    description: Base experience yield when defeated.
   nv_pokemon_height:
     type: integer
-    description: Height in decimetres
+    description: Height in decimetres.
   nv_pokemon_is_default:
     type: boolean
-    description: Whether this is the default form
+    description: Whether this is the default form.
   nv_pokemon_order:
     type: integer
-    description: Display sort order
+    description: Display sort order.
   nv_pokemon_weight:
     type: integer
-    description: Weight in hectograms
+    description: Weight in hectograms.
   nv_pokemon_color_id:
     type: integer
-    description: Numeric color identifier
+    description: Numeric color identifier.
   nv_pokemon_color_name:
     type: string
     string_semantics: short
-    description: Color name (unique key)
+    description: Color name (unique key).
   nv_pokemon_color_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_pokemon_encounter_pokemon_id:
     type: entity_ref
     target: Pokemon
-    description: Pokémon this encounter is for
+    description: Pokémon this encounter is for.
   nv_pokemon_form_id:
     type: integer
-    description: Numeric form identifier
+    description: Numeric form identifier.
   nv_pokemon_form_name:
     type: string
     string_semantics: short
-    description: Form name (unique key)
+    description: Form name (unique key).
   nv_pokemon_form_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_pokemon_form_order:
     type: integer
-    description: Global display order
+    description: Global display order.
   nv_pokemon_form_form_order:
     type: integer
-    description: Order among forms of same species
+    description: Order among forms of same species.
   nv_pokemon_form_is_default:
     type: boolean
-    description: Whether this is the default form
+    description: Whether this is the default form.
   nv_pokemon_form_is_battle_only:
     type: boolean
-    description: Whether form only appears in battle
+    description: Whether form only appears in battle.
   nv_pokemon_form_is_mega:
     type: boolean
-    description: Whether this is a Mega Evolution form
+    description: Whether this is a Mega Evolution form.
   nv_pokemon_form_form_name:
     type: string
     string_semantics: short
-    description: Name of this specific form
+    description: Name of this specific form.
   nv_pokemon_habitat_id:
     type: integer
-    description: Numeric habitat identifier
+    description: Numeric habitat identifier.
   nv_pokemon_habitat_name:
     type: string
     string_semantics: short
-    description: Habitat name (unique key)
+    description: Habitat name (unique key).
   nv_pokemon_habitat_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_pokemon_shape_id:
     type: integer
-    description: Numeric shape identifier
+    description: Numeric shape identifier.
   nv_pokemon_shape_name:
     type: string
     string_semantics: short
-    description: Shape name (unique key)
+    description: Shape name (unique key).
   nv_pokemon_shape_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_pokemon_species_id:
     type: integer
-    description: National Pokédex species number
+    description: National Pokédex species number.
   nv_pokemon_species_name:
     type: string
     string_semantics: short
-    description: Species name (unique key)
+    description: Species name (unique key).
   nv_pokemon_species_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_pokemon_species_order:
     type: integer
-    description: Display sort order
+    description: Display sort order.
   nv_pokemon_species_gender_rate:
     type: integer
-    description: Gender ratio (eighths female, -1=genderless)
+    description: Gender ratio (eighths female, -1=genderless).
   nv_pokemon_species_capture_rate:
     type: integer
-    description: Base catch rate (0-255)
+    description: Base catch rate (0-255).
   nv_pokemon_species_base_happiness:
     type: integer
-    description: Starting friendship value
+    description: Starting friendship value.
   nv_pokemon_species_is_baby:
     type: boolean
-    description: Whether this is a baby Pokémon
+    description: Whether this is a baby Pokémon.
   nv_pokemon_species_is_legendary:
     type: boolean
-    description: Whether this is a legendary Pokémon
+    description: Whether this is a legendary Pokémon.
   nv_pokemon_species_is_mythical:
     type: boolean
-    description: Whether this is a mythical Pokémon
+    description: Whether this is a mythical Pokémon.
   nv_pokemon_species_hatch_counter:
     type: integer
-    description: Egg cycles required to hatch
+    description: Egg cycles required to hatch.
   nv_pokemon_species_has_gender_differences:
     type: boolean
-    description: Whether males and females look different
+    description: Whether males and females look different.
   nv_pokemon_species_forms_switchable:
     type: boolean
-    description: Whether forms can change in battle
+    description: Whether forms can change in battle.
   nv_pokeathlon_stat_id:
     type: integer
-    description: Numeric Pokéathlon stat identifier
+    description: Numeric Pokéathlon stat identifier.
   nv_pokeathlon_stat_name:
     type: string
     string_semantics: short
-    description: Stat name (unique key)
+    description: Stat name (unique key).
   nv_pokeathlon_stat_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_region_id:
     type: integer
-    description: Numeric region identifier
+    description: Numeric region identifier.
   nv_region_name:
     type: string
     string_semantics: short
-    description: Region name (unique key)
+    description: Region name (unique key).
   nv_region_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_stat_id:
     type: integer
-    description: Numeric stat identifier
+    description: Numeric stat identifier.
   nv_stat_name:
     type: string
     string_semantics: short
-    description: Stat name (unique key)
+    description: Stat name (unique key).
   nv_stat_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_stat_game_index:
     type: integer
-    description: Internal game index for this stat
+    description: Internal game index for this stat.
   nv_stat_is_battle_only:
     type: boolean
-    description: Whether stat only applies in battle
+    description: Whether stat only applies in battle.
   nv_super_contest_effect_id:
     type: integer
-    description: Numeric super contest effect identifier
+    description: Numeric super contest effect identifier.
   nv_super_contest_effect_url:
     type: string
     string_semantics: short
-    description: API resource URL (unique key)
+    description: API resource URL (unique key).
   nv_super_contest_effect_appeal:
     type: integer
-    description: Appeal points in Super Contests
+    description: Appeal points in Super Contests.
   nv_type_id:
     type: integer
-    description: Numeric type identifier
+    description: Numeric type identifier.
   nv_type_name:
     type: string
     string_semantics: short
-    description: Type name (unique key)
+    description: Type name (unique key).
   nv_type_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_version_id:
     type: integer
-    description: Numeric version identifier
+    description: Numeric version identifier.
   nv_version_name:
     type: string
     string_semantics: short
-    description: Version name (unique key)
+    description: Version name (unique key).
   nv_version_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_version_group_id:
     type: integer
-    description: Numeric version group identifier
+    description: Numeric version group identifier.
   nv_version_group_name:
     type: string
     string_semantics: short
-    description: Version group name (unique key)
+    description: Version group name (unique key).
   nv_version_group_url:
     type: string
     string_semantics: short
-    description: API resource URL
+    description: API resource URL.
   nv_version_group_order:
     type: integer
-    description: Release order of this version group
+    description: Release order of this version group.
   nv_pokemonencounter_query_pokemon_id:
     type: entity_ref
     target: Pokemon

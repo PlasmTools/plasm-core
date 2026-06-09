@@ -250,7 +250,7 @@ capabilities:
     - createdDateTime
     - lastUpdatedDateTime
   chat_get:
-    description: Get a chat by identifier.
+    description: Get a chat.
     kind: get
     entity: Chat
     provides:

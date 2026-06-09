@@ -72,7 +72,7 @@ entities:
         value_ref: nv_fibery_space_name
     relations:
       databases:
-        description: Databases belonging to this space
+        description: Databases belonging to this space.
         target: Database
         cardinality: many
         materialize:
@@ -100,7 +100,7 @@ entities:
         value_ref: nv_fibery_space_name
     relations:
       fields:
-        description: Field definitions for this database
+        description: Field definitions for this database.
         target: Field
         cardinality: many
         materialize:
@@ -108,7 +108,7 @@ entities:
           capability: schema_detail_query
           param: database
       records:
-        description: Rows in this database
+        description: Rows in this database.
         target: Record
         cardinality: many
         materialize:
@@ -146,7 +146,7 @@ entities:
     key_vars:
       - database
       - id
-    description: Generic Fibery database row; runtime overlay adds typed entities per database.
+    description: Generic Fibery database record; runtime overlay adds typed entities per database.
     primary_read: entity_get
     fields:
       id:
@@ -332,7 +332,7 @@ entities:
         value_ref: nv_wire_str_short
   DatabaseContext:
     id_field: database
-    description: Schema fields plus a sample of rows for one database.
+    description: Schema fields and a sample of records for one database.
     domain_projection_examples: true
     fields:
       database:
@@ -346,7 +346,7 @@ entities:
         value_ref: nv_wire_int
   RecordWithDocument:
     id_field: id
-    description: One entity row with its rich-text document body loaded.
+    description: One entity record with its rich-text document body loaded.
     fields:
       id:
         required: true
@@ -403,7 +403,6 @@ capabilities:
         value_ref: nv_fibery_command_input_json
         required: false
   entity_get:
-    description: Get one row by fibery/id within a database.
     kind: get
     entity: Record
     provides:
@@ -417,7 +416,7 @@ capabilities:
         required: true
         role: scope
   entity_create:
-    description: Create a row in a database.
+    description: Create a record in a database.
     kind: create
     entity: Record
     provides:
@@ -433,7 +432,7 @@ capabilities:
         value_ref: nv_fibery_payload_json
         required: true
   entity_update:
-    description: Update fields on an existing row.
+    description: Update fields on an existing record.
     kind: update
     entity: Record
     provides:
@@ -451,7 +450,7 @@ capabilities:
         value_ref: nv_fibery_payload_json
         required: true
   entity_delete:
-    description: Delete a row by fibery/id.
+    description: Delete a record by fibery/id.
     kind: delete
     entity: Record
   entity_upsert:
@@ -460,7 +459,7 @@ capabilities:
     entity: Record
     output:
       type: side_effect
-      description: Creates or updates rows via fibery.entity.batch/create-or-update; returns per-row create, skip, or update outcomes.
+      description: Batch create or update records; returns per-record create, skip, or update outcomes.
     parameters:
       - name: database
         value_ref: nv_fibery_database_name
@@ -469,7 +468,7 @@ capabilities:
         value_ref: nv_fibery_command_input_json
         required: true
   entity_search:
-    description: Full-text search workspace entities and views by keyword.
+    description: Full-text search workspace entities and viewsword.
     kind: search
     entity: SearchResult
     parameters:
@@ -548,7 +547,7 @@ capabilities:
     entity: Record
     output:
       type: side_effect
-      description: Adds related entity ids to a collection field on the target row.
+      description: Adds related entity ids to a collection field on the target record.
     parameters:
       - name: database
         value_ref: nv_fibery_database_name
@@ -565,7 +564,7 @@ capabilities:
     entity: Record
     output:
       type: side_effect
-      description: Removes related entity ids from a collection field on the target row.
+      description: Removes related entity ids from a collection field on the target record.
     parameters:
       - name: database
         value_ref: nv_fibery_database_name
@@ -577,12 +576,12 @@ capabilities:
         value_ref: nv_fibery_command_input_json
         required: true
   workflow_state_set:
-    description: Move a row to a workflow state.
+    description: Move a record to a workflow state.
     kind: action
     entity: Record
     output:
       type: side_effect
-      description: Updates workflow/state on the target row.
+      description: Updates workflow/state on the target record.
     parameters:
       - name: database
         value_ref: nv_fibery_database_name
@@ -844,12 +843,12 @@ capabilities:
         value_ref: nv_fibery_command_input_json
         required: true
   file_attach:
-    description: Attach a file entity to a row collection field.
+    description: Attach a file entity to a record collection field.
     kind: action
     entity: Record
     output:
       type: side_effect
-      description: Adds file entity ids to a files collection field on the target row.
+      description: Adds file entity ids to a files collection field on the target record.
     parameters:
       - name: database
         value_ref: nv_fibery_database_name
@@ -879,7 +878,6 @@ capabilities:
         required: true
         role: scope
   entity_with_document_get:
-    description: Get one entity row with rich-text document content loaded.
     kind: get
     entity: RecordWithDocument
     parameters:
@@ -926,7 +924,7 @@ views:
         kind: node_row_count
         node: sample
   entity_with_document:
-    description: One entity row with rich-text document content loaded.
+    description: One entity record with rich-text document content loaded.
     capability: entity_with_document_get
     entity: RecordWithDocument
     scope:
@@ -979,108 +977,108 @@ values:
   nv_fibery_id:
     type: string
     string_semantics: short
-    description: Fibery UUID identifier
+    description: Fibery UUID identifier.
   nv_fibery_public_id:
     type: string
     string_semantics: short
-    description: Fibery public id (numeric string in UI)
+    description: Fibery public id (numeric string in UI).
   nv_fibery_database_name:
     type: string
     string_semantics: short
-    description: Qualified database name Space/Name
+    description: Qualified database name Space/Name.
   nv_fibery_payload_json:
     type: json
-    description: Fibery entity field map or unmapped row payload
+    description: Fibery entity field map or unmapped record payload.
   nv_fibery_command_input_json:
     type: json
-    description: Passthrough command args or request body fragment
+    description: Passthrough command args or request body fragment.
   nv_fibery_space_name:
     type: string
     string_semantics: short
-    description: Fibery space (API app) name
+    description: Fibery space (API app) name.
   nv_fibery_field_name:
     type: string
     string_semantics: short
-    description: Fibery field wire name
+    description: Fibery field wire name.
   nv_fibery_field_type:
     type: string
     string_semantics: short
-    description: Fibery field type id
+    description: Fibery field type id.
   nv_fibery_user_name:
     type: string
     string_semantics: short
-    description: User display name
+    description: User display name.
   nv_fibery_user_email:
     type: string
     string_semantics: short
-    description: User email address
+    description: User email address.
   nv_fibery_file_name:
     type: string
     string_semantics: short
-    description: File display name
+    description: File display name.
   nv_fibery_file_secret:
     type: string
     string_semantics: short
-    description: File storage secret (fibery/secret)
+    description: File storage secret (fibery/secret).
   nv_fibery_file_content_type:
     type: string
     string_semantics: short
-    description: MIME content type
+    description: MIME content type.
   nv_fibery_file_content_length:
     type: integer
-    description: File size in bytes
+    description: File size in bytes.
   nv_fibery_file_source_url:
     type: string
     string_semantics: short
-    description: Remote URL to import as a Fibery file
+    description: Remote URL to import as a Fibery file.
   nv_fibery_view_name:
     type: string
     string_semantics: short
-    description: Saved view title
+    description: Saved view title.
   nv_fibery_view_type:
     type: string
     string_semantics: short
-    description: View layout type (board, grid, document, etc.)
+    description: View layout type (board, grid, document, etc.).
   nv_fibery_webhook_id:
     type: string
     string_semantics: short
-    description: Webhook subscription id (integer on wire, string in expressions)
+    description: Webhook subscription id (integer on wire, string in expressions).
   nv_fibery_webhook_url:
     type: string
     string_semantics: short
-    description: Webhook callback URL
+    description: Webhook callback URL.
   nv_fibery_webhook_state:
     type: string
     string_semantics: short
-    description: Webhook lifecycle state
+    description: Webhook lifecycle state.
   nv_fibery_search_query:
     type: string
     string_semantics: short
-    description: Full-text search query string
+    description: Full-text search query string.
   nv_fibery_search_kind:
     type: string
     string_semantics: short
-    description: Search hit kind (entity or view)
+    description: Search hit kind (entity or view).
   nv_fibery_history_id:
     type: string
     string_semantics: short
-    description: History entry id
+    description: History entry id.
   nv_fibery_history_action:
     type: string
     string_semantics: short
-    description: History action name
+    description: History action name.
   nv_fibery_document_secret:
     type: string
     string_semantics: short
-    description: Collaborative document secret UUID
+    description: Collaborative document secret UUID.
   nv_fibery_document_format:
     type: select
     allowed_values: [md, html, json]
-    description: Document wire format
+    description: Document wire format.
   nv_fibery_document_markdown:
     type: string
     string_semantics: markdown
-    description: Rich-text document body
+    description: Rich-text document body.
   nv_wire_str_short:
     type: string
     string_semantics: short

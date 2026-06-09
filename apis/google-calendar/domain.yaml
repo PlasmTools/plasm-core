@@ -3,7 +3,7 @@ http_backend: https://www.googleapis.com/calendar/v3
 entities:
   Calendar:
     id_field: id
-    description: A Google Calendar from the authenticated user's calendar list
+    description: A Google Calendar from the authenticated user's calendar list.
     fields:
       id:
         required: true
@@ -56,7 +56,7 @@ entities:
     key_vars:
     - calendarId
     - id
-    description: A Google Calendar event
+    description: A Google Calendar event.
     fields:
       calendarId:
         required: true
@@ -163,7 +163,7 @@ capabilities:
   calendar_get:
     kind: get
     entity: Calendar
-    description: Get a calendar from the authenticated user's list by its ID
+    description: Get a calendar from the authenticated user's list by its ID.
     provides:
     - id
     - summary
@@ -180,7 +180,7 @@ capabilities:
   calendar_list:
     kind: query
     entity: Calendar
-    description: List all calendars in the authenticated user's calendar list
+    description: List all calendars in the authenticated user's calendar list.
     parameters:
     - name: showHidden
       value_ref: nv_wire_bool
@@ -194,7 +194,7 @@ capabilities:
   event_get:
     kind: get
     entity: Event
-    description: Get a specific event by compound key (calendarId/eventId)
+    description: Get a specific event by compound key (calendarId/eventId).
     provides:
     - id
     - calendarId
@@ -230,7 +230,7 @@ capabilities:
   event_list:
     kind: query
     entity: Event
-    description: List events in a specific calendar
+    description: List events in a specific calendar.
     parameters:
     - name: calendarId
       value_ref: nv_event_list_calendar_id
@@ -417,7 +417,7 @@ values:
   nv_event_list_sync_token:
     type: string
     string_semantics: short
-    description: Incremental sync token from a prior list response; cannot combine with several other filters (see API sync
+    description: Incremental sync token from a prior list response; cannot combine with several other filters (see API sync.
       guide).
   nv_event_list_time_zone:
     type: string

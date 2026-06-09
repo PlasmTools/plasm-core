@@ -5,7 +5,7 @@ http_backend: http://127.0.0.1:8545
 entities:
   Balance:
     id_field: account
-    description: ERC-20 balance for an account address
+    description: ERC-20 balance for an account address.
     fields:
       account:
         required: true
@@ -16,7 +16,7 @@ entities:
     relations: {}
   Transfer:
     id_field: event_id
-    description: ERC-20 Transfer event
+    description: ERC-20 Transfer event.
     fields:
       event_id:
         required: true
@@ -39,45 +39,45 @@ entities:
     relations: {}
 capabilities:
   balance_get:
-    description: Read ERC-20 balanceOf for a single account
+    description: Read ERC-20 balanceOf for a single account.
     kind: get
     entity: Balance
     provides:
     - account
     - balance
   transfer_query:
-    description: Query ERC-20 Transfer logs over a block range
+    description: Query ERC-20 Transfer logs over a block range.
     kind: query
     entity: Transfer
 values:
   nv_balance_account:
     type: string
     string_semantics: short
-    description: Account address queried via balanceOf
+    description: Account address queried via balanceOf.
   nv_balance_balance:
     type: string
     string_semantics: short
-    description: Token balance as a decimal string
+    description: Token balance as a decimal string.
   nv_transfer_event_id:
     type: string
     string_semantics: short
-    description: Stable per-log identity (<tx_hash>:<log_index>)
+    description: Stable per-log identity (<tx_hash>:<log_index>).
   nv_transfer_tx_hash:
     type: string
     string_semantics: short
-    description: Transaction hash that emitted the log
+    description: Transaction hash that emitted the log.
   nv_transfer_log_index:
     type: integer
-    description: Log index within the block
+    description: Log index within the block.
   nv_transfer_from:
     type: string
     string_semantics: short
-    description: Sender address
+    description: Sender address.
   nv_transfer_to:
     type: string
     string_semantics: short
-    description: Recipient address
+    description: Recipient address.
   nv_transfer_value:
     type: string
     string_semantics: short
-    description: Transferred amount as a decimal string
+    description: Transferred amount as a decimal string.

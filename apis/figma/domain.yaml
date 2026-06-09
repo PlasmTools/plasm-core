@@ -219,7 +219,7 @@ capabilities:
   team_get:
     kind: get
     entity: Team
-    description: Open a known Figma team by id so its projects can be traversed.
+    description: Open a known Figma team so its projects can be traversed.
     provides:
     - id
     - name
@@ -238,7 +238,7 @@ capabilities:
   project_get:
     kind: get
     entity: Project
-    description: Open a known project by id so its files can be traversed.
+    description: Open a known project so its files can be traversed.
     provides:
     - id
     - name

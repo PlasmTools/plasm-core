@@ -6,7 +6,7 @@ entities:
     key_vars:
     - owner
     - repo
-    description: A GitHub repository (bare list reads use repos visible to the authenticated token, not all of GitHub)
+    description: A GitHub repository (bare list reads use repos visible to the authenticated token, not all of GitHub).
     fields:
       id:
         required: true
@@ -116,7 +116,7 @@ entities:
     - owner
     - repo
     - number
-    description: A GitHub issue in a repository
+    description: A GitHub issue in a repository.
     fields:
       repository_url:
         required: false
@@ -225,7 +225,7 @@ entities:
       labels:
         target: Label
         cardinality: many
-        description: >-
+        description: >-.
           Labels on the issue. List and GET issue responses embed a `labels` array on the wire;
           use those when present. For authoritative or post-mutation label sets, traverse via
           `issue_label_query` (scoped per issue) when list embed is absent or incomplete.
@@ -527,7 +527,7 @@ entities:
     - pull_number
     - id
     id_field: id
-    description: A review on a pull request
+    description: A review on a pull request.
     fields:
       owner:
         required: false
@@ -587,7 +587,7 @@ entities:
         value_ref: nv_wire_str_markdown
   User:
     id_field: login
-    description: A GitHub user account
+    description: A GitHub user account.
     fields:
       login:
         required: true
@@ -640,7 +640,7 @@ entities:
     - repo
     - name
     id_field: name
-    description: Label for issues and PRs
+    description: Label for issues and PRs.
     fields:
       owner:
         required: true
@@ -669,7 +669,7 @@ entities:
     - repo
     - number
     id_field: number
-    description: A milestone grouping issues and pull requests
+    description: A milestone grouping issues and pull requests.
     fields:
       owner:
         required: true
@@ -719,7 +719,7 @@ entities:
     - repo
     - id
     id_field: id
-    description: A GitHub release with assets and release notes
+    description: A GitHub release with assets and release notes.
     fields:
       owner:
         required: true
@@ -760,7 +760,7 @@ entities:
         cardinality: one
   IssueComment:
     id_field: id
-    description: A comment on a GitHub issue or pull request
+    description: A comment on a GitHub issue or pull request.
     fields:
       id:
         required: true
@@ -1025,7 +1025,7 @@ entities:
     - repo
     - id
     id_field: id
-    description: A workflow in a repository
+    description: A workflow in a repository.
     fields:
       owner:
         required: true
@@ -1077,7 +1077,7 @@ entities:
     - repo
     - id
     id_field: id
-    description: One workflow run for a repository
+    description: One workflow run for a repository.
     fields:
       owner:
         required: true
@@ -1181,7 +1181,7 @@ entities:
     - run_id
     - id
     id_field: id
-    description: A GitHub Actions job within a workflow run
+    description: A GitHub Actions job within a workflow run.
     fields:
       owner:
         required: true
@@ -1231,7 +1231,7 @@ entities:
     - repo
     - id
     id_field: id
-    description: Downloadable artifact from a workflow run
+    description: Downloadable artifact from a workflow run.
     fields:
       owner:
         required: true
@@ -1273,7 +1273,7 @@ entities:
     - repo
     - run_id
     id_field: run_id
-    description: Per-job timing and billable usage for a run
+    description: Per-job timing and billable usage for a run.
     fields:
       owner:
         required: true
@@ -1741,7 +1741,7 @@ capabilities:
   pr_review_get:
     kind: get
     entity: PullRequestReview
-    description: Get a pull request review by id.
+    description: Get a pull request review.
     provides:
     - id
     - owner
@@ -1755,7 +1755,7 @@ capabilities:
   pr_review_comment_get:
     kind: get
     entity: PullRequestReviewComment
-    description: Get a pull request review comment by id.
+    description: Get a pull request review comment.
     provides:
     - id
     - owner
@@ -2263,7 +2263,7 @@ capabilities:
   gist_get:
     kind: get
     entity: Gist
-    description: Get a gist by id.
+    description: Get a gist.
     provides:
     - id
     - description
@@ -2307,7 +2307,7 @@ capabilities:
     description: Mark a notification thread as read.
     output:
       type: side_effect
-      description: Mark thread read in the recipient's inbox
+      description: Mark thread read in the recipient's inbox.
   label_query:
     kind: query
     entity: Label
@@ -2428,7 +2428,7 @@ capabilities:
   milestone_update:
     kind: update
     entity: Milestone
-    description: Update milestone (title, state, description, due).
+    description: Update milestone.
     provides:
     - number
     - owner
@@ -2474,7 +2474,7 @@ capabilities:
   release_get:
     kind: get
     entity: Release
-    description: Get a release by id in a repository.
+    description: Get a release in a repository.
     provides:
     - id
     - owner
@@ -2568,7 +2568,7 @@ capabilities:
   release_delete:
     kind: delete
     entity: Release
-    description: Delete a release by id in a repository.
+    description: Delete a release in a repository.
   issue_comment_query:
     kind: query
     entity: IssueComment
@@ -3756,7 +3756,7 @@ values:
   nv_issue_assign_copilot_target_repo:
     type: string
     string_semantics: short
-    description: Target repo (owner/name), e.g. octocat/Hello-World.
+    description: Target repository (owner/name).
   nv_issue_assignees_add_assignees_item:
     type: entity_ref
     target: User
@@ -3837,11 +3837,11 @@ values:
   nv_label_create_color:
     type: string
     string_semantics: short
-    description: Hex color without leading
+    description: Hex color without leading.
   nv_label_update_color:
     type: string
     string_semantics: short
-    description: Hex color without leading
+    description: Hex color without leading.
   nv_label_update_new_name:
     type: string
     string_semantics: short
@@ -4029,7 +4029,7 @@ values:
   nv_repo_search_q:
     type: string
     string_semantics: short
-    description: GitHub repository search query, not natural language. Use valid qualifiers such as "org:rust-lang rust in:name"
+    description: GitHub repository search query, not natural language. Use valid qualifiers such as "org:rust-lang rust in:name".
       or "plasm-core in:name not:fork"; invalid qualifier syntax may be rejected by GitHub.
   nv_repo_search_sort:
     type: select

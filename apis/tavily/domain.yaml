@@ -3,7 +3,7 @@ http_backend: https://api.tavily.com
 entities:
   SearchResult:
     id_field: url
-    description: A ranked web search result from Tavily Search
+    description: A ranked web search result from Tavily Search.
     fields:
       url:
         required: true
@@ -25,7 +25,7 @@ entities:
         value_ref: nv_search_result_favicon
   ExtractResult:
     id_field: url
-    description: Extracted or crawled page content from Tavily Extract / Crawl
+    description: Extracted or crawled page content from Tavily Extract / Crawl.
     fields:
       url:
         required: true
@@ -38,7 +38,7 @@ entities:
         value_ref: nv_extract_result_favicon
   ResearchTask:
     id_field: request_id
-    description: An async Tavily Research task
+    description: An async Tavily Research task.
     fields:
       request_id:
         required: true
@@ -133,7 +133,7 @@ capabilities:
   url_extract:
     kind: query
     entity: ExtractResult
-    description: Extract cleaned content from one or more URLs
+    description: Extract cleaned content from one or more URLs.
     parameters:
     - name: urls
       value_ref: nv_url_extract_urls
@@ -164,7 +164,7 @@ capabilities:
   site_crawl:
     kind: query
     entity: ExtractResult
-    description: Graph-based website traversal — crawl multiple pages in parallel
+    description: Graph-based website traversal — crawl multiple pages in parallel.
     parameters:
     - name: url
       value_ref: nv_wire_str_short
@@ -196,7 +196,7 @@ capabilities:
   research_create:
     kind: create
     entity: ResearchTask
-    description: Start an async deep research task (returns request_id for polling)
+    description: Start an async deep research task (returns request_id for polling).
     provides:
     - request_id
     - created_at
@@ -216,7 +216,7 @@ capabilities:
   research_get:
     kind: get
     entity: ResearchTask
-    description: Poll the status and retrieve the report for a research task
+    description: Poll the status and retrieve the report for a research task.
     provides:
     - request_id
     - status
@@ -234,15 +234,15 @@ values:
   nv_extract_result_favicon:
     type: string
     string_semantics: short
-    description: Favicon URL for the page's domain
+    description: Favicon URL for the page's domain.
   nv_extract_result_raw_content:
     type: string
     string_semantics: markdown
-    description: Full extracted page content (markdown or plain text)
+    description: Full extracted page content (markdown or plain text).
   nv_extract_result_url:
     type: string
     string_semantics: short
-    description: URL of the extracted page
+    description: URL of the extracted page.
   nv_research_create_citation_format:
     type: select
     allowed_values:
@@ -259,29 +259,29 @@ values:
   nv_research_task_content:
     type: string
     string_semantics: markdown
-    description: Full research content/report (populated when status=completed)
+    description: Full research content/report (populated when status=completed).
   nv_research_task_created_at:
     type: date
     value_format: rfc3339
-    description: Timestamp when the task was created
+    description: Timestamp when the task was created.
   nv_research_task_input:
     type: string
     string_semantics: short
-    description: The research question submitted
+    description: The research question submitted.
   nv_research_task_model:
     type: select
     allowed_values:
     - mini
     - pro
     - auto
-    description: Research agent model used
+    description: Research agent model used.
   nv_research_task_request_id:
     type: string
     string_semantics: short
-    description: Unique identifier for the research task (use to poll status)
+    description: Unique identifier for the research task (use to poll status).
   nv_research_task_response_time:
     type: number
-    description: Time in seconds for the research task to complete
+    description: Time in seconds for the research task to complete.
   nv_research_task_status:
     type: select
     allowed_values:
@@ -289,30 +289,30 @@ values:
     - running
     - completed
     - failed
-    description: Current execution status of the task
+    description: Current execution status of the task.
   nv_search_result_content:
     type: string
     string_semantics: markdown
-    description: Relevance snippet or chunked content from the page
+    description: Relevance snippet or chunked content from the page.
   nv_search_result_favicon:
     type: string
     string_semantics: short
-    description: Favicon URL for the result's domain
+    description: Favicon URL for the result's domain.
   nv_search_result_raw_content:
     type: string
     string_semantics: markdown
-    description: Full cleaned page content (only when include_raw_content=true)
+    description: Full cleaned page content (only when include_raw_content=true).
   nv_search_result_score:
     type: number
-    description: Relevance score (0–1)
+    description: Relevance score (0–1).
   nv_search_result_title:
     type: string
     string_semantics: short
-    description: Title of the source page
+    description: Title of the source page.
   nv_search_result_url:
     type: string
     string_semantics: short
-    description: URL of the source page
+    description: URL of the source page.
   nv_url_extract_extract_depth:
     type: select
     allowed_values:
@@ -358,7 +358,7 @@ values:
     type: array
     items:
       value_ref: nv_wire_str_short
-    description: Cited sources (populated when status=completed)
+    description: Cited sources (populated when status=completed).
   nv_url_extract_urls:
     type: array
     items:

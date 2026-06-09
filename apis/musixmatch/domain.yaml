@@ -3,7 +3,7 @@ http_backend: https://api.musixmatch.com
 entities:
   Artist:
     id_field: artist_id
-    description: A musical artist in the Musixmatch catalog
+    description: A musical artist in the Musixmatch catalog.
     fields:
       artist_id:
         required: true
@@ -19,7 +19,7 @@ entities:
         value_ref: nv_artist_artist_country
   Track:
     id_field: track_id
-    description: A music track with lyrics metadata
+    description: A music track with lyrics metadata.
     fields:
       track_id:
         required: true
@@ -40,7 +40,7 @@ entities:
       lyrics:
         target: Lyrics
         cardinality: one
-        description: Lyrics content for this track
+        description: Lyrics content for this track.
   Lyrics:
     id_field: lyrics_id
     description: 'Lyrics content for a Musixmatch track. Retrieved via GET /track.lyrics.get?track_id=<id>. This is a separate
@@ -62,7 +62,7 @@ entities:
         value_ref: nv_lyrics_lyrics_language
 capabilities:
   artist_search:
-    description: Search for artists by name
+    description: Search for artists by name.
     kind: search
     entity: Artist
     parameters:
@@ -75,7 +75,7 @@ capabilities:
       required: false
       role: filter
   artist_get:
-    description: Retrieve a single artist by ID
+    description: Retrieve a single artist.
     kind: get
     entity: Artist
     provides:
@@ -84,7 +84,7 @@ capabilities:
     - artist_rating
     - artist_country
   chart_artists:
-    description: Get top charting artists by country
+    description: Get top charting artists by country.
     kind: query
     entity: Artist
     parameters:
@@ -93,7 +93,7 @@ capabilities:
       required: false
       role: filter
   track_search:
-    description: Search tracks by title, artist, or lyrics
+    description: Search tracks by title, artist, or lyrics.
     kind: search
     entity: Track
     parameters:
@@ -118,7 +118,7 @@ capabilities:
       required: false
       role: filter
   track_get:
-    description: Retrieve a single track by ID
+    description: Retrieve a single track.
     kind: get
     entity: Track
     provides:
@@ -128,7 +128,7 @@ capabilities:
     - track_rating
     - has_lyrics
   chart_tracks:
-    description: Get top charting tracks by country
+    description: Get top charting tracks by country.
     kind: query
     entity: Track
     parameters:
@@ -161,49 +161,49 @@ values:
   nv_artist_artist_country:
     type: string
     string_semantics: short
-    description: Country of origin for the artist
+    description: Country of origin for the artist.
   nv_artist_artist_id:
     type: integer
-    description: Unique Musixmatch artist identifier
+    description: Unique Musixmatch artist identifier.
   nv_artist_artist_name:
     type: string
     string_semantics: short
-    description: Artist or band name
+    description: Artist or band name.
   nv_artist_artist_rating:
     type: integer
-    description: Musixmatch popularity rating
+    description: Musixmatch popularity rating.
   nv_lyrics_lyrics_body:
     type: string
     string_semantics: markdown
-    description: The full lyrics text (may be truncated per Musixmatch licensing)
+    description: The full lyrics text (may be truncated per Musixmatch licensing).
   nv_lyrics_lyrics_copyright:
     type: string
     string_semantics: short
-    description: Copyright notice for the lyrics
+    description: Copyright notice for the lyrics.
   nv_lyrics_lyrics_id:
     type: integer
-    description: Unique Musixmatch lyrics identifier
+    description: Unique Musixmatch lyrics identifier.
   nv_lyrics_lyrics_language:
     type: string
     string_semantics: short
-    description: BCP 47 language code of the lyrics (e.g. 'en', 'es')
+    description: BCP 47 language code of the lyrics (e.g. 'en', 'es').
   nv_track_artist_id:
     type: entity_ref
     target: Artist
-    description: Reference to the track's artist
+    description: Reference to the track's artist.
   nv_track_has_lyrics:
     type: integer
-    description: Whether lyrics are available (1=yes, 0=no)
+    description: Whether lyrics are available (1=yes, 0=no).
   nv_track_track_id:
     type: integer
-    description: Unique Musixmatch track identifier
+    description: Unique Musixmatch track identifier.
   nv_track_track_name:
     type: string
     string_semantics: short
-    description: Title of the track
+    description: Title of the track.
   nv_track_track_rating:
     type: integer
-    description: Musixmatch popularity rating
+    description: Musixmatch popularity rating.
   nv_wire_int:
     type: integer
   nv_wire_str_short:

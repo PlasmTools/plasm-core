@@ -1060,7 +1060,7 @@ capabilities:
     - content
     - timestamp
   message_reply:
-    description: Post a reply in the same channel with message_reference to the target. Runtime preflight runs message_get
+    description: Post a reply in the same channel with message_reference to the target. Runtime preflight runs message_get.
       and merges parent_* (parent id/channel for the reference).
     kind: action
     entity: Message
@@ -1086,7 +1086,7 @@ capabilities:
     - timestamp
     output:
       type: side_effect
-      description: Creates a new Message row (the reply) via POST channels/{channel_id}/messages.
+      description: Creates a reply message in the channel.
   message_search_in_guild:
     kind: search
     entity: Message
@@ -2460,7 +2460,7 @@ values:
     description: When true, returns a prune count without removing members.
   nv_guild_prune_execute_days:
     type: integer
-    description: Minimum number of days since last activity for a member to be pruned (Discord rejects the request if omitted
+    description: Minimum number of days since last activity for a member to be pruned (Discord rejects the request if omitted.
       on the wire; supply a positive integer).
   nv_guild_prune_execute_guild_id:
     type: entity_ref
@@ -2546,10 +2546,10 @@ values:
   nv_message_reply_content:
     type: string
     string_semantics: markdown
-    description: Reply body text
+    description: Reply body text.
   nv_message_reply_tts:
     type: boolean
-    description: Text-to-speech (omit unless true)
+    description: Text-to-speech (omit unless true).
   nv_message_search_in_guild_author_id:
     type: entity_ref
     target: User

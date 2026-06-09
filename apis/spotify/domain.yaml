@@ -3,7 +3,7 @@ http_backend: https://api.spotify.com
 entities:
   Album:
     id_field: id
-    description: A music album on Spotify
+    description: A music album on Spotify.
     fields:
       id:
         required: true
@@ -26,7 +26,7 @@ entities:
     relations: {}
   Artist:
     id_field: id
-    description: A musical artist or band on Spotify
+    description: A musical artist or band on Spotify.
     fields:
       id:
         required: true
@@ -43,7 +43,7 @@ entities:
     relations: {}
   Track:
     id_field: id
-    description: A single music track on Spotify
+    description: A single music track on Spotify.
     fields:
       id:
         required: true
@@ -99,7 +99,7 @@ entities:
     relations: {}
   Playlist:
     id_field: id
-    description: A curated playlist of tracks
+    description: A curated playlist of tracks.
     fields:
       id:
         required: true
@@ -122,7 +122,7 @@ entities:
     relations: {}
   User:
     id_field: id
-    description: A Spotify user profile
+    description: A Spotify user profile.
     fields:
       id:
         required: true
@@ -133,7 +133,7 @@ entities:
     relations: {}
 capabilities:
   album_query:
-    description: Batch-fetch multiple albums by their Spotify IDs
+    description: Batch-fetch multiple albums by their Spotify IDs.
     kind: query
     entity: Album
     parameters:
@@ -146,7 +146,7 @@ capabilities:
       required: false
       role: response_control
   album_get:
-    description: Retrieve a single album by ID
+    description: Retrieve a single album.
     kind: get
     entity: Album
     provides:
@@ -157,7 +157,7 @@ capabilities:
     - release_date
     - popularity
   album_tracks:
-    description: List tracks belonging to an album
+    description: List tracks belonging to an album.
     kind: action
     entity: Album
     parameters:
@@ -175,9 +175,9 @@ capabilities:
       role: response_control
     output:
       type: side_effect
-      description: List tracks belonging to an album
+      description: List tracks belonging to an album.
   artist_query:
-    description: Batch-fetch multiple artists by their Spotify IDs
+    description: Batch-fetch multiple artists by their Spotify IDs.
     kind: query
     entity: Artist
     parameters:
@@ -186,7 +186,7 @@ capabilities:
       required: true
       role: filter
   artist_get:
-    description: Retrieve a single artist by ID
+    description: Retrieve a single artist.
     kind: get
     entity: Artist
     provides:
@@ -195,7 +195,7 @@ capabilities:
     - popularity
     - genres
   artist_albums:
-    description: List albums released by an artist
+    description: List albums released by an artist.
     kind: action
     entity: Artist
     parameters:
@@ -217,16 +217,16 @@ capabilities:
       role: response_control
     output:
       type: side_effect
-      description: List albums released by an artist
+      description: List albums released by an artist.
   artist_related:
-    description: Get artists related to a given artist
+    description: Get artists related to a given artist.
     kind: action
     entity: Artist
     output:
       type: side_effect
-      description: Get artists related to a given artist
+      description: Get artists related to a given artist.
   artist_top_tracks:
-    description: Get an artist's most popular tracks
+    description: Get an artist's most popular tracks.
     kind: action
     entity: Artist
     parameters:
@@ -236,9 +236,9 @@ capabilities:
       role: response_control
     output:
       type: side_effect
-      description: Get an artist's most popular tracks
+      description: Get an artist's most popular tracks.
   track_query:
-    description: Batch-fetch multiple tracks by their Spotify IDs
+    description: Batch-fetch multiple tracks by their Spotify IDs.
     kind: query
     entity: Track
     parameters:
@@ -251,7 +251,7 @@ capabilities:
       required: false
       role: response_control
   track_get:
-    description: 'Retrieve a single track by ID (catalog metadata: name, duration, explicit, popularity).'
+    description: 'Retrieve a single track (catalog metadata: name, duration, explicit, popularity).'
     kind: get
     entity: Track
     provides:
@@ -283,7 +283,7 @@ capabilities:
     - mode
     - time_signature
   playlist_get:
-    description: Retrieve a single playlist by ID
+    description: Retrieve a single playlist.
     kind: get
     entity: Playlist
     provides:
@@ -294,7 +294,7 @@ capabilities:
     - collaborative
     - snapshot_id
   playlist_tracks:
-    description: List tracks contained in a playlist
+    description: List tracks contained in a playlist.
     kind: action
     entity: Playlist
     parameters:
@@ -316,9 +316,9 @@ capabilities:
       role: response_control
     output:
       type: side_effect
-      description: List tracks contained in a playlist
+      description: List tracks contained in a playlist.
   playlist_update:
-    description: Update a playlist's metadata
+    description: Update a playlist's metadata.
     kind: update
     entity: Playlist
     parameters:
@@ -335,14 +335,14 @@ capabilities:
       value_ref: nv_wire_bool
       required: false
   user_get:
-    description: Retrieve a user profile by ID
+    description: Retrieve a user profile.
     kind: get
     entity: User
     provides:
     - id
     - display_name
   user_playlists:
-    description: List playlists owned by a user
+    description: List playlists owned by a user.
     kind: action
     entity: User
     parameters:
@@ -354,9 +354,9 @@ capabilities:
       required: false
     output:
       type: side_effect
-      description: List playlists owned by a user
+      description: List playlists owned by a user.
   user_create_playlist:
-    description: Create a new playlist for a user
+    description: Create a new playlist for a user.
     kind: action
     entity: User
     parameters:
@@ -374,7 +374,7 @@ capabilities:
       required: false
     output:
       type: side_effect
-      description: Create a new playlist for a user
+      description: Create a new playlist for a user.
 auth:
   scheme: oauth2_client_credentials
   token_url: https://accounts.spotify.com/api/token
@@ -387,58 +387,58 @@ values:
     - album
     - single
     - compilation
-    description: Album, single, or compilation
+    description: Album, single, or compilation.
   nv_album_id:
     type: string
     string_semantics: short
-    description: Unique Spotify album identifier
+    description: Unique Spotify album identifier.
   nv_album_name:
     type: string
     string_semantics: short
-    description: Album title
+    description: Album title.
   nv_album_popularity:
     type: integer
-    description: Popularity score from 0 to 100
+    description: Popularity score from 0 to 100.
   nv_album_release_date:
     type: string
     string_semantics: short
-    description: Date the album was released
+    description: Date the album was released.
   nv_album_total_tracks:
     type: integer
-    description: Number of tracks on the album
+    description: Number of tracks on the album.
   nv_artist_id:
     type: string
     string_semantics: short
-    description: Unique Spotify artist identifier
+    description: Unique Spotify artist identifier.
   nv_artist_name:
     type: string
     string_semantics: short
-    description: Artist or band name
+    description: Artist or band name.
   nv_artist_popularity:
     type: integer
-    description: Popularity score from 0 to 100
+    description: Popularity score from 0 to 100.
   nv_playlist_collaborative:
     type: boolean
-    description: Whether others can add tracks
+    description: Whether others can add tracks.
   nv_playlist_description:
     type: string
     string_semantics: markdown
-    description: User-provided playlist description text
+    description: User-provided playlist description text.
   nv_playlist_id:
     type: string
     string_semantics: short
-    description: Unique Spotify playlist identifier
+    description: Unique Spotify playlist identifier.
   nv_playlist_name:
     type: string
     string_semantics: short
-    description: Playlist name
+    description: Playlist name.
   nv_playlist_public:
     type: boolean
-    description: Whether the playlist is publicly visible
+    description: Whether the playlist is publicly visible.
   nv_playlist_snapshot_id:
     type: string
     string_semantics: short
-    description: Version identifier for playlist state
+    description: Version identifier for playlist state.
   nv_track_acousticness:
     type: number
     description: Confidence the track is acoustic 0.0–1.0. Populated by track_get_audio_features.
@@ -447,17 +447,17 @@ values:
     description: How suitable for dancing 0.0–1.0. Populated by track_get_audio_features.
   nv_track_duration_ms:
     type: integer
-    description: Track length in milliseconds
+    description: Track length in milliseconds.
   nv_track_energy:
     type: number
     description: Intensity/activity 0.0–1.0. Populated by track_get_audio_features.
   nv_track_explicit:
     type: boolean
-    description: Whether the track has explicit lyrics
+    description: Whether the track has explicit lyrics.
   nv_track_id:
     type: string
     string_semantics: short
-    description: Unique Spotify track identifier
+    description: Unique Spotify track identifier.
   nv_track_instrumentalness:
     type: number
     description: Predicts whether track has no vocals 0.0–1.0. Populated by track_get_audio_features.
@@ -476,10 +476,10 @@ values:
   nv_track_name:
     type: string
     string_semantics: short
-    description: Track title
+    description: Track title.
   nv_track_popularity:
     type: integer
-    description: Popularity score from 0 to 100
+    description: Popularity score from 0 to 100.
   nv_track_speechiness:
     type: number
     description: Presence of spoken words 0.0–1.0. Populated by track_get_audio_features.
@@ -495,11 +495,11 @@ values:
   nv_user_display_name:
     type: string
     string_semantics: short
-    description: User's public display name
+    description: User's public display name.
   nv_user_id:
     type: string
     string_semantics: short
-    description: Unique Spotify user identifier
+    description: Unique Spotify user identifier.
   nv_wire_bool:
     type: boolean
   nv_wire_int:
@@ -514,4 +514,4 @@ values:
     type: array
     items:
       value_ref: nv_wire_str_short
-    description: List of associated music genres
+    description: List of associated music genres.

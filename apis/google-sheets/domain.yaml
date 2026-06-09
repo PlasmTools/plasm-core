@@ -3,7 +3,7 @@ http_backend: https://sheets.googleapis.com
 entities:
   Spreadsheet:
     id_field: spreadsheetId
-    description: A Google Sheets spreadsheet file (workbook). The Sheets v4 API does not list spreadsheets; obtain spreadsheet
+    description: A Google Sheets spreadsheet file (workbook). The Sheets v4 API does not list spreadsheets; obtain spreadsheet.
       IDs via Drive or shared links.
     primary_read: spreadsheet_get
     fields:
@@ -41,7 +41,7 @@ entities:
     key_vars:
     - spreadsheetId
     - sheetId
-    description: A single worksheet tab within a spreadsheet. Metadata is usually read via spreadsheet_get; there is no standalone
+    description: A single worksheet tab within a spreadsheet. Metadata is usually read via spreadsheet_get; there is no standalone.
       sheet GET in v4.
     fields:
       spreadsheetId:
@@ -139,7 +139,7 @@ capabilities:
   spreadsheet_create:
     kind: create
     entity: Spreadsheet
-    description: Create a new spreadsheet. Optional title, locale, time zone, initial sheets; maps to Spreadsheet.properties
+    description: Create a new spreadsheet. Optional title, locale, time zone, initial sheets; maps to Spreadsheet.properties.
       and sheets on the wire.
     parameters:
     - name: title
@@ -295,7 +295,7 @@ capabilities:
   developer_metadata_get:
     kind: get
     entity: DeveloperMetadata
-    description: Fetch a single developer metadata entry by ID.
+    description: Fetch a single developer metadata entry.
     provides:
     - metadataId
     - metadataKey
@@ -468,7 +468,7 @@ values:
     target: Spreadsheet
   nv_spreadsheet_batch_update_input:
     type: json
-    description: POST body for spreadsheets/{spreadsheetId}:batchUpdate (BatchUpdateSpreadsheetRequest). Omitted in teaching table
+    description: POST body for spreadsheets/{spreadsheetId}:batchUpdate (BatchUpdateSpreadsheetRequest). Omitted in teaching table.
       only for parse ergonomics; live calls must send a JSON object including a requests array (for example batch-update(input={requests=[]})
       or a fuller payload).
   nv_spreadsheet_create_locale:

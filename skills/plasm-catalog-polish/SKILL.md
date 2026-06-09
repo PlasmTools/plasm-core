@@ -83,7 +83,19 @@ Audit entity `description`, capability `description`, and `output.description` f
 - Uses tabular jargon ("row", "column") in domain-facing prose.
 - Restates the wire type or enum members that `value_ref` already conveys.
 
-See [plasm-authoring reference.md — Teaching-table-facing descriptions](../plasm-authoring/reference.md#domain-facing-descriptions-entities-and-capabilities).
+Run the automated linter (from monorepo root or `plasm-oss/`):
+
+```bash
+python3 plasm-oss/scripts/check_catalog_description_hygiene.py --catalog <api> --fail-on error
+```
+
+Bulk remediation helper (review diff before commit):
+
+```bash
+python3 plasm-oss/scripts/apply_description_hygiene_fixes.py --catalog <api>
+```
+
+Rule ids: `A_identity_restatement`, `B_eval_example_leakage`, `C_field_param_inventory`, `D_generic_get_boilerplate`, `E_composed_projection_dup`, `F_scoping_parenthetical`, `G_tabular_jargon` — see [plasm-authoring reference.md — Teaching-table-facing descriptions](../plasm-authoring/reference.md#teaching-table-facing-descriptions-entities-and-capabilities).
 
 ### 7. Composed reads (`views:`) check
 

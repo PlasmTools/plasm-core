@@ -236,7 +236,7 @@ entities:
     key_vars:
     - fileId
     - id
-    description: A permission row on a file (user, group, domain, or link).
+    description: A permission grant on a file (user, group, domain, or link).
     fields:
       id:
         required: true
@@ -461,7 +461,6 @@ capabilities:
   files_get:
     kind: get
     entity: File
-    description: Fetch one file by id including metadata the token can see.
   files_create:
     kind: create
     entity: File
@@ -572,7 +571,6 @@ capabilities:
   permissions_get:
     kind: get
     entity: DrivePermission
-    description: Fetch one permission by id on a file.
     parameters:
     - name: supportsAllDrives
       value_ref: nv_wire_bool
@@ -673,7 +671,7 @@ capabilities:
   comments_update:
     kind: update
     entity: DriveComment
-    description: Patch a comment. Preflight runs comments_get and merges parent_*; the wire body merges optional overrides
+    description: Patch a comment. Preflight runs comments_get and merges parent_*; the wire body merges optional overrides.
       with the parent row (content, anchor, quotedFileContent).
     preflight:
     - kind: hydrate_invoke_target
@@ -733,7 +731,7 @@ capabilities:
   replies_update:
     kind: update
     entity: DriveReply
-    description: Patch a reply. Preflight runs replies_get and merges parent_*; the wire body merges optional overrides with
+    description: Patch a reply. Preflight runs replies_get and merges parent_*; the wire body merges optional overrides with.
       the parent row (content, action).
     preflight:
     - kind: hydrate_invoke_target
@@ -1244,7 +1242,7 @@ values:
     description: Size in bytes as returned by the API (string on wire).
   nv_files_copy_input:
     type: json
-    description: Copy request body (destination parents, title, etc.).
+    description: Copy request body.
   nv_files_create_input:
     type: json
     description: File resource body for POST /files (name, mimeType, parents, etc.).

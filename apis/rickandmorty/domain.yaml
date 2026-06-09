@@ -124,7 +124,7 @@ capabilities:
       required: false
       role: filter
   character_get:
-    description: Retrieve a single character by ID.
+    description: Retrieve a single character.
     kind: get
     entity: Character
     provides:
@@ -155,7 +155,7 @@ capabilities:
       required: false
       role: filter
   location_get:
-    description: Retrieve a single location by ID.
+    description: Retrieve a single location.
     kind: get
     entity: Location
     provides:
@@ -179,7 +179,7 @@ capabilities:
       required: false
       role: filter
   episode_get:
-    description: Retrieve a single episode by ID.
+    description: Retrieve a single episode.
     kind: get
     entity: Episode
     provides:

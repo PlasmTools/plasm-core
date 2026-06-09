@@ -3,7 +3,7 @@ http_backend: https://api.vultr.com
 entities:
   Account:
     id_field: email
-    description: Vultr account profile and billing flags for the authenticated user
+    description: Vultr account profile and billing flags for the authenticated user.
     fields:
       email:
         required: true
@@ -30,7 +30,7 @@ entities:
   AccountBgp:
     id_field: id
     implicit_request_identity: true
-    description: Public BGP status for the authenticated account
+    description: Public BGP status for the authenticated account.
     fields:
       enabled:
         required: false
@@ -46,7 +46,7 @@ entities:
   AccountBandwidth:
     id_field: id
     implicit_request_identity: true
-    description: Aggregated bandwidth and usage meters for the authenticated account
+    description: Aggregated bandwidth and usage meters for the authenticated account.
     fields:
       usage:
         required: false
@@ -55,7 +55,7 @@ entities:
     relations: {}
   Region:
     id_field: id
-    description: A Vultr deployment region
+    description: A Vultr deployment region.
     fields:
       id:
         required: true
@@ -85,7 +85,7 @@ entities:
           param: region
   Plan:
     id_field: id
-    description: A deployable Vultr compute plan and associated pricing
+    description: A deployable Vultr compute plan and associated pricing.
     fields:
       id:
         required: true
@@ -120,7 +120,7 @@ entities:
     relations: {}
   BareMetalPlan:
     id_field: id
-    description: A bare metal server plan at Vultr
+    description: A bare metal server plan at Vultr.
     fields:
       id:
         required: true
@@ -155,7 +155,7 @@ entities:
     relations: {}
   Os:
     id_field: id
-    description: A Vultr OS or application image that can be selected at deploy time
+    description: A Vultr OS or application image that can be selected at deploy time.
     fields:
       id:
         required: true
@@ -172,7 +172,7 @@ entities:
     relations: {}
   Application:
     id_field: id
-    description: A One-Click or Marketplace application image
+    description: A One-Click or Marketplace application image.
     fields:
       id:
         required: true
@@ -198,7 +198,7 @@ entities:
     relations: {}
   BillingLine:
     id_field: id
-    description: A line on the account billing or credit history
+    description: A line on the account billing or credit history.
     fields:
       id:
         required: true
@@ -221,7 +221,7 @@ entities:
     relations: {}
   Invoice:
     id_field: id
-    description: A billing invoice or credit document
+    description: A billing invoice or credit document.
     fields:
       id:
         required: true
@@ -238,7 +238,7 @@ entities:
     relations: {}
   ApiKey:
     id_field: id
-    description: A Vultr account API key row (value is always masked in list and get, except for create)
+    description: A Vultr account API key (value is always masked in list and get, except for create).
     fields:
       id:
         required: true
@@ -259,7 +259,7 @@ entities:
     relations: {}
   User:
     id_field: id
-    description: A user account in your Vultr team, with their own API keys and ACLs
+    description: A user account in your Vultr team, with their own API keys and ACLs.
     fields:
       id:
         required: true
@@ -303,7 +303,7 @@ entities:
     relations: {}
   SshKey:
     id_field: id
-    description: A public SSH key you can copy onto new server deployments
+    description: A public SSH key you can copy onto new server deployments.
     fields:
       id:
         required: true
@@ -321,7 +321,7 @@ entities:
     relations: {}
   IamPolicy:
     id_field: id
-    description: IAM access policy (pre-release API) attached to roles and the account
+    description: IAM access policy (pre-release API) attached to roles and the account.
     fields:
       id:
         required: true
@@ -347,7 +347,7 @@ entities:
     relations: {}
   IamRole:
     id_field: id
-    description: An IAM role bundling one or more policies
+    description: An IAM role bundling one or more policies.
     fields:
       id:
         required: true
@@ -373,7 +373,7 @@ entities:
     relations: {}
   IamGroup:
     id_field: id
-    description: An IAM group that bundles users
+    description: An IAM group that bundles users.
     fields:
       id:
         required: true
@@ -402,7 +402,7 @@ entities:
     relations: {}
   Vpc:
     id_field: id
-    description: A per-region private network you attach instances to
+    description: A per-region private network you attach instances to.
     fields:
       id:
         required: true
@@ -428,7 +428,7 @@ entities:
     relations: {}
   FirewallGroup:
     id_field: id
-    description: A group of firewall rules that you bind to one or more instances
+    description: A group of firewall rules that you bind to one or more instances.
     fields:
       id:
         required: true
@@ -468,7 +468,7 @@ entities:
           param: firewall_group_id
   Instance:
     id_field: id
-    description: A Vultr cloud instance (VPS) in your account
+    description: A Vultr cloud instance (VPS) in your account.
     fields:
       id:
         required: true
@@ -542,7 +542,7 @@ entities:
     relations: {}
   ReservedIp:
     id_field: id
-    description: A region-scoped reserved or floating IPv4 or IPv6 address
+    description: A region-scoped reserved or floating IPv4 or IPv6 address.
     fields:
       id:
         required: true
@@ -568,7 +568,7 @@ entities:
     relations: {}
   LoadBalancer:
     id_field: id
-    description: A regional L4/L7 load balancer in front of one or more instances
+    description: A regional L4/L7 load balancer in front of one or more instances.
     fields:
       id:
         required: true
@@ -631,7 +631,7 @@ entities:
     key_vars:
     - firewall_group_id
     - id
-    description: A single rule inside a firewall group, scoped to that group
+    description: A single rule inside a firewall group, scoped to that group.
     fields:
       id:
         required: true
@@ -670,7 +670,7 @@ entities:
     relations: {}
   Snapshot:
     id_field: id
-    description: A point-in-time block snapshot of a compute instance or imported image
+    description: A point-in-time block snapshot of a compute instance or imported image.
     fields:
       id:
         required: true
@@ -699,7 +699,7 @@ entities:
     relations: {}
   BlockStorage:
     id_field: id
-    description: A block volume that can be attached to a compute instance in one region
+    description: A block volume that can be attached to a compute instance in one region.
     fields:
       id:
         required: true
@@ -734,7 +734,7 @@ entities:
     relations: {}
   Iso:
     id_field: id
-    description: A private ISO image in the account, or a catalog entry used when deploying
+    description: A private ISO image in the account, or a catalog entry used when deploying.
     fields:
       id:
         required: true
@@ -757,7 +757,7 @@ entities:
     relations: {}
   StartupScript:
     id_field: id
-    description: A user-supplied script executed on first boot (payload is base64 on the wire)
+    description: A user-supplied script executed on first boot (payload is base64 on the wire).
     fields:
       id:
         required: true
@@ -780,7 +780,7 @@ entities:
     relations: {}
   Backup:
     id_field: id
-    description: An automatic backup of an instance as retained by the platform
+    description: An automatic backup of an instance as retained by the platform.
     fields:
       id:
         required: true
@@ -806,7 +806,7 @@ entities:
     relations: {}
   DnsDomain:
     id_field: domain
-    description: A DNS zone hosted on Vultr
+    description: A DNS zone hosted on Vultr.
     fields:
       domain:
         required: true
@@ -830,7 +830,7 @@ entities:
     key_vars:
     - domain
     - id
-    description: A single DNS record row inside a domain zone
+    description: A single DNS record inside a domain zone.
     fields:
       id:
         required: true
@@ -856,7 +856,7 @@ entities:
     relations: {}
   ObjectStorage:
     id_field: id
-    description: S3-compatible object storage subscription in a cluster and region
+    description: S3-compatible object storage subscription in a cluster and region.
     fields:
       id:
         required: true
@@ -891,7 +891,7 @@ entities:
     relations: {}
   ManagedDatabase:
     id_field: id
-    description: A managed MySQL, PostgreSQL, Valkey, or Kafka cluster
+    description: A managed MySQL, PostgreSQL, Valkey, or Kafka cluster.
     fields:
       id:
         required: true
@@ -971,7 +971,7 @@ entities:
     relations: {}
   KubernetesCluster:
     id_field: id
-    description: A Vultr managed Kubernetes (VKE) control plane and its node pool summary
+    description: A Vultr managed Kubernetes (VKE) control plane and its node pool summary.
     fields:
       id:
         required: true
@@ -1037,7 +1037,7 @@ entities:
           param: vke_id
   BareMetal:
     id_field: id
-    description: A dedicated bare metal server (distinct from a bare metal plan catalog row)
+    description: A dedicated bare metal server (distinct from a bare metal plan catalog entry).
     fields:
       id:
         required: true
@@ -1127,7 +1127,7 @@ entities:
             bare_metal_id: id
   CdnPullZone:
     id_field: id
-    description: A CDN origin-pull zone in front of an existing HTTP or HTTPS site
+    description: A CDN origin-pull zone in front of an existing HTTP or HTTPS site.
     fields:
       id:
         required: true
@@ -1171,7 +1171,7 @@ entities:
     relations: {}
   CdnPushZone:
     id_field: id
-    description: A CDN push zone for uploading static assets to the edge
+    description: A CDN push zone for uploading static assets to the edge.
     fields:
       id:
         required: true
@@ -1216,7 +1216,7 @@ entities:
           param: push_zone_id
   KubernetesVersion:
     id_field: id
-    description: A Vultr-supported major Kubernetes version string offered for new VKE clusters
+    description: A Vultr-supported major Kubernetes version string offered for new VKE clusters.
     fields:
       id:
         required: true
@@ -1227,7 +1227,7 @@ entities:
     key_vars:
     - vke_id
     - id
-    description: A worker node pool belonging to a managed VKE cluster
+    description: A worker node pool belonging to a managed VKE cluster.
     fields:
       id:
         required: true
@@ -1302,7 +1302,7 @@ entities:
     - vke_id
     - nodepool_id
     - id
-    description: A key-value label on a VKE node pool, managed as its own sub-resource
+    description: A key-value label on a VKE node pool, managed as its own sub-resource.
     fields:
       id:
         required: true
@@ -1326,7 +1326,7 @@ entities:
     - vke_id
     - nodepool_id
     - id
-    description: A taint (key, value, effect) on a VKE node pool
+    description: A taint (key, value, effect) on a VKE node pool.
     fields:
       id:
         required: true
@@ -1353,7 +1353,7 @@ entities:
     - vke_id
     - nodepool_id
     - id
-    description: A single worker node in a VKE node pool, addressable for replace or recycle operations
+    description: A single worker node in a VKE node pool, addressable for replace or recycle operations.
     fields:
       id:
         required: true
@@ -1376,7 +1376,7 @@ entities:
     relations: {}
   CdnUploadEndpoint:
     id_field: url
-    description: A time-limited upload slot for a push-zone object, including a target URL and form fields the client must
+    description: A time-limited upload slot for a push-zone object, including a target URL and form fields the client must.
       submit
     fields:
       url:
@@ -1393,7 +1393,7 @@ entities:
     key_vars:
     - push_zone_id
     - name
-    description: A file object stored in a push zone at the origin after upload
+    description: A file object stored in a push zone at the origin after upload.
     fields:
       name:
         required: true
@@ -1416,7 +1416,7 @@ entities:
     relations: {}
   VkeResourceInventory:
     id_field: id
-    description: Block storage and load balancer add-ons the provider associates with a given VKE cluster
+    description: Block storage and load balancer add-ons the provider associates with a given VKE cluster.
     fields:
       id:
         required: true
@@ -1428,7 +1428,7 @@ entities:
     relations: {}
   VkeKubeconfig:
     id_field: id
-    description: The kubectl connection file (usually YAML) for a managed VKE cluster, for use with KUBECONFIG or kubectl
+    description: The kubectl connection file (usually YAML) for a managed VKE cluster, for use with KUBECONFIG or kubectl.
     fields:
       id:
         required: true
@@ -1446,7 +1446,7 @@ entities:
     key_vars:
     - vke_id
     - id
-    description: A Kubernetes version string the control plane may be upgraded to for a given cluster
+    description: A Kubernetes version string the control plane may be upgraded to for a given cluster.
     fields:
       id:
         required: true
@@ -1460,7 +1460,7 @@ entities:
     key_vars:
     - bare_metal_id
     - ip
-    description: An IPv4 address assignment on a bare metal host, including reverse-DNS when present
+    description: An IPv4 address assignment on a bare metal host, including reverse-DNS when present.
     fields:
       ip:
         required: true
@@ -1486,7 +1486,7 @@ entities:
     key_vars:
     - bare_metal_id
     - ip
-    description: An IPv6 address and prefix information for a bare metal host
+    description: An IPv6 address and prefix information for a bare metal host.
     fields:
       ip:
         required: true
@@ -1506,7 +1506,7 @@ entities:
     relations: {}
   BareMetalBandwidth:
     id_field: id
-    description: Per-day ingress and egress byte totals for a bare metal instance, keyed by local date
+    description: Per-day ingress and egress byte totals for a bare metal instance, keyed by local date.
     fields:
       id:
         required: true
@@ -1518,7 +1518,7 @@ entities:
     relations: {}
   BareMetalUserData:
     id_field: id
-    description: User data or first-boot material supplied when the bare metal instance was created, as the provider later
+    description: User data or first-boot material supplied when the bare metal instance was created, as the provider later.
       exposes it
     fields:
       id:
@@ -1533,7 +1533,7 @@ entities:
     relations: {}
   BareMetalUpgradeCatalog:
     id_field: id
-    description: Eligible plan, OS, and one-click application upgrades the provider offers for a bare metal instance
+    description: Eligible plan, OS, and one-click application upgrades the provider offers for a bare metal instance.
     fields:
       id:
         required: true
@@ -1548,7 +1548,7 @@ entities:
     key_vars:
     - bare_metal_id
     - id
-    description: A VPC network attachment and private address row for a bare metal instance
+    description: A VPC network attachment and private address for a bare metal instance.
     fields:
       id:
         required: true
@@ -1568,7 +1568,7 @@ entities:
     key_vars:
     - bare_metal_id
     - id
-    description: A legacy VPC 2.0 style attachment for bare metal; new integrations should use BareMetalVpcAttachment
+    description: A legacy VPC 2.0 style attachment for bare metal; new integrations should use BareMetalVpcAttachment.
     fields:
       id:
         required: true
@@ -2379,7 +2379,7 @@ capabilities:
   vkekubeconfig_get:
     kind: get
     entity: VkeKubeconfig
-    description: Fetches the raw kubeconfig document for a cluster; the control plane typically returns YAML bytes (non-JSON),
+    description: Fetches the raw kubeconfig document for a cluster; the control plane typically returns YAML bytes (non-JSON).
       which the client treats as a downloadable file.
     provides:
     - id
@@ -2582,7 +2582,7 @@ capabilities:
     entity: BareMetal
     output:
       type: side_effect
-      description: Connects a legacy-style VPC 2.0 network with a chosen private address; new integrations should use the
+      description: Connects a legacy-style VPC 2.0 network with a chosen private address; new integrations should use the.
         current VPC attach flow instead.
     parameters:
     - name: vpc_id

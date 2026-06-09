@@ -141,6 +141,8 @@ entities:
 
 Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`** to the **projection witness** banner line. **`capabilities.<id>.description`** feeds compact capability legends. Both must stay **agentic**: short, imperative, domain-vocabulary — not implementation manuals and not vendor documentation.
 
+**Lint:** `plasm-oss/scripts/check_catalog_description_hygiene.py` flags antipatterns (identity restatement, eval-key examples, field inventories in parentheses, generic get boilerplate, composed-view duplication, scoping parentheticals, tabular jargon). Use `--fail-on error` before publish; pair with `apply_description_hygiene_fixes.py` for bulk remediation then hand-edit disambiguation.
+
 **Purpose, not contents:** The type system, relations, **`provides:`**, symbolic **`e#` / `p#`** lines, parameter gloss, and **`discovery:`** already teach **shape**. **`description`** must answer **what this entity is for in agent workflow**: which goal it supports or what class of task it grounds — **without naming relations, fields, or parameters** that already appear on teaching lines.
 
 | Surface | Write | Do **not** write |

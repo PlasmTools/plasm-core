@@ -505,7 +505,7 @@ capabilities:
   calendar_get:
     kind: get
     entity: Calendar
-    description: Get a calendar by identifier.
+    description: Get a calendar.
     provides:
     - id
     - name
@@ -571,7 +571,7 @@ capabilities:
   event_get:
     kind: get
     entity: Event
-    description: Get a calendar event by identifier.
+    description: Get a calendar event.
     provides:
     - id
     - subject
@@ -813,7 +813,7 @@ values:
   nv_mailbox_triage_snapshot_key:
     type: string
     string_semantics: short
-    description: Stable singleton key for the mailbox triage snapshot row.
+    description: Stable singleton key for the mailbox triage snapshot.
   nv_mailbox_triage_status:
     type: string
     string_semantics: short

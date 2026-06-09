@@ -5,7 +5,7 @@ http_backend: http://localhost:1080
 entities:
   Order:
     id_field: order_id
-    description: Customer order
+    description: Customer order.
     fields:
       order_id:
         required: true
@@ -22,7 +22,7 @@ entities:
     relations: {}
   User:
     id_field: user_id
-    description: Retail customer profile
+    description: Retail customer profile.
     fields:
       user_id:
         required: true
@@ -33,7 +33,7 @@ entities:
     relations: {}
   Product:
     id_field: product_id
-    description: Sellable product with variants
+    description: Sellable product with variants.
     fields:
       product_id:
         required: true
@@ -43,7 +43,7 @@ entities:
         value_ref: nv_wire_str_short
     relations:
       variants:
-        description: SKUs / line items for this product
+        description: SKUs / line items for this product.
         target: Variant
         cardinality: many
         materialize:
@@ -52,7 +52,7 @@ entities:
           param: product_id
   Variant:
     id_field: item_id
-    description: Product variant
+    description: Product variant.
     fields:
       item_id:
         required: true
@@ -69,7 +69,7 @@ entities:
     relations: {}
   CatalogLine:
     id_field: product_id
-    description: One row from product types
+    description: One product type entry.
     fields:
       product_id:
         required: true
@@ -80,7 +80,7 @@ entities:
     relations: {}
   CalcJob:
     id_field: result
-    description: Arithmetic evaluation via calculate()
+    description: Arithmetic evaluation via calculate().
     fields:
       result:
         required: true
@@ -89,7 +89,7 @@ entities:
     domain_projection_examples: false
   HumanHandoff:
     id_field: status
-    description: transfer_to_human_agents outcome
+    description: transfer_to_human_agents outcome.
     fields:
       status:
         required: true
@@ -100,7 +100,7 @@ capabilities:
   get_order_details:
     kind: get
     entity: Order
-    description: Get order
+    description: Get order.
     provides:
     - order_id
     - user_id
@@ -109,21 +109,21 @@ capabilities:
   get_user_details:
     kind: get
     entity: User
-    description: Get user profile
+    description: Get user profile.
     provides:
     - user_id
     - email
   get_product_details:
     kind: get
     entity: Product
-    description: Get product and variant inventory
+    description: Get product and variant inventory.
     provides:
     - product_id
     - name
   get_item_details:
     kind: get
     entity: Variant
-    description: Get variant by item id
+    description: Get variant by item id.
     provides:
     - item_id
     - product_id
@@ -132,7 +132,7 @@ capabilities:
   list_variants_by_product:
     kind: query
     entity: Variant
-    description: Variants for a product
+    description: Variants for a product.
     parameters:
     - name: product_id
       value_ref: nv_list_variants_by_product_product_id
@@ -141,7 +141,7 @@ capabilities:
   find_user_id_by_email:
     kind: query
     entity: User
-    description: Resolve user by email
+    description: Resolve user by email.
     provides:
     - user_id
     parameters:
@@ -151,7 +151,7 @@ capabilities:
   find_user_id_by_name_zip:
     kind: query
     entity: User
-    description: Resolve user by name and zip
+    description: Resolve user by name and zip.
     provides:
     - user_id
     parameters:
@@ -167,11 +167,11 @@ capabilities:
   list_all_product_types:
     kind: query
     entity: CatalogLine
-    description: List all product types
+    description: List all product types.
   calculate:
     kind: create
     entity: CalcJob
-    description: Evaluate a safe arithmetic expression
+    description: Evaluate a safe arithmetic expression.
     provides:
     - result
     parameters:
@@ -181,7 +181,7 @@ capabilities:
   transfer_to_human_agents:
     kind: create
     entity: HumanHandoff
-    description: Escalate to human with summary
+    description: Escalate to human with summary.
     parameters:
     - name: summary
       value_ref: nv_wire_str_short
@@ -189,7 +189,7 @@ capabilities:
   cancel_pending_order:
     kind: update
     entity: Order
-    description: Cancel pending order with policy reason
+    description: Cancel pending order with policy reason.
     parameters:
     - name: reason
       value_ref: nv_wire_sel_751b7acc3dde7cde
@@ -197,7 +197,7 @@ capabilities:
   modify_pending_order_address:
     kind: update
     entity: Order
-    description: Change shipping address on a pending order
+    description: Change shipping address on a pending order.
     parameters:
     - name: address1
       value_ref: nv_wire_str_short
@@ -220,7 +220,7 @@ capabilities:
   modify_pending_order_payment:
     kind: update
     entity: Order
-    description: Switch payment method on a pending order
+    description: Switch payment method on a pending order.
     parameters:
     - name: payment_method_id
       value_ref: nv_wire_str_short
@@ -228,7 +228,7 @@ capabilities:
   modify_pending_order_items:
     kind: action
     entity: Order
-    description: Replace line items on pending order
+    description: Replace line items on pending order.
     parameters:
     - name: item_ids
       value_ref: nv_modify_pending_order_items_item_ids
@@ -241,11 +241,11 @@ capabilities:
       required: true
     output:
       type: side_effect
-      description: Replace line items on pending order
+      description: Replace line items on pending order.
   exchange_delivered_order_items:
     kind: action
     entity: Order
-    description: Exchange items on a delivered order
+    description: Exchange items on a delivered order.
     parameters:
     - name: item_ids
       value_ref: nv_exchange_delivered_order_items_item_ids
@@ -258,11 +258,11 @@ capabilities:
       required: true
     output:
       type: side_effect
-      description: Exchange items on a delivered order
+      description: Exchange items on a delivered order.
   return_delivered_order_items:
     kind: action
     entity: Order
-    description: Request return for delivered order lines
+    description: Request return for delivered order lines.
     parameters:
     - name: item_ids
       value_ref: nv_return_delivered_order_items_item_ids
@@ -272,11 +272,11 @@ capabilities:
       required: true
     output:
       type: side_effect
-      description: Request return for delivered order lines
+      description: Request return for delivered order lines.
   modify_user_address:
     kind: update
     entity: User
-    description: Update user's default address
+    description: Update user's default address.
     parameters:
     - name: address1
       value_ref: nv_wire_str_short

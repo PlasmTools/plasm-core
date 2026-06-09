@@ -143,7 +143,7 @@ capabilities:
   user_query:
     kind: query
     entity: User
-    description: List users (paginated list; use --summary to skip per-row user_get hydration).
+    description: List users (paginated; use --summary to skip per-user hydration).
     provides:
     - id
     - name
@@ -152,7 +152,6 @@ capabilities:
   user_get:
     kind: get
     entity: User
-    description: Fetch one user by id.
     provides:
     - id
     - name
@@ -171,7 +170,6 @@ capabilities:
   post_get:
     kind: get
     entity: Post
-    description: Fetch one post by id (includes author summary for relation navigation).
     provides:
     - id
     - title
@@ -188,7 +186,6 @@ capabilities:
   comment_get:
     kind: get
     entity: Comment
-    description: Fetch one comment by id.
     provides:
     - id
     - name
@@ -205,7 +202,6 @@ capabilities:
   todo_get:
     kind: get
     entity: Todo
-    description: Fetch one todo by id.
     provides:
     - id
     - title
@@ -220,7 +216,6 @@ capabilities:
   album_get:
     kind: get
     entity: Album
-    description: Fetch one album by id.
     provides:
     - id
     - title
@@ -236,7 +231,6 @@ capabilities:
   photo_get:
     kind: get
     entity: Photo
-    description: Fetch one photo by id.
     provides:
     - id
     - title
@@ -275,7 +269,7 @@ capabilities:
   post_delete:
     kind: delete
     entity: Post
-    description: Delete a post by id (shared demo dataset).
+    description: Delete a post (shared demo dataset).
 values:
   nv_post_id:
     type: string
