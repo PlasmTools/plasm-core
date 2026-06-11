@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Plasm Run Explorer</title>
+  <script type="module" src="/v1/run/ui/app.js?v=ac6a56a6938d"></script>
+  <style>
+:root{color-scheme:dark;--bg: #0f1117;--panel: #171a22;--border: #2a3140;--text: #e8ecf4;--muted: #9aa3b5;--accent: #6ea8ff;--ok: #3ecf8e;--warn: #f5a623;--danger: #ff6b6b;font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);min-height:100vh}.run-shell{display:grid;grid-template-rows:auto 1fr;gap:12px;padding:16px;min-height:100vh}.run-header h1{margin:0;font-size:1.05rem}.run-status{font-size:.8rem;color:var(--muted);margin-top:4px}.run-layout{display:grid;grid-template-columns:minmax(180px,240px) 1fr;gap:12px;min-height:0}@media(max-width:720px){.run-layout{grid-template-columns:1fr}}.run-step-rail,.run-table-panel{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px;min-height:200px}.run-step-list{display:grid;gap:8px}.run-step-btn{display:grid;gap:4px;text-align:left;width:100%;padding:10px;border-radius:8px;border:1px solid var(--border);background:#12151c;color:var(--text);cursor:pointer;font:inherit}.run-step-btn.active{border-color:var(--accent);background:#1a2333}.run-step-title{font-size:.85rem}.run-step-meta{font-size:.75rem;color:var(--muted)}.run-badge{display:inline-block;font-size:.65rem;padding:1px 6px;border-radius:999px;background:#243044;color:var(--muted);margin-left:4px}.run-badge.warn{background:#f5a62326;color:var(--warn)}.run-table-wrap{overflow:auto;max-height:calc(100vh - 120px)}.run-table{width:100%;border-collapse:collapse;font-size:.8rem}.run-table th,.run-table td{border-bottom:1px solid var(--border);padding:6px 8px;text-align:left;vertical-align:top}.run-table th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:600}.run-table-footer{margin-top:8px;font-size:.75rem;color:var(--muted)}.run-empty,.run-loading,.run-error{font-size:.85rem;color:var(--muted)}.run-error{color:var(--danger)}
+
+</style>
+</head>
+<body>
+  <div class="run-shell">
+    <header class="run-header">
+      <h1>Plasm Run Explorer</h1>
+      <div class="run-status" id="status">Initializing…</div>
+    </header>
+    <div class="run-layout">
+      <aside class="run-step-rail" id="step-rail" aria-label="Run steps"></aside>
+      <section class="run-table-panel" id="table-host" aria-label="Entity rows"></section>
+    </div>
+  </div>
+</body>
+</html>

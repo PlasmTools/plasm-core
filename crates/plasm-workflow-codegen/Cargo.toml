@@ -1,0 +1,16 @@
+[package]
+name = "plasm-workflow-codegen"
+version.workspace = true
+edition.workspace = true
+readme = "README.md"
+
+[[bin]]
+name = "plasm-gen-workflow-ts"
+path = "src/bin/plasm_gen_workflow_ts.rs"
+
+[dependencies]
+genco = { workspace = true }
+plasm-agent-core = { path = "../plasm-agent-core" }
+
+[dev-dependencies]
+insta = { workspace = true }

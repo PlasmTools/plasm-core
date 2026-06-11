@@ -1,5 +1,5 @@
 ---
-source: crates/plasm-core/src/prompt_render.rs
+source: plasm-oss/crates/plasm-core/src/prompt_render/mod.rs
 expression: tsv
 ---
 # Follow the grammar and the teaching TSV below; reply with one valid plasm_program:
@@ -26,9 +26,7 @@ expression: tsv
 # - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.
 # - If `Meaning` says `opt: pA, pB`, those keys may be added only as keyed assignments with real values.
 # - Projection rows ending `[p#,…]` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
-# - Relation rows end with `.r#`/`.wire`; apply them to any executable receiver row for that same entity type.
-# - `page(sN_pgM)` uses a continuation handle returned by a prior response; copy the handle exactly and optionally add `, limit=N`.
-# - `wait(sN_oM)` polls an in-flight async plan run; `cancel(sN_oM)` cancels it — copy handles from accept responses. Start live execute with `wait: false`; when dry verdict is **review**, pass `plan_commit_ref` (`pcN`) from plan dry-run or `force: true`.
+# - Host continuations (`page`/`wait`/`cancel`/`pcN`): copy handles from prior responses (see Grammar).
 #
 # Grammar:
 # plasm_program ::= plasm_expr | binding+ roots
@@ -60,7 +58,7 @@ expression: tsv
 # - Multi-line programs: one binding per line and final roots last (preferred). Single-line space-separated bindings are coerced; default return is the first binding.
 # - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.
 # - To turn rows into text, bind a template block: `report = rows[p#,…] <<TAG` newline template newline `TAG`, or `report = rows <<TAG` when columns can be inferred.
-# - Template blocks use Minijinja with `rows` as the input array; the bound row has a `content` field (see Common pitfalls for string parameters).
+# - Template blocks use Minijinja with `rows` as the input array; pass `binding.content` for string capability parameters, not the whole row.
 # - Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.
 # - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
 # - Examples: scoped child list `e1{p14=e3(p5=<val>, p13=<val>), …} (inline) OR repo=e3(…); e1{p14=repo, …} (decomposed label ref)`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
@@ -71,10 +69,8 @@ expression: tsv
 # - Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.
 # - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.
 # - Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.r#` or `issues.labels` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.
-# - Homograph: query filter `p#` and relation `.r#` may share a wire name (e.g. `labels`) — use `.r#`/wire for fanout; `labels = issues.p#` is forgiven when the binding name matches the relation.
-# - Teaching-table `Meaning` may show `relation e3 → e2`; copy executable `.r#`/wire from the left cell, not the arrow gloss.
-# - Fill-ins: never emit `$` from teaching rows — substitute real ids and parameter values before execute.
-# - String slots: pass `binding.content` from bracket-render or template rows, not the whole row.
+# - Homograph / gloss: filter `p#` and relation `.r#`/wire may share a wire name — fanout via `.r#`/wire (`labels = issues.p#` forgiven when the binding name matches). Copy executable left cells, not `Meaning` arrow gloss (`relation e3 → e2`).
+# - Fill-ins: never emit `$` from teaching rows; substitute real ids, filter keys, and `e#~"text"` terms before execute.
 # - Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or real `~"…"` search text.
 #
 

@@ -201,13 +201,13 @@ fn parse_plasm_context_ranked_capabilities(
     }
 }
 
-fn parse_optional_principal(v: &serde_json::Value) -> Option<String> {
+pub(crate) fn parse_optional_principal(v: &serde_json::Value) -> Option<String> {
     v.get("principal")
         .and_then(|x| x.as_str())
         .map(|s| s.to_string())
 }
 
-fn parse_logical_session_ref_arg(
+pub(crate) fn parse_logical_session_ref_arg(
     tool: &str,
     v: &serde_json::Value,
 ) -> Result<String, CallToolError> {
@@ -423,9 +423,9 @@ async fn trace_archive_and_emit_code_plan_execute(
 
 /// Per MCP transport session: Plasm execute `prompt_hash` + `session` ids (same as HTTP paths).
 #[derive(Clone, Default)]
-struct PlasmExecBinding {
-    prompt_hash: String,
-    session_id: String,
+pub(crate) struct PlasmExecBinding {
+    pub(crate) prompt_hash: String,
+    pub(crate) session_id: String,
 }
 
 /// Cumulative MCP-side text volume for token-ish telemetry (Unicode scalar counts).
@@ -441,14 +441,14 @@ pub(crate) struct McpSessionPlasmStats {
 }
 
 #[derive(Default)]
-struct McpLogicalSessionState {
-    binding: Option<PlasmExecBinding>,
+pub(crate) struct McpLogicalSessionState {
+    pub(crate) binding: Option<PlasmExecBinding>,
     stats: McpSessionPlasmStats,
     meta_index: PlasmMetaIndex,
 }
 
 #[derive(Default)]
-struct McpTransportState {
+pub(crate) struct McpTransportState {
     /// Logical session UUID string → per-agent state (execute binding, stats, `_meta.plasm` index).
     logical_by_id: HashMap<String, Arc<Mutex<McpLogicalSessionState>>>,
     /// Client-facing slot ids on this MCP transport (`s0`, …) → canonical logical session UUID.
@@ -459,7 +459,7 @@ struct McpTransportState {
 
 impl McpTransportState {
     /// Assign a stable per-transport slot (`s{n}`) for this canonical logical id (idempotent).
-    fn ensure_session_ref(&mut self, uuid: Uuid) -> String {
+    pub(crate) fn ensure_session_ref(&mut self, uuid: Uuid) -> String {
         if let Some(r) = self.uuid_to_ref.get(&uuid) {
             return r.clone();
         }
@@ -487,7 +487,7 @@ fn plasm_invocation_char_count(program: &str, reasoning: Option<&str>) -> u64 {
 }
 
 pub(crate) struct PlasmMcpHandler {
-    plasm: Arc<PlasmHostState>,
+    pub(crate) plasm: Arc<PlasmHostState>,
     /// MCP transport session key -> per-session mutable state.
     session_states: Arc<RwLock<HashMap<String, Arc<Mutex<McpTransportState>>>>>,
 }
@@ -500,7 +500,7 @@ impl PlasmMcpHandler {
         }
     }
 
-    async fn session_state(&self, key: &str) -> Arc<Mutex<McpTransportState>> {
+    pub(crate) async fn session_state(&self, key: &str) -> Arc<Mutex<McpTransportState>> {
         {
             let g = self.session_states.read().await;
             if let Some(state) = g.get(key) {
@@ -514,7 +514,7 @@ impl PlasmMcpHandler {
         )
     }
 
-    async fn logical_mutex(
+    pub(crate) async fn logical_mutex(
         &self,
         transport_key: &str,
         logical_id: &str,
@@ -534,7 +534,7 @@ impl PlasmMcpHandler {
         )
     }
 
-    async fn resolve_logical_session_ref_to_uuid(
+    pub(crate) async fn resolve_logical_session_ref_to_uuid(
         &self,
         tool: &str,
         transport_key: &str,
@@ -557,7 +557,7 @@ impl PlasmMcpHandler {
     ///
     /// **Locking:** drop the per-logical mutex before reading `logical_execute_bindings` so we never
     /// nest that mutex with the host `RwLock` (consistent lock order vs writers elsewhere).
-    async fn resolve_binding_for_logical(
+    pub(crate) async fn resolve_binding_for_logical(
         &self,
         transport_key: &str,
         logical_uuid: Uuid,
@@ -590,7 +590,7 @@ impl PlasmMcpHandler {
     }
 
     /// Latest tenant MCP policy for this transport session (from HTTP `Authorization` + control-plane store).
-    async fn tenant_mcp_cfg(
+    pub(crate) async fn tenant_mcp_cfg(
         &self,
         runtime: &Arc<dyn McpServer>,
     ) -> Result<Option<Arc<McpRuntimeConfig>>, CallToolError> {
@@ -681,7 +681,7 @@ impl PlasmMcpHandler {
     }
 
     /// Ensures MCP tool calls satisfy `PLASM_INCOMING_AUTH_MODE` (principal from MCP transport auth: API key / OAuth).
-    async fn ensure_mcp_principal(
+    pub(crate) async fn ensure_mcp_principal(
         &self,
         _mcp_key: &str,
         runtime: &Arc<dyn McpServer>,
@@ -884,7 +884,7 @@ impl PlasmMcpHandler {
                 task_support: Some(ToolExecutionTaskSupport::Forbidden),
             }),
             icons: vec![],
-            meta: None,
+            meta: Some(crate::plan_ui_mcp::plan_review_ui_tool_meta()),
             output_schema: None,
         });
         tools.push(Tool {
@@ -905,14 +905,42 @@ impl PlasmMcpHandler {
                 task_support: Some(ToolExecutionTaskSupport::Forbidden),
             }),
             icons: vec![],
-            meta: None,
+            meta: Some(crate::run_explorer_ui_mcp::run_explorer_ui_tool_meta()),
             output_schema: None,
         });
+        tools.push(Tool {
+            name: "plasm_ui_list_catalogs".into(),
+            title: Some("List tenant-enabled catalogs (MCP App)".into()),
+            description: Some(
+                "Returns registry `entry_id`s allowed by tenant MCP policy for MCP App bootstrap UIs."
+                    .into(),
+            ),
+            input_schema: ToolInputSchema::new(vec![], Some(BTreeMap::new()), None),
+            annotations: Some(ToolAnnotations {
+                read_only_hint: Some(true),
+                open_world_hint: Some(false),
+                ..Default::default()
+            }),
+            execution: Some(ToolExecution {
+                task_support: Some(ToolExecutionTaskSupport::Forbidden),
+            }),
+            icons: vec![],
+            meta: Some(
+                serde_json::json!({
+                    "ui": { "visibility": ["app"] }
+                })
+                .as_object()
+                .cloned()
+                .expect("plasm_ui_list_catalogs meta"),
+            ),
+            output_schema: None,
+        });
+        tools.extend(crate::workflow_mcp::workflow_mcp_tools());
         tools
     }
 }
 
-fn json_schema_bool_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
+pub(crate) fn json_schema_bool_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
     m.insert("type".into(), serde_json::json!("boolean"));
     m.insert(
@@ -922,7 +950,7 @@ fn json_schema_bool_type(description: &str) -> serde_json::Map<String, serde_jso
     m
 }
 
-fn json_schema_string_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
+pub(crate) fn json_schema_string_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
     m.insert("type".into(), serde_json::json!("string"));
     m.insert(
@@ -932,7 +960,7 @@ fn json_schema_string_type(description: &str) -> serde_json::Map<String, serde_j
     m
 }
 
-fn json_schema_non_empty_string_type(
+pub(crate) fn json_schema_non_empty_string_type(
     description: &str,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut m = json_schema_string_type(description);
@@ -1181,7 +1209,7 @@ impl PlasmMcpHandler {
 
     /// Shared MCP implementation for [`Self::handle_call_tool_request`] (`plasm` = plan-only, `plasm_run` = execute).
     #[allow(clippy::too_many_lines)]
-    async fn handle_plasm_mcp_tool(
+    pub(crate) async fn handle_plasm_mcp_tool(
         &self,
         key: &str,
         runtime: &Arc<dyn McpServer>,
@@ -1542,6 +1570,16 @@ impl PlasmMcpHandler {
                                             &dry.review,
                                             compact.verdict,
                                         ));
+                                        let ux_ctx = crate::plan_ux_reflection::PlanUxBuildContext {
+                                            session: Some(&es),
+                                            param_bindings: &[],
+                                        };
+                                        plasm_obj.insert(
+                                            "plan_ux_reflection".into(),
+                                            crate::plan_ux_reflection::plan_ux_reflection_value(
+                                                &dry, &ux_ctx,
+                                            ),
+                                        );
                                         if dry
                                             .graph_summary
                                             .get("dry_review")
@@ -1571,6 +1609,7 @@ impl PlasmMcpHandler {
                                             "plasm".into(),
                                             serde_json::Value::Object(plasm_obj),
                                         );
+                                        crate::plan_ui_mcp::attach_plan_review_ui_meta(&mut meta);
                                         Ok(PlasmPlanRunResult {
                                             version: dry.version,
                                             node_results: dry.node_results,
@@ -1985,6 +2024,34 @@ impl PlasmMcpHandler {
         }
         Ok(res)
     }
+
+    async fn handle_mcp_tool_ui_list_catalogs(
+        &self,
+        key: &str,
+        runtime: &Arc<dyn McpServer>,
+    ) -> Result<CallToolResult, CallToolError> {
+        self.ensure_mcp_principal(key, runtime).await?;
+        let reg = self.plasm.catalog.snapshot();
+        let tcfg = self.tenant_mcp_cfg(runtime).await?;
+        let entries = if let Some(cfg) = tcfg.as_ref() {
+            crate::mcp_policy::filter_registry_entries(reg.list_entries(), cfg)
+        } else {
+            reg.list_entries()
+        };
+        let mut entry_ids: Vec<String> = entries.into_iter().map(|m| m.entry_id).collect();
+        entry_ids.sort();
+        let text = if entry_ids.is_empty() {
+            "No MCP-enabled catalogs.".to_string()
+        } else {
+            format!("MCP-enabled catalogs: {}", entry_ids.join(", "))
+        };
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            "plasm".into(),
+            serde_json::json!({ "entry_ids": entry_ids }),
+        );
+        Ok(CallToolResult::text_content(vec![TextContent::new(text, None, None)]).with_meta(Some(meta)))
+    }
 }
 
 #[async_trait]
@@ -2020,6 +2087,42 @@ impl ServerHandler for PlasmMcpHandler {
     ) -> Result<ListResourceTemplatesResult, RpcError> {
         Ok(ListResourceTemplatesResult {
             resource_templates: vec![
+                ResourceTemplate {
+                    annotations: None,
+                    description: Some(
+                        "Plasm cross-catalog workflow MCP App (parameter form + plan canvas).".into(),
+                    ),
+                    icons: vec![],
+                    meta: None,
+                    mime_type: Some(crate::workflow_mcp::WORKFLOW_UI_MIME.into()),
+                    name: "plasm_workflow_app".into(),
+                    title: Some("Plasm workflow MCP App".into()),
+                    uri_template: crate::workflow_mcp::WORKFLOW_UI_URI.into(),
+                },
+                ResourceTemplate {
+                    annotations: None,
+                    description: Some(
+                        "Plasm plan review MCP App (program editor + plan canvas for `plasm` dry-run).".into(),
+                    ),
+                    icons: vec![],
+                    meta: None,
+                    mime_type: Some(crate::plan_ui_mcp::PLAN_REVIEW_UI_MIME.into()),
+                    name: "plasm_plan_review_app".into(),
+                    title: Some("Plasm plan review MCP App".into()),
+                    uri_template: crate::plan_ui_mcp::PLAN_REVIEW_UI_URI.into(),
+                },
+                ResourceTemplate {
+                    annotations: None,
+                    description: Some(
+                        "Plasm run explorer MCP App (step list + entity table for live `plasm_run` / `run_workflow`).".into(),
+                    ),
+                    icons: vec![],
+                    meta: None,
+                    mime_type: Some(crate::run_explorer_ui_mcp::RUN_EXPLORER_UI_MIME.into()),
+                    name: "plasm_run_explorer_app".into(),
+                    title: Some("Plasm run explorer MCP App".into()),
+                    uri_template: crate::run_explorer_ui_mcp::RUN_EXPLORER_UI_URI.into(),
+                },
                 ResourceTemplate {
                     annotations: None,
                     description: Some(
@@ -2064,6 +2167,21 @@ impl ServerHandler for PlasmMcpHandler {
     ) -> Result<ReadResourceResult, RpcError> {
         let started = Instant::now();
         let uri = params.uri.trim();
+        if let Some(bundle) = crate::mcp_app::bundle_for_uri(uri) {
+            let Some((content, result_meta)) = crate::mcp_app::read_resource_text(uri) else {
+                return Err(RpcError::invalid_params().with_message(format!("unknown ui resource: {uri}")));
+            };
+            crate::metrics::record_mcp_resource_read(
+                bundle.resource_metric,
+                "success",
+                "none",
+                started.elapsed(),
+            );
+            return Ok(ReadResourceResult {
+                contents: vec![ReadResourceContent::TextResourceContents(content)],
+                meta: Some(result_meta),
+            });
+        }
         if let Some((segment, resource_index)) = parse_plasm_session_short_resource_uri(uri) {
             let Some(transport_key) = runtime.session_id() else {
                 crate::metrics::record_mcp_resource_read(
@@ -2396,6 +2514,24 @@ async fn dispatch_plasm_mcp_call_tool_request(
     params: CallToolRequestParams,
     runtime: Arc<dyn McpServer>,
 ) -> Result<CallToolResult, CallToolError> {
+    fn record_workflow_tool(
+        tname: &'static str,
+        res: &Result<CallToolResult, CallToolError>,
+        started: Instant,
+    ) {
+        let elapsed = started.elapsed();
+        match res {
+            Ok(_) => crate::metrics::record_mcp_tool(tname, None, "success", "none", elapsed),
+            Err(e) => crate::metrics::record_mcp_tool(
+                tname,
+                None,
+                "error",
+                mcp_call_tool_error_class(e),
+                elapsed,
+            ),
+        }
+    }
+
     let key = mcp_key(&runtime)?;
     let v = args_value(&params);
 
@@ -2447,6 +2583,54 @@ async fn dispatch_plasm_mcp_call_tool_request(
                     elapsed,
                 ),
             }
+            res
+        }
+        "plasm_ui_list_catalogs" => {
+            let started = Instant::now();
+            let res = handler
+                .handle_mcp_tool_ui_list_catalogs(key.as_str(), &runtime)
+                .await;
+            let elapsed = started.elapsed();
+            match &res {
+                Ok(_) => crate::metrics::record_mcp_tool(
+                    "plasm_ui_list_catalogs",
+                    None,
+                    "success",
+                    "none",
+                    elapsed,
+                ),
+                Err(e) => crate::metrics::record_mcp_tool(
+                    "plasm_ui_list_catalogs",
+                    None,
+                    "error",
+                    mcp_call_tool_error_class(e),
+                    elapsed,
+                ),
+            }
+            res
+        }
+        "open_workflow" => {
+            let started = Instant::now();
+            let res = handler
+                .handle_mcp_tool_open_workflow(key.as_str(), &runtime, &v)
+                .await;
+            record_workflow_tool("open_workflow", &res, started);
+            res
+        }
+        "dry_workflow" => {
+            let started = Instant::now();
+            let res = handler
+                .handle_mcp_tool_dry_workflow(key.as_str(), &runtime, &v)
+                .await;
+            record_workflow_tool("dry_workflow", &res, started);
+            res
+        }
+        "run_workflow" => {
+            let started = Instant::now();
+            let res = handler
+                .handle_mcp_tool_run_workflow(key.as_str(), &runtime, &v)
+                .await;
+            record_workflow_tool("run_workflow", &res, started);
             res
         }
         "plasm" | "plasm_run" => {

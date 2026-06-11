@@ -242,7 +242,7 @@ pub fn render_plan_dry_compact_text(
     out
 }
 
-fn render_plan_dry_op(op: &PlanDryOp) -> String {
+pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
     match op {
         PlanDryOp::Surface { kind, expr } => format!("{} {expr}", render_kind(*kind)),
         PlanDryOp::Project { fields } => format!("project {}", fields.join(", ")),

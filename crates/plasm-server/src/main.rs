@@ -184,6 +184,34 @@ fn reconcile_appliance_db_env(cli: &ServeCli) {
     }
 }
 
+/// Start embedded Postgres for `plasm-server mcp` / `oauth` / `migrate-db` when no external URL is set.
+async fn ensure_cli_policy_store(
+    cli: &ServeCli,
+) -> Result<Option<EmbeddedPostgresGuard>, Box<dyn std::error::Error + Send + Sync>> {
+    reconcile_appliance_db_env(cli);
+    if !EmbeddedPostgresGuard::will_autostart_embedded_postgres() {
+        if let Err(e) = ensure_local_auth_storage_encryption_key() {
+            return Err(Box::new(std::io::Error::other(e)));
+        }
+        return Ok(None);
+    }
+    if plasm_agent_core::mcp_config_repository::mcp_config_database_url().is_some() {
+        if let Err(e) = ensure_local_auth_storage_encryption_key() {
+            return Err(Box::new(std::io::Error::other(e)));
+        }
+        return Ok(None);
+    }
+    let guard = EmbeddedPostgresGuard::try_start_from_env()
+        .await
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+            Box::new(std::io::Error::other(e.to_string()))
+        })?;
+    if let Err(e) = ensure_local_auth_storage_encryption_key() {
+        return Err(Box::new(std::io::Error::other(e)));
+    }
+    Ok(guard)
+}
+
 fn policy_store_handoff_detail(
     attach: plasm_agent_core::mcp_host_bootstrap::McpPolicyAttachOutcome,
     repo_attached: bool,
@@ -1008,7 +1036,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln_exit_error(&*e);
             return Err(e);
         }
-        reconcile_appliance_db_env(&root.serve);
+        let _cli_pg = ensure_cli_policy_store(&root.serve).await.map_err(|e| {
+            eprintln_exit_error(&*e);
+            Box::new(std::io::Error::other(format!("{e}"))) as Box<dyn std::error::Error>
+        })?;
         if let Err(e) = run_migrate_mcp_config_db().await {
             eprintln_exit_error(&*e);
             return Err(Box::new(std::io::Error::other(format!("{e}"))));
@@ -1022,6 +1053,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln_exit_error(&*e);
                 return Err(e);
             }
+            let _cli_pg = ensure_cli_policy_store(&root.serve).await.map_err(|e| {
+                eprintln_exit_error(&*e);
+                Box::new(std::io::Error::other(format!("{e}"))) as Box<dyn std::error::Error>
+            })?;
             if let Err(e) = mcp_cli::run_mcp(mcp).await {
                 eprintln_exit_error(&*e);
                 return Err(Box::new(std::io::Error::other(format!("{e}"))));
@@ -1033,6 +1068,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 eprintln_exit_error(&*e);
                 return Err(e);
             }
+            let _cli_pg = ensure_cli_policy_store(&root.serve).await.map_err(|e| {
+                eprintln_exit_error(&*e);
+                Box::new(std::io::Error::other(format!("{e}"))) as Box<dyn std::error::Error>
+            })?;
             if let Err(e) = oauth_cli::run_oauth(oauth).await {
                 eprintln_exit_error(&*e);
                 return Err(Box::new(std::io::Error::other(format!("{e}"))));

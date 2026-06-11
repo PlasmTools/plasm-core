@@ -1,6 +1,126 @@
 //! Prompt surface statistics.
 
 use super::*;
+use std::collections::BTreeMap;
+
+/// Byte breakdown of the grammar contract preamble vs teaching table body.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GrammarFrontmatterStats {
+    /// Raw contract bytes (comment prefix stripped when sourced from TSV `#` lines).
+    pub contract_bytes: usize,
+    /// Contract bytes as embedded in first-wave TSV (`#`-prefixed comment block).
+    pub contract_comment_bytes: usize,
+    /// Bytes from `plasm_expr\\tMeaning` header through end of prompt.
+    pub table_bytes: usize,
+    /// Full rendered prompt bytes (contract comment block + table when present).
+    pub total_prompt_bytes: usize,
+    /// Per-section byte counts on the raw (uncommented) contract text.
+    pub section_bytes: BTreeMap<&'static str, usize>,
+}
+
+impl GrammarFrontmatterStats {
+    /// Human-readable contract vs table split for CLI stderr (`dump_prompt`, eval).
+    pub fn summary_line_body(&self) -> String {
+        let contract_pct = if self.total_prompt_bytes == 0 {
+            0.0
+        } else {
+            100.0 * self.contract_comment_bytes as f64 / self.total_prompt_bytes as f64
+        };
+        let mut sections = String::new();
+        for (name, bytes) in &self.section_bytes {
+            if !sections.is_empty() {
+                sections.push(' ');
+            }
+            let _ = write!(sections, "{name}={bytes}");
+        }
+        format!(
+            "contract: {} B ({contract_pct:.1}%) | table: {} B | sections: {sections}",
+            self.contract_comment_bytes, self.table_bytes,
+        )
+    }
+}
+
+const GRAMMAR_SECTION_MARKERS: &[(&str, &str)] = &[
+    ("output", "Output:"),
+    ("tsv_semantics", "TSV table semantics:"),
+    ("symbol_rules", "Symbol and fill rules:"),
+    ("grammar", "Grammar:"),
+    ("composition", "Composition rules:"),
+    ("pitfalls", "Common pitfalls:"),
+];
+
+/// Strip leading `#` / `# ` comment prefixes from a first-wave TSV contract block.
+pub fn strip_tsv_comment_contract_prefix(comment_block: &str) -> String {
+    let mut out = String::new();
+    for (i, line) in comment_block.lines().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        if line == "#" {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("# ") {
+            out.push_str(rest);
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
+}
+
+/// Section byte map for raw (uncommented) grammar contract text.
+pub fn grammar_frontmatter_section_bytes(contract: &str) -> BTreeMap<&'static str, usize> {
+    let mut map = BTreeMap::new();
+    if let Some(output_idx) = contract.find("Output:") {
+        let opener = contract[..output_idx].trim_end();
+        if !opener.is_empty() {
+            map.insert("opener", opener.len());
+        }
+    }
+    for (i, (name, marker)) in GRAMMAR_SECTION_MARKERS.iter().enumerate() {
+        let Some(start) = contract.find(marker) else {
+            continue;
+        };
+        let end = GRAMMAR_SECTION_MARKERS
+            .get(i + 1)
+            .and_then(|(_, next_marker)| contract.find(next_marker))
+            .unwrap_or(contract.len());
+        let body = contract[start..end].trim_end();
+        map.insert(*name, body.len());
+    }
+    map
+}
+
+/// Stats for canonical grammar frontmatter (no teaching table).
+pub fn grammar_frontmatter_stats_from_contract(contract: &str) -> GrammarFrontmatterStats {
+    let contract_bytes = contract.len();
+    GrammarFrontmatterStats {
+        contract_bytes,
+        contract_comment_bytes: contract_bytes,
+        table_bytes: 0,
+        total_prompt_bytes: contract_bytes,
+        section_bytes: grammar_frontmatter_section_bytes(contract),
+    }
+}
+
+/// Stats for a rendered teaching TSV prompt (optional `#` contract + table).
+pub fn grammar_frontmatter_stats_from_prompt(prompt: &str) -> GrammarFrontmatterStats {
+    let (contract_comment, table) = split_tsv_teaching_contract_and_table(prompt);
+    let contract_comment_bytes = contract_comment.as_ref().map(|s| s.len()).unwrap_or(0);
+    let raw_contract = contract_comment
+        .as_deref()
+        .map(strip_tsv_comment_contract_prefix)
+        .unwrap_or_default();
+    let contract_bytes = raw_contract.len();
+    let table_bytes = table.len();
+    GrammarFrontmatterStats {
+        contract_bytes,
+        contract_comment_bytes,
+        table_bytes,
+        total_prompt_bytes: prompt.len(),
+        section_bytes: grammar_frontmatter_section_bytes(&raw_contract),
+    }
+}
 
 pub fn json_tool_surface_counts(
     cgs: &CGS,

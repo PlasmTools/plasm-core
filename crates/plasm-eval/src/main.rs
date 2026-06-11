@@ -8,6 +8,10 @@ use clap::{Parser, Subcommand, ValueEnum};
 use plasm_core::domain_lexicon::DomainLexicon;
 use plasm_core::loader::load_schema_dir;
 use plasm_core::CGS;
+use plasm_core::{
+    client_has_cached_grammar, plasm_grammar_frontmatter_revision_hex,
+    teaching_prompt_omit_contract_if_cached,
+};
 use plasm_core::{PromptPipelineConfig, PromptRenderMode};
 use plasm_eval::baml_client::sync_client::B;
 use plasm_eval::baml_client::types::{PlanChatTurn, Union2KassistantOrKuser};
@@ -108,6 +112,10 @@ struct RunArgs {
     /// Default: writes `{model-slug}.latest.human.txt` and `{model-slug}.latest.json` next to `--cases`.
     #[arg(long)]
     report_dir: Option<PathBuf>,
+    /// When set to the current canonical grammar revision ([`plasm_grammar_frontmatter_revision_hex`]),
+    /// omit the grammar contract from the first-turn teaching table (table-only; MCP / cached HTTP GET parity).
+    #[arg(long)]
+    grammar_revision: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -511,11 +519,18 @@ fn main() -> anyhow::Result<()> {
                 };
                 let pipeline = PromptPipelineConfig::for_cli_focus(run.focus.as_deref())
                     .with_render_mode(render_mode);
-                let prompt = if run.print_prompt_tsv {
+                let mut prompt = if run.print_prompt_tsv {
                     pipeline.render_prompt_tsv(&cgs, None)
                 } else {
                     pipeline.render_prompt(&cgs, None)
                 };
+                if client_has_cached_grammar(run.grammar_revision.as_deref()) {
+                    prompt = teaching_prompt_omit_contract_if_cached(
+                        &prompt,
+                        run.grammar_revision.as_deref(),
+                        None,
+                    );
+                }
                 let st = pipeline.prompt_surface_stats(&cgs, None, &prompt);
                 // Write prompt first so a line-buffered terminal shows teaching table immediately; stats on
                 // stderr last so they stay visible below the bundle (and after tracing lines).
@@ -566,7 +581,15 @@ fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyhow::Re
     let pipeline = PromptPipelineConfig::for_cli_focus(cli.focus.as_deref()).with_render_mode(
         PromptRenderMode::parse_user_facing_or_default(cli.symbol_tuning.as_str()),
     );
-    let prompt = pipeline.render_prompt(&cgs, None);
+    let mut prompt = pipeline.render_prompt(&cgs, None);
+    if client_has_cached_grammar(cli.grammar_revision.as_deref()) {
+        prompt =
+            teaching_prompt_omit_contract_if_cached(&prompt, cli.grammar_revision.as_deref(), None);
+        eprintln!(
+            "eval: grammar contract omitted (revision matches {})",
+            plasm_grammar_frontmatter_revision_hex()
+        );
+    }
     let st = pipeline.prompt_surface_stats(&cgs, None, &prompt);
     let prompt_stats = PromptStatsSnapshot::from(st);
     eprintln!("schema prompt: {}", st.summary_line_body());

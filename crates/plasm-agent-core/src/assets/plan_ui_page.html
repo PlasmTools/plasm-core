@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Plasm Plan Review</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1117;
+      --panel: #171a22;
+      --border: #2a3140;
+      --text: #e8ecf4;
+      --muted: #9aa3b5;
+      --accent: #6ea8ff;
+      --ok: #3ecf8e;
+      --warn: #f5a623;
+      --danger: #ff6b6b;
+      --canvas-bg: oklch(0.12 0.02 260 / 0.9);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .shell { padding: 16px; display: grid; gap: 16px; }
+    header { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
+    h1 { font-size: 1.1rem; margin: 0; }
+    label { display: grid; gap: 4px; font-size: 0.8rem; color: var(--muted); }
+    select, input, textarea, button {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font: inherit;
+    }
+    textarea.program-input {
+      width: 100%;
+      min-height: 120px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.82rem;
+      line-height: 1.45;
+    }
+    button {
+      cursor: pointer;
+      background: #1f2937;
+    }
+    button.primary { background: #2563eb; border-color: #2563eb; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+    }
+    .panel h2 { margin: 0 0 12px; font-size: 0.95rem; }
+    .status { font-size: 0.8rem; color: var(--muted); }
+    .session-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: end;
+    }
+    .bootstrap-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(280px, 360px) 1fr;
+      gap: 16px;
+    }
+    @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  </style>
+  <script type="module" src="/v1/plan/ui/app.js?v=345c3aa94f38"></script>
+  <style>
+.plan-panel{display:grid;gap:12px}.plan-review-banner{padding:10px 12px;border-radius:8px;border:1px solid var(--border, #2a3140);font-size:.85rem}.plan-review-banner.ok{border-color:var(--ok, #3ecf8e)}.plan-review-banner.review{border-color:var(--warn, #f5a623)}.plan-review-row{display:flex;flex-wrap:wrap;gap:12px;align-items:baseline}.plan-review-verdict{font-weight:600}.plan-review-banner.ok .plan-review-verdict{color:var(--ok, #3ecf8e)}.plan-review-banner.review .plan-review-verdict{color:var(--warn, #f5a623)}.plan-review-metrics{color:var(--muted, #9aa3b5);font-size:.8rem}.plan-review-warnings,.plan-review-gates{margin:8px 0 0;font-size:.8rem;color:var(--muted, #9aa3b5)}.plan-canvas-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(200px,260px);gap:12px;align-items:start}@media(max-width:700px){.plan-canvas-layout{grid-template-columns:1fr}}.plan-column-headers{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:4px}.plan-column-header{font-size:.72rem;text-transform:uppercase;letter-spacing:.04em;color:var(--accent, #6ea8ff);border:1px solid rgba(110,168,255,.35);border-radius:999px;padding:4px 10px}.plan-canvas-host{position:relative;min-height:14rem;overflow-x:auto;border-radius:8px;border:1px solid rgba(255,255,255,.08);background:var(--canvas-bg, oklch(.12 .02 260 / .9));padding:8px}.plan-canvas-error,.plan-canvas-loading{position:absolute;top:0;right:0;bottom:0;left:0;display:flex;align-items:center;justify-content:center;padding:16px;text-align:center;font-size:.8rem;color:#ffb4b4}.plan-canvas-loading{color:var(--muted, #9aa3b5)}.plan-inspector{min-height:14rem;border-radius:8px;border:1px solid var(--border, #2a3140);background:#00000040;padding:12px;font-size:.82rem}.plan-inspector-empty{color:var(--muted, #9aa3b5);margin:0}.plan-inspector-body{display:grid;gap:6px}.plan-inspector-head{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;margin:0}.plan-inspector-id{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;color:#f8faffeb}.plan-inspector-ir{font-family:ui-monospace,monospace;font-size:.7rem;color:var(--muted, #9aa3b5)}.plan-inspector-kind{color:var(--muted, #9aa3b5);font-size:.75rem}.plan-inspector-badge{font-size:.62rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em;border-radius:4px;padding:2px 6px;border:1px solid}.plan-inspector-badge.return{color:#d6d2fd;border-color:#8678c973;background:#1b14348c}.plan-inspector-badge.gate{color:var(--warn, #f5a623);border-color:#f5a62373;background:#f5a6231f}.plan-inspector-op{margin:0;color:#e6ecf8d9;line-height:1.4}.plan-inspector-meta,.plan-inspector-deps{margin:0;color:var(--muted, #9aa3b5);font-size:.75rem;word-break:break-word}details.program-source{margin-top:8px;font-size:.8rem}details.program-source pre{white-space:pre-wrap;word-break:break-word;font-size:.72rem;background:#0b0d12;padding:10px;border-radius:8px;max-height:200px;overflow:auto;margin:8px 0 0}
+
+</style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <div>
+        <h1>Plasm Plan Review</h1>
+        <div class="status" id="status">Initializing…</div>
+      </div>
+      <div class="session-strip">
+        <label>Session ref
+          <input id="session-ref" type="text" placeholder="s0" />
+        </label>
+        <button id="context-btn" class="primary">Open context</button>
+        <button id="dry-btn" disabled>Dry-run plan</button>
+        <button id="run-btn" disabled>Run</button>
+      </div>
+    </header>
+    <div class="layout">
+      <section class="panel">
+        <h2>Program</h2>
+        <details id="bootstrap-details" open>
+          <summary>Open execute session</summary>
+          <div class="bootstrap-grid">
+            <label>Registry entry
+              <select id="entry-id"></select>
+            </label>
+            <label>Entity
+              <input id="entity-name" type="text" placeholder="Issue" />
+            </label>
+            <label>Intent
+              <input id="intent" type="text" placeholder="plan review session" />
+            </label>
+          </div>
+          <p class="status" id="catalog-hint" hidden></p>
+        </details>
+        <textarea id="program-input" class="program-input" placeholder="items = e1.limit(5)&#10;items"></textarea>
+      </section>
+      <section class="panel plan-panel">
+        <h2>Plan canvas</h2>
+        <div id="review-banner" class="plan-review-banner" hidden></div>
+        <div id="column-headers" class="plan-column-headers" hidden></div>
+        <div class="plan-canvas-layout">
+          <div id="plan-canvas-host" class="plan-canvas-host">
+            <p class="plan-inspector-empty">Dry-run a program to render the Program DAG.</p>
+          </div>
+          <div id="plan-inspector" class="plan-inspector">
+            <p class="plan-inspector-empty">Select a plan step to inspect.</p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</body>
+</html>

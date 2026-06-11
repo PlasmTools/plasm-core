@@ -186,11 +186,18 @@ pub use preflight::{
     ScopeBind,
 };
 pub use prompt_pipeline::{PromptFocus, PromptPipelineConfig};
+pub use prompt_render::client_has_cached_grammar;
+pub use prompt_render::grammar_frontmatter_stats_from_contract;
+pub use prompt_render::grammar_frontmatter_stats_from_prompt;
+pub use prompt_render::grammar_revision_from_wire;
+pub use prompt_render::plasm_grammar_frontmatter_revision_hex;
 pub use prompt_render::render_teaching_bundle;
 pub use prompt_render::render_teaching_prompt_bundle_for_exposure;
 pub use prompt_render::render_teaching_tsv;
 pub use prompt_render::split_tsv_teaching_contract_and_table;
+pub use prompt_render::teaching_prompt_omit_contract_if_cached;
 pub use prompt_render::teaching_tsv_table_from_wrapped_prompt;
+pub use prompt_render::GrammarFrontmatterStats;
 pub use prompt_render::PromptRenderMode;
 pub use prompt_render::TeachingPromptSettings;
 pub use prompt_render::TeachingPromptSource;

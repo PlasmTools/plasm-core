@@ -91,6 +91,8 @@ pub struct PlasmOssHostState {
     /// Shared ONNX embedder for typed discovery + background reconcile (`local-embeddings` only).
     #[cfg(feature = "local-embeddings")]
     pub discovery_embedder: Arc<plasm_discovery::BlockingEmbedder>,
+    /// Tenant workflow manifests for MCP Apps (`GET /v1/workflows/:id/view-model`).
+    pub workflows: Arc<crate::workflow_registry::WorkflowRegistry>,
 }
 
 /// Hosted / control-plane state: same process as [`PlasmOssHostState`], but injected after OSS bootstrap.
@@ -177,6 +179,10 @@ impl PlasmHostState {
     #[cfg(feature = "local-embeddings")]
     pub fn discovery_embedder(&self) -> Arc<plasm_discovery::BlockingEmbedder> {
         self.oss.discovery_embedder.clone()
+    }
+
+    pub fn workflows(&self) -> &crate::workflow_registry::WorkflowRegistry {
+        &self.oss.workflows
     }
 
     /// Outbound HTTP credentials: [`PlasmOssHostState::outbound_secret_provider`] when wired; otherwise [`EnvSecretProvider`].

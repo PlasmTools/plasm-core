@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "layout": "parallel_columns",
+  "columns": [
+    {
+      "entry_id": "catalog_a",
+      "label": "catalog_a",
+      "step_ids": ["n0"]
+    },
+    {
+      "entry_id": "catalog_b",
+      "label": "catalog_b",
+      "step_ids": ["n1"]
+    }
+  ],
+  "steps": [
+    {
+      "id": "n0",
+      "ordinal": 1,
+      "widget": "read_surface",
+      "entry_id": "catalog_a",
+      "entity": "WorkItem",
+      "qualified_entity": "catalog_a.WorkItem",
+      "operation": "query",
+      "effect_class": "Read",
+      "approval_gate": false
+    }
+  ],
+  "edges": [],
+  "returns": ["n0"],
+  "writes": [],
+  "review": {
+    "verdict": "ok",
+    "write_count": 0,
+    "read_count": 1
+  },
+  "param_bindings": []
+}

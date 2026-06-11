@@ -1,6 +1,55 @@
 //! TSV teaching contract splitting and fence helpers.
 
 use super::*;
+use sha2::{Digest, Sha256};
+use std::sync::OnceLock;
+
+/// SHA-256 hex digest of [`super::render_plasm_mcp_language_frontmatter`] (canonical grammar contract).
+pub fn plasm_grammar_frontmatter_revision_hex() -> &'static str {
+    static REVISION: OnceLock<String> = OnceLock::new();
+    REVISION.get_or_init(|| {
+        hex::encode(Sha256::digest(
+            super::render_plasm_mcp_language_frontmatter().as_bytes(),
+        ))
+    })
+}
+
+/// True when the client advertises the current canonical grammar revision (case-insensitive).
+pub fn client_has_cached_grammar(revision: Option<&str>) -> bool {
+    revision.is_some_and(|r| r.eq_ignore_ascii_case(plasm_grammar_frontmatter_revision_hex()))
+}
+
+/// Resolve grammar revision from optional query value and `X-Plasm-Grammar-Revision` header.
+pub fn grammar_revision_from_wire<'a>(
+    query: Option<&'a str>,
+    header: Option<&'a str>,
+) -> Option<&'a str> {
+    query.or(header).filter(|s| !s.is_empty())
+}
+
+/// When the client cached grammar matches [`plasm_grammar_frontmatter_revision_hex`], return table-only
+/// teaching TSV (optionally re-wrapped in a markdown fence). Stored session prompts are unchanged.
+pub fn teaching_prompt_omit_contract_if_cached(
+    prompt: &str,
+    grammar_revision: Option<&str>,
+    fence_info: Option<&str>,
+) -> String {
+    if !client_has_cached_grammar(grammar_revision) {
+        return prompt.to_string();
+    }
+    let table = if let Some(fence) = fence_info {
+        markdown_fence_body_inner(prompt, fence)
+            .map(|inner| split_tsv_teaching_contract_and_table(inner).1)
+            .unwrap_or_else(|| split_tsv_teaching_contract_and_table(prompt).1)
+    } else {
+        split_tsv_teaching_contract_and_table(prompt).1
+    };
+    if let Some(fence) = fence_info {
+        format!("```{fence}\n{}\n```\n", table.trim_end())
+    } else {
+        table
+    }
+}
 
 pub fn split_tsv_teaching_contract_and_table(teaching_tsv: &str) -> (Option<String>, String) {
     if let Some(idx) = teaching_tsv.find(TSV_TEACHING_TABLE_HEADER) {
@@ -112,4 +161,50 @@ pub(crate) enum DomainWaveSurface {
     InitialTeaching,
     /// Subsequent waves: new entity rows only; keep `plasm_expr` / `Meaning` header for a self-describing fragment.
     AdditiveWave,
+}
+
+#[cfg(test)]
+mod grammar_revision_tests {
+    use super::*;
+
+    #[test]
+    fn grammar_revision_hex_is_sha256_of_canonical_frontmatter() {
+        let rev = plasm_grammar_frontmatter_revision_hex();
+        assert_eq!(rev.len(), 64);
+        assert!(client_has_cached_grammar(Some(rev)));
+        assert!(!client_has_cached_grammar(Some("deadbeef")));
+    }
+
+    #[test]
+    fn teaching_prompt_omit_contract_when_revision_matches() {
+        let contract = super::super::render_plasm_mcp_language_frontmatter();
+        let prompt = format!(
+            "# {}\n\n{}e1\trow\n",
+            super::super::TEACHING_VALID_EXPR_MARKER,
+            super::super::TSV_TEACHING_TABLE_HEADER
+        );
+        assert!(prompt.contains('#'));
+        let rev = plasm_grammar_frontmatter_revision_hex();
+        let wire = teaching_prompt_omit_contract_if_cached(&prompt, Some(rev), None);
+        assert!(!wire.contains("Follow the grammar"));
+        assert!(wire.starts_with(super::super::TSV_TEACHING_TABLE_HEADER.trim_end()));
+        assert_eq!(
+            contract.len(),
+            super::super::render_plasm_mcp_language_frontmatter().len()
+        );
+    }
+
+    #[test]
+    fn teaching_prompt_omit_contract_fenced_when_revision_matches() {
+        let inner = format!(
+            "# line\n\n{}e1\trow\n",
+            super::super::TSV_TEACHING_TABLE_HEADER
+        );
+        let fenced = format!("```tsv\n{inner}```\n");
+        let rev = plasm_grammar_frontmatter_revision_hex();
+        let wire = teaching_prompt_omit_contract_if_cached(&fenced, Some(rev), Some("tsv"));
+        assert!(wire.starts_with("```tsv\n"));
+        assert!(!wire.contains("# line"));
+        assert!(wire.contains("plasm_expr\tMeaning"));
+    }
 }

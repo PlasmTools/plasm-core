@@ -107,6 +107,10 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
         bounds: trace_hub.bounds(),
     };
     let op_progress_hub = OperationProgressHub::new();
+    let workflows = Arc::new(crate::workflow_registry::WorkflowRegistry::new());
+    for manifest in crate::workflow_registry::demo_workflow_manifests() {
+        workflows.register(manifest);
+    }
     PlasmHostState {
         oss: PlasmOssHostState {
             engine: Arc::new(engine),
@@ -141,6 +145,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
                 fastembed::EmbeddingModel::AllMiniLML6V2,
                 plasm_discovery::embedder::discovery_embed_concurrency(),
             )),
+            workflows,
         },
         saas: None,
     }
@@ -170,6 +175,9 @@ pub fn oss_traced_routes() -> Router {
             .merge(incoming_context_routes())
             .merge(trace_routes())
             .merge(execute_routes())
+            .merge(crate::http_workflow::workflow_routes())
+            .merge(crate::http_plan_ui::plan_ui_routes())
+            .merge(crate::http_run_ui::run_ui_routes())
             .layer(axum::middleware::from_fn(incoming_auth_http_middleware)),
     )
 }
@@ -190,7 +198,8 @@ pub fn discovery_execute_router(state: PlasmHostState) -> Router {
     let mut pre_internal = Router::new()
         .merge(http_oauth_link::oauth_link_routes())
         .merge(http_outbound_secrets::outbound_secrets_routes())
-        .merge(http_mcp_bindings::mcp_bindings_routes());
+        .merge(http_mcp_bindings::mcp_bindings_routes())
+        .merge(crate::http_mcp_catalog::mcp_catalog_routes());
     if state.mcp_config_repository().is_some() {
         pre_internal = pre_internal.merge(crate::http_mcp_config::mcp_config_routes());
     }

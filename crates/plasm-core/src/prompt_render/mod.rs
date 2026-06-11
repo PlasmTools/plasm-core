@@ -129,13 +129,18 @@ mod mcp_frontmatter;
 mod stats;
 
 pub use contract::{
-    markdown_fence_body_inner, split_tsv_teaching_contract_and_table,
-    teaching_tsv_table_from_wrapped_prompt,
+    client_has_cached_grammar, grammar_revision_from_wire, markdown_fence_body_inner,
+    plasm_grammar_frontmatter_revision_hex, split_tsv_teaching_contract_and_table,
+    teaching_prompt_omit_contract_if_cached, teaching_tsv_table_from_wrapped_prompt,
 };
 pub use mcp_frontmatter::render_plasm_mcp_language_frontmatter;
 #[cfg(test)]
 pub(crate) use stats::domain_expression_tool_count_resolved;
-pub use stats::{json_tool_surface_counts, prompt_surface_stats};
+pub use stats::{
+    grammar_frontmatter_section_bytes, grammar_frontmatter_stats_from_contract,
+    grammar_frontmatter_stats_from_prompt, json_tool_surface_counts, prompt_surface_stats,
+    strip_tsv_comment_contract_prefix, GrammarFrontmatterStats,
+};
 
 #[cfg(test)]
 pub(crate) use contract::validate_teaching_tsv_teaching_table;
@@ -6494,6 +6499,128 @@ mod tests {
                 render_plasm_mcp_language_frontmatter()
             );
         });
+    }
+
+    #[test]
+    fn grammar_frontmatter_byte_budget() {
+        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6672;
+        const MAX_GRAMMAR_FRONTMATTER_BYTES: usize = 7298;
+        const MINIMAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6800;
+
+        let full = render_plasm_mcp_language_frontmatter();
+        assert_eq!(
+            full.len(),
+            CANONICAL_GRAMMAR_FRONTMATTER_BYTES,
+            "update CANONICAL_GRAMMAR_FRONTMATTER_BYTES when intentionally changing contract size"
+        );
+        assert!(
+            full.len() <= MAX_GRAMMAR_FRONTMATTER_BYTES,
+            "grammar contract grew past max budget: {} bytes",
+            full.len()
+        );
+
+        let full_stats = super::grammar_frontmatter_stats_from_contract(&full);
+        assert_eq!(
+            full_stats.contract_bytes,
+            CANONICAL_GRAMMAR_FRONTMATTER_BYTES
+        );
+        assert!(
+            full_stats
+                .section_bytes
+                .get("grammar")
+                .copied()
+                .unwrap_or(0)
+                > 1000
+        );
+        assert!(
+            full_stats
+                .section_bytes
+                .get("symbol_rules")
+                .copied()
+                .unwrap_or(0)
+                > 1000
+        );
+
+        let minimal = render_prompt_contract(prompt_contract_spec_minimal_for_test());
+        assert!(
+            minimal.len() <= MINIMAL_GRAMMAR_FRONTMATTER_BYTES,
+            "minimal contract too long: {} bytes",
+            minimal.len()
+        );
+        assert!(
+            minimal.len() < full.len(),
+            "minimal spec should be strictly smaller than canonical frontmatter"
+        );
+
+        let dir = fixtures_schemas_dir("plasm_prompt_matrix");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let full_prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+        let single_prompt = render_prompt_tsv_with_config(
+            &cgs,
+            RenderConfig {
+                focus: FocusSpec::Single("Ruleset"),
+                ..RenderConfig::for_eval(None)
+            },
+        );
+        let full_prompt_stats = super::grammar_frontmatter_stats_from_prompt(&full_prompt);
+        let single_stats = super::grammar_frontmatter_stats_from_prompt(&single_prompt);
+        assert!(
+            single_stats.contract_comment_bytes <= full_prompt_stats.contract_comment_bytes,
+            "single-entity slice contract should not exceed full-schema contract"
+        );
+        assert!(
+            single_stats.contract_comment_bytes < full.len(),
+            "slice-adaptive contract should be smaller than canonical MCP frontmatter when optional sections are omitted"
+        );
+    }
+
+    #[test]
+    fn grammar_revision_hex() {
+        let rev = super::plasm_grammar_frontmatter_revision_hex();
+        assert_eq!(rev.len(), 64);
+        eprintln!("plasm grammar revision: {rev}");
+    }
+
+    /// Reports contract/table ratio for matrix fixture and one real catalog (stderr only on failure).
+    #[test]
+    fn grammar_frontmatter_stats_matrix_and_catalog() {
+        let matrix_dir = fixtures_schemas_dir("plasm_prompt_matrix");
+        if !matrix_dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(&matrix_dir).unwrap();
+        let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+        let st = super::grammar_frontmatter_stats_from_prompt(&prompt);
+        assert!(st.contract_comment_bytes > 0);
+        assert!(st.table_bytes > 0);
+        assert!(
+            st.contract_comment_bytes + st.table_bytes <= st.total_prompt_bytes,
+            "contract + table should not exceed prompt size"
+        );
+        eprintln!(
+            "grammar_frontmatter_stats plasm_prompt_matrix: {}",
+            st.summary_line_body()
+        );
+
+        for catalog in ["linear", "github"] {
+            let dir = apis_dir(catalog);
+            if !dir.is_dir() {
+                continue;
+            }
+            let cgs = load_schema_dir(&dir).unwrap();
+            let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+            let st = super::grammar_frontmatter_stats_from_prompt(&prompt);
+            assert!(st.contract_comment_bytes > 0);
+            assert!(st.table_bytes > 0);
+            eprintln!(
+                "grammar_frontmatter_stats apis/{catalog}: {}",
+                st.summary_line_body()
+            );
+            return;
+        }
     }
 
     /// Search teaching rows must not invite copy-paste of `e#~$` (grammar teaches `e#~"text"`).

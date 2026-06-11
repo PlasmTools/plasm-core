@@ -7,7 +7,6 @@ pub(crate) struct PromptContractSpec {
     include_search_line: bool,
     include_rich_string_guidance: bool,
     include_scoped_search_worked_example: bool,
-    include_search_pitfalls: bool,
     include_search_only_entity_pitfall: bool,
     include_federation_pitfall: bool,
 }
@@ -24,7 +23,6 @@ pub fn render_plasm_mcp_language_frontmatter() -> String {
         include_search_line: true,
         include_rich_string_guidance: true,
         include_scoped_search_worked_example: false,
-        include_search_pitfalls: true,
         include_search_only_entity_pitfall: true,
         include_federation_pitfall: true,
     })
@@ -128,7 +126,6 @@ where
         include_scoped_search_worked_example: cgs_slice_has_repository_issue_scoped_search(
             full_entities,
         ),
-        include_search_pitfalls: include_search_line,
         include_search_only_entity_pitfall: !cgs_slice_all_entities_have_query(
             resolve,
             full_entities,
@@ -147,6 +144,18 @@ pub(crate) fn symbolic_entity_form(symbolic: bool) -> &'static str {
 
 pub(crate) fn render_prompt_contract(spec: PromptContractSpec) -> String {
     render_prompt_contract_dense(spec)
+}
+
+#[cfg(test)]
+pub(crate) fn prompt_contract_spec_minimal_for_test() -> PromptContractSpec {
+    PromptContractSpec {
+        symbolic: true,
+        include_search_line: false,
+        include_rich_string_guidance: false,
+        include_scoped_search_worked_example: false,
+        include_search_only_entity_pitfall: false,
+        include_federation_pitfall: false,
+    }
 }
 
 pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
@@ -252,9 +261,7 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         "- Projection rows ending `{projection}` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.",
         projection = projection
     );
-    s.push_str("- Relation rows end with `.r#`/`.wire`; apply them to any executable receiver row for that same entity type.\n");
-    s.push_str("- `page(sN_pgM)` uses a continuation handle returned by a prior response; copy the handle exactly and optionally add `, limit=N`.\n");
-    s.push_str("- `wait(sN_oM)` polls an in-flight async plan run; `cancel(sN_oM)` cancels it — copy handles from accept responses. Start live execute with `wait: false`; when dry verdict is **review**, pass `plan_commit_ref` (`pcN`) from plan dry-run or `force: true`.\n\n");
+    s.push_str("- Host continuations (`page`/`wait`/`cancel`/`pcN`): copy handles from prior responses (see Grammar).\n\n");
 
     s.push_str("Grammar:\n");
     let _ = writeln!(s, "plasm_program ::= plasm_expr | binding+ roots");
@@ -313,7 +320,7 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         "- Multi-line programs: one binding per line and final roots last (preferred). Single-line space-separated bindings are coerced; default return is the first binding.\n\
 - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.\n\
 - To turn rows into text, bind a template block: `report = rows[p#,…] <<TAG` newline template newline `TAG`, or `report = rows <<TAG` when columns can be inferred.\n\
-- Template blocks use Minijinja with `rows` as the input array; the bound row has a `content` field (see Common pitfalls for string parameters).\n\
+- Template blocks use Minijinja with `rows` as the input array; pass `binding.content` for string capability parameters, not the whole row.\n\
 - Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.\n\
 - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.\n",
     );
@@ -341,21 +348,14 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         "- Row contract: `{…}` / `~\"…\"{…}` inputs fetch or filter rows; only `rows:` fields from the teaching row may be used in `[fields]`, `.group_by`, `.sort`, `.dedupe`, or row `.filter`.\n\
 - Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.\n\
 - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.\n\
-        - Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.r#` or `issues.labels` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.\n\
-        - Homograph: query filter `p#` and relation `.r#` may share a wire name (e.g. `labels`) — use `.r#`/wire for fanout; `labels = issues.p#` is forgiven when the binding name matches the relation.\n\
-        - Teaching-table `Meaning` may show `relation e3 → e2`; copy executable `.r#`/wire from the left cell, not the arrow gloss.\n",
-    );
-    s.push_str(
-        "- Fill-ins: never emit `$` from teaching rows — substitute real ids and parameter values before execute.\n\
-- String slots: pass `binding.content` from bracket-render or template rows, not the whole row.\n",
+- Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.r#` or `issues.labels` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.\n\
+- Homograph / gloss: filter `p#` and relation `.r#`/wire may share a wire name — fanout via `.r#`/wire (`labels = issues.p#` forgiven when the binding name matches). Copy executable left cells, not `Meaning` arrow gloss (`relation e3 → e2`).\n\
+- Fill-ins: never emit `$` from teaching rows; substitute real ids, filter keys, and `e#~\"text\"` terms before execute.\n",
     );
     if spec.include_federation_pitfall {
         s.push_str(
             "- Federated sessions: use the `e#` from the teaching row for that catalog when the same wire entity name appears in multiple APIs.\n",
         );
-    }
-    if spec.include_search_pitfalls {
-        s.push_str("- Search: copy `e#~\"text\"` with real quoted terms — never `e#~$`.\n");
     }
     if spec.include_search_only_entity_pitfall {
         s.push_str(

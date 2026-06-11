@@ -5,6 +5,22 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.102] - 2026-06-11
+
+### Added
+
+- **Run Explorer MCP App:** `ui://plasm/run-explorer`, `GET /v1/run/ui`, live `plasm_run` / `run_workflow` artifact step rail (`apps/run-explorer-ui/`).
+- **Plan Review MCP App:** `ui://plasm/plan-review`, `GET /v1/plan/ui`, dry-run plan DAG + `plan_ux_reflection` (`apps/plan-ui/`).
+- **Workflow MCP App:** `ui://plasm/workflow`, `open_workflow` / `dry_workflow` / `run_workflow`, federated workflow manifest registry.
+- **Embedded UI bundles:** Vite build → `include_str!` assets under `plasm-agent-core/src/assets/` with compile-time dev-ref guards (`build.rs`).
+- **CI bundle gates:** `ensure-plan/run/workflow-ui-bundle.sh` + `ensure-workflow-ts-codegen.sh` in `circle-validate.sh`.
+- **E2E:** `cargo test -p plasm-e2e --test workflow_apps_e2e` (HTTP routes, MCP resources, live `_meta.ui` on truncated runs).
+
+### Fixed
+
+- **MCP inline bundle:** `$&` replacement corruption in `inline-bundle.mjs`; CSS-before-JS ordering via `buildMcpInlineHtml`.
+- **Catalog YAML:** `apis/github/domain.yaml` block-scalar typo (`description: >-.`).
+
 ## [0.1.101] - 2026-06-09
 
 ### Changed

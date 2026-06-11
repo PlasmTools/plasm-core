@@ -12,7 +12,7 @@
 //! Progress lines go to **stderr** (unbuffered) so you still see them when stdout is redirected.
 
 use plasm_core::loader::load_schema_dir;
-use plasm_core::PromptPipelineConfig;
+use plasm_core::{grammar_frontmatter_stats_from_prompt, PromptPipelineConfig};
 use std::env;
 use std::io::Write;
 
@@ -45,9 +45,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let pipeline = PromptPipelineConfig::default();
     let s = pipeline.render_prompt(&cgs, None);
     let st = pipeline.prompt_surface_stats(&cgs, None, &s);
+    let gf = grammar_frontmatter_stats_from_prompt(&s);
     eprintln!(
-        "dump_prompt: prompt built — {}; writing stdout …",
-        st.summary_line_body()
+        "dump_prompt: prompt built — {}; {}",
+        st.summary_line_body(),
+        gf.summary_line_body()
     );
     let _ = std::io::stderr().flush();
 

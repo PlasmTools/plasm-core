@@ -28,9 +28,10 @@ use plasm_core::discovery::{CgsCatalog, DiscoveryError};
 use plasm_core::error_render::{render_parse_error_with_feedback, FeedbackStyle};
 use plasm_core::{
     expr_parser::{self, ParsedExpr},
-    normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
-    teaching_tsv_table_from_wrapped_prompt, AuthScheme, CgsContext, Expr, PagingHandle,
-    PromptRenderMode, SymbolMap, Value, CGS,
+    grammar_revision_from_wire, normalize_expr_query_capabilities,
+    normalize_expr_query_capabilities_federated, plasm_grammar_frontmatter_revision_hex,
+    teaching_prompt_omit_contract_if_cached, teaching_tsv_table_from_wrapped_prompt, AuthScheme,
+    CgsContext, Expr, PagingHandle, PromptRenderMode, SymbolMap, Value, CGS,
 };
 use plasm_runtime::{
     auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
@@ -415,6 +416,7 @@ fn build_mcp_tool_meta(
             );
             let mut meta = serde_json::Map::new();
             meta.insert("plasm".into(), serde_json::Value::Object(plasm));
+            crate::mcp_app::attach_run_explorer_ui_on_tool_meta(&mut meta);
             Some(meta)
         }
         None => {
@@ -431,6 +433,7 @@ fn build_mcp_tool_meta(
             }
             let mut meta = serde_json::Map::new();
             meta.insert("plasm".into(), serde_json::Value::Object(plasm));
+            crate::mcp_app::attach_run_explorer_ui_on_tool_meta(&mut meta);
             Some(meta)
         }
     }
@@ -472,6 +475,8 @@ pub struct CreateExecuteSessionResponse {
     pub prompt: String,
     pub entry_id: String,
     pub entities: Vec<String>,
+    /// SHA-256 hex of the canonical grammar contract ([`plasm_grammar_frontmatter_revision_hex`]).
+    pub grammar_revision: String,
     /// True when this response came from [`ExecuteSessionStore::try_reuse_session`] (same `entry_id` +
     /// entity set as an existing non-expired session). MCP clients should omit redundant Plasm instructions
     /// churn when this is set.
@@ -479,6 +484,42 @@ pub struct CreateExecuteSessionResponse {
     pub reused: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub principal: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+struct ExecuteSessionGetQuery {
+    #[serde(default)]
+    grammar_revision: Option<String>,
+}
+
+fn wire_execute_session_prompt(
+    stored_prompt: &str,
+    render_mode: PromptRenderMode,
+    grammar_revision: Option<&str>,
+) -> String {
+    teaching_prompt_omit_contract_if_cached(
+        stored_prompt,
+        grammar_revision,
+        Some(render_mode.markdown_fence_info_string()),
+    )
+}
+
+fn create_execute_session_response(
+    sess: &crate::execute_session::ExecuteSession,
+    session_id: String,
+    prompt: String,
+    reused: bool,
+) -> CreateExecuteSessionResponse {
+    CreateExecuteSessionResponse {
+        prompt_hash: sess.prompt_hash.clone(),
+        session: session_id,
+        prompt,
+        entry_id: sess.entry_id.clone(),
+        entities: sess.entities.clone(),
+        grammar_revision: plasm_grammar_frontmatter_revision_hex().to_string(),
+        reused,
+        principal: sess.principal.clone(),
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1310,15 +1351,12 @@ async fn execute_session_create_response_inner(
                 "reusing execute session (same entry_id + entities + catalog hash)"
             );
             crate::metrics::record_execute_session_outcome("reuse", "");
-            return Ok(CreateExecuteSessionResponse {
-                prompt_hash: sess.prompt_hash.clone(),
-                session: session_id_str,
-                prompt: sess.prompt_text.clone(),
-                entry_id: sess.entry_id.clone(),
-                entities: sess.entities.clone(),
-                reused: true,
-                principal: sess.principal.clone(),
-            });
+            return Ok(create_execute_session_response(
+                &sess,
+                session_id_str,
+                sess.prompt_text.clone(),
+                true,
+            ));
         }
     }
 
@@ -1423,6 +1461,7 @@ async fn execute_session_create_response_inner(
         prompt,
         entry_id: body.entry_id,
         entities: names,
+        grammar_revision: plasm_grammar_frontmatter_revision_hex().to_string(),
         reused: false,
         principal: principal_stored,
     })
@@ -4219,6 +4258,8 @@ async fn get_execute_session(
         prompt_hash,
         session_id,
     }: ExecutePath,
+    Query(query): Query<ExecuteSessionGetQuery>,
+    headers: HeaderMap,
 ) -> Response {
     let Some(sess) = st.sessions.get(&prompt_hash, &session_id).await else {
         let _miss = crate::spans::execute_session_lookup_miss().entered();
@@ -4246,15 +4287,19 @@ async fn get_execute_session(
         );
     }
 
-    Json(CreateExecuteSessionResponse {
-        prompt_hash: sess.prompt_hash.clone(),
-        session: session_id.to_string(),
-        prompt: sess.prompt_text.clone(),
-        entry_id: sess.entry_id.clone(),
-        entities: sess.entities.clone(),
-        reused: false,
-        principal: sess.principal.clone(),
-    })
+    let grammar_revision = grammar_revision_from_wire(
+        query.grammar_revision.as_deref(),
+        headers
+            .get("x-plasm-grammar-revision")
+            .and_then(|v| v.to_str().ok()),
+    );
+    let render_mode = st.engine.prompt_pipeline().render_mode;
+    Json(create_execute_session_response(
+        &sess,
+        session_id.to_string(),
+        wire_execute_session_prompt(&sess.prompt_text, render_mode, grammar_revision),
+        false,
+    ))
     .into_response()
 }
 
@@ -4623,9 +4668,18 @@ async fn post_run_execute_session(
             crate::operation::plan_commit_meta(&commit_ref, &dry.review, compact.verdict);
         plasm_meta.insert("dry_run".into(), serde_json::json!(true));
         plasm_meta.insert("plan".into(), plan_json.clone());
+        let ux_ctx = crate::plan_ux_reflection::PlanUxBuildContext {
+            session: Some(&sess),
+            param_bindings: &[],
+        };
+        plasm_meta.insert(
+            "plan_ux_reflection".into(),
+            crate::plan_ux_reflection::plan_ux_reflection_value(&dry, &ux_ctx),
+        );
         let preview = serde_json::json!({
             "plan": true,
             "plan_dag": plan_json,
+            "plan_ux_reflection": plasm_meta.get("plan_ux_reflection").cloned(),
             "node_results": dry.node_results,
             "graph_summary": dry.graph_summary,
             "source": program,
@@ -4894,6 +4948,57 @@ mod tests {
         assert!(!out.markdown.contains("owner:"));
     }
 
+    #[test]
+    fn live_run_tool_meta_attaches_run_explorer_ui() {
+        use crate::mcp_plasm_meta::PlasmMetaIndex;
+        use crate::output::LossySummaryFieldNames;
+        use crate::run_artifacts::{
+            artifact_http_path, plasm_run_resource_uri, plasm_short_resource_uri, RunArtifactId,
+        };
+
+        let run = RunArtifactId::from_bytes([2u8; 32]);
+        let ph = "cd".repeat(32);
+        let sid = "b".repeat(32);
+        let handle = RunArtifactHandle {
+            run_id: run,
+            resource_index: 1,
+            plasm_uri: plasm_short_resource_uri(1),
+            canonical_plasm_uri: plasm_run_resource_uri(&ph, &sid, &run),
+            http_path: artifact_http_path(&ph, &sid, &run),
+            payload_len: 256,
+            request_fingerprints: vec!["cafe".into()],
+        };
+        let mut idx = PlasmMetaIndex::new();
+        let meta = build_mcp_tool_meta(
+            Some(&mut idx),
+            std::slice::from_ref(&handle),
+            &OmittedReferenceOnlyFields::default(),
+            &[LossySummaryFieldNames::default()],
+            &["WorkItem.query()".into()],
+            Some(&[1]),
+            None,
+            None,
+        )
+        .expect("tool meta");
+        assert_eq!(
+            meta.get("ui")
+                .and_then(|u| u.get("resourceUri"))
+                .and_then(|v| v.as_str()),
+            Some(crate::run_explorer_ui_mcp::RUN_EXPLORER_UI_URI)
+        );
+        assert!(
+            meta.get("plasm")
+                .and_then(|p| p.get("steps"))
+                .and_then(|s| s.as_array())
+                .is_some_and(|a| !a.is_empty())
+        );
+        assert!(
+            meta.get("plasm")
+                .and_then(|p| p.get("plan"))
+                .is_none()
+        );
+    }
+
     fn test_state_with_registry() -> PlasmHostState {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
@@ -5031,6 +5136,61 @@ mod tests {
             .unwrap();
         let res2 = app.oneshot(run).await.unwrap();
         assert_eq!(res2.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn get_execute_session_omits_contract_when_grammar_revision_matches() {
+        let st = test_state_with_registry();
+        let app = test_app_execute(st.clone());
+
+        let create = Request::builder()
+            .method("POST")
+            .uri("/execute")
+            .header("content-type", "application/json")
+            .body(Body::from(
+                serde_json::json!({ "entry_id": "overshow", "entities": ["Profile"] }).to_string(),
+            ))
+            .unwrap();
+        let res = app.clone().oneshot(create).await.unwrap();
+        assert_eq!(res.status(), StatusCode::SEE_OTHER);
+        let loc = res
+            .headers()
+            .get(LOCATION)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_owned();
+
+        let full = get_execute_session_json(&app, loc.as_str()).await;
+        assert_eq!(full.grammar_revision.len(), 64);
+        assert!(
+            full.prompt
+                .contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER),
+            "default GET should include grammar contract preamble"
+        );
+
+        let cached_uri = format!("{loc}?grammar_revision={}", full.grammar_revision);
+        let get = Request::builder()
+            .method("GET")
+            .uri(cached_uri.as_str())
+            .header("accept", "application/json")
+            .body(Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(get).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let cached: CreateExecuteSessionResponse =
+            serde_json::from_slice(&body).expect("session JSON");
+        assert_eq!(cached.prompt_hash, full.prompt_hash);
+        assert!(
+            !cached
+                .prompt
+                .contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER),
+            "cached grammar GET should omit contract preamble"
+        );
+        assert!(cached.prompt.contains("plasm_expr"));
     }
 
     #[tokio::test]
