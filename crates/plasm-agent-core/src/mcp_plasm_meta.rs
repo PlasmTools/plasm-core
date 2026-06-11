@@ -54,6 +54,22 @@ pub(crate) struct StepPlasmMetaFields {
     pub row_count: usize,
 }
 
+/// One return step for Run Explorer UI (`_meta.plasm.steps` — all returns, not truncated-only).
+#[derive(Debug, Clone)]
+pub(crate) struct RunUiStepFields {
+    pub run_step: usize,
+    pub return_label: String,
+    pub display: String,
+    pub row_count: usize,
+    pub node_id: Option<String>,
+    pub preview_entities: Option<Vec<Value>>,
+    pub artifact: Option<RunArtifactHandle>,
+    pub lossy_summary_fields: LossySummaryFieldNames,
+}
+
+/// Max inline entity rows emitted per step for MCP Run Explorer preview tables.
+pub(crate) const MCP_UI_PREVIEW_ENTITY_ROW_CAP: usize = 100;
+
 /// Per MCP transport session + execute session: intern repeated `_meta.plasm` strings and fingerprint lists.
 #[derive(Debug)]
 pub struct PlasmMetaIndex {
@@ -235,6 +251,95 @@ impl PlasmMetaIndex {
         (plasm, desc_ids)
     }
 
+    /// Build `_meta.plasm` with one `steps` entry per program return (inline preview and/or artifact).
+    pub(crate) fn build_plasm_run_ui_meta(
+        &mut self,
+        all_steps: &[RunUiStepFields],
+        omitted_from_summary: &[String],
+        paging: Option<&[PlasmPagingStepMeta]>,
+    ) -> Map<String, Value> {
+        self.index_id = self.index_id.saturating_add(1);
+        let mut delta = Map::new();
+        let mut steps = Vec::with_capacity(all_steps.len());
+
+        for spec in all_steps {
+            let mut step = Map::new();
+            step.insert("run_step".into(), json!(spec.run_step));
+            step.insert("return_label".into(), json!(spec.return_label));
+            step.insert("display".into(), json!(spec.display));
+            step.insert("row_count".into(), json!(spec.row_count));
+            if let Some(ref node_id) = spec.node_id {
+                step.insert("node_id".into(), json!(node_id));
+            }
+            if let Some(ref preview) = spec.preview_entities {
+                if !preview.is_empty() {
+                    step.insert("preview_entities".into(), json!(preview));
+                }
+            }
+            if !spec.lossy_summary_fields.is_empty() {
+                step.insert(
+                    "lossy_summary_fields".into(),
+                    json!(spec.lossy_summary_fields.as_slice()),
+                );
+            }
+            if let Some(ref h) = spec.artifact {
+                step.insert("run_id".into(), json!(h.run_id.to_wire()));
+                step.insert("artifact_uri".into(), json!(h.plasm_uri));
+                let mime_id = Self::intern_map(
+                    &mut self.mime,
+                    &mut self.next_mime,
+                    MIME_JSON,
+                    &mut delta,
+                    "mime",
+                );
+                let desc_id = Self::intern_map(
+                    &mut self.desc,
+                    &mut self.next_desc,
+                    DESC_RUN_SNAPSHOT,
+                    &mut delta,
+                    "desc",
+                );
+                let path_id = Self::intern_map(
+                    &mut self.path,
+                    &mut self.next_path,
+                    &h.http_path,
+                    &mut delta,
+                    "artifact_path",
+                );
+                let fp_id = self.intern_fp(&h.request_fingerprints, &mut delta);
+                step.insert(
+                    "dict_ref".into(),
+                    json!({
+                        "mime": mime_id,
+                        "desc": desc_id,
+                        "artifact_path": path_id,
+                        "fp": fp_id,
+                    }),
+                );
+                step.insert("expr_preview".into(), json!(spec.display));
+            }
+            steps.push(Value::Object(step));
+        }
+
+        let mut plasm = Map::new();
+        plasm.insert("index_id".into(), json!(self.index_id));
+        if !delta.is_empty() {
+            plasm.insert("index_delta".into(), Value::Object(delta));
+        }
+        if !steps.is_empty() {
+            plasm.insert("steps".into(), Value::Array(steps));
+        }
+        if !omitted_from_summary.is_empty() {
+            plasm.insert("omitted_from_summary".into(), json!(omitted_from_summary));
+        }
+        if let Some(ps) = paging {
+            if let Some(v) = plasm_paging_json_value(ps) {
+                plasm.insert("paging".into(), v);
+            }
+        }
+        plasm
+    }
+
     /// Short description for `resource_link` pointing at dictionary entry.
     pub fn resource_link_description(desc_id: u32) -> String {
         format!("Run snapshot (ref: desc#{desc_id})")
@@ -266,6 +371,36 @@ mod tests {
             payload_len: 128,
             request_fingerprints: vec!["deadbeef".into()],
         }
+    }
+
+    #[test]
+    fn build_plasm_run_ui_meta_includes_preview_entities() {
+        let mut idx = PlasmMetaIndex::new();
+        let plasm = idx.build_plasm_run_ui_meta(
+            &[RunUiStepFields {
+                run_step: 1,
+                return_label: "items".into(),
+                display: "query e1".into(),
+                row_count: 2,
+                node_id: Some("n1".into()),
+                preview_entities: Some(vec![
+                    json!({"id": "1", "title": "A"}),
+                    json!({"id": "2", "title": "B"}),
+                ]),
+                artifact: None,
+                lossy_summary_fields: LossySummaryFieldNames::default(),
+            }],
+            &[],
+            None,
+        );
+        let steps = plasm
+            .get("steps")
+            .and_then(|v| v.as_array())
+            .expect("steps");
+        assert_eq!(steps.len(), 1);
+        let preview = steps[0]["preview_entities"].as_array().expect("preview");
+        assert_eq!(preview.len(), 2);
+        assert_eq!(steps[0]["node_id"], json!("n1"));
     }
 
     #[test]

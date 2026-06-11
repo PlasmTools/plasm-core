@@ -34,10 +34,10 @@ use plasm_core::{
     CgsContext, Expr, PagingHandle, PromptRenderMode, SymbolMap, Value, CGS,
 };
 use plasm_runtime::{
-    auth_resolution_mode_from_env, validate_principal_for_mode, AuthResolutionMode, AuthResolver,
-    CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecuteSessionMaterial, ExecutionResult,
-    ExecutionSource, ExecutionStats, QueryPaginationResumeData, RuntimeError,
-    SessionMaterialization, StreamConsumeOpts,
+    auth_resolution_mode_from_env, entity_to_row_json, validate_principal_for_mode,
+    AuthResolutionMode, AuthResolver, CompileOperationFn, CompileQueryFn, ExecuteOptions,
+    ExecuteSessionMaterial, ExecutionResult, ExecutionSource, ExecutionStats,
+    QueryPaginationResumeData, RuntimeError, SessionMaterialization, StreamConsumeOpts,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -148,7 +148,8 @@ use crate::incoming_auth::{
     incoming_auth_problem, session_allows_principal, tenant_scope, IncomingPrincipal,
 };
 use crate::mcp_plasm_meta::{
-    plasm_paging_json_value, PlasmMetaIndex, PlasmPagingStepMeta, StepPlasmMetaFields,
+    plasm_paging_json_value, PlasmMetaIndex, PlasmPagingStepMeta, RunUiStepFields,
+    StepPlasmMetaFields, MCP_UI_PREVIEW_ENTITY_ROW_CAP,
 };
 use crate::mcp_run_markdown::{
     execute_expression_preview, mcp_compact_markdown_multi_line, mcp_compact_markdown_single,
@@ -296,6 +297,143 @@ fn plasm_meta_object(
         }
     }
     m
+}
+
+fn preview_entities_for_step(
+    step: &PublishedResultStep,
+    cgs: Option<&CGS>,
+) -> Vec<serde_json::Value> {
+    let cgs = step.cgs.as_deref().or(cgs);
+    step.result
+        .entities
+        .iter()
+        .take(MCP_UI_PREVIEW_ENTITY_ROW_CAP)
+        .map(|e| entity_to_row_json(e, cgs))
+        .collect()
+}
+
+fn step_result_truncated_for_ui(
+    preview_needed: bool,
+    i: usize,
+    per_step_artifact: &[Option<RunArtifactHandle>],
+    per_step_omitted: &[OmittedReferenceOnlyFields],
+    per_step_lossy: &[LossySummaryFieldNames],
+    per_step_in_band: &[InBandSummaryReport],
+) -> bool {
+    per_step_artifact[i].is_some()
+        && (preview_needed
+            || !per_step_omitted[i].is_empty()
+            || !per_step_lossy[i].is_empty()
+            || per_step_in_band[i].any_loss())
+}
+
+fn plasm_run_ui_meta_object(
+    all_steps: &[RunUiStepFields],
+    omitted_from_summary: &[String],
+    paging: Option<&[PlasmPagingStepMeta]>,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut m = serde_json::Map::new();
+    if !all_steps.is_empty() {
+        let steps: Vec<serde_json::Value> = all_steps
+            .iter()
+            .map(|spec| {
+                let mut step = serde_json::json!({
+                    "run_step": spec.run_step,
+                    "return_label": spec.return_label,
+                    "display": spec.display,
+                    "row_count": spec.row_count,
+                });
+                if let Some(ref node_id) = spec.node_id {
+                    if let Some(obj) = step.as_object_mut() {
+                        obj.insert("node_id".into(), serde_json::json!(node_id));
+                    }
+                }
+                if let Some(ref preview) = spec.preview_entities {
+                    if !preview.is_empty() {
+                        if let Some(obj) = step.as_object_mut() {
+                            obj.insert("preview_entities".into(), serde_json::json!(preview));
+                        }
+                    }
+                }
+                if !spec.lossy_summary_fields.is_empty() {
+                    if let Some(obj) = step.as_object_mut() {
+                        obj.insert(
+                            "lossy_summary_fields".into(),
+                            serde_json::json!(spec.lossy_summary_fields.as_slice()),
+                        );
+                    }
+                }
+                if let Some(ref h) = spec.artifact {
+                    if let Some(obj) = step.as_object_mut() {
+                        obj.insert("run_id".into(), serde_json::json!(h.run_id.to_wire()));
+                        obj.insert("artifact_uri".into(), serde_json::json!(h.plasm_uri));
+                        obj.insert(
+                            "canonical_artifact_uri".into(),
+                            serde_json::json!(h.canonical_plasm_uri),
+                        );
+                        obj.insert("artifact_path".into(), serde_json::json!(h.http_path));
+                        obj.insert(
+                            "request_fingerprints".into(),
+                            serde_json::json!(h.request_fingerprints),
+                        );
+                    }
+                }
+                step
+            })
+            .collect();
+        m.insert("steps".into(), serde_json::Value::Array(steps));
+    }
+    if !omitted_from_summary.is_empty() {
+        m.insert(
+            "omitted_from_summary".into(),
+            serde_json::json!(omitted_from_summary),
+        );
+    }
+    if let Some(ps) = paging {
+        if let Some(v) = plasm_paging_json_value(ps) {
+            m.insert("paging".into(), v);
+        }
+    }
+    m
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_mcp_run_tool_meta(
+    meta_index: Option<&mut PlasmMetaIndex>,
+    all_steps: &[RunUiStepFields],
+    omitted_from_summary: &OmittedReferenceOnlyFields,
+    paging: Option<&[PlasmPagingStepMeta]>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    if all_steps.is_empty() && omitted_from_summary.is_empty() && paging.is_none() {
+        return None;
+    }
+    match meta_index {
+        Some(idx) => {
+            let plasm = idx.build_plasm_run_ui_meta(
+                all_steps,
+                omitted_from_summary.as_ref(),
+                paging,
+            );
+            let mut meta = serde_json::Map::new();
+            meta.insert("plasm".into(), serde_json::Value::Object(plasm));
+            crate::mcp_app::attach_run_explorer_ui_on_tool_meta(&mut meta);
+            Some(meta)
+        }
+        None => {
+            let plasm = plasm_run_ui_meta_object(
+                all_steps,
+                omitted_from_summary.as_ref(),
+                paging,
+            );
+            if plasm.is_empty() {
+                return None;
+            }
+            let mut meta = serde_json::Map::new();
+            meta.insert("plasm".into(), serde_json::Value::Object(plasm));
+            crate::mcp_app::attach_run_explorer_ui_on_tool_meta(&mut meta);
+            Some(meta)
+        }
+    }
 }
 
 /// Maps the parsed `page(...)` handle to the key stored in [`ExecuteSession::paging_resume_by_handle`].
@@ -2451,32 +2589,46 @@ pub fn publish_plasm_result_steps(
     }
     let handles_meta: Vec<RunArtifactHandle> =
         truncated_steps.iter().map(|(_, h)| h.clone()).collect();
-    let run_step_vec: Vec<usize> = truncated_steps.iter().map(|(s, _)| *s).collect();
-    let step_meta_for_handles: Vec<StepPlasmMetaFields> = truncated_steps
-        .iter()
-        .map(|(step_no, _)| {
-            let i = *step_no - 1;
+    let truncated_refs: Vec<(usize, &RunArtifactHandle)> =
+        truncated_steps.iter().map(|(s, h)| (*s, h)).collect();
+
+    let all_ui_steps: Vec<RunUiStepFields> = (0..total)
+        .map(|i| {
             let step = &steps[i];
-            StepPlasmMetaFields {
-                return_label: return_label_for_step(step.name.as_deref(), step.node_id.as_deref()),
+            let truncated = step_result_truncated_for_ui(
+                preview_needed,
+                i,
+                &per_step_artifact,
+                &per_step_omitted,
+                &per_step_lossy,
+                &per_step_in_band,
+            );
+            RunUiStepFields {
+                run_step: i + 1,
+                return_label: return_label_for_step(
+                    step.name.as_deref(),
+                    step.node_id.as_deref(),
+                ),
                 display: step.display.clone(),
                 row_count: step.result.count,
+                node_id: step.node_id.clone(),
+                preview_entities: if truncated {
+                    None
+                } else {
+                    Some(preview_entities_for_step(step, cgs))
+                },
+                artifact: if truncated {
+                    per_step_artifact[i].clone()
+                } else {
+                    None
+                },
+                lossy_summary_fields: merge_snapshot_column_hints(
+                    &per_step_lossy[i],
+                    &per_step_in_band[i],
+                ),
             }
         })
         .collect();
-    let expr_previews_filtered: Vec<String> = step_meta_for_handles
-        .iter()
-        .map(|m| m.display.clone())
-        .collect();
-    let lossy_meta_truncated: Vec<LossySummaryFieldNames> = truncated_steps
-        .iter()
-        .map(|(step_no, _)| {
-            let i = *step_no - 1;
-            merge_snapshot_column_hints(&per_step_lossy[i], &per_step_in_band[i])
-        })
-        .collect();
-    let truncated_refs: Vec<(usize, &RunArtifactHandle)> =
-        truncated_steps.iter().map(|(s, h)| (*s, h)).collect();
 
     let mut lossy_union_set: BTreeSet<String> = BTreeSet::new();
     if preview_needed {
@@ -2526,18 +2678,11 @@ pub fn publish_plasm_result_steps(
         &omitted_for_steps,
     );
     let paging_for_meta = (!paging.is_empty()).then_some(paging.as_slice());
-    let run_step_numbers_for_meta = (!run_step_vec.is_empty()).then_some(run_step_vec.as_slice());
-    let step_meta_for_meta =
-        (!step_meta_for_handles.is_empty()).then_some(step_meta_for_handles.as_slice());
-    let tool_meta = build_mcp_tool_meta(
+    let tool_meta = build_mcp_run_tool_meta(
         meta_index,
-        &handles_meta,
+        &all_ui_steps,
         &omitted_for_steps,
-        lossy_meta_truncated.as_slice(),
-        &expr_previews_filtered,
-        run_step_numbers_for_meta,
         paging_for_meta,
-        step_meta_for_meta,
     );
     ExecuteRunToolOutput {
         markdown,

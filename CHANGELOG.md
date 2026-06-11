@@ -5,6 +5,20 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.103] - 2026-06-11
+
+### Added
+
+- **MCP UI live fix:** informational read-only Plan Review + Run Explorer surfaces driven by host `toolinput` / `toolresult` (no operator form in iframe).
+- **Run Explorer node-result tables:** `_meta.plasm.steps` emits every return node with `preview_entities` (cap 100) or artifact handles; tabular UI per step.
+- **Shared MCP tokens:** `apps/mcp-ui-tokens.css` (OKLCH neutrals, violet accent).
+- **Appliance shell reference:** forwards `plasm` / `plasm_run` tool lifecycle + `notifications/plasm/op` via AppBridge.
+
+### Fixed
+
+- **Inline MCP bundle corruption:** function replacer in `inline-bundle.mjs` (no `$&` expansion); CI sanity guards for nested `<!DOCTYPE html>`.
+- **Run Explorer event wiring:** `addEventListener("toolresult")` instead of deprecated `.on()`.
+
 ## [0.1.102] - 2026-06-11
 
 ### Added
