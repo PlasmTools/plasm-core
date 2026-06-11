@@ -151,6 +151,7 @@ impl PlasmMetaIndex {
     /// When `lossy_per_step` is `Some`, it must be the same length as `handles`; each entry lists
     /// field names summarized with a lossy cap for that step (same shape as non-compact `plasm` meta).
     #[allow(clippy::too_many_arguments)]
+    #[allow(dead_code)] // legacy compact steps meta; unit tests in this module
     pub(crate) fn build_plasm_meta(
         &mut self,
         handles: &[RunArtifactHandle],

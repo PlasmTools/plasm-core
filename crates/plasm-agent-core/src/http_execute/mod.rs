@@ -409,22 +409,15 @@ fn build_mcp_run_tool_meta(
     }
     match meta_index {
         Some(idx) => {
-            let plasm = idx.build_plasm_run_ui_meta(
-                all_steps,
-                omitted_from_summary.as_ref(),
-                paging,
-            );
+            let plasm =
+                idx.build_plasm_run_ui_meta(all_steps, omitted_from_summary.as_ref(), paging);
             let mut meta = serde_json::Map::new();
             meta.insert("plasm".into(), serde_json::Value::Object(plasm));
             crate::mcp_app::attach_run_explorer_ui_on_tool_meta(&mut meta);
             Some(meta)
         }
         None => {
-            let plasm = plasm_run_ui_meta_object(
-                all_steps,
-                omitted_from_summary.as_ref(),
-                paging,
-            );
+            let plasm = plasm_run_ui_meta_object(all_steps, omitted_from_summary.as_ref(), paging);
             if plasm.is_empty() {
                 return None;
             }
@@ -519,62 +512,6 @@ fn tool_meta_from_handles(
     let mut meta = serde_json::Map::new();
     meta.insert("plasm".into(), serde_json::Value::Object(plasm));
     Some(meta)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn build_mcp_tool_meta(
-    meta_index: Option<&mut PlasmMetaIndex>,
-    handles: &[RunArtifactHandle],
-    omitted_from_summary: &OmittedReferenceOnlyFields,
-    lossy_per_handle: &[LossySummaryFieldNames],
-    expr_previews: &[String],
-    run_step_numbers: Option<&[usize]>,
-    paging: Option<&[PlasmPagingStepMeta]>,
-    step_meta: Option<&[StepPlasmMetaFields]>,
-) -> Option<serde_json::Map<String, serde_json::Value>> {
-    debug_assert!(
-        handles.is_empty() || lossy_per_handle.len() == handles.len(),
-        "lossy_per_handle must align with handles"
-    );
-    let lossy_arg = if handles.is_empty() {
-        None
-    } else {
-        Some(lossy_per_handle)
-    };
-    match meta_index {
-        Some(idx) => {
-            let (plasm, _desc_ids) = idx.build_plasm_meta(
-                handles,
-                omitted_from_summary.as_ref(),
-                lossy_arg,
-                expr_previews,
-                run_step_numbers,
-                paging,
-                step_meta,
-            );
-            let mut meta = serde_json::Map::new();
-            meta.insert("plasm".into(), serde_json::Value::Object(plasm));
-            crate::mcp_app::attach_run_explorer_ui_on_tool_meta(&mut meta);
-            Some(meta)
-        }
-        None => {
-            let plasm = plasm_meta_object(
-                handles,
-                omitted_from_summary.as_ref(),
-                lossy_arg,
-                run_step_numbers,
-                paging,
-                step_meta,
-            );
-            if plasm.is_empty() {
-                return None;
-            }
-            let mut meta = serde_json::Map::new();
-            meta.insert("plasm".into(), serde_json::Value::Object(plasm));
-            crate::mcp_app::attach_run_explorer_ui_on_tool_meta(&mut meta);
-            Some(meta)
-        }
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -2605,10 +2542,7 @@ pub fn publish_plasm_result_steps(
             );
             RunUiStepFields {
                 run_step: i + 1,
-                return_label: return_label_for_step(
-                    step.name.as_deref(),
-                    step.node_id.as_deref(),
-                ),
+                return_label: return_label_for_step(step.name.as_deref(), step.node_id.as_deref()),
                 display: step.display.clone(),
                 row_count: step.result.count,
                 node_id: step.node_id.clone(),
@@ -5095,7 +5029,7 @@ mod tests {
 
     #[test]
     fn live_run_tool_meta_attaches_run_explorer_ui() {
-        use crate::mcp_plasm_meta::PlasmMetaIndex;
+        use crate::mcp_plasm_meta::{PlasmMetaIndex, RunUiStepFields};
         use crate::output::LossySummaryFieldNames;
         use crate::run_artifacts::{
             artifact_http_path, plasm_run_resource_uri, plasm_short_resource_uri, RunArtifactId,
@@ -5114,14 +5048,19 @@ mod tests {
             request_fingerprints: vec!["cafe".into()],
         };
         let mut idx = PlasmMetaIndex::new();
-        let meta = build_mcp_tool_meta(
+        let meta = build_mcp_run_tool_meta(
             Some(&mut idx),
-            std::slice::from_ref(&handle),
+            &[RunUiStepFields {
+                run_step: 1,
+                return_label: "items".into(),
+                display: "WorkItem.query()".into(),
+                row_count: 5,
+                node_id: None,
+                preview_entities: None,
+                artifact: Some(handle),
+                lossy_summary_fields: LossySummaryFieldNames::default(),
+            }],
             &OmittedReferenceOnlyFields::default(),
-            &[LossySummaryFieldNames::default()],
-            &["WorkItem.query()".into()],
-            Some(&[1]),
-            None,
             None,
         )
         .expect("tool meta");
