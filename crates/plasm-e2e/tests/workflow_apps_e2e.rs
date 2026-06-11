@@ -433,6 +433,42 @@ async fn workflow_apps_e2e_async() {
         "plasm_run should succeed: {run_mcp}"
     );
 
+    let small_steps = run_mcp
+        .pointer("/_meta/plasm/steps")
+        .and_then(|v| v.as_array())
+        .expect("small plasm_run must emit _meta.plasm.steps");
+    assert!(
+        !small_steps.is_empty(),
+        "small plasm_run steps must be non-empty: {run_mcp}"
+    );
+    assert_eq!(
+        run_mcp
+            .pointer("/_meta/ui/resourceUri")
+            .and_then(|v| v.as_str()),
+        Some("ui://plasm/run-explorer"),
+        "small plasm_run must attach run-explorer ui meta: {run_mcp}"
+    );
+    let first_small = &small_steps[0];
+    assert!(
+        first_small.get("return_label").and_then(|v| v.as_str()).is_some(),
+        "step must include return_label: {first_small}"
+    );
+    assert!(
+        first_small.get("display").and_then(|v| v.as_str()).is_some(),
+        "step must include display: {first_small}"
+    );
+    assert!(
+        first_small.get("row_count").and_then(|v| v.as_u64()).is_some(),
+        "step must include row_count: {first_small}"
+    );
+    assert!(
+        first_small
+            .get("preview_entities")
+            .and_then(|v| v.as_array())
+            .is_some_and(|a| !a.is_empty()),
+        "bounded small plasm_run must inline preview_entities: {first_small}"
+    );
+
     let run_large_mcp = mcp_tool_meta(
         &client,
         &base,
@@ -466,6 +502,15 @@ async fn workflow_apps_e2e_async() {
             .and_then(|v| v.as_str()),
         Some("ui://plasm/run-explorer"),
         "live plasm_run with artifact steps must attach run-explorer ui meta: {run_large_mcp}"
+    );
+    let large_steps = run_steps.expect("run_steps");
+    assert!(
+        large_steps.iter().any(|step| {
+            step.get("dict_ref").is_some()
+                || step.get("artifact_uri").is_some()
+                || step.get("run_id").is_some()
+        }),
+        "truncated multi-return plasm_run steps must reference artifacts: {run_large_mcp}"
     );
 
     let tools_list = client

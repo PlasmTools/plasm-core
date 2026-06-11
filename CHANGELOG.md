@@ -5,6 +5,19 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.104] - 2026-06-11
+
+### Added
+
+- **MCP UI testing pyramid:** golden `CallToolResult` fixtures, plan/run host lifecycle Vitest suites, AppBridge bridge tests, `scripts/smoke/mcp-ui-live.sh` post-release gate.
+- **CI gates:** `ensure-plan-ui-bundle.sh` runs `plan-ui` vitest + `mcp-appliance-shell` bridge tests before asset drift check.
+
+### Fixed
+
+- **Plan Review stuck loading:** defer canvas spinner until confirmed plan meta on `toolresult`; normalize via `normalizePlasmMeta` (incl. `plan_dag`); error surfaces on incomplete meta.
+- **Run Explorer cancel/error:** `toolcancelled` and `isError` toolresult clear skeleton with user-visible copy.
+- **E2E contract:** bounded `plasm_run` asserts `preview_entities`; truncated runs assert artifact/`dict_ref` handles.
+
 ## [0.1.103] - 2026-06-11
 
 ### Added
