@@ -28,4 +28,3 @@ pub fn run_explorer_ui_tool_meta() -> serde_json::Map<String, serde_json::Value>
     .cloned()
     .expect("run explorer ui meta object")
 }
-

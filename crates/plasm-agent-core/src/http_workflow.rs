@@ -2,8 +2,8 @@
 
 use axum::extract::{Extension, Path};
 use axum::response::{IntoResponse, Response};
-use axum::{Json, Router};
 use axum::routing::{get, post};
+use axum::{Json, Router};
 use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use http_problem::Problem;
 
@@ -21,8 +21,14 @@ pub fn workflow_routes() -> Router {
     Router::new()
         .route("/v1/workflows", get(list_workflows))
         .merge(crate::mcp_app::mount_bundle(&crate::mcp_app::WORKFLOW))
-        .route("/v1/workflows/{id}/view-model", get(get_workflow_view_model))
-        .route("/v1/workflows/{id}/instantiate", post(post_workflow_instantiate))
+        .route(
+            "/v1/workflows/{id}/view-model",
+            get(get_workflow_view_model),
+        )
+        .route(
+            "/v1/workflows/{id}/instantiate",
+            post(post_workflow_instantiate),
+        )
 }
 
 async fn list_workflows(Extension(st): Extension<PlasmHostState>) -> Response {
@@ -111,8 +117,8 @@ async fn post_workflow_instantiate(
 
 #[cfg(test)]
 mod tests {
-    use crate::workflow_view_model::build_workflow_view_model;
     use crate::workflow_registry::demo_workflow_manifests;
+    use crate::workflow_view_model::build_workflow_view_model;
 
     #[test]
     fn demo_manifests_parse() {

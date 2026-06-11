@@ -189,7 +189,9 @@ async fn workflow_apps_e2e_async() {
         .expect("client");
 
     let vm = client
-        .get(format!("{base}/v1/workflows/workflow_matrix_parallel/view-model"))
+        .get(format!(
+            "{base}/v1/workflows/workflow_matrix_parallel/view-model"
+        ))
         .send()
         .await
         .expect("view-model");
@@ -200,7 +202,9 @@ async fn workflow_apps_e2e_async() {
     assert_eq!(vm_body["ready"], true);
 
     let inst = client
-        .post(format!("{base}/v1/workflows/workflow_matrix_parallel/instantiate"))
+        .post(format!(
+            "{base}/v1/workflows/workflow_matrix_parallel/instantiate"
+        ))
         .json(&json!({ "parameters": { "limit": 3 } }))
         .send()
         .await
@@ -530,7 +534,8 @@ async fn workflow_apps_e2e_async() {
         &run_resource_text[..run_resource_text.len().min(500)]
     );
     assert!(
-        run_resource_text.contains("run-step-rail") || run_resource_text.contains("Plasm Run Explorer"),
+        run_resource_text.contains("run-step-rail")
+            || run_resource_text.contains("Plasm Run Explorer"),
         "run explorer resource HTML missing shell markers: {}",
         &run_resource_text[..run_resource_text.len().min(500)]
     );

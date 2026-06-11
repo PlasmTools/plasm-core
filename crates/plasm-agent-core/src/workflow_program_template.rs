@@ -157,8 +157,9 @@ mod tests {
 
     #[test]
     fn parse_param_and_sym_holes() {
-        let t = parse_program_template("items = {{sym:catalog_a.WorkItem}}\nfilter = {{param:query}}")
-            .expect("parse");
+        let t =
+            parse_program_template("items = {{sym:catalog_a.WorkItem}}\nfilter = {{param:query}}")
+                .expect("parse");
         assert_eq!(t.segments.len(), 4);
     }
 

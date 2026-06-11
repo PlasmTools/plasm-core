@@ -62,7 +62,9 @@ pub struct WorkflowManifest {
 }
 
 impl WorkflowManifest {
-    pub fn parsed_template(&self) -> Result<WorkflowProgramTemplate, crate::workflow_program_template::TemplateParseError> {
+    pub fn parsed_template(
+        &self,
+    ) -> Result<WorkflowProgramTemplate, crate::workflow_program_template::TemplateParseError> {
         parse_program_template(&self.program_template)
     }
 }

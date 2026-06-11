@@ -201,11 +201,11 @@ async fn ensure_cli_policy_store(
         }
         return Ok(None);
     }
-    let guard = EmbeddedPostgresGuard::try_start_from_env()
-        .await
-        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+    let guard = EmbeddedPostgresGuard::try_start_from_env().await.map_err(
+        |e| -> Box<dyn std::error::Error + Send + Sync> {
             Box::new(std::io::Error::other(e.to_string()))
-        })?;
+        },
+    )?;
     if let Err(e) = ensure_local_auth_storage_encryption_key() {
         return Err(Box::new(std::io::Error::other(e)));
     }

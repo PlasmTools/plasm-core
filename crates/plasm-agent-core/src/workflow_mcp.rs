@@ -3,12 +3,12 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use rust_mcp_sdk::McpServer;
 use rust_mcp_sdk::schema::schema_utils::CallToolError;
 use rust_mcp_sdk::schema::{
     CallToolResult, TextContent, Tool, ToolAnnotations, ToolExecution, ToolExecutionTaskSupport,
     ToolInputSchema,
 };
+use rust_mcp_sdk::McpServer;
 use serde_json::json;
 use tracing::Instrument;
 
@@ -16,7 +16,9 @@ use crate::http_execute::{
     apply_capability_seeds, normalize_capability_seeds, CapabilitySeed, RankedCapabilitiesArg,
 };
 use crate::incoming_auth::tenant_scope;
-use crate::mcp_server::{parse_logical_session_ref_arg, parse_optional_principal, PlasmExecBinding, PlasmMcpHandler};
+use crate::mcp_server::{
+    parse_logical_session_ref_arg, parse_optional_principal, PlasmExecBinding, PlasmMcpHandler,
+};
 use crate::session_identity::ClientSessionKey;
 use crate::workflow_manifest::WorkflowManifest;
 use crate::workflow_readiness::assess_workflow_readiness;
@@ -47,7 +49,9 @@ pub fn workflow_mcp_tools() -> Vec<Tool> {
     let mut open_props = BTreeMap::new();
     open_props.insert(
         "id".into(),
-        crate::mcp_server::json_schema_non_empty_string_type("Workflow manifest id (e.g. `dossier_linear`)."),
+        crate::mcp_server::json_schema_non_empty_string_type(
+            "Workflow manifest id (e.g. `dossier_linear`).",
+        ),
     );
     open_props.insert(
         "intent".into(),
@@ -78,7 +82,9 @@ pub fn workflow_mcp_tools() -> Vec<Tool> {
     let mut run_props = BTreeMap::new();
     run_props.insert(
         "logical_session_ref".into(),
-        crate::mcp_server::json_schema_string_type("Same slot as `open_workflow` / `dry_workflow`."),
+        crate::mcp_server::json_schema_string_type(
+            "Same slot as `open_workflow` / `dry_workflow`.",
+        ),
     );
     run_props.insert(
         "program".into(),
@@ -201,7 +207,9 @@ impl PlasmMcpHandler {
                 CallToolError::invalid_arguments(tname, Some("missing or empty `intent`".into()))
             })?;
         let Some(manifest) = self.plasm.workflows().get(id) else {
-            return Err(CallToolError::from_message(format!("unknown workflow `{id}`")));
+            return Err(CallToolError::from_message(format!(
+                "unknown workflow `{id}`"
+            )));
         };
         let tcfg = self.tenant_mcp_cfg(runtime).await?;
         let catalog = self.plasm.catalog.snapshot();
@@ -326,7 +334,9 @@ impl PlasmMcpHandler {
             .resolve_logical_session_ref_to_uuid(tname, key, &session_ref)
             .await?;
         let Some(manifest) = self.plasm.workflows().get(id) else {
-            return Err(CallToolError::from_message(format!("unknown workflow `{id}`")));
+            return Err(CallToolError::from_message(format!(
+                "unknown workflow `{id}`"
+            )));
         };
         let template = manifest
             .parsed_template()

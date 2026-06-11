@@ -78,7 +78,9 @@ pub fn bundle_for_uri(uri: &str) -> Option<&'static McpAppBundle> {
     BUNDLES.iter().copied().find(|b| b.uri == uri)
 }
 
-pub fn read_resource_text(uri: &str) -> Option<(TextResourceContents, Map<String, serde_json::Value>)> {
+pub fn read_resource_text(
+    uri: &str,
+) -> Option<(TextResourceContents, Map<String, serde_json::Value>)> {
     let bundle = bundle_for_uri(uri)?;
     Some((
         TextResourceContents {
@@ -168,10 +170,7 @@ fn mount_bundle_routes(router: Router, bundle: &'static McpAppBundle) -> Router 
 
 async fn serve_html(body: &'static str, content_type: &'static str) -> Response {
     (
-        [
-            (CONTENT_TYPE, content_type),
-            (CACHE_CONTROL, "no-store"),
-        ],
+        [(CONTENT_TYPE, content_type), (CACHE_CONTROL, "no-store")],
         body,
     )
         .into_response()
@@ -233,6 +232,9 @@ mod tests {
         );
         meta.remove("ui");
         attach_run_explorer_ui_on_tool_meta(&mut meta);
-        assert!(meta.get("ui").is_none(), "plan present — run-explorer must not attach");
+        assert!(
+            meta.get("ui").is_none(),
+            "plan present — run-explorer must not attach"
+        );
     }
 }

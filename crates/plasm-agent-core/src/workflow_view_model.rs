@@ -48,16 +48,17 @@ pub fn build_workflow_view_model(manifest: &WorkflowManifest) -> WorkflowViewMod
 
 pub fn build_workflow_view_model_with_readiness(
     manifest: &WorkflowManifest,
-    readiness: Option<(&InMemoryCgsRegistry, Option<&crate::mcp_runtime_config::McpRuntimeConfig>)>,
+    readiness: Option<(
+        &InMemoryCgsRegistry,
+        Option<&crate::mcp_runtime_config::McpRuntimeConfig>,
+    )>,
 ) -> WorkflowViewModel {
     let fields = manifest
         .parameters
         .iter()
         .map(parameter_to_field_view)
         .collect();
-    let assessed = readiness.map(|(reg, tenant)| {
-        assess_workflow_readiness(manifest, reg, tenant)
-    });
+    let assessed = readiness.map(|(reg, tenant)| assess_workflow_readiness(manifest, reg, tenant));
     let (ready, blocking_errors) = assessed
         .as_ref()
         .map(|r| (r.ready, r.blocking_errors.clone()))
@@ -173,13 +174,8 @@ pub fn default_sym_exposure(manifest: &WorkflowManifest) -> BTreeMap<(String, St
         .collect()
 }
 
-pub fn sym_exposure_refs<'a>(
-    owned: &'a BTreeMap<(String, String), String>,
-) -> SymExposureMap<'a> {
-    owned
-        .iter()
-        .map(|(k, v)| (k.clone(), v.as_str()))
-        .collect()
+pub fn sym_exposure_refs<'a>(owned: &'a BTreeMap<(String, String), String>) -> SymExposureMap<'a> {
+    owned.iter().map(|(k, v)| (k.clone(), v.as_str())).collect()
 }
 
 #[cfg(test)]

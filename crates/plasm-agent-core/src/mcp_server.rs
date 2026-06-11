@@ -940,7 +940,9 @@ impl PlasmMcpHandler {
     }
 }
 
-pub(crate) fn json_schema_bool_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
+pub(crate) fn json_schema_bool_type(
+    description: &str,
+) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
     m.insert("type".into(), serde_json::json!("boolean"));
     m.insert(
@@ -950,7 +952,9 @@ pub(crate) fn json_schema_bool_type(description: &str) -> serde_json::Map<String
     m
 }
 
-pub(crate) fn json_schema_string_type(description: &str) -> serde_json::Map<String, serde_json::Value> {
+pub(crate) fn json_schema_string_type(
+    description: &str,
+) -> serde_json::Map<String, serde_json::Value> {
     let mut m = serde_json::Map::new();
     m.insert("type".into(), serde_json::json!("string"));
     m.insert(
@@ -2050,7 +2054,10 @@ impl PlasmMcpHandler {
             "plasm".into(),
             serde_json::json!({ "entry_ids": entry_ids }),
         );
-        Ok(CallToolResult::text_content(vec![TextContent::new(text, None, None)]).with_meta(Some(meta)))
+        Ok(
+            CallToolResult::text_content(vec![TextContent::new(text, None, None)])
+                .with_meta(Some(meta)),
+        )
     }
 }
 
@@ -2169,7 +2176,9 @@ impl ServerHandler for PlasmMcpHandler {
         let uri = params.uri.trim();
         if let Some(bundle) = crate::mcp_app::bundle_for_uri(uri) {
             let Some((content, result_meta)) = crate::mcp_app::read_resource_text(uri) else {
-                return Err(RpcError::invalid_params().with_message(format!("unknown ui resource: {uri}")));
+                return Err(
+                    RpcError::invalid_params().with_message(format!("unknown ui resource: {uri}"))
+                );
             };
             crate::metrics::record_mcp_resource_read(
                 bundle.resource_metric,

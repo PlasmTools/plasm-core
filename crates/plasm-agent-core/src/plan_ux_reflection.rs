@@ -11,7 +11,7 @@ use crate::plan_dry_display::{
 use crate::plasm_plan::{
     EffectClass, PlanNodeKind, ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState,
 };
-use crate::plasm_plan_run::{DryPlasmPlanEvaluation, plasm_plan_dag_json};
+use crate::plasm_plan_run::{plasm_plan_dag_json, DryPlasmPlanEvaluation};
 
 pub const PLAN_UX_REFLECTION_SCHEMA_VERSION: u32 = 1;
 
@@ -186,10 +186,7 @@ fn infer_layout(parallel_root_surfaces_only: bool, steps: &[PlanUxStep]) -> Plan
             .filter(|s| s.ordinal <= 1 || steps.len() <= 2)
             .filter_map(|s| s.entry_id.as_deref())
             .collect();
-        let distinct: BTreeSet<_> = steps
-            .iter()
-            .filter_map(|s| s.entry_id.as_deref())
-            .collect();
+        let distinct: BTreeSet<_> = steps.iter().filter_map(|s| s.entry_id.as_deref()).collect();
         if distinct.len() >= 2 && (parallel_root_surfaces_only || root_entry_ids.len() >= 2) {
             return PlanUxLayout::ParallelColumns;
         }
@@ -199,7 +196,10 @@ fn infer_layout(parallel_root_surfaces_only: bool, steps: &[PlanUxStep]) -> Plan
     }
     let mut fanout = false;
     for step in steps {
-        if matches!(step.widget, PlanUxWidgetKind::ForEach | PlanUxWidgetKind::Derive) {
+        if matches!(
+            step.widget,
+            PlanUxWidgetKind::ForEach | PlanUxWidgetKind::Derive
+        ) {
             fanout = true;
             break;
         }
@@ -249,7 +249,10 @@ fn build_steps(
             let operation = compact_step
                 .map(|s| render_plan_dry_op(&s.op))
                 .unwrap_or_else(|| node.id().as_str().to_string());
-            let display_id = display_map.get(id.as_str()).cloned().filter(|label| label != id);
+            let display_id = display_map
+                .get(id.as_str())
+                .cloned()
+                .filter(|label| label != id);
             Some(PlanUxStep {
                 id: id.clone(),
                 ordinal: (idx + 1) as u8,
@@ -279,7 +282,9 @@ fn effect_class_wire(class: EffectClass) -> String {
     }
 }
 
-fn qualified_from_node(node: &ValidatedPlanNode) -> (Option<String>, Option<String>, Option<String>) {
+fn qualified_from_node(
+    node: &ValidatedPlanNode,
+) -> (Option<String>, Option<String>, Option<String>) {
     match node {
         ValidatedPlanNode::Surface(s) => {
             let q = s.qualified_entity.as_ref();
@@ -328,7 +333,9 @@ fn widget_for_node(
             _ => PlanUxWidgetKind::ReadSurface,
         },
         ValidatedPlanNode::RelationTraversal(_) => PlanUxWidgetKind::RelationHop,
-        ValidatedPlanNode::Compute(n) if matches!(n.compute.op, crate::plasm_plan::ComputeOp::Render { .. }) => {
+        ValidatedPlanNode::Compute(n)
+            if matches!(n.compute.op, crate::plasm_plan::ComputeOp::Render { .. }) =>
+        {
             PlanUxWidgetKind::RenderTemplate
         }
         ValidatedPlanNode::Compute(_) => PlanUxWidgetKind::Compute,

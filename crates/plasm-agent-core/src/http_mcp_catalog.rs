@@ -19,7 +19,10 @@ pub struct EnabledCatalogsResponse {
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
-    let raw = headers.get(axum::http::header::AUTHORIZATION)?.to_str().ok()?;
+    let raw = headers
+        .get(axum::http::header::AUTHORIZATION)?
+        .to_str()
+        .ok()?;
     raw.strip_prefix("Bearer ")
         .or_else(|| raw.strip_prefix("bearer "))
         .map(str::trim)
@@ -46,12 +49,7 @@ async fn get_enabled_catalogs(
     let Some(config_id) = mcp_auth.verify_api_key(token).await else {
         return Json(EnabledCatalogsResponse { entry_ids: None });
     };
-    let Some(cfg) = repo
-        .get_runtime_config(&config_id)
-        .await
-        .ok()
-        .flatten()
-    else {
+    let Some(cfg) = repo.get_runtime_config(&config_id).await.ok().flatten() else {
         return Json(EnabledCatalogsResponse { entry_ids: None });
     };
     let mut entry_ids: Vec<String> = mcp_policy::filter_registry_entries(reg.list_entries(), &cfg)

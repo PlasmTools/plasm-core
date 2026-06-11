@@ -4986,17 +4986,12 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some(crate::run_explorer_ui_mcp::RUN_EXPLORER_UI_URI)
         );
-        assert!(
-            meta.get("plasm")
-                .and_then(|p| p.get("steps"))
-                .and_then(|s| s.as_array())
-                .is_some_and(|a| !a.is_empty())
-        );
-        assert!(
-            meta.get("plasm")
-                .and_then(|p| p.get("plan"))
-                .is_none()
-        );
+        assert!(meta
+            .get("plasm")
+            .and_then(|p| p.get("steps"))
+            .and_then(|s| s.as_array())
+            .is_some_and(|a| !a.is_empty()));
+        assert!(meta.get("plasm").and_then(|p| p.get("plan")).is_none());
     }
 
     fn test_state_with_registry() -> PlasmHostState {

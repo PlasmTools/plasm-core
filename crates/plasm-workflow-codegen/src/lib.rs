@@ -1,7 +1,7 @@
 //! genco-backed TypeScript contract emission for workflow MCP Apps.
 
-use genco::prelude::*;
 use genco::lang::js;
+use genco::prelude::*;
 
 const GENERATED_HEADER: &str = "// @generated - do not edit. Regenerate: cargo run -p plasm-workflow-codegen --bin plasm-gen-workflow-ts\n\n";
 

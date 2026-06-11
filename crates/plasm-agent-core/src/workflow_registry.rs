@@ -17,11 +17,18 @@ impl WorkflowRegistry {
 
     pub fn register(&self, manifest: WorkflowManifest) {
         let id = manifest.id.clone();
-        self.inner.write().expect("workflow registry lock").insert(id, manifest);
+        self.inner
+            .write()
+            .expect("workflow registry lock")
+            .insert(id, manifest);
     }
 
     pub fn get(&self, id: &str) -> Option<WorkflowManifest> {
-        self.inner.read().expect("workflow registry lock").get(id).cloned()
+        self.inner
+            .read()
+            .expect("workflow registry lock")
+            .get(id)
+            .cloned()
     }
 
     pub fn list_ids(&self) -> Vec<String> {
