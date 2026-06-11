@@ -54,7 +54,6 @@ mod tests {
     use super::*;
     use crate::workflow_registry::workflow_matrix_manifest;
     use plasm_core::discovery::InMemoryCgsRegistry;
-    use std::sync::Arc;
 
     #[test]
     fn readiness_fails_when_registry_missing_pins() {
