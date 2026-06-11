@@ -75,7 +75,10 @@ pub fn workflow_federated_host_state(
     })
 }
 
-pub fn workflow_federated_session(cgs: Arc<plasm_core::CGS>) -> plasm_agent::execute_session::ExecuteSession {
+#[allow(dead_code)]
+pub fn workflow_federated_session(
+    cgs: Arc<plasm_core::CGS>,
+) -> plasm_agent::execute_session::ExecuteSession {
     let mut ctxs = IndexMap::new();
     ctxs.insert(
         CATALOG_A.into(),
