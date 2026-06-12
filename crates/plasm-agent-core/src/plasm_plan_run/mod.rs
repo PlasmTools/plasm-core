@@ -35,10 +35,10 @@ pub use crate::plan_dry_display::PlanDryReview;
 use crate::plasm_plan::{
     AggregateFunction, BindingName, ComputeOp, ComputeTemplate, EffectClass, FieldPath, InputAlias,
     OutputName, Plan, PlanExprTemplate, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue,
-    QualifiedEntityKey, RelationSourceCardinality, ValidatedDeriveNode, ValidatedForEachNode,
-    ValidatedPlan, ValidatedPlanDataInput, ValidatedPlanExprTemplate, ValidatedPlanNode,
-    ValidatedPlanReturn, ValidatedPlanState, ValidatedRelationTraversalNode, ValidatedSurfaceNode,
-    PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
+    QualifiedEntityKey, RelationSourceCardinality, ValidatedForEachNode, ValidatedPlan,
+    ValidatedPlanDataInput, ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanState,
+    ValidatedRelationTraversalNode, ValidatedSurfaceNode, PLAN_RENDER_MAX_OUTPUT_CHARS,
+    PLAN_RENDER_MAX_ROWS,
 };
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::{CodePlanRunArtifactRef, McpPlasmTraceSink};
@@ -56,6 +56,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 mod compute_eval;
 mod dry;
+pub mod evidence_plan;
 mod materialize;
 mod orchestrator;
 mod parse;
@@ -65,10 +66,11 @@ pub(crate) use compute_eval::*;
 pub(crate) use materialize::*;
 
 pub use dry::{
-    evaluate_validated_plasm_plan_dry, plan_dry_compact_view, plan_semantic_dag_json,
-    plasm_plan_dag_json, render_plasm_plan_dry_text, render_plasm_plan_dry_text_for_session,
+    evaluate_plasm_comp_dry, node_dependencies, plan_dry_compact_view, plan_semantic_dag_json,
+    plasm_plan_dag_json, render_node_operation, render_plasm_plan_dry_text,
+    render_plasm_plan_dry_text_for_session,
 };
-pub use orchestrator::run_validated_plasm_plan;
+pub use orchestrator::run_plasm_comp;
 pub use parse::{
     dry_run_simulation_for_session, expand_program_surface_for_session_lower,
     parse_parsed_expr_for_session, parse_plasm_line_for_session, parse_plasm_surface_line,
@@ -77,8 +79,6 @@ pub use parse::{
 };
 
 pub(crate) use dry::inferred_node_approval;
-#[cfg(test)]
-pub(crate) use dry::render_node_operation;
 pub(crate) use orchestrator::{inline_row_source, MaterializedInputRow, MaterializedNode};
 pub(crate) use parse::{
     entry_scoped_execute_session, propagate_row_identities, row_identities_from_entities,
@@ -102,8 +102,8 @@ pub struct PlasmPlanRunResult {
     /// One entry per `plan.nodes[]` with `ir`, `simulation`, and optional `id`.
     pub node_results: Vec<serde_json::Value>,
     pub graph_summary: serde_json::Value,
-    /// Canonical DAG JSON for trace/UI (`nodes`, `edges`, `returns`, …).
-    pub plan_dag: serde_json::Value,
+    /// Canonical monadic comp wire for trace/UI (`steps`, `bind`, `return`, …).
+    pub comp: serde_json::Value,
     /// Run snapshots keyed to plan nodes (live execution only).
     pub code_plan_run_artifacts: Vec<CodePlanRunArtifactRef>,
     /// Set when `run` is `true` and the engine returns Markdown (HTTP-backed run path).
@@ -119,7 +119,9 @@ pub struct PlasmPlanRunResult {
 pub struct DryPlasmPlanEvaluation {
     pub version: serde_json::Value,
     pub name: Option<String>,
-    plan: Plan<ValidatedPlanState>,
+    artifact: plasm_core::PlasmCompArtifact,
+    executable: crate::plasm_comp_lift::ExecutablePlasmComp,
+    cached_validated: std::cell::OnceCell<ValidatedPlan>,
     pub topological_order: Vec<String>,
     pub node_results: Vec<serde_json::Value>,
     /// When `true`, every plan node is an independent root surface (no cross-line dependencies);
@@ -133,7 +135,21 @@ pub struct DryPlasmPlanEvaluation {
 
 impl DryPlasmPlanEvaluation {
     pub fn validated_plan(&self) -> &Plan<ValidatedPlanState> {
-        &self.plan
+        self.validated().artifact()
+    }
+
+    pub fn validated(&self) -> &ValidatedPlan {
+        self.cached_validated.get_or_init(|| {
+            crate::plasm_step_convert::build_validated_plan_from_executable(
+                &self.artifact.comp,
+                &self.executable,
+            )
+            .expect("dry evaluation already validated executable comp")
+        })
+    }
+
+    pub(crate) fn artifact(&self) -> &plasm_core::PlasmCompArtifact {
+        &self.artifact
     }
 }
 
@@ -190,15 +206,19 @@ impl PlasmPlanApprovalPolicy {
     }
 }
 
-/// Parse, validate, and dry-run a typed `Plan` (used from unit tests; production uses [`ExecutePipeline::run_program`]).
+/// Parse, validate, and dry-run a typed plan JSON (test helper; production uses comp bundles).
 #[cfg(test)]
 pub(crate) fn evaluate_plasm_plan_dry(
     es: &ExecuteSession,
     plan: &serde_json::Value,
 ) -> Result<DryPlasmPlanEvaluation, String> {
+    use crate::plasm_comp_bundle::PlasmCompBundle;
+    use crate::plasm_comp_wire::plasm_comp_from_validated;
     use crate::plasm_plan::parse_and_validate_plan_json;
     let validated = parse_and_validate_plan_json(plan)?;
-    evaluate_validated_plasm_plan_dry(es, &validated)
+    let artifact = plasm_comp_from_validated(&validated);
+    let bundle = PlasmCompBundle::new(artifact)?;
+    evaluate_plasm_comp_dry(es, &bundle)
 }
 
 fn graph_summary_with_approval_receipts(
@@ -228,16 +248,6 @@ fn graph_summary_with_approval_receipts(
         );
     }
     graph_summary
-}
-
-fn validated_return_names(ret: &ValidatedPlanReturn) -> Vec<Option<String>> {
-    match ret {
-        ValidatedPlanReturn::Node(id) => vec![Some(id.as_str().to_string())],
-        ValidatedPlanReturn::Parallel { parallel } => parallel
-            .iter()
-            .map(|id| Some(id.as_str().to_string()))
-            .collect(),
-    }
 }
 
 #[cfg(test)]
@@ -848,11 +858,10 @@ mod tests {
             "return": { "kind": "parallel", "nodes": ["summary", "cards"] }
         });
         let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
-        let dag = plasm_plan_dag_json(&dry);
-        assert_eq!(dag["nodes"][0]["id"], "products");
-        assert_eq!(dag["nodes"][1]["dependencies"][0], "products");
-        assert_eq!(dag["edges"][0]["from"], "products");
-        assert_eq!(dag["edges"][0]["to"], "summary");
+        let comp = crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry);
+        assert!(comp.get("steps").and_then(|s| s.get("products")).is_some());
+        assert_eq!(comp["bind"]["deps"]["summary"][0], "products");
+        assert_eq!(comp["bind"]["deps"]["cards"][0], "summary");
         let text = render_plasm_plan_dry_text(
             &dry,
             Some(PlasmPlanDryRunTextMeta {

@@ -433,6 +433,8 @@ pub struct ExecuteSession {
     /// Dry-run plan acceptance tokens (`pcN`) for soft-gate live execute.
     plan_commits: Arc<StdMutex<HashMap<PlanCommitRef, crate::operation::PlanCommitRecord>>>,
     plan_commit_next: Arc<AtomicU64>,
+    /// Hash-chained evidence for intent→comp→execute (`PLASM_EVIDENCE_CHAIN=1`); lazy slot.
+    pub(crate) evidence_chain: crate::evidence_chain::EvidenceChainSlot,
     /// True while a synchronous (blocking) live plan run holds the execute session.
     sync_live_run_inflight: Arc<AtomicBool>,
     /// Per-catalog session binding maps (MCP connect / REPL `--backend`).
@@ -527,6 +529,7 @@ impl ExecuteSession {
             operation_handle_next: Arc::new(AtomicU64::new(0)),
             plan_commits: Arc::new(StdMutex::new(HashMap::new())),
             plan_commit_next: Arc::new(AtomicU64::new(0)),
+            evidence_chain: crate::evidence_chain::new_evidence_chain_slot(),
             sync_live_run_inflight: Arc::new(AtomicBool::new(false)),
             bindings_by_entry,
         }
@@ -1778,7 +1781,7 @@ mod tests {
                 version: serde_json::json!({}),
                 node_results: Vec::new(),
                 graph_summary: serde_json::json!({}),
-                plan_dag: serde_json::json!({}),
+                comp: serde_json::json!({}),
                 code_plan_run_artifacts: Vec::new(),
                 run_markdown: None,
                 run_plasm_meta: None,

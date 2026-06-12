@@ -9,7 +9,7 @@ pub use scope::{session_scope_for_node, SessionScope};
 
 use crate::execute_session::ExecuteSession;
 use crate::http_execute::RunLineError;
-use crate::plasm_plan::ValidatedPlan;
+use crate::plasm_comp_bundle::PlasmCompBundle;
 use crate::plasm_plan_run::{PlasmPlanRunHooks, PlasmPlanRunResult};
 use crate::server_state::PlasmHostState;
 use plasm_core::expr_parser::ParsedExpr;
@@ -40,16 +40,16 @@ impl ExecutePipeline {
         st: &PlasmHostState,
         prompt_hash: &str,
         session_id: &str,
-        validated: &ValidatedPlan,
+        bundle: &PlasmCompBundle,
         intent: ExecutionIntent,
         mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
     ) -> Result<PlasmPlanRunResult, String> {
-        crate::plasm_plan_run::run_validated_plasm_plan(
+        crate::plasm_plan_run::run_plasm_comp(
             es,
             st,
             prompt_hash,
             session_id,
-            validated,
+            bundle,
             intent.is_live(),
             mcp_tool_hooks,
             None,

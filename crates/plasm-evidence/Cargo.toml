@@ -1,0 +1,23 @@
+[package]
+name = "plasm-evidence"
+version.workspace = true
+edition.workspace = true
+description = "Hash-chained causal evidence bundles for Plasm execute sessions"
+
+[features]
+default = []
+signatures = ["dep:ed25519-dalek"]
+
+[dependencies]
+plasm-core = { path = "../plasm-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true, features = ["serde"] }
+jcs-canonicalize = { workspace = true }
+ed25519-dalek = { version = "2", optional = true, features = ["rand_core"] }
+
+[dev-dependencies]
+plasm-core = { path = "../plasm-core" }

@@ -11,12 +11,12 @@
 //! - Entity roots: bare query, search `~`, get `(id)`, brace predicates `{field=value}`, comparisons.
 //! - Postfix: `.limit`, `.sort(field[, dir])` including `asc`/`desc`, `.aggregate` (named + sugar),
 //!   `.group_by`, `.singleton()`, `.page_size`, bracket projection `[…]`.
-//! - Programs: bindings, node-ref continuation, parallel final roots, `compile_plasm_surface_line_to_plan`
+//! - Programs: bindings, node-ref continuation, parallel final roots, `compile_plasm_expression`
 //!   (single-line surface) vs multi-line DAG programs.
 //! - Relations: `from_parent_get`, `query_scoped`, opaque `r#` nav (not `p#`), one-cardinality `r#`,
 //!   homograph `p#` forgiven when LHS binding label matches relation wire.
 //! - Programs: flattened single-liner coercion (space-separated bindings; first binding default return);
-//!   same path via `compile_plasm_surface_line_to_plan` when DAG-shaped.
+//!   same path via `compile_plasm_expression` when DAG-shaped.
 //! - Render: bracket render `<<TAG`, and passing **`.content`** into a typed string slot (`create`).
 //! - Effects: create / update / delete / zero-arity action (domain-stripped method label), `for_each`.
 //! - teaching table: `e#` symbols where applicable.
@@ -43,14 +43,10 @@ mod language_matrix;
 
 use std::collections::BTreeSet;
 
-use plasm_agent::plasm_dag::{compile_plasm_dag_to_plan, compile_plasm_surface_line_to_plan};
-use plasm_agent::plasm_plan::{
-    parse_plan_value, validate_plan_artifact, AggregateFunction, ComputeOp, ComputeTemplate,
-    PlanValue,
-};
+use plasm_agent::plasm_compile::{compile_plasm_expression, compile_plasm_program};
+use plasm_agent::plasm_plan::{AggregateFunction, ComputeOp, ComputeTemplate, PlanValue};
 use plasm_agent::plasm_plan_run::{
-    evaluate_validated_plasm_plan_dry, run_validated_plasm_plan, DryPlasmPlanEvaluation,
-    PlasmPlanRunResult,
+    evaluate_plasm_comp_dry, run_plasm_comp, DryPlasmPlanEvaluation, PlasmPlanRunResult,
 };
 use plasm_core::{
     ChainStep, CompOp, EntityKey, Expr, GetExpr, InvokeExpr, Predicate, PromptPipelineConfig,
@@ -119,12 +115,13 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "agg_first_last",
     "dry_live_parity",
     "host_wait_cancel",
+    "monadic_comp_witness",
 ];
 
 struct MatrixRow {
     id: &'static str,
     program: &'static str,
-    /// Use [`compile_plasm_surface_line_to_plan`] for this row (single expression / comma roots).
+    /// Use [`compile_plasm_expression`] for this row (single expression / comma roots).
     surface_line: bool,
     /// Federated session: primary `linear` + secondary `pokeapi` (same matrix CGS, distinct `Arc`).
     federated: bool,
@@ -133,6 +130,29 @@ struct MatrixRow {
     min_node_results: usize,
     /// Each substring must appear in [`PlasmPlanRunResult::run_markdown`].
     expect_markdown_substrings: &'static [&'static str],
+}
+
+fn assert_comp_witness(dry: &DryPlasmPlanEvaluation) -> Result<(), String> {
+    use plasm_agent::{plasm_comp_from_validated, plasm_comp_json_from_dry};
+    let artifact = plasm_comp_from_validated(dry.validated());
+    artifact.comp.validate().map_err(|e| e.to_string())?;
+    let wire = plasm_comp_json_from_dry(dry);
+    let steps = wire
+        .get("steps")
+        .and_then(|s| s.as_object())
+        .ok_or_else(|| "comp wire missing steps object".to_string())?;
+    if steps.is_empty() {
+        return Err("comp wire steps must be non-empty".into());
+    }
+    let topo = wire
+        .get("bind")
+        .and_then(|b| b.get("topo"))
+        .and_then(|t| t.as_array())
+        .ok_or_else(|| "comp wire missing bind.topo".to_string())?;
+    if topo.is_empty() {
+        return Err("comp wire bind.topo must be non-empty".into());
+    }
+    Ok(())
 }
 
 fn surface_exprs(dry: &DryPlasmPlanEvaluation) -> Vec<Expr> {
@@ -186,29 +206,30 @@ fn json_contains_selector_field(v: &serde_json::Value, want: &str) -> bool {
     }
 }
 
-fn plan_has_relation_named(plan: &serde_json::Value, relation: &str) -> bool {
-    plan_relation_named(plan, relation).is_some()
+fn comp_has_relation_named(comp: &serde_json::Value, relation: &str) -> bool {
+    comp_relation_named(comp, relation).is_some()
 }
 
-fn plan_relation_named<'a>(
-    plan: &'a serde_json::Value,
+fn comp_relation_named<'a>(
+    comp: &'a serde_json::Value,
     relation: &str,
 ) -> Option<&'a serde_json::Value> {
-    let nodes = plan.get("nodes")?.as_array()?;
-    nodes
-        .iter()
-        .find(|n| {
-            n.get("kind").and_then(|k| k.as_str()) == Some("relation")
-                && n.pointer("/relation/relation").and_then(|x| x.as_str()) == Some(relation)
-        })
-        .and_then(|n| n.get("relation"))
+    let steps = comp.get("steps")?.as_object()?;
+    for step in steps.values() {
+        if step.get("kind").and_then(|k| k.as_str()) == Some("flat_map_relation")
+            && step.pointer("/relation/relation").and_then(|x| x.as_str()) == Some(relation)
+        {
+            return step.get("relation");
+        }
+    }
+    None
 }
 
-fn plan_ir_contains_selector(plan: &serde_json::Value, want: &str) -> bool {
-    let Some(nodes) = plan.get("nodes").and_then(|n| n.as_array()) else {
+fn comp_ir_contains_selector(comp: &serde_json::Value, want: &str) -> bool {
+    let Some(steps) = comp.get("steps").and_then(|s| s.as_object()) else {
         return false;
     };
-    nodes.iter().any(|n| {
+    steps.values().any(|n| {
         [n.get("ir"), n.get("ir_template")]
             .into_iter()
             .flatten()
@@ -244,25 +265,42 @@ fn first_query(exprs: &[Expr]) -> Result<&QueryExpr, String> {
     Err("expected a Query IR node".into())
 }
 
-fn plan_surface_page_size(plan: &serde_json::Value) -> Option<u64> {
-    let nodes = plan.get("nodes")?.as_array()?;
-    for n in nodes {
-        let kind = n.get("kind")?.as_str()?;
-        if matches!(
-            kind,
-            "query" | "search" | "get" | "create" | "update" | "delete" | "action"
-        ) {
-            return n.get("page_size")?.as_u64();
+fn comp_surface_page_size(comp: &serde_json::Value) -> Option<u64> {
+    let steps = comp.get("steps")?.as_object()?;
+    for step in steps.values() {
+        if step.get("kind").and_then(|k| k.as_str()) == Some("invoke") {
+            return step.get("page_size")?.as_u64();
         }
     }
     None
+}
+
+fn comp_steps_values(comp: &serde_json::Value) -> Vec<&serde_json::Value> {
+    comp.get("steps")
+        .and_then(|s| s.as_object())
+        .map(|m| m.values().collect())
+        .unwrap_or_default()
+}
+
+fn comp_first_invoke_qualified_entity(comp: &serde_json::Value) -> Option<&serde_json::Value> {
+    comp_steps_values(comp)
+        .into_iter()
+        .find(|s| s.get("kind").and_then(|k| k.as_str()) == Some("invoke"))
+        .and_then(|s| s.get("qualified_entity"))
+}
+
+fn comp_has_invoke_plan_kind(comp: &serde_json::Value, plan_kind: &str) -> bool {
+    comp_steps_values(comp).iter().any(|n| {
+        n.get("kind").and_then(|k| k.as_str()) == Some("invoke")
+            && n.get("plan_kind").and_then(|k| k.as_str()) == Some(plan_kind)
+    })
 }
 
 #[allow(clippy::too_many_lines)]
 fn assert_planning_ir(
     row: &MatrixRow,
     dry: &DryPlasmPlanEvaluation,
-    plan: &serde_json::Value,
+    comp: &serde_json::Value,
 ) -> Result<(), String> {
     let surfaces = surface_exprs(dry);
     let computes = compute_templates(dry);
@@ -649,7 +687,7 @@ fn assert_planning_ir(
                     "expected `.tags` relation chain IR, got surfaces={surfaces:?} rel={rel:?}",
                 ));
             }
-            let rel_plan = plan_relation_named(plan, "tags")
+            let rel_plan = comp_relation_named(comp, "tags")
                 .ok_or_else(|| "expected `.tags` relation on LangItem(i1).tags".to_string())?;
             if rel_plan
                 .pointer("/materialize/kind")
@@ -673,16 +711,11 @@ fn assert_planning_ir(
             };
         }
         "lang_render_content_into_create" => {
-            let has_create_node = plan
-                .get("nodes")
-                .and_then(|n| n.as_array())
-                .into_iter()
-                .flatten()
-                .any(|n| n.get("kind").and_then(|k| k.as_str()) == Some("create"));
+            let has_create_node = comp_has_invoke_plan_kind(comp, "create");
             if !has_create_node {
                 return Err(format!(
-                    "expected a plan `create` node (Create may be staged with `ir_template`, not dry `ir.expr`), got {:?}",
-                    plan.get("nodes")
+                    "expected a comp invoke `create` step (Create may be staged with `ir_template`, not dry `ir.expr`), got {:?}",
+                    comp.get("steps")
                 ));
             }
             if !computes
@@ -758,8 +791,8 @@ fn assert_planning_ir(
                 ));
             }
             if !surfaces.iter().any(expr_chain_selects_tags)
-                && !plan_ir_contains_selector(plan, "tags")
-                && !plan_has_relation_named(plan, "tags")
+                && !comp_ir_contains_selector(comp, "tags")
+                && !comp_has_relation_named(comp, "tags")
             {
                 return Err(format!(
                     "expected `.tags` navigation (surface IR, plan selector walk, or relation node), surfaces={surfaces:?}"
@@ -767,12 +800,12 @@ fn assert_planning_ir(
             }
         }
         "lang_bind_limit1_continuation" => {
-            if !plan_has_relation_named(plan, "tags") {
+            if !comp_has_relation_named(comp, "tags") {
                 return Err("expected relation node for `.tags` after limit(1)".to_string());
             }
         }
         "lang_relation_many_from_plural_query" => {
-            let rel = plan_relation_named(plan, "tags")
+            let rel = comp_relation_named(comp, "tags")
                 .ok_or_else(|| "expected `.tags` relation from plural query".to_string())?;
             if rel["source_cardinality"].as_str() != Some("many") {
                 return Err(format!(
@@ -795,7 +828,7 @@ fn assert_planning_ir(
             }
         }
         "lang_relation_prefer_embed_hit" => {
-            let rel = plan_relation_named(plan, "tags")
+            let rel = comp_relation_named(comp, "tags")
                 .ok_or_else(|| "expected `.tags` relation on singleton item".to_string())?;
             if rel.pointer("/materialize/kind").and_then(|k| k.as_str())
                 != Some("prefer_from_parent_get")
@@ -811,7 +844,7 @@ fn assert_planning_ir(
             }
         }
         "lang_relation_prefer_embed_miss" => {
-            let rel = plan_relation_named(plan, "tags")
+            let rel = comp_relation_named(comp, "tags")
                 .ok_or_else(|| "expected `.tags` relation from plural list".to_string())?;
             if rel.pointer("/materialize/kind").and_then(|k| k.as_str())
                 != Some("prefer_from_parent_get")
@@ -827,7 +860,7 @@ fn assert_planning_ir(
             }
         }
         "lang_bind_plural_relation_opaque_p" | "lang_relation_opaque_r_symbol" => {
-            let rel = plan_relation_named(plan, "tags")
+            let rel = comp_relation_named(comp, "tags")
                 .ok_or_else(|| "expected `.tags` relation from plural binding".to_string())?;
             if rel["source_cardinality"].as_str() != Some("many") {
                 return Err(format!(
@@ -843,19 +876,23 @@ fn assert_planning_ir(
             }
         }
         "lang_flattened_single_liner_coercion" | "lang_flattened_surface_line_compile" => {
-            if plan["return"]["node"].as_str() != Some("items") {
+            if comp.pointer("/return/step").and_then(|v| v.as_str()) != Some("items") {
                 return Err(format!(
                     "flattened single-liner should return first binding `items`, got {:?}",
-                    plan["return"]
+                    comp.get("return")
                 ));
             }
-            if plan["metadata"]["coerced_default_return"].as_str() != Some("items") {
+            if comp
+                .pointer("/metadata/coerced_default_return")
+                .and_then(|v| v.as_str())
+                != Some("items")
+            {
                 return Err(format!(
                     "expected coerced_default_return metadata, got {:?}",
-                    plan["metadata"]
+                    comp.get("metadata")
                 ));
             }
-            let rel = plan_relation_named(plan, "tags")
+            let rel = comp_relation_named(comp, "tags")
                 .ok_or_else(|| "expected `.tags` relation on flattened program".to_string())?;
             if rel["source"].as_str() != Some("items") {
                 return Err(format!(
@@ -864,7 +901,7 @@ fn assert_planning_ir(
             }
         }
         "lang_relation_one_opaque_r" => {
-            let rel = plan_relation_named(plan, "summary")
+            let rel = comp_relation_named(comp, "summary")
                 .ok_or_else(|| "expected `.summary` relation on singleton item".to_string())?;
             if rel["source_cardinality"].as_str() != Some("single") {
                 return Err(format!(
@@ -885,7 +922,7 @@ fn assert_planning_ir(
             }
         }
         "lang_homograph_lhs_coercion" => {
-            let rel = plan_relation_named(plan, "tags").ok_or_else(|| {
+            let rel = comp_relation_named(comp, "tags").ok_or_else(|| {
                 "expected `.tags` relation from homograph LHS coercion".to_string()
             })?;
             if rel["source"].as_str() != Some("items") {
@@ -900,7 +937,7 @@ fn assert_planning_ir(
             }
         }
         "lang_relation_integer_scoped_bindings" => {
-            let rel_plan = plan_relation_named(plan, "tags_by_score").ok_or_else(|| {
+            let rel_plan = comp_relation_named(comp, "tags_by_score").ok_or_else(|| {
                 "expected `.tags_by_score` relation with integer scoped bindings".to_string()
             })?;
             if rel_plan["source_cardinality"].as_str() != Some("many") {
@@ -981,14 +1018,14 @@ fn assert_planning_ir(
             }
         }
         "lang_bind_projection_then_relation" => {
-            let rel = plan_relation_named(plan, "tags")
+            let rel = comp_relation_named(comp, "tags")
                 .ok_or_else(|| "expected `.tags` relation after projection anchor".to_string())?;
             if rel["source"].as_str() != Some("trimmed") {
                 return Err(format!("expected source trimmed, got {rel:?}"));
             }
         }
         "lang_bind_relation_hop_one_one" => {
-            let detail = plan_relation_named(plan, "detail")
+            let detail = comp_relation_named(comp, "detail")
                 .ok_or_else(|| "expected second one-cardinality `.detail` hop".to_string())?;
             if detail["source_cardinality"].as_str() != Some("single") {
                 return Err(format!(
@@ -1002,7 +1039,7 @@ fn assert_planning_ir(
             }
         }
         "lang_federated_relation_target_entry" => {
-            let summary = plan_relation_named(plan, "summary")
+            let summary = comp_relation_named(comp, "summary")
                 .ok_or_else(|| "expected `.summary` relation in federated session".to_string())?;
             if summary.pointer("/target/entry_id").and_then(|v| v.as_str()) != Some("pokeapi") {
                 return Err(format!(
@@ -1031,17 +1068,13 @@ fn assert_planning_ir(
                     q.catalog_entry_id
                 ));
             }
-            let qe = plan
-                .get("nodes")
-                .and_then(|n| n.as_array())
-                .and_then(|a| a.first())
-                .and_then(|n| n.get("qualified_entity"))
-                .ok_or_else(|| "expected qualified_entity on plan node".to_string())?;
+            let qe = comp_first_invoke_qualified_entity(comp)
+                .ok_or_else(|| "expected qualified_entity on comp invoke step".to_string())?;
             if qe.get("entry_id").and_then(|v| v.as_str()) != Some("github") {
-                return Err(format!("plan qualified_entity must be github: {qe:?}"));
+                return Err(format!("comp qualified_entity must be github: {qe:?}"));
             }
             if qe.get("entity").and_then(|v| v.as_str()) != Some("LangItem") {
-                return Err(format!("plan qualified_entity entity LangItem: {qe:?}"));
+                return Err(format!("comp qualified_entity entity LangItem: {qe:?}"));
             }
         }
         "lang_federated_duplicate_entity_e2_search" => {
@@ -1064,14 +1097,10 @@ fn assert_planning_ir(
             if cap.as_str() != "langitem_search" {
                 return Err(format!("expected langitem_search, got {cap}"));
             }
-            let qe = plan
-                .get("nodes")
-                .and_then(|n| n.as_array())
-                .and_then(|a| a.first())
-                .and_then(|n| n.get("qualified_entity"))
-                .ok_or_else(|| "expected qualified_entity on plan node".to_string())?;
+            let qe = comp_first_invoke_qualified_entity(comp)
+                .ok_or_else(|| "expected qualified_entity on comp invoke step".to_string())?;
             if qe.get("entry_id").and_then(|v| v.as_str()) != Some("linear") {
-                return Err(format!("plan qualified_entity must be linear: {qe:?}"));
+                return Err(format!("comp qualified_entity must be linear: {qe:?}"));
             }
         }
         "lang_effect_create_literal" => {
@@ -1116,17 +1145,13 @@ fn assert_planning_ir(
             // CGS `update` capabilities lower to `Expr::Invoke`, which [`infer_surface_contract`]
             // classifies as [`PlanNodeKind::Action`] (not `Update`) in the plan DAG.
             let matches_fe_invoke = |nr: &serde_json::Value| {
-                nr.get("kind").and_then(|k| k.as_str()) == Some("for_each")
+                (nr.get("kind").and_then(|k| k.as_str()) == Some("for_each")
+                    || nr.get("kind").and_then(|k| k.as_str()) == Some("flat_map_effect"))
                     && nr.pointer("/effect_template/kind").and_then(|k| k.as_str())
                         == Some("action")
             };
             let dry_ok = dry.node_results.iter().any(matches_fe_invoke);
-            let plan_ok = plan
-                .get("nodes")
-                .and_then(|n| n.as_array())
-                .into_iter()
-                .flatten()
-                .any(matches_fe_invoke);
+            let plan_ok = comp_steps_values(comp).iter().any(|n| matches_fe_invoke(n));
             if !dry_ok && !plan_ok {
                 return Err(
                     "expected `for_each` with effect_template.kind action (invoke/update surface)"
@@ -1141,7 +1166,7 @@ fn assert_planning_ir(
             if q.entity != "LangItem" || q.predicate.is_some() {
                 return Err(format!("unexpected query IR: {q:?}"));
             }
-            let ps = plan_surface_page_size(plan).ok_or_else(|| {
+            let ps = comp_surface_page_size(comp).ok_or_else(|| {
                 "expected plan surface page_size field (IR omits host paging cap)".to_string()
             })?;
             if ps != 10 {
@@ -1964,8 +1989,8 @@ async fn plasm_language_matrix_live_runs_impl(base: String) {
             (&es, &st)
         };
         let program = matrix_program_for_row(row, row_es);
-        let plan_json = if row.surface_line {
-            compile_plasm_surface_line_to_plan(
+        let bundle = if row.surface_line {
+            compile_plasm_expression(
                 &PromptPipelineConfig::default(),
                 None,
                 row_es,
@@ -1973,7 +1998,7 @@ async fn plasm_language_matrix_live_runs_impl(base: String) {
                 &program,
             )
         } else {
-            compile_plasm_dag_to_plan(
+            compile_plasm_program(
                 &PromptPipelineConfig::default(),
                 None,
                 row_es,
@@ -1983,28 +2008,28 @@ async fn plasm_language_matrix_live_runs_impl(base: String) {
         }
         .unwrap_or_else(|e| panic!("row {} compile: {e}", row.id));
 
-        let plan = parse_plan_value(&plan_json)
-            .unwrap_or_else(|e| panic!("row {} parse_plan_value: {e}", row.id));
-        let validated = validate_plan_artifact(&plan)
-            .unwrap_or_else(|e| panic!("row {} validate_plan_artifact: {e}", row.id));
+        let comp_json = serde_json::to_value(&bundle.artifact().comp)
+            .unwrap_or_else(|e| panic!("row {} comp json: {e}", row.id));
 
-        let dry = evaluate_validated_plasm_plan_dry(row_es, &validated)
-            .unwrap_or_else(|e| panic!("row {} evaluate_validated_plasm_plan_dry: {e}", row.id));
-        assert_planning_ir(row, &dry, &plan_json)
+        let dry = evaluate_plasm_comp_dry(row_es, &bundle)
+            .unwrap_or_else(|e| panic!("row {} evaluate_plasm_comp_dry: {e}", row.id));
+        assert_planning_ir(row, &dry, &comp_json)
             .unwrap_or_else(|e| panic!("row {} planning IR: {e}", row.id));
+        assert_comp_witness(&dry)
+            .unwrap_or_else(|e| panic!("row {} monadic comp witness: {e}", row.id));
 
-        let live = run_validated_plasm_plan(
+        let live = run_plasm_comp(
             row_es,
             row_st,
             row_es.prompt_hash.as_str(),
             "matrix_sess",
-            &validated,
+            &bundle,
             true,
             None,
             None,
         )
         .await
-        .unwrap_or_else(|e| panic!("row {} run_validated_plasm_plan: {e}", row.id));
+        .unwrap_or_else(|e| panic!("row {} run_plasm_comp: {e}", row.id));
 
         assert_row(row, &live).unwrap_or_else(|e| panic!("row {} assertion: {e}", row.id));
         for t in row.features {
@@ -2017,6 +2042,7 @@ async fn plasm_language_matrix_live_runs_impl(base: String) {
         .map(|s| (*s).to_string())
         .collect();
     tags_seen.insert("host_wait_cancel".to_string());
+    tags_seen.insert("monadic_comp_witness".to_string());
     let missing: Vec<_> = required.difference(&tags_seen).cloned().collect();
     assert!(
         missing.is_empty(),

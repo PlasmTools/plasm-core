@@ -20,6 +20,7 @@ path = "src/lib.rs"
 
 [dependencies]
 plasm-core = { path = "../plasm-core" }
+plasm-evidence = { path = "../plasm-evidence", features = ["signatures"] }
 plasm-discovery = { path = "../plasm-discovery", default-features = false }
 plasm-compile = { path = "../plasm-compile" }
 plasm-runtime = { path = "../plasm-runtime" }

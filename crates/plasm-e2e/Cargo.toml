@@ -14,6 +14,7 @@ evm = []
 
 [dependencies]
 plasm-core = { path = "../plasm-core" }
+plasm-evidence = { path = "../plasm-evidence", features = ["signatures"] }
 plasm-compile = { path = "../plasm-compile" }
 plasm-runtime = { path = "../plasm-runtime" }
 plasm = { path = "../plasm" }

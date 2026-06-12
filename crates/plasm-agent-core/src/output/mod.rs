@@ -334,13 +334,7 @@ pub(super) fn format_summary_column_cell(
     if let Some(v) = entity.fields.get(col) {
         let wire = v.to_value();
         return format_value_for_summary_cell_impl(
-            &wire,
-            pres,
-            mime_hint,
-            omitted,
-            col,
-            report,
-            false,
+            &wire, pres, mime_hint, omitted, col, report, false,
         );
     }
     if let Some(refs) = entity.relations.get(col) {

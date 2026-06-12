@@ -11,11 +11,9 @@ mod language_matrix_views;
 
 use std::collections::BTreeSet;
 
-use plasm_agent::plasm_dag::compile_plasm_dag_to_plan;
-use plasm_agent::plasm_plan::{parse_plan_value, validate_plan_artifact};
+use plasm_agent::plasm_compile::compile_plasm_program;
 use plasm_agent::plasm_plan_run::{
-    evaluate_validated_plasm_plan_dry, run_validated_plasm_plan, DryPlasmPlanEvaluation,
-    PlasmPlanRunResult,
+    evaluate_plasm_comp_dry, run_plasm_comp, DryPlasmPlanEvaluation, PlasmPlanRunResult,
 };
 use plasm_core::{
     ChainStep, CompOp, EntityKey, Expr, GetExpr, Predicate, PromptPipelineConfig, QueryExpr,
@@ -124,12 +122,12 @@ fn expr_chain_selects_self_via_bindings(e: &Expr) -> bool {
     }
 }
 
-fn plan_has_relation_named(plan: &serde_json::Value, relation: &str) -> bool {
-    let Some(nodes) = plan.get("nodes").and_then(|n| n.as_array()) else {
+fn comp_has_relation_named(comp: &serde_json::Value, relation: &str) -> bool {
+    let Some(steps) = comp.get("steps").and_then(|s| s.as_object()) else {
         return false;
     };
-    nodes.iter().any(|n| {
-        n.get("kind").and_then(|k| k.as_str()) == Some("relation")
+    steps.values().any(|n| {
+        n.get("kind").and_then(|k| k.as_str()) == Some("flat_map_relation")
             && n.pointer("/relation/relation").and_then(|x| x.as_str()) == Some(relation)
     })
 }
@@ -137,7 +135,7 @@ fn plan_has_relation_named(plan: &serde_json::Value, relation: &str) -> bool {
 fn assert_view_planning_ir(
     row: &ViewMatrixRow,
     dry: &DryPlasmPlanEvaluation,
-    plan: &serde_json::Value,
+    comp: &serde_json::Value,
 ) -> Result<(), String> {
     let surfaces = surface_exprs(dry);
     let rel = relation_exprs(dry);
@@ -201,8 +199,8 @@ fn assert_view_planning_ir(
                     "expected `.item_snapshot` chain in IR, surfaces={surfaces:?} rel={rel:?}"
                 ));
             }
-            if !plan_has_relation_named(plan, "item_snapshot") {
-                return Err("compiled plan missing relation node item_snapshot".into());
+            if !comp_has_relation_named(comp, "item_snapshot") {
+                return Err("compiled comp missing flat_map_relation step item_snapshot".into());
             }
         }
         "views_digest_computed_slug" => {
@@ -388,7 +386,7 @@ async fn plasm_language_matrix_views_live_runs_impl() {
     let mut tags_seen: BTreeSet<String> = BTreeSet::new();
 
     for row in VIEW_MATRIX_ROWS {
-        let plan_json = compile_plasm_dag_to_plan(
+        let bundle = compile_plasm_program(
             &PromptPipelineConfig::default(),
             None,
             &es,
@@ -397,28 +395,26 @@ async fn plasm_language_matrix_views_live_runs_impl() {
         )
         .unwrap_or_else(|e| panic!("row {} compile: {e}", row.id));
 
-        let plan = parse_plan_value(&plan_json)
-            .unwrap_or_else(|e| panic!("row {} parse_plan_value: {e}", row.id));
-        let validated = validate_plan_artifact(&plan)
-            .unwrap_or_else(|e| panic!("row {} validate_plan_artifact: {e}", row.id));
+        let comp_json = serde_json::to_value(&bundle.artifact().comp)
+            .unwrap_or_else(|e| panic!("row {} comp json: {e}", row.id));
 
-        let dry = evaluate_validated_plasm_plan_dry(&es, &validated)
-            .unwrap_or_else(|e| panic!("row {} evaluate_validated_plasm_plan_dry: {e}", row.id));
-        assert_view_planning_ir(row, &dry, &plan_json)
+        let dry = evaluate_plasm_comp_dry(&es, &bundle)
+            .unwrap_or_else(|e| panic!("row {} evaluate_plasm_comp_dry: {e}", row.id));
+        assert_view_planning_ir(row, &dry, &comp_json)
             .unwrap_or_else(|e| panic!("row {} planning IR: {e}", row.id));
 
-        let live = run_validated_plasm_plan(
+        let live = run_plasm_comp(
             &es,
             &st,
             es.prompt_hash.as_str(),
             "matrix_views_sess",
-            &validated,
+            &bundle,
             true,
             None,
             None,
         )
         .await
-        .unwrap_or_else(|e| panic!("row {} run_validated_plasm_plan: {e}", row.id));
+        .unwrap_or_else(|e| panic!("row {} run_plasm_comp: {e}", row.id));
 
         assert_view_row(row, &live).unwrap_or_else(|e| panic!("row {} assertion: {e}", row.id));
         for t in row.features {

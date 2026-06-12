@@ -398,6 +398,26 @@ impl ValidatedPlanReturn {
     }
 }
 
+impl Plan<ValidatedPlanState> {
+    pub(crate) fn new_program(
+        version: u32,
+        name: Option<String>,
+        nodes: Vec<ValidatedPlanNode>,
+        return_value: ValidatedPlanReturn,
+        metadata: BTreeMap<String, serde_json::Value>,
+    ) -> Self {
+        Self {
+            version,
+            kind: PlanKind::Program,
+            name,
+            nodes,
+            return_value,
+            metadata,
+            state: PhantomData,
+        }
+    }
+}
+
 /// Proof-bearing Plan artifact consumed by dry-run and execution.
 #[derive(Debug, Clone)]
 pub struct ValidatedPlanArtifact {
@@ -506,6 +526,8 @@ pub struct ValidatedPlanRelationTraversal {
     pub(crate) ir: ValidatedPlanExprIr,
     /// Frozen from CGS at plan lower time; plan/runtime must not re-infer from cache shape.
     pub(crate) materialize: plasm_core::RelationMaterialization,
+    /// Catalog-derived scoped-binding witnesses preserved on comp wire.
+    pub(crate) binding_proofs: Vec<plasm_core::RelationBindingProof>,
 }
 
 impl ValidatedPlanNode {
@@ -618,6 +640,20 @@ impl ValidatedPlanArtifact {
 
     pub(crate) fn nodes_mut(&mut self) -> &mut [ValidatedPlanNode] {
         &mut self.artifact.nodes
+    }
+
+    pub(crate) fn from_validated_parts(
+        artifact: Plan<ValidatedPlanState>,
+        topo: Vec<PlanNodeId>,
+        node_indices: HashMap<PlanNodeId, usize>,
+        approval_gates: Vec<PlanNodeId>,
+    ) -> Self {
+        Self {
+            artifact,
+            topo,
+            node_indices,
+            approval_gates,
+        }
     }
 }
 
@@ -1387,6 +1423,7 @@ fn validated_node_from_raw(
                             .materialize
                             .clone()
                             .unwrap_or(plasm_core::RelationMaterialization::Unavailable),
+                        binding_proofs: relation.binding_proofs.clone(),
                     },
                     depends_on,
                     uses_result,

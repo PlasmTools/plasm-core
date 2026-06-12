@@ -101,6 +101,7 @@ pub mod identity;
 pub mod loader;
 pub mod normalizer;
 pub mod paging_handle;
+pub mod plasm_monad;
 pub mod predicate;
 pub mod preflight;
 pub mod prompt_pipeline;
@@ -129,6 +130,7 @@ pub mod typed_literal;
 pub mod typed_row;
 pub mod value;
 
+pub mod comp_canonical;
 mod o200k_token_count;
 mod operation_handle;
 mod plan_commit;
@@ -143,6 +145,7 @@ pub use cgs_context::{CgsContext, Prefix};
 pub use cgs_federation::{
     CatalogResolver, FederationDispatch, FederationResolveError, QualifiedEntityKey,
 };
+pub use comp_canonical::plasm_comp_commit_canonical;
 pub use connect_profile::{
     catalog_connect_profile, CatalogAuthCapability, CatalogConnectProfile, CatalogOauthCapability,
 };
@@ -180,6 +183,19 @@ pub use paging_handle::{
     is_valid_logical_session_ref_segment, PagingHandle, PagingHandleParseError,
 };
 pub use plan_commit::{PlanCommitId, PlanCommitRef};
+pub use plasm_monad::{
+    comp_equivalent, comp_semantic_eq, empty_comp, invoke_step_payload, map_step_payload,
+    plasm_bind_step, plasm_map_step, plasm_parallel_return, plasm_pure_step, AggregateFunction,
+    AggregateSpec, BindingName, CompEquivDiff, CompEquivResult, ComputeOp, ComputeTemplate,
+    DeriveKind, DerivePayload, DeriveTemplate, EffectBarrier, EffectClass, EffectTemplate,
+    FieldPath, FlatMapEffectPayload, FlatMapRelationPayload, InputCardinality, InvokePayload,
+    MapPayload, OutputName, PlanDataInput, PlanExprIr, PlanExprTemplate, PlanInputBinding,
+    PlanPredicate, PlanPredicateOp, PlanQualifiedEntityKey, PlanRelationTraversal, PlanResultUse,
+    PlasmBindGraph, PlasmComp, PlasmCompArtifact, PlasmDataValue, PlasmHoleUse, PlasmReturn,
+    PlasmStep, PlasmStepKind, PlasmStepPayload, PurePayload, RelationCardinality,
+    RelationSourceCardinality, ResultShape, RewritePolicy, StepId, SurfaceKind,
+    SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
+};
 pub use predicate::Predicate;
 pub use preflight::{
     validate_capability_preflight, PickSpec, PreflightFieldPath, PreflightPlan, PreflightStep,

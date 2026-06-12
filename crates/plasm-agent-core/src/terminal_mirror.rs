@@ -141,7 +141,7 @@ mod tests {
             let mirror = SessionMirror::open(sid).expect("open");
             let mut m = mirror;
             let dir = m.alloc_dir(MirrorOpKind::Run).expect("alloc");
-            let body = br#"{"plan":true,"dry_run":false,"plan_dag":{},"run_markdown":"hello"}"#;
+            let body = br#"{"plan":true,"dry_run":false,"comp":{},"run_markdown":"hello"}"#;
             let (_, txt) = m.write_pair(&dir, "body", body, None).expect("pair");
             let text = std::fs::read_to_string(txt).expect("read txt");
             assert_eq!(text, "hello");

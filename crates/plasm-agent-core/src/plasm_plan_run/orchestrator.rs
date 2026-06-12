@@ -1,38 +1,46 @@
 //! Live plan orchestration.
 
 use super::*;
+use crate::evidence_chain::{
+    attach_evidence_meta, chain, persist_evidence_sidecars, StepExecutedRecord,
+};
+use crate::http_execute::run_seal_record_for_handle;
+use crate::plasm_comp_lift::ExecutablePlasmComp;
+use crate::plasm_plan_run::evidence_plan::parsed_expr_for_plan_node;
+use crate::plasm_step_convert::step_payload_to_validated_node;
+use plasm_core::PlasmReturn;
 
 #[allow(clippy::too_many_arguments)]
-pub async fn run_validated_plasm_plan(
+pub async fn run_plasm_comp(
     es: &ExecuteSession,
     st: &PlasmHostState,
     prompt_hash: &str,
     session_id: &str,
-    validated: &ValidatedPlan,
+    bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
     run: bool,
     mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
 ) -> Result<PlasmPlanRunResult, String> {
-    let dry = evaluate_validated_plasm_plan_dry(es, validated)?;
+    let dry = evaluate_plasm_comp_dry(es, bundle)?;
     if !run {
-        let plan_dag = plasm_plan_dag_json(&dry);
+        let comp = crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry);
         return Ok(PlasmPlanRunResult {
             version: dry.version,
             node_results: dry.node_results,
             graph_summary: dry.graph_summary,
-            plan_dag,
+            comp,
             code_plan_run_artifacts: Vec::new(),
             run_markdown: None,
             run_plasm_meta: None,
             return_steps: Vec::new(),
         });
     }
-    run_validated_plasm_plan_scoped(
+    run_plasm_comp_scoped(
         es,
         st,
         prompt_hash,
         session_id,
-        validated,
+        bundle.executable(),
         dry,
         mcp_tool_hooks,
         execution_scope,
@@ -41,23 +49,23 @@ pub async fn run_validated_plasm_plan(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn run_validated_plasm_plan_scoped(
+pub(crate) async fn run_plasm_comp_scoped(
     es: &ExecuteSession,
     st: &PlasmHostState,
     prompt_hash: &str,
     session_id: &str,
-    validated: &ValidatedPlan,
+    executable: &ExecutablePlasmComp,
     dry: DryPlasmPlanEvaluation,
     mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
 ) -> Result<PlasmPlanRunResult, String> {
     crate::operation::with_plan_execute_scope(execution_scope, async {
-        run_validated_plan_phased(
+        run_executable_plan_phased(
             es,
             st,
             prompt_hash,
             session_id,
-            validated,
+            executable,
             dry,
             mcp_tool_hooks,
             execution_scope,
@@ -95,17 +103,16 @@ pub(crate) struct MaterializedInputRow {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn run_validated_plan_phased(
+pub(crate) async fn run_executable_plan_phased(
     es: &ExecuteSession,
     st: &PlasmHostState,
     prompt_hash: &str,
     session_id: &str,
-    validated: &ValidatedPlan,
+    executable: &ExecutablePlasmComp,
     dry: DryPlasmPlanEvaluation,
     mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
 ) -> Result<PlasmPlanRunResult, String> {
-    let _ = prompt_hash;
     let mut materialized: BTreeMap<PlanNodeId, MaterializedNode> = BTreeMap::new();
     let approval_policy = PlasmPlanApprovalPolicy::automatic();
     let mut approval_receipts: Vec<PlasmPlanApprovalReceipt> = Vec::new();
@@ -117,28 +124,25 @@ pub(crate) async fn run_validated_plan_phased(
         sink = Some(hooks.sink);
         meta_index = Some(hooks.meta_index);
     }
-    let topo = validated.topological_order();
-    let step_total = topo.len() as u32;
-    for (step_idx, node_id) in topo.iter().enumerate() {
+    let step_total = executable.steps_topo.len() as u32;
+    let mut evidence_steps = Vec::with_capacity(step_total as usize);
+    for (step_idx, (step_id, payload)) in executable.steps_topo.iter().enumerate() {
         if let Some(scope) = execution_scope {
             scope.check()?;
             scope.set_progress(
                 step_idx as u32 + 1,
                 step_total,
-                Some(node_id.as_str().to_string()),
+                Some(step_id.as_str().to_string()),
             );
         }
-        let idx = validated
-            .node_index(node_id)
-            .ok_or_else(|| format!("validated node {:?} missing index", node_id.as_str()))?;
-        let node = &validated.nodes()[idx];
-        if let Some(gate) = inferred_node_approval(node) {
+        let node = step_payload_to_validated_node(step_id, payload, &executable.bind)?;
+        if let Some(gate) = inferred_node_approval(&node) {
             let receipt = approval_policy.review(gate);
             match receipt.decision {
                 PlasmPlanApprovalDecision::Approved => approval_receipts.push(receipt),
             }
         }
-        let mat = match node {
+        let mat = match &node {
             ValidatedPlanNode::Surface(surface) => {
                 let parsed = if let Some(ir) = &surface.ir {
                     let pe = ParsedExpr {
@@ -182,7 +186,7 @@ pub(crate) async fn run_validated_plan_phased(
                     expr_label,
                     parsed,
                     trace.as_ref(),
-                    idx as i64,
+                    step_idx as i64,
                     host_page,
                     surface.pushed_read_budget.clone(),
                     rows_progress,
@@ -224,8 +228,10 @@ pub(crate) async fn run_validated_plan_phased(
                     scope.sync_rows_materialized(result.count.max(result.entities.len()));
                 }
                 if let Some(sink) = sink.as_ref() {
-                    trace_record_plasm_line(sink, idx, expr_label, &parsed, &result, &scoped_es)
-                        .await;
+                    trace_record_plasm_line(
+                        sink, step_idx, expr_label, &parsed, &result, &scoped_es,
+                    )
+                    .await;
                 }
                 MaterializedNode {
                     entry_id: surface
@@ -267,7 +273,7 @@ pub(crate) async fn run_validated_plan_phased(
                     st,
                     es,
                     session_id,
-                    node,
+                    &node,
                     es.entry_id.as_str(),
                     None,
                     rows,
@@ -303,7 +309,7 @@ pub(crate) async fn run_validated_plan_phased(
                     st,
                     es,
                     session_id,
-                    node,
+                    &node,
                     owner_entry_id.as_str(),
                     None,
                     rows,
@@ -344,7 +350,7 @@ pub(crate) async fn run_validated_plan_phased(
                     st,
                     es,
                     session_id,
-                    node,
+                    &node,
                     owner_entry_id.as_str(),
                     compute.compute.schema.entity.as_deref(),
                     rows,
@@ -358,8 +364,8 @@ pub(crate) async fn run_validated_plan_phased(
                     st,
                     es,
                     session_id,
-                    idx,
-                    node,
+                    step_idx,
+                    &node,
                     relation,
                     &materialized,
                     trace.as_ref(),
@@ -372,7 +378,7 @@ pub(crate) async fn run_validated_plan_phased(
                     st,
                     es,
                     session_id,
-                    idx,
+                    step_idx,
                     for_each,
                     &materialized,
                     trace.as_ref(),
@@ -381,19 +387,52 @@ pub(crate) async fn run_validated_plan_phased(
                 .await?
             }
         };
+        let source_line = render_node_operation(&node);
+        let parsed_evidence = parsed_expr_for_plan_node(&node);
+        let step_entry_id = mat.entry_id.clone();
+        let step_fps = mat.result.request_fingerprints.clone();
         materialized.insert(node.id().clone(), mat);
+        evidence_steps.push(StepExecutedRecord {
+            step_id: step_id.as_str().to_string(),
+            step_index: step_idx as u32,
+            entry_id: Some(step_entry_id),
+            source_line,
+            parsed: parsed_evidence,
+            request_fingerprints: step_fps,
+        });
+    }
+    if let Some(evidence) = chain(es) {
+        evidence
+            .record_steps_executed(&evidence_steps)
+            .map_err(|e| format!("evidence step_executed: {e}"))?;
     }
 
-    let return_refs = validated.return_value().refs();
+    let return_node_ids = plasm_return_node_ids(&executable.return_)?;
     let mut steps = Vec::new();
-    let return_names = validated_return_names(validated.return_value());
-    for (i, node_ref) in return_refs.into_iter().enumerate() {
+    let return_names = plasm_return_names(&executable.return_);
+    for (i, node_ref) in return_node_ids.iter().enumerate() {
         let mat = materialized.get(node_ref).ok_or_else(|| {
             format!(
                 "plan.return materialized node {:?} missing",
                 node_ref.as_str()
             )
         })?;
+        if let Some(h) = &mat.artifact {
+            let seal = run_seal_record_for_handle(
+                st,
+                es,
+                prompt_hash,
+                session_id,
+                h,
+                Some(node_ref.as_str().to_string()),
+            )
+            .await?;
+            if let Some(evidence) = chain(es) {
+                evidence
+                    .record_run_sealed(&seal)
+                    .map_err(|e| format!("evidence run_sealed: {e}"))?;
+            }
+        }
         steps.push(PublishedResultStep {
             name: return_names.get(i).cloned().flatten(),
             node_id: Some(node_ref.as_str().to_string()),
@@ -411,12 +450,14 @@ pub(crate) async fn run_validated_plan_phased(
     }
     let return_steps = steps.clone();
     let out = publish_plasm_result_steps(es.cgs.as_ref().into(), meta_index, &steps);
-    let plan_dag = plasm_plan_dag_json(&dry);
+    let comp = crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry);
     let mut code_plan_run_artifacts = Vec::new();
+    let mut evidence_run_ids = Vec::new();
     for (i, step) in steps.iter().enumerate() {
         let Some(h) = step.artifact.as_ref() else {
             continue;
         };
+        evidence_run_ids.push(h.run_id);
         code_plan_run_artifacts.push(CodePlanRunArtifactRef {
             run_id: h.run_id.to_wire(),
             artifact_uri: Some(h.plasm_uri.clone()),
@@ -428,14 +469,62 @@ pub(crate) async fn run_validated_plan_phased(
             request_fingerprints: h.request_fingerprints.clone(),
         });
     }
+    let mut evidence_head_hex = None;
+    if let Some(evidence) = chain(es) {
+        if let Some(bundle) = evidence
+            .finish_bundle()
+            .map_err(|e| format!("evidence finish: {e}"))?
+        {
+            evidence_head_hex = bundle.chain.head.map(|h| h.to_hex());
+            persist_evidence_sidecars(
+                &st.run_artifacts,
+                prompt_hash,
+                session_id,
+                &evidence_run_ids,
+                &bundle,
+            )
+            .await
+            .map_err(|e| format!("evidence persist: {e}"))?;
+        }
+    }
+    let mut run_plasm_meta = out.tool_meta;
+    if let Some(evidence) = chain(es) {
+        run_plasm_meta = attach_evidence_meta(
+            run_plasm_meta,
+            prompt_hash,
+            session_id,
+            evidence.as_ref(),
+            &evidence_run_ids,
+            evidence_head_hex,
+        );
+    }
     Ok(PlasmPlanRunResult {
         version: dry.version,
         node_results: dry.node_results,
         graph_summary: graph_summary_with_approval_receipts(dry.graph_summary, &approval_receipts),
-        plan_dag,
+        comp,
         code_plan_run_artifacts,
         run_markdown: Some(out.markdown),
-        run_plasm_meta: out.tool_meta,
+        run_plasm_meta,
         return_steps,
     })
+}
+
+fn plasm_return_node_ids(ret: &PlasmReturn) -> Result<Vec<PlanNodeId>, String> {
+    match ret {
+        PlasmReturn::Step { step } => Ok(vec![PlanNodeId::new(step.as_str().to_string())?]),
+        PlasmReturn::Parallel { steps } => steps
+            .iter()
+            .map(|s| PlanNodeId::new(s.as_str().to_string()))
+            .collect(),
+    }
+}
+
+fn plasm_return_names(ret: &PlasmReturn) -> Vec<Option<String>> {
+    match ret {
+        PlasmReturn::Step { step } => vec![Some(step.as_str().to_string())],
+        PlasmReturn::Parallel { steps } => {
+            steps.iter().map(|s| Some(s.as_str().to_string())).collect()
+        }
+    }
 }

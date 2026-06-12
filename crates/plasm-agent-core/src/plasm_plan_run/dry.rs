@@ -1,52 +1,71 @@
 //! Dry-run evaluation.
 
 use super::*;
+use crate::plasm_comp_lift::ExecutablePlasmComp;
+use crate::plasm_step_convert::step_payload_to_validated_node;
+use plasm_core::PlasmCompArtifact;
 
-pub fn evaluate_validated_plasm_plan_dry(
+#[path = "dry_render.rs"]
+mod dry_render;
+pub use dry_render::render_node_operation;
+use dry_render::{render_return_lines, render_uses_result};
+
+pub fn evaluate_plasm_comp_dry(
     es: &ExecuteSession,
-    validated: &ValidatedPlan,
+    bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
 ) -> Result<DryPlasmPlanEvaluation, String> {
-    let plan = validated.artifact();
-    let version = serde_json::json!(plan.version);
+    evaluate_executable_comp_dry(es, bundle.executable(), bundle.artifact())
+}
+
+pub fn evaluate_executable_comp_dry(
+    es: &ExecuteSession,
+    executable: &ExecutablePlasmComp,
+    artifact: &PlasmCompArtifact,
+) -> Result<DryPlasmPlanEvaluation, String> {
+    let comp = &artifact.comp;
+    // Record comp commit when evidence chain is active (noop when disabled).
+    if let Some(evidence) = crate::evidence_chain::chain(es) {
+        evidence
+            .record_comp_committed(comp)
+            .map_err(|e| format!("evidence comp_committed: {e}"))?;
+    }
+    let version = serde_json::json!(comp.version);
     let mut out = Vec::new();
     let mut parallel_root_surfaces_only = true;
     let mut staged_nodes = Vec::new();
     let execution_unsupported = Vec::new();
-    for node_id in validated.topological_order() {
-        let i = validated
-            .node_index(node_id)
-            .ok_or_else(|| format!("validated node {:?} missing index", node_id.as_str()))?;
-        let n = &plan.nodes[i];
-        ensure_node_dispatchable(es, n, i)?;
-        if let ValidatedPlanNode::RelationTraversal(relation) = n {
+    for (step_idx, (step_id, payload)) in executable.steps_topo.iter().enumerate() {
+        let n = step_payload_to_validated_node(step_id, payload, &executable.bind)?;
+        ensure_node_dispatchable(es, &n, step_idx)?;
+        if let ValidatedPlanNode::RelationTraversal(relation) = &n {
             let pe = ParsedExpr {
                 expr: relation.relation.ir.expr.clone(),
                 projection: relation.relation.ir.projection.clone(),
             };
             typecheck_parsed_for_session(es, &pe)
-                .map_err(|e| format!("type check in plan.nodes[{i}].relation.expr: {e}"))?;
-            ensure_relation_expr_matches_plan(es, relation, &pe, i)?;
+                .map_err(|e| format!("type check in plan.nodes[{step_idx}].relation.expr: {e}"))?;
+            ensure_relation_expr_matches_plan(es, relation, &pe, step_idx)?;
         }
-        let inferred_approval = inferred_node_approval(n);
+        let inferred_approval = inferred_node_approval(&n);
         if n.depends_on().is_empty() && n.uses_result().is_empty() {
             let Some(surface) = n.as_surface() else {
                 parallel_root_surfaces_only = false;
                 staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
-                out.push(dry_stage_result(i, n));
+                out.push(dry_stage_result(step_idx, &n));
                 continue;
             };
             let ir = surface
                 .ir
                 .as_ref()
-                .ok_or_else(|| format!("plan.nodes[{i}] requires staged IR execution"))?;
+                .ok_or_else(|| format!("plan.nodes[{step_idx}] requires staged IR execution"))?;
             let scoped_es = entry_scoped_execute_session(es, surface.qualified_entity.as_ref())?;
             let pe = ParsedExpr {
                 expr: ir.expr.clone(),
                 projection: ir.projection.clone(),
             };
             typecheck_parsed_for_session(&scoped_es, &pe)
-                .map_err(|e| format!("type check in plan.nodes[{i}]: {e}"))?;
-            ensure_surface_expr_matches_plan_kind(&scoped_es, surface, &pe, i)?;
+                .map_err(|e| format!("type check in plan.nodes[{step_idx}]: {e}"))?;
+            ensure_surface_expr_matches_plan_kind(&scoped_es, surface, &pe, step_idx)?;
             let (intent, il, bindings) = dry_run_simulation_for_session(&scoped_es, &pe);
             let expr = ir
                 .display_expr
@@ -54,11 +73,11 @@ pub fn evaluate_validated_plasm_plan_dry(
                 .or(surface.display_expr.as_deref())
                 .unwrap_or("<ir>");
             out.push(serde_json::json!({
-                "index": i,
+                "index": step_idx,
                 "ok": true,
                 "id": n.id().as_str(),
                 "kind": n.kind(),
-                "operation": render_node_operation(n),
+                "operation": render_node_operation(&n),
                 "qualified_entity": surface.qualified_entity,
                 "effect_class": n.effect_class(),
                 "result_shape": n.result_shape(),
@@ -88,17 +107,22 @@ pub fn evaluate_validated_plasm_plan_dry(
 
         parallel_root_surfaces_only = false;
         staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
-        out.push(dry_stage_result(i, n));
+        out.push(dry_stage_result(step_idx, &n));
     }
+    let validated =
+        crate::plasm_step_convert::build_validated_plan_from_executable(comp, executable)?;
+    let plan = validated.artifact();
     let (graph_summary, review) = graph_summary_for_session(plan, es);
     Ok(DryPlasmPlanEvaluation {
         version,
-        name: plan.name.clone(),
-        plan: plan.clone(),
-        topological_order: validated
-            .topological_order()
+        name: comp.name.clone(),
+        artifact: artifact.clone(),
+        executable: executable.clone(),
+        cached_validated: std::cell::OnceCell::from(validated),
+        topological_order: executable
+            .steps_topo
             .iter()
-            .map(|id| id.as_str().to_string())
+            .map(|(id, _)| id.as_str().to_string())
             .collect(),
         node_results: out,
         parallel_root_surfaces_only,
@@ -295,7 +319,7 @@ pub fn plasm_plan_dag_json(dry: &DryPlasmPlanEvaluation) -> serde_json::Value {
     serde_json::Value::Object(obj)
 }
 
-pub(crate) fn node_dependencies(node: &ValidatedPlanNode) -> Vec<String> {
+pub fn node_dependencies(node: &ValidatedPlanNode) -> Vec<String> {
     let mut out = Vec::new();
     push_unique(
         &mut out,
@@ -332,378 +356,6 @@ pub(crate) fn push_unique(out: &mut Vec<String>, values: impl IntoIterator<Item 
         if !out.iter().any(|seen| seen == &value) {
             out.push(value);
         }
-    }
-}
-
-pub(crate) fn render_uses_result(node: &ValidatedPlanNode) -> Vec<String> {
-    node.uses_result()
-        .iter()
-        .map(|u| format!("{} as {}", u.node, u.r#as))
-        .collect()
-}
-
-pub(crate) fn render_node_operation(node: &ValidatedPlanNode) -> String {
-    match node {
-        ValidatedPlanNode::Surface(n) => render_surface_operation(n),
-        ValidatedPlanNode::Data(n) => format!("data {}", render_plan_value(&n.data)),
-        ValidatedPlanNode::Derive(n) => render_derive_template(n),
-        ValidatedPlanNode::Compute(n) => render_compute_template(&n.compute),
-        ValidatedPlanNode::RelationTraversal(n) => {
-            let source = n.relation.source.as_str();
-            let relation = n.relation.relation.as_str();
-            let target = format!(
-                "{}.{}",
-                n.relation.target.entry_id, n.relation.target.entity
-            );
-            format!(
-                "relation {source}.{relation} -> {target} <= {}",
-                render_plan_expr_ir(&n.relation.ir)
-            )
-        }
-        ValidatedPlanNode::ForEach(n) => {
-            let source = n.source.as_str();
-            let binding = n.item_binding.as_str();
-            let template = render_effect_template_expr(&n.effect_template);
-            format!("for_each {source} as {binding} => {template}")
-        }
-    }
-}
-
-pub(crate) fn render_surface_operation(node: &ValidatedSurfaceNode) -> String {
-    let entity = node
-        .qualified_entity
-        .as_ref()
-        .map(|q| format!("{}.{}", q.entry_id, q.entity))
-        .unwrap_or_else(|| "<unqualified>".to_string());
-    let expr = node
-        .ir
-        .as_ref()
-        .map(render_plan_expr_ir)
-        .or_else(|| node.ir_template.as_ref().map(render_plan_expr_template))
-        .or_else(|| node.display_expr.clone())
-        .unwrap_or_else(|| "<typed Plasm IR>".to_string());
-    format!("{} {} <= {}", render_kind(node.kind), entity, expr)
-}
-
-pub(crate) fn render_plan_expr_ir(ir: &crate::plasm_plan::ValidatedPlanExprIr) -> String {
-    ir.display_expr
-        .clone()
-        .unwrap_or_else(|| crate::expr_display::expr_display(&ir.expr))
-}
-
-pub(crate) fn render_plan_expr_template(
-    template: &crate::plasm_plan::ValidatedPlanExprTemplate,
-) -> String {
-    template
-        .display_expr
-        .clone()
-        .unwrap_or_else(|| "<typed Plasm IR template>".to_string())
-}
-
-pub(crate) fn render_effect_template_expr(template: &crate::plasm_plan::EffectTemplate) -> String {
-    if !template.expr_template.trim().is_empty() {
-        template.expr_template.clone()
-    } else {
-        template
-            .ir_template
-            .display_expr
-            .clone()
-            .unwrap_or_else(|| "<typed Plasm IR template>".to_string())
-    }
-}
-
-pub(crate) fn render_derive_template(template: &ValidatedDeriveNode) -> String {
-    let source = template.source.as_str();
-    let binding = template.item_binding.as_str();
-    let inputs = render_data_inputs(&template.inputs);
-    let input_suffix = if inputs.is_empty() {
-        String::new()
-    } else {
-        format!(" with {}", inputs.join(", "))
-    };
-    format!(
-        "derive map {source} as {binding}{input_suffix} → {}",
-        render_plan_value(&template.value)
-    )
-}
-
-pub(crate) fn render_data_inputs(inputs: &[ValidatedPlanDataInput]) -> Vec<String> {
-    inputs
-        .iter()
-        .map(|input| {
-            format!(
-                "{} as {} {}",
-                input.node.as_str(),
-                input.alias.as_str(),
-                render_input_cardinality(input.proof)
-            )
-        })
-        .collect()
-}
-
-pub(crate) fn render_input_cardinality(
-    proof: crate::plasm_plan::InputCardinalityProof,
-) -> &'static str {
-    match proof {
-        crate::plasm_plan::InputCardinalityProof::StaticSingleton => "static-singleton",
-        crate::plasm_plan::InputCardinalityProof::RuntimeCheckedSingleton => {
-            "runtime-checked-singleton"
-        }
-    }
-}
-
-pub(crate) fn render_compute_template(compute: &ComputeTemplate) -> String {
-    match &compute.op {
-        ComputeOp::Project { fields } => {
-            let fields = fields
-                .iter()
-                .map(|(name, path)| format!("{}={}", name.as_str(), path.dotted()))
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("project {} -> {{{fields}}}", compute.source)
-        }
-        ComputeOp::Filter { predicates } => {
-            let predicates = predicates
-                .iter()
-                .map(render_predicate)
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("filter {} where {predicates}", compute.source)
-        }
-        ComputeOp::GroupBy { keys, aggregates } => {
-            let key_list = keys
-                .iter()
-                .map(|k| k.dotted())
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "group_by {} keys=[{key_list}] -> {{{}}}",
-                compute.source,
-                render_aggregates(aggregates)
-            )
-        }
-        ComputeOp::Aggregate { aggregates } => {
-            format!(
-                "aggregate {} -> {{{}}}",
-                compute.source,
-                render_aggregates(aggregates)
-            )
-        }
-        ComputeOp::Sort { key, descending } => format!(
-            "sort {} by {} {}",
-            compute.source,
-            key.dotted(),
-            if *descending { "desc" } else { "asc" }
-        ),
-        ComputeOp::Limit { count } => format!("limit {} count={count}", compute.source),
-        ComputeOp::DedupeBy { keys } => {
-            if keys.is_empty() {
-                format!("distinct {} *", compute.source)
-            } else {
-                format!(
-                    "dedupe {} keys={}",
-                    compute.source,
-                    keys.iter()
-                        .map(|k| k.dotted())
-                        .collect::<Vec<_>>()
-                        .join(",")
-                )
-            }
-        }
-        ComputeOp::Render { columns, template } => format!(
-            "render {} columns=[{}] template_chars={}",
-            compute.source,
-            columns
-                .iter()
-                .map(|c| c.as_str())
-                .collect::<Vec<_>>()
-                .join(", "),
-            template.chars().count()
-        ),
-    }
-}
-
-pub(crate) fn render_aggregates(aggregates: &[crate::plasm_plan::AggregateSpec]) -> String {
-    aggregates
-        .iter()
-        .map(|agg| {
-            let field = agg
-                .field
-                .as_ref()
-                .map(FieldPath::dotted)
-                .unwrap_or_else(|| "*".to_string());
-            format!(
-                "{}={}({field})",
-                agg.name.as_str(),
-                render_aggregate_function(agg.function)
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-pub(crate) fn render_predicate(predicate: &crate::plasm_plan::PlanPredicate) -> String {
-    format!(
-        "{}{}{}",
-        predicate.field_path.join("."),
-        render_predicate_op(predicate.op),
-        render_plan_value(&predicate.value)
-    )
-}
-
-pub(crate) fn render_plan_value(value: &PlanValue) -> String {
-    match value {
-        PlanValue::Literal { value } => render_json_value(value),
-        PlanValue::Helper {
-            name,
-            args,
-            display,
-        } => display.clone().unwrap_or_else(|| {
-            format!(
-                "{}({})",
-                name,
-                args.iter()
-                    .map(render_json_value)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        }),
-        PlanValue::Symbol { path } => format!("${path}"),
-        PlanValue::BindingSymbol { binding, path } => {
-            let suffix = if path.is_empty() {
-                String::new()
-            } else {
-                format!(".{}", path.join("."))
-            };
-            format!("${binding}{suffix}")
-        }
-        PlanValue::NodeSymbol { alias, path, .. } => {
-            let suffix = if path.is_empty() {
-                String::new()
-            } else {
-                format!(".{}", path.join("."))
-            };
-            format!("${alias}{suffix}")
-        }
-        PlanValue::Template { template, .. } => format!("template`{template}`"),
-        PlanValue::EntityRefKey { key, .. } => render_plan_value(key),
-        PlanValue::Array { items } => {
-            if items.is_empty() {
-                return "[0 items]".to_string();
-            }
-            let mut rendered = items
-                .iter()
-                .take(5)
-                .map(render_plan_value)
-                .collect::<Vec<_>>();
-            if items.len() > 5 {
-                rendered.push("...".to_string());
-            }
-            format!("[{}]", rendered.join(", "))
-        }
-        PlanValue::Object { fields } => {
-            if fields.is_empty() {
-                return "{0 fields}".to_string();
-            }
-            let mut rendered = fields
-                .iter()
-                .take(8)
-                .map(|(name, value)| format!("{name}: {}", render_plan_value(value)))
-                .collect::<Vec<_>>();
-            if fields.len() > 8 {
-                rendered.push("...".to_string());
-            }
-            format!("{{{}}}", rendered.join(", "))
-        }
-    }
-}
-
-pub(crate) fn render_json_value(value: &serde_json::Value) -> String {
-    match value {
-        serde_json::Value::String(s) => format!("{s:?}"),
-        serde_json::Value::Array(items) => {
-            if items.is_empty() {
-                return "[0 items]".to_string();
-            }
-            let mut rendered = items
-                .iter()
-                .take(5)
-                .map(render_json_value)
-                .collect::<Vec<_>>();
-            if items.len() > 5 {
-                rendered.push("...".to_string());
-            }
-            format!("[{}]", rendered.join(", "))
-        }
-        serde_json::Value::Object(obj) => {
-            if obj.is_empty() {
-                return "{0 fields}".to_string();
-            }
-            let mut rendered = obj
-                .iter()
-                .take(8)
-                .map(|(name, value)| format!("{name}: {}", render_json_value(value)))
-                .collect::<Vec<_>>();
-            if obj.len() > 8 {
-                rendered.push("...".to_string());
-            }
-            format!("{{{}}}", rendered.join(", "))
-        }
-        other => other.to_string(),
-    }
-}
-
-pub(crate) fn render_return_lines(ret: &ValidatedPlanReturn) -> Vec<String> {
-    match ret {
-        ValidatedPlanReturn::Node(id) => vec![id.as_str().to_string()],
-        ValidatedPlanReturn::Parallel { parallel } => parallel
-            .iter()
-            .enumerate()
-            .map(|(i, id)| format!("parallel[{}] -> {}", i, id.as_str()))
-            .collect(),
-    }
-}
-
-pub(crate) fn render_kind(kind: PlanNodeKind) -> &'static str {
-    match kind {
-        PlanNodeKind::Query => "query",
-        PlanNodeKind::Search => "search",
-        PlanNodeKind::Get => "get",
-        PlanNodeKind::Create => "create",
-        PlanNodeKind::Update => "update",
-        PlanNodeKind::Delete => "delete",
-        PlanNodeKind::Action => "action",
-        PlanNodeKind::Data => "data",
-        PlanNodeKind::Derive => "derive",
-        PlanNodeKind::Compute => "compute",
-        PlanNodeKind::ForEach => "for_each",
-        PlanNodeKind::Relation => "relation",
-    }
-}
-
-pub(crate) fn render_aggregate_function(function: AggregateFunction) -> &'static str {
-    match function {
-        AggregateFunction::Count => "count",
-        AggregateFunction::Sum => "sum",
-        AggregateFunction::Avg => "avg",
-        AggregateFunction::Min => "min",
-        AggregateFunction::Max => "max",
-        AggregateFunction::First => "first",
-        AggregateFunction::Last => "last",
-    }
-}
-
-pub(crate) fn render_predicate_op(op: crate::plasm_plan::PlanPredicateOp) -> &'static str {
-    match op {
-        crate::plasm_plan::PlanPredicateOp::Eq => "=",
-        crate::plasm_plan::PlanPredicateOp::Ne => "!=",
-        crate::plasm_plan::PlanPredicateOp::Lt => "<",
-        crate::plasm_plan::PlanPredicateOp::Lte => "<=",
-        crate::plasm_plan::PlanPredicateOp::Gt => ">",
-        crate::plasm_plan::PlanPredicateOp::Gte => ">=",
-        crate::plasm_plan::PlanPredicateOp::Contains => "~",
-        crate::plasm_plan::PlanPredicateOp::In => " in ",
-        crate::plasm_plan::PlanPredicateOp::Exists => " exists ",
     }
 }
 

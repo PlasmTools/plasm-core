@@ -219,6 +219,37 @@ pub enum Cmd {
         #[command(flatten)]
         run: RunArgs,
     },
+    #[command(about = "Verify hash-chained evidence bundle JSON")]
+    Evidence {
+        #[command(subcommand)]
+        cmd: EvidenceCmd,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum EvidenceCmd {
+    #[command(about = "Verify chain integrity (and optional run seal)")]
+    Verify {
+        #[arg(value_name = "FILE", help = "Path to .evidence.json sidecar")]
+        path: std::path::PathBuf,
+        #[arg(
+            long,
+            help = "Verify run_sealed digest for this run_id (requires --artifact)"
+        )]
+        run_id: Option<String>,
+        #[arg(long, help = "Run snapshot JSON for run_sealed digest verification")]
+        artifact: Option<std::path::PathBuf>,
+        #[arg(
+            long,
+            help = "CGS schema directory to parse artifact expressions (required with --artifact for digest verify)"
+        )]
+        schema: Option<std::path::PathBuf>,
+        #[arg(
+            long = "trusted-pubkey",
+            help = "Allowed Ed25519 public key (hex); repeat for rotation window (also PLASM_EVIDENCE_TRUSTED_PUBLIC_KEYS)"
+        )]
+        trusted_pubkey: Vec<String>,
+    },
 }
 
 #[cfg(test)]

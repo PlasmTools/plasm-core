@@ -5,7 +5,7 @@ use crate::operation_progress::{
     op_plasm_meta_short, render_op_wire_line, render_op_wire_markdown, OpWireSig,
 };
 use crate::plan_dry_display::{PlanDryReview, PlanDryVerdict};
-use crate::plasm_plan_run::{plan_semantic_dag_json, DryPlasmPlanEvaluation, PlasmPlanRunResult};
+use crate::plasm_plan_run::{DryPlasmPlanEvaluation, PlasmPlanRunResult};
 use crate::server_state::PlasmHostState;
 use plasm_core::{OperationHandle, PlanCommitId, PlanCommitRef};
 use plasm_runtime::CancelSignal;
@@ -101,6 +101,14 @@ fn verify_plan_commit_id(
             "plan_commit_ref `{}` does not match the current program — call `plasm` dry-run again",
             commit_ref.as_str()
         ));
+    }
+    if let Some(evidence) = crate::evidence_chain::chain(es) {
+        evidence.verify_comp_commit_matches(&commit_id).map_err(|e| {
+            format!(
+                "plan_commit_ref `{}` evidence mismatch: {e}",
+                commit_ref.as_str()
+            )
+        })?;
     }
     Ok(())
 }
@@ -309,21 +317,25 @@ impl PlanCommitRecord {
     }
 }
 
-/// Semantic plan DAG payload for commit-id hashing — strips session-local volatile fields
-/// (e.g. MCP `plasm_dag_call_{call_count}` plan names, dry-run summary metadata).
-pub fn plan_commit_canonical_dag_json(dag: &serde_json::Value) -> serde_json::Value {
+/// Semantic comp payload for commit-id hashing — strips session-local volatile fields.
+pub fn plan_commit_canonical_comp_json(comp: &serde_json::Value) -> serde_json::Value {
     let mut obj = serde_json::Map::new();
-    for key in ["version", "nodes", "edges", "topological_order", "returns"] {
-        if let Some(v) = dag.get(key) {
+    for key in ["version", "steps", "bind", "return"] {
+        if let Some(v) = comp.get(key) {
             obj.insert(key.to_string(), v.clone());
         }
     }
     serde_json::Value::Object(obj)
 }
 
-/// Content-addressed id for a validated plan DAG artifact.
-pub fn compute_plan_commit_id(plan_json: &serde_json::Value) -> PlanCommitId {
-    compute_plan_commit_id_from_semantic(&plan_commit_canonical_dag_json(plan_json))
+/// Same as [`plan_commit_canonical_comp_json`] for typed comp.
+pub fn plan_commit_canonical_comp(comp: &plasm_core::PlasmComp) -> serde_json::Value {
+    plasm_core::plasm_comp_commit_canonical(comp)
+}
+
+/// Content-addressed id for a validated plan comp artifact.
+pub fn compute_plan_commit_id(comp_json: &serde_json::Value) -> PlanCommitId {
+    compute_plan_commit_id_from_semantic(&plan_commit_canonical_comp_json(comp_json))
 }
 
 /// Hash the semantic DAG payload directly (no volatile `name` / `summary` fields).
@@ -335,24 +347,29 @@ pub fn compute_plan_commit_id_from_semantic(semantic: &serde_json::Value) -> Pla
     PlanCommitId::from_canonical_bytes(bytes)
 }
 
-/// Content-addressed id from a dry-run evaluation (builds semantic DAG once).
+/// Content-addressed id from a dry-run evaluation (semantic comp bind graph).
 pub fn compute_plan_commit_id_from_dry(dry: &DryPlasmPlanEvaluation) -> PlanCommitId {
-    compute_plan_commit_id_from_semantic(&plan_semantic_dag_json(dry))
+    use crate::plasm_comp_wire::plasm_comp_commit_canonical;
+    compute_plan_commit_id_from_semantic(&plasm_comp_commit_canonical(&dry.artifact().comp))
 }
 
 /// Build accept metadata for async plan runs (display map + optional MCP transport).
-pub fn op_accept_context_from_validated(
+pub(crate) fn op_accept_context_from_executable(
     plan_commit_ref: Option<PlanCommitRef>,
     dry_verdict: Option<PlanDryVerdict>,
     auto_async: bool,
     mcp_transport_key: Option<String>,
-    validated: &crate::plasm_plan::ValidatedPlan,
+    executable: &crate::plasm_comp_lift::ExecutablePlasmComp,
+    comp: &plasm_core::PlasmComp,
 ) -> OpAcceptContext {
-    let order: Vec<String> = validated
-        .topological_order()
+    let order: Vec<String> = executable
+        .steps_topo
         .iter()
-        .map(|id| id.as_str().to_string())
+        .map(|(id, _)| id.as_str().to_string())
         .collect();
+    let validated =
+        crate::plasm_step_convert::build_validated_plan_from_executable(comp, executable)
+            .expect("executable comp already validated at dry-run");
     let display_map = crate::plan_dry_display::plan_node_display_map(validated.artifact(), &order);
     OpAcceptContext {
         plan_commit_ref,
@@ -548,7 +565,7 @@ pub fn spawn_async_plan_run(
     st: Arc<crate::server_state::PlasmHostState>,
     prompt_hash: String,
     session_id: String,
-    validated: crate::plasm_plan::ValidatedPlan,
+    bundle: crate::plasm_comp_bundle::PlasmCompBundle,
     handle: OperationHandle,
     cancel: CancelSignal,
     accept: OpAcceptContext,
@@ -559,12 +576,12 @@ pub fn spawn_async_plan_run(
     let scope = ExecutionScope::for_async_operation(Arc::clone(&es), handle.clone(), cancel);
     es.emit_op_accept(&handle, &st)?;
     tokio::spawn(async move {
-        let result = crate::plasm_plan_run::run_validated_plasm_plan(
+        let result = crate::plasm_plan_run::run_plasm_comp(
             es.as_ref(),
             st.as_ref(),
             prompt_hash.as_str(),
             session_id.as_str(),
-            &validated,
+            &bundle,
             true,
             None,
             Some(&scope),
@@ -648,20 +665,18 @@ mod tests {
     fn plan_commit_id_ignores_volatile_plan_name_and_summary() {
         let base = json!({
             "version": 1,
-            "name": "plasm_dag_call_1",
-            "nodes": [{"id": "n0", "kind": "surface"}],
-            "edges": [],
-            "topological_order": ["n0"],
-            "returns": ["n0"],
+            "name": "plasm_comp_call_1",
+            "steps": { "n0": { "kind": "invoke" } },
+            "bind": { "topo": ["n0"], "deps": {} },
+            "return": { "kind": "step", "step": "n0" },
             "summary": { "unused_seeds": ["OtherEntity"] },
         });
         let renamed = json!({
             "version": 1,
-            "name": "plasm_dag_call_99",
-            "nodes": [{"id": "n0", "kind": "surface"}],
-            "edges": [],
-            "topological_order": ["n0"],
-            "returns": ["n0"],
+            "name": "plasm_comp_call_99",
+            "steps": { "n0": { "kind": "invoke" } },
+            "bind": { "topo": ["n0"], "deps": {} },
+            "return": { "kind": "step", "step": "n0" },
             "summary": { "unused_seeds": [] },
         });
         assert_eq!(
@@ -670,10 +685,9 @@ mod tests {
         );
         let semantic = json!({
             "version": 1,
-            "nodes": [{"id": "n0", "kind": "surface"}],
-            "edges": [],
-            "topological_order": ["n0"],
-            "returns": ["n0"],
+            "steps": { "n0": { "kind": "invoke" } },
+            "bind": { "topo": ["n0"], "deps": {} },
+            "return": { "kind": "step", "step": "n0" },
         });
         assert_eq!(
             compute_plan_commit_id(&base),
@@ -682,42 +696,39 @@ mod tests {
     }
 
     #[test]
-    fn plan_commit_semantic_dag_hash_benchmark() {
+    fn plan_commit_semantic_comp_hash_benchmark() {
         use std::time::{Duration, Instant};
 
-        let mut nodes = Vec::new();
-        let mut edges = Vec::new();
-        let mut order = Vec::new();
+        let mut steps = serde_json::Map::new();
+        let mut topo = Vec::new();
+        let mut deps = serde_json::Map::new();
         for i in 0..64 {
             let id = format!("n{i}");
-            order.push(id.clone());
-            nodes.push(json!({
-                "id": id,
-                "kind": "surface",
-                "effect_class": "read",
-                "result_shape": "rows",
-                "dependencies": if i == 0 { json!([]) } else { json!([format!("n{}", i - 1)]) },
-                "uses_result": json!([]),
-                "operation": "query Query(LangItem all)",
-            }));
+            topo.push(json!(id));
+            steps.insert(
+                id.clone(),
+                json!({
+                    "kind": "invoke",
+                    "effect_class": "read",
+                    "operation": "query Query(LangItem all)",
+                }),
+            );
             if i > 0 {
-                edges.push(json!({ "from": format!("n{}", i - 1), "to": format!("n{i}") }));
+                deps.insert(id, json!([format!("n{}", i - 1)]));
             }
         }
         let semantic = json!({
             "version": 1,
-            "nodes": nodes,
-            "edges": edges,
-            "topological_order": order,
-            "returns": ["n63"],
+            "steps": steps,
+            "bind": { "topo": topo, "deps": deps },
+            "return": { "kind": "step", "step": "n63" },
         });
         let presentation = json!({
             "version": 1,
-            "name": "plasm_dag_call_1",
-            "nodes": semantic["nodes"].clone(),
-            "edges": semantic["edges"].clone(),
-            "topological_order": semantic["topological_order"].clone(),
-            "returns": semantic["returns"].clone(),
+            "name": "plasm_comp_call_1",
+            "steps": semantic["steps"].clone(),
+            "bind": semantic["bind"].clone(),
+            "return": semantic["return"].clone(),
             "summary": { "unused_seeds": ["OtherEntity"] },
         });
 
@@ -738,7 +749,7 @@ mod tests {
         );
         assert!(
             elapsed < cap,
-            "plan commit hash (100 iter, 64 nodes) took {:?}, cap {:?}",
+            "plan commit hash (100 iter, 64 steps) took {:?}, cap {:?}",
             elapsed,
             cap
         );
