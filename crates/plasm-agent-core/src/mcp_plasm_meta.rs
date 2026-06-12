@@ -65,6 +65,7 @@ pub(crate) struct RunUiStepFields {
     pub preview_entities: Option<Vec<Value>>,
     pub artifact: Option<RunArtifactHandle>,
     pub lossy_summary_fields: LossySummaryFieldNames,
+    pub column_schema: Option<serde_json::Value>,
 }
 
 /// Max inline entity rows emitted per step for MCP Run Explorer preview tables.
@@ -283,9 +284,17 @@ impl PlasmMetaIndex {
                     json!(spec.lossy_summary_fields.as_slice()),
                 );
             }
+            if let Some(ref schema) = spec.column_schema {
+                step.insert("column_schema".into(), schema.clone());
+            }
             if let Some(ref h) = spec.artifact {
                 step.insert("run_id".into(), json!(h.run_id.to_wire()));
                 step.insert("artifact_uri".into(), json!(h.plasm_uri));
+                step.insert(
+                    "canonical_artifact_uri".into(),
+                    json!(h.canonical_plasm_uri),
+                );
+                step.insert("artifact_path".into(), json!(h.http_path));
                 let mime_id = Self::intern_map(
                     &mut self.mime,
                     &mut self.next_mime,
@@ -390,6 +399,7 @@ mod tests {
                 ]),
                 artifact: None,
                 lossy_summary_fields: LossySummaryFieldNames::default(),
+                column_schema: None,
             }],
             &[],
             None,

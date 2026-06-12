@@ -450,12 +450,25 @@ fn build_ref_from_row(
     Ok(Ref::compound(entity_type, parts))
 }
 
-/// Row-shaped JSON for plan evaluation, spill pages, and snapshots (CGS-aware id slots).
-pub fn entity_to_row_json(
+/// Agent-visible row JSON: domain fields + relations + CGS identity slots — no cache metadata.
+pub fn entity_to_agent_row_json(
     entity: &CachedEntity,
     cgs: Option<&plasm_core::CGS>,
 ) -> serde_json::Value {
     let mut v = entity.payload_to_json();
+    let Some(obj) = v.as_object_mut() else {
+        return v;
+    };
+    apply_identity_slots_to_row(obj, entity, cgs);
+    v
+}
+
+/// Row-shaped JSON for spill pages and graph rehydrate (includes `_ref`, `_version`, …).
+pub fn entity_to_row_json(
+    entity: &CachedEntity,
+    cgs: Option<&plasm_core::CGS>,
+) -> serde_json::Value {
+    let mut v = entity_to_agent_row_json(entity, cgs);
     let Some(obj) = v.as_object_mut() else {
         return v;
     };
@@ -481,14 +494,22 @@ pub fn entity_to_row_json(
             .to_string(),
         ),
     );
+    v
+}
+
+fn apply_identity_slots_to_row(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    entity: &CachedEntity,
+    cgs: Option<&plasm_core::CGS>,
+) {
     let slot = entity.reference.primary_slot_str();
     if slot.is_empty() {
-        return v;
+        return;
     }
     let Some(cgs) = cgs else {
         obj.entry("id".to_string())
             .or_insert_with(|| serde_json::Value::String(slot));
-        return v;
+        return;
     };
     match &entity.reference.key {
         plasm_core::EntityKey::Simple(_) => {
@@ -515,7 +536,6 @@ pub fn entity_to_row_json(
             }
         }
     }
-    v
 }
 
 impl GraphCache {
@@ -1047,6 +1067,20 @@ mod tests {
                 assert_i1_key_reference(&a);
             }
         }
+    }
+
+    #[test]
+    fn agent_row_json_omits_cache_metadata() {
+        use plasm_core::CGS;
+        let entity = create_test_entity("test-1", "TestEntity");
+        let cgs = CGS::new();
+        let row = entity_to_agent_row_json(&entity, Some(&cgs));
+        let obj = row.as_object().expect("object");
+        assert!(!obj.contains_key("_ref"));
+        assert!(!obj.contains_key("_version"));
+        assert!(!obj.contains_key("_last_updated"));
+        assert!(!obj.contains_key("_completeness"));
+        assert!(obj.contains_key("name"));
     }
 
     #[test]

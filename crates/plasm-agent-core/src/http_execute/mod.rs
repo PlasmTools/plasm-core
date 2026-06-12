@@ -34,7 +34,7 @@ use plasm_core::{
     CgsContext, Expr, PagingHandle, PromptRenderMode, SymbolMap, Value, CGS,
 };
 use plasm_runtime::{
-    auth_resolution_mode_from_env, entity_to_row_json, validate_principal_for_mode,
+    auth_resolution_mode_from_env, entity_to_agent_row_json, validate_principal_for_mode,
     AuthResolutionMode, AuthResolver, CompileOperationFn, CompileQueryFn, ExecuteOptions,
     ExecuteSessionMaterial, ExecutionResult, ExecutionSource, ExecutionStats,
     QueryPaginationResumeData, RuntimeError, SessionMaterialization, StreamConsumeOpts,
@@ -308,8 +308,20 @@ fn preview_entities_for_step(
         .entities
         .iter()
         .take(MCP_UI_PREVIEW_ENTITY_ROW_CAP)
-        .map(|e| entity_to_row_json(e, cgs))
+        .map(|e| {
+            let mut v = entity_to_agent_row_json(e, cgs);
+            strip_cache_keys_from_agent_preview_row(&mut v);
+            v
+        })
         .collect()
+}
+
+fn strip_cache_keys_from_agent_preview_row(v: &mut serde_json::Value) {
+    if let Some(obj) = v.as_object_mut() {
+        for key in ["_ref", "_version", "_last_updated", "_completeness"] {
+            obj.remove(key);
+        }
+    }
 }
 
 fn step_result_truncated_for_ui(
@@ -361,6 +373,11 @@ fn plasm_run_ui_meta_object(
                             "lossy_summary_fields".into(),
                             serde_json::json!(spec.lossy_summary_fields.as_slice()),
                         );
+                    }
+                }
+                if let Some(ref schema) = spec.column_schema {
+                    if let Some(obj) = step.as_object_mut() {
+                        obj.insert("column_schema".into(), schema.clone());
                     }
                 }
                 if let Some(ref h) = spec.artifact {
@@ -2540,6 +2557,14 @@ pub fn publish_plasm_result_steps(
                 &per_step_lossy,
                 &per_step_in_band,
             );
+            let step_cgs = step.cgs.as_deref().or(cgs);
+            let column_schema = crate::run_ui_column_schema::build_run_step_column_schema(
+                &step.result,
+                step_cgs,
+                step.entry_id.as_deref(),
+                step.entity.as_deref(),
+            )
+            .map(|s| crate::run_ui_column_schema::column_schema_json(&s));
             RunUiStepFields {
                 run_step: i + 1,
                 return_label: return_label_for_step(step.name.as_deref(), step.node_id.as_deref()),
@@ -2547,7 +2572,11 @@ pub fn publish_plasm_result_steps(
                 row_count: step.result.count,
                 node_id: step.node_id.clone(),
                 preview_entities: if truncated {
-                    None
+                    if step.result.count <= MCP_UI_PREVIEW_ENTITY_ROW_CAP {
+                        Some(preview_entities_for_step(step, cgs))
+                    } else {
+                        None
+                    }
                 } else {
                     Some(preview_entities_for_step(step, cgs))
                 },
@@ -2560,6 +2589,7 @@ pub fn publish_plasm_result_steps(
                     &per_step_lossy[i],
                     &per_step_in_band[i],
                 ),
+                column_schema,
             }
         })
         .collect();
@@ -5059,6 +5089,7 @@ mod tests {
                 preview_entities: None,
                 artifact: Some(handle),
                 lossy_summary_fields: LossySummaryFieldNames::default(),
+                column_schema: None,
             }],
             &OmittedReferenceOnlyFields::default(),
             None,

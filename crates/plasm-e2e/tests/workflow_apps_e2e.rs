@@ -415,9 +415,7 @@ async fn workflow_apps_e2e_async() {
         .pointer("/structuredContent/plasm")
         .or_else(|| dry_mcp.pointer("/mcp_result/structuredContent/plasm"));
     assert!(
-        dry_structured_plasm
-            .and_then(|p| p.get("plan"))
-            .is_some(),
+        dry_structured_plasm.and_then(|p| p.get("plan")).is_some(),
         "plasm dry-run must mirror plan into structuredContent.plasm: {dry_mcp}"
     );
     assert_eq!(
@@ -497,12 +495,30 @@ async fn workflow_apps_e2e_async() {
             .is_some_and(|a| !a.is_empty()),
         "bounded small plasm_run must inline preview_entities: {first_small}"
     );
+    if let Some(row) = first_small
+        .get("preview_entities")
+        .and_then(|v| v.as_array())
+        .and_then(|a| a.first())
+    {
+        for key in ["_ref", "_version", "_last_updated", "_completeness"] {
+            assert!(
+                row.get(key).is_none(),
+                "preview_entities must not include cache key {key}: {row}"
+            );
+        }
+    }
+    assert!(
+        first_small.get("column_schema").is_some(),
+        "plasm_run step must include column_schema: {first_small}"
+    );
 
     let run_structured_steps = run_mcp
         .pointer("/structuredContent/plasm/steps")
         .or_else(|| run_mcp.pointer("/mcp_result/structuredContent/plasm/steps"));
     assert!(
-        run_structured_steps.and_then(|v| v.as_array()).is_some_and(|a| !a.is_empty()),
+        run_structured_steps
+            .and_then(|v| v.as_array())
+            .is_some_and(|a| !a.is_empty()),
         "plasm_run must mirror steps into structuredContent.plasm: {run_mcp}"
     );
     assert_eq!(

@@ -5,6 +5,22 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.107] - 2026-06-11
+
+### Added
+
+- **`entity_to_agent_row_json`:** agent-facing rows (preview_entities, TSV) omit cache metadata (`_ref`, `_version`, `_completeness`, `_last_updated`).
+- **`column_schema` on `_meta.plasm.steps`:** CGS-informed column types for Run Explorer typed cells.
+- **`@plasm/mcp-ui-shared`:** shared ref chips + typed cell renderer for Run Explorer and Plan Review.
+- **Portrait-first MCP UI:** stacked Run Explorer (horizontal step tabs) and Plan Review (canvas → inspector).
+
+### Changed
+
+- **TS UI consolidation:** extract `@plasm/mcp-ui-host` (host protocol) and `@plasm/plan-dag` (shared Program DAG layout); Phoenix trace hook and Plan Review share one renderer.
+- **Run Explorer:** dense table layout, relation arrays as chips, sticky header.
+- **Plan Review:** inspector as structured definition table with shared chips.
+- **MCP TSV:** includes relation columns; no `_ref` fallback column.
+
 ## [0.1.106] - 2026-06-11
 
 ### Added

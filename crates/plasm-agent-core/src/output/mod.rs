@@ -171,8 +171,8 @@ fn field_type_is_blob(cgs: Option<&CGS>, entity_type: &EntityName, field: &str) 
         .is_some_and(|nv| matches!(nv.field_type, FieldType::Blob))
 }
 
-/// Column order for table/TSV: CGS `blob` fields expand to `{name}_ref` + `{name}_mime`.
-pub(super) fn union_entity_table_columns(
+/// Column order for agent table/TSV: fields (blob → ref+mime) + relations — no cache metadata columns.
+pub(crate) fn union_entity_table_columns(
     result: &ExecutionResult,
     cgs: Option<&CGS>,
 ) -> Vec<String> {
@@ -201,11 +201,13 @@ pub(super) fn union_entity_table_columns(
                 emitted.insert(key.clone());
             }
         }
+        for rel in entity.relations.keys() {
+            if emitted.insert(rel.clone()) {
+                columns.push(rel.clone());
+            }
+        }
     }
 
-    if columns.is_empty() {
-        columns.push("_ref".into());
-    }
     columns
 }
 
@@ -329,14 +331,23 @@ pub(super) fn format_summary_column_cell(
 
     let pres = field_presentation(cgs, &entity.reference.entity_type, col);
     let mime_hint = field_mime_hint(cgs, &entity.reference.entity_type, col);
-    entity
-        .fields
-        .get(col)
-        .map(|v| {
-            let wire = v.to_value();
-            format_value_for_summary_cell_impl(&wire, pres, mime_hint, omitted, col, report, false)
-        })
-        .unwrap_or_default()
+    if let Some(v) = entity.fields.get(col) {
+        let wire = v.to_value();
+        return format_value_for_summary_cell_impl(
+            &wire,
+            pres,
+            mime_hint,
+            omitted,
+            col,
+            report,
+            false,
+        );
+    }
+    if let Some(refs) = entity.relations.get(col) {
+        let parts: Vec<String> = refs.iter().map(|r| r.to_string()).collect();
+        return parts.join(", ");
+    }
+    String::new()
 }
 
 pub(super) fn field_mime_hint<'a>(
