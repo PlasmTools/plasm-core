@@ -5,6 +5,24 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.106] - 2026-06-11
+
+### Added
+
+- **MCP App view-only contract:** Plan Review and Run Explorer never call `callServerTool` — they render from the first host-forwarded tool result only.
+- **`structuredContent.plasm` mirror:** `plasm` / `plasm_run` responses duplicate `_meta.plasm` for hosts that strip `_meta` on iframe forward.
+- **Run content fallback:** parse Plasm markdown `## label (N rows)` + fenced TSV from forwarded `content` when meta channels are absent.
+- **Cursor forward fixtures + Vitest guards:** assert zero re-execution; structuredContent and TSV-only forwards render.
+
+### Fixed
+
+- **Removed v0.1.105 self-hydrate:** deleted `hydratePlanFromServer` / `hydrateRunFromServer` (wrong architecture — UI is a view, not an execution surface).
+- **Actionable host-forward errors:** “Host did not forward plan/run data” instead of misleading “Plan request failed” when the agent call succeeded.
+
+### Removed
+
+- **Self-hydrate tests** that mocked successful `callServerTool` re-invocation.
+
 ## [0.1.105] - 2026-06-11
 
 ### Added

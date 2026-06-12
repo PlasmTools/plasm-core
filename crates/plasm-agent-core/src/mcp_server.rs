@@ -1686,6 +1686,7 @@ impl PlasmMcpHandler {
                 let mut res = CallToolResult::from_content(blocks);
                 if let Some(m) = out.run_plasm_meta {
                     res = res.with_meta(Some(m));
+                    res = crate::mcp_ui_payload::mirror_plasm_structured_content(res);
                 }
                 Ok(res)
             }

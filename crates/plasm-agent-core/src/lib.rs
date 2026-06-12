@@ -57,6 +57,7 @@ pub mod mcp_config_readiness;
 pub mod mcp_config_repository;
 pub mod mcp_host_bootstrap;
 pub mod mcp_plasm_meta;
+pub mod mcp_ui_payload;
 pub mod mcp_policy;
 mod mcp_run_markdown;
 pub mod mcp_runtime_config;

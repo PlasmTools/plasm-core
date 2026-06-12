@@ -162,7 +162,12 @@ async fn mcp_tool_meta(
         }
     }
     let meta = result.get("_meta").cloned().unwrap_or(json!({}));
-    json!({ "_meta": meta, "mcp_result": result })
+    let structured = result
+        .get("structuredContent")
+        .or_else(|| result.get("structured_content"))
+        .cloned()
+        .unwrap_or(json!({}));
+    json!({ "_meta": meta, "structuredContent": structured, "mcp_result": result })
 }
 
 #[test]
@@ -406,6 +411,21 @@ async fn workflow_apps_e2e_async() {
         "plasm dry-run must attach plan review ui meta: {dry_mcp}"
     );
 
+    let dry_structured_plasm = dry_mcp
+        .pointer("/structuredContent/plasm")
+        .or_else(|| dry_mcp.pointer("/mcp_result/structuredContent/plasm"));
+    assert!(
+        dry_structured_plasm
+            .and_then(|p| p.get("plan"))
+            .is_some(),
+        "plasm dry-run must mirror plan into structuredContent.plasm: {dry_mcp}"
+    );
+    assert_eq!(
+        dry_mcp.pointer("/_meta/plasm/plan"),
+        dry_structured_plasm.and_then(|p| p.get("plan")),
+        "structuredContent.plasm.plan must mirror _meta.plasm.plan"
+    );
+
     let plan_commit_ref = dry_mcp
         .pointer("/_meta/plasm/plan_commit_ref")
         .and_then(|v| v.as_str())
@@ -450,15 +470,24 @@ async fn workflow_apps_e2e_async() {
     );
     let first_small = &small_steps[0];
     assert!(
-        first_small.get("return_label").and_then(|v| v.as_str()).is_some(),
+        first_small
+            .get("return_label")
+            .and_then(|v| v.as_str())
+            .is_some(),
         "step must include return_label: {first_small}"
     );
     assert!(
-        first_small.get("display").and_then(|v| v.as_str()).is_some(),
+        first_small
+            .get("display")
+            .and_then(|v| v.as_str())
+            .is_some(),
         "step must include display: {first_small}"
     );
     assert!(
-        first_small.get("row_count").and_then(|v| v.as_u64()).is_some(),
+        first_small
+            .get("row_count")
+            .and_then(|v| v.as_u64())
+            .is_some(),
         "step must include row_count: {first_small}"
     );
     assert!(
@@ -467,6 +496,19 @@ async fn workflow_apps_e2e_async() {
             .and_then(|v| v.as_array())
             .is_some_and(|a| !a.is_empty()),
         "bounded small plasm_run must inline preview_entities: {first_small}"
+    );
+
+    let run_structured_steps = run_mcp
+        .pointer("/structuredContent/plasm/steps")
+        .or_else(|| run_mcp.pointer("/mcp_result/structuredContent/plasm/steps"));
+    assert!(
+        run_structured_steps.and_then(|v| v.as_array()).is_some_and(|a| !a.is_empty()),
+        "plasm_run must mirror steps into structuredContent.plasm: {run_mcp}"
+    );
+    assert_eq!(
+        run_mcp.pointer("/_meta/plasm/steps"),
+        run_structured_steps,
+        "structuredContent.plasm.steps must mirror _meta.plasm.steps"
     );
 
     let run_large_mcp = mcp_tool_meta(
