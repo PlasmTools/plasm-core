@@ -31,7 +31,7 @@ pub(crate) fn build_run_step_column_schema(
     }
     let mut columns = Vec::with_capacity(column_names.len());
     for name in column_names {
-        if let Some(col) = column_meta_for_name(ent, cgs, &name, &first) {
+        if let Some(col) = column_meta_for_name(ent, cgs, &name, first) {
             columns.push(col);
         }
     }
