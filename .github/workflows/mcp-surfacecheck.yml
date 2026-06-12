@@ -19,6 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: major-matters/mcp-surfacecheck@v1
+      # Upstream action.yml calls sentinel.py but the repo ships surfacecheck.py (v1 tag).
+      - uses: actions/checkout@v4
         with:
-          fail-on: high
+          repository: major-matters/mcp-surfacecheck
+          ref: v1
+          path: .mcp-surfacecheck
+      - name: MCP surface check
+        run: |
+          set -euo pipefail
+          python3 .mcp-surfacecheck/surfacecheck.py --github-summary . >> "$GITHUB_STEP_SUMMARY"
+          python3 .mcp-surfacecheck/surfacecheck.py --fail-on high .
