@@ -88,11 +88,11 @@ use crate::operation::{
     PlanCommitRecord, PLAN_COMMIT_TTL,
 };
 use crate::plan_dry_display::build_plan_dry_compact_view;
-use crate::plasm_compile::compile_plasm_expression;
 use crate::plasm_comp_wire::plasm_comp_json_from_dry;
+use crate::plasm_compile::compile_plasm_expression;
 use crate::plasm_plan_run::{
-    evaluate_plasm_comp_dry, render_plasm_plan_dry_text_for_session,
-    PlasmPlanRunHooks, PlasmPlanRunResult,
+    evaluate_plasm_comp_dry, render_plasm_plan_dry_text_for_session, PlasmPlanRunHooks,
+    PlasmPlanRunResult,
 };
 use crate::run_artifacts::{
     code_plan_handle, code_plan_http_path, parse_plasm_execute_run_uri,
@@ -238,8 +238,7 @@ fn comp_content_sha256_hex(comp: &serde_json::Value) -> String {
 }
 
 fn plan_display_name_from_comp(comp: &serde_json::Value) -> String {
-    comp
-        .get("name")
+    comp.get("name")
         .and_then(|v| v.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| "unnamed plan".to_string())
@@ -1430,7 +1429,7 @@ impl PlasmMcpHandler {
                             crate::evidence_chain::evidence_anchors(
                                 plan_commit_ref.as_ref(),
                                 Some(mcp_trace.trace_id),
-                                Some(call_count as u64),
+                                Some(call_count),
                             ),
                         )
                         .map_err(|e| format!("evidence begin: {e}"))?;
@@ -1540,7 +1539,7 @@ impl PlasmMcpHandler {
                             crate::evidence_chain::evidence_anchors(
                                 None,
                                 Some(mcp_trace.trace_id),
-                                Some(call_count as u64),
+                                Some(call_count),
                             ),
                         )
                         .map_err(|e| format!("evidence begin: {e}"))?;

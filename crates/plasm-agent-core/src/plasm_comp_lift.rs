@@ -12,7 +12,9 @@ pub(crate) struct ExecutablePlasmComp {
 }
 
 /// Validate comp wiring and materialize steps in bind topological order.
-pub(crate) fn lift_executable_comp(artifact: &PlasmCompArtifact) -> Result<ExecutablePlasmComp, String> {
+pub(crate) fn lift_executable_comp(
+    artifact: &PlasmCompArtifact,
+) -> Result<ExecutablePlasmComp, String> {
     artifact.comp.validate()?;
     let mut steps_topo = Vec::with_capacity(artifact.comp.bind.topo.len());
     for id in &artifact.comp.bind.topo {

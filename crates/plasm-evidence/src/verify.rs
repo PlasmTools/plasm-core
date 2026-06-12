@@ -1,6 +1,6 @@
 use crate::bundle::EvidenceBundle;
-use crate::digest::ChainHead;
 use crate::canonical::{compute_run_bundle_digest, hash_segment_body, segment_body_for_hash};
+use crate::digest::ChainHead;
 use crate::segment::EvidenceKind;
 use plasm_core::expr_parser::ParsedExpr;
 use thiserror::Error;
@@ -72,11 +72,7 @@ impl DefaultChainVerifier {
         }
         #[cfg(feature = "signatures")]
         if let Some(sig) = &bundle.signature {
-            crate::sign::verify_bundle_signature_trusted(
-                bundle,
-                sig,
-                &opts.trusted_public_keys,
-            )?;
+            crate::sign::verify_bundle_signature_trusted(bundle, sig, &opts.trusted_public_keys)?;
         }
         Ok(head)
     }
@@ -93,7 +89,10 @@ impl DefaultChainVerifier {
         Err(EvidenceError::MissingCompCommitted)
     }
 
-    pub fn verify_comp_commit_id(bundle: &EvidenceBundle, expected_hex: &str) -> Result<(), EvidenceError> {
+    pub fn verify_comp_commit_id(
+        bundle: &EvidenceBundle,
+        expected_hex: &str,
+    ) -> Result<(), EvidenceError> {
         let got = Self::comp_committed_plan_id(bundle)?;
         if got != expected_hex {
             return Err(EvidenceError::CompCommitMismatch {
@@ -182,9 +181,7 @@ impl DefaultChainVerifier {
                 topo_idx += 1;
             }
             if topo_idx >= topo.len() {
-                return Err(EvidenceError::StepTopoMismatch {
-                    index: topo_idx,
-                });
+                return Err(EvidenceError::StepTopoMismatch { index: topo_idx });
             }
             topo_idx += 1;
         }
@@ -238,11 +235,11 @@ impl DefaultChainVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bundle::EvidenceAnchors;
     use crate::chain::ChainBuilder;
     use crate::digest::{IntentDigest, SegmentDigest};
     use crate::scope::EvidenceScope;
     use crate::segment::EvidenceKind;
-    use crate::bundle::EvidenceAnchors;
 
     fn scope() -> EvidenceScope {
         EvidenceScope::new_v1("p".repeat(64), "s1", "c".repeat(64), 0, "demo")

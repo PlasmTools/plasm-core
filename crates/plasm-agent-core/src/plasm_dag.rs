@@ -318,7 +318,8 @@ fn collect_value_for_template_uses(
     }
 }
 
-pub fn is_plasm_dag_candidate(expressions: &[String]) -> bool {
+#[allow(dead_code)]
+pub(crate) fn is_plasm_dag_candidate(expressions: &[String]) -> bool {
     if expressions.len() != 1 {
         return false;
     }
@@ -336,6 +337,7 @@ pub(crate) fn is_plasm_dag_source(src: &str) -> bool {
 }
 
 /// Compile one program expression to plan JSON (DAG program vs single surface line).
+#[allow(dead_code)]
 pub(crate) fn compile_plasm_expression_to_plan(
     pipeline: &PromptPipelineConfig,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,

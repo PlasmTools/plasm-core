@@ -104,7 +104,12 @@ fn verify_plan_commit_id(
     }
     es.evidence_chain
         .verify_comp_commit_matches(&commit_id)
-        .map_err(|e| format!("plan_commit_ref `{}` evidence mismatch: {e}", commit_ref.as_str()))?;
+        .map_err(|e| {
+            format!(
+                "plan_commit_ref `{}` evidence mismatch: {e}",
+                commit_ref.as_str()
+            )
+        })?;
     Ok(())
 }
 pub const PLAN_COMMIT_TTL: Duration = Duration::from_secs(600);
@@ -349,7 +354,7 @@ pub fn compute_plan_commit_id_from_dry(dry: &DryPlasmPlanEvaluation) -> PlanComm
 }
 
 /// Build accept metadata for async plan runs (display map + optional MCP transport).
-pub fn op_accept_context_from_executable(
+pub(crate) fn op_accept_context_from_executable(
     plan_commit_ref: Option<PlanCommitRef>,
     dry_verdict: Option<PlanDryVerdict>,
     auto_async: bool,
@@ -365,8 +370,7 @@ pub fn op_accept_context_from_executable(
     let validated =
         crate::plasm_step_convert::build_validated_plan_from_executable(comp, executable)
             .expect("executable comp already validated at dry-run");
-    let display_map =
-        crate::plan_dry_display::plan_node_display_map(validated.artifact(), &order);
+    let display_map = crate::plan_dry_display::plan_node_display_map(validated.artifact(), &order);
     OpAcceptContext {
         plan_commit_ref,
         dry_verdict,

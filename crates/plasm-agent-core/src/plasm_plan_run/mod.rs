@@ -35,9 +35,9 @@ pub use crate::plan_dry_display::PlanDryReview;
 use crate::plasm_plan::{
     AggregateFunction, BindingName, ComputeOp, ComputeTemplate, EffectClass, FieldPath, InputAlias,
     OutputName, Plan, PlanExprTemplate, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue,
-    QualifiedEntityKey, RelationSourceCardinality, ValidatedDeriveNode, ValidatedForEachNode,
+    QualifiedEntityKey, RelationSourceCardinality, ValidatedForEachNode,
     ValidatedPlan, ValidatedPlanDataInput, ValidatedPlanExprTemplate, ValidatedPlanNode,
-    ValidatedPlanReturn, ValidatedPlanState, ValidatedRelationTraversalNode, ValidatedSurfaceNode,
+    ValidatedPlanState, ValidatedRelationTraversalNode, ValidatedSurfaceNode,
     PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
 };
 use crate::server_state::PlasmHostState;
@@ -66,9 +66,9 @@ pub(crate) use compute_eval::*;
 pub(crate) use materialize::*;
 
 pub use dry::{
-    evaluate_plasm_comp_dry, node_dependencies,
-    plan_dry_compact_view, plan_semantic_dag_json, plasm_plan_dag_json, render_node_operation,
-    render_plasm_plan_dry_text, render_plasm_plan_dry_text_for_session,
+    evaluate_plasm_comp_dry, node_dependencies, plan_dry_compact_view, plan_semantic_dag_json,
+    plasm_plan_dag_json, render_node_operation, render_plasm_plan_dry_text,
+    render_plasm_plan_dry_text_for_session,
 };
 pub use orchestrator::run_plasm_comp;
 pub use parse::{
@@ -150,10 +150,6 @@ impl DryPlasmPlanEvaluation {
 
     pub(crate) fn artifact(&self) -> &plasm_core::PlasmCompArtifact {
         &self.artifact
-    }
-
-    pub(crate) fn executable(&self) -> &crate::plasm_comp_lift::ExecutablePlasmComp {
-        &self.executable
     }
 }
 
@@ -864,14 +860,8 @@ mod tests {
         let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         let comp = crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry);
         assert!(comp.get("steps").and_then(|s| s.get("products")).is_some());
-        assert_eq!(
-            comp["bind"]["deps"]["summary"][0],
-            "products"
-        );
-        assert_eq!(
-            comp["bind"]["deps"]["cards"][0],
-            "summary"
-        );
+        assert_eq!(comp["bind"]["deps"]["summary"][0], "products");
+        assert_eq!(comp["bind"]["deps"]["cards"][0], "summary");
         let text = render_plasm_plan_dry_text(
             &dry,
             Some(PlasmPlanDryRunTextMeta {

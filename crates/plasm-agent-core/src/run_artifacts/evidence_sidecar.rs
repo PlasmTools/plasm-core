@@ -4,6 +4,7 @@ use super::{RunArtifactError, RunArtifactId, RunArtifactStore};
 use object_store::path::Path as StorePath;
 use std::collections::{HashMap, HashSet};
 
+#[derive(Default)]
 pub(crate) struct EvidenceSidecarIndex {
     /// `(prompt_hash, session_id, chain_head_hex)` → serialized bundle (dedup).
     pub bundles_by_head: HashMap<(String, String, String), Vec<u8>>,
@@ -11,16 +12,6 @@ pub(crate) struct EvidenceSidecarIndex {
     pub run_to_head: HashMap<(String, String, RunArtifactId), String>,
     /// Durable backends: head already written for this session.
     pub persisted_heads: HashSet<(String, String, String)>,
-}
-
-impl Default for EvidenceSidecarIndex {
-    fn default() -> Self {
-        Self {
-            bundles_by_head: HashMap::new(),
-            run_to_head: HashMap::new(),
-            persisted_heads: HashSet::new(),
-        }
-    }
 }
 
 pub(crate) fn evidence_head_sidecar_filename(head_hex: &str) -> String {
@@ -79,7 +70,11 @@ pub(crate) fn evidence_object_key(
 }
 
 impl RunArtifactStore {
-    pub fn evidence_http_path(prompt_hash: &str, session_id: &str, run_id: &RunArtifactId) -> String {
+    pub fn evidence_http_path(
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: &RunArtifactId,
+    ) -> String {
         format!(
             "/execute/{prompt_hash}/{session_id}/artifacts/{}/evidence",
             run_id.to_wire()
@@ -98,9 +93,7 @@ impl RunArtifactStore {
         }
         let head_hex = bundle
             .chain_head()
-            .ok_or_else(|| {
-                RunArtifactError::Decode("evidence bundle missing chain head".into())
-            })?
+            .ok_or_else(|| RunArtifactError::Decode("evidence bundle missing chain head".into()))?
             .to_hex();
         let bytes = serde_json::to_vec(bundle)?;
         let n = bytes.len();
@@ -118,11 +111,7 @@ impl RunArtifactStore {
             g.bundles_by_head.insert(head_key, bytes.clone());
             for run_id in run_ids {
                 g.run_to_head.insert(
-                    (
-                        prompt_hash.to_string(),
-                        session_id.to_string(),
-                        *run_id,
-                    ),
+                    (prompt_hash.to_string(), session_id.to_string(), *run_id),
                     head_hex.clone(),
                 );
             }
@@ -134,12 +123,7 @@ impl RunArtifactStore {
                 .await?;
             for run_id in run_ids {
                 self.inner
-                    .put_evidence_run_head_pointer(
-                        prompt_hash,
-                        session_id,
-                        *run_id,
-                        &head_hex,
-                    )
+                    .put_evidence_run_head_pointer(prompt_hash, session_id, *run_id, &head_hex)
                     .await?;
             }
             self.evidence_index
@@ -158,8 +142,13 @@ impl RunArtifactStore {
         run_id: RunArtifactId,
         bundle: &plasm_evidence::EvidenceBundle,
     ) -> Result<usize, RunArtifactError> {
-        self.insert_evidence_bundles(prompt_hash, session_id, std::slice::from_ref(&run_id), bundle)
-            .await
+        self.insert_evidence_bundles(
+            prompt_hash,
+            session_id,
+            std::slice::from_ref(&run_id),
+            bundle,
+        )
+        .await
     }
 
     pub async fn get_evidence_bundle(
@@ -168,25 +157,16 @@ impl RunArtifactStore {
         session_id: &str,
         run_id: RunArtifactId,
     ) -> Result<Option<plasm_evidence::EvidenceBundle>, RunArtifactError> {
-        let key = (
-            prompt_hash.to_string(),
-            session_id.to_string(),
-            run_id,
-        );
-        if let Some(bytes) = self
-            .evidence_index
-            .read()
-            .ok()
-            .and_then(|g| {
-                g.run_to_head
-                    .get(&key)
-                    .and_then(|head| {
-                        g.bundles_by_head
-                            .get(&(key.0.clone(), key.1.clone(), head.clone()))
-                    })
-                    .cloned()
-            })
-        {
+        let key = (prompt_hash.to_string(), session_id.to_string(), run_id);
+        if let Some(bytes) = self.evidence_index.read().ok().and_then(|g| {
+            g.run_to_head
+                .get(&key)
+                .and_then(|head| {
+                    g.bundles_by_head
+                        .get(&(key.0.clone(), key.1.clone(), head.clone()))
+                })
+                .cloned()
+        }) {
             let bundle: plasm_evidence::EvidenceBundle = serde_json::from_slice(&bytes)?;
             return Ok(Some(bundle));
         }

@@ -7,9 +7,9 @@
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::{PlanCommitId, PlasmComp};
 use plasm_evidence::{
-    compute_comp_commit_id, compute_intent_digest, compute_parsed_expr_digest, ChainBuilder,
-    DefaultChainVerifier, EvidenceAnchors, EvidenceBundle, EvidenceKind, EvidenceScope,
-    run_id_wire_from_digest, CanonicalError, SegmentDigest, CHAIN_BUILDER_DEFAULT_CAPACITY,
+    compute_comp_commit_id, compute_intent_digest, compute_parsed_expr_digest,
+    run_id_wire_from_digest, CanonicalError, ChainBuilder, DefaultChainVerifier, EvidenceAnchors,
+    EvidenceBundle, EvidenceKind, EvidenceScope, SegmentDigest, CHAIN_BUILDER_DEFAULT_CAPACITY,
 };
 use std::env;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -243,7 +243,10 @@ impl EvidenceChainSession {
     }
 
     /// Record many `step_executed` segments under one mutex hold.
-    pub fn record_steps_executed(&self, steps: &[StepExecutedRecord]) -> Result<(), EvidenceEmitError> {
+    pub fn record_steps_executed(
+        &self,
+        steps: &[StepExecutedRecord],
+    ) -> Result<(), EvidenceEmitError> {
         if steps.is_empty() {
             return Ok(());
         }
@@ -255,7 +258,8 @@ impl EvidenceChainSession {
         g.builder.reserve(steps.len());
         for step in steps {
             let fps = Self::parse_fingerprints(&step.request_fingerprints);
-            let parsed_digest = compute_parsed_expr_digest(&step.parsed).map_err(map_canonical_err)?;
+            let parsed_digest =
+                compute_parsed_expr_digest(&step.parsed).map_err(map_canonical_err)?;
             g.builder
                 .push(
                     EvidenceKind::StepExecuted {
@@ -312,7 +316,10 @@ impl EvidenceChainSession {
         Ok(())
     }
 
-    pub fn verify_comp_commit_matches(&self, expected: &PlanCommitId) -> Result<(), EvidenceEmitError> {
+    pub fn verify_comp_commit_matches(
+        &self,
+        expected: &PlanCommitId,
+    ) -> Result<(), EvidenceEmitError> {
         let Some(inner) = self.allocated_inner() else {
             return Ok(());
         };
@@ -337,7 +344,10 @@ impl EvidenceChainSession {
             return Ok(None);
         };
         let mut g = lock_chain(&inner)?;
-        let scope = g.scope.clone().ok_or(EvidenceEmitError::ScopeNotInitialized)?;
+        let scope = g
+            .scope
+            .clone()
+            .ok_or(EvidenceEmitError::ScopeNotInitialized)?;
         let chain = std::mem::replace(
             &mut g.builder,
             ChainBuilder::with_capacity(CHAIN_BUILDER_DEFAULT_CAPACITY),
@@ -402,9 +412,8 @@ fn signing_seed_hex_from_env_uncached() -> Result<Option<String>, EvidenceEmitEr
     if seed.is_empty() {
         return Ok(None);
     }
-    let bytes = hex::decode(seed).map_err(|e| {
-        EvidenceEmitError::SigningKeyInvalid(format!("invalid seed hex: {e}"))
-    })?;
+    let bytes = hex::decode(seed)
+        .map_err(|e| EvidenceEmitError::SigningKeyInvalid(format!("invalid seed hex: {e}")))?;
     if bytes.len() != 32 {
         return Err(EvidenceEmitError::SigningKeyInvalid(
             "PLASM_EVIDENCE_SIGNING_KEY must be 32-byte hex".into(),
@@ -597,12 +606,19 @@ mod tests {
         let chain = EvidenceChainSession::new();
         assert!(!chain.is_inner_allocated());
         chain
-            .record_step_executed("x", 0, None, "line", &ParsedExpr {
-                expr: Expr::TeachingValue {
-                    value: Value::String("x".into()),
+            .record_step_executed(
+                "x",
+                0,
+                None,
+                "line",
+                &ParsedExpr {
+                    expr: Expr::TeachingValue {
+                        value: Value::String("x".into()),
+                    },
+                    projection: None,
                 },
-                projection: None,
-            }, &[])
+                &[],
+            )
             .expect("noop");
         assert!(!chain.is_inner_allocated());
     }
@@ -652,9 +668,7 @@ mod tests {
                 "demo",
             ))
             .expect("scope");
-        chain
-            .record_comp_committed(&minimal_comp())
-            .expect("comp");
+        chain.record_comp_committed(&minimal_comp()).expect("comp");
         let parsed = ParsedExpr {
             expr: Expr::TeachingValue {
                 value: Value::String("x".into()),
@@ -734,9 +748,7 @@ mod tests {
                 "demo",
             ))
             .expect("scope");
-        chain
-            .record_comp_committed(&minimal_comp())
-            .expect("comp");
+        chain.record_comp_committed(&minimal_comp()).expect("comp");
         let err = chain.finish_bundle().expect_err("invalid key");
         assert!(matches!(err, EvidenceEmitError::SigningKeyInvalid(_)));
         std::env::remove_var(ENV_PLASM_EVIDENCE_SIGNING_KEY);

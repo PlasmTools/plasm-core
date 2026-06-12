@@ -88,7 +88,10 @@ async fn get_evidence_returns_stored_bundle() {
         .insert_evidence_bundle(&ph, &sid, run_id, &bundle)
         .await
         .expect("insert");
-    let uri = format!("/execute/{ph}/{sid}/artifacts/{}/evidence", run_id.to_wire());
+    let uri = format!(
+        "/execute/{ph}/{sid}/artifacts/{}/evidence",
+        run_id.to_wire()
+    );
     let req = Request::builder()
         .method("GET")
         .uri(uri)
@@ -105,13 +108,8 @@ fn verify_evidence_for_http_serve_rejects_tampered_chain() {
     let mut bundle = sample_bundle(&ph, &sid);
     DefaultChainVerifier::verify(&bundle).expect("valid");
     bundle.chain.segments[0].prev = Some(plasm_evidence::SegmentDigest::from_bytes([9u8; 32]));
-    let err = verify_evidence_for_http_serve(
-        &bundle,
-        &VerifyOptions::default(),
-        "pr00",
-        None,
-        None,
-    )
-    .expect_err("tampered");
+    let err =
+        verify_evidence_for_http_serve(&bundle, &VerifyOptions::default(), "pr00", None, None)
+            .expect_err("tampered");
     assert!(err.to_string().contains("prev") || err.to_string().contains("head"));
 }

@@ -1259,8 +1259,12 @@ impl RunArtifactBackend for ObjectStoreRunArtifactBackend {
         if let Ok(res) = self.store.get(&ptr_key).await {
             if let Ok(bytes) = res.bytes().await {
                 if let Ok(head) = std::str::from_utf8(bytes.as_ref()) {
-                    let head_key =
-                        evidence_head_object_key(&self.prefix, prompt_hash, session_id, head.trim());
+                    let head_key = evidence_head_object_key(
+                        &self.prefix,
+                        prompt_hash,
+                        session_id,
+                        head.trim(),
+                    );
                     if let Ok(res) = self.store.get(&head_key).await {
                         if let Ok(b) = res.bytes().await {
                             return Some(b.to_vec());
@@ -1924,7 +1928,10 @@ mod tests {
 
     #[tokio::test]
     async fn evidence_sidecar_memory_round_trip() {
-        use plasm_evidence::{ChainBuilder, EvidenceAnchors, EvidenceBundle, EvidenceKind, EvidenceScope, IntentDigest};
+        use plasm_evidence::{
+            ChainBuilder, EvidenceAnchors, EvidenceBundle, EvidenceKind, EvidenceScope,
+            IntentDigest,
+        };
         let store = RunArtifactStore::memory();
         let ph = "p".repeat(64);
         let run_id = RunArtifactId::from_bytes([9u8; 32]);
@@ -1958,7 +1965,10 @@ mod tests {
 
     #[tokio::test]
     async fn evidence_sidecar_dedup_multi_run_id() {
-        use plasm_evidence::{ChainBuilder, EvidenceAnchors, EvidenceBundle, EvidenceKind, EvidenceScope, IntentDigest};
+        use plasm_evidence::{
+            ChainBuilder, EvidenceAnchors, EvidenceBundle, EvidenceKind, EvidenceScope,
+            IntentDigest,
+        };
         let store = RunArtifactStore::memory();
         let ph = "p".repeat(64);
         let run_a = RunArtifactId::from_bytes([9u8; 32]);
@@ -2007,7 +2017,9 @@ mod tests {
         assert!(!object_store_path_is_run_snapshot_gc_eligible(
             "execute/abc/s1/evidence/run-heads/prabc.head"
         ));
-        assert!(!object_store_path_is_run_snapshot_gc_eligible("code-plans/p/s1/p1.json"));
+        assert!(!object_store_path_is_run_snapshot_gc_eligible(
+            "code-plans/p/s1/p1.json"
+        ));
     }
 
     #[tokio::test]

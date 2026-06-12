@@ -133,7 +133,10 @@ pub fn plasm_comp_json_from_dry(dry: &DryPlasmPlanEvaluation) -> serde_json::Val
 }
 
 /// Wire JSON for MCP/HTTP `_meta.plasm.comp` (greenfield).
-pub fn plasm_comp_wire_json(artifact: &PlasmCompArtifact, summary: Option<&serde_json::Value>) -> serde_json::Value {
+pub fn plasm_comp_wire_json(
+    artifact: &PlasmCompArtifact,
+    summary: Option<&serde_json::Value>,
+) -> serde_json::Value {
     let mut v = serde_json::to_value(&artifact.comp).expect("PlasmComp serializes");
     if let Some(obj) = v.as_object_mut() {
         if let Some(s) = summary {

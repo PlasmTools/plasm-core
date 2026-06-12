@@ -22,11 +22,10 @@ pub use run_seal::{
 };
 pub use scope::EvidenceScope;
 pub use segment::{EvidenceKind, EvidenceSegment};
-pub use verify::{
-    DefaultChainVerifier, EvidenceError, RunSealInputs, VerifyOptions,
-};
+pub use verify::{DefaultChainVerifier, EvidenceError, RunSealInputs, VerifyOptions};
 
 pub use canonical::{
-    comp_semantic_canonical, compute_comp_commit_id, compute_intent_digest, compute_parsed_expr_digest,
-    compute_run_bundle_digest, CanonicalError, EVIDENCE_SEGMENT_HASH_SCHEMA_VERSION,
+    comp_semantic_canonical, compute_comp_commit_id, compute_intent_digest,
+    compute_parsed_expr_digest, compute_run_bundle_digest, CanonicalError,
+    EVIDENCE_SEGMENT_HASH_SCHEMA_VERSION,
 };

@@ -99,7 +99,9 @@ pub fn segment_body_for_hash(
     })
 }
 
-pub fn hash_segment_body(body: &serde_json::Value) -> Result<SegmentDigest, crate::verify::EvidenceError> {
+pub fn hash_segment_body(
+    body: &serde_json::Value,
+) -> Result<SegmentDigest, crate::verify::EvidenceError> {
     let bytes = jcs::canonical_bytes(body)?;
     let digest = Sha256::digest(&bytes);
     let mut out = [0u8; 32];
@@ -110,7 +112,10 @@ pub fn hash_segment_body(body: &serde_json::Value) -> Result<SegmentDigest, crat
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plasm_core::plasm_monad::{PlasmBindGraph, PlasmComp, PlasmReturn, PlasmStepPayload, PurePayload, PlasmDataValue, StepId};
+    use plasm_core::plasm_monad::{
+        PlasmBindGraph, PlasmComp, PlasmDataValue, PlasmReturn, PlasmStepPayload, PurePayload,
+        StepId,
+    };
     use std::collections::BTreeMap;
 
     #[test]

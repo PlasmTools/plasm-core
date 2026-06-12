@@ -37,7 +37,11 @@ impl ChainBuilder {
         &self.segments
     }
 
-    pub fn push(&mut self, kind: EvidenceKind, at_ms: Option<u64>) -> Result<SegmentDigest, crate::verify::EvidenceError> {
+    pub fn push(
+        &mut self,
+        kind: EvidenceKind,
+        at_ms: Option<u64>,
+    ) -> Result<SegmentDigest, crate::verify::EvidenceError> {
         let body = segment_body_for_hash(self.seq, self.prev, &kind);
         let digest = hash_segment_body(&body)?;
         let segment = EvidenceSegment {
@@ -83,9 +87,7 @@ impl EvidenceChain {
         let mut prev: Option<SegmentDigest> = None;
         for segment in &self.segments {
             if segment.prev != prev {
-                return Err(crate::verify::EvidenceError::BrokenPrevLink {
-                    seq: segment.seq,
-                });
+                return Err(crate::verify::EvidenceError::BrokenPrevLink { seq: segment.seq });
             }
             let body = segment_body_for_hash(segment.seq, segment.prev, &segment.kind);
             let digest = hash_segment_body(&body)?;

@@ -474,7 +474,7 @@ impl ClientSymbolSession {
         }
         let bundle = compile_plasm_expression(pipeline, cross, &es, "plasm_cli", trimmed)
             .map_err(|e| anyhow!("{e}"))?;
-        Ok(serde_json::to_value(&bundle.artifact().comp).map_err(|e| anyhow!("{e}"))?)
+        serde_json::to_value(&bundle.artifact().comp).map_err(|e| anyhow!("{e}"))
     }
 
     #[allow(dead_code)]
@@ -541,16 +541,14 @@ mod tests {
         let comp = sess
             .compile_program_to_plan("Profile{}")
             .expect("compile Profile{}");
-        assert!(
-            comp.get("steps")
-                .and_then(|s| s.as_object())
-                .is_some_and(|m| !m.is_empty())
-        );
-        assert!(
-            comp.get("bind")
-                .and_then(|b| b.get("topo"))
-                .and_then(|t| t.as_array())
-                .is_some_and(|a| !a.is_empty())
-        );
+        assert!(comp
+            .get("steps")
+            .and_then(|s| s.as_object())
+            .is_some_and(|m| !m.is_empty()));
+        assert!(comp
+            .get("bind")
+            .and_then(|b| b.get("topo"))
+            .and_then(|t| t.as_array())
+            .is_some_and(|a| !a.is_empty()));
     }
 }

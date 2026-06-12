@@ -125,9 +125,10 @@ impl PlasmStep {
                 EffectClass::SideEffect => EffectBarrier::SideEffect,
             },
             Self::FlatMapEffect { .. } => EffectBarrier::Write,
-            Self::Pure { .. } | Self::Map { .. } | Self::Derive { .. } | Self::FlatMapRelation { .. } => {
-                EffectBarrier::Read
-            }
+            Self::Pure { .. }
+            | Self::Map { .. }
+            | Self::Derive { .. }
+            | Self::FlatMapRelation { .. } => EffectBarrier::Read,
         }
     }
 

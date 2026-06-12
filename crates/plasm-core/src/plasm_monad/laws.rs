@@ -74,7 +74,13 @@ fn right_identity_bind_map_then_return() {
         StepId::new("y").unwrap(),
         a_id,
         "project id",
-        map_step_payload("x", ComputeOp::Project { fields: BTreeMap::new() }, ResultShape::List),
+        map_step_payload(
+            "x",
+            ComputeOp::Project {
+                fields: BTreeMap::new(),
+            },
+            ResultShape::List,
+        ),
     )
     .unwrap();
     m.return_ = PlasmReturn::Step {
@@ -90,7 +96,12 @@ fn associativity_three_read_maps() {
     plasm_pure_step(
         &mut left,
         StepId::new("a").unwrap(),
-        invoke_step_payload(SurfaceKind::Query, EffectClass::Read, ResultShape::List, "a"),
+        invoke_step_payload(
+            SurfaceKind::Query,
+            EffectClass::Read,
+            ResultShape::List,
+            "a",
+        ),
         "a",
     )
     .unwrap();
@@ -107,7 +118,11 @@ fn associativity_three_read_maps() {
         StepId::new("c").unwrap(),
         StepId::new("b").unwrap(),
         "filter",
-        map_step_payload("b", ComputeOp::Filter { predicates: vec![] }, ResultShape::List),
+        map_step_payload(
+            "b",
+            ComputeOp::Filter { predicates: vec![] },
+            ResultShape::List,
+        ),
     )
     .unwrap();
     left.return_ = PlasmReturn::Step {
@@ -118,7 +133,12 @@ fn associativity_three_read_maps() {
     plasm_pure_step(
         &mut right,
         StepId::new("a").unwrap(),
-        invoke_step_payload(SurfaceKind::Query, EffectClass::Read, ResultShape::List, "a"),
+        invoke_step_payload(
+            SurfaceKind::Query,
+            EffectClass::Read,
+            ResultShape::List,
+            "a",
+        ),
         "a",
     )
     .unwrap();
@@ -145,10 +165,7 @@ fn associativity_three_read_maps() {
 #[test]
 fn parallel_return_not_nested_bind() {
     use super::operators::plasm_parallel_return;
-    let pr = plasm_parallel_return(vec![
-        StepId::new("a").unwrap(),
-        StepId::new("b").unwrap(),
-    ])
-    .unwrap();
+    let pr =
+        plasm_parallel_return(vec![StepId::new("a").unwrap(), StepId::new("b").unwrap()]).unwrap();
     assert!(matches!(pr, PlasmReturn::Parallel { .. }));
 }

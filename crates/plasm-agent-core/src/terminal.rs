@@ -18,7 +18,6 @@ use crate::http_execute::{
     build_capability_exposure_plan, CapabilitySeed, CreateExecuteSessionBody,
     CreateExecuteSessionResponse, ExecuteSessionContextBody,
 };
-use plasm_core::PlasmComp;
 use crate::resolved_plan_http::{
     ResolvedPlanProtocolVersion, ResolvedPlanRequest, ResolvedPlanRunMode,
     RESOLVED_PLAN_CONTENT_TYPE,
@@ -32,6 +31,7 @@ use crate::terminal_state::{
     resolve_current_session, write_current_session_pointer, write_language_frontmatter_markdown,
     write_plasm_cli_agent_skill, ExecutionBinding,
 };
+use plasm_core::PlasmComp;
 
 /// Default HTTP origin written by `plasm init` when `--server` is omitted.
 pub const DEFAULT_PLASM_HTTP_ORIGIN: &str = "http://127.0.0.1:3000";
@@ -1100,7 +1100,9 @@ fn run_evidence_cmd(cmd: crate::terminal_cli::EvidenceCmd) -> Result<(), anyhow:
                     anyhow!("evidence verify: --run-id requires --artifact for digest verification")
                 })?;
                 let schema_path = schema.as_ref().ok_or_else(|| {
-                    anyhow!("evidence verify: --run-id requires --schema to parse artifact expressions")
+                    anyhow!(
+                        "evidence verify: --run-id requires --schema to parse artifact expressions"
+                    )
                 })?;
                 let mut artifact_raw = String::new();
                 std::fs::File::open(artifact_path)

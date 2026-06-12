@@ -2,25 +2,27 @@
 
 use crate::plasm_comp_lift::ExecutablePlasmComp;
 use crate::plasm_plan::{
-    BindingName, EffectClass as PlanEffectClass, EffectTemplate, InputAlias,
-    InputCardinalityProof, Plan, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue,
-    QualifiedEntityKey, ResultShape as PlanResultShape, ValidatedComputeNode, ValidatedDataNode,
-    ValidatedDeriveNode, ValidatedForEachNode,     ValidatedPlan, ValidatedPlanArtifact,
-    ValidatedPlanDataInput, ValidatedPlanExprIr, ValidatedPlanExprTemplate, ValidatedPlanNode,
-    ValidatedPlanRelationTraversal, ValidatedPlanReturn,
-    ValidatedRelationTraversalNode, ValidatedSurfaceNode,
+    BindingName, EffectClass as PlanEffectClass, EffectTemplate, InputAlias, InputCardinalityProof,
+    Plan, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue, QualifiedEntityKey,
+    ResultShape as PlanResultShape, ValidatedComputeNode, ValidatedDataNode, ValidatedDeriveNode,
+    ValidatedForEachNode, ValidatedPlan, ValidatedPlanArtifact, ValidatedPlanDataInput,
+    ValidatedPlanExprIr, ValidatedPlanExprTemplate, ValidatedPlanNode,
+    ValidatedPlanRelationTraversal, ValidatedPlanReturn, ValidatedRelationTraversalNode,
+    ValidatedSurfaceNode,
 };
 use plasm_core::{
     BindingName as CoreBindingName, DeriveKind, DerivePayload, DeriveTemplate, EffectClass,
     EffectTemplate as CoreEffectTemplate, Expr, FlatMapEffectPayload, FlatMapRelationPayload,
-    InputCardinality as CoreInputCardinality, InvokePayload, MapPayload, PlanDataInput,
-    PlanExprIr, PlanExprTemplate, PlanInputBinding, PlanPredicate, PlanQualifiedEntityKey,
-    PlanRelationTraversal, PlasmBindGraph, PlasmComp, PlasmDataValue, PlasmReturn, PlasmStepPayload,
-    PurePayload, ResultShape, StepId, SurfaceKind,
+    InputCardinality as CoreInputCardinality, InvokePayload, MapPayload, PlanDataInput, PlanExprIr,
+    PlanExprTemplate, PlanInputBinding, PlanPredicate, PlanQualifiedEntityKey,
+    PlanRelationTraversal, PlasmBindGraph, PlasmComp, PlasmDataValue, PlasmReturn,
+    PlasmStepPayload, PurePayload, ResultShape, StepId, SurfaceKind,
 };
 use std::collections::HashMap;
 
-pub(crate) fn validated_node_to_step_payload(node: &ValidatedPlanNode) -> Result<PlasmStepPayload, String> {
+pub(crate) fn validated_node_to_step_payload(
+    node: &ValidatedPlanNode,
+) -> Result<PlasmStepPayload, String> {
     match node {
         ValidatedPlanNode::Surface(n) => Ok(PlasmStepPayload::Invoke(surface_to_invoke(n)?)),
         ValidatedPlanNode::Data(n) => Ok(PlasmStepPayload::Pure(data_to_pure(n)?)),
@@ -29,7 +31,9 @@ pub(crate) fn validated_node_to_step_payload(node: &ValidatedPlanNode) -> Result
         ValidatedPlanNode::RelationTraversal(n) => {
             Ok(PlasmStepPayload::FlatMapRelation(relation_to_payload(n)?))
         }
-        ValidatedPlanNode::ForEach(n) => Ok(PlasmStepPayload::FlatMapEffect(for_each_to_payload(n)?)),
+        ValidatedPlanNode::ForEach(n) => {
+            Ok(PlasmStepPayload::FlatMapEffect(for_each_to_payload(n)?))
+        }
     }
 }
 
@@ -39,7 +43,7 @@ fn surface_to_invoke(node: &ValidatedSurfaceNode) -> Result<InvokePayload, Strin
         qualified_entity: node
             .qualified_entity
             .as_ref()
-            .map(|q| qualified_entity_key(q)),
+            .map(qualified_entity_key),
         ir: node
             .ir
             .as_ref()
@@ -93,7 +97,9 @@ fn derive_to_payload(node: &ValidatedDeriveNode) -> Result<DerivePayload, String
     })
 }
 
-fn relation_to_payload(node: &ValidatedRelationTraversalNode) -> Result<FlatMapRelationPayload, String> {
+fn relation_to_payload(
+    node: &ValidatedRelationTraversalNode,
+) -> Result<FlatMapRelationPayload, String> {
     Ok(FlatMapRelationPayload {
         relation: relation_traversal_to_plan(&node.relation)?,
         effect_class: effect_class(node.effect_class),
@@ -114,7 +120,9 @@ fn for_each_to_payload(node: &ValidatedForEachNode) -> Result<FlatMapEffectPaylo
     })
 }
 
-fn relation_traversal_to_plan(relation: &ValidatedPlanRelationTraversal) -> Result<PlanRelationTraversal, String> {
+fn relation_traversal_to_plan(
+    relation: &ValidatedPlanRelationTraversal,
+) -> Result<PlanRelationTraversal, String> {
     Ok(PlanRelationTraversal {
         source: relation.source.as_str().to_string(),
         relation: relation.relation.as_str().to_string(),
@@ -253,19 +261,9 @@ pub(crate) fn step_payload_to_validated_node(
         PlasmStepPayload::Invoke(p) => Ok(ValidatedPlanNode::Surface(ValidatedSurfaceNode {
             id,
             kind: surface_kind_to_plan(p.plan_kind)?,
-            qualified_entity: p
-                .qualified_entity
-                .as_ref()
-                .map(plan_qualified_entity_key),
-            ir: p
-                .ir
-                .as_ref()
-                .map(plan_expr_ir_to_validated)
-                .transpose()?,
-            ir_template: p
-                .ir_template
-                .as_ref()
-                .map(plan_expr_template_to_validated),
+            qualified_entity: p.qualified_entity.as_ref().map(plan_qualified_entity_key),
+            ir: p.ir.as_ref().map(plan_expr_ir_to_validated).transpose()?,
+            ir_template: p.ir_template.as_ref().map(plan_expr_template_to_validated),
             display_expr: p.display_expr.clone(),
             effect_class: plan_effect_class(p.effect_class),
             result_shape: plan_result_shape(p.result_shape),
@@ -300,10 +298,9 @@ pub(crate) fn step_payload_to_validated_node(
                 effect_class: plan_effect_class(p.effect_class),
                 result_shape: plan_result_shape(p.result_shape),
                 source: PlanNodeId::new(
-                    derive
-                        .source
-                        .as_deref()
-                        .ok_or_else(|| format!("derive step {} missing source", step_id.as_str()))?,
+                    derive.source.as_deref().ok_or_else(|| {
+                        format!("derive step {} missing source", step_id.as_str())
+                    })?,
                 )?,
                 item_binding: BindingName::new(
                     derive
@@ -334,19 +331,21 @@ pub(crate) fn step_payload_to_validated_node(
                 uses_result,
             },
         )),
-        PlasmStepPayload::FlatMapEffect(p) => Ok(ValidatedPlanNode::ForEach(ValidatedForEachNode {
-            id,
-            effect_class: plan_effect_class(p.effect_class),
-            result_shape: plan_result_shape(p.result_shape),
-            source: PlanNodeId::new(p.source.clone())?,
-            item_binding: BindingName::new(p.item_binding.as_str())?,
-            effect_template: effect_template_to_plan(&p.effect_template)?,
-            projection: p.projection.clone(),
-            predicates: convert_predicates_back(&p.predicates)?,
-            depends_on,
-            uses_result,
-            approval: p.approval.clone(),
-        })),
+        PlasmStepPayload::FlatMapEffect(p) => {
+            Ok(ValidatedPlanNode::ForEach(ValidatedForEachNode {
+                id,
+                effect_class: plan_effect_class(p.effect_class),
+                result_shape: plan_result_shape(p.result_shape),
+                source: PlanNodeId::new(p.source.clone())?,
+                item_binding: BindingName::new(p.item_binding.as_str())?,
+                effect_template: effect_template_to_plan(&p.effect_template)?,
+                projection: p.projection.clone(),
+                predicates: convert_predicates_back(&p.predicates)?,
+                depends_on,
+                uses_result,
+                approval: p.approval.clone(),
+            }))
+        }
     }
 }
 

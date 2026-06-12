@@ -9,9 +9,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 
 #[cfg(feature = "signatures")]
 pub fn signable_head_bytes(bundle: &EvidenceBundle) -> Result<Vec<u8>, EvidenceError> {
-    let head = bundle
-        .chain_head()
-        .ok_or(EvidenceError::EmptyChain)?;
+    let head = bundle.chain_head().ok_or(EvidenceError::EmptyChain)?;
     let v = serde_json::json!({
         "schema_version": 2u32,
         "scope": bundle.scope,
@@ -54,15 +52,18 @@ pub fn verify_bundle_signature_trusted(
             return Err(EvidenceError::SignatureInvalid);
         }
     }
-    let pk_bytes = hex::decode(sig.public_key_hex.trim()).map_err(|_| EvidenceError::SignatureInvalid)?;
+    let pk_bytes =
+        hex::decode(sig.public_key_hex.trim()).map_err(|_| EvidenceError::SignatureInvalid)?;
     if pk_bytes.len() != 32 {
         return Err(EvidenceError::SignatureInvalid);
     }
     let mut pk_arr = [0u8; 32];
     pk_arr.copy_from_slice(&pk_bytes);
     let vk = VerifyingKey::from_bytes(&pk_arr).map_err(|_| EvidenceError::SignatureInvalid)?;
-    let sig_bytes = hex::decode(sig.signature_hex.trim()).map_err(|_| EvidenceError::SignatureInvalid)?;
-    let signature = Signature::from_slice(&sig_bytes).map_err(|_| EvidenceError::SignatureInvalid)?;
+    let sig_bytes =
+        hex::decode(sig.signature_hex.trim()).map_err(|_| EvidenceError::SignatureInvalid)?;
+    let signature =
+        Signature::from_slice(&sig_bytes).map_err(|_| EvidenceError::SignatureInvalid)?;
     let bytes = signable_head_bytes(bundle)?;
     vk.verify(&bytes, &signature)
         .map_err(|_| EvidenceError::SignatureInvalid)

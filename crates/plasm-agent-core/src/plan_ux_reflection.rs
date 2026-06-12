@@ -8,10 +8,10 @@ use crate::execute_session::ExecuteSession;
 use crate::plan_dry_display::{
     build_plan_dry_compact_view, plan_node_display_map, render_plan_dry_op, PlanDryVerdict,
 };
+use crate::plasm_comp_wire::plasm_comp_json_from_dry;
 use crate::plasm_plan::{
     EffectClass, PlanNodeKind, ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState,
 };
-use crate::plasm_comp_wire::plasm_comp_json_from_dry;
 use crate::plasm_plan_run::DryPlasmPlanEvaluation;
 
 pub const PLAN_UX_REFLECTION_SCHEMA_VERSION: u32 = 1;

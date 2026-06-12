@@ -232,11 +232,17 @@ pub enum EvidenceCmd {
     Verify {
         #[arg(value_name = "FILE", help = "Path to .evidence.json sidecar")]
         path: std::path::PathBuf,
-        #[arg(long, help = "Verify run_sealed digest for this run_id (requires --artifact)")]
+        #[arg(
+            long,
+            help = "Verify run_sealed digest for this run_id (requires --artifact)"
+        )]
         run_id: Option<String>,
         #[arg(long, help = "Run snapshot JSON for run_sealed digest verification")]
         artifact: Option<std::path::PathBuf>,
-        #[arg(long, help = "CGS schema directory to parse artifact expressions (required with --artifact for digest verify)")]
+        #[arg(
+            long,
+            help = "CGS schema directory to parse artifact expressions (required with --artifact for digest verify)"
+        )]
         schema: Option<std::path::PathBuf>,
         #[arg(
             long = "trusted-pubkey",

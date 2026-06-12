@@ -1,12 +1,10 @@
 //! Live plan orchestration.
 
 use super::*;
+use crate::evidence_chain::{attach_evidence_meta, persist_evidence_sidecars, StepExecutedRecord};
 use crate::http_execute::run_seal_record_for_handle;
-use crate::plasm_plan_run::evidence_plan::parsed_expr_for_plan_node;
-use crate::evidence_chain::{
-    attach_evidence_meta, persist_evidence_sidecars, StepExecutedRecord,
-};
 use crate::plasm_comp_lift::ExecutablePlasmComp;
+use crate::plasm_plan_run::evidence_plan::parsed_expr_for_plan_node;
 use crate::plasm_step_convert::step_payload_to_validated_node;
 use plasm_core::PlasmReturn;
 
@@ -228,8 +226,10 @@ pub(crate) async fn run_executable_plan_phased(
                     scope.sync_rows_materialized(result.count.max(result.entities.len()));
                 }
                 if let Some(sink) = sink.as_ref() {
-                    trace_record_plasm_line(sink, step_idx, expr_label, &parsed, &result, &scoped_es)
-                        .await;
+                    trace_record_plasm_line(
+                        sink, step_idx, expr_label, &parsed, &result, &scoped_es,
+                    )
+                    .await;
                 }
                 MaterializedNode {
                     entry_id: surface
@@ -514,9 +514,8 @@ fn plasm_return_node_ids(ret: &PlasmReturn) -> Result<Vec<PlanNodeId>, String> {
 fn plasm_return_names(ret: &PlasmReturn) -> Vec<Option<String>> {
     match ret {
         PlasmReturn::Step { step } => vec![Some(step.as_str().to_string())],
-        PlasmReturn::Parallel { steps } => steps
-            .iter()
-            .map(|s| Some(s.as_str().to_string()))
-            .collect(),
+        PlasmReturn::Parallel { steps } => {
+            steps.iter().map(|s| Some(s.as_str().to_string())).collect()
+        }
     }
 }

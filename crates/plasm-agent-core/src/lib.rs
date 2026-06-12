@@ -26,6 +26,7 @@ mod discovery_human_format;
 pub mod dispatch;
 pub mod dotenv_safe;
 pub mod error;
+pub mod evidence_chain;
 pub mod execute_path_ids;
 pub mod execute_pipeline;
 pub mod execute_session;
@@ -80,15 +81,14 @@ pub mod oss_local_state;
 pub mod outbound_secret_provider;
 pub mod output;
 mod plan_dry_display;
-pub mod plasm_comp_display;
 pub mod plan_read_bounds;
 pub mod plan_ux_reflection;
 mod plasm_comp_bundle;
+pub mod plasm_comp_display;
 mod plasm_comp_lift;
 mod plasm_comp_wire;
-mod plasm_step_convert;
-pub mod evidence_chain;
 pub mod plasm_compile;
+mod plasm_step_convert;
 pub use plasm_comp_bundle::PlasmCompBundle;
 pub use plasm_comp_wire::{
     plasm_comp_commit_canonical, plasm_comp_from_validated, plasm_comp_json_from_dry,

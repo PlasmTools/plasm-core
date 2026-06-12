@@ -1,19 +1,14 @@
 //! Dry-run evaluation.
 
 use super::*;
-use crate::plasm_comp_lift::{lift_executable_comp, ExecutablePlasmComp};
+use crate::plasm_comp_lift::ExecutablePlasmComp;
 use crate::plasm_step_convert::step_payload_to_validated_node;
 use plasm_core::PlasmCompArtifact;
 
 #[path = "dry_render.rs"]
 mod dry_render;
-pub(crate) use dry_render::{
-    render_aggregate_function, render_aggregates, render_compute_template, render_data_inputs,
-    render_derive_template, render_effect_template_expr, render_input_cardinality, render_json_value,
-    render_kind, render_plan_expr_ir, render_plan_expr_template, render_plan_value, render_predicate,
-    render_predicate_op, render_return_lines, render_surface_operation, render_uses_result,
-};
 pub use dry_render::render_node_operation;
+use dry_render::{render_return_lines, render_uses_result};
 
 pub fn evaluate_plasm_comp_dry(
     es: &ExecuteSession,
@@ -111,7 +106,8 @@ pub fn evaluate_executable_comp_dry(
         staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
         out.push(dry_stage_result(step_idx, &n));
     }
-    let validated = crate::plasm_step_convert::build_validated_plan_from_executable(comp, executable)?;
+    let validated =
+        crate::plasm_step_convert::build_validated_plan_from_executable(comp, executable)?;
     let plan = validated.artifact();
     let (graph_summary, review) = graph_summary_for_session(plan, es);
     Ok(DryPlasmPlanEvaluation {

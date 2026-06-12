@@ -24,10 +24,9 @@ pub use payload::{
     AggregateFunction, AggregateSpec, BindingName, ComputeOp, ComputeTemplate, DeriveKind,
     DerivePayload, DeriveTemplate, EffectTemplate, FieldPath, FlatMapEffectPayload,
     FlatMapRelationPayload, InputCardinality, InvokePayload, MapPayload, OutputName, PlanDataInput,
-    PlanExprIr, PlanExprTemplate, PlanInputBinding, PlanPredicate, PlanPredicateOp, PlanRelationTraversal,
-    PlanQualifiedEntityKey, PlanResultUse, PlasmDataValue, PlasmStepPayload, PurePayload,
-    RelationCardinality, RelationName, RelationSourceCardinality, SyntheticFieldSchema,
-    SyntheticResultSchema,
-    SyntheticValueKind,
+    PlanExprIr, PlanExprTemplate, PlanInputBinding, PlanPredicate, PlanPredicateOp,
+    PlanQualifiedEntityKey, PlanRelationTraversal, PlanResultUse, PlasmDataValue, PlasmStepPayload,
+    PurePayload, RelationCardinality, RelationName, RelationSourceCardinality,
+    SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
 };
 pub use step::{EffectBarrier, EffectClass, PlasmStep, PlasmStepKind, ResultShape, SurfaceKind};

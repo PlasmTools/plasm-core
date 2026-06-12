@@ -28,9 +28,9 @@ pub fn parsed_expr_for_plan_node(node: &crate::plasm_plan::ValidatedPlanNode) ->
             projection: relation.relation.ir.projection.clone(),
         },
         crate::plasm_plan::ValidatedPlanNode::ForEach(for_each) => {
-            if let Ok(expr) =
-                serde_json::from_value::<plasm_core::Expr>(for_each.effect_template.ir_template.expr.clone())
-            {
+            if let Ok(expr) = serde_json::from_value::<plasm_core::Expr>(
+                for_each.effect_template.ir_template.expr.clone(),
+            ) {
                 ParsedExpr {
                     expr,
                     projection: if for_each.effect_template.projection.is_empty() {

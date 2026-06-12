@@ -38,6 +38,8 @@ impl EvidenceAnchors {
 
 impl EvidenceBundle {
     pub fn chain_head(&self) -> Option<ChainHead> {
-        self.chain.head.or_else(|| self.chain.verify_integrity().ok())
+        self.chain
+            .head
+            .or_else(|| self.chain.verify_integrity().ok())
     }
 }

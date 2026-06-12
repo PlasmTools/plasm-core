@@ -31,7 +31,7 @@ use plasm_core::{
     grammar_revision_from_wire, normalize_expr_query_capabilities,
     normalize_expr_query_capabilities_federated, plasm_grammar_frontmatter_revision_hex,
     teaching_prompt_omit_contract_if_cached, teaching_tsv_table_from_wrapped_prompt, AuthScheme,
-    CgsContext, Expr, PagingHandle, PromptRenderMode, SymbolMap, Value, CGS,
+    CgsContext, Expr, PagingHandle, PromptRenderMode, SymbolMap, CGS,
 };
 use plasm_runtime::{
     auth_resolution_mode_from_env, entity_to_agent_row_json, validate_principal_for_mode,
@@ -2465,16 +2465,15 @@ pub async fn run_seal_record_for_handle(
         .get(prompt_hash, session_id, handle.run_id)
         .await
         .ok_or_else(|| "stored run artifact missing for run_sealed".to_string())?;
-    let artifact: plasm_evidence::RunArtifactForSeal =
-        serde_json::from_slice(&bytes).map_err(|e| format!("artifact decode for run_sealed: {e}"))?;
+    let artifact: plasm_evidence::RunArtifactForSeal = serde_json::from_slice(&bytes)
+        .map_err(|e| format!("artifact decode for run_sealed: {e}"))?;
     let source_line = artifact.source_line();
     let line = artifact
         .expressions
         .first()
         .ok_or_else(|| "artifact has no expressions for run_sealed".to_string())?;
-    let parsed = parse_plasm_line(line.trim(), es, st).map_err(|e| {
-        format!("parse for run_sealed: {}", run_line_error_string(e))
-    })?;
+    let parsed = parse_plasm_line(line.trim(), es, st)
+        .map_err(|e| format!("parse for run_sealed: {}", run_line_error_string(e)))?;
     Ok(crate::evidence_chain::RunSealRecord {
         expected_run_id_wire: handle.run_id.to_wire(),
         step_id,
@@ -4494,19 +4493,19 @@ async fn get_execute_run_evidence(
             let (artifact_doc, parsed_for_seal) = if let Some(bytes) = artifact_bytes {
                 match serde_json::from_slice::<plasm_evidence::RunArtifactForSeal>(&bytes) {
                     Ok(artifact_doc) => {
-                        let parsed = st
-                            .sessions
-                            .get(&prompt_hash, &session_id)
-                            .await
-                            .and_then(|sess| {
-                                artifact_doc.expressions.first().and_then(|line| {
-                                    crate::plasm_plan_run::parse_parsed_expr_for_session(
-                                        sess.as_ref(),
-                                        line.trim(),
-                                    )
-                                    .ok()
-                                })
-                            });
+                        let parsed =
+                            st.sessions
+                                .get(&prompt_hash, &session_id)
+                                .await
+                                .and_then(|sess| {
+                                    artifact_doc.expressions.first().and_then(|line| {
+                                        crate::plasm_plan_run::parse_parsed_expr_for_session(
+                                            sess.as_ref(),
+                                            line.trim(),
+                                        )
+                                        .ok()
+                                    })
+                                });
                         (Some(artifact_doc), parsed)
                     }
                     Err(_) => (None, None),

@@ -238,18 +238,9 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
     )
     .expect("compile plan");
 
-    let live = run_plasm_comp(
-        &es,
-        &st,
-        PROMPT_HASH,
-        SESSION_ID,
-        &bundle,
-        true,
-        None,
-        None,
-    )
-    .await
-    .expect("live plan run");
+    let live = run_plasm_comp(&es, &st, PROMPT_HASH, SESSION_ID, &bundle, true, None, None)
+        .await
+        .expect("live plan run");
 
     let one_step = live
         .return_steps

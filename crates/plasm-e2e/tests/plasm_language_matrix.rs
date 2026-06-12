@@ -44,9 +44,7 @@ mod language_matrix;
 use std::collections::BTreeSet;
 
 use plasm_agent::plasm_compile::{compile_plasm_expression, compile_plasm_program};
-use plasm_agent::plasm_plan::{
-    AggregateFunction, ComputeOp, ComputeTemplate, PlanValue,
-};
+use plasm_agent::plasm_plan::{AggregateFunction, ComputeOp, ComputeTemplate, PlanValue};
 use plasm_agent::plasm_plan_run::{
     evaluate_plasm_comp_dry, run_plasm_comp, DryPlasmPlanEvaluation, PlasmPlanRunResult,
 };
@@ -884,7 +882,10 @@ fn assert_planning_ir(
                     comp.get("return")
                 ));
             }
-            if comp.pointer("/metadata/coerced_default_return").and_then(|v| v.as_str()) != Some("items")
+            if comp
+                .pointer("/metadata/coerced_default_return")
+                .and_then(|v| v.as_str())
+                != Some("items")
             {
                 return Err(format!(
                     "expected coerced_default_return metadata, got {:?}",

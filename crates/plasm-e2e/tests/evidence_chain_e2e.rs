@@ -6,11 +6,11 @@ mod hermit_lang_matrix;
 #[path = "common/language_matrix.rs"]
 mod language_matrix;
 
-use plasm_agent::plasm_compile::compile_plasm_expression;
-use plasm_agent::plasm_plan_run::{evaluate_plasm_comp_dry, run_plasm_comp};
 use plasm_agent::evidence_chain::{begin_plan_evidence, evidence_chain_enabled};
-use plasm_core::PromptPipelineConfig;
+use plasm_agent::plasm_compile::compile_plasm_expression;
 use plasm_agent::plasm_plan_run::parse_parsed_expr_for_session;
+use plasm_agent::plasm_plan_run::{evaluate_plasm_comp_dry, run_plasm_comp};
+use plasm_core::PromptPipelineConfig;
 use plasm_evidence::{DefaultChainVerifier, VerifyOptions};
 use plasm_runtime::{ExecutionConfig, ExecutionEngine};
 
@@ -33,7 +33,9 @@ fn evidence_chain_plan_run_round_trip() {
 }
 
 async fn evidence_chain_plan_run_round_trip_async() {
-    let base = hermit_lang_matrix::language_matrix_hermit_base_url().await.clone();
+    let base = hermit_lang_matrix::language_matrix_hermit_base_url()
+        .await
+        .clone();
     let cgs = language_matrix::load_language_matrix_cgs();
     let engine = ExecutionEngine::new(ExecutionConfig {
         base_url: Some(base.clone()),
@@ -147,7 +149,9 @@ fn evidence_chain_signed_bundle_round_trip() {
 }
 
 async fn evidence_chain_signed_round_trip_async() {
-    let base = hermit_lang_matrix::language_matrix_hermit_base_url().await.clone();
+    let base = hermit_lang_matrix::language_matrix_hermit_base_url()
+        .await
+        .clone();
     let cgs = language_matrix::load_language_matrix_cgs();
     let engine = ExecutionEngine::new(ExecutionConfig {
         base_url: Some(base.clone()),
@@ -196,23 +200,21 @@ async fn evidence_chain_signed_round_trip_async() {
         .expect("get evidence")
         .expect("evidence sidecar stored");
 
-    let sig = bundle_json
-        .signature
-        .as_ref()
-        .expect("signed bundle");
+    let sig = bundle_json.signature.as_ref().expect("signed bundle");
     let pk = sig.public_key_hex.clone();
     let opts = VerifyOptions::from_trusted_public_keys(vec![pk.clone()]);
-    DefaultChainVerifier::verify_bundle_for_serve(&bundle_json, &opts).expect("verify signed serve");
-    assert!(
-        plasm_evidence::sign::verify_bundle_signature_trusted(&bundle_json, sig, &[pk.clone()])
-            .is_ok()
-    );
-    assert!(
-        plasm_evidence::sign::verify_bundle_signature_trusted(
-            &bundle_json,
-            sig,
-            &["00".repeat(32)]
-        )
-        .is_err()
-    );
+    DefaultChainVerifier::verify_bundle_for_serve(&bundle_json, &opts)
+        .expect("verify signed serve");
+    assert!(plasm_evidence::sign::verify_bundle_signature_trusted(
+        &bundle_json,
+        sig,
+        &[pk.clone()]
+    )
+    .is_ok());
+    assert!(plasm_evidence::sign::verify_bundle_signature_trusted(
+        &bundle_json,
+        sig,
+        &["00".repeat(32)]
+    )
+    .is_err());
 }

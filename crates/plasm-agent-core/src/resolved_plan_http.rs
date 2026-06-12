@@ -109,7 +109,8 @@ pub(crate) fn prepare_resolved_plan_request(
     ResolvedPlanProtocolVersion::from_wire(req.protocol_version)?;
     sess.validate_catalog_pins(&req.catalog_pins)
         .map_err(ResolvedPlanReject::CatalogPins)?;
-    let artifact = plasm_comp_artifact_from_comp(req.comp).map_err(ResolvedPlanReject::InvalidPlan)?;
+    let artifact =
+        plasm_comp_artifact_from_comp(req.comp).map_err(ResolvedPlanReject::InvalidPlan)?;
     Ok(PreparedResolvedPlan {
         bundle: PlasmCompBundle::new(artifact).map_err(ResolvedPlanReject::InvalidPlan)?,
         mode: req.mode,

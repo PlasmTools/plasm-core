@@ -1,6 +1,8 @@
 use super::bind_graph::PlasmBindGraph;
 use super::comp::{PlasmComp, PlasmReturn, StepId};
-use super::payload::{ComputeOp, ComputeTemplate, InvokePayload, MapPayload, PlasmStepPayload, SyntheticResultSchema};
+use super::payload::{
+    ComputeOp, ComputeTemplate, InvokePayload, MapPayload, PlasmStepPayload, SyntheticResultSchema,
+};
 use super::step::{EffectClass, ResultShape, SurfaceKind};
 use std::collections::BTreeMap;
 
