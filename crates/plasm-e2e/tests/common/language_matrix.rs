@@ -1,5 +1,4 @@
 //! CGS + execute session wiring for the language-matrix Hermit base URL.
-#![allow(dead_code)] // federated matrix helpers kept for upcoming witness cases
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -71,6 +70,7 @@ pub fn matrix_execute_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
 }
 
 /// Same wire entity (`LangItem`) in `github` and `linear` catalogs — distinct session `e1` / `e2`.
+#[allow(dead_code)]
 pub fn matrix_federated_duplicate_entity_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
     let mut ctxs = IndexMap::new();
     ctxs.insert(
@@ -103,6 +103,7 @@ pub fn matrix_federated_duplicate_entity_session(cgs: Arc<plasm_core::CGS>) -> E
     )
 }
 
+#[allow(dead_code)]
 pub fn matrix_federated_duplicate_entity_host_state(
     engine: ExecutionEngine,
     cgs: Arc<plasm_core::CGS>,
@@ -134,6 +135,7 @@ pub fn matrix_federated_duplicate_entity_host_state(
     })
 }
 
+#[allow(dead_code)]
 pub fn matrix_federated_relation_target_session(
     cgs_primary: Arc<plasm_core::CGS>,
     cgs_secondary: Arc<plasm_core::CGS>,
@@ -170,6 +172,7 @@ pub fn matrix_federated_relation_target_session(
     )
 }
 
+#[allow(dead_code)]
 pub fn matrix_federated_host_state(
     engine: ExecutionEngine,
     cgs_primary: Arc<plasm_core::CGS>,
