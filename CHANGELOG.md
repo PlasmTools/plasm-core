@@ -5,6 +5,20 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.105] - 2026-06-11
+
+### Added
+
+- **Cursor MCP UI self-hydrate:** Plan/Run iframes call `app.callServerTool` when host `toolresult` omits `_meta.plasm` (Cursor strips meta on forward).
+- **Argument-based tool routing:** infer plan vs run from `toolinput.arguments` (ext-apps omits `toolName`); ignore cross-app results.
+- **Run watchdog:** 120s stale skeleton teardown with interrupted/in-progress copy.
+- **Dev aid:** `window.__plasmUiLastEvent` for Cursor host debugging.
+
+### Fixed
+
+- **Plan session strip:** `logical_session_ref` from toolinput arguments before toolresult arrives.
+- **Plan app:** no longer shows "Plan meta incomplete" for `plasm_run`-shaped results.
+
 ## [0.1.104] - 2026-06-11
 
 ### Added
