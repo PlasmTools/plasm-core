@@ -102,14 +102,14 @@ fn verify_plan_commit_id(
             commit_ref.as_str()
         ));
     }
-    es.evidence_chain
-        .verify_comp_commit_matches(&commit_id)
-        .map_err(|e| {
+    if let Some(evidence) = crate::evidence_chain::chain(es) {
+        evidence.verify_comp_commit_matches(&commit_id).map_err(|e| {
             format!(
                 "plan_commit_ref `{}` evidence mismatch: {e}",
                 commit_ref.as_str()
             )
         })?;
+    }
     Ok(())
 }
 pub const PLAN_COMMIT_TTL: Duration = Duration::from_secs(600);

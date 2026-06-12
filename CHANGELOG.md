@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Breaking — MCP/HTTP wire:** `_meta.plasm.comp` replaces `plan_dag`; consumers must read `comp` (TypeScript: `requirePlasmComp()`).
 - **`plan_commit_id`:** hashes semantic comp subset via `comp_canonical` / `plasm_comp_commit_canonical`.
 - **Evidence HTTP serve:** verifies full chain + optional signature trust; cross-checks `run_sealed` when the run artifact is co-located in the store.
+- **Evidence module layout:** `evidence_chain/` submodules (`session`, `plan`, `error`, …); `ExecuteSession` uses lazy `Option<Arc<EvidenceChainSession>>` slot (no nested `OnceLock`).
+- **`EvidenceEmitError`:** typed `Chain` / `Canonical` / `ChainLockPoisoned` variants replace stringly `Verify`.
+- **`run_artifacts/` decomposition:** types, backends (memory/fs/object store), keys, GC, URI helpers; `mod.rs` slimmed (~390 lines).
+- **`ChainBuilder`:** removed misleading `finish_trusted()` alias; use `finish()`.
 
 ## [0.1.107] - 2026-06-11
 

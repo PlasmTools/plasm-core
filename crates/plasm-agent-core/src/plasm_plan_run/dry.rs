@@ -23,9 +23,12 @@ pub fn evaluate_executable_comp_dry(
     artifact: &PlasmCompArtifact,
 ) -> Result<DryPlasmPlanEvaluation, String> {
     let comp = &artifact.comp;
-    es.evidence_chain
-        .record_comp_committed(comp)
-        .map_err(|e| format!("evidence comp_committed: {e}"))?;
+    // Record comp commit when evidence chain is active (noop when disabled).
+    if let Some(evidence) = crate::evidence_chain::chain(es) {
+        evidence
+            .record_comp_committed(comp)
+            .map_err(|e| format!("evidence comp_committed: {e}"))?;
+    }
     let version = serde_json::json!(comp.version);
     let mut out = Vec::new();
     let mut parallel_root_surfaces_only = true;

@@ -1,7 +1,9 @@
 //! Live plan orchestration.
 
 use super::*;
-use crate::evidence_chain::{attach_evidence_meta, persist_evidence_sidecars, StepExecutedRecord};
+use crate::evidence_chain::{
+    attach_evidence_meta, chain, persist_evidence_sidecars, StepExecutedRecord,
+};
 use crate::http_execute::run_seal_record_for_handle;
 use crate::plasm_comp_lift::ExecutablePlasmComp;
 use crate::plasm_plan_run::evidence_plan::parsed_expr_for_plan_node;
@@ -399,9 +401,11 @@ pub(crate) async fn run_executable_plan_phased(
             request_fingerprints: step_fps,
         });
     }
-    es.evidence_chain
-        .record_steps_executed(&evidence_steps)
-        .map_err(|e| format!("evidence step_executed: {e}"))?;
+    if let Some(evidence) = chain(es) {
+        evidence
+            .record_steps_executed(&evidence_steps)
+            .map_err(|e| format!("evidence step_executed: {e}"))?;
+    }
 
     let return_node_ids = plasm_return_node_ids(&executable.return_)?;
     let mut steps = Vec::new();
@@ -423,9 +427,11 @@ pub(crate) async fn run_executable_plan_phased(
                 Some(node_ref.as_str().to_string()),
             )
             .await?;
-            es.evidence_chain
-                .record_run_sealed(&seal)
-                .map_err(|e| format!("evidence run_sealed: {e}"))?;
+            if let Some(evidence) = chain(es) {
+                evidence
+                    .record_run_sealed(&seal)
+                    .map_err(|e| format!("evidence run_sealed: {e}"))?;
+            }
         }
         steps.push(PublishedResultStep {
             name: return_names.get(i).cloned().flatten(),
@@ -464,31 +470,34 @@ pub(crate) async fn run_executable_plan_phased(
         });
     }
     let mut evidence_head_hex = None;
-    if let Some(bundle) = es
-        .evidence_chain
-        .finish_bundle()
-        .map_err(|e| format!("evidence finish: {e}"))?
-    {
-        evidence_head_hex = bundle.chain.head.map(|h| h.to_hex());
-        persist_evidence_sidecars(
-            &st.run_artifacts,
-            prompt_hash,
-            session_id,
-            &evidence_run_ids,
-            &bundle,
-        )
-        .await
-        .map_err(|e| format!("evidence persist: {e}"))?;
+    if let Some(evidence) = chain(es) {
+        if let Some(bundle) = evidence
+            .finish_bundle()
+            .map_err(|e| format!("evidence finish: {e}"))?
+        {
+            evidence_head_hex = bundle.chain.head.map(|h| h.to_hex());
+            persist_evidence_sidecars(
+                &st.run_artifacts,
+                prompt_hash,
+                session_id,
+                &evidence_run_ids,
+                &bundle,
+            )
+            .await
+            .map_err(|e| format!("evidence persist: {e}"))?;
+        }
     }
     let mut run_plasm_meta = out.tool_meta;
-    run_plasm_meta = attach_evidence_meta(
-        run_plasm_meta,
-        prompt_hash,
-        session_id,
-        &es.evidence_chain,
-        &evidence_run_ids,
-        evidence_head_hex,
-    );
+    if let Some(evidence) = chain(es) {
+        run_plasm_meta = attach_evidence_meta(
+            run_plasm_meta,
+            prompt_hash,
+            session_id,
+            evidence.as_ref(),
+            &evidence_run_ids,
+            evidence_head_hex,
+        );
+    }
     Ok(PlasmPlanRunResult {
         version: dry.version,
         node_results: dry.node_results,

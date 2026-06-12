@@ -62,11 +62,6 @@ impl ChainBuilder {
             head: self.prev.map(ChainHead::from_segment),
         }
     }
-
-    /// Finalize after incremental `push` validation (each link hashed at append time).
-    pub fn finish_trusted(self) -> EvidenceChain {
-        self.finish()
-    }
 }
 
 impl Default for ChainBuilder {
