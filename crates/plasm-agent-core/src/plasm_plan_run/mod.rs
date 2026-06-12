@@ -35,10 +35,10 @@ pub use crate::plan_dry_display::PlanDryReview;
 use crate::plasm_plan::{
     AggregateFunction, BindingName, ComputeOp, ComputeTemplate, EffectClass, FieldPath, InputAlias,
     OutputName, Plan, PlanExprTemplate, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue,
-    QualifiedEntityKey, RelationSourceCardinality, ValidatedForEachNode,
-    ValidatedPlan, ValidatedPlanDataInput, ValidatedPlanExprTemplate, ValidatedPlanNode,
-    ValidatedPlanState, ValidatedRelationTraversalNode, ValidatedSurfaceNode,
-    PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
+    QualifiedEntityKey, RelationSourceCardinality, ValidatedForEachNode, ValidatedPlan,
+    ValidatedPlanDataInput, ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanState,
+    ValidatedRelationTraversalNode, ValidatedSurfaceNode, PLAN_RENDER_MAX_OUTPUT_CHARS,
+    PLAN_RENDER_MAX_ROWS,
 };
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::{CodePlanRunArtifactRef, McpPlasmTraceSink};

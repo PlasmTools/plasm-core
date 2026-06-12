@@ -208,7 +208,7 @@ async fn evidence_chain_signed_round_trip_async() {
     assert!(plasm_evidence::sign::verify_bundle_signature_trusted(
         &bundle_json,
         sig,
-        &[pk.clone()]
+        std::slice::from_ref(&pk)
     )
     .is_ok());
     assert!(plasm_evidence::sign::verify_bundle_signature_trusted(

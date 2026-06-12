@@ -1,4 +1,5 @@
 //! CGS + execute session wiring for the language-matrix Hermit base URL.
+#![allow(dead_code)] // federated matrix helpers kept for upcoming witness cases
 
 use std::path::PathBuf;
 use std::sync::Arc;

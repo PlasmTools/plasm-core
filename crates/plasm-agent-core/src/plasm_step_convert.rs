@@ -40,10 +40,7 @@ pub(crate) fn validated_node_to_step_payload(
 fn surface_to_invoke(node: &ValidatedSurfaceNode) -> Result<InvokePayload, String> {
     Ok(InvokePayload {
         plan_kind: plan_kind_to_surface(node.kind)?,
-        qualified_entity: node
-            .qualified_entity
-            .as_ref()
-            .map(qualified_entity_key),
+        qualified_entity: node.qualified_entity.as_ref().map(qualified_entity_key),
         ir: node
             .ir
             .as_ref()
