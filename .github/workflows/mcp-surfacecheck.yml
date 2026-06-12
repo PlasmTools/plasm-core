@@ -1,0 +1,24 @@
+name: MCP Surface Check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-surfacecheck-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  surfacecheck:
+    name: MCP surface check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: major-matters/mcp-surfacecheck@v1
+        with:
+          fail-on: high
