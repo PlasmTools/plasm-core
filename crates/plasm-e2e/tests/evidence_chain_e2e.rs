@@ -8,7 +8,6 @@ mod language_matrix;
 
 use plasm_agent::evidence_chain::{begin_plan_evidence, evidence_chain_enabled};
 use plasm_agent::plasm_compile::compile_plasm_expression;
-use plasm_agent::plasm_plan_run::parse_parsed_expr_for_session;
 use plasm_agent::plasm_plan_run::{evaluate_plasm_comp_dry, run_plasm_comp};
 use plasm_core::PromptPipelineConfig;
 use plasm_evidence::{DefaultChainVerifier, VerifyOptions};
@@ -110,17 +109,12 @@ async fn evidence_chain_plan_run_round_trip_async() {
         .expect("artifact bytes");
     let artifact_doc: plasm_evidence::RunArtifactForSeal =
         serde_json::from_slice(&artifact_bytes).expect("artifact json");
-    let line = artifact_doc
-        .expressions
-        .first()
-        .expect("artifact expression");
-    let parsed = parse_parsed_expr_for_session(&es, line.trim()).expect("parse session line");
     let source_line = artifact_doc.source_line();
     let inputs = plasm_evidence::run_seal_inputs_from_artifact(
         &bundle_json.scope,
         &artifact_doc,
         &source_line,
-        &parsed,
+        &artifact_doc.parsed_preimage,
     );
     DefaultChainVerifier::verify_run_seal_with_inputs(&bundle_json, run_id, &inputs)
         .expect("run seal digest");

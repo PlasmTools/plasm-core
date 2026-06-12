@@ -1,7 +1,9 @@
 use super::gc::object_store_path_is_run_snapshot_gc_eligible;
 use super::*;
+use axum::body::Bytes;
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::{Expr, Value};
+use plasm_runtime::{ExecutionSource, ExecutionStats};
 use std::str::FromStr;
 use std::sync::Mutex;
 
@@ -77,19 +79,22 @@ fn plan_bundle_digest_stable_and_fingerprint_sensitive() {
         &["b".into(), "a".into()],
     )
     .expect("digest");
-    let b = RunArtifactId::from_plan_bundle_inputs(
-        "h",
-        0,
-        "e",
-        "line",
-        &p,
-        &["a".into(), "b".into()],
-    )
-    .expect("digest");
+    let b =
+        RunArtifactId::from_plan_bundle_inputs("h", 0, "e", "line", &p, &["a".into(), "b".into()])
+            .expect("digest");
     assert_eq!(a, b, "fingerprints are sorted in the bundle");
     let c = RunArtifactId::from_plan_bundle_inputs("h", 0, "e", "line", &p, &["z".into()])
         .expect("digest");
     assert_ne!(a, c);
+}
+
+fn sample_parsed_preimage() -> ParsedExpr {
+    ParsedExpr {
+        expr: Expr::TeachingValue {
+            value: Value::String("probe".into()),
+        },
+        projection: None,
+    }
 }
 
 #[tokio::test]
@@ -103,7 +108,8 @@ async fn memory_insert_get_round_trip() {
         entry_id: "e".into(),
         resource_index: Some(1),
         principal: None,
-        expressions: vec![],
+        parsed_preimage: sample_parsed_preimage(),
+        display_lines: vec![],
         request_fingerprints: vec![],
         entities: vec![],
         source: ExecutionSource::Live,
@@ -202,8 +208,7 @@ fn parse_code_plan_handles_and_uris() {
 #[tokio::test]
 async fn evidence_sidecar_memory_round_trip() {
     use plasm_evidence::{
-        ChainBuilder, EvidenceAnchors, EvidenceBundle, EvidenceKind, EvidenceScope,
-        IntentDigest,
+        ChainBuilder, EvidenceAnchors, EvidenceBundle, EvidenceKind, EvidenceScope, IntentDigest,
     };
     let store = RunArtifactStore::memory();
     let ph = "p".repeat(64);
@@ -239,8 +244,7 @@ async fn evidence_sidecar_memory_round_trip() {
 #[tokio::test]
 async fn evidence_sidecar_dedup_multi_run_id() {
     use plasm_evidence::{
-        ChainBuilder, EvidenceAnchors, EvidenceBundle, EvidenceKind, EvidenceScope,
-        IntentDigest,
+        ChainBuilder, EvidenceAnchors, EvidenceBundle, EvidenceKind, EvidenceScope, IntentDigest,
     };
     let store = RunArtifactStore::memory();
     let ph = "p".repeat(64);
@@ -326,8 +330,7 @@ async fn memory_code_plan_round_trip_by_index() {
         .await
         .expect("decode")
         .expect("payload");
-    let got: CodePlanArchiveDocument =
-        serde_json::from_slice(payload.bytes.as_ref()).expect("doc");
+    let got: CodePlanArchiveDocument = serde_json::from_slice(payload.bytes.as_ref()).expect("doc");
     assert_eq!(got.plan_id, plan_id.to_string());
     assert_eq!(got.plan_handle, "p1");
 }
@@ -345,7 +348,8 @@ async fn fs_backend_resource_index_round_trip() {
         entry_id: "e".into(),
         resource_index: Some(3),
         principal: None,
-        expressions: vec![],
+        parsed_preimage: sample_parsed_preimage(),
+        display_lines: vec![],
         request_fingerprints: vec![],
         entities: vec![],
         source: ExecutionSource::Live,
@@ -404,7 +408,8 @@ async fn init_from_env_url_precedes_dir() {
         entry_id: "e".into(),
         resource_index: None,
         principal: None,
-        expressions: vec![],
+        parsed_preimage: sample_parsed_preimage(),
+        display_lines: vec![],
         request_fingerprints: vec![],
         entities: vec![],
         source: ExecutionSource::Live,

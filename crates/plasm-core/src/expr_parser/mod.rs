@@ -94,7 +94,7 @@ use crate::{
     ValueWireFormat, CGS,
 };
 use indexmap::IndexMap;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::Arc;
@@ -328,7 +328,7 @@ impl fmt::Display for ParseErrorKind {
 }
 
 /// The result of parsing a path expression.
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ParsedExpr {
     /// The composed expression tree.
     pub expr: Expr,
@@ -645,6 +645,12 @@ impl<'a> Parser<'a> {
             }
             self.skip_ws();
             self.peek_char() == Some('=')
+                && self
+                    .input
+                    .as_bytes()
+                    .get(self.pos + 1)
+                    .copied()
+                    != Some(b'=')
         })();
         self.pos = save;
         looks
@@ -749,13 +755,75 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
         self.expect_char(')')?;
-        if key != ent.id_field.as_str() {
+        let wire_key = self
+            .sym_map
+            .resolve_ident(key.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| key.clone());
+        if wire_key != ent.id_field.as_str() {
             return Err(self.err(ParseErrorKind::Other {
                 message: format!(
                     "entity `{entity}` uses a simple id; `{key}=…` is only accepted when `{key}` is the identity field `{}` — otherwise use `{entity}(value)`",
                     ent.id_field
                 ),
             }));
+        }
+        if matches!(id_val, Value::PlasmInputRef(_)) {
+            let path_key = format!("{}_id", entity.to_lowercase());
+            return Ok(Some(Expr::Get(GetExpr::from_ref_with_path_vars(
+                Ref::new(entity, ""),
+                Some(IndexMap::from([(path_key, id_val)])),
+            ))));
+        }
+        let id_str = self.compound_get_slot_string_from_value(&id_val)?;
+        Ok(Some(Expr::Get(GetExpr::new(entity, id_str))))
+    }
+
+    /// `Entity(id_field == value)` or `Entity(p# == value)` when `p#` resolves to `id_field`.
+    fn try_parse_id_field_eq_get_in_parens(
+        &mut self,
+        entity: &str,
+        ent: &EntityDef,
+    ) -> Result<Option<Expr>, ParseError> {
+        if !ent.key_vars.is_empty() {
+            return Ok(None);
+        }
+        let save = self.pos;
+        let (field, _, _) = match self.parse_ident_with_span() {
+            Ok(v) => v,
+            Err(_) => {
+                self.pos = save;
+                return Ok(None);
+            }
+        };
+        self.skip_ws();
+        if self.peek_char() != Some('=')
+            || self.input.as_bytes().get(self.pos + 1).copied() != Some(b'=')
+        {
+            self.pos = save;
+            return Ok(None);
+        }
+        self.pos += 2;
+        self.skip_ws();
+        let id_val = if self.program_nodes.is_some() {
+            self.parse_predicate_rhs_after_op()?
+        } else {
+            self.parse_value()?
+        };
+        self.skip_ws();
+        if self.peek_char() != Some(')') {
+            self.pos = save;
+            return Ok(None);
+        }
+        self.expect_char(')')?;
+        let wire_field = self
+            .sym_map
+            .resolve_ident(field.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or(field);
+        if wire_field != ent.id_field.as_str() {
+            self.pos = save;
+            return Ok(None);
         }
         if matches!(id_val, Value::PlasmInputRef(_)) {
             let path_key = format!("{}_id", entity.to_lowercase());
@@ -2092,6 +2160,9 @@ impl<'a> Parser<'a> {
                         }));
                     }
                     self.pos = after_paren;
+                    if let Some(get) = self.try_parse_id_field_eq_get_in_parens(&entity, &ent)? {
+                        return self.ok_stamped(get);
+                    }
                     let id_val = if self.program_nodes.is_some() {
                         self.parse_dotted_call_arg_value_rhs()?
                     } else {
@@ -4797,5 +4868,88 @@ mod tests {
             )),
             "expected body.content PlasmInputRef, got {refs_found:?}"
         );
+    }
+
+    fn simple_name_id_get_fixture_cgs() -> CGS {
+        let mut cgs = CGS::new();
+        seed_fx_str(&mut cgs);
+        let f = |n: &str| registry_test_util::entity_field_from_values(&cgs, "fx_str", n, true, "");
+        cgs.add_resource(ResourceSchema {
+            name: "Pet".into(),
+            description: String::new(),
+            id_field: "name".into(),
+            id_format: None,
+            id_from: None,
+            fields: vec![f("name")],
+            relations: vec![],
+            expression_aliases: vec![],
+            implicit_request_identity: false,
+            key_vars: vec![],
+            abstract_entity: false,
+            domain_projection_examples: false,
+            primary_read: None,
+            discovery: None,
+        })
+        .unwrap();
+        cgs.add_capability(CapabilitySchema {
+            name: "pet_get".into(),
+            description: String::new(),
+            kind: CapabilityKind::Get,
+            domain: "Pet".into(),
+            mapping: CapabilityMapping {
+                template: serde_json::json!({
+                    "method": "GET",
+                    "path": [{"type": "var", "name": "name"}]
+                })
+                .into(),
+            },
+            input_schema: None,
+            output_schema: None,
+            provides: vec![],
+            scope_aggregate_key_policy: Default::default(),
+            preflight: None,
+            discovery: None,
+        })
+        .unwrap();
+        cgs.validate().unwrap();
+        cgs
+    }
+
+    #[test]
+    fn parse_id_field_eq_in_get_parens_lowers_to_get() {
+        use std::sync::Arc;
+
+        let cgs = simple_name_id_get_fixture_cgs();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
+        let layers = [&cgs];
+        let r = parse_with_cgs_layers_program(
+            r#"Pet(name == "pikachu")"#,
+            &layers,
+            sym_map,
+            None,
+            false,
+        )
+        .expect("parse");
+        let Expr::Get(g) = r.expr else {
+            panic!("expected Get, got {:?}", r.expr);
+        };
+        assert_eq!(g.reference.primary_slot_str(), "pikachu");
+    }
+
+    #[test]
+    fn parse_id_field_shadow_sugar_single_eq_unchanged() {
+        use std::sync::Arc;
+
+        let cgs = simple_name_id_get_fixture_cgs();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
+        let layers = [&cgs];
+        let r = parse_with_cgs_layers_program(r#"Pet(name=pikachu)"#, &layers, sym_map, None, false)
+            .expect("parse");
+        let Expr::Get(g) = r.expr else {
+            panic!("expected Get, got {:?}", r.expr);
+        };
+        assert_eq!(g.reference.primary_slot_str(), "pikachu");
     }
 }

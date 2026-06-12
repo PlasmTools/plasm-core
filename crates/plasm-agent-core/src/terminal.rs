@@ -1071,7 +1071,7 @@ fn run_evidence_cmd(cmd: crate::terminal_cli::EvidenceCmd) -> Result<(), anyhow:
             path,
             run_id,
             artifact,
-            schema,
+            schema: _schema,
             trusted_pubkey,
         } => {
             let mut raw = String::new();
@@ -1099,11 +1099,6 @@ fn run_evidence_cmd(cmd: crate::terminal_cli::EvidenceCmd) -> Result<(), anyhow:
                 let artifact_path = artifact.as_ref().ok_or_else(|| {
                     anyhow!("evidence verify: --run-id requires --artifact for digest verification")
                 })?;
-                let schema_path = schema.as_ref().ok_or_else(|| {
-                    anyhow!(
-                        "evidence verify: --run-id requires --schema to parse artifact expressions"
-                    )
-                })?;
                 let mut artifact_raw = String::new();
                 std::fs::File::open(artifact_path)
                     .map_err(|e| {
@@ -1126,22 +1121,12 @@ fn run_evidence_cmd(cmd: crate::terminal_cli::EvidenceCmd) -> Result<(), anyhow:
                             artifact_path.display()
                         )
                     })?;
-                let cgs = std::sync::Arc::new(
-                    plasm_core::loader::load_schema_dir(schema_path)
-                        .map_err(|e| anyhow!("evidence verify: load schema: {e}"))?,
-                );
-                let line = artifact_doc
-                    .expressions
-                    .first()
-                    .ok_or_else(|| anyhow!("evidence verify: artifact has no expressions"))?;
-                let parsed = plasm_core::expr_parser::parse(line.trim(), cgs.as_ref())
-                    .map_err(|e| anyhow!("evidence verify: parse expression: {e}"))?;
                 let source_line = artifact_doc.source_line();
                 let inputs = run_seal_inputs_from_artifact(
                     &bundle.scope,
                     &artifact_doc,
                     &source_line,
-                    &parsed,
+                    &artifact_doc.parsed_preimage,
                 );
                 DefaultChainVerifier::verify_run_seal_with_inputs(&bundle, rid, &inputs)
                     .map_err(|e| anyhow!("evidence verify: run_sealed digest failed: {e}"))?;

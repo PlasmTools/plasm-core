@@ -35,10 +35,10 @@ use evidence_sidecar::EvidenceSidecarIndex;
 use gc::{gc_interval_from_env, retention_from_env, spawn_run_artifact_gc_task};
 use keys::{decode_payload, encode_payload};
 use object_store::ObjectStore;
+use plasm_core::expr_parser::ParsedExpr;
 use plasm_runtime::ExecutionResult;
 use std::path::PathBuf;
 use std::sync::Arc;
-use uuid::Uuid;
 pub use uri::{
     artifact_http_path, code_plan_handle, code_plan_http_path, parse_code_plan_handle,
     parse_plasm_execute_plan_uri, parse_plasm_execute_run_uri, parse_plasm_session_short_plan_uri,
@@ -47,6 +47,7 @@ pub use uri::{
     plasm_session_short_resource_uri, plasm_short_code_plan_uri, plasm_short_resource_uri,
     plasm_short_resource_uri_logical, LogicalSessionUriSegment,
 };
+use uuid::Uuid;
 
 /// Execute run snapshot storage (memory or object store).
 #[derive(Clone)]
@@ -359,7 +360,8 @@ pub struct DocumentFromRun<'a> {
     pub session_id: &'a str,
     pub entry_id: &'a str,
     pub principal: Option<String>,
-    pub expressions: Vec<String>,
+    pub display_lines: Vec<String>,
+    pub parsed_preimage: &'a ParsedExpr,
     pub result: &'a ExecutionResult,
     pub resource_index: Option<u64>,
 }
@@ -378,7 +380,8 @@ pub fn document_from_run(d: DocumentFromRun<'_>) -> RunArtifactDocument {
         entry_id: d.entry_id.to_string(),
         resource_index: d.resource_index,
         principal: d.principal,
-        expressions: d.expressions,
+        parsed_preimage: d.parsed_preimage.clone(),
+        display_lines: d.display_lines,
         request_fingerprints: d.result.request_fingerprints.clone(),
         entities,
         source: d.result.source,

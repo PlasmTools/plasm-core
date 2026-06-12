@@ -1,3 +1,9 @@
+//! Run snapshot wire types.
+//!
+//! **Invariant:** [`ParsedExpr`] preimages are minted once at compile/execute and stored in
+//! [`RunArtifactDocument::parsed_preimage`]. [`RunArtifactDocument::display_lines`] is human
+//! lineage only — never parsed for semantics or digest recovery.
+
 use axum::body::Bytes;
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_runtime::{ExecutionSource, ExecutionStats};
@@ -149,7 +155,7 @@ impl ArtifactPayloadMetadata {
         Self {
             content_type: "application/json".into(),
             content_encoding: None,
-            schema_version: 1,
+            schema_version: 2,
             producer: "plasm".into(),
         }
     }
@@ -163,7 +169,7 @@ pub struct ArtifactPayload {
 }
 
 /// JSON document returned by artifact GET and MCP `resources/read`.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunArtifactDocument {
     pub run_id: String,
     pub prompt_hash: String,
@@ -174,7 +180,11 @@ pub struct RunArtifactDocument {
     pub resource_index: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub principal: Option<String>,
-    pub expressions: Vec<String>,
+    /// Typed digest/evidence preimage; required on schema v2 artifacts.
+    pub parsed_preimage: ParsedExpr,
+    /// Human-readable lineage only (never re-parsed).
+    #[serde(alias = "expressions")]
+    pub display_lines: Vec<String>,
     pub request_fingerprints: Vec<String>,
     pub entities: Vec<serde_json::Value>,
     pub source: ExecutionSource,

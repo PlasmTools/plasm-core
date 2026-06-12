@@ -47,16 +47,11 @@ fn try_brace_query_to_get(q: &QueryExpr, cgs: &CGS) -> Option<GetExpr> {
     {
         return None;
     }
-    // Search-only entities: brace with only id_field is almost always meant as Get.
-    if !cgs
-        .find_capabilities(&q.entity, CapabilityKind::Search)
-        .is_empty()
-        && pred_references_only_field(pred, ent.id_field.as_str())
-    {
-        let id_str = predicate_value_to_string(&value)?;
-        return Some(GetExpr::from_ref(Ref::new(q.entity.clone(), id_str)));
+    if !pred_references_only_field(pred, ent.id_field.as_str()) {
+        return None;
     }
-    None
+    let id_str = predicate_value_to_string(&value)?;
+    Some(GetExpr::from_ref(Ref::new(q.entity.clone(), id_str)))
 }
 
 fn pred_references_only_field(pred: &Predicate, field: &str) -> bool {

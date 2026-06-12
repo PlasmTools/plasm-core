@@ -444,6 +444,7 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
         },
         request_fingerprints: vec![compute_fingerprint(node, &source_rows)],
     };
+    let parsed_preimage = crate::plasm_plan_run::evidence_plan::parsed_expr_for_plan_node(node);
     let artifact = archive_plasm_result_snapshot(
         st,
         es,
@@ -453,6 +454,7 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
             "plan.relation({}) cached_embed",
             relation.id.as_str()
         )],
+        &parsed_preimage,
         &full_result,
         trace,
     )
@@ -508,7 +510,7 @@ pub(crate) async fn materialize_relation_scoped_fanout(
     es: &ExecuteSession,
     session_id: &str,
     node_index: usize,
-    _node: &ValidatedPlanNode,
+    node: &ValidatedPlanNode,
     relation: &ValidatedRelationTraversalNode,
     source_mat: &MaterializedNode,
     source_rows: &[serde_json::Value],
@@ -635,6 +637,7 @@ pub(crate) async fn materialize_relation_scoped_fanout(
         stats,
         request_fingerprints: request_fingerprints.clone(),
     };
+    let parsed_preimage = crate::plasm_plan_run::evidence_plan::parsed_expr_for_plan_node(node);
     let artifact = archive_plasm_result_snapshot(
         st,
         es,
@@ -645,6 +648,7 @@ pub(crate) async fn materialize_relation_scoped_fanout(
             relation.id.as_str(),
             source_rows.len()
         )],
+        &parsed_preimage,
         &full_result,
         trace,
     )
@@ -1095,12 +1099,16 @@ pub(crate) async fn materialize_for_each_node(
         stats,
         request_fingerprints,
     };
+    let for_each_node = ValidatedPlanNode::ForEach(for_each.clone());
+    let parsed_preimage =
+        crate::plasm_plan_run::evidence_plan::parsed_expr_for_plan_node(&for_each_node);
     let artifact = archive_plasm_result_snapshot(
         st,
         es,
         session_id,
         Some(for_each.effect_template.qualified_entity.entry_id.as_str()),
         expressions,
+        &parsed_preimage,
         &result,
         trace,
     )

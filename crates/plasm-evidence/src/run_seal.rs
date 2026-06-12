@@ -47,13 +47,15 @@ pub fn run_bundle_digest_from_run_id_wire(run_id: &str) -> Result<SegmentDigest,
 #[derive(Debug, Clone, Deserialize)]
 pub struct RunArtifactForSeal {
     pub entry_id: String,
-    pub expressions: Vec<String>,
+    pub parsed_preimage: ParsedExpr,
+    #[serde(default, alias = "expressions")]
+    pub display_lines: Vec<String>,
     pub request_fingerprints: Vec<String>,
 }
 
 impl RunArtifactForSeal {
     pub fn source_line(&self) -> String {
-        self.expressions.join("\n")
+        self.display_lines.join("\n")
     }
 }
 

@@ -165,10 +165,6 @@ use crate::output::{
 use crate::server_state::PlasmHostState;
 use std::collections::BTreeSet;
 
-fn artifact_archive_fallback_parsed_expr() -> ParsedExpr {
-    crate::plasm_plan_run::evidence_plan::archive_fallback_parsed_expr()
-}
-
 #[allow(dead_code)]
 fn session_cgs_for_result<'a>(
     sess: &'a crate::execute_session::ExecuteSession,
@@ -2356,29 +2352,24 @@ pub async fn trace_record_plasm_line(
     trace_emit_plasm_line(sink, line_index, line, parsed, result, sess).await;
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn archive_plasm_result_snapshot(
     st: &PlasmHostState,
     sess: &ExecuteSession,
     session_id: &str,
     entry_id_override: Option<&str>,
-    expressions: Vec<String>,
+    display_lines: Vec<String>,
+    parsed_preimage: &ParsedExpr,
     result: &ExecutionResult,
     trace: Option<&PlasmTraceContext>,
 ) -> Result<RunArtifactHandle, String> {
     let entry_id = entry_id_override.unwrap_or(sess.entry_id.as_str());
-    let source_line = expressions.join("\n");
-    let parsed_digest = match expressions.first() {
-        Some(line) => match parse_plasm_line(line.trim(), sess, st) {
-            Ok(p) => p,
-            Err(_) => artifact_archive_fallback_parsed_expr(),
-        },
-        None => artifact_archive_fallback_parsed_expr(),
-    };
+    let source_line = display_lines.join("\n");
     let run_id = mint_run_artifact_id(
         sess,
         entry_id,
         &source_line,
-        &parsed_digest,
+        parsed_preimage,
         &result.request_fingerprints,
     )?;
     let resource_index = sess.mint_run_resource_index();
@@ -2388,7 +2379,8 @@ pub async fn archive_plasm_result_snapshot(
         session_id,
         entry_id: entry_id_override.unwrap_or(sess.entry_id.as_str()),
         principal: sess.principal.clone(),
-        expressions,
+        display_lines,
+        parsed_preimage,
         result,
         resource_index: Some(resource_index),
     });
@@ -2454,7 +2446,7 @@ pub async fn archive_plasm_result_snapshot(
 /// Build `RunSealRecord` from the persisted run snapshot (same preimage as `mint_run_artifact_id`).
 pub async fn run_seal_record_for_handle(
     st: &PlasmHostState,
-    es: &ExecuteSession,
+    _es: &ExecuteSession,
     prompt_hash: &str,
     session_id: &str,
     handle: &RunArtifactHandle,
@@ -2468,19 +2460,13 @@ pub async fn run_seal_record_for_handle(
     let artifact: plasm_evidence::RunArtifactForSeal = serde_json::from_slice(&bytes)
         .map_err(|e| format!("artifact decode for run_sealed: {e}"))?;
     let source_line = artifact.source_line();
-    let line = artifact
-        .expressions
-        .first()
-        .ok_or_else(|| "artifact has no expressions for run_sealed".to_string())?;
-    let parsed = parse_plasm_line(line.trim(), es, st)
-        .map_err(|e| format!("parse for run_sealed: {}", run_line_error_string(e)))?;
     Ok(crate::evidence_chain::RunSealRecord {
         expected_run_id_wire: handle.run_id.to_wire(),
         step_id,
         resource_index: Some(handle.resource_index),
         entry_id: artifact.entry_id,
         source_line,
-        parsed,
+        parsed: artifact.parsed_preimage,
         request_fingerprints: handle.request_fingerprints.clone(),
     })
 }
@@ -3168,7 +3154,8 @@ pub(crate) async fn run_parsed_plasm_line(
                 session_id,
                 entry_id: sess.entry_id.as_str(),
                 principal: sess.principal.clone(),
-                expressions: vec![line.to_string()],
+                display_lines: vec![line.to_string()],
+                parsed_preimage: &parsed,
                 result: &result,
                 resource_index: Some(resource_index),
             });
@@ -3522,7 +3509,8 @@ pub(crate) async fn run_parsed_plasm_line(
         session_id,
         entry_id: sess.entry_id.as_str(),
         principal: sess.principal.clone(),
-        expressions: vec![line.to_string()],
+        display_lines: vec![line.to_string()],
+        parsed_preimage: &parsed,
         result: &result,
         resource_index: Some(resource_index),
     });
@@ -4493,20 +4481,8 @@ async fn get_execute_run_evidence(
             let (artifact_doc, parsed_for_seal) = if let Some(bytes) = artifact_bytes {
                 match serde_json::from_slice::<plasm_evidence::RunArtifactForSeal>(&bytes) {
                     Ok(artifact_doc) => {
-                        let parsed =
-                            st.sessions
-                                .get(&prompt_hash, &session_id)
-                                .await
-                                .and_then(|sess| {
-                                    artifact_doc.expressions.first().and_then(|line| {
-                                        crate::plasm_plan_run::parse_parsed_expr_for_session(
-                                            sess.as_ref(),
-                                            line.trim(),
-                                        )
-                                        .ok()
-                                    })
-                                });
-                        (Some(artifact_doc), parsed)
+                        let parsed = artifact_doc.parsed_preimage.clone();
+                        (Some(artifact_doc), Some(parsed))
                     }
                     Err(_) => (None, None),
                 }

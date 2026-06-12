@@ -43,12 +43,14 @@ pub(crate) async fn materialize_synthetic_node(
         },
         request_fingerprints: request_fingerprints.clone(),
     };
+    let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(node);
     let artifact = archive_plasm_result_snapshot(
         st,
         es,
         session_id,
         Some(entry_id),
-        vec![format!("plan.compute({})", node.id().as_str())],
+        vec![synthetic_node_display(node)],
+        &parsed_preimage,
         &full_result,
         trace,
     )
@@ -319,12 +321,14 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
         },
         request_fingerprints: request_fingerprints.clone(),
     };
+    let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(node);
     let artifact = archive_plasm_result_snapshot(
         st,
         es,
         session_id,
         Some(relation.relation.target.entry_id.as_str()),
-        vec![format!("plan.relation({})", node.id().as_str())],
+        vec![synthetic_node_display(node)],
+        &parsed_preimage,
         &full_result,
         trace,
     )
@@ -448,6 +452,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                     },
                     request_fingerprints: vec![compute_fingerprint(node, source_rows)],
                 };
+                let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(node);
                 let artifact = archive_plasm_result_snapshot(
                     st,
                     es,
@@ -457,6 +462,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                         "plan.relation({}) prefer_embed_all",
                         relation.id.as_str()
                     )],
+                    &parsed_preimage,
                     &full_result,
                     trace,
                 )
@@ -664,6 +670,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
         stats,
         request_fingerprints: request_fingerprints.clone(),
     };
+    let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(node);
     let artifact = archive_plasm_result_snapshot(
         st,
         es,
@@ -673,6 +680,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
             "plan.relation({}) prefer_from_parent_get (mixed)",
             relation.id.as_str()
         )],
+        &parsed_preimage,
         &full_result,
         trace,
     )

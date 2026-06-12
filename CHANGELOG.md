@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-12
+
+### Fixed
+
+- **Live relation returns:** run artifacts store typed `parsed_preimage`; `run_sealed` no longer re-parses synthetic `plan.relation(...)` display lines (fixes `plasm_run` failure on relation fanout returns).
+- **GET by id_field filter:** `Entity(name == "value")` in GET parens lowers to Get instead of mangling the path id as `= "value"`.
+
+### Changed
+
+- **Run artifact schema v2:** `parsed_preimage` (required on new writes) + `display_lines` (human lineage only; `expressions` alias on read). No re-parse fallback for digest recovery.
+
 ## [0.2.0] - 2026-06-12
 
 ### Added
