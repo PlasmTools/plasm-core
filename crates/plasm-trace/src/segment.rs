@@ -147,7 +147,7 @@ pub enum TraceSegment {
         node_count: usize,
         code_chars: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        dag: Option<serde_json::Value>,
+        comp: Option<serde_json::Value>,
     },
     CodePlanExecute {
         plan_handle: String,
@@ -167,7 +167,7 @@ pub enum TraceSegment {
         #[serde(default)]
         code_chars: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        dag: Option<serde_json::Value>,
+        comp: Option<serde_json::Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         plasm_call_index: Option<u64>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -197,12 +197,12 @@ mod tests {
             session_id: "s1".into(),
             node_count: 2,
             code_chars: 42,
-            dag: Some(serde_json::json!({"nodes": [{"id": "n1"}], "edges": []})),
+            comp: Some(serde_json::json!({"steps": {"n1": {}}, "bind": {"topo": ["n1"]}})),
         };
         let v = serde_json::to_value(eval).expect("json");
         assert_eq!(v["kind"], "code_plan_evaluate");
         assert_eq!(v["plan_handle"], "p1");
-        assert_eq!(v["dag"]["nodes"][0]["id"], "n1");
+        assert_eq!(v["comp"]["bind"]["topo"][0], "n1");
 
         let exec = TraceSegment::CodePlanExecute {
             plan_handle: "p1".into(),
@@ -218,7 +218,7 @@ mod tests {
             session_id: "s1".into(),
             node_count: 2,
             code_chars: 42,
-            dag: Some(serde_json::json!({"nodes": [{"id": "n1"}], "edges": []})),
+            comp: Some(serde_json::json!({"steps": {"n1": {}}, "bind": {"topo": ["n1"]}})),
             plasm_call_index: Some(7),
             run_ids: vec!["r1".into()],
             run_artifacts: vec![super::CodePlanRunArtifactRef {

@@ -1,4 +1,4 @@
-//! Mandatory UX projection from dry-run plans — sibling to [`plasm_plan_dag_json`], excluded from commit hash.
+//! Mandatory UX projection from dry-run plans — sibling to comp wire, excluded from commit hash.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -11,7 +11,8 @@ use crate::plan_dry_display::{
 use crate::plasm_plan::{
     EffectClass, PlanNodeKind, ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState,
 };
-use crate::plasm_plan_run::{plasm_plan_dag_json, DryPlasmPlanEvaluation};
+use crate::plasm_comp_wire::plasm_comp_json_from_dry;
+use crate::plasm_plan_run::DryPlasmPlanEvaluation;
 
 pub const PLAN_UX_REFLECTION_SCHEMA_VERSION: u32 = 1;
 
@@ -141,8 +142,8 @@ pub fn plan_ux_reflection(
         &dry.graph_summary,
         ctx.session,
     );
-    let dag = plasm_plan_dag_json(dry);
-    let edges = dag_edges(&dag);
+    let comp = plasm_comp_json_from_dry(dry);
+    let edges = comp_edges(&comp);
     let steps = build_steps(plan, &dry.topological_order, &compact);
     let layout = infer_layout(dry.parallel_root_surfaces_only, &steps);
     let columns = build_columns(&layout, &steps);
@@ -355,20 +356,29 @@ fn column_hint(node: &ValidatedPlanNode) -> Option<String> {
     }
 }
 
-fn dag_edges(dag: &serde_json::Value) -> Vec<PlanUxEdge> {
-    dag.get("edges")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|e| {
-                    Some(PlanUxEdge {
-                        from: e.get("from")?.as_str()?.to_string(),
-                        to: e.get("to")?.as_str()?.to_string(),
-                    })
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+fn comp_edges(comp: &serde_json::Value) -> Vec<PlanUxEdge> {
+    let Some(deps) = comp
+        .get("bind")
+        .and_then(|b| b.get("deps"))
+        .and_then(|d| d.as_object())
+    else {
+        return Vec::new();
+    };
+    let mut edges = Vec::new();
+    for (to, froms) in deps {
+        let Some(arr) = froms.as_array() else {
+            continue;
+        };
+        for from in arr {
+            if let Some(from_s) = from.as_str() {
+                edges.push(PlanUxEdge {
+                    from: from_s.to_string(),
+                    to: to.clone(),
+                });
+            }
+        }
+    }
+    edges
 }
 
 fn write_step_ids(

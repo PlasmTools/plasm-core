@@ -15,9 +15,8 @@ use plasm_agent::{
     execute_session::ExecuteSession,
     graph_page_spill_for_execute,
     http::{build_plasm_host_state, PlasmHostBootstrap},
-    plasm_dag::compile_plasm_dag_to_plan,
-    plasm_plan::{parse_plan_value, validate_plan_artifact},
-    plasm_plan_run::run_validated_plasm_plan,
+    plasm_compile::compile_plasm_program,
+    plasm_plan_run::run_plasm_comp,
     run_artifacts::RunArtifactStore,
     server_state::CatalogBootstrap,
     session_graph_persistence::SessionGraphPersistence,
@@ -230,7 +229,7 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
     drop(mat);
 
     let program = "all = Berry\none = all.limit(1)\none";
-    let plan_json = compile_plasm_dag_to_plan(
+    let bundle = compile_plasm_program(
         &PromptPipelineConfig::default(),
         None,
         &es,
@@ -238,15 +237,13 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
         program,
     )
     .expect("compile plan");
-    let plan = parse_plan_value(&plan_json).expect("parse plan");
-    let validated = validate_plan_artifact(&plan).expect("validate plan");
 
-    let live = run_validated_plasm_plan(
+    let live = run_plasm_comp(
         &es,
         &st,
         PROMPT_HASH,
         SESSION_ID,
-        &validated,
+        &bundle,
         true,
         None,
         None,

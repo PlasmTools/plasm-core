@@ -56,7 +56,6 @@ pub mod mcp_config_admin;
 pub mod mcp_config_readiness;
 pub mod mcp_config_repository;
 pub mod mcp_host_bootstrap;
-pub mod run_ui_column_schema;
 pub mod mcp_plasm_meta;
 pub mod mcp_policy;
 mod mcp_run_markdown;
@@ -81,9 +80,24 @@ pub mod oss_local_state;
 pub mod outbound_secret_provider;
 pub mod output;
 mod plan_dry_display;
+pub mod plasm_comp_display;
 pub mod plan_read_bounds;
 pub mod plan_ux_reflection;
-pub mod plasm_dag;
+mod plasm_comp_bundle;
+mod plasm_comp_lift;
+mod plasm_comp_wire;
+mod plasm_step_convert;
+pub mod evidence_chain;
+pub mod plasm_compile;
+pub use plasm_comp_bundle::PlasmCompBundle;
+pub use plasm_comp_wire::{
+    plasm_comp_commit_canonical, plasm_comp_from_validated, plasm_comp_json_from_dry,
+    plasm_comp_wire_json, PlasmCompArtifact,
+};
+pub use plasm_compile::{
+    compile_plasm_expression, compile_plasm_program, compile_plasm_surface_line_to_comp,
+};
+pub(crate) mod plasm_dag;
 /// Serializable effect [`Plan`](plasm_plan::Plan) contract and DAG validation (Plasm programs, archived plans).
 pub mod plasm_plan;
 pub mod plasm_plan_run;
@@ -93,6 +107,7 @@ pub mod query_args;
 pub(crate) mod resolved_plan_http;
 pub(crate) mod row_predicate_lower;
 pub mod run_artifacts;
+pub mod run_ui_column_schema;
 pub mod schema_overlay_session;
 pub mod server_state;
 pub mod session_bindings;

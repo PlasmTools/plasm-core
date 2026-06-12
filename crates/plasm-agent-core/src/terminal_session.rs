@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use crate::execute_session::ExecuteSession;
 use crate::http_execute::{build_capability_exposure_plan, CapabilitySeed};
-use crate::plasm_dag::compile_plasm_expression_to_plan;
+use crate::plasm_compile::compile_plasm_expression;
 use crate::plasm_plan_run::{expand_program_surface_for_session_lower, parse_plasm_surface_line};
 use crate::terminal_state::{
     append_teaching_tsv_wave, catalog_cache_path, teaching_tsv_path, write_session_meta,
@@ -472,8 +472,9 @@ impl ClientSymbolSession {
         if trimmed.is_empty() {
             return Err(anyhow!("program is empty"));
         }
-        compile_plasm_expression_to_plan(pipeline, cross, &es, "plasm_cli", trimmed)
-            .map_err(|e| anyhow!("{e}"))
+        let bundle = compile_plasm_expression(pipeline, cross, &es, "plasm_cli", trimmed)
+            .map_err(|e| anyhow!("{e}"))?;
+        Ok(serde_json::to_value(&bundle.artifact().comp).map_err(|e| anyhow!("{e}"))?)
     }
 
     #[allow(dead_code)]
@@ -537,9 +538,19 @@ mod tests {
         sess.capabilities
             .push(("overshow".into(), "Profile".into()));
         sess.rebuild_exposure_from_capabilities().expect("expose");
-        let plan = sess
+        let comp = sess
             .compile_program_to_plan("Profile{}")
             .expect("compile Profile{}");
-        assert!(plan.get("nodes").and_then(|n| n.as_array()).is_some());
+        assert!(
+            comp.get("steps")
+                .and_then(|s| s.as_object())
+                .is_some_and(|m| !m.is_empty())
+        );
+        assert!(
+            comp.get("bind")
+                .and_then(|b| b.get("topo"))
+                .and_then(|t| t.as_array())
+                .is_some_and(|a| !a.is_empty())
+        );
     }
 }

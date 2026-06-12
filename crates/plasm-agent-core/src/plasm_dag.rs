@@ -325,7 +325,7 @@ pub fn is_plasm_dag_candidate(expressions: &[String]) -> bool {
     is_plasm_dag_source(expressions[0].trim())
 }
 
-fn is_plasm_dag_source(src: &str) -> bool {
+pub(crate) fn is_plasm_dag_source(src: &str) -> bool {
     src.lines().any(|line| {
         let line = strip_line_comment(line).trim();
         !line.is_empty() && split_assignment_at_top_level(line).is_some()
@@ -336,7 +336,7 @@ fn is_plasm_dag_source(src: &str) -> bool {
 }
 
 /// Compile one program expression to plan JSON (DAG program vs single surface line).
-pub fn compile_plasm_expression_to_plan(
+pub(crate) fn compile_plasm_expression_to_plan(
     pipeline: &PromptPipelineConfig,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     session: &ExecuteSession,
@@ -350,7 +350,7 @@ pub fn compile_plasm_expression_to_plan(
     }
 }
 
-pub fn compile_plasm_dag_to_plan(
+pub(crate) fn compile_plasm_dag_to_plan(
     pipeline: &PromptPipelineConfig,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     session: &ExecuteSession,
@@ -360,7 +360,9 @@ pub fn compile_plasm_dag_to_plan(
     compile_plasm_dag_to_plan_inner(pipeline, symbol_map_cross_cache, session, name, source)
 }
 
-fn compile_plasm_dag_to_plan_inner(
+// compile_plasm_program / compile_plasm_expression live in plasm_compile.rs
+
+pub(crate) fn compile_plasm_dag_to_plan_inner(
     pipeline: &PromptPipelineConfig,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     session: &ExecuteSession,
@@ -428,7 +430,7 @@ fn compile_plasm_dag_to_plan_inner(
 
 /// One line of surface Plasm (or `a, b` at top level) as a one-line program plan — same shape as
 /// [`compile_plasm_dag_to_plan`], so the MCP and HTTP runtimes can always execute through the plan runner.
-pub fn compile_plasm_surface_line_to_plan(
+pub(crate) fn compile_plasm_surface_line_to_plan(
     pipeline: &PromptPipelineConfig,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     session: &ExecuteSession,
@@ -5450,10 +5452,7 @@ created"#;
                 .and_then(|k| k.as_str()),
             Some("action")
         );
-        let plan_value = crate::plasm_plan::parse_plan_value(&plan).expect("parse plan");
-        let validated = crate::plasm_plan::validate_plan_artifact(&plan_value).expect("validate");
-        let dry = crate::plasm_plan_run::evaluate_validated_plasm_plan_dry(&session, &validated)
-            .expect("dry");
+        let dry = crate::plasm_plan_run::evaluate_plasm_plan_dry(&session, &plan).expect("dry");
         assert!(
             dry.node_results.iter().any(|nr| {
                 nr.get("kind").and_then(|k| k.as_str()) == Some("for_each")

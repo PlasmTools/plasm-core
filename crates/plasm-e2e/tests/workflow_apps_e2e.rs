@@ -76,20 +76,20 @@ fn assert_plan_ux_reflection(body: &Value) {
     }
 }
 
-fn assert_plan_dag_human_ops(body: &Value) {
-    let plan = body
-        .pointer("/_meta/plasm/plan")
-        .expect("plan missing in _meta.plasm");
-    let nodes = plan["nodes"].as_array().expect("plan.nodes");
-    assert!(!nodes.is_empty(), "plan.nodes must be non-empty");
-    for node in nodes {
-        let op = node["operation"].as_str().unwrap_or("");
+fn assert_comp_human_ops(body: &Value) {
+    let comp = body
+        .pointer("/_meta/plasm/comp")
+        .expect("comp missing in _meta.plasm");
+    let steps = comp["steps"].as_object().expect("comp.steps");
+    assert!(!steps.is_empty(), "comp.steps must be non-empty");
+    for (_id, step) in steps {
+        let op = step["operation"].as_str().unwrap_or("");
         assert!(
             !op.contains("PlanDryOp") && !op.is_empty(),
-            "plan node operation must be human-readable, got {op:?}"
+            "comp step operation must be human-readable, got {op:?}"
         );
     }
-    assert!(plan["edges"].is_array(), "plan.edges required");
+    assert!(comp["bind"]["topo"].is_array(), "comp.bind.topo required");
 }
 
 async fn http_open_workflow_session(client: &reqwest::Client, base: &str) -> (String, String) {
@@ -235,7 +235,7 @@ async fn workflow_apps_e2e_async() {
         "http dry: {dry_status} body={dry_body}"
     );
     assert_plan_ux_reflection(&dry_body);
-    assert_plan_dag_human_ops(&dry_body);
+    assert_comp_human_ops(&dry_body);
 
     let list = client
         .get(format!("{base}/v1/workflows"))
@@ -304,7 +304,7 @@ async fn workflow_apps_e2e_async() {
     )
     .await;
     assert_plan_ux_reflection(&dry_mcp);
-    assert_plan_dag_human_ops(&dry_mcp);
+    assert_comp_human_ops(&dry_mcp);
 
     let open_wf = mcp_tool_meta(
         &client,
@@ -340,7 +340,7 @@ async fn workflow_apps_e2e_async() {
     )
     .await;
     assert_plan_ux_reflection(&dry_wf);
-    assert_plan_dag_human_ops(&dry_wf);
+    assert_comp_human_ops(&dry_wf);
 
     let plan_shell = client
         .get(format!("{base}/v1/plan/ui"))

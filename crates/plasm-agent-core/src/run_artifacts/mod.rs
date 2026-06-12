@@ -18,7 +18,6 @@ use futures_util::TryStreamExt;
 use object_store::{path::Path as StorePath, ObjectStore, ObjectStoreExt};
 use plasm_runtime::{ExecutionResult, ExecutionSource, ExecutionStats};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
@@ -29,6 +28,13 @@ use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 
 use plasm_core::expr_parser::ParsedExpr;
+
+mod evidence_sidecar;
+
+use evidence_sidecar::{
+    evidence_head_object_key, evidence_head_sidecar_filename, evidence_object_key,
+    evidence_run_head_pointer_key, evidence_sidecar_filename, EvidenceSidecarIndex,
+};
 
 /// ASCII prefix for deterministic run artifact wire ids (`pr` + 64 lowercase hex = full SHA256 digest).
 pub const RUN_ARTIFACT_WIRE_PREFIX: &str = "pr";
@@ -81,23 +87,16 @@ impl RunArtifactId {
         source_line: &str,
         parsed: &ParsedExpr,
         request_fingerprints: &[String],
-    ) -> Result<Self, serde_json::Error> {
-        let mut fps: Vec<String> = request_fingerprints.to_vec();
-        fps.sort();
-        let v = serde_json::json!({
-            "schema_version": 1u32,
-            "catalog_cgs_hash": catalog_cgs_hash,
-            "domain_revision": domain_revision,
-            "entry_id": entry_id,
-            "source_line": source_line.trim(),
-            "parsed": parsed,
-            "request_fingerprints": fps,
-        });
-        let bytes = serde_json::to_vec(&v)?;
-        let digest = Sha256::digest(&bytes);
-        let mut out = [0u8; 32];
-        out.copy_from_slice(&digest);
-        Ok(Self(out))
+    ) -> Result<Self, plasm_evidence::CanonicalError> {
+        let digest = plasm_evidence::compute_run_bundle_digest(
+            catalog_cgs_hash,
+            domain_revision,
+            entry_id,
+            source_line,
+            parsed,
+            request_fingerprints,
+        )?;
+        Ok(Self(*digest.as_bytes()))
     }
 }
 
@@ -226,7 +225,9 @@ pub struct CodePlanArchiveDocument {
     pub name: String,
     pub code: String,
     pub plan_hash: String,
-    pub plan: serde_json::Value,
+    /// Canonical typed comp wire (legacy archive alias: `plan`).
+    #[serde(alias = "plan")]
+    pub comp: serde_json::Value,
     pub catalog_cgs_hash: String,
     pub domain_revision: u32,
     pub entities: Vec<String>,
@@ -302,19 +303,56 @@ pub trait RunArtifactBackend: Send + Sync {
         session_id: &str,
         plan_index: u64,
     ) -> Option<Uuid>;
+
+    async fn insert_evidence_sidecar(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: RunArtifactId,
+        encoded: &[u8],
+    ) -> Result<usize, RunArtifactError>;
+
+    async fn insert_evidence_sidecar_by_head(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        head_hex: &str,
+        encoded: &[u8],
+    ) -> Result<usize, RunArtifactError>;
+
+    async fn put_evidence_run_head_pointer(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: RunArtifactId,
+        head_hex: &str,
+    ) -> Result<(), RunArtifactError>;
+
+    async fn get_evidence_sidecar(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: RunArtifactId,
+    ) -> Option<Vec<u8>>;
 }
 
 /// Execute run snapshot storage (memory or object store).
 #[derive(Clone)]
 pub struct RunArtifactStore {
     inner: Arc<dyn RunArtifactBackend>,
+    evidence_index: Arc<std::sync::RwLock<EvidenceSidecarIndex>>,
 }
 
 impl RunArtifactStore {
-    pub fn memory() -> Self {
+    fn new(inner: Arc<dyn RunArtifactBackend>) -> Self {
         Self {
-            inner: Arc::new(MemoryRunArtifactBackend::default()),
+            inner,
+            evidence_index: Arc::new(std::sync::RwLock::new(EvidenceSidecarIndex::default())),
         }
+    }
+
+    pub fn memory() -> Self {
+        Self::new(Arc::new(MemoryRunArtifactBackend::default()))
     }
 
     pub async fn insert(
@@ -513,6 +551,9 @@ struct MemoryRunArtifactState {
     by_resource_index: HashMap<(String, String, u64), RunArtifactId>,
     plan_blobs: HashMap<(String, String, Uuid), Vec<u8>>,
     plan_by_index: HashMap<(String, String, u64), Uuid>,
+    evidence_blobs: HashMap<(String, String, RunArtifactId), Vec<u8>>,
+    evidence_by_head: HashMap<(String, String, String), Vec<u8>>,
+    evidence_run_heads: HashMap<(String, String, RunArtifactId), String>,
 }
 
 #[derive(Debug, Default)]
@@ -629,6 +670,78 @@ impl RunArtifactBackend for MemoryRunArtifactBackend {
             .get(&(prompt_hash.to_string(), session_id.to_string(), plan_index))
             .copied()
     }
+
+    async fn insert_evidence_sidecar(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: RunArtifactId,
+        encoded: &[u8],
+    ) -> Result<usize, RunArtifactError> {
+        let n = encoded.len();
+        let mut g = self.inner.write().expect("run artifact mutex poisoned");
+        g.evidence_blobs.insert(
+            (prompt_hash.to_string(), session_id.to_string(), run_id),
+            encoded.to_vec(),
+        );
+        Ok(n)
+    }
+
+    async fn insert_evidence_sidecar_by_head(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        head_hex: &str,
+        encoded: &[u8],
+    ) -> Result<usize, RunArtifactError> {
+        let n = encoded.len();
+        let mut g = self.inner.write().expect("run artifact mutex poisoned");
+        g.evidence_by_head.insert(
+            (
+                prompt_hash.to_string(),
+                session_id.to_string(),
+                head_hex.to_string(),
+            ),
+            encoded.to_vec(),
+        );
+        Ok(n)
+    }
+
+    async fn put_evidence_run_head_pointer(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: RunArtifactId,
+        head_hex: &str,
+    ) -> Result<(), RunArtifactError> {
+        let mut g = self.inner.write().expect("run artifact mutex poisoned");
+        g.evidence_run_heads.insert(
+            (prompt_hash.to_string(), session_id.to_string(), run_id),
+            head_hex.to_string(),
+        );
+        Ok(())
+    }
+
+    async fn get_evidence_sidecar(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: RunArtifactId,
+    ) -> Option<Vec<u8>> {
+        let g = self.inner.read().ok()?;
+        let key = (prompt_hash.to_string(), session_id.to_string(), run_id);
+        if let Some(head) = g.evidence_run_heads.get(&key) {
+            return g
+                .evidence_by_head
+                .get(&(
+                    prompt_hash.to_string(),
+                    session_id.to_string(),
+                    head.clone(),
+                ))
+                .cloned();
+        }
+        g.evidence_blobs.get(&key).cloned()
+    }
 }
 
 fn run_artifact_blob_filename(run_id: RunArtifactId) -> String {
@@ -713,6 +826,65 @@ impl FsRunArtifactBackend {
             .join(sid)
             .join("plan-index")
             .join(format!("{plan_index}.txt")))
+    }
+
+    fn evidence_path(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: RunArtifactId,
+    ) -> Result<PathBuf, RunArtifactError> {
+        let ph = run_artifact_fs_segment(prompt_hash)?;
+        let sid = run_artifact_fs_segment(session_id)?;
+        let fname_owned = evidence_sidecar_filename(run_id);
+        let fname = run_artifact_fs_segment(&fname_owned)?;
+        Ok(self
+            .root
+            .join("execute")
+            .join(ph)
+            .join(sid)
+            .join("evidence")
+            .join(fname))
+    }
+
+    fn evidence_head_path(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        head_hex: &str,
+    ) -> Result<PathBuf, RunArtifactError> {
+        let ph = run_artifact_fs_segment(prompt_hash)?;
+        let sid = run_artifact_fs_segment(session_id)?;
+        let fname_owned = evidence_head_sidecar_filename(head_hex);
+        let fname = run_artifact_fs_segment(&fname_owned)?;
+        Ok(self
+            .root
+            .join("execute")
+            .join(ph)
+            .join(sid)
+            .join("evidence")
+            .join("heads")
+            .join(fname))
+    }
+
+    fn evidence_run_head_pointer_path(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: RunArtifactId,
+    ) -> Result<PathBuf, RunArtifactError> {
+        let ph = run_artifact_fs_segment(prompt_hash)?;
+        let sid = run_artifact_fs_segment(session_id)?;
+        let fname_owned = format!("{}.head", run_id.to_wire());
+        let fname = run_artifact_fs_segment(&fname_owned)?;
+        Ok(self
+            .root
+            .join("execute")
+            .join(ph)
+            .join(sid)
+            .join("evidence")
+            .join("run-heads")
+            .join(fname))
     }
 }
 
@@ -835,6 +1007,87 @@ impl RunArtifactBackend for FsRunArtifactBackend {
         let s = std::str::from_utf8(&bytes).ok()?;
         Uuid::parse_str(s.trim()).ok()
     }
+
+    async fn insert_evidence_sidecar(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: RunArtifactId,
+        encoded: &[u8],
+    ) -> Result<usize, RunArtifactError> {
+        let n = encoded.len();
+        let path = self.evidence_path(prompt_hash, session_id, run_id)?;
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        }
+        tokio::fs::write(&path, encoded)
+            .await
+            .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        Ok(n)
+    }
+
+    async fn insert_evidence_sidecar_by_head(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        head_hex: &str,
+        encoded: &[u8],
+    ) -> Result<usize, RunArtifactError> {
+        let n = encoded.len();
+        let path = self.evidence_head_path(prompt_hash, session_id, head_hex)?;
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        }
+        tokio::fs::write(&path, encoded)
+            .await
+            .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        Ok(n)
+    }
+
+    async fn put_evidence_run_head_pointer(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: RunArtifactId,
+        head_hex: &str,
+    ) -> Result<(), RunArtifactError> {
+        let path = self.evidence_run_head_pointer_path(prompt_hash, session_id, run_id)?;
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        }
+        tokio::fs::write(&path, head_hex)
+            .await
+            .map_err(|e| RunArtifactError::Filesystem(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn get_evidence_sidecar(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: RunArtifactId,
+    ) -> Option<Vec<u8>> {
+        if let Ok(ptr) = self.evidence_run_head_pointer_path(prompt_hash, session_id, run_id) {
+            if let Ok(head_bytes) = tokio::fs::read(&ptr).await {
+                if let Ok(head) = std::str::from_utf8(&head_bytes) {
+                    let head = head.trim();
+                    if let Ok(path) = self.evidence_head_path(prompt_hash, session_id, head) {
+                        if let Ok(bytes) = tokio::fs::read(&path).await {
+                            return Some(bytes);
+                        }
+                    }
+                }
+            }
+        }
+        let path = self.evidence_path(prompt_hash, session_id, run_id).ok()?;
+        tokio::fs::read(&path).await.ok()
+    }
 }
 
 struct ObjectStoreRunArtifactBackend {
@@ -947,6 +1200,78 @@ impl RunArtifactBackend for ObjectStoreRunArtifactBackend {
         let bytes = res.bytes().await.ok()?;
         let s = std::str::from_utf8(bytes.as_ref()).ok()?;
         Uuid::parse_str(s.trim()).ok()
+    }
+
+    async fn insert_evidence_sidecar(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: RunArtifactId,
+        encoded: &[u8],
+    ) -> Result<usize, RunArtifactError> {
+        let n = encoded.len();
+        let key = evidence_object_key(&self.prefix, prompt_hash, session_id, run_id);
+        self.store
+            .put(&key, encoded.to_vec().into())
+            .await
+            .map_err(|e| RunArtifactError::ObjectStore(e.to_string()))?;
+        Ok(n)
+    }
+
+    async fn insert_evidence_sidecar_by_head(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        head_hex: &str,
+        encoded: &[u8],
+    ) -> Result<usize, RunArtifactError> {
+        let n = encoded.len();
+        let key = evidence_head_object_key(&self.prefix, prompt_hash, session_id, head_hex);
+        self.store
+            .put(&key, encoded.to_vec().into())
+            .await
+            .map_err(|e| RunArtifactError::ObjectStore(e.to_string()))?;
+        Ok(n)
+    }
+
+    async fn put_evidence_run_head_pointer(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: RunArtifactId,
+        head_hex: &str,
+    ) -> Result<(), RunArtifactError> {
+        let key = evidence_run_head_pointer_key(&self.prefix, prompt_hash, session_id, run_id);
+        self.store
+            .put(&key, head_hex.as_bytes().to_vec().into())
+            .await
+            .map_err(|e| RunArtifactError::ObjectStore(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn get_evidence_sidecar(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        run_id: RunArtifactId,
+    ) -> Option<Vec<u8>> {
+        let ptr_key = evidence_run_head_pointer_key(&self.prefix, prompt_hash, session_id, run_id);
+        if let Ok(res) = self.store.get(&ptr_key).await {
+            if let Ok(bytes) = res.bytes().await {
+                if let Ok(head) = std::str::from_utf8(bytes.as_ref()) {
+                    let head_key =
+                        evidence_head_object_key(&self.prefix, prompt_hash, session_id, head.trim());
+                    if let Ok(res) = self.store.get(&head_key).await {
+                        if let Ok(b) = res.bytes().await {
+                            return Some(b.to_vec());
+                        }
+                    }
+                }
+            }
+        }
+        let key = evidence_object_key(&self.prefix, prompt_hash, session_id, run_id);
+        let res = self.store.get(&key).await.ok()?;
+        res.bytes().await.ok().map(|b| b.to_vec())
     }
 }
 
@@ -1083,7 +1408,7 @@ pub fn init_from_env_with_policy(
                 gc_interval_secs = interval.as_secs(),
                 "run artifacts: object store backend (time-based GC)"
             );
-            return Ok(Arc::new(RunArtifactStore { inner: backend }));
+            return Ok(Arc::new(RunArtifactStore::new(backend)));
         }
     }
     if let Ok(dir) = std::env::var("PLASM_RUN_ARTIFACTS_DIR") {
@@ -1095,9 +1420,9 @@ pub fn init_from_env_with_policy(
                 ));
             }
             tracing::info!(path = %root.display(), "run artifacts: local filesystem backend");
-            return Ok(Arc::new(RunArtifactStore {
-                inner: Arc::new(FsRunArtifactBackend { root }),
-            }));
+            return Ok(Arc::new(RunArtifactStore::new(Arc::new(
+                FsRunArtifactBackend { root: root.clone() },
+            ))));
         }
     }
     if policy == RunArtifactInitPolicy::OssFilesystemDefaults
@@ -1114,9 +1439,9 @@ pub fn init_from_env_with_policy(
                 path = %root.display(),
                 "run artifacts: OSS default local filesystem backend (~/.plasm/local/run-artifacts or PLASM_LOCAL_STATE_DIR)"
             );
-            return Ok(Arc::new(RunArtifactStore {
-                inner: Arc::new(FsRunArtifactBackend { root }),
-            }));
+            return Ok(Arc::new(RunArtifactStore::new(Arc::new(
+                FsRunArtifactBackend { root: root.clone() },
+            ))));
         }
         tracing::warn!(
             target: "plasm_agent::run_artifacts",
@@ -1133,9 +1458,7 @@ pub fn init_from_env_with_policy(
 #[cfg(test)]
 impl RunArtifactStore {
     fn from_fs_root_for_test(root: PathBuf) -> Self {
-        Self {
-            inner: Arc::new(FsRunArtifactBackend { root }),
-        }
+        Self::new(Arc::new(FsRunArtifactBackend { root }))
     }
 }
 
@@ -1183,10 +1506,7 @@ async fn run_artifact_gc_pass(
     let cutoff = Utc::now() - chrono::Duration::seconds(secs);
     let mut stream = store.list(Some(list_prefix));
     while let Some(meta) = stream.try_next().await? {
-        // Code plans are permanent provenance records; only time-GC execute run snapshots.
-        if !meta.location.as_ref().contains("/execute/")
-            && !meta.location.as_ref().starts_with("execute/")
-        {
+        if !object_store_path_is_run_snapshot_gc_eligible(meta.location.as_ref()) {
             continue;
         }
         if meta.last_modified < cutoff {
@@ -1195,6 +1515,12 @@ async fn run_artifact_gc_pass(
         }
     }
     Ok(())
+}
+
+/// Time-GC applies only to execute run snapshot blobs, not evidence sidecars or code plans.
+pub(crate) fn object_store_path_is_run_snapshot_gc_eligible(location: &str) -> bool {
+    (location.contains("/execute/") || location.starts_with("execute/"))
+        && !location.contains("/evidence/")
 }
 
 /// Canonical MCP / logical URI for a run artifact.
@@ -1597,6 +1923,94 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn evidence_sidecar_memory_round_trip() {
+        use plasm_evidence::{ChainBuilder, EvidenceAnchors, EvidenceBundle, EvidenceKind, EvidenceScope, IntentDigest};
+        let store = RunArtifactStore::memory();
+        let ph = "p".repeat(64);
+        let run_id = RunArtifactId::from_bytes([9u8; 32]);
+        let mut b = ChainBuilder::new();
+        b.push(
+            EvidenceKind::IntentBound {
+                intent_digest: IntentDigest::from_bytes([1u8; 32]),
+                intent_len: 3,
+            },
+            None,
+        )
+        .expect("push");
+        let bundle = EvidenceBundle {
+            scope: EvidenceScope::new_v1(ph.clone(), "s1", "c".repeat(64), 0, "demo"),
+            chain: b.finish(),
+            anchors: EvidenceAnchors::default(),
+            signature: None,
+        };
+        store
+            .insert_evidence_bundle(&ph, "s1", run_id, &bundle)
+            .await
+            .expect("insert");
+        let got = store
+            .get_evidence_bundle(&ph, "s1", run_id)
+            .await
+            .expect("get")
+            .expect("some");
+        assert_eq!(got.chain.segments.len(), 1);
+        plasm_evidence::DefaultChainVerifier::verify(&got).expect("verify");
+    }
+
+    #[tokio::test]
+    async fn evidence_sidecar_dedup_multi_run_id() {
+        use plasm_evidence::{ChainBuilder, EvidenceAnchors, EvidenceBundle, EvidenceKind, EvidenceScope, IntentDigest};
+        let store = RunArtifactStore::memory();
+        let ph = "p".repeat(64);
+        let run_a = RunArtifactId::from_bytes([9u8; 32]);
+        let run_b = RunArtifactId::from_bytes([8u8; 32]);
+        let mut b = ChainBuilder::new();
+        b.push(
+            EvidenceKind::IntentBound {
+                intent_digest: IntentDigest::from_bytes([1u8; 32]),
+                intent_len: 3,
+            },
+            None,
+        )
+        .expect("push");
+        let bundle = EvidenceBundle {
+            scope: EvidenceScope::new_v1(ph.clone(), "s1", "c".repeat(64), 0, "demo"),
+            chain: b.finish(),
+            anchors: EvidenceAnchors::default(),
+            signature: None,
+        };
+        store
+            .insert_evidence_bundles(&ph, "s1", &[run_a, run_b], &bundle)
+            .await
+            .expect("insert");
+        let got_a = store
+            .get_evidence_bundle(&ph, "s1", run_a)
+            .await
+            .expect("get a")
+            .expect("some a");
+        let got_b = store
+            .get_evidence_bundle(&ph, "s1", run_b)
+            .await
+            .expect("get b")
+            .expect("some b");
+        assert_eq!(got_a.chain.head, got_b.chain.head);
+        plasm_evidence::DefaultChainVerifier::verify(&got_a).expect("verify chain");
+    }
+
+    #[test]
+    fn object_store_gc_skips_evidence_paths() {
+        assert!(object_store_path_is_run_snapshot_gc_eligible(
+            "execute/abc/s1/prdeadbeef.json"
+        ));
+        assert!(!object_store_path_is_run_snapshot_gc_eligible(
+            "execute/abc/s1/evidence/heads/feedface.evidence.json"
+        ));
+        assert!(!object_store_path_is_run_snapshot_gc_eligible(
+            "execute/abc/s1/evidence/run-heads/prabc.head"
+        ));
+        assert!(!object_store_path_is_run_snapshot_gc_eligible("code-plans/p/s1/p1.json"));
+    }
+
+    #[tokio::test]
     async fn memory_code_plan_round_trip_by_index() {
         let store = RunArtifactStore::memory();
         let plan_id = Uuid::new_v4();
@@ -1611,7 +2025,7 @@ mod tests {
             name: "demo plan".into(),
             code: "JSON.stringify({version:1,nodes:[]})".into(),
             plan_hash: "h".repeat(64),
-            plan: serde_json::json!({"version": 1, "nodes": []}),
+            comp: serde_json::json!({"version": 1, "steps": {}, "bind": {"topo": []}, "return": {"kind": "step", "step": "x"}}),
             catalog_cgs_hash: "c".repeat(64),
             domain_revision: 0,
             entities: vec!["Widget".into()],

@@ -10,9 +10,8 @@ use std::sync::Arc;
 use plasm_agent::{
     execute_session::ExecuteSession,
     http::{build_plasm_host_state, PlasmHostBootstrap},
-    plasm_dag::compile_plasm_dag_to_plan,
-    plasm_plan::{parse_plan_value, validate_plan_artifact},
-    plasm_plan_run::run_validated_plasm_plan,
+    plasm_compile::compile_plasm_program,
+    plasm_plan_run::run_plasm_comp,
     run_artifacts::RunArtifactStore,
     server_state::CatalogBootstrap,
 };
@@ -107,7 +106,7 @@ async fn limit_pushdown_bounds_paginated_berry_query_async() {
     let es = pokeapi_session(cgs.clone());
 
     let program = "all = Berry\nlimited = all.limit(5)\nlimited";
-    let plan_json = compile_plasm_dag_to_plan(
+    let bundle = compile_plasm_program(
         &PromptPipelineConfig::default(),
         None,
         &es,
@@ -115,15 +114,13 @@ async fn limit_pushdown_bounds_paginated_berry_query_async() {
         program,
     )
     .expect("compile plan");
-    let plan = parse_plan_value(&plan_json).expect("parse");
-    let validated = validate_plan_artifact(&plan).expect("validate");
 
-    let live = run_validated_plasm_plan(
+    let live = run_plasm_comp(
         &es,
         &st,
         PROMPT_HASH,
         SESSION_ID,
-        &validated,
+        &bundle,
         true,
         None,
         None,

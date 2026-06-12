@@ -83,15 +83,15 @@ use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
 use crate::operation::{
     async_live_run_accept_parts, compute_plan_commit_id_from_dry, live_run_should_auto_async,
-    op_accept_context_from_validated, plan_commit_meta, plan_requires_review_gate,
+    op_accept_context_from_executable, plan_commit_meta, plan_requires_review_gate,
     should_spawn_async_live_run, spawn_async_plan_run, verify_plan_commit_for_dry,
     PlanCommitRecord, PLAN_COMMIT_TTL,
 };
 use crate::plan_dry_display::build_plan_dry_compact_view;
-use crate::plasm_dag::compile_plasm_expression_to_plan;
-use crate::plasm_plan::parse_and_validate_plan_json;
+use crate::plasm_compile::compile_plasm_expression;
+use crate::plasm_comp_wire::plasm_comp_json_from_dry;
 use crate::plasm_plan_run::{
-    evaluate_validated_plasm_plan_dry, plasm_plan_dag_json, render_plasm_plan_dry_text_for_session,
+    evaluate_plasm_comp_dry, render_plasm_plan_dry_text_for_session,
     PlasmPlanRunHooks, PlasmPlanRunResult,
 };
 use crate::run_artifacts::{
@@ -107,7 +107,6 @@ use crate::typed_discovery_host::run_typed_catalog_discovery;
 use chrono::Utc;
 use plasm_trace::RunArtifactArchiveRef;
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 /// Best-effort bound on concurrent MCP transport sessions holding an execute binding (see module doc).
@@ -234,26 +233,28 @@ pub(crate) fn parse_logical_session_ref_arg(
     }
 }
 
-fn plan_content_sha256_hex(plan: &serde_json::Value) -> String {
-    let bytes = serde_json::to_vec(plan).unwrap_or_default();
-    let mut h = Sha256::new();
-    h.update(bytes);
-    hex::encode(h.finalize())
+fn comp_content_sha256_hex(comp: &serde_json::Value) -> String {
+    crate::evidence_chain::semantic_comp_commit_hex_from_json(comp)
 }
 
-fn plan_display_name_from_dag(plan_dag: &serde_json::Value) -> String {
-    plan_dag
+fn plan_display_name_from_comp(comp: &serde_json::Value) -> String {
+    comp
         .get("name")
         .and_then(|v| v.as_str())
         .map(str::to_string)
         .unwrap_or_else(|| "unnamed plan".to_string())
 }
 
-fn plan_node_count_from_dag(plan_dag: &serde_json::Value) -> usize {
-    plan_dag
-        .get("nodes")
-        .and_then(|n| n.as_array())
-        .map(Vec::len)
+fn plan_node_count_from_comp(comp: &serde_json::Value) -> usize {
+    comp.get("steps")
+        .and_then(|s| s.as_object())
+        .map(|m| m.len())
+        .or_else(|| {
+            comp.get("bind")
+                .and_then(|b| b.get("topo"))
+                .and_then(|t| t.as_array())
+                .map(|a| a.len())
+        })
         .unwrap_or(0)
 }
 
@@ -266,12 +267,12 @@ async fn trace_archive_and_emit_code_plan_evaluate(
     prompt_hash: &str,
     session_id: &str,
     session_ref: &str,
-    plan: &serde_json::Value,
+    comp: &serde_json::Value,
     program: &str,
-    plan_dag: serde_json::Value,
+    comp_summary: serde_json::Value,
     plan_call_index: u64,
 ) {
-    let plan_hash_str = plan_content_sha256_hex(plan);
+    let plan_hash_str = comp_content_sha256_hex(comp);
     let plan_id = Uuid::new_v4();
     let plan_index = plan_call_index;
     let handle_str = code_plan_handle(plan_index);
@@ -283,10 +284,10 @@ async fn trace_archive_and_emit_code_plan_evaluate(
         entry_id: es.entry_id.clone(),
         plan_index,
         plan_handle: handle_str.clone(),
-        name: plan_display_name_from_dag(&plan_dag),
+        name: plan_display_name_from_comp(comp),
         code: program.to_string(),
         plan_hash: plan_hash_str.clone(),
-        plan: plan.clone(),
+        comp: comp.clone(),
         catalog_cgs_hash: es.catalog_cgs_hash.clone(),
         domain_revision: es.domain_revision,
         entities: es.entities.clone(),
@@ -311,14 +312,14 @@ async fn trace_archive_and_emit_code_plan_evaluate(
             )
         }
     };
-    let node_count = plan_node_count_from_dag(&plan_dag);
+    let node_count = plan_node_count_from_comp(comp);
     let code_chars = program.chars().count() as u64;
     hub.trace_record_code_plan_evaluate(
         mcp_key,
         CodePlanTrace {
             plan_handle: handle_str,
             plan_id: plan_id.to_string(),
-            plan_name: plan_display_name_from_dag(&plan_dag),
+            plan_name: plan_display_name_from_comp(comp),
             plan_hash: plan_hash_str,
             plan_uri,
             canonical_plan_uri,
@@ -327,7 +328,7 @@ async fn trace_archive_and_emit_code_plan_evaluate(
             session_id: session_id.to_string(),
             node_count,
             code_chars,
-            dag: plan_dag,
+            comp: comp_summary,
             plasm_call_index: None,
             run_ids: Vec::new(),
             run_artifacts: Vec::new(),
@@ -345,13 +346,13 @@ async fn trace_archive_and_emit_code_plan_execute(
     prompt_hash: &str,
     session_id: &str,
     session_ref: &str,
-    plan: &serde_json::Value,
+    comp: &serde_json::Value,
     program: &str,
-    plan_dag: serde_json::Value,
+    comp_summary: serde_json::Value,
     plan_call_index: u64,
     out: &PlasmPlanRunResult,
 ) {
-    let plan_hash_str = plan_content_sha256_hex(plan);
+    let plan_hash_str = comp_content_sha256_hex(comp);
     let plan_id = Uuid::new_v4();
     let plan_index = plan_call_index;
     let handle_str = code_plan_handle(plan_index);
@@ -363,10 +364,10 @@ async fn trace_archive_and_emit_code_plan_execute(
         entry_id: es.entry_id.clone(),
         plan_index,
         plan_handle: handle_str.clone(),
-        name: plan_display_name_from_dag(&plan_dag),
+        name: plan_display_name_from_comp(comp),
         code: program.to_string(),
         plan_hash: plan_hash_str.clone(),
-        plan: plan.clone(),
+        comp: comp.clone(),
         catalog_cgs_hash: es.catalog_cgs_hash.clone(),
         domain_revision: es.domain_revision,
         entities: es.entities.clone(),
@@ -391,7 +392,7 @@ async fn trace_archive_and_emit_code_plan_execute(
             )
         }
     };
-    let node_count = plan_node_count_from_dag(&plan_dag);
+    let node_count = plan_node_count_from_comp(comp);
     let code_chars = program.chars().count() as u64;
     let run_ids: Vec<String> = out
         .code_plan_run_artifacts
@@ -403,7 +404,7 @@ async fn trace_archive_and_emit_code_plan_execute(
         CodePlanTrace {
             plan_handle: handle_str,
             plan_id: plan_id.to_string(),
-            plan_name: plan_display_name_from_dag(&plan_dag),
+            plan_name: plan_display_name_from_comp(comp),
             plan_hash: plan_hash_str,
             plan_uri,
             canonical_plan_uri,
@@ -412,7 +413,7 @@ async fn trace_archive_and_emit_code_plan_execute(
             session_id: session_id.to_string(),
             node_count,
             code_chars,
-            dag: plan_dag,
+            comp: comp_summary,
             plasm_call_index: Some(plan_call_index),
             run_ids,
             run_artifacts: out.code_plan_run_artifacts.clone(),
@@ -1409,7 +1410,7 @@ impl PlasmMcpHandler {
             let plan_name = format!("plasm_dag_call_{call_count}");
             let pipeline = self.plasm.engine.prompt_pipeline();
             let cross = self.plasm.sessions.symbol_map_cross_cache();
-            let compile = compile_plasm_expression_to_plan(
+            let compile = compile_plasm_expression(
                 pipeline,
                 Some(cross),
                 &es,
@@ -1417,217 +1418,219 @@ impl PlasmMcpHandler {
                 &program,
             );
             match compile {
-                Ok(plan) => {
+                Ok(bundle) => {
+                    let comp_archive = crate::plasm_comp_wire::plasm_comp_wire_json(
+                        bundle.artifact(),
+                        None,
+                    );
                     if run_live {
-                        match parse_and_validate_plan_json(&plan) {
-                            Err(e) => Err(e),
-                            Ok(validated) => {
-                                let plan_json = plan.clone();
-                                let dry_gate =
-                                    evaluate_validated_plasm_plan_dry(&es, &validated)?;
-                                let compact = build_plan_dry_compact_view(
-                                    dry_gate.validated_plan(),
-                                    &dry_gate.topological_order,
-                                    &dry_gate.review,
-                                    &dry_gate.graph_summary,
-                                    Some(&es),
-                                );
-                                if plan_requires_review_gate(
-                                    compact.verdict,
-                                    force_run,
-                                    plan_commit_ref.as_ref(),
-                                ) {
-                                    return Err(
-                                        "plan_requires_review: call `plasm` dry-run first, then pass `plan_commit_ref` or `force: true` on `plasm_run`"
-                                            .to_string(),
-                                    );
-                                }
-                                if let Some(pc) = plan_commit_ref.as_ref() {
-                                    verify_plan_commit_for_dry(&es, pc, &dry_gate)?;
-                                }
-                                let auto_async =
-                                    live_run_should_auto_async(&dry_gate.review, wait_live);
-                                if should_spawn_async_live_run(wait_live, &dry_gate.review) {
-                                    es.try_begin_live_program_run()?;
-                                    let handle = es.mint_operation_handle(session_ref.as_str());
-                                    let accept = op_accept_context_from_validated(
-                                        plan_commit_ref.clone(),
-                                        Some(compact.verdict),
-                                        auto_async,
-                                        Some(key.to_string()),
-                                        &validated,
-                                    );
-                                    spawn_async_plan_run(
-                                        Arc::clone(&es),
-                                        Arc::clone(&self.plasm),
-                                        b.prompt_hash.clone(),
-                                        b.session_id.clone(),
-                                        validated,
-                                        handle.clone(),
-                                        CancelSignal::new(),
-                                        accept,
-                                    )?;
-                                    let (markdown, meta) = async_live_run_accept_parts(
-                                        &handle,
-                                        plan_commit_ref.as_ref(),
-                                        compact.verdict,
-                                        auto_async,
-                                    );
-                                    return Ok(PlasmPlanRunResult {
-                                        version: serde_json::json!({}),
-                                        node_results: Vec::new(),
-                                        graph_summary: serde_json::json!({}),
-                                        plan_dag: plan_json,
-                                        code_plan_run_artifacts: Vec::new(),
-                                        run_markdown: Some(markdown),
-                                        run_plasm_meta: Some(meta),
-                                        return_steps: Vec::new(),
-                                    });
-                                }
-                                es.begin_sync_live_run()?;
-                                let sync_result = ExecutePipeline::run_program(
+                        crate::evidence_chain::begin_plan_evidence_with_anchors(
+                            &es,
+                            b.session_id.as_str(),
+                            crate::evidence_chain::evidence_anchors(
+                                plan_commit_ref.as_ref(),
+                                Some(mcp_trace.trace_id),
+                                Some(call_count as u64),
+                            ),
+                        )
+                        .map_err(|e| format!("evidence begin: {e}"))?;
+                        let dry_gate = evaluate_plasm_comp_dry(&es, &bundle)?;
+                        let compact = build_plan_dry_compact_view(
+                            dry_gate.validated_plan(),
+                            &dry_gate.topological_order,
+                            &dry_gate.review,
+                            &dry_gate.graph_summary,
+                            Some(&es),
+                        );
+                        if plan_requires_review_gate(
+                            compact.verdict,
+                            force_run,
+                            plan_commit_ref.as_ref(),
+                        ) {
+                            return Err(
+                                "plan_requires_review: call `plasm` dry-run first, then pass `plan_commit_ref` or `force: true` on `plasm_run`"
+                                    .to_string(),
+                            );
+                        }
+                        if let Some(pc) = plan_commit_ref.as_ref() {
+                            verify_plan_commit_for_dry(&es, pc, &dry_gate)?;
+                        }
+                        let auto_async =
+                            live_run_should_auto_async(&dry_gate.review, wait_live);
+                        if should_spawn_async_live_run(wait_live, &dry_gate.review) {
+                            es.try_begin_live_program_run()?;
+                            let handle = es.mint_operation_handle(session_ref.as_str());
+                            let accept = op_accept_context_from_executable(
+                                plan_commit_ref.clone(),
+                                Some(compact.verdict),
+                                auto_async,
+                                Some(key.to_string()),
+                                bundle.executable(),
+                                &bundle.artifact().comp,
+                            );
+                            spawn_async_plan_run(
+                                Arc::clone(&es),
+                                Arc::clone(&self.plasm),
+                                b.prompt_hash.clone(),
+                                b.session_id.clone(),
+                                bundle.clone(),
+                                handle.clone(),
+                                CancelSignal::new(),
+                                accept,
+                            )?;
+                            let (markdown, meta) = async_live_run_accept_parts(
+                                &handle,
+                                plan_commit_ref.as_ref(),
+                                compact.verdict,
+                                auto_async,
+                            );
+                            let comp_json = plasm_comp_json_from_dry(&dry_gate);
+                            return Ok(PlasmPlanRunResult {
+                                version: serde_json::json!({}),
+                                node_results: Vec::new(),
+                                graph_summary: serde_json::json!({}),
+                                comp: comp_json,
+                                code_plan_run_artifacts: Vec::new(),
+                                run_markdown: Some(markdown),
+                                run_plasm_meta: Some(meta),
+                                return_steps: Vec::new(),
+                            });
+                        }
+                        es.begin_sync_live_run()?;
+                        let sync_result = ExecutePipeline::run_program(
+                            &es,
+                            self.plasm.as_ref(),
+                            &b.prompt_hash,
+                            &b.session_id,
+                            &bundle,
+                            ExecutionIntent::Live,
+                            Some(PlasmPlanRunHooks {
+                                meta_index: &mut idx,
+                                trace: mcp_trace.clone(),
+                                sink: sink.clone(),
+                            }),
+                        )
+                        .await;
+                        es.end_sync_live_run();
+                        match sync_result {
+                            Ok(out) => {
+                                trace_archive_and_emit_code_plan_execute(
+                                    &self.plasm.trace_hub,
+                                    &self.plasm.run_artifacts,
+                                    &ls_key,
                                     &es,
-                                    self.plasm.as_ref(),
-                                    &b.prompt_hash,
-                                    &b.session_id,
-                                    &validated,
-                                    ExecutionIntent::Live,
-                                    Some(PlasmPlanRunHooks {
-                                        meta_index: &mut idx,
-                                        trace: mcp_trace.clone(),
-                                        sink: sink.clone(),
-                                    }),
+                                    b.prompt_hash.as_str(),
+                                    b.session_id.as_str(),
+                                    session_ref.as_str(),
+                                    &comp_archive,
+                                    &program,
+                                    out.comp.clone(),
+                                    call_count,
+                                    &out,
                                 )
                                 .await;
-                                es.end_sync_live_run();
-                                match sync_result {
-                                    Ok(out) => {
-                                        trace_archive_and_emit_code_plan_execute(
-                                            &self.plasm.trace_hub,
-                                            &self.plasm.run_artifacts,
-                                            &ls_key,
-                                            &es,
-                                            b.prompt_hash.as_str(),
-                                            b.session_id.as_str(),
-                                            session_ref.as_str(),
-                                            &plan,
-                                            &program,
-                                            out.plan_dag.clone(),
-                                            call_count,
-                                            &out,
-                                        )
-                                        .await;
-                                        Ok(out)
-                                    }
-                                    Err(e) => Err(e),
-                                }
+                                Ok(out)
                             }
+                            Err(e) => Err(e),
                         }
                     } else {
-                        match parse_and_validate_plan_json(&plan) {
-                            Err(e) => Err(e),
-                            Ok(validated) => {
-                                match evaluate_validated_plasm_plan_dry(&es, &validated) {
-                                    Err(e) => Err(e),
-                                    Ok(dry) => {
-                                        let dry_text = render_plasm_plan_dry_text_for_session(
-                                            &dry,
-                                            None,
-                                            Some(&es),
-                                        );
-                                        let markdown = format!("```text\n{dry_text}\n```");
-                                        let plan_json = plasm_plan_dag_json(&dry);
-                                        let compact = build_plan_dry_compact_view(
-                                            dry.validated_plan(),
-                                            &dry.topological_order,
-                                            &dry.review,
-                                            &dry.graph_summary,
-                                            Some(&es),
-                                        );
-                                        let commit_ref = es.mint_plan_commit_ref();
-                                        es.register_plan_commit(PlanCommitRecord {
-                                            commit_ref: commit_ref.clone(),
-                                            commit_id: compute_plan_commit_id_from_dry(&dry),
-                                            dry_review: dry.review.clone(),
-                                            verdict: compact.verdict,
-                                            expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
-                                        });
-                                        trace_archive_and_emit_code_plan_evaluate(
-                                            &self.plasm.trace_hub,
-                                            &self.plasm.run_artifacts,
-                                            &ls_key,
-                                            &es,
-                                            b.prompt_hash.as_str(),
-                                            b.session_id.as_str(),
-                                            session_ref.as_str(),
-                                            &plan,
-                                            &program,
-                                            plan_json.clone(),
-                                            call_count,
-                                        )
-                                        .await;
-                                        let mut plasm_obj = serde_json::Map::new();
-                                        plasm_obj.insert("dry_run".into(), serde_json::json!(true));
-                                        plasm_obj.insert("plan".into(), plan_json.clone());
-                                        plasm_obj.extend(plan_commit_meta(
-                                            &commit_ref,
-                                            &dry.review,
-                                            compact.verdict,
-                                        ));
-                                        let ux_ctx = crate::plan_ux_reflection::PlanUxBuildContext {
-                                            session: Some(&es),
-                                            param_bindings: &[],
-                                        };
-                                        plasm_obj.insert(
-                                            "plan_ux_reflection".into(),
-                                            crate::plan_ux_reflection::plan_ux_reflection_value(
-                                                &dry, &ux_ctx,
-                                            ),
-                                        );
-                                        if dry
-                                            .graph_summary
-                                            .get("dry_review")
-                                            .and_then(|v| v.get("has_unprojected_multi_row_read"))
-                                            .and_then(|v| v.as_bool())
-                                            .unwrap_or(false)
-                                        {
-                                            plasm_obj.insert(
-                                                "projection_warning".into(),
-                                                serde_json::json!(true),
-                                            );
-                                        }
-                                        if let Some(unused) = dry
-                                            .graph_summary
-                                            .get("unused_seeds")
-                                            .and_then(|v| v.as_array())
-                                        {
-                                            if !unused.is_empty() {
-                                                plasm_obj.insert(
-                                                    "unused_seeds".into(),
-                                                    serde_json::Value::Array(unused.clone()),
-                                                );
-                                            }
-                                        }
-                                        let mut meta = serde_json::Map::new();
-                                        meta.insert(
-                                            "plasm".into(),
-                                            serde_json::Value::Object(plasm_obj),
-                                        );
-                                        crate::plan_ui_mcp::attach_plan_review_ui_meta(&mut meta);
-                                        Ok(PlasmPlanRunResult {
-                                            version: dry.version,
-                                            node_results: dry.node_results,
-                                            graph_summary: dry.graph_summary,
-                                            plan_dag: plan_json,
-                                            code_plan_run_artifacts: Vec::new(),
-                                            run_markdown: Some(markdown),
-                                            run_plasm_meta: Some(meta),
-                                            return_steps: Vec::new(),
-                                        })
-                                    }
-                                }
+                        crate::evidence_chain::begin_plan_evidence_with_anchors(
+                            &es,
+                            b.session_id.as_str(),
+                            crate::evidence_chain::evidence_anchors(
+                                None,
+                                Some(mcp_trace.trace_id),
+                                Some(call_count as u64),
+                            ),
+                        )
+                        .map_err(|e| format!("evidence begin: {e}"))?;
+                        let dry = evaluate_plasm_comp_dry(&es, &bundle)?;
+                        let dry_text = render_plasm_plan_dry_text_for_session(
+                            &dry,
+                            None,
+                            Some(&es),
+                        );
+                        let markdown = format!("```text\n{dry_text}\n```");
+                        let comp_json = plasm_comp_json_from_dry(&dry);
+                        let compact = build_plan_dry_compact_view(
+                            dry.validated_plan(),
+                            &dry.topological_order,
+                            &dry.review,
+                            &dry.graph_summary,
+                            Some(&es),
+                        );
+                        let commit_ref = es.mint_plan_commit_ref();
+                        es.register_plan_commit(PlanCommitRecord {
+                            commit_ref: commit_ref.clone(),
+                            commit_id: compute_plan_commit_id_from_dry(&dry),
+                            dry_review: dry.review.clone(),
+                            verdict: compact.verdict,
+                            expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
+                        });
+                        trace_archive_and_emit_code_plan_evaluate(
+                            &self.plasm.trace_hub,
+                            &self.plasm.run_artifacts,
+                            &ls_key,
+                            &es,
+                            b.prompt_hash.as_str(),
+                            b.session_id.as_str(),
+                            session_ref.as_str(),
+                            &comp_archive,
+                            &program,
+                            comp_json.clone(),
+                            call_count,
+                        )
+                        .await;
+                        let mut plasm_obj = serde_json::Map::new();
+                        plasm_obj.insert("dry_run".into(), serde_json::json!(true));
+                        plasm_obj.insert("comp".into(), comp_json.clone());
+                        plasm_obj.extend(plan_commit_meta(
+                            &commit_ref,
+                            &dry.review,
+                            compact.verdict,
+                        ));
+                        let ux_ctx = crate::plan_ux_reflection::PlanUxBuildContext {
+                            session: Some(&es),
+                            param_bindings: &[],
+                        };
+                        plasm_obj.insert(
+                            "plan_ux_reflection".into(),
+                            crate::plan_ux_reflection::plan_ux_reflection_value(&dry, &ux_ctx),
+                        );
+                        if dry
+                            .graph_summary
+                            .get("dry_review")
+                            .and_then(|v| v.get("has_unprojected_multi_row_read"))
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false)
+                        {
+                            plasm_obj.insert("projection_warning".into(), serde_json::json!(true));
+                        }
+                        if let Some(unused) = dry
+                            .graph_summary
+                            .get("unused_seeds")
+                            .and_then(|v| v.as_array())
+                        {
+                            if !unused.is_empty() {
+                                plasm_obj.insert(
+                                    "unused_seeds".into(),
+                                    serde_json::Value::Array(unused.clone()),
+                                );
                             }
                         }
+                        let mut meta = serde_json::Map::new();
+                        meta.insert("plasm".into(), serde_json::Value::Object(plasm_obj));
+                        crate::plan_ui_mcp::attach_plan_review_ui_meta(&mut meta);
+                        Ok(PlasmPlanRunResult {
+                            version: dry.version,
+                            node_results: dry.node_results,
+                            graph_summary: dry.graph_summary,
+                            comp: comp_json,
+                            code_plan_run_artifacts: Vec::new(),
+                            run_markdown: Some(markdown),
+                            run_plasm_meta: Some(meta),
+                            return_steps: Vec::new(),
+                        })
                     }
                 }
                 Err(e) => Err(e),

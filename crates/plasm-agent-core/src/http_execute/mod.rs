@@ -166,12 +166,7 @@ use crate::server_state::PlasmHostState;
 use std::collections::BTreeSet;
 
 fn artifact_archive_fallback_parsed_expr() -> ParsedExpr {
-    ParsedExpr {
-        expr: Expr::TeachingValue {
-            value: Value::String("__plasm_run_artifact_archive__".into()),
-        },
-        projection: None,
-    }
+    crate::plasm_plan_run::evidence_plan::archive_fallback_parsed_expr()
 }
 
 #[allow(dead_code)]
@@ -2456,6 +2451,41 @@ pub async fn archive_plasm_result_snapshot(
     })
 }
 
+/// Build `RunSealRecord` from the persisted run snapshot (same preimage as `mint_run_artifact_id`).
+pub async fn run_seal_record_for_handle(
+    st: &PlasmHostState,
+    es: &ExecuteSession,
+    prompt_hash: &str,
+    session_id: &str,
+    handle: &RunArtifactHandle,
+    step_id: Option<String>,
+) -> Result<crate::evidence_chain::RunSealRecord, String> {
+    let bytes = st
+        .run_artifacts
+        .get(prompt_hash, session_id, handle.run_id)
+        .await
+        .ok_or_else(|| "stored run artifact missing for run_sealed".to_string())?;
+    let artifact: plasm_evidence::RunArtifactForSeal =
+        serde_json::from_slice(&bytes).map_err(|e| format!("artifact decode for run_sealed: {e}"))?;
+    let source_line = artifact.source_line();
+    let line = artifact
+        .expressions
+        .first()
+        .ok_or_else(|| "artifact has no expressions for run_sealed".to_string())?;
+    let parsed = parse_plasm_line(line.trim(), es, st).map_err(|e| {
+        format!("parse for run_sealed: {}", run_line_error_string(e))
+    })?;
+    Ok(crate::evidence_chain::RunSealRecord {
+        expected_run_id_wire: handle.run_id.to_wire(),
+        step_id,
+        resource_index: Some(handle.resource_index),
+        entry_id: artifact.entry_id,
+        source_line,
+        parsed,
+        request_fingerprints: handle.request_fingerprints.clone(),
+    })
+}
+
 pub fn publish_plasm_result_steps(
     cgs: Option<&CGS>,
     meta_index: Option<&mut PlasmMetaIndex>,
@@ -4107,7 +4137,7 @@ async fn post_execute_session_plan(
         &st,
         ph_str.as_str(),
         sid_str.as_str(),
-        &prepared.validated,
+        &prepared.bundle,
         if run_live {
             crate::execute_pipeline::ExecutionIntent::Live
         } else {
@@ -4127,7 +4157,7 @@ async fn post_execute_session_plan(
             let payload = crate::resolved_plan_http::ResolvedPlanResponse {
                 plan: true,
                 dry_run: !run_live,
-                plan_dag: result.plan_dag,
+                comp: result.comp,
                 node_results: Some(result.node_results),
                 graph_summary: Some(result.graph_summary),
                 run_markdown: result.run_markdown,
@@ -4175,6 +4205,10 @@ pub fn execute_routes() -> Router {
         .route(
             "/execute/{prompt_hash}/{session_id}/operations/{operation_handle}/stream",
             get(get_operation_progress_stream),
+        )
+        .route(
+            "/execute/{prompt_hash}/{session_id}/artifacts/{run_id}/evidence",
+            get(get_execute_run_evidence),
         )
         .route(
             "/execute/{prompt_hash}/{session_id}/artifacts/{run_id}",
@@ -4412,6 +4446,113 @@ async fn get_execute_session(
     .into_response()
 }
 
+async fn get_execute_run_evidence(
+    Extension(st): Extension<PlasmHostState>,
+    Path((ph, sid, rid)): Path<(String, String, String)>,
+) -> Response {
+    let prompt_hash = match ph.parse::<PromptHashHex>() {
+        Ok(v) => v,
+        Err(msg) => {
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                format!("invalid `prompt_hash` path segment: {msg}"),
+            );
+        }
+    };
+    let session_id = match sid.parse::<ExecuteSessionId>() {
+        Ok(v) => v,
+        Err(msg) => {
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                format!("invalid `session_id` path segment: {msg}"),
+            );
+        }
+    };
+    let run_id = match rid.trim().parse::<RunArtifactWire>() {
+        Ok(w) => w.0,
+        Err(e) => {
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                format!("invalid `run_id` path segment: {e}"),
+            );
+        }
+    };
+    match st
+        .run_artifacts
+        .get_evidence_bundle(prompt_hash.as_str(), session_id.as_str(), run_id)
+        .await
+    {
+        Ok(Some(bundle)) => {
+            let opts = plasm_evidence::VerifyOptions {
+                trusted_public_keys: crate::evidence_chain::trusted_public_keys_from_env(),
+            };
+            let run_id_wire = run_id.to_wire();
+            let artifact_bytes = st
+                .run_artifacts
+                .get(prompt_hash.as_str(), session_id.as_str(), run_id)
+                .await;
+            let (artifact_doc, parsed_for_seal) = if let Some(bytes) = artifact_bytes {
+                match serde_json::from_slice::<plasm_evidence::RunArtifactForSeal>(&bytes) {
+                    Ok(artifact_doc) => {
+                        let parsed = st
+                            .sessions
+                            .get(&prompt_hash, &session_id)
+                            .await
+                            .and_then(|sess| {
+                                artifact_doc.expressions.first().and_then(|line| {
+                                    crate::plasm_plan_run::parse_parsed_expr_for_session(
+                                        sess.as_ref(),
+                                        line.trim(),
+                                    )
+                                    .ok()
+                                })
+                            });
+                        (Some(artifact_doc), parsed)
+                    }
+                    Err(_) => (None, None),
+                }
+            } else {
+                (None, None)
+            };
+            let artifact_ref = artifact_doc.as_ref();
+            let parsed_ref = parsed_for_seal.as_ref();
+            if let Err(e) = crate::evidence_chain::verify_evidence_for_http_serve(
+                &bundle,
+                &opts,
+                run_id_wire.as_str(),
+                artifact_ref,
+                parsed_ref,
+            ) {
+                return problem_response(
+                    Problem::custom(
+                        ProblemStatus::UNPROCESSABLE_ENTITY,
+                        Uri::from_static(problem_types::EXECUTE_UNKNOWN_ARTIFACT),
+                    )
+                    .with_title("Evidence verification failed")
+                    .with_detail(e.to_string()),
+                );
+            }
+            Json(bundle).into_response()
+        }
+        Ok(None) => problem_response(
+            Problem::custom(
+                ProblemStatus::NOT_FOUND,
+                Uri::from_static(problem_types::EXECUTE_UNKNOWN_ARTIFACT),
+            )
+            .with_title("Not Found")
+            .with_detail("evidence bundle not found for this run_id"),
+        ),
+        Err(e) => problem_response(
+            Problem::custom(
+                ProblemStatus::INTERNAL_SERVER_ERROR,
+                Uri::from_static(problem_types::EXECUTE_UNKNOWN_ARTIFACT),
+            )
+            .with_title("Evidence decode failed")
+            .with_detail(e.to_string()),
+        ),
+    }
+}
+
 async fn get_execute_run_artifact(
     Extension(st): Extension<PlasmHostState>,
     Path((ph, sid, rid)): Path<(String, String, String)>,
@@ -4537,7 +4678,7 @@ fn respond_plan_run_live_result(
                     .run_plasm_meta
                     .as_ref()
                     .map(|m| serde_json::Value::Object(m.clone())),
-                "plan_dag": result.plan_dag,
+                "comp": result.comp,
             });
             if let ExecResponseKind::Table = kind {
                 let md = result.run_markdown.as_deref().unwrap_or("");
@@ -4709,27 +4850,14 @@ async fn post_run_execute_session(
     let plan_name = "http_execute_program";
     let pipeline = st.engine.prompt_pipeline();
     let cross = st.sessions.symbol_map_cross_cache();
-    let plan = match crate::plasm_dag::compile_plasm_expression_to_plan(
+    let bundle = match crate::plasm_compile::compile_plasm_expression(
         pipeline,
         Some(cross),
         &sess,
         plan_name,
         &program,
     ) {
-        Ok(p) => p,
-        Err(e) => {
-            return problem_response(
-                Problem::custom(
-                    ProblemStatus::BAD_REQUEST,
-                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                )
-                .with_title("Bad Request")
-                .with_detail(e),
-            );
-        }
-    };
-    let validated = match crate::plasm_plan::parse_and_validate_plan_json(&plan) {
-        Ok(v) => v,
+        Ok(b) => b,
         Err(e) => {
             return problem_response(
                 Problem::custom(
@@ -4743,8 +4871,17 @@ async fn post_run_execute_session(
     };
 
     if plan_only {
-        let dry = match crate::plasm_plan_run::evaluate_validated_plasm_plan_dry(&sess, &validated)
-        {
+        if let Err(e) = crate::evidence_chain::begin_plan_evidence(&sess, session_id.as_str()) {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::INTERNAL_SERVER_ERROR,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                )
+                .with_title("Evidence error")
+                .with_detail(e.to_string()),
+            );
+        }
+        let dry = match crate::plasm_plan_run::evaluate_plasm_comp_dry(&sess, &bundle) {
             Ok(d) => d,
             Err(e) => {
                 return problem_response(
@@ -4757,7 +4894,7 @@ async fn post_run_execute_session(
                 );
             }
         };
-        let plan_json = crate::plasm_plan_run::plasm_plan_dag_json(&dry);
+        let comp_json = crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry);
         let compact = crate::plan_dry_display::build_plan_dry_compact_view(
             dry.validated_plan(),
             &dry.topological_order,
@@ -4776,7 +4913,7 @@ async fn post_run_execute_session(
         let mut plasm_meta =
             crate::operation::plan_commit_meta(&commit_ref, &dry.review, compact.verdict);
         plasm_meta.insert("dry_run".into(), serde_json::json!(true));
-        plasm_meta.insert("plan".into(), plan_json.clone());
+        plasm_meta.insert("comp".into(), comp_json.clone());
         let ux_ctx = crate::plan_ux_reflection::PlanUxBuildContext {
             session: Some(&sess),
             param_bindings: &[],
@@ -4787,7 +4924,7 @@ async fn post_run_execute_session(
         );
         let preview = serde_json::json!({
             "plan": true,
-            "plan_dag": plan_json,
+            "comp": comp_json,
             "plan_ux_reflection": plasm_meta.get("plan_ux_reflection").cloned(),
             "node_results": dry.node_results,
             "graph_summary": dry.graph_summary,
@@ -4810,8 +4947,21 @@ async fn post_run_execute_session(
     let ph_str = prompt_hash.to_string();
     let sid_str = session_id.to_string();
 
-    let dry_gate = match crate::plasm_plan_run::evaluate_validated_plasm_plan_dry(&sess, &validated)
-    {
+    if let Err(e) = crate::evidence_chain::begin_plan_evidence_with_anchors(
+        &sess,
+        session_id.as_str(),
+        crate::evidence_chain::evidence_anchors(plan_commit_ref.as_ref(), None, None),
+    ) {
+        return problem_response(
+            Problem::custom(
+                ProblemStatus::INTERNAL_SERVER_ERROR,
+                Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+            )
+            .with_title("Evidence error")
+            .with_detail(e.to_string()),
+        );
+    }
+    let dry_gate = match crate::plasm_plan_run::evaluate_plasm_comp_dry(&sess, &bundle) {
         Ok(d) => d,
         Err(e) => {
             return problem_response(
@@ -4873,19 +5023,20 @@ async fn post_run_execute_session(
             );
         }
         let handle = sess.mint_operation_handle("s0");
-        let accept = crate::operation::op_accept_context_from_validated(
+        let accept = crate::operation::op_accept_context_from_executable(
             plan_commit_ref.clone(),
             Some(compact.verdict),
             auto_async,
             None,
-            &validated,
+            bundle.executable(),
+            &bundle.artifact().comp,
         );
         if let Err(e) = crate::operation::spawn_async_plan_run(
             Arc::clone(&sess),
             Arc::new(st.clone()),
             ph_str.clone(),
             sid_str.clone(),
-            validated,
+            bundle.clone(),
             handle.clone(),
             plasm_runtime::CancelSignal::new(),
             accept,
@@ -4911,7 +5062,7 @@ async fn post_run_execute_session(
                 version: serde_json::json!({}),
                 node_results: Vec::new(),
                 graph_summary: serde_json::json!({}),
-                plan_dag: plan,
+                comp: crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry_gate),
                 code_plan_run_artifacts: Vec::new(),
                 run_markdown: Some(markdown),
                 run_plasm_meta: Some(meta),
@@ -4936,7 +5087,7 @@ async fn post_run_execute_session(
         &st,
         ph_str.as_str(),
         sid_str.as_str(),
-        &validated,
+        &bundle,
         crate::execute_pipeline::ExecutionIntent::Live,
         None,
     )
@@ -5397,7 +5548,7 @@ mod tests {
     #[tokio::test]
     async fn resolved_plan_endpoint_plan_mode() {
         use crate::catalog_pin::CatalogPin;
-        use crate::plasm_dag::compile_plasm_surface_line_to_plan;
+        use crate::plasm_compile::compile_plasm_surface_line_to_comp;
         use crate::resolved_plan_http::{
             ResolvedPlanProtocolVersion, ResolvedPlanRequest, ResolvedPlanRunMode,
             RESOLVED_PLAN_CONTENT_TYPE,
@@ -5429,9 +5580,10 @@ mod tests {
             .expect("session");
         let pipeline = st.engine.prompt_pipeline();
         let cross = st.sessions.symbol_map_cross_cache();
-        let plan =
-            compile_plasm_surface_line_to_plan(pipeline, Some(cross), &sess, "test", "Profile{}")
+        let bundle =
+            compile_plasm_surface_line_to_comp(pipeline, Some(cross), &sess, "test", "Profile{}")
                 .expect("compile");
+        let comp = bundle.artifact().comp.clone();
         let digest = sess.cgs.catalog_cgs_hash_hex();
         let req = ResolvedPlanRequest {
             protocol_version: ResolvedPlanProtocolVersion::V1.as_u16(),
@@ -5442,7 +5594,7 @@ mod tests {
             }],
             mode: ResolvedPlanRunMode::Plan,
             source_program: "Profile{}".into(),
-            plan,
+            comp,
         };
         let plan_uri = format!("/execute/{}/{}/plan", created.prompt_hash, created.session);
         let run = Request::builder()
@@ -5464,7 +5616,7 @@ mod tests {
         let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(doc.get("plan").and_then(|v| v.as_bool()), Some(true));
         assert_eq!(doc.get("dry_run").and_then(|v| v.as_bool()), Some(true));
-        assert!(doc.get("plan_dag").is_some());
+        assert!(doc.get("comp").is_some());
     }
 
     #[tokio::test]
@@ -5497,7 +5649,16 @@ mod tests {
             }],
             mode: ResolvedPlanRunMode::Plan,
             source_program: "Profile{}".into(),
-            plan: serde_json::json!({ "version": 1, "name": "bad", "nodes": [], "returns": { "type": "node", "id": "n1" } }),
+            comp: plasm_core::PlasmComp {
+                version: 1,
+                name: Some("bad".into()),
+                steps: std::collections::BTreeMap::new(),
+                bind: plasm_core::PlasmBindGraph::default(),
+                return_: plasm_core::PlasmReturn::Step {
+                    step: plasm_core::StepId::new("n1").expect("id"),
+                },
+                metadata: std::collections::BTreeMap::new(),
+            },
         };
         let plan_uri = format!("/execute/{}/{}/plan", created.prompt_hash, created.session);
         let run = Request::builder()
@@ -5733,7 +5894,7 @@ mod tests {
             .expect("session");
         let pipeline = st.engine.prompt_pipeline();
         let cross = st.sessions.symbol_map_cross_cache();
-        let err = crate::plasm_dag::compile_plasm_expression_to_plan(
+        let err = crate::plasm_compile::compile_plasm_expression(
             pipeline,
             Some(cross),
             &sess,

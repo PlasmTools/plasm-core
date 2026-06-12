@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::catalog_pin::{CatalogPin, CatalogPinError};
 use crate::execute_session::ExecuteSession;
-use crate::plasm_plan::{parse_and_validate_plan_json, ValidatedPlan};
+use crate::plasm_comp_bundle::PlasmCompBundle;
+use crate::plasm_comp_wire::plasm_comp_artifact_from_comp;
 
 /// Wire protocol version for [`ResolvedPlanRequest`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,14 +42,16 @@ pub enum ResolvedPlanRunMode {
     Run,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResolvedPlanRequest {
     pub protocol_version: u16,
     pub client_session_id: String,
     pub catalog_pins: Vec<CatalogPin>,
     pub mode: ResolvedPlanRunMode,
     pub source_program: String,
-    pub plan: serde_json::Value,
+    /// Canonical typed comp (legacy wire alias: `plan`).
+    #[serde(alias = "plan")]
+    pub comp: plasm_core::PlasmComp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -56,7 +59,7 @@ pub struct ResolvedPlanResponse {
     pub plan: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub dry_run: bool,
-    pub plan_dag: serde_json::Value,
+    pub comp: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub node_results: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -70,7 +73,7 @@ pub struct ResolvedPlanResponse {
 /// Server-side acceptance of a resolved-plan POST (pins + typed plan artifact).
 #[derive(Debug)]
 pub(crate) struct PreparedResolvedPlan {
-    pub validated: ValidatedPlan,
+    pub bundle: PlasmCompBundle,
     pub mode: ResolvedPlanRunMode,
     #[allow(dead_code)]
     pub source_program: String,
@@ -106,10 +109,9 @@ pub(crate) fn prepare_resolved_plan_request(
     ResolvedPlanProtocolVersion::from_wire(req.protocol_version)?;
     sess.validate_catalog_pins(&req.catalog_pins)
         .map_err(ResolvedPlanReject::CatalogPins)?;
-    let validated =
-        parse_and_validate_plan_json(&req.plan).map_err(ResolvedPlanReject::InvalidPlan)?;
+    let artifact = plasm_comp_artifact_from_comp(req.comp).map_err(ResolvedPlanReject::InvalidPlan)?;
     Ok(PreparedResolvedPlan {
-        validated,
+        bundle: PlasmCompBundle::new(artifact).map_err(ResolvedPlanReject::InvalidPlan)?,
         mode: req.mode,
         source_program: req.source_program,
     })

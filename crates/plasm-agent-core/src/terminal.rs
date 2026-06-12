@@ -18,7 +18,7 @@ use crate::http_execute::{
     build_capability_exposure_plan, CapabilitySeed, CreateExecuteSessionBody,
     CreateExecuteSessionResponse, ExecuteSessionContextBody,
 };
-use crate::plasm_plan::parse_and_validate_plan_json;
+use plasm_core::PlasmComp;
 use crate::resolved_plan_http::{
     ResolvedPlanProtocolVersion, ResolvedPlanRequest, ResolvedPlanRunMode,
     RESOLVED_PLAN_CONTENT_TYPE,
@@ -973,20 +973,22 @@ pub async fn run_terminal() -> Result<()> {
                 }
                 return Ok(());
             }
-            let plan_json = sym
+            let comp_json = sym
                 .compile_program_to_plan(&program)
-                .context("compile program to plan")?;
-            parse_and_validate_plan_json(&plan_json).map_err(|e| anyhow!("plan: {e}"))?;
-            let plan_bytes =
-                serde_json::to_vec_pretty(&plan_json).map_err(|e| anyhow!("plan json: {e}"))?;
-            session_mirror.write_file(&op_dir, "plan.json", &plan_bytes)?;
+                .context("compile program to comp")?;
+            let comp: PlasmComp =
+                serde_json::from_value(comp_json.clone()).context("decode comp")?;
+            comp.validate().map_err(|e| anyhow!("comp: {e}"))?;
+            let comp_bytes =
+                serde_json::to_vec_pretty(&comp_json).map_err(|e| anyhow!("comp json: {e}"))?;
+            session_mirror.write_file(&op_dir, "comp.json", &comp_bytes)?;
             let req = ResolvedPlanRequest {
                 protocol_version: ResolvedPlanProtocolVersion::V1.as_u16(),
                 client_session_id: sym.client_session_id.clone(),
                 catalog_pins: sym.catalog_pins(),
                 mode: run_mode,
                 source_program: program,
-                plan: plan_json,
+                comp,
             };
             let path = format!("/execute/{ph}/{sid}/plan");
             let mut headers = HeaderMap::new();
@@ -1049,6 +1051,101 @@ pub async fn run_terminal() -> Result<()> {
                         Err(e) => eprintln!("mirror run snapshot: {e}"),
                     }
                 }
+            }
+            Ok(())
+        }
+        Cmd::Evidence { cmd } => run_evidence_cmd(cmd),
+    }
+}
+
+fn run_evidence_cmd(cmd: crate::terminal_cli::EvidenceCmd) -> Result<(), anyhow::Error> {
+    use crate::evidence_chain::trusted_public_keys_from_env;
+    use crate::terminal_cli::EvidenceCmd;
+    use plasm_evidence::{
+        run_seal_inputs_from_artifact, DefaultChainVerifier, RunArtifactForSeal, VerifyOptions,
+    };
+    use std::io::Read;
+
+    match cmd {
+        EvidenceCmd::Verify {
+            path,
+            run_id,
+            artifact,
+            schema,
+            trusted_pubkey,
+        } => {
+            let mut raw = String::new();
+            std::fs::File::open(&path)
+                .map_err(|e| anyhow!("evidence verify: open {}: {e}", path.display()))?
+                .read_to_string(&mut raw)
+                .map_err(|e| anyhow!("evidence verify: read {}: {e}", path.display()))?;
+            let bundle: plasm_evidence::EvidenceBundle = serde_json::from_str(&raw)
+                .map_err(|e| anyhow!("evidence verify: decode {}: {e}", path.display()))?;
+            let mut trusted = trusted_public_keys_from_env();
+            trusted.extend(
+                trusted_pubkey
+                    .into_iter()
+                    .map(|k| k.trim().to_ascii_lowercase())
+                    .filter(|k| !k.is_empty()),
+            );
+            trusted.sort();
+            trusted.dedup();
+            let opts = VerifyOptions {
+                trusted_public_keys: trusted,
+            };
+            DefaultChainVerifier::verify_bundle_for_serve(&bundle, &opts)
+                .map_err(|e| anyhow!("evidence verify: {e}"))?;
+            if let Some(rid) = run_id.as_deref().filter(|s| !s.trim().is_empty()) {
+                let artifact_path = artifact.as_ref().ok_or_else(|| {
+                    anyhow!("evidence verify: --run-id requires --artifact for digest verification")
+                })?;
+                let schema_path = schema.as_ref().ok_or_else(|| {
+                    anyhow!("evidence verify: --run-id requires --schema to parse artifact expressions")
+                })?;
+                let mut artifact_raw = String::new();
+                std::fs::File::open(artifact_path)
+                    .map_err(|e| {
+                        anyhow!(
+                            "evidence verify: open artifact {}: {e}",
+                            artifact_path.display()
+                        )
+                    })?
+                    .read_to_string(&mut artifact_raw)
+                    .map_err(|e| {
+                        anyhow!(
+                            "evidence verify: read artifact {}: {e}",
+                            artifact_path.display()
+                        )
+                    })?;
+                let artifact_doc: RunArtifactForSeal = serde_json::from_str(&artifact_raw)
+                    .map_err(|e| {
+                        anyhow!(
+                            "evidence verify: decode artifact {}: {e}",
+                            artifact_path.display()
+                        )
+                    })?;
+                let cgs = std::sync::Arc::new(
+                    plasm_core::loader::load_schema_dir(schema_path)
+                        .map_err(|e| anyhow!("evidence verify: load schema: {e}"))?,
+                );
+                let line = artifact_doc
+                    .expressions
+                    .first()
+                    .ok_or_else(|| anyhow!("evidence verify: artifact has no expressions"))?;
+                let parsed = plasm_core::expr_parser::parse(line.trim(), cgs.as_ref())
+                    .map_err(|e| anyhow!("evidence verify: parse expression: {e}"))?;
+                let source_line = artifact_doc.source_line();
+                let inputs = run_seal_inputs_from_artifact(
+                    &bundle.scope,
+                    &artifact_doc,
+                    &source_line,
+                    &parsed,
+                );
+                DefaultChainVerifier::verify_run_seal_with_inputs(&bundle, rid, &inputs)
+                    .map_err(|e| anyhow!("evidence verify: run_sealed digest failed: {e}"))?;
+                println!("ok: chain + topo + run_sealed verified for {rid}");
+            } else {
+                println!("ok: chain + step topo verified");
             }
             Ok(())
         }

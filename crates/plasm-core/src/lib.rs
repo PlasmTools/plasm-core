@@ -101,6 +101,7 @@ pub mod identity;
 pub mod loader;
 pub mod normalizer;
 pub mod paging_handle;
+pub mod plasm_monad;
 pub mod predicate;
 pub mod preflight;
 pub mod prompt_pipeline;
@@ -132,6 +133,7 @@ pub mod value;
 mod o200k_token_count;
 mod operation_handle;
 mod plan_commit;
+pub mod comp_canonical;
 mod spans;
 mod utf8_trunc;
 mod wire_coercion;
@@ -179,6 +181,20 @@ pub use operation_handle::{OperationHandle, OperationHandleParseError};
 pub use paging_handle::{
     is_valid_logical_session_ref_segment, PagingHandle, PagingHandleParseError,
 };
+pub use plasm_monad::{
+    comp_equivalent, comp_semantic_eq, empty_comp, invoke_step_payload, map_step_payload,
+    plasm_bind_step, plasm_map_step, plasm_parallel_return, plasm_pure_step, AggregateFunction,
+    AggregateSpec, BindingName, CompEquivDiff, CompEquivResult, ComputeOp, ComputeTemplate,
+    DeriveKind, DerivePayload, DeriveTemplate, EffectBarrier, EffectClass, EffectTemplate,
+    FieldPath, FlatMapEffectPayload, FlatMapRelationPayload, InputCardinality, InvokePayload,
+    MapPayload, OutputName, PlanDataInput, PlanExprIr, PlanExprTemplate, PlanInputBinding,
+    PlanPredicate, PlanPredicateOp, PlanRelationTraversal, PlanResultUse, PlasmBindGraph, PlasmComp,
+    PlasmCompArtifact, PlasmDataValue, PlasmHoleUse, PlasmReturn, PlasmStep, PlasmStepKind,
+    PlanQualifiedEntityKey, PlasmStepPayload, PurePayload, RelationCardinality,
+    RelationSourceCardinality, ResultShape, RewritePolicy, StepId, SurfaceKind,
+    SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
+};
+pub use comp_canonical::plasm_comp_commit_canonical;
 pub use plan_commit::{PlanCommitId, PlanCommitRef};
 pub use predicate::Predicate;
 pub use preflight::{

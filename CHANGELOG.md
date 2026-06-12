@@ -5,6 +5,26 @@ All notable changes to this OSS workspace are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.2.0] - 2026-06-12
+
+### Added
+
+- **Monadic execution contract (`PlasmComp`):** programs compile to typed `PlasmComp` with `PlasmStepPayload` steps; plan runner executes via `run_plasm_comp` / `ExecutablePlasmComp`.
+- **Language matrix witness:** `monadic_comp_witness` tag in `plasm_language_matrix` e2e; `compile_plasm_program` is the public compile entry.
+- **CI guards:** `check_plasm_comp_single_topo`, `check_plasm_comp_strict_steps`, `check_no_legacy_plan_ir`, `check_evidence_no_trace_chain`.
+- **Hash-chained evidence bundles (opt-in):** `PLASM_EVIDENCE_CHAIN=1` emits tamper-evident sidecars (`GET …/artifacts/{run_id}/evidence`, `plasm evidence verify`). Segment hashing uses RFC 8785 JCS schema v2 (breaks preview v1 chains). Optional Ed25519 signing via `PLASM_EVIDENCE_SIGNING_KEY` and rotation window via `PLASM_EVIDENCE_TRUSTED_PUBLIC_KEYS`.
+- **`plasm-evidence` crate:** JCS canonical segments, chain verify modes, optional Ed25519 (`signatures` feature).
+- **Evidence run seal at emit:** `run_sealed` segments recompute digest from artifact preimage; wire `run_id` must match content hash.
+- **Evidence sidecar retention:** object-store GC skips `execute/…/evidence/` paths; head-dedup storage layout documented.
+
+### Changed
+
+- **Breaking — MCP/HTTP wire:** `_meta.plasm.comp` replaces `plan_dag`; consumers must read `comp` (TypeScript: `requirePlasmComp()`).
+- **`plan_commit_id`:** hashes semantic comp subset via `comp_canonical` / `plasm_comp_commit_canonical`.
+- **Evidence HTTP serve:** verifies full chain + optional signature trust; cross-checks `run_sealed` when the run artifact is co-located in the store.
+
 ## [0.1.107] - 2026-06-11
 
 ### Added
