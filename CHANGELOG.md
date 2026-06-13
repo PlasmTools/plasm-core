@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-06-13
+
+### Fixed
+
+- **MCP App OAuth stickiness:** ingress default `upstream-hash-by` is **`$http_mcp_session_id` only** (composite `$http_mcp_session_id$http_authorization` broke pod affinity on every OAuth access-token refresh → `-32016` Session not found and Cursor “Not connected” MCP Apps while tools still worked).
+- **MCP App AppBridge:** plan/run iframe hosts retry AppBridge connect (3×5s) and expose `window.__plasmUiConnectionState` for host-debug status.
+
+### Changed
+
+- **Smoke:** `mcp-stream-common.sh`, `mcp-ingress-check.sh`, `mcp-sticky-session-live.sh`; DEMO.md OAuth troubleshooting + API-key workaround.
+
 ## [0.2.5] - 2026-06-12
 
 ### Fixed
