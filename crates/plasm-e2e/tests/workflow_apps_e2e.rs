@@ -415,13 +415,13 @@ async fn workflow_apps_e2e_async() {
         .pointer("/structuredContent/plasm")
         .or_else(|| dry_mcp.pointer("/mcp_result/structuredContent/plasm"));
     assert!(
-        dry_structured_plasm.and_then(|p| p.get("plan")).is_some(),
-        "plasm dry-run must mirror plan into structuredContent.plasm: {dry_mcp}"
+        dry_structured_plasm.and_then(|p| p.get("comp")).is_some(),
+        "plasm dry-run must mirror comp into structuredContent.plasm: {dry_mcp}"
     );
     assert_eq!(
-        dry_mcp.pointer("/_meta/plasm/plan"),
-        dry_structured_plasm.and_then(|p| p.get("plan")),
-        "structuredContent.plasm.plan must mirror _meta.plasm.plan"
+        dry_mcp.pointer("/_meta/plasm/comp"),
+        dry_structured_plasm.and_then(|p| p.get("comp")),
+        "structuredContent.plasm.comp must mirror _meta.plasm.comp"
     );
 
     let plan_commit_ref = dry_mcp

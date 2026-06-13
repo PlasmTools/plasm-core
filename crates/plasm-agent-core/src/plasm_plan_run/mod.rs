@@ -1621,4 +1621,147 @@ mod tests {
         .expect("interpolate");
         assert_eq!(out, serde_json::json!("Bolt STATS"));
     }
+
+    fn test_host_state() -> crate::server_state::PlasmHostState {
+        use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
+        use plasm_core::discovery::InMemoryCgsRegistry;
+        use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
+        use std::sync::Arc;
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(
+            load_schema(&root.join("tests/fixtures/execute_tiny")).expect("load execute_tiny"),
+        );
+        let reg = InMemoryCgsRegistry::from_pairs(vec![(
+            "acme".into(),
+            "Acme".into(),
+            vec!["demo".into()],
+            cgs.clone(),
+        )]);
+        let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
+        build_plasm_host_state(PlasmHostBootstrap {
+            engine,
+            mode: ExecutionMode::Live,
+            registry: Arc::new(reg),
+            catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
+            plugin_manager: None,
+            incoming_auth: None,
+            run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
+            session_graph_persistence: None,
+            oss_local_filesystem_defaults: false,
+        })
+    }
+
+    #[tokio::test]
+    async fn from_parent_get_materializes_embedded_relation_refs() {
+        use crate::plasm_plan::{
+            PlanNodeId, RelationCardinality, RelationName, ResultShape, ValidatedPlanExprIr,
+            ValidatedPlanNode, ValidatedPlanRelationTraversal, ValidatedRelationTraversalNode,
+        };
+        use crate::plasm_plan_run::orchestrator::MaterializedNode;
+        use plasm_core::{Expr, GetExpr, JsonPathSegment, RelationMaterialization, Value};
+
+        let st = test_host_state();
+        let es = test_session();
+        let parent_ref = Ref::new("Product", "p1");
+        let cat_ref = Ref::new("Category", "c1");
+
+        let mut cat = CachedEntity::new(cat_ref.clone(), 1);
+        cat.fields.insert(
+            "id".into(),
+            TypedFieldValue::from(Value::String("c1".into())),
+        );
+        cat.fields.insert(
+            "name".into(),
+            TypedFieldValue::from(Value::String("Tools".into())),
+        );
+
+        let mut parent = CachedEntity::new(parent_ref.clone(), 1);
+        parent
+            .relations
+            .insert("category".into(), vec![cat_ref.clone()]);
+
+        {
+            let mut g = es.graph_cache.lock().await;
+            g.insert(cat).expect("insert cat");
+            g.insert(parent.clone()).expect("insert parent");
+        }
+
+        let parent_row = parent.payload_to_json();
+        let source_mat = MaterializedNode {
+            entry_id: "acme".into(),
+            entity: "Product".into(),
+            result: ExecutionResult {
+                count: 1,
+                entities: vec![parent.clone()],
+                has_more: false,
+                pagination_resume: None,
+                paging_handle: None,
+                source: ExecutionSource::Cache,
+                stats: ExecutionStats::default(),
+                request_fingerprints: vec![],
+            },
+            row_source: MaterializedRowSource::Inline(vec![parent_row.clone()]),
+            rows: vec![parent_row],
+            row_identities: vec![None],
+            artifact: None,
+            display: r#"Product("p1")"#.into(),
+            projection: None,
+        };
+
+        let product_id = PlanNodeId::new("product").expect("product id");
+        let category_id = PlanNodeId::new("category").expect("category id");
+        let relation_wrap = ValidatedRelationTraversalNode {
+            id: category_id,
+            effect_class: EffectClass::Read,
+            result_shape: ResultShape::Single,
+            relation: ValidatedPlanRelationTraversal {
+                source: product_id.clone(),
+                relation: RelationName::new("category").expect("relation"),
+                target: QualifiedEntityKey {
+                    entry_id: "acme".into(),
+                    entity: "Category".into(),
+                },
+                cardinality: RelationCardinality::One,
+                source_cardinality: RelationSourceCardinality::RuntimeCheckedSingleton,
+                ir: ValidatedPlanExprIr {
+                    expr: Expr::Get(GetExpr::new("Category", "c1")),
+                    projection: None,
+                    display_expr: Some(r#"Product("p1").category"#.into()),
+                },
+                materialize: RelationMaterialization::FromParentGet {
+                    path: vec![JsonPathSegment::Key {
+                        key: "category".into(),
+                    }],
+                },
+                binding_proofs: vec![],
+            },
+            depends_on: vec![product_id],
+            uses_result: vec![PlanResultUse {
+                node: "product".into(),
+                r#as: "product".into(),
+            }],
+        };
+        let relation_node = ValidatedPlanNode::RelationTraversal(relation_wrap);
+
+        let mat = try_materialize_from_parent_get_relation(
+            &st,
+            &es,
+            "test-session",
+            &relation_node,
+            match &relation_node {
+                ValidatedPlanNode::RelationTraversal(n) => n,
+                _ => panic!("relation node"),
+            },
+            &source_mat,
+            &source_mat.rows,
+            None,
+        )
+        .await
+        .expect("materialize")
+        .expect("some rows");
+
+        assert_eq!(mat.result.count, 1, "embedded category ref must resolve");
+        assert_eq!(mat.result.entities[0].reference, cat_ref);
+    }
 }

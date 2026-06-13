@@ -97,12 +97,23 @@ fn plasm_object(meta: &Map<String, serde_json::Value>) -> Option<&Map<String, se
     meta.get("plasm").and_then(|p| p.as_object())
 }
 
-/// Plan dry-run only: attach plan-review when `_meta.plasm.plan` is present.
+fn plasm_dry_run(plasm: &Map<String, serde_json::Value>) -> bool {
+    plasm
+        .get("dry_run")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false)
+}
+
+fn plasm_has_comp(plasm: &Map<String, serde_json::Value>) -> bool {
+    plasm.get("comp").is_some()
+}
+
+/// Plan dry-run only: attach plan-review when `_meta.plasm.dry_run` and `comp`.
 pub fn attach_plan_review_ui_on_tool_meta(meta: &mut Map<String, serde_json::Value>) {
     let Some(plasm) = plasm_object(meta) else {
         return;
     };
-    if plasm.get("plan").is_some() {
+    if plasm_dry_run(plasm) && plasm_has_comp(plasm) {
         meta.insert(
             "ui".into(),
             serde_json::json!({
@@ -112,7 +123,7 @@ pub fn attach_plan_review_ui_on_tool_meta(meta: &mut Map<String, serde_json::Val
     }
 }
 
-/// Live run artifacts only: attach run-explorer when steps exist and no plan.
+/// Live run artifacts only: attach run-explorer when steps exist and payload is not a dry-run.
 pub fn attach_run_explorer_ui_on_tool_meta(meta: &mut Map<String, serde_json::Value>) {
     let Some(plasm) = plasm_object(meta) else {
         return;
@@ -121,8 +132,7 @@ pub fn attach_run_explorer_ui_on_tool_meta(meta: &mut Map<String, serde_json::Va
         .get("steps")
         .and_then(|s| s.as_array())
         .is_some_and(|steps| !steps.is_empty());
-    let has_plan = plasm.get("plan").is_some();
-    if has_steps && !has_plan {
+    if has_steps && !plasm_dry_run(plasm) {
         meta.insert(
             "ui".into(),
             serde_json::json!({
@@ -189,7 +199,7 @@ mod tests {
     }
 
     #[test]
-    fn attach_plan_review_only_when_plan_present() {
+    fn attach_plan_review_on_dry_run_comp() {
         let mut meta = serde_json::Map::new();
         meta.insert(
             "plasm".into(),
@@ -200,7 +210,10 @@ mod tests {
 
         meta.insert(
             "plasm".into(),
-            serde_json::json!({ "plan": { "nodes": [] }, "steps": [{ "run_id": "prabc" }] }),
+            serde_json::json!({
+                "dry_run": true,
+                "comp": { "steps": { "n1": {} }, "bind": { "topo": ["n1"] }, "return": { "kind": "step", "step": "n1" } }
+            }),
         );
         attach_plan_review_ui_on_tool_meta(&mut meta);
         assert_eq!(
@@ -209,10 +222,25 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some(PLAN_REVIEW.uri)
         );
+
+        meta.remove("ui");
+        meta.insert(
+            "plasm".into(),
+            serde_json::json!({
+                "dry_run": true,
+                "plan": { "nodes": [] },
+                "steps": [{ "run_id": "prabc" }]
+            }),
+        );
+        attach_plan_review_ui_on_tool_meta(&mut meta);
+        assert!(
+            meta.get("ui").is_none(),
+            "legacy plan without comp must not attach plan-review"
+        );
     }
 
     #[test]
-    fn attach_run_explorer_only_for_steps_without_plan() {
+    fn attach_run_explorer_only_for_live_steps() {
         let mut meta = serde_json::Map::new();
         meta.insert(
             "plasm".into(),
@@ -228,13 +256,17 @@ mod tests {
 
         meta.insert(
             "plasm".into(),
-            serde_json::json!({ "plan": { "nodes": [] }, "steps": [{ "run_id": "prabc" }] }),
+            serde_json::json!({
+                "dry_run": true,
+                "comp": { "steps": { "n1": {} }, "bind": { "topo": ["n1"] }, "return": { "kind": "step", "step": "n1" } },
+                "steps": [{ "run_id": "prabc" }]
+            }),
         );
         meta.remove("ui");
         attach_run_explorer_ui_on_tool_meta(&mut meta);
         assert!(
             meta.get("ui").is_none(),
-            "plan present — run-explorer must not attach"
+            "dry-run payload — run-explorer must not attach"
         );
     }
 }

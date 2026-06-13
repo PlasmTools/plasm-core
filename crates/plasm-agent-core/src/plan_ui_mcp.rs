@@ -29,7 +29,7 @@ pub fn plan_review_ui_tool_meta() -> serde_json::Map<String, serde_json::Value> 
     .expect("plan review ui meta object")
 }
 
-/// When `_meta.plasm.plan` is present, attach MCP App embed metadata for plan review UI.
+/// When `_meta.plasm.dry_run` and `comp` are present, attach plan-review UI meta.
 pub fn attach_plan_review_ui_meta(meta: &mut serde_json::Map<String, serde_json::Value>) {
     crate::mcp_app::attach_plan_review_ui_on_tool_meta(meta);
 }

@@ -300,6 +300,13 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
             relation.relation.relation, source_mat.entity
         ));
     }
+    if let Some(mat) = try_materialize_from_cached_relation_refs(
+        st, es, session_id, node, relation, source_mat, trace,
+    )
+    .await?
+    {
+        return Ok(Some(mat));
+    }
     let rows = flatten_from_parent_get_source_rows(source_rows, path, rel_schema.cardinality);
     let target = relation.relation.target.entity.as_str();
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;

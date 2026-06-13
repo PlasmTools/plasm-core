@@ -27,7 +27,14 @@ mod tests {
         let mut meta = Map::new();
         meta.insert(
             "plasm".to_string(),
-            json!({ "plan": { "nodes": [], "edges": [], "returns": [] } }),
+            json!({
+                "dry_run": true,
+                "comp": {
+                    "steps": { "n1": {} },
+                    "bind": { "topo": ["n1"] },
+                    "return": { "kind": "step", "step": "n1" }
+                }
+            }),
         );
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)])
             .with_meta(Some(meta));
@@ -36,8 +43,12 @@ mod tests {
             out.structured_content
                 .as_ref()
                 .and_then(|m| m.get("plasm"))
-                .and_then(|p| p.get("plan")),
-            Some(&json!({ "nodes": [], "edges": [], "returns": [] }))
+                .and_then(|p| p.get("comp")),
+            Some(&json!({
+                "steps": { "n1": {} },
+                "bind": { "topo": ["n1"] },
+                "return": { "kind": "step", "step": "n1" }
+            }))
         );
     }
 
