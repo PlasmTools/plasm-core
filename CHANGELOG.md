@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-06-12
+
+### Fixed
+
+- **MCP UI attach gates:** plan-review and run-explorer `_meta.ui.resourceUri` attach on `comp` / `dry_run` / `steps` wire (v0.2.0 dropped legacy `_meta.plasm.plan`; hosts no longer skip iframe render).
+- **Relation fanout (FromParentGet):** materialize embedded relation refs from session graph cache before wire-path flatten (fixes 0-row returns on bindings like `types = pikachu.types`).
+
 ## [0.2.1] - 2026-06-12
 
 ### Fixed
