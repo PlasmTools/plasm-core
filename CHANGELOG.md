@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-06-12
+
+### Fixed
+
+- **HTTP outbound JSON UTF-8:** serialize JSON bodies as explicit UTF-8 bytes with `Content-Type: application/json; charset=utf-8` (reqwest `.json()` dropped charset and could cause mojibake on downstream APIs such as Proof).
+- **MCP App CSP:** `resources/read` UI bundles allow `connectDomains` for `platform.plasm.tools` and `*.plasm.tools` (hosted artifact fetch in Run Explorer standalone mode).
+
+### Changed
+
+- **E2E:** `render_unicode_markdown_survives_live` Hermit regression for `Pokémon` / `→` in render output; wire-level unit test on compiled JSON requests.
+
 ## [0.2.4] - 2026-06-12
 
 ### Fixed

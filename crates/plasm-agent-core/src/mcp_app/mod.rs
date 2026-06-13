@@ -65,7 +65,14 @@ pub fn resource_read_content_meta() -> Map<String, serde_json::Value> {
     serde_json::json!({
         "ui": {
             "csp": {
-                "connectDomains": ["http://127.0.0.1:*", "http://localhost:*", "https://127.0.0.1:*", "https://localhost:*"]
+                "connectDomains": [
+                    "http://127.0.0.1:*",
+                    "http://localhost:*",
+                    "https://127.0.0.1:*",
+                    "https://localhost:*",
+                    "https://platform.plasm.tools",
+                    "https://*.plasm.tools"
+                ]
             }
         }
     })

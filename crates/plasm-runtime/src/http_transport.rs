@@ -164,12 +164,17 @@ fn build_compiled_reqwest(
             HttpBodyFormat::Json => {
                 let json_body = plasm_value_to_json(body);
                 let stripped = strip_null_fields(json_body);
+                let bytes = serde_json::to_vec(&stripped).map_err(|e| {
+                    RuntimeError::SerializationError {
+                        message: format!("JSON encode outbound body: {e}"),
+                    }
+                })?;
                 req_builder = req_builder
                     .header(
                         reqwest::header::CONTENT_TYPE,
                         "application/json; charset=utf-8",
                     )
-                    .json(&stripped);
+                    .body(bytes);
             }
             HttpBodyFormat::FormUrlencoded => {
                 let form = plasm_value_to_form_urlencoded(body)?;
@@ -1193,6 +1198,56 @@ mod multipart_wire_tests {
         let decoded = std::str::from_utf8(&bytes).expect("utf-8 JSON body");
         assert!(decoded.contains("Pokémon"));
         assert!(decoded.contains('→'));
+    }
+}
+
+#[cfg(test)]
+mod json_wire_tests {
+    use super::build_compiled_reqwest;
+    use indexmap::IndexMap;
+    use plasm_compile::{CompiledRequest, HttpBodyFormat, HttpMethod};
+    use plasm_core::Value;
+    use reqwest::header::CONTENT_TYPE;
+
+    #[test]
+    fn compiled_json_request_sets_charset_and_utf8_body() {
+        let markdown = "# Pokémon\nstep → done\n";
+        let body = Value::Object(IndexMap::from([(
+            "markdown".into(),
+            Value::String(markdown.into()),
+        )]));
+        let request = CompiledRequest {
+            method: HttpMethod::Post,
+            path: "/v1/share".into(),
+            query: None,
+            body: Some(body),
+            body_format: HttpBodyFormat::Json,
+            multipart: None,
+            headers: None,
+        };
+        let client = reqwest::Client::new();
+        let builder =
+            build_compiled_reqwest(&client, "https://api.example.test", &request, None)
+                .expect("builder");
+        let req = builder.build().expect("build");
+        let ct = req
+            .headers()
+            .get(CONTENT_TYPE)
+            .expect("content-type")
+            .to_str()
+            .expect("utf8 header");
+        assert!(
+            ct.contains("charset=utf-8"),
+            "expected charset on Content-Type, got {ct}"
+        );
+        let body_bytes = req.body().expect("body").as_bytes().expect("bytes");
+        let decoded = std::str::from_utf8(body_bytes).expect("utf-8 JSON body");
+        assert!(decoded.contains("Pokémon"));
+        assert!(decoded.contains('→'));
+        assert!(
+            !decoded.contains("PokÃ"),
+            "mojibake must not appear in wire JSON: {decoded}"
+        );
     }
 }
 
