@@ -108,8 +108,8 @@ fn plasm_has_comp(plasm: &Map<String, serde_json::Value>) -> bool {
     plasm.get("comp").is_some()
 }
 
-/// Plan dry-run only: attach plan-review when `_meta.plasm.dry_run` and `comp`.
-pub fn attach_plan_review_ui_on_tool_meta(meta: &mut Map<String, serde_json::Value>) {
+/// Attach MCP App mount metadata from `_meta.plasm` comp-only wire (no legacy `plan`).
+pub fn attach_mcp_app_ui_on_tool_meta(meta: &mut Map<String, serde_json::Value>) {
     let Some(plasm) = plasm_object(meta) else {
         return;
     };
@@ -120,14 +120,8 @@ pub fn attach_plan_review_ui_on_tool_meta(meta: &mut Map<String, serde_json::Val
                 "resourceUri": PLAN_REVIEW.uri
             }),
         );
-    }
-}
-
-/// Live run artifacts only: attach run-explorer when steps exist and payload is not a dry-run.
-pub fn attach_run_explorer_ui_on_tool_meta(meta: &mut Map<String, serde_json::Value>) {
-    let Some(plasm) = plasm_object(meta) else {
         return;
-    };
+    }
     let has_steps = plasm
         .get("steps")
         .and_then(|s| s.as_array())
@@ -199,13 +193,10 @@ mod tests {
     }
 
     #[test]
-    fn attach_plan_review_on_dry_run_comp() {
+    fn attach_mcp_app_ui_plan_review_on_dry_run_comp() {
         let mut meta = serde_json::Map::new();
-        meta.insert(
-            "plasm".into(),
-            serde_json::json!({ "steps": [{ "run_id": "prabc" }] }),
-        );
-        attach_plan_review_ui_on_tool_meta(&mut meta);
+        meta.insert("plasm".into(), serde_json::json!({ "logical_session_ref": "s0" }));
+        attach_mcp_app_ui_on_tool_meta(&mut meta);
         assert!(meta.get("ui").is_none());
 
         meta.insert(
@@ -215,7 +206,7 @@ mod tests {
                 "comp": { "steps": { "n1": {} }, "bind": { "topo": ["n1"] }, "return": { "kind": "step", "step": "n1" } }
             }),
         );
-        attach_plan_review_ui_on_tool_meta(&mut meta);
+        attach_mcp_app_ui_on_tool_meta(&mut meta);
         assert_eq!(
             meta.get("ui")
                 .and_then(|u| u.get("resourceUri"))
@@ -232,7 +223,7 @@ mod tests {
                 "steps": [{ "run_id": "prabc" }]
             }),
         );
-        attach_plan_review_ui_on_tool_meta(&mut meta);
+        attach_mcp_app_ui_on_tool_meta(&mut meta);
         assert!(
             meta.get("ui").is_none(),
             "legacy plan without comp must not attach plan-review"
@@ -240,13 +231,13 @@ mod tests {
     }
 
     #[test]
-    fn attach_run_explorer_only_for_live_steps() {
+    fn attach_mcp_app_ui_run_explorer_only_for_live_steps() {
         let mut meta = serde_json::Map::new();
         meta.insert(
             "plasm".into(),
             serde_json::json!({ "steps": [{ "run_id": "prabc" }] }),
         );
-        attach_run_explorer_ui_on_tool_meta(&mut meta);
+        attach_mcp_app_ui_on_tool_meta(&mut meta);
         assert_eq!(
             meta.get("ui")
                 .and_then(|u| u.get("resourceUri"))
@@ -258,12 +249,11 @@ mod tests {
             "plasm".into(),
             serde_json::json!({
                 "dry_run": true,
-                "comp": { "steps": { "n1": {} }, "bind": { "topo": ["n1"] }, "return": { "kind": "step", "step": "n1" } },
                 "steps": [{ "run_id": "prabc" }]
             }),
         );
         meta.remove("ui");
-        attach_run_explorer_ui_on_tool_meta(&mut meta);
+        attach_mcp_app_ui_on_tool_meta(&mut meta);
         assert!(
             meta.get("ui").is_none(),
             "dry-run payload — run-explorer must not attach"

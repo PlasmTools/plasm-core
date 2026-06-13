@@ -205,8 +205,7 @@ pub struct CodePlanArchiveDocument {
     pub name: String,
     pub code: String,
     pub plan_hash: String,
-    /// Canonical typed comp wire (legacy archive alias: `plan`).
-    #[serde(alias = "plan")]
+    /// Canonical typed comp wire.
     pub comp: serde_json::Value,
     pub catalog_cgs_hash: String,
     pub domain_revision: u32,

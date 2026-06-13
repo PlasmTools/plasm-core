@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-06-13
+
+### Changed
+
+- **MCP UI PlasmComp cutover (zero legacy):** single `finalize_mcp_tool_result` MCP exit attaches `_meta.ui` from `dry_run + comp` / live `steps`; UI attach removed from `http_execute`. Dropped `plan` wire aliases on resolved-plan and code-plan archive types.
+
 ## [0.2.2] - 2026-06-12
 
 ### Fixed

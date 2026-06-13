@@ -1619,7 +1619,6 @@ impl PlasmMcpHandler {
                         }
                         let mut meta = serde_json::Map::new();
                         meta.insert("plasm".into(), serde_json::Value::Object(plasm_obj));
-                        crate::plan_ui_mcp::attach_plan_review_ui_meta(&mut meta);
                         Ok(PlasmPlanRunResult {
                             version: dry.version,
                             node_results: dry.node_results,
@@ -1687,8 +1686,9 @@ impl PlasmMcpHandler {
                 ))];
                 let mut res = CallToolResult::from_content(blocks);
                 if let Some(m) = out.run_plasm_meta {
-                    res = res.with_meta(Some(m));
-                    res = crate::mcp_ui_payload::mirror_plasm_structured_content(res);
+                    if let Some(plasm_obj) = crate::mcp_ui_payload::plasm_obj_from_tool_meta(m) {
+                        res = crate::mcp_ui_payload::finalize_mcp_tool_result(res, plasm_obj);
+                    }
                 }
                 Ok(res)
             }

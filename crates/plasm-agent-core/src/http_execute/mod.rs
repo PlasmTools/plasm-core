@@ -421,7 +421,6 @@ fn build_mcp_run_tool_meta(
                 idx.build_plasm_run_ui_meta(all_steps, omitted_from_summary.as_ref(), paging);
             let mut meta = serde_json::Map::new();
             meta.insert("plasm".into(), serde_json::Value::Object(plasm));
-            crate::mcp_app::attach_run_explorer_ui_on_tool_meta(&mut meta);
             Some(meta)
         }
         None => {
@@ -431,7 +430,6 @@ fn build_mcp_run_tool_meta(
             }
             let mut meta = serde_json::Map::new();
             meta.insert("plasm".into(), serde_json::Value::Object(plasm));
-            crate::mcp_app::attach_run_explorer_ui_on_tool_meta(&mut meta);
             Some(meta)
         }
     }
@@ -5184,12 +5182,14 @@ mod tests {
     }
 
     #[test]
-    fn live_run_tool_meta_attaches_run_explorer_ui() {
+    fn live_run_tool_meta_finalizes_run_explorer_ui() {
         use crate::mcp_plasm_meta::{PlasmMetaIndex, RunUiStepFields};
+        use crate::mcp_ui_payload::{finalize_mcp_tool_result, plasm_obj_from_tool_meta};
         use crate::output::LossySummaryFieldNames;
         use crate::run_artifacts::{
             artifact_http_path, plasm_run_resource_uri, plasm_short_resource_uri, RunArtifactId,
         };
+        use rust_mcp_sdk::schema::{CallToolResult, TextContent};
 
         let run = RunArtifactId::from_bytes([2u8; 32]);
         let ph = "cd".repeat(32);
@@ -5221,18 +5221,36 @@ mod tests {
             None,
         )
         .expect("tool meta");
+        assert!(
+            meta.get("ui").is_none(),
+            "UI attach happens at MCP finalize, not in build_mcp_run_tool_meta"
+        );
+        let plasm_obj = plasm_obj_from_tool_meta(meta).expect("plasm obj");
+        let res = finalize_mcp_tool_result(
+            CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]),
+            plasm_obj,
+        );
         assert_eq!(
-            meta.get("ui")
+            res.meta
+                .as_ref()
+                .and_then(|m| m.get("ui"))
                 .and_then(|u| u.get("resourceUri"))
                 .and_then(|v| v.as_str()),
             Some(crate::run_explorer_ui_mcp::RUN_EXPLORER_UI_URI)
         );
-        assert!(meta
-            .get("plasm")
+        assert!(res
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("plasm"))
             .and_then(|p| p.get("steps"))
             .and_then(|s| s.as_array())
             .is_some_and(|a| !a.is_empty()));
-        assert!(meta.get("plasm").and_then(|p| p.get("plan")).is_none());
+        assert!(res
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("plasm"))
+            .and_then(|p| p.get("plan"))
+            .is_none());
     }
 
     fn test_state_with_registry() -> PlasmHostState {

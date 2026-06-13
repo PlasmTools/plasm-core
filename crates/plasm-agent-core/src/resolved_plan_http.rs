@@ -49,8 +49,7 @@ pub struct ResolvedPlanRequest {
     pub catalog_pins: Vec<CatalogPin>,
     pub mode: ResolvedPlanRunMode,
     pub source_program: String,
-    /// Canonical typed comp (legacy wire alias: `plan`).
-    #[serde(alias = "plan")]
+    /// Canonical typed comp.
     pub comp: plasm_core::PlasmComp,
 }
 
