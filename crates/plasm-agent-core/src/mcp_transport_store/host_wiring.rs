@@ -38,6 +38,10 @@ pub async fn wire_host_redis(
         .attach_redis(Arc::clone(&backend))
         .await;
     plasm
+        .logical_sessions
+        .attach_redis(Arc::clone(&backend))
+        .await;
+    plasm
         .execute_session_registry
         .attach_redis(Arc::clone(&backend))
         .await;
