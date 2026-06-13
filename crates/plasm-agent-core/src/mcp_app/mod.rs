@@ -115,6 +115,26 @@ fn plasm_has_comp(plasm: &Map<String, serde_json::Value>) -> bool {
     plasm.get("comp").is_some()
 }
 
+fn plasm_is_live_operation_pending(plasm: &Map<String, serde_json::Value>) -> bool {
+    if plasm_dry_run(plasm) || plasm_has_comp(plasm) {
+        return false;
+    }
+    let Some(continuity) = plasm.get("continuity").and_then(|c| c.as_object()) else {
+        return false;
+    };
+    let has_handle = continuity
+        .get("h")
+        .and_then(|h| h.as_str())
+        .is_some_and(|s| !s.is_empty());
+    if !has_handle {
+        return false;
+    }
+    if plasm.get("op").and_then(|o| o.as_object()).is_some() {
+        return true;
+    }
+    plasm.get("auto_async").and_then(|v| v.as_bool()) == Some(true)
+}
+
 /// Attach MCP App mount metadata from `_meta.plasm` comp-only wire (no legacy `plan`).
 pub fn attach_mcp_app_ui_on_tool_meta(meta: &mut Map<String, serde_json::Value>) {
     let Some(plasm) = plasm_object(meta) else {
@@ -133,7 +153,7 @@ pub fn attach_mcp_app_ui_on_tool_meta(meta: &mut Map<String, serde_json::Value>)
         .get("steps")
         .and_then(|s| s.as_array())
         .is_some_and(|steps| !steps.is_empty());
-    if has_steps && !plasm_dry_run(plasm) {
+    if (has_steps || plasm_is_live_operation_pending(plasm)) && !plasm_dry_run(plasm) {
         meta.insert(
             "ui".into(),
             serde_json::json!({
@@ -267,6 +287,28 @@ mod tests {
         assert!(
             meta.get("ui").is_none(),
             "dry-run payload — run-explorer must not attach"
+        );
+    }
+
+    #[test]
+    fn attach_mcp_app_ui_run_explorer_on_async_accept() {
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            "plasm".into(),
+            serde_json::json!({
+                "logical_session_ref": "l_r-b8dYGwR4SOf_Scx27Xvw",
+                "auto_async": true,
+                "continuity": { "p": "running", "h": "l_r-b8dYGwR4SOf_Scx27Xvw_o1" },
+                "op": { "n": 1, "+": 1, "c": "pc1" },
+                "dry_verdict": "review"
+            }),
+        );
+        attach_mcp_app_ui_on_tool_meta(&mut meta);
+        assert_eq!(
+            meta.get("ui")
+                .and_then(|u| u.get("resourceUri"))
+                .and_then(|v| v.as_str()),
+            Some(RUN_EXPLORER.uri)
         );
     }
 }

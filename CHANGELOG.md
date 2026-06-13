@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-06-13
+
+### Fixed
+
+- **Run Explorer MCP App:** async `plasm_run` accept responses (`continuity` + compact `op`, no `steps`) render a pending op panel instead of "Host did not forward run data"; tool errors show MCP `content` text. Server attaches Run Explorer UI for operation-pending meta; embedded bundle regenerated.
+
 ## [0.3.1] - 2026-06-13
 
 ### Fixed
