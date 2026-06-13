@@ -94,7 +94,7 @@ async fn operation_progress_push_http_sse_and_mcp_notifications_async() {
             )
             .await
             .expect("async accept");
-        assert_async_accept(&body, "s0_o");
+        assert_async_accept(&body, Surface::Http.async_handle_prefix());
         operation_handle_from_accept(&body)
     };
 

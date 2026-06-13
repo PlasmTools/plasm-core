@@ -289,7 +289,7 @@ async fn workflow_apps_e2e_async() {
     let ls = ctx
         .pointer("/_meta/plasm/logical_session_ref")
         .and_then(|v| v.as_str())
-        .unwrap_or("s0");
+        .expect("logical_session_ref from plasm_context");
 
     let dry_mcp = mcp_tool_meta(
         &client,

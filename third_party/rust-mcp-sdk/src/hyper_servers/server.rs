@@ -18,7 +18,7 @@ use crate::{
     },
     mcp_server::hyper_runtime::HyperRuntime,
     mcp_traits::{IdGenerator, McpServerHandler},
-    session_store::InMemorySessionStore,
+    session_store::{InMemorySessionStore, SessionStore},
     task_store::{ClientTaskStore, ServerTaskStore},
     McpObserver,
 };
@@ -148,6 +148,10 @@ pub struct HyperServerOptions {
     /// Optional observer for incoming/outgoing messages.
     /// Implementations should be fast and preferably non-blocking.
     pub message_observer: Option<Arc<dyn McpObserver<ClientMessage, ServerMessage>>>,
+
+    /// Optional session store for Streamable HTTP transport sessions.
+    /// When unset, an in-memory store is used (single-pod only).
+    pub session_store: Option<Arc<dyn SessionStore>>,
 }
 
 impl HyperServerOptions {
@@ -291,6 +295,7 @@ impl Default for HyperServerOptions {
             health_endpoint: None,
             health_handler: None,
             message_observer: None,
+            session_store: None,
         }
     }
 }
@@ -320,8 +325,12 @@ impl HyperServer {
         handler: Arc<dyn McpServerHandler + 'static>,
         mut server_options: HyperServerOptions,
     ) -> Self {
+        let session_store: Arc<dyn SessionStore> = server_options
+            .session_store
+            .take()
+            .unwrap_or_else(|| Arc::new(InMemorySessionStore::new()));
         let state: Arc<McpAppState> = Arc::new(McpAppState {
-            session_store: Arc::new(InMemorySessionStore::new()),
+            session_store,
             id_generator: server_options
                 .session_id_generator
                 .take()

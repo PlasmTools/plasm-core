@@ -286,9 +286,12 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     if spec.include_search_line {
         let _ = writeln!(s, "search        ::= {}", search_form);
     }
-    let _ = writeln!(s, "page          ::= page(sN_pgM) | page(sN_pgM, limit=N)");
-    let _ = writeln!(s, "wait          ::= wait(sN_oM)");
-    let _ = writeln!(s, "cancel        ::= cancel(sN_oM)");
+    let _ = writeln!(
+        s,
+        "page          ::= page(l_<token>_pgM) | page(l_<token>_pgM, limit=N)"
+    );
+    let _ = writeln!(s, "wait          ::= wait(l_<token>_oM)");
+    let _ = writeln!(s, "cancel        ::= cancel(l_<token>_oM)");
     let _ = writeln!(
         s,
         "projection    ::= {} | \"[\" fields \"]\"",
@@ -319,8 +322,8 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     s.push_str(
         "- Multi-line programs: one binding per line and final roots last (preferred). Single-line space-separated bindings are coerced; default return is the first binding.\n\
 - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.\n\
-- To turn rows into text, bind a template block: `report = rows[p#,…] <<TAG` newline template newline `TAG`, or `report = rows <<TAG` when columns can be inferred.\n\
-- Template blocks use Minijinja with `rows` as the input array; pass `binding.content` for string capability parameters, not the whole row.\n\
+- Row text: `report = rows[p#,…] <<TAG` newline template newline `TAG`; Minijinja `rows` is only that source's projected rows.\n\
+- Compose text with `${report.content}` in later heredocs/strings; pass `binding.content` to string params, not the whole row.\n\
 - Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.\n\
 - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.\n",
     );

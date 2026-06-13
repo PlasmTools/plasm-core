@@ -187,7 +187,7 @@ fn binding_specs_json(
 }
 
 /// Scope triple for binding KV reads/writes.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct BindingScope {
     pub tenant_id: String,
     pub mcp_config_id: Uuid,
@@ -209,7 +209,7 @@ impl BindingScope {
 }
 
 /// Session-constant binding values keyed by host wire name.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SessionBindingMap {
     pub scope: Option<BindingScope>,
     pub values: IndexMap<String, String>,

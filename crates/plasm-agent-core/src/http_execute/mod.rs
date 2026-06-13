@@ -436,22 +436,22 @@ fn build_mcp_run_tool_meta(
 }
 
 /// Maps the parsed `page(...)` handle to the key stored in [`ExecuteSession::paging_resume_by_handle`].
-/// MCP (`logical_session_ref` set): namespaced `s0_pgN` only. HTTP: plain `pgN` only.
+/// MCP (`logical_session_ref` set): namespaced `l_<token>_pgN` only. HTTP: plain `pgN` only.
 fn resolve_paging_storage_handle(
     trace: Option<&PlasmTraceContext>,
     handle: &PagingHandle,
 ) -> Result<PagingHandle, RunLineError> {
-    let mcp_slot = trace.and_then(|t| t.logical_session_ref.as_deref());
+    let mcp_ref = trace.and_then(|t| t.logical_session_ref.as_deref());
     let s = handle.as_str();
     let is_ns = handle.is_logical_namespaced();
-    match (mcp_slot, is_ns) {
+    match (mcp_ref, is_ns) {
         (Some(r), true) => {
-            let slot = handle.logical_session_slot().ok_or_else(|| {
+            let slot = handle.logical_session_ref().ok_or_else(|| {
                 RunLineError::Parse(format!("invalid namespaced paging handle `{s}`"))
             })?;
             if slot != r {
                 return Err(RunLineError::Parse(format!(
-                    "paging handle slot `{slot}` does not match current logical_session_ref `{r}`"
+                    "paging handle ref `{slot}` does not match current logical_session_ref `{r}`"
                 )));
             }
             Ok(handle.clone())
@@ -1042,7 +1042,10 @@ async fn apply_ranked_capabilities_session_update(
     let session_id_p: ExecuteSessionId = session_id
         .parse()
         .map_err(|e: &'static str| e.to_string())?;
-    let Some(sess_arc) = st.sessions.get(&prompt_hash_p, &session_id_p).await else {
+    let Some(sess_arc) = st
+        .get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
+        .await
+    else {
         return Err("unknown or expired execute session".into());
     };
     let mut sess = (*sess_arc).clone();
@@ -1050,8 +1053,7 @@ async fn apply_ranked_capabilities_session_update(
         return Ok(());
     }
     sess.ranked_capabilities = normalize_ranked_capabilities_for_gate(opt.clone());
-    st.sessions
-        .replace_session(&prompt_hash_p, &session_id_p, sess)
+    st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
         .await;
     Ok(())
 }
@@ -1525,15 +1527,14 @@ async fn execute_session_create_response_inner(
         ranked_for_domain,
         bindings_map,
     );
-    st.sessions
-        .insert(
-            reuse_key,
-            prompt_hash_str.clone(),
-            session_id_str.clone(),
-            session,
-        )
-        .instrument(create_span)
-        .await;
+    st.store_execute_session(
+        reuse_key,
+        prompt_hash_str.clone(),
+        session_id_str.clone(),
+        session,
+    )
+    .instrument(create_span)
+    .await;
 
     crate::metrics::record_execute_session_outcome("create", "");
     Ok(CreateExecuteSessionResponse {
@@ -1584,7 +1585,10 @@ pub async fn federate_execute_session(
         .parse()
         .map_err(|e: &'static str| e.to_string())?;
 
-    let Some(sess_arc) = st.sessions.get(&prompt_hash_p, &session_id_p).await else {
+    let Some(sess_arc) = st
+        .get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
+        .await
+    else {
         return Err("unknown or expired execute session".into());
     };
     let mut sess = (*sess_arc).clone();
@@ -1694,8 +1698,7 @@ pub async fn federate_execute_session(
 
     if added_qualified.is_empty() {
         sess.teaching_exposure = Some(exp);
-        st.sessions
-            .replace_session(&prompt_hash_p, &session_id_p, sess)
+        st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
             .await;
         return Ok(CapabilityWaveOutcome {
             mode: "federate".to_string(),
@@ -1729,8 +1732,7 @@ pub async fn federate_execute_session(
     sess.entities = exp.entities.clone();
     sess.teaching_exposure = Some(exp);
     sess.domain_revision = sess.domain_revision.saturating_add(1);
-    st.sessions
-        .replace_session(&prompt_hash_p, &session_id_p, sess)
+    st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
         .await;
 
     Ok(CapabilityWaveOutcome {
@@ -1762,7 +1764,10 @@ pub async fn expand_execute_teaching_session(
         .parse()
         .map_err(|e: &'static str| e.to_string())?;
 
-    let Some(sess_arc) = st.sessions.get(&prompt_hash_p, &session_id_p).await else {
+    let Some(sess_arc) = st
+        .get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
+        .await
+    else {
         return Err("unknown or expired execute session".into());
     };
     let mut sess = (*sess_arc).clone();
@@ -1853,8 +1858,7 @@ pub async fn expand_execute_teaching_session(
     if added_qualified.is_empty() {
         sess.entities = exp.entities.clone();
         sess.teaching_exposure = Some(exp);
-        st.sessions
-            .replace_session(&prompt_hash_p, &session_id_p, sess)
+        st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
             .await;
         return Ok(String::new());
     }
@@ -1890,8 +1894,7 @@ pub async fn expand_execute_teaching_session(
     sess.entities = exp.entities.clone();
     sess.teaching_exposure = Some(exp);
     sess.domain_revision = sess.domain_revision.saturating_add(1);
-    st.sessions
-        .replace_session(&prompt_hash_p, &session_id_p, sess)
+    st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
         .await;
     Ok(wave)
 }
@@ -1922,7 +1925,7 @@ pub(crate) async fn apply_capability_seeds(
     let binding = match binding {
         None => None,
         Some((ph, sid)) => {
-            if st.sessions.get_by_strs(ph, sid).await.is_some() {
+            if st.get_execute_session(ph, sid).await.is_some() {
                 Some((ph, sid))
             } else {
                 stale_execute_binding_recovered = true;
@@ -2061,7 +2064,7 @@ pub(crate) async fn apply_capability_seeds(
             &ranked_capabilities,
         )
         .await?;
-        if let Some(sess_arc) = st.sessions.get_by_strs(&prompt_hash, &session_id).await {
+        if let Some(sess_arc) = st.get_execute_session(&prompt_hash, &session_id).await {
             if let Some(ref exp) = sess_arc.teaching_exposure {
                 let catalogs_ready = plan
                     .process_order
@@ -3897,7 +3900,10 @@ async fn post_execute_session_context(
     }: ExecutePath,
     Json(body): Json<ExecuteSessionContextBody>,
 ) -> Response {
-    let Some(sess) = st.sessions.get(&prompt_hash, &session_id).await else {
+    let Some(sess) = st
+        .get_execute_session(prompt_hash.as_str(), session_id.as_str())
+        .await
+    else {
         return problem_response(
             Problem::custom(
                 ProblemStatus::NOT_FOUND,
@@ -3951,7 +3957,10 @@ async fn get_execute_session_symbols(
         session_id,
     }: ExecutePath,
 ) -> Response {
-    let Some(sess) = st.sessions.get(&prompt_hash, &session_id).await else {
+    let Some(sess) = st
+        .get_execute_session(prompt_hash.as_str(), session_id.as_str())
+        .await
+    else {
         return problem_response(
             Problem::custom(
                 ProblemStatus::NOT_FOUND,
@@ -3996,7 +4005,10 @@ async fn get_execute_session_status(
         session_id,
     }: ExecutePath,
 ) -> Response {
-    let Some(sess) = st.sessions.get(&prompt_hash, &session_id).await else {
+    let Some(sess) = st
+        .get_execute_session(prompt_hash.as_str(), session_id.as_str())
+        .await
+    else {
         return Json(ExecuteSessionStatusResponse {
             alive: false,
             prompt_hash: prompt_hash.to_string(),
@@ -4041,7 +4053,10 @@ async fn get_execute_session_runs(
         session_id,
     }: ExecutePath,
 ) -> Response {
-    let Some(sess) = st.sessions.get(&prompt_hash, &session_id).await else {
+    let Some(sess) = st
+        .get_execute_session(prompt_hash.as_str(), session_id.as_str())
+        .await
+    else {
         return problem_response(
             Problem::custom(
                 ProblemStatus::NOT_FOUND,
@@ -4078,7 +4093,10 @@ async fn post_execute_session_plan(
     headers: HeaderMap,
     Json(body): Json<crate::resolved_plan_http::ResolvedPlanRequest>,
 ) -> Response {
-    let Some(sess) = st.sessions.get(&prompt_hash, &session_id).await else {
+    let Some(sess) = st
+        .get_execute_session(prompt_hash.as_str(), session_id.as_str())
+        .await
+    else {
         return problem_response(
             Problem::custom(
                 ProblemStatus::NOT_FOUND,
@@ -4221,7 +4239,7 @@ pub fn execute_routes() -> Router {
         )
         .route(
             "/execute/{prompt_hash}/{session_id}",
-            get(get_execute_session).post(post_run_execute_session),
+            get(handle_execute_session_get).post(post_run_execute_session),
         )
 }
 
@@ -4253,7 +4271,7 @@ async fn get_operation_progress_stream(
                 .with_detail(e.to_string()),
             )
         })?;
-    let Some(sess) = st.sessions.get(&ph, &sid).await else {
+    let Some(sess) = st.get_execute_session(ph.as_str(), sid.as_str()).await else {
         return Err(problem_response(
             Problem::custom(
                 ProblemStatus::NOT_FOUND,
@@ -4379,7 +4397,7 @@ async fn post_create_execute_session(
     }
 }
 
-async fn get_execute_session(
+async fn handle_execute_session_get(
     Extension(st): Extension<PlasmHostState>,
     Extension(IncomingPrincipal(principal)): Extension<IncomingPrincipal>,
     ExecutePath {
@@ -4389,7 +4407,10 @@ async fn get_execute_session(
     Query(query): Query<ExecuteSessionGetQuery>,
     headers: HeaderMap,
 ) -> Response {
-    let Some(sess) = st.sessions.get(&prompt_hash, &session_id).await else {
+    let Some(sess) = st
+        .get_execute_session(prompt_hash.as_str(), session_id.as_str())
+        .await
+    else {
         let _miss = crate::spans::execute_session_lookup_miss().entered();
         tracing::debug!(
             prompt_hash = %prompt_hash,
@@ -4562,7 +4583,9 @@ async fn get_execute_run_artifact(
         }
     };
 
-    let live_sess = st.sessions.get(&prompt_hash, &session_id).await;
+    let live_sess = st
+        .get_execute_session(prompt_hash.as_str(), session_id.as_str())
+        .await;
     let live_payload = if let Some(sess) = &live_sess {
         sess.core
             .get_run_artifact(run_id)
@@ -4742,7 +4765,10 @@ async fn post_run_execute_session(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let Some(sess) = st.sessions.get(&prompt_hash, &session_id).await else {
+    let Some(sess) = st
+        .get_execute_session(prompt_hash.as_str(), session_id.as_str())
+        .await
+    else {
         let _miss = crate::spans::execute_session_lookup_miss().entered();
         tracing::debug!(
             prompt_hash = %prompt_hash,
@@ -4995,7 +5021,7 @@ async fn post_run_execute_session(
                 .with_detail(e),
             );
         }
-        let handle = sess.mint_operation_handle("s0");
+        let handle = sess.mint_operation_handle_plain();
         let accept = crate::operation::op_accept_context_from_executable(
             plan_commit_ref.clone(),
             Some(compact.verdict),
@@ -5830,8 +5856,8 @@ mod tests {
             reused_session: false,
             teaching_prompt_chars_added: 10,
         }];
-        let md = build_plasm_context_agent_markdown("s0", &waves);
-        assert!(md.starts_with("`s0`\n\n"));
+        let md = build_plasm_context_agent_markdown("l_AAAAAAAAQACAAAAAAAAAAQ", &waves);
+        assert!(md.starts_with("`l_AAAAAAAAQACAAAAAAAAAAQ`\n\n"));
         assert!(md.contains("```tsv"));
         assert!(!md.contains("Exposed"));
         assert!(!md.contains("Added capabilities"));
@@ -5850,7 +5876,7 @@ mod tests {
             stale_execute_binding_recovered: false,
             stale_binding_previous: None,
         };
-        let meta = build_plasm_context_tool_meta("s0", &out, Some(2), None);
+        let meta = build_plasm_context_tool_meta("l_AAAAAAAAQACAAAAAAAAAAQ", &out, Some(2), None);
         assert!(meta.contains_key("logical_session_ref"));
         assert!(meta.contains_key("continuity"));
         assert!(meta.contains_key("domain_revision"));

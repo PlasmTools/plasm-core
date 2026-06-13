@@ -1,4 +1,7 @@
 use super::types::RunArtifactId;
+use crate::mcp_logical_ref::{
+    format_logical_session_wire_ref_from_uuid, parse_logical_session_wire_ref,
+};
 use uuid::Uuid;
 
 pub fn plasm_run_resource_uri(
@@ -18,7 +21,7 @@ pub fn plasm_short_resource_uri(resource_index: u64) -> String {
 }
 
 /// Short URI scoped to an MCP **logical session** (agent identity), not transport.
-/// `session_segment` is the client-facing slot id (`s0`, `s1`, …) or a canonical UUID string.
+/// `session_segment` is the canonical wire ref (`l_<token>`).
 pub fn plasm_session_short_resource_uri(session_segment: &str, resource_index: u64) -> String {
     format!("plasm://session/{session_segment}/r/{resource_index}")
 }
@@ -40,7 +43,7 @@ pub fn plasm_short_code_plan_uri(plan_index: u64) -> String {
     format!("plasm://p/{plan_index}")
 }
 
-/// Short program-plan URI scoped to an MCP logical session slot or UUID.
+/// Short program-plan URI scoped to an MCP logical session wire ref.
 pub fn plasm_session_short_plan_uri(session_segment: &str, plan_index: u64) -> String {
     format!("plasm://session/{session_segment}/p/{plan_index}")
 }
@@ -50,16 +53,24 @@ pub fn plasm_code_plan_resource_uri(prompt_hash: &str, session_id: &str, plan_id
     format!("plasm://execute/{prompt_hash}/{session_id}/plan/{plan_id}")
 }
 
-/// Legacy helper: embed canonical logical session UUID in the short resource URI.
+/// Short logical-session URI from canonical UUID (formats `l_<token>`).
 pub fn plasm_short_resource_uri_logical(logical_session_id: &Uuid, resource_index: u64) -> String {
-    plasm_session_short_resource_uri(&logical_session_id.to_string(), resource_index)
+    plasm_session_short_resource_uri(
+        &format_logical_session_wire_ref_from_uuid(*logical_session_id),
+        resource_index,
+    )
 }
 
-/// First path segment after `plasm://session/` for short run resources: UUID **or** slot `s` + digits.
+/// First path segment after `plasm://session/` for short run resources: canonical `l_<token>` only.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LogicalSessionUriSegment {
-    Uuid(Uuid),
-    Slot(String),
+    WireRef(String),
+}
+
+fn parse_session_segment(seg: &str) -> Option<LogicalSessionUriSegment> {
+    parse_logical_session_wire_ref(seg)
+        .ok()
+        .map(|_| LogicalSessionUriSegment::WireRef(seg.to_string()))
 }
 
 /// Parse `plasm://r/{decimal}` (no extra path segments).
@@ -74,21 +85,14 @@ pub fn parse_plasm_short_resource_uri(uri: &str) -> Option<u64> {
     rest.parse().ok()
 }
 
-/// Parse `plasm://session/{uuid}/r/{decimal}` or `plasm://session/s{n}/r/{decimal}` (per-transport slot).
+/// Parse `plasm://session/l_<token>/r/{decimal}`.
 pub fn parse_plasm_session_short_resource_uri(
     uri: &str,
 ) -> Option<(LogicalSessionUriSegment, u64)> {
     let rest = uri.strip_prefix("plasm://session/")?;
     let mut parts = rest.split('/').filter(|s| !s.is_empty());
     let seg = parts.next()?;
-    let segment = if let Ok(u) = Uuid::parse_str(seg) {
-        LogicalSessionUriSegment::Uuid(u)
-    } else if seg.len() >= 2 && seg.starts_with('s') && seg[1..].chars().all(|c| c.is_ascii_digit())
-    {
-        LogicalSessionUriSegment::Slot(seg.to_string())
-    } else {
-        return None;
-    };
+    let segment = parse_session_segment(seg)?;
     let r = parts.next()?;
     let n = parts.next()?;
     if r != "r" {
@@ -104,19 +108,12 @@ pub fn parse_plasm_session_short_resource_uri(
     Some((segment, idx))
 }
 
-/// Parse `plasm://session/{uuid}/p/{decimal}` or `plasm://session/s{n}/p/{decimal}`.
+/// Parse `plasm://session/l_<token>/p/{decimal}`.
 pub fn parse_plasm_session_short_plan_uri(uri: &str) -> Option<(LogicalSessionUriSegment, u64)> {
     let rest = uri.strip_prefix("plasm://session/")?;
     let mut parts = rest.split('/').filter(|s| !s.is_empty());
     let seg = parts.next()?;
-    let segment = if let Ok(u) = Uuid::parse_str(seg) {
-        LogicalSessionUriSegment::Uuid(u)
-    } else if seg.len() >= 2 && seg.starts_with('s') && seg[1..].chars().all(|c| c.is_ascii_digit())
-    {
-        LogicalSessionUriSegment::Slot(seg.to_string())
-    } else {
-        return None;
-    };
+    let segment = parse_session_segment(seg)?;
     let p = parts.next()?;
     let n = parts.next()?;
     if p != "p" {
@@ -130,6 +127,26 @@ pub fn parse_plasm_session_short_plan_uri(uri: &str) -> Option<(LogicalSessionUr
     }
     let idx: u64 = n.parse().ok()?;
     Some((segment, idx))
+}
+
+pub fn logical_uuid_from_uri_segment(segment: &LogicalSessionUriSegment) -> Option<Uuid> {
+    match segment {
+        LogicalSessionUriSegment::WireRef(wire) => parse_logical_session_wire_ref(wire)
+            .ok()
+            .map(|id| id.as_uuid()),
+    }
+}
+
+pub fn uri_segment_rejection_reason(seg: &str) -> Option<&'static str> {
+    if crate::mcp_logical_ref::is_legacy_transport_slot(seg) {
+        Some("legacy transport slot refs (s0, …) are not accepted in resource URIs")
+    } else if uuid::Uuid::parse_str(seg).is_ok() {
+        Some("UUID text is not accepted in resource URIs; use l_<token>")
+    } else if seg.starts_with('l') {
+        Some("invalid l_<token> segment in resource URI")
+    } else {
+        None
+    }
 }
 
 pub fn artifact_http_path(prompt_hash: &str, session_id: &str, run_id: &RunArtifactId) -> String {

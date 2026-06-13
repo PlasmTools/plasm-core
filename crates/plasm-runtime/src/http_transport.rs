@@ -1226,9 +1226,8 @@ mod json_wire_tests {
             headers: None,
         };
         let client = reqwest::Client::new();
-        let builder =
-            build_compiled_reqwest(&client, "https://api.example.test", &request, None)
-                .expect("builder");
+        let builder = build_compiled_reqwest(&client, "https://api.example.test", &request, None)
+            .expect("builder");
         let req = builder.build().expect("build");
         let ct = req
             .headers()

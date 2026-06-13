@@ -39,15 +39,15 @@ pub enum Expr {
     #[serde(rename = "chain")]
     Chain(ChainExpr),
 
-    /// Resume the next batch of a paginated query using an opaque host-minted handle (`page(pg1)` HTTP, `page(s0_pg1)` MCP).
+    /// Resume the next batch of a paginated query using an opaque host-minted handle (`page(pg1)` HTTP, `page(l_<token>_pg1)` MCP).
     #[serde(rename = "page")]
     Page(PageExpr),
 
-    /// Poll/resume an in-flight async plan run (`wait(s0_o1)` MCP).
+    /// Poll/resume an in-flight async plan run (`wait(l_<token>_o1)` MCP or `wait(o1)` HTTP).
     #[serde(rename = "wait")]
     Wait(WaitExpr),
 
-    /// Cancel an in-flight async plan run (`cancel(s0_o1)` MCP).
+    /// Cancel an in-flight async plan run (`cancel(l_<token>_o1)` MCP or `cancel(o1)` HTTP).
     #[serde(rename = "cancel")]
     Cancel(CancelExpr),
 

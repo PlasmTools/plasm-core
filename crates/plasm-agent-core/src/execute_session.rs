@@ -29,6 +29,11 @@ use serde::Serialize;
 /// Default time-to-live for a session (lazy expiry on lookup).
 const SESSION_TTL: Duration = Duration::from_secs(3600);
 
+/// Shared in-memory + Redis descriptor expiry (seconds).
+pub fn session_ttl_secs() -> u64 {
+    SESSION_TTL.as_secs()
+}
+
 /// Environment key: max run snapshots retained per session in RAM after archive write (default 256).
 pub const ENV_RUN_ARTIFACT_HOT_CACHE_MAX_RUNS: &str = "PLASM_RUN_ARTIFACT_HOT_CACHE_MAX_RUNS";
 /// Environment key: optional byte budget for the per-session hot cache (0 = use run count only).
@@ -550,7 +555,7 @@ impl ExecuteSession {
 
     /// Mint a paging handle and store `resume` for subsequent `page(...)` expressions.
     /// - `logical_session_ref: None` — plain `pgN` (HTTP execute).
-    /// - `Some("s0")` — namespaced `s0_pgN` (MCP `plasm` with `logical_session_ref` on the trace).
+    /// - `Some("l_<token>")` — namespaced `l_<token>_pgN` (MCP `plasm` with `logical_session_ref` on the trace).
     pub fn register_paging_continuation(
         &self,
         resume: QueryPaginationResumeData,
@@ -635,10 +640,16 @@ impl ExecuteSession {
             .remove(handle);
     }
 
-    /// Mint the next monotonic operation handle for MCP logical session `sN`.
+    /// Mint the next monotonic operation handle for MCP logical session `l_<token>`.
     pub fn mint_operation_handle(&self, logical_session_ref: &str) -> OperationHandle {
         let n = self.operation_handle_next.fetch_add(1, Ordering::Relaxed) + 1;
         OperationHandle::mint_namespaced(logical_session_ref, n)
+    }
+
+    /// Mint plain `oN` for HTTP execute (no MCP logical session).
+    pub fn mint_operation_handle_plain(&self) -> OperationHandle {
+        let n = self.operation_handle_next.fetch_add(1, Ordering::Relaxed) + 1;
+        OperationHandle::mint_monotonic(n)
     }
 
     pub fn register_operation(
@@ -1127,6 +1138,97 @@ impl ExecuteSession {
             .cloned()
     }
 
+    pub(crate) fn snapshot_plan_commits_for_persist(
+        &self,
+    ) -> crate::mcp_transport_store::execute_session_registry::PlanCommitPersistSnapshot {
+        use crate::mcp_transport_store::execute_session_registry::PersistedPlanCommitRecord;
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let map = self.plan_commits.lock().unwrap_or_else(|e| e.into_inner());
+        let mut records = Vec::new();
+        let mut max_seq = self.plan_commit_next.load(Ordering::Relaxed);
+        for record in map.values() {
+            if record.is_expired() {
+                continue;
+            }
+            let expires_at_unix = now_unix.saturating_add(
+                record
+                    .expires_at
+                    .checked_duration_since(std::time::Instant::now())
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+            );
+            if let Some(n) = record
+                .commit_ref
+                .as_str()
+                .strip_prefix("pc")
+                .and_then(|s| s.parse::<u64>().ok())
+            {
+                max_seq = max_seq.max(n.saturating_add(1));
+            }
+            records.push(PersistedPlanCommitRecord {
+                commit_ref: record.commit_ref.as_str().to_string(),
+                commit_id_hex: record.commit_id.to_string(),
+                dry_review: record.dry_review.clone(),
+                verdict: record.verdict,
+                expires_at_unix,
+            });
+        }
+        crate::mcp_transport_store::execute_session_registry::PlanCommitPersistSnapshot {
+            records,
+            next_sequence: max_seq,
+        }
+    }
+
+    pub(crate) fn restore_persisted_plan_commits(
+        &self,
+        records: &[crate::mcp_transport_store::execute_session_registry::PersistedPlanCommitRecord],
+        next_sequence: u64,
+    ) {
+        use plasm_core::PlanCommitId;
+        use std::time::{Duration, SystemTime, UNIX_EPOCH};
+        let now_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut map = self.plan_commits.lock().unwrap_or_else(|e| e.into_inner());
+        for persisted in records {
+            let Some(commit_ref) = PlanCommitRef::parse(&persisted.commit_ref) else {
+                continue;
+            };
+            if persisted.expires_at_unix <= now_unix {
+                continue;
+            }
+            let Ok(bytes) = hex::decode(persisted.commit_id_hex.as_str()) else {
+                continue;
+            };
+            if bytes.len() != 32 {
+                continue;
+            }
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&bytes);
+            let ttl_secs = persisted.expires_at_unix.saturating_sub(now_unix);
+            map.insert(
+                commit_ref.clone(),
+                crate::operation::PlanCommitRecord {
+                    commit_ref,
+                    commit_id: PlanCommitId::from_canonical_bytes(arr),
+                    dry_review: persisted.dry_review.clone(),
+                    verdict: persisted.verdict,
+                    expires_at: std::time::Instant::now() + Duration::from_secs(ttl_secs),
+                },
+            );
+        }
+        let current = self.plan_commit_next.load(Ordering::Relaxed);
+        if next_sequence > current {
+            self.plan_commit_next
+                .store(next_sequence, Ordering::Relaxed);
+        }
+    }
+
     /// Multi-catalog dispatch for execute (HTTP backend + auth per owning graph).
     pub fn federation_dispatch(&self) -> Option<Arc<FederationDispatch>> {
         if self.contexts_by_entry.len() <= 1 {
@@ -1369,6 +1471,24 @@ impl ExecuteSessionStore {
         let key = ExecuteSessionKey::new(prompt_hash.as_str(), session_id.as_str());
         let mut g = self.inner.write().await;
         g.insert(key, SessionRecord::new(Arc::new(session)));
+    }
+
+    /// Cross-pod reload: insert without evicting/finalizing prior rows.
+    pub async fn insert_rehydrated(
+        &self,
+        reuse_key: SessionReuseKey,
+        prompt_hash: String,
+        session_id: String,
+        session: ExecuteSession,
+    ) {
+        let session = Arc::new(session);
+        let mut g = self.inner.write().await;
+        let mut r = self.reuse_index.write().await;
+        g.insert(
+            ExecuteSessionKey::new(prompt_hash.clone(), session_id.clone()),
+            SessionRecord::new(Arc::clone(&session)),
+        );
+        r.insert(reuse_key, (prompt_hash, session_id));
     }
 
     /// Returns the session if present, non-expired, and `prompt_hash` matches the stored value.
@@ -1767,7 +1887,7 @@ mod tests {
             None,
             None,
         );
-        let handle = es.mint_operation_handle("s0");
+        let handle = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
         es.try_begin_async_operation(
             handle.clone(),
             plasm_runtime::CancelSignal::new(),

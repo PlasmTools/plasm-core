@@ -60,7 +60,7 @@ where
 }
 
 #[cfg(feature = "hyper-server")]
-pub(crate) fn create_server_instance(
+pub fn create_server_instance(
     server_details: Arc<InitializeResult>,
     handler: Arc<dyn McpServerHandler>,
     session_id: SessionId,

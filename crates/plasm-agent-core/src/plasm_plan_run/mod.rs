@@ -58,9 +58,9 @@ mod compute_eval;
 mod dry;
 pub mod evidence_plan;
 mod materialize;
-mod relation_hydrate;
 mod orchestrator;
 mod parse;
+mod relation_hydrate;
 mod row_json;
 
 pub(crate) use compute_eval::*;

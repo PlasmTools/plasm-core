@@ -342,6 +342,7 @@ pub(crate) async fn create_standalone_stream(
         TransportServerError::SessionIdInvalid(session_id.to_string()),
     )?;
 
+    state.session_store.touch_session(&session_id).await;
     runtime.update_auth_info(auth_info).await;
 
     if runtime.default_stream_exists().await {
@@ -406,6 +407,10 @@ pub(crate) async fn start_new_session(
         state
             .session_store
             .set(session_id.to_owned(), runtime.clone())
+            .await;
+        state
+            .session_store
+            .persist_session_metadata(&session_id, Some(payload))
             .await;
     }
     response
@@ -518,6 +523,7 @@ pub(crate) async fn process_incoming_message_return(
 ) -> TransportServerResult<http::Response<GenericBody>> {
     match state.session_store.get(&session_id).await {
         Some(runtime) => {
+            state.session_store.touch_session(&session_id).await;
             runtime.update_auth_info(auth_info).await;
             single_shot_stream(
                 runtime.clone(),
@@ -545,6 +551,7 @@ pub(crate) async fn process_incoming_message(
 ) -> TransportServerResult<http::Response<GenericBody>> {
     match state.session_store.get(&session_id).await {
         Some(runtime) => {
+            state.session_store.touch_session(&session_id).await;
             runtime.update_auth_info(auth_info).await;
             // when receiving a result in a streamable_http server, that means it was sent by the standalone sse transport
             // it should be processed by the same transport , therefore no need to call create_sse_stream

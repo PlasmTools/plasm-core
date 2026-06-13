@@ -204,7 +204,7 @@ mod tests {
         let mut meta = serde_json::Map::new();
         meta.insert(
             "plasm".into(),
-            serde_json::json!({ "logical_session_ref": "s0" }),
+            serde_json::json!({ "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ" }),
         );
         attach_mcp_app_ui_on_tool_meta(&mut meta);
         assert!(meta.get("ui").is_none());

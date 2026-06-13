@@ -1,6 +1,7 @@
-//! Opaque host-minted async operation continuation handles (`s0_o1`, …).
+//! Opaque host-minted async operation continuation handles.
 //!
-//! Parallel to [`PagingHandle`](crate::PagingHandle) (`s0_pg1`): MCP logical session slot + monotonic `_o` sequence.
+//! - **HTTP execute**: plain `o1`, `o2`, …
+//! - **MCP `plasm_run`**: namespaced `l_<token>_o1`, … (parallel to [`PagingHandle`](crate::PagingHandle)).
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -13,12 +14,25 @@ pub struct OperationHandle(String);
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum OperationHandleParseError {
-    #[error("operation handle must be namespaced `s` + digits + `_o` + digits (got {0:?})")]
+    #[error(
+        "operation handle must be plain `o` + digits or namespaced `l_<token>_o` + digits (got {0:?})"
+    )]
     InvalidFormat(String),
 }
 
+fn valid_plain_operation(s: &str) -> bool {
+    if s.len() < 2 || !s.starts_with('o') {
+        return false;
+    }
+    let num = &s[1..];
+    if num.is_empty() || num.len() > 24 {
+        return false;
+    }
+    num.chars().all(|c| c.is_ascii_digit())
+}
+
 fn valid_namespaced_operation(s: &str) -> bool {
-    let Some((slot, rest)) = s.split_once("_o") else {
+    let Some((slot, rest)) = s.rsplit_once("_o") else {
         return false;
     };
     if !crate::paging_handle::is_valid_logical_session_ref_segment(slot) {
@@ -34,13 +48,25 @@ impl OperationHandle {
     /// Parses a client-supplied handle from `wait(<ident>)` / `cancel(<ident>)`.
     pub fn parse(s: impl AsRef<str>) -> Result<Self, OperationHandleParseError> {
         let s = s.as_ref().trim();
-        if valid_namespaced_operation(s) {
+        if s.contains("_o") {
+            if valid_namespaced_operation(s) {
+                return Ok(Self(s.to_string()));
+            }
+            return Err(OperationHandleParseError::InvalidFormat(s.to_string()));
+        }
+        if valid_plain_operation(s) {
             return Ok(Self(s.to_string()));
         }
         Err(OperationHandleParseError::InvalidFormat(s.to_string()))
     }
 
-    /// Host mint: MCP logical session slot + monotonic sequence within the execute session.
+    /// Host mint: monotonic `oN` (HTTP execute without logical session).
+    #[must_use]
+    pub fn mint_monotonic(n: u64) -> Self {
+        Self(format!("o{n}"))
+    }
+
+    /// Host mint: MCP logical session ref + monotonic sequence within the execute session.
     pub fn mint_namespaced(logical_session_ref: &str, n: u64) -> Self {
         Self(format!("{logical_session_ref}_o{n}"))
     }
@@ -49,9 +75,24 @@ impl OperationHandle {
         &self.0
     }
 
-    /// Logical session segment (`s0`, …) when namespaced.
+    /// `true` if this is a plain `oN` handle (HTTP path).
+    #[must_use]
+    pub fn is_plain(&self) -> bool {
+        valid_plain_operation(self.as_str())
+    }
+
+    /// `true` if this is `l_<token>_o{m}` (MCP path).
+    #[must_use]
+    pub fn is_logical_namespaced(&self) -> bool {
+        valid_namespaced_operation(self.as_str())
+    }
+
+    /// Logical session ref (`l_<token>`, …) when namespaced.
     pub fn logical_session_ref(&self) -> Option<&str> {
-        self.0.split_once("_o").map(|(slot, _)| slot)
+        if !self.is_logical_namespaced() {
+            return None;
+        }
+        self.0.rsplit_once("_o").map(|(slot, _)| slot)
     }
 }
 
@@ -70,18 +111,38 @@ impl AsRef<str> for OperationHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    use base64::Engine as _;
 
-    #[test]
-    fn parse_and_mint_namespaced_operation() {
-        let h = OperationHandle::mint_namespaced("s0", 1);
-        assert_eq!(h.as_str(), "s0_o1");
-        assert_eq!(OperationHandle::parse("s0_o1").expect("parse"), h);
-        assert_eq!(h.logical_session_ref(), Some("s0"));
+    fn sample_wire_ref() -> String {
+        let token = URL_SAFE_NO_PAD.encode([0u8; 16]);
+        format!("l_{token}")
     }
 
     #[test]
-    fn rejects_plain_and_paging_handles() {
+    fn parse_and_mint_plain_operation() {
+        let h = OperationHandle::mint_monotonic(1);
+        assert_eq!(h.as_str(), "o1");
+        assert!(h.is_plain());
+        assert_eq!(OperationHandle::parse("o1").expect("parse"), h);
+    }
+
+    #[test]
+    fn parse_and_mint_namespaced_operation() {
+        let wire = sample_wire_ref();
+        let h = OperationHandle::mint_namespaced(&wire, 1);
+        assert_eq!(h.as_str(), format!("{wire}_o1"));
+        assert_eq!(
+            OperationHandle::parse(&format!("{wire}_o1")).expect("parse"),
+            h
+        );
+        assert_eq!(h.logical_session_ref(), Some(wire.as_str()));
+    }
+
+    #[test]
+    fn rejects_legacy_slot_and_paging_handles() {
         assert!(OperationHandle::parse("pg1").is_err());
+        assert!(OperationHandle::parse("s0_o1").is_err());
         assert!(OperationHandle::parse("s0_pg1").is_err());
     }
 }

@@ -56,8 +56,8 @@ expression: tsv
 # Composition rules:
 # - Multi-line programs: one binding per line and final roots last (preferred). Single-line space-separated bindings are coerced; default return is the first binding.
 # - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.
-# - To turn rows into text, bind a template block: `report = rows[p#,…] <<TAG` newline template newline `TAG`, or `report = rows <<TAG` when columns can be inferred.
-# - Template blocks use Minijinja with `rows` as the input array; the bound row has a `content` field (see Common pitfalls for string parameters).
+# - Row text: `report = rows[p#,…] <<TAG` newline template newline `TAG`; Minijinja `rows` is only that source's projected rows.
+# - Compose text with `${report.content}` in later heredocs/strings; pass `binding.content` to string params, not the whole row.
 # - Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.
 # - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
 # - Examples: scoped child list `e1{p14=e3(p5=<val>, p13=<val>), …} (inline) OR repo=e3(…); e1{p14=repo, …} (decomposed label ref)`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.

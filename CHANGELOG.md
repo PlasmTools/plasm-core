@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-13
+
+### Changed
+
+- **Breaking — stateless MCP logical sessions:** `plasm_context` returns **`logical_session_ref`** as `l_<token>` (22 URL-safe base64 chars over the canonical UUID bytes). Legacy transport slots (`s0`, …), raw UUID text, and `plasm://session/s0/…` URIs are **rejected**. MCP paging/operation handles are namespaced (`l_<token>_pgN`, `l_<token>_oN`); HTTP execute uses plain `pgN` / `oN` on the same execute row.
+- **Multi-replica execute:** Redis-backed execute descriptors now persist binding maps, federated catalog hashes, plugin generation pins, and plan-commit records so any `plasm-mcp` pod can rehydrate material session state without transport stickiness.
+- **`resources/read`:** `plasm://session/l_<token>/r|p/{n}` resolves without `MCP-Session-Id` when the logical binding exists in Redis.
+- **Docs / smoke:** multireplica execute smoke (`scripts/smoke/mcp-multireplica-execute-live.sh`), MCP client conformance notes, teaching-table BNF uses `l_<token>_…` handle shapes.
+
+### Migration
+
+- Replace stored `s0` / `sN` refs with the `l_<token>` from each `plasm_context` response.
+- Scale `plasm-mcp` beyond one replica only with **`PLASM_MCP_TRANSPORT_REDIS_URL`** (`transportRedis.enabled` in Helm) and ingress MCP stickiness **`none`**.
+
 ## [0.2.6] - 2026-06-13
 
 ### Fixed

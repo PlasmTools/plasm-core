@@ -39,4 +39,15 @@ pub trait SessionStore: Send + Sync {
 
     /// Clears all sessions from the store
     async fn clear(&self);
+
+    /// Persist session metadata for cross-pod hydration (default: no-op).
+    async fn persist_session_metadata(&self, _key: &SessionId, _init_payload: Option<&str>) {}
+
+    /// Refresh remote TTL on activity (default: no-op).
+    async fn touch_session(&self, _key: &SessionId) {}
+
+    /// Whether a session record exists remotely (default: local `has` only).
+    async fn exists_remote(&self, key: &SessionId) -> bool {
+        self.has(key).await
+    }
 }

@@ -93,7 +93,7 @@ async fn collect_progress_lines(
 async fn coalesce_row_spam_via_execution_scope_broadcast() {
     let es = execute_session();
     let st = host_state();
-    let handle = es.mint_operation_handle("s0");
+    let handle = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
     let cancel = CancelSignal::new();
 
     let accept = OpAcceptContext {
@@ -166,7 +166,7 @@ async fn coalesce_row_spam_via_execution_scope_broadcast() {
 async fn coalesce_at_most_two_running_emits_per_two_second_window() {
     let es = execute_session();
     let st = host_state();
-    let handle = es.mint_operation_handle("s0");
+    let handle = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
     let cancel = CancelSignal::new();
 
     let accept = OpAcceptContext {

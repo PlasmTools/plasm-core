@@ -1,5 +1,6 @@
 use super::gc::object_store_path_is_run_snapshot_gc_eligible;
 use super::*;
+use crate::mcp_logical_ref::parse_logical_session_wire_ref;
 use axum::body::Bytes;
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::{Expr, Value};
@@ -172,31 +173,31 @@ fn parse_short_plasm_resource_uri() {
 
 #[test]
 fn parse_logical_short_plasm_resource_uri_round_trip() {
-    let id = Uuid::nil();
-    let u = plasm_short_resource_uri_logical(&id, 7);
-    assert_eq!(
-        parse_plasm_session_short_resource_uri(&u),
-        Some((LogicalSessionUriSegment::Uuid(id), 7))
-    );
-    let u2 = plasm_session_short_resource_uri("s3", 7);
+    let wire = "l_AAAAAAAAQACAAAAAAAAAAQ";
+    let u = parse_logical_session_wire_ref(wire)
+        .expect("parse")
+        .as_uuid();
+    let u2 = plasm_short_resource_uri_logical(&u, 7);
+    assert_eq!(u2, format!("plasm://session/{wire}/r/7"));
     assert_eq!(
         parse_plasm_session_short_resource_uri(&u2),
-        Some((LogicalSessionUriSegment::Slot("s3".into()), 7))
+        Some((LogicalSessionUriSegment::WireRef(wire.into()), 7))
     );
+    assert!(parse_plasm_session_short_resource_uri("plasm://session/s3/r/1").is_none());
     assert!(parse_plasm_session_short_resource_uri("plasm://session/not-uuid/r/1").is_none());
-    assert!(parse_plasm_session_short_resource_uri("plasm://session/s/r/1").is_none());
 }
 
 #[test]
 fn parse_code_plan_handles_and_uris() {
-    let id = Uuid::nil();
+    let wire = "l_AAAAAAAAQACAAAAAAAAAAQ";
+    let id = Uuid::from_u128(1);
     assert_eq!(code_plan_handle(3), "p3");
     assert_eq!(parse_code_plan_handle("p3"), Some(3));
     assert!(parse_code_plan_handle("r3").is_none());
-    let short = plasm_session_short_plan_uri("s0", 3);
+    let short = plasm_session_short_plan_uri(wire, 3);
     assert_eq!(
         parse_plasm_session_short_plan_uri(&short),
-        Some((LogicalSessionUriSegment::Slot("s0".into()), 3))
+        Some((LogicalSessionUriSegment::WireRef(wire.into()), 3))
     );
     let canonical = plasm_code_plan_resource_uri(&"a".repeat(64), "sess", &id);
     assert_eq!(

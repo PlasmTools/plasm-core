@@ -138,7 +138,7 @@ impl ToolModelExecuteContinuations {
         Self {
             summary: "LLM execute uses host continuation expressions — not raw API pagination cursors or background job ids.".into(),
             pagination: append_llm_pagination_execute_note(String::new()),
-            long_operations: "Async plan runs: wait=false or review auto-async → compact op lines (`+` accept · `~` running · `=` unchanged · `!` done). Poll wait(sN_oM) every few seconds; optional GET .../operations/{handle}/stream SSE or MCP notifications/plasm/op.".into(),
+            long_operations: "Async plan runs: wait=false or review auto-async → compact op lines (`+` accept · `~` running · `=` unchanged · `!` done). Poll wait(l_<token>_oM) every few seconds; optional GET .../operations/{handle}/stream SSE or MCP notifications/plasm/op. HTTP execute uses plain wait(oM)/cancel(oM).".into(),
             review_gate: "When plan dry-run verdict is review, pass plan_commit_ref (pcN) from matching plan dry-run or force=true before live execute. Commit ids hash semantic plan DAG only.".into(),
         }
     }
@@ -396,7 +396,7 @@ fn capability_about_from_cgs(cap: &CapabilitySchema, fallback: impl Into<String>
 
 /// Tool Explorer / operator copy: LLM execute uses opaque `page(pg#)` continuations, not CLI flags.
 fn append_llm_pagination_execute_note(about: String) -> String {
-    const NOTE: &str = " For MCP `plasm`, additional list pages use namespaced `page(s0_pg#)` handles from tool results; HTTP execute uses plain `page(pg#)`. Not raw API pagination parameters.";
+    const NOTE: &str = " For MCP `plasm`, additional list pages use namespaced `page(l_<token>_pg#)` handles from tool results; HTTP execute uses plain `page(pg#)`. Not raw API pagination parameters.";
     if about.is_empty() {
         NOTE.trim_start().to_string()
     } else {
@@ -1563,7 +1563,7 @@ mod tests {
         let m = build_tool_model(&cgs, &meta, &q).expect("ok");
         assert!(!m.entities.is_empty());
         assert!(m.execute.summary.contains("continuation"));
-        assert!(m.execute.long_operations.contains("wait(sN_oM)"));
+        assert!(m.execute.long_operations.contains("wait(l_<token>_oM)"));
         assert!(m.execute.review_gate.contains("plan_commit_ref"));
         assert_eq!(m.entities.len(), m.domain.model.entities.len());
         assert_eq!(m.focus.mode, "all");

@@ -2805,11 +2805,12 @@ mod tests {
             return;
         }
         let cgs = petstore_cgs();
-        let r = parse("page(s0_pg1)", &cgs).unwrap();
+        let wire = "l_AAAAAAAAQACAAAAAAAAAAQ";
+        let r = parse(&format!("page({wire}_pg1)"), &cgs).unwrap();
         let Expr::Page(p) = &r.expr else {
             panic!("expected Page, got {:?}", r.expr);
         };
-        assert_eq!(p.handle.as_str(), "s0_pg1");
+        assert_eq!(p.handle.as_str(), format!("{wire}_pg1"));
         assert_eq!(p.limit, None);
     }
 
@@ -2819,11 +2820,12 @@ mod tests {
             return;
         }
         let cgs = petstore_cgs();
-        let r = parse("wait(s0_o1)", &cgs).unwrap();
+        let wire = "l_AAAAAAAAQACAAAAAAAAAAQ";
+        let r = parse(&format!("wait({wire}_o1)"), &cgs).unwrap();
         let Expr::Wait(w) = &r.expr else {
             panic!("expected Wait, got {:?}", r.expr);
         };
-        assert_eq!(w.handle.as_str(), "s0_o1");
+        assert_eq!(w.handle.as_str(), format!("{wire}_o1"));
     }
 
     #[test]
@@ -2832,11 +2834,12 @@ mod tests {
             return;
         }
         let cgs = petstore_cgs();
-        let r = parse("cancel(s0_o2)", &cgs).unwrap();
+        let wire = "l_AAAAAAAAQACAAAAAAAAAAQ";
+        let r = parse(&format!("cancel({wire}_o2)"), &cgs).unwrap();
         let Expr::Cancel(c) = &r.expr else {
             panic!("expected Cancel, got {:?}", r.expr);
         };
-        assert_eq!(c.handle.as_str(), "s0_o2");
+        assert_eq!(c.handle.as_str(), format!("{wire}_o2"));
     }
 
     #[test]

@@ -147,7 +147,7 @@ async fn wait_unknown_handle_is_400() {
         .method("POST")
         .uri(&uri)
         .header("accept", "application/json")
-        .body(Body::from("wait(s0_o999)"))
+        .body(Body::from("wait(o999)"))
         .unwrap();
     let res = app.oneshot(run).await.unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
@@ -215,7 +215,7 @@ async fn review_plan_auto_async_without_wait_false() {
         .get("run_markdown")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    assert!(md.contains("s0_o"), "markdown: {md}");
+    assert!(md.contains("`o"), "markdown: {md}");
 }
 
 #[tokio::test]
@@ -296,7 +296,7 @@ async fn wait_false_async_accept_returns_operation_json() {
         .get("run_markdown")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    assert!(md.contains("s0_o"), "markdown: {md}");
+    assert!(md.contains("`o"), "markdown: {md}");
     assert!(md.contains('+'), "compact accept: {md}");
     assert!(
         !md.contains("Poll:"),

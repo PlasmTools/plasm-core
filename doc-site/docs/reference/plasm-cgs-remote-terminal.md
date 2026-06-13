@@ -99,7 +99,7 @@ plasm context --new -i "github issues" github:Issue
 
 Paging: `e1[p5]` then `page(pg1)[p5]` in the same client session (server holds pagination handles).
 
-Long-running plan execute: `--mode plan` for dry-run + `plan_commit_ref`; `--wait=false` to accept `wait(s0_oN)` and poll with `plasm run -e 'wait(s0_o1)'` / cancel with `cancel(s0_o1)`. See [plasm-long-operations.md](plasm-long-operations.md).
+Long-running plan execute: `--mode plan` for dry-run + `plan_commit_ref`; `--wait=false` to accept `wait(oN)` and poll with `plasm run -e 'wait(o1)'` / cancel with `cancel(o1)`. See [plasm-long-operations.md](plasm-long-operations.md).
 
 **`plasm context`** always prints the new symbol wave (TSV) on stdout; **`--verbose`** adds a stderr banner before the wave.
 

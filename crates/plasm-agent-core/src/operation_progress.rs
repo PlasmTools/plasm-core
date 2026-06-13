@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn wire_line_all_sigs() {
-        let h = OperationHandle::mint_namespaced("s0", 1);
+        let h = OperationHandle::mint_namespaced("l_AAAAAAAAQACAAAAAAAAAAQ", 1);
         assert!(render_op_wire_line(
             &h,
             OpWireSig::Accept,
@@ -368,15 +368,15 @@ mod tests {
         };
         assert_eq!(
             render_op_wire_line(&h, OpWireSig::Running, Some(&prog), None, None, None),
-            "`s0_o1` ~ 2/5 r1 42r"
+            "`l_AAAAAAAAQACAAAAAAAAAAQ_o1` ~ 2/5 r1 42r"
         );
         assert_eq!(
             render_op_wire_line(&h, OpWireSig::Unchanged, Some(&prog), None, None, None),
-            "`s0_o1` = 2/5 r1 42r"
+            "`l_AAAAAAAAQACAAAAAAAAAAQ_o1` = 2/5 r1 42r"
         );
         assert_eq!(
             render_op_wire_line(&h, OpWireSig::Done, Some(&prog), None, None, None),
-            "`s0_o1` ! 42r"
+            "`l_AAAAAAAAQACAAAAAAAAAAQ_o1` ! 42r"
         );
     }
 

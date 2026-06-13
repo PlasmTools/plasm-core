@@ -2055,14 +2055,14 @@ async fn plasm_language_matrix_live_runs_impl(base: String) {
 fn lang_wait_cancel_operation_parse() {
     use plasm_core::expr_parser::parse;
     let cgs = language_matrix::load_language_matrix_cgs();
-    let wait = parse("wait(s0_o1)", cgs.as_ref()).expect("wait parse");
+    let wait = parse("wait(l_AAAAAAAAQACAAAAAAAAAAQ_o1)", cgs.as_ref()).expect("wait parse");
     match wait.expr {
-        Expr::Wait(w) => assert_eq!(w.handle.as_str(), "s0_o1"),
+        Expr::Wait(w) => assert_eq!(w.handle.as_str(), "l_AAAAAAAAQACAAAAAAAAAAQ_o1"),
         other => panic!("expected Wait, got {other:?}"),
     }
-    let cancel = parse("cancel(s0_o2)", cgs.as_ref()).expect("cancel parse");
+    let cancel = parse("cancel(l_AAAAAAAAQACAAAAAAAAAAQ_o2)", cgs.as_ref()).expect("cancel parse");
     match cancel.expr {
-        Expr::Cancel(c) => assert_eq!(c.handle.as_str(), "s0_o2"),
+        Expr::Cancel(c) => assert_eq!(c.handle.as_str(), "l_AAAAAAAAQACAAAAAAAAAAQ_o2"),
         other => panic!("expected Cancel, got {other:?}"),
     }
 }

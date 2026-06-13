@@ -10,12 +10,14 @@
 
 use crate::catalog_runtime::CatalogRuntime;
 use crate::discovery_embedding_repository::DiscoveryEmbeddingRepository;
-use crate::execute_session::ExecuteSessionStore;
+use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
+use crate::execute_session::{ExecuteSession, ExecuteSessionStore, SessionReuseKey};
 use crate::incoming_auth::IncomingAuthVerifier;
 use crate::incoming_auth_device::IncomingAuthDeviceStore;
 use crate::local_trace_archive::LocalTraceArchive;
 use crate::mcp_config_repository::McpConfigRepository;
 use crate::mcp_transport_auth::McpTransportAuth;
+use crate::mcp_transport_store::{ExecuteSessionRegistry, LogicalExecuteBindingRegistry};
 use crate::oauth_link_catalog::OauthLinkCatalog;
 use crate::operation_progress::OperationProgressHub;
 use crate::run_artifacts::RunArtifactStore;
@@ -30,10 +32,8 @@ use plasm_discovery::embedding_store::CatalogEmbeddingStore;
 use plasm_discovery::CatalogIndexCache;
 use plasm_plugin_host::PluginManager;
 use plasm_runtime::{EnvSecretProvider, ExecutionEngine, ExecutionMode, SecretProvider};
-use std::collections::HashMap;
 use std::ops::Deref;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use uuid::Uuid;
 
 pub use crate::catalog_runtime::CatalogBootstrap;
@@ -53,7 +53,9 @@ pub struct PlasmOssHostState {
     pub logical_sessions: Arc<LogicalSessionRegistry>,
     /// Latest execute binding per logical session: `logical_session_id` → `(prompt_hash, execute_session_id)`.
     /// Used for MCP `resources/read` on `plasm://session/{uuid}/r/{n}` without relying on transport state.
-    pub logical_execute_bindings: Arc<RwLock<HashMap<Uuid, (String, String)>>>,
+    pub logical_execute_bindings: LogicalExecuteBindingRegistry,
+    /// Durable execute-session descriptors for cross-pod rehydration (`PLASM_MCP_TRANSPORT_REDIS_URL`).
+    pub execute_session_registry: ExecuteSessionRegistry,
     /// Stored execute run snapshots (`GET .../artifacts/:run_id`, MCP `resources/read`). See [`crate::run_artifacts`].
     pub run_artifacts: Arc<RunArtifactStore>,
     /// Optional object-store-backed delta/snapshot persistence for session graph state.
@@ -93,6 +95,8 @@ pub struct PlasmOssHostState {
     pub discovery_embedder: Arc<plasm_discovery::BlockingEmbedder>,
     /// Tenant workflow manifests for MCP Apps (`GET /v1/workflows/:id/view-model`).
     pub workflows: Arc<crate::workflow_registry::WorkflowRegistry>,
+    /// Shared Redis backend for MCP transport + execute session externalization (when configured).
+    pub redis_backend: Option<Arc<crate::mcp_transport_store::RedisBackend>>,
 }
 
 /// Hosted / control-plane state: same process as [`PlasmOssHostState`], but injected after OSS bootstrap.
@@ -199,9 +203,95 @@ impl PlasmHostState {
         prompt_hash: &str,
         session_id: &str,
     ) -> Option<Uuid> {
-        let map = self.oss.logical_execute_bindings.read().await;
-        map.iter()
-            .find(|(_, (ph, sid))| ph.as_str() == prompt_hash && sid.as_str() == session_id)
-            .map(|(u, _)| *u)
+        self.oss
+            .logical_execute_bindings
+            .find_by_execute(prompt_hash, session_id)
+            .await
+    }
+
+    /// Local execute row, then Redis-backed rehydrate when configured.
+    pub async fn get_execute_session(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+    ) -> Option<Arc<ExecuteSession>> {
+        if let Some(sess) = self.sessions.get_by_strs(prompt_hash, session_id).await {
+            return Some(sess);
+        }
+        let desc = self
+            .execute_session_registry
+            .load(prompt_hash, session_id)
+            .await?;
+        match crate::execute_session_rehydrate::rehydrate_execute_session(self, &desc).await {
+            Ok(session) => {
+                crate::metrics::record_execute_rehydrate("ok", "");
+                let reuse_key: SessionReuseKey = desc.reuse_key.into();
+                self.sessions
+                    .insert_rehydrated(
+                        reuse_key,
+                        desc.prompt_hash.clone(),
+                        desc.session_id.clone(),
+                        session,
+                    )
+                    .await;
+                self.sessions.get_by_strs(prompt_hash, session_id).await
+            }
+            Err(err) => {
+                crate::metrics::record_execute_rehydrate("error", rehydrate_error_kind(&err));
+                tracing::warn!(
+                    target: "plasm_agent::execute_session",
+                    prompt_hash = %prompt_hash,
+                    session_id = %session_id,
+                    error = %err,
+                    "execute session rehydrate failed"
+                );
+                None
+            }
+        }
+    }
+
+    /// Insert a new execute session and mirror descriptor to Redis when configured.
+    pub async fn store_execute_session(
+        &self,
+        reuse_key: SessionReuseKey,
+        prompt_hash: String,
+        session_id: String,
+        session: ExecuteSession,
+    ) {
+        self.execute_session_registry
+            .persist(&session, &session_id, &reuse_key)
+            .await;
+        self.sessions
+            .insert(reuse_key, prompt_hash, session_id, session)
+            .await;
+    }
+
+    /// Replace in-memory session payload and refresh Redis descriptor (reuse key preserved when present).
+    pub async fn replace_execute_session(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        session: ExecuteSession,
+    ) {
+        self.execute_session_registry
+            .persist_or_update(&session, session_id)
+            .await;
+        if let (Ok(ph), Ok(sid)) = (
+            prompt_hash.parse::<PromptHashHex>(),
+            session_id.parse::<ExecuteSessionId>(),
+        ) {
+            self.sessions.replace_session(&ph, &sid, session).await;
+        }
+    }
+}
+
+fn rehydrate_error_kind(err: &crate::execute_session_rehydrate::RehydrateError) -> &'static str {
+    use crate::execute_session_rehydrate::RehydrateError;
+    match err {
+        RehydrateError::UnknownEntry(_) => "unknown_entry",
+        RehydrateError::CatalogHashMismatch { .. } => "catalog_hash_mismatch",
+        RehydrateError::DescriptorExpired => "descriptor_expired",
+        RehydrateError::Discovery(_) => "discovery",
+        RehydrateError::PluginGenerationUnavailable { .. } => "plugin_generation_unavailable",
     }
 }

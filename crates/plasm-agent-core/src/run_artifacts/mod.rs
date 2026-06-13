@@ -40,12 +40,12 @@ use plasm_runtime::ExecutionResult;
 use std::path::PathBuf;
 use std::sync::Arc;
 pub use uri::{
-    artifact_http_path, code_plan_handle, code_plan_http_path, parse_code_plan_handle,
-    parse_plasm_execute_plan_uri, parse_plasm_execute_run_uri, parse_plasm_session_short_plan_uri,
-    parse_plasm_session_short_resource_uri, parse_plasm_short_resource_uri,
-    plasm_code_plan_resource_uri, plasm_run_resource_uri, plasm_session_short_plan_uri,
-    plasm_session_short_resource_uri, plasm_short_code_plan_uri, plasm_short_resource_uri,
-    plasm_short_resource_uri_logical, LogicalSessionUriSegment,
+    artifact_http_path, code_plan_handle, code_plan_http_path, logical_uuid_from_uri_segment,
+    parse_code_plan_handle, parse_plasm_execute_plan_uri, parse_plasm_execute_run_uri,
+    parse_plasm_session_short_plan_uri, parse_plasm_session_short_resource_uri,
+    parse_plasm_short_resource_uri, plasm_code_plan_resource_uri, plasm_run_resource_uri,
+    plasm_session_short_plan_uri, plasm_session_short_resource_uri, plasm_short_code_plan_uri,
+    plasm_short_resource_uri, plasm_short_resource_uri_logical, LogicalSessionUriSegment,
 };
 use uuid::Uuid;
 

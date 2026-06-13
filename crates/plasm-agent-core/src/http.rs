@@ -32,6 +32,7 @@ use crate::incoming_auth::incoming_auth_http_middleware;
 use crate::incoming_auth::IncomingAuthVerifier;
 use crate::incoming_auth_device::incoming_auth_device_public_routes;
 use crate::local_trace_archive::LocalTraceArchive;
+use crate::mcp_transport_store::{ExecuteSessionRegistry, LogicalExecuteBindingRegistry};
 use crate::operation_progress::OperationProgressHub;
 use crate::run_artifacts::RunArtifactStore;
 use crate::server_state::{CatalogBootstrap, PlasmHostState, PlasmOssHostState};
@@ -42,9 +43,7 @@ use crate::trace_sink_emit::{EnvTraceIngestClient, TraceIngestClient};
 use plasm_otel::tower_http_trace_parent_span;
 use plasm_plugin_host::PluginManager;
 use reqwest::Client;
-use std::collections::HashMap;
 use std::time::Duration;
-use tokio::sync::RwLock;
 
 fn trace_sink_http_client() -> Client {
     Client::builder()
@@ -118,7 +117,8 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             catalog,
             sessions,
             logical_sessions: Arc::new(LogicalSessionRegistry::new()),
-            logical_execute_bindings: Arc::new(RwLock::new(HashMap::new())),
+            logical_execute_bindings: LogicalExecuteBindingRegistry::new_in_memory(),
+            execute_session_registry: ExecuteSessionRegistry::new_in_memory(),
             run_artifacts,
             session_graph_persistence,
             plugin_manager,
@@ -146,6 +146,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
                 plasm_discovery::embedder::discovery_embed_concurrency(),
             )),
             workflows,
+            redis_backend: None,
         },
         saas: None,
     }
@@ -271,6 +272,9 @@ pub async fn serve_discovery_execute_on_listener_opts(
     if opts.emit_stderr_route_help {
         eprint_http_command_help(port);
     }
+    let state = crate::mcp_transport_store::prepare_host_for_serve(state)
+        .await
+        .map_err(|e| format!("Redis wiring failed: {e}"))?;
     let app = discovery_execute_router(state);
     axum::serve(listener, app).await?;
     Ok(())
@@ -300,9 +304,14 @@ pub async fn serve_discovery_execute_and_mcp_unified(
     if opts.emit_stderr_route_help {
         eprint_http_command_help(port);
     }
+    let state = crate::mcp_transport_store::prepare_host_for_serve(state)
+        .await
+        .map_err(|e| format!("Redis wiring failed: {e}"))?;
     let plasm_arc = std::sync::Arc::new(state.clone());
     let mcp =
-        crate::mcp_server::build_mcp_hyper_server_for_merge(std::sync::Arc::clone(&plasm_arc));
+        crate::mcp_server::build_mcp_hyper_server_for_merge(std::sync::Arc::clone(&plasm_arc))
+            .await
+            .map_err(|e| format!("MCP server bootstrap failed: {e}"))?;
     let mcp_router = mcp.into_router();
     let app = Router::new()
         .merge(discovery_execute_router(state))

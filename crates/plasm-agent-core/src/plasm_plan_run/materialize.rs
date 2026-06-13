@@ -261,7 +261,14 @@ pub(crate) async fn materialize_validated_relation_traversal(
                 crate::plasm_plan::RelationCardinality::One
             ) {
                 materialize_relation_singleton_chain(
-                    st, es, session_id, idx, relation, materialized, trace, sink,
+                    st,
+                    es,
+                    session_id,
+                    idx,
+                    relation,
+                    materialized,
+                    trace,
+                    sink,
                 )
                 .await
             } else {

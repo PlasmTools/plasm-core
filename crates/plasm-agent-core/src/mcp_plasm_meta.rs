@@ -514,7 +514,7 @@ mod tests {
         let paging = [PlasmPagingStepMeta::Next {
             run_step: 1,
             returned_count: 20,
-            next_page_handle: PagingHandle::mint_namespaced("s0", 1),
+            next_page_handle: PagingHandle::mint_namespaced("l_AAAAAAAAQACAAAAAAAAAAQ", 1),
         }];
         let (plasm, _) = idx.build_plasm_meta(
             std::slice::from_ref(&h),
@@ -530,7 +530,10 @@ mod tests {
             .and_then(|v| v.as_array())
             .expect("paging");
         assert_eq!(arr.len(), 1);
-        assert_eq!(arr[0]["next_page_handle"], json!("s0_pg1"));
+        assert_eq!(
+            arr[0]["next_page_handle"],
+            json!("l_AAAAAAAAQACAAAAAAAAAAQ_pg1")
+        );
         assert_eq!(arr[0]["count"], json!(20));
     }
 }

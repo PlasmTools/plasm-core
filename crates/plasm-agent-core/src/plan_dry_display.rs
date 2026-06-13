@@ -11,13 +11,16 @@ use crate::plasm_plan::{
     ValidatedSurfaceNode,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PlanDryVerdict {
     Ok,
     Review,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanDryReview {
     pub has_unprojected_multi_row_read: bool,
     pub has_unbounded_read_root: bool,

@@ -10,10 +10,15 @@ pub async fn handle_wait_operation(
     let key = crate::operation::resolve_operation_storage_handle(trace, handle)?;
     let logical_session_ref = trace
         .and_then(|t| t.logical_session_ref.as_deref())
-        .unwrap_or("s0");
+        .unwrap_or("oN");
+    let hint = if handle.is_plain() {
+        format!("wait({})", key.as_str())
+    } else {
+        format!("wait({logical_session_ref}_oN)")
+    };
     let Some(snapshot) = sess.get_operation_poll_snapshot(&key) else {
         return Err(format!(
-            "unknown operation handle `{}` — stale continuation or wrong logical session; use `wait({logical_session_ref}_oN)` from the latest tool result",
+            "unknown operation handle `{}` — stale continuation or wrong logical session; use `{hint}` from the latest tool result",
             key.as_str()
         ));
     };
@@ -68,16 +73,13 @@ pub async fn handle_wait_operation(
     }
 }
 
-/// Cancel an in-flight async plan operation (`cancel(sN_oM)`).
+/// Cancel an in-flight async plan operation (`cancel(l_<token>_oM)` or plain `cancel(oM)` on HTTP).
 pub async fn handle_cancel_operation(
     sess: &ExecuteSession,
     trace: Option<&PlasmTraceContext>,
     handle: &plasm_core::OperationHandle,
 ) -> Result<crate::plasm_plan_run::PlasmPlanRunResult, String> {
     let key = crate::operation::resolve_operation_storage_handle(trace, handle)?;
-    let _logical_session_ref = trace
-        .and_then(|t| t.logical_session_ref.as_deref())
-        .unwrap_or("s0");
     if !sess.cancel_operation(&key, None) {
         return Err(format!("unknown operation handle `{}`", key.as_str()));
     }
@@ -110,14 +112,14 @@ pub async fn handle_cancel_operation(
     })
 }
 
-/// Default logical-session slot for HTTP execute long-op handles (`s0_oN`) when no MCP `plasm_context`.
+/// Default trace for HTTP execute long-op handles (plain `oN`) when no MCP `plasm_context`.
 pub(crate) fn http_operation_trace() -> crate::trace_sink_emit::PlasmTraceContext {
     crate::trace_sink_emit::PlasmTraceContext {
         trace_id: Uuid::nil(),
         call_index: None,
         mcp_session_id: None,
         logical_session_id: None,
-        logical_session_ref: Some("s0".into()),
+        logical_session_ref: None,
     }
 }
 

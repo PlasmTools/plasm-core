@@ -11,6 +11,7 @@
 //!   and reconnect **hydration** without relying on this connection’s RAM.
 //! - **`McpTransportState::logical_by_id`** ([`crate::mcp_server`]) — **per MCP transport**
 //!   (`MCP-Session-Id`) cache for binding + stats + `_meta.plasm` index; **not** the minting authority.
+//!   Logical session continuity uses stateless **`l_<token>`** wire refs ([`crate::mcp_logical_ref`]), not transport slots.
 //!
 //! Used for idempotent `plasm_context` and for correlating MCP tools with a single execute
 //! session without relying on MCP transport session ids. Durable cross-replica storage is a future

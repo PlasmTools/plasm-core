@@ -181,6 +181,9 @@ pub async fn run_mcp_main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
     let host = endpoint.host.clone();
+    let app_state = plasm_agent_core::mcp_transport_store::prepare_host_for_serve(app_state)
+        .await
+        .map_err(|e| std::io::Error::other(format!("Redis wiring: {e}")))?;
     tokio::select! {
         _ = shutdown_signal() => {
             eprintln!("plasm-mcp: shutting down");

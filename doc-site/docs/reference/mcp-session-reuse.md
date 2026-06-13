@@ -9,10 +9,10 @@ See also: [MCP logical sessions](mcp-logical-sessions.md), [incremental teaching
 0. **`discover_capabilities`** (optional): **one call per user goal** with a single **`intent`** string describing the whole task — not one discover per API or keyword list. Merge table rows into one **`plasm_context`** **`seeds`** array; retry discover only if required entities are missing.
 
 1. **`plasm_context`** with **`intent`** and non-empty **`seeds`**
-  - The server is **idempotent** on `(tenant_scope, intent)`: the same string yields the same canonical **`logical_session_id`** and the same per-transport **`logical_session_ref`** (e.g. `s0`).
+  - The server is **idempotent** on `(tenant_scope, intent)`: the same string yields the same canonical **`logical_session_id`** and the same **`logical_session_ref`** wire handle (e.g. `l_AAAAAAAAQACAAAAAAAAAAQ` for UUID `00000000-0000-4000-8000-000000000001`).
   - If a live execute session is already bound for that logical id, the server **expands** or **federates** into that session (no fresh-open path).
-  - **First open** (new execute row): `` `{sN}` `` + optional stale-binding notice + fenced **full** teaching TSV only — no entity-count or char accounting in the body.
-  - **Expand** (new entities on an existing binding): `` `{sN}` `` + fenced **delta** TSV only.
+  - **First open** (new execute row): `` `{l_<token>}` `` + optional stale-binding notice + fenced **full** teaching TSV only — no entity-count or char accounting in the body.
+  - **Expand** (new entities on an existing binding): `` `{l_<token>}` `` + fenced **delta** TSV only.
   - **Duplicate seeds (already exposed):** if the request does not add new entity picks, the server returns **one line** only:
     ```text
     _Session unchanged (`e1`…`eN`). Use `plasm` / `plasm_run` with this logical_session_ref._

@@ -25,8 +25,8 @@ Every tool-model response includes an `execute` object describing **host-only** 
 | Field | Meaning |
 |-------|---------|
 | `summary` | Continuations are host-minted handles — not vendor API cursors or job ids. |
-| `pagination` | MCP: `page(s0_pgN)` from tool results. HTTP-only execute: plain `page(pgN)` when no MCP logical session. |
-| `long_operations` | Async plan runs: `wait=false` or review auto-async → compact op lines (`+` accept · `~` running · `=` unchanged · `!` done). Poll `wait(sN_oM)` every few seconds; optional `GET …/operations/{handle}/stream` SSE or MCP `notifications/plasm/op`. HTTP without `plasm_context` uses synthetic slot **`s0`** (`s0_oN`). |
+| `pagination` | MCP: `page(l_<token>_pgN)` from tool results. HTTP-only execute: plain `page(pgN)` when no MCP logical session. |
+| `long_operations` | Async plan runs: `wait=false` or review auto-async → compact op lines (`+` accept · `~` running · `=` unchanged · `!` done). Poll `wait(l_<token>_oM)` (MCP) or `wait(oM)` (HTTP) every few seconds; optional `GET …/operations/{handle}/stream` SSE or MCP `notifications/plasm/op`. |
 | `review_gate` | Dry verdict **review** requires `plan_commit_ref` (`pcN`) from matching plan dry-run or `force=true`. Commit ids hash semantic plan DAG only. |
 
 Full workflow: [plasm-long-operations.md](plasm-long-operations.md). Surface grammar: [plasm-language-definition.md](plasm-language-definition.md#host-continuations-page-wait-cancel). Teaching TSV preamble (first wave): [incremental-teaching-prompts.md](incremental-teaching-prompts.md).
@@ -40,7 +40,7 @@ Tool-model describes **what** agents can express; **`POST /execute/:prompt_hash/
 | Query / body | Role |
 |--------------|------|
 | `mode=plan` | Plan dry-run; mints `plan_commit_ref` in `_meta.plasm`. |
-| `wait=false` | Background live execute; accept response includes `wait(s0_oN)` (HTTP `s0` slot). |
+| `wait=false` | Background live execute; accept response includes `wait(oN)` (HTTP plain handle). |
 | `force=true` | Bypass review soft gate. |
 | `plan_commit_ref=pcN` | Accept matching dry-run plan after **review** verdict. |
 

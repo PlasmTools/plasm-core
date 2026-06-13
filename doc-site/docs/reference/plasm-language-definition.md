@@ -1,8 +1,82 @@
 # Plasm language definition
 
-This document is the **canonical specification** of the user-facing Plasm surface language: path expressions, multi-line programs (bindings, postfix transforms, roots), structured values and heredocs, row-to-text templates, and the **CGS load-time rules** for structured capability inputs. It aligns with the reference implementation in **`plasm_core::expr_parser`** and with program lowering in **`plasm-agent-core`** (Plan/DAG).
+This document is the **canonical specification** of the user-facing Plasm surface language: path expressions, multi-line programs (bindings, postfix transforms, roots), structured values and heredocs, row-to-text templates, and the **CGS load-time rules** for structured capability inputs. It aligns with the reference implementation in **`plasm_core::expr_parser`** and with program lowering to **`PlasmComp`** ([`compile_plasm_program`](../plasm-oss/crates/plasm-agent-core/src/plasm_dag.rs)).
 
 For API authoring (YAML catalogs, transport), use the OSS documentation **Connect an API → Reference**, or in the Plasm monorepo the skill file `plasm-oss/skills/plasm-authoring/reference.md` (repository root–relative).
+
+---
+
+## Monadic execution contract (`PlasmComp`)
+
+Plasm programs compile to a single canonical artifact: **`PlasmComp`** (`plasm_core::plasm_monad`). There is no separate “Plan DAG” user language — the comp **is** the execution contract.
+
+### Bind semantics
+
+Each surface binding `label = rhs` is **`bind`** over the prior comp:
+
+```text
+issues = e1{status="open"}     -- bind: Invoke (read)
+labels = issues.r2             -- bind: FlatMapRelation (>>=)
+summary = labels[title, color] -- bind: Map (project)
+summary                          -- return
+```
+
+Operators (formal):
+
+```text
+pure  : T -> Plasm<T>
+bind  : Plasm<A> -> (A -> Plasm<B>) -> Plasm<B>
+```
+
+Parallel final roots (`a, b`) are an **applicative product** at return — not nested `bind`.
+
+### Wire shape (MCP / HTTP `_meta.plasm`)
+
+Greenfield consumers read **`comp`** only:
+
+```json
+{
+  "comp": {
+    "version": 1,
+    "steps": { "issues": { "kind": "invoke", "operation": "…" } },
+    "bind": { "topo": ["issues", "labels"], "deps": {}, "primary": {}, "holes": {} },
+    "return": { "kind": "step", "step": "summary" }
+  },
+  "plan_ux_reflection": { … },
+  "plan_commit_ref": "pc1"
+}
+```
+
+`bind.topo` is the phased runner order. **`bind.primary`** witnesses the monadic predecessor for each step. Plan commit ids hash the semantic subset: `version`, `steps`, `bind`, `return`.
+
+### Typed step payloads (`PlasmStepPayload`)
+
+Each entry in `comp.steps` is a tagged serde object (`kind` discriminant). Wire and runner share one schema — no untyped JSON step blobs:
+
+| `kind` | Role | Key fields |
+|--------|------|------------|
+| `invoke` | Read / action / view surface | `plan_kind`, `qualified_entity`, `ir` **xor** `ir_template`, `projection`, `predicates`, `page_size`, `approval` |
+| `pure` | Literal / artifact data | `data` (`PlasmDataValue`) |
+| `map` | Row compute (filter, sort, group, …) | `compute` (`ComputeTemplate`) |
+| `derive` | Per-row map over a source | `derive` (`DeriveTemplate`: `source`, `item_binding`, `inputs`, `value`) |
+| `flat_map_relation` | Relation fanout (`>>=`) | `relation` (`PlanRelationTraversal`: `source`, `relation`, `target`, `ir`, `binding_proofs`, `materialize`) |
+| `flat_map_effect` | `for_each` side effects | `source`, `item_binding`, `effect_template`, `projection`, `predicates`, `approval` |
+
+Input wiring for templates uses **`bind.holes`** (prior step outputs); row sources for map/derive/relation/effect use **`bind.primary`**. TypeScript mirror: [`apps/plan-dag/src/comp-types.ts`](../apps/plan-dag/src/comp-types.ts).
+
+**Evidence chain:** when `PLASM_EVIDENCE_CHAIN=1`, dry-run `plan_commit_id` is recorded in a hash-chained bundle through live execution; see [plasm-evidence-bundles.md](plasm-evidence-bundles.md).
+
+### Monad laws (testable)
+
+- Left identity: `pure(a).bind(f) == f(a)`
+- Right identity: `m.bind(pure) == m`
+- Associativity: `m.bind(f).bind(g) == m.bind(a -> f(a).bind(g))`
+
+Equality is same typed result and observable semantics — not byte-identical trace logs.
+
+Writes / `for_each` / side effects are **bind-ordered** and not freely reassociable. See `comp_equivalent` / `EffectBarrier` in `plasm_core::plasm_monad`.
+
+Implementation: [`plasm_monad/`](../plasm-oss/crates/plasm-core/src/plasm_monad/), compile via [`compile_plasm_program`](../plasm-oss/crates/plasm-agent-core/src/plasm_dag.rs).
 
 ---
 
@@ -39,7 +113,7 @@ An expression that denotes a value denotes the **same value** wherever that type
 2. **Symbolic ≡ wire:** after session `p#`/`m#` expansion (with `e#` opaque), compound keys normalize to the same `Value::Object`.
 3. **Position independence:** if `e3(p5=x, p13=y)` parses as a get binding, the same surface must parse in brace predicates and method args.
 
-Implementation: unified entity constructor head resolution in [`entity_ref_parse.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/entity_ref_parse.rs).
+Implementation: unified entity constructor head resolution in [`entity_ref_parse.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/entity_ref_parse.rs).
 
 ---
 
@@ -102,7 +176,7 @@ Three **disjoint** binding forms:
 | Derive map | `cards = rows => { t: _.title }` | `Derive` (`value_or_template` only) |
 | for_each effect | `sync = rows => e1(…).update(…)` | `ForEach` (writes; `_` row cursor) |
 
-**Plural parent → many-relation:** when `issues` is a list binding, `labels = issues.r2` (or `issues.labels`) executes the child relation **once per parent row** (`source_cardinality: many` in the plan). Opaque `r#` segments resolve through the session symbol map to the catalog relation wire before lowering. Pagination applies to the **parent** query (`page(sN_pgM)`), then relation fanout runs on that page’s rows.
+**Plural parent → many-relation:** when `issues` is a list binding, `labels = issues.r2` (or `issues.labels`) executes the child relation **once per parent row** (`source_cardinality: many` in the plan). Opaque `r#` segments resolve through the session symbol map to the catalog relation wire before lowering. Pagination applies to the **parent** query (`page(l_<token>_pgM)` on MCP, `page(pgM)` on HTTP-only execute), then relation fanout runs on that page’s rows.
 
 **teaching vs grammar:** Meaning-column text such as `relation e3 → e2` in the teaching TSV is **pedagogy only** (relation target gloss, not program syntax). Executable navigation is `receiver.r#`, `binding.r#`, or the declared wire name (`binding.labels`), never `binding => Entity(…)`.
 
@@ -122,19 +196,19 @@ These are **host-only** surface expressions — not CGS entity operations. The p
 
 | Expression | Handle shape | Purpose |
 |------------|--------------|---------|
-| `page(s0_pgN)` | `sN_pgM` (MCP) or `pgM` (HTTP-only paging) | Resume paginated query batch |
-| `wait(s0_oN)` | `sN_oM` | Poll in-flight async plan run |
-| `cancel(s0_oN)` | `sN_oM` | Cooperative cancel of that operation |
+| `page(l_<token>_pgN)` | `l_<token>_pgM` (MCP) or `pgM` (HTTP-only paging) | Resume paginated query batch |
+| `wait(l_<token>_oN)` / `wait(oN)` | `l_<token>_oM` (MCP) or `oM` (HTTP) | Poll in-flight async plan run |
+| `cancel(…)` | same as wait handle | Cooperative cancel of that operation |
 
-**MCP:** handles are namespaced with the logical session ref from `plasm_context` (`s0_o1`, `s0_pg2`, …).
+**MCP:** handles are namespaced with the stateless wire ref from `plasm_context` (`l_<token>_o1`, `l_<token>_pg2`, …). Legacy transport slots (`s0`, …) are rejected.
 
-**HTTP execute:** when no MCP logical session exists, long-op handles use synthetic session slot **`s0`** (`s0_o1`, …) on the same execute session.
+**HTTP execute:** long-op and paging handles are plain **`oN`** / **`pgN`** on the same execute session row.
 
-**Async plan runs:** start live execute with `wait: false` (MCP `plasm_run` arg or HTTP `?wait=false`). The accept response includes `wait(s0_oN)` in Markdown and `_meta.plasm.operation`. Poll with `wait(…)`; cancel with `cancel(…)`.
+**Async plan runs:** start live execute with `wait: false` (MCP `plasm_run` arg or HTTP `?wait=false`). The accept response includes `wait(…)` in Markdown and `_meta.plasm.operation`. Poll with `wait(…)`; cancel with `cancel(…)`.
 
 **Review gate:** plans with dry verdict **review** require **`plan_commit_ref`** (`pcN`) from a matching plan dry-run or **`force: true`** before live execute. Commit ids hash the **semantic plan DAG** (`version`, `nodes`, `edges`, `topological_order`, `returns`) — not session-local plan names or dry-run summary metadata. See [plasm-long-operations.md](plasm-long-operations.md).
 
-IR types: [`PageExpr`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr.rs), [`WaitExpr`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr.rs), [`CancelExpr`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr.rs).
+IR types: [`PageExpr`](../plasm-oss/crates/plasm-core/src/expr.rs), [`WaitExpr`](../plasm-oss/crates/plasm-core/src/expr.rs), [`CancelExpr`](../plasm-oss/crates/plasm-core/src/expr.rs).
 
 ---
 
@@ -144,16 +218,16 @@ Surface scanning lives in **`plasm-oss/crates/plasm-core/src/expr_parser/`**:
 
 | Module | Responsibility |
 |--------|----------------|
-| [`heredoc_surface.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/heredoc_surface.rs) | Tagged `<<TAG …` open/close detection shared by values, postfix render tails, and multi-line program staging. |
-| [`program_surface.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/program_surface.rs) | Physical-line merging across heredocs (`collect_program_statement_lines`), `;;` stripping, top-level comma/`=>` splitting (`split_top_level`, `split_token_top_level`), binding `=` splitting (`split_assignment_at_top_level` / `split_assignment_for_binding`), program label validation. |
-| [`predicate_surface.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/predicate_surface.rs) | Query `{…}` predicate list: same comma splitting as `split_top_level`, plus quote/heredoc-aware comparison-operator scan for [`expr_correction`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_correction/mod.rs) (no duplicate lexer). |
-| [`program.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/program.rs) | Optional shape AST: bindings + postfix-peeled primaries (`parse_program_shape`). Does not attach CGS typing. |
-| [`postfix.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/postfix.rs) | Postfix peel (`.limit`, `.sort`, `[projection]`, row-to-text `<<TAG`). |
-| [`mod.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/mod.rs) (path parser) | CGS-aware **path expression** → [`Expr`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr.rs) + optional trailing `[projection]`. |
-| [`entity_ref_parse.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/entity_ref_parse.rs) | Session `e#` + wire entity constructor head resolution (referential transparency across value positions). |
-| [`value.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/value.rs) | Scalar/collection literals, strict vs lenient RHS, structured heredocs, `PlasmInputRef` holes when program context is enabled. |
+| [`heredoc_surface.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/heredoc_surface.rs) | Tagged `<<TAG …` open/close detection shared by values, postfix render tails, and multi-line program staging. |
+| [`program_surface.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/program_surface.rs) | Physical-line merging across heredocs (`collect_program_statement_lines`), `;;` stripping, top-level comma/`=>` splitting (`split_top_level`, `split_token_top_level`), binding `=` splitting (`split_assignment_at_top_level` / `split_assignment_for_binding`), program label validation. |
+| [`predicate_surface.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/predicate_surface.rs) | Query `{…}` predicate list: same comma splitting as `split_top_level`, plus quote/heredoc-aware comparison-operator scan for [`expr_correction`](../plasm-oss/crates/plasm-core/src/expr_correction/mod.rs) (no duplicate lexer). |
+| [`program.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/program.rs) | Optional shape AST: bindings + postfix-peeled primaries (`parse_program_shape`). Does not attach CGS typing. |
+| [`postfix.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/postfix.rs) | Postfix peel (`.limit`, `.sort`, `[projection]`, row-to-text `<<TAG`). |
+| [`mod.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/mod.rs) (path parser) | CGS-aware **path expression** → [`Expr`](../plasm-oss/crates/plasm-core/src/expr.rs) + optional trailing `[projection]`. |
+| [`entity_ref_parse.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/entity_ref_parse.rs) | Session `e#` + wire entity constructor head resolution (referential transparency across value positions). |
+| [`value.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/value.rs) | Scalar/collection literals, strict vs lenient RHS, structured heredocs, `PlasmInputRef` holes when program context is enabled. |
 
-Multi-line **program → Plan/DAG** lowering remains in [**`plasm_dag.rs`**](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-agent-core/src/plasm_dag.rs), which calls **`program_surface`** and **`postfix`**, then [`parse_with_cgs_layers_program`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/mod.rs) on each session-expanded primary.
+Multi-line **program → Plan/DAG** lowering remains in [**`plasm_dag.rs`**](../plasm-oss/crates/plasm-agent-core/src/plasm_dag.rs), which calls **`program_surface`** and **`postfix`**, then [`parse_with_cgs_layers_program`](../plasm-oss/crates/plasm-core/src/expr_parser/mod.rs) on each session-expanded primary.
 
 **Lenient single-expression parse:** `expr_parser::parse` reads **one** path expression from the start of a string and **ignores trailing non-whitespace** (noisy LLM paste tolerance). Whole-program compilation uses **statement-collected lines** and does not apply that tail-ignore rule to binding/root lines.
 
@@ -181,7 +255,7 @@ TAG           = IDENT_START , { IDENT_CONT } ;
 
 ### Tagged structured heredoc (formal shell)
 
-Opener/close rules are implemented in [`heredoc_surface.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/heredoc_surface.rs). **Operational discipline** for choosing `TAG` (collision-safe payloads) is under [Tagged heredocs and tag collision](#tagged-heredocs-and-tag-collision) below.
+Opener/close rules are implemented in [`heredoc_surface.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/heredoc_surface.rs). **Operational discipline** for choosing `TAG` (collision-safe payloads) is under [Tagged heredocs and tag collision](#tagged-heredocs-and-tag-collision) below.
 
 ```ebnf
 HEREDOC_OPEN_LINE  = "<<" , TAG , { WS_CHAR } , NEWLINE ;
@@ -193,7 +267,7 @@ STRUCTURED_HEREDOC = HEREDOC_OPEN_LINE , HEREDOC_BODY , HEREDOC_CLOSE_LINE ;
 
 ### Program shape (multi-line)
 
-Logical statements come from [`collect_program_statement_lines`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/program_surface.rs) (heredocs may span physical lines).
+Logical statements come from [`collect_program_statement_lines`](../plasm-oss/crates/plasm-core/src/expr_parser/program_surface.rs) (heredocs may span physical lines).
 
 ```ebnf
 PROGRAM       = { STATEMENT } , ROOTS_LINE ;
@@ -209,7 +283,7 @@ Binding lines use `split_assignment_at_top_level` then **`validate_program_label
 
 ### Postfix chain (per `RHS` fragment)
 
-After [`peel_postfix_suffixes`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/postfix.rs), surface postfix applies **inner-to-outer** per the [chaining order](#chaining-order) invariant.
+After [`peel_postfix_suffixes`](../plasm-oss/crates/plasm-core/src/expr_parser/postfix.rs), surface postfix applies **inner-to-outer** per the [chaining order](#chaining-order) invariant.
 
 ```ebnf
 POSTFIX_OP    = "singleton"
@@ -223,11 +297,11 @@ POSTFIX_OP    = "singleton"
 FIELD_LIST    = IDENT , { "," , IDENT } ;
 ```
 
-**Row-to-text:** optional render tail after the postfix head — `… [ fields ]? <<TAG …`; see [`try_parse_render_tail`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/postfix.rs) and [Row-to-Text Templates](#row-to-text-templates-content-and-minijinja).
+**Row-to-text:** optional render tail after the postfix head — `… [ fields ]? <<TAG …`; see [`try_parse_render_tail`](../plasm-oss/crates/plasm-core/src/expr_parser/postfix.rs) and [Row-to-Text Templates](#row-to-text-templates-content-and-minijinja).
 
 ### Path expression (CGS-aware)
 
-Abbreviated from [`expr_parser/mod.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/mod.rs).
+Abbreviated from [`expr_parser/mod.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/mod.rs).
 
 ```ebnf
 EXPR          = SOURCE , { PIPE_SEGMENT } , [ "[" , FIELD_LIST , "]" ] ;
@@ -259,17 +333,17 @@ VALUE         = QUOTED_STRING | STRUCTURED_HEREDOC | UUID | NUMBER | BARE_WORD
 - If it is **`InputType::Union`** (a *root* tagged union), the parentheses may contain **either** a full **`DOTTED_ARG_LIST`** (including a wire-style object with the variant discriminator field, when applicable) **or** exactly one **`UNION_CTOR_PAYLOAD`**: `v` + ASCII digits + `{` … `}` matching a variant’s `constructor_symbol` and body fields.
 - **Mixed forms are rejected** (e.g. `method(v111{…}, p2=$)`): `UNION_CTOR_PAYLOAD` must be the sole contents of `( … )` for that overload.
 
-**Lowering:** a sole `UNION_CTOR_PAYLOAD` is stored on the invoke IR as raw [`Value::UnionCtor`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/value.rs) inside [`InvokeInputPayload`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/typed_invoke.rs) (deserialized as `InvokeInputPayload::Raw`). The runtime lifts it with the capability `input_schema` into wire JSON (discriminator merged per variant `wire`) before CML template evaluation — same path as nested union rows inside object bodies.
+**Lowering:** a sole `UNION_CTOR_PAYLOAD` is stored on the invoke IR as raw [`Value::UnionCtor`](../plasm-oss/crates/plasm-core/src/value.rs) inside [`InvokeInputPayload`](../plasm-oss/crates/plasm-core/src/typed_invoke.rs) (deserialized as `InvokeInputPayload::Raw`). The runtime lifts it with the capability `input_schema` into wire JSON (discriminator merged per variant `wire`) before CML template evaluation — same path as nested union rows inside object bodies.
 
-**Context sensitivity:** classification into field navigation vs invoke vs zero-arity depends on **`CGS`**. Federation uses [`parse_with_cgs_layers_program`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/mod.rs) with the session [`SymbolMap`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/symbol_tuning.rs).
+**Context sensitivity:** classification into field navigation vs invoke vs zero-arity depends on **`CGS`**. Federation uses [`parse_with_cgs_layers_program`](../plasm-oss/crates/plasm-core/src/expr_parser/mod.rs) with the session [`SymbolMap`](../plasm-oss/crates/plasm-core/src/symbol_tuning.rs).
 
-**Predicate lists (`Entity{ … }`):** comma-separated clauses use [`split_top_level`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/program_surface.rs) (`()`, `[]`, `{}`, quotes, tagged heredocs). Within each clause, the first top-level comparison operator (`!=`, `>=`, `<=`, `=`, `~`, `>`, `<`) is located with the same nesting rules — see [`predicate_surface.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/predicate_surface.rs). [`try_auto_correct`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_correction/auto_correct.rs) delegates to that module so correction never runs a parallel comma/`=` scanner.
+**Predicate lists (`Entity{ … }`):** comma-separated clauses use [`split_top_level`](../plasm-oss/crates/plasm-core/src/expr_parser/program_surface.rs) (`()`, `[]`, `{}`, quotes, tagged heredocs). Within each clause, the first top-level comparison operator (`!=`, `>=`, `<=`, `=`, `~`, `>`, `<`) is located with the same nesting rules — see [`predicate_surface.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/predicate_surface.rs). [`try_auto_correct`](../plasm-oss/crates/plasm-core/src/expr_correction/auto_correct.rs) delegates to that module so correction never runs a parallel comma/`=` scanner.
 
 ---
 
 ## Tagged heredocs and tag collision
 
-Structured string values may use **tagged heredocs** (`<<TAG` … closing line `TAG` / `TAG)` / `TAG})` / …), implemented in `plasm_core::expr_parser` ([`value.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/value.rs), shared close rules in [`heredoc_surface.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr_parser/heredoc_surface.rs)). The close delimiter is recognized on the **first** line (after the opener) whose **trimmed** content equals `TAG` or `TAG` followed by optional ASCII space and a parser-owned delimiter tail containing only `)`, `]`, `}`, and/or `,` on the same line. The heredoc scanner closes the string at `TAG`; the enclosing parser then consumes and validates the suffix delimiters. There is no “last closing tag wins” scan.
+Structured string values may use **tagged heredocs** (`<<TAG` … closing line `TAG` / `TAG)` / `TAG})` / …), implemented in `plasm_core::expr_parser` ([`value.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/value.rs), shared close rules in [`heredoc_surface.rs`](../plasm-oss/crates/plasm-core/src/expr_parser/heredoc_surface.rs)). The close delimiter is recognized on the **first** line (after the opener) whose **trimmed** content equals `TAG` or `TAG` followed by optional ASCII space and a parser-owned delimiter tail containing only `)`, `]`, `}`, and/or `,` on the same line. The heredoc scanner closes the string at `TAG`; the enclosing parser then consumes and validates the suffix delimiters. There is no “last closing tag wins” scan.
 
 **Unified object-expression rule:** heredocs are **value atoms**, not statement terminators. Program staging must keep accumulating physical lines until the heredoc is closed **and** the enclosing expression delimiters balance. This makes direct arguments and nested object/union payloads equivalent:
 
@@ -320,7 +394,7 @@ Not a complete Lean formalisation; judgement forms intended to be mechanisable (
 - **`Catalog`** — loaded CGS slice(s) + mappings metadata (entities, fields, capabilities, parameter slots).
 - **`Γ`** — program environment: labels → node / value types.
 - **`Value`** — literals + structured objects + **`Hole`** (`PlasmInputRef`).
-- **`Expr`** — path IR ([`Expr`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr.rs)).
+- **`Expr`** — path IR ([`Expr`](../plasm-oss/crates/plasm-core/src/expr.rs)).
 - **`Plan`** — lowered DAG (opaque; host-defined).
 
 ### Representative judgements
@@ -394,24 +468,24 @@ Plan relation nodes may carry serialized `binding_proofs` (param ← parent fiel
 - **Entity fields** (`FieldSchema`) always use `value_ref` → a row in top-level `values:`.
 - **Capability object parameters** (`parameters:` entries) use **exactly one** of:
   - `value_ref` → `values:` (registry), or
-  - `input_type` → inline structural [`InputType`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema.rs) (object / array / union / value / none).
+  - `input_type` → inline structural [`InputType`](../plasm-oss/crates/plasm-core/src/schema.rs) (object / array / union / value / none).
 - **`input_schema.input_type.fields`** use the same XOR: each field is either registry-backed (`value_ref`) or structural (`input_type`). When both `parameters` and `input_schema` are present, loader-merged object fields must not duplicate names.
 
 Structural inline fields are **not** `values:` slots; registry-only consumers may skip them when a `NamedValueSchema` is required.
 
 ### Tagged unions (`InputType::Union`)
 
-- Each variant has **`wire`** (`field` + `value`) — the **discriminator** merged into HTTP/CML JSON when lowering ([`TypedInvokeInput::Union`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/typed_invoke.rs)).
+- Each variant has **`wire`** (`field` + `value`) — the **discriminator** merged into HTTP/CML JSON when lowering ([`TypedInvokeInput::Union`](../plasm-oss/crates/plasm-core/src/typed_invoke.rs)).
 - **Surface typing** matches the variant **body** only (no discriminator in the Plasm value before lowering).
 - **Lifting** tries each variant’s body shape in order until one matches.
-- When the union is the **root** `input_schema.input_type` of an invoke/update/create dotted call, the surface may use a **`UNION_CTOR_PAYLOAD`** as the entire parenthesized argument list (see [`METHOD_ARGS` above](#path-expression-cgs-aware)); the parser records [`Value::UnionCtor`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/value.rs) with `constructor_symbol` matching the variant.
+- When the union is the **root** `input_schema.input_type` of an invoke/update/create dotted call, the surface may use a **`UNION_CTOR_PAYLOAD`** as the entire parenthesized argument list (see [`METHOD_ARGS` above](#path-expression-cgs-aware)); the parser records [`Value::UnionCtor`](../plasm-oss/crates/plasm-core/src/value.rs) with `constructor_symbol` matching the variant.
 
 ### Surface constructor literals (`v` + digits + `{…}`)
 
-A token **`v`** plus ASCII digits plus a braced map parses as a **union constructor literal** [`Value::UnionCtor`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/value.rs) when it appears in value positions that accept constructors (including **`UNION_CTOR_PAYLOAD`** in method calls, and **standalone** teaching rows as [`Expr::TeachingValue`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/expr.rs)). Digits align with teaching table `constructor_symbol` mnemonics; the type checker ties them to `InputType::Union` variants in scope.
+A token **`v`** plus ASCII digits plus a braced map parses as a **union constructor literal** [`Value::UnionCtor`](../plasm-oss/crates/plasm-core/src/value.rs) when it appears in value positions that accept constructors (including **`UNION_CTOR_PAYLOAD`** in method calls, and **standalone** teaching rows as [`Expr::TeachingValue`](../plasm-oss/crates/plasm-core/src/expr.rs)). Digits align with teaching table `constructor_symbol` mnemonics; the type checker ties them to `InputType::Union` variants in scope.
 
 ---
 
 ## Proof catalog
 
-[`apis/proof/`](https://github.com/PlasmTools/plasm-core/tree/main/apis/proof/) ships split **`domain.yaml`** + **`mappings.yaml`**. See [`apis/proof/README.md`](https://github.com/PlasmTools/plasm-core/tree/main/apis/proof/README.md) for regeneration and exploration.
+[`apis/proof/`](../apis/proof/) ships split **`domain.yaml`** + **`mappings.yaml`**. See [`apis/proof/README.md`](../apis/proof/README.md) for regeneration and exploration.

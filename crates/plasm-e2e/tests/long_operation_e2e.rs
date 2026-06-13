@@ -107,7 +107,7 @@ async fn long_operation_dual_surface_e2e_async() {
             .await
             .expect("async accept");
         assert!(started.elapsed() < Duration::from_secs(1));
-        assert_async_accept(&body, "s0_o");
+        assert_async_accept(&body, surface.async_handle_prefix());
         fixture.cleanup().await;
     }
 
@@ -240,8 +240,12 @@ async fn long_operation_dual_surface_e2e_async() {
     }
 
     for surface in [Surface::Http, Surface::Mcp] {
+        let stale = match surface {
+            Surface::Http => "wait(o999)".to_string(),
+            Surface::Mcp => format!("wait({}_o999)", fixture.logical_session_ref),
+        };
         let err = fixture
-            .run_program(surface, "wait(s0_o999)", RunOpts::default())
+            .run_program(surface, &stale, RunOpts::default())
             .await
             .expect_err("stale handle");
         assert!(
@@ -282,7 +286,7 @@ async fn long_operation_dual_surface_e2e_async() {
             )
             .await
             .expect("review plan_commit_ref auto-async accept");
-        assert_async_accept(&body, &fixture.logical_session_ref);
+        assert_async_accept(&body, surface.async_handle_prefix());
         assert_eq!(
             body.get("_meta")
                 .and_then(|m| m.get("plasm"))

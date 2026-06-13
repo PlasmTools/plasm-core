@@ -1738,7 +1738,10 @@ pub(crate) fn dry_validate_render_nodes(
         let ValidatedPlanNode::Compute(c) = n else {
             continue;
         };
-        let ComputeOp::Render { columns, template, .. } = &c.compute.op else {
+        let ComputeOp::Render {
+            columns, template, ..
+        } = &c.compute.op
+        else {
             continue;
         };
         let qe = dry_render_source_qualified_entity(&nodes, c.compute.source.clone())?;
@@ -1755,11 +1758,7 @@ pub(crate) fn dry_validate_render_nodes(
             ent.id_field.as_str().to_string(),
             serde_json::Value::String("dry-placeholder".into()),
         );
-        render_compute(
-            &[serde_json::Value::Object(row)],
-            columns,
-            template,
-        )?;
+        render_compute(&[serde_json::Value::Object(row)], columns, template)?;
     }
     Ok(())
 }

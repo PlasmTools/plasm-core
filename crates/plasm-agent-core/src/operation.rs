@@ -1,4 +1,4 @@
-//! Long-running async plan operations (`s0_oN`) and dry-run plan commit tokens (`pcN`).
+//! Long-running async plan operations (`l_<token>_oN` MCP / plain `oN` HTTP) and dry-run plan commit tokens (`pcN`).
 
 use crate::execute_session::ExecuteSession;
 use crate::operation_progress::{
@@ -510,22 +510,22 @@ pub fn plan_commit_meta(
     plasm
 }
 
-/// Resolve operation handle namespace for MCP (`sN_oM`) vs HTTP (`oM` only — rejected for MCP).
+/// Resolve operation handle namespace for MCP (`l_<token>_oM`) vs HTTP (`oM` only).
 pub fn resolve_operation_storage_handle(
     trace: Option<&crate::trace_sink_emit::PlasmTraceContext>,
     handle: &OperationHandle,
 ) -> Result<OperationHandle, String> {
     let s = handle.as_str();
-    let mcp_slot = trace.and_then(|t| t.logical_session_ref.as_deref());
-    let is_ns = handle.logical_session_ref().is_some();
-    match (mcp_slot, is_ns) {
+    let mcp_ref = trace.and_then(|t| t.logical_session_ref.as_deref());
+    let is_ns = handle.is_logical_namespaced();
+    match (mcp_ref, is_ns) {
         (Some(r), true) => {
             let slot = handle
                 .logical_session_ref()
                 .ok_or_else(|| format!("invalid namespaced operation handle `{s}`"))?;
             if slot != r {
                 return Err(format!(
-                    "operation handle slot `{slot}` does not match current logical_session_ref `{r}`"
+                    "operation handle ref `{slot}` does not match current logical_session_ref `{r}`"
                 ));
             }
             Ok(handle.clone())

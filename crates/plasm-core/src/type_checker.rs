@@ -190,7 +190,7 @@ fn type_check_operation_handle(handle: &crate::OperationHandle) -> Result<(), Ty
             field: "handle".to_string(),
             value_type: handle.as_str().to_string(),
             field_type:
-                "opaque operation handle: namespaced `s0_o1` (MCP logical session slot + sequence)"
+                "opaque operation handle: plain `o1` (HTTP) or namespaced `l_<token>_o1` (MCP wire ref + sequence)"
                     .to_string(),
         });
     }
@@ -210,7 +210,7 @@ fn type_check_page(page: &PageExpr) -> Result<(), TypeError> {
         return Err(TypeError::IncompatibleValue {
             field: "handle".to_string(),
             value_type: page.handle.as_str().to_string(),
-            field_type: "opaque paging handle: plain `pg1` (HTTP) or `s0_pg1` (MCP logical session slot + sequence)".to_string(),
+            field_type: "opaque paging handle: plain `pg1` (HTTP) or `l_<token>_pg1` (MCP wire ref + sequence)".to_string(),
         });
     }
     if let Some(limit) = page.limit {

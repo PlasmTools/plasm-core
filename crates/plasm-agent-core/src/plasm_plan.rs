@@ -2508,8 +2508,8 @@ mod tests {
             "nodes": [{
                 "id": "pg",
                 "kind": "query",
-                "expr": "page(s0_pg1)",
-                "ir": { "expr": { "op": "page", "handle": "s0_pg1" } },
+                "expr": "page(l_AAAAAAAAQACAAAAAAAAAAQ_pg1)",
+                "ir": { "expr": { "op": "page", "handle": "l_AAAAAAAAQACAAAAAAAAAAQ_pg1" } },
                 "effect_class": "read",
                 "result_shape": "page"
             }],

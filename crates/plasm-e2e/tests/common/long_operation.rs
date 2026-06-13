@@ -217,12 +217,23 @@ impl LongOpFixture {
 
     /// Best-effort cancel of background async ops so orphaned tasks do not hit Hermit after the test ends.
     pub async fn cleanup(&self) {
-        for surface in [Surface::Http, Surface::Mcp] {
-            let _ = self
-                .run_program(surface, "cancel(s0_o1)", RunOpts::default())
-                .await;
-        }
+        let _ = self
+            .run_program(Surface::Http, "cancel(o1)", RunOpts::default())
+            .await;
+        let mcp_cancel = format!("cancel({}_o1)", self.logical_session_ref);
+        let _ = self
+            .run_program(Surface::Mcp, &mcp_cancel, RunOpts::default())
+            .await;
         tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+}
+
+impl Surface {
+    pub fn async_handle_prefix(self) -> &'static str {
+        match self {
+            Surface::Http => "o",
+            Surface::Mcp => "l_",
+        }
     }
 }
 
@@ -374,7 +385,7 @@ pub async fn mcp_plasm_context(
     let meta = plasm_meta(&body);
     meta.get("logical_session_ref")
         .and_then(|v| v.as_str())
-        .unwrap_or("s0")
+        .expect("logical_session_ref from plasm_context")
         .to_string()
 }
 
@@ -508,6 +519,19 @@ pub fn continuity_phase(body: &Value) -> Option<&str> {
         .and_then(|v| v.as_str())
 }
 
+fn extract_operation_handle_from_markdown(md: &str) -> Option<String> {
+    for part in md.split('`') {
+        if part.contains("_o") && part.starts_with("l_") {
+            return Some(part.to_string());
+        }
+        if part.len() > 1 && part.starts_with('o') && part[1..].chars().all(|c| c.is_ascii_digit())
+        {
+            return Some(part.to_string());
+        }
+    }
+    None
+}
+
 fn continuity_handle(body: &Value) -> Option<&str> {
     plasm_meta(body)
         .get("continuity")
@@ -516,9 +540,15 @@ fn continuity_handle(body: &Value) -> Option<&str> {
 }
 
 pub fn operation_handle_from_accept(body: &Value) -> String {
-    continuity_handle(body)
+    if let Some(h) = continuity_handle(body) {
+        if h.contains("_o")
+            || (h.len() > 1 && h.starts_with('o') && h[1..].chars().all(|c| c.is_ascii_digit()))
+        {
+            return h.to_string();
+        }
+    }
+    extract_operation_handle_from_markdown(markdown_text(body))
         .expect("operation handle in accept response")
-        .to_string()
 }
 
 pub fn plan_commit_ref(body: &Value) -> Option<String> {

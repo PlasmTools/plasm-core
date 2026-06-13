@@ -8,12 +8,16 @@ See also [plasm-language-definition.md](plasm-language-definition.md#host-contin
 
 | Handle | Expression | Resumes |
 |--------|------------|---------|
-| `s0_pgN` | `page(s0_pgN)` | Paginated query cursor (more rows) |
-| `s0_oN` | `wait(s0_oN)` | In-flight async plan execution |
-| `s0_oN` | `cancel(s0_oN)` | Cooperative cancel of that operation |
+| `l_<token>_pgN` | `page(l_<token>_pgN)` | Paginated query cursor (MCP) |
+| `pgN` | `page(pgN)` | Paginated query cursor (HTTP-only execute) |
+| `l_<token>_oN` | `wait(l_<token>_oN)` | In-flight async plan execution (MCP) |
+| `oN` | `wait(oN)` | In-flight async plan execution (HTTP) |
+| `l_<token>_oN` / `oN` | `cancel(…)` | Cooperative cancel of that operation |
 | `pcN` | (tool/query arg) | Dry-run plan acceptance token |
 
-MCP names handles with the logical session prefix (`s0_o1`, `s0_pg2`). HTTP execute uses the same **`s0_oN`** slot when no MCP `plasm_context` is present (synthetic logical session `s0`).
+**MCP:** handles are namespaced with the stateless wire ref from `plasm_context` — e.g. `l_AAAAAAAAQACAAAAAAAAAAQ_o1`, `l_AAAAAAAAQACAAAAAAAAAAQ_pg2`. Legacy transport slots (`s0`, …) are rejected.
+
+**HTTP execute:** long-op and paging handles are **plain** `oN` / `pgN` on the same `/execute/:prompt_hash/:session` row — no MCP `plasm_context` required for wait/cancel continuations.
 
 ## Plan commit tokens (`pcN`)
 
@@ -31,7 +35,7 @@ Tokens expire after **10 minutes** (`PLAN_COMMIT_TTL`). Re-run plan dry-run afte
 1. **`plasm`** — dry-run; returns `plan_commit_ref` (`pc0`, …) and `dry_review` / `dry_verdict` in `_meta.plasm` when the plan needs review.
 2. **`plasm_run`** — live execute.
    - On **`review`** verdict: blocked unless `plan_commit_ref` matches the current program or `force: true`.
-   - **Review/unbounded plans auto-async** when `wait` is omitted — returns `wait(s0_oN)` immediately; poll via `plasm_run` + `wait(s0_oN)`; cancel via `cancel(s0_oN)`.
+   - **Review/unbounded plans auto-async** when `wait` is omitted — returns `wait(l_<token>_oN)` immediately; poll via `plasm_run` + `wait(…)`; cancel via `cancel(…)`.
    - **Expensive** plans (unbounded paginated reads, relation fanout, mutating for_each) auto-async on default `wait`. Advisory review alone (e.g. get + project, unused seeds) stays **sync**.
    - With **`wait: false`**: same async accept on any plan.
    - Bounded **ok** verdict plans with default `wait` remain synchronous (fast path).
@@ -41,12 +45,12 @@ Tokens expire after **10 minutes** (`PLAN_COMMIT_TTL`). Re-run plan dry-run afte
 
 ```text
 plasm_run  program=Pokemon.filter{base_experience >= 300}  wait=false  force=true
-→ wait(s0_o1) · verdict review · plan `pc0`
+→ wait(l_AAAAAAAAQACAAAAAAAAAAQ_o1) · verdict review · plan `pc0`
 
-plasm_run  program=wait(s0_o1)
+plasm_run  program=wait(l_AAAAAAAAQACAAAAAAAAAAQ_o1)
 → step 3/8 · …  (while running) or final results (when done)
 
-plasm_run  program=cancel(s0_o1)
+plasm_run  program=cancel(l_AAAAAAAAQACAAAAAAAAAAQ_o1)
 → cancelled · partial snapshots via resources/read
 ```
 
@@ -59,21 +63,21 @@ Query parameters (also available on MCP `plasm` / `plasm_run` tool args):
 | Param | Default | Role |
 |-------|---------|------|
 | `mode=plan` | — | Plan dry-run only (no live HTTP). Mints `plan_commit_ref` in `_meta.plasm` like MCP `plasm`. |
-| `wait=false` | `true` | Start live execute in background; response is `wait(s0_oN)` accept Markdown. |
+| `wait=false` | `true` | Start live execute in background; response is `wait(oN)` accept Markdown. |
 | `force=true` | `false` | Bypass **review** soft gate without `plan_commit_ref`. |
 | `plan_commit_ref=pcN` | — | Accept a matching dry-run plan after **review** verdict. |
 
 JSON body alternative: `{"program": "…", "wait": false, "force": true, "plan_commit_ref": "pc0"}`.
 
-HTTP binds operation handles under logical session **`s0`** (`s0_o1`, …) via trace context — no MCP `plasm_context` required for wait/cancel continuations on the same execute session.
+HTTP mints plain **`oN`** / **`pgN`** handles on the execute session — no `logical_session_ref` required for wait/cancel continuations.
 
 ## CLI (`plasm run`)
 
 ```bash
 plasm run --mode plan -e 'Pokemon.filter{base_experience >= 300}'
 plasm run --wait=false --force -e 'Pokemon.filter{base_experience >= 300}'
-plasm run -e 'wait(s0_o1)'
-plasm run -e 'cancel(s0_o1)'
+plasm run -e 'wait(o1)'
+plasm run -e 'cancel(o1)'
 ```
 
 ## Agent-facing progress (poll + push)
@@ -89,7 +93,7 @@ Compact **one-line** updates — not repeated poll/cancel instructions:
 | `x` | cancelled |
 | `?` | failed |
 
-**Poll:** `wait(s0_oN)` / HTTP `POST` with the same program — `_meta.plasm.op` uses short keys (`n`, `~`, `s`, `l`, `r`).
+**Poll:** `wait(…)` / HTTP `POST` with the same program — `_meta.plasm.op` uses short keys (`n`, `~`, `s`, `l`, `r`).
 
 **Push (optional):**
 
@@ -107,3 +111,4 @@ Trace hub SSE remains for Phoenix/SRE timeline detail — separate from the comp
 - Push E2E (SSE + MCP): `cargo test -p plasm-e2e --test operation_progress_push_e2e`
 - Coalesce integration: `cargo test -p plasm-agent-core coalesce`
 - Commit-id + hash perf guard: `cargo test -p plasm-agent-core plan_commit_semantic_dag_hash_benchmark`
+- Multi-replica smoke: `scripts/smoke/mcp-multireplica-execute-live.sh`

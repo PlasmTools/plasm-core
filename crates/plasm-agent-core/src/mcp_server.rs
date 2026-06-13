@@ -3,13 +3,13 @@
 //! dry-runs (`plan` + `guidance`); **`plasm_run`** performs live execution and may attach request fingerprints,
 //! artifact URIs, and optional `lossy_summary_fields` per truncated step in `_meta.plasm`.
 //! Run snapshot URIs in Markdown use logical-session short form `plasm://session/{logical_session_ref}/r/{n}`
-//! (`s0`, `s1`, … per MCP transport; see [`crate::run_artifacts::plasm_session_short_resource_uri`]);
+//! (canonical `l_<token>` wire ref; see [`crate::run_artifacts::plasm_session_short_resource_uri`]);
 //! canonical `plasm://execute/.../run/{uuid}` remains accepted on read.
 //! Tool results may include run snapshot URIs and inline hints when full data requires MCP `resources/read`;
 //! the server repeats that obligation in the reply when it applies.
 //!
 //! Execute bindings (`plasm_context` → `plasm` / `plasm_run`) are stored **per agent logical session**
-//! ([`PlasmExecBinding`]), keyed by canonical logical session UUID from `plasm_context` (client uses per-transport **`logical_session_ref`** slots: `s0`, `s1`, …).
+//! ([`PlasmExecBinding`]), keyed by canonical logical session UUID from `plasm_context` (client uses stateless **`logical_session_ref`**: `l_<token>`).
 //! One MCP transport may host **many** logical sessions; `MCP-Session-Id` is transport correlation only.
 //! If the server-side execute session expires while the MCP transport stays open, the next
 //! `plasm_context` opens a **new** `(prompt_hash, session_id)` and refreshes the binding.
@@ -58,6 +58,7 @@ use rust_mcp_sdk::mcp_server::{
     HyperServer, HyperServerOptions, ServerHandler, ToMcpServerHandler,
 };
 use rust_mcp_sdk::schema::schema_utils::{CallToolError, CustomNotification};
+use rust_mcp_sdk::schema::SdkError;
 use rust_mcp_sdk::schema::{
     BlobResourceContents, CallToolRequestParams, CallToolResult, ContentBlock, Implementation,
     InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
@@ -66,8 +67,13 @@ use rust_mcp_sdk::schema::{
     ServerCapabilitiesResources, ServerCapabilitiesTools, TextContent, TextResourceContents, Tool,
     ToolAnnotations, ToolExecution, ToolExecutionTaskSupport, ToolInputSchema,
 };
+use rust_mcp_sdk::session_store::SessionStore;
 use rust_mcp_sdk::McpServer;
 use tokio::sync::{Mutex, RwLock};
+
+use crate::mcp_transport_store::{
+    PlasmTransportRedisStore, RedisSessionStore, SessionRuntimeFactory,
+};
 
 use crate::execute_pipeline::{ExecutePipeline, ExecutionIntent};
 use crate::execute_session::ExecuteSession;
@@ -77,6 +83,7 @@ use crate::http_execute::{
     CapabilitySeed, RankedCapabilitiesArg,
 };
 use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
+use crate::mcp_logical_ref::{format_logical_session_wire_ref, parse_logical_session_wire_ref};
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
@@ -95,10 +102,10 @@ use crate::plasm_plan_run::{
     PlasmPlanRunResult,
 };
 use crate::run_artifacts::{
-    code_plan_handle, code_plan_http_path, parse_plasm_execute_run_uri,
-    parse_plasm_session_short_resource_uri, plasm_code_plan_resource_uri,
-    plasm_session_short_plan_uri, ArtifactPayload, CodePlanArchiveDocument,
-    LogicalSessionUriSegment,
+    code_plan_handle, code_plan_http_path, logical_uuid_from_uri_segment,
+    parse_plasm_execute_run_uri, parse_plasm_session_short_resource_uri,
+    plasm_code_plan_resource_uri, plasm_session_short_plan_uri, ArtifactPayload,
+    CodePlanArchiveDocument,
 };
 use crate::server_state::PlasmHostState;
 use crate::session_identity::{ClientSessionKey, LogicalSessionId};
@@ -219,18 +226,9 @@ pub(crate) fn parse_logical_session_ref_arg(
                 Some("missing `logical_session_ref`: call `plasm_context` first".into()),
             )
         })?;
-    let t = s.trim();
-    if t.len() >= 2 && t.starts_with('s') && t[1..].chars().all(|c| c.is_ascii_digit()) {
-        Ok(t.to_string())
-    } else {
-        Err(CallToolError::invalid_arguments(
-            tool,
-            Some(
-                "invalid `logical_session_ref`: expected a slot id like `s0` or `s1` from `plasm_context`"
-                    .into(),
-            ),
-        ))
-    }
+    parse_logical_session_wire_ref(s.trim())
+        .map(|id| format_logical_session_wire_ref(id))
+        .map_err(|e| CallToolError::invalid_arguments(tool, Some(e.to_string())))
 }
 
 fn comp_content_sha256_hex(comp: &serde_json::Value) -> String {
@@ -422,11 +420,7 @@ async fn trace_archive_and_emit_code_plan_execute(
 }
 
 /// Per MCP transport session: Plasm execute `prompt_hash` + `session` ids (same as HTTP paths).
-#[derive(Clone, Default)]
-pub(crate) struct PlasmExecBinding {
-    pub(crate) prompt_hash: String,
-    pub(crate) session_id: String,
-}
+pub(crate) use crate::mcp_transport_store::PlasmExecBinding;
 
 /// Cumulative MCP-side text volume for token-ish telemetry (Unicode scalar counts).
 #[derive(Clone, Default, Debug)]
@@ -451,23 +445,39 @@ pub(crate) struct McpLogicalSessionState {
 pub(crate) struct McpTransportState {
     /// Logical session UUID string → per-agent state (execute binding, stats, `_meta.plasm` index).
     logical_by_id: HashMap<String, Arc<Mutex<McpLogicalSessionState>>>,
-    /// Client-facing slot ids on this MCP transport (`s0`, …) → canonical logical session UUID.
-    ref_to_uuid: HashMap<String, Uuid>,
-    uuid_to_ref: HashMap<Uuid, String>,
-    next_session_slot: u64,
 }
 
 impl McpTransportState {
-    /// Assign a stable per-transport slot (`s{n}`) for this canonical logical id (idempotent).
-    pub(crate) fn ensure_session_ref(&mut self, uuid: Uuid) -> String {
-        if let Some(r) = self.uuid_to_ref.get(&uuid) {
-            return r.clone();
+    pub(crate) fn to_persisted(&self) -> crate::mcp_transport_store::PersistedPlasmTransportState {
+        use crate::mcp_transport_store::PersistedPlasmTransportState;
+        PersistedPlasmTransportState {
+            logical_bindings: HashMap::new(),
         }
-        let r = format!("s{}", self.next_session_slot);
-        self.next_session_slot = self.next_session_slot.saturating_add(1);
-        self.ref_to_uuid.insert(r.clone(), uuid);
-        self.uuid_to_ref.insert(uuid, r.clone());
-        r
+    }
+
+    pub(crate) fn with_persisted_bindings(
+        mut self,
+        bindings: HashMap<String, PlasmExecBinding>,
+    ) -> Self {
+        for (id, binding) in bindings {
+            self.logical_by_id.insert(
+                id,
+                Arc::new(Mutex::new(McpLogicalSessionState {
+                    binding: Some(binding),
+                    ..Default::default()
+                })),
+            );
+        }
+        self
+    }
+
+    pub(crate) fn from_persisted(
+        p: crate::mcp_transport_store::PersistedPlasmTransportState,
+    ) -> Self {
+        Self {
+            logical_by_id: HashMap::new(),
+        }
+        .with_persisted_bindings(p.logical_bindings)
     }
 }
 
@@ -490,6 +500,7 @@ pub(crate) struct PlasmMcpHandler {
     pub(crate) plasm: Arc<PlasmHostState>,
     /// MCP transport session key -> per-session mutable state.
     session_states: Arc<RwLock<HashMap<String, Arc<Mutex<McpTransportState>>>>>,
+    transport_redis: Option<Arc<crate::mcp_transport_store::PlasmTransportRedisStore>>,
 }
 
 impl PlasmMcpHandler {
@@ -497,20 +508,57 @@ impl PlasmMcpHandler {
         Self {
             plasm,
             session_states: Arc::new(RwLock::new(HashMap::new())),
+            transport_redis: None,
         }
     }
 
+    pub(crate) fn with_transport_redis(
+        mut self,
+        store: Arc<crate::mcp_transport_store::PlasmTransportRedisStore>,
+    ) -> Self {
+        self.transport_redis = Some(store);
+        self
+    }
+
+    pub(crate) async fn persist_transport_state(&self, transport_key: &str) {
+        let Some(redis) = self.transport_redis.as_ref() else {
+            return;
+        };
+        let state = self.session_state(transport_key).await;
+        let snapshot = {
+            let g = state.lock().await;
+            g.to_persisted()
+        };
+        let mut merged: crate::mcp_transport_store::PersistedPlasmTransportState = snapshot;
+        {
+            let g = state.lock().await;
+            for (id, ls) in &g.logical_by_id {
+                if let Some(binding) = ls.lock().await.binding.clone() {
+                    merged.logical_bindings.insert(id.clone(), binding);
+                }
+            }
+        }
+        redis.save_snapshot(transport_key, &merged).await;
+    }
     pub(crate) async fn session_state(&self, key: &str) -> Arc<Mutex<McpTransportState>> {
         {
             let g = self.session_states.read().await;
             if let Some(state) = g.get(key) {
+                if let Some(redis) = self.transport_redis.as_ref() {
+                    redis.touch(key).await;
+                }
                 return Arc::clone(state);
             }
         }
+        let hydrated = if let Some(redis) = self.transport_redis.as_ref() {
+            redis.load(key).await.map(McpTransportState::from_persisted)
+        } else {
+            None
+        };
         let mut g = self.session_states.write().await;
         Arc::clone(
             g.entry(key.to_string())
-                .or_insert_with(|| Arc::new(Mutex::new(McpTransportState::default()))),
+                .or_insert_with(|| Arc::new(Mutex::new(hydrated.unwrap_or_default()))),
         )
     }
 
@@ -534,23 +582,28 @@ impl PlasmMcpHandler {
         )
     }
 
-    pub(crate) async fn resolve_logical_session_ref_to_uuid(
+    pub(crate) fn resolve_logical_session_ref_to_uuid(
         &self,
         tool: &str,
-        transport_key: &str,
         ref_str: &str,
     ) -> Result<Uuid, CallToolError> {
-        let transport = self.session_state(transport_key).await;
-        let g = transport.lock().await;
-        g.ref_to_uuid.get(ref_str).copied().ok_or_else(|| {
-            CallToolError::invalid_arguments(
-                tool,
-                Some(
-                    "unknown `logical_session_ref`: call `plasm_context` on this MCP connection first"
-                        .into(),
-                ),
-            )
-        })
+        parse_logical_session_wire_ref(ref_str)
+            .map(|id| id.as_uuid())
+            .map_err(|e| CallToolError::invalid_arguments(tool, Some(e.to_string())))
+    }
+
+    pub(crate) async fn resolve_binding_stateless(
+        &self,
+        logical_uuid: Uuid,
+    ) -> Option<PlasmExecBinding> {
+        self.plasm
+            .logical_execute_bindings
+            .get(&logical_uuid)
+            .await
+            .map(|(ph, sid)| PlasmExecBinding {
+                prompt_hash: ph,
+                session_id: sid,
+            })
     }
 
     /// Resolve execute binding: in-memory per-logical row first, then shared `logical_execute_bindings`.
@@ -569,11 +622,14 @@ impl PlasmMcpHandler {
             return Some(b.clone());
         }
         drop(g);
-        let map = self.plasm.logical_execute_bindings.read().await;
-        map.get(&logical_uuid).map(|(ph, sid)| PlasmExecBinding {
-            prompt_hash: ph.clone(),
-            session_id: sid.clone(),
-        })
+        self.plasm
+            .logical_execute_bindings
+            .get(&logical_uuid)
+            .await
+            .map(|(ph, sid)| PlasmExecBinding {
+                prompt_hash: ph,
+                session_id: sid,
+            })
     }
 
     async fn mcp_plasm_token_snapshot_logical(
@@ -808,7 +864,7 @@ impl PlasmMcpHandler {
         plasm_run_props.insert(
             "wait".into(),
             json_schema_bool_type(
-                "When **false**, start live execute in the background and return an operation handle immediately (`wait(sN_oM)`). Default **true** for bounded ok plans; **review** plans auto-async even when omitted.",
+                "When **false**, start live execute in the background and return an operation handle immediately (`wait(l_<token>_oN)`). Default **true** for bounded ok plans; **review** plans auto-async even when omitted.",
             ),
         );
         plasm_run_props.insert(
@@ -1224,9 +1280,7 @@ impl PlasmMcpHandler {
     ) -> Result<CallToolResult, CallToolError> {
         let principal_incoming = self.ensure_mcp_principal(key, runtime).await?;
         let session_ref = parse_logical_session_ref_arg(tool_name, v)?;
-        let logical_uuid = self
-            .resolve_logical_session_ref_to_uuid(tool_name, key, &session_ref)
-            .await?;
+        let logical_uuid = self.resolve_logical_session_ref_to_uuid(tool_name, &session_ref)?;
         let scope = tenant_scope(principal_incoming.as_ref());
         if !self
             .plasm
@@ -1331,8 +1385,7 @@ impl PlasmMcpHandler {
 
         if self
             .plasm
-            .sessions
-            .get_by_strs(&b.prompt_hash, &b.session_id)
+            .get_execute_session(&b.prompt_hash, &b.session_id)
             .await
             .is_none()
         {
@@ -1341,8 +1394,10 @@ impl PlasmMcpHandler {
                 g.binding = None;
             }
             {
-                let mut map = self.plasm.logical_execute_bindings.write().await;
-                map.remove(&logical_uuid);
+                self.plasm
+                    .logical_execute_bindings
+                    .remove(&logical_uuid)
+                    .await;
             }
             crate::metrics::record_mcp_tool(
                 tool_name,
@@ -1392,8 +1447,7 @@ impl PlasmMcpHandler {
         let run_result = async {
             let Some(es) = self
                 .plasm
-                .sessions
-                .get_by_strs(&b.prompt_hash, &b.session_id)
+                .get_execute_session(&b.prompt_hash, &b.session_id)
                 .await
             else {
                 return Err(
@@ -1739,11 +1793,7 @@ impl PlasmMcpHandler {
             .logical_sessions
             .init_session(&scope, &ClientSessionKey::new(intent))
             .await;
-        let logical_session_ref = {
-            let transport = self.session_state(key).await;
-            let mut g = transport.lock().await;
-            g.ensure_session_ref(rec.logical_session_id.as_uuid())
-        };
+        let logical_session_ref = format_logical_session_wire_ref(rec.logical_session_id);
         let logical_uuid = rec.logical_session_id.as_uuid();
         let ls_key = logical_uuid.to_string();
         let seeds = parse_tool_seeds(tname, v)?;
@@ -1832,11 +1882,14 @@ impl PlasmMcpHandler {
                 session_id: out.session_id.clone(),
             });
             drop(g);
-            let mut map = self.plasm.logical_execute_bindings.write().await;
-            map.insert(
-                logical_uuid,
-                (out.prompt_hash.clone(), out.session_id.clone()),
-            );
+            self.plasm
+                .logical_execute_bindings
+                .insert(
+                    logical_uuid,
+                    out.prompt_hash.clone(),
+                    out.session_id.clone(),
+                )
+                .await;
         }
         let trace_meta = self.trace_session_meta(key, runtime).await;
         self.plasm
@@ -1933,6 +1986,7 @@ impl PlasmMcpHandler {
             meta.insert("plasm".to_string(), serde_json::Value::Object(plasm));
             res = res.with_meta(Some(meta));
         }
+        self.persist_transport_state(key).await;
         Ok(res)
     }
 
@@ -2149,7 +2203,7 @@ impl ServerHandler for PlasmMcpHandler {
                 ResourceTemplate {
                     annotations: None,
                     description: Some(
-                        "Short alias for the same snapshot JSON as the canonical URI. `logical_session_ref` is the slot from `plasm_context` (`s0`, …); `n` is monotonic within that logical session’s execute binding."
+                        "Short alias for the same snapshot JSON as the canonical URI. `logical_session_ref` is the canonical `l_<token>` from `plasm_context`; `n` is monotonic within that logical session’s execute binding."
                             .into(),
                     ),
                     icons: vec![],
@@ -2195,43 +2249,23 @@ impl ServerHandler for PlasmMcpHandler {
             });
         }
         if let Some((segment, resource_index)) = parse_plasm_session_short_resource_uri(uri) {
-            let Some(transport_key) = runtime.session_id() else {
+            let Some(logical_uuid) = logical_uuid_from_uri_segment(&segment) else {
                 crate::metrics::record_mcp_resource_read(
                     "logical_short",
                     "error",
-                    "session_not_ready",
+                    "invalid_session_ref",
                     started.elapsed(),
                 );
                 return Err(RpcError::invalid_params().with_message(
-                    "MCP session not ready: complete the initialize handshake before resources/read.",
+                    "invalid logical session in URI: use `plasm://session/l_<token>/r/...` from `plasm_context`",
                 ));
             };
-            let logical_uuid = match segment {
-                LogicalSessionUriSegment::Uuid(u) => u,
-                LogicalSessionUriSegment::Slot(s) => {
-                    let transport = self.session_state(&transport_key).await;
-                    let g = transport.lock().await;
-                    let Some(u) = g.ref_to_uuid.get(&s).copied() else {
-                        crate::metrics::record_mcp_resource_read(
-                            "logical_short",
-                            "error",
-                            "unknown_session_ref",
-                            started.elapsed(),
-                        );
-                        return Err(RpcError::invalid_params().with_message(
-                            "unknown logical session slot in URI: use a `plasm://session/s{n}/r/...` URI from this connection after `plasm_context`, or the canonical `plasm://execute/.../run/...` URI.",
-                        ));
-                    };
-                    u
-                }
-            };
             let ls_key = logical_uuid.to_string();
-            let binding = {
-                let map = self.plasm.logical_execute_bindings.read().await;
-                map.get(&logical_uuid).map(|(ph, sid)| PlasmExecBinding {
-                    prompt_hash: ph.clone(),
-                    session_id: sid.clone(),
-                })
+            let transport_key = runtime.session_id();
+            let binding = if let Some(ref tk) = transport_key {
+                self.resolve_binding_for_logical(tk, logical_uuid).await
+            } else {
+                self.resolve_binding_stateless(logical_uuid).await
             };
             let Some(b) = binding else {
                 crate::metrics::record_mcp_resource_read(
@@ -2256,8 +2290,7 @@ impl ServerHandler for PlasmMcpHandler {
             };
             let live_sess = self
                 .plasm
-                .sessions
-                .get_by_strs(b.prompt_hash.as_str(), b.session_id.as_str())
+                .get_execute_session(b.prompt_hash.as_str(), b.session_id.as_str())
                 .await;
             let live_art = if let Some(ref sess) = live_sess {
                 sess.core
@@ -2415,8 +2448,7 @@ impl ServerHandler for PlasmMcpHandler {
         };
         let live_sess = self
             .plasm
-            .sessions
-            .get_by_strs(prompt_hash.as_str(), session_id.as_str())
+            .get_execute_session(prompt_hash.as_str(), session_id.as_str())
             .await;
         let live_payload = if let Some(sess) = &live_sess {
             sess.core
@@ -2817,40 +2849,51 @@ fn mcp_initialize_result() -> InitializeResult {
 }
 
 /// Build MCP Streamable HTTP server (not started) for merging with discovery routes on one port.
-pub fn build_mcp_hyper_server_for_merge(plasm: Arc<PlasmHostState>) -> HyperServer {
-    let handler_struct = PlasmMcpHandler::new(Arc::clone(&plasm));
-    let session_states = Arc::clone(&handler_struct.session_states);
-    let handler = handler_struct.to_mcp_server_handler();
-    let auth_provider: Option<Arc<dyn rust_mcp_sdk::auth::AuthProvider>> =
-        if plasm.mcp_config_repository().is_some() || plasm.incoming_auth.is_some() {
-            Some(Arc::new(
-                crate::mcp_stream_auth::PlasmMcpApiKeyAuthProvider::new(Arc::clone(&plasm)),
-            ))
-        } else {
-            None
-        };
-    let server = hyper_server::create_server(
-        mcp_initialize_result(),
-        handler,
-        HyperServerOptions {
-            host: "0.0.0.0".into(),
-            port: 0,
-            event_store: Some(Arc::new(InMemoryEventStore::default())),
-            health_endpoint: Some("/health".into()),
-            sse_support: false,
-            auth: auth_provider,
-            ..Default::default()
-        },
-    );
-    spawn_mcp_teaching_prompt_session_reporter(&server, Arc::clone(&plasm), session_states);
-    server
+pub async fn build_mcp_hyper_server_for_merge(
+    plasm: Arc<PlasmHostState>,
+) -> SdkResult<HyperServer> {
+    build_mcp_hyper_server(plasm, "0.0.0.0", 0).await
 }
 
-/// Run Streamable HTTP MCP on `host`:`port` (default MCP path `/mcp` from the SDK).
-pub async fn run_mcp_server(host: &str, port: u16, plasm: Arc<PlasmHostState>) -> SdkResult<()> {
-    let handler_struct = PlasmMcpHandler::new(Arc::clone(&plasm));
+async fn build_mcp_hyper_server(
+    plasm: Arc<PlasmHostState>,
+    host: &str,
+    port: u16,
+) -> SdkResult<HyperServer> {
+    let mut handler_struct = PlasmMcpHandler::new(Arc::clone(&plasm));
     let session_states = Arc::clone(&handler_struct.session_states);
-    let handler = handler_struct.to_mcp_server_handler();
+    let server_details = Arc::new(mcp_initialize_result());
+
+    if let Some(backend) = plasm.redis_backend.as_ref() {
+        let plasm_redis = Arc::new(PlasmTransportRedisStore::new(Arc::clone(backend)));
+        handler_struct = handler_struct.with_transport_redis(plasm_redis);
+    }
+
+    let mcp_handler = handler_struct.to_mcp_server_handler();
+
+    let session_store: Option<Arc<dyn SessionStore>> =
+        if let Some(backend) = plasm.redis_backend.as_ref() {
+            let store: Arc<RedisSessionStore> = Arc::new(RedisSessionStore::new(
+                Arc::clone(backend),
+                Arc::new(SessionRuntimeFactory {
+                    server_details: Arc::clone(&server_details),
+                    handler: mcp_handler.clone(),
+                    task_store: None,
+                    client_task_store: None,
+                    message_observer: None,
+                }),
+            ));
+            store.ping().await.map_err(|e| {
+                SdkError::internal_error().with_message(&format!(
+                    "PLASM_MCP_TRANSPORT_REDIS_URL configured but Redis ping failed: {e}"
+                ))
+            })?;
+            tracing::info!("MCP transport session store: Redis (multi-replica safe)");
+            Some(store)
+        } else {
+            None
+        };
+
     let auth_provider: Option<Arc<dyn rust_mcp_sdk::auth::AuthProvider>> =
         if plasm.mcp_config_repository().is_some() || plasm.incoming_auth.is_some() {
             Some(Arc::new(
@@ -2860,8 +2903,8 @@ pub async fn run_mcp_server(host: &str, port: u16, plasm: Arc<PlasmHostState>) -
             None
         };
     let server = hyper_server::create_server(
-        mcp_initialize_result(),
-        handler,
+        (*server_details).clone(),
+        mcp_handler,
         HyperServerOptions {
             host: host.to_string(),
             port,
@@ -2869,10 +2912,17 @@ pub async fn run_mcp_server(host: &str, port: u16, plasm: Arc<PlasmHostState>) -
             health_endpoint: Some("/health".into()),
             sse_support: false,
             auth: auth_provider,
+            session_store,
             ..Default::default()
         },
     );
     spawn_mcp_teaching_prompt_session_reporter(&server, Arc::clone(&plasm), session_states);
+    Ok(server)
+}
+
+/// Run Streamable HTTP MCP on `host`:`port` (default MCP path `/mcp` from the SDK).
+pub async fn run_mcp_server(host: &str, port: u16, plasm: Arc<PlasmHostState>) -> SdkResult<()> {
+    let server = build_mcp_hyper_server(plasm, host, port).await?;
     server.start().await
 }
 
@@ -2913,6 +2963,37 @@ mod tests {
         });
         let err = mcp_discover_query_from_arguments(&v).expect_err("array intent rejected");
         assert!(err.contains("single string"), "unexpected: {err}");
+    }
+
+    #[test]
+    fn parse_logical_session_ref_rejects_legacy_slot() {
+        let err = super::parse_logical_session_ref_arg(
+            "plasm",
+            &serde_json::json!({ "logical_session_ref": "s0" }),
+        )
+        .expect_err("legacy slot");
+        assert!(err.to_string().contains("legacy transport slot"));
+    }
+
+    #[test]
+    fn parse_logical_session_ref_accepts_wire_ref() {
+        let wire = "l_AAAAAAAAQACAAAAAAAAAAQ";
+        let got = super::parse_logical_session_ref_arg(
+            "plasm",
+            &serde_json::json!({ "logical_session_ref": wire }),
+        )
+        .expect("wire ref");
+        assert_eq!(got, wire);
+    }
+
+    #[test]
+    fn resolve_logical_session_wire_ref_round_trip() {
+        let wire = "l_AAAAAAAAQACAAAAAAAAAAQ";
+        let id = crate::mcp_logical_ref::parse_logical_session_wire_ref(wire).expect("parse");
+        assert_eq!(
+            crate::mcp_logical_ref::format_logical_session_wire_ref(id),
+            wire
+        );
     }
 
     #[test]

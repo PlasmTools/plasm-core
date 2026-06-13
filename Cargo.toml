@@ -28,7 +28,7 @@ resolver = "2"
 
 # Single SemVer for the OSS workspace (see monorepo RELEASING.md on PlasmTools/plasm).
 [workspace.package]
-version = "0.2.6"
+version = "0.3.0"
 edition = "2021"
 
 [workspace.dependencies]
@@ -37,6 +37,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 serde_urlencoded = "0.7"
+jcs-canonicalize = "0.2.1"
 thiserror = "1.0"
 
 # Async runtime
@@ -121,6 +122,10 @@ auth-framework = { version = "0.5.0-rc1", default-features = false, features = [
 sqlx = { version = "0.8.6", default-features = false, features = [
     "postgres",
     "runtime-tokio-rustls",
+] }
+redis = { version = "0.27", default-features = false, features = [
+    "tokio-comp",
+    "connection-manager",
 ] }
 # OSS: embedded PostgreSQL (`embedded_postgres` on `plasm`; default for `plasm-server` crate, autostart unless opted out).
 pg-embed = { version = "1.0.0", default-features = false, features = ["rt_tokio_migrate"] }

@@ -18,6 +18,7 @@ struct AgentMetrics {
     mcp_resource_calls: Counter<u64>,
     mcp_resource_duration_ms: Histogram<f64>,
     execute_session_outcomes: Counter<u64>,
+    execute_rehydrate_outcomes: Counter<u64>,
     execute_expression_calls: Counter<u64>,
     execute_expression_duration_ms: Histogram<f64>,
     execute_expression_cache_hits: Counter<u64>,
@@ -65,6 +66,10 @@ fn agent_metrics() -> &'static AgentMetrics {
             execute_session_outcomes: m
                 .u64_counter("plasm.execute.session.outcomes_total")
                 .with_description("HTTP/MCP session create outcomes (reuse, create, error).")
+                .build(),
+            execute_rehydrate_outcomes: m
+                .u64_counter("plasm.execute.rehydrate.outcomes_total")
+                .with_description("Cross-pod execute session rehydrate outcomes.")
                 .build(),
             execute_expression_calls: m
                 .u64_counter("plasm.execute.expression.calls_total")
@@ -225,6 +230,14 @@ pub fn record_execute_session_outcome(outcome: &'static str, error_kind: &'stati
         KeyValue::new("error_kind", error_kind),
     ];
     agent_metrics().execute_session_outcomes.add(1, attrs);
+}
+
+pub fn record_execute_rehydrate(outcome: &'static str, error_kind: &'static str) {
+    let attrs = &[
+        KeyValue::new("outcome", outcome),
+        KeyValue::new("error_kind", error_kind),
+    ];
+    agent_metrics().execute_rehydrate_outcomes.add(1, attrs);
 }
 
 pub fn record_execute_expression_line(

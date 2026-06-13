@@ -5272,11 +5272,11 @@ mod tests {
             "symbolic value placeholders must use <value>, not bare v"
         );
         assert!(
-            contract.contains("page(sN_pgM)"),
+            contract.contains("page(l_<token>_pgM)"),
             "page continuation handles are taught by responses and must remain in the contract"
         );
         assert!(
-            contract.contains("wait(sN_oM)") && contract.contains("cancel(sN_oM)"),
+            contract.contains("wait(l_<token>_oM)") && contract.contains("cancel(l_<token>_oM)"),
             "async plan continuation handles must remain in the contract"
         );
         assert!(
@@ -6503,7 +6503,7 @@ mod tests {
 
     #[test]
     fn grammar_frontmatter_byte_budget() {
-        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6672;
+        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6650;
         const MAX_GRAMMAR_FRONTMATTER_BYTES: usize = 7298;
         const MINIMAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6800;
 

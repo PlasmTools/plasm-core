@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm-core/src/prompt_render/mod.rs
+source: crates/plasm-core/src/prompt_render/mod.rs
 expression: tsv
 ---
 # Follow the grammar and the teaching TSV below; reply with one valid plasm_program:
@@ -43,9 +43,9 @@ expression: tsv
 # method        ::= e#(<id>).m#() or e#(<id>).m#(p#=<value>, …)
 # create_action ::= e#.m#(p#=<value>, …)
 # search        ::= e#~"text"[{p#=…}]?
-# page          ::= page(sN_pgM) | page(sN_pgM, limit=N)
-# wait          ::= wait(sN_oM)
-# cancel        ::= cancel(sN_oM)
+# page          ::= page(l_<token>_pgM) | page(l_<token>_pgM, limit=N)
+# wait          ::= wait(l_<token>_oM)
+# cancel        ::= cancel(l_<token>_oM)
 # projection    ::= e#(<id>)[p#,…] | "[" fields "]"
 # postfix       ::= ".limit(N)" | ".page_size(N)" | ".sort(field[, dir])" | ".filter{…}" | ".filter(…)" | ".aggregate(specs)" | ".group_by(field, specs)" | ".dedupe(field[, …])" | ".distinct(field[, …])" | ".distinct()" | ".singleton()" | "[" fields "]"
 # row_template  ::= ("[" fields "]")? "<<TAG" template_body "TAG"
@@ -58,8 +58,8 @@ expression: tsv
 # Composition rules:
 # - Multi-line programs: one binding per line and final roots last (preferred). Single-line space-separated bindings are coerced; default return is the first binding.
 # - Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.
-# - To turn rows into text, bind a template block: `report = rows[p#,…] <<TAG` newline template newline `TAG`, or `report = rows <<TAG` when columns can be inferred.
-# - Template blocks use Minijinja with `rows` as the input array; pass `binding.content` for string capability parameters, not the whole row.
+# - Row text: `report = rows[p#,…] <<TAG` newline template newline `TAG`; Minijinja `rows` is only that source's projected rows.
+# - Compose text with `${report.content}` in later heredocs/strings; pass `binding.content` to string params, not the whole row.
 # - Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.
 # - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
 # - Examples: scoped child list `e1{p14=e3(p5=<val>, p13=<val>), …} (inline) OR repo=e3(…); e1{p14=repo, …} (decomposed label ref)`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.

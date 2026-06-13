@@ -16,6 +16,7 @@ use crate::http_execute::{
     apply_capability_seeds, normalize_capability_seeds, CapabilitySeed, RankedCapabilitiesArg,
 };
 use crate::incoming_auth::tenant_scope;
+use crate::mcp_logical_ref::format_logical_session_wire_ref;
 use crate::mcp_server::{
     parse_logical_session_ref_arg, parse_optional_principal, PlasmExecBinding, PlasmMcpHandler,
 };
@@ -67,7 +68,7 @@ pub fn workflow_mcp_tools() -> Vec<Tool> {
     );
     dry_props.insert(
         "logical_session_ref".into(),
-        crate::mcp_server::json_schema_string_type("Slot from `open_workflow` (`s0`, …)."),
+        crate::mcp_server::json_schema_string_type("Canonical `l_<token>` from `open_workflow`."),
     );
     dry_props.insert(
         "parameters".into(),
@@ -83,7 +84,7 @@ pub fn workflow_mcp_tools() -> Vec<Tool> {
     run_props.insert(
         "logical_session_ref".into(),
         crate::mcp_server::json_schema_string_type(
-            "Same slot as `open_workflow` / `dry_workflow`.",
+            "Same `l_<token>` as `open_workflow` / `dry_workflow`.",
         ),
     );
     run_props.insert(
@@ -230,11 +231,7 @@ impl PlasmMcpHandler {
             .logical_sessions
             .init_session(&scope, &ClientSessionKey::new(intent))
             .await;
-        let logical_session_ref = {
-            let transport = self.session_state(key).await;
-            let mut g = transport.lock().await;
-            g.ensure_session_ref(rec.logical_session_id.as_uuid())
-        };
+        let logical_session_ref = format_logical_session_wire_ref(rec.logical_session_id);
         let logical_uuid = rec.logical_session_id.as_uuid();
         let seeds = manifest_seeds_to_capability_seeds(&manifest);
         let allowed_ids: Option<Vec<String>> = tcfg.as_ref().map(|cfg| {
@@ -277,17 +274,19 @@ impl PlasmMcpHandler {
                 session_id: out.session_id.clone(),
             });
             drop(g);
-            let mut map = self.plasm.logical_execute_bindings.write().await;
-            map.insert(
-                logical_uuid,
-                (out.prompt_hash.clone(), out.session_id.clone()),
-            );
+            self.plasm
+                .logical_execute_bindings
+                .insert(
+                    logical_uuid,
+                    out.prompt_hash.clone(),
+                    out.session_id.clone(),
+                )
+                .await;
         }
 
         let entity_symbols = self
             .plasm
-            .sessions
-            .get_by_strs(&out.prompt_hash, &out.session_id)
+            .get_execute_session(&out.prompt_hash, &out.session_id)
             .await
             .and_then(|sess| {
                 sess.teaching_exposure
@@ -330,9 +329,7 @@ impl PlasmMcpHandler {
                 CallToolError::invalid_arguments(tname, Some("missing or empty `id`".into()))
             })?;
         let session_ref = parse_logical_session_ref_arg(tname, v)?;
-        let logical_uuid = self
-            .resolve_logical_session_ref_to_uuid(tname, key, &session_ref)
-            .await?;
+        let logical_uuid = self.resolve_logical_session_ref_to_uuid(tname, &session_ref)?;
         let Some(manifest) = self.plasm.workflows().get(id) else {
             return Err(CallToolError::from_message(format!(
                 "unknown workflow `{id}`"

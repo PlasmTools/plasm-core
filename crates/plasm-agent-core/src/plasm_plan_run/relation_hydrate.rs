@@ -1,7 +1,7 @@
 //! Ensure relation traversal rows are typed target-entity rows (decode + GET hydrate).
 
 use plasm_core::expr_parser::ParsedExpr;
-use plasm_core::{CGS, EntityName, Expr, GetExpr, Ref};
+use plasm_core::{EntityName, Expr, GetExpr, Ref, CGS};
 use plasm_runtime::{entity_to_agent_row_json, CachedEntity};
 
 use crate::execute_session::ExecuteSession;
@@ -77,11 +77,12 @@ async fn fetch_entity_get_by_ref(
         None,
     )
     .await?;
-    result
-        .entities
-        .into_iter()
-        .next()
-        .ok_or_else(|| format!("relation hydrate GET returned no `{}` row", reference.entity_type))
+    result.entities.into_iter().next().ok_or_else(|| {
+        format!(
+            "relation hydrate GET returned no `{}` row",
+            reference.entity_type
+        )
+    })
 }
 
 /// GET-hydrate any relation targets whose cached/embed rows omit declared CGS fields.
@@ -108,8 +109,8 @@ pub(crate) async fn hydrate_relation_entities_if_needed(
         let mut cache = scoped.graph_cache.lock().await;
         cache.remove(&entity.reference);
         drop(cache);
-        let hydrated = fetch_entity_get_by_ref(st, es, session_id, target, &entity.reference, trace)
-            .await?;
+        let hydrated =
+            fetch_entity_get_by_ref(st, es, session_id, target, &entity.reference, trace).await?;
         out.push(hydrated);
     }
     Ok(out)
