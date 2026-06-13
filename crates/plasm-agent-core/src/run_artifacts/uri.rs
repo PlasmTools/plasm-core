@@ -137,18 +137,6 @@ pub fn logical_uuid_from_uri_segment(segment: &LogicalSessionUriSegment) -> Opti
     }
 }
 
-pub fn uri_segment_rejection_reason(seg: &str) -> Option<&'static str> {
-    if crate::mcp_logical_ref::is_legacy_transport_slot(seg) {
-        Some("legacy transport slot refs (s0, …) are not accepted in resource URIs")
-    } else if uuid::Uuid::parse_str(seg).is_ok() {
-        Some("UUID text is not accepted in resource URIs; use l_<token>")
-    } else if seg.starts_with('l') {
-        Some("invalid l_<token> segment in resource URI")
-    } else {
-        None
-    }
-}
-
 pub fn artifact_http_path(prompt_hash: &str, session_id: &str, run_id: &RunArtifactId) -> String {
     format!(
         "/execute/{prompt_hash}/{session_id}/artifacts/{}",

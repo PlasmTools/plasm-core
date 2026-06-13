@@ -132,7 +132,6 @@ impl fmt::Display for PagingHandle {
 mod tests {
     use super::*;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    use base64::Engine as _;
 
     fn sample_wire_ref() -> String {
         let token = URL_SAFE_NO_PAD.encode([1u8; 16]);

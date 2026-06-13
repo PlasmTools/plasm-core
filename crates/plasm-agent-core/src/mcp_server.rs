@@ -227,7 +227,7 @@ pub(crate) fn parse_logical_session_ref_arg(
             )
         })?;
     parse_logical_session_wire_ref(s.trim())
-        .map(|id| format_logical_session_wire_ref(id))
+        .map(format_logical_session_wire_ref)
         .map_err(|e| CallToolError::invalid_arguments(tool, Some(e.to_string())))
 }
 

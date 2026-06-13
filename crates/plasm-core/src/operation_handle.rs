@@ -133,7 +133,7 @@ mod tests {
         let h = OperationHandle::mint_namespaced(&wire, 1);
         assert_eq!(h.as_str(), format!("{wire}_o1"));
         assert_eq!(
-            OperationHandle::parse(&format!("{wire}_o1")).expect("parse"),
+            OperationHandle::parse(format!("{wire}_o1")).expect("parse"),
             h
         );
         assert_eq!(h.logical_session_ref(), Some(wire.as_str()));
