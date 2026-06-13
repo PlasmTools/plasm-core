@@ -807,6 +807,10 @@ entities:
         description: Species this Pokémon belongs to.
         target: PokemonSpecies
         cardinality: one
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: species
       forms:
         description: Visual forms of this Pokémon.
         target: PokemonForm

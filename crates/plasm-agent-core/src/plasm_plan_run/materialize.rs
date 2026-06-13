@@ -247,7 +247,23 @@ pub(crate) async fn materialize_validated_relation_traversal(
             )
             .await?
             {
-                Ok(mat)
+                finalize_typed_relation_materialized_node(
+                    st,
+                    es,
+                    session_id,
+                    &relation.relation.target,
+                    mat,
+                    trace,
+                )
+                .await
+            } else if matches!(
+                relation.relation.cardinality,
+                crate::plasm_plan::RelationCardinality::One
+            ) {
+                materialize_relation_singleton_chain(
+                    st, es, session_id, idx, relation, materialized, trace, sink,
+                )
+                .await
             } else {
                 Err(format!(
                     "relation `{}` on `{}` has no materialize strategy (Unavailable)",
@@ -347,17 +363,26 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
         .display_expr
         .clone()
         .unwrap_or_else(|| format!("plan.relation({})", node.id().as_str()));
-    Ok(Some(MaterializedNode {
-        entry_id: relation.relation.target.entry_id.clone(),
-        entity: relation.relation.target.entity.clone(),
-        display,
-        projection: relation.relation.ir.projection.clone(),
-        row_source: inline_row_source(&rows),
-        rows,
-        row_identities,
-        result: full_result,
-        artifact: Some(artifact),
-    }))
+    finalize_typed_relation_materialized_node(
+        st,
+        es,
+        session_id,
+        &relation.relation.target,
+        MaterializedNode {
+            entry_id: relation.relation.target.entry_id.clone(),
+            entity: relation.relation.target.entity.clone(),
+            display,
+            projection: relation.relation.ir.projection.clone(),
+            row_source: inline_row_source(&[]),
+            rows: vec![],
+            row_identities,
+            result: full_result,
+            artifact: Some(artifact),
+        },
+        trace,
+    )
+    .await
+    .map(Some)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -474,34 +499,42 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                     trace,
                 )
                 .await?;
-                return Ok(MaterializedNode {
-                    entry_id: relation.relation.target.entry_id.clone(),
-                    entity: relation.relation.target.entity.clone(),
-                    display: format!(
-                        "plan.relation({}) prefer_from_parent_get (all embedded)",
-                        relation.id.as_str()
-                    ),
-                    projection: relation.relation.ir.projection.clone(),
-                    row_source: inline_row_source(
-                        &full_result
+                return finalize_typed_relation_materialized_node(
+                    st,
+                    es,
+                    session_id,
+                    &relation.relation.target,
+                    MaterializedNode {
+                        entry_id: relation.relation.target.entry_id.clone(),
+                        entity: relation.relation.target.entity.clone(),
+                        display: format!(
+                            "plan.relation({}) prefer_from_parent_get (all embedded)",
+                            relation.id.as_str()
+                        ),
+                        projection: relation.relation.ir.projection.clone(),
+                        row_source: inline_row_source(
+                            &full_result
+                                .entities
+                                .iter()
+                                .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+                                .collect::<Vec<_>>(),
+                        ),
+                        rows: full_result
                             .entities
                             .iter()
                             .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-                            .collect::<Vec<_>>(),
-                    ),
-                    rows: full_result
-                        .entities
-                        .iter()
-                        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-                        .collect(),
-                    row_identities: row_identities_from_entities(
-                        &scoped_es,
-                        target_entity,
-                        &full_result.entities,
-                    ),
-                    result: full_result,
-                    artifact: Some(artifact),
-                });
+                            .collect(),
+                        row_identities: row_identities_from_entities(
+                            &scoped_es,
+                            target_entity,
+                            &full_result.entities,
+                        ),
+                        result: full_result,
+                        artifact: Some(artifact),
+                    },
+                    trace,
+                )
+                .await;
             }
         }
     }
@@ -697,24 +730,32 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
         .iter()
         .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
         .collect();
-    Ok(MaterializedNode {
-        entry_id: relation.relation.target.entry_id.clone(),
-        entity: relation.relation.target.entity.clone(),
-        display: format!(
-            "plan.relation({}) prefer_from_parent_get",
-            relation.id.as_str()
-        ),
-        projection: relation.relation.ir.projection.clone(),
-        row_source: inline_row_source(&rows),
-        rows,
-        row_identities: row_identities_from_entities(
-            &scoped_es,
-            target_entity,
-            &full_result.entities,
-        ),
-        result: full_result,
-        artifact: Some(artifact),
-    })
+    finalize_typed_relation_materialized_node(
+        st,
+        es,
+        session_id,
+        &relation.relation.target,
+        MaterializedNode {
+            entry_id: relation.relation.target.entry_id.clone(),
+            entity: relation.relation.target.entity.clone(),
+            display: format!(
+                "plan.relation({}) prefer_from_parent_get",
+                relation.id.as_str()
+            ),
+            projection: relation.relation.ir.projection.clone(),
+            row_source: inline_row_source(&rows),
+            rows,
+            row_identities: row_identities_from_entities(
+                &scoped_es,
+                target_entity,
+                &full_result.entities,
+            ),
+            result: full_result,
+            artifact: Some(artifact),
+        },
+        trace,
+    )
+    .await
 }
 
 pub(crate) async fn materialized_rows(

@@ -28,4 +28,3 @@ pub fn plan_review_ui_tool_meta() -> serde_json::Map<String, serde_json::Value> 
     .cloned()
     .expect("plan review ui meta object")
 }
-

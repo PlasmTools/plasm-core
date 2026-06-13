@@ -1,6 +1,10 @@
 //! Typed per-parent relation row resolution (CGS `materialize` → embed vs scoped HTTP).
 //!
 //! Plan and runtime share this module so strategy does not depend on cache-shape heuristics.
+//!
+//! **Typed row invariant:** relation traversals must yield rows shaped as the target CGS entity
+//! (full field set or explicit nulls). Wire embeds are transport shortcuts; incomplete embeds
+//! are hydrated via target GET before plan compute (see `plasm_plan_run::relation_hydrate`).
 
 use crate::{Cardinality, EmbedOnMissPolicy, JsonPathSegment, Ref, RelationMaterialization};
 use serde_json::Value;

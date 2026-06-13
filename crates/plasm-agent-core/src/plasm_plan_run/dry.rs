@@ -111,6 +111,7 @@ pub fn evaluate_executable_comp_dry(
     }
     let validated =
         crate::plasm_step_convert::build_validated_plan_from_executable(comp, executable)?;
+    dry_validate_render_nodes(es, validated.artifact())?;
     let plan = validated.artifact();
     let (graph_summary, review) = graph_summary_for_session(plan, es);
     Ok(DryPlasmPlanEvaluation {

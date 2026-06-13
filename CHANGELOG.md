@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-06-12
+
+### Fixed
+
+- **Typed relation rows:** relation materialization decodes embed payloads as target CGS entities and GET-hydrates when declared fields are missing; evicts graph-cache stubs before hydrate so plan compute sees full rows (fixes dry-green / live-red on `Plan.render` columns such as `capture_rate` on `specimen.species`).
+- **Plan/run isomorphism:** dry-run `dry_validate_render_nodes` preflights `render_compute` against the target entity field set (same keys as live execution).
+
+### Changed
+
+- **PokeAPI catalog:** `Pokemon.species` declares `from_parent_get` on path `[species]`.
+- **HTTP outbound JSON:** set `Content-Type: application/json; charset=utf-8` on JSON request bodies.
+- **Docs:** DEMO.md states relation hops yield typed target-entity rows (removes sparse-embed workaround).
+
 ## [0.2.3] - 2026-06-13
 
 ### Changed

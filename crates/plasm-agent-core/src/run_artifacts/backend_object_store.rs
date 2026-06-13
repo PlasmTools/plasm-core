@@ -2,7 +2,10 @@ use super::backend::RunArtifactBackend;
 use super::evidence_sidecar::{
     evidence_head_object_key, evidence_object_key, evidence_run_head_pointer_key,
 };
-use super::keys::{artifact_object_key, code_plan_index_pointer_key, code_plan_object_key, resource_index_pointer_key};
+use super::keys::{
+    artifact_object_key, code_plan_index_pointer_key, code_plan_object_key,
+    resource_index_pointer_key,
+};
 use super::types::{RunArtifactError, RunArtifactId};
 use async_trait::async_trait;
 use object_store::{path::Path as StorePath, ObjectStore, ObjectStoreExt};

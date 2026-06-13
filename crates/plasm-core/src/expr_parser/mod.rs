@@ -645,12 +645,7 @@ impl<'a> Parser<'a> {
             }
             self.skip_ws();
             self.peek_char() == Some('=')
-                && self
-                    .input
-                    .as_bytes()
-                    .get(self.pos + 1)
-                    .copied()
-                    != Some(b'=')
+                && self.input.as_bytes().get(self.pos + 1).copied() != Some(b'=')
         })();
         self.pos = save;
         looks
@@ -4945,8 +4940,9 @@ mod tests {
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
         let layers = [&cgs];
-        let r = parse_with_cgs_layers_program(r#"Pet(name=pikachu)"#, &layers, sym_map, None, false)
-            .expect("parse");
+        let r =
+            parse_with_cgs_layers_program(r#"Pet(name=pikachu)"#, &layers, sym_map, None, false)
+                .expect("parse");
         let Expr::Get(g) = r.expr else {
             panic!("expected Get, got {:?}", r.expr);
         };

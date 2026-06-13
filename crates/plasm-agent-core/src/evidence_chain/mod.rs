@@ -19,9 +19,9 @@ pub use config::{
 pub use error::EvidenceEmitError;
 pub use plan::{
     attach_evidence_meta, begin_plan_evidence, begin_plan_evidence_with_anchors, chain,
-    evidence_anchors, evidence_scope_from_session, persist_evidence_sidecars,
-    semantic_comp_commit_hex, semantic_comp_commit_hex_from_json, verify_evidence_for_http_serve,
-    new_evidence_chain_slot, EvidenceChainSlot,
+    evidence_anchors, evidence_scope_from_session, new_evidence_chain_slot,
+    persist_evidence_sidecars, semantic_comp_commit_hex, semantic_comp_commit_hex_from_json,
+    verify_evidence_for_http_serve, EvidenceChainSlot,
 };
 pub use records::{RunSealRecord, StepExecutedRecord};
 pub use session::EvidenceChainSession;

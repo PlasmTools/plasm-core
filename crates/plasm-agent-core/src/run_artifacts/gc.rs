@@ -65,4 +65,3 @@ pub(crate) fn object_store_path_is_run_snapshot_gc_eligible(location: &str) -> b
     (location.contains("/execute/") || location.starts_with("execute/"))
         && !location.contains("/evidence/")
 }
-

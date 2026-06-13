@@ -58,12 +58,14 @@ mod compute_eval;
 mod dry;
 pub mod evidence_plan;
 mod materialize;
+mod relation_hydrate;
 mod orchestrator;
 mod parse;
 mod row_json;
 
 pub(crate) use compute_eval::*;
 pub(crate) use materialize::*;
+pub(crate) use relation_hydrate::finalize_typed_relation_materialized_node;
 
 pub use dry::{
     evaluate_plasm_comp_dry, node_dependencies, plan_dry_compact_view, plan_semantic_dag_json,
@@ -969,6 +971,27 @@ mod tests {
             render_compute(&rows, &columns, "{{ rows }}").expect_err("missing column rejected");
 
         assert!(err.contains("did not resolve in source row 0"), "{err}");
+    }
+
+    #[test]
+    fn render_compute_preserves_unicode_markdown() {
+        let rows = vec![serde_json::json!({
+            "title": "Pokémon",
+            "arrow": "→",
+        })];
+        let columns = vec![
+            OutputName::new("title").expect("title"),
+            OutputName::new("arrow").expect("arrow"),
+        ];
+        let rendered = render_compute(
+            &rows,
+            &columns,
+            "# {{ rows[0].title }}\nstep {{ rows[0].arrow }} done",
+        )
+        .expect("render unicode");
+        let content = rendered[0]["content"].as_str().expect("content");
+        assert!(content.contains("Pokémon"), "{content}");
+        assert!(content.contains('→'), "{content}");
     }
 
     #[test]

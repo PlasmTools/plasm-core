@@ -103,12 +103,14 @@ fn verify_plan_commit_id(
         ));
     }
     if let Some(evidence) = crate::evidence_chain::chain(es) {
-        evidence.verify_comp_commit_matches(&commit_id).map_err(|e| {
-            format!(
-                "plan_commit_ref `{}` evidence mismatch: {e}",
-                commit_ref.as_str()
-            )
-        })?;
+        evidence
+            .verify_comp_commit_matches(&commit_id)
+            .map_err(|e| {
+                format!(
+                    "plan_commit_ref `{}` evidence mismatch: {e}",
+                    commit_ref.as_str()
+                )
+            })?;
     }
     Ok(())
 }

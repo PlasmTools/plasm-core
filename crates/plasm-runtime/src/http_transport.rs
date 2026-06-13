@@ -164,7 +164,12 @@ fn build_compiled_reqwest(
             HttpBodyFormat::Json => {
                 let json_body = plasm_value_to_json(body);
                 let stripped = strip_null_fields(json_body);
-                req_builder = req_builder.json(&stripped);
+                req_builder = req_builder
+                    .header(
+                        reqwest::header::CONTENT_TYPE,
+                        "application/json; charset=utf-8",
+                    )
+                    .json(&stripped);
             }
             HttpBodyFormat::FormUrlencoded => {
                 let form = plasm_value_to_form_urlencoded(body)?;
@@ -1172,6 +1177,22 @@ mod multipart_wire_tests {
             "unexpected Content-Type: {s}"
         );
         assert!(s.contains("boundary="), "boundary in {s}");
+    }
+
+    #[test]
+    fn json_outbound_body_preserves_utf8_markdown() {
+        use plasm_core::Value;
+
+        let markdown = "# Pokémon\nstep → done\n";
+        let body = Value::Object(indexmap::IndexMap::from([(
+            "markdown".into(),
+            Value::String(markdown.into()),
+        )]));
+        let json_val = plasm_core::plasm_value_to_json(&body);
+        let bytes = serde_json::to_vec(&json_val).expect("serialize");
+        let decoded = std::str::from_utf8(&bytes).expect("utf-8 JSON body");
+        assert!(decoded.contains("Pokémon"));
+        assert!(decoded.contains('→'));
     }
 }
 

@@ -195,7 +195,10 @@ mod tests {
     #[test]
     fn attach_mcp_app_ui_plan_review_on_dry_run_comp() {
         let mut meta = serde_json::Map::new();
-        meta.insert("plasm".into(), serde_json::json!({ "logical_session_ref": "s0" }));
+        meta.insert(
+            "plasm".into(),
+            serde_json::json!({ "logical_session_ref": "s0" }),
+        );
         attach_mcp_app_ui_on_tool_meta(&mut meta);
         assert!(meta.get("ui").is_none());
 

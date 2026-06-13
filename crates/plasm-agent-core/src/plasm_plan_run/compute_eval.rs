@@ -379,26 +379,29 @@ pub(crate) async fn materialize_relation_singleton_chain(
     if let Some(sink) = sink {
         trace_record_plasm_line(sink, node_index, expr_label, &parsed, &result, &scoped_es).await;
     }
-    let rows: Vec<_> = result
-        .entities
-        .iter()
-        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-        .collect();
-    Ok(MaterializedNode {
-        entry_id: relation.relation.target.entry_id.clone(),
-        entity: relation.relation.target.entity.clone(),
-        display: crate::expr_display::expr_display(&parsed.expr),
-        projection: parsed.projection,
-        row_source: inline_row_source(&rows),
-        rows,
-        row_identities: row_identities_from_entities(
-            &scoped_es,
-            relation.relation.target.entity.as_str(),
-            &result.entities,
-        ),
-        result,
-        artifact,
-    })
+    finalize_typed_relation_materialized_node(
+        st,
+        es,
+        session_id,
+        &relation.relation.target,
+        MaterializedNode {
+            entry_id: relation.relation.target.entry_id.clone(),
+            entity: relation.relation.target.entity.clone(),
+            display: crate::expr_display::expr_display(&parsed.expr),
+            projection: parsed.projection,
+            row_source: inline_row_source(&[]),
+            rows: vec![],
+            row_identities: row_identities_from_entities(
+                &scoped_es,
+                relation.relation.target.entity.as_str(),
+                &result.entities,
+            ),
+            result,
+            artifact,
+        },
+        trace,
+    )
+    .await
 }
 
 /// When view `relation_outputs` (or other embed paths) populated `CachedEntity.relations`.
@@ -464,21 +467,30 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
         .iter()
         .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
         .collect();
-    Ok(Some(MaterializedNode {
-        entry_id: relation.relation.target.entry_id.clone(),
-        entity: relation.relation.target.entity.clone(),
-        display: format!("plan.relation({}) cached_embed", relation.id.as_str()),
-        projection: relation.relation.ir.projection.clone(),
-        row_source: inline_row_source(&rows),
-        rows,
-        row_identities: row_identities_from_entities(
-            &scoped_es,
-            target_entity,
-            &full_result.entities,
-        ),
-        result: full_result,
-        artifact: Some(artifact),
-    }))
+    finalize_typed_relation_materialized_node(
+        st,
+        es,
+        session_id,
+        &relation.relation.target,
+        MaterializedNode {
+            entry_id: relation.relation.target.entry_id.clone(),
+            entity: relation.relation.target.entity.clone(),
+            display: format!("plan.relation({}) cached_embed", relation.id.as_str()),
+            projection: relation.relation.ir.projection.clone(),
+            row_source: inline_row_source(&rows),
+            rows,
+            row_identities: row_identities_from_entities(
+                &scoped_es,
+                target_entity,
+                &full_result.entities,
+            ),
+            result: full_result,
+            artifact: Some(artifact),
+        },
+        trace,
+    )
+    .await
+    .map(Some)
 }
 
 /// When every parent row has fully resolved embed refs in the session graph.
@@ -1706,6 +1718,80 @@ pub(crate) fn json_rows_to_entities_with_refs(
             }
         })
         .collect()
+}
+
+/// Dry-run render preflight: validate template columns against the target entity field set
+/// (same keys as live `render_compute` would project from typed relation/surface rows).
+pub(crate) fn dry_validate_render_nodes(
+    es: &ExecuteSession,
+    plan: &crate::plasm_plan::Plan<crate::plasm_plan::ValidatedPlanState>,
+) -> Result<(), String> {
+    use crate::plasm_plan::{ComputeOp, ValidatedPlanNode};
+    use std::collections::HashMap;
+
+    let nodes: HashMap<String, &ValidatedPlanNode> = plan
+        .nodes
+        .iter()
+        .map(|n| (n.id().as_str().to_string(), n))
+        .collect();
+    for n in &plan.nodes {
+        let ValidatedPlanNode::Compute(c) = n else {
+            continue;
+        };
+        let ComputeOp::Render { columns, template, .. } = &c.compute.op else {
+            continue;
+        };
+        let qe = dry_render_source_qualified_entity(&nodes, c.compute.source.clone())?;
+        let scoped = entry_scoped_execute_session(es, Some(&qe))?;
+        let ent = scoped
+            .cgs
+            .get_entity(qe.entity.as_str())
+            .ok_or_else(|| format!("dry render: unknown entity `{}`", qe.entity))?;
+        let mut row = serde_json::Map::new();
+        for field in ent.fields.keys() {
+            row.insert(field.as_str().to_string(), serde_json::Value::Null);
+        }
+        row.insert(
+            ent.id_field.as_str().to_string(),
+            serde_json::Value::String("dry-placeholder".into()),
+        );
+        render_compute(
+            &[serde_json::Value::Object(row)],
+            columns,
+            template,
+        )?;
+    }
+    Ok(())
+}
+
+fn dry_render_source_qualified_entity(
+    nodes: &std::collections::HashMap<String, &ValidatedPlanNode>,
+    mut source: String,
+) -> Result<QualifiedEntityKey, String> {
+    use crate::plasm_plan::ValidatedPlanNode;
+
+    loop {
+        let Some(n) = nodes.get(source.as_str()) else {
+            return Err(format!("dry render: unknown source node `{source}`"));
+        };
+        match n {
+            ValidatedPlanNode::Surface(s) => {
+                return s.qualified_entity.clone().ok_or_else(|| {
+                    format!("dry render: surface `{source}` has no qualified entity")
+                });
+            }
+            ValidatedPlanNode::RelationTraversal(r) => return Ok(r.relation.target.clone()),
+            ValidatedPlanNode::Compute(c) => {
+                source = c.compute.source.clone();
+            }
+            other => {
+                return Err(format!(
+                    "dry render: source `{source}` is {:?}, expected surface/relation/compute chain",
+                    other.kind()
+                ));
+            }
+        }
+    }
 }
 
 pub(crate) fn json_to_plasm_value(v: &serde_json::Value) -> Value {
