@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-06-13
+
+### Fixed
+
+- **Multi-replica MCP logical sessions:** `LogicalSessionRegistry` mirrors minted sessions to Redis so `plasm` / `plasm_run` on a different pod than `plasm_context` pass `verify_tenant` (fixes ~50% cross-pod smoke failures on hosted multi-replica).
+
 ## [0.3.0] - 2026-06-13
 
 ### Changed
