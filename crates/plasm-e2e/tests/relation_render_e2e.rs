@@ -1,5 +1,7 @@
 //! Typed relation rows: species traversal + render on `capture_rate` (dry + live, Hermit pokeapi).
 
+#![allow(dead_code)]
+
 mod common;
 
 use std::path::Path;
