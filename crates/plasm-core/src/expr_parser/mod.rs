@@ -1944,7 +1944,7 @@ impl<'a> Parser<'a> {
     fn parse_page_invocation(&mut self) -> Result<Expr, ParseError> {
         self.expect_char('(')?;
         self.skip_ws();
-        let handle_raw = self.parse_ident()?;
+        let handle_raw = self.parse_continuation_handle_operand()?;
         let handle = crate::PagingHandle::parse(&handle_raw).map_err(|e| {
             self.err(ParseErrorKind::Other {
                 message: e.to_string(),
@@ -1972,13 +1972,33 @@ impl<'a> Parser<'a> {
         Ok(Expr::Page(PageExpr { handle, limit }))
     }
 
+    /// Wire handle operand for `wait` / `cancel` / `page`: allows `-` in base64url `l_<token>_oN`.
+    fn is_continuation_handle_char(c: char) -> bool {
+        c.is_ascii_alphanumeric() || c == '_' || c == '-'
+    }
+
+    fn parse_continuation_handle_operand(&mut self) -> Result<String, ParseError> {
+        self.skip_ws();
+        let start = self.pos;
+        while let Some(c) = self.peek_char() {
+            if !Self::is_continuation_handle_char(c) {
+                break;
+            }
+            self.pos += c.len_utf8();
+        }
+        if self.pos == start {
+            return Err(self.err(ParseErrorKind::ExpectedIdentifier));
+        }
+        Ok(self.input[start..self.pos].to_string())
+    }
+
     fn parse_operation_handle_invocation(
         &mut self,
         kind: &'static str,
     ) -> Result<Expr, ParseError> {
         self.expect_char('(')?;
         self.skip_ws();
-        let handle_raw = self.parse_ident()?;
+        let handle_raw = self.parse_continuation_handle_operand()?;
         let handle = crate::OperationHandle::parse(&handle_raw).map_err(|e| {
             self.err(ParseErrorKind::Other {
                 message: e.to_string(),
@@ -2826,6 +2846,34 @@ mod tests {
             panic!("expected Wait, got {:?}", r.expr);
         };
         assert_eq!(w.handle.as_str(), format!("{wire}_o1"));
+    }
+
+    #[test]
+    fn parse_wait_operation_continuation_base64url_hyphen() {
+        if !has_petstore() {
+            return;
+        }
+        let cgs = petstore_cgs();
+        let wire = "l_EPUj_tlFT76v-qOcMZXRAQ";
+        let r = parse(&format!("wait({wire}_o1)"), &cgs).unwrap();
+        let Expr::Wait(w) = &r.expr else {
+            panic!("expected Wait, got {:?}", r.expr);
+        };
+        assert_eq!(w.handle.as_str(), format!("{wire}_o1"));
+    }
+
+    #[test]
+    fn parse_page_continuation_base64url_hyphen() {
+        if !has_petstore() {
+            return;
+        }
+        let cgs = petstore_cgs();
+        let wire = "l_EPUj_tlFT76v-qOcMZXRAQ";
+        let r = parse(&format!("page({wire}_pg1)"), &cgs).unwrap();
+        let Expr::Page(p) = &r.expr else {
+            panic!("expected Page, got {:?}", r.expr);
+        };
+        assert_eq!(p.handle.as_str(), format!("{wire}_pg1"));
     }
 
     #[test]

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-06-13
+
+### Fixed
+
+- **`wait()` / `cancel()` / `page()` handle parse:** continuation operands accept `-` in base64url logical session tokens (`wait(l_<token>_oN)`), not only `[A-Za-z0-9_]` ident prefixes.
+
 ## [0.3.2] - 2026-06-13
 
 ### Fixed
