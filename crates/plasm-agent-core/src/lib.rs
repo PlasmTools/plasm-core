@@ -32,7 +32,9 @@ pub mod execute_pipeline;
 pub mod execute_session;
 pub mod execute_session_rehydrate;
 pub mod expr_display;
+mod graph_cache_guard;
 mod graph_cache_metrics;
+mod graph_execute;
 mod graph_page_spill_host;
 mod graph_rehydrate;
 pub mod http;
@@ -91,6 +93,8 @@ mod plasm_comp_lift;
 mod plasm_comp_wire;
 pub mod plasm_compile;
 mod plasm_step_convert;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub use plasm_comp_bundle::PlasmCompBundle;
 pub use plasm_comp_wire::{
     plasm_comp_commit_canonical, plasm_comp_from_validated, plasm_comp_json_from_dry,
@@ -109,6 +113,7 @@ pub mod query_args;
 pub(crate) mod resolved_plan_http;
 pub(crate) mod row_predicate_lower;
 pub mod run_artifacts;
+pub mod run_explorer_meta;
 pub mod run_ui_column_schema;
 pub mod schema_overlay_session;
 pub mod server_state;

@@ -1,6 +1,8 @@
 //! In-memory execute sessions: prompt text + CGS + entity seeds, keyed by `(prompt_hash, session_id)`.
 //! Plasm instructions text is built incrementally via [`plasm_core::TeachingExposureSession`] (monotonic `e#`/`m#`/`p#`/`r#`).
 
+pub use crate::graph_cache_guard::GraphCacheGuard;
+
 use indexmap::IndexMap;
 use plasm_core::CgsContext;
 use plasm_core::FederationDispatch;
@@ -748,6 +750,9 @@ impl ExecuteSession {
                 mcp_transport_key: accept.mcp_transport_key,
                 progress_host: accept.host,
                 progress_tx,
+                comp: accept.comp,
+                plan_ux_reflection: accept.plan_ux_reflection,
+                step_order: accept.step_order,
             },
         );
         Ok(())
@@ -1048,7 +1053,13 @@ impl ExecuteSession {
                 op.plan_commit_ref.as_ref(),
             )
         };
-        Some((markdown, meta, unchanged))
+        let mut plasm = meta;
+        crate::run_explorer_meta::merge_run_explorer_fields_into_plasm(
+            &mut plasm,
+            op,
+            Some(&op.progress),
+        );
+        Some((markdown, plasm, unchanged))
     }
 
     pub fn finalize_operation_succeeded(
@@ -1237,6 +1248,11 @@ impl ExecuteSession {
         Some(Arc::new(crate::catalog_ownership::federation_for_session(
             self,
         )))
+    }
+
+    /// Exclusive graph-cache access for the full execute / rehydrate await chain.
+    pub(crate) async fn lock_graph_cache(&self) -> GraphCacheGuard<'_> {
+        GraphCacheGuard::from_guard(self.graph_cache.lock().await)
     }
 
     async fn finalize_run_artifacts(&self, session_id: &str, store: &RunArtifactStore) {
@@ -1547,7 +1563,7 @@ async fn finalize_session_once(
         let span = crate::spans::execute_graph_snapshot_finalize(through_seq);
         let _guard = span.enter();
         let started = std::time::Instant::now();
-        let cache = sess.graph_cache.lock().await;
+        let cache = sess.lock_graph_cache().await;
         let entity_count = cache.stats().total_entities;
         match persistence
             .write_snapshot(

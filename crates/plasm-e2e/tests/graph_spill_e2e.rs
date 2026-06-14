@@ -1,12 +1,15 @@
 //! Graph spill + hot trim + plan rehydrate (Hermit pokeapi_mini + file persistence).
 //!
-//! Requires `PLASM_GRAPH_CACHE_URL` and a low `PLASM_GRAPH_HOT_MAX_ENTITIES`; uses
-//! [`serial_test::serial`] so env vars do not race other tests.
+//! Requires `PLASM_GRAPH_CACHE_URL` and a low `PLASM_GRAPH_HOT_MAX_ENTITIES`.
+//! This integration-test binary contains a single test; no `serial_test` lock is required.
+//! If a prior run was interrupted, kill stale `graph_spill_e2e` processes — they can hold
+//! resources and appear as indefinite hangs under `cargo test`.
 
 #![allow(dead_code)] // common::hermit re-exports petstore helpers unused by this binary.
 
 mod common;
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -26,7 +29,6 @@ use plasm_core::{CgsContext, Expr, PromptPipelineConfig, QueryExpr, QueryPaginat
 use plasm_runtime::{
     ExecuteOptions, ExecutionConfig, ExecutionEngine, ExecutionMode, StreamConsumeOpts,
 };
-use serial_test::serial;
 
 use common::hermit;
 
@@ -46,7 +48,7 @@ impl GraphSpillEnv {
         let store_root = dir.path().join("graph-cache");
         std::fs::create_dir_all(&store_root).expect("graph-cache dir");
         let url = format!("file://{}", store_root.display());
-        // SAFETY: test runs under `#[serial]`; no concurrent env mutation.
+        // SAFETY: single-test binary; env vars are not shared with parallel tests.
         unsafe {
             std::env::set_var("PLASM_GRAPH_CACHE_URL", url);
             std::env::set_var("PLASM_GRAPH_HOT_MAX_ENTITIES", HOT_MAX.to_string());
@@ -146,7 +148,8 @@ fn graph_spill_bounded_hot_and_plan_filter_rehydrate() {
     std::thread::Builder::new()
         .stack_size(16 * 1024 * 1024)
         .spawn(|| {
-            let rt = tokio::runtime::Builder::new_current_thread()
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
                 .enable_all()
                 .build()
                 .expect("graph spill runtime");
@@ -157,10 +160,9 @@ fn graph_spill_bounded_hot_and_plan_filter_rehydrate() {
         .expect("graph spill thread join");
 }
 
-#[serial]
 async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
     let env = GraphSpillEnv::install();
-    let base = hermit::pokeapi_hermit_base_url().await.clone();
+    let base = hermit::pokeapi_hermit_graph_spill_base_url().await.clone();
     let cgs = load_pokeapi_mini_cgs();
     let engine = make_engine(&base);
     let es = pokeapi_execute_session(cgs.clone());
@@ -252,5 +254,70 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
         one_step.result.entities.len(),
         1,
         "limit step should materialize one entity row"
+    );
+    let md = live.run_markdown.as_deref().unwrap_or("");
+    assert!(
+        !md.contains("(no results)"),
+        "published markdown must include rehydrated rows, got: {md}"
+    );
+
+    let program_many = "all = Berry\nmany = all.limit(40)\nmany";
+    let bundle_many = compile_plasm_program(
+        &PromptPipelineConfig::default(),
+        None,
+        &es,
+        "graph_spill_limit_many",
+        program_many,
+    )
+    .expect("compile limit-many plan");
+
+    let live_many = run_plasm_comp(
+        &es,
+        &st,
+        PROMPT_HASH,
+        SESSION_ID,
+        &bundle_many,
+        true,
+        None,
+        None,
+    )
+    .await
+    .expect("live limit-many plan run");
+
+    let many_step = live_many
+        .return_steps
+        .iter()
+        .find(|s| s.node_id.as_deref() == Some("many"))
+        .expect("many return step");
+    let row_count = many_step.result.count;
+    assert!(row_count > 0, "expected at least one berry row");
+    assert!(
+        row_count <= 40,
+        "limit(40) should cap at 40 rows, got {row_count}"
+    );
+
+    use plasm_core::Value;
+
+    let mut names = BTreeSet::new();
+    for entity in &many_step.result.entities {
+        if let Some(Value::String(name)) = entity
+            .get_field("name")
+            .map(plasm_core::TypedFieldValue::to_value)
+        {
+            names.insert(name);
+        }
+    }
+    assert_eq!(
+        names.len(),
+        many_step.result.entities.len(),
+        "limit-many rows must be unique by berry name (got {} rows, {} unique names)",
+        many_step.result.entities.len(),
+        names.len()
+    );
+
+    let md_many = live_many.run_markdown.as_deref().unwrap_or("");
+    assert!(
+        !md_many.contains("(no results)"),
+        "limit-many markdown must include rows, got: {md_many}"
     );
 }

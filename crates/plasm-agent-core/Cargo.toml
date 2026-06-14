@@ -7,6 +7,8 @@ build = "build.rs"
 
 [features]
 default = []
+# In-crate Shuttle concurrency tests (`graph_execute/concurrency_shuttle.rs`).
+shuttle-tests = []
 # Local-only: allow bootstrap secrets from process env when `PLASM_SECRETS_DIR` is unset (never enable for k8s images).
 local_env_bootstrap_secrets = []
 # Forward to plasm-compile for EVM-backed schemas (e.g. apis/evm-erc20).
@@ -78,3 +80,7 @@ serde = { workspace = true }
 serde_urlencoded = { workspace = true }
 testcontainers-modules = { workspace = true }
 tower = { workspace = true }
+shuttle = { workspace = true }
+object_store = { workspace = true }
+url = { workspace = true }
+axum = { workspace = true }

@@ -3,8 +3,8 @@
 //! Callers hold one [`MutexGraphCacheSession`] per HTTP/MCP execute session (plasm) instead of a
 //! process-global mutex. See cache module invariants **I5** (single writer).
 //!
-//! Hold the [`MutexGuard`](tokio::sync::MutexGuard) from [`Self::lock`] across the full `execute` /
-//! projection await chain (do not wrap `&mut SessionMaterialization` in nested async closures).
+//! Live execute should fork materialization under lock, mutate the branch across awaited
+//! HTTP, then commit with an epoch check — the mutex must not be held during I/O.
 
 use std::sync::Arc;
 

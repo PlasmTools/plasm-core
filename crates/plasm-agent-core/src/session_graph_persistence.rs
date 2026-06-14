@@ -144,6 +144,14 @@ impl SessionGraphPersistence {
         prompt_hash: &str,
         session_id: &str,
     ) -> Result<Vec<GraphPageDelta>, String> {
+        self.load_graph_pages_sorted(prompt_hash, session_id).await
+    }
+
+    async fn load_graph_pages_sorted(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+    ) -> Result<Vec<GraphPageDelta>, String> {
         let seqs = self.list_delta_seqs(prompt_hash, session_id).await?;
         let mut pages = Vec::new();
         for seq in seqs {

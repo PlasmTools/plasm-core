@@ -1,19 +1,19 @@
 //! Unified execute front door: dry-run is live preflight with I/O stubbed, not a parallel simulation path.
 
 mod preflight;
+mod run_line_error;
 mod scope;
 
 pub use plasm_core::PreflightToken;
 pub use preflight::{PlasmPreflight, PreflightReport, SimulationBundle};
+pub use run_line_error::RunLineError;
 pub use scope::{session_scope_for_node, SessionScope};
 
 use crate::execute_session::ExecuteSession;
-use crate::http_execute::RunLineError;
 use crate::plasm_comp_bundle::PlasmCompBundle;
 use crate::plasm_plan_run::{PlasmPlanRunHooks, PlasmPlanRunResult};
 use crate::server_state::PlasmHostState;
 use plasm_core::expr_parser::ParsedExpr;
-use plasm_runtime::SessionMaterialization;
 
 /// What the caller wants — replaces scattered `plan_only` / `run: bool` flags.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -63,7 +63,6 @@ impl ExecutePipeline {
         line: &str,
         sess: &ExecuteSession,
         st: &PlasmHostState,
-        cache: &mut SessionMaterialization,
         session_id: &str,
         parsed: ParsedExpr,
         trace: Option<&crate::trace_sink_emit::PlasmTraceContext>,
@@ -81,7 +80,6 @@ impl ExecutePipeline {
             line,
             sess,
             st,
-            cache,
             session_id,
             parsed,
             trace,

@@ -15,20 +15,29 @@ pub(crate) async fn eval_compute_with_row_source(
         MaterializedRowSource::GraphBacked {
             entity_type,
             logical_count,
+            hot_snapshot,
         } => {
             if compute_needs_full_materialize(&compute.op) {
-                let rows = crate::graph_rehydrate::rehydrate_rows(
-                    es,
-                    st,
-                    session_id,
-                    entity_type,
-                    *logical_count,
-                    cgs,
-                )
-                .await?;
+                let rows =
+                    crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, cgs)
+                        .rehydrate_rows(
+                            std::sync::Arc::clone(hot_snapshot),
+                            entity_type,
+                            *logical_count,
+                        )
+                        .await?;
                 return eval_compute_from_rows(compute, &rows);
             }
-            eval_compute_streaming(compute, es, st, session_id, entity_type, cgs).await
+            eval_compute_streaming(
+                compute,
+                es,
+                st,
+                session_id,
+                entity_type,
+                cgs,
+                std::sync::Arc::clone(hot_snapshot),
+            )
+            .await
         }
     }
 }
@@ -40,37 +49,39 @@ pub(crate) async fn eval_compute_streaming(
     session_id: &str,
     entity_type: &str,
     cgs: &CGS,
+    hot_snapshot: std::sync::Arc<[plasm_runtime::CachedEntity]>,
 ) -> Result<Vec<serde_json::Value>, String> {
     let mut out = Vec::new();
     let limit = match &compute.op {
         ComputeOp::Limit { count } => Some(*count),
         _ => None,
     };
-    crate::graph_rehydrate::stream_entity_rows(es, st, session_id, entity_type, cgs, |row| {
-        match &compute.op {
-            ComputeOp::Filter { predicates } => {
-                if predicates.iter().all(|p| predicate_matches(row, p)) {
-                    out.push(row.clone());
+    crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, cgs)
+        .stream_entity_rows(hot_snapshot, entity_type, |row| {
+            match &compute.op {
+                ComputeOp::Filter { predicates } => {
+                    if predicates.iter().all(|p| predicate_matches(row, p)) {
+                        out.push(row.clone());
+                    }
                 }
-            }
-            ComputeOp::Limit { .. } => out.push(row.clone()),
-            ComputeOp::Project { fields } => {
-                let mut obj = serde_json::Map::new();
-                for (name, path) in fields {
-                    obj.insert(
-                        name.as_str().to_string(),
-                        value_at_path(row, path)
-                            .cloned()
-                            .unwrap_or(serde_json::Value::Null),
-                    );
+                ComputeOp::Limit { .. } => out.push(row.clone()),
+                ComputeOp::Project { fields } => {
+                    let mut obj = serde_json::Map::new();
+                    for (name, path) in fields {
+                        obj.insert(
+                            name.as_str().to_string(),
+                            value_at_path(row, path)
+                                .cloned()
+                                .unwrap_or(serde_json::Value::Null),
+                        );
+                    }
+                    out.push(serde_json::Value::Object(obj));
                 }
-                out.push(serde_json::Value::Object(obj));
+                _ => {}
             }
-            _ => {}
-        }
-        limit.is_some_and(|cap| out.len() >= cap)
-    })
-    .await?;
+            limit.is_some_and(|cap| out.len() >= cap)
+        })
+        .await?;
     if let ComputeOp::Limit { count } = &compute.op {
         out.truncate(*count);
     }
@@ -422,7 +433,7 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
         return Ok(None);
     }
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
-    let graph = scoped_es.graph_cache.lock().await;
+    let graph = scoped_es.lock_graph_cache().await;
     let Some(entities) =
         collect_all_embedded_relation_targets(rel_name, target_entity, parents, &graph)
     else {
@@ -581,41 +592,40 @@ pub(crate) async fn materialize_relation_scoped_fanout(
             &parsed,
         )
         .map_err(|e| e.to_string())?;
-        let (parsed, result, _artifact) = {
-            let mut cache = scoped_es.graph_cache.lock().await;
-            run_parsed_plasm_line(
-                &expr_label,
-                &scoped_es,
-                st,
-                &mut cache,
-                session_id,
-                parsed,
-                trace,
-                trace_line_index as i64,
-                None,
-                None,
-                None,
-                Some(plasm_core::PreflightToken::VERIFIED),
-            )
-            .await
-            .map_err(|e| match e {
-                crate::http_execute::RunLineError::Parse(d)
-                | crate::http_execute::RunLineError::Normalize(d)
-                | crate::http_execute::RunLineError::Projection(d) => d,
-                crate::http_execute::RunLineError::Operation(_) => {
-                    "operation continuation is not valid inside a plan surface node".to_string()
-                }
-                crate::http_execute::RunLineError::Runtime(e, src) => {
-                    format!("{e}\nsource expression: {src}")
-                }
-                crate::http_execute::RunLineError::ArtifactSerialization(e) => {
-                    format!("artifact serialization failed: {e}")
-                }
-                crate::http_execute::RunLineError::ArtifactPersist(d) => {
-                    format!("run artifact persist failed: {d}")
-                }
-            })?
-        };
+        let (parsed, result, _artifact) = run_parsed_plasm_line(
+            &expr_label,
+            &scoped_es,
+            st,
+            session_id,
+            parsed,
+            trace,
+            trace_line_index as i64,
+            None,
+            None,
+            None,
+            Some(plasm_core::PreflightToken::VERIFIED),
+        )
+        .await
+        .map_err(|e| match e {
+            crate::http_execute::RunLineError::Parse(d)
+            | crate::http_execute::RunLineError::Normalize(d)
+            | crate::http_execute::RunLineError::Projection(d) => d,
+            crate::http_execute::RunLineError::Operation(_) => {
+                "operation continuation is not valid inside a plan surface node".to_string()
+            }
+            crate::http_execute::RunLineError::Runtime(e, src) => {
+                format!("{e}\nsource expression: {src}")
+            }
+            crate::http_execute::RunLineError::ArtifactSerialization(e) => {
+                format!("artifact serialization failed: {e}")
+            }
+            crate::http_execute::RunLineError::ArtifactPersist(d) => {
+                format!("run artifact persist failed: {d}")
+            }
+            crate::http_execute::RunLineError::StaleGraphEpoch { .. } => {
+                "session graph changed during concurrent execute; retry the request".to_string()
+            }
+        })?;
         if let Some(sink) = sink {
             trace_record_plasm_line(
                 sink,

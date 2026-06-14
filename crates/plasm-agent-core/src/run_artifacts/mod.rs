@@ -19,12 +19,17 @@ mod backend_object_store;
 mod evidence_sidecar;
 mod gc;
 mod keys;
+mod persist;
 mod types;
 mod uri;
 
 #[cfg(test)]
 mod tests;
 
+pub use persist::{
+    mint_run_artifact_id_for_session, persist_execute_run, PersistExecuteRunError,
+    PersistExecuteRunInput,
+};
 pub use types::*;
 
 use backend::RunArtifactBackend;

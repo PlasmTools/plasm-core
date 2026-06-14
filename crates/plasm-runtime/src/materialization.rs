@@ -184,9 +184,13 @@ pub enum MaterializedRowSource {
     /// Rows fully in memory (small / non-graph-backed).
     Inline(Vec<serde_json::Value>),
     /// Hot graph + spilled pages; `logical_count` from [`crate::ExecutionResult::count`].
+    ///
+    /// `hot_snapshot` is captured at materialize time so compute can rehydrate without
+    /// re-acquiring the session graph mutex or re-copying hot entities.
     GraphBacked {
         entity_type: String,
         logical_count: usize,
+        hot_snapshot: std::sync::Arc<[CachedEntity]>,
     },
 }
 

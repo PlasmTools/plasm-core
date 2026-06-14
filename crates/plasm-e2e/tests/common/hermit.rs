@@ -6,6 +6,7 @@ use tokio::sync::OnceCell;
 static PETSTORE_HERMIT: OnceCell<String> = OnceCell::const_new();
 static PETSTORE_HERMIT_HYDRATE: OnceCell<String> = OnceCell::const_new();
 static POKEAPI_HERMIT: OnceCell<String> = OnceCell::const_new();
+static POKEAPI_HERMIT_GRAPH_SPILL: OnceCell<String> = OnceCell::const_new();
 
 fn fixture_dir_candidates(rel_under_fixtures: &str) -> Vec<PathBuf> {
     let crate_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -32,10 +33,15 @@ pub fn pokeapi_spec_path() -> PathBuf {
         .expect("Cannot find pokeapi.yaml")
 }
 
-async fn spawn_hermit_with_base(spec_path: &Path, base_suffix: &str) -> String {
+async fn spawn_hermit_with_base(
+    spec_path: &Path,
+    base_suffix: &str,
+    min_items: usize,
+    max_items: usize,
+) -> String {
     let spec = beavuck_hermit::spec_loader::load(spec_path);
     let routes = beavuck_hermit::spec_parser::extract_routes(&spec);
-    let router = beavuck_hermit::router::build_with_bounds(routes, 1, 5);
+    let router = beavuck_hermit::router::build_with_bounds(routes, min_items, max_items);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -62,7 +68,7 @@ pub async fn petstore_hermit_base_url() -> &'static String {
     PETSTORE_HERMIT
         .get_or_init(|| async {
             let spec_path = petstore_spec_path().expect("petstore_api.json");
-            spawn_hermit_with_base(spec_path.as_path(), "api/v3").await
+            spawn_hermit_with_base(spec_path.as_path(), "api/v3", 1, 5).await
         })
         .await
 }
@@ -72,7 +78,7 @@ pub async fn petstore_hermit_hydrate_base_url() -> &'static String {
     PETSTORE_HERMIT_HYDRATE
         .get_or_init(|| async {
             let spec_path = petstore_spec_path().expect("petstore_api.json");
-            spawn_hermit_with_base(spec_path.as_path(), "api/v3").await
+            spawn_hermit_with_base(spec_path.as_path(), "api/v3", 1, 5).await
         })
         .await
 }
@@ -82,7 +88,17 @@ pub async fn pokeapi_hermit_base_url() -> &'static String {
     POKEAPI_HERMIT
         .get_or_init(|| async {
             let spec_path = pokeapi_spec_path();
-            spawn_hermit_with_base(spec_path.as_path(), "").await
+            spawn_hermit_with_base(spec_path.as_path(), "", 1, 5).await
+        })
+        .await
+}
+
+/// PokéAPI Hermit tuned for graph-spill e2e: enough list rows to exceed `PLASM_GRAPH_HOT_MAX_ENTITIES=1`.
+pub async fn pokeapi_hermit_graph_spill_base_url() -> &'static String {
+    POKEAPI_HERMIT_GRAPH_SPILL
+        .get_or_init(|| async {
+            let spec_path = pokeapi_spec_path();
+            spawn_hermit_with_base(spec_path.as_path(), "", 4, 8).await
         })
         .await
 }

@@ -128,14 +128,10 @@ pub(crate) async fn materialize_validated_relation_traversal(
             relation.relation.source.as_str()
         )
     })?;
-    let source_rows = crate::graph_rehydrate::resolve_row_source_rows(
-        &source_mat.row_source,
-        es,
-        st,
-        session_id,
-        es.cgs.as_ref(),
-    )
-    .await?;
+    let source_rows =
+        crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, es.cgs.as_ref())
+            .resolve_row_source_rows(&source_mat.row_source)
+            .await?;
     match &relation.relation.materialize {
         RelationMaterialization::FromParentGet { .. } => try_materialize_from_parent_get_relation(
             st,
@@ -392,6 +388,8 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
     .map(Some)
 }
 
+/// PreferFromParentGet: embed from graph when possible; otherwise per-row scoped GET via
+/// [`run_parsed_plasm_line`] (graph branch fork/commit — session mutex not held during HTTP).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn materialize_prefer_from_parent_get_relation(
     st: &PlasmHostState,
@@ -454,8 +452,8 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
         }
     }
     let parents = &source_mat.result.entities;
-    {
-        let graph = scoped_es.graph_cache.lock().await;
+    let all_embedded_entities: Option<Vec<CachedEntity>> = {
+        let graph = scoped_es.lock_graph_cache().await;
         let all_embed = parents.len() == source_rows.len()
             && parents.iter().zip(source_rows).all(|(parent, row)| {
                 matches!(
@@ -471,79 +469,80 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                 )
             });
         if all_embed {
-            if let Some(entities) =
-                collect_all_embedded_relation_targets(rel_name, target_entity, parents, &graph)
-            {
-                let count = entities.len();
-                let full_result = ExecutionResult {
-                    count,
-                    entities: entities.clone(),
-                    has_more: false,
-                    pagination_resume: None,
-                    paging_handle: None,
-                    source: ExecutionSource::Cache,
-                    stats: ExecutionStats {
-                        duration_ms: 0,
-                        network_requests: 0,
-                        cache_hits: count,
-                        cache_misses: 0,
-                        ..Default::default()
-                    },
-                    request_fingerprints: vec![compute_fingerprint(node, source_rows)],
-                };
-                let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(node);
-                let artifact = archive_plasm_result_snapshot(
-                    st,
-                    es,
-                    session_id,
-                    Some(relation.relation.target.entry_id.as_str()),
-                    vec![format!(
-                        "plan.relation({}) prefer_embed_all",
-                        relation.id.as_str()
-                    )],
-                    &parsed_preimage,
-                    &full_result,
-                    trace,
-                )
-                .await?;
-                return finalize_typed_relation_materialized_node(
-                    st,
-                    es,
-                    session_id,
-                    &relation.relation.target,
-                    MaterializedNode {
-                        entry_id: relation.relation.target.entry_id.clone(),
-                        entity: relation.relation.target.entity.clone(),
-                        display: format!(
-                            "plan.relation({}) prefer_from_parent_get (all embedded)",
-                            relation.id.as_str()
-                        ),
-                        projection: relation.relation.ir.projection.clone(),
-                        row_source: inline_row_source(
-                            &full_result
-                                .entities
-                                .iter()
-                                .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-                                .collect::<Vec<_>>(),
-                        ),
-                        rows: full_result
-                            .entities
-                            .iter()
-                            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-                            .collect(),
-                        row_identities: row_identities_from_entities(
-                            &scoped_es,
-                            target_entity,
-                            &full_result.entities,
-                        ),
-                        result: full_result,
-                        artifact: Some(artifact),
-                    },
-                    trace,
-                )
-                .await;
-            }
+            collect_all_embedded_relation_targets(rel_name, target_entity, parents, &graph)
+        } else {
+            None
         }
+    };
+    if let Some(entities) = all_embedded_entities {
+        let count = entities.len();
+        let full_result = ExecutionResult {
+            count,
+            entities: entities.clone(),
+            has_more: false,
+            pagination_resume: None,
+            paging_handle: None,
+            source: ExecutionSource::Cache,
+            stats: ExecutionStats {
+                duration_ms: 0,
+                network_requests: 0,
+                cache_hits: count,
+                cache_misses: 0,
+                ..Default::default()
+            },
+            request_fingerprints: vec![compute_fingerprint(node, source_rows)],
+        };
+        let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(node);
+        let artifact = archive_plasm_result_snapshot(
+            st,
+            es,
+            session_id,
+            Some(relation.relation.target.entry_id.as_str()),
+            vec![format!(
+                "plan.relation({}) prefer_embed_all",
+                relation.id.as_str()
+            )],
+            &parsed_preimage,
+            &full_result,
+            trace,
+        )
+        .await?;
+        return finalize_typed_relation_materialized_node(
+            st,
+            es,
+            session_id,
+            &relation.relation.target,
+            MaterializedNode {
+                entry_id: relation.relation.target.entry_id.clone(),
+                entity: relation.relation.target.entity.clone(),
+                display: format!(
+                    "plan.relation({}) prefer_from_parent_get (all embedded)",
+                    relation.id.as_str()
+                ),
+                projection: relation.relation.ir.projection.clone(),
+                row_source: inline_row_source(
+                    &full_result
+                        .entities
+                        .iter()
+                        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+                        .collect::<Vec<_>>(),
+                ),
+                rows: full_result
+                    .entities
+                    .iter()
+                    .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+                    .collect(),
+                row_identities: row_identities_from_entities(
+                    &scoped_es,
+                    target_entity,
+                    &full_result.entities,
+                ),
+                result: full_result,
+                artifact: Some(artifact),
+            },
+            trace,
+        )
+        .await;
     }
     let pe = ParsedExpr {
         expr: relation.relation.ir.expr.clone(),
@@ -557,7 +556,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
         .clone()
         .unwrap_or_else(|| format!("plan.relation({})", relation.id.as_str()));
     let resolutions: Vec<RelationRowResolution> = {
-        let graph = scoped_es.graph_cache.lock().await;
+        let graph = scoped_es.lock_graph_cache().await;
         source_rows
             .iter()
             .enumerate()
@@ -590,9 +589,9 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
         let source_row = &source_rows[row_index];
         match resolution {
             RelationRowResolution::EmbeddedRefs(refs) => {
-                let cache = scoped_es.graph_cache.lock().await;
+                let graph = scoped_es.lock_graph_cache().await;
                 for r in refs {
-                    let e = cache
+                    let e = graph
                         .get(r)
                         .ok_or_else(|| format!("prefer embed: missing graph target {r}"))?
                         .clone();
@@ -646,42 +645,41 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                     &parsed,
                 )
                 .map_err(|e| e.to_string())?;
-                let (parsed, result, _artifact) = {
-                    let mut cache = scoped_es.graph_cache.lock().await;
-                    run_parsed_plasm_line(
-                        &expr_label,
-                        &scoped_es,
-                        st,
-                        &mut cache,
-                        session_id,
-                        parsed,
-                        trace,
-                        trace_line_index as i64,
-                        None,
-                        None,
-                        None,
-                        Some(plasm_core::PreflightToken::VERIFIED),
-                    )
-                    .await
-                    .map_err(|e| match e {
-                        crate::http_execute::RunLineError::Parse(d)
-                        | crate::http_execute::RunLineError::Normalize(d)
-                        | crate::http_execute::RunLineError::Projection(d) => d,
-                        crate::http_execute::RunLineError::Operation(_) => {
-                            "operation continuation is not valid inside a plan surface node"
-                                .to_string()
-                        }
-                        crate::http_execute::RunLineError::Runtime(e, src) => {
-                            format!("{e}\nsource expression: {src}")
-                        }
-                        crate::http_execute::RunLineError::ArtifactSerialization(e) => {
-                            format!("artifact serialization failed: {e}")
-                        }
-                        crate::http_execute::RunLineError::ArtifactPersist(d) => {
-                            format!("run artifact persist failed: {d}")
-                        }
-                    })?
-                };
+                let (parsed, result, _artifact) = run_parsed_plasm_line(
+                    &expr_label,
+                    &scoped_es,
+                    st,
+                    session_id,
+                    parsed,
+                    trace,
+                    trace_line_index as i64,
+                    None,
+                    None,
+                    None,
+                    Some(plasm_core::PreflightToken::VERIFIED),
+                )
+                .await
+                .map_err(|e| match e {
+                    crate::http_execute::RunLineError::Parse(d)
+                    | crate::http_execute::RunLineError::Normalize(d)
+                    | crate::http_execute::RunLineError::Projection(d) => d,
+                    crate::http_execute::RunLineError::Operation(_) => {
+                        "operation continuation is not valid inside a plan surface node".to_string()
+                    }
+                    crate::http_execute::RunLineError::Runtime(e, src) => {
+                        format!("{e}\nsource expression: {src}")
+                    }
+                    crate::http_execute::RunLineError::ArtifactSerialization(e) => {
+                        format!("artifact serialization failed: {e}")
+                    }
+                    crate::http_execute::RunLineError::ArtifactPersist(d) => {
+                        format!("run artifact persist failed: {d}")
+                    }
+                    crate::http_execute::RunLineError::StaleGraphEpoch { .. } => {
+                        "session graph changed during concurrent execute; retry the request"
+                            .to_string()
+                    }
+                })?;
                 if let Some(sink) = sink {
                     trace_record_plasm_line(
                         sink,
@@ -778,14 +776,9 @@ pub(crate) async fn materialized_rows(
             source.as_str()
         )
     })?;
-    crate::graph_rehydrate::resolve_row_source_rows(
-        &mat.row_source,
-        es,
-        st,
-        session_id,
-        es.cgs.as_ref(),
-    )
-    .await
+    crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, es.cgs.as_ref())
+        .resolve_row_source_rows(&mat.row_source)
+        .await
 }
 
 pub(crate) fn compute_needs_full_materialize(op: &ComputeOp) -> bool {

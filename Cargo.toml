@@ -191,6 +191,7 @@ iceberg-sql-catalog = { git = "https://github.com/JanKaul/iceberg-rust", package
     "runtime-tokio",
 ] }
 object_store = { version = "0.13", features = ["aws", "gcp", "azure", "fs"] }
+shuttle = "0.9"
 
 # EVM / Alloy
 alloy = "1.8.2"

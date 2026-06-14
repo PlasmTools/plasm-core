@@ -106,7 +106,7 @@ pub(crate) async fn hydrate_relation_entities_if_needed(
             out.push(entity);
             continue;
         }
-        let mut cache = scoped.graph_cache.lock().await;
+        let mut cache = scoped.lock_graph_cache().await;
         cache.remove(&entity.reference);
         drop(cache);
         let hydrated =

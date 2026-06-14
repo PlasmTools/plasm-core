@@ -2981,17 +2981,45 @@ fn split_return_list(
         if part.is_empty() {
             continue;
         }
-        if state.contains(part) {
-            roots.push(part.to_string());
+        let part =
+            rewrite_binding_field_projection_root(part, state).unwrap_or_else(|| part.to_string());
+        if state.contains(part.as_str()) {
+            roots.push(part);
         } else {
             let id = format!("return_{}", roots.len() + 1);
-            for node in compile_node_expr(session, state, &id, part)? {
+            for node in compile_node_expr(session, state, &id, part.as_str())? {
                 state.insert(node)?;
             }
             roots.push(id);
         }
     }
     Ok(roots)
+}
+
+/// When a final root looks like `binding(p10, p9)` and `binding` is a program label, rewrite to
+/// `binding[p10, p9]` (canonical projection postfix).
+fn rewrite_binding_field_projection_root(part: &str, state: &CompileState<'_>) -> Option<String> {
+    let open = part.find('(')?;
+    if open == 0 {
+        return None;
+    }
+    let label = part[..open].trim();
+    if !state.contains(label) {
+        return None;
+    }
+    let close = part.rfind(')')?;
+    if close <= open {
+        return None;
+    }
+    let tail = part[open + 1..close].trim();
+    if tail.is_empty() {
+        return None;
+    }
+    if part[close + 1..].trim().is_empty() {
+        Some(format!("{label}[{tail}]"))
+    } else {
+        None
+    }
 }
 
 fn require_node(state: &CompileState<'_>, node: &str) -> Result<(), String> {
@@ -5464,5 +5492,39 @@ created"#;
             "dry node_results: {:?}",
             dry.node_results
         );
+    }
+
+    #[test]
+    fn binding_field_projection_root_rewrites_paren_to_bracket() {
+        let session = test_session();
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "binding-projection-root",
+            "rows = LangItem\npick = rows.limit(1)\npick(id, title)",
+        )
+        .expect("compile binding projection root");
+        let ret = plan["return"].pointer("/node").and_then(|v| v.as_str());
+        assert_eq!(
+            ret,
+            Some("return_1"),
+            "paren root desugars to bracket projection return"
+        );
+    }
+
+    #[test]
+    fn rewrite_binding_field_projection_root_unit() {
+        let session = test_session();
+        let pipeline = PromptPipelineConfig::default();
+        let mut state = CompileState::new(&pipeline, None);
+        for node in compile_node_expr(&session, &state, "rows", "LangItem").expect("rows") {
+            state.insert(node).expect("insert rows");
+        }
+        for node in compile_node_expr(&session, &state, "pick", "rows.limit(1)").expect("pick") {
+            state.insert(node).expect("insert pick");
+        }
+        let rewritten = rewrite_binding_field_projection_root("pick(id, title)", &state);
+        assert_eq!(rewritten.as_deref(), Some("pick[id, title]"));
     }
 }

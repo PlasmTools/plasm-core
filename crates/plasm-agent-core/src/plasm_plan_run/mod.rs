@@ -1705,7 +1705,7 @@ mod tests {
             .insert("category".into(), vec![cat_ref.clone()]);
 
         {
-            let mut g = es.graph_cache.lock().await;
+            let mut g = es.lock_graph_cache().await;
             g.insert(cat).expect("insert cat");
             g.insert(parent.clone()).expect("insert parent");
         }

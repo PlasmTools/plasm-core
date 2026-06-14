@@ -203,23 +203,16 @@ pub(crate) async fn run_executable_plan_phased(
                     .as_ref()
                     .map(|q| q.entity.as_str())
                     .unwrap_or_else(|| node.id().as_str());
-                let row_source = crate::graph_rehydrate::materialize_surface_rows(
-                    &scoped_es,
-                    st,
-                    scoped_es.cgs.as_ref(),
-                    entity_type,
-                    &result,
-                )
-                .await;
-                let mat_entities = crate::graph_rehydrate::materialized_entities_for_surface(
+                // Graph-backed entity sync runs inside `run_parsed_plasm_line` (spill I/O without lock).
+                let row_source = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
                     &scoped_es,
                     st,
                     session_id,
                     scoped_es.cgs.as_ref(),
-                    entity_type,
-                    &result,
                 )
+                .materialize_surface_rows(entity_type, &result)
                 .await;
+                let mat_entities = result.entities.clone();
                 let mat_rows = match &row_source {
                     MaterializedRowSource::Inline(rows) => rows.clone(),
                     MaterializedRowSource::GraphBacked { .. } => Vec::new(),
