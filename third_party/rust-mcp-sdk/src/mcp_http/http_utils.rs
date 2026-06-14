@@ -607,7 +607,7 @@ pub(crate) async fn delete_session(
     match state.session_store.get(&session_id).await {
         Some(runtime) => {
             runtime.shutdown().await;
-            state.session_store.delete(&session_id).await;
+            state.session_store.delete_persistent(&session_id).await;
             tracing::info!("client disconnected : {}", &session_id);
 
             let body = Full::new(Bytes::from("ok"))

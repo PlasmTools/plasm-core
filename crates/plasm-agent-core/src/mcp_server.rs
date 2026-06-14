@@ -1302,6 +1302,8 @@ impl PlasmMcpHandler {
             if let Some(b) = self.resolve_binding_for_logical(key, logical_uuid).await {
                 let mut g = state.lock().await;
                 g.binding = Some(b);
+                drop(g);
+                self.persist_transport_state(key).await;
             }
         }
         if dry_run_only && v.get("execute").is_some() {
@@ -1744,6 +1746,7 @@ impl PlasmMcpHandler {
                         res = crate::mcp_ui_payload::finalize_mcp_tool_result(res, plasm_obj);
                     }
                 }
+                self.persist_transport_state(key).await;
                 Ok(res)
             }
             Err(msg) => {

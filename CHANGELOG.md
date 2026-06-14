@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-06-13
+
+### Fixed
+
+- **MCP rollout survival:** `RedisSessionStore::delete` drops local cache only; explicit HTTP DELETE uses `delete_persistent` so Redis transport metadata survives SSE pod loss during rollouts. SDK graceful shutdown extended to 30s.
+- **MCP transport persistence:** `persist_transport_state` after `plasm` / `plasm_run` and binding hydration so per-transport slot maps mirror to Redis before pod termination.
+
 ## [0.3.3] - 2026-06-13
 
 ### Fixed

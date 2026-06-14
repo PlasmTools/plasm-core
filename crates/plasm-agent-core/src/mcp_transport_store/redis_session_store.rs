@@ -122,6 +122,10 @@ impl SessionStore for RedisSessionStore {
 
     async fn delete(&self, key: &SessionId) {
         self.local.delete(key).await;
+    }
+
+    async fn delete_persistent(&self, key: &SessionId) {
+        self.local.delete(key).await;
         self.delete_record(key).await;
     }
 
@@ -157,5 +161,93 @@ impl SessionStore for RedisSessionStore {
 
     async fn exists_remote(&self, key: &SessionId) -> bool {
         self.load_record(key).await.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
+    use crate::mcp_server::PlasmMcpHandler;
+    use crate::run_artifacts::RunArtifactStore;
+    use crate::server_state::CatalogBootstrap;
+    use plasm_core::discovery::InMemoryCgsRegistry;
+    use plasm_core::loader::load_schema_dir;
+    use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
+    use rust_mcp_sdk::schema::{Implementation, InitializeResult};
+    use rust_mcp_sdk::ToMcpServerHandler;
+
+    fn test_host_state() -> crate::server_state::PlasmHostState {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = std::sync::Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
+        let reg = InMemoryCgsRegistry::from_pairs(vec![(
+            "langmatrix".into(),
+            "Lang Matrix".into(),
+            vec!["matrix".into()],
+            cgs,
+        )]);
+        let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
+        build_plasm_host_state(PlasmHostBootstrap {
+            engine,
+            mode: ExecutionMode::Live,
+            registry: std::sync::Arc::new(reg),
+            catalog_bootstrap: CatalogBootstrap::Fixed,
+            plugin_manager: None,
+            incoming_auth: None,
+            run_artifacts: std::sync::Arc::new(RunArtifactStore::memory()),
+            session_graph_persistence: None,
+            oss_local_filesystem_defaults: false,
+        })
+    }
+
+    #[tokio::test]
+    async fn delete_local_only_preserves_remote_record() {
+        let url = match std::env::var("PLASM_TEST_REDIS_URL") {
+            Ok(u) => u,
+            Err(_) => return,
+        };
+        let backend = std::sync::Arc::new(
+            super::super::redis_backend::RedisBackend::connect(&url, Duration::from_secs(120))
+                .await
+                .expect("redis"),
+        );
+        let plasm = std::sync::Arc::new(test_host_state());
+        let handler = PlasmMcpHandler::new(std::sync::Arc::clone(&plasm)).to_mcp_server_handler();
+        let factory = std::sync::Arc::new(SessionRuntimeFactory {
+            server_details: std::sync::Arc::new(InitializeResult {
+                protocol_version: "2025-11-25".into(),
+                capabilities: Default::default(),
+                server_info: Implementation {
+                    name: "test".into(),
+                    version: "0".into(),
+                    title: None,
+                    description: None,
+                    icons: vec![],
+                    website_url: None,
+                },
+                instructions: None,
+                meta: None,
+            }),
+            handler,
+            task_store: None,
+            client_task_store: None,
+            message_observer: None,
+        });
+        let store = RedisSessionStore::new(backend, factory);
+        let session_id: SessionId = format!("test-delete-local-only-{}", uuid::Uuid::new_v4());
+
+        store
+            .persist_session_metadata(&session_id, Some(r#"{"method":"initialize","params":{}}"#))
+            .await;
+        assert!(store.exists_remote(&session_id).await);
+
+        store.delete(&session_id).await;
+        assert!(store.exists_remote(&session_id).await);
+
+        store.delete_persistent(&session_id).await;
+        assert!(!store.exists_remote(&session_id).await);
     }
 }

@@ -39,7 +39,7 @@ use tokio::signal;
 
 // Default client ping interval (12 seconds)
 const DEFAULT_CLIENT_PING_INTERVAL: Duration = Duration::from_secs(12);
-const GRACEFUL_SHUTDOWN_TMEOUT_SECS: u64 = 5;
+const GRACEFUL_SHUTDOWN_TMEOUT_SECS: u64 = 30;
 
 /// Configuration struct for the Hyper server
 /// Used to configure the HyperServer instance.

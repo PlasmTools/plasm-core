@@ -25,11 +25,15 @@ pub trait SessionStore: Send + Sync {
     /// * `key` - The session identifier
     /// * `value` - The duplex stream to store
     async fn set(&self, key: SessionId, value: Arc<ServerRuntime>);
-    /// Deletes a session by its identifier
+    /// Drops the in-process runtime cache for this session (SSE stream teardown, pod shutdown).
     ///
-    /// # Arguments
-    /// * `key` - The session identifier to delete
+    /// Redis-backed stores keep remote metadata until [`Self::delete_persistent`].
     async fn delete(&self, key: &SessionId);
+
+    /// Client-initiated session teardown (HTTP DELETE): local cache + durable metadata.
+    async fn delete_persistent(&self, key: &SessionId) {
+        self.delete(key).await;
+    }
 
     async fn has(&self, session: &SessionId) -> bool;
 
