@@ -6,6 +6,7 @@ use tokio::sync::OnceCell;
 static PETSTORE_HERMIT: OnceCell<String> = OnceCell::const_new();
 static PETSTORE_HERMIT_HYDRATE: OnceCell<String> = OnceCell::const_new();
 static POKEAPI_HERMIT: OnceCell<String> = OnceCell::const_new();
+#[allow(dead_code)]
 static POKEAPI_HERMIT_GRAPH_SPILL: OnceCell<String> = OnceCell::const_new();
 
 fn fixture_dir_candidates(rel_under_fixtures: &str) -> Vec<PathBuf> {
@@ -94,6 +95,7 @@ pub async fn pokeapi_hermit_base_url() -> &'static String {
 }
 
 /// PokéAPI Hermit tuned for graph-spill e2e: enough list rows to exceed `PLASM_GRAPH_HOT_MAX_ENTITIES=1`.
+#[allow(dead_code)]
 pub async fn pokeapi_hermit_graph_spill_base_url() -> &'static String {
     POKEAPI_HERMIT_GRAPH_SPILL
         .get_or_init(|| async {

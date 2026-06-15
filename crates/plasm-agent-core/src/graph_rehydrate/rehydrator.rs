@@ -87,23 +87,6 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         }
     }
 
-    /// Sync graph-backed execute result entities (lock once, spill I/O unlocked).
-    #[cfg(test)]
-    pub(crate) async fn sync_result_entities(
-        &self,
-        entity_type: &str,
-        result: &mut ExecutionResult,
-    ) {
-        let plan = {
-            let guard = self.ctx.es.lock_graph_cache().await;
-            Self::plan_spill_sync(guard.materialization(), self.ctx.st, entity_type, result)
-        };
-        let Some(plan) = plan else {
-            return;
-        };
-        self.apply_spill_sync(plan, result).await;
-    }
-
     pub(crate) async fn materialize_surface_rows(
         &self,
         entity_type: &str,
