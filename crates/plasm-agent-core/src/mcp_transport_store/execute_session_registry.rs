@@ -9,6 +9,8 @@ use crate::execute_session::{ExecuteSession, SessionReuseKey};
 
 use super::redis_backend::RedisBackend;
 
+type TestJsonStore = Arc<RwLock<std::collections::HashMap<String, String>>>;
+
 const SESSION_KEY_PREFIX: &str = "mcp:execute:session:";
 
 fn session_key(prompt_hash: &str, session_id: &str) -> String {
@@ -103,6 +105,12 @@ pub struct PersistedExecuteSessionDescriptor {
     pub expires_at_unix: u64,
     #[serde(default)]
     pub catalog_cgs_hashes_by_entry: std::collections::HashMap<String, String>,
+    /// Registry-base digests at open (before tenant materialization); used for rotation detection.
+    #[serde(default)]
+    pub registry_catalog_hashes_by_entry: std::collections::HashMap<String, String>,
+    /// Tenant outbound hosted_kv keys per entry (cross-pod rehydrate materialization).
+    #[serde(default)]
+    pub outbound_hosted_kv_by_entry: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub bindings_by_entry: indexmap::IndexMap<String, crate::binding_slots::SessionBindingMap>,
     #[serde(default)]
@@ -127,9 +135,15 @@ impl PersistedExecuteSessionDescriptor {
         reuse_key: &SessionReuseKey,
     ) -> Self {
         let mut catalog_cgs_hashes_by_entry = std::collections::HashMap::new();
+        let mut outbound_hosted_kv_by_entry = std::collections::HashMap::new();
         for (eid, ctx) in &session.contexts_by_entry {
             catalog_cgs_hashes_by_entry
                 .insert(eid.clone(), ctx.cgs.effective_catalog_cgs_hash_hex());
+            if let Some(kv) =
+                crate::execute_session_materialize::outbound_hosted_kv_from_cgs(ctx.cgs.as_ref())
+            {
+                outbound_hosted_kv_by_entry.insert(eid.clone(), kv);
+            }
         }
         let plan_snapshot = session.snapshot_plan_commits_for_persist();
         Self {
@@ -151,6 +165,8 @@ impl PersistedExecuteSessionDescriptor {
             reuse_key: PersistedSessionReuseKey::from(reuse_key),
             expires_at_unix: expires_at_from_now(),
             catalog_cgs_hashes_by_entry,
+            registry_catalog_hashes_by_entry: session.registry_catalog_hashes_by_entry.clone(),
+            outbound_hosted_kv_by_entry,
             bindings_by_entry: session.bindings_by_entry.clone(),
             plan_commits: plan_snapshot.records,
             plan_commit_next: plan_snapshot.next_sequence,
@@ -161,6 +177,22 @@ impl PersistedExecuteSessionDescriptor {
 #[derive(Clone, Default)]
 pub struct ExecuteSessionRegistry {
     redis: Arc<RwLock<Option<Arc<RedisBackend>>>>,
+    test_json: Arc<RwLock<Option<TestJsonStore>>>,
+}
+
+#[cfg(test)]
+impl ExecuteSessionRegistry {
+    /// In-memory JSON store for cross-pod rehydrate unit tests (no Redis required).
+    pub fn with_test_json_store() -> (Self, TestJsonStore) {
+        let map: TestJsonStore = Arc::new(RwLock::new(std::collections::HashMap::new()));
+        (
+            Self {
+                redis: Default::default(),
+                test_json: Arc::new(RwLock::new(Some(map.clone()))),
+            },
+            map,
+        )
+    }
 }
 
 impl ExecuteSessionRegistry {
@@ -176,33 +208,36 @@ impl ExecuteSessionRegistry {
         self.redis.read().await.clone()
     }
 
+    async fn test_json(&self) -> Option<TestJsonStore> {
+        self.test_json.read().await.clone()
+    }
+
     pub async fn persist(
         &self,
         session: &ExecuteSession,
         session_id: &str,
         reuse_key: &SessionReuseKey,
     ) {
-        let Some(redis) = self.redis().await else {
-            return;
-        };
         let desc = PersistedExecuteSessionDescriptor::from_session_and_reuse(
             session, session_id, reuse_key,
         );
-        redis
-            .set_json(&session_key(&desc.prompt_hash, &desc.session_id), &desc)
-            .await;
+        let key = session_key(&desc.prompt_hash, &desc.session_id);
+        if let Some(map) = self.test_json().await {
+            if let Ok(payload) = serde_json::to_string(&desc) {
+                map.write().await.insert(key, payload);
+            }
+            return;
+        }
+        let Some(redis) = self.redis().await else {
+            return;
+        };
+        redis.set_json(&key, &desc).await;
     }
 
     /// Refresh descriptor after in-session mutation (federate/expand); keeps stored reuse key when present.
     pub async fn persist_or_update(&self, session: &ExecuteSession, session_id: &str) {
-        let Some(redis) = self.redis().await else {
-            return;
-        };
         let key = session_key(&session.prompt_hash, session_id);
-        let reuse_key = if let Some(existing) = redis
-            .get_json::<PersistedExecuteSessionDescriptor>(&key)
-            .await
-        {
+        let reuse_key = if let Some(existing) = self.load_json(&key).await {
             existing.reuse_key
         } else {
             return;
@@ -211,7 +246,25 @@ impl ExecuteSessionRegistry {
         let desc = PersistedExecuteSessionDescriptor::from_session_and_reuse(
             session, session_id, &reuse_key,
         );
+        if let Some(map) = self.test_json().await {
+            if let Ok(payload) = serde_json::to_string(&desc) {
+                map.write().await.insert(key, payload);
+            }
+            return;
+        }
+        let Some(redis) = self.redis().await else {
+            return;
+        };
         redis.set_json(&key, &desc).await;
+    }
+
+    async fn load_json(&self, key: &str) -> Option<PersistedExecuteSessionDescriptor> {
+        if let Some(map) = self.test_json().await {
+            let raw = map.read().await.get(key).cloned()?;
+            return serde_json::from_str(&raw).ok();
+        }
+        let redis = self.redis().await?;
+        redis.get_json(key).await
     }
 
     pub async fn load(
@@ -219,27 +272,30 @@ impl ExecuteSessionRegistry {
         prompt_hash: &str,
         session_id: &str,
     ) -> Option<PersistedExecuteSessionDescriptor> {
-        let redis = self.redis().await?;
         let key = session_key(prompt_hash, session_id);
-        let desc: PersistedExecuteSessionDescriptor = redis.get_json(&key).await?;
-        redis.touch(&key).await;
+        let desc = self.load_json(&key).await?;
+        if self.redis().await.is_some() {
+            if let Some(redis) = self.redis().await {
+                redis.touch(&key).await;
+            }
+        }
         Some(desc)
     }
 
     pub(crate) async fn delete(&self, prompt_hash: &str, session_id: &str) {
+        let key = session_key(prompt_hash, session_id);
+        if let Some(map) = self.test_json().await {
+            map.write().await.remove(&key);
+        }
         if let Some(redis) = self.redis().await {
-            redis
-                .delete(&session_key(prompt_hash, session_id))
-                .await;
+            redis.delete(&key).await;
         }
     }
 
     /// Drop all cross-pod execute session descriptors (e.g. after plugin catalog reload).
     pub async fn purge_redis(&self) -> u64 {
         if let Some(redis) = self.redis().await {
-            redis
-                .delete_keys_matching_prefix(SESSION_KEY_PREFIX)
-                .await
+            redis.delete_keys_matching_prefix(SESSION_KEY_PREFIX).await
         } else {
             0
         }

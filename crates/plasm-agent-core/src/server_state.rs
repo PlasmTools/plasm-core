@@ -218,12 +218,9 @@ impl PlasmHostState {
         if let Some(sess) = self.sessions.get_by_strs(prompt_hash, session_id).await {
             let reg = self.catalog.snapshot();
             let pins =
-                crate::execute_session_rehydrate::PinnedCatalogHashes::from_execute_session(&sess);
-            if crate::execute_session_rehydrate::pinned_catalog_hashes_match_live(
-                reg.as_ref(),
-                &pins,
-            )
-            .is_ok()
+                crate::execute_session_rehydrate::RegistryCatalogPins::from_execute_session(&sess);
+            if crate::execute_session_rehydrate::registry_pins_match_live(reg.as_ref(), &pins)
+                .is_ok()
             {
                 return Some(sess);
             }
@@ -345,24 +342,19 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
-    use plasm_core::discovery::InMemoryCgsRegistry;
+    use plasm_core::discovery::{CgsCatalog, InMemoryCgsRegistry};
     use plasm_core::loader::load_schema_dir;
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 
     use super::*;
     use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
-    use crate::http_execute::{execute_session_create_response, CreateExecuteSessionBody};
+    use crate::http_execute::execute_session_create_response_inner;
+    use crate::http_execute::CreateExecuteSessionBody;
+    use crate::mcp_transport_store::ExecuteSessionRegistry;
     use crate::run_artifacts::RunArtifactStore;
+    use plasm_core::AuthScheme;
 
-    fn test_host_state() -> PlasmHostState {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
-        let reg = InMemoryCgsRegistry::from_pairs(vec![(
-            "overshow".into(),
-            "Overshow".into(),
-            vec!["demo".into()],
-            cgs,
-        )]);
+    fn test_host_state_from_registry(reg: InMemoryCgsRegistry) -> PlasmHostState {
         let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
         build_plasm_host_state(PlasmHostBootstrap {
             engine,
@@ -377,8 +369,55 @@ mod tests {
         })
     }
 
+    fn test_host_state() -> PlasmHostState {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        let reg = InMemoryCgsRegistry::from_pairs(vec![(
+            "overshow".into(),
+            "Overshow".into(),
+            vec!["demo".into()],
+            cgs,
+        )]);
+        test_host_state_from_registry(reg)
+    }
+
+    fn test_host_state_with_shared(
+        registry: Arc<InMemoryCgsRegistry>,
+        execute_session_registry: ExecuteSessionRegistry,
+    ) -> PlasmHostState {
+        let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
+        let mut st = build_plasm_host_state(PlasmHostBootstrap {
+            engine,
+            mode: ExecutionMode::Live,
+            registry,
+            catalog_bootstrap: CatalogBootstrap::Fixed,
+            plugin_manager: None,
+            incoming_auth: None,
+            run_artifacts: Arc::new(RunArtifactStore::memory()),
+            session_graph_persistence: None,
+            oss_local_filesystem_defaults: false,
+        });
+        st.oss.execute_session_registry = execute_session_registry;
+        st
+    }
+
+    fn fibery_shaped_registry() -> InMemoryCgsRegistry {
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let mut cgs = load_schema_dir(&dir).expect("overshow_tools");
+        cgs.http_backend = "https://YOUR_ACCOUNT.fibery.io".to_string();
+        InMemoryCgsRegistry::from_pairs(vec![(
+            "fibery".into(),
+            "Fibery".into(),
+            vec!["Profile".into()],
+            Arc::new(cgs),
+        )])
+    }
+
     fn rotated_overshow_registry() -> InMemoryCgsRegistry {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let mut cgs = load_schema_dir(&dir).expect("overshow_tools");
         if let Some(entity) = cgs.entities.get_mut("RecordedContent") {
             entity.description.push_str(" (catalog reload test bump)");
@@ -394,7 +433,7 @@ mod tests {
     #[tokio::test]
     async fn get_execute_session_none_after_in_memory_catalog_stale() {
         let st = test_host_state();
-        let created = execute_session_create_response(
+        let created = execute_session_create_response_inner(
             &st,
             None,
             CreateExecuteSessionBody {
@@ -406,29 +445,232 @@ mod tests {
                 ranked_capabilities: None,
                 read_first_seeded_exposure: false,
             },
+            true,
+            None,
+            None,
         )
         .await
         .expect("open session");
 
-        assert!(
-            st.get_execute_session(&created.prompt_hash, &created.session)
-                .await
-                .is_some()
-        );
+        assert!(st
+            .get_execute_session(&created.prompt_hash, &created.session)
+            .await
+            .is_some());
 
         st.catalog
             .publish_catalog(Arc::new(rotated_overshow_registry()));
 
+        assert!(st
+            .get_execute_session(&created.prompt_hash, &created.session)
+            .await
+            .is_none());
+        assert!(st
+            .sessions
+            .get_by_strs(&created.prompt_hash, &created.session)
+            .await
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn get_execute_session_survives_outbound_hosted_auth_patch() {
+        let st = test_host_state();
+        let mut hosted = std::collections::HashMap::new();
+        hosted.insert("overshow".to_string(), "tenant/test/oauth".to_string());
+        let created = execute_session_create_response_inner(
+            &st,
+            None,
+            CreateExecuteSessionBody {
+                entry_id: "overshow".into(),
+                entities: vec!["Profile".into()],
+                principal: None,
+                logical_session_id: None,
+                context_intent: None,
+                ranked_capabilities: None,
+                read_first_seeded_exposure: false,
+            },
+            false,
+            Some(&hosted),
+            None,
+        )
+        .await
+        .expect("open session with tenant hosted_kv patch");
+
+        let reg = st.catalog.snapshot();
+        let session = st
+            .sessions
+            .get_by_strs(&created.prompt_hash, &created.session)
+            .await
+            .expect("session row");
+        let effective = session
+            .contexts_by_entry
+            .get("overshow")
+            .expect("overshow ctx")
+            .cgs
+            .effective_catalog_cgs_hash_hex();
+        let registry_base = reg
+            .load_context("overshow")
+            .expect("overshow")
+            .cgs
+            .catalog_cgs_hash_hex();
+        assert_ne!(
+            effective, registry_base,
+            "tenant patch must change effective digest vs registry base"
+        );
+        assert!(matches!(
+            session.contexts_by_entry["overshow"].cgs.auth,
+            Some(AuthScheme::BearerToken { .. })
+        ));
+
         assert!(
             st.get_execute_session(&created.prompt_hash, &created.session)
                 .await
-                .is_none()
+                .is_some(),
+            "get_execute_session must not false-discard tenant-patched session"
         );
-        assert!(
-            st.sessions
-                .get_by_strs(&created.prompt_hash, &created.session)
-                .await
-                .is_none()
+    }
+
+    #[tokio::test]
+    async fn get_execute_session_survives_resolved_http_backend_patch() {
+        let st = test_host_state_from_registry(fibery_shaped_registry());
+        let mut bindings = std::collections::HashMap::new();
+        bindings.insert(
+            "fibery".to_string(),
+            crate::session_bindings::repl_session_binding_map(
+                "fibery",
+                crate::http_backend::ReplHttpOverride::from_engine_base("https://acme.fibery.io")
+                    .expect("origin"),
+            )
+            .expect("bindings"),
         );
+        let created = execute_session_create_response_inner(
+            &st,
+            None,
+            CreateExecuteSessionBody {
+                entry_id: "fibery".into(),
+                entities: vec!["Profile".into()],
+                principal: None,
+                logical_session_id: None,
+                context_intent: None,
+                ranked_capabilities: None,
+                read_first_seeded_exposure: false,
+            },
+            false,
+            None,
+            Some(&bindings),
+        )
+        .await
+        .expect("open fibery session with resolved backend");
+
+        let reg = st.catalog.snapshot();
+        let session = st
+            .sessions
+            .get_by_strs(&created.prompt_hash, &created.session)
+            .await
+            .expect("session row");
+        let effective = session.contexts_by_entry["fibery"]
+            .cgs
+            .effective_catalog_cgs_hash_hex();
+        let registry_base = reg
+            .load_context("fibery")
+            .expect("fibery")
+            .cgs
+            .catalog_cgs_hash_hex();
+        assert_ne!(effective, registry_base);
+        assert_eq!(
+            session.contexts_by_entry["fibery"].cgs.http_backend,
+            "https://acme.fibery.io"
+        );
+
+        assert!(st
+            .get_execute_session(&created.prompt_hash, &created.session)
+            .await
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn tenant_patch_alone_does_not_trigger_catalog_stale_discard() {
+        let st = test_host_state();
+        let mut hosted = std::collections::HashMap::new();
+        hosted.insert("overshow".to_string(), "tenant/test/oauth".to_string());
+        let created = execute_session_create_response_inner(
+            &st,
+            None,
+            CreateExecuteSessionBody {
+                entry_id: "overshow".into(),
+                entities: vec!["Profile".into()],
+                principal: None,
+                logical_session_id: None,
+                context_intent: None,
+                ranked_capabilities: None,
+                read_first_seeded_exposure: false,
+            },
+            false,
+            Some(&hosted),
+            None,
+        )
+        .await
+        .expect("open session");
+
+        // Registry unchanged — only tenant materialization differs from live effective hash.
+        assert!(st
+            .get_execute_session(&created.prompt_hash, &created.session)
+            .await
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn cross_pod_rehydrate_after_tenant_materialization_patch() {
+        let (execute_registry, _) = ExecuteSessionRegistry::with_test_json_store();
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        let registry = Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+            "overshow".into(),
+            "Overshow".into(),
+            vec!["demo".into()],
+            cgs,
+        )]));
+        let host_a = test_host_state_with_shared(registry.clone(), execute_registry.clone());
+        let host_b = test_host_state_with_shared(registry, execute_registry);
+
+        let mut hosted = std::collections::HashMap::new();
+        hosted.insert("overshow".to_string(), "tenant/test/oauth".to_string());
+        let created = execute_session_create_response_inner(
+            &host_a,
+            None,
+            CreateExecuteSessionBody {
+                entry_id: "overshow".into(),
+                entities: vec!["Profile".into()],
+                principal: None,
+                logical_session_id: None,
+                context_intent: None,
+                ranked_capabilities: None,
+                read_first_seeded_exposure: false,
+            },
+            false,
+            Some(&hosted),
+            None,
+        )
+        .await
+        .expect("open on host A");
+
+        assert!(host_a
+            .sessions
+            .get_by_strs(&created.prompt_hash, &created.session)
+            .await
+            .is_some());
+        host_a.sessions.purge_all().await;
+
+        let rehydrated = host_b
+            .get_execute_session(&created.prompt_hash, &created.session)
+            .await
+            .expect("host B rehydrate");
+        assert!(matches!(
+            &rehydrated.contexts_by_entry["overshow"].cgs.auth,
+            Some(AuthScheme::BearerToken {
+                hosted_kv: Some(kv),
+                ..
+            }) if kv == "tenant/test/oauth"
+        ));
     }
 }

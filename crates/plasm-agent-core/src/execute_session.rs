@@ -413,8 +413,10 @@ pub struct ExecuteSession {
     pub principal: Option<String>,
     /// Pins [`plasm_plugin_host::LoadedPluginGeneration`] for compile overrides (hot-swap safe).
     pub plugin_generation: Option<Arc<LoadedPluginGeneration>>,
-    /// Canonical digest of the pinned primary CGS at session open.
+    /// Canonical digest of the pinned primary CGS at session open (effective, post-overlay).
     pub catalog_cgs_hash: String,
+    /// Registry-base `catalog_cgs_hash_hex` per entry at open (before tenant/http/overlay patches).
+    pub(crate) registry_catalog_hashes_by_entry: HashMap<String, String>,
     /// Normalized MCP `plasm_context` intent when teaching table uses intent-scoped capability exposure (`None` = legacy full closure).
     pub context_intent: Option<String>,
     /// Optional ranked capability-name gate for mutators (aligned with [`SessionReuseKey::ranked_capabilities`]).
@@ -522,6 +524,7 @@ impl ExecuteSession {
             principal,
             plugin_generation,
             catalog_cgs_hash,
+            registry_catalog_hashes_by_entry: HashMap::new(),
             context_intent,
             ranked_capabilities,
             session_share_token: Arc::new(RwLock::new(None)),

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-06-13
+
+### Fixed
+
+- **Distributed execute sessions (hosted tenants):** catalog rotation checks now compare registry-base `catalog_cgs_hash_hex` pins captured before tenant OAuth hosted-KV / resolved `http_backend` / schema-overlay materialization — fixes immediate `Execute session unavailable` after `plasm_context` on GitHub, Linear, and Proof while pokeapi (no tenant patch) continued to work.
+- **Cross-pod rehydrate:** replay tenant outbound hosted-KV, binding-resolved backend, and overlay via shared `execute_session_materialize` helper; persist `registry_catalog_hashes_by_entry` and `outbound_hosted_kv_by_entry` on Redis descriptors.
+- **Session reuse:** `try_reuse_session` paths validate through `get_execute_session` so reused rows are not returned when registry rotation would discard them.
+
 ## [0.3.8] - 2026-06-13
 
 ### Fixed

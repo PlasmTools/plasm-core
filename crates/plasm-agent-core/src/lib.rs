@@ -30,6 +30,7 @@ pub mod evidence_chain;
 pub mod execute_path_ids;
 pub mod execute_pipeline;
 pub mod execute_session;
+mod execute_session_materialize;
 pub mod execute_session_rehydrate;
 pub mod expr_display;
 mod graph_cache_guard;

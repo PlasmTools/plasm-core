@@ -7,6 +7,10 @@ mod seeds;
 mod session;
 
 pub(crate) use backend::cgs_entity_names_sample;
+pub(crate) use backend::{
+    patch_cgs_context_outbound_hosted, patch_cgs_context_resolved_http_backend,
+    resolve_http_backend_for_entry,
+};
 pub(crate) use seeds::{
     build_capability_exposure_plan, build_plasm_context_agent_markdown,
     build_plasm_context_tool_meta, format_session_unchanged_one_liner,
@@ -16,6 +20,7 @@ pub(crate) use seeds::{
 };
 pub use seeds::{normalize_capability_seeds, resolve_capability_seeds};
 pub(crate) use session::apply_capability_seeds;
+pub(crate) use session::execute_session_create_response_inner;
 pub use session::{
     execute_session_create_response, expand_execute_teaching_session, federate_execute_session,
 };

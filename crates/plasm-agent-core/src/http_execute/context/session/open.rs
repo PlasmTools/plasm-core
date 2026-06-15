@@ -2,10 +2,7 @@
 
 use super::super::super::*;
 
-use super::super::backend::{
-    patch_cgs_context_outbound_hosted, patch_cgs_context_resolved_http_backend,
-    resolve_http_backend_for_entry, tenant_outbound_hosted_kv_for_entries,
-};
+use super::super::backend::tenant_outbound_hosted_kv_for_entries;
 use super::super::seeds::{
     apply_ranked_capabilities_session_update, build_capability_exposure_plan,
     format_session_unchanged_one_liner, normalize_execute_entity_names,
@@ -15,7 +12,7 @@ use super::super::seeds::{
 };
 use plasm_core::plasm_grammar_frontmatter_revision_hex;
 
-pub(super) async fn execute_session_create_response_inner(
+pub(crate) async fn execute_session_create_response_inner(
     st: &PlasmHostState,
     principal: Option<&crate::incoming_auth::TenantPrincipal>,
     body: CreateExecuteSessionBody,
@@ -40,54 +37,29 @@ pub(super) async fn execute_session_create_response_inner(
     let names = normalize_execute_entity_names(body.entities);
 
     let reg = st.catalog.snapshot();
-    let mut ctx = match reg.load_context(&body.entry_id) {
-        Ok(c) => c,
-        Err(DiscoveryError::UnknownEntry(id)) => {
-            crate::metrics::record_execute_session_outcome("error", "unknown_entry");
-            return Err(format!("unknown catalog entry: {id}"));
-        }
-        Err(e) => {
-            crate::metrics::record_execute_session_outcome("error", "discovery");
-            return Err(e.to_string());
-        }
-    };
-    if let Some(map) = outbound_hosted_kv_by_entry {
-        if let Some(kv) = map.get(&body.entry_id) {
-            ctx = patch_cgs_context_outbound_hosted(ctx, kv);
-        }
-    }
+    let registry_catalog_hashes =
+        crate::execute_session_rehydrate::registry_catalog_pins_from_registry(
+            reg.as_ref(),
+            std::slice::from_ref(&body.entry_id),
+        )
+        .map_err(|e| e.to_string())?
+        .registry_hash_by_entry;
+
     let hosted_kv_key = outbound_hosted_kv_by_entry
         .and_then(|map| map.get(&body.entry_id))
         .map(|s| s.as_str());
     let entry_bindings = bindings_by_entry.and_then(|m| m.get(&body.entry_id));
-    let catalog_backend =
-        crate::http_backend::CatalogHttpBackend::from_cgs_field(ctx.cgs.http_backend.as_str());
-    let http_backend = resolve_http_backend_for_entry(
+    let materialized = crate::execute_session_materialize::materialize_entry_context(
         st,
         body.entry_id.as_str(),
-        &catalog_backend,
-        entry_bindings,
         hosted_kv_key,
+        entry_bindings,
     )
     .await?;
-    if catalog_backend.needs_origin_resolution(body.entry_id.as_str()) {
-        ctx = patch_cgs_context_resolved_http_backend(ctx, &http_backend);
-    }
-    let ctx_arc = Arc::new(ctx);
-    let effective_cgs = crate::schema_overlay_session::resolve_schema_overlay_for_host(
-        st.engine.as_ref(),
-        st.mode,
-        st.effective_outbound_secret_provider(),
-        ctx_arc.cgs.clone(),
-        http_backend.as_str(),
-        body.entry_id.as_str(),
-    )
-    .await?;
+    let ctx_arc = materialized.ctx;
+    let effective_cgs = materialized.effective_cgs;
+    let http_backend = materialized.http_backend;
     let catalog_cgs_hash = effective_cgs.effective_catalog_cgs_hash_hex();
-    let ctx_arc = Arc::new(plasm_core::CgsContext::entry(
-        body.entry_id.clone(),
-        effective_cgs.clone(),
-    ));
 
     let plugin_generation = st
         .plugin_manager
@@ -119,28 +91,33 @@ pub(super) async fn execute_session_create_response_inner(
 
     if allow_reuse {
         if let Some((session_id_str, sess)) = st.sessions.try_reuse_session(&reuse_key).await {
-            let _reuse = crate::spans::execute_session_reuse(
-                reuse_key.entry_id.as_str(),
-                reuse_key.catalog_cgs_hash.as_str(),
-                sess.prompt_hash.as_str(),
-                session_id_str.as_str(),
-            )
-            .entered();
-            tracing::info!(
-                entry_id = %reuse_key.entry_id,
-                entities = ?reuse_key.entities,
-                catalog_cgs_hash = %reuse_key.catalog_cgs_hash,
-                prompt_hash = %sess.prompt_hash,
-                session = %session_id_str,
-                "reusing execute session (same entry_id + entities + catalog hash)"
-            );
-            crate::metrics::record_execute_session_outcome("reuse", "");
-            return Ok(create_execute_session_response(
-                &sess,
-                session_id_str,
-                sess.prompt_text.clone(),
-                true,
-            ));
+            if let Some(reused) = st
+                .get_execute_session(sess.prompt_hash.as_str(), session_id_str.as_str())
+                .await
+            {
+                let _reuse = crate::spans::execute_session_reuse(
+                    reuse_key.entry_id.as_str(),
+                    reuse_key.catalog_cgs_hash.as_str(),
+                    reused.prompt_hash.as_str(),
+                    session_id_str.as_str(),
+                )
+                .entered();
+                tracing::info!(
+                    entry_id = %reuse_key.entry_id,
+                    entities = ?reuse_key.entities,
+                    catalog_cgs_hash = %reuse_key.catalog_cgs_hash,
+                    prompt_hash = %reused.prompt_hash,
+                    session = %session_id_str,
+                    "reusing execute session (same entry_id + entities + catalog hash)"
+                );
+                crate::metrics::record_execute_session_outcome("reuse", "");
+                return Ok(create_execute_session_response(
+                    &reused,
+                    session_id_str,
+                    reused.prompt_text.clone(),
+                    true,
+                ));
+            }
         }
     }
 
@@ -210,7 +187,7 @@ pub(super) async fn execute_session_create_response_inner(
         }
     }
 
-    let session = ExecuteSession::new_with_bindings(
+    let mut session = ExecuteSession::new_with_bindings(
         prompt_hash_str.clone(),
         prompt.clone(),
         cgs,
@@ -228,6 +205,7 @@ pub(super) async fn execute_session_create_response_inner(
         ranked_for_domain,
         bindings_map,
     );
+    session.registry_catalog_hashes_by_entry = registry_catalog_hashes;
     st.store_execute_session(
         reuse_key,
         prompt_hash_str.clone(),

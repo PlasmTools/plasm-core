@@ -81,7 +81,7 @@ pub(super) async fn migration_legacy_http_backend_from_outbound_key(
         .map(|s| crate::http_backend::BindingOriginValue::from_legacy_outbound_kv(&s))
 }
 
-pub(super) async fn resolve_http_backend_for_entry(
+pub(crate) async fn resolve_http_backend_for_entry(
     st: &PlasmHostState,
     entry_id: &str,
     catalog_backend: &crate::http_backend::CatalogHttpBackend,
@@ -101,7 +101,7 @@ pub(super) async fn resolve_http_backend_for_entry(
     )
 }
 
-pub(super) fn patch_cgs_context_resolved_http_backend(
+pub(crate) fn patch_cgs_context_resolved_http_backend(
     ctx: CgsContext,
     resolved: &crate::http_backend::ResolvedHttpOrigin,
 ) -> CgsContext {
@@ -163,7 +163,7 @@ fn patch_cgs_outbound_auth(cgs: &Arc<CGS>, hosted_kv_key: &str) -> Arc<CGS> {
     Arc::new(c)
 }
 
-pub(super) fn patch_cgs_context_outbound_hosted(
+pub(crate) fn patch_cgs_context_outbound_hosted(
     ctx: CgsContext,
     hosted_kv_key: &str,
 ) -> CgsContext {

@@ -158,9 +158,7 @@ impl LogicalExecuteBindingRegistry {
             rev.clear();
         }
         if let Some(redis) = self.redis().await {
-            redis
-                .delete_keys_matching_prefix(LOGICAL_KEY_PREFIX)
-                .await
+            redis.delete_keys_matching_prefix(LOGICAL_KEY_PREFIX).await
         } else {
             0
         }

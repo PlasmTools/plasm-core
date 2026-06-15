@@ -2,10 +2,6 @@
 
 use super::super::super::*;
 
-use super::super::backend::{
-    patch_cgs_context_outbound_hosted, patch_cgs_context_resolved_http_backend,
-    resolve_http_backend_for_entry,
-};
 use super::super::seeds::{
     normalize_execute_entity_names, relation_endpoint_keys_for_wave,
     wrap_teaching_markdown_literal_block,
@@ -56,48 +52,22 @@ pub async fn federate_execute_session(
     }
 
     let reg = st.catalog.snapshot();
-    let mut ctx = match reg.load_context(&new_entry_id) {
-        Ok(c) => c,
-        Err(DiscoveryError::UnknownEntry(id)) => {
-            return Err(format!("unknown catalog entry: {id}"));
-        }
-        Err(e) => return Err(e.to_string()),
-    };
-    if let Some(map) = outbound_hosted_kv_by_entry {
-        if let Some(kv) = map.get(&new_entry_id) {
-            ctx = patch_cgs_context_outbound_hosted(ctx, kv);
-        }
-    }
+    let registry_pin = reg
+        .load_context(&new_entry_id)
+        .map(|ctx| ctx.cgs.catalog_cgs_hash_hex())
+        .map_err(|e| e.to_string())?;
     let hosted_kv_key = outbound_hosted_kv_by_entry
         .and_then(|map| map.get(&new_entry_id))
         .map(|s| s.as_str());
     let entry_bindings = bindings_by_entry.and_then(|m| m.get(&new_entry_id));
-    let catalog_backend =
-        crate::http_backend::CatalogHttpBackend::from_cgs_field(ctx.cgs.http_backend.as_str());
-    let http_backend = resolve_http_backend_for_entry(
+    let materialized = crate::execute_session_materialize::materialize_entry_context(
         st,
         new_entry_id.as_str(),
-        &catalog_backend,
-        entry_bindings,
         hosted_kv_key,
+        entry_bindings,
     )
     .await?;
-    if catalog_backend.needs_origin_resolution(new_entry_id.as_str()) {
-        ctx = patch_cgs_context_resolved_http_backend(ctx, &http_backend);
-    }
-    let effective_cgs = crate::schema_overlay_session::resolve_schema_overlay_for_host(
-        st.engine.as_ref(),
-        st.mode,
-        st.effective_outbound_secret_provider(),
-        ctx.cgs.clone(),
-        http_backend.as_str(),
-        new_entry_id.as_str(),
-    )
-    .await?;
-    let ctx_arc = Arc::new(plasm_core::CgsContext::entry(
-        new_entry_id.clone(),
-        effective_cgs,
-    ));
+    let ctx_arc = materialized.ctx;
 
     for e in &names {
         if ctx_arc.get_entity(e).is_none() {
@@ -107,6 +77,8 @@ pub async fn federate_execute_session(
 
     sess.contexts_by_entry
         .insert(new_entry_id.clone(), ctx_arc.clone());
+    sess.registry_catalog_hashes_by_entry
+        .insert(new_entry_id.clone(), registry_pin);
     if let Some(map) = bindings_by_entry {
         if let Some(b) = map.get(&new_entry_id) {
             sess.bindings_by_entry
