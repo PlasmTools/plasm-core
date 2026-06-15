@@ -282,6 +282,9 @@ pub struct OperationState {
     pub mcp_transport_key: Option<String>,
     pub progress_host: Option<std::sync::Weak<PlasmHostState>>,
     pub progress_tx: tokio::sync::broadcast::Sender<crate::operation_progress::OpProgressEvent>,
+    pub comp: Option<serde_json::Value>,
+    pub plan_ux_reflection: Option<serde_json::Value>,
+    pub step_order: Vec<String>,
 }
 
 /// Context captured when an async live run is accepted (accept line + push routing).
@@ -293,6 +296,9 @@ pub struct OpAcceptContext {
     pub mcp_transport_key: Option<String>,
     pub display_map: HashMap<String, String>,
     pub host: Option<std::sync::Weak<PlasmHostState>>,
+    pub comp: Option<serde_json::Value>,
+    pub plan_ux_reflection: Option<serde_json::Value>,
+    pub step_order: Vec<String>,
 }
 
 /// Narrow poll snapshot for `wait(...)` — avoids cloning cancel signals and full operation state.
@@ -380,6 +386,9 @@ pub(crate) fn op_accept_context_from_executable(
         mcp_transport_key,
         display_map,
         host: None,
+        comp: None,
+        plan_ux_reflection: None,
+        step_order: Vec::new(),
     }
 }
 
@@ -460,6 +469,13 @@ pub fn async_live_run_accept_parts(
     if auto_async {
         plasm.insert("auto_async".into(), json!(true));
     }
+    plasm.insert(
+        "dry_verdict".into(),
+        json!(match verdict {
+            PlanDryVerdict::Ok => "ok",
+            PlanDryVerdict::Review => "review",
+        }),
+    );
     meta.insert("plasm".into(), serde_json::Value::Object(plasm));
     (markdown, meta)
 }

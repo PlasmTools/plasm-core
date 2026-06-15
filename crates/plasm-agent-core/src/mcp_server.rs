@@ -1515,7 +1515,11 @@ impl PlasmMcpHandler {
                         if should_spawn_async_live_run(wait_live, &dry_gate.review) {
                             es.try_begin_live_program_run()?;
                             let handle = es.mint_operation_handle(session_ref.as_str());
-                            let accept = op_accept_context_from_executable(
+                            let payload = crate::run_explorer_meta::build_run_explorer_accept_payload(
+                                &dry_gate,
+                                Some(&es),
+                            );
+                            let mut accept = op_accept_context_from_executable(
                                 plan_commit_ref.clone(),
                                 Some(compact.verdict),
                                 auto_async,
@@ -1523,6 +1527,9 @@ impl PlasmMcpHandler {
                                 bundle.executable(),
                                 &bundle.artifact().comp,
                             );
+                            accept.comp = Some(payload.comp.clone());
+                            accept.plan_ux_reflection = Some(payload.plan_ux_reflection.clone());
+                            accept.step_order = payload.step_order.clone();
                             spawn_async_plan_run(
                                 Arc::clone(&es),
                                 Arc::clone(&self.plasm),
@@ -1533,18 +1540,22 @@ impl PlasmMcpHandler {
                                 CancelSignal::new(),
                                 accept,
                             )?;
-                            let (markdown, meta) = async_live_run_accept_parts(
+                            let (markdown, mut meta) = async_live_run_accept_parts(
                                 &handle,
                                 plan_commit_ref.as_ref(),
                                 compact.verdict,
                                 auto_async,
                             );
-                            let comp_json = plasm_comp_json_from_dry(&dry_gate);
+                            crate::run_explorer_meta::merge_accept_payload_into_meta(
+                                &mut meta,
+                                session_ref.as_str(),
+                                &payload,
+                            );
                             return Ok(PlasmPlanRunResult {
                                 version: serde_json::json!({}),
                                 node_results: Vec::new(),
                                 graph_summary: serde_json::json!({}),
-                                comp: comp_json,
+                                comp: payload.comp,
                                 code_plan_run_artifacts: Vec::new(),
                                 run_markdown: Some(markdown),
                                 run_plasm_meta: Some(meta),
