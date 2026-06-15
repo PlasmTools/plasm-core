@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-06-13
+
+### Fixed
+
+- **Run Explorer async accept:** `isPlanShapedPlasmMeta` no longer misclassifies live `plasm_run` payloads carrying `comp` + `plan_ux_reflection` as dry-run plan review.
+
+### Changed
+
+- **Run Explorer MCP App UX:** flatten instrument-panel layout for ~390px iframe — edge-to-edge results table, hide step rail and plan DAG on single-step runs, human summary header (`{label} · N rows`), copyable session ref chip; remove redundant Technical details disclosure and eternal DAG loading placeholder.
+- **Run Explorer layout module:** extract `run-layout.ts` for DAG visibility, chrome sync, and header summary policy.
+
 ## [0.3.7] - 2026-06-13
 
 ### Fixed
