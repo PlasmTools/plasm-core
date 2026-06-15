@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-06-13
+
+### Fixed
+
+- **Run Explorer op state / CI build:** complete `operation.rs` + `run_explorer_meta.rs` wiring omitted from v0.3.5 (`comp`, `plan_ux_reflection`, `step_order` on async live runs); regenerate embedded Run Explorer MCP App bundle.
+
 ## [0.3.5] - 2026-06-13
 
 ### Changed
