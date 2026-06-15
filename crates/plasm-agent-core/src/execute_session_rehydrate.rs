@@ -1,5 +1,6 @@
 //! Rebuild an in-memory [`ExecuteSession`] from a Redis-persisted descriptor + catalog snapshot.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -60,25 +61,63 @@ pub fn descriptor_expired(desc: &PersistedExecuteSessionDescriptor) -> bool {
     now > desc.expires_at_unix
 }
 
-fn validate_catalog_hashes(
-    desc: &PersistedExecuteSessionDescriptor,
-    reg: &InMemoryCgsRegistry,
-) -> Result<(), RehydrateError> {
-    let entries: Vec<String> = if desc.catalog_cgs_hashes_by_entry.is_empty() {
-        vec![desc.entry_id.clone()]
-    } else {
-        desc.context_entry_ids.clone()
-    };
-    for eid in entries {
-        let expected = if desc.catalog_cgs_hashes_by_entry.is_empty() {
-            desc.catalog_cgs_hash.clone()
+/// Pinned catalog digests for one execute session (legacy single-entry or federated).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PinnedCatalogHashes {
+    pub(crate) entry_ids: Vec<String>,
+    pub(crate) expected_by_entry: HashMap<String, String>,
+}
+
+impl PinnedCatalogHashes {
+    pub(crate) fn from_descriptor(desc: &PersistedExecuteSessionDescriptor) -> Self {
+        let entry_ids = if desc.catalog_cgs_hashes_by_entry.is_empty() {
+            vec![desc.entry_id.clone()]
         } else {
-            desc.catalog_cgs_hashes_by_entry
-                .get(&eid)
-                .cloned()
-                .unwrap_or_else(|| desc.catalog_cgs_hash.clone())
+            desc.context_entry_ids.clone()
         };
-        let live = match reg.load_context(&eid) {
+        let mut expected_by_entry = HashMap::new();
+        for eid in &entry_ids {
+            let expected = if desc.catalog_cgs_hashes_by_entry.is_empty() {
+                desc.catalog_cgs_hash.clone()
+            } else {
+                desc.catalog_cgs_hashes_by_entry
+                    .get(eid)
+                    .cloned()
+                    .unwrap_or_else(|| desc.catalog_cgs_hash.clone())
+            };
+            expected_by_entry.insert(eid.clone(), expected);
+        }
+        Self {
+            entry_ids,
+            expected_by_entry,
+        }
+    }
+
+    pub(crate) fn from_execute_session(session: &ExecuteSession) -> Self {
+        let entry_ids: Vec<String> = session.contexts_by_entry.keys().cloned().collect();
+        let expected_by_entry = session
+            .contexts_by_entry
+            .iter()
+            .map(|(eid, ctx)| (eid.clone(), ctx.cgs.effective_catalog_cgs_hash_hex()))
+            .collect();
+        Self {
+            entry_ids,
+            expected_by_entry,
+        }
+    }
+}
+
+pub(crate) fn pinned_catalog_hashes_match_live(
+    reg: &InMemoryCgsRegistry,
+    pins: &PinnedCatalogHashes,
+) -> Result<(), RehydrateError> {
+    for eid in &pins.entry_ids {
+        let expected = pins
+            .expected_by_entry
+            .get(eid)
+            .cloned()
+            .unwrap_or_default();
+        let live = match reg.load_context(eid) {
             Ok(ctx) => ctx.cgs.effective_catalog_cgs_hash_hex(),
             Err(DiscoveryError::UnknownEntry(id)) => return Err(RehydrateError::UnknownEntry(id)),
             Err(e) => {
@@ -89,13 +128,24 @@ fn validate_catalog_hashes(
         };
         if live != expected {
             return Err(RehydrateError::CatalogHashMismatch {
-                entry_id: eid,
+                entry_id: eid.clone(),
                 expected,
                 live,
             });
         }
     }
     Ok(())
+}
+
+/// Whether a persisted descriptor / binding should be removed after rehydrate failure.
+pub fn should_discard_persisted_execute_on_rehydrate_error(err: &RehydrateError) -> bool {
+    matches!(
+        err,
+        RehydrateError::UnknownEntry(_)
+            | RehydrateError::CatalogHashMismatch { .. }
+            | RehydrateError::DescriptorExpired
+            | RehydrateError::PluginGenerationUnavailable { .. }
+    )
 }
 
 pub async fn rehydrate_execute_session(
@@ -107,7 +157,7 @@ pub async fn rehydrate_execute_session(
     }
 
     let reg = st.catalog.snapshot();
-    validate_catalog_hashes(desc, reg.as_ref())?;
+    pinned_catalog_hashes_match_live(reg.as_ref(), &PinnedCatalogHashes::from_descriptor(desc))?;
 
     let primary_ctx = match reg.load_context(&desc.entry_id) {
         Ok(c) => c,
@@ -199,10 +249,27 @@ pub async fn rehydrate_execute_session(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use plasm_core::discovery::InMemoryCgsRegistry;
+    use plasm_core::loader::load_schema_dir;
+
     use super::*;
     use crate::mcp_transport_store::execute_session_registry::{
         PersistedExecuteSessionDescriptor, PersistedSessionReuseKey,
     };
+
+    fn overshow_registry() -> InMemoryCgsRegistry {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        InMemoryCgsRegistry::from_pairs(vec![(
+            "overshow".into(),
+            "Overshow".into(),
+            vec!["demo".into()],
+            cgs,
+        )])
+    }
 
     #[test]
     fn descriptor_expired_rejects_past_timestamp() {
@@ -240,5 +307,91 @@ mod tests {
             plan_commit_next: 0,
         };
         assert!(descriptor_expired(&desc));
+    }
+
+    #[test]
+    fn discard_on_catalog_mismatch_not_discovery_transient() {
+        use RehydrateError::*;
+        assert!(should_discard_persisted_execute_on_rehydrate_error(
+            &CatalogHashMismatch {
+                entry_id: "github".into(),
+                expected: "a".into(),
+                live: "b".into(),
+            }
+        ));
+        assert!(!should_discard_persisted_execute_on_rehydrate_error(&Discovery(
+            "network".into()
+        )));
+    }
+
+    #[test]
+    fn pinned_hashes_from_descriptor_legacy_single_entry() {
+        let desc = PersistedExecuteSessionDescriptor {
+            prompt_hash: "ph".into(),
+            session_id: "sid".into(),
+            prompt_text: String::new(),
+            entry_id: "overshow".into(),
+            context_entry_ids: vec!["overshow".into()],
+            entities: vec!["demo".into()],
+            tenant_scope: "t".into(),
+            principal_subject: String::new(),
+            http_backend: None,
+            principal: None,
+            catalog_cgs_hash: "deadbeef".into(),
+            context_intent: None,
+            ranked_capabilities: None,
+            plugin_generation_id: None,
+            domain_revision: 0,
+            reuse_key: PersistedSessionReuseKey {
+                tenant_scope: "t".into(),
+                entry_id: "overshow".into(),
+                catalog_cgs_hash: "deadbeef".into(),
+                entities: vec!["demo".into()],
+                context_intent: None,
+                ranked_capabilities: None,
+                principal: None,
+                plugin_generation_id: None,
+                logical_session_id: None,
+            },
+            expires_at_unix: u64::MAX,
+            catalog_cgs_hashes_by_entry: Default::default(),
+            bindings_by_entry: Default::default(),
+            plan_commits: Vec::new(),
+            plan_commit_next: 0,
+        };
+        let pins = PinnedCatalogHashes::from_descriptor(&desc);
+        assert_eq!(pins.entry_ids, vec!["overshow".to_string()]);
+        assert_eq!(
+            pins.expected_by_entry.get("overshow"),
+            Some(&"deadbeef".to_string())
+        );
+    }
+
+    #[test]
+    fn pinned_hashes_match_live_ok_and_mismatch() {
+        let reg = overshow_registry();
+        let live_hash = reg
+            .load_context("overshow")
+            .expect("overshow")
+            .cgs
+            .effective_catalog_cgs_hash_hex();
+        let ok_pins = PinnedCatalogHashes {
+            entry_ids: vec!["overshow".into()],
+            expected_by_entry: HashMap::from([("overshow".into(), live_hash.clone())]),
+        };
+        assert!(pinned_catalog_hashes_match_live(&reg, &ok_pins).is_ok());
+
+        let bad_pins = PinnedCatalogHashes {
+            entry_ids: vec!["overshow".into()],
+            expected_by_entry: HashMap::from([("overshow".into(), "stale".into())]),
+        };
+        assert_eq!(
+            pinned_catalog_hashes_match_live(&reg, &bad_pins),
+            Err(RehydrateError::CatalogHashMismatch {
+                entry_id: "overshow".into(),
+                expected: "stale".into(),
+                live: live_hash,
+            })
+        );
     }
 }

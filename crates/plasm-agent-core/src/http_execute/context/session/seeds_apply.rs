@@ -48,7 +48,7 @@ pub(crate) async fn apply_capability_seeds(
                     target: "plasm_agent::http_execute",
                     prompt_hash = %ph,
                     session_id = %sid,
-                    "apply_capability_seeds: MCP execute binding stale (session missing or expired); opening fresh execute session"
+                    "apply_capability_seeds: MCP execute binding stale (session missing, expired, or catalog reload); opening fresh execute session"
                 );
                 None
             }

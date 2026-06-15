@@ -61,6 +61,42 @@ impl RedisBackend {
         let _: redis::RedisResult<()> = conn.del(key).await;
     }
 
+    /// Delete all keys whose names start with `prefix` (Redis `SCAN` + `DEL`).
+    pub(crate) async fn delete_keys_matching_prefix(&self, prefix: &str) -> u64 {
+        let pattern = format!("{prefix}*");
+        let mut conn = self.conn.clone();
+        let mut cursor: u64 = 0;
+        let mut deleted = 0u64;
+        loop {
+            let scan_result: redis::RedisResult<(u64, Vec<String>)> = redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(100)
+                .query_async(&mut conn)
+                .await;
+            let (next_cursor, keys) = match scan_result {
+                Ok(pair) => pair,
+                Err(err) => {
+                    warn!(?err, prefix, "redis SCAN failed during prefix delete");
+                    break;
+                }
+            };
+            if !keys.is_empty() {
+                match conn.del::<_, u64>(keys).await {
+                    Ok(n) => deleted = deleted.saturating_add(n),
+                    Err(err) => warn!(?err, prefix, "redis DEL failed during prefix delete"),
+                }
+            }
+            cursor = next_cursor;
+            if cursor == 0 {
+                break;
+            }
+        }
+        deleted
+    }
+
     pub async fn touch(&self, key: &str) {
         let mut conn = self.conn.clone();
         let ttl_secs = self.ttl.as_secs().max(60) as i64;

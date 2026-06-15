@@ -225,4 +225,23 @@ impl ExecuteSessionRegistry {
         redis.touch(&key).await;
         Some(desc)
     }
+
+    pub(crate) async fn delete(&self, prompt_hash: &str, session_id: &str) {
+        if let Some(redis) = self.redis().await {
+            redis
+                .delete(&session_key(prompt_hash, session_id))
+                .await;
+        }
+    }
+
+    /// Drop all cross-pod execute session descriptors (e.g. after plugin catalog reload).
+    pub async fn purge_redis(&self) -> u64 {
+        if let Some(redis) = self.redis().await {
+            redis
+                .delete_keys_matching_prefix(SESSION_KEY_PREFIX)
+                .await
+        } else {
+            0
+        }
+    }
 }

@@ -141,6 +141,30 @@ impl LogicalExecuteBindingRegistry {
             .await?;
         uuid_str.parse().ok()
     }
+
+    /// Remove logical binding rows for a stale execute `(prompt_hash, session_id)` pair.
+    pub(crate) async fn delete_for_execute(&self, prompt_hash: &str, session_id: &str) {
+        if let Some(uuid) = self.find_by_execute(prompt_hash, session_id).await {
+            self.remove(&uuid).await;
+        }
+    }
+
+    /// Clear local caches and Redis logical binding keys (catalog reload / cluster-wide reset).
+    pub async fn purge_redis_and_local(&self) -> u64 {
+        {
+            let mut g = self.local.write().await;
+            g.clear();
+            let mut rev = self.by_session.write().await;
+            rev.clear();
+        }
+        if let Some(redis) = self.redis().await {
+            redis
+                .delete_keys_matching_prefix(LOGICAL_KEY_PREFIX)
+                .await
+        } else {
+            0
+        }
+    }
 }
 
 #[cfg(test)]

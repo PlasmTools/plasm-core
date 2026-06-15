@@ -1533,6 +1533,38 @@ impl ExecuteSessionStore {
         self.get(&ph, &sid).await
     }
 
+    /// Drop one in-memory execute row (and reuse-index entry when it points at this pair).
+    pub async fn remove_by_strs(&self, prompt_hash: &str, session_id: &str) {
+        let removed = {
+            let mut g = self.inner.write().await;
+            g.remove(&ExecuteSessionKey::new(prompt_hash, session_id))
+                .map(|rec| rec.session)
+        };
+        let Some(sess) = removed else {
+            return;
+        };
+        {
+            let mut r = self.reuse_index.write().await;
+            r.retain(|_, (ph, sid)| !(ph == prompt_hash && sid == session_id));
+        }
+        self.enqueue_finalize(sess, session_id.to_string());
+    }
+
+    /// Drop all in-memory execute rows (plugin catalog reload; stale CGS must not survive locally).
+    pub async fn purge_all(&self) {
+        let removed: Vec<(String, Arc<ExecuteSession>)> = {
+            let mut g = self.inner.write().await;
+            let mut r = self.reuse_index.write().await;
+            r.clear();
+            g.drain()
+                .map(|(k, rec)| (k.session_id, rec.session))
+                .collect()
+        };
+        for (sid, sess) in removed {
+            self.enqueue_finalize(sess, sid);
+        }
+    }
+
     async fn get_unchecked_by_strs(
         &self,
         prompt_hash: &str,

@@ -216,7 +216,26 @@ impl PlasmHostState {
         session_id: &str,
     ) -> Option<Arc<ExecuteSession>> {
         if let Some(sess) = self.sessions.get_by_strs(prompt_hash, session_id).await {
-            return Some(sess);
+            let reg = self.catalog.snapshot();
+            let pins =
+                crate::execute_session_rehydrate::PinnedCatalogHashes::from_execute_session(&sess);
+            if crate::execute_session_rehydrate::pinned_catalog_hashes_match_live(
+                reg.as_ref(),
+                &pins,
+            )
+            .is_ok()
+            {
+                return Some(sess);
+            }
+            tracing::info!(
+                target: "plasm_agent::execute_session",
+                prompt_hash = %prompt_hash,
+                session_id = %session_id,
+                "in-memory execute session stale (catalog rotation); discarding"
+            );
+            self.discard_persisted_execute_row(prompt_hash, session_id)
+                .await;
+            return None;
         }
         let desc = self
             .execute_session_registry
@@ -238,6 +257,12 @@ impl PlasmHostState {
             }
             Err(err) => {
                 crate::metrics::record_execute_rehydrate("error", rehydrate_error_kind(&err));
+                if crate::execute_session_rehydrate::should_discard_persisted_execute_on_rehydrate_error(
+                    &err,
+                ) {
+                    self.discard_persisted_execute_row(prompt_hash, session_id)
+                        .await;
+                }
                 tracing::warn!(
                     target: "plasm_agent::execute_session",
                     prompt_hash = %prompt_hash,
@@ -248,6 +273,25 @@ impl PlasmHostState {
                 None
             }
         }
+    }
+
+    /// Remove Redis descriptor, logical binding, and in-memory row for one execute session.
+    pub async fn discard_persisted_execute_row(&self, prompt_hash: &str, session_id: &str) {
+        self.execute_session_registry
+            .delete(prompt_hash, session_id)
+            .await;
+        self.logical_execute_bindings
+            .delete_for_execute(prompt_hash, session_id)
+            .await;
+        self.sessions.remove_by_strs(prompt_hash, session_id).await;
+    }
+
+    /// Purge cross-pod execute transport after plugin catalog reload (Redis + local caches).
+    pub async fn purge_persisted_execute_state(&self) -> (u64, u64) {
+        self.sessions.purge_all().await;
+        let session_keys = self.execute_session_registry.purge_redis().await;
+        let logical_keys = self.logical_execute_bindings.purge_redis_and_local().await;
+        (session_keys, logical_keys)
     }
 
     /// Insert a new execute session and mirror descriptor to Redis when configured.
@@ -293,5 +337,98 @@ fn rehydrate_error_kind(err: &crate::execute_session_rehydrate::RehydrateError) 
         RehydrateError::DescriptorExpired => "descriptor_expired",
         RehydrateError::Discovery(_) => "discovery",
         RehydrateError::PluginGenerationUnavailable { .. } => "plugin_generation_unavailable",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use plasm_core::discovery::InMemoryCgsRegistry;
+    use plasm_core::loader::load_schema_dir;
+    use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
+
+    use super::*;
+    use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
+    use crate::http_execute::{execute_session_create_response, CreateExecuteSessionBody};
+    use crate::run_artifacts::RunArtifactStore;
+
+    fn test_host_state() -> PlasmHostState {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        let reg = InMemoryCgsRegistry::from_pairs(vec![(
+            "overshow".into(),
+            "Overshow".into(),
+            vec!["demo".into()],
+            cgs,
+        )]);
+        let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
+        build_plasm_host_state(PlasmHostBootstrap {
+            engine,
+            mode: ExecutionMode::Live,
+            registry: Arc::new(reg),
+            catalog_bootstrap: CatalogBootstrap::Fixed,
+            plugin_manager: None,
+            incoming_auth: None,
+            run_artifacts: Arc::new(RunArtifactStore::memory()),
+            session_graph_persistence: None,
+            oss_local_filesystem_defaults: false,
+        })
+    }
+
+    fn rotated_overshow_registry() -> InMemoryCgsRegistry {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let mut cgs = load_schema_dir(&dir).expect("overshow_tools");
+        if let Some(entity) = cgs.entities.get_mut("RecordedContent") {
+            entity.description.push_str(" (catalog reload test bump)");
+        }
+        InMemoryCgsRegistry::from_pairs(vec![(
+            "overshow".into(),
+            "Overshow".into(),
+            vec!["demo".into()],
+            Arc::new(cgs),
+        )])
+    }
+
+    #[tokio::test]
+    async fn get_execute_session_none_after_in_memory_catalog_stale() {
+        let st = test_host_state();
+        let created = execute_session_create_response(
+            &st,
+            None,
+            CreateExecuteSessionBody {
+                entry_id: "overshow".into(),
+                entities: vec!["Profile".into()],
+                principal: None,
+                logical_session_id: None,
+                context_intent: None,
+                ranked_capabilities: None,
+                read_first_seeded_exposure: false,
+            },
+        )
+        .await
+        .expect("open session");
+
+        assert!(
+            st.get_execute_session(&created.prompt_hash, &created.session)
+                .await
+                .is_some()
+        );
+
+        st.catalog
+            .publish_catalog(Arc::new(rotated_overshow_registry()));
+
+        assert!(
+            st.get_execute_session(&created.prompt_hash, &created.session)
+                .await
+                .is_none()
+        );
+        assert!(
+            st.sessions
+                .get_by_strs(&created.prompt_hash, &created.session)
+                .await
+                .is_none()
+        );
     }
 }

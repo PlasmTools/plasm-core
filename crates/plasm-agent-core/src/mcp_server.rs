@@ -119,6 +119,8 @@ use uuid::Uuid;
 /// Best-effort bound on concurrent MCP transport sessions holding an execute binding (see module doc).
 const MAX_MCP_EXEC_BINDINGS: usize = 512;
 
+const MCP_EXECUTE_SESSION_UNAVAILABLE: &str = "Execute session unavailable (expired or catalog reload): call `plasm_context` again with your capability picks (`seeds`).";
+
 /// Model-facing **`plasm`** tool description: **plan-only** program construction (session setup is in initialize instructions).
 pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = include_str!("mcp_prompt/plasm_tool_head.txt");
 
@@ -1409,7 +1411,7 @@ impl PlasmMcpHandler {
                 started.elapsed(),
             );
             return Ok(CallToolResult::with_error(CallToolError::from_message(
-                "Execute session expired: call `plasm_context` again with your capability picks (`seeds`) to open a new session.",
+                MCP_EXECUTE_SESSION_UNAVAILABLE,
             )));
         }
 
@@ -1452,10 +1454,7 @@ impl PlasmMcpHandler {
                 .get_execute_session(&b.prompt_hash, &b.session_id)
                 .await
             else {
-                return Err(
-                    "Execute session expired: call `plasm_context` again with your capability picks (`seeds`) to open a new session."
-                        .to_string(),
-                );
+                return Err(MCP_EXECUTE_SESSION_UNAVAILABLE.to_string());
             };
             if let Some(op_result) =
                 try_dispatch_operation_program(&es, Some(&mcp_trace), &program).await

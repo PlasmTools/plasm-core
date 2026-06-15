@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-06-13
+
+### Fixed
+
+- **Multi-replica execute sessions after plugin catalog reload:** purge Redis execute descriptors and logical bindings when plugin-dir catalog reload detects hash changes; discard stale bindings on `CatalogHashMismatch` during cross-pod rehydrate; validate in-memory sessions against live catalog pins before serve.
+- **MCP session errors:** distinguish catalog rotation from generic expiry in `plasm` / `plasm_run` messages; stale logical bindings recover via existing `plasm_context` path.
+
 ## [0.3.6] - 2026-06-13
 
 ### Fixed
