@@ -407,6 +407,10 @@ pub fn operation_accept_markdown(
         None,
     );
     render_op_wire_markdown(&line)
+        + &format!(
+            "\n\n_Poll with `plasm_run program=wait({})` until `!`; do not start unrelated live programs while this handle is open._",
+            handle.as_str()
+        )
 }
 
 pub fn operation_running_markdown(

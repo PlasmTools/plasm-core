@@ -138,7 +138,7 @@ impl ToolModelExecuteContinuations {
         Self {
             summary: "LLM execute uses host continuation expressions — not raw API pagination cursors or background job ids.".into(),
             pagination: append_llm_pagination_execute_note(String::new()),
-            long_operations: "Async plan runs: wait=false or review auto-async → compact op lines (`+` accept · `~` running · `=` unchanged · `!` done). Poll wait(l_<token>_oM) every few seconds; optional GET .../operations/{handle}/stream SSE or MCP notifications/plasm/op. HTTP execute uses plain wait(oM)/cancel(oM).".into(),
+            long_operations: "Async plan runs: `+`/`~`/`=` = handle open — plasm_run program=wait(h) until `!` or cancel(h); parallel handles OK, poll each (3–5s). At cap, wait/cancel outstanding before more. Optional SSE/MCP push. HTTP: wait(oM)/cancel(oM).".into(),
             review_gate: "When plan dry-run verdict is review, pass plan_commit_ref (pcN) from matching plan dry-run or force=true before live execute. Commit ids hash semantic plan DAG only.".into(),
         }
     }
@@ -1563,7 +1563,7 @@ mod tests {
         let m = build_tool_model(&cgs, &meta, &q).expect("ok");
         assert!(!m.entities.is_empty());
         assert!(m.execute.summary.contains("continuation"));
-        assert!(m.execute.long_operations.contains("wait(l_<token>_oM)"));
+        assert!(m.execute.long_operations.contains("plasm_run program=wait(h)"));
         assert!(m.execute.review_gate.contains("plan_commit_ref"));
         assert_eq!(m.entities.len(), m.domain.model.entities.len());
         assert_eq!(m.focus.mode, "all");

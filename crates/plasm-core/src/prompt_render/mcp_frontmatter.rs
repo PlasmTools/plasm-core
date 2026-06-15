@@ -261,7 +261,7 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         "- Projection rows ending `{projection}` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.",
         projection = projection
     );
-    s.push_str("- Host continuations (`page`/`wait`/`cancel`/`pcN`): copy handles from prior responses (see Grammar).\n\n");
+    s.push_str("- Host continuations (`page`/`wait`/`cancel`/`pcN`): copy handles from prior responses (see Grammar). Open `oN`/`pgN` handles must be polled with `wait(h)` or cancelled before unrelated live execute or telling the user the task is done.\n\n");
 
     s.push_str("Grammar:\n");
     let _ = writeln!(s, "plasm_program ::= plasm_expr | binding+ roots");

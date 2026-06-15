@@ -28,6 +28,48 @@ use crate::run_artifacts::{ArtifactPayload, RunArtifactId, RunArtifactStore};
 use crate::session_graph_persistence::SessionGraphPersistence;
 use serde::Serialize;
 
+/// Default cap on concurrent `Running` async operations per execute session.
+pub const DEFAULT_MAX_RUNNING_OPS_PER_SESSION: usize = 16;
+
+/// `PLASM_MAX_RUNNING_OPS_PER_SESSION` — max concurrent async ops per session (default 16).
+pub fn max_running_ops_per_session() -> usize {
+    env::var("PLASM_MAX_RUNNING_OPS_PER_SESSION")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_MAX_RUNNING_OPS_PER_SESSION)
+}
+
+fn running_handles_from_map(
+    map: &HashMap<OperationHandle, crate::operation::OperationState>,
+) -> Vec<OperationHandle> {
+    map.iter()
+        .filter(|(_, op)| op.phase == crate::operation::OperationPhase::Running)
+        .map(|(h, _)| h.clone())
+        .collect()
+}
+
+fn format_too_many_operations_error(handles: &[OperationHandle], cap: usize) -> String {
+    let count = handles.len();
+    const MAX_LIST: usize = 8;
+    let listed: Vec<&str> = handles
+        .iter()
+        .take(MAX_LIST)
+        .map(|h| h.as_str())
+        .collect();
+    let mut list = listed.join(", ");
+    if count > MAX_LIST {
+        list.push_str(", …");
+    }
+    let example = handles
+        .first()
+        .map(|h| h.as_str())
+        .unwrap_or("l_<token>_oN");
+    format!(
+        "too_many_operations ({count}/{cap}): wait or cancel outstanding handles before starting more — poll `wait({example})` or `cancel({example})`; running: {list}"
+    )
+}
+
 /// Default time-to-live for a session (lazy expiry on lookup).
 const SESSION_TTL: Duration = Duration::from_secs(3600);
 
@@ -668,72 +710,40 @@ impl ExecuteSession {
             .insert(handle, state);
     }
 
-    fn running_operation_handle(&self) -> Option<OperationHandle> {
-        self.operation_by_handle
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .iter()
-            .find(|(_, op)| op.phase == crate::operation::OperationPhase::Running)
-            .map(|(h, _)| h.clone())
-    }
-
-    fn live_run_inflight_error(&self) -> Option<String> {
-        if let Some(h) = self.running_operation_handle() {
-            return Some(format!(
-                "operation_in_flight: poll `wait({})` or `cancel({})` before starting another live run",
-                h.as_str(),
-                h.as_str()
-            ));
-        }
-        if self.sync_live_run_inflight.load(Ordering::Acquire) {
-            return Some(
+    /// Reject nested synchronous live runs on the same execute session.
+    pub fn begin_sync_live_run(&self) -> Result<(), String> {
+        if self
+            .sync_live_run_inflight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return Err(
                 "operation_in_flight: a synchronous live run is in progress on this execute session"
                     .to_string(),
             );
         }
-        None
-    }
-
-    /// Reject a second live program when an async op is running or sync execute holds the session.
-    pub fn try_begin_live_program_run(&self) -> Result<(), String> {
-        if let Some(err) = self.live_run_inflight_error() {
-            return Err(err);
-        }
         Ok(())
     }
 
-    /// Register an async operation after checking no other live run is in flight.
+    pub fn end_sync_live_run(&self) {
+        self.sync_live_run_inflight.store(false, Ordering::Release);
+    }
+
+    /// Register an async operation; rejects when running-op cap is reached.
     pub fn try_begin_async_operation(
         &self,
         handle: OperationHandle,
         cancel: plasm_runtime::CancelSignal,
         accept: crate::operation::OpAcceptContext,
     ) -> Result<(), String> {
+        let cap = max_running_ops_per_session();
         let mut map = self
             .operation_by_handle
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        if map
-            .values()
-            .any(|op| op.phase == crate::operation::OperationPhase::Running)
-        {
-            if let Some(h) = map
-                .iter()
-                .find(|(_, op)| op.phase == crate::operation::OperationPhase::Running)
-                .map(|(h, _)| h.clone())
-            {
-                return Err(format!(
-                    "operation_in_flight: poll `wait({})` or `cancel({})` before starting another live run",
-                    h.as_str(),
-                    h.as_str()
-                ));
-            }
-        }
-        if self.sync_live_run_inflight.load(Ordering::Acquire) {
-            return Err(
-                "operation_in_flight: a synchronous live run is in progress on this execute session"
-                    .to_string(),
-            );
+        let running = running_handles_from_map(&map);
+        if running.len() >= cap {
+            return Err(format_too_many_operations_error(&running, cap));
         }
         let (progress_tx, _) = tokio::sync::broadcast::channel(64);
         map.insert(
@@ -759,25 +769,6 @@ impl ExecuteSession {
             },
         );
         Ok(())
-    }
-
-    pub fn begin_sync_live_run(&self) -> Result<(), String> {
-        self.try_begin_live_program_run()?;
-        if self
-            .sync_live_run_inflight
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return Err(
-                "operation_in_flight: a synchronous live run is in progress on this execute session"
-                    .to_string(),
-            );
-        }
-        Ok(())
-    }
-
-    pub fn end_sync_live_run(&self) {
-        self.sync_live_run_inflight.store(false, Ordering::Release);
     }
 
     pub fn get_operation(
@@ -1911,6 +1902,145 @@ mod tests {
                 last_requested_to_block: None,
             },
         }
+    }
+
+    #[test]
+    fn parallel_async_operations_same_session() {
+        let cgs = Arc::new(CGS::new());
+        let mut ctxs = IndexMap::new();
+        ctxs.insert(
+            "default".into(),
+            Arc::new(CgsContext::entry("default", cgs.clone())),
+        );
+        let es = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs,
+            ctxs,
+            "default".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Pet".into()],
+            None,
+            None,
+            None,
+            "hash".into(),
+            None,
+            None,
+        );
+        let h1 = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
+        let h2 = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
+        es.try_begin_async_operation(
+            h1,
+            plasm_runtime::CancelSignal::new(),
+            crate::operation::OpAcceptContext::default(),
+        )
+        .expect("first async op");
+        es.try_begin_async_operation(
+            h2,
+            plasm_runtime::CancelSignal::new(),
+            crate::operation::OpAcceptContext::default(),
+        )
+        .expect("second parallel async op");
+    }
+
+    #[test]
+    fn running_ops_cap_rejects_when_exceeded() {
+        let prev = env::var("PLASM_MAX_RUNNING_OPS_PER_SESSION").ok();
+        unsafe {
+            env::set_var("PLASM_MAX_RUNNING_OPS_PER_SESSION", "2");
+        }
+        let cgs = Arc::new(CGS::new());
+        let mut ctxs = IndexMap::new();
+        ctxs.insert(
+            "default".into(),
+            Arc::new(CgsContext::entry("default", cgs.clone())),
+        );
+        let es = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs,
+            ctxs,
+            "default".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Pet".into()],
+            None,
+            None,
+            None,
+            "hash".into(),
+            None,
+            None,
+        );
+        for i in 0..2 {
+            let h = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
+            es.try_begin_async_operation(
+                h,
+                plasm_runtime::CancelSignal::new(),
+                crate::operation::OpAcceptContext::default(),
+            )
+            .unwrap_or_else(|_| panic!("register op {i}"));
+        }
+        let h3 = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
+        let err = es
+            .try_begin_async_operation(
+                h3,
+                plasm_runtime::CancelSignal::new(),
+                crate::operation::OpAcceptContext::default(),
+            )
+            .expect_err("cap");
+        assert!(
+            err.contains("too_many_operations"),
+            "unexpected: {err}"
+        );
+        assert!(err.contains("wait(") && err.contains("cancel("));
+        match prev {
+            Some(v) => unsafe {
+                env::set_var("PLASM_MAX_RUNNING_OPS_PER_SESSION", v);
+            },
+            None => unsafe {
+                env::remove_var("PLASM_MAX_RUNNING_OPS_PER_SESSION");
+            },
+        }
+    }
+
+    #[test]
+    fn sync_live_run_allowed_while_async_running() {
+        let cgs = Arc::new(CGS::new());
+        let mut ctxs = IndexMap::new();
+        ctxs.insert(
+            "default".into(),
+            Arc::new(CgsContext::entry("default", cgs.clone())),
+        );
+        let es = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs,
+            ctxs,
+            "default".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Pet".into()],
+            None,
+            None,
+            None,
+            "hash".into(),
+            None,
+            None,
+        );
+        let h = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
+        es.try_begin_async_operation(
+            h,
+            plasm_runtime::CancelSignal::new(),
+            crate::operation::OpAcceptContext::default(),
+        )
+        .expect("async op");
+        es.begin_sync_live_run()
+            .expect("sync while async running");
+        es.end_sync_live_run();
     }
 
     #[test]

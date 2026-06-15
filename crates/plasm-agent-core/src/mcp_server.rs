@@ -1512,7 +1512,6 @@ impl PlasmMcpHandler {
                         let auto_async =
                             live_run_should_auto_async(&dry_gate.review, wait_live);
                         if should_spawn_async_live_run(wait_live, &dry_gate.review) {
-                            es.try_begin_live_program_run()?;
                             let handle = es.mint_operation_handle(session_ref.as_str());
                             let payload = crate::run_explorer_meta::build_run_explorer_accept_payload(
                                 &dry_gate,

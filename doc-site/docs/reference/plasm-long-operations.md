@@ -100,6 +100,22 @@ Compact **one-line** updates — not repeated poll/cancel instructions:
 - HTTP SSE: `GET /execute/{prompt_hash}/{session}/operations/{handle}/stream` — `data` is the plain wire line (`snapshot` / `progress` / `terminal` events).
 - MCP: `notifications/plasm/op` with `{ "line", "n" }` (optional `"c"` on accept).
 
+## Handle discipline
+
+When a response includes **`+`**, **`~`**, or **`=`** on an operation handle, that handle is **open**:
+
+1. Poll with **`plasm_run program=wait(h)`** (MCP) or **`POST`** body `wait(h)` (HTTP) every **3–5s** until **`!`** (done), **`x`** (cancelled), or **`?`** (failed).
+2. Or cooperative **`cancel(h)`** when abandoning the run.
+3. **Do not** start unrelated live programs or tell the user the task is finished while handles you opened are still open — unless you explicitly say the run is still in progress and keep polling.
+
+**`plasm` (dry-run) does not dispatch `wait(h)`** — continuations are **`plasm_run`** (or HTTP execute) only.
+
+## Concurrent operations
+
+Each async live program mints its own handle (`l_<token>_o1`, `_o2`, …). **Parallel async runs are allowed** on the same execute session — poll **each** handle independently.
+
+**Cap:** `PLASM_MAX_RUNNING_OPS_PER_SESSION` (default **16**). When the cap is reached, the host returns **`too_many_operations`** listing outstanding handles — **wait or cancel** those before starting more.
+
 ## Internal observability
 
 Trace hub SSE remains for Phoenix/SRE timeline detail — separate from the compact agent lines above.

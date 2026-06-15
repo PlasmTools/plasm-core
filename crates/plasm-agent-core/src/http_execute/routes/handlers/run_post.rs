@@ -261,16 +261,6 @@ pub(crate) async fn post_run_execute_session(
 
     if crate::operation::should_spawn_async_live_run(wait_live, &dry_gate.review) {
         let auto_async = crate::operation::live_run_should_auto_async(&dry_gate.review, wait_live);
-        if let Err(e) = sess.try_begin_live_program_run() {
-            return problem_response(
-                Problem::custom(
-                    ProblemStatus::BAD_REQUEST,
-                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                )
-                .with_title("Bad Request")
-                .with_detail(e),
-            );
-        }
         let handle = sess.mint_operation_handle_plain();
         let payload =
             crate::run_explorer_meta::build_run_explorer_accept_payload(&dry_gate, Some(&sess));

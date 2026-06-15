@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.10] - 2026-06-15
+
+### Changed
+
+- **Parallel async operations:** remove execute-session single-flight gate; multiple `plasm_run` async programs may run concurrently on one session (distinct `l_<token>_oN` handles). Cap via `PLASM_MAX_RUNNING_OPS_PER_SESSION` (default **16**); `too_many_operations` lists outstanding handles with wait/cancel hints.
+- **Sync live runs:** `begin_sync_live_run` is sync-only re-entrancy — async ops no longer block bounded sync runs or each other (until cap).
+- **Agent teaching:** MCP initialize long-ops lifecycle copy, `plasm_run` tool async-accept note, teaching TSV frontmatter open-handle rule, async accept response poll nudge, `tool_model` long_operations string.
+
 ## [0.3.9] - 2026-06-13
 
 ### Fixed

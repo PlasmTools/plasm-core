@@ -1,5 +1,5 @@
      **`plasm`** is **plan-only** (no live HTTP). Prefer **one** `program` per call (comma-separated roots on the final line for multi-return). Multi-root answers: review with **`plasm`**, execute with **`plasm_run`**. Never prefix roots with `return`.
      **`plasm_run`**: same args as **`plasm`**; live HTTP after plan review. May return run snapshot URIs.
      **Paging:** **`page(l_<token>_pgN)`** / `_meta.plasm.paging` in the same logical session.
-     **Long ops:** **`wait(l_<token>_oN)`** poll · **`cancel(l_<token>_oN)`** cancel · compact op lines: **`+`** accept · **`~`** running · **`=`** unchanged · **`!`** done · poll slowly (3–5s).
+     **Long ops:** **`+`/`~`/`=`** open — **`wait(h)`** on **`plasm_run`** until **`!`**/**`x`** or **`cancel(h)`**; no unrelated live runs or user “done”. Parallel OK — poll each 3–5s.
      **Snapshots:** `plasm://…` → **`resources/read`** when Markdown points there.

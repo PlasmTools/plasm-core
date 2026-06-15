@@ -1,3 +1,5 @@
 **Run Plasm** (live): same **`logical_session_ref`** + **`program`** (+ optional **`reasoning`**) as **`plasm`**. Real HTTP/API; may return **`resource_link`** / `_meta.plasm` snapshots.
 
+**Async accept:** compact **`+`** wire line + handle — not final rows; **`plasm_run program=wait(h)`** until **`!`** or **`x`** before unrelated live programs or telling the user the run finished.
+
 **Live results:** `## {return_label} ({n} rows)` + TSV/table; multi-return programs use `# Results` with `### {label} ({n} rows)` per root. Truncated rows: `_meta.plasm.steps` + MCP **`resources/read`** on snapshot URIs.

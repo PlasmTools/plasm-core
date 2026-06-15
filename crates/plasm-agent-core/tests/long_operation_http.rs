@@ -219,50 +219,50 @@ async fn review_plan_auto_async_without_wait_false() {
 }
 
 #[tokio::test]
-async fn concurrent_live_run_rejected_while_async_inflight() {
+async fn parallel_async_live_runs_accept_distinct_handles() {
     let app = test_app(langmatrix_host_state());
     let (ph, sid) = open_langitem_session(&app).await;
     let start_uri = format!("/execute/{ph}/{sid}?wait=false&force=true");
-    let start_req = Request::builder()
+    let first_req = Request::builder()
         .method("POST")
         .uri(&start_uri)
         .header("accept", "application/json")
         .body(Body::from("LangItem.page_size(1).limit(10)"))
         .unwrap();
-    let start_res = app.clone().oneshot(start_req).await.unwrap();
-    assert_eq!(start_res.status(), StatusCode::OK);
-    let start_body = axum::body::to_bytes(start_res.into_body(), usize::MAX)
+    let first_res = app.clone().oneshot(first_req).await.unwrap();
+    assert_eq!(first_res.status(), StatusCode::OK);
+    let first_body = axum::body::to_bytes(first_res.into_body(), usize::MAX)
         .await
         .unwrap();
-    let start_doc: serde_json::Value = serde_json::from_slice(&start_body).unwrap();
-    let handle = start_doc
+    let first_doc: serde_json::Value = serde_json::from_slice(&first_body).unwrap();
+    let handle1 = first_doc
         .get("_meta")
         .and_then(|m| m.get("plasm"))
         .and_then(|p| p.get("continuity"))
         .and_then(|c| c.get("h"))
         .and_then(|v| v.as_str())
         .expect("operation handle");
-    let second_uri = format!("/execute/{ph}/{sid}?force=true");
+
     let second_req = Request::builder()
         .method("POST")
-        .uri(&second_uri)
+        .uri(&start_uri)
         .header("accept", "application/json")
         .body(Body::from("LangItem.limit(2)"))
         .unwrap();
     let second_res = app.oneshot(second_req).await.unwrap();
-    assert_eq!(second_res.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(second_res.status(), StatusCode::OK, "parallel async accept");
     let second_body = axum::body::to_bytes(second_res.into_body(), usize::MAX)
         .await
         .unwrap();
     let second_doc: serde_json::Value = serde_json::from_slice(&second_body).unwrap();
-    let detail = second_doc
-        .get("detail")
-        .and_then(|d| d.as_str())
-        .unwrap_or("");
-    assert!(
-        detail.contains("operation_in_flight") && detail.contains(handle),
-        "detail: {detail}"
-    );
+    let handle2 = second_doc
+        .get("_meta")
+        .and_then(|m| m.get("plasm"))
+        .and_then(|p| p.get("continuity"))
+        .and_then(|c| c.get("h"))
+        .and_then(|v| v.as_str())
+        .expect("second operation handle");
+    assert_ne!(handle1, handle2);
 }
 
 #[tokio::test]
@@ -299,8 +299,8 @@ async fn wait_false_async_accept_returns_operation_json() {
     assert!(md.contains("`o"), "markdown: {md}");
     assert!(md.contains('+'), "compact accept: {md}");
     assert!(
-        !md.contains("Poll:"),
-        "no poll instructions on accept: {md}"
+        md.contains("wait("),
+        "accept should nudge wait poll: {md}"
     );
 }
 

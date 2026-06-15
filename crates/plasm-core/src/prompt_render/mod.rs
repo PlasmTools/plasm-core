@@ -6503,7 +6503,7 @@ mod tests {
 
     #[test]
     fn grammar_frontmatter_byte_budget() {
-        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6650;
+        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6785;
         const MAX_GRAMMAR_FRONTMATTER_BYTES: usize = 7298;
         const MINIMAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6800;
 
