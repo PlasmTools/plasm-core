@@ -11,46 +11,37 @@ pub use operations::{
     handle_cancel_operation, handle_wait_operation, try_dispatch_operation_program,
 };
 
-mod prelude;
-pub(crate) use prelude::*;
+mod deps;
+mod wire;
+
+pub(crate) use deps::*;
 
 use axum::extract::rejection::PathRejection;
-use axum::extract::FromRequestParts;
-use plasm_core::{
-    plasm_grammar_frontmatter_revision_hex, teaching_prompt_omit_contract_if_cached, PagingHandle,
-    PromptRenderMode,
+use axum::extract::{FromRequestParts, Path};
+use axum::http::StatusCode;
+use axum::response::Response;
+use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
+use http_problem::Problem;
+use plasm_core::{PagingHandle, PromptRenderMode, CGS};
+use plasm_runtime::ExecutionResult;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use uuid::Uuid;
+
+use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
+use crate::http_problem_util::{problem_response, problem_types};
+use crate::run_artifacts::RunArtifactHandle;
+use crate::trace_sink_emit::PlasmTraceContext;
+
+pub(crate) use wire::{
+    create_execute_session_response, problem_response_invalid_execute_path,
+    wire_execute_session_prompt,
 };
 
 /// Validated `/execute/:prompt_hash/:session_id` segments; rejects with RFC 7807 `problem+json`.
 pub(crate) struct ExecutePath {
     prompt_hash: PromptHashHex,
     session_id: ExecuteSessionId,
-}
-
-fn problem_response_invalid_execute_path(
-    axum_status: StatusCode,
-    detail: impl Into<String>,
-) -> Response {
-    let pstatus = if axum_status == StatusCode::BAD_REQUEST {
-        ProblemStatus::BAD_REQUEST
-    } else if axum_status == StatusCode::INTERNAL_SERVER_ERROR {
-        ProblemStatus::INTERNAL_SERVER_ERROR
-    } else {
-        ProblemStatus::BAD_REQUEST
-    };
-    let title = if pstatus == ProblemStatus::INTERNAL_SERVER_ERROR {
-        "Internal Server Error"
-    } else {
-        "Bad Request"
-    };
-    problem_response(
-        Problem::custom(
-            pstatus,
-            Uri::from_static(problem_types::EXECUTE_INVALID_PATH_PARAM),
-        )
-        .with_title(title)
-        .with_detail(detail.into()),
-    )
 }
 
 fn problem_response_from_path_rejection(rej: PathRejection) -> Response {
@@ -103,9 +94,6 @@ where
         })
     }
 }
-
-use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
-use crate::http_problem_util::{problem_response, problem_types};
 
 /// Re-export: MCP adaptive preview threshold (Unicode scalars).
 pub use crate::mcp_run_markdown::MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS;
@@ -190,36 +178,6 @@ pub struct ApplyCapabilitySeedsOutcome {
     pub stale_binding_previous: Option<(String, String)>,
 }
 
-fn wire_execute_session_prompt(
-    stored_prompt: &str,
-    render_mode: PromptRenderMode,
-    grammar_revision: Option<&str>,
-) -> String {
-    teaching_prompt_omit_contract_if_cached(
-        stored_prompt,
-        grammar_revision,
-        Some(render_mode.markdown_fence_info_string()),
-    )
-}
-
-fn create_execute_session_response(
-    sess: &crate::execute_session::ExecuteSession,
-    session_id: String,
-    prompt: String,
-    reused: bool,
-) -> CreateExecuteSessionResponse {
-    CreateExecuteSessionResponse {
-        prompt_hash: sess.prompt_hash.clone(),
-        session: session_id,
-        prompt,
-        entry_id: sess.entry_id.clone(),
-        entities: sess.entities.clone(),
-        grammar_revision: plasm_grammar_frontmatter_revision_hex().to_string(),
-        reused,
-        principal: sess.principal.clone(),
-    }
-}
-
 /// Maps the parsed `page(...)` handle to the key stored in [`ExecuteSession::paging_resume_by_handle`].
 /// MCP (`logical_session_ref` set): namespaced `l_<token>_pgN` only. HTTP: plain `pgN` only.
 fn resolve_paging_storage_handle(
@@ -232,7 +190,9 @@ fn resolve_paging_storage_handle(
     match (mcp_ref, is_ns) {
         (Some(r), true) => {
             let slot = handle.logical_session_ref().ok_or_else(|| {
-                crate::execute_pipeline::RunLineError::Parse(format!("invalid namespaced paging handle `{s}`"))
+                crate::execute_pipeline::RunLineError::Parse(format!(
+                    "invalid namespaced paging handle `{s}`"
+                ))
             })?;
             if slot != r {
                 return Err(crate::execute_pipeline::RunLineError::Parse(format!(
@@ -264,8 +224,6 @@ mod trace;
 pub use crate::execute_pipeline::RunLineError;
 pub(crate) use run_line::run_parsed_plasm_line;
 
-#[allow(unused_imports)]
-// re-exported for terminal/MCP callers and sibling modules via `super::*`
 pub(crate) use context::{
     apply_capability_seeds, build_capability_exposure_plan, build_plasm_context_agent_markdown,
     build_plasm_context_tool_meta, cgs_entity_names_sample,

@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.4] - 2026-06-13
+## [0.3.5] - 2026-06-13
+
+### Changed
+
+- **`http_execute` modularization (Phase B):** rename `prelude.rs` → `deps.rs`; extract wire helpers to `wire.rs`; split `routes/handlers.rs` into focused modules (`stream`, `create`, `session_get`, `artifacts`, `plan_run_response`, `run_post`); split `context/session.rs` into `open`, `federate`, `expand`, `seeds_apply`.
+
+### Added
+
+- **Graph execute fork/commit:** `GraphExecuteBranch` COW snapshot execute with stale-epoch retry (`MAX_STALE_EPOCH_RETRIES = 3`); unified rehydrate API; Shuttle concurrency tests; CI guard `check_graph_cache_concurrency.sh`.
+
 
 ### Fixed
 

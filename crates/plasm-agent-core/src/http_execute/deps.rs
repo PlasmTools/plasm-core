@@ -1,4 +1,4 @@
-//! Shared imports for `http_execute` submodules (`use super::*` / `use super::super::*`).
+//! Explicit shared imports for `http_execute` submodules.
 
 #![allow(unused_imports)]
 
