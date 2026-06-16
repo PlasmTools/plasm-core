@@ -7,6 +7,7 @@ pub(crate) struct PromptContractSpec {
     include_search_line: bool,
     include_rich_string_guidance: bool,
     include_scoped_search_worked_example: bool,
+    include_row_compute_worked_example: bool,
     include_search_only_entity_pitfall: bool,
     include_federation_pitfall: bool,
 }
@@ -23,6 +24,7 @@ pub fn render_plasm_mcp_language_frontmatter() -> String {
         include_search_line: true,
         include_rich_string_guidance: true,
         include_scoped_search_worked_example: false,
+        include_row_compute_worked_example: true,
         include_search_only_entity_pitfall: true,
         include_federation_pitfall: true,
     })
@@ -126,19 +128,16 @@ where
         include_scoped_search_worked_example: cgs_slice_has_repository_issue_scoped_search(
             full_entities,
         ),
+        include_row_compute_worked_example: full_entities.iter().any(|e| {
+            !resolve(e)
+                .find_capabilities(e, CapabilityKind::Query)
+                .is_empty()
+        }),
         include_search_only_entity_pitfall: !cgs_slice_all_entities_have_query(
             resolve,
             full_entities,
         ),
         include_federation_pitfall,
-    }
-}
-
-pub(crate) fn symbolic_entity_form(symbolic: bool) -> &'static str {
-    if symbolic {
-        "e#"
-    } else {
-        "Entity"
     }
 }
 
@@ -153,48 +152,50 @@ pub(crate) fn prompt_contract_spec_minimal_for_test() -> PromptContractSpec {
         include_search_line: false,
         include_rich_string_guidance: false,
         include_scoped_search_worked_example: false,
+        include_row_compute_worked_example: false,
         include_search_only_entity_pitfall: false,
         include_federation_pitfall: false,
     }
 }
 
+const ROW_POSTFIX_OPS_BULLET: &str = "- Postfix on row producers: `.limit(N)` | `.page_size(N)` | `.sort(field[, dir])` | `.filter{…}` | `.filter(…)` | `.aggregate(specs)` | `.group_by(field, specs)` | `.dedupe(field[, …])` | `.distinct(field[, …])` | `.distinct()` | `.singleton()` | `[fields]` projection.\n";
+
+fn render_core_surface_bullets(spec: &PromptContractSpec, projection: &str) -> String {
+    let mut s = String::new();
+    s.push_str("Core surface:\n");
+    s.push_str(
+        "- Program shape: one `plasm_expr`, or `label = …` bindings then comma-separated final roots (no `return`).\n",
+    );
+    s.push_str(ROW_POSTFIX_OPS_BULLET);
+    s.push_str(
+        "- Continuations: `page(l_<token>_pgM)` | `wait(l_<token>_oM)` | `cancel(l_<token>_oM)` | review gate `pcN` on prior dry-run.\n",
+    );
+    if spec.symbolic {
+        s.push_str(
+            "- Teaching table left cells are executable `plasm_expr` surfaces (list/get/query/relation/method); copy them and substitute placeholders — use Composition worked examples for bind→filter→sort→limit.\n",
+        );
+    } else {
+        s.push_str(
+            "- Teaching table left cells teach list/get/query/relation/method shapes; copy executable rows and substitute placeholders.\n",
+        );
+    }
+    if spec.include_search_line && spec.symbolic {
+        s.push_str("- Search when exposed: `e#~\"text\"[{p#=…}]?`.\n");
+    }
+    let _ = writeln!(
+        s,
+        "- Field projection suffix: `{projection}`.",
+        projection = projection
+    );
+    s.push('\n');
+    s
+}
+
 pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
-    let entity = symbolic_entity_form(spec.symbolic);
     let projection = if spec.symbolic {
         "[p#,…]"
     } else {
         "[field,…]"
-    };
-    let get_form = if spec.symbolic {
-        "e#(<id>) or e#(p#=<value>, p#=<value>)"
-    } else {
-        "Entity(<id>) or Entity(name=<value>, name=<value>)"
-    };
-    let query_form = if spec.symbolic {
-        "e#{p#=<value>, …}"
-    } else {
-        "Entity{name=<value>, …}"
-    };
-    let query_all_form = entity;
-    let nav_form = if spec.symbolic {
-        "<receiver>.r# | <receiver>.wire"
-    } else {
-        "<receiver>.field"
-    };
-    let method_form = if spec.symbolic {
-        "e#(<id>).m#() or e#(<id>).m#(p#=<value>, …)"
-    } else {
-        "Entity(<id>).method() or Entity(<id>).method(name=<value>, …)"
-    };
-    let create_form = if spec.symbolic {
-        "e#.m#(p#=<value>, …)"
-    } else {
-        "Entity.method(name=<value>, …)"
-    };
-    let projection_form = if spec.symbolic {
-        "e#(<id>)[p#,…]"
-    } else {
-        "Entity(<id>)[field,…]"
     };
     let scoped_form = if spec.symbolic {
         "e1{p14=e3(p5=<val>, p13=<val>), …} (inline) OR repo=e3(…); e1{p14=repo, …} (decomposed label ref)"
@@ -206,17 +207,6 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     } else {
         "name=[Entity(<id>), …]"
     };
-    let search_form = if spec.symbolic {
-        "e#~\"text\"[{p#=…}]?"
-    } else {
-        "Entity~\"text\"[{filter=…}]?"
-    };
-    let entity_expr_rhs: &str = if spec.include_search_line {
-        "query_all | get | query | relation | method | create_action | search"
-    } else {
-        "query_all | get | query | relation | method | create_action"
-    };
-
     let mut s = String::new();
     s.push_str(TEACHING_VALID_EXPR_MARKER);
     s.push_str("\n\n");
@@ -261,62 +251,9 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         "- Projection rows ending `{projection}` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.",
         projection = projection
     );
-    s.push_str("- Host continuations (`page`/`wait`/`cancel`/`pcN`): copy handles from prior responses (see Grammar). Open `oN`/`pgN` handles must be polled with `wait(h)` or cancelled before unrelated live execute or telling the user the task is done.\n\n");
+    s.push_str("- Host continuations (`page`/`wait`/`cancel`/`pcN`): copy handles from prior responses (see Core surface). Open `oN`/`pgN` handles must be polled with `wait(h)` or cancelled before unrelated live execute or telling the user the task is done.\n\n");
 
-    s.push_str("Grammar:\n");
-    let _ = writeln!(s, "plasm_program ::= plasm_expr | binding+ roots");
-    let _ = writeln!(s, "binding       ::= ident \"=\" node");
-    let _ = writeln!(s, "roots         ::= root (\",\" root)*");
-    let _ = writeln!(s, "root          ::= ident | plasm_expr");
-    let _ = writeln!(
-        s,
-        "node          ::= (plasm_expr | ident) postfix* row_template? | ident \"=>\" value_or_template"
-    );
-    let _ = writeln!(
-        s,
-        "plasm_expr    ::= entity_expr [projection] | page | wait | cancel"
-    );
-    let _ = writeln!(s, "entity_expr   ::= {}", entity_expr_rhs);
-    let _ = writeln!(s, "query_all     ::= {}", query_all_form);
-    let _ = writeln!(s, "get           ::= {}", get_form);
-    let _ = writeln!(s, "query         ::= {}", query_form);
-    let _ = writeln!(s, "relation      ::= {}", nav_form);
-    let _ = writeln!(s, "method        ::= {}", method_form);
-    let _ = writeln!(s, "create_action ::= {}", create_form);
-    if spec.include_search_line {
-        let _ = writeln!(s, "search        ::= {}", search_form);
-    }
-    let _ = writeln!(
-        s,
-        "page          ::= page(l_<token>_pgM) | page(l_<token>_pgM, limit=N)"
-    );
-    let _ = writeln!(s, "wait          ::= wait(l_<token>_oM)");
-    let _ = writeln!(s, "cancel        ::= cancel(l_<token>_oM)");
-    let _ = writeln!(
-        s,
-        "projection    ::= {} | \"[\" fields \"]\"",
-        projection_form
-    );
-    let _ = writeln!(
-        s,
-        "postfix       ::= \".limit(N)\" | \".page_size(N)\" | \".sort(field[, dir])\" | \".filter{{…}}\" | \".filter(…)\" | \".aggregate(specs)\" | \".group_by(field, specs)\" | \".dedupe(field[, …])\" | \".distinct(field[, …])\" | \".distinct()\" | \".singleton()\" | \"[\" fields \"]\""
-    );
-    let _ = writeln!(
-        s,
-        "row_template  ::= (\"[\" fields \"]\")? \"<<TAG\" template_body \"TAG\""
-    );
-    let _ = writeln!(s, "fields        ::= {}", projection);
-    let _ = writeln!(
-        s,
-        "specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) | name=first(field) | name=last(field) [, ...]"
-    );
-    let _ = writeln!(s, "dir           ::= desc | asc | descending | ascending");
-    let _ = writeln!(
-        s,
-        "value_or_template ::= literal | ident | ident.field | _.field | [elem, ...] | heredoc"
-    );
-    let _ = writeln!(s, "literal       ::= quoted string | number | bool | null");
-    s.push('\n');
+    s.push_str(&render_core_surface_bullets(&spec, projection));
 
     s.push_str("Composition rules:\n");
     s.push_str(
@@ -339,6 +276,19 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
   repo = e3(p5=octocat, p13=Hello-World)\n\
   e1{p14=repo, p71=open}\n\
   OR inline: e1{p14=e3(p5=octocat, p13=Hello-World), p71=open}\n",
+        );
+    }
+    if spec.symbolic && spec.include_row_compute_worked_example {
+        let threshold = super::ROW_COMPUTE_EXEMPLAR_THRESHOLD;
+        let _ = write!(
+            s,
+            "- Worked row-compute program (copy shape, substitute `e#` / `p#` from this table):\n\
+  items = e1\n\
+  filtered = items.filter{{p1>={threshold}}}  # bind first — not e1.filter{{…}}\n\
+  sorted = filtered.sort(p1, desc)\n\
+  limited = sorted.limit(10)\n\
+  limited[p5,p1]\n\
+- Relation + row compute may chain directly: `e2(p10=\"electric\").r2.limit(5)[p5]`\n"
         );
     }
     if spec.include_rich_string_guidance {

@@ -4,6 +4,18 @@ use super::*;
 use sha2::{Digest, Sha256};
 use std::sync::OnceLock;
 
+/// Numeric threshold used in row-compute teaching exemplars (filter/sort/limit worked examples).
+pub const ROW_COMPUTE_EXEMPLAR_THRESHOLD: i64 = 300;
+
+/// Which portion of a fenced teaching TSV block to expose on the wire.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TeachingFenceSlice {
+    /// `plasm_expr` / `Meaning` table only (grammar-revision cached clients, terminal).
+    TableOnly,
+    /// Full fenced body for MCP agents: `#` grammar contract plus entity table.
+    AgentFull,
+}
+
 /// SHA-256 hex digest of [`super::render_plasm_mcp_language_frontmatter`] (canonical grammar contract).
 pub fn plasm_grammar_frontmatter_revision_hex() -> &'static str {
     static REVISION: OnceLock<String> = OnceLock::new();
@@ -72,10 +84,31 @@ pub fn markdown_fence_body_inner<'a>(markdown: &'a str, fence_info: &str) -> Opt
     Some(&rest[..end])
 }
 
+/// Extract a teaching TSV slice from a markdown-fenced session prompt.
+pub fn teaching_tsv_from_wrapped_prompt(
+    prompt: &str,
+    fence_info: &str,
+    slice: TeachingFenceSlice,
+) -> Option<String> {
+    let inner = markdown_fence_body_inner(prompt, fence_info)?;
+    Some(match slice {
+        TeachingFenceSlice::TableOnly => split_tsv_teaching_contract_and_table(inner).1,
+        TeachingFenceSlice::AgentFull => inner.to_string(),
+    })
+}
+
 /// teaching TSV table fragment (from [`TSV_TEACHING_TABLE_HEADER`] onward), dropping optional `#` contract lines inside the fence body.
 pub fn teaching_tsv_table_from_wrapped_prompt(prompt: &str, fence_info: &str) -> Option<String> {
-    let inner = markdown_fence_body_inner(prompt, fence_info)?;
-    Some(split_tsv_teaching_contract_and_table(inner).1)
+    teaching_tsv_from_wrapped_prompt(prompt, fence_info, TeachingFenceSlice::TableOnly)
+}
+
+/// Full fenced teaching body for MCP `plasm_context`: grammar contract (`#` lines) plus entity table.
+#[inline]
+pub fn teaching_tsv_agent_body_from_wrapped_prompt(
+    prompt: &str,
+    fence_info: &str,
+) -> Option<String> {
+    teaching_tsv_from_wrapped_prompt(prompt, fence_info, TeachingFenceSlice::AgentFull)
 }
 
 /// Invariant for prompts emitted by [`render_prompt_tsv_from_bundle`]: from the `plasm_expr\tMeaning`
@@ -195,16 +228,20 @@ mod grammar_revision_tests {
     }
 
     #[test]
-    fn teaching_prompt_omit_contract_fenced_when_revision_matches() {
+    fn teaching_tsv_agent_body_preserves_contract() {
         let inner = format!(
-            "# line\n\n{}e1\trow\n",
+            "# grammar line\n\n{}e1\trow\n",
             super::super::TSV_TEACHING_TABLE_HEADER
         );
         let fenced = format!("```tsv\n{inner}```\n");
-        let rev = plasm_grammar_frontmatter_revision_hex();
-        let wire = teaching_prompt_omit_contract_if_cached(&fenced, Some(rev), Some("tsv"));
-        assert!(wire.starts_with("```tsv\n"));
-        assert!(!wire.contains("# line"));
-        assert!(wire.contains("plasm_expr\tMeaning"));
+        let body = teaching_tsv_from_wrapped_prompt(&fenced, "tsv", TeachingFenceSlice::AgentFull)
+            .expect("body");
+        assert!(body.contains("# grammar line"));
+        assert!(body.contains("plasm_expr\tMeaning"));
+        let table_only =
+            teaching_tsv_from_wrapped_prompt(&fenced, "tsv", TeachingFenceSlice::TableOnly)
+                .expect("table");
+        assert!(!table_only.contains("# grammar line"));
+        assert!(table_only.starts_with(super::super::TSV_TEACHING_TABLE_HEADER.trim_end()));
     }
 }

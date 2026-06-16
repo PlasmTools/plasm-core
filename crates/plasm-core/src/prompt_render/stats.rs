@@ -44,7 +44,7 @@ const GRAMMAR_SECTION_MARKERS: &[(&str, &str)] = &[
     ("output", "Output:"),
     ("tsv_semantics", "TSV table semantics:"),
     ("symbol_rules", "Symbol and fill rules:"),
-    ("grammar", "Grammar:"),
+    ("core_surface", "Core surface:"),
     ("composition", "Composition rules:"),
     ("pitfalls", "Common pitfalls:"),
 ];

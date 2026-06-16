@@ -739,19 +739,74 @@ fn format_session_unchanged_one_liner_shape() {
     assert!(s.contains("plasm_run"));
 }
 
+#[tokio::test]
+async fn plasm_context_open_wire_includes_grammar_contract() {
+    use plasm_core::{TeachingFenceSlice, TSV_TEACHING_TABLE_HEADER};
+
+    let st = test_state_with_registry();
+    let out = apply_capability_seeds(
+        &st,
+        None,
+        None,
+        vec![CapabilitySeed {
+            entry_id: "overshow".into(),
+            entity: "Profile".into(),
+        }],
+        None,
+        None,
+        None,
+        "list profiles for triage",
+        RankedCapabilitiesArg::Unspecified,
+    )
+    .await
+    .expect("apply seeds");
+    assert!(out.new_symbol_space, "expected fresh open");
+    let open = out
+        .waves
+        .iter()
+        .find(|w| w.mode == "open")
+        .expect("open wave");
+    assert!(
+        open.markdown_delta.contains('#'),
+        "open wire must include grammar contract comments: {}",
+        open.markdown_delta.chars().take(400).collect::<String>()
+    );
+    assert!(
+        open.markdown_delta
+            .contains(TSV_TEACHING_TABLE_HEADER.trim_end()),
+        "open wire must include teaching table header"
+    );
+    let created = st
+        .get_execute_session(&out.prompt_hash, &out.session_id)
+        .await
+        .expect("session row");
+    let mode = st.engine.prompt_pipeline().render_mode;
+    let body = plasm_core::teaching_tsv_from_wrapped_prompt(
+        &created.prompt_text,
+        mode.markdown_fence_info_string(),
+        TeachingFenceSlice::AgentFull,
+    )
+    .expect("agent body slice");
+    assert!(
+        body.lines().any(|l| l.starts_with('#')),
+        "stored prompt agent slice must preserve contract lines"
+    );
+}
+
 #[test]
 fn build_plasm_context_agent_markdown_minimal_open_shape() {
     let waves = vec![CapabilityWaveOutcome {
         mode: "open".into(),
         entry_id: "fibery".into(),
         entities: vec!["Record".into()],
-        markdown_delta: "```tsv\nplasm_expr\tMeaning\ne1\trow\n```\n".into(),
+        markdown_delta: "```tsv\n# grammar contract\n\nplasm_expr\tMeaning\ne1\trow\n```\n".into(),
         reused_session: false,
         teaching_prompt_chars_added: 10,
     }];
     let md = build_plasm_context_agent_markdown("l_AAAAAAAAQACAAAAAAAAAAQ", &waves);
     assert!(md.starts_with("`l_AAAAAAAAQACAAAAAAAAAAQ`\n\n"));
     assert!(md.contains("```tsv"));
+    assert!(md.contains("# grammar contract"));
     assert!(!md.contains("Exposed"));
     assert!(!md.contains("Added capabilities"));
 }

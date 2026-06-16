@@ -2,7 +2,7 @@
 
 use anyhow::{anyhow, Context as _, Result};
 use indexmap::IndexMap;
-use plasm_core::prompt_render::teaching_tsv_table_from_wrapped_prompt;
+use plasm_core::prompt_render::{teaching_tsv_from_wrapped_prompt, TeachingFenceSlice};
 use plasm_core::CgsContext;
 use plasm_core::{
     discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions},
@@ -356,9 +356,12 @@ impl ClientSymbolSession {
         };
 
         let mode = self.pipeline.render_mode;
-        let tsv =
-            teaching_tsv_table_from_wrapped_prompt(&rendered, mode.markdown_fence_info_string())
-                .unwrap_or(rendered);
+        let tsv = teaching_tsv_from_wrapped_prompt(
+            &rendered,
+            mode.markdown_fence_info_string(),
+            TeachingFenceSlice::TableOnly,
+        )
+        .unwrap_or(rendered);
         Ok(tsv)
     }
 

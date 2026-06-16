@@ -131,7 +131,9 @@ mod stats;
 pub use contract::{
     client_has_cached_grammar, grammar_revision_from_wire, markdown_fence_body_inner,
     plasm_grammar_frontmatter_revision_hex, split_tsv_teaching_contract_and_table,
-    teaching_prompt_omit_contract_if_cached, teaching_tsv_table_from_wrapped_prompt,
+    teaching_prompt_omit_contract_if_cached, teaching_tsv_agent_body_from_wrapped_prompt,
+    teaching_tsv_from_wrapped_prompt, teaching_tsv_table_from_wrapped_prompt, TeachingFenceSlice,
+    ROW_COMPUTE_EXEMPLAR_THRESHOLD,
 };
 pub use mcp_frontmatter::render_plasm_mcp_language_frontmatter;
 #[cfg(test)]
@@ -6502,10 +6504,29 @@ mod tests {
     }
 
     #[test]
+    fn grammar_frontmatter_includes_row_compute_worked_example() {
+        let frontmatter = render_plasm_mcp_language_frontmatter();
+        let threshold = ROW_COMPUTE_EXEMPLAR_THRESHOLD;
+        assert!(frontmatter.contains(&format!(">={threshold}")));
+        assert!(frontmatter.contains(".filter{"));
+        assert!(frontmatter.contains(".limit(10)"));
+        assert!(frontmatter.contains("Core surface:"));
+        assert!(frontmatter.contains(".group_by(field, specs)"));
+        assert!(
+            !frontmatter.contains(" ::="),
+            "full pseudo-EBNF block retired; canonical syntax is Core surface + worked examples"
+        );
+        assert!(
+            frontmatter.contains("bind first"),
+            "worked row-compute example must teach bind-before-filter"
+        );
+    }
+
+    #[test]
     fn grammar_frontmatter_byte_budget() {
-        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6785;
-        const MAX_GRAMMAR_FRONTMATTER_BYTES: usize = 7298;
-        const MINIMAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6800;
+        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6323;
+        const MAX_GRAMMAR_FRONTMATTER_BYTES: usize = 6551;
+        const MINIMAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6020;
 
         let full = render_plasm_mcp_language_frontmatter();
         assert_eq!(
@@ -6527,10 +6548,10 @@ mod tests {
         assert!(
             full_stats
                 .section_bytes
-                .get("grammar")
+                .get("core_surface")
                 .copied()
                 .unwrap_or(0)
-                > 1000
+                > 400
         );
         assert!(
             full_stats

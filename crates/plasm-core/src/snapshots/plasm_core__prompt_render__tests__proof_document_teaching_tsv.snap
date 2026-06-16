@@ -1,5 +1,5 @@
 ---
-source: crates/plasm-core/src/prompt_render/mod.rs
+source: plasm-oss/crates/plasm-core/src/prompt_render/mod.rs
 expression: tsv
 ---
 # Follow the grammar and the teaching TSV below; reply with one valid plasm_program:
@@ -26,33 +26,14 @@ expression: tsv
 # - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.
 # - If `Meaning` says `opt: pA, pB`, those keys may be added only as keyed assignments with real values.
 # - Projection rows ending `[p#,…]` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
-# - Host continuations (`page`/`wait`/`cancel`/`pcN`): copy handles from prior responses (see Grammar). Open `oN`/`pgN` handles must be polled with `wait(h)` or cancelled before unrelated live execute or telling the user the task is done.
+# - Host continuations (`page`/`wait`/`cancel`/`pcN`): copy handles from prior responses (see Core surface). Open `oN`/`pgN` handles must be polled with `wait(h)` or cancelled before unrelated live execute or telling the user the task is done.
 #
-# Grammar:
-# plasm_program ::= plasm_expr | binding+ roots
-# binding       ::= ident "=" node
-# roots         ::= root ("," root)*
-# root          ::= ident | plasm_expr
-# node          ::= (plasm_expr | ident) postfix* row_template? | ident "=>" value_or_template
-# plasm_expr    ::= entity_expr [projection] | page | wait | cancel
-# entity_expr   ::= query_all | get | query | relation | method | create_action
-# query_all     ::= e#
-# get           ::= e#(<id>) or e#(p#=<value>, p#=<value>)
-# query         ::= e#{p#=<value>, …}
-# relation      ::= <receiver>.r# | <receiver>.wire
-# method        ::= e#(<id>).m#() or e#(<id>).m#(p#=<value>, …)
-# create_action ::= e#.m#(p#=<value>, …)
-# page          ::= page(l_<token>_pgM) | page(l_<token>_pgM, limit=N)
-# wait          ::= wait(l_<token>_oM)
-# cancel        ::= cancel(l_<token>_oM)
-# projection    ::= e#(<id>)[p#,…] | "[" fields "]"
-# postfix       ::= ".limit(N)" | ".page_size(N)" | ".sort(field[, dir])" | ".filter{…}" | ".filter(…)" | ".aggregate(specs)" | ".group_by(field, specs)" | ".dedupe(field[, …])" | ".distinct(field[, …])" | ".distinct()" | ".singleton()" | "[" fields "]"
-# row_template  ::= ("[" fields "]")? "<<TAG" template_body "TAG"
-# fields        ::= [p#,…]
-# specs         ::= name=count | name=sum(field) | name=avg(field) | name=min(field) | name=max(field) | name=first(field) | name=last(field) [, ...]
-# dir           ::= desc | asc | descending | ascending
-# value_or_template ::= literal | ident | ident.field | _.field | [elem, ...] | heredoc
-# literal       ::= quoted string | number | bool | null
+# Core surface:
+# - Program shape: one `plasm_expr`, or `label = …` bindings then comma-separated final roots (no `return`).
+# - Postfix on row producers: `.limit(N)` | `.page_size(N)` | `.sort(field[, dir])` | `.filter{…}` | `.filter(…)` | `.aggregate(specs)` | `.group_by(field, specs)` | `.dedupe(field[, …])` | `.distinct(field[, …])` | `.distinct()` | `.singleton()` | `[fields]` projection.
+# - Continuations: `page(l_<token>_pgM)` | `wait(l_<token>_oM)` | `cancel(l_<token>_oM)` | review gate `pcN` on prior dry-run.
+# - Teaching table left cells are executable `plasm_expr` surfaces (list/get/query/relation/method); copy them and substitute placeholders — use Composition worked examples for bind→filter→sort→limit.
+# - Field projection suffix: `[p#,…]`.
 #
 # Composition rules:
 # - Multi-line programs: one binding per line and final roots last (preferred). Single-line space-separated bindings are coerced; default return is the first binding.
