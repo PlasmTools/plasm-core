@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.12] - 2026-06-13
+
+### Added
+
+- **View-backed preflight v2:** shared sync/async view DAG orchestrator (`ViewNodeRunner` / `ViewNodeRunnerAsync`); inner Query/Get CML compile gates on preflight nodes; schema-derived stub rows for downstream binds.
+- **`validate_cgs_views`:** static view DAG validation at plugin pack (`plasm-pack-plugins`) alongside CML template validation.
+- **`ViewRunProof`** and **`view_test_support`** fixture re-exports for deterministic view conformance tests.
+
+### Changed
+
+- **`ViewAmbientContext`:** explicit threading at dispatch boundaries (`ExecuteOptions::view_ambient`, `ExecuteSession::view_ambient`); no task-local lookup for view scope injection.
+- **Dry ≡ live compile gate:** view capabilities no longer skip CML preflight in `compile_preflight`.
+- **Execute session operations:** operation wire/persist helpers extracted to `execute_session_operations.rs`.
+- **MCP teaching copy:** async poll discipline notes in initialize / `plasm_run` tool descriptions.
+
+### Removed
+
+- **`view_typestate.rs`** (superseded by shared DAG orchestrator in `view_dag_run.rs`).
+
 ## [0.3.11] - 2026-06-15
 
 ### Added
