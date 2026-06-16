@@ -91,6 +91,9 @@ pub struct PersistedExecuteSessionDescriptor {
     pub entry_id: String,
     pub context_entry_ids: Vec<String>,
     pub entities: Vec<String>,
+    /// Parallel catalog `entry_id` for each row in [`Self::entities`] (federated symbol map rehydrate).
+    #[serde(default)]
+    pub entity_catalog_entry_ids: Vec<String>,
     pub tenant_scope: String,
     pub principal_subject: String,
     pub http_backend: Option<String>,
@@ -152,6 +155,11 @@ impl PersistedExecuteSessionDescriptor {
         }
         let plan_snapshot = session.snapshot_plan_commits_for_persist();
         let op_snapshot = session.snapshot_operations_for_persist();
+        let entity_catalog_entry_ids = session
+            .teaching_exposure
+            .as_ref()
+            .map(|e| e.entity_catalog_entry_ids.clone())
+            .unwrap_or_else(|| vec![session.entry_id.clone(); session.entities.len()]);
         Self {
             prompt_hash: session.prompt_hash.clone(),
             session_id: session_id.to_string(),
@@ -159,6 +167,7 @@ impl PersistedExecuteSessionDescriptor {
             entry_id: session.entry_id.clone(),
             context_entry_ids: session.contexts_by_entry.keys().cloned().collect(),
             entities: session.entities.clone(),
+            entity_catalog_entry_ids,
             tenant_scope: session.tenant_scope.clone(),
             principal_subject: session.principal_subject.clone(),
             http_backend: session.http_backend.clone(),

@@ -1,0 +1,243 @@
+//! Plan commit registration with optional durable descriptor refresh.
+
+use plasm_core::{PlanCommitId, PlanCommitRef};
+
+use crate::execute_session::ExecuteSession;
+use crate::operation::PlanCommitRecord;
+use crate::server_state::PlasmHostState;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanCommitVerifyError {
+    Unknown { commit_ref: String },
+    Expired { commit_ref: String },
+    Mismatch { commit_ref: String },
+    Evidence { commit_ref: String, detail: String },
+}
+
+impl PlanCommitVerifyError {
+    pub fn detail(&self) -> String {
+        match self {
+            Self::Unknown { commit_ref } => format!(
+                "unknown plan_commit_ref `{commit_ref}` — call `plasm` dry-run again"
+            ),
+            Self::Expired { commit_ref } => format!(
+                "plan_commit_ref `{commit_ref}` expired — call `plasm` dry-run again"
+            ),
+            Self::Mismatch { commit_ref } => format!(
+                "plan_commit_ref `{commit_ref}` does not match the current program — call `plasm` dry-run again"
+            ),
+            Self::Evidence { commit_ref, detail } => format!(
+                "plan_commit_ref `{commit_ref}` evidence mismatch: {detail}"
+            ),
+        }
+    }
+}
+
+pub async fn register_plan_commit_and_persist(
+    st: &PlasmHostState,
+    session: &ExecuteSession,
+    prompt_hash: &str,
+    session_id: &str,
+    record: PlanCommitRecord,
+) {
+    session.register_plan_commit(record);
+    st.replace_execute_session(prompt_hash, session_id, session.clone())
+        .await;
+}
+
+pub fn verify_plan_commit_id(
+    es: &ExecuteSession,
+    commit_ref: &PlanCommitRef,
+    commit_id: PlanCommitId,
+) -> Result<(), PlanCommitVerifyError> {
+    let Some(record) = es.get_plan_commit(commit_ref) else {
+        return Err(PlanCommitVerifyError::Unknown {
+            commit_ref: commit_ref.as_str().to_string(),
+        });
+    };
+    if record.is_expired() {
+        return Err(PlanCommitVerifyError::Expired {
+            commit_ref: commit_ref.as_str().to_string(),
+        });
+    }
+    if commit_id != record.commit_id {
+        return Err(PlanCommitVerifyError::Mismatch {
+            commit_ref: commit_ref.as_str().to_string(),
+        });
+    }
+    if let Some(evidence) = crate::evidence_chain::chain(es) {
+        evidence
+            .verify_comp_commit_matches(&commit_id)
+            .map_err(|e| PlanCommitVerifyError::Evidence {
+                commit_ref: commit_ref.as_str().to_string(),
+                detail: e.to_string(),
+            })?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use plasm_core::{CgsContext, CGS};
+
+    use super::*;
+    use crate::execute_session::ExecuteSession;
+    use crate::operation::PLAN_COMMIT_TTL;
+    use crate::plan_dry_display::PlanDryVerdict;
+
+    fn minimal_session() -> ExecuteSession {
+        let cgs = Arc::new(CGS::new());
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "default".into(),
+            Arc::new(CgsContext::entry("default", cgs.clone())),
+        );
+        ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs,
+            ctxs,
+            "default".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Pet".into()],
+            None,
+            None,
+            None,
+            "hash".into(),
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn verify_splits_unknown_expired_and_mismatch() {
+        let es = minimal_session();
+        let pc = es.mint_plan_commit_ref();
+        let err = verify_plan_commit_id(&es, &pc, PlanCommitId::from_canonical_bytes([0u8; 32]))
+            .expect_err("unknown");
+        assert!(matches!(err, PlanCommitVerifyError::Unknown { .. }));
+
+        let record = PlanCommitRecord {
+            commit_ref: pc.clone(),
+            commit_id: PlanCommitId::from_canonical_bytes([1u8; 32]),
+            dry_review: Default::default(),
+            verdict: PlanDryVerdict::Ok,
+            expires_at: std::time::Instant::now() - PLAN_COMMIT_TTL,
+        };
+        es.register_plan_commit(record);
+        let err = verify_plan_commit_id(&es, &pc, PlanCommitId::from_canonical_bytes([1u8; 32]))
+            .expect_err("expired");
+        assert!(matches!(err, PlanCommitVerifyError::Expired { .. }));
+
+        es.register_plan_commit(PlanCommitRecord {
+            commit_ref: pc.clone(),
+            commit_id: PlanCommitId::from_canonical_bytes([2u8; 32]),
+            dry_review: Default::default(),
+            verdict: PlanDryVerdict::Ok,
+            expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
+        });
+        let err = verify_plan_commit_id(&es, &pc, PlanCommitId::from_canonical_bytes([9u8; 32]))
+            .expect_err("mismatch");
+        assert!(matches!(err, PlanCommitVerifyError::Mismatch { .. }));
+    }
+
+    #[test]
+    fn register_roundtrip_on_session() {
+        let es = minimal_session();
+        let pc = es.mint_plan_commit_ref();
+        let commit_id = PlanCommitId::from_canonical_bytes([7u8; 32]);
+        es.register_plan_commit(PlanCommitRecord {
+            commit_ref: pc.clone(),
+            commit_id: commit_id.clone(),
+            dry_review: Default::default(),
+            verdict: PlanDryVerdict::Ok,
+            expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
+        });
+        verify_plan_commit_id(&es, &pc, commit_id).expect("roundtrip");
+    }
+
+    #[tokio::test]
+    async fn register_persist_survives_rehydrate() {
+        use std::path::Path;
+
+        use plasm_core::discovery::InMemoryCgsRegistry;
+        use plasm_core::loader::load_schema_dir;
+        use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
+
+        use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
+        use crate::http_execute::{execute_session_create_response, CreateExecuteSessionBody};
+        use crate::mcp_transport_store::ExecuteSessionRegistry;
+        use crate::run_artifacts::RunArtifactStore;
+        use crate::server_state::CatalogBootstrap;
+
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        let registry = Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+            "overshow".into(),
+            "Overshow".into(),
+            vec!["demo".into()],
+            cgs,
+        )]));
+        let (execute_registry, _) = ExecuteSessionRegistry::with_test_json_store();
+        let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
+        let mut host = build_plasm_host_state(PlasmHostBootstrap {
+            engine,
+            mode: ExecutionMode::Live,
+            registry,
+            catalog_bootstrap: CatalogBootstrap::Fixed,
+            plugin_manager: None,
+            incoming_auth: None,
+            run_artifacts: Arc::new(RunArtifactStore::memory()),
+            session_graph_persistence: None,
+            oss_local_filesystem_defaults: false,
+        });
+        host.oss.execute_session_registry = execute_registry;
+
+        let created = execute_session_create_response(
+            &host,
+            None,
+            CreateExecuteSessionBody {
+                entry_id: "overshow".into(),
+                entities: vec!["Profile".into()],
+                principal: None,
+                logical_session_id: None,
+                context_intent: None,
+                ranked_capabilities: None,
+                read_first_seeded_exposure: false,
+            },
+        )
+        .await
+        .expect("open session");
+        let es = host
+            .get_execute_session(&created.prompt_hash, &created.session)
+            .await
+            .expect("session row");
+        let pc = es.mint_plan_commit_ref();
+        let commit_id = PlanCommitId::from_canonical_bytes([7u8; 32]);
+        register_plan_commit_and_persist(
+            &host,
+            &es,
+            created.prompt_hash.as_str(),
+            created.session.as_str(),
+            PlanCommitRecord {
+                commit_ref: pc.clone(),
+                commit_id: commit_id.clone(),
+                dry_review: Default::default(),
+                verdict: PlanDryVerdict::Ok,
+                expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
+            },
+        )
+        .await;
+        host.sessions.purge_all().await;
+        let es2 = host
+            .get_execute_session(&created.prompt_hash, &created.session)
+            .await
+            .expect("rehydrate");
+        verify_plan_commit_id(&es2, &pc, commit_id).expect("persisted plan commit");
+    }
+}

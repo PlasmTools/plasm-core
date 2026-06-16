@@ -194,6 +194,7 @@ mod tests {
             entry_id: "default".into(),
             context_entry_ids: vec!["default".into()],
             entities: vec![],
+            entity_catalog_entry_ids: vec![],
             tenant_scope: String::new(),
             principal_subject: String::new(),
             http_backend: None,

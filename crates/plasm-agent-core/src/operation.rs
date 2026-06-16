@@ -69,7 +69,12 @@ pub fn verify_plan_commit_for_run(
     commit_ref: &PlanCommitRef,
     plan_json: &serde_json::Value,
 ) -> Result<(), String> {
-    verify_plan_commit_id(es, commit_ref, compute_plan_commit_id(plan_json))
+    crate::plan_commit_store::verify_plan_commit_id(
+        es,
+        commit_ref,
+        compute_plan_commit_id(plan_json),
+    )
+    .map_err(|e| e.detail())
 }
 
 /// Verify a plan acceptance token against a dry-run evaluation without building presentation DAG fields.
@@ -78,43 +83,12 @@ pub fn verify_plan_commit_for_dry(
     commit_ref: &PlanCommitRef,
     dry: &DryPlasmPlanEvaluation,
 ) -> Result<(), String> {
-    verify_plan_commit_id(es, commit_ref, compute_plan_commit_id_from_dry(dry))
-}
-
-fn verify_plan_commit_id(
-    es: &ExecuteSession,
-    commit_ref: &PlanCommitRef,
-    commit_id: PlanCommitId,
-) -> Result<(), String> {
-    let Some(record) = es.get_plan_commit(commit_ref) else {
-        return Err(format!(
-            "unknown or expired plan_commit_ref `{}` — call `plasm` dry-run again",
-            commit_ref.as_str()
-        ));
-    };
-    if record.is_expired() {
-        return Err(format!(
-            "plan_commit_ref `{}` expired — call `plasm` dry-run again",
-            commit_ref.as_str()
-        ));
-    }
-    if commit_id != record.commit_id {
-        return Err(format!(
-            "plan_commit_ref `{}` does not match the current program — call `plasm` dry-run again",
-            commit_ref.as_str()
-        ));
-    }
-    if let Some(evidence) = crate::evidence_chain::chain(es) {
-        evidence
-            .verify_comp_commit_matches(&commit_id)
-            .map_err(|e| {
-                format!(
-                    "plan_commit_ref `{}` evidence mismatch: {e}",
-                    commit_ref.as_str()
-                )
-            })?;
-    }
-    Ok(())
+    crate::plan_commit_store::verify_plan_commit_id(
+        es,
+        commit_ref,
+        compute_plan_commit_id_from_dry(dry),
+    )
+    .map_err(|e| e.detail())
 }
 pub const PLAN_COMMIT_TTL: Duration = Duration::from_secs(600);
 
@@ -590,13 +564,19 @@ pub fn plasm_dry_run_continuation_error(program: &str) -> Option<&'static str> {
 pub(crate) fn try_parse_operation_continuation(
     es: &ExecuteSession,
     program: &str,
+    symbol_map_cross_cache: Option<&plasm_core::SymbolMapCrossRequestCache>,
 ) -> Option<plasm_core::Expr> {
     if !is_operation_continuation_program(program) {
         return None;
     }
     let trimmed = program.trim();
     let layers = crate::plasm_plan_run::session_cgs_layers(es);
-    let map = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(es, None);
+    let map = crate::symbol_map_resolve::resolve_session_symbol_map(
+        &crate::symbol_map_resolve::SessionSymbolMapContext {
+            session: es,
+            cross_cache: symbol_map_cross_cache,
+        },
+    );
     let parsed =
         plasm_core::expr_parser::parse_with_cgs_layers_program(trimmed, &layers, map, None, false)
             .ok()?;

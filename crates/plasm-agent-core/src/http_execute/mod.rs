@@ -231,6 +231,7 @@ mod trace;
 pub use crate::execute_pipeline::RunLineError;
 pub(crate) use run_line::run_parsed_plasm_line;
 
+pub(crate) use context::replay_teaching_exposure_waves;
 pub(crate) use context::{
     apply_capability_seeds, build_capability_exposure_plan, build_plasm_context_agent_markdown,
     build_plasm_context_tool_meta, cgs_entity_names_sample,

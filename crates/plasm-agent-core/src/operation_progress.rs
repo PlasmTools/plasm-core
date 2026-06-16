@@ -221,10 +221,6 @@ pub fn render_op_wire_markdown(line: &str) -> String {
 /// Terminal poll outcome glyphs on compact async operation wire lines.
 pub const ASYNC_POLL_TERMINAL_GLYPHS: &str = "`!` (done), `x` (cancelled), or `?` (failed)";
 
-/// MCP initialize / workflow tail long-op line (single source; keep `mcp_prompt/async_poll_discipline_mcp.txt` in sync).
-pub const ASYNC_POLL_DISCIPLINE_MCP_LINE: &str =
-    include_str!("mcp_prompt/async_poll_discipline_mcp.txt");
-
 pub fn async_poll_accept_markdown_suffix(handle: &OperationHandle) -> String {
     format!(
         "\n\n_Poll with `plasm_run program=wait({})` until {ASYNC_POLL_TERMINAL_GLYPHS}. `~` = progress changed; `=` = still open but unchanged — keep polling. Do not start unrelated live programs while this handle is open._",
@@ -359,11 +355,8 @@ mod tests {
 
     #[test]
     fn async_poll_discipline_mcp_line_matches_include() {
-        assert_eq!(
-            ASYNC_POLL_DISCIPLINE_MCP_LINE,
-            include_str!("mcp_prompt/async_poll_discipline_mcp.txt")
-        );
-        assert!(ASYNC_POLL_DISCIPLINE_MCP_LINE.contains("wait(l_<token>_oN)"));
+        const MCP_LINE: &str = include_str!("mcp_prompt/async_poll_discipline_mcp.txt");
+        assert!(MCP_LINE.contains("wait(l_<token>_oN)"));
         assert!(ASYNC_POLL_TERMINAL_GLYPHS.contains('!'));
     }
 

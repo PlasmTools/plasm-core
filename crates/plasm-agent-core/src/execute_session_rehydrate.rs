@@ -10,6 +10,7 @@ use plasm_core::InMemoryCgsRegistry;
 
 use crate::execute_session::ExecuteSession;
 use crate::execute_session_materialize::materialize_entry_context;
+use crate::http_execute::replay_teaching_exposure_waves;
 use crate::mcp_transport_store::execute_session_registry::PersistedExecuteSessionDescriptor;
 use crate::server_state::PlasmHostState;
 
@@ -23,6 +24,10 @@ pub enum RehydrateError {
         live: String,
     },
     DescriptorExpired,
+    EntityCatalogPairingMismatch {
+        entities: usize,
+        catalog_ids: usize,
+    },
     Discovery(String),
     PluginGenerationUnavailable {
         generation_id: u64,
@@ -42,6 +47,13 @@ impl std::fmt::Display for RehydrateError {
                 "catalog hash mismatch for `{entry_id}` (session pinned {expected}, live {live})"
             ),
             Self::DescriptorExpired => write!(f, "persisted execute session descriptor expired"),
+            Self::EntityCatalogPairingMismatch {
+                entities,
+                catalog_ids,
+            } => write!(
+                f,
+                "entity/catalog pairing mismatch ({entities} entities, {catalog_ids} catalog ids)"
+            ),
             Self::Discovery(e) => write!(f, "{e}"),
             Self::PluginGenerationUnavailable { generation_id } => write!(
                 f,
@@ -195,6 +207,7 @@ pub fn should_discard_persisted_execute_on_rehydrate_error(err: &RehydrateError)
         RehydrateError::UnknownEntry(_)
             | RehydrateError::CatalogHashMismatch { .. }
             | RehydrateError::DescriptorExpired
+            | RehydrateError::EntityCatalogPairingMismatch { .. }
             | RehydrateError::PluginGenerationUnavailable { .. }
     )
 }
@@ -243,31 +256,23 @@ pub async fn rehydrate_execute_session(
         contexts_by_entry.insert(eid.clone(), materialized.ctx);
     }
 
-    let refs: Vec<&str> = desc.entities.iter().map(String::as_str).collect();
-    let teaching_exposure = match &desc.context_intent {
-        Some(intent_s) => {
-            let relation_keys =
-                plasm_core::relation_endpoint_keys(desc.entry_id.as_str(), &desc.entities);
-            let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
-                cgs.as_ref(),
-                desc.entry_id.as_str(),
-                intent_s.as_str(),
-                &relation_keys,
-                &desc.entities,
-                desc.ranked_capabilities.as_deref(),
-                plasm_core::discovery::ExposureSurfaceOptions::default(),
-            );
-            plasm_core::TeachingExposureSession::new_with_intent_delta(
-                cgs.as_ref(),
-                desc.entry_id.as_str(),
-                &refs,
-                delta,
-            )
-        }
-        None => {
-            plasm_core::TeachingExposureSession::new(cgs.as_ref(), desc.entry_id.as_str(), &refs)
-        }
+    let entity_catalog_entry_ids = if desc.entity_catalog_entry_ids.len() == desc.entities.len() {
+        desc.entity_catalog_entry_ids.clone()
+    } else if desc.entity_catalog_entry_ids.is_empty() {
+        vec![desc.entry_id.clone(); desc.entities.len()]
+    } else {
+        return Err(RehydrateError::EntityCatalogPairingMismatch {
+            entities: desc.entities.len(),
+            catalog_ids: desc.entity_catalog_entry_ids.len(),
+        });
     };
+    let teaching_exposure = replay_teaching_exposure_waves(
+        &contexts_by_entry,
+        &desc.entities,
+        &entity_catalog_entry_ids,
+        desc.context_intent.as_deref(),
+        desc.ranked_capabilities.as_deref(),
+    );
 
     let plugin_generation = match desc.plugin_generation_id {
         Some(id) => Some(
@@ -342,6 +347,7 @@ mod tests {
             entry_id: "e".into(),
             context_entry_ids: vec!["e".into()],
             entities: vec!["x".into()],
+            entity_catalog_entry_ids: vec!["e".into()],
             tenant_scope: "t".into(),
             principal_subject: String::new(),
             http_backend: None,
@@ -391,6 +397,96 @@ mod tests {
     }
 
     #[test]
+    fn discard_on_entity_catalog_pairing_mismatch() {
+        assert!(should_discard_persisted_execute_on_rehydrate_error(
+            &RehydrateError::EntityCatalogPairingMismatch {
+                entities: 2,
+                catalog_ids: 1,
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn rehydrate_rejects_mismatched_entity_catalog_pairing() {
+        let matrix_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = Arc::new(load_schema_dir(&matrix_dir).expect("matrix"));
+        let reg = Arc::new(InMemoryCgsRegistry::from_pairs(vec![
+            (
+                "github".into(),
+                "GitHub".into(),
+                vec!["github".into()],
+                cgs.clone(),
+            ),
+            (
+                "linear".into(),
+                "Linear".into(),
+                vec!["linear".into()],
+                cgs.clone(),
+            ),
+        ]));
+        let engine = plasm_runtime::ExecutionEngine::new(plasm_runtime::ExecutionConfig::default())
+            .expect("engine");
+        let host = crate::http::build_plasm_host_state(crate::http::PlasmHostBootstrap {
+            engine,
+            mode: plasm_runtime::ExecutionMode::Live,
+            registry: reg,
+            catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
+            plugin_manager: None,
+            incoming_auth: None,
+            run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
+            session_graph_persistence: None,
+            oss_local_filesystem_defaults: false,
+        });
+        let desc = PersistedExecuteSessionDescriptor {
+            prompt_hash: "ph".into(),
+            session_id: "sid".into(),
+            prompt_text: String::new(),
+            entry_id: "github".into(),
+            context_entry_ids: vec!["github".into(), "linear".into()],
+            entities: vec!["LangItem".into(), "LangItem".into()],
+            entity_catalog_entry_ids: vec!["github".into()],
+            tenant_scope: String::new(),
+            principal_subject: String::new(),
+            http_backend: None,
+            principal: None,
+            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+            context_intent: None,
+            ranked_capabilities: None,
+            plugin_generation_id: None,
+            domain_revision: 0,
+            reuse_key: PersistedSessionReuseKey {
+                tenant_scope: String::new(),
+                entry_id: "github".into(),
+                catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+                entities: vec!["LangItem".into(), "LangItem".into()],
+                context_intent: None,
+                ranked_capabilities: None,
+                principal: None,
+                plugin_generation_id: None,
+                logical_session_id: None,
+            },
+            expires_at_unix: u64::MAX,
+            catalog_cgs_hashes_by_entry: Default::default(),
+            registry_catalog_hashes_by_entry: Default::default(),
+            outbound_hosted_kv_by_entry: Default::default(),
+            bindings_by_entry: Default::default(),
+            plan_commits: Vec::new(),
+            plan_commit_next: 0,
+            operations: Vec::new(),
+            operation_handle_next: 0,
+        };
+        let err = match rehydrate_execute_session(&host, &desc).await {
+            Err(e) => e,
+            Ok(_) => panic!("pairing mismatch should fail rehydrate"),
+        };
+        assert!(matches!(
+            err,
+            RehydrateError::EntityCatalogPairingMismatch { .. }
+        ));
+    }
+
+    #[test]
     fn pinned_hashes_from_descriptor_legacy_single_entry() {
         let desc = PersistedExecuteSessionDescriptor {
             prompt_hash: "ph".into(),
@@ -399,6 +495,7 @@ mod tests {
             entry_id: "overshow".into(),
             context_entry_ids: vec!["overshow".into()],
             entities: vec!["demo".into()],
+            entity_catalog_entry_ids: vec!["overshow".into()],
             tenant_scope: "t".into(),
             principal_subject: String::new(),
             http_backend: None,
@@ -462,6 +559,74 @@ mod tests {
                 expected: "stale".into(),
                 live: live_hash,
             })
+        );
+    }
+
+    #[test]
+    fn federated_descriptor_rebuild_preserves_entity_catalog_pairing() {
+        let matrix_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = Arc::new(load_schema_dir(&matrix_dir).expect("matrix"));
+        let mut contexts = IndexMap::new();
+        contexts.insert(
+            "github".into(),
+            Arc::new(plasm_core::CgsContext::entry("github", cgs.clone())),
+        );
+        contexts.insert(
+            "linear".into(),
+            Arc::new(plasm_core::CgsContext::entry("linear", cgs.clone())),
+        );
+        let desc = PersistedExecuteSessionDescriptor {
+            prompt_hash: "ph".into(),
+            session_id: "sid".into(),
+            prompt_text: String::new(),
+            entry_id: "github".into(),
+            context_entry_ids: vec!["github".into(), "linear".into()],
+            entities: vec!["LangItem".into(), "LangItem".into()],
+            entity_catalog_entry_ids: vec!["github".into(), "linear".into()],
+            tenant_scope: String::new(),
+            principal_subject: String::new(),
+            http_backend: None,
+            principal: None,
+            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+            context_intent: None,
+            ranked_capabilities: None,
+            plugin_generation_id: None,
+            domain_revision: 0,
+            reuse_key: PersistedSessionReuseKey {
+                tenant_scope: String::new(),
+                entry_id: "github".into(),
+                catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+                entities: vec!["LangItem".into(), "LangItem".into()],
+                context_intent: None,
+                ranked_capabilities: None,
+                principal: None,
+                plugin_generation_id: None,
+                logical_session_id: None,
+            },
+            expires_at_unix: u64::MAX,
+            catalog_cgs_hashes_by_entry: Default::default(),
+            registry_catalog_hashes_by_entry: Default::default(),
+            outbound_hosted_kv_by_entry: Default::default(),
+            bindings_by_entry: Default::default(),
+            plan_commits: Vec::new(),
+            plan_commit_next: 0,
+            operations: Vec::new(),
+            operation_handle_next: 0,
+        };
+        let exp = replay_teaching_exposure_waves(
+            &contexts,
+            &desc.entities,
+            &desc.entity_catalog_entry_ids,
+            desc.context_intent.as_deref(),
+            desc.ranked_capabilities.as_deref(),
+        );
+        assert_eq!(exp.entity_catalog_entry_ids, vec!["github", "linear"]);
+        let (map, _): (Arc<plasm_core::SymbolMap>, _) = exp.symbol_map_arc_cross(None, None);
+        assert!(map.resolve_session_entity_symbol("e2").is_some());
+        assert_eq!(
+            map.entry_id_for_entity_symbol("e2").as_deref(),
+            Some("linear")
         );
     }
 }

@@ -186,18 +186,13 @@ async fn hydrate_plan_run_from_artifact(
             handle: handle.as_str().to_string(),
             run_artifact_id: wire_id.to_string(),
         })?;
-    let markdown = if doc.entities.is_empty() {
-        "## return (0 rows)\n\n```tsv\n(no rows)\n```".to_string()
-    } else {
-        format!(
-            "## return ({} rows)\n\n```json\n{}\n```",
-            doc.entities.len(),
-            serde_json::to_string_pretty(&doc.entities).unwrap_or_else(|_| "[]".into())
-        )
-    };
+    let (out, node_results) =
+        crate::terminal_result_format::hydrate_plan_run_from_artifact_formatted(
+            &doc, sess, wire_id,
+        )?;
     Ok(crate::plasm_plan_run::PlasmPlanRunResult {
         version: serde_json::json!({}),
-        node_results: doc.entities,
+        node_results,
         graph_summary: serde_json::json!({}),
         comp: serde_json::json!({}),
         code_plan_run_artifacts: vec![CodePlanRunArtifactRef {
@@ -210,8 +205,8 @@ async fn hydrate_plan_run_from_artifact(
             display: None,
             request_fingerprints: doc.request_fingerprints,
         }],
-        run_markdown: Some(markdown),
-        run_plasm_meta: None,
+        run_markdown: Some(out.markdown),
+        run_plasm_meta: out.tool_meta,
         return_steps: Vec::new(),
     })
 }
@@ -273,8 +268,10 @@ pub async fn try_dispatch_operation_program(
     st: Option<&PlasmHostState>,
     trace: Option<&PlasmTraceContext>,
     program: &str,
+    symbol_map_cross_cache: Option<&plasm_core::SymbolMapCrossRequestCache>,
 ) -> Option<Result<crate::plasm_plan_run::PlasmPlanRunResult, String>> {
-    let expr = crate::operation::try_parse_operation_continuation(sess, program)?;
+    let expr =
+        crate::operation::try_parse_operation_continuation(sess, program, symbol_map_cross_cache)?;
     Some(match expr {
         Expr::Wait(w) => handle_wait_operation(sess, st, trace, &w.handle)
             .await

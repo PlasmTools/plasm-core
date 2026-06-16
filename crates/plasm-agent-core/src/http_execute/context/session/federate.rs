@@ -2,10 +2,8 @@
 
 use super::super::super::*;
 
-use super::super::seeds::{
-    normalize_execute_entity_names, relation_endpoint_keys_for_wave,
-    wrap_teaching_markdown_literal_block,
-};
+use super::super::seeds::{normalize_execute_entity_names, wrap_teaching_markdown_literal_block};
+use super::exposure_replay::{apply_federate_exposure_wave, ExposureCatalogWave};
 
 /// Append another registry row’s [`plasm_core::CgsContext`] to an existing execute session (same
 /// `prompt_hash` / `session`); monotonic `e#` / `m#` / `p#` via [`plasm_core::TeachingExposureSession`].
@@ -90,36 +88,23 @@ pub async fn federate_execute_session(
         return Err("session has no incremental exposure state".into());
     };
 
-    let layers: Vec<&CGS> = sess
-        .contexts_by_entry
-        .values()
-        .map(|c| c.cgs.as_ref())
-        .collect();
-    let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
     let n0 = exp.entities.len();
-    if let Some(ref intent_s) = scope_intent {
-        let relation_keys = relation_endpoint_keys_for_wave(&exp, new_entry_id.as_str(), &names);
-        let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
-            ctx_arc.cgs.as_ref(),
-            new_entry_id.as_str(),
-            intent_s.as_str(),
-            &relation_keys,
-            &names,
-            ranked_slice,
-            plasm_core::discovery::ExposureSurfaceOptions {
-                read_first_seeded: true,
-            },
-        );
-        exp.expose_surface(
-            &layers,
-            ctx_arc.cgs.clone(),
-            new_entry_id.as_str(),
-            &refs,
-            delta,
-        );
-    } else {
-        exp.expose_entities(&layers, ctx_arc.cgs.clone(), new_entry_id.as_str(), &refs);
-    }
+    apply_federate_exposure_wave(
+        &mut exp,
+        &sess
+            .contexts_by_entry
+            .values()
+            .map(|c| c.cgs.as_ref())
+            .collect::<Vec<_>>(),
+        &sess.contexts_by_entry,
+        &ExposureCatalogWave {
+            entry_id: new_entry_id.clone(),
+            entities: names.clone(),
+            read_first_seeded: true,
+        },
+        scope_intent.as_deref(),
+        ranked_slice,
+    );
     let added_qualified = exp.qualified_entities_since(n0);
 
     if added_qualified.is_empty() {

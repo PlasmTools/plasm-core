@@ -79,9 +79,14 @@ pub(crate) async fn post_run_execute_session(
         }
     };
 
-    if let Some(op_result) =
-        try_dispatch_operation_program(&sess, Some(&st), Some(&http_operation_trace()), &program)
-            .await
+    if let Some(op_result) = try_dispatch_operation_program(
+        &sess,
+        Some(&st),
+        Some(&http_operation_trace()),
+        &program,
+        Some(st.sessions.symbol_map_cross_cache()),
+    )
+    .await
     {
         return match op_result {
             Ok(result) => respond_plan_run_live_result(kind, &result, &sess),
@@ -260,8 +265,16 @@ pub(crate) async fn post_run_execute_session(
         }
     }
 
-    if crate::operation::should_spawn_async_live_run(wait_live, &dry_gate.review) {
-        let auto_async = crate::operation::live_run_should_auto_async(&dry_gate.review, wait_live);
+    if crate::run_delivery::should_spawn_async_for_policy(
+        crate::run_delivery::RunDeliveryPolicy::HttpExecute,
+        wait_live,
+        &dry_gate.review,
+    ) {
+        let auto_async = crate::run_delivery::live_run_should_auto_async_for_policy(
+            crate::run_delivery::RunDeliveryPolicy::HttpExecute,
+            wait_live,
+            &dry_gate.review,
+        );
         let handle = sess.mint_operation_handle_plain();
         let payload =
             crate::run_explorer_meta::build_run_explorer_accept_payload(&dry_gate, Some(&sess));

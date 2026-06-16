@@ -49,7 +49,6 @@ use plasm_core::discovery::{CapabilityQuery, CgsCatalog, DiscoveryError};
 use plasm_core::CgsDiscovery;
 use plasm_core::PlanCommitRef;
 use plasm_discovery::DiscoveryQuery;
-use plasm_runtime::CancelSignal;
 use rust_mcp_sdk::error::SdkResult;
 use rust_mcp_sdk::event_store::InMemoryEventStore;
 use rust_mcp_sdk::mcp_server::hyper_server;
@@ -88,10 +87,8 @@ use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
 use crate::operation::{
-    async_live_run_accept_parts, compute_plan_commit_id_from_dry, live_run_should_auto_async,
-    op_accept_context_from_executable, plan_commit_meta, plan_requires_review_gate,
-    should_spawn_async_live_run, spawn_async_plan_run, verify_plan_commit_for_dry,
-    PlanCommitRecord, PLAN_COMMIT_TTL,
+    compute_plan_commit_id_from_dry, plan_commit_meta, plan_requires_review_gate,
+    verify_plan_commit_for_dry, PlanCommitRecord, PLAN_COMMIT_TTL,
 };
 use crate::plan_dry_display::build_plan_dry_compact_view;
 use crate::plasm_comp_wire::plasm_comp_json_from_dry;
@@ -901,6 +898,7 @@ impl PlasmMcpHandler {
                     Some(self.plasm.as_ref()),
                     Some(&mcp_trace),
                     &program,
+                    Some(self.plasm.sessions.symbol_map_cross_cache()),
                 )
                 .await
             {
@@ -954,56 +952,40 @@ impl PlasmMcpHandler {
                         if let Some(pc) = plan_commit_ref.as_ref() {
                             verify_plan_commit_for_dry(&es, pc, &dry_gate)?;
                         }
-                        let auto_async =
-                            live_run_should_auto_async(&dry_gate.review, wait_live);
-                        if should_spawn_async_live_run(wait_live, &dry_gate.review) {
-                            let handle = es.mint_operation_handle(session_ref.as_str());
-                            let payload = crate::run_explorer_meta::build_run_explorer_accept_payload(
-                                &dry_gate,
-                                Some(&es),
-                            );
-                            let mut accept = op_accept_context_from_executable(
-                                plan_commit_ref.clone(),
-                                Some(compact.verdict),
-                                auto_async,
-                                Some(key.to_string()),
-                                bundle.executable(),
-                                &bundle.artifact().comp,
-                            );
-                            accept.comp = Some(payload.comp.clone());
-                            accept.plan_ux_reflection = Some(payload.plan_ux_reflection.clone());
-                            accept.step_order = payload.step_order.clone();
-                            spawn_async_plan_run(
-                                Arc::clone(&es),
-                                Arc::clone(&self.plasm),
-                                b.prompt_hash.clone(),
-                                b.session_id.clone(),
-                                bundle.clone(),
-                                handle.clone(),
-                                CancelSignal::new(),
-                                accept,
-                            )?;
-                            let (markdown, mut meta) = async_live_run_accept_parts(
-                                &handle,
-                                plan_commit_ref.as_ref(),
-                                compact.verdict,
-                                auto_async,
-                            );
-                            crate::run_explorer_meta::merge_accept_payload_into_meta(
-                                &mut meta,
-                                session_ref.as_str(),
-                                &payload,
-                            );
-                            return Ok(PlasmPlanRunResult {
-                                version: serde_json::json!({}),
-                                node_results: Vec::new(),
-                                graph_summary: serde_json::json!({}),
-                                comp: payload.comp,
-                                code_plan_run_artifacts: Vec::new(),
-                                run_markdown: Some(markdown),
-                                run_plasm_meta: Some(meta),
-                                return_steps: Vec::new(),
-                            });
+                        if crate::run_delivery::should_spawn_async_for_policy(
+                            crate::run_delivery::RunDeliveryPolicy::McpAwaitTerminal,
+                            wait_live,
+                            &dry_gate.review,
+                        ) {
+                            let accept_payload =
+                                crate::run_explorer_meta::build_run_explorer_accept_payload(
+                                    &dry_gate,
+                                    Some(&es),
+                                );
+                            if let Some(awaited) =
+                                crate::run_delivery::deliver_mcp_expensive_live_run(
+                                    crate::run_delivery::McpExpensiveLiveRunContext {
+                                        es: Arc::clone(&es),
+                                        st: Arc::clone(&self.plasm),
+                                        prompt_hash: b.prompt_hash.clone(),
+                                        session_id: b.session_id.clone(),
+                                        session_ref: session_ref.clone(),
+                                        mcp_session_key: key.to_string(),
+                                        bundle: bundle.clone(),
+                                        review: dry_gate.review.clone(),
+                                        accept_payload,
+                                        dry_verdict: compact.verdict,
+                                        plan_commit_ref: plan_commit_ref.clone(),
+                                        trace: mcp_trace.clone(),
+                                        wait_live,
+                                        await_cfg: crate::mcp_run_await::AwaitConfig::default(),
+                                    },
+                                )
+                                .await
+                                .map_err(|e| e.to_string())?
+                            {
+                                return Ok(awaited);
+                            }
                         }
                         es.begin_sync_live_run()?;
                         let sync_result = ExecutePipeline::run_program(
@@ -1069,13 +1051,21 @@ impl PlasmMcpHandler {
                             Some(&es),
                         );
                         let commit_ref = es.mint_plan_commit_ref();
-                        es.register_plan_commit(PlanCommitRecord {
+                        let commit_record = PlanCommitRecord {
                             commit_ref: commit_ref.clone(),
                             commit_id: compute_plan_commit_id_from_dry(&dry),
                             dry_review: dry.review.clone(),
                             verdict: compact.verdict,
                             expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
-                        });
+                        };
+                        crate::plan_commit_store::register_plan_commit_and_persist(
+                            self.plasm.as_ref(),
+                            &es,
+                            b.prompt_hash.as_str(),
+                            b.session_id.as_str(),
+                            commit_record,
+                        )
+                        .await;
                         trace_archive_and_emit_code_plan_evaluate(
                             &self.plasm.trace_hub,
                             &self.plasm.run_artifacts,

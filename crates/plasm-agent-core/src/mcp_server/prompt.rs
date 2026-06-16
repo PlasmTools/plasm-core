@@ -32,9 +32,5 @@ pub(crate) fn mcp_server_initialize_workflow() -> String {
 }
 
 pub(crate) fn mcp_server_initialize_instructions() -> String {
-    format!(
-        "{}{}",
-        mcp_server_initialize_workflow(),
-        crate::operation_progress::ASYNC_POLL_DISCIPLINE_MCP_LINE
-    )
+    mcp_server_initialize_workflow()
 }

@@ -19,7 +19,7 @@ use plasm_agent_core::server_state::{CatalogBootstrap, PlasmHostState};
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::loader::load_schema_dir;
-use plasm_core::{Expr, Value};
+use plasm_core::{Expr, QueryExpr};
 use plasm_runtime::{
     CancelSignal, ExecutionConfig, ExecutionEngine, ExecutionMode, ExecutionSource, ExecutionStats,
 };
@@ -70,9 +70,15 @@ fn run_artifact_doc(
         resource_index: None,
         principal: None,
         parsed_preimage: ParsedExpr {
-            expr: Expr::TeachingValue {
-                value: Value::String("probe".into()),
-            },
+            expr: Expr::Query(QueryExpr {
+                entity: "Profile".into(),
+                predicate: None,
+                projection: None,
+                pagination: None,
+                hydrate: None,
+                capability_name: None,
+                catalog_entry_id: Some("overshow".into()),
+            }),
             projection: None,
         },
         display_lines: vec![],
@@ -142,7 +148,7 @@ async fn cross_pod_wait_terminal_hydrates_run_artifact() {
                 &run_wire,
                 &ph,
                 &sid,
-                vec![serde_json::json!({"name": "cross-pod"})],
+                vec![serde_json::json!({"id": "cross-pod", "display_name": "cross-pod"})],
             ),
         )
         .await
@@ -152,7 +158,7 @@ async fn cross_pod_wait_terminal_hydrates_run_artifact() {
         &handle,
         plasm_agent_core::plasm_plan_run::PlasmPlanRunResult {
             version: serde_json::json!({}),
-            node_results: vec![serde_json::json!({"name": "cross-pod"})],
+            node_results: vec![serde_json::json!({"id": "cross-pod", "display_name": "cross-pod"})],
             graph_summary: serde_json::json!({}),
             comp: serde_json::json!({}),
             code_plan_run_artifacts: vec![],
@@ -177,6 +183,8 @@ async fn cross_pod_wait_terminal_hydrates_run_artifact() {
         .await
         .expect("wait terminal");
     assert_eq!(result.node_results.len(), 1);
+    let md = result.run_markdown.as_deref().unwrap_or_default();
+    assert!(md.contains("```tsv"), "expected TSV hydrate, got: {md}");
 }
 
 #[tokio::test]

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.16] - 2026-06-16
+
+### Added
+
+- **Shared exposure replay:** `exposure_replay` canonicalizes federate + cross-pod rehydrate teaching waves; persisted descriptors store per-entity `entity_catalog_entry_ids`.
+- **Run delivery policy:** `RunDeliveryPolicy` separates MCP await-terminal vs HTTP async surfaces; `deliver_mcp_expensive_live_run` + `mcp_run_await` for server-side terminal await.
+- **Plan commit store:** `register_plan_commit_and_persist` writes `pcN` into Redis execute descriptors; typed `PlanCommitVerifyError` variants.
+- **Terminal hydrate formatting:** cross-pod wait hydrates run artifacts through the shared TSV publish path (`terminal_result_format`).
+- **Tests:** plan-commit registry roundtrip, bounded MCP deliver gate, artifact meta on non-truncated publish, federated rehydrate pairing rejection.
+
+### Changed
+
+- **MCP `plasm_run` (default `wait: true`):** expensive plans spawn internally and return one terminal TSV/table response (no `+` accept + client poll loop); initialize async-poll appendix removed.
+- **HTTP execute:** async spawn gate routed through `RunDeliveryPolicy::HttpExecute` (behavior unchanged).
+- **Symbol map:** single `resolve_session_symbol_map` boundary; continuation parse passes cross-request cache for federated `e#` after async finalize.
+
+### Fixed
+
+- **Federated compile after async finalize:** `e2` (and cross-catalog symbols) resolve when posting continuations with symbol-map cross-cache.
+- **Cross-pod terminal wait:** hydrates stored run artifacts as TSV, not hard-coded JSON fences.
+- **Rehydrate pairing:** partial `entity_catalog_entry_ids` vs `entities` length mismatch fails loud (`EntityCatalogPairingMismatch`) instead of silent primary-catalog padding.
+- **Publish meta:** artifact handles always appear in `_meta.plasm.steps` when a step carries a run snapshot (hydrate no longer patches meta ad hoc).
+
 ## [0.3.15] - 2026-06-16
 
 ### Added

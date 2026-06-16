@@ -155,7 +155,6 @@ fn mcp_prompt_char_budget() {
     );
     let head = include_str!("../mcp_prompt/workflow_head.txt");
     let tail = include_str!("../mcp_prompt/workflow_tail.txt");
-    let async_poll = crate::operation_progress::ASYNC_POLL_DISCIPLINE_MCP_LINE;
     assert!(
         head.len() < 950,
         "workflow_head too long: {} chars",
@@ -174,14 +173,14 @@ fn mcp_prompt_char_budget() {
         grammar.len()
     );
     assert!(
-        tail.len() + async_poll.len() < 1500,
-        "workflow_tail + async poll too long: {} chars",
-        tail.len() + async_poll.len()
+        tail.len() < 1500,
+        "workflow_tail too long: {} chars",
+        tail.len()
     );
     assert_eq!(
         init.len(),
-        workflow.len() + async_poll.len(),
-        "initialize instructions must equal workflow + async poll"
+        workflow.len(),
+        "initialize instructions must equal workflow (MCP await-by-default; no async poll appendix)"
     );
     assert!(
         super::MCP_PLASM_TOOL_DESCRIPTION.len() < 1200,

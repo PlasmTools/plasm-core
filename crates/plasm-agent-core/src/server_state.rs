@@ -337,6 +337,7 @@ fn rehydrate_error_kind(err: &crate::execute_session_rehydrate::RehydrateError) 
         RehydrateError::UnknownEntry(_) => "unknown_entry",
         RehydrateError::CatalogHashMismatch { .. } => "catalog_hash_mismatch",
         RehydrateError::DescriptorExpired => "descriptor_expired",
+        RehydrateError::EntityCatalogPairingMismatch { .. } => "entity_catalog_pairing_mismatch",
         RehydrateError::Discovery(_) => "discovery",
         RehydrateError::PluginGenerationUnavailable { .. } => "plugin_generation_unavailable",
     }

@@ -364,11 +364,7 @@ pub fn publish_plasm_result_steps(
                 } else {
                     Some(preview_entities_for_step(step, cgs))
                 },
-                artifact: if truncated {
-                    per_step_artifact[i].clone()
-                } else {
-                    None
-                },
+                artifact: per_step_artifact[i].clone(),
                 lossy_summary_fields: merge_snapshot_column_hints(
                     &per_step_lossy[i],
                     &per_step_in_band[i],
@@ -435,5 +431,60 @@ pub fn publish_plasm_result_steps(
     ExecuteRunToolOutput {
         markdown,
         tool_meta,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use plasm_runtime::{ExecutionResult, ExecutionSource, ExecutionStats};
+
+    use super::*;
+    use crate::http_execute::PublishedResultStep;
+    use crate::run_artifacts::{RunArtifactHandle, RunArtifactId};
+
+    #[test]
+    fn publish_includes_artifact_meta_when_result_not_truncated() {
+        let run_id = RunArtifactId::from_wire(&format!("pr{}", "c".repeat(64))).expect("wire");
+        let handle = RunArtifactHandle {
+            run_id,
+            resource_index: 1,
+            plasm_uri: crate::run_artifacts::plasm_short_resource_uri(1),
+            canonical_plasm_uri: crate::run_artifacts::plasm_run_resource_uri("ph", "sid", &run_id),
+            http_path: crate::run_artifacts::artifact_http_path("ph", "sid", &run_id),
+            payload_len: 0,
+            request_fingerprints: vec!["fp".into()],
+        };
+        let step = PublishedResultStep {
+            name: None,
+            node_id: None,
+            entry_id: Some("default".into()),
+            entity: Some("Pet".into()),
+            cgs: None,
+            display: "pets".into(),
+            projection: None,
+            result: ExecutionResult {
+                count: 0,
+                entities: Vec::new(),
+                has_more: false,
+                pagination_resume: None,
+                paging_handle: None,
+                source: ExecutionSource::Live,
+                stats: ExecutionStats::default(),
+                request_fingerprints: vec![],
+            },
+            artifact: Some(handle),
+        };
+        let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
+        let steps = out
+            .tool_meta
+            .and_then(|m| m.get("plasm").cloned())
+            .and_then(|p| p.get("steps").cloned())
+            .and_then(|s| s.as_array().cloned())
+            .expect("steps meta");
+        assert_eq!(steps.len(), 1);
+        assert_eq!(
+            steps[0].get("run_id").and_then(|v| v.as_str()),
+            Some(run_id.to_wire().as_str())
+        );
     }
 }

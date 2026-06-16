@@ -68,22 +68,12 @@ pub fn symbol_map_for_plasm_surface_parse(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
 ) -> Arc<SymbolMap> {
-    let layers = session_cgs_layers(session);
-    if let Some(e) = session.teaching_exposure.as_ref() {
-        let key = if symbol_map_cross_cache.is_some() {
-            if layers.len() <= 1 {
-                Some(symbol_map_cache_key_single_catalog(session.cgs.as_ref(), e))
-            } else {
-                Some(symbol_map_cache_key_federated(&layers, e))
-            }
-        } else {
-            None
-        };
-        Arc::clone(&e.symbol_map_arc_cross(symbol_map_cross_cache, key).0)
-    } else {
-        let (full, _) = entity_slices_for_render(session.cgs.as_ref(), FocusSpec::All);
-        Arc::new(SymbolMap::build(session.cgs.as_ref(), &full))
-    }
+    crate::symbol_map_resolve::resolve_session_symbol_map(
+        &crate::symbol_map_resolve::SessionSymbolMapContext {
+            session,
+            cross_cache: symbol_map_cross_cache,
+        },
+    )
 }
 
 /// Row-shaped JSON for plan evaluation (`for_each` templates, derive scopes, …).

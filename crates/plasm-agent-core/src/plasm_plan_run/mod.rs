@@ -1,18 +1,14 @@
 //! Parse, validate, dry-run, and execute Plasm effect [`Plan`](crate::plasm_plan::Plan) programs (HTTP + MCP).
 
 use plasm_core::cgs_federation::FederationDispatch;
-use plasm_core::entity_slices_for_render;
 use plasm_core::expr_parser::{parse_with_cgs_layers_program, ParseError, ParsedExpr};
 use plasm_core::expr_simulation_bindings;
 use plasm_core::normalize_expr_query_capabilities;
 use plasm_core::normalize_expr_query_capabilities_federated;
 use plasm_core::render_intent_with_projection;
 use plasm_core::render_intent_with_projection_federated;
-use plasm_core::symbol_map_cache_key_federated;
-use plasm_core::symbol_map_cache_key_single_catalog;
 use plasm_core::type_check_expr;
 use plasm_core::type_check_expr_federated;
-use plasm_core::FocusSpec;
 use plasm_core::PromptPipelineConfig;
 use plasm_core::SymbolMap;
 use plasm_core::SymbolMapCrossRequestCache;

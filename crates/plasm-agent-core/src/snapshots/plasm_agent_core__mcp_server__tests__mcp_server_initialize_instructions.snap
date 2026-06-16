@@ -73,4 +73,3 @@ Common pitfalls:
      **`plasm_run`**: live execute after review; may return snapshots.
      **Paging:** **`plasm_run program=page(l_<token>_pgN)`** on same `logical_session_ref` (live resume only).
      **Snapshots:** `(in artifact)` / **`resource_link`** / `_meta.plasm.steps` → **`resources/read`** required before concluding data is missing.
-     **Long ops:** **`+`/`~`/`=`** = accepted/progress/unchanged — poll **`plasm_run program=wait(l_<token>_oN)`** until **`!`/`x`/`?`**. No unrelated live runs until terminal. **`too_many_operations`**: wait or cancel first.
