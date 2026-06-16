@@ -182,6 +182,8 @@ By default, each field is read from a top-level JSON key matching the field name
 
 **`provides` vs full row decode:** HTTP GET responses are decoded using **all** entity fields that have `path` / `derive` wiring. Capability **`provides`** controls summary-vs-complete detection for list/search ([`CGS::effective_provides`](../../../crates/plasm-core/src/schema.rs)) and teaching projection; it does not strip extra decoded fields from the cached entity row.
 
+**Search filters vs row fields (agents):** Teaching-row `inputs:` / `opt:` keys are fetch filters only. If agents should aggregate on a dimension (`group_by`, `.sort`, row `.filter`, `[fields]`) that also appears as a search filter parameter, that field must be listed in capability **`provides:`** with wire backing (entity field + decode path) — filter-only params are not row columns at plan time.
+
 **`description` on entities and capabilities:** Optional but recommended when it helps agents. Write **short domain prose** framed for agents choosing tools and traversing the graph, not for humans reading vendor API reference. The same rule applies to `output.description` for `side_effect` actions: state the **domain effect** (e.g. "message moves to Trash"), not the transport shape ("PATCH, empty body", "returns 204"). **Exception:** `auth.token_url` and similar machine OAuth fields may contain a provider token URL.
 
 #### Gloss: do not restate typed structure

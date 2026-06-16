@@ -1,7 +1,0 @@
-**Open or extend** one logical session: stable **`intent`** + non-empty **`seeds`** (`{api, entity}` per pick). Multi-API: one **`seeds`** array per goal (see MCP initialize).
-
-Returns **`logical_session_ref`** (`l_<token>`, …) then **teaching TSV** (fenced): grammar contract (`#` lines) plus `e#`/`m#`/`p#` gloss rows; relation hops in **exemplar** cells (`receiver.r#` or wire — no standalone `r#` gloss lines). Copy executable `.r#`/wire from the left column; Meaning `relation e# → e#` is pedagogy only. Symbols are session-local and append-only.
-
-**Adding picks:** call again with more `{api, entity}` rows — delta TSV only (or one-line unchanged notice when seeds are already exposed).
-
-**`_meta.plasm`:** `logical_session_ref`, `continuity`, `domain_revision`, optional **`relations`** when opaque `r#` is off-screen — prefer latest exemplar when visible.

@@ -1,4 +1,3 @@
 Plasm MCP tools (in order): **`plasm_context`** (session + teaching TSV), **`plasm`** (dry-run plan), **`plasm_run`** (live execute), **`discover_capabilities`** (when **`api`/`entity`** unknown).
-     **One goal → one stable **`intent`** → one **`plasm_context`**.** `logical_session_ref` (`s0`, …) is per goal, not per API. Multi-API: one **`seeds`** array (see **`plasm_context`** tool).
-     **`discover_capabilities`**: one **`intent`** per goal. **Default response is fenced `tsv`** (`api` / `entity` / `description`) — do **not** pass **`typed`** unless the TSV ambiguity note requires structured disambiguation. Merge rows into **`plasm_context`** **`seeds`**; retry with a narrower `intent` if entities are missing.
-     **`plasm_context`**: **`intent`** + **`seeds`**; returns **`logical_session_ref`** + teaching TSV. **Steady state:** reuse ref with **`plasm`** / **`plasm_run`**; do not repeat identical **`seeds`**.
+     **`discover_capabilities`**: one **`intent`** per goal. Default **fenced `tsv`** — skip **`typed`** unless the TSV note requires it. Merge rows into **`plasm_context`** **`seeds`**.
+     **`plasm_context`**: **`intent`** + **`seeds`** → ref + teaching TSV. Reuse ref for **`plasm`** / **`plasm_run`**; extend via same **`intent`**, more **`seeds`** (delta **`e#`**).

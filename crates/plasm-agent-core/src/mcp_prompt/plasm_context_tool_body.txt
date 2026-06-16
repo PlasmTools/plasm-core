@@ -1,7 +1,3 @@
----
-source: plasm-oss/crates/plasm-agent-core/src/mcp_server.rs
-expression: context
----
 
 **Open or extend:** stable **`intent`** + **`seeds`** (`{api, entity}`). Multi-API: one **`seeds`** array on the same intent.
 

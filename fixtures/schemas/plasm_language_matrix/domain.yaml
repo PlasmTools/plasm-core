@@ -77,6 +77,9 @@ entities:
       owner:
         required: false
         value_ref: nv_lang_item_owner
+      team_key:
+        required: false
+        value_ref: nv_langitem_search_team_key
     relations:
       summary:
         description: Summary object embedded on LangItem GET responses
@@ -165,6 +168,7 @@ capabilities:
     - title
     - score
     - owner
+    - team_key
   langitem_get:
     description: Get LangItem by id (includes embedded lines in wire JSON)
     kind: get

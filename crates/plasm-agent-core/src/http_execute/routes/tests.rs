@@ -18,6 +18,8 @@ use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 use std::path::Path;
 use tower::util::ServiceExt;
 
+mod plasm_context;
+
 #[test]
 fn primary_entry_id_is_lexicographic_not_seed_insertion_order() {
     let seeds = vec![
@@ -175,15 +177,7 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
         .is_none());
 }
 
-fn test_state_with_registry() -> PlasmHostState {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
-    let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
-    let reg = InMemoryCgsRegistry::from_pairs(vec![(
-        "overshow".into(),
-        "Overshow".into(),
-        vec!["demo".into()],
-        cgs.clone(),
-    )]);
+fn test_host_state_from_registry(reg: InMemoryCgsRegistry) -> PlasmHostState {
     let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
     http::build_plasm_host_state(http::PlasmHostBootstrap {
         engine,
@@ -196,6 +190,53 @@ fn test_state_with_registry() -> PlasmHostState {
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
     })
+}
+
+fn test_state_with_registry() -> PlasmHostState {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+    let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+    test_host_state_from_registry(InMemoryCgsRegistry::from_pairs(vec![(
+        "overshow".into(),
+        "Overshow".into(),
+        vec!["demo".into()],
+        cgs,
+    )]))
+}
+
+fn test_state_with_linear_registry() -> Option<PlasmHostState> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/linear");
+    if !dir.exists() {
+        return None;
+    }
+    let cgs = Arc::new(load_schema_dir(&dir).expect("linear"));
+    Some(test_host_state_from_registry(
+        InMemoryCgsRegistry::from_pairs(vec![(
+            "linear".into(),
+            "Linear".into(),
+            vec!["linear".into()],
+            cgs,
+        )]),
+    ))
+}
+
+fn test_state_with_matrix_federated_registry() -> Option<PlasmHostState> {
+    let dir =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
+    if !dir.exists() {
+        return None;
+    }
+    let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
+    Some(test_host_state_from_registry(
+        InMemoryCgsRegistry::from_pairs(vec![
+            (
+                "github".into(),
+                "Github".into(),
+                vec!["demo".into()],
+                cgs.clone(),
+            ),
+            ("linear".into(), "Linear".into(), vec!["demo".into()], cgs),
+        ]),
+    ))
 }
 
 fn test_app_execute(st: PlasmHostState) -> Router<()> {
@@ -339,10 +380,12 @@ async fn get_execute_session_omits_contract_when_grammar_revision_matches() {
     let full = get_execute_session_json(&app, loc.as_str()).await;
     assert_eq!(full.grammar_revision.len(), 64);
     assert!(
-        full.prompt
+        !full
+            .prompt
             .contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER),
-        "default GET should include grammar contract preamble"
+        "execute session prompt is table-only; grammar is taught via MCP initialize / plasm init"
     );
+    assert!(full.prompt.contains("plasm_expr"));
 
     let cached_uri = format!("{loc}?grammar_revision={}", full.grammar_revision);
     let get = Request::builder()
@@ -362,7 +405,7 @@ async fn get_execute_session_omits_contract_when_grammar_revision_matches() {
         !cached
             .prompt
             .contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER),
-        "cached grammar GET should omit contract preamble"
+        "cached grammar GET stays table-only for execute sessions"
     );
     assert!(cached.prompt.contains("plasm_expr"));
 }
@@ -737,100 +780,10 @@ fn format_session_unchanged_one_liner_shape() {
     let s = format_session_unchanged_one_liner(3);
     assert!(s.contains("`e1`…`e3`"));
     assert!(s.contains("plasm_run"));
-}
-
-#[tokio::test]
-async fn plasm_context_open_wire_includes_grammar_contract() {
-    use plasm_core::{TeachingFenceSlice, TSV_TEACHING_TABLE_HEADER};
-
-    let st = test_state_with_registry();
-    let out = apply_capability_seeds(
-        &st,
-        None,
-        None,
-        vec![CapabilitySeed {
-            entry_id: "overshow".into(),
-            entity: "Profile".into(),
-        }],
-        None,
-        None,
-        None,
-        "list profiles for triage",
-        RankedCapabilitiesArg::Unspecified,
-    )
-    .await
-    .expect("apply seeds");
-    assert!(out.new_symbol_space, "expected fresh open");
-    let open = out
-        .waves
-        .iter()
-        .find(|w| w.mode == "open")
-        .expect("open wave");
-    assert!(
-        open.markdown_delta.contains('#'),
-        "open wire must include grammar contract comments: {}",
-        open.markdown_delta.chars().take(400).collect::<String>()
-    );
-    assert!(
-        open.markdown_delta
-            .contains(TSV_TEACHING_TABLE_HEADER.trim_end()),
-        "open wire must include teaching table header"
-    );
-    let created = st
-        .get_execute_session(&out.prompt_hash, &out.session_id)
-        .await
-        .expect("session row");
-    let mode = st.engine.prompt_pipeline().render_mode;
-    let body = plasm_core::teaching_tsv_from_wrapped_prompt(
-        &created.prompt_text,
-        mode.markdown_fence_info_string(),
-        TeachingFenceSlice::AgentFull,
-    )
-    .expect("agent body slice");
-    assert!(
-        body.lines().any(|l| l.starts_with('#')),
-        "stored prompt agent slice must preserve contract lines"
-    );
-}
-
-#[test]
-fn build_plasm_context_agent_markdown_minimal_open_shape() {
-    let waves = vec![CapabilityWaveOutcome {
-        mode: "open".into(),
-        entry_id: "fibery".into(),
-        entities: vec!["Record".into()],
-        markdown_delta: "```tsv\n# grammar contract\n\nplasm_expr\tMeaning\ne1\trow\n```\n".into(),
-        reused_session: false,
-        teaching_prompt_chars_added: 10,
-    }];
-    let md = build_plasm_context_agent_markdown("l_AAAAAAAAQACAAAAAAAAAAQ", &waves);
-    assert!(md.starts_with("`l_AAAAAAAAQACAAAAAAAAAAQ`\n\n"));
-    assert!(md.contains("```tsv"));
-    assert!(md.contains("# grammar contract"));
-    assert!(!md.contains("Exposed"));
-    assert!(!md.contains("Added capabilities"));
-}
-
-#[test]
-fn build_plasm_context_tool_meta_keeps_slim_agent_keys() {
-    let out = ApplyCapabilitySeedsOutcome {
-        prompt_hash: "ph".into(),
-        session_id: "sid".into(),
-        primary_entry_id: "fibery".into(),
-        principal: None,
-        waves: vec![],
-        binding_updated: true,
-        new_symbol_space: true,
-        stale_execute_binding_recovered: false,
-        stale_binding_previous: None,
-    };
-    let meta = build_plasm_context_tool_meta("l_AAAAAAAAQACAAAAAAAAAAQ", &out, Some(2), None);
-    assert!(meta.contains_key("logical_session_ref"));
-    assert!(meta.contains_key("continuity"));
-    assert!(meta.contains_key("domain_revision"));
-    assert!(!meta.contains_key("execute_binding"));
-    assert!(!meta.contains_key("catalog_entry_ids"));
-    assert!(!meta.contains_key("intent"));
+    assert!(s.contains("logical_session_ref"));
+    assert!(s.contains("rows:` fields only"));
+    assert!(s.contains("e#~$"));
+    assert!(s.contains(plasm_core::prompt_render::REUSE_SESSION_UNCHANGED_DISCIPLINE));
 }
 
 #[tokio::test]

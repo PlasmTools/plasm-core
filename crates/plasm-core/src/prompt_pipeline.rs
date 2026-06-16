@@ -261,7 +261,12 @@ impl PromptPipelineConfig {
             symbol_map_cross_cache,
             ..self.render_config_for_focus(FocusSpec::All)
         };
-        render_prompt_tsv_for_single_catalog_exposure(cgs, cfg, exposure)
+        render_prompt_tsv_for_single_catalog_exposure(
+            cgs,
+            cfg,
+            exposure,
+            DomainWaveSurface::AdditiveWave,
+        )
     }
 
     /// First teaching wave for a **federated** session: one [`CGS`] per registry `entry_id`.
@@ -287,7 +292,7 @@ impl PromptPipelineConfig {
             exposure,
             ident_meta.as_ref(),
             |entity| resolver.resolve(entity),
-            DomainWaveSurface::InitialTeaching,
+            DomainWaveSurface::AdditiveWave,
         )
     }
 

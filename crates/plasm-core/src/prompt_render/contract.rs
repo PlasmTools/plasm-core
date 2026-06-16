@@ -10,9 +10,9 @@ pub const ROW_COMPUTE_EXEMPLAR_THRESHOLD: i64 = 300;
 /// Which portion of a fenced teaching TSV block to expose on the wire.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TeachingFenceSlice {
-    /// `plasm_expr` / `Meaning` table only (grammar-revision cached clients, terminal).
+    /// `plasm_expr` / `Meaning` table only (execute waves, MCP `plasm_context`, grammar-revision cached clients, terminal).
     TableOnly,
-    /// Full fenced body for MCP agents: `#` grammar contract plus entity table.
+    /// Full fenced body including optional `#` grammar contract prefix (legacy stored prompts; prefer [`Self::TableOnly`] on the wire).
     AgentFull,
 }
 
@@ -102,7 +102,7 @@ pub fn teaching_tsv_table_from_wrapped_prompt(prompt: &str, fence_info: &str) ->
     teaching_tsv_from_wrapped_prompt(prompt, fence_info, TeachingFenceSlice::TableOnly)
 }
 
-/// Full fenced teaching body for MCP `plasm_context`: grammar contract (`#` lines) plus entity table.
+/// Full fenced teaching body when stored prompts still embed a `#` contract prefix (prefer [`TeachingFenceSlice::TableOnly`] on MCP wire).
 #[inline]
 pub fn teaching_tsv_agent_body_from_wrapped_prompt(
     prompt: &str,
@@ -185,14 +185,14 @@ pub(crate) fn enforce_teaching_tsv_teaching_invariant(prompt: &str) {
 
 /// Whether teaching table **TSV** output includes the global Plasm contract comment block.
 ///
-/// Execute-session **additive** waves ([`crate::prompt_pipeline::PromptPipelineConfig::render_teaching_exposure_delta`])
-/// must use [`Self::AdditiveWave`] so we do not re-broadcast grammar boilerplate on every capability append.
-/// Full-schema / first-wave teaching uses [`Self::InitialTeaching`].
+/// Execute sessions (first open and additive waves) use [`Self::AdditiveWave`] — grammar is taught once
+/// via MCP initialize / `plasm init`, not repeated on `plasm_context` wire responses.
+/// Eval / REPL full-schema teaching uses [`Self::InitialTeaching`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum DomainWaveSurface {
-    /// First wave or greenfield teaching: emit global contract as leading TSV `#` comments.
+    /// Eval / REPL / greenfield teaching: emit global contract as leading TSV `#` comments.
     InitialTeaching,
-    /// Subsequent waves: new entity rows only; keep `plasm_expr` / `Meaning` header for a self-describing fragment.
+    /// Execute-session waves (including first open): entity table only; keep `plasm_expr` / `Meaning` header.
     AdditiveWave,
 }
 

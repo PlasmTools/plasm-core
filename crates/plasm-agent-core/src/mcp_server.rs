@@ -129,23 +129,32 @@ pub(crate) const MCP_PLASM_RUN_TOOL_DESCRIPTION: &str =
     include_str!("mcp_prompt/plasm_run_tool.txt");
 
 /// Model-facing **`plasm_context`** tool description (teaching TSV + continuity; federation in initialize workflow).
-pub(crate) const MCP_PLASM_CONTEXT_TOOL_DESCRIPTION: &str =
-    include_str!("mcp_prompt/plasm_context_tool.txt");
+pub(crate) fn mcp_plasm_context_tool_description() -> &'static str {
+    static DESC: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    DESC.get_or_init(|| include_str!("mcp_prompt/plasm_context_tool_body.txt").to_string())
+        .as_str()
+}
 
 /// One-line JSON-schema description for the shared **`program`** parameter on **`plasm`** / **`plasm_run`**.
-pub(crate) const MCP_PROGRAM_PARAM_DESCRIPTION: &str = "Plasm program JSON string (`e#`/`m#`/`p#`/`r#`). Newlines preferred; coerced single-liners supported — see initialize **program contract** + `plasm_context` TSV.";
+pub(crate) const MCP_PROGRAM_PARAM_DESCRIPTION: &str =
+    "Plasm program JSON string. Grammar is in MCP initialize; symbols come from `plasm_context` TSV.";
 
-/// MCP initialize workflow text (orchestration + program contract; async poll appended at runtime).
-pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = concat!(
-    include_str!("mcp_prompt/workflow_head.txt"),
-    include_str!("mcp_prompt/program_contract.txt"),
-    include_str!("mcp_prompt/workflow_tail.txt"),
-);
+/// MCP initialize workflow text (orchestration + canonical grammar; async poll appended at runtime).
+pub(crate) fn mcp_server_initialize_workflow() -> String {
+    format!(
+        "{head}     {session}\n{program}\n\n{grammar}\n{tail}",
+        head = include_str!("mcp_prompt/workflow_head.txt"),
+        session = plasm_core::prompt_render::SESSION_DISCIPLINE_MCP,
+        program = plasm_core::prompt_render::SESSION_DISCIPLINE_PROGRAM,
+        grammar = plasm_core::prompt_render::render_plasm_mcp_language_frontmatter(),
+        tail = include_str!("mcp_prompt/workflow_tail.txt"),
+    )
+}
 
 fn mcp_server_initialize_instructions() -> String {
     format!(
         "{}{}",
-        MCP_SERVER_INITIALIZE_WORKFLOW,
+        mcp_server_initialize_workflow(),
         crate::operation_progress::ASYNC_POLL_DISCIPLINE_MCP_LINE
     )
 }
@@ -890,7 +899,7 @@ impl PlasmMcpHandler {
             Tool {
                 name: "plasm_context".into(),
                 title: Some("Open or extend Plasm context".into()),
-                description: Some(MCP_PLASM_CONTEXT_TOOL_DESCRIPTION.into()),
+                description: Some(mcp_plasm_context_tool_description().into()),
                 input_schema: ToolInputSchema::new(
                     vec!["intent".into(), "seeds".into()],
                     Some(context_props),
@@ -3070,15 +3079,20 @@ mod tests {
 
     #[test]
     fn mcp_server_initialize_workflow_uses_intent_not_query() {
-        let text = super::MCP_SERVER_INITIALIZE_WORKFLOW;
+        let text = super::mcp_server_initialize_workflow();
+        assert!(text.contains(plasm_core::prompt_render::SESSION_DISCIPLINE_MCP));
+        assert!(text.contains(plasm_core::prompt_render::SESSION_DISCIPLINE_PROGRAM));
+        assert!(text.contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER));
+        assert!(text.contains("Row text:"));
+        assert!(text.contains("Heredoc opener"));
         assert!(text.contains("`intent`"));
         assert!(text.contains("One goal"));
         assert!(text.contains("one **`intent`** per goal"));
         assert!(!text.contains("several discovery calls"));
         assert!(!text.contains("pass **`query`**"));
         assert!(!text.contains("syntax guide in MCP initialize"));
-        assert!(text.contains("plasm_context` teaching TSV"));
         assert!(text.contains("Multi-API"));
+        assert!(text.contains("Reuse ref"));
         let discover = super::PlasmMcpHandler::plasm_tools()
             .into_iter()
             .find(|t| t.name == "discover_capabilities")
@@ -3095,13 +3109,13 @@ mod tests {
     #[test]
     fn mcp_prompt_char_budget() {
         let init = super::mcp_server_initialize_instructions();
+        let workflow = super::mcp_server_initialize_workflow();
         assert!(
-            init.len() < 3300,
+            init.len() < 8300,
             "initialize instructions too long: {} chars",
             init.len()
         );
         let head = include_str!("mcp_prompt/workflow_head.txt");
-        let contract = include_str!("mcp_prompt/program_contract.txt");
         let tail = include_str!("mcp_prompt/workflow_tail.txt");
         let async_poll = crate::operation_progress::ASYNC_POLL_DISCIPLINE_MCP_LINE;
         assert!(
@@ -3109,10 +3123,17 @@ mod tests {
             "workflow_head too long: {} chars",
             head.len()
         );
+        let grammar = plasm_core::prompt_render::render_plasm_mcp_language_frontmatter();
         assert!(
-            contract.len() < 900,
-            "program_contract too long: {} chars",
-            contract.len()
+            grammar.len() < 6200,
+            "grammar too long: {} chars",
+            grammar.len()
+        );
+        assert!(
+            init.len().saturating_sub(grammar.len()) < 2000,
+            "initialize non-grammar workflow too long: init={} grammar={}",
+            init.len(),
+            grammar.len()
         );
         assert!(
             tail.len() + async_poll.len() < 1500,
@@ -3121,7 +3142,8 @@ mod tests {
         );
         assert_eq!(
             init.len(),
-            head.len() + contract.len() + tail.len() + async_poll.len()
+            workflow.len() + async_poll.len(),
+            "initialize instructions must equal workflow + async poll"
         );
         assert!(
             super::MCP_PLASM_TOOL_DESCRIPTION.len() < 1200,
@@ -3129,9 +3151,9 @@ mod tests {
             super::MCP_PLASM_TOOL_DESCRIPTION.len()
         );
         assert!(
-            super::MCP_PLASM_CONTEXT_TOOL_DESCRIPTION.len() < 950,
+            super::mcp_plasm_context_tool_description().len() < 950,
             "plasm_context tool description too long: {} chars",
-            super::MCP_PLASM_CONTEXT_TOOL_DESCRIPTION.len()
+            super::mcp_plasm_context_tool_description().len()
         );
         assert!(
             super::MCP_PROGRAM_PARAM_DESCRIPTION.len() < 200,
@@ -3201,13 +3223,17 @@ mod tests {
             .find(|t| t.name == "plasm_context")
             .and_then(|t| t.description.as_deref())
             .expect("plasm_context description");
-        let workflow = super::MCP_SERVER_INITIALIZE_WORKFLOW;
+        let workflow = super::mcp_server_initialize_workflow();
         assert!(
-            desc.contains("**Adding picks:**"),
+            desc.contains("**Extend picks:**"),
             "expected append guidance in plasm_context description"
         );
         assert!(
-            workflow.contains("Steady state:"),
+            workflow.contains(plasm_core::prompt_render::SESSION_DISCIPLINE_MCP),
+            "expected session discipline in initialize workflow"
+        );
+        assert!(
+            workflow.contains("Reuse ref"),
             "expected steady-state guidance in initialize workflow"
         );
     }

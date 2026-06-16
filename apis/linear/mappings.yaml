@@ -12,7 +12,7 @@ issue_search:
     fields:
       - - query
         - type: const
-          value: 'query($first: Int, $after: String, $filter: IssueFilter) { issues(first: $first, after: $after, filter: $filter) { nodes { id identifier title priority } pageInfo { hasNextPage endCursor } } }'
+          value: 'query($first: Int, $after: String, $filter: IssueFilter) { issues(first: $first, after: $after, filter: $filter) { nodes { id identifier title priority team { key } } pageInfo { hasNextPage endCursor } } }'
       - - variables
         - type: object
           fields:

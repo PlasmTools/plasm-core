@@ -12,28 +12,25 @@ expression: prompt
 # TSV table semantics:
 # - Header is exactly `plasm_expr<TAB>Meaning`; every following row has exactly one tab delimiter.
 # - Left cell is either executable syntax or metadata. Right cell is selection guidance only; never copy `Meaning` into output.
-# - Executable rows start with an entity surface (`e#`/`Entity`). Copy their left-cell shape, then replace placeholders.
-# - Metadata rows whose left cell is only `v#`/`value domain` define reusable value types. Metadata rows whose left cell is only `p#`/`field` define keyed slots. Metadata rows are never executable roots.
+# - Executable rows start with an entity surface (`e#`/`Entity`). Metadata-only `p#`/`v#` rows define slots/value domains and are never roots.
 # - `Meaning` fragments joined by ` · ` stay inside `Meaning`; they are not operators.
 #
 # Symbol and fill rules:
 # - `e#` = entity surface; `m#` = method/action surface; `p#` = field/capability/query predicate; `r#` = declared relation navigation; `v#` = value-domain metadata only.
-# - Relation hops use `.wire` or `.r#` on a row-producing receiver — not `p#` in dotted navigation (`p#` in `e#{{…}}` is a filter/param).
-# - Entity-ref slots in `Meaning` look like `ref:Zone · str · Zone identifier`: canonical entity, id wire type, short note — not `plasm_expr` syntax.
+# - Relation hops use `.wire` or `.r#` on a row-producing receiver — never bare `p#` after `.` (`p#` in `e#{{…}}` is a filter/param).
+# - Entity-ref gloss like `ref:Zone · str · Zone identifier` is type/help text, not syntax.
 # - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.
-# - Unary identity rows often teach `e#(p#)` using the opaque `p#` for the entity `id_field` (same token as gloss); substitute the real wire id — do not treat it as a literal API value.
-# - `<id>`, `<value>`, `<receiver>`, and `elem` in this contract are meta-variables, not syntax tokens.
+# - `e#(p#)` identity rows use `p#` for the id slot; substitute the real wire id. `<id>`, `<value>`, `<receiver>`, and `elem` are meta-variables.
 # - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.
 # - If `Meaning` says `opt: pA, pB`, those keys may be added only as keyed assignments with real values.
 # - Projection rows ending `[p#,…]` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
-# - Host continuations (`page`/`wait`/`cancel`/`pcN`): copy handles from prior responses (see Core surface). Open `oN`/`pgN` handles must be polled with `wait(h)` or cancelled before unrelated live execute or telling the user the task is done.
 #
 # Core surface:
 # - Program shape: one `plasm_expr`, or `label = …` bindings then comma-separated final roots (no `return`).
 # - Postfix on row producers: `.limit(N)` | `.page_size(N)` | `.sort(field[, dir])` | `.filter{…}` | `.filter(…)` | `.aggregate(specs)` | `.group_by(field, specs)` | `.dedupe(field[, …])` | `.distinct(field[, …])` | `.distinct()` | `.singleton()` | `[fields]` projection.
 # - Continuations: `page(l_<token>_pgM)` | `wait(l_<token>_oM)` | `cancel(l_<token>_oM)` | review gate `pcN` on prior dry-run.
-# - Teaching table left cells are executable `plasm_expr` surfaces (list/get/query/relation/method); copy them and substitute placeholders — use Composition worked examples for bind→filter→sort→limit.
-# - Search when exposed: `e#~"text"[{p#=…}]?`.
+# - Teaching TSV left cells are executable surfaces (list/get/query/relation/method); copy left cells, substitute placeholders, and compose via bindings.
+# - Search when exposed: `e#~$` or `e#~"text"` (bare `e#~` is invalid); optional scoped filters `e#~"text"[{p#=…}]`.
 # - Field projection suffix: `[p#,…]`.
 #
 # Composition rules:
@@ -43,28 +40,35 @@ expression: prompt
 # - Compose text with `${report.content}` in later heredocs/strings; pass `binding.content` to string params, not the whole row.
 # - Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.
 # - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
-# - Examples: scoped child list `e1{p14=e3(p5=<val>, p13=<val>), …} (inline) OR repo=e3(…); e1{p14=repo, …} (decomposed label ref)`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
-# - Worked scoped-search program (copy shape, substitute values):
-# repo = e3(p5=octocat, p13=Hello-World)
-# e1{p14=repo, p71=open}
-# OR inline: e1{p14=e3(p5=octocat, p13=Hello-World), p71=open}
-# - Worked row-compute program (copy shape, substitute `e#` / `p#` from this table):
-# items = e1
-# filtered = items.filter{p1>=300}
-# sorted = filtered.sort(p1, desc)
+# - Examples: scoped child list `e_child{p_scope=e_parent(p_id=<val>, …), …} (inline) OR anchor=e_parent(…); e_child{p_scope=anchor, …} (decomposed label ref)`; array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
+# - Worked scoped-search program (shape only — substitute symbols from your table below):
+# anchor = e_parent(p_id=<val>, …)
+# e_child{p_scope=anchor, p_filter=<val>}
+# OR inline: e_child{p_scope=e_parent(p_id=<val>, …), p_filter=<val>}
+# - Worked row-compute program (shape only — substitute `e#` / `p#` from your table below):
+# items = e_source
+# filtered = items.filter{p_field>=300}  # prefer bind; bare `e_source.filter{…}` list-alls first
+# sorted = filtered.sort(p_field, desc)
 # limited = sorted.limit(10)
-# limited[p5,p1]
-# - Relation + row compute may chain directly: `e2(p10="electric").r2.limit(5)[p5]`
+# limited[p_a,p_field]
+# - Worked relation + row compute (shape only — copy `.r#`/wire from your table's left column):
+# parent = e_parent(p_key=<val>)
+# children = parent.rN
+# limited = children.limit(5)
+# limited[p_a,p_b]
 # - `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `m#(..., p#=<<TXT` + newline body + `TXT` newline `)`.
 #
 # Common pitfalls:
-# - Row contract: `{…}` / `~"…"{…}` inputs fetch or filter rows; only `rows:` fields from the teaching row may be used in `[fields]`, `.group_by`, `.sort`, `.dedupe`, or row `.filter`.
+# - Row contract: `{…}` / `~"…"{…}` inputs fetch or filter rows; only `rows:` fields from the teaching row may be used in `[fields]`, `.group_by`, `.sort`, `.dedupe`, or row `.filter` — not `inputs:` / `opt:` filter keys.
 # - Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.
+# - Prefer `label = e#` then `label.filter{{…}}`; bare `e#.filter{{…}}` implies list-all first (unbounded read warning).
 # - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.
 # - Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.r#` or `issues.labels` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.
 # - Homograph / gloss: filter `p#` and relation `.r#`/wire may share a wire name — fanout via `.r#`/wire (`labels = issues.p#` forgiven when the binding name matches). Copy executable left cells, not `Meaning` arrow gloss (`relation e3 → e2`).
 # - Fill-ins: never emit `$` from teaching rows; substitute real ids, filter keys, and `e#~"text"` terms before execute.
-# - Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or real `~"…"` search text.
+# - Search operand: `e#~$` or `e#~"text"` required — bare `e#~` is a parse error.
+# - Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or `e#~$` / `e#~"text"` search.
+# Worked search-only shape: `items = e#~$` then narrow with row postfix on `items` using **`rows:` fields only**.
 #
 
 plasm_expr	Meaning

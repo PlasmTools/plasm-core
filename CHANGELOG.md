@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.13] - 2026-06-16
+
+### Changed
+
+- **MCP grammar placement:** MCP initialize now teaches the canonical Plasm grammar once; `plasm_context` open/federate/expand waves return table-only teaching TSV rows and do not repeat the grammar preamble.
+- **MCP prompt budget:** canonical grammar is ratcheted to 6106 bytes; initialize prompt budget now guards grammar and non-grammar workflow copy separately.
+- **Prompt copy ownership:** removed duplicate MCP prompt fragments so tool descriptions point to initialize instead of restating grammar.
+
+### Fixed
+
+- **Linear search rows:** `Issue` / matrix search rows expose `team_key`, enabling search results to be grouped or filtered by team key.
+- **Seeded abstract entities:** explicitly seeded abstract entities receive stable `e#` symbols and executable teaching rows in MCP contexts.
+
 ## [0.3.12] - 2026-06-13
 
 ### Added

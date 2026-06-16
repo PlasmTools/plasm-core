@@ -143,7 +143,7 @@ pub(crate) async fn apply_capability_seeds(
                     if let Some(body_tsv) = teaching_tsv_from_wrapped_prompt(
                         &created.prompt,
                         mode.markdown_fence_info_string(),
-                        TeachingFenceSlice::AgentFull,
+                        TeachingFenceSlice::TableOnly,
                     ) {
                         open_md.push_str(&wrap_teaching_markdown_literal_block(&body_tsv, mode));
                     } else {

@@ -637,6 +637,30 @@ fn assert_planning_ir(
                 ));
             }
         }
+        "lang_search_then_group_by_team_key" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::GroupBy { keys, .. },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::GroupBy { .. }))
+            else {
+                return Err(format!("expected GroupBy after search, got {:?}", computes));
+            };
+            if keys.len() != 1 || keys[0].dotted() != "team_key" {
+                return Err(format!(
+                    "expected group key team_key on search rows, got {:?}",
+                    keys
+                ));
+            }
+            let q = first_query(&surfaces)?;
+            if q.capability_name.as_deref() != Some("langitem_search") {
+                return Err(format!(
+                    "expected langitem_search upstream, got {:?}",
+                    q.capability_name
+                ));
+            }
+        }
         "lang_relation_lines" => {
             if !surfaces
                 .iter()
@@ -1411,6 +1435,15 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         features: &["entity_search", "postfix_group_by", "search_then_group_by"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "owner"],
+    },
+    MatrixRow {
+        id: "lang_search_then_group_by_team_key",
+        program: "rows = LangItem~\"matrix\"{team_key=\"eng\"}\nby_team = rows.group_by(team_key)\nby_team",
+        surface_line: false,
+        federated: false,
+        features: &["entity_search", "postfix_group_by", "search_then_group_by"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "team_key"],
     },
     MatrixRow {
         id: "lang_row_filter_brace",

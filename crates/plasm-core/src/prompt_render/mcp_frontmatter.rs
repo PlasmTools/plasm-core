@@ -8,6 +8,7 @@ pub(crate) struct PromptContractSpec {
     include_rich_string_guidance: bool,
     include_scoped_search_worked_example: bool,
     include_row_compute_worked_example: bool,
+    include_relation_worked_example: bool,
     include_search_only_entity_pitfall: bool,
     include_federation_pitfall: bool,
 }
@@ -25,6 +26,7 @@ pub fn render_plasm_mcp_language_frontmatter() -> String {
         include_rich_string_guidance: true,
         include_scoped_search_worked_example: false,
         include_row_compute_worked_example: true,
+        include_relation_worked_example: true,
         include_search_only_entity_pitfall: true,
         include_federation_pitfall: true,
     })
@@ -133,6 +135,7 @@ where
                 .find_capabilities(e, CapabilityKind::Query)
                 .is_empty()
         }),
+        include_relation_worked_example: slice_hints.has_relation_nav_exemplar,
         include_search_only_entity_pitfall: !cgs_slice_all_entities_have_query(
             resolve,
             full_entities,
@@ -153,6 +156,7 @@ pub(crate) fn prompt_contract_spec_minimal_for_test() -> PromptContractSpec {
         include_rich_string_guidance: false,
         include_scoped_search_worked_example: false,
         include_row_compute_worked_example: false,
+        include_relation_worked_example: false,
         include_search_only_entity_pitfall: false,
         include_federation_pitfall: false,
     }
@@ -172,7 +176,7 @@ fn render_core_surface_bullets(spec: &PromptContractSpec, projection: &str) -> S
     );
     if spec.symbolic {
         s.push_str(
-            "- Teaching table left cells are executable `plasm_expr` surfaces (list/get/query/relation/method); copy them and substitute placeholders — use Composition worked examples for bind→filter→sort→limit.\n",
+            "- Teaching TSV left cells are executable surfaces (list/get/query/relation/method); copy left cells, substitute placeholders, and compose via bindings.\n",
         );
     } else {
         s.push_str(
@@ -180,7 +184,7 @@ fn render_core_surface_bullets(spec: &PromptContractSpec, projection: &str) -> S
         );
     }
     if spec.include_search_line && spec.symbolic {
-        s.push_str("- Search when exposed: `e#~\"text\"[{p#=…}]?`.\n");
+        s.push_str("- Search when exposed: `e#~$` or `e#~\"text\"` (bare `e#~` is invalid); optional scoped filters `e#~\"text\"[{p#=…}]`.\n");
     }
     let _ = writeln!(
         s,
@@ -198,7 +202,7 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         "[field,…]"
     };
     let scoped_form = if spec.symbolic {
-        "e1{p14=e3(p5=<val>, p13=<val>), …} (inline) OR repo=e3(…); e1{p14=repo, …} (decomposed label ref)"
+        "e_child{p_scope=e_parent(p_id=<val>, …), …} (inline) OR anchor=e_parent(…); e_child{p_scope=anchor, …} (decomposed label ref)"
     } else {
         "Entity{scope_param=AnchorEntity(<id>)}"
     };
@@ -222,8 +226,7 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     s.push_str(
         "- Header is exactly `plasm_expr<TAB>Meaning`; every following row has exactly one tab delimiter.\n\
 - Left cell is either executable syntax or metadata. Right cell is selection guidance only; never copy `Meaning` into output.\n\
-- Executable rows start with an entity surface (`e#`/`Entity`). Copy their left-cell shape, then replace placeholders.\n\
-- Metadata rows whose left cell is only `v#`/`value domain` define reusable value types. Metadata rows whose left cell is only `p#`/`field` define keyed slots. Metadata rows are never executable roots.\n\
+- Executable rows start with an entity surface (`e#`/`Entity`). Metadata-only `p#`/`v#` rows define slots/value domains and are never roots.\n\
 - `Meaning` fragments joined by ` · ` stay inside `Meaning`; they are not operators.\n\n",
     );
 
@@ -231,11 +234,10 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     if spec.symbolic {
         s.push_str(
             "- `e#` = entity surface; `m#` = method/action surface; `p#` = field/capability/query predicate; `r#` = declared relation navigation; `v#` = value-domain metadata only.\n\
-            - Relation hops use `.wire` or `.r#` on a row-producing receiver — not `p#` in dotted navigation (`p#` in `e#{{…}}` is a filter/param).\n\
-- Entity-ref slots in `Meaning` look like `ref:Zone · str · Zone identifier`: canonical entity, id wire type, short note — not `plasm_expr` syntax.\n\
+            - Relation hops use `.wire` or `.r#` on a row-producing receiver — never bare `p#` after `.` (`p#` in `e#{{…}}` is a filter/param).\n\
+- Entity-ref gloss like `ref:Zone · str · Zone identifier` is type/help text, not syntax.\n\
 - Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.\n\
-- Unary identity rows often teach `e#(p#)` using the opaque `p#` for the entity `id_field` (same token as gloss); substitute the real wire id — do not treat it as a literal API value.\n\
-- `<id>`, `<value>`, `<receiver>`, and `elem` in this contract are meta-variables, not syntax tokens.\n\
+- `e#(p#)` identity rows use `p#` for the id slot; substitute the real wire id. `<id>`, `<value>`, `<receiver>`, and `elem` are meta-variables.\n\
 - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.\n\
 - If `Meaning` says `opt: pA, pB`, those keys may be added only as keyed assignments with real values.\n",
         );
@@ -251,7 +253,7 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
         "- Projection rows ending `{projection}` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.",
         projection = projection
     );
-    s.push_str("- Host continuations (`page`/`wait`/`cancel`/`pcN`): copy handles from prior responses (see Core surface). Open `oN`/`pgN` handles must be polled with `wait(h)` or cancelled before unrelated live execute or telling the user the task is done.\n\n");
+    s.push('\n');
 
     s.push_str(&render_core_surface_bullets(&spec, projection));
 
@@ -264,31 +266,47 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
 - Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.\n\
 - Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.\n",
     );
-    let _ = writeln!(
-        s,
-        "- Examples: scoped child list `{scoped_form}`; array argument `{array_form}`. Quoted strings use only `\\\"` and `\\\\` escapes.",
-        scoped_form = scoped_form,
-        array_form = array_form
-    );
+    if spec.include_scoped_search_worked_example {
+        let _ = writeln!(
+            s,
+            "- Examples: scoped child list `{scoped_form}`; array argument `{array_form}`. Quoted strings use only `\\\"` and `\\\\` escapes.",
+            scoped_form = scoped_form,
+            array_form = array_form
+        );
+    } else {
+        let _ = writeln!(
+            s,
+            "- Examples: array argument `{array_form}`. Quoted strings use only `\\\"` and `\\\\` escapes.",
+            array_form = array_form
+        );
+    }
     if spec.symbolic && spec.include_scoped_search_worked_example {
         s.push_str(
-            "- Worked scoped-search program (copy shape, substitute values):\n\
-  repo = e3(p5=octocat, p13=Hello-World)\n\
-  e1{p14=repo, p71=open}\n\
-  OR inline: e1{p14=e3(p5=octocat, p13=Hello-World), p71=open}\n",
+            "- Worked scoped-search program (shape only — substitute symbols from your table below):\n\
+  anchor = e_parent(p_id=<val>, …)\n\
+  e_child{p_scope=anchor, p_filter=<val>}\n\
+  OR inline: e_child{p_scope=e_parent(p_id=<val>, …), p_filter=<val>}\n",
         );
     }
     if spec.symbolic && spec.include_row_compute_worked_example {
         let threshold = super::ROW_COMPUTE_EXEMPLAR_THRESHOLD;
         let _ = write!(
             s,
-            "- Worked row-compute program (copy shape, substitute `e#` / `p#` from this table):\n\
-  items = e1\n\
-  filtered = items.filter{{p1>={threshold}}}  # bind first — not e1.filter{{…}}\n\
-  sorted = filtered.sort(p1, desc)\n\
+            "- Worked row-compute program (shape only — substitute `e#` / `p#` from your table below):\n\
+  items = e_source\n\
+  filtered = items.filter{{p_field>={threshold}}}  # prefer bind; bare `e_source.filter{{…}}` list-alls first\n\
+  sorted = filtered.sort(p_field, desc)\n\
   limited = sorted.limit(10)\n\
-  limited[p5,p1]\n\
-- Relation + row compute may chain directly: `e2(p10=\"electric\").r2.limit(5)[p5]`\n"
+  limited[p_a,p_field]\n"
+        );
+    }
+    if spec.symbolic && spec.include_relation_worked_example {
+        s.push_str(
+            "- Worked relation + row compute (shape only — copy `.r#`/wire from your table's left column):\n\
+  parent = e_parent(p_key=<val>)\n\
+  children = parent.rN\n\
+  limited = children.limit(5)\n\
+  limited[p_a,p_b]\n",
         );
     }
     if spec.include_rich_string_guidance {
@@ -298,13 +316,19 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
 
     s.push_str("Common pitfalls:\n");
     s.push_str(
-        "- Row contract: `{…}` / `~\"…\"{…}` inputs fetch or filter rows; only `rows:` fields from the teaching row may be used in `[fields]`, `.group_by`, `.sort`, `.dedupe`, or row `.filter`.\n\
+        "- Row contract: `{…}` / `~\"…\"{…}` inputs fetch or filter rows; only `rows:` fields from the teaching row may be used in `[fields]`, `.group_by`, `.sort`, `.dedupe`, or row `.filter` — not `inputs:` / `opt:` filter keys.\n\
 - Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.\n\
+- Prefer `label = e#` then `label.filter{{…}}`; bare `e#.filter{{…}}` implies list-all first (unbounded read warning).\n\
 - `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.\n\
 - Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.r#` or `issues.labels` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.\n\
 - Homograph / gloss: filter `p#` and relation `.r#`/wire may share a wire name — fanout via `.r#`/wire (`labels = issues.p#` forgiven when the binding name matches). Copy executable left cells, not `Meaning` arrow gloss (`relation e3 → e2`).\n\
 - Fill-ins: never emit `$` from teaching rows; substitute real ids, filter keys, and `e#~\"text\"` terms before execute.\n",
     );
+    if spec.include_search_line && spec.symbolic {
+        s.push_str(
+            "- Search operand: `e#~$` or `e#~\"text\"` required — bare `e#~` is a parse error.\n",
+        );
+    }
     if spec.include_federation_pitfall {
         s.push_str(
             "- Federated sessions: use the `e#` from the teaching row for that catalog when the same wire entity name appears in multiple APIs.\n",
@@ -312,7 +336,8 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     }
     if spec.include_search_only_entity_pitfall {
         s.push_str(
-            "- Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or real `~\"…\"` search text.\n",
+            "- Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or `e#~$` / `e#~\"text\"` search.\n\
+  Worked search-only shape: `items = e#~$` then narrow with row postfix on `items` using **`rows:` fields only**.\n",
         );
     }
     s.push('\n');

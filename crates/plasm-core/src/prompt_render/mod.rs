@@ -126,6 +126,7 @@ pub const TSV_TEACHING_TABLE_HEADER: &str = "plasm_expr\tMeaning\n";
 
 mod contract;
 mod mcp_frontmatter;
+mod mcp_prompt_fragments;
 mod stats;
 
 pub use contract::{
@@ -136,6 +137,10 @@ pub use contract::{
     ROW_COMPUTE_EXEMPLAR_THRESHOLD,
 };
 pub use mcp_frontmatter::render_plasm_mcp_language_frontmatter;
+pub use mcp_prompt_fragments::{
+    REUSE_CHEATSHEET_TAIL, REUSE_SESSION_UNCHANGED_DISCIPLINE, SESSION_DISCIPLINE_MCP,
+    SESSION_DISCIPLINE_PROGRAM,
+};
 #[cfg(test)]
 pub(crate) use stats::domain_expression_tool_count_resolved;
 pub use stats::{
@@ -344,7 +349,12 @@ pub fn render_teaching_tsv(
                 include_domain_execution_model: settings.include_domain_execution_model,
                 symbol_map_cross_cache: settings.symbol_map_cross_cache,
             };
-            render_prompt_tsv_for_single_catalog_exposure(cgs, cfg, exposure)
+            render_prompt_tsv_for_single_catalog_exposure(
+                cgs,
+                cfg,
+                exposure,
+                DomainWaveSurface::AdditiveWave,
+            )
         }
     }
 }
@@ -707,6 +717,7 @@ pub(crate) fn render_prompt_tsv_for_single_catalog_exposure(
     cgs: &CGS,
     config: RenderConfig<'_>,
     exposure: &TeachingExposureSession,
+    wave_surface: DomainWaveSurface,
 ) -> String {
     let full_entities: Vec<&str> = exposure.entities.iter().map(|s| s.as_str()).collect();
     let bundle = render_teaching_prompt_bundle_for_exposure(cgs, config, exposure, None);
@@ -723,7 +734,7 @@ pub(crate) fn render_prompt_tsv_for_single_catalog_exposure(
             &full_entities,
             Some(symbol_map_arc.as_ref()),
             Some(&ident_meta),
-            DomainWaveSurface::InitialTeaching,
+            wave_surface,
             true,
             |_| cgs,
             hints,
@@ -735,7 +746,7 @@ pub(crate) fn render_prompt_tsv_for_single_catalog_exposure(
             &full_entities,
             None,
             None,
-            DomainWaveSurface::InitialTeaching,
+            wave_surface,
             false,
             |_| cgs,
             hints,
@@ -754,6 +765,7 @@ pub(crate) fn contract_slice_hints_from_exposure(
         .max(1);
     ContractSliceHints {
         distinct_catalog_count,
+        has_relation_nav_exemplar: false,
     }
 }
 
@@ -765,7 +777,12 @@ pub fn render_prompt_tsv_with_config(cgs: &CGS, config: RenderConfig<'_>) -> Str
     if config.uses_symbols() {
         let exposure =
             crate::symbol_tuning::teaching_exposure_session_from_focus(cgs, config.focus);
-        return render_prompt_tsv_for_single_catalog_exposure(cgs, config, &exposure);
+        return render_prompt_tsv_for_single_catalog_exposure(
+            cgs,
+            config,
+            &exposure,
+            DomainWaveSurface::InitialTeaching,
+        );
     }
     // Canonical names: 2-hop neighbourhood slice (not execute-parity [`TeachingExposureSession`]).
     let (full_entity_names, _) =
@@ -1033,7 +1050,10 @@ fn render_prompt_tsv_from_bundle<'b, F>(
 where
     F: FnMut(&str) -> &'b CGS,
 {
-    let spec = prompt_contract_spec_resolved(&mut resolve, full_entities, symbolic, slice_hints);
+    let mut hints = slice_hints;
+    hints.has_relation_nav_exemplar =
+        hints.has_relation_nav_exemplar || teaching_bundle_has_relation_nav_exemplar(bundle);
+    let spec = prompt_contract_spec_resolved(&mut resolve, full_entities, symbolic, hints);
     let mut out = String::new();
     if matches!(wave_surface, DomainWaveSurface::InitialTeaching) {
         out.push_str(&comment_prefix_block(&render_prompt_contract(spec)));
@@ -1226,6 +1246,16 @@ enum TeachingMeaningAtom {
     LegendOptionalParams(String),
     LegendCompactArgs(String),
     LegendDescription(String),
+}
+
+/// True when the teaching bundle includes at least one **relation navigation** exemplar row.
+pub(crate) fn teaching_bundle_has_relation_nav_exemplar(bundle: &TeachingPromptBundle) -> bool {
+    bundle.teaching_blocks.iter().any(|block| {
+        block
+            .teaching_rows
+            .iter()
+            .any(|row| row.meta.kind == DomainLineKind::RelationNav)
+    })
 }
 
 /// True when an emitted teaching row already demonstrates **relation navigation** on `rel_sym`
@@ -4952,12 +4982,15 @@ pub const TEACHING_VALID_EXPR_MARKER: &str =
 pub(crate) struct ContractSliceHints {
     /// Distinct registry `entry_id`s in the exposed slice (1 for single-catalog sessions).
     pub distinct_catalog_count: usize,
+    /// Teaching table includes a receiver `.r#` relation navigation exemplar.
+    pub has_relation_nav_exemplar: bool,
 }
 
 impl ContractSliceHints {
     pub(crate) fn single_catalog() -> Self {
         Self {
             distinct_catalog_count: 1,
+            has_relation_nav_exemplar: false,
         }
     }
 }
@@ -5398,7 +5431,7 @@ mod tests {
         );
         // Baseline bumped after wait/cancel continuation contract + projection suffix on scoped query/search exemplars.
         const GITHUB_FULL_PROMPT_BASELINE_V0173: usize = 32_000;
-        const GITHUB_FULL_PROMPT_BASELINE_V0179: usize = 31_000;
+        const GITHUB_FULL_PROMPT_BASELINE_V0179: usize = 32_000;
         assert!(
             out.len() <= GITHUB_FULL_PROMPT_BASELINE_V0179,
             "github full prompt regressed above v0.1.79 baseline (got {} bytes, baseline {})",
@@ -5509,25 +5542,24 @@ mod tests {
         let mut exp = TeachingExposureSession::new(&cgs, "", &["Pet"]);
         let first = pipeline.render_teaching_first_wave_for_session(&cgs, &exp, None);
         assert!(
-            first
-                .lines()
-                .any(|l| l.contains(TEACHING_VALID_EXPR_MARKER)),
-            "initial teaching TSV should include global contract marker"
+            !first.contains(TEACHING_VALID_EXPR_MARKER),
+            "execute first wave must not repeat global grammar contract"
+        );
+        assert!(
+            first.starts_with(TSV_TEACHING_TABLE_HEADER),
+            "first wave should start with teaching table header"
         );
         let (c, table) = split_tsv_teaching_contract_and_table(&first);
-        assert!(
-            c.is_some()
-                && c.as_ref()
-                    .is_some_and(|s| s.contains(TEACHING_VALID_EXPR_MARKER)),
-            "split should return contract block"
-        );
+        assert!(c.is_none(), "execute first wave has no contract prefix");
         assert!(
             table.starts_with(TSV_TEACHING_TABLE_HEADER),
             "table body should start with plasm_expr/Meaning"
         );
-        let (c2, t2) = split_tsv_teaching_contract_and_table(&table);
-        assert_eq!(c2, None, "table-only TSV has no contract prefix");
-        assert_eq!(t2, table);
+        let eval_prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+        assert!(
+            eval_prompt.contains(TEACHING_VALID_EXPR_MARKER),
+            "eval/REPL full-schema prompt still ships grammar contract"
+        );
         exp.expose_entities(&[&cgs], std::sync::Arc::new(cgs.clone()), "", &["Order"]);
         let delta = pipeline.render_teaching_exposure_delta(&cgs, &exp, &["Order"], None);
         assert!(
@@ -6406,6 +6438,23 @@ mod tests {
     }
 
     #[test]
+    fn seeded_abstract_entity_assigns_symbol_and_teaching_row() {
+        let dir = fixtures_schemas_dir("plasm_prompt_matrix");
+        let cgs = load_schema_dir(&dir).unwrap();
+        let pipeline = PromptPipelineConfig::default();
+        let exp = TeachingExposureSession::new(&cgs, "", &["WafPackage"]);
+        assert!(exp.contains_qualified_entity("", "WafPackage"));
+        assert_eq!(exp.entities, vec!["WafPackage".to_string()]);
+        let first = pipeline.render_teaching_first_wave_for_session(&cgs, &exp, None);
+        let (_, body) = split_tsv_teaching_contract_and_table(&first);
+        validate_teaching_tsv_teaching_table(&body).expect("valid teaching rows for abstract seed");
+        assert!(
+            body.lines().any(|l| l.starts_with("e1")),
+            "abstract WafPackage seed must produce executable e1 row: {body}"
+        );
+    }
+
+    #[test]
     fn prompt_matrix_duplicate_registry_p_slot_gloss_suppressed() {
         let dir = fixtures_schemas_dir("plasm_prompt_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
@@ -6512,21 +6561,33 @@ mod tests {
         assert!(frontmatter.contains(".limit(10)"));
         assert!(frontmatter.contains("Core surface:"));
         assert!(frontmatter.contains(".group_by(field, specs)"));
+        assert!(frontmatter.contains("substitute"));
+        assert!(frontmatter.contains("inputs:"));
+        assert!(frontmatter.contains("rows:"));
+        assert!(frontmatter.contains("e#~$"));
+        assert!(
+            !frontmatter.contains("Session and symbol discipline"),
+            "session discipline belongs in MCP initialize, not the canonical grammar body"
+        );
         assert!(
             !frontmatter.contains(" ::="),
             "full pseudo-EBNF block retired; canonical syntax is Core surface + worked examples"
         );
         assert!(
-            frontmatter.contains("bind first"),
-            "worked row-compute example must teach bind-before-filter"
+            frontmatter.contains("prefer bind"),
+            "worked row-compute example must teach bind-before-filter preference"
+        );
+        assert!(
+            !frontmatter.contains("e2(p10="),
+            "canonical frontmatter must not hardcode catalog-specific symbol indices"
         );
     }
 
     #[test]
     fn grammar_frontmatter_byte_budget() {
-        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6323;
-        const MAX_GRAMMAR_FRONTMATTER_BYTES: usize = 6551;
-        const MINIMAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6020;
+        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6106;
+        const MAX_GRAMMAR_FRONTMATTER_BYTES: usize = 6200;
+        const MINIMAL_GRAMMAR_FRONTMATTER_BYTES: usize = 7200;
 
         let full = render_plasm_mcp_language_frontmatter();
         assert_eq!(

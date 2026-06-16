@@ -3718,10 +3718,10 @@ bad"#,
             &session,
             "search-group-by-filter-input",
             r#"rows = LangItem~"probe"{team_key="eng"}
-bad = rows.group_by(team_key)
+bad = rows.group_by(q)
 bad"#,
         )
-        .expect_err("filter params are inputs not row fields");
+        .expect_err("search text param q is not a row field");
         assert!(err.contains("is an input on langitem_search"), "{err}");
         assert!(err.contains("not a row field"), "{err}");
     }
@@ -3739,6 +3739,23 @@ rows"#,
         )
         .expect_err("filter params are inputs not row fields for projection");
         assert!(err.contains("is an input on langitem_search"), "{err}");
+    }
+
+    #[test]
+    fn search_group_by_accepts_filter_param_when_in_provides() {
+        let session = test_session();
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "search-group-by-filter-in-provides",
+            r#"rows = LangItem~"probe"{team_key="eng"}
+by_team = rows.group_by(team_key)
+by_team"#,
+        )
+        .expect("team_key in provides should be a valid group_by key");
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+        assert!(!dry.node_results.is_empty());
     }
 
     #[test]
@@ -4109,6 +4126,66 @@ author"#;
         )
         .expect("compile");
         assert_eq!(plan["nodes"][0]["kind"].as_str(), Some("search"), "{plan}");
+    }
+
+    /// Linear `issue_search` rows include `team_key` in provides so agents can `group_by` on filter dimensions.
+    #[test]
+    fn linear_issue_search_group_by_team_key_dry_run() {
+        fn plan_group_by_keys(plan: &serde_json::Value) -> Vec<String> {
+            let mut out = Vec::new();
+            let Some(nodes) = plan.get("nodes").and_then(|n| n.as_array()) else {
+                return out;
+            };
+            for node in nodes {
+                if node.get("kind").and_then(|k| k.as_str()) != Some("compute") {
+                    continue;
+                }
+                let Some(op) = node.get("compute").and_then(|c| c.get("op")) else {
+                    continue;
+                };
+                if op.get("kind").and_then(|k| k.as_str()) != Some("group_by") {
+                    continue;
+                }
+                let Some(keys) = op.get("keys").and_then(|k| k.as_array()) else {
+                    continue;
+                };
+                for key in keys {
+                    if let Some(path) = key.as_array() {
+                        if let Some(field) = path.first().and_then(|x| x.as_str()) {
+                            out.push(field.to_string());
+                        }
+                    } else if let Some(s) = key.as_str() {
+                        out.push(s.to_string());
+                    }
+                }
+            }
+            out
+        }
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let dir = root.join("../../apis/linear");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = Arc::new(plasm_core::loader::load_schema_dir(&dir).expect("linear"));
+        let session = linear_test_session(cgs);
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "linear-search-group-by-team",
+            r#"issues = Issue~$
+by_team = issues.group_by(team_key)
+by_team"#,
+        )
+        .expect("compile");
+        let keys = plan_group_by_keys(&plan);
+        assert!(
+            keys.iter().any(|k| k == "team_key"),
+            "expected group_by on team_key, got {keys:?}; plan={plan}"
+        );
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+        assert!(!dry.node_results.is_empty());
     }
 
     /// Matrix: `lang_domain_symbol_page_size` (surface `e#.page_size` + plan node `page_size`).

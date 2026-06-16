@@ -596,10 +596,8 @@ pub fn entity_slices_for_render<'a>(
     if let FocusSpec::SeedsExact(seeds) = focus {
         let mut full = Vec::new();
         for s in seeds.iter().copied() {
-            if let Some(ent) = cgs.get_entity(s) {
-                if !ent.abstract_entity {
-                    full.push(s);
-                }
+            if cgs.get_entity(s).is_some() {
+                full.push(s);
             }
         }
         // `SeedsExact` matches [`TeachingExposureSession::entities`] only (no 2-hop neighbourhood).
@@ -663,11 +661,7 @@ pub fn entity_slices_for_render_federated<'a>(
     let mut full: Vec<&str> = Vec::new();
     let mut full_set: HashSet<&str> = HashSet::new();
     for &name in &refs {
-        let ok = cgs_layers.iter().any(|c| {
-            c.get_entity(name)
-                .map(|e| !e.abstract_entity)
-                .unwrap_or(false)
-        });
+        let ok = cgs_layers.iter().any(|c| c.get_entity(name).is_some());
         if ok {
             full.push(name);
             full_set.insert(name);
@@ -3100,12 +3094,11 @@ impl TeachingExposureSession {
             if self.qualified_entity_to_sym.contains_key(&qkey) {
                 continue;
             }
-            let Some(ent) = owning_cgs.get_entity(n) else {
-                continue;
-            };
-            if ent.abstract_entity {
+            if owning_cgs.get_entity(n).is_none() {
                 continue;
             }
+            // Explicit seed list (`entity_names_in_order`): assign `e#` even when `abstract: true`.
+            // Auto-neighbourhood / full-catalog slices still omit abstract entities elsewhere.
             let i = self.entities.len() + 1;
             let sym = format!("e{i}");
             self.entities.push((*n).to_string());
@@ -3157,12 +3150,10 @@ impl TeachingExposureSession {
             if self.qualified_entity_to_sym.contains_key(&qkey) {
                 continue;
             }
-            let Some(ent) = owning_cgs.get_entity(n) else {
+            let Some(_ent) = owning_cgs.get_entity(n) else {
                 continue;
             };
-            if ent.abstract_entity {
-                continue;
-            }
+            // Delta wave: same explicit-seed policy as [`Self::expose_entities`].
             entities_added += 1;
             let i = self.entities.len() + 1;
             let sym = format!("e{i}");

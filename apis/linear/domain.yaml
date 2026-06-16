@@ -134,6 +134,10 @@ entities:
       dueDate:
         required: false
         value_ref: nv_wire_str_short
+      team_key:
+        required: false
+        path: team.key
+        value_ref: nv_team_key
     relations:
       team:
         target: Team
@@ -381,6 +385,7 @@ capabilities:
     - identifier
     - title
     - priority
+    - team_key
   issue_get:
     kind: get
     entity: Issue

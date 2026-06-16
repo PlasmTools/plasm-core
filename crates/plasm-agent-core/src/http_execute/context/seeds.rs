@@ -59,7 +59,9 @@ pub(crate) fn format_session_unchanged_one_liner(entity_count: usize) -> String 
         "_Session unchanged — no exposed entities yet._\n".to_string()
     } else {
         format!(
-            "_Session unchanged (`e1`…`e{entity_count}`). Use `plasm` / `plasm_run` with this logical_session_ref._\n"
+            "_Session unchanged (`e1`…`e{entity_count}`). {}_\n{}",
+            plasm_core::prompt_render::REUSE_SESSION_UNCHANGED_DISCIPLINE,
+            plasm_core::prompt_render::REUSE_CHEATSHEET_TAIL,
         )
     }
 }
