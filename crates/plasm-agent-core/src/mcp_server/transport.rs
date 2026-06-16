@@ -77,4 +77,3 @@ pub(crate) fn plasm_invocation_char_count(program: &str, reasoning: Option<&str>
     }
     n
 }
-

@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm-agent-core/src/mcp_server/tests.rs
+source: crates/plasm-agent-core/src/mcp_server/tests.rs
 expression: "super::mcp_server_initialize_instructions()"
 ---
 Plasm MCP tools (in order): **`plasm_context`** (session + teaching TSV), **`plasm`** (dry-run plan), **`plasm_run`** (live execute), **`discover_capabilities`** (when **`api`/`entity`** unknown).
@@ -71,6 +71,6 @@ Common pitfalls:
      **`plasm`** is plan-only (no live HTTP). One `program` per call; bare comma-separated roots (no `return`). **`plasm` cannot run `wait(h)`/`cancel(h)`** — use **`plasm_run`**.
      **Review gate:** when **`plasm`** returns `dry_verdict: review`, pass matching **`plan_commit_ref`** (`pcN`) to **`plasm_run`** (prefer over **`force: true`**).
      **`plasm_run`**: live execute after review; may return snapshots.
-     **Paging:** **`page(l_<token>_pgN)`** on same `logical_session_ref`.
+     **Paging:** **`plasm_run program=page(l_<token>_pgN)`** on same `logical_session_ref` (live resume only).
      **Snapshots:** `(in artifact)` / **`resource_link`** / `_meta.plasm.steps` → **`resources/read`** required before concluding data is missing.
      **Long ops:** **`+`/`~`/`=`** = accepted/progress/unchanged — poll **`plasm_run program=wait(l_<token>_oN)`** until **`!`/`x`/`?`**. No unrelated live runs until terminal. **`too_many_operations`**: wait or cancel first.

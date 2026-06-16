@@ -124,6 +124,8 @@ mod trace;
 mod transport;
 
 #[cfg(test)]
+mod integration;
+#[cfg(test)]
 mod tests;
 
 pub(crate) use discover::{
@@ -772,6 +774,20 @@ impl PlasmMcpHandler {
             .get("reasoning")
             .and_then(|x| x.as_str())
             .filter(|s| !s.is_empty());
+        if dry_run_only {
+            if let Some(msg) = crate::operation::plasm_dry_run_continuation_error(&program) {
+                crate::metrics::record_mcp_tool(
+                    tool_name,
+                    Some(false),
+                    "error",
+                    "invalid_arguments",
+                    started.elapsed(),
+                );
+                return Ok(CallToolResult::with_error(
+                    CallToolError::invalid_arguments(tool_name, Some(msg.into())),
+                ));
+            }
+        }
         let wait_live = v.get("wait").and_then(|x| x.as_bool()).unwrap_or(true);
         let force_run = v.get("force").and_then(|x| x.as_bool()).unwrap_or(false);
         let plan_commit_ref = v

@@ -1,7 +1,8 @@
 //! MCP initialize workflow and tool description strings.
 
 /// Model-facing **`plasm`** tool description: **plan-only** program construction (session setup is in initialize instructions).
-pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str = include_str!("../mcp_prompt/plasm_tool_head.txt");
+pub(crate) const MCP_PLASM_TOOL_DESCRIPTION: &str =
+    include_str!("../mcp_prompt/plasm_tool_head.txt");
 
 /// Model-facing **`plasm_run`** tool description: live execution after plan review.
 pub(crate) const MCP_PLASM_RUN_TOOL_DESCRIPTION: &str =

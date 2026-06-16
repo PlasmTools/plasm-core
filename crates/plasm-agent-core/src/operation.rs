@@ -568,14 +568,33 @@ pub fn resolve_operation_storage_handle(
     }
 }
 
+/// True when `program` is a host operation continuation (`wait(h)` / `cancel(h)`), not a Plasm surface program.
+#[must_use]
+pub fn is_operation_continuation_program(program: &str) -> bool {
+    let trimmed = program.trim();
+    trimmed.starts_with("wait(") || trimmed.starts_with("cancel(")
+}
+
+/// MCP `plasm` (dry-run) must not dispatch live operation continuations.
+#[must_use]
+pub fn plasm_dry_run_continuation_error(program: &str) -> Option<&'static str> {
+    if is_operation_continuation_program(program) {
+        Some(
+            "plan-only `plasm` cannot run `wait(...)` or `cancel(...)` — use `plasm_run` with the same `logical_session_ref` and program",
+        )
+    } else {
+        None
+    }
+}
+
 pub(crate) fn try_parse_operation_continuation(
     es: &ExecuteSession,
     program: &str,
 ) -> Option<plasm_core::Expr> {
-    let trimmed = program.trim();
-    if !(trimmed.starts_with("wait(") || trimmed.starts_with("cancel(")) {
+    if !is_operation_continuation_program(program) {
         return None;
     }
+    let trimmed = program.trim();
     let layers = crate::plasm_plan_run::session_cgs_layers(es);
     let map = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(es, None);
     let parsed =
@@ -646,6 +665,14 @@ pub fn spawn_async_plan_run(
 mod tests {
     use super::*;
     use plasm_core::PlanCommitRef;
+
+    #[test]
+    fn is_operation_continuation_program_detects_wait_and_cancel() {
+        assert!(is_operation_continuation_program("wait(l_x_o1)"));
+        assert!(is_operation_continuation_program("  cancel(l_x_o1)"));
+        assert!(!is_operation_continuation_program("e1"));
+        assert!(!is_operation_continuation_program("page(l_x_pg1)"));
+    }
 
     #[test]
     fn operation_accept_markdown_includes_poll_discipline() {

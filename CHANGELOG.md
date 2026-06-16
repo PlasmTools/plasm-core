@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.15] - 2026-06-16
+
+### Added
+
+- **MCP integration tests:** federated multi-catalog `apply_capability_seeds` + distinct `e#` dry-run compile; async `wait(l_<token>_oN)` poll through terminal result.
+
+### Changed
+
+- **MCP initialize paging copy:** paging continuations explicitly require **`plasm_run`** (live resume only).
+
+### Fixed
+
+- **`plasm` dry-run continuations:** reject `wait(...)` / `cancel(...)` on plan-only **`plasm`**; poll/cancel remain on **`plasm_run`** only (`plasm_dry_run_continuation_error` in `operation.rs`).
+
 ## [0.3.14] - 2026-06-16
 
 ### Changed

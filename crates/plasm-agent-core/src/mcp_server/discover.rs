@@ -3,7 +3,9 @@
 use super::*;
 
 /// MCP `discover_capabilities`: `intent` is exactly one non-empty task description string.
-pub(crate) fn mcp_discover_query_from_arguments(v: &serde_json::Value) -> Result<CapabilityQuery, String> {
+pub(crate) fn mcp_discover_query_from_arguments(
+    v: &serde_json::Value,
+) -> Result<CapabilityQuery, String> {
     let Some(obj) = v.as_object() else {
         return Err("discover_capabilities arguments must be a JSON object".to_string());
     };
@@ -162,4 +164,3 @@ pub(crate) fn read_resource_result_for_payload(
         meta: None,
     })
 }
-
