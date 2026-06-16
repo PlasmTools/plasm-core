@@ -712,7 +712,7 @@ mod tests {
 
         let s = langmatrix_session();
         let pipeline = PromptPipelineConfig::default();
-        let source = r#"rows = LangItem~"probe"{team_key="eng"}[team_key]
+        let source = r#"rows = LangItem~"probe"{team_key="eng"}[q]
 rows"#;
         match compile_plasm_expression(&pipeline, None, &s, "search-proj-input", source) {
             Err(err) => {

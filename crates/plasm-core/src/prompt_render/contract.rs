@@ -219,7 +219,7 @@ mod grammar_revision_tests {
         assert!(prompt.contains('#'));
         let rev = plasm_grammar_frontmatter_revision_hex();
         let wire = teaching_prompt_omit_contract_if_cached(&prompt, Some(rev), None);
-        assert!(!wire.contains("Follow the grammar"));
+        assert!(!wire.contains("Grammar below"));
         assert!(wire.starts_with(super::super::TSV_TEACHING_TABLE_HEADER.trim_end()));
         assert_eq!(
             contract.len(),

@@ -866,6 +866,40 @@ fn row_contract_field_error(
     )
 }
 
+fn validate_surface_inline_projection(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    node: &DagNode,
+) -> Result<(), String> {
+    let parsed = match &node.source {
+        DagNodeSource::Surface { parsed, .. } | DagNodeSource::RelationTraversal { parsed, .. } => {
+            parsed
+        }
+        _ => return Ok(()),
+    };
+    let Some(fields) = parsed.projection.as_ref() else {
+        return Ok(());
+    };
+    if fields.is_empty() {
+        return Ok(());
+    }
+    let paths: Vec<FieldPath> = fields
+        .iter()
+        .map(|f| FieldPath::from_dotted(f.as_str()))
+        .collect::<Result<_, _>>()?;
+    if let Some(allowed) = logical_row_field_paths_for_surface_node(session, node)? {
+        validate_compute_paths_for_allowed_set(
+            session,
+            state.cross_cache,
+            node,
+            &allowed,
+            &paths,
+            "surface projection",
+        )?;
+    }
+    Ok(())
+}
+
 fn validate_compute_paths_for_allowed_set(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
@@ -2771,7 +2805,7 @@ fn compile_surface_node(
     let uses = collect_template_uses_from_expr(&parsed.expr);
     let (kind, qualified_entity, effect_class, result_shape) =
         infer_surface_contract(session, &parsed.expr)?;
-    Ok(DagNode {
+    let node = DagNode {
         id: id.to_string(),
         expr: expr.to_string(),
         singleton: matches!(parsed.expr, Expr::Get(_)),
@@ -2784,7 +2818,9 @@ fn compile_surface_node(
             result_shape,
             uses_result: uses,
         },
-    })
+    };
+    validate_surface_inline_projection(session, state, &node)?;
+    Ok(node)
 }
 
 fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
@@ -3734,7 +3770,7 @@ bad"#,
             None,
             &session,
             "search-projection-filter-input",
-            r#"rows = LangItem~"probe"{team_key="eng"}[team_key]
+            r#"rows = LangItem~"probe"{team_key="eng"}[q]
 rows"#,
         )
         .expect_err("filter params are inputs not row fields for projection");

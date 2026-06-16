@@ -4975,7 +4975,7 @@ pub(crate) fn query_construct_display(es: &str, scope_variant: &str) -> String {
 
 /// Marker substring for tests; must appear once at the start of the rendered prompt contract.
 pub const TEACHING_VALID_EXPR_MARKER: &str =
-    "Follow the grammar and the teaching TSV below; reply with one valid plasm_program:";
+    "Grammar below; symbols from `plasm_context` TSV. Reply with one valid plasm_program:";
 
 /// Slice shape for conditioning the teaching table contract preamble (first-wave TSV only).
 #[derive(Clone, Copy, Debug)]
@@ -6585,8 +6585,8 @@ mod tests {
 
     #[test]
     fn grammar_frontmatter_byte_budget() {
-        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 6106;
-        const MAX_GRAMMAR_FRONTMATTER_BYTES: usize = 6200;
+        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 4310;
+        const MAX_GRAMMAR_FRONTMATTER_BYTES: usize = 5500;
         const MINIMAL_GRAMMAR_FRONTMATTER_BYTES: usize = 7200;
 
         let full = render_plasm_mcp_language_frontmatter();
@@ -6620,7 +6620,7 @@ mod tests {
                 .get("symbol_rules")
                 .copied()
                 .unwrap_or(0)
-                > 1000
+                > 500
         );
 
         let minimal = render_prompt_contract(prompt_contract_spec_minimal_for_test());

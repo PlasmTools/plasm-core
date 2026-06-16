@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.14] - 2026-06-16
+
+### Changed
+
+- **MCP grammar compression:** canonical initialize grammar ratcheted from 6106 to 4310 bytes; initialize/grammar budget guards tightened accordingly.
+- **MCP server layout:** split `mcp_server.rs` into focused submodules (`prompt`, `discover`, `trace`, `transport`, `schema`, `tool_parse`, `tests`) while keeping handler impl in `mod.rs`.
+- **Grammar opener copy:** initialize contract now points agents at `plasm_context` TSV for symbols instead of implying teaching rows ship in initialize.
+
+### Fixed
+
+- **Search inline projection:** surface `[fields]` on search rows now validates against capability `provides` (rejects filter inputs like `q`); matrix tests updated after `team_key` joined search `provides`.
+
 ## [0.3.13] - 2026-06-16
 
 ### Changed

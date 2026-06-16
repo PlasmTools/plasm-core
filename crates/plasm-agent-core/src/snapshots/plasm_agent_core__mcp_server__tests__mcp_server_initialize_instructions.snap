@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm-agent-core/src/mcp_server.rs
+source: plasm-oss/crates/plasm-agent-core/src/mcp_server/tests.rs
 expression: "super::mcp_server_initialize_instructions()"
 ---
 Plasm MCP tools (in order): **`plasm_context`** (session + teaching TSV), **`plasm`** (dry-run plan), **`plasm_run`** (live execute), **`discover_capabilities`** (when **`api`/`entity`** unknown).
@@ -8,44 +8,40 @@ Plasm MCP tools (in order): **`plasm_context`** (session + teaching TSV), **`pla
      **One goal → one stable `intent` → one `logical_session_ref`.** No new `intent` per API or message. Multi-API: one **`seeds`** array on the same intent.
 **Session:** one goal → one **`intent`** → one **`logical_session_ref`**; use **`e#`/`m#`/`p#`/`r#` from this session's teaching TSV only** (contract examples are shapes; substitute from your table).
 
-Follow the grammar and the teaching TSV below; reply with one valid plasm_program:
+Grammar below; symbols from `plasm_context` TSV. Reply with one valid plasm_program:
 
 Output:
-- Emit only code: either one `plasm_expr`, or one multi-line `plasm_program` with bindings then final roots.
-- Do not emit prose, JSON wrappers, `return`, Markdown fences, or table rows.
-- Prefer bind → narrow/project/transform → few final roots when more than one step is needed.
+- Emit only code: one `plasm_expr`, or bindings then final roots. No prose, JSON, `return`, fences, or table rows.
+- Prefer bind → narrow/project/transform → few final roots.
 
 TSV table semantics:
-- Header is exactly `plasm_expr<TAB>Meaning`; every following row has exactly one tab delimiter.
-- Left cell is either executable syntax or metadata. Right cell is selection guidance only; never copy `Meaning` into output.
-- Executable rows start with an entity surface (`e#`/`Entity`). Metadata-only `p#`/`v#` rows define slots/value domains and are never roots.
-- `Meaning` fragments joined by ` · ` stay inside `Meaning`; they are not operators.
+- Header: `plasm_expr<TAB>Meaning`; one tab per row. Left = syntax/metadata; right = guidance only (never copy `Meaning`).
+- Executable rows start with `e#`/Entity; metadata-only `p#`/`v#` rows are never roots.
 
 Symbol and fill rules:
-- `e#` = entity surface; `m#` = method/action surface; `p#` = field/capability/query predicate; `r#` = declared relation navigation; `v#` = value-domain metadata only.
-- Relation hops use `.wire` or `.r#` on a row-producing receiver — never bare `p#` after `.` (`p#` in `e#{{…}}` is a filter/param).
-- Entity-ref gloss like `ref:Zone · str · Zone identifier` is type/help text, not syntax.
-- Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.
-- `e#(p#)` identity rows use `p#` for the id slot; substitute the real wire id. `<id>`, `<value>`, `<receiver>`, and `elem` are meta-variables.
-- If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.
-- If `Meaning` says `opt: pA, pB`, those keys may be added only as keyed assignments with real values.
+- `e#` entity; `m#` method; `p#` field/param/filter; `r#` relation nav; `v#` value-domain metadata only.
+- Relation hops: `.wire` or `.r#` on row producers — never bare `p#` after `.` (`p#` in `e#{{…}}` is filter/param).
+- Never write `v#` in code; use `p#` keys and read `v#` rows for allowed values.
+- `e#(p#)` identity rows: substitute real wire ids for `<id>`, `<value>`, `<receiver>`, `elem`.
+- Remove `..` ellipses or replace with real `p#=` assignments before output.
+- Optional keys (`opt:` in `Meaning`): add only as keyed assignments with real values.
 - Projection rows ending `[p#,…]` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
 
 Core surface:
 - Program shape: one `plasm_expr`, or `label = …` bindings then comma-separated final roots (no `return`).
-- Postfix on row producers: `.limit(N)` | `.page_size(N)` | `.sort(field[, dir])` | `.filter{…}` | `.filter(…)` | `.aggregate(specs)` | `.group_by(field, specs)` | `.dedupe(field[, …])` | `.distinct(field[, …])` | `.distinct()` | `.singleton()` | `[fields]` projection.
+- Postfix on row producers: `.limit(N)` | `.page_size(N)` | `.sort(field[, dir])` | `.filter{…}` | `.filter(…)` | `.aggregate(specs)` | `.group_by(field, specs)` | `.dedupe(field[, …])` | `.distinct(field[, …])` | `.distinct()` | `.singleton()` | `[fields]`.
 - Continuations: `page(l_<token>_pgM)` | `wait(l_<token>_oM)` | `cancel(l_<token>_oM)` | review gate `pcN` on prior dry-run.
-- Teaching TSV left cells are executable surfaces (list/get/query/relation/method); copy left cells, substitute placeholders, and compose via bindings.
+- Copy teaching TSV left cells; substitute placeholders; compose via bindings.
 - Search when exposed: `e#~$` or `e#~"text"` (bare `e#~` is invalid); optional scoped filters `e#~"text"[{p#=…}]`.
 - Field projection suffix: `[p#,…]`.
 
 Composition rules:
-- Multi-line programs: one binding per line and final roots last (preferred). Single-line space-separated bindings are coerced; default return is the first binding.
-- Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.
-- Row text: `report = rows[p#,…] <<TAG` newline template newline `TAG`; Minijinja `rows` is only that source's projected rows.
-- Compose text with `${report.content}` in later heredocs/strings; pass `binding.content` to string params, not the whole row.
-- Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.
-- Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.
+- One binding per line; final roots last (preferred). Single-line bindings coerced; default return is first binding.
+- Postfix/`[fields]` chain on any row-producing binding or expression.
+- Row text: `report = rows[p#,…] <<TAG` … `TAG`; Minijinja `rows` = that source's projected rows only.
+- Pass `binding.content` to string params; compose with `${report.content}` in later heredocs/strings.
+- Do not use `report.content` as a final root or relation receiver.
+- Heredoc: `<<TAG` + newline; first trimmed `TAG` line closes; pick a tag absent from the body.
 - Examples: array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
 - Worked row-compute program (shape only — substitute `e#` / `p#` from your table below):
 items = e_source
@@ -61,17 +57,15 @@ limited[p_a,p_b]
 - `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `m#(..., p#=<<TXT` + newline body + `TXT` newline `)`.
 
 Common pitfalls:
-- Row contract: `{…}` / `~"…"{…}` inputs fetch or filter rows; only `rows:` fields from the teaching row may be used in `[fields]`, `.group_by`, `.sort`, `.dedupe`, or row `.filter` — not `inputs:` / `opt:` filter keys.
-- Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.
-- Prefer `label = e#` then `label.filter{{…}}`; bare `e#.filter{{…}}` implies list-all first (unbounded read warning).
-- `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.
-- Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.r#` or `issues.labels` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.
-- Homograph / gloss: filter `p#` and relation `.r#`/wire may share a wire name — fanout via `.r#`/wire (`labels = issues.p#` forgiven when the binding name matches). Copy executable left cells, not `Meaning` arrow gloss (`relation e3 → e2`).
-- Fill-ins: never emit `$` from teaching rows; substitute real ids, filter keys, and `e#~"text"` terms before execute.
+- `[fields]`/`.group_by`/`.sort`/`.dedupe`/row `.filter` use `rows:` fields only — not `inputs:`/`opt:` filter keys.
+- `e#{{…}}` filters at HTTP; `binding.filter{{…}}` filters materialized rows. Prefer `label = e#` then filter; bare `e#.filter{{…}}` list-alls first.
+- `group_by(key)` ≡ `group_by(key, count=count)`; multi-key: `group_by(k1, k2, n=count)`.
+- `=>` only for derive `{ k: _.field }` or `for_each` updates — not relation reads (`labels = issues.r#`).
+- Homograph: relation fanout via `.r#`/wire; `labels = issues.p#` forgiven when binding name matches.
+- Never emit `$` from teaching rows; substitute real ids and `e#~"text"` search terms.
 - Search operand: `e#~$` or `e#~"text"` required — bare `e#~` is a parse error.
 - Federated sessions: use the `e#` from the teaching row for that catalog when the same wire entity name appears in multiple APIs.
-- Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or `e#~$` / `e#~"text"` search.
-Worked search-only shape: `items = e#~$` then narrow with row postfix on `items` using **`rows:` fields only**.
+- Search-only entities (no query): no `e#{}` list-all — scoped `e#{p#=…}` and/or `e#~"text"`.
 
 
      **`plasm`** is plan-only (no live HTTP). One `program` per call; bare comma-separated roots (no `return`). **`plasm` cannot run `wait(h)`/`cancel(h)`** — use **`plasm_run`**.

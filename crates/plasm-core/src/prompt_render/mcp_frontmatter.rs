@@ -162,7 +162,7 @@ pub(crate) fn prompt_contract_spec_minimal_for_test() -> PromptContractSpec {
     }
 }
 
-const ROW_POSTFIX_OPS_BULLET: &str = "- Postfix on row producers: `.limit(N)` | `.page_size(N)` | `.sort(field[, dir])` | `.filter{…}` | `.filter(…)` | `.aggregate(specs)` | `.group_by(field, specs)` | `.dedupe(field[, …])` | `.distinct(field[, …])` | `.distinct()` | `.singleton()` | `[fields]` projection.\n";
+const ROW_POSTFIX_OPS_BULLET: &str = "- Postfix on row producers: `.limit(N)` | `.page_size(N)` | `.sort(field[, dir])` | `.filter{…}` | `.filter(…)` | `.aggregate(specs)` | `.group_by(field, specs)` | `.dedupe(field[, …])` | `.distinct(field[, …])` | `.distinct()` | `.singleton()` | `[fields]`.\n";
 
 fn render_core_surface_bullets(spec: &PromptContractSpec, projection: &str) -> String {
     let mut s = String::new();
@@ -176,7 +176,7 @@ fn render_core_surface_bullets(spec: &PromptContractSpec, projection: &str) -> S
     );
     if spec.symbolic {
         s.push_str(
-            "- Teaching TSV left cells are executable surfaces (list/get/query/relation/method); copy left cells, substitute placeholders, and compose via bindings.\n",
+            "- Copy teaching TSV left cells; substitute placeholders; compose via bindings.\n",
         );
     } else {
         s.push_str(
@@ -217,35 +217,31 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
 
     s.push_str("Output:\n");
     s.push_str(
-        "- Emit only code: either one `plasm_expr`, or one multi-line `plasm_program` with bindings then final roots.\n\
-- Do not emit prose, JSON wrappers, `return`, Markdown fences, or table rows.\n\
-- Prefer bind → narrow/project/transform → few final roots when more than one step is needed.\n\n",
+        "- Emit only code: one `plasm_expr`, or bindings then final roots. No prose, JSON, `return`, fences, or table rows.\n\
+- Prefer bind → narrow/project/transform → few final roots.\n\n",
     );
 
     s.push_str("TSV table semantics:\n");
     s.push_str(
-        "- Header is exactly `plasm_expr<TAB>Meaning`; every following row has exactly one tab delimiter.\n\
-- Left cell is either executable syntax or metadata. Right cell is selection guidance only; never copy `Meaning` into output.\n\
-- Executable rows start with an entity surface (`e#`/`Entity`). Metadata-only `p#`/`v#` rows define slots/value domains and are never roots.\n\
-- `Meaning` fragments joined by ` · ` stay inside `Meaning`; they are not operators.\n\n",
+        "- Header: `plasm_expr<TAB>Meaning`; one tab per row. Left = syntax/metadata; right = guidance only (never copy `Meaning`).\n\
+- Executable rows start with `e#`/Entity; metadata-only `p#`/`v#` rows are never roots.\n\n",
     );
 
     s.push_str("Symbol and fill rules:\n");
     if spec.symbolic {
         s.push_str(
-            "- `e#` = entity surface; `m#` = method/action surface; `p#` = field/capability/query predicate; `r#` = declared relation navigation; `v#` = value-domain metadata only.\n\
-            - Relation hops use `.wire` or `.r#` on a row-producing receiver — never bare `p#` after `.` (`p#` in `e#{{…}}` is a filter/param).\n\
-- Entity-ref gloss like `ref:Zone · str · Zone identifier` is type/help text, not syntax.\n\
-- Never write `v#` inside a `plasm_expr`. Use `p#` keys in code and use `v#` rows only to understand allowed values/types.\n\
-- `e#(p#)` identity rows use `p#` for the id slot; substitute the real wire id. `<id>`, `<value>`, `<receiver>`, and `elem` are meta-variables.\n\
-- If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.\n\
-- If `Meaning` says `opt: pA, pB`, those keys may be added only as keyed assignments with real values.\n",
+            "- `e#` entity; `m#` method; `p#` field/param/filter; `r#` relation nav; `v#` value-domain metadata only.\n\
+- Relation hops: `.wire` or `.r#` on row producers — never bare `p#` after `.` (`p#` in `e#{{…}}` is filter/param).\n\
+- Never write `v#` in code; use `p#` keys and read `v#` rows for allowed values.\n\
+- `e#(p#)` identity rows: substitute real wire ids for `<id>`, `<value>`, `<receiver>`, `elem`.\n\
+- Remove `..` ellipses or replace with real `p#=` assignments before output.\n\
+- Optional keys (`opt:` in `Meaning`): add only as keyed assignments with real values.\n",
         );
     } else {
         s.push_str(
-            "- Entity names, method names, and field names are literal code tokens when they appear in executable left cells.\n\
-- `$`, `<id>`, `<value>`, `<receiver>`, and `elem` are fill/meta placeholders; replace them before final output.\n\
-- If a copied row contains `..`, remove it or replace it with additional keyed assignments before final output.\n",
+            "- Entity, method, and field names in executable left cells are literal tokens.\n\
+- Replace `$`, `<id>`, `<value>`, `<receiver>`, and `elem` before output.\n\
+- Remove `..` ellipses or replace with keyed assignments before output.\n",
         );
     }
     let _ = writeln!(
@@ -259,12 +255,12 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
 
     s.push_str("Composition rules:\n");
     s.push_str(
-        "- Multi-line programs: one binding per line and final roots last (preferred). Single-line space-separated bindings are coerced; default return is the first binding.\n\
-- Postfix transforms and `[fields]` may chain on any bound node or expression that returns rows.\n\
-- Row text: `report = rows[p#,…] <<TAG` newline template newline `TAG`; Minijinja `rows` is only that source's projected rows.\n\
-- Compose text with `${report.content}` in later heredocs/strings; pass `binding.content` to string params, not the whole row.\n\
-- Do not use `report.content` as a final root or relation receiver. Return `report` if you want the generated text row; continue relations only from row-producing query/relation/projection bindings.\n\
-- Heredoc opener `<<TAG` is followed by newline; the first later line whose trimmed text is `TAG` closes it. Choose a tag not present in the body.\n",
+        "- One binding per line; final roots last (preferred). Single-line bindings coerced; default return is first binding.\n\
+- Postfix/`[fields]` chain on any row-producing binding or expression.\n\
+- Row text: `report = rows[p#,…] <<TAG` … `TAG`; Minijinja `rows` = that source's projected rows only.\n\
+- Pass `binding.content` to string params; compose with `${report.content}` in later heredocs/strings.\n\
+- Do not use `report.content` as a final root or relation receiver.\n\
+- Heredoc: `<<TAG` + newline; first trimmed `TAG` line closes; pick a tag absent from the body.\n",
     );
     if spec.include_scoped_search_worked_example {
         let _ = writeln!(
@@ -316,13 +312,12 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
 
     s.push_str("Common pitfalls:\n");
     s.push_str(
-        "- Row contract: `{…}` / `~\"…\"{…}` inputs fetch or filter rows; only `rows:` fields from the teaching row may be used in `[fields]`, `.group_by`, `.sort`, `.dedupe`, or row `.filter` — not `inputs:` / `opt:` filter keys.\n\
-- Fetch vs row filter: `e#{{…}}` filters at HTTP; `binding.filter{{…}}` or `binding.filter(…)` filters materialized rows. Not `rows{{…}}` on a label.\n\
-- Prefer `label = e#` then `label.filter{{…}}`; bare `e#.filter{{…}}` implies list-all first (unbounded read warning).\n\
-- `group_by(key, count=count)`; bare `group_by(key)` means `count=count`. Multi-key: `group_by(k1, k2, n=count)`.\n\
-- Binding `=>`: only `rows => {{ k: _.field }}` (derive) or `rows => e1(…).update(…)` (for_each). Child reads: `labels = issues.r#` or `issues.labels` — not `issues => e2(…)`. Row text: `rows <<TAG`, not `=>`.\n\
-- Homograph / gloss: filter `p#` and relation `.r#`/wire may share a wire name — fanout via `.r#`/wire (`labels = issues.p#` forgiven when the binding name matches). Copy executable left cells, not `Meaning` arrow gloss (`relation e3 → e2`).\n\
-- Fill-ins: never emit `$` from teaching rows; substitute real ids, filter keys, and `e#~\"text\"` terms before execute.\n",
+        "- `[fields]`/`.group_by`/`.sort`/`.dedupe`/row `.filter` use `rows:` fields only — not `inputs:`/`opt:` filter keys.\n\
+- `e#{{…}}` filters at HTTP; `binding.filter{{…}}` filters materialized rows. Prefer `label = e#` then filter; bare `e#.filter{{…}}` list-alls first.\n\
+- `group_by(key)` ≡ `group_by(key, count=count)`; multi-key: `group_by(k1, k2, n=count)`.\n\
+- `=>` only for derive `{ k: _.field }` or `for_each` updates — not relation reads (`labels = issues.r#`).\n\
+- Homograph: relation fanout via `.r#`/wire; `labels = issues.p#` forgiven when binding name matches.\n\
+- Never emit `$` from teaching rows; substitute real ids and `e#~\"text\"` search terms.\n",
     );
     if spec.include_search_line && spec.symbolic {
         s.push_str(
@@ -336,8 +331,7 @@ pub(crate) fn render_prompt_contract_dense(spec: PromptContractSpec) -> String {
     }
     if spec.include_search_only_entity_pitfall {
         s.push_str(
-            "- Search-only entities (no query capability): there is no `e#{}` list-all — use scoped `e#{p#=…}` filters and/or `e#~$` / `e#~\"text\"` search.\n\
-  Worked search-only shape: `items = e#~$` then narrow with row postfix on `items` using **`rows:` fields only**.\n",
+            "- Search-only entities (no query): no `e#{}` list-all — scoped `e#{p#=…}` and/or `e#~\"text\"`.\n",
         );
     }
     s.push('\n');
