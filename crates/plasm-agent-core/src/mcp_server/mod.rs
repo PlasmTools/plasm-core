@@ -117,7 +117,7 @@ use uuid::Uuid;
 
 /// Best-effort bound on concurrent MCP transport sessions holding an execute binding (see module doc).
 mod discover;
-mod prompt;
+pub(crate) mod prompt;
 mod schema;
 mod tool_parse;
 mod trace;
@@ -126,15 +126,15 @@ mod transport;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use prompt::{
-    mcp_plasm_context_tool_description, mcp_server_initialize_instructions, mcp_server_initialize_workflow,
-    MCP_PLASM_RUN_TOOL_DESCRIPTION, MCP_PLASM_TOOL_DESCRIPTION, MCP_PROGRAM_PARAM_DESCRIPTION,
-};
 pub(crate) use discover::{
     discovery_mcp_error, mcp_artifact_payload_chars, mcp_call_tool_error_class,
     mcp_discover_query_from_arguments, mcp_key, mcp_truncate_resource_uri_display,
     mcp_typed_discovery_query_from_arguments, read_resource_result_for_payload,
     typed_discovery_mcp_error,
+};
+pub(crate) use prompt::{
+    mcp_plasm_context_tool_description, mcp_server_initialize_instructions,
+    MCP_PLASM_RUN_TOOL_DESCRIPTION, MCP_PLASM_TOOL_DESCRIPTION, MCP_PROGRAM_PARAM_DESCRIPTION,
 };
 pub(crate) use schema::{
     args_value, json_schema_bool_type, json_schema_non_empty_object_array,
@@ -145,10 +145,12 @@ pub(crate) use tool_parse::{
     parse_plasm_context_ranked_capabilities, parse_tool_seeds, plan_display_name_from_comp,
     plan_node_count_from_comp,
 };
-pub(crate) use trace::{trace_archive_and_emit_code_plan_evaluate, trace_archive_and_emit_code_plan_execute};
+pub(crate) use trace::{
+    trace_archive_and_emit_code_plan_evaluate, trace_archive_and_emit_code_plan_execute,
+};
 pub(crate) use transport::{
-    mcp_chars_to_token_est, McpLogicalSessionState, McpSessionPlasmStats, McpTransportState,
-    PlasmExecBinding, plasm_invocation_char_count,
+    mcp_chars_to_token_est, plasm_invocation_char_count, McpLogicalSessionState,
+    McpSessionPlasmStats, McpTransportState, PlasmExecBinding,
 };
 
 const MAX_MCP_EXEC_BINDINGS: usize = 512;
