@@ -1,8 +1,11 @@
 //! Unified execute front door: dry-run is live preflight with I/O stubbed, not a parallel simulation path.
 
+mod dispatch;
 mod preflight;
 mod run_line_error;
 mod scope;
+
+pub(crate) use dispatch::preflight_line_compile_dispatch;
 
 pub use plasm_core::PreflightToken;
 pub use preflight::{PlasmPreflight, PreflightReport, SimulationBundle};

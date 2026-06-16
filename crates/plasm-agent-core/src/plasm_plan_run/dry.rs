@@ -63,10 +63,11 @@ pub fn evaluate_executable_comp_dry(
                 expr: ir.expr.clone(),
                 projection: ir.projection.clone(),
             };
-            typecheck_parsed_for_session(&scoped_es, &pe)
-                .map_err(|e| format!("type check in plan.nodes[{step_idx}]: {e}"))?;
-            ensure_surface_expr_matches_plan_kind(&scoped_es, surface, &pe, step_idx)?;
-            let (intent, il, bindings) = dry_run_simulation_for_session(&scoped_es, &pe);
+            let normalized =
+                crate::execute_pipeline::PlasmPreflight::preflight_node_compile_dispatch(
+                    es, &scoped_es, surface, &pe, step_idx,
+                )?;
+            let (intent, il, bindings) = dry_run_simulation_for_session(&scoped_es, &normalized);
             let expr = ir
                 .display_expr
                 .as_deref()
@@ -85,15 +86,15 @@ pub fn evaluate_executable_comp_dry(
                 "predicates": surface.predicates,
                 "approval_gate": inferred_approval,
                 "ir": {
-                    "expr": pe.expr,
-                    "projection": pe.projection
+                    "expr": normalized.expr,
+                    "projection": normalized.projection
                 },
                 "execution_contract": {
                     "entry_id": surface.qualified_entity.as_ref().map(|q| q.entry_id.as_str()).unwrap_or(es.entry_id.as_str()),
                     "entity": surface.qualified_entity.as_ref().map(|q| q.entity.as_str()),
                     "display_expr": expr,
-                    "ir": pe.expr,
-                    "projection": pe.projection
+                    "ir": normalized.expr,
+                    "projection": normalized.projection
                 },
                 "type_check": "ok",
                 "simulation": {
@@ -749,56 +750,6 @@ pub(crate) fn ensure_node_dispatchable(
         ));
     }
     Ok(())
-}
-
-pub(crate) fn ensure_surface_expr_matches_plan_kind(
-    es: &ExecuteSession,
-    surface: &ValidatedSurfaceNode,
-    pe: &ParsedExpr,
-    index: usize,
-) -> Result<(), String> {
-    let Expr::Query(query) = &pe.expr else {
-        if surface.kind == PlanNodeKind::Search {
-            return Err(format!(
-                "plan.nodes[{index}] is kind search but did not parse to a search query expression"
-            ));
-        }
-        return Ok(());
-    };
-    let Some(name) = query.capability_name.as_deref() else {
-        if surface.kind == PlanNodeKind::Search {
-            return Err(format!(
-                "plan.nodes[{index}] is kind search but expression did not resolve a search capability"
-            ));
-        }
-        return Ok(());
-    };
-    let cgs = es
-        .contexts_by_entry
-        .get(
-            surface
-                .qualified_entity
-                .as_ref()
-                .map(|q| q.entry_id.as_str())
-                .unwrap_or(es.entry_id.as_str()),
-        )
-        .map(|ctx| ctx.cgs.as_ref())
-        .unwrap_or(es.cgs.as_ref());
-    let Some(cap) = cgs.get_capability(name) else {
-        return Err(format!(
-            "plan.nodes[{index}] references unknown capability {name:?}"
-        ));
-    };
-    match (surface.kind, cap.kind) {
-        (PlanNodeKind::Search, CapabilityKind::Search) => Ok(()),
-        (PlanNodeKind::Search, other) => Err(format!(
-            "plan.nodes[{index}] is kind search but expression resolved capability {name:?} with kind {other:?}"
-        )),
-        (PlanNodeKind::Query, CapabilityKind::Search) => Err(format!(
-            "plan.nodes[{index}] is kind query but expression resolved search capability {name:?}; use a `search` plan node (kind `search`) or a non-search query per teaching table"
-        )),
-        _ => Ok(()),
-    }
 }
 
 pub(crate) fn ensure_relation_expr_matches_plan(

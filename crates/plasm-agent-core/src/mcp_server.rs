@@ -135,7 +135,7 @@ pub(crate) const MCP_PLASM_CONTEXT_TOOL_DESCRIPTION: &str =
 /// One-line JSON-schema description for the shared **`program`** parameter on **`plasm`** / **`plasm_run`**.
 pub(crate) const MCP_PROGRAM_PARAM_DESCRIPTION: &str = "Plasm program JSON string (`e#`/`m#`/`p#`/`r#`). Newlines preferred; coerced single-liners supported — see initialize **program contract** + `plasm_context` TSV.";
 
-/// MCP initialize workflow text (orchestration + program contract).
+/// MCP initialize workflow text (orchestration + program contract; async poll appended at runtime).
 pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = concat!(
     include_str!("mcp_prompt/workflow_head.txt"),
     include_str!("mcp_prompt/program_contract.txt"),
@@ -143,7 +143,11 @@ pub(crate) const MCP_SERVER_INITIALIZE_WORKFLOW: &str = concat!(
 );
 
 fn mcp_server_initialize_instructions() -> String {
-    MCP_SERVER_INITIALIZE_WORKFLOW.to_string()
+    format!(
+        "{}{}",
+        MCP_SERVER_INITIALIZE_WORKFLOW,
+        crate::operation_progress::ASYNC_POLL_DISCIPLINE_MCP_LINE
+    )
 }
 
 fn parse_tool_seeds(
@@ -3092,13 +3096,14 @@ mod tests {
     fn mcp_prompt_char_budget() {
         let init = super::mcp_server_initialize_instructions();
         assert!(
-            init.len() < 3200,
+            init.len() < 3300,
             "initialize instructions too long: {} chars",
             init.len()
         );
         let head = include_str!("mcp_prompt/workflow_head.txt");
         let contract = include_str!("mcp_prompt/program_contract.txt");
         let tail = include_str!("mcp_prompt/workflow_tail.txt");
+        let async_poll = crate::operation_progress::ASYNC_POLL_DISCIPLINE_MCP_LINE;
         assert!(
             head.len() < 950,
             "workflow_head too long: {} chars",
@@ -3110,18 +3115,21 @@ mod tests {
             contract.len()
         );
         assert!(
-            tail.len() < 750,
-            "workflow_tail too long: {} chars",
-            tail.len()
+            tail.len() + async_poll.len() < 1500,
+            "workflow_tail + async poll too long: {} chars",
+            tail.len() + async_poll.len()
         );
-        assert_eq!(init.len(), head.len() + contract.len() + tail.len());
+        assert_eq!(
+            init.len(),
+            head.len() + contract.len() + tail.len() + async_poll.len()
+        );
         assert!(
             super::MCP_PLASM_TOOL_DESCRIPTION.len() < 1200,
             "plasm tool description too long: {} chars",
             super::MCP_PLASM_TOOL_DESCRIPTION.len()
         );
         assert!(
-            super::MCP_PLASM_CONTEXT_TOOL_DESCRIPTION.len() < 900,
+            super::MCP_PLASM_CONTEXT_TOOL_DESCRIPTION.len() < 950,
             "plasm_context tool description too long: {} chars",
             super::MCP_PLASM_CONTEXT_TOOL_DESCRIPTION.len()
         );

@@ -134,7 +134,14 @@ impl ExecutionEngine {
                             async move {
                                 let result = match &expr {
                                     Expr::Get(g) => {
-                                        self.execute_get(g, cgs, &mut branch, mode).await
+                                        self.execute_get(
+                                            g,
+                                            cgs,
+                                            &mut branch,
+                                            mode,
+                                            &ViewAmbientContext::default(),
+                                        )
+                                        .await
                                     }
                                     Expr::Invoke(inv) => {
                                         self.execute_invoke(inv, cgs, &mut branch, mode).await

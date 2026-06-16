@@ -3,7 +3,10 @@
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::{reject_domain_placeholder_in_executable, PreflightToken};
 
+use crate::plasm_plan::ValidatedSurfaceNode;
 use crate::plasm_plan_run::{dry_run_simulation_for_session, typecheck_parsed_for_session};
+
+use super::dispatch;
 
 /// Dry-run materialization bundle produced during preflight simulation.
 #[derive(Debug, Clone, Default)]
@@ -16,23 +19,11 @@ pub struct SimulationBundle {
 pub struct PreflightReport {
     pub typecheck: PreflightToken,
     pub placeholders: PreflightToken,
-    pub plan_kind_match: PreflightToken,
     pub projection: PreflightToken,
     pub simulation: SimulationBundle,
 }
 
 impl PreflightReport {
-    pub fn new(simulation: SimulationBundle) -> Self {
-        let token = PreflightToken::VERIFIED;
-        Self {
-            typecheck: token,
-            placeholders: token,
-            plan_kind_match: token,
-            projection: token,
-            simulation,
-        }
-    }
-
     pub fn token(&self) -> PreflightToken {
         self.typecheck
     }
@@ -85,10 +76,30 @@ impl PlasmPreflight {
         _source: &str,
         parsed: &ParsedExpr,
     ) -> Result<PreflightReport, String> {
-        Self::typecheck_parsed_for_session(session, parsed)?;
+        let typecheck = Self::typecheck_parsed_for_session(session, parsed)?;
         reject_domain_placeholder_in_executable(&parsed.expr).map_err(|e| e.to_string())?;
-        Self::validate_projection_fields(session, parsed)?;
-        Ok(PreflightReport::new(SimulationBundle { node_count: 1 }))
+        let projection = Self::validate_projection_fields(session, parsed)?;
+        Ok(PreflightReport {
+            typecheck,
+            placeholders: PreflightToken::VERIFIED,
+            projection,
+            simulation: SimulationBundle { node_count: 1 },
+        })
+    }
+
+    /// Typecheck, normalize, plan-kind match, and CML compile — same gates as live line execute.
+    pub fn preflight_node_compile_dispatch(
+        es: &crate::execute_session::ExecuteSession,
+        scoped_es: &crate::execute_session::ExecuteSession,
+        surface: &ValidatedSurfaceNode,
+        parsed: &ParsedExpr,
+        step_idx: usize,
+    ) -> Result<ParsedExpr, String> {
+        let label = format!("plan.nodes[{step_idx}]");
+        Self::preflight_parsed_line(scoped_es, &label, parsed)?;
+        dispatch::preflight_surface_dispatch_after_typecheck(
+            es, scoped_es, surface, parsed, step_idx,
+        )
     }
 
     /// Dry preview: same gates as live, then intent/il/bindings simulation (no HTTP).
@@ -98,7 +109,14 @@ impl PlasmPreflight {
         parsed: &ParsedExpr,
     ) -> Result<(String, String, serde_json::Value), String> {
         Self::preflight_parsed_line(session, source, parsed)?;
-        Ok(dry_run_simulation_for_session(session, parsed))
+        let normalized = dispatch::preflight_line_compile_dispatch(
+            session,
+            session,
+            parsed,
+            source,
+            session.cgs.as_ref(),
+        )?;
+        Ok(dry_run_simulation_for_session(session, &normalized))
     }
 }
 

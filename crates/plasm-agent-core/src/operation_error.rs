@@ -7,6 +7,7 @@ pub enum OperationError {
     UnknownHandle {
         handle: String,
         hint: String,
+        open_handles: Vec<String>,
     },
     NotOnReplica {
         handle: String,
@@ -35,9 +36,25 @@ impl OperationError {
 
     pub fn detail(&self) -> String {
         match self {
-            Self::UnknownHandle { handle, hint } => format!(
-                "unknown operation handle `{handle}` — stale continuation or wrong logical session; use `{hint}` from the latest tool result"
-            ),
+            Self::UnknownHandle {
+                handle,
+                hint,
+                open_handles,
+            } => {
+                let mut msg = format!(
+                    "unknown operation handle `{handle}` — stale continuation or wrong logical session; use `{hint}` from the latest tool result"
+                );
+                if !open_handles.is_empty() {
+                    const MAX_LIST: usize = 8;
+                    let listed: Vec<&str> = open_handles.iter().take(MAX_LIST).map(String::as_str).collect();
+                    let mut list = listed.join(", ");
+                    if open_handles.len() > MAX_LIST {
+                        list.push_str(", …");
+                    }
+                    msg.push_str(&format!("; open in this session: {list}"));
+                }
+                msg
+            }
             Self::NotOnReplica { handle, .. } => format!(
                 "operation `{handle}` is running on another host; poll `wait({handle})` until terminal or retry after completion"
             ),
@@ -54,5 +71,22 @@ impl OperationError {
 impl std::fmt::Display for OperationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.detail())
+    }
+}
+
+#[cfg(test)]
+mod operation_error_tests {
+    use super::*;
+
+    #[test]
+    fn unknown_handle_lists_open_handles_in_detail() {
+        let err = OperationError::UnknownHandle {
+            handle: "l_test_o9".into(),
+            hint: "wait(l_test_oN)".into(),
+            open_handles: vec!["l_test_o1".into(), "l_test_o2".into()],
+        };
+        let detail = err.detail();
+        assert!(detail.contains("l_test_o9"));
+        assert!(detail.contains("open in this session: l_test_o1, l_test_o2"));
     }
 }

@@ -4,6 +4,7 @@ use crate::http_resilience::{HttpResiliencePolicy, ResilientHttpTransport};
 use crate::http_transport::{HttpTransport, ReqwestHttpTransport};
 use crate::materialization::{CacheTelemetry, ExecutionCacheConsult, SessionMaterialization};
 use crate::preflight::{apply_preflight_steps, PreflightInvoke};
+use crate::view_plan::ViewAmbientContext;
 use crate::{AuthResolver, CachedEntity, CancelSignal, EntityCompleteness, RuntimeError};
 use indexmap::IndexMap;
 use plasm_compile::{
@@ -35,12 +36,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::Instrument;
 
 mod chain;
+mod compile_preflight;
 mod http_exec;
 mod mutators;
 mod pagination_state;
 mod projection;
 mod query_stream;
 mod resume;
+
+pub use compile_preflight::preflight_compile_expr;
 
 pub(crate) use pagination_state::PaginationLoopState;
 #[cfg(test)]
@@ -446,11 +450,6 @@ pub(crate) fn try_current_execute_session_material(
         .flatten()
 }
 
-/// HTTP base string for the current execute task (view ambient scope fallback).
-pub(crate) fn try_current_http_base_string() -> Option<String> {
-    EXECUTION_HTTP_BASE.try_with(|b| b.to_string()).ok()
-}
-
 tokio::task_local! {
     /// Entity name for the current HTTP op (matches [`plasm_core::FederationDispatch`] keys); selects backend when federated.
     static EXECUTION_DISPATCH_ENTITY: Option<String>;
@@ -681,6 +680,16 @@ impl std::fmt::Debug for ExecuteOptions {
             .field("graph_page_spill", &self.graph_page_spill.is_some())
             .field("rows_progress", &self.rows_progress.is_some())
             .finish()
+    }
+}
+
+impl ExecuteOptions {
+    /// View scope injection context derived from this execute call's session material / HTTP base.
+    pub fn view_ambient(&self) -> ViewAmbientContext {
+        if let Some(material) = self.execute_session.as_ref() {
+            return ViewAmbientContext::from_execute_material(material.as_ref());
+        }
+        ViewAmbientContext::from_http_backend(self.http_base_url_override.as_deref())
     }
 }
 
@@ -1153,6 +1162,7 @@ impl ExecutionEngine {
         }
         let execution_mode = mode.unwrap_or(self.config.default_mode);
         let chain_consume = consume.clone();
+        let view_ambient = opts.view_ambient();
         match expr {
             Expr::Query(query) => self.query_to_stream(
                 query,
@@ -1161,6 +1171,7 @@ impl ExecutionEngine {
                 execution_mode,
                 consume,
                 opts.graph_page_spill.clone(),
+                &view_ambient,
             ),
             Expr::Page(_) => Err(RuntimeError::ConfigurationError {
                 message: "`page(pg#)` continuations are executed via `ExecutionEngine::execute_pagination_resume`"
@@ -1176,8 +1187,9 @@ impl ExecutionEngine {
             }),
             Expr::Get(get) => {
                 let get = get.clone();
+                let ambient = view_ambient;
                 let stream = Box::pin(async_stream::try_stream! {
-                    let res = self.execute_get(&get, cgs, mat, execution_mode).await?;
+                    let res = self.execute_get(&get, cgs, mat, execution_mode, &ambient).await?;
                     yield PageResult {
                         entities: res.entities,
                         page_index: 0,
@@ -1261,8 +1273,10 @@ impl ExecutionEngine {
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
         consume: StreamConsumeOpts,
+        ambient: &ViewAmbientContext,
     ) -> Result<ExecutionResult, RuntimeError> {
-        let mut stream = self.query_to_stream(query, cgs, mat, mode, consume.clone(), None)?;
+        let mut stream =
+            self.query_to_stream(query, cgs, mat, mode, consume.clone(), None, ambient)?;
         collect_query_stream(&mut stream, &consume).await
     }
 
@@ -1273,6 +1287,7 @@ impl ExecutionEngine {
     ///   inject an FK equality predicate on the source query.
     /// - **Pull-right**: query source without the cross-entity predicate,
     ///   then client-side filter each row by fetching the foreign entity.
+    #[allow(clippy::too_many_arguments)]
     fn execute_query_cross_entity<'a>(
         &'a self,
         query: &'a QueryExpr,
@@ -1281,9 +1296,11 @@ impl ExecutionEngine {
         mat: &'a mut SessionMaterialization,
         mode: ExecutionMode,
         consume: StreamConsumeOpts,
+        ambient: &'a ViewAmbientContext,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<ExecutionResult, RuntimeError>> + Send + 'a>,
     > {
+        let ambient = ambient.clone();
         Box::pin(async move {
             let source_entity =
                 cgs.get_entity(&query.entity)
@@ -1319,6 +1336,7 @@ impl ExecutionEngine {
                                     graph_backed_result: false,
                                     ..Default::default()
                                 },
+                                &ambient,
                             )
                             .await?;
 
@@ -1390,7 +1408,7 @@ impl ExecutionEngine {
             rewritten_query.predicate = rewritten_pred;
 
             let mut result = self
-                .execute_query(&rewritten_query, cgs, mat, mode, consume)
+                .execute_query(&rewritten_query, cgs, mat, mode, consume, &ambient)
                 .await?;
             result.stats.network_requests += total_network;
             if any_live {
@@ -1410,7 +1428,7 @@ impl ExecutionEngine {
                         };
 
                         let get = GetExpr::new(&cross.foreign_entity, &id);
-                        let get_result = self.execute_get(&get, cgs, mat, mode).await?;
+                        let get_result = self.execute_get(&get, cgs, mat, mode, &ambient).await?;
                         result.stats.network_requests += get_result.stats.network_requests;
 
                         let Some(foreign) = get_result.entities.first() else {
@@ -1442,6 +1460,7 @@ impl ExecutionEngine {
         cgs: &CGS,
         mat: &mut SessionMaterialization,
         mode: ExecutionMode,
+        ambient: &ViewAmbientContext,
     ) -> Result<ExecutionResult, RuntimeError> {
         // Satisfy from cache only when we already hold a detail payload.
         if let Some(entity) = mat.get(&get.reference) {
@@ -1466,7 +1485,7 @@ impl ExecutionEngine {
         }
 
         let (cached, source) = self
-            .fetch_get_decoded(get, cgs, mode, None, true, Some(mat))
+            .fetch_get_decoded(get, cgs, mode, None, true, Some(mat), ambient)
             .await?;
         mat.insert(cached.clone())?;
 
@@ -1741,6 +1760,7 @@ impl ExecutionEngine {
     ///
     /// When `inject_execute_session_env` is true, reserved `plasm_execute_*` keys are merged for
     /// user-facing GETs only — internal preflight/hydrate GETs pass `false`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) async fn fetch_get_decoded(
         &self,
         get: &GetExpr,
@@ -1749,6 +1769,7 @@ impl ExecutionEngine {
         hydrate_capability: Option<&str>,
         inject_execute_session_env: bool,
         cache: Option<&mut SessionMaterialization>,
+        ambient: &ViewAmbientContext,
     ) -> Result<(CachedEntity, ExecutionSource), RuntimeError> {
         let capability: &CapabilitySchema = match hydrate_capability {
             Some(name) => {
@@ -1794,6 +1815,7 @@ impl ExecutionEngine {
                 cgs,
                 cache_ref,
                 mode,
+                ambient,
             )
             .await?;
             let cached = res
@@ -1862,7 +1884,7 @@ impl ExecutionEngine {
         let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
             let get = GetExpr::from_ref(reference.clone());
             async move {
-                self.fetch_get_decoded(&get, cgs, mode, None, false, None)
+                self.fetch_get_decoded(&get, cgs, mode, None, false, None, &ViewAmbientContext::default())
                     .await
             }
         }))

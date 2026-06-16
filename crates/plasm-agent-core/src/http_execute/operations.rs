@@ -5,18 +5,33 @@ use crate::operation_error::OperationError;
 use crate::run_artifacts::RunArtifactId;
 use crate::trace_hub::CodePlanRunArtifactRef;
 
+fn open_handle_strings(sess: &ExecuteSession) -> Vec<String> {
+    sess.open_live_operation_handles()
+        .into_iter()
+        .map(|h| h.as_str().to_string())
+        .collect()
+}
+
+fn session_unknown_handle(
+    sess: &ExecuteSession,
+    handle: impl AsRef<str>,
+    hint: impl Into<String>,
+) -> OperationError {
+    OperationError::UnknownHandle {
+        handle: handle.as_ref().to_string(),
+        hint: hint.into(),
+        open_handles: open_handle_strings(sess),
+    }
+}
+
 pub async fn handle_wait_operation(
     sess: &ExecuteSession,
     st: Option<&PlasmHostState>,
     trace: Option<&PlasmTraceContext>,
     handle: &plasm_core::OperationHandle,
 ) -> Result<crate::plasm_plan_run::PlasmPlanRunResult, OperationError> {
-    let key = crate::operation::resolve_operation_storage_handle(trace, handle).map_err(|e| {
-        OperationError::UnknownHandle {
-            handle: handle.as_str().to_string(),
-            hint: e,
-        }
-    })?;
+    let key = crate::operation::resolve_operation_storage_handle(trace, handle)
+        .map_err(|e| session_unknown_handle(sess, handle.as_str(), e))?;
     let hint = wait_hint(trace, handle, &key);
 
     if let Some(op) = sess.get_operation(&key) {
@@ -32,28 +47,19 @@ pub async fn handle_wait_operation(
         }
         if op.phase == crate::operation::OperationPhase::Failed {
             if let Some(err) = op.error.clone() {
-                return Err(OperationError::UnknownHandle {
-                    handle: key.as_str().to_string(),
-                    hint: err,
-                });
+                return Err(session_unknown_handle(sess, key.as_str(), err));
             }
         }
     }
 
     let Some(snapshot) = sess.get_operation_poll_snapshot(&key) else {
-        return Err(OperationError::UnknownHandle {
-            handle: key.as_str().to_string(),
-            hint,
-        });
+        return Err(session_unknown_handle(sess, key.as_str(), hint));
     };
 
     match snapshot {
         crate::operation::OperationPollSnapshot::Running(_) => {
             let Some((markdown, plasm_meta, _unchanged)) = sess.operation_poll_parts(&key) else {
-                return Err(OperationError::UnknownHandle {
-                    handle: key.as_str().to_string(),
-                    hint,
-                });
+                return Err(session_unknown_handle(sess, key.as_str(), hint));
             };
             let mut meta = serde_json::Map::new();
             meta.insert("plasm".into(), serde_json::Value::Object(plasm_meta));
@@ -61,10 +67,7 @@ pub async fn handle_wait_operation(
         }
         crate::operation::OperationPollSnapshot::Succeeded(result) => Ok((*result).clone()),
         crate::operation::OperationPollSnapshot::Failed(error) => {
-            Err(OperationError::UnknownHandle {
-                handle: key.as_str().to_string(),
-                hint: error,
-            })
+            Err(session_unknown_handle(sess, key.as_str(), error))
         }
         crate::operation::OperationPollSnapshot::Cancelled(progress) => {
             Ok(cancelled_plan_run_result(&key, &progress, sess))
@@ -219,12 +222,8 @@ pub async fn handle_cancel_operation(
     trace: Option<&PlasmTraceContext>,
     handle: &plasm_core::OperationHandle,
 ) -> Result<crate::plasm_plan_run::PlasmPlanRunResult, OperationError> {
-    let key = crate::operation::resolve_operation_storage_handle(trace, handle).map_err(|e| {
-        OperationError::UnknownHandle {
-            handle: handle.as_str().to_string(),
-            hint: e,
-        }
-    })?;
+    let key = crate::operation::resolve_operation_storage_handle(trace, handle)
+        .map_err(|e| session_unknown_handle(sess, handle.as_str(), e))?;
     if !sess.operation_has_live_executor(&key) {
         if let Some(op) = sess.get_operation(&key) {
             if op.phase == crate::operation::OperationPhase::Running {
@@ -236,16 +235,18 @@ pub async fn handle_cancel_operation(
                 });
             }
         }
-        return Err(OperationError::UnknownHandle {
-            handle: key.as_str().to_string(),
-            hint: format!("cancel({})", key.as_str()),
-        });
+        return Err(session_unknown_handle(
+            sess,
+            key.as_str(),
+            format!("cancel({})", key.as_str()),
+        ));
     }
     if !sess.cancel_operation(&key, None) {
-        return Err(OperationError::UnknownHandle {
-            handle: key.as_str().to_string(),
-            hint: format!("cancel({})", key.as_str()),
-        });
+        return Err(session_unknown_handle(
+            sess,
+            key.as_str(),
+            format!("cancel({})", key.as_str()),
+        ));
     }
     let progress = sess.get_operation_progress(&key).unwrap_or_default();
     Ok(cancelled_plan_run_result(&key, &progress, sess))

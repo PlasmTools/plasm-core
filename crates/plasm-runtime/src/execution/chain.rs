@@ -338,7 +338,7 @@ impl ExecutionEngine {
             let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
                 let get = GetExpr::from_ref(reference.clone());
                 async move {
-                    self.fetch_get_decoded(&get, cgs, mode, None, false, None)
+                    self.fetch_get_decoded(&get, cgs, mode, None, false, None, &ViewAmbientContext::default())
                         .await
                 }
             }))
@@ -421,7 +421,14 @@ impl ExecutionEngine {
                 let mut branch = branch_seed.clone();
                 async move {
                     let result = self
-                        .execute_query(&q, cgs, &mut branch, mode, StreamConsumeOpts::default())
+                        .execute_query(
+                            &q,
+                            cgs,
+                            &mut branch,
+                            mode,
+                            StreamConsumeOpts::default(),
+                            &ViewAmbientContext::default(),
+                        )
                         .await?;
                     Ok::<_, RuntimeError>((parent_idx, result, branch))
                 }
@@ -782,7 +789,15 @@ impl ExecutionEngine {
         let mut stream = stream::iter(gets.into_iter().map(move |get| {
             let c = cap_named.clone();
             async move {
-                self.fetch_get_decoded(&get, cgs, mode, Some(c.as_str()), false, None)
+                self.fetch_get_decoded(
+                    &get,
+                    cgs,
+                    mode,
+                    Some(c.as_str()),
+                    false,
+                    None,
+                    &ViewAmbientContext::default(),
+                )
                     .await
             }
         }))
@@ -953,7 +968,7 @@ impl ExecutionEngine {
             let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
                 let get = GetExpr::from_ref(reference.clone());
                 async move {
-                    self.fetch_get_decoded(&get, cgs, mode, None, false, None)
+                    self.fetch_get_decoded(&get, cgs, mode, None, false, None, &ViewAmbientContext::default())
                         .await
                 }
             }))

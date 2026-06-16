@@ -127,7 +127,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             incoming_auth_device: Arc::new(crate::incoming_auth_device::IncomingAuthDeviceStore),
             trace_hub,
             op_progress_hub,
-            operation_persist: Arc::new(OperationPersistScheduler),
+            operation_persist: Arc::new(OperationPersistScheduler::default()),
             trace_hub_config,
             trace_ingest,
             local_trace_archive,

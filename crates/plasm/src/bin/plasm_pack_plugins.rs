@@ -11,7 +11,7 @@
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use plasm_compile::validate_cgs_capability_templates;
+use plasm_compile::{validate_cgs_capability_templates, validate_cgs_views};
 use plasm_core::loader::{finalize_cgs_load, load_schema_dir_unvalidated};
 use plasm_core::schema::CGS;
 use sha2::{Digest, Sha256};
@@ -158,6 +158,7 @@ fn prepare_cgs_for_plugin(api_dir: &Path, entry_id: &str) -> Result<CGS> {
         .map_err(|e| anyhow::anyhow!("load_schema {}: {e}", api_dir.display()))?;
     validate_cgs_capability_templates(&cgs)
         .map_err(|e| anyhow::anyhow!("validate {entry_id}: {e}"))?;
+    validate_cgs_views(&cgs).map_err(|e| anyhow::anyhow!("validate views {entry_id}: {e}"))?;
 
     if let Some(ref eid) = cgs.entry_id {
         if eid != entry_id {

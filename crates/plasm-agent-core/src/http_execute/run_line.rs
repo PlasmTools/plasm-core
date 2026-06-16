@@ -269,6 +269,10 @@ pub(crate) async fn run_parsed_plasm_line(
     let fed_holder = sess.federation_dispatch();
     let exec_cgs = crate::catalog_ownership::resolve_cgs_for_entity(sess, root_entity, None)
         .map_err(RunLineError::Parse)?;
+    let parsed = crate::execute_pipeline::preflight_line_compile_dispatch(
+        sess, sess, &parsed, line, exec_cgs,
+    )
+    .map_err(RunLineError::Parse)?;
     let engine_override = st
         .engine
         .config()

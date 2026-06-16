@@ -1,8 +1,10 @@
 //! Query execution streams (paginated, non-paginated, cross-entity).
 
 use super::*;
+use crate::view_plan::ViewAmbientContext;
 
 impl ExecutionEngine {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn query_to_stream<'a>(
         &'a self,
         query: &'a QueryExpr,
@@ -11,13 +13,15 @@ impl ExecutionEngine {
         mode: ExecutionMode,
         consume: StreamConsumeOpts,
         graph_page_spill: Option<crate::graph_page_spill::GraphPageSpillHandle>,
+        ambient: &ViewAmbientContext,
     ) -> Result<QueryStream<'a>, RuntimeError> {
         if let Some(pred) = &query.predicate {
             if let Some(source_entity) = cgs.get_entity(&query.entity) {
                 let crosses = extract_cross_entity_predicates(pred, source_entity, cgs);
                 if !crosses.is_empty() {
-                    return self
-                        .cross_entity_query_stream(query, &crosses, cgs, mat, mode, consume);
+                    return self.cross_entity_query_stream(
+                        query, &crosses, cgs, mat, mode, consume, ambient,
+                    );
                 }
             }
         }
@@ -48,6 +52,7 @@ impl ExecutionEngine {
         if let CapabilityTemplate::View(vt) = &capability_template {
             let view_name = vt.view.clone();
             let query = query.clone();
+            let ambient = ambient.clone();
             let stream = Box::pin(async_stream::try_stream! {
                 let res = crate::view_execution::execute_view_query(
                     self,
@@ -56,6 +61,7 @@ impl ExecutionEngine {
                     cgs,
                     mat,
                     mode,
+                    &ambient,
                 )
                 .await?;
                 yield PageResult {
@@ -95,12 +101,14 @@ impl ExecutionEngine {
         mat: &'a mut SessionMaterialization,
         mode: ExecutionMode,
         consume: StreamConsumeOpts,
+        ambient: &ViewAmbientContext,
     ) -> Result<QueryStream<'a>, RuntimeError> {
         let query = query.clone();
         let crosses = crosses.to_vec();
+        let ambient = ambient.clone();
         let stream = Box::pin(async_stream::try_stream! {
             let res = self
-                .execute_query_cross_entity(&query, &crosses, cgs, mat, mode, consume)
+                .execute_query_cross_entity(&query, &crosses, cgs, mat, mode, consume, &ambient)
                 .await?;
             yield PageResult {
                 entities: res.entities,

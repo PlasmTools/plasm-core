@@ -1,5 +1,10 @@
 # Linear — task-oriented NL eval (name-centric: identifiers, team keys, filter strings).
 #
+# Live/MCP smoke: fixture ids like `ENG` / `ENG-42` are pedagogy only. Before live MCP tests,
+# discover a real `team_key` and issue identifier from the connected workspace (e.g. search issues,
+# list teams) and substitute those values — empty results or `Entity not found` are usually data mismatch,
+# not catalog transport failures.
+#
 - id: lin-01
   schema: linear
   goal: "Show open bugs in team ENG"

@@ -16,6 +16,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 indexmap = { workspace = true }
 tracing = { workspace = true }
+minijinja = { version = "2.19.0", default-features = false, features = ["builtins"] }
 
 [dev-dependencies]
 proptest = { workspace = true }

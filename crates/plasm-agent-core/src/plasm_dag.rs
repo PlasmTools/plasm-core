@@ -1351,6 +1351,29 @@ fn lower_row_expression(
     )
 }
 
+/// When `expr` carries postfix and/or relation suffixes, lower the full DAG spine.
+/// Returns `None` for pure surface heads (no row suffix stream).
+fn try_lower_row_suffix_expression(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    expr: &str,
+) -> Result<Option<Vec<DagNode>>, String> {
+    let expr_trim = expr.trim();
+    let expanded = ExpandedProgramSurface::new(session, state.pipeline, expr_trim);
+    let (_, suffixes) = decompose_row_suffix_stream(session, state, expanded.as_str())?;
+    if suffixes.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(lower_row_expression(
+        session,
+        state,
+        id,
+        expr_trim,
+        Some(id),
+    )?))
+}
+
 /// Classify interleaved relation + transform suffixes after peeling postfix transforms and relation hops from the right.
 fn decompose_row_suffix_stream(
     session: &ExecuteSession,
@@ -1759,9 +1782,8 @@ fn compile_node_expr(
         return compile_render_from_tail(session, state, id, rhs_display, tail);
     }
 
-    let (_, suffixes) = decompose_row_suffix_stream(session, state, rhs)?;
-    if !suffixes.is_empty() {
-        return lower_row_expression(session, state, id, rhs_display, Some(id));
+    if let Some(nodes) = try_lower_row_suffix_expression(session, state, id, rhs_display)? {
+        return Ok(nodes);
     }
 
     if let Ok(value) = parse_plan_value_expr(rhs, state, None) {
@@ -2458,14 +2480,31 @@ fn try_split_single_hop_surface_chain(
     let segment = chain.selector.clone();
     let trimmed = expr.trim();
     let suffix = format!(".{segment}");
-    if !trimmed.ends_with(&suffix) {
-        return None;
+    if trimmed.ends_with(&suffix) {
+        let base_expr = trimmed[..trimmed.len() - suffix.len()].trim().to_string();
+        if !base_expr.is_empty() {
+            return Some((base_expr, segment));
+        }
     }
-    let base_expr = trimmed[..trimmed.len() - suffix.len()].trim().to_string();
+    // Opaque relation symbols (e.g. `.r2`) may differ from wire names (e.g. `.pokemon`).
+    let dot = trimmed.rfind('.')?;
+    let base_expr = trimmed[..dot].trim().to_string();
     if base_expr.is_empty() {
         return None;
     }
-    Some((base_expr, segment))
+    let base_parsed = parse_plasm_surface_line_program(
+        session,
+        state.cross_cache,
+        state.pipeline,
+        &base_expr,
+        Some(&refs),
+        false,
+    )
+    .ok()?;
+    if base_parsed.expr == *chain.source {
+        return Some((base_expr, segment));
+    }
+    None
 }
 
 fn plan_render_content_scalar_reference_err(id: &str, expr: &str, label: &str) -> String {
@@ -2582,6 +2621,11 @@ fn compile_surface_node(
     id: &str,
     expr: &str,
 ) -> Result<DagNode, String> {
+    if let Some(mut nodes) = try_lower_row_suffix_expression(session, state, id, expr)? {
+        return nodes.pop().ok_or_else(|| {
+            format!("Plasm program `{id}`: postfix/relation chain `{expr}` produced no nodes")
+        });
+    }
     if let Some((label, tail)) = longest_matching_bound_prefix(expr, state) {
         let contract = binding_contract(state, &label).ok_or_else(|| {
             format!("Plasm program `{id}`: unknown binding `{label}` for continuation")
@@ -3732,6 +3776,28 @@ bad"#,
         assert!(
             err.contains("derive map does not accept surface expressions"),
             "{err}"
+        );
+    }
+
+    #[test]
+    fn surface_relation_chain_with_postfix_compiles() {
+        let session = test_session();
+        let plan = compile_plasm_surface_line_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "relation-chain-limit",
+            r#"LangItem("i1").lines.limit(2)[id]"#,
+        )
+        .expect("direct relation chain with postfix should compile");
+        let nodes = plan.get("nodes").and_then(|v| v.as_array()).expect("nodes");
+        assert!(
+            nodes.len() >= 2,
+            "expected relation + compute nodes, got {nodes:?}"
+        );
+        assert!(
+            !format!("{plan:?}").contains("internal: relation chains must be lowered"),
+            "{plan:?}"
         );
     }
 

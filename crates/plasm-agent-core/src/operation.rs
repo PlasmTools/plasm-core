@@ -2,7 +2,9 @@
 
 use crate::execute_session::ExecuteSession;
 use crate::operation_progress::{
-    op_plasm_meta_short, render_op_wire_line, render_op_wire_markdown, OpWireSig,
+    async_poll_accept_markdown_suffix, async_poll_progress_markdown_suffix,
+    async_poll_unchanged_markdown_suffix, op_plasm_meta_short, render_op_wire_line,
+    render_op_wire_markdown, OpWireSig,
 };
 use crate::plan_dry_display::{PlanDryReview, PlanDryVerdict};
 use crate::plasm_plan_run::{DryPlasmPlanEvaluation, PlasmPlanRunResult};
@@ -410,11 +412,7 @@ pub fn operation_accept_markdown(
         dry_verdict,
         None,
     );
-    render_op_wire_markdown(&line)
-        + &format!(
-            "\n\n_Poll with `plasm_run program=wait({})` until `!`; do not start unrelated live programs while this handle is open._",
-            handle.as_str()
-        )
+    render_op_wire_markdown(&line) + &async_poll_accept_markdown_suffix(handle)
 }
 
 pub fn operation_running_markdown(
@@ -428,7 +426,12 @@ pub fn operation_running_markdown(
         OpWireSig::Running
     };
     let line = render_op_wire_line(handle, sig, Some(progress), None, None, None);
-    render_op_wire_markdown(&line)
+    let suffix = if unchanged {
+        async_poll_unchanged_markdown_suffix(handle)
+    } else {
+        async_poll_progress_markdown_suffix(handle)
+    };
+    render_op_wire_markdown(&line) + &suffix
 }
 
 pub fn operation_terminal_markdown(
@@ -643,6 +646,29 @@ pub fn spawn_async_plan_run(
 mod tests {
     use super::*;
     use plasm_core::PlanCommitRef;
+
+    #[test]
+    fn operation_accept_markdown_includes_poll_discipline() {
+        let handle = OperationHandle::mint_namespaced("l_AAAAAAAAQACAAAAAAAAAAQ", 1);
+        let md = operation_accept_markdown(&handle, None, None, true);
+        assert!(md.contains("wait(l_AAAAAAAAQACAAAAAAAAAAQ_o1)"));
+        assert!(md.contains("unrelated live programs"));
+        assert!(md.contains("`=`"));
+    }
+
+    #[test]
+    fn operation_running_markdown_unchanged_includes_keep_polling() {
+        let handle = OperationHandle::mint_namespaced("l_AAAAAAAAQACAAAAAAAAAAQ", 2);
+        let progress = OperationProgress {
+            step: 1,
+            step_total: 5,
+            label: Some("items".into()),
+            rows_materialized: 120,
+        };
+        let md = operation_running_markdown(&handle, &progress, true);
+        assert!(md.contains("Still open"));
+        assert!(md.contains("wait(l_AAAAAAAAQACAAAAAAAAAAQ_o2)"));
+    }
 
     #[test]
     fn live_run_should_auto_async_only_for_expensive_review_with_default_wait() {

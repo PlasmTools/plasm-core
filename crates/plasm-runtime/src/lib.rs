@@ -126,9 +126,22 @@ pub mod runtime_error_render;
 pub mod session_graph_cache;
 pub mod top_k;
 
+mod view_dag_run;
 mod view_execution;
+mod view_matrix_fixture;
+mod view_plan;
+mod view_preflight;
+mod view_stub_rows;
 mod view_template;
-mod view_typestate;
+
+pub mod view_test_support {
+    pub use crate::view_matrix_fixture::*;
+}
+
+pub use view_plan::{ViewAmbientContext, ViewRunProof};
+pub use view_preflight::{
+    preflight_view_get, preflight_view_query, preflight_view_scoped_with_proof,
+};
 
 mod cancel_signal;
 mod runtime_metrics;

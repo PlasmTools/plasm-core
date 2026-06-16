@@ -17,6 +17,14 @@ Personal API keys use a **raw** `Authorization` header (no `Bearer` prefix).
 export LINEAR_API_TOKEN='lin_api_…'
 ```
 
+## Live MCP / agent smoke
+
+NL eval cases under [`eval/cases.yaml`](eval/cases.yaml) use fixture names like `ENG` and `ENG-42` for synthesis coverage. **Do not assume those ids exist in your workspace.** Before live `plasm_run` tests:
+
+1. `discover_capabilities` or `Issue.search` for a real team key and issue identifier.
+2. Substitute discovered values in get/comment/workflow programs.
+3. Treat `Entity not found` or zero-row search as workspace data mismatch unless auth fails.
+
 ## Schema overlay (deferred)
 
 Linear workspaces can define **issue custom fields**, but the **public GraphQL schema** exposed in [Linear's SDK](https://github.com/linear/linear/blob/master/packages/sdk/src/schema.graphql) does not yet include a stable **`customFields`** (or equivalent) query for field definitions and issue value shapes. When Linear publishes that surface, add **`custom_field_query`** + **`schema_overlay:`** with `projection.mode: augment_base` on **`Issue`** (same pattern as [ClickUp](../clickup/domain.yaml)). Until then, use static `Issue` fields and `issue_update` for standard properties only.

@@ -68,6 +68,210 @@ pub fn validate_cgs_capability_templates(cgs: &plasm_core::CGS) -> Result<(), Cm
     Ok(())
 }
 
+fn validate_view_template_syntax(label: &str, template: &str) -> Result<(), CmlError> {
+    if template.len() > 32_768 {
+        return Err(CmlError::InvalidTemplate {
+            message: format!("{label}: template exceeds 32KiB"),
+        });
+    }
+    minijinja::Environment::new()
+        .template_from_str(template)
+        .map_err(|e| CmlError::InvalidTemplate {
+            message: format!("{label}: {e}"),
+        })?;
+    Ok(())
+}
+
+fn view_node_ids(view: &plasm_core::schema::ViewDefinition) -> indexmap::IndexSet<String> {
+    view.nodes.iter().map(|n| n.id.clone()).collect()
+}
+
+/// Static validation for CGS `views:` DAGs at catalog load (no expr / HTTP).
+pub fn validate_cgs_views(cgs: &plasm_core::CGS) -> Result<(), CmlError> {
+    use plasm_core::schema::{ViewOutputBinding, ViewParamBinding, ViewRelationBinding};
+    use plasm_core::CapabilityKind;
+    use std::collections::HashSet;
+
+    for (view_key, view) in &cgs.views {
+        let cap = cgs
+            .get_capability(view.capability.as_str())
+            .ok_or_else(|| CmlError::InvalidTemplate {
+                message: format!(
+                    "view `{view_key}` references unknown capability `{}`",
+                    view.capability
+                ),
+            })?;
+        let template = parse_capability_template(&cap.mapping.template)?;
+        match &template {
+            CapabilityTemplate::View(vt) if vt.view == *view_key => {}
+            CapabilityTemplate::View(vt) => {
+                return Err(CmlError::InvalidTemplate {
+                    message: format!(
+                        "view `{view_key}`: capability `{}` maps to view `{}`",
+                        view.capability, vt.view
+                    ),
+                });
+            }
+            _ => {
+                return Err(CmlError::InvalidTemplate {
+                    message: format!(
+                        "view `{view_key}` capability `{}` must use transport: view",
+                        view.capability
+                    ),
+                });
+            }
+        }
+
+        if cgs.get_entity(view.entity.as_str()).is_none() {
+            return Err(CmlError::InvalidTemplate {
+                message: format!("view `{view_key}` targets unknown entity `{}`", view.entity),
+            });
+        }
+
+        for sp in &view.scope {
+            if sp.required && sp.inject.is_some() {
+                return Err(CmlError::InvalidTemplate {
+                    message: format!(
+                        "view `{view_key}` scope `{}` cannot be both required and inject",
+                        sp.name
+                    ),
+                });
+            }
+        }
+
+        let all_node_ids = view_node_ids(view);
+        let mut seen_node_ids: HashSet<String> = HashSet::new();
+        let mut prior_nodes: HashSet<String> = HashSet::new();
+
+        for node in &view.nodes {
+            if !seen_node_ids.insert(node.id.clone()) {
+                return Err(CmlError::InvalidTemplate {
+                    message: format!("view `{view_key}` has duplicate node id `{}`", node.id),
+                });
+            }
+            let node_cap = cgs
+                .get_capability(node.capability.as_str())
+                .ok_or_else(|| CmlError::InvalidTemplate {
+                    message: format!(
+                        "view `{view_key}` node `{}` references unknown capability `{}`",
+                        node.id, node.capability
+                    ),
+                })?;
+            match node_cap.kind {
+                CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get => {}
+                other => {
+                    return Err(CmlError::InvalidTemplate {
+                        message: format!(
+                            "view `{view_key}` node `{}`: unsupported capability kind {other:?}",
+                            node.id
+                        ),
+                    });
+                }
+            }
+            let inner_template = parse_capability_template(&node_cap.mapping.template)?;
+            if matches!(inner_template, CapabilityTemplate::View(_)) {
+                return Err(CmlError::InvalidTemplate {
+                    message: format!(
+                        "view `{view_key}` node `{}`: nested view capabilities are not supported",
+                        node.id
+                    ),
+                });
+            }
+
+            for (param, binding) in &node.bind {
+                match binding {
+                    ViewParamBinding::NodeField { node: ref_node, .. } => {
+                        if !prior_nodes.contains(ref_node) {
+                            return Err(CmlError::InvalidTemplate {
+                                message: format!(
+                                    "view `{view_key}` node `{}` bind `{param}` references `{ref_node}` before it runs",
+                                    node.id
+                                ),
+                            });
+                        }
+                    }
+                    ViewParamBinding::Computed { template } => {
+                        validate_view_template_syntax(
+                            &format!(
+                                "view `{view_key}` node `{}` bind `{param}` computed",
+                                node.id
+                            ),
+                            template,
+                        )?;
+                    }
+                    _ => {}
+                }
+            }
+            prior_nodes.insert(node.id.clone());
+        }
+
+        for (field, binding) in &view.output {
+            match binding {
+                ViewOutputBinding::NodeRowCount { node }
+                | ViewOutputBinding::NodeField { node, .. }
+                | ViewOutputBinding::NodeFieldHistogramJson { node, .. }
+                | ViewOutputBinding::NodeAnyRowFieldEquals { node, .. }
+                | ViewOutputBinding::NodeRowCountPositive { node } => {
+                    if !all_node_ids.contains(node) {
+                        return Err(CmlError::InvalidTemplate {
+                            message: format!(
+                                "view `{view_key}` output `{field}` references unknown node `{node}`"
+                            ),
+                        });
+                    }
+                }
+                ViewOutputBinding::Computed { template } => {
+                    validate_view_template_syntax(
+                        &format!("view `{view_key}` output `{field}` computed"),
+                        template,
+                    )?;
+                }
+                ViewOutputBinding::Scope { .. } => {}
+            }
+        }
+
+        for spec in &view.relation_outputs {
+            let node = match &spec.binding {
+                ViewRelationBinding::FirstNodeRowWhere { node, .. }
+                | ViewRelationBinding::NodeRowsWhere { node, .. }
+                | ViewRelationBinding::NodeAllRows { node }
+                | ViewRelationBinding::NodeSingleRow { node } => node,
+            };
+            if !all_node_ids.contains(node) {
+                return Err(CmlError::InvalidTemplate {
+                    message: format!(
+                        "view `{view_key}` relation `{}` references unknown node `{node}`",
+                        spec.relation
+                    ),
+                });
+            }
+            if cgs.get_entity(spec.target.as_str()).is_none() {
+                return Err(CmlError::InvalidTemplate {
+                    message: format!(
+                        "view `{view_key}` relation `{}` targets unknown entity `{}`",
+                        spec.relation, spec.target
+                    ),
+                });
+            }
+        }
+    }
+
+    for (cap_name, cap) in &cgs.capabilities {
+        let Ok(template) = parse_capability_template(&cap.mapping.template) else {
+            continue;
+        };
+        if let CapabilityTemplate::View(vt) = template {
+            if !cgs.views.contains_key(vt.view.as_str()) {
+                return Err(CmlError::InvalidTemplate {
+                    message: format!("capability `{cap_name}` maps to unknown view `{}`", vt.view),
+                });
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Parse one capability template and return its composable pagination stanza, when present.
 ///
 /// Shared by CLI generation and tool-model projection so both surfaces interpret pagination
@@ -150,6 +354,29 @@ mod tests {
                 || splat_err.to_string().contains("key_vars"),
             "{splat_err}"
         );
+    }
+
+    #[test]
+    fn matrix_views_validate_at_load() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = plasm_core::load_schema_dir(
+            &root.join("../../fixtures/schemas/plasm_language_matrix_views"),
+        )
+        .expect("load matrix views");
+        validate_cgs_views(&cgs).expect("views valid");
+    }
+
+    #[test]
+    fn validate_cgs_views_rejects_duplicate_node_id() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let mut cgs = plasm_core::load_schema_dir(
+            &root.join("../../fixtures/schemas/plasm_language_matrix_views"),
+        )
+        .expect("load matrix views");
+        let view = cgs.views.get_mut("lang_digest").expect("view");
+        view.nodes.push(view.nodes[0].clone());
+        let err = validate_cgs_views(&cgs).expect_err("duplicate node");
+        assert!(err.to_string().contains("duplicate node id"), "{err}");
     }
 
     #[test]

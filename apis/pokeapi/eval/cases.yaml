@@ -1,5 +1,10 @@
 # NL eval cases for PokéAPI — scoped filter/aggregate and long-operation gates.
 # Run: cargo run -p plasm-eval -- --schema apis/pokeapi --cases apis/pokeapi/eval/cases.yaml
+#
+# Live/MCP notes:
+# - pk-01/pk-02 row filters run after `pokemon_query` fetch-all (paginated HTTP). Expect async long ops even with `.limit(10)`.
+# - pk-03 (type → pokemon relation) is the fast live smoke.
+# - pk-05 is the intentional unbounded/async stress case.
 
 - id: pk-01
   schema: pokeapi

@@ -37,16 +37,15 @@ use crate::plasm_plan::{
     OutputName, Plan, PlanExprTemplate, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue,
     QualifiedEntityKey, RelationSourceCardinality, ValidatedForEachNode, ValidatedPlan,
     ValidatedPlanDataInput, ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanState,
-    ValidatedRelationTraversalNode, ValidatedSurfaceNode, PLAN_RENDER_MAX_OUTPUT_CHARS,
-    PLAN_RENDER_MAX_ROWS,
+    ValidatedRelationTraversalNode, PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
 };
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::{CodePlanRunArtifactRef, McpPlasmTraceSink};
 use crate::trace_sink_emit::PlasmTraceContext;
 use indexmap::IndexMap;
 use plasm_core::{
-    flatten_from_parent_get_source_rows, resolve_relation_row_resolution, CapabilityKind,
-    EntityName, Expr, Ref, RelationMaterialization, RelationRowResolution, TypedFieldValue, Value,
+    flatten_from_parent_get_source_rows, resolve_relation_row_resolution, EntityName, Expr, Ref,
+    RelationMaterialization, RelationRowResolution, TypedFieldValue, Value,
 };
 use plasm_runtime::{
     entity_to_row_json, CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource,
@@ -570,6 +569,165 @@ mod tests {
         let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         assert!(dry.parallel_root_surfaces_only);
         assert_eq!(dry.node_results[0]["kind"], "search");
+    }
+
+    fn langmatrix_session() -> ExecuteSession {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(
+            load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+                .expect("load plasm_language_matrix"),
+        );
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "langmatrix".into(),
+            Arc::new(CgsContext::entry("langmatrix", cgs.clone())),
+        );
+        let exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix", &["LangItem"]);
+        ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "langmatrix".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["LangItem".into()],
+            Some(exp),
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
+        )
+    }
+
+    fn matrix_views_session() -> ExecuteSession {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(
+            load_schema(&root.join("../../fixtures/schemas/plasm_language_matrix_views"))
+                .expect("load plasm_language_matrix_views"),
+        );
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "langmatrix_views".into(),
+            Arc::new(CgsContext::entry("langmatrix_views", cgs.clone())),
+        );
+        let exp = TeachingExposureSession::new(
+            cgs.as_ref(),
+            "langmatrix_views",
+            &["LangDigest", "LangItem"],
+        );
+        ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "langmatrix_views".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["LangDigest".into(), "LangItem".into()],
+            Some(exp),
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn dry_run_rejects_query_node_resolving_search_capability() {
+        let s = langmatrix_session();
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "brace-search-mismatch",
+            "nodes": [{
+                "id": "n0",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "langmatrix", "entity": "LangItem" },
+                "expr": "LangItem{team_key=ENG}",
+                "ir": {
+                    "expr": {
+                        "op": "query",
+                        "entity": "LangItem",
+                        "predicate": {
+                            "type": "comparison",
+                            "field": "team_key",
+                            "op": "=",
+                            "value": "ENG"
+                        },
+                        "capability_name": "langitem_search"
+                    }
+                },
+                "effect_class": "read",
+                "result_shape": "list"
+            }],
+            "return": { "kind": "node", "node": "n0" }
+        });
+        let err = evaluate_plasm_plan_dry(&s, &plan).expect_err("query vs search dispatch");
+        assert!(
+            err.contains("kind query but expression resolved search capability"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn dry_run_preflight_runs_query_capability_normalize_gates() {
+        use crate::execute_pipeline::PlasmPreflight;
+
+        let s = langmatrix_session();
+        let pe =
+            parse_parsed_expr_for_session(&s, "LangItem{owner=acme}").expect("parse brace owner");
+        PlasmPreflight::dry_preview_for_line(&s, "LangItem{owner=acme}", &pe)
+            .expect("normalize + compile dispatch for scoped query filter");
+    }
+
+    #[test]
+    fn dry_run_view_backed_matrix_views_preflight() {
+        use crate::execute_pipeline::PlasmPreflight;
+
+        let s = matrix_views_session();
+        let lines = [
+            r#"LangDigest{item_id="item-1"}"#,
+            r#"LangTriageContext{item_id="item-1"}"#,
+            r#"LangItemLink{item_id="item-1"}"#,
+            r#"LangOwnerFilterDemo{item_id="item-1"}"#,
+        ];
+        for line in lines {
+            let pe = parse_parsed_expr_for_session(&s, line)
+                .unwrap_or_else(|err| panic!("parse `{line}`: {err}"));
+            PlasmPreflight::dry_preview_for_line(&s, line, &pe).unwrap_or_else(|err| {
+                panic!("view-backed dry preflight for `{line}`: {err}");
+            });
+        }
+    }
+
+    #[test]
+    fn dry_run_compiled_search_projection_rejects_filter_input_param() {
+        use crate::plasm_compile::compile_plasm_expression;
+        use plasm_core::PromptPipelineConfig;
+
+        let s = langmatrix_session();
+        let pipeline = PromptPipelineConfig::default();
+        let source = r#"rows = LangItem~"probe"{team_key="eng"}[team_key]
+rows"#;
+        match compile_plasm_expression(&pipeline, None, &s, "search-proj-input", source) {
+            Err(err) => {
+                assert!(err.contains("is an input on langitem_search"), "{err}");
+            }
+            Ok(bundle) => {
+                let dry_err = evaluate_plasm_comp_dry(&s, &bundle)
+                    .expect_err("dry must reject search input projection");
+                assert!(
+                    dry_err.contains("is an input on langitem_search")
+                        || dry_err.contains("postfix projection"),
+                    "{dry_err}"
+                );
+            }
+        }
     }
 
     #[test]

@@ -2,6 +2,7 @@
 
 use crate::execution::{ExecutionEngine, ExecutionMode, StreamConsumeOpts};
 use crate::materialization::SessionMaterialization;
+use crate::view_plan::ViewAmbientContext;
 use crate::{CachedEntity, EntityCompleteness, RuntimeError};
 use indexmap::IndexMap;
 use plasm_compile::CmlEnv;
@@ -148,7 +149,15 @@ async fn hydrate_invoke_target(
         catalog_entry_id: None,
     };
     let (cached, _source) = engine
-        .fetch_get_decoded(&get, cgs, mode, Some(get_cap), false, Some(cache))
+        .fetch_get_decoded(
+            &get,
+            cgs,
+            mode,
+            Some(get_cap),
+            false,
+            Some(cache),
+            &ViewAmbientContext::default(),
+        )
         .await?;
     cache.insert(cached.clone())?;
     merge_preflight_fields_into_env(env, prefix, &cached.fields);
@@ -185,7 +194,15 @@ async fn hydrate_entity_ref_param(
         catalog_entry_id: None,
     };
     let (cached, _source) = engine
-        .fetch_get_decoded(&get, cgs, mode, Some(get_cap), false, Some(cache))
+        .fetch_get_decoded(
+            &get,
+            cgs,
+            mode,
+            Some(get_cap),
+            false,
+            Some(cache),
+            &ViewAmbientContext::default(),
+        )
         .await?;
     for (wire_key, field) in merge {
         let v =
@@ -261,7 +278,14 @@ async fn query_pick_step(
     query.capability_name = Some(query_cap.name.clone());
 
     let res = engine
-        .execute_query(&query, cgs, cache, mode, StreamConsumeOpts::default())
+        .execute_query(
+            &query,
+            cgs,
+            cache,
+            mode,
+            StreamConsumeOpts::default(),
+            &ViewAmbientContext::default(),
+        )
         .await?;
 
     let needle = env
@@ -469,7 +493,14 @@ async fn resolve_label_id_by_name(
     let mut query = QueryExpr::filtered(lookup_cap.domain.clone(), Predicate::True);
     query.capability_name = Some(lookup_cap.name.clone());
     let res = engine
-        .execute_query(&query, cgs, cache, mode, StreamConsumeOpts::default())
+        .execute_query(
+            &query,
+            cgs,
+            cache,
+            mode,
+            StreamConsumeOpts::default(),
+            &ViewAmbientContext::default(),
+        )
         .await?;
     let mut matches = Vec::new();
     for row in &res.entities {
