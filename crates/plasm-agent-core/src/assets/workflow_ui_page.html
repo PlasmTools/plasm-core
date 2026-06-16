@@ -5,20 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Plasm Workflow</title>
   <style>
-    :root {
-      color-scheme: dark;
-      --bg: #0f1117;
-      --panel: #171a22;
-      --border: #2a3140;
-      --text: #e8ecf4;
-      --muted: #9aa3b5;
-      --accent: #6ea8ff;
-      --ok: #3ecf8e;
-      --warn: #f5a623;
-      --danger: #ff6b6b;
-      --canvas-bg: oklch(0.12 0.02 260 / 0.9);
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -26,184 +12,77 @@
       color: var(--text);
       min-height: 100vh;
     }
-    .shell { padding: 16px; display: grid; gap: 16px; }
-    header { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; }
-    h1 { font-size: 1.1rem; margin: 0; }
+    .shell { padding: 8px 10px; display: grid; gap: 10px; }
+    header { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+    h1 { font-size: 1rem; margin: 0; }
     label { display: grid; gap: 4px; font-size: 0.8rem; color: var(--muted); }
     select, input, textarea, button {
-      background: var(--panel);
+      background: oklch(0.17 0.025 260);
       border: 1px solid var(--border);
       color: var(--text);
-      border-radius: 8px;
+      border-radius: var(--radius-panel);
       padding: 8px 10px;
       font: inherit;
     }
     button {
       cursor: pointer;
-      background: #1f2937;
     }
-    button.primary { background: #2563eb; border-color: #2563eb; }
+    button.primary {
+      background: oklch(0.45 0.18 277);
+      border-color: oklch(0.52 0.2 277);
+    }
     button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .grid { display: grid; grid-template-columns: minmax(240px, 320px) 1fr; gap: 16px; }
+    .grid { display: grid; grid-template-columns: minmax(220px, 280px) 1fr; gap: 10px; }
     @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
     .panel {
-      background: var(--panel);
+      background: oklch(0.15 0.02 260);
       border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 14px;
-    }
-    .panel h2 { margin: 0 0 12px; font-size: 0.95rem; }
-    .field { margin-bottom: 10px; }
-    .status { font-size: 0.8rem; color: var(--muted); }
-    .banner {
+      border-radius: var(--radius-panel);
       padding: 10px 12px;
-      border-radius: 8px;
-      font-size: 0.85rem;
+    }
+    .panel h2 { margin: 0 0 10px; font-size: 0.95rem; }
+    .field { margin-bottom: 10px; }
+    .status { font-size: 0.75rem; color: var(--muted); }
+    .banner {
+      padding: 8px 10px;
+      border-radius: var(--radius-panel);
+      font-size: 0.82rem;
       border: 1px solid var(--border);
     }
     .banner.error { border-color: var(--danger); color: #ffb4b4; }
-    .plan-panel { display: grid; gap: 12px; }
-    .plan-review-banner {
-      padding: 10px 12px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      font-size: 0.85rem;
-    }
-    .plan-review-banner.ok { border-color: var(--ok); }
-    .plan-review-banner.review { border-color: var(--warn); }
-    .plan-review-row {
+    .plan-section {
       display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      align-items: baseline;
-    }
-    .plan-review-verdict { font-weight: 600; }
-    .plan-review-banner.ok .plan-review-verdict { color: var(--ok); }
-    .plan-review-banner.review .plan-review-verdict { color: var(--warn); }
-    .plan-review-metrics { color: var(--muted); font-size: 0.8rem; }
-    .plan-review-warnings, .plan-review-gates {
-      margin: 8px 0 0;
-      font-size: 0.8rem;
-      color: var(--muted);
-    }
-    .plan-canvas-layout {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(200px, 260px);
-      gap: 12px;
-      align-items: start;
-    }
-    @media (max-width: 700px) {
-      .plan-canvas-layout { grid-template-columns: 1fr; }
-    }
-    .plan-column-headers {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-bottom: 4px;
-    }
-    .plan-column-header {
-      font-size: 0.72rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      color: var(--accent);
-      border: 1px solid rgba(110, 168, 255, 0.35);
-      border-radius: 999px;
-      padding: 4px 10px;
-    }
-    .plan-canvas-host {
-      position: relative;
-      min-height: 14rem;
-      overflow-x: auto;
-      border-radius: 8px;
-      border: 1px solid rgba(255,255,255,0.08);
-      background: var(--canvas-bg);
-      padding: 8px;
-    }
-    .plan-canvas-error,
-    .plan-canvas-loading {
-      position: absolute;
-      inset: 0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-      text-align: center;
-      font-size: 0.8rem;
-      color: #ffb4b4;
-    }
-    .plan-canvas-loading { color: var(--muted); }
-    .plan-inspector {
-      min-height: 14rem;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: rgba(0,0,0,0.25);
-      padding: 12px;
-      font-size: 0.82rem;
-    }
-    .plan-inspector-empty { color: var(--muted); margin: 0; }
-    .plan-inspector-body { display: grid; gap: 6px; }
-    .plan-inspector-head {
-      display: flex;
-      flex-wrap: wrap;
+      flex-direction: column;
       gap: 6px;
-      align-items: baseline;
+      min-height: 0;
+      padding-bottom: 8px;
+    }
+    .plan-section .plan-header {
+      border-bottom: 1px solid oklch(0.28 0.03 260 / 0.55);
+      padding-bottom: 6px;
+    }
+    .plan-section .plan-header-title {
       margin: 0;
     }
-    .plan-inspector-id {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      color: rgba(248, 250, 255, 0.92);
+    .plan-section .plan-main {
+      flex: 1;
+      min-height: 0;
     }
-    .plan-inspector-ir {
-      font-family: ui-monospace, monospace;
-      font-size: 0.7rem;
-      color: var(--muted);
-    }
-    .plan-inspector-kind { color: var(--muted); font-size: 0.75rem; }
-    .plan-inspector-badge {
-      font-size: 0.62rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      border-radius: 4px;
-      padding: 2px 6px;
-      border: 1px solid;
-    }
-    .plan-inspector-badge.return {
-      color: oklch(0.88 0.06 290);
-      border-color: oklch(0.62 0.12 290 / 0.45);
-      background: oklch(0.22 0.06 290 / 0.55);
-    }
-    .plan-inspector-badge.gate {
-      color: var(--warn);
-      border-color: rgba(245, 166, 35, 0.45);
-      background: rgba(245, 166, 35, 0.12);
-    }
-    .plan-inspector-op { margin: 0; color: rgba(230, 236, 248, 0.85); line-height: 1.4; }
-    .plan-inspector-meta, .plan-inspector-deps {
-      margin: 0;
-      color: var(--muted);
-      font-size: 0.75rem;
-      word-break: break-word;
+    .plan-section .plan-dag-row {
+      min-height: 12rem;
     }
     details.program-source {
-      margin-top: 8px;
-      font-size: 0.8rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+      border-top: 1px solid oklch(0.28 0.03 260 / 0.55);
+      padding-top: 6px;
+      flex-shrink: 0;
     }
-    details.program-source pre {
-      white-space: pre-wrap;
-      word-break: break-word;
-      font-size: 0.72rem;
-      background: #0b0d12;
-      padding: 10px;
-      border-radius: 8px;
-      max-height: 200px;
-      overflow: auto;
-      margin: 8px 0 0;
-    }
+    details.program-source summary { cursor: pointer; }
   </style>
-  <script type="module" src="/v1/workflows/ui/app.js?v=97facc323138"></script>
+  <script type="module" src="/v1/workflows/ui/app.js?v=e8dc779057b9"></script>
   <style>
-.plan-panel{display:grid;gap:10px}.plan-review-banner{padding:8px 10px;border-radius:8px;border:1px solid var(--border, #2a3140);font-size:.82rem}.plan-review-banner.ok{border-color:var(--ok, #3ecf8e)}.plan-review-banner.review{border-color:var(--warn, #f5a623)}.plan-review-row{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:baseline}.plan-review-verdict{font-weight:600}.plan-review-banner.ok .plan-review-verdict{color:var(--ok, #3ecf8e)}.plan-review-banner.review .plan-review-verdict{color:var(--warn, #f5a623)}.plan-review-metrics{color:var(--muted, #9aa3b5);font-size:.75rem}.plan-review-warnings,.plan-review-gates{margin:6px 0 0;font-size:.75rem;color:var(--muted, #9aa3b5)}.plan-canvas-layout{display:flex;flex-direction:column;gap:8px;min-height:0}@media(min-width:720px){.plan-canvas-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(180px,240px);align-items:start}}.plan-column-headers{display:flex;flex-direction:row;flex-wrap:nowrap;gap:6px;overflow-x:auto;padding-bottom:2px;margin-bottom:2px}.plan-column-header{flex:0 0 auto;font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;color:var(--accent, #6ea8ff);border:1px solid rgba(110,168,255,.35);border-radius:999px;padding:3px 8px;white-space:nowrap}.plan-canvas-host{position:relative;min-height:11rem;max-height:42vh;overflow:auto;border-radius:8px;border:1px solid rgba(255,255,255,.08);background:var(--canvas-bg, oklch(.12 .02 260 / .9));padding:6px}@media(max-width:430px){.plan-canvas-host{min-height:9rem;max-height:36vh}}.plan-canvas-error,.plan-canvas-loading{position:absolute;top:0;right:0;bottom:0;left:0;display:flex;align-items:center;justify-content:center;padding:12px;text-align:center;font-size:.78rem;color:#ffb4b4}.plan-canvas-error.plan-view-error{position:static;inset:auto;display:block;min-height:6rem;padding:14px 12px;text-align:left;line-height:1.45;white-space:pre-wrap;word-break:break-word}.plan-canvas-loading{color:var(--muted, #9aa3b5)}.plan-inspector{min-height:0;border-radius:8px;border:1px solid var(--border, #2a3140);background:#00000040;padding:10px;font-size:.78rem}.plan-inspector-empty{color:var(--muted, #9aa3b5);margin:0}.plan-inspector-body{display:grid;gap:8px}.plan-inspector-head{display:flex;flex-wrap:wrap;gap:6px;align-items:baseline;margin:0}.plan-inspector-id{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;color:#f8faffeb;font-size:.82rem}.plan-inspector-ir{font-family:ui-monospace,monospace;font-size:.68rem;color:var(--muted, #9aa3b5)}.plan-inspector-kind{color:var(--muted, #9aa3b5);font-size:.72rem}.plan-inspector-badge{font-size:.6rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em;border-radius:4px;padding:2px 6px;border:1px solid}.plan-inspector-badge.return{color:#d6d2fd;border-color:#8678c973;background:#1b14348c}.plan-inspector-badge.gate{color:var(--warn, #f5a623);border-color:#f5a62373;background:#f5a6231f}.plan-inspector-table{display:grid;grid-template-columns:auto 1fr;gap:.35rem .65rem;margin:0;font-size:.75rem}.plan-inspector-table dt{margin:0;color:var(--muted, #9aa3b5);font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;padding-top:.15rem}.plan-inspector-table dd{margin:0;min-width:0}.plan-inspector-op-code{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:.7rem;line-height:1.35;white-space:pre-wrap;word-break:break-word;color:#e6ecf8e0}.plan-inspector-widget-chip,.plan-inspector-effect{display:inline-block;font-size:.65rem;padding:.1rem .45rem;border-radius:var(--radius-chip, 999px);border:1px solid var(--border, #2a3140);background:#0c121a}.plan-inspector-dep-chip{font-family:ui-monospace,monospace}details.program-source{margin-top:6px;font-size:.75rem}details.program-source pre{white-space:pre-wrap;word-break:break-word;font-size:.68rem;background:#0b0d12;padding:8px;border-radius:8px;max-height:160px;overflow:auto;margin:6px 0 0}
+:root{color-scheme:dark;--bg: oklch(.14 .02 260);--panel: oklch(.17 .025 260);--border: oklch(.28 .03 260);--text: oklch(.93 .01 260);--muted: oklch(.68 .02 260);--accent: oklch(.58 .233 277);--ok: oklch(.72 .17 155);--warn: oklch(.78 .14 75);--danger: oklch(.65 .2 25);--canvas-bg: oklch(.12 .02 260 / .9);--radius-panel: 8px;--radius-chip: 999px;--mcp-frame-width: 390px;--mcp-frame-max-height: 100dvh;font-family:Geist,ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}.mcp-ref-chip{display:inline-flex;align-items:baseline;gap:.2rem;font-size:.68rem;line-height:1.3;padding:.1rem .45rem;border-radius:var(--radius-chip);border:1px solid oklch(.38 .04 260);background:#0f1621;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mcp-ref-chip-type{color:var(--accent);font-weight:600}.mcp-ref-chip-slot{color:var(--text);font-family:JetBrains Mono,ui-monospace,Menlo,Monaco,Consolas,monospace}.mcp-cell-chips{display:flex;flex-wrap:wrap;gap:.25rem;align-items:center}.mcp-chip-more{font:inherit;font-size:.62rem;padding:.1rem .4rem;border-radius:var(--radius-chip);border:1px dashed var(--border);background:transparent;color:var(--muted);cursor:pointer}.mcp-bool-pill{display:inline-block;font-size:.65rem;padding:.05rem .4rem;border-radius:var(--radius-chip);border:1px solid var(--border);color:var(--muted)}@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}.mcp-markdown{max-height:12rem;overflow:auto;white-space:normal;font-size:.8rem;line-height:1.45}.mcp-markdown h1,.mcp-markdown h2,.mcp-markdown h3{margin:.4em 0 .25em;font-size:.95rem;font-weight:600}.mcp-markdown p{margin:.35em 0}.mcp-markdown ul,.mcp-markdown ol{margin:.35em 0;padding-left:1.2em}.mcp-markdown code{font-family:JetBrains Mono,ui-monospace,Menlo,Monaco,Consolas,monospace;font-size:.85em;background:#050911;padding:.1em .35em;border-radius:3px}.mcp-entity-table{width:max-content;min-width:100%;border-collapse:collapse;font-size:.72rem;table-layout:fixed}.mcp-entity-table th,.mcp-entity-table td{border-bottom:1px solid var(--border);padding:.28rem .45rem;text-align:left;vertical-align:top;line-height:1.35;max-width:12rem;overflow:hidden}.mcp-entity-table th{position:sticky;top:0;background:var(--panel);color:var(--muted);font-weight:600;z-index:1;font-size:.68rem}.mcp-status-empty,.mcp-status-loading,.mcp-status-error{font-size:.8rem;color:var(--muted)}.mcp-status-error{color:var(--danger)}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);min-height:100vh;max-width:100%}.plan-shell{display:flex;flex-direction:column;gap:6px;padding:8px 10px 10px;min-height:100dvh;max-width:100%}.plan-header{flex-shrink:0;padding-bottom:6px;border-bottom:1px solid oklch(.28 .03 260 / .55)}.plan-header-title{margin:0;font-size:.72rem;font-weight:500;color:var(--muted);letter-spacing:.02em;text-transform:uppercase}.plan-header-row{display:flex;flex-wrap:wrap;align-items:center;gap:6px 8px;margin-top:4px;min-width:0}.plan-session-ref{flex:0 0 auto;font:inherit;font-size:.68rem;color:var(--muted);background:#090f1a;border:1px solid oklch(.28 .03 260 / .65);border-radius:var(--radius-chip);padding:2px 8px;cursor:pointer;max-width:7rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.plan-session-ref:hover{color:var(--text);border-color:#364358}.plan-session-ref:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.plan-status{font-size:.75rem;color:var(--muted);margin:2px 0 0;min-height:1.1em}.plan-review-inline{display:flex;flex-wrap:wrap;align-items:center;gap:4px 6px;min-width:0;flex:1}.plan-review-inline[hidden]{display:none}.plan-review-verdict{flex:0 0 auto;font-size:.65rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em;padding:2px 7px;border-radius:var(--radius-chip);border:1px solid}.plan-review-inline.ok .plan-review-verdict{color:var(--ok);border-color:#22c37373;background:#22c3731a}.plan-review-inline.review .plan-review-verdict{color:var(--warn);border-color:#eba94180;background:#eba9411f}.plan-review-metrics{flex:0 0 auto;font-size:.68rem;color:var(--muted)}.plan-review-warn{flex:1 1 100%;margin:0;font-size:.68rem;color:var(--warn);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}.plan-review-gates{flex:1 1 100%;margin:0;font-size:.68rem;color:var(--muted)}.plan-main{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;gap:4px}.plan-column-headers{display:flex;flex-direction:row;flex-wrap:nowrap;gap:6px;overflow-x:auto;padding-bottom:2px;flex-shrink:0}.plan-column-header{flex:0 0 auto;font-size:.68rem;text-transform:uppercase;letter-spacing:.04em;color:var(--accent);border:1px solid rgba(110,168,255,.35);border-radius:999px;padding:3px 8px;white-space:nowrap}.plan-dag-row{display:grid;grid-template-columns:1fr;gap:8px;flex:1 1 auto;min-height:0;padding:4px 0 6px;border-bottom:1px solid oklch(.28 .03 260 / .35)}@media(min-width:720px){.plan-dag-row{grid-template-columns:minmax(0,1fr) minmax(160px,220px)}}.plan-canvas-host{position:relative;min-height:0;flex:1 1 auto;overflow:auto;padding:0}.plan-canvas-host svg{display:block;max-width:100%;height:auto}.plan-canvas-error,.plan-canvas-loading{position:absolute;top:0;right:0;bottom:0;left:0;display:flex;align-items:center;justify-content:center;padding:12px;text-align:center;font-size:.78rem;color:#ffb4b4}.plan-canvas-error.plan-view-error{position:static;inset:auto;display:block;min-height:4rem;padding:10px 0;text-align:left;line-height:1.45;white-space:pre-wrap;word-break:break-word}.plan-canvas-loading{color:var(--muted)}.plan-inspector{min-height:0;font-size:.72rem;border-top:1px solid var(--border);padding-top:8px}@media(min-width:720px){.plan-inspector{border-top:none;border-left:1px solid var(--border);padding-top:0;padding-left:8px}}.plan-inspector-empty{color:var(--muted);margin:0;font-size:.68rem}.plan-inspector-body{display:grid;gap:6px}.plan-inspector-head{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:baseline;margin:0;font-size:.75rem;line-height:1.3}.plan-inspector-id{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;color:#f8faffeb;font-weight:600}.plan-session-ref[hidden]{display:none}.plan-inspector-ir{margin:0;font-family:ui-monospace,monospace;font-size:.62rem;color:var(--muted)}.plan-inspector-kind{color:var(--muted);font-size:.68rem}.plan-inspector-sep{color:var(--muted);-webkit-user-select:none;user-select:none}.plan-inspector-badge{font-size:.58rem;font-weight:600;text-transform:uppercase;letter-spacing:.04em;border-radius:4px;padding:1px 5px;border:1px solid}.plan-inspector-badge.return{color:#d6d2fd;border-color:#8678c973;background:#1b14348c}.plan-inspector-badge.gate{color:var(--warn);border-color:#f5a62373;background:#f5a6231f}.plan-inspector-table{display:grid;grid-template-columns:auto 1fr;gap:.2rem .5rem;margin:0;font-size:.68rem}.plan-inspector-table dt{margin:0;color:var(--muted);font-size:.62rem;text-transform:uppercase;letter-spacing:.04em}.plan-inspector-table dd{margin:0;min-width:0}.plan-inspector-op-code{display:block;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;font-size:.65rem;line-height:1.3;white-space:pre-wrap;word-break:break-word;color:#e6ecf8e0}.plan-inspector-widget-chip,.plan-inspector-effect{display:inline-block;font-size:.62rem;padding:.05rem .4rem;border-radius:var(--radius-chip);border:1px solid var(--border);background:#0c121a}.plan-inspector-dep-chip{font-family:ui-monospace,monospace}
 
 </style>
 </head>
@@ -227,22 +106,28 @@
         <h2>Parameters</h2>
         <form id="param-form"></form>
       </section>
-      <section class="panel plan-panel">
-        <h2>Plan canvas</h2>
-        <div id="review-banner" class="plan-review-banner" hidden></div>
-        <div id="column-headers" class="plan-column-headers" hidden></div>
-        <div class="plan-canvas-layout">
-          <div id="plan-canvas-host" class="plan-canvas-host">
-            <p class="plan-inspector-empty">Dry-run a workflow to render the Program DAG.</p>
+      <section class="panel plan-section">
+        <header class="plan-header">
+          <h2 class="plan-header-title">Plan canvas</h2>
+          <div class="plan-header-row">
+            <div id="review-inline" class="plan-review-inline" hidden aria-live="polite"></div>
           </div>
-          <div id="plan-inspector" class="plan-inspector">
-            <p class="plan-inspector-empty">Select a plan step to inspect.</p>
+        </header>
+        <main class="plan-main">
+          <div id="column-headers" class="plan-column-headers" hidden></div>
+          <div class="plan-dag-row">
+            <div id="plan-canvas-host" class="plan-canvas-host">
+              <p class="plan-inspector-empty">Dry-run a workflow to render the Program DAG.</p>
+            </div>
+            <aside id="plan-inspector" class="plan-inspector">
+              <p class="plan-inspector-empty">Select a step.</p>
+            </aside>
           </div>
-        </div>
-        <details class="program-source" id="program-details" hidden>
-          <summary>Program source</summary>
-          <pre id="program"></pre>
-        </details>
+          <details id="program-details" class="plan-program-details program-source" hidden>
+            <summary>Program source</summary>
+            <pre id="program" class="plan-program-excerpt"></pre>
+          </details>
+        </main>
       </section>
     </div>
   </div>
