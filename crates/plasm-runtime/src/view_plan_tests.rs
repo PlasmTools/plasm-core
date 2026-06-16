@@ -119,10 +119,8 @@ fn preflight_proof_matches_fixture_runner_on_lang_digest() {
         Some(&Value::String("item-1-".into()))
     );
 
-    let results = indexmap::IndexMap::from([(
-        "item_node".into(),
-        stub_item_node_result("item-1", ""),
-    )]);
+    let results =
+        indexmap::IndexMap::from([("item_node".into(), stub_item_node_result("item-1", ""))]);
     let (fixture_proof, _) = run_view_dag_sync(
         &FixtureViewNodeRunner { results },
         "lang_digest",
@@ -152,14 +150,8 @@ fn fixture_runner_relation_cardinality_single_row() {
     };
     let scope = lang_digest_scope();
     let ambient = ViewAmbientContext::default();
-    let (proof, _) = run_view_dag_sync(
-        &runner,
-        "lang_digest",
-        scope,
-        &cgs,
-        &ambient,
-    )
-    .expect("fixture run");
+    let (proof, _) =
+        run_view_dag_sync(&runner, "lang_digest", scope, &cgs, &ambient).expect("fixture run");
     assert_eq!(
         proof.output_fields.get("echo_title"),
         Some(&Value::String("Alpha".into()))
@@ -187,14 +179,8 @@ fn fixture_runner_node_single_row_cardinality_error() {
     let runner = FixtureViewNodeRunner { results };
     let scope = lang_digest_scope();
     let ambient = ViewAmbientContext::default();
-    let err = run_view_dag_sync(
-        &runner,
-        "lang_digest",
-        scope,
-        &cgs,
-        &ambient,
-    )
-    .expect_err("cardinality");
+    let err =
+        run_view_dag_sync(&runner, "lang_digest", scope, &cgs, &ambient).expect_err("cardinality");
     assert!(err.to_string().contains("node_single_row"), "{err}");
 }
 

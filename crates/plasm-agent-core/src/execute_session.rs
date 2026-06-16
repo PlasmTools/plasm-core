@@ -12,7 +12,9 @@ use plasm_core::PlanCommitRef;
 use plasm_core::TeachingExposureSession;
 use plasm_core::CGS;
 use plasm_plugin_host::LoadedPluginGeneration;
-use plasm_runtime::{CachedEntity, GraphCache, MutexGraphCacheSession, QueryPaginationResumeData, ViewAmbientContext};
+use plasm_runtime::{
+    CachedEntity, GraphCache, MutexGraphCacheSession, QueryPaginationResumeData, ViewAmbientContext,
+};
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};

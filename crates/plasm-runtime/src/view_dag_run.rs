@@ -285,9 +285,7 @@ async fn dispatch_prepared_async<R: ViewNodeRunnerAsync + ?Sized>(
                 .await
         }
         PreparedViewNode::Get { cap, get, bound } => {
-            runner
-                .run_get_node(run_ctx, node, cap, &get, &bound)
-                .await
+            runner.run_get_node(run_ctx, node, cap, &get, &bound).await
         }
     }
 }

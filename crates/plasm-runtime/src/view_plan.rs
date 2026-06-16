@@ -255,12 +255,7 @@ pub fn node_fields_from_results(
 ) -> ViewNodeFieldMap {
     node_results
         .iter()
-        .map(|(node_id, res)| {
-            (
-                node_id.clone(),
-                node_fields_for_row(res.entities.first()),
-            )
-        })
+        .map(|(node_id, res)| (node_id.clone(), node_fields_for_row(res.entities.first())))
         .collect()
 }
 

@@ -1884,8 +1884,16 @@ impl ExecutionEngine {
         let mut stream = stream::iter(to_fetch.into_iter().map(|reference| {
             let get = GetExpr::from_ref(reference.clone());
             async move {
-                self.fetch_get_decoded(&get, cgs, mode, None, false, None, &ViewAmbientContext::default())
-                    .await
+                self.fetch_get_decoded(
+                    &get,
+                    cgs,
+                    mode,
+                    None,
+                    false,
+                    None,
+                    &ViewAmbientContext::default(),
+                )
+                .await
             }
         }))
         .buffer_unordered(concurrency);
