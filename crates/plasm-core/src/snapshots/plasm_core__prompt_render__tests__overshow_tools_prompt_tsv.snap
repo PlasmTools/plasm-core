@@ -26,7 +26,7 @@ expression: tsv
 # - If a copied row contains `..`, it is an ellipsis for omitted optional keys. Remove `..` or replace it with additional `p#=<value>` assignments before final output.
 # - If `Meaning` says `opt: pA, pB`, those keys may be added only as keyed assignments with real values.
 # - Projection rows ending `[p#,…]` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
-# - Host continuations (`page`/`wait`/`cancel`/`pcN`): copy handles from prior responses (see Grammar).
+# - Host continuations (`page`/`wait`/`cancel`/`pcN`): copy handles from prior responses (see Grammar). Open `oN`/`pgN` handles must be polled with `wait(h)` or cancelled before unrelated live execute or telling the user the task is done.
 #
 # Grammar:
 # plasm_program ::= plasm_expr | binding+ roots

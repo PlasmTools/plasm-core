@@ -11,6 +11,9 @@ use plasm_agent_core::execute_path_ids::PromptHashHex;
 use plasm_agent_core::http::{build_plasm_host_state, PlasmHostBootstrap};
 use plasm_agent_core::http_execute::{execute_routes, CreateExecuteSessionResponse};
 use plasm_agent_core::incoming_auth::IncomingPrincipal;
+use plasm_agent_core::mcp_transport_store::{
+    descriptor_from_operation_state, ExecuteSessionRegistry, OperationPersistPatch,
+};
 use plasm_agent_core::run_artifacts::RunArtifactStore;
 use plasm_agent_core::server_state::CatalogBootstrap;
 use plasm_core::discovery::InMemoryCgsRegistry;
@@ -19,6 +22,16 @@ use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 use tower::ServiceExt;
 
 fn langmatrix_host_state() -> plasm_agent_core::server_state::PlasmHostState {
+    langmatrix_host_with_registry(
+        ExecuteSessionRegistry::default(),
+        Arc::new(RunArtifactStore::memory()),
+    )
+}
+
+fn langmatrix_host_with_registry(
+    execute_session_registry: ExecuteSessionRegistry,
+    run_artifacts: Arc<RunArtifactStore>,
+) -> plasm_agent_core::server_state::PlasmHostState {
     let dir =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
     let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
@@ -29,17 +42,19 @@ fn langmatrix_host_state() -> plasm_agent_core::server_state::PlasmHostState {
         cgs,
     )]);
     let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
-    build_plasm_host_state(PlasmHostBootstrap {
+    let mut st = build_plasm_host_state(PlasmHostBootstrap {
         engine,
         mode: ExecutionMode::Live,
         registry: Arc::new(reg),
         catalog_bootstrap: CatalogBootstrap::Fixed,
         plugin_manager: None,
         incoming_auth: None,
-        run_artifacts: Arc::new(RunArtifactStore::memory()),
+        run_artifacts,
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
-    })
+    });
+    st.oss.execute_session_registry = execute_session_registry;
+    st
 }
 
 fn test_app(st: plasm_agent_core::server_state::PlasmHostState) -> Router<()> {
@@ -298,10 +313,7 @@ async fn wait_false_async_accept_returns_operation_json() {
         .unwrap_or("");
     assert!(md.contains("`o"), "markdown: {md}");
     assert!(md.contains('+'), "compact accept: {md}");
-    assert!(
-        md.contains("wait("),
-        "accept should nudge wait poll: {md}"
-    );
+    assert!(md.contains("wait("), "accept should nudge wait poll: {md}");
 }
 
 #[tokio::test]
@@ -357,4 +369,127 @@ async fn wait_poll_unchanged_returns_compact_equals_line() {
     {
         assert!(op.get("n").is_some(), "short-key op meta: {op}");
     }
+}
+
+#[tokio::test]
+async fn running_ops_cap_rejects_when_exceeded_http() {
+    let prev = std::env::var("PLASM_MAX_RUNNING_OPS_PER_SESSION").ok();
+    unsafe {
+        std::env::set_var("PLASM_MAX_RUNNING_OPS_PER_SESSION", "2");
+    }
+    let app = test_app(langmatrix_host_state());
+    let (ph, sid) = open_langitem_session(&app).await;
+    for _ in 0..2 {
+        let uri = format!("/execute/{ph}/{sid}?wait=false&force=true");
+        let req = Request::builder()
+            .method("POST")
+            .uri(&uri)
+            .header("accept", "application/json")
+            .body(Body::from("LangItem.limit(2)"))
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK, "async accept under cap");
+    }
+    let uri = format!("/execute/{ph}/{sid}?wait=false&force=true");
+    let req = Request::builder()
+        .method("POST")
+        .uri(&uri)
+        .header("accept", "application/json")
+        .body(Body::from("LangItem.limit(2)"))
+        .unwrap();
+    let res = app.oneshot(req).await.unwrap();
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let text = String::from_utf8_lossy(&body);
+    assert!(
+        text.contains("too_many_operations"),
+        "expected cap error: {text}"
+    );
+    match prev {
+        Some(v) => unsafe {
+            std::env::set_var("PLASM_MAX_RUNNING_OPS_PER_SESSION", v);
+        },
+        None => unsafe {
+            std::env::remove_var("PLASM_MAX_RUNNING_OPS_PER_SESSION");
+        },
+    }
+}
+
+#[tokio::test]
+async fn cross_pod_wait_from_shared_session_registry() {
+    let (execute_registry, _) = ExecuteSessionRegistry::with_test_json_store();
+    let artifacts = Arc::new(RunArtifactStore::memory());
+    let host_a = langmatrix_host_with_registry(execute_registry.clone(), artifacts.clone());
+    let host_b = langmatrix_host_with_registry(execute_registry, artifacts);
+    let app_a = test_app(host_a.clone());
+    let app_b = test_app(host_b);
+    let (ph, sid) = open_langitem_session(&app_a).await;
+
+    let start_uri = format!("/execute/{ph}/{sid}?wait=false&force=true");
+    let start_req = Request::builder()
+        .method("POST")
+        .uri(&start_uri)
+        .header("accept", "application/json")
+        .body(Body::from("LangItem.limit(2)"))
+        .unwrap();
+    let start_res = app_a.clone().oneshot(start_req).await.unwrap();
+    assert_eq!(start_res.status(), StatusCode::OK);
+    let start_body = axum::body::to_bytes(start_res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let start_doc: serde_json::Value = serde_json::from_slice(&start_body).unwrap();
+    let handle = start_doc
+        .get("_meta")
+        .and_then(|m| m.get("plasm"))
+        .and_then(|p| p.get("continuity"))
+        .and_then(|c| c.get("h"))
+        .and_then(|v| v.as_str())
+        .expect("handle")
+        .to_string();
+
+    let sess = host_a
+        .get_execute_session(&ph, &sid)
+        .await
+        .expect("session");
+    let op =
+        sess.get_operation(&plasm_core::OperationHandle::parse(&handle).expect("parse handle"));
+    if let Some(op) = op {
+        host_a
+            .execute_session_registry
+            .patch_session_operations(
+                &ph,
+                &sid,
+                OperationPersistPatch::Upsert(descriptor_from_operation_state(
+                    &plasm_core::OperationHandle::parse(&handle).unwrap(),
+                    &op,
+                    1_700_000_000,
+                )),
+            )
+            .await;
+    }
+    host_a.sessions.purge_all().await;
+
+    let wait_uri = format!("/execute/{ph}/{sid}");
+    let wait_req = Request::builder()
+        .method("POST")
+        .uri(&wait_uri)
+        .header("accept", "application/json")
+        .body(Body::from(format!("wait({handle})")))
+        .unwrap();
+    let wait_res = app_b.oneshot(wait_req).await.unwrap();
+    assert_eq!(wait_res.status(), StatusCode::OK);
+    let wait_body = axum::body::to_bytes(wait_res.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    let wait_doc: serde_json::Value = serde_json::from_slice(&wait_body).unwrap();
+    let md = wait_doc
+        .get("run_markdown")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    assert!(
+        !md.contains("unknown operation handle"),
+        "cross-pod wait should resolve persisted handle: {md}"
+    );
 }

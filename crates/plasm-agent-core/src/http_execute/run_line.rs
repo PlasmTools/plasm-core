@@ -177,15 +177,19 @@ pub(crate) async fn run_parsed_plasm_line(
     };
     match &parsed.expr {
         Expr::Wait(w) => {
-            let out = handle_wait_operation(sess, trace, &w.handle)
+            let out = handle_wait_operation(sess, Some(st), trace, &w.handle)
                 .await
-                .map_err(RunLineError::Parse)?;
+                .map_err(|e| {
+                    RunLineError::Parse(crate::http_execute::operation_error_to_string(e))
+                })?;
             return Err(RunLineError::Operation(Box::new(out)));
         }
         Expr::Cancel(c) => {
             let out = handle_cancel_operation(sess, trace, &c.handle)
                 .await
-                .map_err(RunLineError::Parse)?;
+                .map_err(|e| {
+                    RunLineError::Parse(crate::http_execute::operation_error_to_string(e))
+                })?;
             return Err(RunLineError::Operation(Box::new(out)));
         }
         _ => {}

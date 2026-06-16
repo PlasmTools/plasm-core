@@ -80,7 +80,8 @@ pub(crate) async fn post_run_execute_session(
     };
 
     if let Some(op_result) =
-        try_dispatch_operation_program(&sess, Some(&http_operation_trace()), &program).await
+        try_dispatch_operation_program(&sess, Some(&st), Some(&http_operation_trace()), &program)
+            .await
     {
         return match op_result {
             Ok(result) => respond_plan_run_live_result(kind, &result, &sess),

@@ -19,6 +19,7 @@ use crate::mcp_config_repository::McpConfigRepository;
 use crate::mcp_transport_auth::McpTransportAuth;
 use crate::mcp_transport_store::{ExecuteSessionRegistry, LogicalExecuteBindingRegistry};
 use crate::oauth_link_catalog::OauthLinkCatalog;
+use crate::operation_persist::OperationPersistScheduler;
 use crate::operation_progress::OperationProgressHub;
 use crate::run_artifacts::RunArtifactStore;
 use crate::session_graph_persistence::SessionGraphPersistence;
@@ -70,6 +71,8 @@ pub struct PlasmOssHostState {
     pub trace_hub: Arc<TraceHub>,
     /// Queued MCP `notifications/plasm/op` payloads (drained by MCP session reporter).
     pub op_progress_hub: Arc<OperationProgressHub>,
+    /// Debounced cross-pod async operation descriptor persistence.
+    pub operation_persist: Arc<OperationPersistScheduler>,
     /// Effective [`TraceHubConfig`] after startup (matches [`TraceHub::bounds`] on the hub).
     pub trace_hub_config: TraceHubConfig,
     /// Best-effort POST of audit batches to the trace sink (`PLASM_TRACE_SINK_URL` when using [`EnvTraceIngestClient`]).
@@ -241,6 +244,7 @@ impl PlasmHostState {
         match crate::execute_session_rehydrate::rehydrate_execute_session(self, &desc).await {
             Ok(session) => {
                 crate::metrics::record_execute_rehydrate("ok", "");
+                session.bind_operation_wire(session_id);
                 let reuse_key: SessionReuseKey = desc.reuse_key.into();
                 self.sessions
                     .insert_rehydrated(
@@ -299,6 +303,7 @@ impl PlasmHostState {
         session_id: String,
         session: ExecuteSession,
     ) {
+        session.bind_operation_wire(&session_id);
         self.execute_session_registry
             .persist(&session, &session_id, &reuse_key)
             .await;
@@ -350,9 +355,16 @@ mod tests {
     use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
     use crate::http_execute::execute_session_create_response_inner;
     use crate::http_execute::CreateExecuteSessionBody;
-    use crate::mcp_transport_store::ExecuteSessionRegistry;
-    use crate::run_artifacts::RunArtifactStore;
+    use crate::http_execute::{handle_cancel_operation, handle_wait_operation};
+    use crate::mcp_transport_store::{
+        descriptor_from_operation_state, ExecuteSessionRegistry, OperationPersistPatch,
+        PersistedOperationPhase, PersistedOperationProgress,
+    };
+    use crate::operation::OpAcceptContext;
+    use crate::operation_error::OperationError;
+    use crate::run_artifacts::{RunArtifactId, RunArtifactStore};
     use plasm_core::AuthScheme;
+    use plasm_runtime::CancelSignal;
 
     fn test_host_state_from_registry(reg: InMemoryCgsRegistry) -> PlasmHostState {
         let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
@@ -386,6 +398,18 @@ mod tests {
         registry: Arc<InMemoryCgsRegistry>,
         execute_session_registry: ExecuteSessionRegistry,
     ) -> PlasmHostState {
+        test_host_state_with_shared_artifacts(
+            registry,
+            execute_session_registry,
+            Arc::new(RunArtifactStore::memory()),
+        )
+    }
+
+    fn test_host_state_with_shared_artifacts(
+        registry: Arc<InMemoryCgsRegistry>,
+        execute_session_registry: ExecuteSessionRegistry,
+        run_artifacts: Arc<RunArtifactStore>,
+    ) -> PlasmHostState {
         let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
         let mut st = build_plasm_host_state(PlasmHostBootstrap {
             engine,
@@ -394,12 +418,68 @@ mod tests {
             catalog_bootstrap: CatalogBootstrap::Fixed,
             plugin_manager: None,
             incoming_auth: None,
-            run_artifacts: Arc::new(RunArtifactStore::memory()),
+            run_artifacts,
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,
         });
         st.oss.execute_session_registry = execute_session_registry;
         st
+    }
+
+    fn test_run_artifact_doc(
+        run_wire: &str,
+        ph: &str,
+        sid: &str,
+        entities: Vec<serde_json::Value>,
+    ) -> crate::run_artifacts::RunArtifactDocument {
+        use plasm_core::expr_parser::ParsedExpr;
+        use plasm_core::{Expr, Value};
+        use plasm_runtime::{ExecutionSource, ExecutionStats};
+        crate::run_artifacts::RunArtifactDocument {
+            run_id: run_wire.to_string(),
+            prompt_hash: ph.to_string(),
+            session_id: sid.to_string(),
+            entry_id: "overshow".into(),
+            resource_index: None,
+            principal: None,
+            parsed_preimage: ParsedExpr {
+                expr: Expr::TeachingValue {
+                    value: Value::String("probe".into()),
+                },
+                projection: None,
+            },
+            display_lines: vec![],
+            request_fingerprints: vec![],
+            entities,
+            source: ExecutionSource::Live,
+            stats: ExecutionStats::default(),
+        }
+    }
+
+    async fn open_overshow_session(host: &PlasmHostState) -> (String, String, Arc<ExecuteSession>) {
+        let created = execute_session_create_response_inner(
+            host,
+            None,
+            CreateExecuteSessionBody {
+                entry_id: "overshow".into(),
+                entities: vec!["Profile".into()],
+                principal: None,
+                logical_session_id: None,
+                context_intent: None,
+                ranked_capabilities: None,
+                read_first_seeded_exposure: false,
+            },
+            false,
+            None,
+            None,
+        )
+        .await
+        .expect("open session");
+        let sess = host
+            .get_execute_session(&created.prompt_hash, &created.session)
+            .await
+            .expect("session row");
+        (created.prompt_hash, created.session, sess)
     }
 
     fn fibery_shaped_registry() -> InMemoryCgsRegistry {
@@ -672,5 +752,246 @@ mod tests {
                 ..
             }) if kv == "tenant/test/oauth"
         ));
+    }
+
+    #[tokio::test]
+    async fn cross_pod_wait_terminal_hydrates_run_artifact() {
+        let (execute_registry, _) = ExecuteSessionRegistry::with_test_json_store();
+        let artifacts = Arc::new(RunArtifactStore::memory());
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        let registry = Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+            "overshow".into(),
+            "Overshow".into(),
+            vec!["demo".into()],
+            cgs,
+        )]));
+        let host_a = test_host_state_with_shared_artifacts(
+            registry.clone(),
+            execute_registry.clone(),
+            artifacts.clone(),
+        );
+        let host_b =
+            test_host_state_with_shared_artifacts(registry, execute_registry.clone(), artifacts);
+
+        let (ph, sid, sess) = open_overshow_session(&host_a).await;
+        let handle = sess.mint_operation_handle_plain();
+        let host_arc = Arc::new(host_a.clone());
+        sess.try_begin_async_operation(
+            handle.clone(),
+            CancelSignal::new(),
+            OpAcceptContext {
+                host: Some(Arc::downgrade(&host_arc)),
+                ..Default::default()
+            },
+        )
+        .expect("accept");
+        let run_wire = format!("pr{}", "ab".repeat(32));
+        let run_id = RunArtifactId::from_wire(&run_wire).expect("wire id");
+        host_a
+            .run_artifacts
+            .insert(
+                &ph,
+                &sid,
+                run_id,
+                &test_run_artifact_doc(
+                    &run_wire,
+                    &ph,
+                    &sid,
+                    vec![serde_json::json!({"name": "cross-pod"})],
+                ),
+            )
+            .await
+            .expect("artifact");
+        sess.set_operation_run_artifact_id(&handle, run_wire.clone());
+        sess.finalize_operation_succeeded(
+            &handle,
+            crate::plasm_plan_run::PlasmPlanRunResult {
+                version: serde_json::json!({}),
+                node_results: vec![serde_json::json!({"name": "cross-pod"})],
+                graph_summary: serde_json::json!({}),
+                comp: serde_json::json!({}),
+                code_plan_run_artifacts: vec![],
+                run_markdown: None,
+                run_plasm_meta: None,
+                return_steps: Vec::new(),
+            },
+            None,
+        );
+        let op = sess.get_operation(&handle).expect("op");
+        let desc = descriptor_from_operation_state(&handle, &op, 1_700_000_000);
+        execute_registry
+            .patch_session_operations(&ph, &sid, OperationPersistPatch::Upsert(desc))
+            .await;
+        host_a.sessions.purge_all().await;
+
+        let sess_b = host_b
+            .get_execute_session(&ph, &sid)
+            .await
+            .expect("rehydrate");
+        let result = handle_wait_operation(&sess_b, Some(&host_b), None, &handle)
+            .await
+            .expect("wait terminal");
+        assert_eq!(result.node_results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn cross_pod_wait_running_returns_not_on_replica() {
+        let (execute_registry, _) = ExecuteSessionRegistry::with_test_json_store();
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        let registry = Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+            "overshow".into(),
+            "Overshow".into(),
+            vec!["demo".into()],
+            cgs,
+        )]));
+        let host_a = test_host_state_with_shared(registry.clone(), execute_registry.clone());
+        let host_b = test_host_state_with_shared(registry, execute_registry.clone());
+
+        let (ph, sid, sess) = open_overshow_session(&host_a).await;
+        let handle = sess.mint_operation_handle_plain();
+        sess.try_begin_async_operation(
+            handle.clone(),
+            CancelSignal::new(),
+            OpAcceptContext::default(),
+        )
+        .expect("accept");
+        sess.update_operation_progress(
+            &handle,
+            crate::operation::OperationProgress {
+                step: 1,
+                step_total: 3,
+                label: Some("step".into()),
+                rows_materialized: 0,
+            },
+        );
+        let op = sess.get_operation(&handle).expect("op");
+        execute_registry
+            .patch_session_operations(
+                &ph,
+                &sid,
+                OperationPersistPatch::Upsert(descriptor_from_operation_state(
+                    &handle,
+                    &op,
+                    1_700_000_000,
+                )),
+            )
+            .await;
+        host_a.sessions.purge_all().await;
+
+        let sess_b = host_b
+            .get_execute_session(&ph, &sid)
+            .await
+            .expect("rehydrate");
+        let result = handle_wait_operation(&sess_b, Some(&host_b), None, &handle)
+            .await
+            .expect("wait running");
+        let code = result
+            .run_plasm_meta
+            .as_ref()
+            .and_then(|m| m.get("plasm"))
+            .and_then(|p| p.get("code"))
+            .and_then(|c| c.as_str());
+        assert_eq!(code, Some(OperationError::CODE_NOT_ON_REPLICA));
+    }
+
+    #[tokio::test]
+    async fn cross_pod_cancel_running_returns_not_on_replica() {
+        let (execute_registry, _) = ExecuteSessionRegistry::with_test_json_store();
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        let registry = Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+            "overshow".into(),
+            "Overshow".into(),
+            vec!["demo".into()],
+            cgs,
+        )]));
+        let host_a = test_host_state_with_shared(registry.clone(), execute_registry.clone());
+        let host_b = test_host_state_with_shared(registry, execute_registry.clone());
+
+        let (ph, sid, sess) = open_overshow_session(&host_a).await;
+        let handle = sess.mint_operation_handle_plain();
+        sess.try_begin_async_operation(
+            handle.clone(),
+            CancelSignal::new(),
+            OpAcceptContext::default(),
+        )
+        .expect("accept");
+        let op = sess.get_operation(&handle).expect("op");
+        execute_registry
+            .patch_session_operations(
+                &ph,
+                &sid,
+                OperationPersistPatch::Upsert(descriptor_from_operation_state(
+                    &handle,
+                    &op,
+                    1_700_000_000,
+                )),
+            )
+            .await;
+        host_a.sessions.purge_all().await;
+
+        let sess_b = host_b
+            .get_execute_session(&ph, &sid)
+            .await
+            .expect("rehydrate");
+        let err = handle_cancel_operation(&sess_b, None, &handle)
+            .await
+            .expect_err("cancel foreign");
+        assert!(matches!(err, OperationError::NotOnReplica { .. }));
+    }
+
+    #[tokio::test]
+    async fn cross_pod_rehydrate_preserves_operation_handle_monotonicity() {
+        let (execute_registry, _) = ExecuteSessionRegistry::with_test_json_store();
+        let dir =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("overshow_tools"));
+        let registry = Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
+            "overshow".into(),
+            "Overshow".into(),
+            vec!["demo".into()],
+            cgs,
+        )]));
+        let host_a = test_host_state_with_shared(registry.clone(), execute_registry.clone());
+        let host_b = test_host_state_with_shared(registry, execute_registry.clone());
+
+        let (ph, sid, sess) = open_overshow_session(&host_a).await;
+        let h1 = sess.mint_operation_handle_plain();
+        assert!(h1.as_str() == "o1");
+        execute_registry
+            .patch_session_operations(
+                &ph,
+                &sid,
+                OperationPersistPatch::Upsert(
+                    crate::mcp_transport_store::PersistedOperationDescriptor {
+                        handle: h1.as_str().to_string(),
+                        phase: PersistedOperationPhase::Succeeded,
+                        progress: PersistedOperationProgress::default(),
+                        started_at_unix: 0,
+                        error: None,
+                        run_artifact_id: None,
+                        plan_commit_ref: None,
+                        dry_verdict: None,
+                        display_map: Default::default(),
+                        agent_seq: 0,
+                        agent_last_line: String::new(),
+                    },
+                ),
+            )
+            .await;
+        host_a.sessions.purge_all().await;
+
+        let sess_b = host_b
+            .get_execute_session(&ph, &sid)
+            .await
+            .expect("rehydrate");
+        let h2 = sess_b.mint_operation_handle_plain();
+        assert_ne!(h1, h2);
+        assert_eq!(h2.as_str(), "o2");
     }
 }

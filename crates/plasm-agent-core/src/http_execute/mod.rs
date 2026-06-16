@@ -8,7 +8,8 @@
 mod operations;
 pub(crate) use operations::http_operation_trace;
 pub use operations::{
-    handle_cancel_operation, handle_wait_operation, try_dispatch_operation_program,
+    handle_cancel_operation, handle_wait_operation, operation_error_to_string,
+    try_dispatch_operation_program,
 };
 
 mod deps;

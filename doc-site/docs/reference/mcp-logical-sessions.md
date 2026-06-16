@@ -24,7 +24,13 @@ That model breaks when:
 
 ## In-process vs scaled deployments
 
-Today, logical session metadata and execute bindings are still **in-memory** in `plasm`. Surviving process restart or moving to another replica requires a shared **logical session repository** (out of scope for this document’s implementation phase); the types and IDs are chosen so that repository can be added without changing the client contract.
+**MCP transport layer** (SDK `MCP-Session-Id`, GET SSE, JSON-RPC correlation): when `PLASM_MCP_TRANSPORT_REDIS_URL` is set, per-transport stats/index caches are mirrored in Redis so **2+ `plasm-mcp` replicas** work without ingress stickiness. Logical session continuity uses stateless `l_<token>` handles, not transport slot maps.
+
+**Execute / logical session registry** (`logical_execute_bindings`, execute session descriptors): when `PLASM_MCP_TRANSPORT_REDIS_URL` is set, the host mirrors **logical UUID → `(prompt_hash, session_id)`** bindings and **session descriptors** (prompt text, entities, federated entry ids, reuse key, `expires_at_unix`, async operation metadata, …) in the same Redis cluster. Any pod resolves bindings and **rehydrates** the in-memory execute row on demand via [`PlasmHostState::get_execute_session`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-agent-core/src/server_state.rs) (HTTP and MCP both use this path).
+
+**Operational limits after rehydrate:** hot graph cache, paging resume tokens, and **live operation executors** are **not** restored — session metadata, teaching exposure, binding maps, federated catalog hashes, plan-commit records, and **async operation descriptors** (phase/progress/`run_artifact_id`) **are** persisted when Redis is configured. Poll `wait(h)` on any replica; Running ops on another pod return **`operation_not_on_replica`** until terminal. Spilled graph pages reload lazily when `PLASM_GRAPH_CACHE_URL` is set; terminal **`wait(h)`** requires shared `PLASM_RUN_ARTIFACTS_URL`. Rehydrate failures emit `plasm.execute.rehydrate.outcomes_total` metrics.
+
+**Smoke:** [`scripts/smoke/mcp-multireplica-execute-live.sh`](../../../../scripts/smoke/mcp-multireplica-execute-live.sh) (HTTP create → cross-pod GET; MCP `plasm_context` → fresh-transport `plasm` plan; async `plasm_run` → fresh-transport `wait(h)`).
 
 ## Related code
 

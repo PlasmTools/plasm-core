@@ -79,6 +79,8 @@ pub mod oauth_provider_pull;
 pub mod oauth_provider_repository;
 pub mod oauth_runtime_source;
 pub mod operation;
+pub mod operation_error;
+mod operation_persist;
 mod operation_progress;
 #[cfg(test)]
 mod operation_progress_coalesce_integration;

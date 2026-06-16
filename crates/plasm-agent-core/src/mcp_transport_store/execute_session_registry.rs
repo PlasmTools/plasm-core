@@ -7,6 +7,7 @@ use tokio::sync::RwLock;
 
 use crate::execute_session::{ExecuteSession, SessionReuseKey};
 
+use super::persisted_operations::{merge_operation_patch, OperationPersistPatch};
 use super::redis_backend::RedisBackend;
 
 type TestJsonStore = Arc<RwLock<std::collections::HashMap<String, String>>>;
@@ -117,6 +118,10 @@ pub struct PersistedExecuteSessionDescriptor {
     pub plan_commits: Vec<PersistedPlanCommitRecord>,
     #[serde(default)]
     pub plan_commit_next: u64,
+    #[serde(default)]
+    pub operations: Vec<super::persisted_operations::PersistedOperationDescriptor>,
+    #[serde(default)]
+    pub operation_handle_next: u64,
 }
 
 fn default_expires_at_unix() -> u64 {
@@ -146,6 +151,7 @@ impl PersistedExecuteSessionDescriptor {
             }
         }
         let plan_snapshot = session.snapshot_plan_commits_for_persist();
+        let op_snapshot = session.snapshot_operations_for_persist();
         Self {
             prompt_hash: session.prompt_hash.clone(),
             session_id: session_id.to_string(),
@@ -170,6 +176,8 @@ impl PersistedExecuteSessionDescriptor {
             bindings_by_entry: session.bindings_by_entry.clone(),
             plan_commits: plan_snapshot.records,
             plan_commit_next: plan_snapshot.next_sequence,
+            operations: op_snapshot.operations,
+            operation_handle_next: op_snapshot.operation_handle_next,
         }
     }
 }
@@ -180,9 +188,8 @@ pub struct ExecuteSessionRegistry {
     test_json: Arc<RwLock<Option<TestJsonStore>>>,
 }
 
-#[cfg(test)]
 impl ExecuteSessionRegistry {
-    /// In-memory JSON store for cross-pod rehydrate unit tests (no Redis required).
+    /// Shared in-memory JSON store for cross-pod rehydrate tests (no Redis required).
     pub fn with_test_json_store() -> (Self, TestJsonStore) {
         let map: TestJsonStore = Arc::new(RwLock::new(std::collections::HashMap::new()));
         (
@@ -193,9 +200,7 @@ impl ExecuteSessionRegistry {
             map,
         )
     }
-}
 
-impl ExecuteSessionRegistry {
     pub fn new_in_memory() -> Self {
         Self::default()
     }
@@ -299,5 +304,30 @@ impl ExecuteSessionRegistry {
         } else {
             0
         }
+    }
+
+    /// Merge one operation patch into the durable session descriptor (cross-pod wait/cancel metadata).
+    pub async fn patch_session_operations(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        patch: OperationPersistPatch,
+    ) {
+        let key = session_key(prompt_hash, session_id);
+        let Some(mut desc) = self.load_json(&key).await else {
+            return;
+        };
+        merge_operation_patch(&mut desc.operations, &mut desc.operation_handle_next, patch);
+        desc.expires_at_unix = expires_at_from_now();
+        if let Some(map) = self.test_json().await {
+            if let Ok(payload) = serde_json::to_string(&desc) {
+                map.write().await.insert(key, payload);
+            }
+            return;
+        }
+        let Some(redis) = self.redis().await else {
+            return;
+        };
+        redis.set_json(&key, &desc).await;
     }
 }

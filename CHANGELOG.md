@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.11] - 2026-06-15
+
+### Added
+
+- **Cross-pod async operation persistence:** thin operation descriptors (phase, coalesced progress, terminal `run_artifact_id`) persist in the Redis execute session descriptor; any replica can `wait(h)` / resolve terminal results via shared run artifacts. Running ops on another pod return **`operation_not_on_replica`**; foreign **`cancel(h)`** is rejected with the same code.
+- **`OperationError`** structured codes: `unknown_operation_handle`, `operation_not_on_replica`, `operation_result_unavailable`.
+- **Tests:** cross-pod integration in `server_state`, HTTP cap + cross-pod wait smokes in `long_operation_http`; multireplica smoke extends async accept → fresh-transport `wait(h)`.
+
+### Changed
+
+- **Rehydrate:** restore persisted operation stubs (no live executor); **`PLASM_MAX_RUNNING_OPS_PER_SESSION`** counts pod-local live executors only.
+- **Docs:** cross-pod long-op behavior in `plasm-long-operations.md`, `mcp-logical-sessions.md`, `env-profiles.md` (+ doc-site mirrors).
+
 ## [0.3.10] - 2026-06-15
 
 ### Changed

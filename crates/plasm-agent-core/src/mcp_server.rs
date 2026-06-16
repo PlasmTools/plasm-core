@@ -1457,7 +1457,13 @@ impl PlasmMcpHandler {
                 return Err(MCP_EXECUTE_SESSION_UNAVAILABLE.to_string());
             };
             if let Some(op_result) =
-                try_dispatch_operation_program(&es, Some(&mcp_trace), &program).await
+                try_dispatch_operation_program(
+                    &es,
+                    Some(self.plasm.as_ref()),
+                    Some(&mcp_trace),
+                    &program,
+                )
+                .await
             {
                 return op_result;
             }

@@ -1563,7 +1563,10 @@ mod tests {
         let m = build_tool_model(&cgs, &meta, &q).expect("ok");
         assert!(!m.entities.is_empty());
         assert!(m.execute.summary.contains("continuation"));
-        assert!(m.execute.long_operations.contains("plasm_run program=wait(h)"));
+        assert!(m
+            .execute
+            .long_operations
+            .contains("plasm_run program=wait(h)"));
         assert!(m.execute.review_gate.contains("plan_commit_ref"));
         assert_eq!(m.entities.len(), m.domain.model.entities.len());
         assert_eq!(m.focus.mode, "all");

@@ -258,7 +258,7 @@ pub enum OperationPhase {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OperationProgress {
     pub step: u32,
     pub step_total: u32,
@@ -274,6 +274,10 @@ pub struct OperationState {
     pub progress: OperationProgress,
     pub result: Option<Arc<PlasmPlanRunResult>>,
     pub error: Option<String>,
+    /// When false, this row was rehydrated from Redis (no local executor).
+    pub live_executor: bool,
+    /// Durable run snapshot id for cross-pod terminal `wait`.
+    pub run_artifact_id: Option<String>,
     pub agent_emit: crate::operation_progress::OperationAgentEmitState,
     pub display_map: HashMap<String, String>,
     pub plan_commit_ref: Option<PlanCommitRef>,
@@ -594,6 +598,7 @@ pub fn spawn_async_plan_run(
 ) -> Result<(), String> {
     let mut accept = accept;
     accept.host = Some(Arc::downgrade(&st));
+    es.bind_operation_wire(session_id.as_str());
     es.try_begin_async_operation(handle.clone(), cancel.clone(), accept)?;
     let scope = ExecutionScope::for_async_operation(Arc::clone(&es), handle.clone(), cancel);
     es.emit_op_accept(&handle, &st)?;
@@ -610,7 +615,18 @@ pub fn spawn_async_plan_run(
         )
         .await;
         match result {
-            Ok(out) => es.finalize_operation_succeeded(&handle, out, Some(st.as_ref())),
+            Ok(out) => {
+                let run_artifact_id = out
+                    .code_plan_run_artifacts
+                    .first()
+                    .map(|a| a.run_id.clone());
+                es.finalize_operation_succeeded_with_artifact(
+                    &handle,
+                    out,
+                    run_artifact_id,
+                    Some(st.as_ref()),
+                );
+            }
             Err(e) => {
                 if scope.cancel.is_cancelled() {
                     es.cancel_operation(&handle, Some(st.as_ref()));

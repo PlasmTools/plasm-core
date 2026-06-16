@@ -114,7 +114,21 @@ When a response includes **`+`**, **`~`**, or **`=`** on an operation handle, th
 
 Each async live program mints its own handle (`l_<token>_o1`, `_o2`, …). **Parallel async runs are allowed** on the same execute session — poll **each** handle independently.
 
-**Cap:** `PLASM_MAX_RUNNING_OPS_PER_SESSION` (default **16**). When the cap is reached, the host returns **`too_many_operations`** listing outstanding handles — **wait or cancel** those before starting more.
+**Cap:** `PLASM_MAX_RUNNING_OPS_PER_SESSION` (default **16**). When the cap is reached, the host returns **`too_many_operations`** listing outstanding handles — **wait or cancel** those before starting more. Only **pod-local live executors** count toward the cap; rehydrated Running stubs on a foreign replica do not.
+
+## Cross-pod async operations (Redis-backed)
+
+When `PLASM_MCP_TRANSPORT_REDIS_URL` is configured, the host persists **thin operation descriptors** in the existing execute session descriptor JSON (phase, coalesced progress, terminal `run_artifact_id`). **Tokio tasks, cancel signals, and graph state stay pod-local.**
+
+| Situation | `wait(h)` on another replica | `cancel(h)` on another replica |
+|-----------|------------------------------|--------------------------------|
+| **Running** (executor on pod A) | Returns compact `~` progress; `_meta.plasm.code` = **`operation_not_on_replica`** (keep polling) | **`operation_not_on_replica`** error (400) |
+| **Succeeded** | Hydrates rows from shared **`PLASM_RUN_ARTIFACTS_URL`** / in-memory store via stored `pr…` id | N/A (already terminal) |
+| **Unknown handle** | **`unknown_operation_handle`** | same |
+
+Terminal ops store **`run_artifact_id`** only in Redis (not inline `PlasmPlanRunResult`). Progress patches are coalesced (~2s) to bound write volume. At most **16** live Running ops per session and **32** terminal op rows retained in the descriptor.
+
+**Smoke:** `scripts/smoke/mcp-multireplica-execute-live.sh` (async accept + cross-transport `wait(h)`).
 
 ## Internal observability
 

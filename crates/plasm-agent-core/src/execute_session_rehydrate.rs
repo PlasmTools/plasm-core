@@ -300,6 +300,10 @@ pub async fn rehydrate_execute_session(
     session.registry_catalog_hashes_by_entry = desc.registry_catalog_hashes_by_entry.clone();
     session.domain_revision = desc.domain_revision;
     session.restore_persisted_plan_commits(&desc.plan_commits, desc.plan_commit_next);
+    session.restore_persisted_operations(&crate::mcp_transport_store::OperationPersistSnapshot {
+        operations: desc.operations.clone(),
+        operation_handle_next: desc.operation_handle_next,
+    });
 
     Ok(session)
 }
@@ -365,6 +369,8 @@ mod tests {
             bindings_by_entry: Default::default(),
             plan_commits: Vec::new(),
             plan_commit_next: 0,
+            operations: Vec::new(),
+            operation_handle_next: 0,
         };
         assert!(descriptor_expired(&desc));
     }
@@ -420,6 +426,8 @@ mod tests {
             bindings_by_entry: Default::default(),
             plan_commits: Vec::new(),
             plan_commit_next: 0,
+            operations: Vec::new(),
+            operation_handle_next: 0,
         };
         let pins = PinnedCatalogHashes::from_descriptor(&desc);
         assert_eq!(pins.entry_ids, vec!["overshow".to_string()]);

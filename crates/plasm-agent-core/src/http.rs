@@ -33,6 +33,7 @@ use crate::incoming_auth::IncomingAuthVerifier;
 use crate::incoming_auth_device::incoming_auth_device_public_routes;
 use crate::local_trace_archive::LocalTraceArchive;
 use crate::mcp_transport_store::{ExecuteSessionRegistry, LogicalExecuteBindingRegistry};
+use crate::operation_persist::OperationPersistScheduler;
 use crate::operation_progress::OperationProgressHub;
 use crate::run_artifacts::RunArtifactStore;
 use crate::server_state::{CatalogBootstrap, PlasmHostState, PlasmOssHostState};
@@ -126,6 +127,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             incoming_auth_device: Arc::new(crate::incoming_auth_device::IncomingAuthDeviceStore),
             trace_hub,
             op_progress_hub,
+            operation_persist: Arc::new(OperationPersistScheduler),
             trace_hub_config,
             trace_ingest,
             local_trace_archive,
