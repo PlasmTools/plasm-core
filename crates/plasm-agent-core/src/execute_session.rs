@@ -475,6 +475,8 @@ pub struct ExecuteSession {
     pub(crate) evidence_chain: crate::evidence_chain::EvidenceChainSlot,
     /// True while a synchronous (blocking) live plan run holds the execute session.
     sync_live_run_inflight: Arc<AtomicBool>,
+    /// Outbound HTTP telemetry for the active sync or async live run (MCP App progress).
+    sync_live_telemetry: Arc<StdMutex<Option<Arc<plasm_runtime::LiveRunTelemetry>>>>,
     /// Per-catalog session binding maps (MCP connect / REPL `--backend`).
     pub bindings_by_entry: indexmap::IndexMap<String, crate::binding_slots::SessionBindingMap>,
 }
@@ -573,6 +575,7 @@ impl ExecuteSession {
             plan_commit_next: Arc::new(AtomicU64::new(0)),
             evidence_chain: crate::evidence_chain::new_evidence_chain_slot(),
             sync_live_run_inflight: Arc::new(AtomicBool::new(false)),
+            sync_live_telemetry: Arc::new(StdMutex::new(None)),
             bindings_by_entry,
         }
     }
@@ -701,7 +704,7 @@ impl ExecuteSession {
     }
 
     /// Reject nested synchronous live runs on the same execute session.
-    pub fn begin_sync_live_run(&self) -> Result<(), String> {
+    pub fn begin_sync_live_run(&self) -> Result<Arc<plasm_runtime::LiveRunTelemetry>, String> {
         if self
             .sync_live_run_inflight
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -712,11 +715,56 @@ impl ExecuteSession {
                     .to_string(),
             );
         }
-        Ok(())
+        let telemetry = Arc::new(plasm_runtime::LiveRunTelemetry::new());
+        *self
+            .sync_live_telemetry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Arc::clone(&telemetry));
+        Ok(telemetry)
     }
 
     pub fn end_sync_live_run(&self) {
         self.sync_live_run_inflight.store(false, Ordering::Release);
+        *self
+            .sync_live_telemetry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    pub fn install_live_run_telemetry(&self, telemetry: Arc<plasm_runtime::LiveRunTelemetry>) {
+        *self
+            .sync_live_telemetry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(telemetry);
+    }
+
+    pub fn clear_live_run_telemetry(&self) {
+        *self
+            .sync_live_telemetry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    fn live_run_notify_stats(&self, rows: Option<u64>) -> crate::operation_progress::OpNotifyStats {
+        let tel = self
+            .sync_live_telemetry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let Some(tel) = tel else {
+            return crate::operation_progress::OpNotifyStats {
+                rows,
+                ..Default::default()
+            };
+        };
+        let calls = tel.http_calls();
+        let last_ms = tel.last_latency_ms();
+        crate::operation_progress::OpNotifyStats {
+            calls: (calls > 0).then_some(calls),
+            last_ms: (last_ms > 0).then_some(last_ms),
+            elapsed_ms: Some(tel.elapsed_ms()),
+            rows,
+        }
     }
 
     /// Register an async operation; rejects when running-op cap is reached.
@@ -872,6 +920,11 @@ impl ExecuteSession {
         terminal: bool,
         st: Option<&crate::server_state::PlasmHostState>,
     ) {
+        let rows = self
+            .get_operation(handle)
+            .map(|op| op.progress.rows_materialized)
+            .filter(|r| *r > 0);
+        let stats = self.live_run_notify_stats(rows);
         if let Some(op) = self.get_operation(handle) {
             let _ = op
                 .progress_tx
@@ -881,8 +934,13 @@ impl ExecuteSession {
                     terminal,
                 });
             if let (Some(st), Some(tk)) = (st, op.mcp_transport_key.as_deref()) {
-                st.op_progress_hub
-                    .queue_mcp_notify(tk, line, seq, op.plan_commit_ref.as_ref());
+                st.op_progress_hub.queue_mcp_notify(
+                    tk,
+                    line,
+                    seq,
+                    op.plan_commit_ref.as_ref(),
+                    stats,
+                );
             }
         }
     }
@@ -937,6 +995,51 @@ impl ExecuteSession {
             snapshot,
             op.agent_emit.last_emit_at,
         ) {
+            return false;
+        }
+        op.agent_emit.seq = op.agent_emit.seq.saturating_add(1);
+        op.agent_emit.last_emitted = snapshot;
+        op.agent_emit.last_emit_at = Instant::now();
+        let line = crate::operation_progress::render_op_wire_line(
+            handle,
+            crate::operation_progress::OpWireSig::Running,
+            Some(&op.progress),
+            None,
+            None,
+            None,
+        );
+        op.agent_emit.last_line = line.clone();
+        let seq = op.agent_emit.seq;
+        drop(map);
+        self.fanout_op_line(handle, &line, seq, false, st);
+        true
+    }
+
+    /// Emit running progress at most every ~1s (HTTP telemetry) even when plan step is unchanged.
+    pub fn try_emit_op_running_coalesced(
+        &self,
+        handle: &OperationHandle,
+        st: Option<&crate::server_state::PlasmHostState>,
+    ) -> bool {
+        let mut map = self
+            .operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let Some(op) = map.get_mut(handle) else {
+            return false;
+        };
+        if op.phase != crate::operation::OperationPhase::Running {
+            return false;
+        }
+        let snapshot = crate::operation_progress::OpAgentSnapshot::from_running(&op.progress);
+        let time_due = op.agent_emit.last_emit_at.elapsed() >= Duration::from_secs(1);
+        if !time_due
+            && !crate::operation_progress::should_emit_agent_progress(
+                op.agent_emit.last_emitted,
+                snapshot,
+                op.agent_emit.last_emit_at,
+            )
+        {
             return false;
         }
         op.agent_emit.seq = op.agent_emit.seq.saturating_add(1);
@@ -2093,6 +2196,41 @@ mod tests {
                 env::remove_var("PLASM_MAX_RUNNING_OPS_PER_SESSION");
             },
         }
+    }
+
+    #[test]
+    fn live_run_notify_stats_reads_session_telemetry() {
+        let cgs = Arc::new(CGS::new());
+        let mut ctxs = IndexMap::new();
+        ctxs.insert(
+            "default".into(),
+            Arc::new(CgsContext::entry("default", cgs.clone())),
+        );
+        let es = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs,
+            ctxs,
+            "default".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Pet".into()],
+            None,
+            None,
+            None,
+            "hash".into(),
+            None,
+            None,
+        );
+        let telemetry = es.begin_sync_live_run().expect("telemetry");
+        telemetry.record_http_completion(std::time::Duration::from_millis(250));
+        let stats = es.live_run_notify_stats(Some(3));
+        assert_eq!(stats.calls, Some(1));
+        assert_eq!(stats.last_ms, Some(250));
+        assert!(stats.elapsed_ms.is_some());
+        assert_eq!(stats.rows, Some(3));
+        es.end_sync_live_run();
     }
 
     #[test]

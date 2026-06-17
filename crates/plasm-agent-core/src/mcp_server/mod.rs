@@ -2174,6 +2174,18 @@ pub(crate) fn spawn_mcp_teaching_prompt_session_reporter(
                 if let Some(c) = pending.plan_commit {
                     op_params.insert("c".into(), json!(c));
                 }
+                if let Some(calls) = pending.stats.calls {
+                    op_params.insert("calls".into(), json!(calls));
+                }
+                if let Some(last_ms) = pending.stats.last_ms {
+                    op_params.insert("last_ms".into(), json!(last_ms));
+                }
+                if let Some(elapsed_ms) = pending.stats.elapsed_ms {
+                    op_params.insert("elapsed_ms".into(), json!(elapsed_ms));
+                }
+                if let Some(rows) = pending.stats.rows {
+                    op_params.insert("rows".into(), json!(rows));
+                }
                 if let Some(transport) = store.get(&pending.transport_key).await {
                     let _ = transport
                         .notify_custom(CustomNotification {

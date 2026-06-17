@@ -9,6 +9,15 @@ use std::time::{Duration, Instant};
 
 pub const OP_PROGRESS_COALESCE: Duration = Duration::from_secs(2);
 
+/// Structured live-run stats for MCP App progress (Run Explorer telemetry header).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct OpNotifyStats {
+    pub calls: Option<u64>,
+    pub last_ms: Option<u64>,
+    pub elapsed_ms: Option<u64>,
+    pub rows: Option<u64>,
+}
+
 /// MCP push payload queued for the transport session reporter loop.
 #[derive(Debug, Clone)]
 pub struct McpOpPending {
@@ -16,6 +25,7 @@ pub struct McpOpPending {
     pub line: String,
     pub n: u64,
     pub plan_commit: Option<String>,
+    pub stats: OpNotifyStats,
 }
 
 /// Global queue for MCP `notifications/plasm/op` (drained by MCP session reporter).
@@ -35,6 +45,7 @@ impl OperationProgressHub {
         line: &str,
         n: u64,
         plan_commit: Option<&PlanCommitRef>,
+        stats: OpNotifyStats,
     ) {
         self.pending_mcp
             .lock()
@@ -44,6 +55,7 @@ impl OperationProgressHub {
                 line: line.to_string(),
                 n,
                 plan_commit: plan_commit.map(|c| c.as_str().to_string()),
+                stats,
             });
     }
 
@@ -374,6 +386,30 @@ mod tests {
         assert_eq!(op.get("=").and_then(|v| v.as_u64()), Some(1));
         assert_eq!(op.get("s").and_then(|v| v.as_str()), Some("2/5"));
         assert_eq!(op.get("r").and_then(|v| v.as_u64()), Some(42));
+    }
+
+    #[test]
+    fn mcp_pending_carries_notify_stats() {
+        let hub = OperationProgressHub::new();
+        hub.queue_mcp_notify(
+            "tk1",
+            "`o1` ~ 1/2 items",
+            3,
+            Some(&PlanCommitRef::mint(0)),
+            OpNotifyStats {
+                calls: Some(5),
+                last_ms: Some(120),
+                elapsed_ms: Some(4_500),
+                rows: Some(10),
+            },
+        );
+        let pending = hub.drain_mcp_pending();
+        assert_eq!(pending.len(), 1);
+        let p = &pending[0];
+        assert_eq!(p.stats.calls, Some(5));
+        assert_eq!(p.stats.last_ms, Some(120));
+        assert_eq!(p.stats.elapsed_ms, Some(4_500));
+        assert_eq!(p.stats.rows, Some(10));
     }
 
     #[test]

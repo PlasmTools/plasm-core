@@ -511,7 +511,10 @@ async fn mcp_dry_run_plan_commit_merges_from_durable_when_in_memory_stale() {
         .get_execute_session(&fx.out.prompt_hash, &fx.out.session_id)
         .await
         .expect("execute session");
-    assert!(Arc::ptr_eq(&merged, &fx.es), "same in-memory row, merged fields");
+    assert!(
+        Arc::ptr_eq(&merged, &fx.es),
+        "same in-memory row, merged fields"
+    );
     resolve_committed_plan(&merged, &fx.pc).expect("pcN merged from durable descriptor");
 }
 

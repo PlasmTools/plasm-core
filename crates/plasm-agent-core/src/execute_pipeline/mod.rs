@@ -47,6 +47,7 @@ impl ExecutePipeline {
         bundle: &PlasmCompBundle,
         intent: ExecutionIntent,
         mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
+        execution_scope: Option<&crate::operation::ExecutionScope>,
         dry: Option<crate::plasm_plan_run::DryPlasmPlanEvaluation>,
     ) -> Result<PlasmPlanRunResult, String> {
         crate::plasm_plan_run::run_plasm_comp(
@@ -57,7 +58,7 @@ impl ExecutePipeline {
             bundle,
             intent.is_live(),
             mcp_tool_hooks,
-            None,
+            execution_scope,
             dry,
         )
         .await

@@ -286,12 +286,9 @@ impl HttpTransport for ResilientHttpTransport {
                 Err(e) => break Err(e),
             }
         };
-        crate::runtime_metrics::record_outbound_http_request(
-            method,
-            &url,
-            result.is_ok(),
-            started.elapsed(),
-        );
+        let elapsed = started.elapsed();
+        crate::runtime_metrics::record_outbound_http_request(method, &url, result.is_ok(), elapsed);
+        crate::live_run_telemetry::record_live_http_completion(elapsed);
         result
     }
 
@@ -323,12 +320,9 @@ impl HttpTransport for ResilientHttpTransport {
                 Err(e) => break Err(e),
             }
         };
-        crate::runtime_metrics::record_outbound_http_request(
-            "GET",
-            url,
-            result.is_ok(),
-            started.elapsed(),
-        );
+        let elapsed = started.elapsed();
+        crate::runtime_metrics::record_outbound_http_request("GET", url, result.is_ok(), elapsed);
+        crate::live_run_telemetry::record_live_http_completion(elapsed);
         result
     }
 }

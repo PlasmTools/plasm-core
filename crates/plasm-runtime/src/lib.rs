@@ -144,6 +144,7 @@ pub use view_preflight::{
 };
 
 mod cancel_signal;
+mod live_run_telemetry;
 mod runtime_metrics;
 mod spans;
 
@@ -159,6 +160,9 @@ pub use auth_resolution::{
 };
 pub use cache::*;
 pub use cancel_signal::{check_cancel, CancelSignal};
+pub use live_run_telemetry::{
+    record_live_http_completion, with_live_run_telemetry, LiveRunTelemetry,
+};
 pub use error::*;
 pub use evm::*;
 pub use execution::*;

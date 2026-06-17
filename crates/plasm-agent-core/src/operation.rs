@@ -614,19 +614,34 @@ pub fn spawn_async_plan_run(
     es.try_begin_async_operation(handle.clone(), cancel.clone(), accept)?;
     let scope = ExecutionScope::for_async_operation(Arc::clone(&es), handle.clone(), cancel);
     es.emit_op_accept(&handle, &st)?;
+    let telemetry = Arc::new(plasm_runtime::LiveRunTelemetry::new());
+    es.install_live_run_telemetry(Arc::clone(&telemetry));
+    let ticker_cancel = tokio_util::sync::CancellationToken::new();
+    let ticker = spawn_op_progress_ticker(
+        Arc::clone(&es),
+        handle.clone(),
+        Arc::clone(&st),
+        ticker_cancel.clone(),
+    );
     tokio::spawn(async move {
-        let result = crate::plasm_plan_run::run_plasm_comp(
-            es.as_ref(),
-            st.as_ref(),
-            prompt_hash.as_str(),
-            session_id.as_str(),
-            &bundle,
-            true,
-            None,
-            Some(&scope),
-            None,
-        )
+        let result = plasm_runtime::with_live_run_telemetry(telemetry, async {
+            crate::plasm_plan_run::run_plasm_comp(
+                es.as_ref(),
+                st.as_ref(),
+                prompt_hash.as_str(),
+                session_id.as_str(),
+                &bundle,
+                true,
+                None,
+                Some(&scope),
+                None,
+            )
+            .await
+        })
         .await;
+        ticker_cancel.cancel();
+        let _ = ticker.await;
+        es.clear_live_run_telemetry();
         match result {
             Ok(out) => {
                 let run_artifact_id = out
@@ -650,6 +665,27 @@ pub fn spawn_async_plan_run(
         }
     });
     Ok(())
+}
+
+/// Periodic MCP op notifications while a live run is in flight (HTTP telemetry coalesce).
+pub fn spawn_op_progress_ticker(
+    es: Arc<ExecuteSession>,
+    handle: OperationHandle,
+    st: Arc<crate::server_state::PlasmHostState>,
+    cancel: tokio_util::sync::CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                () = cancel.cancelled() => break,
+                _ = interval.tick() => {
+                    es.try_emit_op_running_coalesced(&handle, Some(st.as_ref()));
+                }
+            }
+        }
+    })
 }
 
 #[cfg(test)]

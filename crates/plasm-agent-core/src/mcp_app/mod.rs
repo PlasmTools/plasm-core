@@ -241,7 +241,10 @@ async fn serve_html(body: &'static str, content_type: &'static str) -> Response 
 
 async fn serve_shell_html(body: &'static str) -> Response {
     (
-        [(CONTENT_TYPE, "text/html; charset=utf-8"), (CACHE_CONTROL, "no-store")],
+        [
+            (CONTENT_TYPE, "text/html; charset=utf-8"),
+            (CACHE_CONTROL, "no-store"),
+        ],
         shell_html_with_mcp_config(body),
     )
         .into_response()

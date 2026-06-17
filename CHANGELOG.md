@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.23] - 2026-06-17
+
+### Added
+
+- **Run Explorer live progress:** sync and async MCP `plasm_run` emit enriched `notifications/plasm/op` with outbound HTTP call count, last latency, elapsed time, and row materialization; sync runs use an ephemeral internal operation + 1s progress ticker.
+- **Run Explorer UI:** telemetry header and status footer update during in-flight runs from `hostcontextchanged` (plus local elapsed ticker when the host is silent).
+- **Plan Review UI:** prominent `plan_commit_ref` (`pcN`) chip in the header (click-to-copy), review banner badge, and status line (`pcN · N nodes`).
+
+### Changed
+
+- **`plasm-runtime`:** session-scoped `LiveRunTelemetry` task-local hook on outbound HTTP completion.
+
 ## [0.3.22] - 2026-06-17
 
 ### Fixed

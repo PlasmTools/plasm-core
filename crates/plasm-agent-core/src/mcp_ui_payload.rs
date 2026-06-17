@@ -43,7 +43,10 @@ mod tests {
     fn finalize_serializes_structured_content_for_cursor_hosts() {
         let mut plasm_obj = Map::new();
         plasm_obj.insert("dry_run".into(), json!(true));
-        plasm_obj.insert("logical_session_ref".into(), json!("l_AAAAAAAAQACAAAAAAAAAAQ"));
+        plasm_obj.insert(
+            "logical_session_ref".into(),
+            json!("l_AAAAAAAAQACAAAAAAAAAAQ"),
+        );
         plasm_obj.insert("program".into(), json!("items = e1.limit(1)\nitems"));
         plasm_obj.insert(
             "comp".into(),
@@ -62,14 +65,14 @@ mod tests {
         let out = finalize_mcp_tool_result(res, plasm_obj);
         let wire = serde_json::to_value(&out).expect("serialize CallToolResult");
         assert_eq!(
-            wire
-                .pointer("/structuredContent/plasm/comp/bind/topo")
+            wire.pointer("/structuredContent/plasm/comp/bind/topo")
                 .and_then(|v| v.as_array())
                 .map(|a| a.len()),
             Some(1)
         );
         assert_eq!(
-            wire.pointer("/_meta/ui/resourceUri").and_then(|v| v.as_str()),
+            wire.pointer("/_meta/ui/resourceUri")
+                .and_then(|v| v.as_str()),
             Some(crate::plan_ui_mcp::PLAN_REVIEW_UI_URI)
         );
         assert_eq!(

@@ -262,6 +262,7 @@ pub(crate) async fn post_execute_session_plan(
         },
         None,
         None,
+        None,
     )
     .await;
 
