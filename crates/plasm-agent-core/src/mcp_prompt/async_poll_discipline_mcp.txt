@@ -1,1 +1,1 @@
-     **Long ops:** **`+`/`~`/`=`** = accepted/progress/unchanged — poll **`plasm_run program=wait(l_<token>_oN)`** until **`!`/`x`/`?`**. No unrelated live runs until terminal. **`too_many_operations`**: wait or cancel first.
+     **Long ops:** MCP `plasm_run` awaits server-side and returns one terminal response. Do not poll or cancel via `plasm_run`; if the server reports an in-flight operation, retry after the current run finishes.

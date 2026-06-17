@@ -171,9 +171,7 @@ fn render_core_surface_bullets(spec: &PromptContractSpec, projection: &str) -> S
         "- Program shape: one `plasm_expr`, or `label = …` bindings then comma-separated final roots (no `return`).\n",
     );
     s.push_str(ROW_POSTFIX_OPS_BULLET);
-    s.push_str(
-        "- Continuations: `page(l_<token>_pgM)` | `wait(l_<token>_oM)` | `cancel(l_<token>_oM)` | review gate `pcN` on prior dry-run.\n",
-    );
+    s.push_str("- Run gate: pass `pcN` from a prior dry-run to `plasm_run`; MCP `plasm_run` does not accept program continuations.\n");
     if spec.symbolic {
         s.push_str(
             "- Copy teaching TSV left cells; substitute placeholders; compose via bindings.\n",

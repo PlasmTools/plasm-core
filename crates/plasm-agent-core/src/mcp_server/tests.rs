@@ -234,6 +234,12 @@ fn mcp_tool_list_hides_internal_auth_and_registry_tools() {
     assert!(!names.iter().any(|n| n == "evaluate_code_plan"));
     assert!(!names.iter().any(|n| n == "execute_code_plan"));
     assert!(!names.iter().any(|n| n == "execute"));
+    for workflow_tool in ["open_workflow", "dry_workflow", "run_workflow"] {
+        assert!(
+            !names.iter().any(|n| n == workflow_tool),
+            "{workflow_tool} must remain feature-gated off by default"
+        );
+    }
     assert!(names.iter().any(|n| n == "plasm"));
     assert!(names.iter().any(|n| n == "plasm_run"));
 }
@@ -375,30 +381,61 @@ fn plasm_input_schema_advertises_single_program_string() {
 }
 
 #[test]
-fn plasm_run_input_schema_matches_plasm_program_shape() {
-    let tools = super::PlasmMcpHandler::plasm_tools();
-    let plasm_run = tools
-        .iter()
-        .find(|t| t.name == "plasm_run")
-        .expect("plasm_run tool");
-    let v = serde_json::to_value(&plasm_run.input_schema).expect("input_schema json");
-    let required = v
-        .get("required")
-        .and_then(|x| x.as_array())
-        .expect("required array");
-    assert!(required.iter().any(|x| x.as_str() == Some("program")));
-    let props = v
-        .get("properties")
-        .and_then(|x| x.as_object())
-        .expect("properties object");
-    assert_eq!(
-        props
-            .get("program")
-            .and_then(|x| x.get("type"))
-            .and_then(|x| x.as_str()),
-        Some("string")
-    );
-    assert!(!props.contains_key("execute"));
+fn plasm_run_invocation_rejects_program_and_wait_arguments() {
+    for (key, value, expected) in [
+        (
+            "program",
+            serde_json::json!("e1"),
+            "no longer accepts `program`",
+        ),
+        ("wait", serde_json::json!(false), "does not accept `wait`"),
+        (
+            "cancel",
+            serde_json::json!(true),
+            "does not accept `cancel`",
+        ),
+        ("force", serde_json::json!(true), "does not accept `force`"),
+        (
+            "execute",
+            serde_json::json!(true),
+            "does not accept `execute`",
+        ),
+    ] {
+        let mut args = serde_json::json!({
+            "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
+            "plan_commit_ref": "pc0"
+        });
+        args.as_object_mut()
+            .expect("object args")
+            .insert(key.into(), value);
+        let err = match super::parse_mcp_plasm_invocation("plasm_run", &args, false) {
+            Ok(_) => panic!("{key} should be rejected"),
+            Err(err) => err,
+        };
+        let rendered = format!("{err:?}");
+        assert!(
+            rendered.contains(expected),
+            "unexpected {key} error: {rendered}"
+        );
+    }
+}
+
+#[test]
+fn plasm_run_invocation_accepts_only_plan_commit_ref() {
+    let invocation = super::parse_mcp_plasm_invocation(
+        "plasm_run",
+        &serde_json::json!({
+            "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
+            "plan_commit_ref": "pc12"
+        }),
+        false,
+    )
+    .expect("token invocation");
+    let Some(pc) = invocation.plan_commit_ref() else {
+        panic!("expected run invocation");
+    };
+    assert_eq!(pc.as_str(), "pc12");
+    assert!(invocation.program().is_none());
 }
 
 #[test]

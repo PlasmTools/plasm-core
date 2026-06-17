@@ -2,4 +2,4 @@
 source: crates/plasm-agent-core/src/mcp_server/tests.rs
 expression: "super::MCP_PLASM_TOOL_DESCRIPTION"
 ---
-**Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology. When **`dry_verdict`** is `review`, the response includes **`plan_commit_ref`** (`pcN`) in the Markdown body (and `_meta.plasm`) — pass that token to **`plasm_run`**; do not use **`force: true`** unless you intentionally skip review. Grammar is in MCP initialize; symbols come from **`plasm_context`** TSV.
+**Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and an executable **`plan_commit_ref`** (`pcN`) in the Markdown body (and `_meta.plasm`). Pass that token to **`plasm_run`**; do **not** echo the program. Grammar is in MCP initialize; symbols come from **`plasm_context`** TSV.

@@ -15,7 +15,7 @@ pub(crate) fn mcp_plasm_context_tool_description() -> &'static str {
         .as_str()
 }
 
-/// One-line JSON-schema description for the shared **`program`** parameter on **`plasm`** / **`plasm_run`**.
+/// One-line JSON-schema description for the **`program`** parameter on **`plasm`**.
 pub(crate) const MCP_PROGRAM_PARAM_DESCRIPTION: &str =
     "Plasm program JSON string. Grammar is in MCP initialize; symbols come from `plasm_context` TSV.";
 

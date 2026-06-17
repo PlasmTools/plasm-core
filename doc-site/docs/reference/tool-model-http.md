@@ -26,8 +26,8 @@ Every tool-model response includes an `execute` object describing **host-only** 
 |-------|---------|
 | `summary` | Continuations are host-minted handles — not vendor API cursors or job ids. |
 | `pagination` | MCP: `page(l_<token>_pgN)` from tool results. HTTP-only execute: plain `page(pgN)` when no MCP logical session. |
-| `long_operations` | Async plan runs: `wait=false` or review auto-async → compact op lines (`+` accept · `~` running · `=` unchanged · `!` done). Poll `wait(l_<token>_oM)` (MCP) or `wait(oM)` (HTTP) every few seconds; optional `GET …/operations/{handle}/stream` SSE or MCP `notifications/plasm/op`. |
-| `review_gate` | Dry verdict **review** requires `plan_commit_ref` (`pcN`) from matching plan dry-run or `force=true`. Commit ids hash semantic plan DAG only. |
+| `long_operations` | MCP `plasm_run` awaits server-side and returns one terminal response; progress may arrive via `notifications/plasm/op`. HTTP-only execute can use `wait=false` and poll `wait(oM)` every few seconds; optional `GET …/operations/{handle}/stream` SSE. |
+| `review_gate` | MCP live execute requires `plan_commit_ref` (`pcN`) from `plasm`. HTTP live execute accepts a matching `plan_commit_ref` or `force=true`. Commit ids hash semantic plan DAG only. |
 
 Full workflow: [plasm-long-operations.md](plasm-long-operations.md). Surface grammar: [plasm-language-definition.md](plasm-language-definition.md#host-continuations-page-wait-cancel). Teaching TSV preamble (first wave): [incremental-teaching-prompts.md](incremental-teaching-prompts.md).
 

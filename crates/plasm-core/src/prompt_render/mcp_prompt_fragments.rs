@@ -3,7 +3,7 @@
 /// MCP initialize workflow + tool-description session line.
 pub const SESSION_DISCIPLINE_MCP: &str = "**One goal → one stable `intent` → one `logical_session_ref`.** No new `intent` per API or message. Multi-API: one **`seeds`** array on the same intent.";
 
-/// `plasm` / `plasm_run` program-contract header (MCP initialize).
+/// `plasm` program-contract header plus `plasm_run` review-gate note (MCP initialize).
 pub const SESSION_DISCIPLINE_PROGRAM: &str = "**Session:** one goal → one **`intent`** → one **`logical_session_ref`**; use **`e#`/`m#`/`p#`/`r#` from this session's teaching TSV only** (contract examples are shapes; substitute from your table).";
 
 /// Reuse one-liner: same-ref discipline (embedded in `_Session unchanged …_` wrapper).

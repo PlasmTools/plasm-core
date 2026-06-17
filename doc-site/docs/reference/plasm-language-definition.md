@@ -197,16 +197,16 @@ These are **host-only** surface expressions — not CGS entity operations. The p
 | Expression | Handle shape | Purpose |
 |------------|--------------|---------|
 | `page(l_<token>_pgN)` | `l_<token>_pgM` (MCP) or `pgM` (HTTP-only paging) | Resume paginated query batch |
-| `wait(l_<token>_oN)` / `wait(oN)` | `l_<token>_oM` (MCP) or `oM` (HTTP) | Poll in-flight async plan run |
-| `cancel(…)` | same as wait handle | Cooperative cancel of that operation |
+| `wait(oN)` | `oM` (HTTP) | Poll in-flight async plan run |
+| `cancel(oN)` | `oM` (HTTP) | Cooperative cancel of that operation |
 
-**MCP:** handles are namespaced with the stateless wire ref from `plasm_context` (`l_<token>_o1`, `l_<token>_pg2`, …). Legacy transport slots (`s0`, …) are rejected.
+**MCP:** `plasm_run` awaits server-side and does not accept operation continuations. Agents author programs only through `plasm`; `plasm_run` executes the reviewed `plan_commit_ref` (`pcN`). Legacy transport slots (`s0`, …) are rejected.
 
 **HTTP execute:** long-op and paging handles are plain **`oN`** / **`pgN`** on the same execute session row.
 
-**Async plan runs:** start live execute with `wait: false` (MCP `plasm_run` arg or HTTP `?wait=false`). The accept response includes `wait(…)` in Markdown and `_meta.plasm.operation`. Poll with `wait(…)`; cancel with `cancel(…)`.
+**Async plan runs:** HTTP execute may start live work with `?wait=false`; the accept response includes `wait(…)` in Markdown and `_meta.plasm.operation`. Poll with `wait(…)`; cancel with `cancel(…)`. MCP `plasm_run` awaits internally and returns a terminal response.
 
-**Review gate:** plans with dry verdict **review** require **`plan_commit_ref`** (`pcN`) from a matching plan dry-run or **`force: true`** before live execute. Commit ids hash the **semantic plan DAG** (`version`, `nodes`, `edges`, `topological_order`, `returns`) — not session-local plan names or dry-run summary metadata. See [plasm-long-operations.md](plasm-long-operations.md).
+**Review gate:** MCP live execute requires the **`plan_commit_ref`** (`pcN`) from `plasm`. HTTP live execute may use a matching `plan_commit_ref` or `force=true`. Commit ids hash the **semantic plan DAG** (`version`, `nodes`, `edges`, `topological_order`, `returns`) — not session-local plan names or dry-run summary metadata. See [plasm-long-operations.md](plasm-long-operations.md).
 
 IR types: [`PageExpr`](../plasm-oss/crates/plasm-core/src/expr.rs), [`WaitExpr`](../plasm-oss/crates/plasm-core/src/expr.rs), [`CancelExpr`](../plasm-oss/crates/plasm-core/src/expr.rs).
 

@@ -30,7 +30,7 @@ Symbol and fill rules:
 Core surface:
 - Program shape: one `plasm_expr`, or `label = …` bindings then comma-separated final roots (no `return`).
 - Postfix on row producers: `.limit(N)` | `.page_size(N)` | `.sort(field[, dir])` | `.filter{…}` | `.filter(…)` | `.aggregate(specs)` | `.group_by(field, specs)` | `.dedupe(field[, …])` | `.distinct(field[, …])` | `.distinct()` | `.singleton()` | `[fields]`.
-- Continuations: `page(l_<token>_pgM)` | `wait(l_<token>_oM)` | `cancel(l_<token>_oM)` | review gate `pcN` on prior dry-run.
+- Run gate: pass `pcN` from a prior dry-run to `plasm_run`; MCP `plasm_run` does not accept program continuations.
 - Copy teaching TSV left cells; substitute placeholders; compose via bindings.
 - Search when exposed: `e#~$` or `e#~"text"` (bare `e#~` is invalid); optional scoped filters `e#~"text"[{p#=…}]`.
 - Field projection suffix: `[p#,…]`.
@@ -68,8 +68,7 @@ Common pitfalls:
 - Search-only entities (no query): no `e#{}` list-all — scoped `e#{p#=…}` and/or `e#~"text"`.
 
 
-     **`plasm`** is plan-only (no live HTTP). One `program` per call; bare comma-separated roots (no `return`). **`plasm` cannot run `wait(h)`/`cancel(h)`** — use **`plasm_run`**.
-     **Review gate:** when **`plasm`** returns `dry_verdict: review`, pass matching **`plan_commit_ref`** (`pcN`) to **`plasm_run`** (prefer over **`force: true`**).
-     **`plasm_run`**: live execute after review; may return snapshots.
-     **Paging:** **`plasm_run program=page(l_<token>_pgN)`** on same `logical_session_ref` (live resume only).
+     **`plasm`** is plan-only (no live HTTP). One `program` per call; bare comma-separated roots (no `return`).
+     **Run gate:** pass the **`plan_commit_ref`** (`pcN`) from **`plasm`** to **`plasm_run`**; do not echo the program.
+     **`plasm_run`**: live execute the stored reviewed plan; may return snapshots.
      **Snapshots:** `(in artifact)` / **`resource_link`** / `_meta.plasm.steps` → **`resources/read`** required before concluding data is missing.

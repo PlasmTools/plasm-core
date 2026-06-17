@@ -5303,16 +5303,12 @@ mod tests {
             "contract should teach TSV interpretation before catalog rows"
         );
         assert!(
-            contract.contains("p#=<value>"),
-            "symbolic value placeholders must use <value>, not bare v"
+            contract.contains("substitute placeholders"),
+            "symbolic contract must teach placeholder substitution"
         );
         assert!(
-            contract.contains("page(l_<token>_pgM)"),
-            "page continuation handles are taught by responses and must remain in the contract"
-        );
-        assert!(
-            contract.contains("wait(l_<token>_oM)") && contract.contains("cancel(l_<token>_oM)"),
-            "async plan continuation handles must remain in the contract"
+            contract.contains("MCP `plasm_run` does not accept program continuations"),
+            "MCP contract must keep live continuations out of the agent-facing run surface"
         );
         assert!(
             !contract.contains("teaching table") && !contract.contains(";;") && !contract.contains("p#=v"),

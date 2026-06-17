@@ -77,18 +77,27 @@ pub fn verify_plan_commit_for_run(
     .map_err(|e| e.detail())
 }
 
+/// Verify a plan acceptance token against the compiled comp (stable across dry/live paths).
+pub fn verify_plan_commit_for_comp(
+    es: &ExecuteSession,
+    commit_ref: &PlanCommitRef,
+    comp: &plasm_core::PlasmComp,
+) -> Result<(), String> {
+    crate::plan_commit_store::verify_plan_commit_id(
+        es,
+        commit_ref,
+        compute_plan_commit_id_from_semantic(&plan_commit_canonical_comp(comp)),
+    )
+    .map_err(|e| e.detail())
+}
+
 /// Verify a plan acceptance token against a dry-run evaluation without building presentation DAG fields.
 pub fn verify_plan_commit_for_dry(
     es: &ExecuteSession,
     commit_ref: &PlanCommitRef,
     dry: &DryPlasmPlanEvaluation,
 ) -> Result<(), String> {
-    crate::plan_commit_store::verify_plan_commit_id(
-        es,
-        commit_ref,
-        compute_plan_commit_id_from_dry(dry),
-    )
-    .map_err(|e| e.detail())
+    verify_plan_commit_for_comp(es, commit_ref, &dry.artifact().comp)
 }
 pub const PLAN_COMMIT_TTL: Duration = Duration::from_secs(600);
 
@@ -294,6 +303,8 @@ pub enum OperationPollSnapshot {
 pub struct PlanCommitRecord {
     pub commit_ref: PlanCommitRef,
     pub commit_id: PlanCommitId,
+    pub artifact: crate::plasm_comp_wire::PlasmCompArtifact,
+    pub program: String,
     pub dry_review: PlanDryReview,
     pub verdict: PlanDryVerdict,
     pub expires_at: Instant,
@@ -531,10 +542,10 @@ pub fn resolve_operation_storage_handle(
             Ok(handle.clone())
         }
         (Some(r), false) => Err(format!(
-            "MCP requires namespaced operations: use `wait({r}_oN)` from the tool result"
+            "namespaced logical-session operation required: use `wait({r}_oN)` from the operation result"
         )),
         (None, true) => Err(
-            "namespaced operation handles are only for MCP `plasm_run` with `plasm_context`"
+            "namespaced operation handles require a logical_session_ref context"
                 .to_string(),
         ),
         (None, false) => Ok(handle.clone()),
@@ -553,7 +564,7 @@ pub fn is_operation_continuation_program(program: &str) -> bool {
 pub fn plasm_dry_run_continuation_error(program: &str) -> Option<&'static str> {
     if is_operation_continuation_program(program) {
         Some(
-            "plan-only `plasm` cannot run `wait(...)` or `cancel(...)` — use `plasm_run` with the same `logical_session_ref` and program",
+            "plan-only `plasm` cannot run `wait(...)` or `cancel(...)`; MCP live runs await server-side via `plasm_run` with a `plan_commit_ref`",
         )
     } else {
         None

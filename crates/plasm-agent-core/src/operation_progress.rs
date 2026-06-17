@@ -218,26 +218,23 @@ pub fn render_op_wire_markdown(line: &str) -> String {
     format!("```text\n{line}\n```")
 }
 
-/// Terminal poll outcome glyphs on compact async operation wire lines.
-pub const ASYNC_POLL_TERMINAL_GLYPHS: &str = "`!` (done), `x` (cancelled), or `?` (failed)";
-
 pub fn async_poll_accept_markdown_suffix(handle: &OperationHandle) -> String {
     format!(
-        "\n\n_Poll with `plasm_run program=wait({})` until {ASYNC_POLL_TERMINAL_GLYPHS}. `~` = progress changed; `=` = still open but unchanged — keep polling. Do not start unrelated live programs while this handle is open._",
+        "\n\n_Operation `{}` is running. MCP `plasm_run` awaits server-side; do not poll._",
         handle.as_str()
     )
 }
 
 pub fn async_poll_unchanged_markdown_suffix(handle: &OperationHandle) -> String {
     format!(
-        "\n\n_Still open (`=` unchanged). Keep polling with `plasm_run program=wait({})` until {ASYNC_POLL_TERMINAL_GLYPHS}._",
+        "\n\n_Operation `{}` is still open. MCP `plasm_run` awaits server-side; do not poll._",
         handle.as_str()
     )
 }
 
 pub fn async_poll_progress_markdown_suffix(handle: &OperationHandle) -> String {
     format!(
-        "\n\n_Progress changed (`~`). Keep polling with `plasm_run program=wait({})` until {ASYNC_POLL_TERMINAL_GLYPHS}._",
+        "\n\n_Operation `{}` progressed. MCP `plasm_run` awaits server-side; do not poll._",
         handle.as_str()
     )
 }
@@ -356,8 +353,8 @@ mod tests {
     #[test]
     fn async_poll_discipline_mcp_line_matches_include() {
         const MCP_LINE: &str = include_str!("mcp_prompt/async_poll_discipline_mcp.txt");
-        assert!(MCP_LINE.contains("wait(l_<token>_oN)"));
-        assert!(ASYNC_POLL_TERMINAL_GLYPHS.contains('!'));
+        assert!(MCP_LINE.contains("awaits server-side"));
+        assert!(MCP_LINE.contains("Do not poll"));
     }
 
     #[test]

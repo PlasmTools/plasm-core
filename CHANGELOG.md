@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.18] - 2026-06-17
+
+### Changed
+
+- **MCP `plasm_run` contract:** split plan and execute fully: `plasm` accepts `program` and returns a reviewed `plan_commit_ref` (`pcN`); `plasm_run` now accepts only `logical_session_ref` + `plan_commit_ref` and executes the stored reviewed plan.
+- **MCP prompt/docs discipline:** initialize, tool descriptions, Tool Explorer notes, and doc-site references now teach token-only `plasm_run`; explicit `wait(oN)` / `cancel(oN)` continuations are documented as HTTP / remote CLI only.
+- **MCP UI clients:** Plan UI, Run Explorer, appliance shell, and shared MCP UI host fixtures now use committed-plan run arguments and reject the old `program` / `wait` / `force` shape.
+
+### Fixed
+
+- **Plan commit durability:** HTTP dry-run persists `pcN` records, including compiled plan artifact and source program, so reviewed plans survive execute-session rehydrate.
+- **Run Explorer selection:** artifact prefetch no longer steals active selection, and step rail re-selection keeps its handler after inline and artifact result renders.
+- **TypeScript package checks:** MCP UI packages declare Node test types explicitly and pass strict package-local typechecks.
+
 ## [0.3.17] - 2026-06-16
 
 ### Added

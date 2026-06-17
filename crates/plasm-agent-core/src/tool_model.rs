@@ -138,7 +138,7 @@ impl ToolModelExecuteContinuations {
         Self {
             summary: "LLM execute uses host continuation expressions — not raw API pagination cursors or background job ids.".into(),
             pagination: append_llm_pagination_execute_note(String::new()),
-            long_operations: "Async plan runs: `+`/`~`/`=` = handle open — plasm_run program=wait(h) until `!` or cancel(h); parallel handles OK, poll each (3–5s). At cap, wait/cancel outstanding before more. Optional SSE/MCP push. HTTP: wait(oM)/cancel(oM).".into(),
+            long_operations: "MCP live runs await server-side and return one terminal response; agents do not poll or cancel continuations. HTTP execute may still use operation continuations for explicit async operations.".into(),
             review_gate: "When plan dry-run verdict is review, pass plan_commit_ref (pcN) from matching plan dry-run or force=true before live execute. Commit ids hash semantic plan DAG only.".into(),
         }
     }
@@ -1566,7 +1566,7 @@ mod tests {
         assert!(m
             .execute
             .long_operations
-            .contains("plasm_run program=wait(h)"));
+            .contains("agents do not poll or cancel"));
         assert!(m.execute.review_gate.contains("plan_commit_ref"));
         assert_eq!(m.entities.len(), m.domain.model.entities.len());
         assert_eq!(m.focus.mode, "all");

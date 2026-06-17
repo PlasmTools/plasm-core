@@ -158,13 +158,22 @@ pub(crate) async fn post_run_execute_session(
             Some(&sess),
         );
         let commit_ref = sess.mint_plan_commit_ref();
-        sess.register_plan_commit(crate::operation::PlanCommitRecord {
-            commit_ref: commit_ref.clone(),
-            commit_id: crate::operation::compute_plan_commit_id_from_dry(&dry),
-            dry_review: dry.review.clone(),
-            verdict: compact.verdict,
-            expires_at: std::time::Instant::now() + crate::operation::PLAN_COMMIT_TTL,
-        });
+        crate::plan_commit_store::register_plan_commit_and_persist(
+            &st,
+            &sess,
+            prompt_hash.as_str(),
+            session_id.as_str(),
+            crate::operation::PlanCommitRecord {
+                commit_ref: commit_ref.clone(),
+                commit_id: crate::operation::compute_plan_commit_id_from_dry(&dry),
+                artifact: dry.artifact().clone(),
+                program: program.clone(),
+                dry_review: dry.review.clone(),
+                verdict: compact.verdict,
+                expires_at: std::time::Instant::now() + crate::operation::PLAN_COMMIT_TTL,
+            },
+        )
+        .await;
         let mut plasm_meta =
             crate::operation::plan_commit_meta(&commit_ref, &dry.review, compact.verdict);
         plasm_meta.insert("dry_run".into(), serde_json::json!(true));
@@ -236,8 +245,27 @@ pub(crate) async fn post_run_execute_session(
         &dry_gate.graph_summary,
         Some(&sess),
     );
-    if crate::operation::plan_requires_review_gate(
+    let accepted = match crate::plan_commit_store::accept_plan_commit_for_bundle(
+        &sess,
+        plan_commit_ref.as_ref(),
+        &bundle,
         compact.verdict,
+        &dry_gate.review,
+    ) {
+        Ok(a) => a,
+        Err(e) => {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::BAD_REQUEST,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                )
+                .with_title("Bad Request")
+                .with_detail(e.detail()),
+            );
+        }
+    };
+    if crate::operation::plan_requires_review_gate(
+        accepted.verdict_for_gate,
         force_run,
         plan_commit_ref.as_ref(),
     ) {
@@ -252,35 +280,22 @@ pub(crate) async fn post_run_execute_session(
             ),
         );
     }
-    if let Some(pc) = plan_commit_ref.as_ref() {
-        if let Err(e) = crate::operation::verify_plan_commit_for_dry(&sess, pc, &dry_gate) {
-            return problem_response(
-                Problem::custom(
-                    ProblemStatus::BAD_REQUEST,
-                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                )
-                .with_title("Bad Request")
-                .with_detail(e),
-            );
-        }
-    }
-
     if crate::run_delivery::should_spawn_async_for_policy(
         crate::run_delivery::RunDeliveryPolicy::HttpExecute,
         wait_live,
-        &dry_gate.review,
+        &accepted.review_for_delivery,
     ) {
         let auto_async = crate::run_delivery::live_run_should_auto_async_for_policy(
             crate::run_delivery::RunDeliveryPolicy::HttpExecute,
             wait_live,
-            &dry_gate.review,
+            &accepted.review_for_delivery,
         );
         let handle = sess.mint_operation_handle_plain();
         let payload =
             crate::run_explorer_meta::build_run_explorer_accept_payload(&dry_gate, Some(&sess));
         let mut accept = crate::operation::op_accept_context_from_executable(
             plan_commit_ref.clone(),
-            Some(compact.verdict),
+            Some(accepted.verdict_for_gate),
             auto_async,
             None,
             bundle.executable(),

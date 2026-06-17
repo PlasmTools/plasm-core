@@ -3,7 +3,11 @@
 use plasm_core::{PlanCommitId, PlanCommitRef};
 
 use crate::execute_session::ExecuteSession;
-use crate::operation::PlanCommitRecord;
+use crate::operation::{
+    compute_plan_commit_id_from_semantic, plan_commit_canonical_comp, PlanCommitRecord,
+};
+use crate::plan_dry_display::{PlanDryReview, PlanDryVerdict};
+use crate::plasm_comp_bundle::PlasmCompBundle;
 use crate::server_state::PlasmHostState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +80,82 @@ pub fn verify_plan_commit_id(
     Ok(())
 }
 
+#[derive(Clone)]
+pub struct AcceptedPlanCommit {
+    pub record: Option<PlanCommitRecord>,
+    pub verdict_for_gate: PlanDryVerdict,
+    pub review_for_delivery: PlanDryReview,
+}
+
+#[derive(Clone)]
+pub struct CommittedPlan {
+    pub commit_ref: PlanCommitRef,
+    pub artifact: crate::plasm_comp_wire::PlasmCompArtifact,
+    pub program: String,
+    pub dry_review: PlanDryReview,
+    pub verdict: PlanDryVerdict,
+}
+
+pub fn resolve_committed_plan(
+    es: &ExecuteSession,
+    commit_ref: &PlanCommitRef,
+) -> Result<CommittedPlan, PlanCommitVerifyError> {
+    let record = es
+        .get_plan_commit(commit_ref)
+        .ok_or_else(|| PlanCommitVerifyError::Unknown {
+            commit_ref: commit_ref.as_str().to_string(),
+        })?;
+    if record.is_expired() {
+        return Err(PlanCommitVerifyError::Expired {
+            commit_ref: commit_ref.as_str().to_string(),
+        });
+    }
+    let commit_id =
+        compute_plan_commit_id_from_semantic(&plan_commit_canonical_comp(&record.artifact.comp));
+    verify_plan_commit_id(es, commit_ref, commit_id)?;
+    Ok(CommittedPlan {
+        commit_ref: record.commit_ref,
+        artifact: record.artifact,
+        program: record.program,
+        dry_review: record.dry_review,
+        verdict: record.verdict,
+    })
+}
+
+pub fn accept_plan_commit_for_bundle(
+    es: &ExecuteSession,
+    commit_ref: Option<&PlanCommitRef>,
+    bundle: &PlasmCompBundle,
+    fresh_verdict: PlanDryVerdict,
+    fresh_review: &PlanDryReview,
+) -> Result<AcceptedPlanCommit, PlanCommitVerifyError> {
+    let Some(commit_ref) = commit_ref else {
+        return Ok(AcceptedPlanCommit {
+            record: None,
+            verdict_for_gate: fresh_verdict,
+            review_for_delivery: fresh_review.clone(),
+        });
+    };
+    let commit_id =
+        compute_plan_commit_id_from_semantic(&plan_commit_canonical_comp(&bundle.artifact().comp));
+    verify_plan_commit_id(es, commit_ref, commit_id)?;
+    let record = es
+        .get_plan_commit(commit_ref)
+        .ok_or_else(|| PlanCommitVerifyError::Unknown {
+            commit_ref: commit_ref.as_str().to_string(),
+        })?;
+    if record.is_expired() {
+        return Err(PlanCommitVerifyError::Expired {
+            commit_ref: commit_ref.as_str().to_string(),
+        });
+    }
+    Ok(AcceptedPlanCommit {
+        verdict_for_gate: record.verdict,
+        review_for_delivery: record.dry_review.clone(),
+        record: Some(record),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -113,6 +193,41 @@ mod tests {
         )
     }
 
+    fn minimal_artifact() -> crate::plasm_comp_wire::PlasmCompArtifact {
+        use plasm_core::plasm_monad::*;
+        use std::collections::BTreeMap;
+
+        let mut steps = BTreeMap::new();
+        steps.insert(
+            "x".into(),
+            PlasmStepPayload::Pure(PurePayload {
+                data: plasm_core::PlasmDataValue::Literal {
+                    value: serde_json::json!("ok"),
+                },
+                effect_class: plasm_core::EffectClass::ArtifactRead,
+                result_shape: plasm_core::ResultShape::Artifact,
+            }),
+        );
+        crate::plasm_comp_wire::PlasmCompArtifact {
+            comp: PlasmComp {
+                version: 1,
+                name: Some("test".into()),
+                steps,
+                bind: PlasmBindGraph {
+                    topo: vec![StepId::new("x").expect("step id")],
+                    deps: Default::default(),
+                    primary: Default::default(),
+                    holes: Default::default(),
+                },
+                return_: PlasmReturn::Step {
+                    step: StepId::new("x").expect("return step"),
+                },
+                metadata: Default::default(),
+            },
+            approval_gates: Vec::new(),
+        }
+    }
+
     #[test]
     fn verify_splits_unknown_expired_and_mismatch() {
         let es = minimal_session();
@@ -124,6 +239,8 @@ mod tests {
         let record = PlanCommitRecord {
             commit_ref: pc.clone(),
             commit_id: PlanCommitId::from_canonical_bytes([1u8; 32]),
+            artifact: minimal_artifact(),
+            program: "test".into(),
             dry_review: Default::default(),
             verdict: PlanDryVerdict::Ok,
             expires_at: std::time::Instant::now() - PLAN_COMMIT_TTL,
@@ -136,6 +253,8 @@ mod tests {
         es.register_plan_commit(PlanCommitRecord {
             commit_ref: pc.clone(),
             commit_id: PlanCommitId::from_canonical_bytes([2u8; 32]),
+            artifact: minimal_artifact(),
+            program: "test".into(),
             dry_review: Default::default(),
             verdict: PlanDryVerdict::Ok,
             expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
@@ -153,11 +272,53 @@ mod tests {
         es.register_plan_commit(PlanCommitRecord {
             commit_ref: pc.clone(),
             commit_id: commit_id.clone(),
+            artifact: minimal_artifact(),
+            program: "test".into(),
             dry_review: Default::default(),
             verdict: PlanDryVerdict::Ok,
             expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
         });
         verify_plan_commit_id(&es, &pc, commit_id).expect("roundtrip");
+    }
+
+    #[test]
+    fn accept_plan_commit_uses_stored_review_for_matching_bundle() {
+        let es = minimal_session();
+        let artifact = minimal_artifact();
+        let bundle = PlasmCompBundle::new(artifact.clone()).expect("bundle");
+        let pc = es.mint_plan_commit_ref();
+        let commit_id = crate::operation::compute_plan_commit_id_from_semantic(
+            &plan_commit_canonical_comp(&artifact.comp),
+        );
+        let review = PlanDryReview {
+            has_unbounded_read_root: true,
+            ..Default::default()
+        };
+        es.register_plan_commit(PlanCommitRecord {
+            commit_ref: pc.clone(),
+            commit_id,
+            artifact,
+            program: "e1.limit(3)".into(),
+            dry_review: review.clone(),
+            verdict: PlanDryVerdict::Review,
+            expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
+        });
+
+        let accepted = accept_plan_commit_for_bundle(
+            &es,
+            Some(&pc),
+            &bundle,
+            PlanDryVerdict::Ok,
+            &PlanDryReview::default(),
+        )
+        .expect("accepted");
+
+        assert_eq!(accepted.verdict_for_gate, PlanDryVerdict::Review);
+        assert!(accepted.review_for_delivery.has_unbounded_read_root);
+        assert_eq!(
+            accepted.record.as_ref().map(|r| r.program.as_str()),
+            Some("e1.limit(3)")
+        );
     }
 
     #[tokio::test]
@@ -218,7 +379,10 @@ mod tests {
             .await
             .expect("session row");
         let pc = es.mint_plan_commit_ref();
-        let commit_id = PlanCommitId::from_canonical_bytes([7u8; 32]);
+        let artifact = minimal_artifact();
+        let commit_id = crate::operation::compute_plan_commit_id_from_semantic(
+            &plan_commit_canonical_comp(&artifact.comp),
+        );
         register_plan_commit_and_persist(
             &host,
             &es,
@@ -227,6 +391,8 @@ mod tests {
             PlanCommitRecord {
                 commit_ref: pc.clone(),
                 commit_id: commit_id.clone(),
+                artifact: artifact.clone(),
+                program: "test".into(),
                 dry_review: Default::default(),
                 verdict: PlanDryVerdict::Ok,
                 expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
@@ -239,5 +405,20 @@ mod tests {
             .await
             .expect("rehydrate");
         verify_plan_commit_id(&es2, &pc, commit_id).expect("persisted plan commit");
+        let record = es2.get_plan_commit(&pc).expect("persisted record");
+        let bundle = PlasmCompBundle::new(record.artifact).expect("persisted artifact bundle");
+        let accepted = accept_plan_commit_for_bundle(
+            &es2,
+            Some(&pc),
+            &bundle,
+            PlanDryVerdict::Review,
+            &PlanDryReview::default(),
+        )
+        .expect("rehydrated token accepted");
+        assert_eq!(accepted.verdict_for_gate, PlanDryVerdict::Ok);
+        assert_eq!(
+            accepted.record.as_ref().map(|r| r.program.as_str()),
+            Some("test")
+        );
     }
 }

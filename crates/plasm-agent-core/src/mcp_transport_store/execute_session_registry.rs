@@ -78,6 +78,10 @@ impl From<PersistedSessionReuseKey> for SessionReuseKey {
 pub struct PersistedPlanCommitRecord {
     pub commit_ref: String,
     pub commit_id_hex: String,
+    #[serde(default)]
+    pub comp: Option<serde_json::Value>,
+    #[serde(default)]
+    pub program: String,
     pub dry_review: crate::plan_dry_display::PlanDryReview,
     pub verdict: crate::plan_dry_display::PlanDryVerdict,
     pub expires_at_unix: u64,

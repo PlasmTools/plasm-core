@@ -1,6 +1,9 @@
 # Long-running Plasm operations
 
-Plasm uses the same **continuation model as paging**: opaque handles and program expressions — no extra MCP tools.
+Plasm uses two execution surfaces:
+
+- **MCP:** `plasm` dry-runs a program and returns `plan_commit_ref` (`pcN`); `plasm_run` executes that stored reviewed plan and awaits server-side.
+- **HTTP / remote CLI:** live execute can opt into explicit async operation continuations with `wait(oN)` / `cancel(oN)`.
 
 See also [plasm-language-definition.md](plasm-language-definition.md#host-continuations-page-wait-cancel) for surface syntax, [incremental-teaching-prompts.md](incremental-teaching-prompts.md) for how the teaching TSV preamble teaches continuations, and [tool-model-http.md](tool-model-http.md) for Phoenix Tool Explorer `execute` notes.
 
@@ -10,12 +13,11 @@ See also [plasm-language-definition.md](plasm-language-definition.md#host-contin
 |--------|------------|---------|
 | `l_<token>_pgN` | `page(l_<token>_pgN)` | Paginated query cursor (MCP) |
 | `pgN` | `page(pgN)` | Paginated query cursor (HTTP-only execute) |
-| `l_<token>_oN` | `wait(l_<token>_oN)` | In-flight async plan execution (MCP) |
 | `oN` | `wait(oN)` | In-flight async plan execution (HTTP) |
-| `l_<token>_oN` / `oN` | `cancel(…)` | Cooperative cancel of that operation |
+| `oN` | `cancel(oN)` | Cooperative cancel of that operation |
 | `pcN` | (tool/query arg) | Dry-run plan acceptance token |
 
-**MCP:** handles are namespaced with the stateless wire ref from `plasm_context` — e.g. `l_AAAAAAAAQACAAAAAAAAAAQ_o1`, `l_AAAAAAAAQACAAAAAAAAAAQ_pg2`. Legacy transport slots (`s0`, …) are rejected.
+**MCP:** `plasm_run` does not accept `program`, `wait`, `cancel`, `force`, or `execute`. It accepts the reviewed `plan_commit_ref` returned by `plasm` and returns one terminal response. Legacy transport slots (`s0`, …) are rejected.
 
 **HTTP execute:** long-op and paging handles are **plain** `oN` / `pgN` on the same `/execute/:prompt_hash/:session` row — no MCP `plasm_context` required for wait/cancel continuations.
 
@@ -26,39 +28,31 @@ Dry-run mints a **`plan_commit_ref`** (`pc0`, `pc1`, …) tied to a **content-ad
 - Hashed fields: `version`, `nodes`, `edges`, `topological_order`, `returns`
 - **Excluded** (session-local / presentation): plan `name` (e.g. `plasm_dag_call_{n}`), dry-run `summary`
 
-The same program therefore yields the same `pcN` acceptance on MCP and HTTP even when call counters or summary metadata differ.
+The same program therefore yields the same `pcN` acceptance on MCP and HTTP even when call counters or summary metadata differ. MCP stores the reviewed comp under `pcN`; `plasm_run` consumes that token directly rather than re-accepting a program echo.
 
 Tokens expire after **10 minutes** (`PLAN_COMMIT_TTL`). Re-run plan dry-run after expiry or program change.
 
 ## Agent workflow (MCP)
 
-1. **`plasm`** — dry-run; returns `plan_commit_ref` (`pc0`, …) and `dry_review` / `dry_verdict` in `_meta.plasm` when the plan needs review.
-2. **`plasm_run`** — live execute.
-   - On **`review`** verdict: blocked unless `plan_commit_ref` matches the current program or `force: true`.
-   - **Review/unbounded plans auto-async** when `wait` is omitted — returns `wait(l_<token>_oN)` immediately; poll via `plasm_run` + `wait(…)`; cancel via `cancel(…)`.
-   - **Expensive** plans (unbounded paginated reads, relation fanout, mutating for_each) auto-async on default `wait`. Advisory review alone (e.g. get + project, unused seeds) stays **sync**.
-   - With **`wait: false`**: same async accept on any plan.
-   - Bounded **ok** verdict plans with default `wait` remain synchronous (fast path).
+1. **`plasm`** — dry-run; pass `logical_session_ref` + `program`. The response returns `plan_commit_ref` (`pc0`, …) and `dry_review` / `dry_verdict` in `_meta.plasm`.
+2. **`plasm_run`** — live execute; pass `logical_session_ref` + `plan_commit_ref` only. Do not echo the program. The server awaits expensive work internally and returns terminal rows/snapshots.
 3. **`resources/read`** — full run snapshots when Markdown summarizes away fields.
 
 ### Examples
 
 ```text
-plasm_run  program=Pokemon.filter{base_experience >= 300}  wait=false  force=true
-→ wait(l_AAAAAAAAQACAAAAAAAAAAQ_o1) · verdict review · plan `pc0`
+plasm      logical_session_ref=l_AAAAAAAAQACAAAAAAAAAAQ  program=Pokemon.filter{base_experience >= 300}
+→ dry plan · plan_commit_ref `pc0`
 
-plasm_run  program=wait(l_AAAAAAAAQACAAAAAAAAAAQ_o1)
-→ step 3/8 · …  (while running) or final results (when done)
-
-plasm_run  program=cancel(l_AAAAAAAAQACAAAAAAAAAAQ_o1)
-→ cancelled · partial snapshots via resources/read
+plasm_run  logical_session_ref=l_AAAAAAAAQACAAAAAAAAAAQ  plan_commit_ref=pc0
+→ terminal rows/table or resource_link snapshots
 ```
 
 ## HTTP execute
 
 `POST /execute/:prompt_hash/:session` accepts the same program strings (`wait(…)`, `cancel(…)`).
 
-Query parameters (also available on MCP `plasm` / `plasm_run` tool args):
+Query parameters:
 
 | Param | Default | Role |
 |-------|---------|------|
@@ -93,7 +87,7 @@ Compact **one-line** updates — not repeated poll/cancel instructions:
 | `x` | cancelled |
 | `?` | failed |
 
-**Poll:** `wait(…)` / HTTP `POST` with the same program — `_meta.plasm.op` uses short keys (`n`, `~`, `s`, `l`, `r`).
+**Poll:** HTTP `POST` with `wait(…)` — `_meta.plasm.op` uses short keys (`n`, `~`, `s`, `l`, `r`).
 
 **Push (optional):**
 
@@ -104,23 +98,23 @@ Compact **one-line** updates — not repeated poll/cancel instructions:
 
 When a response includes **`+`**, **`~`**, or **`=`** on an operation handle, that handle is **open**:
 
-1. Poll with **`plasm_run program=wait(h)`** (MCP) or **`POST`** body `wait(h)` (HTTP) every **3–5s** until **`!`** (done), **`x`** (cancelled), or **`?`** (failed).
+1. Poll with HTTP **`POST`** body `wait(h)` every **3–5s** until **`!`** (done), **`x`** (cancelled), or **`?`** (failed).
 2. Or cooperative **`cancel(h)`** when abandoning the run.
 3. **Do not** start unrelated live programs or tell the user the task is finished while handles you opened are still open — unless you explicitly say the run is still in progress and keep polling.
 
-**`plasm` (dry-run) does not dispatch `wait(h)`** — continuations are **`plasm_run`** (or HTTP execute) only.
+**MCP does not dispatch `wait(h)` / `cancel(h)` through `plasm_run`**. Use HTTP execute / remote CLI for explicit operation continuations.
 
 ## Concurrent operations
 
-Each async live program mints its own handle (`l_<token>_o1`, `_o2`, …). **Parallel async runs are allowed** on the same execute session — poll **each** handle independently.
+Each HTTP async live program mints its own handle (`o1`, `o2`, …). **Parallel async runs are allowed** on the same execute session — poll **each** handle independently.
 
 **Cap:** `PLASM_MAX_RUNNING_OPS_PER_SESSION` (default **16**). When the cap is reached, the host returns **`too_many_operations`** listing outstanding handles — **wait or cancel** those before starting more. Only **pod-local live executors** count toward the cap; rehydrated Running stubs on a foreign replica do not.
 
-## Cross-pod async operations (Redis-backed)
+## Cross-pod HTTP async operations (Redis-backed)
 
-When `PLASM_MCP_TRANSPORT_REDIS_URL` is configured, the host persists **thin operation descriptors** in the existing execute session descriptor JSON (phase, coalesced progress, terminal `run_artifact_id`). **Tokio tasks, cancel signals, and graph state stay pod-local.**
+When `PLASM_MCP_TRANSPORT_REDIS_URL` is configured, the host persists **thin operation descriptors** in the existing execute session descriptor JSON (phase, coalesced progress, terminal `run_artifact_id`). **Tokio tasks, cancel signals, and graph state stay pod-local.** This is an HTTP / remote CLI continuation surface; MCP `plasm_run` awaits internally.
 
-| Situation | `wait(h)` on another replica | `cancel(h)` on another replica |
+| Situation | `wait(oN)` on another replica | `cancel(oN)` on another replica |
 |-----------|------------------------------|--------------------------------|
 | **Running** (executor on pod A) | Returns compact `~` progress; `_meta.plasm.code` = **`operation_not_on_replica`** (keep polling) | **`operation_not_on_replica`** error (400) |
 | **Succeeded** | Hydrates rows from shared **`PLASM_RUN_ARTIFACTS_URL`** / in-memory store via stored `pr…` id | N/A (already terminal) |

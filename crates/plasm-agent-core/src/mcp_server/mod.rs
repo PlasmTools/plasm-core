@@ -29,8 +29,8 @@
 //!
 //! Plasm language / instructions body (first update on `plasm_context` open plus append-only deltas when you add
 //! capability picks via `plasm_context`'s `seeds`) is counted in Unicode scalar values per MCP transport session.
-//! Each `plasm` / `plasm_run` call also accumulates invocation text (`program` plus optional `reasoning`) and,
-//! on success, returned Markdown. Server logs use a rough **token estimate** ≈ `ceil(chars / 4)` per
+//! `plasm` calls also accumulate invocation text (`program` plus optional `reasoning`); both
+//! `plasm` and `plasm_run` accumulate returned Markdown on success. Server logs use a rough **token estimate** ≈ `ceil(chars / 4)` per
 //! bucket (`prompt` / `invocation` / `tool_response`). When the session leaves the SDK session store,
 //! an `INFO` line logs cumulative character totals and token estimates (`plasm_agent::mcp`).
 
@@ -87,8 +87,8 @@ use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
 use crate::operation::{
-    compute_plan_commit_id_from_dry, plan_commit_meta, plan_requires_review_gate,
-    verify_plan_commit_for_dry, PlanCommitRecord, PLAN_COMMIT_TTL,
+    compute_plan_commit_id_from_dry, plan_commit_meta, plan_requires_review_gate, PlanCommitRecord,
+    PLAN_COMMIT_TTL,
 };
 use crate::plan_dry_display::build_plan_dry_compact_view;
 use crate::plasm_comp_wire::plasm_comp_json_from_dry;
@@ -522,22 +522,11 @@ impl PlasmMcpHandler {
             json_schema_string_type("Optional short note explaining the intent of this call."),
         );
         let mut plasm_run_props = plasm_program_props.clone();
-        plasm_run_props.insert(
-            "wait".into(),
-            json_schema_bool_type(
-                "Default **true**. **Expensive** plans: server spawns and awaits internally — one terminal TSV (no client `wait(l_<token>_oN)` loop). **`wait: false`**: return **`+`** accept + handle; poll with `plasm_run program=wait(l_<token>_oN)` until terminal.",
-            ),
-        );
-        plasm_run_props.insert(
-            "force".into(),
-            json_schema_bool_type(
-                "Bypass the dry-run **review** soft gate for unbounded or risky plans. Prefer `plan_commit_ref` from a prior `plasm` dry-run when possible.",
-            ),
-        );
+        plasm_run_props.remove("program");
         plasm_run_props.insert(
             "plan_commit_ref".into(),
             json_schema_string_type(
-                "Plan acceptance token (`pcN`) from a matching `plasm` dry-run. Required when dry verdict is **review** unless `force: true`.",
+                "Executable plan token (`pcN`) from a prior `plasm` dry-run. `plasm_run` executes this stored reviewed plan; do not echo the program.",
             ),
         );
 
@@ -609,7 +598,7 @@ impl PlasmMcpHandler {
             title: Some("Run Plasm (execute)".into()),
             description: Some(MCP_PLASM_RUN_TOOL_DESCRIPTION.into()),
             input_schema: ToolInputSchema::new(
-                vec!["logical_session_ref".into(), "program".into()],
+                vec!["logical_session_ref".into(), "plan_commit_ref".into()],
                 Some(plasm_run_props),
                 None,
             ),
@@ -652,9 +641,103 @@ impl PlasmMcpHandler {
             ),
             output_schema: None,
         });
-        tools.extend(crate::workflow_mcp::workflow_mcp_tools());
+        if workflow_mcp_tools_enabled() {
+            tools.extend(crate::workflow_mcp::workflow_mcp_tools());
+        }
         tools
     }
+}
+
+fn workflow_mcp_tools_enabled() -> bool {
+    std::env::var("PLASM_MCP_WORKFLOW_TOOLS")
+        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
+#[derive(Debug, Clone)]
+enum McpPlasmInvocation {
+    Dry { program: String },
+    Run { plan_commit_ref: PlanCommitRef },
+}
+
+impl McpPlasmInvocation {
+    fn program(&self) -> Option<&str> {
+        match self {
+            Self::Dry { program } => Some(program.as_str()),
+            Self::Run { .. } => None,
+        }
+    }
+
+    fn plan_commit_ref(&self) -> Option<&PlanCommitRef> {
+        match self {
+            Self::Dry { .. } => None,
+            Self::Run { plan_commit_ref } => Some(plan_commit_ref),
+        }
+    }
+}
+
+fn parse_mcp_plasm_invocation(
+    tool_name: &'static str,
+    v: &serde_json::Value,
+    dry_run_only: bool,
+) -> Result<McpPlasmInvocation, CallToolResult> {
+    fn invalid(tool_name: &'static str, msg: impl Into<String>) -> CallToolResult {
+        CallToolResult::with_error(CallToolError::invalid_arguments(
+            tool_name,
+            Some(msg.into()),
+        ))
+    }
+
+    if dry_run_only && v.get("execute").is_some() {
+        return Err(invalid(
+            tool_name,
+            "remove `execute`: `plasm` is plan-only. Call `plasm_run` with the same `logical_session_ref` and returned `plan_commit_ref` for live execution after reviewing the dry-run plan.",
+        ));
+    }
+
+    if dry_run_only {
+        let Some(program) = v
+            .get("program")
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+        else {
+            return Err(invalid(
+                tool_name,
+                "missing or invalid `program`: non-empty string",
+            ));
+        };
+        if let Some(msg) = crate::operation::plasm_dry_run_continuation_error(&program) {
+            return Err(invalid(tool_name, msg));
+        }
+        return Ok(McpPlasmInvocation::Dry { program });
+    }
+
+    for removed_key in ["program", "wait", "cancel", "force", "execute"] {
+        if v.get(removed_key).is_some() {
+            let msg = match removed_key {
+                "program" => "`plasm_run` no longer accepts `program`; call `plasm` first, then pass only the returned `plan_commit_ref`.",
+                "wait" => "MCP `plasm_run` always awaits server-side and does not accept `wait`.",
+                "cancel" => "MCP `plasm_run` does not accept `cancel`; live runs await server-side and operation cancellation is not agent-accessible on MCP.",
+                "force" => "MCP `plasm_run` does not accept `force`; execute the reviewed `plan_commit_ref` returned by `plasm`.",
+                "execute" => "MCP `plasm_run` does not accept `execute`; pass only the reviewed `plan_commit_ref` returned by `plasm`.",
+                _ => unreachable!("removed key list is exhaustive"),
+            };
+            return Err(invalid(tool_name, msg));
+        }
+    }
+    let Some(plan_commit_ref) = v
+        .get("plan_commit_ref")
+        .and_then(|x| x.as_str())
+        .and_then(PlanCommitRef::parse)
+    else {
+        return Err(invalid(
+            tool_name,
+            "missing `plan_commit_ref`: call `plasm` first, then run the returned `pcN` token",
+        ));
+    };
+    Ok(McpPlasmInvocation::Run { plan_commit_ref })
 }
 
 impl PlasmMcpHandler {
@@ -730,49 +813,9 @@ impl PlasmMcpHandler {
                 self.persist_transport_state(key).await;
             }
         }
-        if dry_run_only && v.get("execute").is_some() {
-            crate::metrics::record_mcp_tool(
-                tool_name,
-                Some(false),
-                "error",
-                "invalid_arguments",
-                started.elapsed(),
-            );
-            return Ok(CallToolResult::with_error(CallToolError::invalid_arguments(
-                tool_name,
-                Some(
-                    "remove `execute`: `plasm` is plan-only. Call `plasm_run` with the same `logical_session_ref` and `program` for live execution after reviewing the dry-run plan."
-                        .into(),
-                ),
-            )));
-        }
-        let Some(program) = v
-            .get("program")
-            .and_then(|x| x.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-        else {
-            crate::metrics::record_mcp_tool(
-                tool_name,
-                Some(false),
-                "error",
-                "invalid_arguments",
-                started.elapsed(),
-            );
-            return Ok(CallToolResult::with_error(
-                CallToolError::invalid_arguments(
-                    tool_name,
-                    Some("missing or invalid `program`: non-empty string".into()),
-                ),
-            ));
-        };
-        let reasoning = v
-            .get("reasoning")
-            .and_then(|x| x.as_str())
-            .filter(|s| !s.is_empty());
-        if dry_run_only {
-            if let Some(msg) = crate::operation::plasm_dry_run_continuation_error(&program) {
+        let invocation = match parse_mcp_plasm_invocation(tool_name, v, dry_run_only) {
+            Ok(invocation) => invocation,
+            Err(result) => {
                 crate::metrics::record_mcp_tool(
                     tool_name,
                     Some(false),
@@ -780,27 +823,27 @@ impl PlasmMcpHandler {
                     "invalid_arguments",
                     started.elapsed(),
                 );
-                return Ok(CallToolResult::with_error(
-                    CallToolError::invalid_arguments(tool_name, Some(msg.into())),
-                ));
+                return Ok(result);
             }
-        }
-        let wait_live = v.get("wait").and_then(|x| x.as_bool()).unwrap_or(true);
-        let force_run = v.get("force").and_then(|x| x.as_bool()).unwrap_or(false);
-        let plan_commit_ref = v
-            .get("plan_commit_ref")
+        };
+        let reasoning = v
+            .get("reasoning")
             .and_then(|x| x.as_str())
-            .and_then(PlanCommitRef::parse);
+            .filter(|s| !s.is_empty());
+        let wait_live = true;
+        let force_run = false;
         let plasm_tool_span = if dry_run_only {
             crate::spans::mcp_tool_plasm(false, 1, session_ref.as_str())
         } else {
             crate::spans::mcp_tool_plasm_run(false, 1, session_ref.as_str())
         };
-        let run_live = !dry_run_only;
+        let run_live = matches!(invocation, McpPlasmInvocation::Run { .. });
+        let plan_commit_ref = invocation.plan_commit_ref().cloned();
         let (binding, this_invocation_chars, mut idx, call_count) = {
             let mut g = state.lock().await;
             let binding = g.binding.clone();
-            let this_invocation_chars = plasm_invocation_char_count(&program, reasoning);
+            let this_invocation_chars =
+                plasm_invocation_char_count(invocation.program().unwrap_or_default(), reasoning);
             g.stats.plasm_invocation_chars = g
                 .stats
                 .plasm_invocation_chars
@@ -892,30 +935,43 @@ impl PlasmMcpHandler {
             else {
                 return Err(MCP_EXECUTE_SESSION_UNAVAILABLE.to_string());
             };
-            if let Some(op_result) =
-                try_dispatch_operation_program(
+            if let Some(program) = invocation.program() {
+                if let Some(op_result) = try_dispatch_operation_program(
                     &es,
                     Some(self.plasm.as_ref()),
                     Some(&mcp_trace),
-                    &program,
+                    program,
                     Some(self.plasm.sessions.symbol_map_cross_cache()),
                 )
                 .await
-            {
-                return op_result;
+                {
+                    return op_result;
+                }
             }
-            let plan_name = format!("plasm_dag_call_{call_count}");
-            let pipeline = self.plasm.engine.prompt_pipeline();
-            let cross = self.plasm.sessions.symbol_map_cross_cache();
-            let compile = compile_plasm_expression(
-                pipeline,
-                Some(cross),
-                &es,
-                &plan_name,
-                &program,
-            );
-            match compile {
-                Ok(bundle) => {
+            let (bundle, program_for_trace, committed_plan) = if run_live {
+                let pc = plan_commit_ref
+                    .as_ref()
+                    .ok_or_else(|| "missing `plan_commit_ref`: call `plasm` first".to_string())?;
+                let committed = crate::plan_commit_store::resolve_committed_plan(&es, pc)
+                    .map_err(|e| e.detail())?;
+                (
+                    crate::plasm_comp_bundle::PlasmCompBundle::new(committed.artifact.clone())?,
+                    committed.program.clone(),
+                    Some(committed),
+                )
+            } else {
+                let program = invocation
+                    .program()
+                    .ok_or_else(|| "missing `program`: call `plasm` with a program".to_string())?;
+                let plan_name = format!("plasm_dag_call_{call_count}");
+                let pipeline = self.plasm.engine.prompt_pipeline();
+                let cross = self.plasm.sessions.symbol_map_cross_cache();
+                (
+                    compile_plasm_expression(pipeline, Some(cross), &es, &plan_name, program)?,
+                    program.to_string(),
+                    None,
+                )
+            };
                     let comp_archive = crate::plasm_comp_wire::plasm_comp_wire_json(
                         bundle.artifact(),
                         None,
@@ -932,30 +988,23 @@ impl PlasmMcpHandler {
                         )
                         .map_err(|e| format!("evidence begin: {e}"))?;
                         let dry_gate = evaluate_plasm_comp_dry(&es, &bundle)?;
-                        let compact = build_plan_dry_compact_view(
-                            dry_gate.validated_plan(),
-                            &dry_gate.topological_order,
-                            &dry_gate.review,
-                            &dry_gate.graph_summary,
-                            Some(&es),
-                        );
+                        let committed = committed_plan
+                            .as_ref()
+                            .expect("run invocation resolves committed plan");
                         if plan_requires_review_gate(
-                            compact.verdict,
+                            committed.verdict,
                             force_run,
                             plan_commit_ref.as_ref(),
                         ) {
                             return Err(
-                                "plan_requires_review: call `plasm` dry-run first; copy `plan_commit_ref` (`pcN`) from that response into `plasm_run` (prefer over `force: true`)"
+                                "plan_requires_review: call `plasm` dry-run first, then pass the returned `plan_commit_ref` (`pcN`) to `plasm_run`"
                                     .to_string(),
                             );
-                        }
-                        if let Some(pc) = plan_commit_ref.as_ref() {
-                            verify_plan_commit_for_dry(&es, pc, &dry_gate)?;
                         }
                         if crate::run_delivery::should_spawn_async_for_policy(
                             crate::run_delivery::RunDeliveryPolicy::McpAwaitTerminal,
                             wait_live,
-                            &dry_gate.review,
+                            &committed.dry_review,
                         ) {
                             let accept_payload =
                                 crate::run_explorer_meta::build_run_explorer_accept_payload(
@@ -972,9 +1021,9 @@ impl PlasmMcpHandler {
                                         session_ref: session_ref.clone(),
                                         mcp_session_key: key.to_string(),
                                         bundle: bundle.clone(),
-                                        review: dry_gate.review.clone(),
+                                        review: committed.dry_review.clone(),
                                         accept_payload,
-                                        dry_verdict: compact.verdict,
+                                        dry_verdict: committed.verdict,
                                         plan_commit_ref: plan_commit_ref.clone(),
                                         trace: mcp_trace.clone(),
                                         wait_live,
@@ -1015,7 +1064,7 @@ impl PlasmMcpHandler {
                                     b.session_id.as_str(),
                                     session_ref.as_str(),
                                     &comp_archive,
-                                    &program,
+                                    &program_for_trace,
                                     out.comp.clone(),
                                     call_count,
                                     &out,
@@ -1052,15 +1101,15 @@ impl PlasmMcpHandler {
                         );
                         let commit_ref = es.mint_plan_commit_ref();
                         let mut markdown = format!("```text\n{dry_text}\n```");
-                        if compact.verdict == crate::plan_dry_display::PlanDryVerdict::Review {
-                            markdown.push_str(&format!(
-                                "\n\n**Review gate:** pass `plan_commit_ref`: `{}` to **`plasm_run`** with the same `program` (prefer over `force: true`).",
-                                commit_ref.as_str()
-                            ));
-                        }
+                        markdown.push_str(&format!(
+                            "\n\n**Run:** pass `plan_commit_ref`: `{}` to **`plasm_run`**. Do not echo the program.",
+                            commit_ref.as_str()
+                        ));
                         let commit_record = PlanCommitRecord {
                             commit_ref: commit_ref.clone(),
                             commit_id: compute_plan_commit_id_from_dry(&dry),
+                            artifact: dry.artifact().clone(),
+                            program: program_for_trace.clone(),
                             dry_review: dry.review.clone(),
                             verdict: compact.verdict,
                             expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
@@ -1082,7 +1131,7 @@ impl PlasmMcpHandler {
                             b.session_id.as_str(),
                             session_ref.as_str(),
                             &comp_archive,
-                            &program,
+                            &program_for_trace,
                             comp_json.clone(),
                             call_count,
                         )
@@ -1136,9 +1185,6 @@ impl PlasmMcpHandler {
                             run_plasm_meta: Some(meta),
                             return_steps: Vec::new(),
                         })
-                    }
-                }
-                Err(e) => Err(e),
             }
         }
         .instrument(plasm_tool_span)

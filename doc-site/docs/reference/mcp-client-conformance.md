@@ -75,7 +75,7 @@ Teaching-table symbols (`e#`, `m#`, `p#`, `r#`) describe **postfix** program sha
 | `fire = Type \| filter(...)` then `fire(p10, p9)` | Root `fire(...)` is parsed as entity lookup, not binding projection | `fire[p10, p9]` or `fire(p10, p9)` after compiler desugar (binding field roots) |
 | Bare relation nav with `p#` after `.` | Homograph filter vs relation | Copy relation from exemplar: `issues.r#` or wire name when binding name matches |
 
-These are **authoring / teaching** issues, not MCP transport bugs. Run Explorer and TSV output depend on successful live execution after `wait()` — graph-backed spill rehydration must populate entity rows before publish (see `graph_spill_e2e`).
+These are **authoring / teaching** issues, not MCP transport bugs. Run Explorer and TSV output depend on successful terminal `plasm_run` responses and artifact hydration — graph-backed spill rehydration must populate entity rows before publish (see `graph_spill_e2e`).
 
 ## Related docs
 

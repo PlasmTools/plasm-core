@@ -1206,9 +1206,22 @@ impl ExecuteSession {
             {
                 max_seq = max_seq.max(n.saturating_add(1));
             }
+            let comp = match serde_json::to_value(&record.artifact.comp) {
+                Ok(comp) => comp,
+                Err(error) => {
+                    tracing::error!(
+                        plan_commit_ref = %record.commit_ref.as_str(),
+                        %error,
+                        "skipping plan_commit persistence: failed to serialize reviewed comp"
+                    );
+                    continue;
+                }
+            };
             records.push(PersistedPlanCommitRecord {
                 commit_ref: record.commit_ref.as_str().to_string(),
                 commit_id_hex: record.commit_id.to_string(),
+                comp: Some(comp),
+                program: record.program.clone(),
                 dry_review: record.dry_review.clone(),
                 verdict: record.verdict,
                 expires_at_unix,
@@ -1248,11 +1261,34 @@ impl ExecuteSession {
             let mut arr = [0u8; 32];
             arr.copy_from_slice(&bytes);
             let ttl_secs = persisted.expires_at_unix.saturating_sub(now_unix);
+            let Some(comp_value) = persisted.comp.clone() else {
+                tracing::warn!(
+                    plan_commit_ref = %persisted.commit_ref,
+                    "skipping persisted plan_commit: missing reviewed comp"
+                );
+                continue;
+            };
+            let Ok(comp) = serde_json::from_value::<plasm_core::PlasmComp>(comp_value) else {
+                tracing::warn!(
+                    plan_commit_ref = %persisted.commit_ref,
+                    "skipping persisted plan_commit: invalid reviewed comp JSON"
+                );
+                continue;
+            };
+            let Ok(artifact) = crate::plasm_comp_wire::plasm_comp_artifact_from_comp(comp) else {
+                tracing::warn!(
+                    plan_commit_ref = %persisted.commit_ref,
+                    "skipping persisted plan_commit: reviewed comp failed validation"
+                );
+                continue;
+            };
             map.insert(
                 commit_ref.clone(),
                 crate::operation::PlanCommitRecord {
                     commit_ref,
                     commit_id: PlanCommitId::from_canonical_bytes(arr),
+                    artifact,
+                    program: persisted.program.clone(),
                     dry_review: persisted.dry_review.clone(),
                     verdict: persisted.verdict,
                     expires_at: std::time::Instant::now() + Duration::from_secs(ttl_secs),
