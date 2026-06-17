@@ -1072,6 +1072,11 @@ impl PlasmMcpHandler {
                         .await;
                         let mut plasm_obj = serde_json::Map::new();
                         plasm_obj.insert("dry_run".into(), serde_json::json!(true));
+                        plasm_obj.insert(
+                            "logical_session_ref".into(),
+                            serde_json::json!(session_ref.as_str()),
+                        );
+                        plasm_obj.insert("program".into(), serde_json::json!(program_for_trace));
                         plasm_obj.insert("comp".into(), comp_json.clone());
                         plasm_obj.extend(plan_commit_meta(
                             &commit_ref,

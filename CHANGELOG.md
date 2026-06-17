@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.22] - 2026-06-17
+
+### Fixed
+
+- **Cursor in-chat Plan Review MCP App:** accept plan payloads from `structuredContent.plasm` even when the host forwards a display `toolName` (not wire `plasm`); show an initial waiting hint instead of a blank canvas on connect.
+- **Cursor in-chat Run Explorer:** same payload-first routing for run-shaped `structuredContent` / `_meta.plasm.steps`.
+- **MCP dry-run wire:** include `logical_session_ref` and `program` in `_meta.plasm` / `structuredContent.plasm` for session strip hydration.
+- **MCP UI smoke:** `mcp-ui-live.sh` executes `plasm_run` with `plan_commit_ref` from the preceding dry-run (v0.3.18 contract).
+
 ## [0.3.21] - 2026-06-17
 
 ### Fixed

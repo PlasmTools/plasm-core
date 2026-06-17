@@ -40,6 +40,46 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn finalize_serializes_structured_content_for_cursor_hosts() {
+        let mut plasm_obj = Map::new();
+        plasm_obj.insert("dry_run".into(), json!(true));
+        plasm_obj.insert("logical_session_ref".into(), json!("l_AAAAAAAAQACAAAAAAAAAAQ"));
+        plasm_obj.insert("program".into(), json!("items = e1.limit(1)\nitems"));
+        plasm_obj.insert(
+            "comp".into(),
+            json!({
+                "version": 1,
+                "steps": { "n1": { "kind": "invoke", "operation": "query e1" } },
+                "bind": { "topo": ["n1"] },
+                "return": { "kind": "step", "step": "n1" }
+            }),
+        );
+        plasm_obj.insert(
+            "plan_ux_reflection".into(),
+            json!({ "schema_version": 1, "layout": "sequential", "steps": [] }),
+        );
+        let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
+        let out = finalize_mcp_tool_result(res, plasm_obj);
+        let wire = serde_json::to_value(&out).expect("serialize CallToolResult");
+        assert_eq!(
+            wire
+                .pointer("/structuredContent/plasm/comp/bind/topo")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len()),
+            Some(1)
+        );
+        assert_eq!(
+            wire.pointer("/_meta/ui/resourceUri").and_then(|v| v.as_str()),
+            Some(crate::plan_ui_mcp::PLAN_REVIEW_UI_URI)
+        );
+        assert_eq!(
+            wire.pointer("/structuredContent/plasm/program")
+                .and_then(|v| v.as_str()),
+            Some("items = e1.limit(1)\nitems")
+        );
+    }
+
+    #[test]
     fn finalize_attaches_plan_review_and_mirrors_comp() {
         let mut plasm_obj = Map::new();
         plasm_obj.insert("dry_run".into(), json!(true));
