@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.20] - 2026-06-17
+
+### Fixed
+
+- **Hosted MCP App UI:** nginx ingress now routes `/v1/plan/ui`, `/v1/run/ui`, and `/v1/workflows/ui` to the plasm-mcp HTTP listener so bundled shell assets (`/v1/.../shell.js`, `app.js`) load on `platform.plasm.tools` (previously HTML-only via `/plasm/http/v1/...` with 404 asset paths).
+
 ## [0.3.19] - 2026-06-17
 
 ### Fixed
