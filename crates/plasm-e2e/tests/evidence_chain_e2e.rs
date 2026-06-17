@@ -67,6 +67,7 @@ async fn evidence_chain_plan_run_round_trip_async() {
         true,
         None,
         None,
+        None,
     )
     .await
     .expect("live run");
@@ -174,6 +175,7 @@ async fn evidence_chain_signed_round_trip_async() {
         "evidence_signed_sess",
         &bundle,
         true,
+        None,
         None,
         None,
     )

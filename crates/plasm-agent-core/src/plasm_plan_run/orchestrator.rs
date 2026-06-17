@@ -20,8 +20,12 @@ pub async fn run_plasm_comp(
     run: bool,
     mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
+    dry: Option<DryPlasmPlanEvaluation>,
 ) -> Result<PlasmPlanRunResult, String> {
-    let dry = evaluate_plasm_comp_dry(es, bundle)?;
+    let dry = match dry {
+        Some(d) => d,
+        None => evaluate_plasm_comp_dry(es, bundle)?,
+    };
     if !run {
         let comp = crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry);
         return Ok(PlasmPlanRunResult {
@@ -125,6 +129,7 @@ pub(crate) async fn run_executable_plan_phased(
         meta_index = Some(hooks.meta_index);
     }
     let step_total = executable.steps_topo.len() as u32;
+    let prepared_budgets = crate::plan_prepare::prepared_surface_budget_lookup(dry.validated_plan());
     let mut evidence_steps = Vec::with_capacity(step_total as usize);
     for (step_idx, (step_id, payload)) in executable.steps_topo.iter().enumerate() {
         if let Some(scope) = execution_scope {
@@ -144,6 +149,8 @@ pub(crate) async fn run_executable_plan_phased(
         }
         let mat = match &node {
             ValidatedPlanNode::Surface(surface) => {
+                let mut surface = surface.clone();
+                crate::plan_prepare::apply_prepared_surface_budget(&mut surface, &prepared_budgets);
                 let parsed = if let Some(ir) = &surface.ir {
                     let pe = ParsedExpr {
                         expr: ir.expr.clone(),
@@ -177,7 +184,7 @@ pub(crate) async fn run_executable_plan_phased(
                     .unwrap_or("<ir>");
                 let scoped_es =
                     entry_scoped_execute_session(es, surface.qualified_entity.as_ref())?;
-                let host_page = crate::plan_read_bounds::effective_host_page_size(surface);
+                let host_page = crate::plan_read_bounds::effective_host_page_size(&surface);
                 let rows_progress = execution_scope.and_then(|s| s.rows_progress_fn());
                 let (parsed, mut result, artifact) = execute_plasm_parsed_expr(
                     st,

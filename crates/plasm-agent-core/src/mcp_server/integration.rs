@@ -319,6 +319,72 @@ async fn mcp_deliver_returns_none_for_bounded_plan() {
     assert!(delivered.is_none());
 }
 
+#[tokio::test]
+async fn mcp_deliver_query_limit_not_expensive() {
+    let st = Arc::new(matrix_federated_host());
+    let seeds = vec![CapabilitySeed {
+        entry_id: "github".into(),
+        entity: "LangItem".into(),
+    }];
+    let out = apply_capability_seeds(
+        st.as_ref(),
+        None,
+        None,
+        seeds,
+        None,
+        None,
+        None,
+        "query limit deliver",
+        RankedCapabilitiesArg::Unspecified,
+    )
+    .await
+    .expect("apply_capability_seeds");
+    let es = st
+        .get_execute_session(&out.prompt_hash, &out.session_id)
+        .await
+        .expect("execute session");
+    let pipeline = st.engine.prompt_pipeline();
+    let cross = st.sessions.symbol_map_cross_cache();
+    let program = "items = e1.limit(3)\nitems";
+    let bundle = compile_plasm_expression(pipeline, Some(cross), &es, program, program)
+        .expect("query+limit compile");
+    let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
+    assert!(
+        !dry.review.execution_is_expensive(),
+        "query.limit should be bounded after prepare: {:?}",
+        dry.review
+    );
+    let accept_payload = build_run_explorer_accept_payload(&dry, Some(&es));
+    let delivered = deliver_mcp_expensive_live_run(McpExpensiveLiveRunContext {
+        es: Arc::clone(&es),
+        st: Arc::clone(&st),
+        prompt_hash: out.prompt_hash.clone(),
+        session_id: out.session_id.clone(),
+        session_ref: "l_query_limit_deliver".into(),
+        mcp_session_key: "mcp".into(),
+        bundle,
+        review: dry.review,
+        accept_payload,
+        dry_verdict: crate::plan_dry_display::PlanDryVerdict::Ok,
+        plan_commit_ref: None,
+        trace: PlasmTraceContext {
+            trace_id: Uuid::nil(),
+            call_index: None,
+            mcp_session_id: None,
+            logical_session_id: None,
+            logical_session_ref: Some("l_query_limit_deliver".into()),
+        },
+        wait_live: true,
+        await_cfg: crate::mcp_run_await::AwaitConfig::default(),
+    })
+    .await
+    .expect("deliver");
+    assert!(
+        delivered.is_none(),
+        "bounded query.limit must not server-await"
+    );
+}
+
 #[test]
 fn plasm_dry_run_continuation_error_blocks_wait_and_cancel_only() {
     assert!(crate::operation::plasm_dry_run_continuation_error("wait(l_x_o1)").is_some());

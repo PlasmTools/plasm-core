@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.17] - 2026-06-16
+
+### Added
+
+- **`plan_prepare` pipeline:** lift comp → validated plan → `apply_read_budgets` → unified `ReadBoundedness` + review; shared by dry-run gates and live validated-plan cache.
+- **Live execute budget overlay:** phased runner applies prepared surface `pushed_read_budget` / `page_size` before HTTP (same budgets dry-run uses for policy).
+- **Run Explorer:** dry-run review warnings under program panel; 630s watchdog aligned with MCP server-await.
+- **Regression tests + CI guard:** `dry_live_boundedness_isomorphism`, `mcp_deliver_query_limit_not_expensive`; `scripts/guards/check_dry_live_boundedness.sh`.
+
+### Changed
+
+- **MCP `plasm` dry-run:** `plan_commit_ref` (`pcN`) visible in Markdown body on review verdict (not only `_meta`).
+- **MCP sync `plasm_run`:** reuses prior dry-run evaluation (no second full dry pass on the hot path).
+- **`PlanDryReview::execution_is_expensive`:** delegates to shared `read_execution_is_expensive` helper.
+
+### Fixed
+
+- **False expensive-run await:** `query.limit(N)` programs no longer trigger MCP 600s server-await when limit pushdown bounds the read.
+- **False dry-run warnings:** unused-seed detection walks plan IR (nested entity refs); unbounded-read cost flags use post-budget prepared plan.
+
 ## [0.3.16] - 2026-06-16
 
 ### Added

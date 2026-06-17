@@ -349,6 +349,7 @@ pub(crate) async fn post_run_execute_session(
         &bundle,
         crate::execute_pipeline::ExecutionIntent::Live,
         None,
+        Some(dry_gate),
     )
     .await;
     sess.end_sync_live_run();

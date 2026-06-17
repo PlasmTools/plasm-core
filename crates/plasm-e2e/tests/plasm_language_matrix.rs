@@ -2060,6 +2060,7 @@ async fn plasm_language_matrix_live_runs_impl(base: String) {
             true,
             None,
             None,
+            None,
         )
         .await
         .unwrap_or_else(|e| panic!("row {} run_plasm_comp: {e}", row.id));

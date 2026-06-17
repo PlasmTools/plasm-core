@@ -90,6 +90,7 @@ pub mod outbound_secret_provider;
 pub mod output;
 pub mod plan_commit_store;
 mod plan_dry_display;
+pub mod plan_prepare;
 pub mod plan_read_bounds;
 pub mod plan_ux_reflection;
 mod plasm_comp_bundle;

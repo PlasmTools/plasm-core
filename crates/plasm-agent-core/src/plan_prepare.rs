@@ -1,0 +1,586 @@
+//! Comp-backed plan preparation: lift executable comp → validated plan → read budgets.
+//!
+//! Dry-run review, MCP delivery policy, and live execute must share this prepared view.
+
+use std::collections::{HashMap, HashSet};
+
+use plasm_core::{ChainStep, Expr, PlasmComp, Predicate, TypedComparisonValue};
+
+use crate::execute_session::ExecuteSession;
+use crate::plan_dry_display::PlanDryReview;
+use crate::plan_read_bounds::{apply_read_budgets, PushedReadBudget, read_execution_is_expensive};
+use crate::plasm_comp_lift::ExecutablePlasmComp;
+use crate::plasm_plan::{
+    Plan, PlanNodeKind, PlanValue, ValidatedPlan, ValidatedPlanNode, ValidatedPlanReturn,
+    ValidatedPlanState, ValidatedSurfaceNode,
+};
+use crate::plasm_plan_run::{graph_summary, unused_seed_hints};
+use crate::plasm_step_convert::build_validated_plan_from_executable;
+
+/// Unified read-boundedness analysis on a **prepared** plan (after `apply_read_budgets`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReadBoundedness {
+    pub has_unbounded_read_root: bool,
+    pub has_paginated_list_fetch_all_default: bool,
+    pub has_relation_many_source_fanout: bool,
+    pub has_foreach_fanout_risk: bool,
+}
+
+impl ReadBoundedness {
+    /// True when live execute should spawn async / MCP server-await.
+    #[must_use]
+    pub fn execution_is_expensive(&self) -> bool {
+        read_execution_is_expensive(
+            self.has_unbounded_read_root,
+            self.has_paginated_list_fetch_all_default,
+            self.has_relation_many_source_fanout,
+            self.has_foreach_fanout_risk,
+        )
+    }
+}
+
+/// Read budgets from a prepared validated plan, keyed by surface node id.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct PreparedSurfaceBudget {
+    pub page_size: Option<usize>,
+    pub pushed_read_budget: Option<PushedReadBudget>,
+}
+
+#[must_use]
+pub(crate) fn prepared_surface_budget_lookup(
+    plan: &Plan<ValidatedPlanState>,
+) -> HashMap<String, PreparedSurfaceBudget> {
+    plan.nodes
+        .iter()
+        .filter_map(|n| {
+            let ValidatedPlanNode::Surface(s) = n else {
+                return None;
+            };
+            Some((
+                s.id.as_str().to_string(),
+                PreparedSurfaceBudget {
+                    page_size: s.page_size,
+                    pushed_read_budget: s.pushed_read_budget.clone(),
+                },
+            ))
+        })
+        .collect()
+}
+
+pub(crate) fn apply_prepared_surface_budget(
+    surface: &mut ValidatedSurfaceNode,
+    lookup: &HashMap<String, PreparedSurfaceBudget>,
+) {
+    let Some(budget) = lookup.get(surface.id.as_str()) else {
+        return;
+    };
+    if budget.page_size.is_some() {
+        surface.page_size = budget.page_size;
+    }
+    if budget.pushed_read_budget.is_some() {
+        surface.pushed_read_budget = budget.pushed_read_budget.clone();
+    }
+}
+
+/// Host-prepared executable plan: validated DAG + pushed read budgets + review metadata.
+#[derive(Debug, Clone)]
+pub struct PreparedExecutablePlan {
+    pub validated: ValidatedPlan,
+    pub review: PlanDryReview,
+    pub boundedness: ReadBoundedness,
+    pub graph_summary: serde_json::Value,
+}
+
+/// Lift comp steps, apply read budgets, and derive review/boundedness for dry + live gates.
+pub(crate) fn prepare_executable_plan_for_session(
+    es: &ExecuteSession,
+    comp: &PlasmComp,
+    executable: &ExecutablePlasmComp,
+) -> Result<PreparedExecutablePlan, String> {
+    let validated = build_prepared_validated_plan(comp, executable)?;
+    let plan = validated.artifact();
+    let boundedness = analyze_read_boundedness(plan);
+    let (mut graph_summary, mut review) = graph_summary(plan, &boundedness);
+    review.unused_seeds = unused_seed_hints(es, plan);
+    if !review.unused_seeds.is_empty() {
+        graph_summary["unused_seeds"] = serde_json::json!(review.unused_seeds.clone());
+    }
+    crate::plasm_plan_run::enrich_graph_summary_auth_scoped_reads(es, plan, &mut graph_summary);
+    Ok(PreparedExecutablePlan {
+        validated,
+        review,
+        boundedness,
+        graph_summary,
+    })
+}
+
+/// Build validated plan from executable comp and push `.limit` / filter+limit budgets upstream.
+#[must_use]
+pub(crate) fn build_prepared_validated_plan(
+    comp: &PlasmComp,
+    executable: &ExecutablePlasmComp,
+) -> Result<ValidatedPlan, String> {
+    let mut validated = build_validated_plan_from_executable(comp, executable)?;
+    apply_read_budgets(&mut validated);
+    Ok(validated)
+}
+
+/// Analyze return-reachable list reads on a prepared plan.
+#[must_use]
+pub fn analyze_read_boundedness(plan: &Plan<ValidatedPlanState>) -> ReadBoundedness {
+    let mut out = ReadBoundedness::default();
+    let reachable = return_reachable_node_ids(plan);
+    for n in &plan.nodes {
+        if !reachable.contains(n.id().as_str()) {
+            continue;
+        }
+        if let ValidatedPlanNode::RelationTraversal(rel) = n {
+            if rel.relation.source_cardinality
+                == crate::plasm_plan::RelationSourceCardinality::Many
+            {
+                out.has_relation_many_source_fanout = true;
+            }
+        }
+        if let ValidatedPlanNode::ForEach(fe) = n {
+            if crate::plasm_plan_run::for_each_body_mutates_remote(
+                fe.effect_template.kind,
+                fe.effect_template.effect_class,
+            ) {
+                out.has_foreach_fanout_risk = true;
+            }
+        }
+        let ValidatedPlanNode::Surface(surface) = n else {
+            continue;
+        };
+        if surface.effect_class != crate::plasm_plan::EffectClass::Read {
+            continue;
+        }
+        if !matches!(
+            surface.result_shape,
+            crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
+        ) {
+            continue;
+        }
+        if !matches!(surface.kind, PlanNodeKind::Query | PlanNodeKind::Search) {
+            continue;
+        }
+        if surface_is_read_bounded(surface) {
+            continue;
+        }
+        if crate::plasm_plan_run::node_dependencies(n).is_empty() {
+            out.has_unbounded_read_root = true;
+        }
+        out.has_paginated_list_fetch_all_default = true;
+    }
+    out
+}
+
+#[must_use]
+fn surface_is_read_bounded(surface: &ValidatedSurfaceNode) -> bool {
+    if surface.page_size.is_some() || surface.pushed_read_budget.is_some() {
+        return true;
+    }
+    if surface.kind == PlanNodeKind::Search {
+        return true;
+    }
+    if !surface.predicates.is_empty() {
+        return true;
+    }
+    false
+}
+
+fn return_reachable_node_ids(plan: &Plan<ValidatedPlanState>) -> HashSet<String> {
+    let by_id: std::collections::HashMap<String, usize> = plan
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.id().as_str().to_string(), i))
+        .collect();
+    let mut seeds = match &plan.return_value {
+        ValidatedPlanReturn::Node(id) => vec![id.as_str().to_string()],
+        ValidatedPlanReturn::Parallel { parallel } => {
+            parallel.iter().map(|id| id.as_str().to_string()).collect()
+        }
+    };
+    let mut reachable = HashSet::new();
+    while let Some(id) = seeds.pop() {
+        if !reachable.insert(id.clone()) {
+            continue;
+        }
+        let Some(idx) = by_id.get(id.as_str()) else {
+            continue;
+        };
+        for upstream in upstream_node_ids(&plan.nodes[*idx]) {
+            if !reachable.contains(upstream.as_str()) {
+                seeds.push(upstream);
+            }
+        }
+    }
+    reachable
+}
+
+fn upstream_node_ids(node: &ValidatedPlanNode) -> Vec<String> {
+    match node {
+        ValidatedPlanNode::Compute(c) => vec![c.compute.source.clone()],
+        ValidatedPlanNode::Derive(d) => vec![d.source.as_str().to_string()],
+        ValidatedPlanNode::ForEach(f) => vec![f.source.as_str().to_string()],
+        ValidatedPlanNode::RelationTraversal(r) => vec![r.relation.source.as_str().to_string()],
+        ValidatedPlanNode::Surface(s) => s
+            .depends_on
+            .iter()
+            .map(|d| d.as_str().to_string())
+            .collect(),
+        ValidatedPlanNode::Data(d) => d
+            .depends_on
+            .iter()
+            .map(|dep| dep.as_str().to_string())
+            .collect(),
+    }
+}
+
+/// Entity wire names referenced anywhere in the plan (surfaces, IR, plan predicates).
+#[must_use]
+pub fn collect_plan_entity_names(
+    plan: &Plan<ValidatedPlanState>,
+) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for n in &plan.nodes {
+        if let ValidatedPlanNode::Surface(s) = n {
+            if let Some(q) = &s.qualified_entity {
+                out.insert(q.entity.clone());
+            }
+            if let Some(ir) = &s.ir {
+                collect_entities_from_expr(&ir.expr, &mut out);
+            }
+            for pred in &s.predicates {
+                collect_entities_from_plan_value(&pred.value, &mut out);
+            }
+        }
+        if let ValidatedPlanNode::RelationTraversal(r) = n {
+            collect_entities_from_expr(&r.relation.ir.expr, &mut out);
+        }
+    }
+    out
+}
+
+fn collect_entities_from_plan_value(value: &PlanValue, out: &mut HashSet<String>) {
+    match value {
+        PlanValue::EntityRefKey { entity, key, .. } => {
+            out.insert(entity.clone());
+            collect_entities_from_plan_value(key, out);
+        }
+        PlanValue::Array { items } => {
+            for item in items {
+                collect_entities_from_plan_value(item, out);
+            }
+        }
+        PlanValue::Object { fields } => {
+            for v in fields.values() {
+                collect_entities_from_plan_value(v, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_entities_from_expr(expr: &Expr, out: &mut HashSet<String>) {
+    match expr {
+        Expr::Query(q) => {
+            out.insert(q.entity.as_str().to_string());
+            if let Some(pred) = &q.predicate {
+                collect_entities_from_predicate(pred, out);
+            }
+        }
+        Expr::Get(g) => {
+            out.insert(g.reference.entity_type.as_str().to_string());
+        }
+        Expr::Create(c) => {
+            out.insert(c.entity.as_str().to_string());
+        }
+        Expr::Delete(d) => {
+            out.insert(d.target.entity_type.as_str().to_string());
+        }
+        Expr::Invoke(i) => {
+            out.insert(i.target.entity_type.as_str().to_string());
+        }
+        Expr::Chain(c) => {
+            collect_entities_from_expr(&c.source, out);
+            if let ChainStep::Explicit { expr: inner } = &c.step {
+                collect_entities_from_expr(inner, out);
+            }
+        }
+        Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => {}
+    }
+}
+
+fn collect_entities_from_predicate(pred: &Predicate, out: &mut HashSet<String>) {
+    match pred {
+        Predicate::True | Predicate::False => {}
+        Predicate::Comparison { value, .. } => collect_entities_from_comparison_value(value, out),
+        Predicate::And { args } | Predicate::Or { args } => {
+            for a in args {
+                collect_entities_from_predicate(a, out);
+            }
+        }
+        Predicate::Not { predicate } => collect_entities_from_predicate(predicate, out),
+        Predicate::ExistsRelation { predicate, .. } => {
+            if let Some(inner) = predicate {
+                collect_entities_from_predicate(inner, out);
+            }
+        }
+    }
+}
+
+fn collect_entities_from_comparison_value(value: &TypedComparisonValue, out: &mut HashSet<String>) {
+    if let Some(lit) = value.typed_literal() {
+        use plasm_core::TypedLiteral;
+        if let TypedLiteral::EntityRef(_) = lit {
+            // Compound entity_ref keys do not carry a separate entity name; plan predicates use PlanValue::EntityRefKey instead.
+        }
+    } else {
+        let v = value.to_value();
+        if let plasm_core::Value::Object(map) = v {
+            if let Some(plasm_core::Value::String(entity)) = map.get("entity_type") {
+                out.insert(entity.clone());
+            }
+            if let Some(plasm_core::Value::String(entity)) = map.get("entity") {
+                out.insert(entity.clone());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plasm_plan_run::evaluate_plasm_plan_dry;
+    use crate::plan_read_bounds::effective_host_page_size;
+    use indexmap::IndexMap;
+    use plasm_core::load_schema;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    fn test_session(entities: Vec<&str>) -> crate::execute_session::ExecuteSession {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(
+            load_schema(&root.join("tests/fixtures/execute_tiny")).expect("load execute_tiny"),
+        );
+        let mut ctxs = IndexMap::new();
+        ctxs.insert(
+            "acme".into(),
+            Arc::new(plasm_core::CgsContext::entry("acme", cgs.clone())),
+        );
+        let exp = plasm_core::TeachingExposureSession::new(cgs.as_ref(), "acme", &entities);
+        crate::execute_session::ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "acme".into(),
+            String::new(),
+            String::new(),
+            None,
+            entities.into_iter().map(str::to_string).collect(),
+            Some(exp),
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
+        )
+    }
+
+    fn limit_compute_json(source: &str, count: u32) -> serde_json::Value {
+        serde_json::json!({
+            "id": "limited",
+            "kind": "compute",
+            "effect_class": "read",
+            "result_shape": "list",
+            "depends_on": [source],
+            "compute": {
+                "source": source,
+                "op": { "kind": "limit", "count": count },
+                "schema": {
+                    "entity": "PlanLimit",
+                    "fields": [{ "name": "id", "value_kind": "string", "source": ["id"] }]
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn prepared_plan_applies_limit_pushdown() {
+        let mut nodes = vec![serde_json::json!({
+            "id": "r1",
+            "kind": "query",
+            "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+            "expr": "Product",
+            "ir": { "expr": { "op": "query", "entity": "Product" } },
+            "effect_class": "read",
+            "result_shape": "list"
+        })];
+        nodes.push(limit_compute_json("r1", 3));
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "limited-query",
+            "nodes": nodes,
+            "return": { "kind": "node", "node": "limited" }
+        });
+        let mut validated = crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate");
+        apply_read_budgets(&mut validated);
+        let bounded = analyze_read_boundedness(validated.artifact());
+        assert!(
+            !bounded.execution_is_expensive(),
+            "limit pushdown should bound query: {bounded:?}"
+        );
+        let surface = match &validated.nodes()[0] {
+            ValidatedPlanNode::Surface(s) => s,
+            _ => panic!("expected surface"),
+        };
+        assert_eq!(
+            effective_host_page_size(surface),
+            Some(3),
+            "expected pushed limit on query surface"
+        );
+    }
+
+    #[test]
+    fn unbounded_query_still_expensive_after_prepare() {
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "unbounded",
+            "nodes": [{
+                "id": "products",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                "expr": "Product",
+                "ir": { "expr": { "op": "query", "entity": "Product" } },
+                "effect_class": "read",
+                "result_shape": "list"
+            }],
+            "return": { "kind": "node", "node": "products" }
+        });
+        let mut validated = crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate");
+        apply_read_budgets(&mut validated);
+        let bounded = analyze_read_boundedness(validated.artifact());
+        assert!(bounded.execution_is_expensive());
+    }
+
+    #[test]
+    fn get_expr_entity_counts_as_used_for_unused_seed_walk() {
+        use plasm_core::{EntityKey, GetExpr, Ref};
+        let expr = Expr::Get(GetExpr {
+            reference: Ref {
+                entity_type: "Repository".into(),
+                key: EntityKey::Compound(
+                    [("owner".into(), "octocat".into())].into_iter().collect(),
+                ),
+            },
+            path_vars: None,
+            catalog_entry_id: None,
+        });
+        let mut used = HashSet::new();
+        collect_entities_from_expr(&expr, &mut used);
+        assert!(used.contains("Repository"));
+    }
+
+    #[test]
+    fn entity_ref_key_in_plan_predicate_counts_as_used() {
+        let mut used = HashSet::new();
+        collect_entities_from_plan_value(
+            &PlanValue::EntityRefKey {
+                api: "github".into(),
+                entity: "Repository".into(),
+                key: Box::new(PlanValue::Literal {
+                    value: serde_json::json!({"owner": "octocat"}),
+                }),
+            },
+            &mut used,
+        );
+        assert!(used.contains("Repository"));
+    }
+
+    #[test]
+    fn dry_review_not_expensive_for_query_limit_program() {
+        let s = test_session(vec!["Product"]);
+        let mut nodes = vec![serde_json::json!({
+            "id": "r1",
+            "kind": "query",
+            "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+            "expr": "Product",
+            "ir": { "expr": { "op": "query", "entity": "Product" } },
+            "effect_class": "read",
+            "result_shape": "list"
+        })];
+        nodes.push(limit_compute_json("r1", 3));
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "limited",
+            "nodes": nodes,
+            "return": { "kind": "node", "node": "limited" }
+        });
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+        assert!(
+            !dry.review.execution_is_expensive(),
+            "review: {:?}",
+            dry.review
+        );
+        assert!(
+            !dry.review.has_unbounded_read_root,
+            "should not warn unbounded after limit pushdown"
+        );
+    }
+
+    #[test]
+    fn dry_live_boundedness_isomorphism() {
+        let s = test_session(vec!["Product", "Category"]);
+        let mut nodes = vec![serde_json::json!({
+            "id": "r1",
+            "kind": "query",
+            "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+            "expr": "Product",
+            "ir": { "expr": { "op": "query", "entity": "Product" } },
+            "effect_class": "read",
+            "result_shape": "list"
+        })];
+        nodes.push(limit_compute_json("r1", 3));
+        let bounded_plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "bounded",
+            "nodes": nodes,
+            "return": { "kind": "node", "node": "limited" }
+        });
+        let dry_bounded = evaluate_plasm_plan_dry(&s, &bounded_plan).expect("bounded dry");
+        assert_eq!(
+            dry_bounded.review.execution_is_expensive(),
+            analyze_read_boundedness(dry_bounded.validated_plan()).execution_is_expensive(),
+        );
+        assert!(!dry_bounded.review.execution_is_expensive());
+
+        let unbounded_plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "unbounded",
+            "nodes": [{
+                "id": "products",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                "expr": "Product",
+                "ir": { "expr": { "op": "query", "entity": "Product" } },
+                "effect_class": "read",
+                "result_shape": "list"
+            }],
+            "return": { "kind": "node", "node": "products" }
+        });
+        let dry_unbounded = evaluate_plasm_plan_dry(&s, &unbounded_plan).expect("unbounded dry");
+        assert_eq!(
+            dry_unbounded.review.execution_is_expensive(),
+            analyze_read_boundedness(dry_unbounded.validated_plan()).execution_is_expensive(),
+        );
+        assert!(dry_unbounded.review.execution_is_expensive());
+    }
+}

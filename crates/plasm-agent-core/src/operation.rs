@@ -356,7 +356,7 @@ pub(crate) fn op_accept_context_from_executable(
         .map(|(id, _)| id.as_str().to_string())
         .collect();
     let validated =
-        crate::plasm_step_convert::build_validated_plan_from_executable(comp, executable)
+        crate::plan_prepare::build_prepared_validated_plan(comp, executable)
             .expect("executable comp already validated at dry-run");
     let display_map = crate::plan_dry_display::plan_node_display_map(validated.artifact(), &order);
     OpAcceptContext {
@@ -614,6 +614,7 @@ pub fn spawn_async_plan_run(
             true,
             None,
             Some(&scope),
+            None,
         )
         .await;
         match result {

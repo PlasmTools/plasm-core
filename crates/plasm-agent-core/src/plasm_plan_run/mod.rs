@@ -75,6 +75,10 @@ pub use parse::{
     session_cgs_layers, symbol_map_for_plasm_surface_parse, typecheck_parsed_for_session,
 };
 
+pub(crate) use dry::{
+    enrich_graph_summary_auth_scoped_reads, for_each_body_mutates_remote, graph_summary,
+    unused_seed_hints,
+};
 pub(crate) use dry::inferred_node_approval;
 pub(crate) use orchestrator::{inline_row_source, MaterializedInputRow, MaterializedNode};
 pub(crate) use parse::{
@@ -137,7 +141,7 @@ impl DryPlasmPlanEvaluation {
 
     pub fn validated(&self) -> &ValidatedPlan {
         self.cached_validated.get_or_init(|| {
-            crate::plasm_step_convert::build_validated_plan_from_executable(
+            crate::plan_prepare::build_prepared_validated_plan(
                 &self.artifact.comp,
                 &self.executable,
             )

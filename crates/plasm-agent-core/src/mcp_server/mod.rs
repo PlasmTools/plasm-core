@@ -525,7 +525,7 @@ impl PlasmMcpHandler {
         plasm_run_props.insert(
             "wait".into(),
             json_schema_bool_type(
-                "When **false**, start live execute in the background and return an operation handle immediately (`wait(l_<token>_oN)`). Default **true** for bounded ok plans; **review** plans auto-async even when omitted.",
+                "Default **true**. **Expensive** plans: server spawns and awaits internally — one terminal TSV (no client `wait(l_<token>_oN)` loop). **`wait: false`**: return **`+`** accept + handle; poll with `plasm_run program=wait(l_<token>_oN)` until terminal.",
             ),
         );
         plasm_run_props.insert(
@@ -945,7 +945,7 @@ impl PlasmMcpHandler {
                             plan_commit_ref.as_ref(),
                         ) {
                             return Err(
-                                "plan_requires_review: call `plasm` dry-run first, then pass `plan_commit_ref` or `force: true` on `plasm_run`"
+                                "plan_requires_review: call `plasm` dry-run first; copy `plan_commit_ref` (`pcN`) from that response into `plasm_run` (prefer over `force: true`)"
                                     .to_string(),
                             );
                         }
@@ -1000,6 +1000,7 @@ impl PlasmMcpHandler {
                                 trace: mcp_trace.clone(),
                                 sink: sink.clone(),
                             }),
+                            Some(dry_gate),
                         )
                         .await;
                         es.end_sync_live_run();
@@ -1041,7 +1042,6 @@ impl PlasmMcpHandler {
                             None,
                             Some(&es),
                         );
-                        let markdown = format!("```text\n{dry_text}\n```");
                         let comp_json = plasm_comp_json_from_dry(&dry);
                         let compact = build_plan_dry_compact_view(
                             dry.validated_plan(),
@@ -1051,6 +1051,13 @@ impl PlasmMcpHandler {
                             Some(&es),
                         );
                         let commit_ref = es.mint_plan_commit_ref();
+                        let mut markdown = format!("```text\n{dry_text}\n```");
+                        if compact.verdict == crate::plan_dry_display::PlanDryVerdict::Review {
+                            markdown.push_str(&format!(
+                                "\n\n**Review gate:** pass `plan_commit_ref`: `{}` to **`plasm_run`** with the same `program` (prefer over `force: true`).",
+                                commit_ref.as_str()
+                            ));
+                        }
                         let commit_record = PlanCommitRecord {
                             commit_ref: commit_ref.clone(),
                             commit_id: compute_plan_commit_id_from_dry(&dry),

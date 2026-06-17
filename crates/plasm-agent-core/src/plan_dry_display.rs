@@ -38,10 +38,12 @@ pub struct PlanDryReview {
 impl PlanDryReview {
     /// True when live execute should auto-async (unbounded / expensive reads), not advisory review alone.
     pub fn execution_is_expensive(&self) -> bool {
-        self.has_unbounded_read_root
-            || self.has_paginated_list_fetch_all_default
-            || self.has_relation_many_source_fanout
-            || self.has_foreach_fanout_risk
+        crate::plan_read_bounds::read_execution_is_expensive(
+            self.has_unbounded_read_root,
+            self.has_paginated_list_fetch_all_default,
+            self.has_relation_many_source_fanout,
+            self.has_foreach_fanout_risk,
+        )
     }
 
     pub fn needs_review(&self, return_unbounded_root: bool) -> bool {

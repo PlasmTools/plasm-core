@@ -261,6 +261,7 @@ pub(crate) async fn post_execute_session_plan(
             crate::execute_pipeline::ExecutionIntent::PlanOnly
         },
         None,
+        None,
     )
     .await;
 

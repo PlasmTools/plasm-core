@@ -110,17 +110,15 @@ pub fn evaluate_executable_comp_dry(
         staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
         out.push(dry_stage_result(step_idx, &n));
     }
-    let validated =
-        crate::plasm_step_convert::build_validated_plan_from_executable(comp, executable)?;
-    dry_validate_render_nodes(es, validated.artifact())?;
-    let plan = validated.artifact();
-    let (graph_summary, review) = graph_summary_for_session(plan, es);
+    let prepared =
+        crate::plan_prepare::prepare_executable_plan_for_session(es, comp, executable)?;
+    dry_validate_render_nodes(es, prepared.validated.artifact())?;
     Ok(DryPlasmPlanEvaluation {
         version,
         name: comp.name.clone(),
         artifact: artifact.clone(),
         executable: executable.clone(),
-        cached_validated: std::cell::OnceCell::from(validated),
+        cached_validated: std::cell::OnceCell::from(prepared.validated),
         topological_order: executable
             .steps_topo
             .iter()
@@ -130,29 +128,16 @@ pub fn evaluate_executable_comp_dry(
         parallel_root_surfaces_only,
         staged_nodes,
         execution_unsupported,
-        graph_summary,
-        review,
+        graph_summary: prepared.graph_summary,
+        review: prepared.review,
     })
-}
-
-pub(crate) fn graph_summary_for_session(
-    plan: &Plan<ValidatedPlanState>,
-    es: &ExecuteSession,
-) -> (serde_json::Value, PlanDryReview) {
-    let (mut summary, mut review) = graph_summary(plan);
-    review.unused_seeds = unused_seed_hints(es, plan);
-    if !review.unused_seeds.is_empty() {
-        summary["unused_seeds"] = serde_json::json!(review.unused_seeds.clone());
-    }
-    enrich_graph_summary_auth_scoped_reads(es, plan, &mut summary);
-    (summary, review)
 }
 
 pub(crate) fn unused_seed_hints(
     es: &ExecuteSession,
     plan: &Plan<ValidatedPlanState>,
 ) -> Vec<String> {
-    let used = collect_plan_entity_names(plan);
+    let used = crate::plan_prepare::collect_plan_entity_names(plan);
     es.entities
         .iter()
         .filter(|e| !used.contains(e.as_str()))
@@ -164,23 +149,6 @@ pub(crate) fn unused_seed_hints(
             )
         })
         .collect()
-}
-
-pub(crate) fn collect_plan_entity_names(
-    plan: &Plan<ValidatedPlanState>,
-) -> std::collections::HashSet<String> {
-    let mut out = std::collections::HashSet::new();
-    for n in &plan.nodes {
-        if let ValidatedPlanNode::Surface(s) = n {
-            if let Some(q) = &s.qualified_entity {
-                out.insert(q.entity.clone());
-            }
-            if let Some(ir) = &s.ir {
-                out.insert(ir.expr.primary_entity().to_string());
-            }
-        }
-    }
-    out
 }
 
 pub(crate) fn enrich_graph_summary_auth_scoped_reads(
@@ -368,6 +336,23 @@ pub(crate) fn plan_has_query_limit_row_filter_chain(plan: &Plan<ValidatedPlanSta
         let ValidatedPlanNode::Compute(c) = n else {
             continue;
         };
+        let ComputeOp::Limit { .. } = c.compute.op else {
+            continue;
+        };
+        let Some(q_node) = by_id.get(c.compute.source.as_str()) else {
+            continue;
+        };
+        let ValidatedPlanNode::Surface(s) = q_node else {
+            continue;
+        };
+        if s.kind == PlanNodeKind::Query {
+            return true;
+        }
+    }
+    for n in &plan.nodes {
+        let ValidatedPlanNode::Compute(c) = n else {
+            continue;
+        };
         let ComputeOp::Filter { .. } = c.compute.op else {
             continue;
         };
@@ -393,7 +378,10 @@ pub(crate) fn plan_has_query_limit_row_filter_chain(plan: &Plan<ValidatedPlanSta
     false
 }
 
-pub(crate) fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Value, PlanDryReview) {
+pub(crate) fn graph_summary(
+    plan: &Plan<ValidatedPlanState>,
+    boundedness: &crate::plan_prepare::ReadBoundedness,
+) -> (serde_json::Value, PlanDryReview) {
     let mut read_nodes = Vec::new();
     let mut write_or_side_effect_nodes = Vec::new();
     let mut derive_nodes = Vec::new();
@@ -403,16 +391,12 @@ pub(crate) fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Val
     let mut warnings = Vec::new();
     let mut boundedness_facts = Vec::new();
 
-    let mut has_unbounded_read_root = false;
     let mut has_narrowed_search_root = false;
     let mut has_narrowed_filter_root = false;
     let mut has_explicit_limit = false;
     let mut has_full_collection_compute = false;
-    let mut has_foreach_fanout_risk = false;
-    let mut has_relation_many_source_fanout = false;
     let mut relation_traversal_nodes = 0usize;
     let mut has_unprojected_multi_row_read = false;
-    let mut has_paginated_list_fetch_all_default = false;
 
     for n in &plan.nodes {
         if node_dependencies(n).is_empty() {
@@ -445,11 +429,7 @@ pub(crate) fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Val
                         has_narrowed_filter_root = true;
                     }
                 }
-                ValidatedPlanNode::Surface(surface)
-                    if surface.page_size.is_some() || surface.pushed_read_budget.is_some() => {}
-                _ => {
-                    has_unbounded_read_root = true;
-                }
+                _ => {}
             }
         }
         if matches!(n, ValidatedPlanNode::Compute(_)) {
@@ -460,31 +440,8 @@ pub(crate) fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Val
                 has_full_collection_compute = true;
             }
         }
-        if let ValidatedPlanNode::Surface(surface) = n {
-            let read_bounded = surface.page_size.is_some() || surface.pushed_read_budget.is_some();
-            if !read_bounded
-                && matches!(surface.kind, PlanNodeKind::Query | PlanNodeKind::Search)
-                && matches!(
-                    surface.result_shape,
-                    crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
-                )
-            {
-                has_paginated_list_fetch_all_default = true;
-            }
-        }
-        if let ValidatedPlanNode::RelationTraversal(rel) = n {
+        if let ValidatedPlanNode::RelationTraversal(_) = n {
             relation_traversal_nodes += 1;
-            if rel.relation.source_cardinality == RelationSourceCardinality::Many {
-                has_relation_many_source_fanout = true;
-            }
-        }
-        if let ValidatedPlanNode::ForEach(fe) = n {
-            if for_each_body_mutates_remote(
-                fe.effect_template.kind,
-                fe.effect_template.effect_class,
-            ) {
-                has_foreach_fanout_risk = true;
-            }
         }
         match n {
             ValidatedPlanNode::Surface(s)
@@ -510,6 +467,11 @@ pub(crate) fn graph_summary(plan: &Plan<ValidatedPlanState>) -> (serde_json::Val
             _ => {}
         }
     }
+
+    let has_unbounded_read_root = boundedness.has_unbounded_read_root;
+    let has_paginated_list_fetch_all_default = boundedness.has_paginated_list_fetch_all_default;
+    let has_relation_many_source_fanout = boundedness.has_relation_many_source_fanout;
+    let has_foreach_fanout_risk = boundedness.has_foreach_fanout_risk;
 
     if has_narrowed_search_root {
         boundedness_facts.push("Root read narrowed by search text".to_string());

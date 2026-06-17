@@ -25,6 +25,20 @@ pub enum PushedReadBudget {
     },
 }
 
+/// Shared cost gate: true when live execute should spawn async / MCP server-await.
+#[must_use]
+pub fn read_execution_is_expensive(
+    has_unbounded_read_root: bool,
+    has_paginated_list_fetch_all_default: bool,
+    has_relation_many_source_fanout: bool,
+    has_foreach_fanout_risk: bool,
+) -> bool {
+    has_unbounded_read_root
+        || has_paginated_list_fetch_all_default
+        || has_relation_many_source_fanout
+        || has_foreach_fanout_risk
+}
+
 /// Explicit `.page_size(n)` on the surface node merged with any pushed budget.
 #[must_use]
 pub fn effective_host_page_size(surface: &ValidatedSurfaceNode) -> Option<usize> {
