@@ -110,8 +110,7 @@ pub fn evaluate_executable_comp_dry(
         staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
         out.push(dry_stage_result(step_idx, &n));
     }
-    let prepared =
-        crate::plan_prepare::prepare_executable_plan_for_session(es, comp, executable)?;
+    let prepared = crate::plan_prepare::prepare_executable_plan_for_session(es, comp, executable)?;
     dry_validate_render_nodes(es, prepared.validated.artifact())?;
     Ok(DryPlasmPlanEvaluation {
         version,

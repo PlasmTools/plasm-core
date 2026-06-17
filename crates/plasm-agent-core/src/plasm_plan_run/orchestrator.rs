@@ -11,6 +11,7 @@ use crate::plasm_step_convert::step_payload_to_validated_node;
 use plasm_core::PlasmReturn;
 
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub async fn run_plasm_comp(
     es: &ExecuteSession,
     st: &PlasmHostState,
@@ -129,7 +130,8 @@ pub(crate) async fn run_executable_plan_phased(
         meta_index = Some(hooks.meta_index);
     }
     let step_total = executable.steps_topo.len() as u32;
-    let prepared_budgets = crate::plan_prepare::prepared_surface_budget_lookup(dry.validated_plan());
+    let prepared_budgets =
+        crate::plan_prepare::prepared_surface_budget_lookup(dry.validated_plan());
     let mut evidence_steps = Vec::with_capacity(step_total as usize);
     for (step_idx, (step_id, payload)) in executable.steps_topo.iter().enumerate() {
         if let Some(scope) = execution_scope {

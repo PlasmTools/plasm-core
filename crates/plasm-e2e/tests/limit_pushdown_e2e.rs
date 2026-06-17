@@ -115,9 +115,19 @@ async fn limit_pushdown_bounds_paginated_berry_query_async() {
     )
     .expect("compile plan");
 
-    let live = run_plasm_comp(&es, &st, PROMPT_HASH, SESSION_ID, &bundle, true, None, None, None)
-        .await
-        .expect("live plan");
+    let live = run_plasm_comp(
+        &es,
+        &st,
+        PROMPT_HASH,
+        SESSION_ID,
+        &bundle,
+        true,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("live plan");
 
     let limited = live
         .return_steps

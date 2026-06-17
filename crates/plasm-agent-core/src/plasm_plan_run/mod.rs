@@ -75,11 +75,11 @@ pub use parse::{
     session_cgs_layers, symbol_map_for_plasm_surface_parse, typecheck_parsed_for_session,
 };
 
+pub(crate) use dry::inferred_node_approval;
 pub(crate) use dry::{
     enrich_graph_summary_auth_scoped_reads, for_each_body_mutates_remote, graph_summary,
     unused_seed_hints,
 };
-pub(crate) use dry::inferred_node_approval;
 pub(crate) use orchestrator::{inline_row_source, MaterializedInputRow, MaterializedNode};
 pub(crate) use parse::{
     entry_scoped_execute_session, propagate_row_identities, row_identities_from_entities,

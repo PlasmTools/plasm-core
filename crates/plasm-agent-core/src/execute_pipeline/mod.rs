@@ -38,6 +38,7 @@ pub struct ExecutePipeline;
 
 impl ExecutePipeline {
     /// Multi-line Plasm program (MCP `plasm` / `plasm_run`, HTTP program body).
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_program(
         es: &ExecuteSession,
         st: &PlasmHostState,

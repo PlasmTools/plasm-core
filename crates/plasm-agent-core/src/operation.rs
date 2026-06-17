@@ -355,9 +355,8 @@ pub(crate) fn op_accept_context_from_executable(
         .iter()
         .map(|(id, _)| id.as_str().to_string())
         .collect();
-    let validated =
-        crate::plan_prepare::build_prepared_validated_plan(comp, executable)
-            .expect("executable comp already validated at dry-run");
+    let validated = crate::plan_prepare::build_prepared_validated_plan(comp, executable)
+        .expect("executable comp already validated at dry-run");
     let display_map = crate::plan_dry_display::plan_node_display_map(validated.artifact(), &order);
     OpAcceptContext {
         plan_commit_ref,

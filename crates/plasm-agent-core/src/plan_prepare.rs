@@ -8,7 +8,7 @@ use plasm_core::{ChainStep, Expr, PlasmComp, Predicate, TypedComparisonValue};
 
 use crate::execute_session::ExecuteSession;
 use crate::plan_dry_display::PlanDryReview;
-use crate::plan_read_bounds::{apply_read_budgets, PushedReadBudget, read_execution_is_expensive};
+use crate::plan_read_bounds::{apply_read_budgets, read_execution_is_expensive, PushedReadBudget};
 use crate::plasm_comp_lift::ExecutablePlasmComp;
 use crate::plasm_plan::{
     Plan, PlanNodeKind, PlanValue, ValidatedPlan, ValidatedPlanNode, ValidatedPlanReturn,
@@ -115,7 +115,6 @@ pub(crate) fn prepare_executable_plan_for_session(
 }
 
 /// Build validated plan from executable comp and push `.limit` / filter+limit budgets upstream.
-#[must_use]
 pub(crate) fn build_prepared_validated_plan(
     comp: &PlasmComp,
     executable: &ExecutablePlasmComp,
@@ -135,8 +134,7 @@ pub fn analyze_read_boundedness(plan: &Plan<ValidatedPlanState>) -> ReadBoundedn
             continue;
         }
         if let ValidatedPlanNode::RelationTraversal(rel) = n {
-            if rel.relation.source_cardinality
-                == crate::plasm_plan::RelationSourceCardinality::Many
+            if rel.relation.source_cardinality == crate::plasm_plan::RelationSourceCardinality::Many
             {
                 out.has_relation_many_source_fanout = true;
             }
@@ -240,9 +238,7 @@ fn upstream_node_ids(node: &ValidatedPlanNode) -> Vec<String> {
 
 /// Entity wire names referenced anywhere in the plan (surfaces, IR, plan predicates).
 #[must_use]
-pub fn collect_plan_entity_names(
-    plan: &Plan<ValidatedPlanState>,
-) -> HashSet<String> {
+pub fn collect_plan_entity_names(plan: &Plan<ValidatedPlanState>) -> HashSet<String> {
     let mut out = HashSet::new();
     for n in &plan.nodes {
         if let ValidatedPlanNode::Surface(s) = n {
@@ -353,8 +349,8 @@ fn collect_entities_from_comparison_value(value: &TypedComparisonValue, out: &mu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plasm_plan_run::evaluate_plasm_plan_dry;
     use crate::plan_read_bounds::effective_host_page_size;
+    use crate::plasm_plan_run::evaluate_plasm_plan_dry;
     use indexmap::IndexMap;
     use plasm_core::load_schema;
     use std::path::PathBuf;
@@ -427,7 +423,8 @@ mod tests {
             "nodes": nodes,
             "return": { "kind": "node", "node": "limited" }
         });
-        let mut validated = crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate");
+        let mut validated =
+            crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate");
         apply_read_budgets(&mut validated);
         let bounded = analyze_read_boundedness(validated.artifact());
         assert!(
@@ -462,7 +459,8 @@ mod tests {
             }],
             "return": { "kind": "node", "node": "products" }
         });
-        let mut validated = crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate");
+        let mut validated =
+            crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate");
         apply_read_budgets(&mut validated);
         let bounded = analyze_read_boundedness(validated.artifact());
         assert!(bounded.execution_is_expensive());
