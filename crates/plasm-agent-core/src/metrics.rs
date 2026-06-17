@@ -183,7 +183,9 @@ fn agent_metrics() -> &'static AgentMetrics {
 pub fn record_mcp_plasm_run_phase(phase: &'static str, duration: Duration) {
     let ms = duration.as_secs_f64() * 1000.0;
     let attrs = &[KeyValue::new("phase", phase)];
-    agent_metrics().mcp_plasm_run_phase_duration_ms.record(ms, attrs);
+    agent_metrics()
+        .mcp_plasm_run_phase_duration_ms
+        .record(ms, attrs);
 }
 
 /// `multi_line`: `None` except for `plasm` (`Some(true)` / `Some(false)`).

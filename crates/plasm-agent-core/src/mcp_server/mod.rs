@@ -86,15 +86,13 @@ use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
 use crate::operation::{
-    compute_plan_commit_id_from_dry, plan_commit_meta, PlanCommitRecord,
-    PLAN_COMMIT_TTL,
+    compute_plan_commit_id_from_dry, plan_commit_meta, PlanCommitRecord, PLAN_COMMIT_TTL,
 };
 use crate::plan_dry_display::build_plan_dry_compact_view;
 use crate::plasm_comp_wire::plasm_comp_json_from_dry;
 use crate::plasm_compile::compile_plasm_expression;
 use crate::plasm_plan_run::{
-    evaluate_plasm_comp_dry, render_plasm_plan_dry_text_for_session,
-    PlasmPlanRunResult,
+    evaluate_plasm_comp_dry, render_plasm_plan_dry_text_for_session, PlasmPlanRunResult,
 };
 use crate::run_artifacts::{
     code_plan_handle, code_plan_http_path, logical_uuid_from_uri_segment,
@@ -144,9 +142,7 @@ pub(crate) use tool_parse::{
     parse_plasm_context_ranked_capabilities, parse_tool_seeds, plan_display_name_from_comp,
     plan_node_count_from_comp,
 };
-pub(crate) use trace::{
-    trace_archive_and_emit_code_plan_evaluate,
-};
+pub(crate) use trace::trace_archive_and_emit_code_plan_evaluate;
 pub(crate) use transport::{
     mcp_chars_to_token_est, plasm_invocation_char_count, McpLogicalSessionState,
     McpSessionPlasmStats, McpTransportState, PlasmExecBinding,

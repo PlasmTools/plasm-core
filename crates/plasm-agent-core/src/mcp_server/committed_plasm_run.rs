@@ -6,11 +6,11 @@ use plasm_core::PlanCommitRef;
 
 use crate::execute_pipeline::{ExecutePipeline, ExecutionIntent};
 use crate::execute_session::ExecuteSession;
+use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_run_config::bounded_sync_run_deadline;
 use crate::plan_commit_store::CommittedPlan;
 use crate::plasm_comp_bundle::PlasmCompBundle;
 use crate::plasm_plan_run::{evaluate_plasm_comp_dry, PlasmPlanRunHooks, PlasmPlanRunResult};
-use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::run_artifacts::RunArtifactStore;
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::{McpPlasmTraceSink, TraceHub};
@@ -74,34 +74,35 @@ pub async fn execute_committed_plasm_run(
         ctx.wait_live,
         &ctx.committed.dry_review,
     ) {
-        let awaited = crate::mcp_plasm_run_phases::mcp_plasm_run_phase("async_dry_eval", || async {
-            let dry_gate = evaluate_plasm_comp_dry(ctx.es.as_ref(), &ctx.bundle)?;
-            let accept_payload = crate::run_explorer_meta::build_run_explorer_accept_payload(
-                &dry_gate,
-                Some(ctx.es.as_ref()),
-            );
-            crate::run_delivery::deliver_mcp_expensive_live_run(
-                crate::run_delivery::McpExpensiveLiveRunContext {
-                    es: Arc::clone(&ctx.es),
-                    st: Arc::clone(&ctx.host),
-                    prompt_hash: ctx.prompt_hash.clone(),
-                    session_id: ctx.session_id.clone(),
-                    session_ref: ctx.session_ref.clone(),
-                    mcp_session_key: ctx.mcp_session_key.clone(),
-                    bundle: ctx.bundle.clone(),
-                    review: ctx.committed.dry_review.clone(),
-                    accept_payload,
-                    dry_verdict: ctx.committed.verdict,
-                    plan_commit_ref: ctx.plan_commit_ref.clone(),
-                    trace: ctx.mcp_trace.clone(),
-                    wait_live: ctx.wait_live,
-                    await_cfg: crate::mcp_run_await::AwaitConfig::default(),
-                },
-            )
-            .await
-            .map_err(|e| e.to_string())
-        })
-        .await?;
+        let awaited =
+            crate::mcp_plasm_run_phases::mcp_plasm_run_phase("async_dry_eval", || async {
+                let dry_gate = evaluate_plasm_comp_dry(ctx.es.as_ref(), &ctx.bundle)?;
+                let accept_payload = crate::run_explorer_meta::build_run_explorer_accept_payload(
+                    &dry_gate,
+                    Some(ctx.es.as_ref()),
+                );
+                crate::run_delivery::deliver_mcp_expensive_live_run(
+                    crate::run_delivery::McpExpensiveLiveRunContext {
+                        es: Arc::clone(&ctx.es),
+                        st: Arc::clone(&ctx.host),
+                        prompt_hash: ctx.prompt_hash.clone(),
+                        session_id: ctx.session_id.clone(),
+                        session_ref: ctx.session_ref.clone(),
+                        mcp_session_key: ctx.mcp_session_key.clone(),
+                        bundle: ctx.bundle.clone(),
+                        review: ctx.committed.dry_review.clone(),
+                        accept_payload,
+                        dry_verdict: ctx.committed.verdict,
+                        plan_commit_ref: ctx.plan_commit_ref.clone(),
+                        trace: ctx.mcp_trace.clone(),
+                        wait_live: ctx.wait_live,
+                        await_cfg: crate::mcp_run_await::AwaitConfig::default(),
+                    },
+                )
+                .await
+                .map_err(|e| e.to_string())
+            })
+            .await?;
         if let Some(result) = awaited {
             return Ok(result);
         }

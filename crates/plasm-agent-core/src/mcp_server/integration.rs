@@ -9,19 +9,19 @@ use crate::http_execute::{
     apply_capability_seeds, try_dispatch_operation_program, ApplyCapabilitySeedsOutcome,
     CapabilitySeed, RankedCapabilitiesArg,
 };
+use crate::plan_dry_display::PlanDryCompactView;
 use crate::plasm_compile::compile_plasm_expression;
 use crate::plasm_dag::compile_plasm_surface_line_to_plan;
 use crate::plasm_plan_run::{evaluate_plasm_comp_dry, DryPlasmPlanEvaluation};
-use crate::plan_dry_display::PlanDryCompactView;
-use plasm_core::PlanCommitRef;
-use crate::PlasmCompBundle;
 use crate::run_delivery::{deliver_mcp_expensive_live_run, McpExpensiveLiveRunContext};
 use crate::run_explorer_meta::build_run_explorer_accept_payload;
 use crate::server_state::PlasmHostState;
 use crate::trace_sink_emit::PlasmTraceContext;
+use crate::PlasmCompBundle;
 use indexmap::IndexMap;
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_core::loader::load_schema_dir;
+use plasm_core::PlanCommitRef;
 use plasm_core::{CgsContext, CGS};
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 use uuid::Uuid;
@@ -131,14 +131,9 @@ impl MatrixPcNFixture {
         let program = "e1(p1=\"a\")".to_string();
         let pipeline = st.engine.prompt_pipeline();
         let cross = st.sessions.symbol_map_cross_cache();
-        let bundle = compile_plasm_expression(
-            pipeline,
-            Some(cross),
-            &es,
-            compile_tag,
-            program.as_str(),
-        )
-        .expect("compile");
+        let bundle =
+            compile_plasm_expression(pipeline, Some(cross), &es, compile_tag, program.as_str())
+                .expect("compile");
         let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
         let compact = crate::plan_dry_display::build_plan_dry_compact_view(
             dry.validated_plan(),
@@ -161,7 +156,9 @@ impl MatrixPcNFixture {
     }
 
     async fn persist_plan_commit(&self) {
-        use crate::operation::{compute_plan_commit_id_from_dry, PlanCommitRecord, PLAN_COMMIT_TTL};
+        use crate::operation::{
+            compute_plan_commit_id_from_dry, PlanCommitRecord, PLAN_COMMIT_TTL,
+        };
         use crate::plan_commit_store::register_plan_commit_and_persist;
 
         register_plan_commit_and_persist(
@@ -514,8 +511,7 @@ async fn mcp_bounded_pc_n_sync_gate_uses_committed_review() {
     use crate::plan_commit_store::resolve_committed_plan;
     use crate::run_delivery::{deliver_mcp_expensive_live_run, McpExpensiveLiveRunContext};
 
-    let fx =
-        MatrixPcNFixture::open_with_test_store("bounded pcN sync gate", "mcp_pcN_gate").await;
+    let fx = MatrixPcNFixture::open_with_test_store("bounded pcN sync gate", "mcp_pcN_gate").await;
     assert!(
         !fx.dry.review.execution_is_expensive(),
         "fixture get must stay on sync path"
@@ -523,9 +519,7 @@ async fn mcp_bounded_pc_n_sync_gate_uses_committed_review() {
     fx.persist_plan_commit().await;
     resolve_committed_plan(&fx.es, &fx.pc).expect("pcN");
     assert_eq!(
-        resolve_committed_plan(&fx.es, &fx.pc)
-            .expect("pcN")
-            .program,
+        resolve_committed_plan(&fx.es, &fx.pc).expect("pcN").program,
         fx.program
     );
 

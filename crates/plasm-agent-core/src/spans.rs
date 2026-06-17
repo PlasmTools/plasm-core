@@ -116,10 +116,7 @@ pub(crate) fn mcp_tool_plasm_run(
 
 #[inline]
 pub(crate) fn mcp_plasm_run_phase(phase: &'static str) -> Span {
-    tracing::debug_span!(
-        "plasm_agent.mcp.plasm_run.phase",
-        phase = phase,
-    )
+    tracing::debug_span!("plasm_agent.mcp.plasm_run.phase", phase = phase,)
 }
 
 #[inline]
