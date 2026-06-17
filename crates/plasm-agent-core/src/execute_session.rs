@@ -1164,6 +1164,13 @@ impl ExecuteSession {
             .insert(record.commit_ref.clone(), record);
     }
 
+    pub fn remove_plan_commit(&self, commit_ref: &PlanCommitRef) {
+        self.plan_commits
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(commit_ref);
+    }
+
     pub fn get_plan_commit(
         &self,
         commit_ref: &PlanCommitRef,

@@ -323,9 +323,13 @@ impl PlasmHostState {
             .sessions
             .reuse_key_for_execute_pair(prompt_hash, session_id)
             .await;
-        self.execute_session_registry
+        if let Err(err) = self
+            .execute_session_registry
             .persist_or_update(&session, session_id, reuse_key.as_ref())
-            .await;
+            .await
+        {
+            tracing::warn!(error = %err, "execute session durable persist failed on replace");
+        }
         if let (Ok(ph), Ok(sid)) = (
             prompt_hash.parse::<PromptHashHex>(),
             session_id.parse::<ExecuteSessionId>(),

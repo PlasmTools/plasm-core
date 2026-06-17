@@ -3,6 +3,9 @@
 use plasm_core::{PlanCommitId, PlanCommitRef};
 
 use crate::execute_session::ExecuteSession;
+use crate::mcp_transport_store::execute_session_registry::{
+    ExecuteSessionPersistError, ExecuteSessionPersistOutcome,
+};
 use crate::operation::{
     compute_plan_commit_id_from_semantic, plan_commit_canonical_comp, PlanCommitRecord,
 };
@@ -43,15 +46,23 @@ pub async fn register_plan_commit_and_persist(
     prompt_hash: &str,
     session_id: &str,
     record: PlanCommitRecord,
-) {
-    session.register_plan_commit(record);
+) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
+    session.register_plan_commit(record.clone());
     let reuse_key = st
         .sessions
         .reuse_key_for_execute_pair(prompt_hash, session_id)
         .await;
-    st.execute_session_registry
+    match st
+        .execute_session_registry
         .persist_or_update(session.as_ref(), session_id, reuse_key.as_ref())
-        .await;
+        .await
+    {
+        Ok(outcome) => Ok(outcome),
+        Err(err) => {
+            session.remove_plan_commit(&record.commit_ref);
+            Err(err)
+        }
+    }
 }
 
 pub fn verify_plan_commit_id(
@@ -403,7 +414,8 @@ mod tests {
                 expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
             },
         )
-        .await;
+        .await
+        .expect("persist plan commit");
         host.sessions.purge_all().await;
         let es2 = host
             .get_execute_session(&created.prompt_hash, &created.session)

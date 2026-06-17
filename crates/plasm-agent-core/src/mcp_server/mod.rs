@@ -73,7 +73,6 @@ use crate::mcp_transport_store::{
     PlasmTransportRedisStore, RedisSessionStore, SessionRuntimeFactory,
 };
 
-use crate::execute_pipeline::{ExecutePipeline, ExecutionIntent};
 use crate::execute_session::ExecuteSession;
 use crate::http_execute::{
     apply_capability_seeds, build_plasm_context_agent_markdown, build_plasm_context_tool_meta,
@@ -87,14 +86,14 @@ use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
 use crate::operation::{
-    compute_plan_commit_id_from_dry, plan_commit_meta, plan_requires_review_gate, PlanCommitRecord,
+    compute_plan_commit_id_from_dry, plan_commit_meta, PlanCommitRecord,
     PLAN_COMMIT_TTL,
 };
 use crate::plan_dry_display::build_plan_dry_compact_view;
 use crate::plasm_comp_wire::plasm_comp_json_from_dry;
 use crate::plasm_compile::compile_plasm_expression;
 use crate::plasm_plan_run::{
-    evaluate_plasm_comp_dry, render_plasm_plan_dry_text_for_session, PlasmPlanRunHooks,
+    evaluate_plasm_comp_dry, render_plasm_plan_dry_text_for_session,
     PlasmPlanRunResult,
 };
 use crate::run_artifacts::{
@@ -113,6 +112,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 /// Best-effort bound on concurrent MCP transport sessions holding an execute binding (see module doc).
+mod committed_plasm_run;
 mod discover;
 pub(crate) mod prompt;
 mod schema;
@@ -145,7 +145,7 @@ pub(crate) use tool_parse::{
     plan_node_count_from_comp,
 };
 pub(crate) use trace::{
-    trace_archive_and_emit_code_plan_evaluate, trace_archive_and_emit_code_plan_execute,
+    trace_archive_and_emit_code_plan_evaluate,
 };
 pub(crate) use transport::{
     mcp_chars_to_token_est, plasm_invocation_char_count, McpLogicalSessionState,
@@ -952,8 +952,14 @@ impl PlasmMcpHandler {
                 let pc = plan_commit_ref
                     .as_ref()
                     .ok_or_else(|| "missing `plan_commit_ref`: call `plasm` first".to_string())?;
-                let committed = crate::plan_commit_store::resolve_committed_plan(&es, pc)
-                    .map_err(|e| e.detail())?;
+                let committed = crate::mcp_plasm_run_phases::mcp_plasm_run_phase(
+                    "resolve_commit",
+                    || async {
+                        crate::plan_commit_store::resolve_committed_plan(&es, pc)
+                            .map_err(|e| e.detail())
+                    },
+                )
+                .await?;
                 (
                     crate::plasm_comp_bundle::PlasmCompBundle::new(committed.artifact.clone())?,
                     committed.program.clone(),
@@ -977,126 +983,34 @@ impl PlasmMcpHandler {
                         None,
                     );
                     if run_live {
-                        let mut phases =
-                            crate::mcp_plasm_run_phases::McpPlasmRunPhaseRecorder::start();
-                        phases.record("resolve_commit");
-                        crate::evidence_chain::begin_plan_evidence_with_anchors(
-                            &es,
-                            b.session_id.as_str(),
-                            crate::evidence_chain::evidence_anchors(
-                                plan_commit_ref.as_ref(),
-                                Some(mcp_trace.trace_id),
-                                Some(call_count),
-                            ),
-                        )
-                        .map_err(|e| format!("evidence begin: {e}"))?;
-                        phases.record("evidence_begin");
                         let committed = committed_plan
                             .as_ref()
                             .expect("run invocation resolves committed plan");
-                        if plan_requires_review_gate(
-                            committed.verdict,
-                            force_run,
-                            plan_commit_ref.as_ref(),
-                        ) {
-                            return Err(
-                                "plan_requires_review: call `plasm` dry-run first, then pass the returned `plan_commit_ref` (`pcN`) to `plasm_run`"
-                                    .to_string(),
-                            );
-                        }
-                        if crate::run_delivery::should_spawn_async_for_policy(
-                            crate::run_delivery::RunDeliveryPolicy::McpAwaitTerminal,
-                            wait_live,
-                            &committed.dry_review,
-                        ) {
-                            let dry_gate = evaluate_plasm_comp_dry(&es, &bundle)?;
-                            phases.record("async_dry_eval");
-                            let accept_payload =
-                                crate::run_explorer_meta::build_run_explorer_accept_payload(
-                                    &dry_gate,
-                                    Some(&es),
-                                );
-                            if let Some(awaited) =
-                                crate::run_delivery::deliver_mcp_expensive_live_run(
-                                    crate::run_delivery::McpExpensiveLiveRunContext {
-                                        es: Arc::clone(&es),
-                                        st: Arc::clone(&self.plasm),
-                                        prompt_hash: b.prompt_hash.clone(),
-                                        session_id: b.session_id.clone(),
-                                        session_ref: session_ref.clone(),
-                                        mcp_session_key: key.to_string(),
-                                        bundle: bundle.clone(),
-                                        review: committed.dry_review.clone(),
-                                        accept_payload,
-                                        dry_verdict: committed.verdict,
-                                        plan_commit_ref: plan_commit_ref.clone(),
-                                        trace: mcp_trace.clone(),
-                                        wait_live,
-                                        await_cfg: crate::mcp_run_await::AwaitConfig::default(),
-                                    },
-                                )
-                                .await
-                                .map_err(|e| e.to_string())?
-                            {
-                                return Ok(awaited);
-                            }
-                        }
-                        phases.record("async_routing");
-                        es.begin_sync_live_run()?;
-                        let sync_future = ExecutePipeline::run_program(
-                            &es,
-                            self.plasm.as_ref(),
-                            &b.prompt_hash,
-                            &b.session_id,
-                            &bundle,
-                            ExecutionIntent::Live,
-                            Some(PlasmPlanRunHooks {
-                                meta_index: &mut idx,
-                                trace: mcp_trace.clone(),
+                        committed_plasm_run::execute_committed_plasm_run(
+                            committed_plasm_run::CommittedPlasmRunContext {
+                                es: Arc::clone(&es),
+                                host: Arc::clone(&self.plasm),
+                                prompt_hash: b.prompt_hash.clone(),
+                                session_id: b.session_id.clone(),
+                                session_ref: session_ref.clone(),
+                                ls_key: ls_key.clone(),
+                                mcp_session_key: key.to_string(),
+                                plan_commit_ref: plan_commit_ref.clone(),
+                                committed: committed.clone(),
+                                bundle: bundle.clone(),
+                                program_for_trace: program_for_trace.clone(),
+                                comp_archive: comp_archive.clone(),
+                                mcp_trace: mcp_trace.clone(),
+                                call_count,
+                                force_run,
+                                wait_live,
+                                idx: &mut idx,
                                 sink: sink.clone(),
-                            }),
-                            None,
-                        );
-                        let sync_result = if committed.dry_review.execution_is_expensive() {
-                            sync_future.await
-                        } else {
-                            match tokio::time::timeout(
-                                crate::mcp_run_config::bounded_sync_run_deadline(),
-                                sync_future,
-                            )
-                            .await
-                            {
-                                Ok(result) => result,
-                                Err(_) => Err(format!(
-                                    "sync plasm_run deadline exceeded ({:.0}s); outbound HTTP or auth may be stalled",
-                                    crate::mcp_run_config::bounded_sync_run_deadline().as_secs_f64()
-                                )),
-                            }
-                        };
-                        es.end_sync_live_run();
-                        phases.record("http_execute");
-                        match sync_result {
-                            Ok(out) => {
-                                trace_archive_and_emit_code_plan_execute(
-                                    &self.plasm.trace_hub,
-                                    &self.plasm.run_artifacts,
-                                    &ls_key,
-                                    &es,
-                                    b.prompt_hash.as_str(),
-                                    b.session_id.as_str(),
-                                    session_ref.as_str(),
-                                    &comp_archive,
-                                    &program_for_trace,
-                                    out.comp.clone(),
-                                    call_count,
-                                    &out,
-                                )
-                                .await;
-                                phases.record("artifact_persist");
-                                Ok(out)
-                            }
-                            Err(e) => Err(e),
-                        }
+                                trace_hub: Arc::clone(&self.plasm.trace_hub),
+                                run_artifacts: Arc::clone(&self.plasm.run_artifacts),
+                            },
+                        )
+                        .await
                     } else {
                         crate::evidence_chain::begin_plan_evidence_with_anchors(
                             &es,
@@ -1144,7 +1058,8 @@ impl PlasmMcpHandler {
                             b.session_id.as_str(),
                             commit_record,
                         )
-                        .await;
+                        .await
+                        .map_err(|e| e.to_string())?;
                         trace_archive_and_emit_code_plan_evaluate(
                             &self.plasm.trace_hub,
                             &self.plasm.run_artifacts,

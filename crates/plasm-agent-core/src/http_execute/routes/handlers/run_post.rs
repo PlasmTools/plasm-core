@@ -158,7 +158,7 @@ pub(crate) async fn post_run_execute_session(
             Some(&sess),
         );
         let commit_ref = sess.mint_plan_commit_ref();
-        crate::plan_commit_store::register_plan_commit_and_persist(
+        if let Err(e) = crate::plan_commit_store::register_plan_commit_and_persist(
             &st,
             Arc::clone(&sess),
             prompt_hash.as_str(),
@@ -173,7 +173,17 @@ pub(crate) async fn post_run_execute_session(
                 expires_at: std::time::Instant::now() + crate::operation::PLAN_COMMIT_TTL,
             },
         )
-        .await;
+        .await
+        {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::INTERNAL_SERVER_ERROR,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                )
+                .with_title("Plan commit persistence failed")
+                .with_detail(e.to_string()),
+            );
+        }
         let mut plasm_meta =
             crate::operation::plan_commit_meta(&commit_ref, &dry.review, compact.verdict);
         plasm_meta.insert("dry_run".into(), serde_json::json!(true));

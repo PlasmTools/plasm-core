@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.19] - 2026-06-17
+
+### Fixed
+
+- **MCP `plasm_run` / `pcN` durability:** fail loud when plan commits cannot be durably persisted; rollback in-memory `pcN` on persist failure; upsert execute descriptors with reuse-key fallback.
+- **MCP committed run path:** extract `execute_committed_plasm_run`, wrap phases in real tracing spans, bounded sync deadline, and HTTP semaphore acquire timeout (`RateLimited` on queue stall).
+- **MCP App bridge:** forward tool errors to plan/run iframes even when the host call throws.
+
 ## [0.3.18] - 2026-06-17
 
 ### Changed

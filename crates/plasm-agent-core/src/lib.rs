@@ -64,6 +64,7 @@ pub mod mcp_host_bootstrap;
 pub mod mcp_plasm_meta;
 pub mod mcp_policy;
 pub mod mcp_run_await;
+pub mod host_env_config;
 pub mod mcp_run_config;
 mod mcp_plasm_run_phases;
 mod mcp_run_markdown;

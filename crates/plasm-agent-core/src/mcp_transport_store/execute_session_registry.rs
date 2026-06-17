@@ -12,6 +12,30 @@ use super::redis_backend::RedisBackend;
 
 type TestJsonStore = Arc<RwLock<std::collections::HashMap<String, String>>>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecuteSessionPersistOutcome {
+    InMemoryOnly,
+    Durable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExecuteSessionPersistError {
+    MissingReuseKey,
+}
+
+impl std::fmt::Display for ExecuteSessionPersistError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MissingReuseKey => write!(
+                f,
+                "plan_commit_ref persistence failed: execute session reuse key unavailable — reopen `plasm_context` and dry-run again"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ExecuteSessionPersistError {}
+
 const SESSION_KEY_PREFIX: &str = "mcp:execute:session:";
 
 fn session_key(prompt_hash: &str, session_id: &str) -> String {
@@ -230,6 +254,10 @@ impl ExecuteSessionRegistry {
         self.test_json.read().await.clone()
     }
 
+    pub async fn durable_backend_configured(&self) -> bool {
+        self.test_json().await.is_some() || self.redis().await.is_some()
+    }
+
     pub async fn persist(
         &self,
         session: &ExecuteSession,
@@ -259,14 +287,17 @@ impl ExecuteSessionRegistry {
         session: &ExecuteSession,
         session_id: &str,
         reuse_key_fallback: Option<&SessionReuseKey>,
-    ) {
+    ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
+        let durable = self.durable_backend_configured().await;
         let key = session_key(&session.prompt_hash, session_id);
         let reuse_key = if let Some(existing) = self.load_json(&key).await {
             existing.reuse_key.into()
         } else if let Some(fallback) = reuse_key_fallback {
             fallback.clone()
+        } else if durable {
+            return Err(ExecuteSessionPersistError::MissingReuseKey);
         } else {
-            return;
+            return Ok(ExecuteSessionPersistOutcome::InMemoryOnly);
         };
         let desc = PersistedExecuteSessionDescriptor::from_session_and_reuse(
             session, session_id, &reuse_key,
@@ -275,12 +306,13 @@ impl ExecuteSessionRegistry {
             if let Ok(payload) = serde_json::to_string(&desc) {
                 map.write().await.insert(key, payload);
             }
-            return;
+            return Ok(ExecuteSessionPersistOutcome::Durable);
         }
         let Some(redis) = self.redis().await else {
-            return;
+            return Ok(ExecuteSessionPersistOutcome::InMemoryOnly);
         };
         redis.set_json(&key, &desc).await;
+        Ok(ExecuteSessionPersistOutcome::Durable)
     }
 
     async fn load_json(&self, key: &str) -> Option<PersistedExecuteSessionDescriptor> {

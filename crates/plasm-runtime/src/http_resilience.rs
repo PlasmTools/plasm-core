@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use plasm_compile::CompiledRequest;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, Semaphore, SemaphorePermit};
 use tracing::debug;
@@ -59,21 +60,37 @@ impl ResilientHttpTransport {
     }
 
     fn semaphore_acquire_timeout() -> Duration {
-        std::env::var("PLASM_HTTP_SEMAPHORE_ACQUIRE_TIMEOUT_MS")
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-            .filter(|ms| *ms > 0)
-            .map(Duration::from_millis)
-            .unwrap_or(Duration::from_secs(30))
+        static TIMEOUT: OnceLock<Duration> = OnceLock::new();
+        *TIMEOUT.get_or_init(|| {
+            std::env::var("PLASM_HTTP_SEMAPHORE_ACQUIRE_TIMEOUT_MS")
+                .ok()
+                .and_then(|s| s.parse::<u64>().ok())
+                .filter(|ms| *ms > 0)
+                .map(Duration::from_millis)
+                .unwrap_or(Duration::from_secs(30))
+        })
     }
 
     async fn acquire_permit<'a>(
         sem: &'a Semaphore,
         label: &str,
     ) -> Result<SemaphorePermit<'a>, RuntimeError> {
-        tokio::time::timeout(Self::semaphore_acquire_timeout(), sem.acquire())
+        Self::acquire_permit_with_timeout(sem, label, Self::semaphore_acquire_timeout()).await
+    }
+
+    async fn acquire_permit_with_timeout<'a>(
+        sem: &'a Semaphore,
+        label: &str,
+        timeout: Duration,
+    ) -> Result<SemaphorePermit<'a>, RuntimeError> {
+        let host = label.to_string();
+        tokio::time::timeout(timeout, sem.acquire())
             .await
-            .map_err(|_| RuntimeError::ConfigurationError {
+            .map_err(|_| RuntimeError::RateLimited {
+                status: 429,
+                host,
+                retry_after: Some(timeout),
+                attempts: 0,
                 message: format!("HTTP concurrency queue timeout waiting for {label}"),
             })?
             .map_err(|_| RuntimeError::ConfigurationError {
@@ -319,6 +336,7 @@ impl HttpTransport for ResilientHttpTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn jitter_within_band() {
@@ -339,5 +357,29 @@ mod tests {
     fn safe_method_detection() {
         assert!(is_safe_http_method("GET"));
         assert!(!is_safe_http_method("POST"));
+    }
+
+    #[tokio::test]
+    async fn semaphore_acquire_times_out_when_no_permits() {
+        let sem = Arc::new(Semaphore::new(1));
+        let _held = sem.acquire().await.expect("hold sole permit");
+        let started = Instant::now();
+        let err = ResilientHttpTransport::acquire_permit_with_timeout(
+            sem.as_ref(),
+            "test-global",
+            Duration::from_millis(50),
+        )
+        .await
+        .expect_err("must timeout");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "queue wait should fail fast"
+        );
+        match err {
+            RuntimeError::RateLimited { message, .. } => {
+                assert!(message.contains("HTTP concurrency queue timeout"));
+            }
+            other => panic!("expected RateLimited, got {other:?}"),
+        }
     }
 }
