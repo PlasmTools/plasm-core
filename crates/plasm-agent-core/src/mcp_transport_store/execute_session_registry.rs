@@ -339,6 +339,26 @@ impl ExecuteSessionRegistry {
         Some(desc)
     }
 
+    /// Merge cross-pod durable fields into a hot in-memory execute row (plan commits, async ops).
+    pub async fn merge_into_live_session(
+        &self,
+        session: &ExecuteSession,
+        prompt_hash: &str,
+        session_id: &str,
+    ) {
+        if !self.durable_backend_configured().await {
+            return;
+        }
+        let Some(desc) = self.load(prompt_hash, session_id).await else {
+            return;
+        };
+        session.restore_persisted_plan_commits(&desc.plan_commits, desc.plan_commit_next);
+        session.restore_persisted_operations(&super::OperationPersistSnapshot {
+            operations: desc.operations.clone(),
+            operation_handle_next: desc.operation_handle_next,
+        });
+    }
+
     pub(crate) async fn delete(&self, prompt_hash: &str, session_id: &str) {
         let key = session_key(prompt_hash, session_id);
         if let Some(map) = self.test_json().await {

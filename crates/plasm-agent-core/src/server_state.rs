@@ -225,6 +225,9 @@ impl PlasmHostState {
             if crate::execute_session_rehydrate::registry_pins_match_live(reg.as_ref(), &pins)
                 .is_ok()
             {
+                self.execute_session_registry
+                    .merge_into_live_session(&sess, prompt_hash, session_id)
+                    .await;
                 return Some(sess);
             }
             tracing::info!(

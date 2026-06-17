@@ -167,6 +167,38 @@ pub fn mount_bundle(bundle: &'static McpAppBundle) -> Router {
     mount_bundle_routes(Router::new(), bundle)
 }
 
+const MCP_SHELL_CONFIG_MARKER: &str = "<!-- plasm-mcp-config -->";
+
+/// Streamable HTTP path for browser MCP App shells (`/mcp` vs ingress `/plasm/mcp`).
+pub fn mcp_public_stream_path() -> String {
+    std::env::var("PLASM_MCP_PUBLIC_BASE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .and_then(|base| url::Url::parse(base.trim()).ok())
+        .map(|u| {
+            let mut path = u.path().trim_end_matches('/').to_string();
+            if path.is_empty() {
+                "/mcp".into()
+            } else {
+                path.push_str("/mcp");
+                path
+            }
+        })
+        .unwrap_or_else(|| "/mcp".into())
+}
+
+fn shell_html_with_mcp_config(body: &str) -> String {
+    let inject = format!(
+        r#"<script>window.__PLASM_MCP_STREAM_PATH__={path:?};</script>"#,
+        path = mcp_public_stream_path()
+    );
+    if body.contains(MCP_SHELL_CONFIG_MARKER) {
+        body.replace(MCP_SHELL_CONFIG_MARKER, &inject)
+    } else {
+        format!("{inject}{body}")
+    }
+}
+
 fn mount_bundle_routes(router: Router, bundle: &'static McpAppBundle) -> Router {
     let prefix = bundle.path_prefix;
     let shell_path = prefix.to_string();
@@ -183,7 +215,7 @@ fn mount_bundle_routes(router: Router, bundle: &'static McpAppBundle) -> Router 
     router
         .route(
             shell_path.as_str(),
-            get(move || serve_html(shell_html, "text/html; charset=utf-8")),
+            get(move || serve_shell_html(shell_html)),
         )
         .route(
             shell_js_path.as_str(),
@@ -203,6 +235,14 @@ async fn serve_html(body: &'static str, content_type: &'static str) -> Response 
     (
         [(CONTENT_TYPE, content_type), (CACHE_CONTROL, "no-store")],
         body,
+    )
+        .into_response()
+}
+
+async fn serve_shell_html(body: &'static str) -> Response {
+    (
+        [(CONTENT_TYPE, "text/html; charset=utf-8"), (CACHE_CONTROL, "no-store")],
+        shell_html_with_mcp_config(body),
     )
         .into_response()
 }
@@ -287,6 +327,49 @@ mod tests {
         assert!(
             meta.get("ui").is_none(),
             "dry-run payload — run-explorer must not attach"
+        );
+    }
+
+    fn with_env(key: &str, value: Option<&str>, f: impl FnOnce()) {
+        static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = ENV_LOCK.lock().expect("env test lock");
+        let prev = std::env::var(key).ok();
+        match value {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+        f();
+        match prev {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+    }
+
+    #[test]
+    fn mcp_public_stream_path_defaults_to_root_mcp() {
+        with_env("PLASM_MCP_PUBLIC_BASE_URL", None, || {
+            assert_eq!(super::mcp_public_stream_path(), "/mcp");
+        });
+        with_env(
+            "PLASM_MCP_PUBLIC_BASE_URL",
+            Some("https://platform.plasm.tools/plasm"),
+            || {
+                assert_eq!(super::mcp_public_stream_path(), "/plasm/mcp");
+            },
+        );
+    }
+
+    #[test]
+    fn shell_html_injects_mcp_stream_path() {
+        with_env(
+            "PLASM_MCP_PUBLIC_BASE_URL",
+            Some("https://platform.plasm.tools/plasm"),
+            || {
+                let html = super::shell_html_with_mcp_config(
+                    "<html><head><!-- plasm-mcp-config --></head></html>",
+                );
+                assert!(html.contains(r#"window.__PLASM_MCP_STREAM_PATH__="/plasm/mcp""#));
+            },
         );
     }
 

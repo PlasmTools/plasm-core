@@ -493,6 +493,29 @@ async fn mcp_deliver_query_limit_not_expensive() {
 }
 
 #[tokio::test]
+async fn mcp_dry_run_plan_commit_merges_from_durable_when_in_memory_stale() {
+    use crate::plan_commit_store::resolve_committed_plan;
+
+    let fx = MatrixPcNFixture::open_with_test_store("pcN stale in-memory", "mcp_pcN_stale").await;
+    fx.persist_plan_commit().await;
+    resolve_committed_plan(&fx.es, &fx.pc).expect("in-memory pcN after mint");
+
+    fx.es.remove_plan_commit(&fx.pc);
+    assert!(
+        resolve_committed_plan(&fx.es, &fx.pc).is_err(),
+        "stale pod must miss pcN until durable merge"
+    );
+
+    let merged = fx
+        .st
+        .get_execute_session(&fx.out.prompt_hash, &fx.out.session_id)
+        .await
+        .expect("execute session");
+    assert!(Arc::ptr_eq(&merged, &fx.es), "same in-memory row, merged fields");
+    resolve_committed_plan(&merged, &fx.pc).expect("pcN merged from durable descriptor");
+}
+
+#[tokio::test]
 async fn mcp_dry_run_plan_commit_survives_rehydrate_for_plasm_run() {
     use crate::plan_commit_store::resolve_committed_plan;
 

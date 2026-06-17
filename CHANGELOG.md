@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.21] - 2026-06-17
+
+### Fixed
+
+- **MCP `plasm_run` cross-pod `pcN`:** hot in-memory execute rows now merge durable `plan_commits` (and async operation metadata) from Redis on every `get_execute_session` hit, so `plasm` on pod A and `plasm_run` on pod B no longer fail with `unknown plan_commit_ref pc0`.
+- **Browser MCP App shells:** appliance shells connect to the ingress Streamable HTTP path (`/plasm/mcp` when `PLASM_MCP_PUBLIC_BASE_URL` is set) instead of hardcoded `/mcp` (404 on `platform.plasm.tools`).
+
 ## [0.3.20] - 2026-06-17
 
 ### Fixed
