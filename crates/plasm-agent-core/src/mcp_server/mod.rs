@@ -977,6 +977,9 @@ impl PlasmMcpHandler {
                         None,
                     );
                     if run_live {
+                        let mut phases =
+                            crate::mcp_plasm_run_phases::McpPlasmRunPhaseRecorder::start();
+                        phases.record("resolve_commit");
                         crate::evidence_chain::begin_plan_evidence_with_anchors(
                             &es,
                             b.session_id.as_str(),
@@ -987,7 +990,7 @@ impl PlasmMcpHandler {
                             ),
                         )
                         .map_err(|e| format!("evidence begin: {e}"))?;
-                        let dry_gate = evaluate_plasm_comp_dry(&es, &bundle)?;
+                        phases.record("evidence_begin");
                         let committed = committed_plan
                             .as_ref()
                             .expect("run invocation resolves committed plan");
@@ -1006,6 +1009,8 @@ impl PlasmMcpHandler {
                             wait_live,
                             &committed.dry_review,
                         ) {
+                            let dry_gate = evaluate_plasm_comp_dry(&es, &bundle)?;
+                            phases.record("async_dry_eval");
                             let accept_payload =
                                 crate::run_explorer_meta::build_run_explorer_accept_payload(
                                     &dry_gate,
@@ -1036,8 +1041,9 @@ impl PlasmMcpHandler {
                                 return Ok(awaited);
                             }
                         }
+                        phases.record("async_routing");
                         es.begin_sync_live_run()?;
-                        let sync_result = ExecutePipeline::run_program(
+                        let sync_future = ExecutePipeline::run_program(
                             &es,
                             self.plasm.as_ref(),
                             &b.prompt_hash,
@@ -1049,10 +1055,26 @@ impl PlasmMcpHandler {
                                 trace: mcp_trace.clone(),
                                 sink: sink.clone(),
                             }),
-                            Some(dry_gate),
-                        )
-                        .await;
+                            None,
+                        );
+                        let sync_result = if committed.dry_review.execution_is_expensive() {
+                            sync_future.await
+                        } else {
+                            match tokio::time::timeout(
+                                crate::mcp_run_config::bounded_sync_run_deadline(),
+                                sync_future,
+                            )
+                            .await
+                            {
+                                Ok(result) => result,
+                                Err(_) => Err(format!(
+                                    "sync plasm_run deadline exceeded ({:.0}s); outbound HTTP or auth may be stalled",
+                                    crate::mcp_run_config::bounded_sync_run_deadline().as_secs_f64()
+                                )),
+                            }
+                        };
                         es.end_sync_live_run();
+                        phases.record("http_execute");
                         match sync_result {
                             Ok(out) => {
                                 trace_archive_and_emit_code_plan_execute(
@@ -1070,6 +1092,7 @@ impl PlasmMcpHandler {
                                     &out,
                                 )
                                 .await;
+                                phases.record("artifact_persist");
                                 Ok(out)
                             }
                             Err(e) => Err(e),
@@ -1116,7 +1139,7 @@ impl PlasmMcpHandler {
                         };
                         crate::plan_commit_store::register_plan_commit_and_persist(
                             self.plasm.as_ref(),
-                            &es,
+                            Arc::clone(&es),
                             b.prompt_hash.as_str(),
                             b.session_id.as_str(),
                             commit_record,

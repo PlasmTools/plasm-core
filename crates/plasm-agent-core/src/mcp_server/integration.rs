@@ -385,6 +385,192 @@ async fn mcp_deliver_query_limit_not_expensive() {
     );
 }
 
+#[tokio::test]
+async fn mcp_dry_run_plan_commit_survives_rehydrate_for_plasm_run() {
+    use crate::mcp_transport_store::ExecuteSessionRegistry;
+    use crate::operation::{compute_plan_commit_id_from_dry, PlanCommitRecord, PLAN_COMMIT_TTL};
+    use crate::plan_commit_store::{register_plan_commit_and_persist, resolve_committed_plan};
+    use crate::plan_dry_display::build_plan_dry_compact_view;
+
+    let mut st_inner = matrix_federated_host();
+    st_inner.oss.execute_session_registry =
+        ExecuteSessionRegistry::with_test_json_store().0;
+    let st = Arc::new(st_inner);
+
+    let seeds = vec![CapabilitySeed {
+        entry_id: "github".into(),
+        entity: "LangItem".into(),
+    }];
+    let out = apply_capability_seeds(
+        st.as_ref(),
+        None,
+        None,
+        seeds,
+        None,
+        None,
+        None,
+        "pcN rehydrate",
+        RankedCapabilitiesArg::Unspecified,
+    )
+    .await
+    .expect("apply_capability_seeds");
+    let es = st
+        .get_execute_session(&out.prompt_hash, &out.session_id)
+        .await
+        .expect("execute session");
+    let program = "e1(p1=\"a\")";
+    let pipeline = st.engine.prompt_pipeline();
+    let cross = st.sessions.symbol_map_cross_cache();
+    let bundle = compile_plasm_expression(pipeline, Some(cross), &es, "mcp_pcN", program)
+        .expect("compile");
+    let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
+    let compact = build_plan_dry_compact_view(
+        dry.validated_plan(),
+        &dry.topological_order,
+        &dry.review,
+        &dry.graph_summary,
+        Some(&es),
+    );
+    let pc = es.mint_plan_commit_ref();
+    register_plan_commit_and_persist(
+        st.as_ref(),
+        Arc::clone(&es),
+        out.prompt_hash.as_str(),
+        out.session_id.as_str(),
+        PlanCommitRecord {
+            commit_ref: pc.clone(),
+            commit_id: compute_plan_commit_id_from_dry(&dry),
+            artifact: dry.artifact().clone(),
+            program: program.into(),
+            dry_review: dry.review.clone(),
+            verdict: compact.verdict,
+            expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
+        },
+    )
+    .await;
+
+    resolve_committed_plan(&es, &pc).expect("in-memory pcN");
+
+    st.sessions.purge_all().await;
+    let es2 = st
+        .get_execute_session(&out.prompt_hash, &out.session_id)
+        .await
+        .expect("rehydrated execute session");
+    let committed = resolve_committed_plan(&es2, &pc).expect("rehydrated pcN for plasm_run");
+    assert_eq!(committed.program, program);
+}
+
+#[tokio::test]
+async fn mcp_bounded_pc_n_sync_gate_uses_committed_review() {
+    use crate::mcp_transport_store::ExecuteSessionRegistry;
+    use crate::operation::{
+        compute_plan_commit_id_from_dry, PlanCommitRecord, PLAN_COMMIT_TTL,
+    };
+    use crate::plan_commit_store::{register_plan_commit_and_persist, resolve_committed_plan};
+    use crate::plan_dry_display::build_plan_dry_compact_view;
+    use crate::run_delivery::{deliver_mcp_expensive_live_run, McpExpensiveLiveRunContext};
+
+    let mut st_inner = matrix_federated_host();
+    st_inner.oss.execute_session_registry = ExecuteSessionRegistry::with_test_json_store().0;
+    let st = Arc::new(st_inner);
+    let seeds = vec![CapabilitySeed {
+        entry_id: "github".into(),
+        entity: "LangItem".into(),
+    }];
+    let out = apply_capability_seeds(
+        st.as_ref(),
+        None,
+        None,
+        seeds,
+        None,
+        None,
+        None,
+        "bounded pcN sync gate",
+        RankedCapabilitiesArg::Unspecified,
+    )
+    .await
+    .expect("apply_capability_seeds");
+    let es = st
+        .get_execute_session(&out.prompt_hash, &out.session_id)
+        .await
+        .expect("execute session");
+    let program = "e1(p1=\"a\")";
+    let pipeline = st.engine.prompt_pipeline();
+    let cross = st.sessions.symbol_map_cross_cache();
+    let bundle =
+        compile_plasm_expression(pipeline, Some(cross), &es, "mcp_pcN_gate", program)
+            .expect("compile");
+    let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
+    assert!(
+        !dry.review.execution_is_expensive(),
+        "fixture get must stay on sync path"
+    );
+    let compact = build_plan_dry_compact_view(
+        dry.validated_plan(),
+        &dry.topological_order,
+        &dry.review,
+        &dry.graph_summary,
+        Some(&es),
+    );
+    let pc = es.mint_plan_commit_ref();
+    register_plan_commit_and_persist(
+        st.as_ref(),
+        Arc::clone(&es),
+        out.prompt_hash.as_str(),
+        out.session_id.as_str(),
+        PlanCommitRecord {
+            commit_ref: pc.clone(),
+            commit_id: compute_plan_commit_id_from_dry(&dry),
+            artifact: dry.artifact().clone(),
+            program: program.into(),
+            dry_review: dry.review.clone(),
+            verdict: compact.verdict,
+            expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
+        },
+    )
+    .await;
+    let committed = resolve_committed_plan(&es, &pc).expect("pcN");
+    assert_eq!(committed.program, program);
+
+    st.sessions.purge_all().await;
+    let es2 = st
+        .get_execute_session(&out.prompt_hash, &out.session_id)
+        .await
+        .expect("rehydrated execute session");
+    let committed2 = resolve_committed_plan(&es2, &pc).expect("rehydrated pcN");
+    assert!(!committed2.dry_review.execution_is_expensive());
+
+    let accept_payload = build_run_explorer_accept_payload(&dry, Some(&es2));
+    let delivered = deliver_mcp_expensive_live_run(McpExpensiveLiveRunContext {
+        es: Arc::clone(&es2),
+        st: Arc::clone(&st),
+        prompt_hash: out.prompt_hash.clone(),
+        session_id: out.session_id.clone(),
+        session_ref: "l_pcN_gate".into(),
+        mcp_session_key: "mcp".into(),
+        bundle,
+        review: committed2.dry_review.clone(),
+        accept_payload,
+        dry_verdict: committed2.verdict,
+        plan_commit_ref: Some(pc),
+        trace: PlasmTraceContext {
+            trace_id: Uuid::nil(),
+            call_index: None,
+            mcp_session_id: None,
+            logical_session_id: None,
+            logical_session_ref: Some("l_pcN_gate".into()),
+        },
+        wait_live: true,
+        await_cfg: crate::mcp_run_await::AwaitConfig::default(),
+    })
+    .await
+    .expect("deliver");
+    assert!(
+        delivered.is_none(),
+        "bounded committed plan must use sync plasm_run path"
+    );
+}
+
 #[test]
 fn plasm_dry_run_continuation_error_blocks_wait_and_cancel_only() {
     assert!(crate::operation::plasm_dry_run_continuation_error("wait(l_x_o1)").is_some());

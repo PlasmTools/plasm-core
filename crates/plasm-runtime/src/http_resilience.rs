@@ -12,7 +12,7 @@ use plasm_compile::CompiledRequest;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{Mutex, Semaphore};
+use tokio::sync::{Mutex, Semaphore, SemaphorePermit};
 use tracing::debug;
 
 /// Retry and concurrency policy for outbound HTTP.
@@ -56,6 +56,29 @@ impl ResilientHttpTransport {
             global,
             per_host: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn semaphore_acquire_timeout() -> Duration {
+        std::env::var("PLASM_HTTP_SEMAPHORE_ACQUIRE_TIMEOUT_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|ms| *ms > 0)
+            .map(Duration::from_millis)
+            .unwrap_or(Duration::from_secs(30))
+    }
+
+    async fn acquire_permit<'a>(
+        sem: &'a Semaphore,
+        label: &str,
+    ) -> Result<SemaphorePermit<'a>, RuntimeError> {
+        tokio::time::timeout(Self::semaphore_acquire_timeout(), sem.acquire())
+            .await
+            .map_err(|_| RuntimeError::ConfigurationError {
+                message: format!("HTTP concurrency queue timeout waiting for {label}"),
+            })?
+            .map_err(|_| RuntimeError::ConfigurationError {
+                message: format!("HTTP concurrency semaphore closed ({label})"),
+            })
     }
 
     async fn host_semaphore(&self, host: &str) -> Arc<Semaphore> {
@@ -223,19 +246,12 @@ impl HttpTransport for ResilientHttpTransport {
         let started = Instant::now();
         let host = host_key_from_url(&url);
         let host_sem = self.host_semaphore(&host).await;
-        let _global =
-            self.global
-                .acquire()
-                .await
-                .map_err(|_| RuntimeError::ConfigurationError {
-                    message: "global HTTP concurrency semaphore closed".to_string(),
-                })?;
-        let _host = host_sem
-            .acquire()
-            .await
-            .map_err(|_| RuntimeError::ConfigurationError {
-                message: format!("per-host HTTP semaphore closed for {host}"),
-            })?;
+        let _global = Self::acquire_permit(&self.global, "global HTTP concurrency").await?;
+        let _host = Self::acquire_permit(
+            host_sem.as_ref(),
+            &format!("per-host HTTP concurrency ({host})"),
+        )
+        .await?;
 
         let mut attempt = 0u32;
         let result = loop {
@@ -270,19 +286,12 @@ impl HttpTransport for ResilientHttpTransport {
         let started = Instant::now();
         let host = host_key_from_url(url);
         let host_sem = self.host_semaphore(&host).await;
-        let _global =
-            self.global
-                .acquire()
-                .await
-                .map_err(|_| RuntimeError::ConfigurationError {
-                    message: "global HTTP concurrency semaphore closed".to_string(),
-                })?;
-        let _host = host_sem
-            .acquire()
-            .await
-            .map_err(|_| RuntimeError::ConfigurationError {
-                message: format!("per-host HTTP semaphore closed for {host}"),
-            })?;
+        let _global = Self::acquire_permit(&self.global, "global HTTP concurrency").await?;
+        let _host = Self::acquire_permit(
+            host_sem.as_ref(),
+            &format!("per-host HTTP concurrency ({host})"),
+        )
+        .await?;
 
         let mut attempt = 0u32;
         let result = loop {

@@ -160,7 +160,7 @@ pub(crate) async fn post_run_execute_session(
         let commit_ref = sess.mint_plan_commit_ref();
         crate::plan_commit_store::register_plan_commit_and_persist(
             &st,
-            &sess,
+            Arc::clone(&sess),
             prompt_hash.as_str(),
             session_id.as_str(),
             crate::operation::PlanCommitRecord {

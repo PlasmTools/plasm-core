@@ -39,13 +39,18 @@ impl PlanCommitVerifyError {
 
 pub async fn register_plan_commit_and_persist(
     st: &PlasmHostState,
-    session: &ExecuteSession,
+    session: std::sync::Arc<ExecuteSession>,
     prompt_hash: &str,
     session_id: &str,
     record: PlanCommitRecord,
 ) {
     session.register_plan_commit(record);
-    st.replace_execute_session(prompt_hash, session_id, session.clone())
+    let reuse_key = st
+        .sessions
+        .reuse_key_for_execute_pair(prompt_hash, session_id)
+        .await;
+    st.execute_session_registry
+        .persist_or_update(session.as_ref(), session_id, reuse_key.as_ref())
         .await;
 }
 
@@ -385,7 +390,7 @@ mod tests {
         );
         register_plan_commit_and_persist(
             &host,
-            &es,
+            es.clone(),
             created.prompt_hash.as_str(),
             created.session.as_str(),
             PlanCommitRecord {

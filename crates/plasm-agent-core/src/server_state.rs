@@ -319,8 +319,12 @@ impl PlasmHostState {
         session_id: &str,
         session: ExecuteSession,
     ) {
+        let reuse_key = self
+            .sessions
+            .reuse_key_for_execute_pair(prompt_hash, session_id)
+            .await;
         self.execute_session_registry
-            .persist_or_update(&session, session_id)
+            .persist_or_update(&session, session_id, reuse_key.as_ref())
             .await;
         if let (Ok(ph), Ok(sid)) = (
             prompt_hash.parse::<PromptHashHex>(),

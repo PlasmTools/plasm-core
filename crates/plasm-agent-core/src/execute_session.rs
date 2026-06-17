@@ -1544,6 +1544,18 @@ impl ExecuteSessionStore {
         }
     }
 
+    /// Reverse lookup: execute `(prompt_hash, session_id)` → reuse key (for durable descriptor upsert).
+    pub async fn reuse_key_for_execute_pair(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+    ) -> Option<SessionReuseKey> {
+        let r = self.reuse_index.read().await;
+        r.iter()
+            .find(|(_, (ph, sid))| ph == prompt_hash && sid == session_id)
+            .map(|(key, _)| key.clone())
+    }
+
     /// Replace session payload (e.g. after incremental graph expansion).
     pub async fn replace_session(
         &self,

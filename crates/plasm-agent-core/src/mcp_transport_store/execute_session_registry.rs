@@ -252,15 +252,22 @@ impl ExecuteSessionRegistry {
         redis.set_json(&key, &desc).await;
     }
 
-    /// Refresh descriptor after in-session mutation (federate/expand); keeps stored reuse key when present.
-    pub async fn persist_or_update(&self, session: &ExecuteSession, session_id: &str) {
+    /// Refresh descriptor after in-session mutation (federate/expand/plan commit).
+    /// When no durable row exists yet, `reuse_key_fallback` seeds the first upsert.
+    pub async fn persist_or_update(
+        &self,
+        session: &ExecuteSession,
+        session_id: &str,
+        reuse_key_fallback: Option<&SessionReuseKey>,
+    ) {
         let key = session_key(&session.prompt_hash, session_id);
         let reuse_key = if let Some(existing) = self.load_json(&key).await {
-            existing.reuse_key
+            existing.reuse_key.into()
+        } else if let Some(fallback) = reuse_key_fallback {
+            fallback.clone()
         } else {
             return;
         };
-        let reuse_key: SessionReuseKey = reuse_key.into();
         let desc = PersistedExecuteSessionDescriptor::from_session_and_reuse(
             session, session_id, &reuse_key,
         );

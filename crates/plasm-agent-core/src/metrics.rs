@@ -39,6 +39,7 @@ struct AgentMetrics {
     run_artifact_hot_cache_evictions: Counter<u64>,
     run_artifact_archive_puts: Counter<u64>,
     trace_timeline_events_dropped: Counter<u64>,
+    mcp_plasm_run_phase_duration_ms: Histogram<f64>,
 }
 
 static AGENT_METRICS: OnceLock<AgentMetrics> = OnceLock::new();
@@ -171,8 +172,18 @@ fn agent_metrics() -> &'static AgentMetrics {
                     "Trace timeline events dropped from the in-memory window (cap); durable ingest may still hold full history.",
                 )
                 .build(),
+            mcp_plasm_run_phase_duration_ms: m
+                .f64_histogram("plasm.mcp.plasm_run.phase_duration_ms")
+                .with_description("Wall time between MCP plasm_run phase checkpoints.")
+                .build(),
         }
     })
+}
+
+pub fn record_mcp_plasm_run_phase(phase: &'static str, duration: Duration) {
+    let ms = duration.as_secs_f64() * 1000.0;
+    let attrs = &[KeyValue::new("phase", phase)];
+    agent_metrics().mcp_plasm_run_phase_duration_ms.record(ms, attrs);
 }
 
 /// `multi_line`: `None` except for `plasm` (`Some(true)` / `Some(false)`).
