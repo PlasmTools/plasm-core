@@ -11,7 +11,6 @@ use crate::plasm_step_convert::step_payload_to_validated_node;
 use plasm_core::PlasmReturn;
 
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub async fn run_plasm_comp(
     es: &ExecuteSession,
     st: &PlasmHostState,
