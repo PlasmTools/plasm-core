@@ -1,4 +1,7 @@
 //! Live-run delivery policy (MCP await-by-default vs HTTP async surface).
+//!
+//! Bounded synchronous live execute is unified in [`crate::sync_live_run`] — see concurrent
+//! invariants I1–I12 documented there.
 
 use std::sync::Arc;
 
@@ -17,6 +20,10 @@ use crate::plasm_plan_run::PlasmPlanRunResult;
 use crate::run_explorer_meta::RunExplorerAcceptPayload;
 use crate::server_state::PlasmHostState;
 use crate::trace_sink_emit::PlasmTraceContext;
+
+pub use crate::sync_live_run::{
+    run_bounded_sync_live_run, BoundedSyncLiveRunRequest, SyncLiveProgress,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunDeliveryPolicy {

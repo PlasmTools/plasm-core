@@ -160,9 +160,6 @@ pub use auth_resolution::{
 };
 pub use cache::*;
 pub use cancel_signal::{check_cancel, CancelSignal};
-pub use live_run_telemetry::{
-    record_live_http_completion, with_live_run_telemetry, LiveRunTelemetry,
-};
 pub use error::*;
 pub use evm::*;
 pub use execution::*;
@@ -178,6 +175,9 @@ pub use hosted_oauth_kv::{
 };
 pub use http_resilience::{HttpResiliencePolicy, ResilientHttpTransport};
 pub use http_transport::{HttpTransport, ReqwestHttpTransport};
+pub use live_run_telemetry::{
+    record_live_http_completion, with_live_run_telemetry, LiveRunTelemetry,
+};
 pub use materialization::{
     CacheDecision, CacheTelemetry, EntityGraphSnapshot, ExecutionCacheConsult, FanoutCoordinator,
     MaterializedRowSource, SessionMaterialization, SessionResponseStore, StoredResponse,

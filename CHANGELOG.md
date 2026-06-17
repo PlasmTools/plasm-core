@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.24] - 2026-06-17
+
+### Fixed
+
+- **Bounded sync live run:** unify HTTP and MCP synchronous `plasm_run` / execute paths via `run_bounded_sync_live_run` — shared 90s deadline, single cooperative `CancelSignal`, and RAII `SyncLiveRunGuard` (fixes inverted deadline and cancel split from v0.3.23).
+- **MCP sync progress:** emit terminal `Done`/`Failed` op notifications without registering fake async `OperationState` entries; progress uses `queue_mcp_notify` only.
+
+### Added
+
+- **`sync_live_run` module:** `ExecutionScope::for_sync_live`, shared MCP progress emit helper, CI guard `check_sync_live_run_invariants.sh`, invariant-indexed tests.
+
+### Changed
+
+- **HTTP execute:** bounded sync runs now use the same deadline + cancel policy as MCP.
+
 ## [0.3.23] - 2026-06-17
 
 ### Added

@@ -704,7 +704,9 @@ impl ExecuteSession {
     }
 
     /// Reject nested synchronous live runs on the same execute session.
-    pub fn begin_sync_live_run(&self) -> Result<Arc<plasm_runtime::LiveRunTelemetry>, String> {
+    pub(crate) fn begin_sync_live_run(
+        &self,
+    ) -> Result<Arc<plasm_runtime::LiveRunTelemetry>, String> {
         if self
             .sync_live_run_inflight
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -723,7 +725,7 @@ impl ExecuteSession {
         Ok(telemetry)
     }
 
-    pub fn end_sync_live_run(&self) {
+    pub(crate) fn end_sync_live_run(&self) {
         self.sync_live_run_inflight.store(false, Ordering::Release);
         *self
             .sync_live_telemetry
@@ -743,6 +745,140 @@ impl ExecuteSession {
             .sync_live_telemetry
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sync_live_run_inflight_for_test(&self) -> bool {
+        self.sync_live_run_inflight.load(Ordering::Acquire)
+    }
+
+    /// Initial accept line for MCP bounded sync (no `operation_by_handle` registration).
+    pub(crate) fn emit_sync_live_accept(
+        &self,
+        ctx: &crate::operation::SyncLiveProgressCtx,
+        st: &crate::server_state::PlasmHostState,
+        dry_verdict: Option<crate::plan_dry_display::PlanDryVerdict>,
+    ) -> Result<(), String> {
+        let mut emit = ctx.emit_state.lock().unwrap_or_else(|e| e.into_inner());
+        let stats = self.live_run_notify_stats(None);
+        crate::operation_progress::try_queue_mcp_sync_progress_line(
+            st.op_progress_hub.as_ref(),
+            stats,
+            ctx.mcp_transport_key.as_str(),
+            ctx.plan_commit_ref.as_ref(),
+            &ctx.handle,
+            &mut emit,
+            crate::operation_progress::OpWireSig::Accept,
+            None,
+            dry_verdict,
+            None,
+            crate::operation_progress::McpEmitCoalesce::Accept,
+        );
+        Ok(())
+    }
+
+    pub(crate) fn try_emit_sync_live_progress(
+        &self,
+        ctx: &crate::operation::SyncLiveProgressCtx,
+        progress: &crate::operation::OperationProgress,
+        st: &crate::server_state::PlasmHostState,
+    ) -> bool {
+        let mut emit = ctx.emit_state.lock().unwrap_or_else(|e| e.into_inner());
+        let rows = (progress.rows_materialized > 0).then_some(progress.rows_materialized);
+        let stats = self.live_run_notify_stats(rows);
+        crate::operation_progress::try_queue_mcp_sync_progress_line(
+            st.op_progress_hub.as_ref(),
+            stats,
+            ctx.mcp_transport_key.as_str(),
+            ctx.plan_commit_ref.as_ref(),
+            &ctx.handle,
+            &mut emit,
+            crate::operation_progress::OpWireSig::Running,
+            Some(progress),
+            None,
+            None,
+            crate::operation_progress::McpEmitCoalesce::OnChange,
+        )
+    }
+
+    /// Emit running progress at most every ~1s (HTTP telemetry) even when plan step is unchanged.
+    pub(crate) fn try_emit_sync_live_progress_coalesced(
+        &self,
+        ctx: &crate::operation::SyncLiveProgressCtx,
+        st: &crate::server_state::PlasmHostState,
+    ) -> bool {
+        let progress = ctx
+            .progress
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let mut emit = ctx.emit_state.lock().unwrap_or_else(|e| e.into_inner());
+        let rows = (progress.rows_materialized > 0).then_some(progress.rows_materialized);
+        let stats = self.live_run_notify_stats(rows);
+        crate::operation_progress::try_queue_mcp_sync_progress_line(
+            st.op_progress_hub.as_ref(),
+            stats,
+            ctx.mcp_transport_key.as_str(),
+            ctx.plan_commit_ref.as_ref(),
+            &ctx.handle,
+            &mut emit,
+            crate::operation_progress::OpWireSig::Running,
+            Some(&progress),
+            None,
+            None,
+            crate::operation_progress::McpEmitCoalesce::Coalesced,
+        )
+    }
+
+    /// Terminal `Done` / `Failed` / `Cancelled` for bounded sync (no `operation_by_handle`).
+    pub(crate) fn emit_sync_live_terminal(
+        &self,
+        ctx: &crate::operation::SyncLiveProgressCtx,
+        phase: crate::operation::OperationPhase,
+        error: Option<&str>,
+        st: &crate::server_state::PlasmHostState,
+    ) {
+        let sig = match phase {
+            crate::operation::OperationPhase::Succeeded => {
+                crate::operation_progress::OpWireSig::Done
+            }
+            crate::operation::OperationPhase::Cancelled => {
+                crate::operation_progress::OpWireSig::Cancelled
+            }
+            crate::operation::OperationPhase::Failed => {
+                crate::operation_progress::OpWireSig::Failed
+            }
+            crate::operation::OperationPhase::Running => return,
+        };
+        let progress = ctx
+            .progress
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let rows = (progress.rows_materialized > 0).then_some(progress.rows_materialized);
+        let stats = self.live_run_notify_stats(rows);
+        let mut emit = ctx.emit_state.lock().unwrap_or_else(|e| e.into_inner());
+        crate::operation_progress::try_queue_mcp_sync_progress_line(
+            st.op_progress_hub.as_ref(),
+            stats,
+            ctx.mcp_transport_key.as_str(),
+            ctx.plan_commit_ref.as_ref(),
+            &ctx.handle,
+            &mut emit,
+            sig,
+            Some(&progress),
+            None,
+            error,
+            crate::operation_progress::McpEmitCoalesce::Terminal,
+        );
+    }
+
+    #[cfg(test)]
+    pub(crate) fn sync_live_telemetry_active_for_test(&self) -> bool {
+        self.sync_live_telemetry
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some()
     }
 
     fn live_run_notify_stats(&self, rows: Option<u64>) -> crate::operation_progress::OpNotifyStats {

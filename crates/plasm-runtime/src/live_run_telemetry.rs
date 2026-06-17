@@ -67,9 +67,7 @@ pub async fn with_live_run_telemetry<Fut, T>(telemetry: Arc<LiveRunTelemetry>, f
 where
     Fut: Future<Output = T>,
 {
-    ACTIVE_LIVE_RUN_TELEMETRY
-        .scope(Some(telemetry), fut)
-        .await
+    ACTIVE_LIVE_RUN_TELEMETRY.scope(Some(telemetry), fut).await
 }
 
 #[cfg(test)]

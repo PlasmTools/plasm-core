@@ -356,29 +356,21 @@ pub(crate) async fn post_run_execute_session(
         );
     }
 
-    if let Err(e) = sess.begin_sync_live_run() {
-        return problem_response(
-            Problem::custom(
-                ProblemStatus::BAD_REQUEST,
-                Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-            )
-            .with_title("Bad Request")
-            .with_detail(e),
-        );
-    }
-    let sync_result = crate::execute_pipeline::ExecutePipeline::run_program(
-        &sess,
-        &st,
-        ph_str.as_str(),
-        sid_str.as_str(),
-        &bundle,
-        crate::execute_pipeline::ExecutionIntent::Live,
-        None,
-        None,
-        Some(dry_gate),
+    let sync_result = crate::run_delivery::run_bounded_sync_live_run(
+        crate::run_delivery::BoundedSyncLiveRunRequest {
+            es: Arc::clone(&sess),
+            st: Arc::new(st.clone()),
+            prompt_hash: ph_str.clone(),
+            session_id: sid_str.clone(),
+            bundle: bundle.clone(),
+            dry_review: accepted.review_for_delivery.clone(),
+            dry_verdict: Some(accepted.verdict_for_gate),
+            dry_gate: Some(dry_gate),
+            hooks: None,
+            progress: None,
+        },
     )
     .await;
-    sess.end_sync_live_run();
     match sync_result {
         Ok(result) => respond_plan_run_live_result(kind, &result, &sess),
         Err(e) => problem_response(

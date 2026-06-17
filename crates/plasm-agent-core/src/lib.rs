@@ -129,6 +129,7 @@ pub mod schema_overlay_session;
 pub mod server_state;
 pub mod session_bindings;
 pub mod session_graph_persistence;
+pub mod sync_live_run;
 pub use graph_page_spill_host::graph_page_spill_for_execute;
 pub mod mcp_logical_ref;
 pub mod session_identity;

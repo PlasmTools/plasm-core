@@ -101,6 +101,17 @@ pub fn verify_plan_commit_for_dry(
 }
 pub const PLAN_COMMIT_TTL: Duration = Duration::from_secs(600);
 
+/// MCP sync live-run progress without registering [`OperationState`] (bounded sync path).
+#[derive(Clone)]
+pub struct SyncLiveProgressCtx {
+    pub handle: OperationHandle,
+    pub mcp_transport_key: String,
+    pub plan_commit_ref: Option<PlanCommitRef>,
+    pub progress: Arc<StdMutex<OperationProgress>>,
+    pub emit_state: Arc<StdMutex<crate::operation_progress::OperationAgentEmitState>>,
+    pub host: std::sync::Weak<PlasmHostState>,
+}
+
 /// Cooperative cancellation + optional progress sink for phased plan execution.
 #[derive(Clone)]
 pub struct ExecutionScope {
@@ -108,6 +119,7 @@ pub struct ExecutionScope {
     token: CancellationToken,
     progress: Option<Arc<StdMutex<OperationProgress>>>,
     operation_sink: Option<(Arc<ExecuteSession>, OperationHandle)>,
+    sync_progress_sink: Option<(Arc<ExecuteSession>, Arc<SyncLiveProgressCtx>)>,
 }
 
 impl ExecutionScope {
@@ -118,6 +130,19 @@ impl ExecutionScope {
             token: CancellationToken::new(),
             progress: None,
             operation_sink: None,
+            sync_progress_sink: None,
+        }
+    }
+
+    /// Bounded synchronous live execute (HTTP + MCP): cooperative cancel only.
+    #[must_use]
+    pub fn for_bounded_sync(cancel: CancelSignal) -> Self {
+        Self {
+            cancel,
+            token: CancellationToken::new(),
+            progress: None,
+            operation_sink: None,
+            sync_progress_sink: None,
         }
     }
 
@@ -132,6 +157,23 @@ impl ExecutionScope {
             token: CancellationToken::new(),
             progress: Some(Arc::new(StdMutex::new(OperationProgress::default()))),
             operation_sink: Some((es, handle)),
+            sync_progress_sink: None,
+        }
+    }
+
+    /// MCP bounded sync: progress notifications without [`operation_by_handle`] registration.
+    #[must_use]
+    pub fn for_sync_live(
+        es: Arc<ExecuteSession>,
+        ctx: Arc<SyncLiveProgressCtx>,
+        cancel: CancelSignal,
+    ) -> Self {
+        Self {
+            cancel,
+            token: CancellationToken::new(),
+            progress: Some(Arc::clone(&ctx.progress)),
+            operation_sink: None,
+            sync_progress_sink: Some((es, ctx)),
         }
     }
 
@@ -164,9 +206,7 @@ impl ExecutionScope {
                 *g = progress.clone();
             }
         }
-        if let Some((es, handle)) = &self.operation_sink {
-            es.update_operation_progress(handle, progress);
-        }
+        self.report_progress(progress);
     }
 
     pub fn add_rows_materialized(&self, rows: usize) {
@@ -184,9 +224,7 @@ impl ExecutionScope {
         } else {
             return;
         };
-        if let Some((es, handle)) = &self.operation_sink {
-            es.update_operation_progress(handle, progress);
-        }
+        self.report_progress(progress);
     }
 
     /// Set row count to `rows` (final sync after pagination; avoids double-counting incremental progress).
@@ -202,8 +240,17 @@ impl ExecutionScope {
         } else {
             return;
         };
+        self.report_progress(progress);
+    }
+
+    fn report_progress(&self, progress: OperationProgress) {
         if let Some((es, handle)) = &self.operation_sink {
-            es.update_operation_progress(handle, progress);
+            es.update_operation_progress(handle, progress.clone());
+        }
+        if let Some((es, ctx)) = &self.sync_progress_sink {
+            if let Some(st) = ctx.host.upgrade() {
+                es.try_emit_sync_live_progress(ctx, &progress, st.as_ref());
+            }
         }
     }
 
@@ -751,6 +798,7 @@ mod tests {
             token: CancellationToken::new(),
             progress: Some(Arc::clone(&progress)),
             operation_sink: None,
+            sync_progress_sink: None,
         };
         scope.add_rows_materialized(50);
         scope.add_rows_materialized(50);

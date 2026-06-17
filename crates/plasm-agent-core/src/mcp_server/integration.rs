@@ -584,6 +584,109 @@ async fn mcp_bounded_pc_n_sync_gate_uses_committed_review() {
     );
 }
 
+#[tokio::test]
+async fn sync_progress_notify_without_op_finalize() {
+    use crate::operation::{OperationProgress, SyncLiveProgressCtx};
+    use crate::operation_progress::OperationAgentEmitState;
+    use std::sync::Mutex as StdMutex;
+
+    let fx = MatrixPcNFixture::open_with_test_store("sync progress no op", "mcp_sync_prog").await;
+    let handle = fx.es.mint_operation_handle("l_sync_prog");
+    let ctx = SyncLiveProgressCtx {
+        handle: handle.clone(),
+        mcp_transport_key: "mcp-test".into(),
+        plan_commit_ref: Some(fx.pc.clone()),
+        progress: Arc::new(StdMutex::new(OperationProgress::default())),
+        emit_state: Arc::new(StdMutex::new(OperationAgentEmitState::default())),
+        host: Arc::downgrade(&fx.st),
+    };
+    fx.es
+        .emit_sync_live_accept(&ctx, fx.st.as_ref(), Some(fx.compact.verdict))
+        .expect("accept");
+    assert!(
+        fx.es.get_operation(&handle).is_none(),
+        "bounded sync must not register operation_by_handle"
+    );
+    let pending = fx.st.op_progress_hub.drain_mcp_pending();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].transport_key, "mcp-test");
+    assert!(pending[0].line.contains(handle.as_str()));
+
+    fx.es.emit_sync_live_terminal(
+        &ctx,
+        crate::operation::OperationPhase::Succeeded,
+        None,
+        fx.st.as_ref(),
+    );
+    let terminal = fx.st.op_progress_hub.drain_mcp_pending();
+    assert_eq!(terminal.len(), 1);
+    assert!(terminal[0].line.contains('!'));
+    assert!(
+        fx.es.get_operation(&handle).is_none(),
+        "terminal emit must not register operation_by_handle"
+    );
+}
+
+#[tokio::test]
+async fn matrix_bounded_sync_completes_under_deadline() {
+    use crate::sync_live_run::{await_bounded_sync_live, SyncLiveRunGuard};
+    use std::time::Instant;
+
+    let fx =
+        MatrixPcNFixture::open_with_test_store("bounded sync deadline", "mcp_sync_deadline").await;
+    assert!(
+        !fx.dry.review.execution_is_expensive(),
+        "matrix get must stay on bounded sync path"
+    );
+    let accept_payload = build_run_explorer_accept_payload(&fx.dry, Some(&fx.es));
+    let delivered = deliver_mcp_expensive_live_run(McpExpensiveLiveRunContext {
+        es: Arc::clone(&fx.es),
+        st: Arc::clone(&fx.st),
+        prompt_hash: fx.out.prompt_hash.clone(),
+        session_id: fx.out.session_id.clone(),
+        session_ref: "l_sync_deadline".into(),
+        mcp_session_key: "mcp".into(),
+        bundle: fx.bundle.clone(),
+        review: fx.dry.review.clone(),
+        accept_payload,
+        dry_verdict: fx.compact.verdict,
+        plan_commit_ref: Some(fx.pc.clone()),
+        trace: PlasmTraceContext {
+            trace_id: Uuid::nil(),
+            call_index: None,
+            mcp_session_id: None,
+            logical_session_id: None,
+            logical_session_ref: Some("l_sync_deadline".into()),
+        },
+        wait_live: true,
+        await_cfg: crate::mcp_run_await::AwaitConfig::default(),
+    })
+    .await
+    .expect("deliver");
+    assert!(
+        delivered.is_none(),
+        "bounded matrix plan must use sync path, not async deliver"
+    );
+
+    let start = Instant::now();
+    {
+        let (mut guard, _) = SyncLiveRunGuard::enter(Arc::clone(&fx.es)).expect("enter");
+        let scope =
+            crate::operation::ExecutionScope::for_bounded_sync(guard.cancel_signal().clone());
+        await_bounded_sync_live(
+            &fx.dry.review,
+            std::time::Duration::from_millis(50),
+            &scope,
+            &mut guard,
+            async { Ok(()) },
+        )
+        .await
+        .expect("fast bounded sync future");
+    }
+    assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    assert!(!fx.es.sync_live_run_inflight_for_test());
+}
+
 #[test]
 fn plasm_dry_run_continuation_error_blocks_wait_and_cancel_only() {
     assert!(crate::operation::plasm_dry_run_continuation_error("wait(l_x_o1)").is_some());
