@@ -77,7 +77,6 @@ impl TraceHub {
                 node_count: trace.node_count,
                 code_chars: trace.code_chars,
                 comp: trace.comp,
-                dag: trace.dag,
                 plan_ux_reflection: trace.plan_ux_reflection,
             },
         )
@@ -100,7 +99,6 @@ impl TraceHub {
                 node_count: trace.node_count,
                 code_chars: trace.code_chars,
                 comp: trace.comp.clone(),
-                dag: trace.dag.clone(),
                 plasm_call_index: trace.plasm_call_index,
                 run_ids: trace.run_ids,
                 run_artifacts: trace.run_artifacts,

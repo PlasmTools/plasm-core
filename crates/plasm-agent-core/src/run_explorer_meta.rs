@@ -4,21 +4,29 @@ use crate::execute_session::ExecuteSession;
 use crate::operation::{OperationProgress, OperationState};
 use crate::plan_dry_display::PlanDryVerdict;
 use crate::plasm_plan_run::DryPlasmPlanEvaluation;
+use plasm_trace::TraceCompWire;
 use serde_json::json;
 
 /// Precomputed accept payload for async live runs (built once, fan out to op state + `_meta.plasm`).
 #[derive(Debug, Clone)]
 pub struct RunExplorerAcceptPayload {
-    pub comp: serde_json::Value,
+    pub comp_wire: TraceCompWire,
     pub plan_ux_reflection: serde_json::Value,
     pub step_order: Vec<String>,
+}
+
+impl RunExplorerAcceptPayload {
+    #[must_use]
+    pub fn comp_json(&self) -> serde_json::Value {
+        self.comp_wire.to_json_value()
+    }
 }
 
 pub fn build_run_explorer_accept_payload(
     dry: &DryPlasmPlanEvaluation,
     session: Option<&ExecuteSession>,
 ) -> RunExplorerAcceptPayload {
-    let comp = crate::plasm_comp_wire::plasm_comp_json_from_dry(dry);
+    let comp_wire = crate::plasm_comp_wire::trace_comp_wire_from_dry(dry);
     let ctx = crate::plan_ux_reflection::PlanUxBuildContext {
         session,
         param_bindings: &[],
@@ -31,7 +39,7 @@ pub fn build_run_explorer_accept_payload(
         });
     }
     RunExplorerAcceptPayload {
-        comp,
+        comp_wire,
         plan_ux_reflection: serde_json::to_value(&ux).expect("plan ux reflection serializes"),
         step_order: dry.topological_order.clone(),
     }
@@ -46,7 +54,7 @@ pub fn merge_accept_payload_into_meta(
         return;
     };
     plasm.insert("logical_session_ref".into(), json!(logical_session_ref));
-    plasm.insert("comp".into(), payload.comp.clone());
+    plasm.insert("comp".into(), payload.comp_json());
     plasm.insert(
         "plan_ux_reflection".into(),
         payload.plan_ux_reflection.clone(),
@@ -97,7 +105,7 @@ pub fn merge_run_explorer_fields_into_plasm(
     progress: Option<&OperationProgress>,
 ) {
     if let Some(comp) = &op.comp {
-        plasm.insert("comp".into(), comp.clone());
+        plasm.insert("comp".into(), comp.to_json_value());
     }
     if let Some(reflection) = &op.plan_ux_reflection {
         let ux = progress

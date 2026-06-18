@@ -46,6 +46,7 @@ use plasm_runtime::{
     entity_to_row_json, CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource,
     ExecutionStats, MaterializedRowSource,
 };
+use plasm_trace::TraceCompWire;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod compute_eval;
@@ -65,9 +66,8 @@ pub(crate) use materialize::*;
 pub(crate) use relation_hydrate::finalize_typed_relation_materialized_node;
 
 pub use dry::{
-    evaluate_plasm_comp_dry, node_dependencies, plan_dag_trace_json, plan_dry_compact_view,
-    plan_semantic_dag_json, plasm_plan_dag_json, render_node_operation, render_plasm_plan_dry_text,
-    render_plasm_plan_dry_text_for_session,
+    evaluate_plasm_comp_dry, node_dependencies, plan_dry_compact_view, render_node_operation,
+    render_plasm_plan_dry_text, render_plasm_plan_dry_text_for_session,
 };
 pub use orchestrator::run_plasm_comp;
 pub use parse::{
@@ -104,7 +104,7 @@ pub struct PlasmPlanRunResult {
     pub node_results: Vec<serde_json::Value>,
     pub graph_summary: serde_json::Value,
     /// Canonical monadic comp wire for trace/UI (`steps`, `bind`, `return`, …).
-    pub comp: serde_json::Value,
+    pub comp: Option<TraceCompWire>,
     /// Run snapshots keyed to plan nodes (live execution only).
     pub code_plan_run_artifacts: Vec<CodePlanRunArtifactRef>,
     /// Set when `run` is `true` and the engine returns Markdown (HTTP-backed run path).
@@ -1060,10 +1060,11 @@ rows"#;
             "return": { "kind": "parallel", "nodes": ["summary", "cards"] }
         });
         let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
-        let comp = crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry);
-        assert!(comp.get("steps").and_then(|s| s.get("products")).is_some());
-        assert_eq!(comp["bind"]["deps"]["summary"][0], "products");
-        assert_eq!(comp["bind"]["deps"]["cards"][0], "summary");
+        let comp = crate::plasm_comp_wire::trace_comp_wire_from_dry(&dry);
+        let comp_json = comp.to_json_value();
+        assert!(comp_json.get("steps").and_then(|s| s.get("products")).is_some());
+        assert_eq!(comp_json["bind"]["deps"]["summary"][0], "products");
+        assert_eq!(comp_json["bind"]["deps"]["cards"][0], "summary");
         let text = render_plasm_plan_dry_text(
             &dry,
             Some(PlasmPlanDryRunTextMeta {
@@ -1078,7 +1079,7 @@ rows"#;
             text,
             @"
         plan review · 3n 1r → parallel(2) · p7
-        warn: project list reads; unused seed acme:Category; unbounded read
+        warn: project list reads; unbounded read
 
         01 products     query Query(Product all)
         02 summary      project name, sku ← products
@@ -1456,12 +1457,23 @@ rows"#;
         });
         let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
         let text = render_plasm_plan_dry_text(&dry, None);
-        assert!(text.starts_with("plan review"), "{text}");
+        assert!(text.starts_with("plan ok"), "{text}");
         assert!(
             !text.contains("unbounded read"),
             "bounded get should not get unbounded risk: {text}"
         );
-        assert!(text.contains("unused seed acme:Category"), "{text}");
+        assert!(
+            dry.review
+                .unused_seeds
+                .iter()
+                .any(|s| s.contains("Category")),
+            "unused seeds remain session advisory: {:?}",
+            dry.review.unused_seeds
+        );
+        assert!(
+            !text.contains("unused seed"),
+            "unused seeds belong in session notes, not dry-run warn line: {text}"
+        );
     }
 
     #[test]

@@ -51,7 +51,7 @@ fn empty_plan_run_with_markdown(
         version: serde_json::json!({}),
         node_results: Vec::new(),
         graph_summary: serde_json::json!({}),
-        comp: serde_json::json!({}),
+        comp: None,
         code_plan_run_artifacts: Vec::new(),
         run_markdown: Some(markdown),
         run_plasm_meta: Some(meta),
@@ -234,7 +234,7 @@ async fn hydrate_plan_run_from_artifact(
         version: serde_json::json!({}),
         node_results,
         graph_summary: serde_json::json!({}),
-        comp: serde_json::json!({}),
+        comp: None,
         code_plan_run_artifacts: vec![CodePlanRunArtifactRef {
             run_id: wire_id.to_string(),
             artifact_uri: None,

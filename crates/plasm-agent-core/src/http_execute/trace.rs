@@ -3,7 +3,10 @@
 use super::run_line::{parse_plasm_line_for_session, run_parsed_plasm_line};
 use super::*;
 use crate::mcp_server::CodePlanTraceInput;
+use crate::plasm_comp_wire::trace_comp_wire_from_dry;
 use crate::run_artifacts::{persist_execute_run, PersistExecuteRunInput};
+use plasm_trace::TraceCompWire;
+use std::sync::Arc;
 
 pub(crate) fn trace_expr_api_meta(expr: &plasm_core::Expr) -> (Option<String>, String) {
     use plasm_core::Expr;
@@ -347,9 +350,7 @@ pub async fn run_seal_record_for_handle(
 struct HttpCodePlanTraceContext {
     ls_key: String,
     session_ref: String,
-    comp_archive: serde_json::Value,
-    comp_json: serde_json::Value,
-    dag_json: serde_json::Value,
+    comp_wire: Arc<TraceCompWire>,
     plan_ux_reflection: Option<serde_json::Value>,
 }
 
@@ -380,12 +381,7 @@ async fn http_code_plan_trace_context(
         session_ref: crate::mcp_logical_ref::format_logical_session_wire_ref(
             crate::session_identity::LogicalSessionId(logical_uuid),
         ),
-        comp_archive: crate::plasm_comp_wire::plasm_comp_wire_json(
-            dry.artifact(),
-            Some(&dry.graph_summary),
-        ),
-        comp_json: crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry),
-        dag_json: crate::plasm_plan_run::plan_dag_trace_json(&dry),
+        comp_wire: Arc::new(trace_comp_wire_from_dry(&dry)),
         plan_ux_reflection: Some(crate::plan_ux_reflection::plan_ux_reflection_value(
             &dry,
             &crate::plan_ux_reflection::PlanUxBuildContext {
@@ -418,13 +414,12 @@ pub(crate) async fn maybe_emit_http_code_plan_evaluate(
         prompt_hash,
         session_id,
         session_ref: &ctx.session_ref,
-        comp: &ctx.comp_archive,
+        comp: ctx.comp_wire,
         program,
         plan_call_index,
+        code_chars: program.chars().count() as u64,
     };
-    input
-        .emit_evaluate(ctx.comp_json, ctx.dag_json, ctx.plan_ux_reflection)
-        .await;
+    input.emit_evaluate(ctx.plan_ux_reflection).await;
 }
 
 /// Emit `code_plan_execute` when HTTP live run shares an MCP logical session binding.
@@ -443,6 +438,18 @@ pub(crate) async fn maybe_emit_http_code_plan_execute(
     else {
         return;
     };
+    let comp = match out.comp.as_ref() {
+        Some(wire) => Arc::new(wire.clone()),
+        None => {
+            tracing::warn!(
+                target: "plasm_agent::http_execute",
+                %prompt_hash,
+                %session_id,
+                "execute trace missing comp; skipping code_plan_execute trace emit"
+            );
+            return;
+        }
+    };
     let input = CodePlanTraceInput {
         hub: &st.trace_hub,
         store: &st.run_artifacts,
@@ -451,17 +458,12 @@ pub(crate) async fn maybe_emit_http_code_plan_execute(
         prompt_hash,
         session_id,
         session_ref: &ctx.session_ref,
-        comp: &ctx.comp_archive,
+        comp,
         program,
         plan_call_index,
+        code_chars: program.chars().count() as u64,
     };
     input
-        .emit_execute_completed(
-            None,
-            out.comp.clone(),
-            ctx.dag_json,
-            ctx.plan_ux_reflection,
-            out,
-        )
+        .emit_execute_completed(None, ctx.plan_ux_reflection, out)
         .await;
 }

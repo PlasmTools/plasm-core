@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.32] - 2026-06-18
+
+### Added
+
+- **Typed trace comp boundary:** `TraceCompWire` on `PlasmPlanRunResult`, trace segments, and run-explorer op state; shared `fixtures/trace/minimal_comp.json` contract fixture.
+- **Trace comp module:** `plasm-trace/src/trace_comp.rs` with validated wire type and `trace_comp_arc` serde adapter for `Arc<TraceCompWire>` segments.
+
+### Changed
+
+- **Comp-only cutover:** removed legacy plan DAG JSON builders and `SharedTraceCompWire`; single `trace_comp_wire_from_dry` mint per MCP execute (started + completed share one `Arc`).
+- **HTTP/MCP JSON edges:** `to_json_value()` only at wire boundaries; deleted `plasm_comp_json_from_dry`.
+- **Phoenix trace UI:** comp-only `TracePlanDag.normalize/1`; LiveView and JS hook resolve topology from `comp.bind.topo` only.
+- **CI guard:** extended `check_no_legacy_plan_ir.sh` for typed comp fields and banned legacy helpers.
+
+### Fixed
+
+- **HTTP execute trace:** strict comp validation on complete emit (no silent fallback).
+- **Plan UX reflection:** edges derived from typed `PlasmBindGraph` instead of untyped JSON.
+
 ## [0.3.31] - 2026-06-18
 
 ### Added

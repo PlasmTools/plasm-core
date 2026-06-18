@@ -1,5 +1,6 @@
 use plasm_runtime::{ExecutionSource, ExecutionStats};
-use plasm_trace::TraceSegment;
+use plasm_trace::{minimal_trace_comp_json, TraceCompWire, TraceSegment};
+use std::sync::Arc;
 
 use super::*;
 
@@ -173,8 +174,9 @@ async fn emit_after_finalize_resumes_completed_trace() {
             session_id: "s1".into(),
             node_count: 1,
             code_chars: 10,
-            comp: Some(serde_json::json!({})),
-            dag: Some(serde_json::json!({})),
+            comp: Arc::new(
+                TraceCompWire::from_json_value(minimal_trace_comp_json()).expect("trace comp"),
+            ),
             plan_ux_reflection: None,
             plasm_call_index: Some(1),
             run_ids: vec![],
@@ -222,8 +224,9 @@ async fn code_plan_execute_failed_does_not_increment_executed_kpi() {
             session_id: "s1".into(),
             node_count: 2,
             code_chars: 10,
-            comp: None,
-            dag: None,
+            comp: Arc::new(
+                TraceCompWire::from_json_value(minimal_trace_comp_json()).expect("trace comp"),
+            ),
             plan_ux_reflection: None,
             plasm_call_index: Some(1),
             run_ids: vec![],
@@ -234,4 +237,56 @@ async fn code_plan_execute_failed_does_not_increment_executed_kpi() {
     .await;
     let detail = hub.get_detail(trace_id, Some("t1")).await.expect("detail");
     assert_eq!(detail.summary.totals.code_plans_executed, 0);
+}
+
+#[tokio::test]
+async fn code_plan_trace_detail_wire_is_comp_only_with_bind_topology() {
+    let hub = TraceHub::default();
+    let meta = TraceSessionMeta {
+        tenant_id: "t1".into(),
+        project_slug: "main".into(),
+        mcp_config: None,
+    };
+    let ls = "550e8400-e29b-41d4-a716-446655440003";
+    let trace_id = hub.ensure_logical_session(ls, None, meta).await;
+    hub.trace_record_code_plan_evaluate(
+        ls,
+        CodePlanEvaluateTrace {
+            plan_handle: "p1".into(),
+            plan_id: "00000000-0000-0000-0000-000000000003".into(),
+            plan_name: "demo".into(),
+            plan_hash: "abc".into(),
+            plan_uri: String::new(),
+            canonical_plan_uri: String::new(),
+            plan_http_path: String::new(),
+            prompt_hash: "p".repeat(64),
+            session_id: "s1".into(),
+            node_count: 1,
+            code_chars: 10,
+            comp: Arc::new(
+                TraceCompWire::from_json_value(minimal_trace_comp_json()).expect("trace comp"),
+            ),
+            plan_ux_reflection: None,
+        },
+    )
+    .await;
+    let detail = hub.get_detail(trace_id, Some("t1")).await.expect("detail");
+    let rec = detail
+        .records
+        .iter()
+        .find(|r| r.get("kind").and_then(|v| v.as_str()) == Some("code_plan_evaluate"))
+        .expect("code_plan_evaluate record");
+    assert!(
+        rec.get("dag").is_none(),
+        "trace wire must not carry legacy dag field"
+    );
+    let comp = rec.get("comp").expect("comp on trace row");
+    assert!(
+        comp.get("bind")
+            .and_then(|b| b.get("topo"))
+            .and_then(|t| t.as_array())
+            .is_some_and(|topo| !topo.is_empty()),
+        "comp.bind.topo required for UI topology"
+    );
+    assert!(comp.get("steps").is_some(), "comp.steps required");
 }

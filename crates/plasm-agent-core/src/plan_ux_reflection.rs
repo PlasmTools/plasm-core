@@ -8,7 +8,6 @@ use crate::execute_session::ExecuteSession;
 use crate::plan_dry_display::{
     build_plan_dry_compact_view, human_ux_headline_for_op, human_ux_summary_for_op, PlanDryVerdict,
 };
-use crate::plasm_comp_wire::plasm_comp_json_from_dry;
 use crate::plasm_plan::{
     EffectClass, PlanNodeKind, ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState,
 };
@@ -96,6 +95,12 @@ pub struct PlanUxLiveOverlay {
     pub completed_step_ids: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct PlanUxSession {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unused_seeds: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlanUxReflection {
     pub schema_version: u32,
@@ -114,6 +119,8 @@ pub struct PlanUxReflection {
     pub param_bindings: Vec<PlanUxParamBinding>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub live: Option<PlanUxLiveOverlay>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<PlanUxSession>,
 }
 
 pub struct PlanUxBuildContext<'a> {
@@ -142,13 +149,14 @@ pub fn plan_ux_reflection(
         &dry.graph_summary,
         ctx.session,
     );
-    let comp = plasm_comp_json_from_dry(dry);
-    let edges = comp_edges(&comp);
+    let comp_wire = crate::plasm_comp_wire::trace_comp_wire_from_dry(dry);
+    let edges = comp_edges(&comp_wire);
     let steps = build_steps(plan, &dry.topological_order, &compact);
     let layout = infer_layout(dry.parallel_root_surfaces_only, &steps);
     let columns = build_columns(&layout, &steps);
     let writes = write_step_ids(plan, &dry.topological_order);
     let returns = render_returns(&plan.return_value);
+    let session = session_advisory_from_dry(dry);
 
     PlanUxReflection {
         schema_version: PLAN_UX_REFLECTION_SCHEMA_VERSION,
@@ -169,7 +177,16 @@ pub fn plan_ux_reflection(
         },
         param_bindings: ctx.param_bindings.to_vec(),
         live: None,
+        session,
     }
+}
+
+fn session_advisory_from_dry(dry: &DryPlasmPlanEvaluation) -> Option<PlanUxSession> {
+    let unused = dry.review.unused_seeds.clone();
+    if unused.is_empty() {
+        return None;
+    }
+    Some(PlanUxSession { unused_seeds: unused })
 }
 
 /// JSON value for `_meta.plasm.plan_ux_reflection` (mandatory for MCP App hosts).
@@ -357,26 +374,15 @@ fn column_hint(node: &ValidatedPlanNode) -> Option<String> {
     }
 }
 
-fn comp_edges(comp: &serde_json::Value) -> Vec<PlanUxEdge> {
-    let Some(deps) = comp
-        .get("bind")
-        .and_then(|b| b.get("deps"))
-        .and_then(|d| d.as_object())
-    else {
-        return Vec::new();
-    };
+fn comp_edges(comp: &plasm_trace::TraceCompWire) -> Vec<PlanUxEdge> {
+    let deps = &comp.comp.bind.deps;
     let mut edges = Vec::new();
     for (to, froms) in deps {
-        let Some(arr) = froms.as_array() else {
-            continue;
-        };
-        for from in arr {
-            if let Some(from_s) = from.as_str() {
-                edges.push(PlanUxEdge {
-                    from: from_s.to_string(),
-                    to: to.clone(),
-                });
-            }
+        for from in froms {
+            edges.push(PlanUxEdge {
+                from: from.as_str().to_string(),
+                to: to.as_str().to_string(),
+            });
         }
     }
     edges
@@ -445,6 +451,7 @@ mod tests {
             },
             param_bindings: vec![],
             live: None,
+            session: None,
         };
         let json = serde_json::to_value(&ux).expect("serialize");
         assert_eq!(

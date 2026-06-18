@@ -8,7 +8,6 @@ use plasm_core::PlasmCompArtifact;
 #[path = "dry_render.rs"]
 mod dry_render;
 pub use dry_render::render_node_operation;
-use dry_render::{render_return_lines, render_uses_result};
 
 pub fn evaluate_plasm_comp_dry(
     es: &ExecuteSession,
@@ -239,60 +238,6 @@ pub fn plan_dry_compact_view(
     )
 }
 
-/// Semantic plan DAG (`version`, `nodes`, `edges`, `topological_order`, `returns`) — stable input
-/// for plan commit-id hashing (excludes session-local `name` and dry-run `summary`).
-pub fn plan_semantic_dag_json(dry: &DryPlasmPlanEvaluation) -> serde_json::Value {
-    let plan = dry.validated_plan();
-    let nodes = plan
-        .nodes
-        .iter()
-        .map(|node| {
-            serde_json::json!({
-                "id": node.id().as_str(),
-                "kind": node.kind(),
-                "effect_class": node.effect_class(),
-                "result_shape": node.result_shape(),
-                "dependencies": node_dependencies(node),
-                "uses_result": render_uses_result(node),
-                "operation": render_node_operation(node),
-            })
-        })
-        .collect::<Vec<_>>();
-    let mut edges = Vec::new();
-    for node in &plan.nodes {
-        for from in node_dependencies(node) {
-            edges.push(serde_json::json!({
-                "from": from,
-                "to": node.id().as_str(),
-            }));
-        }
-    }
-    serde_json::json!({
-        "version": plan.version,
-        "nodes": nodes,
-        "edges": edges,
-        "topological_order": dry.topological_order.clone(),
-        "returns": render_return_lines(&plan.return_value),
-    })
-}
-
-/// Trace/UI DAG payload (name + summary). Call sites outside `dry.rs` must use this helper.
-pub fn plan_dag_trace_json(dry: &DryPlasmPlanEvaluation) -> serde_json::Value {
-    plasm_plan_dag_json(dry)
-}
-
-/// Structured DAG payload for trace/UI renderers. This is the machine-readable companion to the
-/// compact dry-run text, so clients do not have to parse Markdown to draw plan topology.
-pub fn plasm_plan_dag_json(dry: &DryPlasmPlanEvaluation) -> serde_json::Value {
-    let mut obj = plan_semantic_dag_json(dry)
-        .as_object()
-        .expect("semantic plan DAG is an object")
-        .clone();
-    obj.insert("name".into(), serde_json::json!(dry.name));
-    obj.insert("summary".into(), dry.graph_summary.clone());
-    serde_json::Value::Object(obj)
-}
-
 pub fn node_dependencies(node: &ValidatedPlanNode) -> Vec<String> {
     let mut out = Vec::new();
     push_unique(
@@ -340,23 +285,6 @@ pub(crate) fn plan_has_query_limit_row_filter_chain(plan: &Plan<ValidatedPlanSta
         let ValidatedPlanNode::Compute(c) = n else {
             continue;
         };
-        let ComputeOp::Limit { .. } = c.compute.op else {
-            continue;
-        };
-        let Some(q_node) = by_id.get(c.compute.source.as_str()) else {
-            continue;
-        };
-        let ValidatedPlanNode::Surface(s) = q_node else {
-            continue;
-        };
-        if s.kind == PlanNodeKind::Query {
-            return true;
-        }
-    }
-    for n in &plan.nodes {
-        let ValidatedPlanNode::Compute(c) = n else {
-            continue;
-        };
         let ComputeOp::Filter { .. } = c.compute.op else {
             continue;
         };
@@ -400,8 +328,6 @@ pub(crate) fn graph_summary(
     let mut has_explicit_limit = false;
     let mut has_full_collection_compute = false;
     let mut relation_traversal_nodes = 0usize;
-    let mut has_unprojected_multi_row_read = false;
-
     for n in &plan.nodes {
         if node_dependencies(n).is_empty() {
             parallelizable_roots.push(n.id().as_str().to_string());
@@ -436,41 +362,20 @@ pub(crate) fn graph_summary(
                 _ => {}
             }
         }
-        if matches!(n, ValidatedPlanNode::Compute(_)) {
-            let op = render_node_operation(n);
-            if op.contains("limit ") {
+        if let ValidatedPlanNode::Compute(c) = n {
+            if matches!(c.compute.op, ComputeOp::Limit { .. }) {
                 has_explicit_limit = true;
-            } else {
+            } else if crate::plan_prepare::compute_op_is_full_collection(&c.compute.op) {
                 has_full_collection_compute = true;
             }
         }
         if let ValidatedPlanNode::RelationTraversal(_) = n {
             relation_traversal_nodes += 1;
         }
-        match n {
-            ValidatedPlanNode::Surface(s)
-                if s.effect_class == EffectClass::Read
-                    && s.projection.is_empty()
-                    && matches!(
-                        s.result_shape,
-                        crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
-                    ) =>
-            {
-                has_unprojected_multi_row_read = true;
-            }
-            ValidatedPlanNode::ForEach(fe)
-                if fe.effect_class == EffectClass::Read
-                    && fe.projection.is_empty()
-                    && matches!(
-                        fe.result_shape,
-                        crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
-                    ) =>
-            {
-                has_unprojected_multi_row_read = true;
-            }
-            _ => {}
-        }
     }
+
+    let has_unprojected_multi_row_read =
+        crate::plan_prepare::return_path_has_unprojected_multi_row_read(plan);
 
     let has_unbounded_read_root = boundedness.has_unbounded_read_root;
     let has_paginated_list_fetch_all_default = boundedness.has_paginated_list_fetch_all_default;

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "name": "demo",
+  "steps": {
+    "n1": {
+      "kind": "invoke",
+      "plan_kind": "query",
+      "effect_class": "read",
+      "result_shape": "list"
+    }
+  },
+  "bind": {
+    "topo": ["n1"],
+    "deps": {}
+  },
+  "return": {
+    "kind": "step",
+    "step": "n1"
+  }
+}

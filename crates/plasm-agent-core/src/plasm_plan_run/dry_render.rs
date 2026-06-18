@@ -2,16 +2,8 @@
 
 use crate::plasm_plan::{
     AggregateFunction, ComputeOp, ComputeTemplate, FieldPath, PlanNodeKind, PlanValue,
-    ValidatedDeriveNode, ValidatedPlanDataInput, ValidatedPlanNode, ValidatedPlanReturn,
-    ValidatedSurfaceNode,
+    ValidatedDeriveNode, ValidatedPlanDataInput, ValidatedPlanNode, ValidatedSurfaceNode,
 };
-
-pub(crate) fn render_uses_result(node: &ValidatedPlanNode) -> Vec<String> {
-    node.uses_result()
-        .iter()
-        .map(|u| format!("{} as {}", u.node, u.r#as))
-        .collect()
-}
 
 pub fn render_node_operation(node: &ValidatedPlanNode) -> String {
     match node {
@@ -321,17 +313,6 @@ pub(crate) fn render_json_value(value: &serde_json::Value) -> String {
             format!("{{{}}}", rendered.join(", "))
         }
         other => other.to_string(),
-    }
-}
-
-pub(crate) fn render_return_lines(ret: &ValidatedPlanReturn) -> Vec<String> {
-    match ret {
-        ValidatedPlanReturn::Node(id) => vec![id.as_str().to_string()],
-        ValidatedPlanReturn::Parallel { parallel } => parallel
-            .iter()
-            .enumerate()
-            .map(|(i, id)| format!("parallel[{}] -> {}", i, id.as_str()))
-            .collect(),
     }
 }
 

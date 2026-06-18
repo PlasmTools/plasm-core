@@ -133,23 +133,14 @@ struct MatrixRow {
 }
 
 fn assert_comp_witness(dry: &DryPlasmPlanEvaluation) -> Result<(), String> {
-    use plasm_agent::{plasm_comp_from_validated, plasm_comp_json_from_dry};
+    use plasm_agent::{plasm_comp_from_validated, trace_comp_wire_from_dry};
     let artifact = plasm_comp_from_validated(dry.validated());
     artifact.comp.validate().map_err(|e| e.to_string())?;
-    let wire = plasm_comp_json_from_dry(dry);
-    let steps = wire
-        .get("steps")
-        .and_then(|s| s.as_object())
-        .ok_or_else(|| "comp wire missing steps object".to_string())?;
-    if steps.is_empty() {
+    let wire = trace_comp_wire_from_dry(dry);
+    if wire.comp.steps.is_empty() {
         return Err("comp wire steps must be non-empty".into());
     }
-    let topo = wire
-        .get("bind")
-        .and_then(|b| b.get("topo"))
-        .and_then(|t| t.as_array())
-        .ok_or_else(|| "comp wire missing bind.topo".to_string())?;
-    if topo.is_empty() {
+    if wire.comp.bind.topo.is_empty() {
         return Err("comp wire bind.topo must be non-empty".into());
     }
     Ok(())

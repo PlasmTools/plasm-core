@@ -11,7 +11,7 @@ use crate::plan_dry_display::PlanDryReview;
 use crate::plan_read_bounds::{apply_read_budgets, read_execution_is_expensive, PushedReadBudget};
 use crate::plasm_comp_lift::ExecutablePlasmComp;
 use crate::plasm_plan::{
-    Plan, PlanNodeKind, PlanValue, ValidatedPlan, ValidatedPlanNode, ValidatedPlanReturn,
+    ComputeOp, Plan, PlanNodeKind, PlanValue, ValidatedPlan, ValidatedPlanNode, ValidatedPlanReturn,
     ValidatedPlanState, ValidatedSurfaceNode,
 };
 use crate::plasm_plan_run::{graph_summary, unused_seed_hints};
@@ -185,6 +185,58 @@ fn surface_is_read_bounded(surface: &ValidatedSurfaceNode) -> bool {
         return true;
     }
     false
+}
+
+/// Aggregate/group_by/sort/dedupe over row sets — not project/filter/limit/render.
+#[must_use]
+pub(crate) fn compute_op_is_full_collection(op: &ComputeOp) -> bool {
+    matches!(
+        op,
+        ComputeOp::Aggregate { .. }
+            | ComputeOp::GroupBy { .. }
+            | ComputeOp::Sort { .. }
+            | ComputeOp::DedupeBy { .. }
+    )
+}
+
+/// List/page read node on the return path without projection or pushed read budget.
+#[must_use]
+pub(crate) fn return_path_node_is_unprojected_multi_row_read(n: &ValidatedPlanNode) -> bool {
+    use crate::plan_read_bounds::effective_host_page_size;
+    use crate::plasm_plan::EffectClass;
+
+    match n {
+        ValidatedPlanNode::Surface(s)
+            if s.effect_class == EffectClass::Read
+                && s.projection.is_empty()
+                && matches!(
+                    s.result_shape,
+                    crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
+                ) =>
+        {
+            !surface_is_read_bounded(s) && effective_host_page_size(s).is_none()
+        }
+        ValidatedPlanNode::ForEach(fe)
+            if fe.effect_class == EffectClass::Read
+                && fe.projection.is_empty()
+                && matches!(
+                    fe.result_shape,
+                    crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
+                ) =>
+        {
+            fe.predicates.is_empty() && fe.effect_template.kind != PlanNodeKind::Search
+        }
+        _ => false,
+    }
+}
+
+/// List/page read on the return path without projection or pushed read budget.
+#[must_use]
+pub(crate) fn return_path_has_unprojected_multi_row_read(plan: &Plan<ValidatedPlanState>) -> bool {
+    let reachable = return_reachable_node_ids(plan);
+    plan.nodes.iter().any(|n| {
+        reachable.contains(n.id().as_str()) && return_path_node_is_unprojected_multi_row_read(n)
+    })
 }
 
 fn return_reachable_node_ids(plan: &Plan<ValidatedPlanState>) -> HashSet<String> {
@@ -580,5 +632,104 @@ mod tests {
             analyze_read_boundedness(dry_unbounded.validated_plan()).execution_is_expensive(),
         );
         assert!(dry_unbounded.review.execution_is_expensive());
+    }
+
+    fn project_compute_json(source: &str, id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "kind": "compute",
+            "effect_class": "artifact_read",
+            "result_shape": "list",
+            "depends_on": [source],
+            "compute": {
+                "source": source,
+                "op": { "kind": "project", "fields": { "id": ["id"], "name": ["name"] } },
+                "schema": {
+                    "entity": "PlanProject",
+                    "fields": [
+                        { "name": "id", "value_kind": "unknown", "source": ["id"] },
+                        { "name": "name", "value_kind": "unknown", "source": ["name"] }
+                    ]
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn dry_review_ok_for_query_limit_project_without_plan_warnings() {
+        use crate::plan_dry_display::{build_plan_dry_compact_view, PlanDryVerdict};
+
+        let s = test_session(vec!["Product", "Category"]);
+        let mut nodes = vec![serde_json::json!({
+            "id": "berries",
+            "kind": "query",
+            "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+            "expr": "Product",
+            "ir": { "expr": { "op": "query", "entity": "Product" } },
+            "effect_class": "read",
+            "result_shape": "list"
+        })];
+        nodes.push(limit_compute_json("berries", 10));
+        nodes.push(project_compute_json("limited", "c1"));
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "berries-limited",
+            "nodes": nodes,
+            "return": { "kind": "node", "node": "c1" }
+        });
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+        let compact = build_plan_dry_compact_view(
+            dry.validated_plan(),
+            &dry.topological_order,
+            &dry.review,
+            &dry.graph_summary,
+            Some(&s),
+        );
+        assert_eq!(compact.verdict, PlanDryVerdict::Ok, "review: {:?}", dry.review);
+        assert!(compact.warnings.is_none(), "warnings: {:?}", compact.warnings);
+        assert!(
+            !dry.review.unused_seeds.is_empty(),
+            "unused seeds remain session advisory"
+        );
+    }
+
+    #[test]
+    fn dry_review_unbounded_list_all_needs_review() {
+        use crate::plan_dry_display::{build_plan_dry_compact_view, PlanDryVerdict};
+
+        let s = test_session(vec!["Product"]);
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "unbounded",
+            "nodes": [{
+                "id": "products",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                "expr": "Product",
+                "ir": { "expr": { "op": "query", "entity": "Product" } },
+                "effect_class": "read",
+                "result_shape": "list"
+            }],
+            "return": { "kind": "node", "node": "products" }
+        });
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+        let compact = build_plan_dry_compact_view(
+            dry.validated_plan(),
+            &dry.topological_order,
+            &dry.review,
+            &dry.graph_summary,
+            Some(&s),
+        );
+        assert_eq!(compact.verdict, PlanDryVerdict::Review);
+        assert!(
+            compact
+                .warnings
+                .as_deref()
+                .is_some_and(|w| w.contains("unbounded")),
+            "warnings: {:?}",
+            compact.warnings
+        );
     }
 }

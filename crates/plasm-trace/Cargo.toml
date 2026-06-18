@@ -5,6 +5,7 @@ edition.workspace = true
 description = "Canonical MCP / execute session trace segments, events, and totals"
 
 [dependencies]
+plasm-core = { path = "../plasm-core" }
 plasm-observability-contracts = { path = "../plasm-observability-contracts" }
 plasm-runtime = { path = "../plasm-runtime" }
 serde = { workspace = true }

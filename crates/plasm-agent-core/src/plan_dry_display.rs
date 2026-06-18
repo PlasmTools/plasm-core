@@ -53,16 +53,12 @@ impl PlanDryReview {
             || self.has_full_collection_compute
             || self.has_foreach_fanout_risk
             || self.has_relation_many_source_fanout
-            || !self.unused_seeds.is_empty()
     }
 
     pub fn warning_line(&self, return_unbounded_root: bool) -> Option<String> {
         let mut parts: Vec<String> = Vec::new();
         if self.has_unprojected_multi_row_read {
             parts.push("project list reads".to_string());
-        }
-        if !self.unused_seeds.is_empty() {
-            parts.push(format!("unused seed {}", self.unused_seeds.join(", ")));
         }
         if (self.has_unbounded_read_root || return_unbounded_root)
             && !parts.iter().any(|p| p.contains("unbounded"))

@@ -5,6 +5,7 @@ use crate::plasm_plan_run::{node_dependencies, DryPlasmPlanEvaluation};
 use crate::plasm_step_convert::validated_node_to_step_payload;
 pub use plasm_core::plasm_monad::PlasmCompArtifact;
 use plasm_core::plasm_monad::{PlasmBindGraph, PlasmComp, PlasmHoleUse, PlasmReturn, StepId};
+use plasm_trace::TraceCompWire;
 use std::collections::{BTreeMap, BTreeSet};
 
 pub fn plasm_comp_artifact_from_comp(comp: PlasmComp) -> Result<PlasmCompArtifact, String> {
@@ -127,9 +128,21 @@ fn primary_predecessor(node: &ValidatedPlanNode) -> Option<String> {
     }
 }
 
-/// Build wire JSON from a dry-run evaluation (canonical MCP/HTTP `comp` payload).
-pub fn plasm_comp_json_from_dry(dry: &DryPlasmPlanEvaluation) -> serde_json::Value {
-    plasm_comp_wire_json(dry.artifact(), Some(&dry.graph_summary))
+/// Validated trace topology from a dry-run evaluation (single builder for trace + MCP meta).
+pub fn trace_comp_wire_from_dry(dry: &DryPlasmPlanEvaluation) -> TraceCompWire {
+    trace_comp_wire_from_artifact(dry.artifact(), Some(dry.graph_summary.clone()))
+}
+
+/// Validated trace topology from a comp artifact (optional dry-run summary).
+pub fn trace_comp_wire_from_artifact(
+    artifact: &PlasmCompArtifact,
+    summary: Option<serde_json::Value>,
+) -> TraceCompWire {
+    TraceCompWire {
+        comp: artifact.comp.clone(),
+        summary,
+        returns: render_return_lines_from_comp(&artifact.comp.return_),
+    }
 }
 
 /// Wire JSON for MCP/HTTP `_meta.plasm.comp` (greenfield).
@@ -137,17 +150,7 @@ pub fn plasm_comp_wire_json(
     artifact: &PlasmCompArtifact,
     summary: Option<&serde_json::Value>,
 ) -> serde_json::Value {
-    let mut v = serde_json::to_value(&artifact.comp).expect("PlasmComp serializes");
-    if let Some(obj) = v.as_object_mut() {
-        if let Some(s) = summary {
-            obj.insert("summary".into(), s.clone());
-        }
-        obj.insert(
-            "returns".into(),
-            serde_json::json!(render_return_lines_from_comp(&artifact.comp.return_)),
-        );
-    }
-    v
+    trace_comp_wire_from_artifact(artifact, summary.cloned()).to_json_value()
 }
 
 fn render_return_lines_from_comp(ret: &PlasmReturn) -> Vec<String> {

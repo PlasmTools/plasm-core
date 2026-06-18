@@ -259,7 +259,7 @@ pub struct OperationState {
     pub progress_tx: tokio::sync::broadcast::Sender<crate::operation_progress::OpProgressEvent>,
     /// Wakes server-side `await_operation_terminal` when phase becomes terminal.
     pub terminal_tx: Option<tokio::sync::watch::Sender<OperationPhase>>,
-    pub comp: Option<serde_json::Value>,
+    pub comp: Option<plasm_trace::TraceCompWire>,
     pub plan_ux_reflection: Option<serde_json::Value>,
     pub step_order: Vec<String>,
 }
@@ -273,7 +273,7 @@ pub struct OpAcceptContext {
     pub mcp_transport_key: Option<String>,
     pub display_map: HashMap<String, String>,
     pub host: Option<std::sync::Weak<PlasmHostState>>,
-    pub comp: Option<serde_json::Value>,
+    pub comp: Option<plasm_trace::TraceCompWire>,
     pub plan_ux_reflection: Option<serde_json::Value>,
     pub step_order: Vec<String>,
     pub plan_trace: Option<crate::trace_hub::PlanRunTraceHooks>,
@@ -423,7 +423,7 @@ impl OpAcceptContext {
         mut self,
         payload: &crate::run_explorer_meta::RunExplorerAcceptPayload,
     ) -> Self {
-        self.comp = Some(payload.comp.clone());
+        self.comp = Some(payload.comp_wire.clone());
         self.plan_ux_reflection = Some(payload.plan_ux_reflection.clone());
         self.step_order = payload.step_order.clone();
         self

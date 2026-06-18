@@ -424,6 +424,9 @@ mod tests {
     #[test]
     fn code_plan_execute_failed_does_not_increment_executed_kpi() {
         use crate::CODE_PLAN_EXECUTION_FAILED;
+        use crate::trace_comp::minimal_trace_comp_wire;
+        use std::sync::Arc;
+        let comp = Arc::new(minimal_trace_comp_wire());
         let mut d = SessionTraceData::new("s1");
         for phase in [
             CODE_PLAN_EXECUTION_FAILED,
@@ -443,8 +446,7 @@ mod tests {
                     session_id: "s1".into(),
                     node_count: 2,
                     code_chars: 10,
-                    comp: None,
-                    dag: None,
+                    comp: comp.clone(),
                     plasm_call_index: Some(1),
                     run_ids: vec![],
                     run_artifacts: vec![],

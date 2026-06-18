@@ -149,10 +149,8 @@ pub enum TraceSegment {
         session_id: String,
         node_count: usize,
         code_chars: u64,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        comp: Option<serde_json::Value>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        dag: Option<serde_json::Value>,
+        #[serde(with = "super::trace_comp::trace_comp_arc")]
+        comp: std::sync::Arc<super::trace_comp::TraceCompWire>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         plan_ux_reflection: Option<serde_json::Value>,
     },
@@ -173,10 +171,8 @@ pub enum TraceSegment {
         node_count: usize,
         #[serde(default)]
         code_chars: u64,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        comp: Option<serde_json::Value>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        dag: Option<serde_json::Value>,
+        #[serde(with = "super::trace_comp::trace_comp_arc")]
+        comp: std::sync::Arc<super::trace_comp::TraceCompWire>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         plasm_call_index: Option<u64>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -197,7 +193,16 @@ fn default_code_plan_execution_phase() -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::TraceSegment;
+    use crate::{minimal_trace_comp_json, TraceCompWire};
+
+    fn minimal_shared_comp() -> Arc<TraceCompWire> {
+        Arc::new(
+            TraceCompWire::from_json_value(minimal_trace_comp_json()).expect("minimal comp"),
+        )
+    }
 
     #[test]
     fn code_plan_trace_segments_carry_provenance() {
@@ -215,8 +220,7 @@ mod tests {
             session_id: "s1".into(),
             node_count: 2,
             code_chars: 42,
-            comp: Some(serde_json::json!({"steps": {"n1": {}}, "bind": {"topo": ["n1"]}})),
-            dag: None,
+            comp: minimal_shared_comp(),
             plan_ux_reflection: None,
         };
         let v = serde_json::to_value(eval).expect("json");
@@ -238,8 +242,7 @@ mod tests {
             session_id: "s1".into(),
             node_count: 1,
             code_chars: 10,
-            comp: None,
-            dag: None,
+            comp: minimal_shared_comp(),
             plan_ux_reflection: Some(ux.clone()),
         };
         let v2 = serde_json::to_value(eval_with_ux).expect("json");
@@ -259,8 +262,7 @@ mod tests {
             session_id: "s1".into(),
             node_count: 2,
             code_chars: 42,
-            comp: Some(serde_json::json!({"steps": {"n1": {}}, "bind": {"topo": ["n1"]}})),
-            dag: None,
+            comp: minimal_shared_comp(),
             plasm_call_index: Some(7),
             run_ids: vec!["r1".into()],
             run_artifacts: vec![super::CodePlanRunArtifactRef {
@@ -284,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn code_plan_trace_segments_accept_legacy_rows() {
+    fn code_plan_trace_segments_require_comp() {
         let legacy = serde_json::json!({
             "kind": "code_plan_execute",
             "plan_handle": "p1",
@@ -295,19 +297,9 @@ mod tests {
             "session_id": "s1",
             "run_ids": ["r1"]
         });
-        let seg: TraceSegment = serde_json::from_value(legacy).expect("legacy code plan trace");
-        match seg {
-            TraceSegment::CodePlanExecute {
-                plan_uri,
-                run_artifacts,
-                node_count,
-                ..
-            } => {
-                assert!(plan_uri.is_empty());
-                assert!(run_artifacts.is_empty());
-                assert_eq!(node_count, 0);
-            }
-            other => panic!("unexpected segment: {other:?}"),
-        }
+        assert!(
+            serde_json::from_value::<TraceSegment>(legacy).is_err(),
+            "code plan segments without comp must not deserialize"
+        );
     }
 }

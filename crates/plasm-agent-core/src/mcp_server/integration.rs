@@ -11,7 +11,7 @@ use crate::http_execute::{
 };
 use crate::plan_dry_display::PlanDryCompactView;
 use crate::plasm_compile::compile_plasm_expression;
-use crate::plasm_dag::compile_plasm_surface_line_to_plan;
+use crate::plasm_plan::ValidatedPlanNode;
 use crate::plasm_plan_run::{evaluate_plasm_comp_dry, DryPlasmPlanEvaluation};
 use crate::run_delivery::{
     deliver_live_run_await, LiveRunAwaitContext, LiveRunSpawnOpts, RunDeliveryPolicy,
@@ -270,15 +270,20 @@ async fn mcp_apply_capability_seeds_federates_multi_catalog_and_dry_runs_distinc
     let pipeline = st.engine.prompt_pipeline();
     let cross = st.sessions.symbol_map_cross_cache();
     for (sym, entry_id) in [("e1", "github"), ("e2", "linear")] {
-        let plan = compile_plasm_surface_line_to_plan(pipeline, Some(cross), &es, sym, sym)
-            .unwrap_or_else(|e| panic!("compile {sym}: {e}"));
-        let qe = &plan["nodes"][0]["qualified_entity"];
-        assert_eq!(qe["entry_id"], entry_id);
-        assert_eq!(qe["entity"], "LangItem");
-
         let bundle = compile_plasm_expression(pipeline, Some(cross), &es, sym, sym)
             .unwrap_or_else(|e| panic!("compile bundle {sym}: {e}"));
-        evaluate_plasm_comp_dry(&es, &bundle).expect("dry-run");
+        let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry-run");
+        let qe = dry
+            .validated_plan()
+            .nodes
+            .iter()
+            .find_map(|n| match n {
+                ValidatedPlanNode::Surface(s) => s.qualified_entity.as_ref(),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("surface node with qualified_entity for {sym}"));
+        assert_eq!(qe.entry_id, entry_id);
+        assert_eq!(qe.entity, "LangItem");
     }
 }
 
@@ -327,7 +332,7 @@ async fn mcp_federated_post_async_finalize_compiles_e2_with_cross_cache() {
             version: serde_json::json!({}),
             node_results: vec![serde_json::json!({"id": "done"})],
             graph_summary: serde_json::json!({}),
-            comp: serde_json::json!({}),
+            comp: None,
             code_plan_run_artifacts: Vec::new(),
             run_markdown: Some("## done".into()),
             run_plasm_meta: None,
@@ -384,7 +389,7 @@ async fn mcp_async_wait_poll_reaches_terminal_result() {
             version: serde_json::json!({}),
             node_results: vec![serde_json::json!({"id": "done"})],
             graph_summary: serde_json::json!({}),
-            comp: serde_json::json!({}),
+            comp: None,
             code_plan_run_artifacts: Vec::new(),
             run_markdown: Some("## done (1 rows)".into()),
             run_plasm_meta: None,
@@ -908,7 +913,7 @@ fn plan_run_result_is_terminal_rejects_operation_poll_markdown() {
         version: serde_json::json!({}),
         node_results: Vec::new(),
         graph_summary: serde_json::json!({}),
-        comp: serde_json::json!({}),
+        comp: None,
         code_plan_run_artifacts: Vec::new(),
         run_markdown: Some(format!("`{}` =", handle.as_str())),
         run_plasm_meta: Some(root),

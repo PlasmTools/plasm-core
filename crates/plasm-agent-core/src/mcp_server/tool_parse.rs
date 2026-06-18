@@ -1,5 +1,7 @@
 //! Shared MCP tool argument parsing helpers.
 
+use plasm_trace::TraceCompWire;
+
 use super::*;
 
 pub(crate) fn parse_tool_seeds(
@@ -89,26 +91,14 @@ pub(crate) fn parse_logical_session_ref_arg(
         .map_err(|e| CallToolError::invalid_arguments(tool, Some(e.to_string())))
 }
 
-pub(crate) fn comp_content_sha256_hex(comp: &serde_json::Value) -> String {
-    crate::evidence_chain::semantic_comp_commit_hex_from_json(comp)
+pub(crate) fn comp_content_sha256_hex(comp: &TraceCompWire) -> String {
+    crate::evidence_chain::semantic_comp_commit_hex(&comp.comp)
 }
 
-pub(crate) fn plan_display_name_from_comp(comp: &serde_json::Value) -> String {
-    comp.get("name")
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| "unnamed plan".to_string())
+pub(crate) fn plan_display_name_from_comp(comp: &TraceCompWire) -> String {
+    comp.plan_display_name()
 }
 
-pub(crate) fn plan_node_count_from_comp(comp: &serde_json::Value) -> usize {
-    comp.get("steps")
-        .and_then(|s| s.as_object())
-        .map(|m| m.len())
-        .or_else(|| {
-            comp.get("bind")
-                .and_then(|b| b.get("topo"))
-                .and_then(|t| t.as_array())
-                .map(|a| a.len())
-        })
-        .unwrap_or(0)
+pub(crate) fn plan_node_count_from_comp(comp: &TraceCompWire) -> usize {
+    comp.node_count()
 }

@@ -308,8 +308,7 @@ pub struct CodePlanEvaluateTrace {
     pub session_id: String,
     pub node_count: usize,
     pub code_chars: u64,
-    pub comp: Option<serde_json::Value>,
-    pub dag: Option<serde_json::Value>,
+    pub comp: std::sync::Arc<plasm_trace::TraceCompWire>,
     pub plan_ux_reflection: Option<serde_json::Value>,
 }
 
@@ -326,8 +325,7 @@ pub struct CodePlanExecuteTrace {
     pub session_id: String,
     pub node_count: usize,
     pub code_chars: u64,
-    pub comp: Option<serde_json::Value>,
-    pub dag: Option<serde_json::Value>,
+    pub comp: std::sync::Arc<plasm_trace::TraceCompWire>,
     pub plan_ux_reflection: Option<serde_json::Value>,
     pub plasm_call_index: Option<u64>,
     pub run_ids: Vec<String>,

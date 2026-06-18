@@ -160,7 +160,7 @@ async fn cross_pod_wait_terminal_hydrates_run_artifact() {
             version: serde_json::json!({}),
             node_results: vec![serde_json::json!({"id": "cross-pod", "display_name": "cross-pod"})],
             graph_summary: serde_json::json!({}),
-            comp: serde_json::json!({}),
+            comp: None,
             code_plan_run_artifacts: vec![],
             run_markdown: None,
             run_plasm_meta: None,

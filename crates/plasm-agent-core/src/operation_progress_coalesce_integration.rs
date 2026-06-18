@@ -226,7 +226,7 @@ async fn coalesce_at_most_two_running_emits_per_two_second_window() {
             version: serde_json::json!({}),
             node_results: Vec::new(),
             graph_summary: serde_json::json!({}),
-            comp: serde_json::json!({}),
+            comp: None,
             code_plan_run_artifacts: Vec::new(),
             run_markdown: None,
             run_plasm_meta: None,

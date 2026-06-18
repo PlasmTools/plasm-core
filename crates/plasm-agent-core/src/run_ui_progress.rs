@@ -6,6 +6,7 @@
 //! `connectDomains` without session cookies.
 
 use axum::extract::{Extension, Path, Query};
+use axum::http::{header, Method};
 use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
@@ -13,6 +14,7 @@ use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use http_problem::Problem;
 use std::sync::Arc;
 use std::time::Duration;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use crate::http_problem_util::{problem_response, problem_types};
 use crate::operation_progress_sse::{
@@ -30,6 +32,14 @@ pub struct RunUiProgressQuery {
 
 const POLL_INTERVAL: Duration = Duration::from_millis(900);
 
+fn run_ui_progress_cors_layer() -> CorsLayer {
+    CorsLayer::new()
+        .allow_methods([Method::GET, Method::OPTIONS])
+        .allow_headers([header::ACCEPT, header::ORIGIN])
+        .allow_origin(AllowOrigin::mirror_request())
+        .vary([header::ORIGIN])
+}
+
 pub fn run_ui_progress_routes() -> Router {
     Router::new()
         .route(
@@ -40,6 +50,7 @@ pub fn run_ui_progress_routes() -> Router {
             "/v1/run/ui/progress/{logical_session_ref}/stream",
             get(get_run_ui_progress_stream),
         )
+        .layer(run_ui_progress_cors_layer())
 }
 
 async fn get_run_ui_progress_json(

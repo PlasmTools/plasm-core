@@ -296,7 +296,11 @@ pub(crate) async fn post_execute_session_plan(
             let payload = crate::resolved_plan_http::ResolvedPlanResponse {
                 plan: true,
                 dry_run: !run_live,
-                comp: result.comp,
+                comp: result
+                    .comp
+                    .as_ref()
+                    .map(plasm_trace::TraceCompWire::to_json_value)
+                    .unwrap_or_else(|| serde_json::json!({})),
                 node_results: Some(result.node_results),
                 graph_summary: Some(result.graph_summary),
                 run_markdown: result.run_markdown,

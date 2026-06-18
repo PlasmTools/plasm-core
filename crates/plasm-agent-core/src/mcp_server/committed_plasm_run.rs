@@ -17,6 +17,8 @@ use crate::server_state::PlasmHostState;
 use crate::trace_hub::TraceHub;
 use crate::trace_sink_emit::PlasmTraceContext;
 
+use plasm_trace::TraceCompWire;
+
 use super::trace::CodePlanTraceInput;
 
 /// MCP execute-row wire + logical session identity.
@@ -34,7 +36,6 @@ pub struct McpExecuteWire {
 pub struct CommittedRunArtifacts {
     pub trace_hub: Arc<TraceHub>,
     pub run_artifacts: Arc<RunArtifactStore>,
-    pub comp_archive: serde_json::Value,
     pub program_for_trace: String,
     pub plan_call_index: u64,
 }
@@ -56,7 +57,7 @@ pub struct ExecuteCommittedMcpRun {
 }
 
 impl ExecuteCommittedMcpRun {
-    fn code_plan_trace_input(&self) -> CodePlanTraceInput<'_> {
+    fn code_plan_trace_input(&self, comp: Arc<TraceCompWire>) -> CodePlanTraceInput<'_> {
         CodePlanTraceInput {
             hub: self.artifacts.trace_hub.as_ref(),
             store: self.artifacts.run_artifacts.as_ref(),
@@ -65,9 +66,10 @@ impl ExecuteCommittedMcpRun {
             prompt_hash: self.wire.prompt_hash.as_str(),
             session_id: self.wire.session_id.as_str(),
             session_ref: self.wire.session_ref.as_str(),
-            comp: &self.artifacts.comp_archive,
+            comp,
             program: self.artifacts.program_for_trace.as_str(),
             plan_call_index: self.artifacts.plan_call_index,
+            code_chars: self.artifacts.program_for_trace.chars().count() as u64,
         }
     }
 }
@@ -105,7 +107,7 @@ pub async fn execute_committed_plasm_run(
     }
 
     let dry = dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, &run.committed)?;
-    let dag_json = crate::plasm_plan_run::plan_dag_trace_json(&dry);
+    let comp_wire = Arc::new(crate::plasm_comp_wire::trace_comp_wire_from_dry(&dry));
     let plan_ux_reflection = Some(crate::plan_ux_reflection::plan_ux_reflection_value(
         &dry,
         &crate::plan_ux_reflection::PlanUxBuildContext {
@@ -113,7 +115,7 @@ pub async fn execute_committed_plasm_run(
             param_bindings: &[],
         },
     ));
-    let trace_input = run.code_plan_trace_input();
+    let trace_input = run.code_plan_trace_input(Arc::clone(&comp_wire));
     let execute_plan_id = trace_input.emit_execute_started().await;
 
     let await_out =
@@ -148,7 +150,7 @@ pub async fn execute_committed_plasm_run(
         {
             Ok(result) => result,
             Err(err) => {
-                run.code_plan_trace_input()
+                run.code_plan_trace_input(Arc::clone(&comp_wire))
                     .emit_execute_failed(execute_plan_id)
                     .await;
                 return Err(err);
@@ -156,11 +158,9 @@ pub async fn execute_committed_plasm_run(
         };
 
     crate::mcp_plasm_run_phases::mcp_plasm_run_phase("artifact_persist", || async {
-        run.code_plan_trace_input()
+        run.code_plan_trace_input(Arc::clone(&comp_wire))
             .emit_execute_completed(
                 Some(execute_plan_id),
-                await_out.comp.clone(),
-                dag_json,
                 plan_ux_reflection,
                 &await_out,
             )

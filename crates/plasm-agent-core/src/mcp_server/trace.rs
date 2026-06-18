@@ -1,7 +1,8 @@
 //! MCP trace archive helpers for code-plan evaluate/execute.
 
 use plasm_trace::{
-    CODE_PLAN_EXECUTION_COMPLETED, CODE_PLAN_EXECUTION_FAILED, CODE_PLAN_EXECUTION_STARTED,
+    TraceCompWire, CODE_PLAN_EXECUTION_COMPLETED, CODE_PLAN_EXECUTION_FAILED,
+    CODE_PLAN_EXECUTION_STARTED,
 };
 
 use super::*;
@@ -15,23 +16,20 @@ pub(crate) struct CodePlanTraceInput<'a> {
     pub prompt_hash: &'a str,
     pub session_id: &'a str,
     pub session_ref: &'a str,
-    pub comp: &'a serde_json::Value,
+    pub comp: Arc<TraceCompWire>,
     pub program: &'a str,
     pub plan_call_index: u64,
+    pub code_chars: u64,
 }
 
 pub(crate) enum CodePlanTraceEmit<'a> {
     Evaluate {
-        comp_summary: serde_json::Value,
-        dag_summary: serde_json::Value,
         plan_ux_reflection: Option<serde_json::Value>,
     },
     Execute {
         phase: &'static str,
         /// `None` mints a fresh archive id (evaluate row, HTTP complete-only, or execute `started`).
         plan_id: Option<Uuid>,
-        comp_summary: Option<serde_json::Value>,
-        dag_summary: Option<serde_json::Value>,
         plan_ux_reflection: Option<serde_json::Value>,
         out: Option<&'a PlasmPlanRunResult>,
     },
@@ -42,6 +40,7 @@ pub(crate) async fn emit_code_plan_trace(
     input: CodePlanTraceInput<'_>,
     emit: CodePlanTraceEmit<'_>,
 ) -> Option<Uuid> {
+    let comp = input.comp.as_ref();
     let skip_archive = matches!(
         &emit,
         CodePlanTraceEmit::Execute {
@@ -49,7 +48,7 @@ pub(crate) async fn emit_code_plan_trace(
             ..
         }
     );
-    let plan_hash_str = comp_content_sha256_hex(input.comp);
+    let plan_hash_str = comp_content_sha256_hex(comp);
     let plan_index = input.plan_call_index;
     let handle_str = code_plan_handle(plan_index);
     let plan_id = match &emit {
@@ -68,10 +67,10 @@ pub(crate) async fn emit_code_plan_trace(
         entry_id: input.es.entry_id.clone(),
         plan_index,
         plan_handle: handle_str.clone(),
-        name: plan_display_name_from_comp(input.comp),
+        name: plan_display_name_from_comp(comp),
         code: input.program.to_string(),
         plan_hash: plan_hash_str.clone(),
-        comp: input.comp.clone(),
+        comp: comp.to_json_value(),
         catalog_cgs_hash: input.es.catalog_cgs_hash.clone(),
         domain_revision: input.es.domain_revision,
         entities: input.es.entities.clone(),
@@ -111,12 +110,9 @@ pub(crate) async fn emit_code_plan_trace(
             }
         }
     };
-    let node_count = plan_node_count_from_comp(input.comp);
-    let code_chars = input.program.chars().count() as u64;
+    let node_count = plan_node_count_from_comp(comp);
     match emit {
         CodePlanTraceEmit::Evaluate {
-            comp_summary,
-            dag_summary,
             plan_ux_reflection,
         } => {
             input
@@ -126,7 +122,7 @@ pub(crate) async fn emit_code_plan_trace(
                     crate::trace_hub::CodePlanEvaluateTrace {
                         plan_handle: handle_str,
                         plan_id: plan_id.to_string(),
-                        plan_name: plan_display_name_from_comp(input.comp),
+                        plan_name: plan_display_name_from_comp(comp),
                         plan_hash: plan_hash_str,
                         plan_uri,
                         canonical_plan_uri,
@@ -134,9 +130,8 @@ pub(crate) async fn emit_code_plan_trace(
                         prompt_hash: input.prompt_hash.to_string(),
                         session_id: input.session_id.to_string(),
                         node_count,
-                        code_chars,
-                        comp: Some(comp_summary),
-                        dag: Some(dag_summary),
+                        code_chars: input.code_chars,
+                        comp: Arc::clone(&input.comp),
                         plan_ux_reflection,
                     },
                 )
@@ -145,8 +140,6 @@ pub(crate) async fn emit_code_plan_trace(
         }
         CodePlanTraceEmit::Execute {
             phase,
-            comp_summary,
-            dag_summary,
             plan_ux_reflection,
             out,
             ..
@@ -167,7 +160,7 @@ pub(crate) async fn emit_code_plan_trace(
                     crate::trace_hub::CodePlanExecuteTrace {
                         plan_handle: handle_str,
                         plan_id: plan_id.to_string(),
-                        plan_name: plan_display_name_from_comp(input.comp),
+                        plan_name: plan_display_name_from_comp(comp),
                         plan_hash: plan_hash_str,
                         plan_uri,
                         canonical_plan_uri,
@@ -175,9 +168,8 @@ pub(crate) async fn emit_code_plan_trace(
                         prompt_hash: input.prompt_hash.to_string(),
                         session_id: input.session_id.to_string(),
                         node_count,
-                        code_chars,
-                        comp: comp_summary,
-                        dag: dag_summary,
+                        code_chars: input.code_chars,
+                        comp: Arc::clone(&input.comp),
                         plan_ux_reflection,
                         plasm_call_index: Some(input.plan_call_index),
                         run_ids,
@@ -192,17 +184,10 @@ pub(crate) async fn emit_code_plan_trace(
 }
 
 impl<'a> CodePlanTraceInput<'a> {
-    pub(crate) async fn emit_evaluate(
-        self,
-        comp_summary: serde_json::Value,
-        dag_summary: serde_json::Value,
-        plan_ux_reflection: Option<serde_json::Value>,
-    ) {
+    pub(crate) async fn emit_evaluate(self, plan_ux_reflection: Option<serde_json::Value>) {
         emit_code_plan_trace(
             self,
             CodePlanTraceEmit::Evaluate {
-                comp_summary,
-                dag_summary,
                 plan_ux_reflection,
             },
         )
@@ -215,8 +200,6 @@ impl<'a> CodePlanTraceInput<'a> {
             CodePlanTraceEmit::Execute {
                 phase: CODE_PLAN_EXECUTION_STARTED,
                 plan_id: None,
-                comp_summary: None,
-                dag_summary: None,
                 plan_ux_reflection: None,
                 out: None,
             },
@@ -231,8 +214,6 @@ impl<'a> CodePlanTraceInput<'a> {
             CodePlanTraceEmit::Execute {
                 phase: CODE_PLAN_EXECUTION_FAILED,
                 plan_id: Some(execute_plan_id),
-                comp_summary: None,
-                dag_summary: None,
                 plan_ux_reflection: None,
                 out: None,
             },
@@ -243,8 +224,6 @@ impl<'a> CodePlanTraceInput<'a> {
     pub(crate) async fn emit_execute_completed(
         self,
         execute_plan_id: Option<Uuid>,
-        comp_summary: serde_json::Value,
-        dag_summary: serde_json::Value,
         plan_ux_reflection: Option<serde_json::Value>,
         out: &PlasmPlanRunResult,
     ) {
@@ -253,8 +232,6 @@ impl<'a> CodePlanTraceInput<'a> {
             CodePlanTraceEmit::Execute {
                 phase: CODE_PLAN_EXECUTION_COMPLETED,
                 plan_id: execute_plan_id,
-                comp_summary: Some(comp_summary),
-                dag_summary: Some(dag_summary),
                 plan_ux_reflection,
                 out: Some(out),
             },
@@ -265,7 +242,18 @@ impl<'a> CodePlanTraceInput<'a> {
 
 #[cfg(test)]
 mod tests {
-    use plasm_trace::{SessionTraceData, TraceEvent, TraceSegment, CODE_PLAN_EXECUTION_FAILED};
+    use std::sync::Arc;
+
+    use plasm_trace::{
+        minimal_trace_comp_json, SessionTraceData, TraceCompWire, TraceEvent,
+        TraceSegment, CODE_PLAN_EXECUTION_FAILED, CODE_PLAN_EXECUTION_STARTED,
+    };
+
+    fn minimal_shared_comp() -> Arc<TraceCompWire> {
+        Arc::new(
+            TraceCompWire::from_json_value(minimal_trace_comp_json()).expect("minimal comp"),
+        )
+    }
 
     fn minimal_execute_segment(phase: &str, plan_id: &str) -> TraceSegment {
         TraceSegment::CodePlanExecute {
@@ -280,8 +268,7 @@ mod tests {
             session_id: "s1".into(),
             node_count: 2,
             code_chars: 10,
-            comp: None,
-            dag: None,
+            comp: minimal_shared_comp(),
             plasm_call_index: Some(1),
             run_ids: vec![],
             run_artifacts: vec![],
@@ -297,6 +284,44 @@ mod tests {
             1,
             minimal_execute_segment(CODE_PLAN_EXECUTION_FAILED, "pid-failed"),
         ));
+        assert_eq!(d.code_plans_executed, 0);
+    }
+
+    #[test]
+    fn execute_started_with_comp_has_bind_topology() {
+        let mut comp_json = minimal_trace_comp_json();
+        comp_json["steps"]["a"] = serde_json::json!({
+            "kind": "invoke",
+            "plan_kind": "query",
+            "effect_class": "read",
+            "result_shape": "list"
+        });
+        comp_json["bind"]["topo"] = serde_json::json!(["a"]);
+        comp_json["return"]["step"] = serde_json::json!("a");
+        let comp = Arc::new(
+            TraceCompWire::from_json_value(comp_json).expect("valid comp"),
+        );
+        let mut d = SessionTraceData::new("s1");
+        let seg = TraceSegment::CodePlanExecute {
+            plan_handle: "p1".into(),
+            plan_id: "pid-started".into(),
+            plan_name: "demo".into(),
+            plan_hash: "abc".into(),
+            plan_uri: String::new(),
+            canonical_plan_uri: String::new(),
+            plan_http_path: String::new(),
+            prompt_hash: "p".repeat(64),
+            session_id: "s1".into(),
+            node_count: 1,
+            code_chars: 10,
+            comp,
+            plasm_call_index: Some(1),
+            run_ids: vec![],
+            run_artifacts: vec![],
+            plan_ux_reflection: None,
+            execution_phase: CODE_PLAN_EXECUTION_STARTED.into(),
+        };
+        let _ = d.push_event(TraceEvent::at(1, seg));
         assert_eq!(d.code_plans_executed, 0);
     }
 }

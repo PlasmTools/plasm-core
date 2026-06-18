@@ -2352,7 +2352,7 @@ mod tests {
                 version: serde_json::json!({}),
                 node_results: Vec::new(),
                 graph_summary: serde_json::json!({}),
-                comp: serde_json::json!({}),
+                comp: None,
                 code_plan_run_artifacts: Vec::new(),
                 run_markdown: None,
                 run_plasm_meta: None,

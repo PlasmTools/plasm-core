@@ -28,12 +28,12 @@ pub async fn run_plasm_comp(
         None => evaluate_plasm_comp_dry(es, bundle)?,
     };
     if !run {
-        let comp = crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry);
+        let comp_wire = crate::plasm_comp_wire::trace_comp_wire_from_dry(&dry);
         return Ok(PlasmPlanRunResult {
             version: dry.version,
             node_results: dry.node_results,
             graph_summary: dry.graph_summary,
-            comp,
+            comp: Some(comp_wire),
             code_plan_run_artifacts: Vec::new(),
             run_markdown: None,
             run_plasm_meta: None,
@@ -469,7 +469,7 @@ pub(crate) async fn run_executable_plan_phased(
         });
     }
     let out = publish_plasm_result_steps(es.cgs.as_ref().into(), None, &steps);
-    let comp = crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry);
+    let comp = crate::plasm_comp_wire::trace_comp_wire_from_dry(&dry);
     let mut code_plan_run_artifacts = Vec::new();
     let mut evidence_run_ids = Vec::new();
     for (i, step) in steps.iter().enumerate() {
@@ -521,7 +521,7 @@ pub(crate) async fn run_executable_plan_phased(
         version: dry.version,
         node_results,
         graph_summary: graph_summary_with_approval_receipts(dry.graph_summary, &approval_receipts),
-        comp,
+        comp: Some(comp),
         code_plan_run_artifacts,
         run_markdown: Some(out.markdown),
         run_plasm_meta,

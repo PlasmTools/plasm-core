@@ -180,9 +180,7 @@ pub fn mcp_public_api_origin() -> Option<String> {
 
 fn mcp_app_client_config_script() -> String {
     let stream = mcp_public_stream_path();
-    let mut script = format!(
-        r#"<script>window.__PLASM_MCP_STREAM_PATH__={stream:?};"#,
-    );
+    let mut script = format!(r#"<script>window.__PLASM_MCP_STREAM_PATH__={stream:?};"#,);
     if let Some(origin) = mcp_public_api_origin() {
         script.push_str(&format!("window.__PLASM_API_ORIGIN__={origin:?};"));
     }
@@ -401,7 +399,9 @@ mod tests {
                     "<html><head><!-- plasm-mcp-config --></head></html>",
                 );
                 assert!(html.contains(r#"window.__PLASM_MCP_STREAM_PATH__="/plasm/mcp""#));
-                assert!(html.contains(r#"window.__PLASM_API_ORIGIN__="https://platform.plasm.tools""#));
+                assert!(
+                    html.contains(r#"window.__PLASM_API_ORIGIN__="https://platform.plasm.tools""#)
+                );
             },
         );
     }
@@ -415,8 +415,12 @@ mod tests {
                 let html = super::inject_mcp_app_client_config(
                     "<!DOCTYPE html><html><head><title>x</title></head><body></body></html>",
                 );
-                assert!(html.contains(r#"window.__PLASM_API_ORIGIN__="https://platform.plasm.tools""#));
-                assert!(html.find("</head>").is_some_and(|i| html[..i].contains("__PLASM_API_ORIGIN__")));
+                assert!(
+                    html.contains(r#"window.__PLASM_API_ORIGIN__="https://platform.plasm.tools""#)
+                );
+                assert!(html
+                    .find("</head>")
+                    .is_some_and(|i| html[..i].contains("__PLASM_API_ORIGIN__")));
             },
         );
     }

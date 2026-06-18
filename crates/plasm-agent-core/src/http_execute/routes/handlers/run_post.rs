@@ -149,7 +149,7 @@ pub(crate) async fn post_run_execute_session(
                 );
             }
         };
-        let comp_json = crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry);
+        let comp_json = crate::plasm_comp_wire::trace_comp_wire_from_dry(&dry).to_json_value();
         let compact = crate::plan_dry_display::build_plan_dry_compact_view(
             dry.validated_plan(),
             &dry.topological_order,

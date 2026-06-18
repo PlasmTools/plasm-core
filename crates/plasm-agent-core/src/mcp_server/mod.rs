@@ -90,7 +90,7 @@ use crate::operation::{
     PLAN_COMMIT_TTL,
 };
 use crate::plan_dry_display::build_plan_dry_compact_view;
-use crate::plasm_comp_wire::plasm_comp_json_from_dry;
+use crate::plasm_comp_wire::trace_comp_wire_from_dry;
 use crate::plasm_compile::compile_plasm_expression;
 use crate::plasm_plan_run::{
     evaluate_plasm_comp_dry, render_plasm_plan_dry_text_for_session, PlasmPlanRunResult,
@@ -945,10 +945,6 @@ impl PlasmMcpHandler {
                     None,
                 )
             };
-                    let comp_archive = crate::plasm_comp_wire::plasm_comp_wire_json(
-                        bundle.artifact(),
-                        None,
-                    );
                     if run_live {
                         let committed = committed_plan
                             .as_ref()
@@ -971,7 +967,6 @@ impl PlasmMcpHandler {
                                 artifacts: committed_plasm_run::CommittedRunArtifacts {
                                     trace_hub: Arc::clone(&self.plasm.trace_hub),
                                     run_artifacts: Arc::clone(&self.plasm.run_artifacts),
-                                    comp_archive: comp_archive.clone(),
                                     program_for_trace: program_for_trace.clone(),
                                     plan_call_index: call_index,
                                 },
@@ -998,8 +993,7 @@ impl PlasmMcpHandler {
                             None,
                             Some(&es),
                         );
-                        let comp_json = plasm_comp_json_from_dry(&dry);
-                        let dag_json = crate::plasm_plan_run::plan_dag_trace_json(&dry);
+                        let comp_wire = Arc::new(trace_comp_wire_from_dry(&dry));
                         let compact = build_plan_dry_compact_view(
                             dry.validated_plan(),
                             &dry.topological_order,
@@ -1046,15 +1040,12 @@ impl PlasmMcpHandler {
                             prompt_hash: b.prompt_hash.as_str(),
                             session_id: b.session_id.as_str(),
                             session_ref: session_ref.as_str(),
-                            comp: &comp_archive,
+                            comp: Arc::clone(&comp_wire),
                             program: &program_for_trace,
                             plan_call_index: call_index,
+                            code_chars: program_for_trace.chars().count() as u64,
                         }
-                        .emit_evaluate(
-                            comp_json.clone(),
-                            dag_json,
-                            Some(plan_ux_reflection.clone()),
-                        )
+                        .emit_evaluate(Some(plan_ux_reflection.clone()))
                         .await;
                         let mut plasm_obj = serde_json::Map::new();
                         plasm_obj.insert("dry_run".into(), serde_json::json!(true));
@@ -1063,7 +1054,7 @@ impl PlasmMcpHandler {
                             serde_json::json!(session_ref.as_str()),
                         );
                         plasm_obj.insert("program".into(), serde_json::json!(program_for_trace));
-                        plasm_obj.insert("comp".into(), comp_json.clone());
+                        plasm_obj.insert("comp".into(), comp_wire.to_json_value());
                         plasm_obj.extend(plan_commit_meta(
                             &commit_ref,
                             &dry.review,
@@ -1086,8 +1077,8 @@ impl PlasmMcpHandler {
                         {
                             if !unused.is_empty() {
                                 plasm_obj.insert(
-                                    "unused_seeds".into(),
-                                    serde_json::Value::Array(unused.clone()),
+                                    "session_notes".into(),
+                                    serde_json::json!({ "unused_seeds": unused }),
                                 );
                             }
                         }
@@ -1097,7 +1088,7 @@ impl PlasmMcpHandler {
                             version: dry.version,
                             node_results: dry.node_results,
                             graph_summary: dry.graph_summary,
-                            comp: comp_json,
+                            comp: Some(comp_wire.as_ref().clone()),
                             code_plan_run_artifacts: Vec::new(),
                             run_markdown: Some(markdown),
                             run_plasm_meta: Some(meta),

@@ -332,7 +332,7 @@ pub async fn deliver_http_live_run(
                     version: serde_json::json!({}),
                     node_results: Vec::new(),
                     graph_summary: serde_json::json!({}),
-                    comp: accept_payload.comp,
+                    comp: Some(accept_payload.comp_wire.clone()),
                     code_plan_run_artifacts: Vec::new(),
                     run_markdown: Some(markdown),
                     run_plasm_meta: Some(meta),

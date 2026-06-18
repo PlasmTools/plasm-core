@@ -4,6 +4,7 @@
 mod contract;
 mod event;
 mod segment;
+mod trace_comp;
 mod segment_counters;
 mod session;
 mod totals;
@@ -18,6 +19,7 @@ pub use contract::{
 pub use event::TraceEvent;
 pub use plasm_observability_contracts::RunArtifactArchiveRef;
 pub use segment::{CodePlanRunArtifactRef, PlasmLineTraceMeta, TraceSegment};
+pub use trace_comp::{minimal_trace_comp_json, TraceCompWire};
 pub use session::{
     session_data_from_events, session_data_from_ordered_events, SessionTraceCountersSnapshot,
     SessionTraceData, DEFAULT_TRACE_TIMELINE_MAX_EVENTS,
