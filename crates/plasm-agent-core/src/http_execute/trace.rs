@@ -247,6 +247,7 @@ struct HttpCodePlanTraceContext {
     comp_archive: serde_json::Value,
     comp_json: serde_json::Value,
     dag_json: serde_json::Value,
+    plan_ux_reflection: Option<serde_json::Value>,
 }
 
 async fn http_code_plan_trace_context(
@@ -282,6 +283,13 @@ async fn http_code_plan_trace_context(
         ),
         comp_json: crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry),
         dag_json: crate::plasm_plan_run::plan_dag_trace_json(&dry),
+        plan_ux_reflection: Some(crate::plan_ux_reflection::plan_ux_reflection_value(
+            &dry,
+            &crate::plan_ux_reflection::PlanUxBuildContext {
+                session: Some(sess),
+                param_bindings: &[],
+            },
+        )),
     })
 }
 
@@ -311,6 +319,7 @@ pub(crate) async fn maybe_emit_http_code_plan_evaluate(
         program,
         ctx.comp_json,
         ctx.dag_json,
+        ctx.plan_ux_reflection,
         plan_call_index,
     )
     .await;
@@ -344,6 +353,7 @@ pub(crate) async fn maybe_emit_http_code_plan_execute(
         program,
         out.comp.clone(),
         ctx.dag_json,
+        ctx.plan_ux_reflection,
         plan_call_index,
         out,
     )

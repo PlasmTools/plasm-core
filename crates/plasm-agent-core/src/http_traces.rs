@@ -28,6 +28,7 @@ use crate::http_problem_util::{problem_response, problem_types};
 use crate::incoming_auth::IncomingPrincipal;
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::{TraceDetailDto, TraceListStatus, TraceSummaryDto};
+use plasm_trace::TraceTotals;
 use plasm_observability_contracts::{
     TraceDetailResponse as SinkTraceDetailResponse, TraceListResponse as SinkTraceListResponse,
 };
@@ -53,6 +54,47 @@ fn trace_list_limit(limit: usize) -> usize {
     limit.clamp(1, 200)
 }
 
+fn merge_trace_totals(a: &TraceTotals, b: &TraceTotals) -> TraceTotals {
+    TraceTotals {
+        plasm_tool_calls: a.plasm_tool_calls.max(b.plasm_tool_calls),
+        plasm_expressions: a.plasm_expressions.max(b.plasm_expressions),
+        expression_lines: a.expression_lines.max(b.expression_lines),
+        multi_line_plasm_invocations: a
+            .multi_line_plasm_invocations
+            .max(b.multi_line_plasm_invocations),
+        teaching_prompt_chars: a.teaching_prompt_chars.max(b.teaching_prompt_chars),
+        plasm_invocation_chars: a.plasm_invocation_chars.max(b.plasm_invocation_chars),
+        plasm_response_chars: a.plasm_response_chars.max(b.plasm_response_chars),
+        mcp_resource_read_chars: a.mcp_resource_read_chars.max(b.mcp_resource_read_chars),
+        total_duration_ms: a.total_duration_ms.max(b.total_duration_ms),
+        network_requests: a.network_requests.max(b.network_requests),
+        cache_hits: a.cache_hits.max(b.cache_hits),
+        cache_misses: a.cache_misses.max(b.cache_misses),
+        http_trace_entry_count: a.http_trace_entry_count.max(b.http_trace_entry_count),
+        code_plans_evaluated: a.code_plans_evaluated.max(b.code_plans_evaluated),
+        code_plans_executed: a.code_plans_executed.max(b.code_plans_executed),
+        code_plan_code_chars: a.code_plan_code_chars.max(b.code_plan_code_chars),
+        code_plan_nodes: a.code_plan_nodes.max(b.code_plan_nodes),
+        code_plan_derived_runs: a.code_plan_derived_runs.max(b.code_plan_derived_runs),
+    }
+}
+
+fn merge_live_trace_summary(d: &mut TraceSummaryDto, live: &TraceSummaryDto) {
+    d.totals = merge_trace_totals(&d.totals, &live.totals);
+    if live.status != "live" {
+        return;
+    }
+    d.status = live.status;
+    d.started_at_ms = live.started_at_ms;
+    d.ended_at_ms = live.ended_at_ms;
+    if let Some(id) = live.logical_session_id.clone() {
+        d.logical_session_id = Some(id);
+    }
+    if !live.mcp_session_id.is_empty() {
+        d.mcp_session_id = live.mcp_session_id.clone();
+    }
+}
+
 fn merge_trace_summaries(
     durable: Vec<TraceSummaryDto>,
     live: Vec<TraceSummaryDto>,
@@ -63,8 +105,11 @@ fn merge_trace_summaries(
     for trace in durable {
         by_trace_id.insert(trace.trace_id.clone(), trace);
     }
-    for trace in live {
-        by_trace_id.insert(trace.trace_id.clone(), trace);
+    for live_trace in live {
+        by_trace_id
+            .entry(live_trace.trace_id.clone())
+            .and_modify(|d| merge_live_trace_summary(d, &live_trace))
+            .or_insert(live_trace);
     }
     let mut traces = by_trace_id.into_values().collect::<Vec<_>>();
     traces.sort_by(|a, b| {
@@ -528,6 +573,25 @@ mod tests {
             mcp_config: None,
             totals: TraceTotals::default(),
         }
+    }
+
+    #[test]
+    fn merge_trace_summaries_merges_totals_fieldwise_for_duplicate_trace_id() {
+        let duplicate_id = Uuid::new_v4().to_string();
+        let mut durable = summary(&duplicate_id, "completed", 100);
+        durable.totals.network_requests = 5;
+        durable.totals.total_duration_ms = 50;
+        let mut live = summary(&duplicate_id, "live", 300);
+        live.totals.network_requests = 0;
+        live.totals.total_duration_ms = 0;
+        live.totals.mcp_resource_read_chars = 1722;
+
+        let merged = merge_trace_summaries(vec![durable], vec![live], 0, 10);
+        let row = merged.iter().find(|t| t.trace_id == duplicate_id).unwrap();
+        assert_eq!(row.status, "live");
+        assert_eq!(row.totals.network_requests, 5);
+        assert_eq!(row.totals.total_duration_ms, 50);
+        assert_eq!(row.totals.mcp_resource_read_chars, 1722);
     }
 
     #[test]

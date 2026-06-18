@@ -247,6 +247,83 @@ pub fn render_plan_dry_compact_text(
     out
 }
 
+/// Operator-facing step title for synthetic IR nodes (not tuned `r1`/`c2` labels).
+pub(crate) fn human_ux_headline_for_op(op: &PlanDryOp) -> String {
+    match op {
+        PlanDryOp::Surface { kind, .. } => match kind {
+            PlanNodeKind::Query | PlanNodeKind::Search | PlanNodeKind::Get => "Read list".into(),
+            PlanNodeKind::Create => "Create".into(),
+            PlanNodeKind::Update => "Update".into(),
+            PlanNodeKind::Delete => "Delete".into(),
+            PlanNodeKind::Action => "Write".into(),
+            _ => render_kind(*kind).to_string(),
+        },
+        PlanDryOp::Project { fields } => {
+            if fields.len() <= 2 {
+                format!("Keep {}", fields.join(", "))
+            } else {
+                format!("Keep {} fields", fields.len())
+            }
+        }
+        PlanDryOp::Filter { .. } => "Filter rows".into(),
+        PlanDryOp::GroupBy { keys, .. } => format!("Group by {}", keys.join(", ")),
+        PlanDryOp::Aggregate { .. } => "Summarize".into(),
+        PlanDryOp::Sort { key, descending } => {
+            if *descending {
+                format!("Sort by {key} (descending)")
+            } else {
+                format!("Sort by {key}")
+            }
+        }
+        PlanDryOp::Limit { count } => format!("Take first {count}"),
+        PlanDryOp::Dedupe { keys } if keys.is_empty() => "Distinct rows".into(),
+        PlanDryOp::Dedupe { keys } => format!("Dedupe on {}", keys.join(", ")),
+        PlanDryOp::Render { .. } => "Render text".into(),
+        PlanDryOp::ForEach { .. } => "For each row".into(),
+        PlanDryOp::Relation { .. } => "Follow relation".into(),
+        PlanDryOp::Data { .. } => "Static data".into(),
+        PlanDryOp::Derive { .. } => "Derive rows".into(),
+    }
+}
+
+/// Secondary line for plan UX — resolved wire names in predicate/field text.
+pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
+    match op {
+        PlanDryOp::Filter { predicates } if !predicates.is_empty() => {
+            format!("Where {}", predicates.join(", "))
+        }
+        PlanDryOp::Filter { .. } => "Filter rows".into(),
+        PlanDryOp::Project { fields } => format!("Fields: {}", fields.join(", ")),
+        PlanDryOp::Surface { kind, expr } => match kind {
+            PlanNodeKind::Search => format!("Search · {expr}"),
+            PlanNodeKind::Get => format!("Get · {expr}"),
+            PlanNodeKind::Query => format!("Read · {expr}"),
+            PlanNodeKind::Create => format!("Create · {expr}"),
+            PlanNodeKind::Update => format!("Update · {expr}"),
+            PlanNodeKind::Delete => format!("Delete · {expr}"),
+            PlanNodeKind::Action => format!("Write · {expr}"),
+            _ => format!("{} · {expr}", render_kind(*kind)),
+        },
+        PlanDryOp::Sort { key, descending } => {
+            if *descending {
+                format!("Sort by {key} (descending)")
+            } else {
+                format!("Sort by {key}")
+            }
+        }
+        PlanDryOp::Limit { count } => format!("Take first {count}"),
+        PlanDryOp::GroupBy { keys, .. } => format!("Group by {}", keys.join(", ")),
+        PlanDryOp::Aggregate { .. } => "Summarize".into(),
+        PlanDryOp::Dedupe { keys } if keys.is_empty() => "Distinct rows".into(),
+        PlanDryOp::Dedupe { keys } => format!("Dedupe on {}", keys.join(", ")),
+        PlanDryOp::Render { columns, .. } => format!("Render {}", columns.join(", ")),
+        PlanDryOp::Relation { relation, target, .. } => format!("Via {relation} → {target}"),
+        PlanDryOp::ForEach { source, binding, .. } => format!("For each row in {source} as {binding}"),
+        PlanDryOp::Derive { source, binding, .. } => format!("Derive from {source} as {binding}"),
+        PlanDryOp::Data { summary } => format!("Data · {summary}"),
+    }
+}
+
 pub(crate) fn render_plan_dry_op(op: &PlanDryOp) -> String {
     match op {
         PlanDryOp::Surface { kind, expr } => format!("{} {expr}", render_kind(*kind)),
@@ -645,6 +722,10 @@ fn is_synthetic_plan_node_id(id: &str) -> bool {
             .strip_prefix("return_")
             .and_then(|rest| rest.parse::<u32>().ok())
             .is_some()
+}
+
+pub(crate) fn is_synthetic_plan_node_id_public(id: &str) -> bool {
+    is_synthetic_plan_node_id(id)
 }
 
 #[derive(Default)]

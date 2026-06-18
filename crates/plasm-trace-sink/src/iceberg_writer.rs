@@ -15,7 +15,7 @@ use crate::model::{
     TraceDetailRecord, TraceHeadRow, TraceSpanRow, TraceSummary, TraceTotals,
     AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT,
 };
-use crate::trace_totals::trace_totals_from_head_row;
+use crate::trace_totals::{head_needs_segment_recompute, trace_totals_from_head_or_records};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use datafusion::arrow::array::Array;
@@ -1168,6 +1168,35 @@ impl IcebergSink {
         Ok(events)
     }
 
+    async fn batch_load_mcp_trace_segment_json(
+        &self,
+        tenant_partition: &str,
+        trace_ids: &[uuid::Uuid],
+    ) -> anyhow::Result<std::collections::HashMap<uuid::Uuid, Vec<serde_json::Value>>> {
+        use std::collections::HashMap;
+        if trace_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let trace_in = trace_ids
+            .iter()
+            .map(|id| format!("'{id}'"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let tenant_q = Self::sql_quote(tenant_partition);
+        let kind_q = Self::sql_quote(AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT);
+        let where_clause = format!(
+            "tenant_partition = '{tenant_q}' AND trace_id IN ({trace_in}) AND event_kind = '{kind_q}'"
+        );
+        let events = self.load_trace_events_with_where(&where_clause).await?;
+        let mut out: HashMap<uuid::Uuid, Vec<serde_json::Value>> = HashMap::new();
+        for e in events {
+            if let Some(rec) = trace_detail_record_from_audit_event(&e) {
+                out.entry(e.trace_id).or_default().push(rec.record);
+            }
+        }
+        Ok(out)
+    }
+
     /// Full scan of `trace_heads` (used to seed SQL projections on first deploy).
     pub async fn scan_all_trace_heads(&self) -> anyhow::Result<Vec<TraceHeadRow>> {
         let sql = format!(
@@ -1314,17 +1343,32 @@ impl IcebergSink {
             filter.limit.clamp(1, 500)
         );
         let batches = self.sql_batches(&sql).await?;
-        let mut out = Vec::new();
+        let mut heads = Vec::new();
         for b in batches {
             for row in 0..b.num_rows() {
                 let h = decode_trace_head_row(&b, row)?;
-                out.push(h);
+                heads.push(h);
             }
         }
-        let out = out
+        let sparse_ids: Vec<uuid::Uuid> = heads
+            .iter()
+            .filter(|h| head_needs_segment_recompute(h))
+            .map(|h| h.trace_id)
+            .collect();
+        let segments_by_trace = if sparse_ids.is_empty() {
+            std::collections::HashMap::new()
+        } else {
+            self.batch_load_mcp_trace_segment_json(filter.tenant.as_str(), &sparse_ids)
+                .await?
+        };
+        let out = heads
             .into_iter()
             .map(|h| {
-                let totals = trace_totals_from_head_row(&h);
+                let records = segments_by_trace
+                    .get(&h.trace_id)
+                    .map(|v| v.as_slice())
+                    .unwrap_or(&[]);
+                let totals = trace_totals_from_head_or_records(&h, records);
                 TraceSummary {
                     trace_id: h.trace_id,
                     mcp_session_id: h.mcp_session_id.unwrap_or_default(),

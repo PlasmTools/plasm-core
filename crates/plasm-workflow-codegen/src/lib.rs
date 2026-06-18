@@ -37,7 +37,7 @@ pub fn emit_contracts_ts() -> String {
             effect_class: string;
             approval_gate: boolean;
             layout_hint?: string;
-            display_id?: string;
+            headline?: string;
         }
 
         export interface PlanUxEdge {
@@ -121,6 +121,7 @@ mod tests {
         assert!(out.contains("PlanUxReflection"));
         assert!(out.contains("@generated"));
         assert!(out.contains("ready: boolean"));
+        assert!(out.contains("headline?: string"));
         assert!(out.contains("blocking_errors"));
     }
 }

@@ -14,7 +14,7 @@ pub use scope::{session_scope_for_node, SessionScope};
 
 use crate::execute_session::ExecuteSession;
 use crate::plasm_comp_bundle::PlasmCompBundle;
-use crate::plasm_plan_run::{PlasmPlanRunHooks, PlasmPlanRunResult};
+use crate::plasm_plan_run::{PlanRunTraceHooks, PlasmPlanRunResult};
 use crate::server_state::PlasmHostState;
 use plasm_core::expr_parser::ParsedExpr;
 
@@ -46,7 +46,7 @@ impl ExecutePipeline {
         session_id: &str,
         bundle: &PlasmCompBundle,
         intent: ExecutionIntent,
-        mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
+        mcp_tool_hooks: Option<PlanRunTraceHooks>,
         execution_scope: Option<&crate::operation::ExecutionScope>,
         dry: Option<crate::plasm_plan_run::DryPlasmPlanEvaluation>,
     ) -> Result<PlasmPlanRunResult, String> {

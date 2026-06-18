@@ -48,6 +48,7 @@ pub struct ExecuteCommittedMcpRun {
     pub bundle: PlasmCompBundle,
     pub mcp_trace: PlasmTraceContext,
     pub artifacts: CommittedRunArtifacts,
+    pub plan_trace: Option<crate::trace_hub::PlanRunTraceHooks>,
     pub force_run: bool,
     pub wait_live: bool,
 }
@@ -102,6 +103,7 @@ pub async fn execute_committed_plasm_run(
                 run.plan_commit_ref.clone(),
                 run.mcp_trace.clone(),
                 dry,
+                run.plan_trace.clone(),
             ))
             .await
             .map_err(|e| match e {
@@ -115,6 +117,14 @@ pub async fn execute_committed_plasm_run(
     let (result, dag_json) = await_out;
 
     crate::mcp_plasm_run_phases::mcp_plasm_run_phase("artifact_persist", || async {
+        let dry = dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, &run.committed)?;
+        let plan_ux_reflection = Some(crate::plan_ux_reflection::plan_ux_reflection_value(
+            &dry,
+            &crate::plan_ux_reflection::PlanUxBuildContext {
+                session: Some(run.es.as_ref()),
+                param_bindings: &[],
+            },
+        ));
         trace_archive_and_emit_code_plan_execute(
             run.artifacts.trace_hub.as_ref(),
             run.artifacts.run_artifacts.as_ref(),
@@ -127,6 +137,7 @@ pub async fn execute_committed_plasm_run(
             run.artifacts.program_for_trace.as_str(),
             result.comp.clone(),
             dag_json,
+            plan_ux_reflection,
             run.artifacts.call_count,
             &result,
         )

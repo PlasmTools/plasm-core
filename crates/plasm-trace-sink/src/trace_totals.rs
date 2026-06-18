@@ -1,10 +1,31 @@
 //! Trace head row → [`TraceTotals`] for list views (shared by Iceberg decoders and SQL projection).
 
 use plasm_trace::{
-    session_data_from_ordered_events, totals_from_session_data, SessionTraceData, TraceEvent,
+    session_data_from_ordered_events, totals_from_session_data, SessionTraceCountersSnapshot,
+    SessionTraceData, TraceEvent,
 };
 
 use crate::model::{TraceHeadRow, TraceTotals};
+
+/// True when list/detail should recompute KPIs from durable segment rows instead of head snapshot.
+pub(crate) fn head_needs_segment_recompute(h: &TraceHeadRow) -> bool {
+    head_totals_snapshot_stale(h)
+}
+
+fn head_totals_snapshot_stale(h: &TraceHeadRow) -> bool {
+    let tj = h.totals_json.trim();
+    if tj.is_empty() {
+        return true;
+    }
+    let Ok(snap) = serde_json::from_str::<SessionTraceCountersSnapshot>(tj) else {
+        return false;
+    };
+    snap.aggregate_expression_lines == 0
+        && snap.aggregate_network_requests == 0
+        && snap.code_plans_evaluated == 0
+        && snap.code_plans_executed == 0
+        && snap.plasm_call_count == 0
+}
 
 /// Derive list totals from a durable head row (`totals_json` snapshot or line-based fallback).
 pub(crate) fn trace_totals_from_head_row(h: &TraceHeadRow) -> TraceTotals {
@@ -40,12 +61,12 @@ pub(crate) fn trace_totals_from_segment_records(
     totals_from_session_data(&session).into()
 }
 
-/// Prefer head snapshot when `totals_json` is populated; otherwise recompute from segment rows.
+/// Prefer head snapshot when populated; otherwise recompute from segment rows.
 pub(crate) fn trace_totals_from_head_or_records(
     h: &TraceHeadRow,
     records: &[serde_json::Value],
 ) -> TraceTotals {
-    if h.totals_json.trim().is_empty() && !records.is_empty() {
+    if !records.is_empty() && head_needs_segment_recompute(h) {
         return trace_totals_from_segment_records(
             records,
             h.mcp_session_id.as_deref().unwrap_or(""),
@@ -82,6 +103,59 @@ mod tests {
         let totals = trace_totals_from_head_or_records(&head, &records);
         assert_eq!(totals.network_requests, 3);
         assert_eq!(totals.total_duration_ms, 12);
+    }
+
+    #[test]
+    fn stale_head_with_resource_read_chars_recomputes_from_segments() {
+        let mut head = test_head();
+        head.totals_json = serde_json::to_string(&plasm_trace::SessionTraceCountersSnapshot {
+            mcp_resource_read_chars: 1722,
+            ..Default::default()
+        })
+        .unwrap();
+        let records = vec![serde_json::json!({
+            "emitted_at_ms": 100,
+            "kind": "plasm_line",
+            "call_index": 0,
+            "line_index": 0,
+            "source_expression": "e1",
+            "duration_ms": 12,
+            "stats": {
+                "network_requests": 3,
+                "cache_hits": 1,
+                "cache_misses": 2,
+                "duration_ms": 12
+            },
+            "source": "live",
+            "request_fingerprints": [],
+            "http_calls": []
+        })];
+        assert!(
+            head_needs_segment_recompute(&head),
+            "resource-only snapshot should be stale for segment recompute"
+        );
+        let totals = trace_totals_from_head_or_records(&head, &records);
+        assert_eq!(totals.network_requests, 3);
+    }
+
+    #[test]
+    fn all_zero_head_snapshot_recomputes_from_segments() {
+        let mut head = test_head();
+        head.totals_json = serde_json::to_string(&plasm_trace::SessionTraceCountersSnapshot {
+            ..Default::default()
+        })
+        .unwrap();
+        let records = vec![serde_json::json!({
+            "emitted_at_ms": 100,
+            "kind": "mcp_resource_read",
+            "uri_display": "plasm://run/1",
+            "chars_added": 100,
+            "duration_ms": 42,
+            "result": "success"
+        })];
+        let totals = trace_totals_from_head_or_records(&head, &records);
+        assert_eq!(totals.mcp_resource_read_chars, 100);
+        assert_eq!(totals.total_duration_ms, 42);
     }
 
     #[test]

@@ -25,7 +25,6 @@ use crate::http_execute::{
     archive_plasm_result_snapshot, execute_plasm_parsed_expr, publish_plasm_result_steps,
     run_parsed_plasm_line, trace_record_plasm_line, PublishedResultStep,
 };
-use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::plan_dry_display;
 pub use crate::plan_dry_display::PlanDryReview;
 use crate::plasm_plan::{
@@ -94,11 +93,7 @@ pub(crate) use row_json::{cached_entity_row_json, predicate_matches, value_at_se
 #[cfg(test)]
 use crate::plasm_plan::{parse_plan_value, validate_plan_artifact};
 
-pub struct PlasmPlanRunHooks<'a> {
-    pub meta_index: &'a mut PlasmMetaIndex,
-    pub trace: PlasmTraceContext,
-    pub sink: McpPlasmTraceSink,
-}
+pub use crate::trace_hub::PlanRunTraceHooks;
 
 /// Outcome of [`ExecutePipeline::run_program`]: the same `node_results` / optional run payload shape as an MCP
 /// live `plasm_run` response (fenced JSON), without Markdown framing.

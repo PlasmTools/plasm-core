@@ -14,6 +14,7 @@ struct CodePlanArchiveContext<'a> {
     program: &'a str,
     comp_summary: serde_json::Value,
     dag_summary: serde_json::Value,
+    plan_ux_reflection: Option<serde_json::Value>,
     plan_call_index: u64,
 }
 
@@ -85,6 +86,7 @@ async fn trace_archive_and_emit_code_plan(
             code_chars,
             comp: ctx.comp_summary,
             dag: ctx.dag_summary,
+            plan_ux_reflection: ctx.plan_ux_reflection.clone(),
             plasm_call_index: None,
             run_ids: Vec::new(),
             run_artifacts: Vec::new(),
@@ -109,6 +111,7 @@ async fn trace_archive_and_emit_code_plan(
                 code_chars,
                 comp: ctx.comp_summary,
                 dag: ctx.dag_summary,
+                plan_ux_reflection: ctx.plan_ux_reflection.clone(),
                 plasm_call_index: Some(ctx.plan_call_index),
                 run_ids,
                 run_artifacts: out.code_plan_run_artifacts.clone(),
@@ -142,6 +145,7 @@ pub(crate) async fn trace_archive_and_emit_code_plan_evaluate(
     program: &str,
     comp_summary: serde_json::Value,
     dag_summary: serde_json::Value,
+    plan_ux_reflection: Option<serde_json::Value>,
     plan_call_index: u64,
 ) {
     trace_archive_and_emit_code_plan(
@@ -157,6 +161,7 @@ pub(crate) async fn trace_archive_and_emit_code_plan_evaluate(
             program,
             comp_summary,
             dag_summary,
+            plan_ux_reflection,
             plan_call_index,
         },
         CodePlanEmitKind::Evaluate,
@@ -177,6 +182,7 @@ pub(crate) async fn trace_archive_and_emit_code_plan_execute(
     program: &str,
     comp_summary: serde_json::Value,
     dag_summary: serde_json::Value,
+    plan_ux_reflection: Option<serde_json::Value>,
     plan_call_index: u64,
     out: &PlasmPlanRunResult,
 ) {
@@ -193,6 +199,7 @@ pub(crate) async fn trace_archive_and_emit_code_plan_execute(
             program,
             comp_summary,
             dag_summary,
+            plan_ux_reflection,
             plan_call_index,
         },
         CodePlanEmitKind::Execute { out },

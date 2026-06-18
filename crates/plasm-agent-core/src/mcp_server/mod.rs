@@ -39,7 +39,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::discovery_human_format::{format_discovery_markdown_for_mcp, DiscoveryTablePolicy};
-use crate::trace_hub::{CodePlanTrace, McpPlasmTraceSink, PlasmContextTrace};
+use crate::trace_hub::{CodePlanTrace, McpPlasmTraceSink, PlanRunTraceHooks, PlasmContextTrace};
 use std::time::Duration;
 use tracing::Instrument;
 
@@ -919,10 +919,14 @@ impl PlasmMcpHandler {
             )
             .await;
 
-        let _sink = McpPlasmTraceSink {
+        let sink = McpPlasmTraceSink {
             hub: Arc::clone(&self.plasm.trace_hub),
             mcp_key: ls_key.clone(),
             call_index,
+        };
+        let plan_trace = PlanRunTraceHooks {
+            trace: mcp_trace.clone(),
+            sink,
         };
 
         let run_result = async {
@@ -1006,6 +1010,7 @@ impl PlasmMcpHandler {
                                     program_for_trace: program_for_trace.clone(),
                                     call_count,
                                 },
+                                plan_trace: Some(plan_trace),
                                 force_run,
                                 wait_live,
                             },
@@ -1062,6 +1067,12 @@ impl PlasmMcpHandler {
                         )
                         .await
                         .map_err(|e| e.to_string())?;
+                        let ux_ctx = crate::plan_ux_reflection::PlanUxBuildContext {
+                            session: Some(&es),
+                            param_bindings: &[],
+                        };
+                        let plan_ux_reflection =
+                            crate::plan_ux_reflection::plan_ux_reflection_value(&dry, &ux_ctx);
                         trace_archive_and_emit_code_plan_evaluate(
                             &self.plasm.trace_hub,
                             &self.plasm.run_artifacts,
@@ -1074,6 +1085,7 @@ impl PlasmMcpHandler {
                             &program_for_trace,
                             comp_json.clone(),
                             dag_json,
+                            Some(plan_ux_reflection.clone()),
                             call_count,
                         )
                         .await;
@@ -1090,14 +1102,7 @@ impl PlasmMcpHandler {
                             &dry.review,
                             compact.verdict,
                         ));
-                        let ux_ctx = crate::plan_ux_reflection::PlanUxBuildContext {
-                            session: Some(&es),
-                            param_bindings: &[],
-                        };
-                        plasm_obj.insert(
-                            "plan_ux_reflection".into(),
-                            crate::plan_ux_reflection::plan_ux_reflection_value(&dry, &ux_ctx),
-                        );
+                        plasm_obj.insert("plan_ux_reflection".into(), plan_ux_reflection);
                         if dry
                             .graph_summary
                             .get("dry_review")

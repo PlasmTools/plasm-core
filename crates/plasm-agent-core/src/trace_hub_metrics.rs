@@ -17,6 +17,7 @@ struct TraceHubInstruments {
     ingest_queue_backlog: Histogram<u64>,
     ingest_queue_wait_ms: Histogram<u64>,
     ingest_send_wait_ms: Histogram<u64>,
+    emit_dropped_no_active_total: Counter<u64>,
 }
 
 static TRACE_HUB_INSTRUMENTS: OnceLock<TraceHubInstruments> = OnceLock::new();
@@ -77,6 +78,12 @@ fn instruments() -> &'static TraceHubInstruments {
                 .u64_histogram("plasm.trace_hub.ingest_send_wait_ms")
                 .with_description(
                     "Time blocked in tokio mpsc send() while waiting for channel capacity (backpressure on MCP/HTTP trace emit path). SSE patches are emitted before this wait.",
+                )
+                .build(),
+            emit_dropped_no_active_total: meter
+                .u64_counter("plasm.trace_hub.emit_dropped_no_active_total")
+                .with_description(
+                    "Trace segment emits dropped because the MCP logical session had no active or resumable completed trace.",
                 )
                 .build(),
         }
@@ -143,4 +150,8 @@ pub(crate) fn record_trace_hub_ingest_send_wait_ms(wait_ms: u64, queue_cap: i64)
     instruments()
         .ingest_send_wait_ms
         .record(wait_ms, &ingest_attrs(queue_cap));
+}
+
+pub(crate) fn record_trace_emit_dropped_no_active() {
+    instruments().emit_dropped_no_active_total.add(1, &[]);
 }

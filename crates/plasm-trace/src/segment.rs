@@ -150,6 +150,8 @@ pub enum TraceSegment {
         comp: Option<serde_json::Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         dag: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plan_ux_reflection: Option<serde_json::Value>,
     },
     CodePlanExecute {
         plan_handle: String,
@@ -178,6 +180,8 @@ pub enum TraceSegment {
         run_ids: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         run_artifacts: Vec<CodePlanRunArtifactRef>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        plan_ux_reflection: Option<serde_json::Value>,
     },
 }
 
@@ -203,11 +207,33 @@ mod tests {
             code_chars: 42,
             comp: Some(serde_json::json!({"steps": {"n1": {}}, "bind": {"topo": ["n1"]}})),
             dag: None,
+            plan_ux_reflection: None,
         };
         let v = serde_json::to_value(eval).expect("json");
         assert_eq!(v["kind"], "code_plan_evaluate");
         assert_eq!(v["plan_handle"], "p1");
         assert_eq!(v["comp"]["bind"]["topo"][0], "n1");
+        assert!(v.get("plan_ux_reflection").is_none());
+
+        let ux = serde_json::json!({"schema_version": 2, "layout": "sequential", "steps": []});
+        let eval_with_ux = TraceSegment::CodePlanEvaluate {
+            plan_handle: "p1".into(),
+            plan_id: "00000000-0000-0000-0000-000000000000".into(),
+            plan_name: "demo".into(),
+            plan_hash: "abc".into(),
+            plan_uri: String::new(),
+            canonical_plan_uri: String::new(),
+            plan_http_path: String::new(),
+            prompt_hash: "p".repeat(64),
+            session_id: "s1".into(),
+            node_count: 1,
+            code_chars: 10,
+            comp: None,
+            dag: None,
+            plan_ux_reflection: Some(ux.clone()),
+        };
+        let v2 = serde_json::to_value(eval_with_ux).expect("json");
+        assert_eq!(v2["plan_ux_reflection"], ux);
 
         let exec = TraceSegment::CodePlanExecute {
             plan_handle: "p1".into(),
@@ -237,6 +263,7 @@ mod tests {
                 display: Some("query".into()),
                 request_fingerprints: vec!["fp".into()],
             }],
+            plan_ux_reflection: None,
         };
         let v = serde_json::to_value(exec).expect("json");
         assert_eq!(v["kind"], "code_plan_execute");

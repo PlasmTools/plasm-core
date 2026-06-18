@@ -276,6 +276,7 @@ pub struct OpAcceptContext {
     pub comp: Option<serde_json::Value>,
     pub plan_ux_reflection: Option<serde_json::Value>,
     pub step_order: Vec<String>,
+    pub plan_trace: Option<crate::trace_hub::PlanRunTraceHooks>,
 }
 
 /// Narrow poll snapshot for `wait(...)` — avoids cloning cancel signals and full operation state.
@@ -408,10 +409,16 @@ pub(crate) fn op_accept_context_from_executable(
         comp: None,
         plan_ux_reflection: None,
         step_order: Vec::new(),
+        plan_trace: None,
     }
 }
 
 impl OpAcceptContext {
+    pub fn with_plan_trace(mut self, hooks: crate::trace_hub::PlanRunTraceHooks) -> Self {
+        self.plan_trace = Some(hooks);
+        self
+    }
+
     pub(crate) fn with_run_explorer(
         mut self,
         payload: &crate::run_explorer_meta::RunExplorerAcceptPayload,
@@ -663,6 +670,7 @@ pub fn spawn_async_plan_run(
 ) -> Result<(), String> {
     let mut accept = accept;
     accept.host = Some(Arc::downgrade(&st));
+    let plan_hooks = accept.plan_trace.clone();
     es.bind_operation_wire(session_id.as_str());
     es.try_begin_async_operation(handle.clone(), cancel.clone(), accept)?;
     let scope = ExecutionScope::for_async_operation(Arc::clone(&es), handle.clone(), cancel);
@@ -681,6 +689,7 @@ pub fn spawn_async_plan_run(
     let st_run = Arc::clone(&st);
     let pool = st.live_plan_pool();
     tokio::spawn(async move {
+        let plan_hooks = plan_hooks;
         let result = pool
             .run(move || async move {
                 plasm_runtime::with_live_run_telemetry(telemetry, async move {
@@ -691,7 +700,7 @@ pub fn spawn_async_plan_run(
                         session_id.as_str(),
                         &bundle,
                         true,
-                        None,
+                        plan_hooks,
                         Some(&scope_for_run),
                         dry,
                     )

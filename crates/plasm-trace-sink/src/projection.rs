@@ -295,7 +295,7 @@ impl ProjectionStore {
         }
         let sparse_ids: Vec<Uuid> = heads
             .iter()
-            .filter(|h| h.totals_json.trim().is_empty())
+            .filter(|h| crate::trace_totals::head_needs_segment_recompute(h))
             .map(|h| h.trace_id)
             .collect();
         let segments_by_trace = if sparse_ids.is_empty() {

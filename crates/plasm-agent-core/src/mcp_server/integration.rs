@@ -16,6 +16,7 @@ use crate::plasm_plan_run::{evaluate_plasm_comp_dry, DryPlasmPlanEvaluation};
 use crate::run_delivery::{deliver_live_run_await, LiveRunAwaitContext, RunDeliveryPolicy};
 use crate::run_explorer_meta::build_run_explorer_accept_payload;
 use crate::server_state::PlasmHostState;
+use crate::trace_hub::{McpPlasmTraceSink, PlanRunTraceHooks, TraceSessionMeta};
 use crate::trace_sink_emit::PlasmTraceContext;
 use crate::PlasmCompBundle;
 use indexmap::IndexMap;
@@ -31,6 +32,10 @@ fn matrix_fixture_dir() -> PathBuf {
 }
 
 fn matrix_federated_host() -> PlasmHostState {
+    matrix_federated_host_with_base(None)
+}
+
+fn matrix_federated_host_with_base(base_url: Option<&str>) -> PlasmHostState {
     let cgs = Arc::new(load_schema_dir(&matrix_fixture_dir()).expect("plasm_language_matrix"));
     let reg = InMemoryCgsRegistry::from_pairs(vec![
         (
@@ -46,7 +51,11 @@ fn matrix_federated_host() -> PlasmHostState {
             cgs.clone(),
         ),
     ]);
-    let engine = ExecutionEngine::new(ExecutionConfig::default()).expect("engine");
+    let config = ExecutionConfig {
+        base_url: base_url.map(str::to_string),
+        ..Default::default()
+    };
+    let engine = ExecutionEngine::new(config).expect("engine");
     build_plasm_host_state(PlasmHostBootstrap {
         engine,
         mode: ExecutionMode::Live,
@@ -58,6 +67,35 @@ fn matrix_federated_host() -> PlasmHostState {
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
     })
+}
+
+async fn spawn_matrix_langitem_mock() -> String {
+    use axum::{
+        extract::Path,
+        routing::get,
+        Json, Router,
+    };
+
+    async fn list_items() -> Json<serde_json::Value> {
+        Json(serde_json::json!([{"id": "a", "title": "trace-test"}]))
+    }
+
+    async fn get_item(Path(id): Path<String>) -> Json<serde_json::Value> {
+        Json(serde_json::json!({"id": id, "title": "trace-test"}))
+    }
+
+    let app = Router::new()
+        .route("/language/v1/items", get(list_items))
+        .route("/language/v1/items/{id}", get(get_item));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind matrix mock");
+    let base = format!("http://{}", listener.local_addr().expect("local addr"));
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("matrix mock serve");
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    base
 }
 
 fn minimal_execute_session() -> ExecuteSession {
@@ -469,6 +507,7 @@ async fn mcp_query_limit_uses_async_await_path() {
                 logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
             },
             dry,
+            None,
         )),
     )
     .await;
@@ -548,6 +587,7 @@ async fn matrix_query_limit_on_injected_live_plan_pool() {
                 logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
             },
             dry,
+            None,
         )),
     )
     .await;
@@ -623,6 +663,7 @@ async fn matrix_query_limit_on_release_stack_budget() {
                 logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
             },
             dry,
+            None,
         )),
     )
     .await;
@@ -707,12 +748,112 @@ async fn mcp_pc_n_committed_await_uses_stored_review() {
                 logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
             },
             fx.dry,
+            None,
         )),
     )
     .await;
     assert!(
         matches!(delivered, Ok(Ok(_)) | Ok(Err(_))),
         "committed pcN await hung past 30s: {delivered:?}"
+    );
+}
+
+#[tokio::test]
+async fn mcp_plan_trace_hooks_emit_plasm_line_and_network_totals() {
+    let base_url = spawn_matrix_langitem_mock().await;
+    let st = Arc::new(matrix_federated_host_with_base(Some(base_url.as_str())));
+    let fx = MatrixPcNFixture::open(
+        Arc::clone(&st),
+        "trace hooks plasm_line",
+        "mcp_trace_hooks",
+    )
+    .await;
+    fx.persist_plan_commit().await;
+
+    let ls_key = "550e8400-e29b-41d4-a716-446655440099";
+    let session_ref = "l_AAAAAAAAQACAAAAAAAAAAQ";
+    let tenant = "anonymous";
+    let trace_meta = TraceSessionMeta {
+        tenant_id: tenant.into(),
+        project_slug: "main".into(),
+        mcp_config: None,
+    };
+    let trace_id = fx
+        .st
+        .trace_hub
+        .ensure_logical_session(ls_key, None, trace_meta)
+        .await;
+    let call_index = fx
+        .st
+        .trace_hub
+        .trace_record_plasm_invocation(ls_key, false, 1, None, fx.program.len() as u64, None)
+        .await;
+    let plan_trace = PlanRunTraceHooks {
+        trace: PlasmTraceContext {
+            trace_id,
+            call_index: Some(call_index as i64),
+            mcp_session_id: None,
+            logical_session_id: Some(ls_key.into()),
+            logical_session_ref: Some(session_ref.into()),
+        },
+        sink: McpPlasmTraceSink {
+            hub: Arc::clone(&fx.st.trace_hub),
+            mcp_key: ls_key.to_string(),
+            call_index,
+        },
+    };
+
+    let accept_payload = build_run_explorer_accept_payload(&fx.dry, Some(fx.es.as_ref()));
+    let delivered = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        deliver_live_run_await(LiveRunAwaitContext::for_mcp_plasm_run(
+            Arc::clone(&fx.es),
+            Arc::clone(&fx.st),
+            fx.out.prompt_hash.clone(),
+            fx.out.session_id.clone(),
+            session_ref.to_string(),
+            "mcp-trace-hooks".to_string(),
+            fx.bundle,
+            accept_payload,
+            fx.compact.verdict,
+            Some(fx.pc),
+            PlasmTraceContext {
+                trace_id,
+                call_index: Some(call_index as i64),
+                mcp_session_id: None,
+                logical_session_id: Some(ls_key.into()),
+                logical_session_ref: Some(session_ref.into()),
+            },
+            fx.dry,
+            Some(plan_trace),
+        )),
+    )
+    .await
+    .expect("plan trace live run hung past 30s")
+    .expect("plan trace live run failed");
+
+    assert!(
+        !delivered.return_steps.is_empty() || delivered.run_markdown.is_some(),
+        "expected terminal rows or markdown"
+    );
+
+    let detail = fx
+        .st
+        .trace_hub
+        .get_detail(trace_id, Some(tenant))
+        .await
+        .expect("trace detail after live run");
+    assert!(
+        detail.records.iter().any(|r| {
+            r.get("kind").and_then(|v| v.as_str()) == Some("plasm_line")
+        }),
+        "expected plasm_line in trace records: {:?}",
+        detail.records
+    );
+    assert!(
+        detail.summary.totals.network_requests > 0,
+        "expected non-zero network_requests, got {:?}",
+        detail.summary.totals
     );
 }
 

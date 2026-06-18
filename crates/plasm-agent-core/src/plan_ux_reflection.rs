@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::execute_session::ExecuteSession;
 use crate::plan_dry_display::{
-    build_plan_dry_compact_view, plan_node_display_map, render_plan_dry_op, PlanDryVerdict,
+    build_plan_dry_compact_view, human_ux_headline_for_op, human_ux_summary_for_op, PlanDryVerdict,
 };
 use crate::plasm_comp_wire::plasm_comp_json_from_dry;
 use crate::plasm_plan::{
@@ -14,7 +14,7 @@ use crate::plasm_plan::{
 };
 use crate::plasm_plan_run::DryPlasmPlanEvaluation;
 
-pub const PLAN_UX_REFLECTION_SCHEMA_VERSION: u32 = 1;
+pub const PLAN_UX_REFLECTION_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -62,7 +62,7 @@ pub struct PlanUxStep {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub layout_hint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub display_id: Option<String>,
+    pub headline: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -239,7 +239,6 @@ fn build_steps(
     order: &[String],
     compact: &crate::plan_dry_display::PlanDryCompactView,
 ) -> Vec<PlanUxStep> {
-    let display_map = plan_node_display_map(plan, order);
     order
         .iter()
         .enumerate()
@@ -248,12 +247,14 @@ fn build_steps(
             let compact_step = compact.steps.get(idx);
             let (entry_id, entity, qualified_entity) = qualified_from_node(node);
             let operation = compact_step
-                .map(|s| render_plan_dry_op(&s.op))
+                .map(|s| human_ux_summary_for_op(&s.op))
                 .unwrap_or_else(|| node.id().as_str().to_string());
-            let display_id = display_map
-                .get(id.as_str())
-                .cloned()
-                .filter(|label| label != id);
+            let headline = if crate::plan_dry_display::is_synthetic_plan_node_id_public(id.as_str())
+            {
+                compact_step.map(|s| human_ux_headline_for_op(&s.op))
+            } else {
+                None
+            };
             Some(PlanUxStep {
                 id: id.clone(),
                 ordinal: (idx + 1) as u8,
@@ -268,7 +269,7 @@ fn build_steps(
                     EffectClass::Write | EffectClass::SideEffect
                 ),
                 layout_hint: column_hint(node),
-                display_id,
+                headline,
             })
         })
         .collect()
@@ -431,7 +432,7 @@ mod tests {
                 effect_class: "read".into(),
                 approval_gate: false,
                 layout_hint: None,
-                display_id: Some("r1".into()),
+                headline: Some("Read list".into()),
             }],
             edges: vec![],
             returns: vec!["n0".into()],
@@ -458,10 +459,21 @@ mod tests {
             kind: PlanNodeKind::Query,
             expr: "e1.identifier".into(),
         };
-        let rendered = render_plan_dry_op(&op);
-        assert_eq!(rendered, "query e1.identifier");
+        let rendered = crate::plan_dry_display::human_ux_summary_for_op(&op);
+        assert!(rendered.contains("Read"));
         assert!(!rendered.contains("PlanDryOp"));
         assert!(!rendered.contains("Surface"));
+        let filter = crate::plan_dry_display::PlanDryOp::Filter {
+            predicates: vec!["cost<100".into()],
+        };
+        assert_eq!(
+            crate::plan_dry_display::human_ux_headline_for_op(&filter),
+            "Filter rows"
+        );
+        assert_eq!(
+            crate::plan_dry_display::human_ux_summary_for_op(&filter),
+            "Where cost<100"
+        );
     }
 
     #[test]

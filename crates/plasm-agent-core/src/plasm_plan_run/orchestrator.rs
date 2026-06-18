@@ -19,7 +19,7 @@ pub async fn run_plasm_comp(
     session_id: &str,
     bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
     run: bool,
-    mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
+    mcp_tool_hooks: Option<PlanRunTraceHooks>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
     dry: Option<DryPlasmPlanEvaluation>,
 ) -> Result<PlasmPlanRunResult, String> {
@@ -61,7 +61,7 @@ pub(crate) async fn run_plasm_comp_scoped(
     session_id: &str,
     executable: &ExecutablePlasmComp,
     dry: DryPlasmPlanEvaluation,
-    mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
+    mcp_tool_hooks: Option<PlanRunTraceHooks>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
 ) -> Result<PlasmPlanRunResult, String> {
     crate::operation::with_plan_execute_scope(execution_scope, async {
@@ -126,7 +126,7 @@ pub(crate) async fn run_executable_plan_phased(
     session_id: &str,
     executable: &ExecutablePlasmComp,
     mut dry: DryPlasmPlanEvaluation,
-    mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
+    mcp_tool_hooks: Option<PlanRunTraceHooks>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
 ) -> Result<PlasmPlanRunResult, String> {
     let node_results = dry.take_node_results_for_live();
@@ -137,11 +137,9 @@ pub(crate) async fn run_executable_plan_phased(
     let mut approval_receipts: Vec<PlasmPlanApprovalReceipt> = Vec::new();
     let mut trace = None;
     let mut sink = None;
-    let mut meta_index = None;
     if let Some(hooks) = mcp_tool_hooks {
         trace = Some(hooks.trace);
         sink = Some(hooks.sink);
-        meta_index = Some(hooks.meta_index);
     }
     let step_total = executable.steps_topo.len() as u32;
     let prepared_budgets =
@@ -470,7 +468,7 @@ pub(crate) async fn run_executable_plan_phased(
             artifact: mat.artifact.clone(),
         });
     }
-    let out = publish_plasm_result_steps(es.cgs.as_ref().into(), meta_index, &steps);
+    let out = publish_plasm_result_steps(es.cgs.as_ref().into(), None, &steps);
     let comp = crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry);
     let mut code_plan_run_artifacts = Vec::new();
     let mut evidence_run_ids = Vec::new();

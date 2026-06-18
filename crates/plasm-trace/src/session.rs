@@ -226,9 +226,16 @@ impl SessionTraceData {
             TraceSegment::PlasmResponseCharsDelta { chars_added, .. } => {
                 self.plasm_response_chars = self.plasm_response_chars.saturating_add(*chars_added);
             }
-            TraceSegment::McpResourceRead { chars_added, .. } => {
+            TraceSegment::McpResourceRead {
+                chars_added,
+                duration_ms,
+                ..
+            } => {
                 self.mcp_resource_read_chars =
                     self.mcp_resource_read_chars.saturating_add(*chars_added);
+                self.aggregate_total_duration_ms = self
+                    .aggregate_total_duration_ms
+                    .saturating_add(*duration_ms);
             }
             TraceSegment::PlasmLine {
                 duration_ms,
@@ -363,5 +370,26 @@ mod tests {
         let totals = crate::totals_from_session_data(&d);
         assert_eq!(totals.expression_lines, 5);
         assert_eq!(totals.total_duration_ms, 50);
+    }
+
+    #[test]
+    fn mcp_resource_read_duration_rolls_into_aggregate_total() {
+        let mut d = SessionTraceData::new("s1");
+        let ev = TraceEvent::at(
+            1,
+            TraceSegment::McpResourceRead {
+                archive: None,
+                uri_display: "plasm://run/1".into(),
+                chars_added: 100,
+                is_binary: false,
+                duration_ms: 42,
+                result: "success".into(),
+                error_class: None,
+            },
+        );
+        let _ = d.push_event(ev);
+        let totals = crate::totals_from_session_data(&d);
+        assert_eq!(totals.mcp_resource_read_chars, 100);
+        assert_eq!(totals.total_duration_ms, 42);
     }
 }

@@ -152,11 +152,12 @@ pub struct LiveRunSpawn {
     pub auto_async: bool,
     pub accept_payload: RunExplorerAcceptPayload,
     pub dry: Option<DryPlasmPlanEvaluation>,
+    pub plan_trace: Option<crate::trace_hub::PlanRunTraceHooks>,
 }
 
 fn spawn_live_plan_run(spawn: LiveRunSpawn) -> Result<OperationHandle, LiveRunError> {
     let handle = spawn.wire.mint_handle(spawn.es.as_ref());
-    let accept = op_accept_context_from_executable(
+    let mut accept = op_accept_context_from_executable(
         spawn.plan_commit_ref.clone(),
         Some(spawn.dry_verdict),
         spawn.auto_async,
@@ -165,6 +166,9 @@ fn spawn_live_plan_run(spawn: LiveRunSpawn) -> Result<OperationHandle, LiveRunEr
         &spawn.bundle.artifact().comp,
     )
     .with_run_explorer(&spawn.accept_payload);
+    if let Some(plan_trace) = spawn.plan_trace.clone() {
+        accept = accept.with_plan_trace(plan_trace);
+    }
     spawn_async_plan_run(
         Arc::clone(&spawn.es),
         Arc::clone(&spawn.st),
@@ -193,6 +197,7 @@ pub struct LiveRunAwaitContext {
     pub trace: PlasmTraceContext,
     pub await_cfg: AwaitConfig,
     pub dry: Option<DryPlasmPlanEvaluation>,
+    pub plan_trace: Option<crate::trace_hub::PlanRunTraceHooks>,
 }
 
 impl LiveRunAwaitContext {
@@ -210,6 +215,7 @@ impl LiveRunAwaitContext {
         plan_commit_ref: Option<PlanCommitRef>,
         trace: PlasmTraceContext,
         dry: DryPlasmPlanEvaluation,
+        plan_trace: Option<crate::trace_hub::PlanRunTraceHooks>,
     ) -> Self {
         Self {
             es,
@@ -227,6 +233,7 @@ impl LiveRunAwaitContext {
             trace,
             await_cfg: AwaitConfig::default(),
             dry: Some(dry),
+            plan_trace,
         }
     }
 
@@ -255,6 +262,7 @@ impl LiveRunAwaitContext {
             trace: crate::http_execute::http_operation_trace(),
             await_cfg: AwaitConfig::default(),
             dry: Some(dry),
+            plan_trace: None,
         }
     }
 }
@@ -299,6 +307,7 @@ pub async fn deliver_http_live_run(
                 auto_async,
                 accept_payload: accept_payload.clone(),
                 dry: Some(req.dry),
+                plan_trace: None,
             })?;
             let (markdown, mut meta) = async_live_run_accept_parts(
                 &handle,
@@ -359,6 +368,7 @@ pub async fn deliver_live_run_await(
         auto_async: false,
         accept_payload: ctx.accept_payload,
         dry: ctx.dry,
+        plan_trace: ctx.plan_trace.clone(),
     })?;
 
     await_operation_terminal(TerminalAwaitContext {

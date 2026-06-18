@@ -34,6 +34,10 @@
 //! - [`TRACE_HUB_ENV_INGEST_QUEUE_CAP`]
 //! - [`TRACE_HUB_ENV_MAX_TIMELINE_EVENTS`]
 
+mod emit;
+mod resume;
+mod state;
+
 use std::collections::{HashMap, VecDeque};
 use std::env;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -54,7 +58,9 @@ use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::trace_sink_emit::{McpTraceAuditFields, TraceIngestClient};
+use crate::trace_sink_emit::TraceIngestClient;
+
+use state::{ActiveTrace, CompletedTrace, TraceHubInner, TraceIngestJob};
 
 /// Back-compat alias for the canonical [`TraceSegment`].
 pub type SessionTraceRecord = TraceSegment;
@@ -285,7 +291,7 @@ fn truncate_trace_reasoning(s: &str) -> String {
     t
 }
 
-fn now_ms() -> u64 {
+pub(super) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
@@ -350,79 +356,6 @@ fn tenant_visible_to_viewer(viewer_tenant_id: Option<&str>, trace_tenant: &str) 
     }
 }
 
-#[derive(Clone)]
-struct ActiveTrace {
-    trace_id: Uuid,
-    /// Key for [`TraceHubInner::active`]: logical session UUID string (preferred) or legacy transport id.
-    session_trace_key: String,
-    /// When set, canonical agent session id (same as `session_trace_key` for logical traces).
-    logical_session_id: Option<String>,
-    /// MCP transport `MCP-Session-Id` for correlation (optional).
-    mcp_transport_session_id: Option<String>,
-    meta: TraceSessionMeta,
-    data: McpSessionTrace,
-    started_ms: u64,
-    /// Last time this trace recorded MCP / Plasm activity (for optional idle finalization).
-    last_activity_ms: u64,
-    seq: u64,
-}
-
-#[derive(Clone)]
-struct CompletedTrace {
-    trace_id: Uuid,
-    session_trace_key: String,
-    logical_session_id: Option<String>,
-    mcp_transport_session_id: Option<String>,
-    meta: TraceSessionMeta,
-    data: McpSessionTrace,
-    started_ms: u64,
-    ended_ms: u64,
-    /// Last SSE `seq` emitted for this trace (including the `terminal` event).
-    last_seq_emitted: u64,
-}
-
-struct TraceHubInner {
-    active: HashMap<String, ActiveTrace>,
-    completed: VecDeque<CompletedTrace>,
-    tx_by_trace: HashMap<Uuid, broadcast::Sender<String>>,
-}
-
-struct TraceIngestJob {
-    fields: McpTraceAuditFields,
-    trace_event: TraceEvent,
-    precomputed_payload: Option<serde_json::Value>,
-    enqueued_at: Instant,
-}
-
-fn mcp_trace_audit_fields_from_active(a: &ActiveTrace) -> McpTraceAuditFields {
-    McpTraceAuditFields {
-        trace_id: a.trace_id,
-        mcp_session_id: a.mcp_transport_session_id.clone(),
-        logical_session_id: a.logical_session_id.clone(),
-        plasm_prompt_hash: None,
-        plasm_execute_session: None,
-        run_id: None,
-        tenant_id: (!a.meta.tenant_id.is_empty()).then(|| a.meta.tenant_id.clone()),
-        principal_sub: None,
-    }
-}
-
-impl TraceIngestJob {
-    /// MCP active-trace segment for [`trace_ingest_worker`] (distinct from HTTP execute audit fields).
-    fn new_mcp_active_segment(
-        a: &ActiveTrace,
-        trace_event: TraceEvent,
-        precomputed_payload: Option<serde_json::Value>,
-    ) -> Self {
-        Self {
-            fields: mcp_trace_audit_fields_from_active(a),
-            trace_event,
-            precomputed_payload,
-            enqueued_at: Instant::now(),
-        }
-    }
-}
-
 async fn trace_ingest_worker(
     mut rx: mpsc::Receiver<TraceIngestJob>,
     ingest: Arc<dyn TraceIngestClient>,
@@ -469,6 +402,7 @@ pub struct CodePlanTrace {
     pub code_chars: u64,
     pub comp: serde_json::Value,
     pub dag: serde_json::Value,
+    pub plan_ux_reflection: Option<serde_json::Value>,
     pub plasm_call_index: Option<u64>,
     pub run_ids: Vec<String>,
     pub run_artifacts: Vec<CodePlanRunArtifactRef>,
@@ -533,7 +467,7 @@ impl TraceHub {
         self.config
     }
 
-    fn broadcast_tx(
+    pub(crate) fn broadcast_tx(
         inner: &mut TraceHubInner,
         trace_id: Uuid,
         sse_broadcast_capacity: usize,
@@ -646,51 +580,31 @@ impl TraceHub {
             }
 
             let last_activity_ms = now_ms();
-            let resumed = if let Some(pos) = g.completed.iter().position(|c| {
-                c.trace_id == trace_id
-                    && c.session_trace_key == session_trace_key
-                    && c.meta.tenant_id == meta.tenant_id
-            }) {
-                g.completed.remove(pos)
-            } else {
-                None
-            };
             let cap = self.config.bounds.max_timeline_events;
-            let (data, started_ms, seq) = if let Some(c) = resumed {
-                debug_assert!(
-                    !g.completed.iter().any(|x| {
-                        x.trace_id == trace_id
-                            && x.session_trace_key == session_trace_key
-                            && x.meta.tenant_id == meta.tenant_id
-                    }),
-                    "duplicate completed trace for same (trace_id, session_trace_key, tenant)"
-                );
-                let mut data = c.data;
-                data.timeline_max_events = cap;
-                (data, c.started_ms, c.last_seq_emitted)
+            let criteria =
+                resume::CompletedResumeCriteria::strict(trace_id, meta.tenant_id.as_str());
+            let resumed = resume::find_completed_index(&g.completed, &session_trace_key, criteria)
+                .and_then(|pos| g.completed.remove(pos));
+            let mut active = if let Some(c) = resumed {
+                resume::active_from_completed(c, cap, last_activity_ms)
             } else {
-                (
-                    SessionTraceData::new_with_timeline_cap(session_trace_key.clone(), cap),
-                    last_activity_ms,
-                    0,
-                )
-            };
-            let _tx =
-                Self::broadcast_tx(&mut g, trace_id, self.config.bounds.sse_broadcast_capacity);
-            g.active.insert(
-                session_trace_key.clone(),
                 ActiveTrace {
                     trace_id,
-                    session_trace_key,
+                    session_trace_key: session_trace_key.clone(),
                     logical_session_id: None,
                     mcp_transport_session_id: Some(mcp_key.to_string()),
-                    meta,
-                    data,
-                    started_ms,
+                    meta: meta.clone(),
+                    data: SessionTraceData::new_with_timeline_cap(session_trace_key.clone(), cap),
+                    started_ms: last_activity_ms,
                     last_activity_ms,
-                    seq,
-                },
-            );
+                    seq: 0,
+                }
+            };
+            active.mcp_transport_session_id = Some(mcp_key.to_string());
+            active.meta = meta;
+            let _tx =
+                Self::broadcast_tx(&mut g, trace_id, self.config.bounds.sse_broadcast_capacity);
+            g.active.insert(session_trace_key.clone(), active);
             crate::trace_hub_metrics::record_trace_hub_queue_state(
                 g.completed.len(),
                 g.active.len(),
@@ -741,43 +655,32 @@ impl TraceHub {
             }
 
             let last_activity_ms = now_ms();
-            let resumed = if let Some(pos) = g.completed.iter().position(|c| {
-                c.trace_id == trace_id
-                    && c.session_trace_key == session_trace_key
-                    && c.meta.tenant_id == meta.tenant_id
-            }) {
-                g.completed.remove(pos)
-            } else {
-                None
-            };
             let cap = self.config.bounds.max_timeline_events;
-            let (data, started_ms, seq) = if let Some(c) = resumed {
-                let mut data = c.data;
-                data.timeline_max_events = cap;
-                (data, c.started_ms, c.last_seq_emitted)
+            let criteria =
+                resume::CompletedResumeCriteria::strict(trace_id, meta.tenant_id.as_str());
+            let resumed = resume::find_completed_index(&g.completed, &session_trace_key, criteria)
+                .and_then(|pos| g.completed.remove(pos));
+            let mut active = if let Some(c) = resumed {
+                resume::active_from_completed(c, cap, last_activity_ms)
             } else {
-                (
-                    SessionTraceData::new_with_timeline_cap(session_trace_key.clone(), cap),
-                    last_activity_ms,
-                    0,
-                )
-            };
-            let _tx =
-                Self::broadcast_tx(&mut g, trace_id, self.config.bounds.sse_broadcast_capacity);
-            g.active.insert(
-                session_trace_key.clone(),
                 ActiveTrace {
                     trace_id,
-                    session_trace_key,
+                    session_trace_key: session_trace_key.clone(),
                     logical_session_id: Some(logical_session_id.to_string()),
                     mcp_transport_session_id: mcp_transport_id.map(str::to_string),
-                    meta,
-                    data,
-                    started_ms,
+                    meta: meta.clone(),
+                    data: SessionTraceData::new_with_timeline_cap(session_trace_key.clone(), cap),
+                    started_ms: last_activity_ms,
                     last_activity_ms,
-                    seq,
-                },
-            );
+                    seq: 0,
+                }
+            };
+            active.logical_session_id = Some(logical_session_id.to_string());
+            active.mcp_transport_session_id = mcp_transport_id.map(str::to_string);
+            active.meta = meta;
+            let _tx =
+                Self::broadcast_tx(&mut g, trace_id, self.config.bounds.sse_broadcast_capacity);
+            g.active.insert(session_trace_key.clone(), active);
             crate::trace_hub_metrics::record_trace_hub_queue_state(
                 g.completed.len(),
                 g.active.len(),
@@ -785,39 +688,6 @@ impl TraceHub {
                 self.config.bounds.max_completed_traces as i64,
             );
             return trace_id;
-        }
-    }
-
-    async fn bump_and_emit(&self, mcp_key: &str, segment: TraceSegment) {
-        let (trace_id, seq, record, job_opt) = {
-            let mut g = self.inner.write().await;
-            let Some(a) = g.active.get_mut(mcp_key) else {
-                return;
-            };
-            let t = now_ms();
-            a.last_activity_ms = t;
-            a.seq = a.seq.saturating_add(1);
-            let seq = a.seq;
-            let ev = TraceEvent::at(t, segment);
-            let dropped = a.data.push_event(ev);
-            if dropped > 0 {
-                crate::metrics::record_trace_timeline_events_dropped(dropped);
-            }
-            let ev_ref = a
-                .data
-                .records
-                .back()
-                .expect("push_event always appends one record");
-            let record = serde_json::to_value(ev_ref).unwrap_or_else(|_| serde_json::json!({}));
-            let job_opt = self.ingest_tx.as_ref().map(|_| {
-                TraceIngestJob::new_mcp_active_segment(a, ev_ref.clone(), Some(record.clone()))
-            });
-            (a.trace_id, seq, record, job_opt)
-        };
-        self.emit_json(trace_id, &TraceSsePayload::Patch { seq, record })
-            .await;
-        if let (Some(tx), Some(job)) = (self.ingest_tx.as_ref(), job_opt) {
-            self.enqueue_durable_job_after_patch(tx, job, seq).await;
         }
     }
 
@@ -1127,6 +997,7 @@ impl TraceHub {
                 code_chars: trace.code_chars,
                 comp: Some(trace.comp),
                 dag: Some(trace.dag),
+                plan_ux_reflection: trace.plan_ux_reflection,
             },
         )
         .await;
@@ -1152,6 +1023,7 @@ impl TraceHub {
                 plasm_call_index: trace.plasm_call_index,
                 run_ids: trace.run_ids,
                 run_artifacts: trace.run_artifacts,
+                plan_ux_reflection: trace.plan_ux_reflection,
             },
         )
         .await;
@@ -1170,6 +1042,15 @@ impl TraceHub {
         plasm_invocation_chars_added: u64,
         reasoning: Option<String>,
     ) -> u64 {
+        if !self.ensure_active_for_emit(mcp_key).await {
+            tracing::warn!(
+                target: "plasm_agent::trace_hub",
+                mcp_key,
+                "plasm_invocation trace dropped: no active or resumable completed trace"
+            );
+            crate::trace_hub_metrics::record_trace_emit_dropped_no_active();
+            return 0;
+        }
         let reasoning_stored = reasoning
             .as_deref()
             .filter(|s| !s.is_empty())
@@ -1177,6 +1058,7 @@ impl TraceHub {
         let (call_index, trace_id, seq, record, job_opt) = {
             let mut g = self.inner.write().await;
             let Some(a) = g.active.get_mut(mcp_key) else {
+                crate::trace_hub_metrics::record_trace_emit_dropped_no_active();
                 return 0;
             };
             let next_call = a.data.plasm_call_count.saturating_add(1);
@@ -1358,6 +1240,13 @@ pub struct McpPlasmTraceSink {
     pub call_index: u64,
 }
 
+/// Cloneable trace hooks for async MCP plan runs (carried on [`crate::operation::OpAcceptContext`]).
+#[derive(Clone)]
+pub struct PlanRunTraceHooks {
+    pub trace: crate::trace_sink_emit::PlasmTraceContext,
+    pub sink: McpPlasmTraceSink,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TraceListStatus {
     All,
@@ -1523,5 +1412,56 @@ mod tests {
             .await
             .expect("completed detail");
         assert_eq!(detail.summary.status, "completed");
+    }
+
+    #[tokio::test]
+    async fn emit_after_finalize_resumes_completed_trace() {
+        let hub = TraceHub::default();
+        let meta = TraceSessionMeta {
+            tenant_id: "t1".into(),
+            project_slug: "main".into(),
+            mcp_config: None,
+        };
+        let ls = "550e8400-e29b-41d4-a716-446655440001";
+        let trace_id = hub
+            .ensure_logical_session(ls, None, meta.clone())
+            .await;
+        hub.finalize_mcp_session(ls).await;
+        hub.bump_and_emit(
+            ls,
+            TraceSegment::CodePlanExecute {
+                plan_handle: "p1".into(),
+                plan_id: "00000000-0000-0000-0000-000000000001".into(),
+                plan_name: "demo".into(),
+                plan_hash: "abc".into(),
+                plan_uri: String::new(),
+                canonical_plan_uri: String::new(),
+                plan_http_path: String::new(),
+                prompt_hash: "p".repeat(64),
+                session_id: "s1".into(),
+                node_count: 1,
+                code_chars: 10,
+                comp: None,
+                dag: None,
+                plasm_call_index: Some(1),
+                run_ids: vec![],
+                run_artifacts: vec![],
+                plan_ux_reflection: None,
+            },
+        )
+        .await;
+        let detail = hub
+            .get_detail(trace_id, Some("t1"))
+            .await
+            .expect("detail after resume emit");
+        let kinds: Vec<_> = detail
+            .records
+            .iter()
+            .filter_map(|r| r.get("kind").and_then(|v| v.as_str()))
+            .collect();
+        assert!(
+            kinds.iter().any(|k| *k == "code_plan_execute"),
+            "expected code_plan_execute segment, got {kinds:?}"
+        );
     }
 }

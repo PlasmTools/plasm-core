@@ -34,7 +34,13 @@ pub struct TraceTotals {
 
 pub fn totals_from_session_data(data: &SessionTraceData) -> TraceTotals {
     // Prefer cumulative aggregates (complete session) when present.
-    if data.aggregate_expression_lines > 0 || data.aggregate_plasm_expressions > 0 {
+    if data.aggregate_expression_lines > 0
+        || data.aggregate_plasm_expressions > 0
+        || data.aggregate_total_duration_ms > 0
+        || data.aggregate_network_requests > 0
+        || data.code_plans_evaluated > 0
+        || data.code_plans_executed > 0
+    {
         return TraceTotals {
             plasm_tool_calls: data.plasm_call_count,
             plasm_expressions: data.aggregate_plasm_expressions,
@@ -101,8 +107,13 @@ pub fn totals_from_session_data(data: &SessionTraceData) -> TraceTotals {
                     .http_trace_entry_count
                     .saturating_add(http_calls.len() as u64);
             }
-            TraceSegment::McpResourceRead { chars_added, .. } => {
+            TraceSegment::McpResourceRead {
+                chars_added,
+                duration_ms,
+                ..
+            } => {
                 t.mcp_resource_read_chars = t.mcp_resource_read_chars.saturating_add(*chars_added);
+                t.total_duration_ms = t.total_duration_ms.saturating_add(*duration_ms);
             }
             TraceSegment::CodePlanEvaluate {
                 node_count,
