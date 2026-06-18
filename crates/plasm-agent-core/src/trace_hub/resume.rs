@@ -5,6 +5,27 @@ use uuid::Uuid;
 use super::state::{ActiveTrace, CompletedTrace, TraceHubInner};
 use super::TraceHub;
 
+/// Bounds passed to [`ensure_active_locked`] (avoids repeating six hub config fields).
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ResumeLockedParams {
+    pub timeline_cap: usize,
+    pub sse_broadcast_capacity: usize,
+    pub last_activity_ms: u64,
+    pub max_completed_traces: i64,
+}
+
+impl TraceHub {
+    pub(super) fn resume_locked_params(&self, last_activity_ms: u64) -> ResumeLockedParams {
+        let b = self.config.bounds;
+        ResumeLockedParams {
+            timeline_cap: b.max_timeline_events,
+            sse_broadcast_capacity: b.sse_broadcast_capacity,
+            last_activity_ms,
+            max_completed_traces: b.max_completed_traces as i64,
+        }
+    }
+}
+
 /// Match policy when locating a row in [`TraceHubInner::completed`].
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CompletedResumeCriteria<'a> {
@@ -85,10 +106,7 @@ pub(crate) fn ensure_active_locked(
     g: &mut TraceHubInner,
     session_trace_key: &str,
     criteria: CompletedResumeCriteria<'_>,
-    timeline_cap: usize,
-    sse_broadcast_capacity: usize,
-    last_activity_ms: u64,
-    max_completed_traces: i64,
+    params: ResumeLockedParams,
 ) -> bool {
     if g.active.contains_key(session_trace_key) {
         return true;
@@ -98,14 +116,14 @@ pub(crate) fn ensure_active_locked(
     };
     let completed = g.completed.remove(pos).expect("position just found");
     let trace_id = completed.trace_id;
-    let active = active_from_completed(completed, timeline_cap, last_activity_ms);
-    let _tx = TraceHub::broadcast_tx(g, trace_id, sse_broadcast_capacity);
+    let active = active_from_completed(completed, params.timeline_cap, params.last_activity_ms);
+    let _tx = TraceHub::broadcast_tx(g, trace_id, params.sse_broadcast_capacity);
     g.active.insert(session_trace_key.to_string(), active);
     crate::trace_hub_metrics::record_trace_hub_queue_state(
         g.completed.len(),
         g.active.len(),
         false,
-        max_completed_traces,
+        params.max_completed_traces,
     );
     true
 }

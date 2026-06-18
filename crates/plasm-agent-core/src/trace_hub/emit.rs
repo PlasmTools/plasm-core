@@ -4,7 +4,7 @@ use plasm_trace::{TraceEvent, TraceSegment};
 
 use super::resume::{CompletedResumeCriteria, ensure_active_locked};
 use super::state::{trace_segment_kind, TraceIngestJob};
-use super::{now_ms, TraceHub};
+use super::{now_ms, TraceHub, TraceSsePayload};
 
 impl TraceHub {
     pub(super) async fn ensure_active_for_emit(&self, mcp_key: &str) -> bool {
@@ -13,26 +13,19 @@ impl TraceHub {
             &mut g,
             mcp_key,
             CompletedResumeCriteria::for_emit(),
-            self.config.bounds.max_timeline_events,
-            self.config.bounds.sse_broadcast_capacity,
-            now_ms(),
-            self.config.bounds.max_completed_traces as i64,
+            self.resume_locked_params(now_ms()),
         )
     }
 
     pub(super) async fn bump_and_emit(&self, mcp_key: &str, segment: TraceSegment) {
         let kind = trace_segment_kind(&segment);
-        let bounds = self.config.bounds;
         let (trace_id, seq, record, job_opt) = {
             let mut g = self.inner.write().await;
             if !ensure_active_locked(
                 &mut g,
                 mcp_key,
                 CompletedResumeCriteria::for_emit(),
-                bounds.max_timeline_events,
-                bounds.sse_broadcast_capacity,
-                now_ms(),
-                bounds.max_completed_traces as i64,
+                self.resume_locked_params(now_ms()),
             ) {
                 drop(g);
                 tracing::warn!(
@@ -74,7 +67,7 @@ impl TraceHub {
             });
             (a.trace_id, seq, record, job_opt)
         };
-        self.emit_json(trace_id, &super::TraceSsePayload::Patch { seq, record })
+        self.emit_json(trace_id, &TraceSsePayload::Patch { seq, record })
             .await;
         if let (Some(tx), Some(job)) = (self.ingest_tx.as_ref(), job_opt) {
             self.enqueue_durable_job_after_patch(tx, job, seq).await;

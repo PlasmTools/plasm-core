@@ -9,7 +9,7 @@ use crate::plan_commit_store::{dry_for_committed_plasm_run, CommittedPlan};
 use crate::plasm_comp_bundle::PlasmCompBundle;
 use crate::plasm_plan_run::PlasmPlanRunResult;
 use crate::run_artifacts::RunArtifactStore;
-use crate::run_delivery::{deliver_live_run_await, LiveRunAwaitContext, LiveRunError};
+use crate::run_delivery::{deliver_live_run_await, LiveRunAwaitContext, LiveRunError, LiveRunSpawnOpts};
 use crate::run_explorer_meta::build_run_explorer_accept_payload;
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::TraceHub;
@@ -90,21 +90,25 @@ pub async fn execute_committed_plasm_run(
             let dry = dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, &run.committed)?;
             let dag_json = crate::plasm_plan_run::plan_dag_trace_json(&dry);
             let accept_payload = build_run_explorer_accept_payload(&dry, Some(run.es.as_ref()));
-            let run_result = deliver_live_run_await(LiveRunAwaitContext::for_mcp_plasm_run(
-                Arc::clone(&run.es),
-                Arc::clone(&run.host),
-                run.wire.prompt_hash.clone(),
-                run.wire.session_id.clone(),
-                run.wire.session_ref.clone(),
-                run.wire.mcp_session_key.clone(),
-                run.bundle.clone(),
-                accept_payload,
-                run.committed.verdict,
-                run.plan_commit_ref.clone(),
-                run.mcp_trace.clone(),
-                dry,
-                run.plan_trace.clone(),
-            ))
+            let run_result = deliver_live_run_await(
+                LiveRunAwaitContext::for_mcp_plasm_run(
+                    Arc::clone(&run.es),
+                    Arc::clone(&run.host),
+                    run.wire.prompt_hash.clone(),
+                    run.wire.session_id.clone(),
+                    run.wire.session_ref.clone(),
+                    run.wire.mcp_session_key.clone(),
+                    run.bundle.clone(),
+                    accept_payload,
+                    run.committed.verdict,
+                    run.plan_commit_ref.clone(),
+                    run.mcp_trace.clone(),
+                    dry,
+                ),
+                LiveRunSpawnOpts {
+                    plan_trace: run.plan_trace.clone(),
+                },
+            )
             .await
             .map_err(|e| match e {
                 LiveRunError::Timeout(d) => format!("live run timed out after {d:?}"),

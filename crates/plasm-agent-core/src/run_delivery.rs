@@ -152,10 +152,18 @@ pub struct LiveRunSpawn {
     pub auto_async: bool,
     pub accept_payload: RunExplorerAcceptPayload,
     pub dry: Option<DryPlasmPlanEvaluation>,
+}
+
+/// Optional spawn-time hooks not carried on [`LiveRunAwaitContext`].
+#[derive(Clone, Default)]
+pub struct LiveRunSpawnOpts {
     pub plan_trace: Option<crate::trace_hub::PlanRunTraceHooks>,
 }
 
-fn spawn_live_plan_run(spawn: LiveRunSpawn) -> Result<OperationHandle, LiveRunError> {
+fn spawn_live_plan_run(
+    spawn: LiveRunSpawn,
+    opts: LiveRunSpawnOpts,
+) -> Result<OperationHandle, LiveRunError> {
     let handle = spawn.wire.mint_handle(spawn.es.as_ref());
     let mut accept = op_accept_context_from_executable(
         spawn.plan_commit_ref.clone(),
@@ -166,7 +174,7 @@ fn spawn_live_plan_run(spawn: LiveRunSpawn) -> Result<OperationHandle, LiveRunEr
         &spawn.bundle.artifact().comp,
     )
     .with_run_explorer(&spawn.accept_payload);
-    if let Some(plan_trace) = spawn.plan_trace.clone() {
+    if let Some(plan_trace) = opts.plan_trace {
         accept = accept.with_plan_trace(plan_trace);
     }
     spawn_async_plan_run(
@@ -197,7 +205,6 @@ pub struct LiveRunAwaitContext {
     pub trace: PlasmTraceContext,
     pub await_cfg: AwaitConfig,
     pub dry: Option<DryPlasmPlanEvaluation>,
-    pub plan_trace: Option<crate::trace_hub::PlanRunTraceHooks>,
 }
 
 impl LiveRunAwaitContext {
@@ -215,7 +222,6 @@ impl LiveRunAwaitContext {
         plan_commit_ref: Option<PlanCommitRef>,
         trace: PlasmTraceContext,
         dry: DryPlasmPlanEvaluation,
-        plan_trace: Option<crate::trace_hub::PlanRunTraceHooks>,
     ) -> Self {
         Self {
             es,
@@ -233,7 +239,6 @@ impl LiveRunAwaitContext {
             trace,
             await_cfg: AwaitConfig::default(),
             dry: Some(dry),
-            plan_trace,
         }
     }
 
@@ -262,7 +267,6 @@ impl LiveRunAwaitContext {
             trace: crate::http_execute::http_operation_trace(),
             await_cfg: AwaitConfig::default(),
             dry: Some(dry),
-            plan_trace: None,
         }
     }
 }
@@ -307,8 +311,9 @@ pub async fn deliver_http_live_run(
                 auto_async,
                 accept_payload: accept_payload.clone(),
                 dry: Some(req.dry),
-                plan_trace: None,
-            })?;
+            },
+            LiveRunSpawnOpts::default(),
+        )?;
             let (markdown, mut meta) = async_live_run_accept_parts(
                 &handle,
                 req.plan_commit_ref.as_ref(),
@@ -335,17 +340,20 @@ pub async fn deliver_http_live_run(
             })
         }
         RunDeliveryDecision::ServerAwait => {
-            let completed = deliver_live_run_await(LiveRunAwaitContext::for_http_wait_true(
-                req.es,
-                req.st,
-                req.prompt_hash,
-                req.session_id,
-                req.bundle,
-                accept_payload,
-                req.verdict_for_gate,
-                req.plan_commit_ref,
-                req.dry,
-            ))
+            let completed = deliver_live_run_await(
+                LiveRunAwaitContext::for_http_wait_true(
+                    req.es,
+                    req.st,
+                    req.prompt_hash,
+                    req.session_id,
+                    req.bundle,
+                    accept_payload,
+                    req.verdict_for_gate,
+                    req.plan_commit_ref,
+                    req.dry,
+                ),
+                LiveRunSpawnOpts::default(),
+            )
             .await?;
             Ok(HttpLiveRunOutcome::Completed(completed))
         }
@@ -355,21 +363,24 @@ pub async fn deliver_http_live_run(
 /// Spawn one async live plan run and block until terminal (`!` / `?` / `x`).
 pub async fn deliver_live_run_await(
     ctx: LiveRunAwaitContext,
+    spawn_opts: LiveRunSpawnOpts,
 ) -> Result<PlasmPlanRunResult, LiveRunError> {
-    let handle = spawn_live_plan_run(LiveRunSpawn {
-        es: Arc::clone(&ctx.es),
-        st: Arc::clone(&ctx.st),
-        prompt_hash: ctx.prompt_hash,
-        session_id: ctx.session_id,
-        bundle: ctx.bundle,
-        wire: ctx.wire,
-        plan_commit_ref: ctx.plan_commit_ref,
-        dry_verdict: ctx.dry_verdict,
-        auto_async: false,
-        accept_payload: ctx.accept_payload,
-        dry: ctx.dry,
-        plan_trace: ctx.plan_trace.clone(),
-    })?;
+    let handle = spawn_live_plan_run(
+        LiveRunSpawn {
+            es: Arc::clone(&ctx.es),
+            st: Arc::clone(&ctx.st),
+            prompt_hash: ctx.prompt_hash,
+            session_id: ctx.session_id,
+            bundle: ctx.bundle,
+            wire: ctx.wire,
+            plan_commit_ref: ctx.plan_commit_ref,
+            dry_verdict: ctx.dry_verdict,
+            auto_async: false,
+            accept_payload: ctx.accept_payload,
+            dry: ctx.dry,
+        },
+        spawn_opts,
+    )?;
 
     await_operation_terminal(TerminalAwaitContext {
         es: Arc::clone(&ctx.es),

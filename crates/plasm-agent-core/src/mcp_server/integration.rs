@@ -13,7 +13,9 @@ use crate::plan_dry_display::PlanDryCompactView;
 use crate::plasm_compile::compile_plasm_expression;
 use crate::plasm_dag::compile_plasm_surface_line_to_plan;
 use crate::plasm_plan_run::{evaluate_plasm_comp_dry, DryPlasmPlanEvaluation};
-use crate::run_delivery::{deliver_live_run_await, LiveRunAwaitContext, RunDeliveryPolicy};
+use crate::run_delivery::{
+    deliver_live_run_await, LiveRunAwaitContext, LiveRunSpawnOpts, RunDeliveryPolicy,
+};
 use crate::run_explorer_meta::build_run_explorer_accept_payload;
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::{McpPlasmTraceSink, PlanRunTraceHooks, TraceSessionMeta};
@@ -488,7 +490,8 @@ async fn mcp_query_limit_uses_async_await_path() {
     let handle_before = es.open_live_operation_handles().len();
     let delivered = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        deliver_live_run_await(LiveRunAwaitContext::for_mcp_plasm_run(
+        deliver_live_run_await(
+            LiveRunAwaitContext::for_mcp_plasm_run(
             Arc::clone(&es),
             Arc::clone(&st),
             out.prompt_hash.clone(),
@@ -507,8 +510,9 @@ async fn mcp_query_limit_uses_async_await_path() {
                 logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
             },
             dry,
-            None,
-        )),
+            ),
+            LiveRunSpawnOpts::default(),
+        ),
     )
     .await;
     let Ok(delivered_inner) = delivered else {
@@ -568,7 +572,8 @@ async fn matrix_query_limit_on_injected_live_plan_pool() {
     );
     let delivered = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        deliver_live_run_await(LiveRunAwaitContext::for_mcp_plasm_run(
+        deliver_live_run_await(
+            LiveRunAwaitContext::for_mcp_plasm_run(
             Arc::clone(&es),
             Arc::clone(&st),
             out.prompt_hash.clone(),
@@ -587,8 +592,9 @@ async fn matrix_query_limit_on_injected_live_plan_pool() {
                 logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
             },
             dry,
-            None,
-        )),
+            ),
+            LiveRunSpawnOpts::default(),
+        ),
     )
     .await;
     assert!(
@@ -644,7 +650,8 @@ async fn matrix_query_limit_on_release_stack_budget() {
     );
     let delivered = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        deliver_live_run_await(LiveRunAwaitContext::for_mcp_plasm_run(
+        deliver_live_run_await(
+            LiveRunAwaitContext::for_mcp_plasm_run(
             Arc::clone(&es),
             Arc::clone(&st),
             out.prompt_hash.clone(),
@@ -663,8 +670,9 @@ async fn matrix_query_limit_on_release_stack_budget() {
                 logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
             },
             dry,
-            None,
-        )),
+            ),
+            LiveRunSpawnOpts::default(),
+        ),
     )
     .await;
     assert!(
@@ -729,7 +737,8 @@ async fn mcp_pc_n_committed_await_uses_stored_review() {
     let accept_payload = build_run_explorer_accept_payload(&fx.dry, Some(&es2));
     let delivered = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        deliver_live_run_await(LiveRunAwaitContext::for_mcp_plasm_run(
+        deliver_live_run_await(
+            LiveRunAwaitContext::for_mcp_plasm_run(
             Arc::clone(&es2),
             Arc::clone(&fx.st),
             fx.out.prompt_hash.clone(),
@@ -748,8 +757,9 @@ async fn mcp_pc_n_committed_await_uses_stored_review() {
                 logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
             },
             fx.dry,
-            None,
-        )),
+            ),
+            LiveRunSpawnOpts::default(),
+        ),
     )
     .await;
     assert!(
@@ -806,7 +816,8 @@ async fn mcp_plan_trace_hooks_emit_plasm_line_and_network_totals() {
     let accept_payload = build_run_explorer_accept_payload(&fx.dry, Some(fx.es.as_ref()));
     let delivered = tokio::time::timeout(
         std::time::Duration::from_secs(30),
-        deliver_live_run_await(LiveRunAwaitContext::for_mcp_plasm_run(
+        deliver_live_run_await(
+            LiveRunAwaitContext::for_mcp_plasm_run(
             Arc::clone(&fx.es),
             Arc::clone(&fx.st),
             fx.out.prompt_hash.clone(),
@@ -825,8 +836,11 @@ async fn mcp_plan_trace_hooks_emit_plasm_line_and_network_totals() {
                 logical_session_ref: Some(session_ref.into()),
             },
             fx.dry,
-            Some(plan_trace),
-        )),
+            ),
+            LiveRunSpawnOpts {
+                plan_trace: Some(plan_trace),
+            },
+        ),
     )
     .await
     .expect("plan trace live run hung past 30s")
