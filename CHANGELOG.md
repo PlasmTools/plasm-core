@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.28] - 2026-06-18
+
+### Added
+
+- **Run Explorer HTTP progress:** `GET /v1/run/ui/progress/{logical_session_ref}` and `/stream` for Cursor in-chat live op strip (same-origin SSE/poll fallback).
+- **`OpUiTelemetry`:** canonical progress wire type shared by HTTP JSON, SSE events, and MCP notify stats; golden fixture under `fixtures/run_explorer/`.
+- **`resolve_running_operation`:** host-level logical-ref → running op resolution (live session or persisted descriptor).
+- **Shared SSE helpers:** `operation_progress_sse` for execute wire stream, Run Explorer JSON stream, and cross-replica poll.
+
+### Fixed
+
+- **MCP server-await:** poll until terminal plan result (no bare `` `l_*_oN` = `` gibberish in tool responses).
+- **Relation materialize:** normalize parent-get target rows in live compute/materialize paths.
+- **Run Explorer artifacts:** lossy preview coverage when step previews omit rows present in snapshots.
+- **Live SSE stats:** `OpProgressEvent` carries `OpNotifyStats`; JSON SSE no longer drops `calls`/`elapsed_ms` after the first tick.
+
+### Changed
+
+- **Run Explorer UI bundles:** regenerated embedded MCP app assets (`run_ui`, `run_shell`).
+- **MCP UI host:** `attachPlasmOpProgressBridge` extracted; token-only `plasm_run` tool-input classification.
+
 ## [0.3.27] - 2026-06-18
 
 ### Fixed
