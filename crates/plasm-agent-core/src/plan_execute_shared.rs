@@ -2,13 +2,13 @@
 
 use std::sync::{Arc, Mutex};
 
-use plasm_core::CGS;
 use plasm_core::PreflightToken;
+use plasm_core::CGS;
+use plasm_runtime::CancelSignal;
 use plasm_runtime::{
     AuthResolver, CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecuteSessionMaterial,
     GraphPageSpillHandle, RowsProgressFn, SecretProvider,
 };
-use plasm_runtime::CancelSignal;
 
 use crate::execute_session::ExecuteSession;
 use crate::graph_page_spill_host::graph_page_spill_for_execute;
@@ -32,11 +32,7 @@ pub struct PlanLineExecuteShared {
 }
 
 impl PlanLineExecuteShared {
-    pub async fn prepare(
-        es: &ExecuteSession,
-        st: &PlasmHostState,
-        session_id: &str,
-    ) -> Self {
+    pub async fn prepare(es: &ExecuteSession, st: &PlasmHostState, session_id: &str) -> Self {
         let bound_share = es.session_share_token.read().await.clone();
         let bound_proof_base_token = es.session_proof_base_token.read().await.clone();
         let (compile_operation_fn, compile_query_fn, plugin_generation_id) =

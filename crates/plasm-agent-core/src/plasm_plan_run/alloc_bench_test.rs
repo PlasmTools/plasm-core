@@ -88,25 +88,17 @@ async fn matrix_limit_3_session(
     let pipeline = st.engine.prompt_pipeline();
     let cross = st.sessions.symbol_map_cross_cache();
     let program = "items = e1.limit(3)\nitems";
-    let bundle = compile_plasm_expression(pipeline, Some(cross), &es, program, program)
-        .expect("compile");
+    let bundle =
+        compile_plasm_expression(pipeline, Some(cross), &es, program, program).expect("compile");
     let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
-    (
-        st,
-        es,
-        out.prompt_hash,
-        out.session_id,
-        bundle,
-        dry,
-    )
+    (st, es, out.prompt_hash, out.session_id, bundle, dry)
 }
 
 #[tokio::test]
 async fn matrix_limit_3_plan_setup_heap_budget() {
     let _profiler = dhat::Profiler::new_heap();
     let host = matrix_host();
-    let (st, es, prompt_hash, session_id, _bundle, mut dry) =
-        matrix_limit_3_session(&host).await;
+    let (st, es, prompt_hash, session_id, _bundle, mut dry) = matrix_limit_3_session(&host).await;
     let node_results = dry.take_node_results_for_live();
     assert!(!node_results.is_empty());
     assert!(dry.node_results.is_empty());
@@ -132,8 +124,7 @@ async fn matrix_limit_3_plan_setup_heap_budget() {
 async fn matrix_limit_3_live_heap_budget() {
     let _profiler = dhat::Profiler::new_heap();
     let host = matrix_host();
-    let (st, es, prompt_hash, session_id, bundle, dry) =
-        matrix_limit_3_session(&host).await;
+    let (st, es, prompt_hash, session_id, bundle, dry) = matrix_limit_3_session(&host).await;
     let result = run_plasm_comp(
         &es,
         st.as_ref(),

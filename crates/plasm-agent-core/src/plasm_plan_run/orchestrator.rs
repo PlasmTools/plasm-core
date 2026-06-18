@@ -130,12 +130,8 @@ pub(crate) async fn run_executable_plan_phased(
     execution_scope: Option<&crate::operation::ExecutionScope>,
 ) -> Result<PlasmPlanRunResult, String> {
     let node_results = dry.take_node_results_for_live();
-    let plan_shared = crate::plan_execute_shared::PlanLineExecuteShared::prepare(
-        es,
-        st,
-        session_id,
-    )
-    .await;
+    let plan_shared =
+        crate::plan_execute_shared::PlanLineExecuteShared::prepare(es, st, session_id).await;
     let mut materialized: BTreeMap<PlanNodeId, MaterializedNode> = BTreeMap::new();
     let approval_policy = PlasmPlanApprovalPolicy::automatic();
     let mut approval_receipts: Vec<PlasmPlanApprovalReceipt> = Vec::new();
@@ -366,12 +362,7 @@ pub(crate) async fn run_executable_plan_phased(
                     &materialized,
                     rows.len(),
                 )?;
-                let entity_override = compute
-                    .compute
-                    .schema
-                    .entity
-                    .as_deref()
-                    .map(str::to_string);
+                let entity_override = compute.compute.schema.entity.as_deref().map(str::to_string);
                 let node = ValidatedPlanNode::Compute(compute);
                 materialize_synthetic_node(
                     st,

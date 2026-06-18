@@ -761,7 +761,8 @@ impl ExecuteSession {
             return Err(format_too_many_operations_error(&running, cap));
         }
         let (progress_tx, _) = tokio::sync::broadcast::channel(64);
-        let (terminal_tx, _) = tokio::sync::watch::channel(crate::operation::OperationPhase::Running);
+        let (terminal_tx, _) =
+            tokio::sync::watch::channel(crate::operation::OperationPhase::Running);
         map.insert(
             handle.clone(),
             crate::operation::OperationState {
@@ -819,7 +820,11 @@ impl ExecuteSession {
             .and_then(|op| op.terminal_tx.as_ref().map(|tx| tx.subscribe()))
     }
 
-    fn notify_operation_terminal(&self, handle: &OperationHandle, phase: crate::operation::OperationPhase) {
+    fn notify_operation_terminal(
+        &self,
+        handle: &OperationHandle,
+        phase: crate::operation::OperationPhase,
+    ) {
         if let Some(op) = self
             .operation_by_handle
             .lock()

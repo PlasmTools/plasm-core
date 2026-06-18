@@ -412,7 +412,10 @@ pub(crate) fn op_accept_context_from_executable(
 }
 
 impl OpAcceptContext {
-    pub(crate) fn with_run_explorer(mut self, payload: &crate::run_explorer_meta::RunExplorerAcceptPayload) -> Self {
+    pub(crate) fn with_run_explorer(
+        mut self,
+        payload: &crate::run_explorer_meta::RunExplorerAcceptPayload,
+    ) -> Self {
         self.comp = Some(payload.comp.clone());
         self.plan_ux_reflection = Some(payload.plan_ux_reflection.clone());
         self.step_order = payload.step_order.clone();
@@ -679,24 +682,22 @@ pub fn spawn_async_plan_run(
     let pool = st.live_plan_pool();
     tokio::spawn(async move {
         let result = pool
-            .run(move || {
-                async move {
-                    plasm_runtime::with_live_run_telemetry(telemetry, async move {
-                        crate::plasm_plan_run::run_plasm_comp(
-                            es_run.as_ref(),
-                            st_run.as_ref(),
-                            prompt_hash.as_str(),
-                            session_id.as_str(),
-                            &bundle,
-                            true,
-                            None,
-                            Some(&scope_for_run),
-                            dry,
-                        )
-                        .await
-                    })
+            .run(move || async move {
+                plasm_runtime::with_live_run_telemetry(telemetry, async move {
+                    crate::plasm_plan_run::run_plasm_comp(
+                        es_run.as_ref(),
+                        st_run.as_ref(),
+                        prompt_hash.as_str(),
+                        session_id.as_str(),
+                        &bundle,
+                        true,
+                        None,
+                        Some(&scope_for_run),
+                        dry,
+                    )
                     .await
-                }
+                })
+                .await
             })
             .await;
         ticker_cancel.cancel();

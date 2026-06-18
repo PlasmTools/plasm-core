@@ -120,12 +120,10 @@ pub fn verify_bundle_matches_committed_plan(
     bundle: &PlasmCompBundle,
     committed: &CommittedPlan,
 ) -> Result<(), PlanCommitVerifyError> {
-    let live_id = compute_plan_commit_id_from_semantic(&plan_commit_canonical_comp(
-        &bundle.artifact().comp,
-    ));
-    let stored_id = compute_plan_commit_id_from_semantic(&plan_commit_canonical_comp(
-        &committed.artifact.comp,
-    ));
+    let live_id =
+        compute_plan_commit_id_from_semantic(&plan_commit_canonical_comp(&bundle.artifact().comp));
+    let stored_id =
+        compute_plan_commit_id_from_semantic(&plan_commit_canonical_comp(&committed.artifact.comp));
     if live_id != stored_id {
         return Err(PlanCommitVerifyError::Mismatch {
             commit_ref: committed.commit_ref.as_str().to_string(),

@@ -240,6 +240,51 @@ pub async fn run_seal_record_for_handle(
     })
 }
 
+/// Shared dry-run + logical-session context for HTTP code-plan trace emission.
+struct HttpCodePlanTraceContext {
+    ls_key: String,
+    session_ref: String,
+    comp_archive: serde_json::Value,
+    comp_json: serde_json::Value,
+    dag_json: serde_json::Value,
+}
+
+async fn http_code_plan_trace_context(
+    st: &PlasmHostState,
+    sess: &ExecuteSession,
+    prompt_hash: &str,
+    session_id: &str,
+    bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
+) -> Option<HttpCodePlanTraceContext> {
+    let Ok(dry) = crate::plasm_plan_run::evaluate_plasm_comp_dry(sess, bundle) else {
+        return None;
+    };
+    let Some(logical_uuid) = st
+        .logical_session_id_for_execute_binding(prompt_hash, session_id)
+        .await
+    else {
+        tracing::debug!(
+            target: "plasm_agent::http_execute",
+            %prompt_hash,
+            %session_id,
+            "skip code_plan trace emit: no MCP logical session binding"
+        );
+        return None;
+    };
+    Some(HttpCodePlanTraceContext {
+        ls_key: logical_uuid.to_string(),
+        session_ref: crate::mcp_logical_ref::format_logical_session_wire_ref(
+            crate::session_identity::LogicalSessionId(logical_uuid),
+        ),
+        comp_archive: crate::plasm_comp_wire::plasm_comp_wire_json(
+            dry.artifact(),
+            Some(&dry.graph_summary),
+        ),
+        comp_json: crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry),
+        dag_json: crate::plasm_plan_run::plan_dag_trace_json(&dry),
+    })
+}
+
 /// Emit `code_plan_evaluate` when HTTP execute dry-run shares an MCP logical session binding.
 pub(crate) async fn maybe_emit_http_code_plan_evaluate(
     st: &PlasmHostState,
@@ -250,35 +295,22 @@ pub(crate) async fn maybe_emit_http_code_plan_evaluate(
     bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
     plan_call_index: u64,
 ) {
-    let Ok(dry) = crate::plasm_plan_run::evaluate_plasm_comp_dry(sess, bundle) else {
-        return;
-    };
-    let Some(logical_uuid) = st
-        .logical_session_id_for_execute_binding(prompt_hash, session_id)
-        .await
+    let Some(ctx) = http_code_plan_trace_context(st, sess, prompt_hash, session_id, bundle).await
     else {
         return;
     };
-    let ls_key = logical_uuid.to_string();
-    let session_ref = crate::mcp_logical_ref::format_logical_session_wire_ref(
-        crate::session_identity::LogicalSessionId(logical_uuid),
-    );
-    let comp_archive =
-        crate::plasm_comp_wire::plasm_comp_wire_json(dry.artifact(), Some(&dry.graph_summary));
-    let comp_json = crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry);
-    let dag_json = crate::plasm_plan_run::plan_dag_trace_json(&dry);
     crate::mcp_server::trace_archive_and_emit_code_plan_evaluate(
         &st.trace_hub,
         &st.run_artifacts,
-        &ls_key,
+        &ctx.ls_key,
         sess,
         prompt_hash,
         session_id,
-        &session_ref,
-        &comp_archive,
+        &ctx.session_ref,
+        &ctx.comp_archive,
         program,
-        comp_json,
-        dag_json,
+        ctx.comp_json,
+        ctx.dag_json,
         plan_call_index,
     )
     .await;
@@ -296,33 +328,22 @@ pub(crate) async fn maybe_emit_http_code_plan_execute(
     plan_call_index: u64,
     out: &crate::plasm_plan_run::PlasmPlanRunResult,
 ) {
-    let Ok(dry) = crate::plasm_plan_run::evaluate_plasm_comp_dry(sess, bundle) else {
-        return;
-    };
-    let Some(logical_uuid) = st
-        .logical_session_id_for_execute_binding(prompt_hash, session_id)
-        .await
+    let Some(ctx) = http_code_plan_trace_context(st, sess, prompt_hash, session_id, bundle).await
     else {
         return;
     };
-    let ls_key = logical_uuid.to_string();
-    let session_ref = crate::mcp_logical_ref::format_logical_session_wire_ref(
-        crate::session_identity::LogicalSessionId(logical_uuid),
-    );
-    let comp_archive =
-        crate::plasm_comp_wire::plasm_comp_wire_json(dry.artifact(), Some(&dry.graph_summary));
     crate::mcp_server::trace_archive_and_emit_code_plan_execute(
         &st.trace_hub,
         &st.run_artifacts,
-        &ls_key,
+        &ctx.ls_key,
         sess,
         prompt_hash,
         session_id,
-        &session_ref,
-        &comp_archive,
+        &ctx.session_ref,
+        &ctx.comp_archive,
         program,
         out.comp.clone(),
-        crate::plasm_plan_run::plan_dag_trace_json(&dry),
+        ctx.dag_json,
         plan_call_index,
         out,
     )

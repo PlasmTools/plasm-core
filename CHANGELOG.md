@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.26] - 2026-06-18
+
+### Added
+
+- **Trace observability:** HTTP execute emits `code_plan_evaluate` / `code_plan_execute` when an MCP logical session binding exists; debug log when skipped.
+- **Trace sink list:** recompute totals from hot `trace_segments` when head `totals_json` is empty (list/detail parity with projection detail reads).
+- **Trace segments:** optional `dag` alongside `comp` on `code_plan_*` segment payloads.
+
+### Changed
+
+- **MCP trace archive:** unified evaluate/execute archive+emit dispatch; HTTP emit shares one dry-run context builder.
+- **Trace totals:** `trace_totals_from_head_or_records` prefers segment recompute only when head snapshot JSON is absent.
+
 ## [0.3.25] - 2026-06-18
 
 ### Removed

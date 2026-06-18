@@ -50,7 +50,9 @@ fn operation_is_terminal(phase: OperationPhase) -> bool {
     )
 }
 
-async fn fetch_terminal_result(ctx: &TerminalAwaitContext) -> Result<PlasmPlanRunResult, AwaitError> {
+async fn fetch_terminal_result(
+    ctx: &TerminalAwaitContext,
+) -> Result<PlasmPlanRunResult, AwaitError> {
     resolve_terminal_plan_run(
         ctx.es.as_ref(),
         Some(ctx.st.as_ref()),
@@ -61,7 +63,9 @@ async fn fetch_terminal_result(ctx: &TerminalAwaitContext) -> Result<PlasmPlanRu
     .map_err(|e| AwaitError::Operation(e.detail()))
 }
 
-async fn await_via_terminal_watch(ctx: &TerminalAwaitContext) -> Result<PlasmPlanRunResult, AwaitError> {
+async fn await_via_terminal_watch(
+    ctx: &TerminalAwaitContext,
+) -> Result<PlasmPlanRunResult, AwaitError> {
     let Some(mut rx) = ctx.es.subscribe_operation_terminal(&ctx.handle) else {
         return await_via_cross_pod_poll(ctx).await;
     };
@@ -73,7 +77,9 @@ async fn await_via_terminal_watch(ctx: &TerminalAwaitContext) -> Result<PlasmPla
     fetch_terminal_result(ctx).await
 }
 
-async fn await_via_cross_pod_poll(ctx: &TerminalAwaitContext) -> Result<PlasmPlanRunResult, AwaitError> {
+async fn await_via_cross_pod_poll(
+    ctx: &TerminalAwaitContext,
+) -> Result<PlasmPlanRunResult, AwaitError> {
     loop {
         if let Some(phase) = ctx.es.get_operation(&ctx.handle).map(|op| op.phase) {
             if operation_is_terminal(phase) {
@@ -90,7 +96,9 @@ async fn await_via_cross_pod_poll(ctx: &TerminalAwaitContext) -> Result<PlasmPla
     }
 }
 
-pub async fn await_operation_terminal(ctx: TerminalAwaitContext) -> Result<PlasmPlanRunResult, AwaitError> {
+pub async fn await_operation_terminal(
+    ctx: TerminalAwaitContext,
+) -> Result<PlasmPlanRunResult, AwaitError> {
     tokio::time::timeout(ctx.cfg.max_wait, async {
         if ctx.es.subscribe_operation_terminal(&ctx.handle).is_some() {
             await_via_terminal_watch(&ctx).await

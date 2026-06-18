@@ -8,7 +8,9 @@ use plasm_core::PlanCommitRef;
 use plasm_runtime::CancelSignal;
 
 use crate::execute_session::ExecuteSession;
-use crate::mcp_run_await::{await_operation_terminal, AwaitConfig, AwaitError, TerminalAwaitContext};
+use crate::mcp_run_await::{
+    await_operation_terminal, AwaitConfig, AwaitError, TerminalAwaitContext,
+};
 use crate::operation::{
     async_live_run_accept_parts, op_accept_context_from_executable, spawn_async_plan_run,
 };
@@ -78,7 +80,9 @@ pub fn should_spawn_async_for_policy(
 ) -> bool {
     match policy {
         RunDeliveryPolicy::McpAwaitTerminal => wait_live,
-        RunDeliveryPolicy::HttpExecute => http_live_run_returns_accept_immediately(wait_live, review),
+        RunDeliveryPolicy::HttpExecute => {
+            http_live_run_returns_accept_immediately(wait_live, review)
+        }
     }
 }
 
@@ -281,11 +285,7 @@ pub async fn deliver_http_live_run(
     req: HttpLiveRunRequest,
 ) -> Result<HttpLiveRunOutcome, LiveRunError> {
     let accept_payload = build_run_explorer_accept_payload(&req.dry, Some(req.es.as_ref()));
-    match decide_delivery(
-        RunDeliveryPolicy::HttpExecute,
-        req.wait_live,
-        &req.review,
-    ) {
+    match decide_delivery(RunDeliveryPolicy::HttpExecute, req.wait_live, &req.review) {
         RunDeliveryDecision::ReturnAccept { auto_async } => {
             let handle = spawn_live_plan_run(LiveRunSpawn {
                 es: Arc::clone(&req.es),
@@ -306,7 +306,11 @@ pub async fn deliver_http_live_run(
                 req.verdict_for_gate,
                 auto_async,
             );
-            crate::run_explorer_meta::merge_accept_payload_into_meta(&mut meta, "oN", &accept_payload);
+            crate::run_explorer_meta::merge_accept_payload_into_meta(
+                &mut meta,
+                "oN",
+                &accept_payload,
+            );
             Ok(HttpLiveRunOutcome::Accept {
                 handle,
                 result: PlasmPlanRunResult {

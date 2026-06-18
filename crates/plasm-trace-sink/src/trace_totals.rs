@@ -1,6 +1,8 @@
 //! Trace head row → [`TraceTotals`] for list views (shared by Iceberg decoders and SQL projection).
 
-use plasm_trace::{session_data_from_ordered_events, totals_from_session_data, TraceEvent, SessionTraceData};
+use plasm_trace::{
+    session_data_from_ordered_events, totals_from_session_data, SessionTraceData, TraceEvent,
+};
 
 use crate::model::{TraceHeadRow, TraceTotals};
 
@@ -38,30 +40,18 @@ pub(crate) fn trace_totals_from_segment_records(
     totals_from_session_data(&session).into()
 }
 
-/// Prefer head snapshot; when `totals_json` is empty but segment rows exist, recompute from records.
+/// Prefer head snapshot when `totals_json` is populated; otherwise recompute from segment rows.
 pub(crate) fn trace_totals_from_head_or_records(
     h: &TraceHeadRow,
     records: &[serde_json::Value],
 ) -> TraceTotals {
-    let from_head = trace_totals_from_head_row(h);
     if h.totals_json.trim().is_empty() && !records.is_empty() {
-        let from_records = trace_totals_from_segment_records(
+        return trace_totals_from_segment_records(
             records,
             h.mcp_session_id.as_deref().unwrap_or(""),
         );
-        if totals_richer_than(&from_records, &from_head) {
-            return from_records;
-        }
     }
-    from_head
-}
-
-fn totals_richer_than(a: &TraceTotals, b: &TraceTotals) -> bool {
-    a.network_requests > b.network_requests
-        || a.total_duration_ms > b.total_duration_ms
-        || a.code_plans_evaluated > b.code_plans_evaluated
-        || a.code_plans_executed > b.code_plans_executed
-        || a.teaching_prompt_chars > b.teaching_prompt_chars
+    trace_totals_from_head_row(h)
 }
 
 #[cfg(test)]
@@ -92,6 +82,55 @@ mod tests {
         let totals = trace_totals_from_head_or_records(&head, &records);
         assert_eq!(totals.network_requests, 3);
         assert_eq!(totals.total_duration_ms, 12);
+    }
+
+    #[test]
+    fn head_snapshot_wins_when_totals_json_present() {
+        let mut head = test_head();
+        head.totals_json = serde_json::to_string(&plasm_trace::SessionTraceCountersSnapshot {
+            aggregate_network_requests: 99,
+            aggregate_expression_lines: 1,
+            ..Default::default()
+        })
+        .unwrap();
+        let records = vec![serde_json::json!({
+            "emitted_at_ms": 100,
+            "kind": "plasm_line",
+            "call_index": 0,
+            "line_index": 0,
+            "source_expression": "e1",
+            "duration_ms": 12,
+            "stats": { "network_requests": 3, "duration_ms": 12 },
+            "source": "live",
+            "request_fingerprints": [],
+            "http_calls": []
+        })];
+        let totals = trace_totals_from_head_or_records(&head, &records);
+        assert_eq!(totals.network_requests, 99);
+    }
+
+    #[test]
+    fn list_and_detail_use_same_totals_helper() {
+        let head = test_head();
+        let records = vec![serde_json::json!({
+            "emitted_at_ms": 100,
+            "kind": "plasm_line",
+            "call_index": 0,
+            "line_index": 0,
+            "source_expression": "e1",
+            "duration_ms": 5,
+            "stats": { "network_requests": 2, "duration_ms": 5 },
+            "source": "live",
+            "request_fingerprints": [],
+            "http_calls": []
+        })];
+        let list_totals = trace_totals_from_head_or_records(&head, &records);
+        let detail_totals = trace_totals_from_head_or_records(&head, &records);
+        assert_eq!(list_totals.network_requests, detail_totals.network_requests);
+        assert_eq!(
+            list_totals.total_duration_ms,
+            detail_totals.total_duration_ms
+        );
     }
 
     fn test_head() -> TraceHeadRow {

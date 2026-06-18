@@ -551,15 +551,16 @@ async fn matrix_query_limit_on_injected_live_plan_pool() {
         )),
     )
     .await;
-    assert!(delivered.is_ok(), "cheap matrix live must finish on host live_plan_pool");
+    assert!(
+        delivered.is_ok(),
+        "cheap matrix live must finish on host live_plan_pool"
+    );
 }
 
 #[cfg(not(debug_assertions))]
 #[tokio::test]
 async fn matrix_query_limit_on_release_stack_budget() {
-    use crate::live_plan_run_worker::{
-        LivePlanRunPool, DEFAULT_LIVE_PLAN_RUN_STACK_BYTES_RELEASE,
-    };
+    use crate::live_plan_run_worker::{LivePlanRunPool, DEFAULT_LIVE_PLAN_RUN_STACK_BYTES_RELEASE};
 
     let mut st = matrix_federated_host();
     st.oss.live_plan_pool = Arc::new(LivePlanRunPool::with_stack_bytes(
@@ -625,7 +626,10 @@ async fn matrix_query_limit_on_release_stack_budget() {
         )),
     )
     .await;
-    assert!(delivered.is_ok(), "cheap matrix live must finish on 4 MiB worker stack");
+    assert!(
+        delivered.is_ok(),
+        "cheap matrix live must finish on 4 MiB worker stack"
+    );
 }
 
 #[tokio::test]
