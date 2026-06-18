@@ -37,6 +37,7 @@ pub fn apply_code_plan_evaluate_counters(
 }
 
 /// Returns whether `code_plans_executed` was incremented (completed phase only).
+#[allow(clippy::too_many_arguments)]
 pub fn apply_code_plan_execute_counters(
     code_plans_executed: &mut u64,
     code_plan_code_chars: &mut u64,
@@ -54,8 +55,7 @@ pub fn apply_code_plan_execute_counters(
     *code_plans_executed = code_plans_executed.saturating_add(1);
     *code_plan_code_chars = code_plan_code_chars.saturating_add(code_chars);
     *code_plan_nodes = code_plan_nodes.saturating_add(node_count as u64);
-    *code_plan_derived_runs = code_plan_derived_runs.saturating_add(
-        run_artifacts_len.max(run_ids_len) as u64,
-    );
+    *code_plan_derived_runs =
+        code_plan_derived_runs.saturating_add(run_artifacts_len.max(run_ids_len) as u64);
     true
 }
