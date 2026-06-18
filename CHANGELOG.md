@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.29] - 2026-06-18
+
+### Fixed
+
+- **plasm-web Docker build:** copy `apps/mcp-ui-shared` into the `web-build` stage so `web/assets` `npm ci` resolves the `@plasm/mcp-ui-shared` file dependency.
+
 ## [0.3.28] - 2026-06-18
 
 ### Added
