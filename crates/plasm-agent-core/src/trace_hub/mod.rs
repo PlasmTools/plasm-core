@@ -296,7 +296,7 @@ pub struct PlasmContextTrace {
 }
 
 #[derive(Debug, Clone)]
-pub struct CodePlanTrace {
+pub struct CodePlanEvaluateTrace {
     pub plan_handle: String,
     pub plan_id: String,
     pub plan_name: String,
@@ -308,12 +308,31 @@ pub struct CodePlanTrace {
     pub session_id: String,
     pub node_count: usize,
     pub code_chars: u64,
-    pub comp: serde_json::Value,
-    pub dag: serde_json::Value,
+    pub comp: Option<serde_json::Value>,
+    pub dag: Option<serde_json::Value>,
+    pub plan_ux_reflection: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CodePlanExecuteTrace {
+    pub plan_handle: String,
+    pub plan_id: String,
+    pub plan_name: String,
+    pub plan_hash: String,
+    pub plan_uri: String,
+    pub canonical_plan_uri: String,
+    pub plan_http_path: String,
+    pub prompt_hash: String,
+    pub session_id: String,
+    pub node_count: usize,
+    pub code_chars: u64,
+    pub comp: Option<serde_json::Value>,
+    pub dag: Option<serde_json::Value>,
     pub plan_ux_reflection: Option<serde_json::Value>,
     pub plasm_call_index: Option<u64>,
     pub run_ids: Vec<String>,
     pub run_artifacts: Vec<CodePlanRunArtifactRef>,
+    pub execution_phase: String,
 }
 
 pub struct TraceHub {

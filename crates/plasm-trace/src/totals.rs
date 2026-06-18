@@ -2,7 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{SessionTraceData, TraceSegment};
+use crate::{
+    segment_counters::{
+        apply_code_plan_evaluate_counters, apply_code_plan_execute_counters,
+        apply_mcp_resource_read_counters,
+    },
+    SessionTraceData, TraceSegment,
+};
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TraceTotals {
@@ -15,6 +21,8 @@ pub struct TraceTotals {
     pub plasm_response_chars: u64,
     #[serde(default)]
     pub mcp_resource_read_chars: u64,
+    #[serde(default)]
+    pub mcp_resource_read_ui_chars: u64,
     pub total_duration_ms: u64,
     pub network_requests: u64,
     pub cache_hits: u64,
@@ -50,6 +58,7 @@ pub fn totals_from_session_data(data: &SessionTraceData) -> TraceTotals {
             plasm_invocation_chars: data.plasm_invocation_chars,
             plasm_response_chars: data.plasm_response_chars,
             mcp_resource_read_chars: data.mcp_resource_read_chars,
+            mcp_resource_read_ui_chars: data.mcp_resource_read_ui_chars,
             total_duration_ms: data.aggregate_total_duration_ms,
             network_requests: data.aggregate_network_requests,
             cache_hits: data.aggregate_cache_hits,
@@ -70,6 +79,7 @@ pub fn totals_from_session_data(data: &SessionTraceData) -> TraceTotals {
         plasm_invocation_chars: data.plasm_invocation_chars,
         plasm_response_chars: data.plasm_response_chars,
         mcp_resource_read_chars: data.mcp_resource_read_chars,
+        mcp_resource_read_ui_chars: data.mcp_resource_read_ui_chars,
         code_plans_evaluated: data.code_plans_evaluated,
         code_plans_executed: data.code_plans_executed,
         code_plan_code_chars: data.code_plan_code_chars,
@@ -110,33 +120,50 @@ pub fn totals_from_session_data(data: &SessionTraceData) -> TraceTotals {
             TraceSegment::McpResourceRead {
                 chars_added,
                 duration_ms,
+                read_source,
                 ..
             } => {
-                t.mcp_resource_read_chars = t.mcp_resource_read_chars.saturating_add(*chars_added);
-                t.total_duration_ms = t.total_duration_ms.saturating_add(*duration_ms);
+                apply_mcp_resource_read_counters(
+                    &mut t.mcp_resource_read_chars,
+                    &mut t.mcp_resource_read_ui_chars,
+                    &mut t.total_duration_ms,
+                    *chars_added,
+                    *duration_ms,
+                    read_source.as_deref(),
+                );
             }
             TraceSegment::CodePlanEvaluate {
                 node_count,
                 code_chars,
                 ..
             } => {
-                t.code_plans_evaluated = t.code_plans_evaluated.saturating_add(1);
-                t.code_plan_code_chars = t.code_plan_code_chars.saturating_add(*code_chars);
-                t.code_plan_nodes = t.code_plan_nodes.saturating_add(*node_count as u64);
+                apply_code_plan_evaluate_counters(
+                    &mut t.code_plans_evaluated,
+                    &mut t.code_plan_code_chars,
+                    &mut t.code_plan_nodes,
+                    *node_count,
+                    *code_chars,
+                );
             }
             TraceSegment::CodePlanExecute {
+                execution_phase,
                 node_count,
                 code_chars,
                 run_ids,
                 run_artifacts,
                 ..
             } => {
-                t.code_plans_executed = t.code_plans_executed.saturating_add(1);
-                t.code_plan_code_chars = t.code_plan_code_chars.saturating_add(*code_chars);
-                t.code_plan_nodes = t.code_plan_nodes.saturating_add(*node_count as u64);
-                t.code_plan_derived_runs = t
-                    .code_plan_derived_runs
-                    .saturating_add(run_artifacts.len().max(run_ids.len()) as u64);
+                apply_code_plan_execute_counters(
+                    &mut t.code_plans_executed,
+                    &mut t.code_plan_code_chars,
+                    &mut t.code_plan_nodes,
+                    &mut t.code_plan_derived_runs,
+                    execution_phase,
+                    *node_count,
+                    *code_chars,
+                    run_ids.len(),
+                    run_artifacts.len(),
+                );
             }
             _ => {}
         }
@@ -157,6 +184,7 @@ pub fn merge_trace_totals(a: &TraceTotals, b: &TraceTotals) -> TraceTotals {
         plasm_invocation_chars: a.plasm_invocation_chars.max(b.plasm_invocation_chars),
         plasm_response_chars: a.plasm_response_chars.max(b.plasm_response_chars),
         mcp_resource_read_chars: a.mcp_resource_read_chars.max(b.mcp_resource_read_chars),
+        mcp_resource_read_ui_chars: a.mcp_resource_read_ui_chars.max(b.mcp_resource_read_ui_chars),
         total_duration_ms: a.total_duration_ms.max(b.total_duration_ms),
         network_requests: a.network_requests.max(b.network_requests),
         cache_hits: a.cache_hits.max(b.cache_hits),
@@ -181,6 +209,7 @@ impl From<TraceTotals> for plasm_observability_contracts::TraceTotals {
             plasm_invocation_chars: t.plasm_invocation_chars,
             plasm_response_chars: t.plasm_response_chars,
             mcp_resource_read_chars: t.mcp_resource_read_chars,
+            mcp_resource_read_ui_chars: t.mcp_resource_read_ui_chars,
             total_duration_ms: t.total_duration_ms,
             network_requests: t.network_requests,
             cache_hits: t.cache_hits,

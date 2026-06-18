@@ -161,7 +161,7 @@ async fn emit_after_finalize_resumes_completed_trace() {
     hub.finalize_mcp_session(ls).await;
     hub.trace_record_code_plan_execute(
         ls,
-        CodePlanTrace {
+        CodePlanExecuteTrace {
             plan_handle: "p1".into(),
             plan_id: "00000000-0000-0000-0000-000000000001".into(),
             plan_name: "demo".into(),
@@ -173,12 +173,13 @@ async fn emit_after_finalize_resumes_completed_trace() {
             session_id: "s1".into(),
             node_count: 1,
             code_chars: 10,
-            comp: serde_json::json!({}),
-            dag: serde_json::json!({}),
+            comp: Some(serde_json::json!({})),
+            dag: Some(serde_json::json!({})),
             plan_ux_reflection: None,
             plasm_call_index: Some(1),
             run_ids: vec![],
             run_artifacts: vec![],
+            execution_phase: plasm_trace::CODE_PLAN_EXECUTION_COMPLETED.into(),
         },
     )
     .await;
@@ -195,4 +196,45 @@ async fn emit_after_finalize_resumes_completed_trace() {
         kinds.contains(&"code_plan_execute"),
         "expected code_plan_execute segment, got {kinds:?}"
     );
+}
+
+#[tokio::test]
+async fn code_plan_execute_failed_does_not_increment_executed_kpi() {
+    let hub = TraceHub::default();
+    let meta = TraceSessionMeta {
+        tenant_id: "t1".into(),
+        project_slug: "main".into(),
+        mcp_config: None,
+    };
+    let ls = "550e8400-e29b-41d4-a716-446655440002";
+    let trace_id = hub.ensure_logical_session(ls, None, meta).await;
+    hub.trace_record_code_plan_execute(
+        ls,
+        CodePlanExecuteTrace {
+            plan_handle: "p1".into(),
+            plan_id: "00000000-0000-0000-0000-000000000002".into(),
+            plan_name: "demo".into(),
+            plan_hash: "abc".into(),
+            plan_uri: String::new(),
+            canonical_plan_uri: String::new(),
+            plan_http_path: String::new(),
+            prompt_hash: "p".repeat(64),
+            session_id: "s1".into(),
+            node_count: 2,
+            code_chars: 10,
+            comp: None,
+            dag: None,
+            plan_ux_reflection: None,
+            plasm_call_index: Some(1),
+            run_ids: vec![],
+            run_artifacts: vec![],
+            execution_phase: plasm_trace::CODE_PLAN_EXECUTION_FAILED.into(),
+        },
+    )
+    .await;
+    let detail = hub
+        .get_detail(trace_id, Some("t1"))
+        .await
+        .expect("detail");
+    assert_eq!(detail.summary.totals.code_plans_executed, 0);
 }

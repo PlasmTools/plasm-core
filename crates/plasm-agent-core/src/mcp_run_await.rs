@@ -358,7 +358,9 @@ mod tests {
         .await
         .expect("terminal after poll");
         assert!(
-            out.run_markdown.as_deref().is_some_and(|m| m.contains("(1 rows)")),
+            out.run_markdown
+                .as_deref()
+                .is_some_and(|m| m.contains("(1 rows)")),
             "expected row markdown, got {:?}",
             out.run_markdown
         );

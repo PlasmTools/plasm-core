@@ -71,6 +71,8 @@ pub struct TraceTotals {
     pub plasm_response_chars: u64,
     #[serde(default)]
     pub mcp_resource_read_chars: u64,
+    #[serde(default)]
+    pub mcp_resource_read_ui_chars: u64,
     pub total_duration_ms: u64,
     pub network_requests: u64,
     pub cache_hits: u64,

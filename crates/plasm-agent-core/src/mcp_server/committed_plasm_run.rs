@@ -17,7 +17,7 @@ use crate::server_state::PlasmHostState;
 use crate::trace_hub::TraceHub;
 use crate::trace_sink_emit::PlasmTraceContext;
 
-use super::trace::trace_archive_and_emit_code_plan_execute;
+use super::trace::CodePlanTraceInput;
 
 /// MCP execute-row wire + logical session identity.
 #[derive(Clone)]
@@ -55,6 +55,23 @@ pub struct ExecuteCommittedMcpRun {
     pub wait_live: bool,
 }
 
+impl ExecuteCommittedMcpRun {
+    fn code_plan_trace_input(&self) -> CodePlanTraceInput<'_> {
+        CodePlanTraceInput {
+            hub: self.artifacts.trace_hub.as_ref(),
+            store: self.artifacts.run_artifacts.as_ref(),
+            mcp_key: self.wire.ls_key.as_str(),
+            es: self.es.as_ref(),
+            prompt_hash: self.wire.prompt_hash.as_str(),
+            session_id: self.wire.session_id.as_str(),
+            session_ref: self.wire.session_ref.as_str(),
+            comp: &self.artifacts.comp_archive,
+            program: self.artifacts.program_for_trace.as_str(),
+            plan_call_index: self.artifacts.plan_call_index,
+        }
+    }
+}
+
 pub async fn execute_committed_plasm_run(
     run: ExecuteCommittedMcpRun,
 ) -> Result<PlasmPlanRunResult, String> {
@@ -87,68 +104,67 @@ pub async fn execute_committed_plasm_run(
         return Err("plasm_run requires live execute".to_string());
     }
 
-    let await_out =
-        crate::mcp_plasm_run_phases::mcp_plasm_run_phase("async_live_await", || async {
-            let dry = dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, &run.committed)?;
-            let dag_json = crate::plasm_plan_run::plan_dag_trace_json(&dry);
-            let accept_payload = build_run_explorer_accept_payload(&dry, Some(run.es.as_ref()));
-            let run_result = deliver_live_run_await(
-                LiveRunAwaitContext::for_mcp_plasm_run(
-                    Arc::clone(&run.es),
-                    Arc::clone(&run.host),
-                    run.wire.prompt_hash.clone(),
-                    run.wire.session_id.clone(),
-                    run.wire.session_ref.clone(),
-                    run.wire.mcp_session_key.clone(),
-                    run.bundle.clone(),
-                    accept_payload,
-                    run.committed.verdict,
-                    run.plan_commit_ref.clone(),
-                    run.mcp_trace.clone(),
-                    dry,
-                ),
-                LiveRunSpawnOpts {
-                    plan_trace: run.plan_trace.clone(),
-                },
-            )
-            .await
-            .map_err(|e| match e {
-                LiveRunError::Timeout(d) => format!("live run timed out after {d:?}"),
-                LiveRunError::Failed(msg) => msg,
-            })?;
-            Ok::<(PlasmPlanRunResult, serde_json::Value), String>((run_result, dag_json))
-        })
-        .await?;
+    let dry = dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, &run.committed)?;
+    let dag_json = crate::plasm_plan_run::plan_dag_trace_json(&dry);
+    let plan_ux_reflection = Some(crate::plan_ux_reflection::plan_ux_reflection_value(
+        &dry,
+        &crate::plan_ux_reflection::PlanUxBuildContext {
+            session: Some(run.es.as_ref()),
+            param_bindings: &[],
+        },
+    ));
+    let trace_input = run.code_plan_trace_input();
+    let execute_plan_id = trace_input.emit_execute_started().await;
 
-    let (result, dag_json) = await_out;
+    let await_out = match crate::mcp_plasm_run_phases::mcp_plasm_run_phase("async_live_await", || async {
+        let accept_payload = build_run_explorer_accept_payload(&dry, Some(run.es.as_ref()));
+        deliver_live_run_await(
+            LiveRunAwaitContext::for_mcp_plasm_run(
+                Arc::clone(&run.es),
+                Arc::clone(&run.host),
+                run.wire.prompt_hash.clone(),
+                run.wire.session_id.clone(),
+                run.wire.session_ref.clone(),
+                run.wire.mcp_session_key.clone(),
+                run.bundle.clone(),
+                accept_payload,
+                run.committed.verdict,
+                run.plan_commit_ref.clone(),
+                run.mcp_trace.clone(),
+                dry,
+            ),
+            LiveRunSpawnOpts {
+                plan_trace: run.plan_trace.clone(),
+            },
+        )
+        .await
+        .map_err(|e| match e {
+            LiveRunError::Timeout(d) => format!("live run timed out after {d:?}"),
+            LiveRunError::Failed(msg) => msg,
+        })
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(err) => {
+            run.code_plan_trace_input()
+                .emit_execute_failed(execute_plan_id)
+                .await;
+            return Err(err);
+        }
+    };
 
     crate::mcp_plasm_run_phases::mcp_plasm_run_phase("artifact_persist", || async {
-        let dry = dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, &run.committed)?;
-        let plan_ux_reflection = Some(crate::plan_ux_reflection::plan_ux_reflection_value(
-            &dry,
-            &crate::plan_ux_reflection::PlanUxBuildContext {
-                session: Some(run.es.as_ref()),
-                param_bindings: &[],
-            },
-        ));
-        trace_archive_and_emit_code_plan_execute(
-            run.artifacts.trace_hub.as_ref(),
-            run.artifacts.run_artifacts.as_ref(),
-            run.wire.ls_key.as_str(),
-            run.es.as_ref(),
-            run.wire.prompt_hash.as_str(),
-            run.wire.session_id.as_str(),
-            run.wire.session_ref.as_str(),
-            &run.artifacts.comp_archive,
-            run.artifacts.program_for_trace.as_str(),
-            result.comp.clone(),
-            dag_json,
-            plan_ux_reflection,
-            run.artifacts.plan_call_index,
-            &result,
-        )
-        .await;
-        Ok(result)
+        run.code_plan_trace_input()
+            .emit_execute_completed(
+                Some(execute_plan_id),
+                await_out.comp.clone(),
+                dag_json,
+                plan_ux_reflection,
+                &await_out,
+            )
+            .await;
+        Ok(await_out)
     })
     .await
 }

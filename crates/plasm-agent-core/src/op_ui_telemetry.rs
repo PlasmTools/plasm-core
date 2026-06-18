@@ -8,9 +8,7 @@ use crate::mcp_transport_store::persisted_operations::{
     PersistedOperationDescriptor, PersistedOperationPhase,
 };
 use crate::operation::{OperationPhase, OperationProgress};
-use crate::operation_progress::{
-    render_op_wire_line, OpNotifyStats, OpProgressEvent, OpWireSig,
-};
+use crate::operation_progress::{render_op_wire_line, OpNotifyStats, OpProgressEvent, OpWireSig};
 
 /// Stable progress telemetry for HTTP JSON, SSE, and MCP App host context.
 ///

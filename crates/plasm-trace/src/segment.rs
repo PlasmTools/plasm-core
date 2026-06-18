@@ -130,6 +130,9 @@ pub enum TraceSegment {
         result: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error_class: Option<String>,
+        /// `"agent"` (default) or [`MCP_RESOURCE_READ_SOURCE_RUN_EXPLORER_UI`] when tagged by Run Explorer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        read_source: Option<String>,
     },
     CodePlanEvaluate {
         plan_handle: String,
@@ -182,7 +185,14 @@ pub enum TraceSegment {
         run_artifacts: Vec<CodePlanRunArtifactRef>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         plan_ux_reflection: Option<serde_json::Value>,
+        /// `"started"` when live execute begins; `"completed"` (default) or `"failed"` when it finishes.
+        #[serde(default = "default_code_plan_execution_phase")]
+        execution_phase: String,
     },
+}
+
+fn default_code_plan_execution_phase() -> String {
+    crate::CODE_PLAN_EXECUTION_COMPLETED.to_string()
 }
 
 #[cfg(test)]
@@ -264,6 +274,7 @@ mod tests {
                 request_fingerprints: vec!["fp".into()],
             }],
             plan_ux_reflection: None,
+            execution_phase: "completed".into(),
         };
         let v = serde_json::to_value(exec).expect("json");
         assert_eq!(v["kind"], "code_plan_execute");

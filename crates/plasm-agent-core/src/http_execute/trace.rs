@@ -2,6 +2,7 @@
 
 use super::run_line::{parse_plasm_line_for_session, run_parsed_plasm_line};
 use super::*;
+use crate::mcp_server::CodePlanTraceInput;
 use crate::run_artifacts::{persist_execute_run, PersistExecuteRunInput};
 
 pub(crate) fn trace_expr_api_meta(expr: &plasm_core::Expr) -> (Option<String>, String) {
@@ -409,22 +410,25 @@ pub(crate) async fn maybe_emit_http_code_plan_evaluate(
     else {
         return;
     };
-    crate::mcp_server::trace_archive_and_emit_code_plan_evaluate(
-        &st.trace_hub,
-        &st.run_artifacts,
-        &ctx.ls_key,
-        sess,
+    let input = CodePlanTraceInput {
+        hub: &st.trace_hub,
+        store: &st.run_artifacts,
+        mcp_key: &ctx.ls_key,
+        es: sess,
         prompt_hash,
         session_id,
-        &ctx.session_ref,
-        &ctx.comp_archive,
+        session_ref: &ctx.session_ref,
+        comp: &ctx.comp_archive,
         program,
-        ctx.comp_json,
-        ctx.dag_json,
-        ctx.plan_ux_reflection,
         plan_call_index,
-    )
-    .await;
+    };
+    input
+        .emit_evaluate(
+            ctx.comp_json,
+            ctx.dag_json,
+            ctx.plan_ux_reflection,
+        )
+        .await;
 }
 
 /// Emit `code_plan_execute` when HTTP live run shares an MCP logical session binding.
@@ -443,21 +447,25 @@ pub(crate) async fn maybe_emit_http_code_plan_execute(
     else {
         return;
     };
-    crate::mcp_server::trace_archive_and_emit_code_plan_execute(
-        &st.trace_hub,
-        &st.run_artifacts,
-        &ctx.ls_key,
-        sess,
+    let input = CodePlanTraceInput {
+        hub: &st.trace_hub,
+        store: &st.run_artifacts,
+        mcp_key: &ctx.ls_key,
+        es: sess,
         prompt_hash,
         session_id,
-        &ctx.session_ref,
-        &ctx.comp_archive,
+        session_ref: &ctx.session_ref,
+        comp: &ctx.comp_archive,
         program,
-        out.comp.clone(),
-        ctx.dag_json,
-        ctx.plan_ux_reflection,
         plan_call_index,
-        out,
-    )
-    .await;
+    };
+    input
+        .emit_execute_completed(
+            None,
+            out.comp.clone(),
+            ctx.dag_json,
+            ctx.plan_ux_reflection,
+            out,
+        )
+        .await;
 }

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.30] - 2026-06-18
+
+### Added
+
+- **Trace execution phases:** MCP `plasm_run` emits `code_plan_execute` with `execution_phase=started` before live await, `completed` on success, and `failed` on error (same `plan_id` links the lifecycle).
+- **Resource read attribution:** `McpResourceRead.read_source` (`run_explorer_ui` vs agent); separate KPI `mcp_resource_read_ui_chars`; URI query `plasm.read_source=` stripped before resolution.
+- **Trace contract:** `plasm-trace/src/contract.rs` canonical phase/read-source strings and shared segment counter helpers.
+- **Code-plan trace input:** `CodePlanTraceInput` + `emit_code_plan_trace` replaces duplicated 12-arg wrappers; split `CodePlanEvaluateTrace` / `CodePlanExecuteTrace`.
+- **MCP resource-read trace module:** `resource_read_trace.rs` with `error`/`success` builders.
+
+### Fixed
+
+- **Run Explorer progress:** elapsed timer no longer cleared by watchdog arm; HTTP 404 waiting state; prefer HTTP `artifactPath` before tagged MCP reads.
+- **Plan DAG labels:** remove horizontal glyph stretching on short node titles (clip-path instead of `textLength` spacing).
+
+### Changed
+
+- **Run Explorer / plan UI bundles:** regenerated embedded MCP app assets.
+- **Phoenix traces UI:** artifact-only hint, execution-phase titles, Run Explorer read badge; logic extracted to `plasm_ui_core` Wire/TracePlanDag/TraceTimeline/TraceChartlets.
+
 ## [0.3.29] - 2026-06-18
 
 ### Fixed

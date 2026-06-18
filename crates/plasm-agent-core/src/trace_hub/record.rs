@@ -6,7 +6,7 @@ use plasm_trace::{PlasmLineTraceMeta, RunArtifactArchiveRef, TraceEvent, TraceSe
 
 use super::state::TraceIngestJob;
 use super::{
-    now_ms, truncate_trace_reasoning, CodePlanTrace, PlasmContextTrace, TraceHub, TraceSsePayload,
+    now_ms, truncate_trace_reasoning, CodePlanEvaluateTrace, CodePlanExecuteTrace, PlasmContextTrace, TraceHub, TraceSsePayload,
 };
 
 impl TraceHub {
@@ -56,7 +56,7 @@ impl TraceHub {
         .await;
     }
 
-    pub async fn trace_record_code_plan_evaluate(&self, mcp_key: &str, trace: CodePlanTrace) {
+    pub async fn trace_record_code_plan_evaluate(&self, mcp_key: &str, trace: CodePlanEvaluateTrace) {
         self.bump_and_emit(
             mcp_key,
             TraceSegment::CodePlanEvaluate {
@@ -71,15 +71,15 @@ impl TraceHub {
                 session_id: trace.session_id,
                 node_count: trace.node_count,
                 code_chars: trace.code_chars,
-                comp: Some(trace.comp),
-                dag: Some(trace.dag),
+                comp: trace.comp,
+                dag: trace.dag,
                 plan_ux_reflection: trace.plan_ux_reflection,
             },
         )
         .await;
     }
 
-    pub async fn trace_record_code_plan_execute(&self, mcp_key: &str, trace: CodePlanTrace) {
+    pub async fn trace_record_code_plan_execute(&self, mcp_key: &str, trace: CodePlanExecuteTrace) {
         self.bump_and_emit(
             mcp_key,
             TraceSegment::CodePlanExecute {
@@ -94,12 +94,13 @@ impl TraceHub {
                 session_id: trace.session_id,
                 node_count: trace.node_count,
                 code_chars: trace.code_chars,
-                comp: Some(trace.comp),
-                dag: Some(trace.dag),
+                comp: trace.comp.clone(),
+                dag: trace.dag.clone(),
                 plasm_call_index: trace.plasm_call_index,
                 run_ids: trace.run_ids,
                 run_artifacts: trace.run_artifacts,
                 plan_ux_reflection: trace.plan_ux_reflection,
+                execution_phase: trace.execution_phase,
             },
         )
         .await;
@@ -213,6 +214,7 @@ impl TraceHub {
         duration_ms: u64,
         result: &str,
         error_class: Option<&str>,
+        read_source: Option<&str>,
     ) {
         self.bump_and_emit(
             mcp_key,
@@ -224,6 +226,7 @@ impl TraceHub {
                 duration_ms,
                 result: result.to_string(),
                 error_class: error_class.map(str::to_string),
+                read_source: read_source.map(str::to_string),
             },
         )
         .await;

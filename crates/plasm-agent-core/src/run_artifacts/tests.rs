@@ -46,6 +46,22 @@ fn parse_plasm_run_uri_round_trip() {
 }
 
 #[test]
+fn strip_plasm_resource_read_source_removes_hint() {
+    let uri = "plasm://execute/abc/sess/run/pr0123?plasm.read_source=run_explorer_ui";
+    let (canonical, source) = strip_plasm_resource_read_source(uri);
+    assert_eq!(canonical, "plasm://execute/abc/sess/run/pr0123");
+    assert_eq!(source.as_deref(), Some("run_explorer_ui"));
+}
+
+#[test]
+fn strip_plasm_resource_read_source_preserves_other_query_params() {
+    let uri = "plasm://session/l_x/r/1?foo=bar&plasm.read_source=run_explorer_ui";
+    let (canonical, source) = strip_plasm_resource_read_source(uri);
+    assert_eq!(canonical, "plasm://session/l_x/r/1?foo=bar");
+    assert_eq!(source.as_deref(), Some("run_explorer_ui"));
+}
+
+#[test]
 fn run_artifact_wire_rejects_uuid_shape() {
     assert!(RunArtifactWire::from_str("550e8400-e29b-41d4-a716-446655440000").is_err());
 }

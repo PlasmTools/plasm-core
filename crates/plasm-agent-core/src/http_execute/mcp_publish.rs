@@ -355,7 +355,9 @@ pub fn publish_plasm_result_steps(
                 display: step.display.clone(),
                 row_count: step.result.count,
                 node_id: step.node_id.clone(),
-                preview_entities: if !truncated || step.result.count <= MCP_UI_PREVIEW_ENTITY_ROW_CAP {
+                preview_entities: if !truncated
+                    || step.result.count <= MCP_UI_PREVIEW_ENTITY_ROW_CAP
+                {
                     Some(preview_entities_for_step(step, cgs))
                 } else {
                     None

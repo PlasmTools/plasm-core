@@ -46,8 +46,8 @@ async fn get_run_ui_progress_json(
     Path(logical_session_ref): Path<String>,
     Query(query): Query<RunUiProgressQuery>,
 ) -> Result<Json<RunUiProgressJson>, Response> {
-    let resolved = resolve_for_http(&st, &logical_session_ref, query.plan_commit_ref.as_deref())
-        .await?;
+    let resolved =
+        resolve_for_http(&st, &logical_session_ref, query.plan_commit_ref.as_deref()).await?;
     Ok(Json(st.snapshot_for_running_op(&resolved)))
 }
 
@@ -56,8 +56,8 @@ async fn get_run_ui_progress_stream(
     Path(logical_session_ref): Path<String>,
     Query(query): Query<RunUiProgressQuery>,
 ) -> Result<Response, Response> {
-    let resolved = resolve_for_http(&st, &logical_session_ref, query.plan_commit_ref.as_deref())
-        .await?;
+    let resolved =
+        resolve_for_http(&st, &logical_session_ref, query.plan_commit_ref.as_deref()).await?;
     let handle = resolved.handle.clone();
     let snapshot = st.snapshot_for_running_op(&resolved);
     let initial_seq = snapshot.n;
@@ -119,10 +119,10 @@ fn run_progress_error_to_response(err: RunProgressError) -> Response {
                 .with_detail(detail),
             )
         }
-        RunProgressError::BindingNotFound => not_found("logical session binding not found or expired"),
-        RunProgressError::SessionNotFound => {
-            not_found("execute session not found or expired")
+        RunProgressError::BindingNotFound => {
+            not_found("logical session binding not found or expired")
         }
+        RunProgressError::SessionNotFound => not_found("execute session not found or expired"),
         RunProgressError::NoRunningOperation => {
             not_found("no running operation for logical session")
         }

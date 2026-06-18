@@ -914,7 +914,9 @@ fn plan_run_result_is_terminal_rejects_operation_poll_markdown() {
         run_plasm_meta: Some(root),
         return_steps: Vec::new(),
     };
-    assert!(!crate::terminal_plan_run::plan_run_result_is_terminal(&poll));
+    assert!(!crate::terminal_plan_run::plan_run_result_is_terminal(
+        &poll
+    ));
 }
 
 #[test]

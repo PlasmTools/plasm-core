@@ -513,6 +513,7 @@ fn hub_totals_from_sink(
         plasm_invocation_chars: t.plasm_invocation_chars,
         plasm_response_chars: t.plasm_response_chars,
         mcp_resource_read_chars: t.mcp_resource_read_chars,
+        mcp_resource_read_ui_chars: t.mcp_resource_read_ui_chars,
         total_duration_ms: t.total_duration_ms,
         network_requests: t.network_requests,
         cache_hits: t.cache_hits,

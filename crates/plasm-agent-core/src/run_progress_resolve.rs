@@ -5,10 +5,10 @@ use std::sync::Arc;
 
 use crate::execute_session::ExecuteSession;
 use crate::mcp_logical_ref::parse_logical_session_wire_ref;
+use crate::mcp_transport_store::execute_session_registry::PersistedExecuteSessionDescriptor;
 use crate::mcp_transport_store::persisted_operations::{
     operation_seq_from_wire, PersistedOperationDescriptor, PersistedOperationPhase,
 };
-use crate::mcp_transport_store::execute_session_registry::PersistedExecuteSessionDescriptor;
 use crate::op_ui_telemetry::OpUiTelemetry;
 use crate::server_state::PlasmHostState;
 
@@ -183,7 +183,9 @@ fn handle_matches_logical_ref(handle: &OperationHandle, logical_session_ref: &st
     handle
         .logical_session_ref()
         .is_some_and(|r| r == logical_session_ref)
-        || handle.as_str().starts_with(&format!("{logical_session_ref}_o"))
+        || handle
+            .as_str()
+            .starts_with(&format!("{logical_session_ref}_o"))
 }
 
 fn plan_commit_matches(got: Option<&str>, want: Option<&str>) -> bool {
@@ -243,12 +245,8 @@ mod tests {
             crate::operation::OpAcceptContext::default(),
         )
         .expect("op2");
-        let picked = pick_latest_running(
-            running_picks_from_session(&sess),
-            ref_str,
-            None,
-        )
-        .expect("handle");
+        let picked =
+            pick_latest_running(running_picks_from_session(&sess), ref_str, None).expect("handle");
         assert_eq!(picked.as_str(), h2.as_str());
     }
 

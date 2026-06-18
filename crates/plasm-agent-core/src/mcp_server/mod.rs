@@ -39,7 +39,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::discovery_human_format::{format_discovery_markdown_for_mcp, DiscoveryTablePolicy};
-use crate::trace_hub::{CodePlanTrace, McpPlasmTraceSink, PlanRunTraceHooks, PlasmContextTrace};
+use crate::trace_hub::{McpPlasmTraceSink, PlanRunTraceHooks, PlasmContextTrace};
 use std::time::Duration;
 use tracing::Instrument;
 
@@ -98,8 +98,8 @@ use crate::plasm_plan_run::{
 use crate::run_artifacts::{
     code_plan_handle, code_plan_http_path, logical_uuid_from_uri_segment,
     parse_plasm_execute_run_uri, parse_plasm_session_short_resource_uri,
-    plasm_code_plan_resource_uri, plasm_session_short_plan_uri, ArtifactPayload,
-    CodePlanArchiveDocument,
+    plasm_code_plan_resource_uri, plasm_session_short_plan_uri, strip_plasm_resource_read_source,
+    ArtifactPayload, CodePlanArchiveDocument,
 };
 use crate::server_state::PlasmHostState;
 use crate::session_identity::{ClientSessionKey, LogicalSessionId};
@@ -114,6 +114,7 @@ use uuid::Uuid;
 mod committed_plasm_run;
 mod discover;
 pub(crate) mod prompt;
+mod resource_read_trace;
 mod schema;
 mod tool_parse;
 mod trace;
@@ -125,10 +126,9 @@ mod integration;
 mod tests;
 
 pub(crate) use discover::{
-    discovery_mcp_error, mcp_artifact_payload_chars, mcp_call_tool_error_class,
-    mcp_discover_query_from_arguments, mcp_key, mcp_truncate_resource_uri_display,
-    mcp_typed_discovery_query_from_arguments, read_resource_result_for_payload,
-    typed_discovery_mcp_error,
+    discovery_mcp_error, mcp_call_tool_error_class,
+    mcp_discover_query_from_arguments, mcp_key, mcp_typed_discovery_query_from_arguments,
+    read_resource_result_for_payload, typed_discovery_mcp_error,
 };
 pub(crate) use prompt::{
     mcp_plasm_context_tool_description, mcp_server_initialize_instructions,
@@ -143,8 +143,7 @@ pub(crate) use tool_parse::{
     parse_plasm_context_ranked_capabilities, parse_tool_seeds, plan_display_name_from_comp,
     plan_node_count_from_comp,
 };
-pub(crate) use trace::trace_archive_and_emit_code_plan_evaluate;
-pub(crate) use trace::trace_archive_and_emit_code_plan_execute;
+pub(crate) use trace::CodePlanTraceInput;
 pub(crate) use transport::{
     mcp_chars_to_token_est, plasm_invocation_char_count, McpLogicalSessionState,
     McpSessionPlasmStats, McpTransportState, PlasmExecBinding,
@@ -739,39 +738,6 @@ fn parse_mcp_plasm_invocation(
 }
 
 impl PlasmMcpHandler {
-    #[allow(clippy::too_many_arguments)]
-    async fn emit_mcp_resource_read_trace(
-        &self,
-        logical_session_trace_key: Option<&str>,
-        archive: Option<RunArtifactArchiveRef>,
-        uri: &str,
-        maybe_payload: Option<&ArtifactPayload>,
-        started: Instant,
-        result: &str,
-        error_class: Option<&str>,
-    ) {
-        let Some(mcp_key) = logical_session_trace_key.filter(|s| !s.is_empty()) else {
-            return;
-        };
-        let (chars_added, is_binary) = maybe_payload
-            .map(mcp_artifact_payload_chars)
-            .unwrap_or((0, false));
-        let duration_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-        self.plasm
-            .trace_hub
-            .trace_record_mcp_resource_read(
-                mcp_key,
-                archive,
-                mcp_truncate_resource_uri_display(uri),
-                chars_added,
-                is_binary,
-                duration_ms,
-                result,
-                error_class,
-            )
-            .await;
-    }
-
     /// Shared MCP implementation for [`Self::handle_call_tool_request`] (`plasm` = plan-only, `plasm_run` = execute).
     #[allow(clippy::too_many_lines)]
     pub(crate) async fn handle_plasm_mcp_tool(
@@ -1072,20 +1038,22 @@ impl PlasmMcpHandler {
                         };
                         let plan_ux_reflection =
                             crate::plan_ux_reflection::plan_ux_reflection_value(&dry, &ux_ctx);
-                        trace_archive_and_emit_code_plan_evaluate(
-                            &self.plasm.trace_hub,
-                            &self.plasm.run_artifacts,
-                            &ls_key,
-                            &es,
-                            b.prompt_hash.as_str(),
-                            b.session_id.as_str(),
-                            session_ref.as_str(),
-                            &comp_archive,
-                            &program_for_trace,
+                        CodePlanTraceInput {
+                            hub: &self.plasm.trace_hub,
+                            store: &self.plasm.run_artifacts,
+                            mcp_key: &ls_key,
+                            es: &es,
+                            prompt_hash: b.prompt_hash.as_str(),
+                            session_id: b.session_id.as_str(),
+                            session_ref: session_ref.as_str(),
+                            comp: &comp_archive,
+                            program: &program_for_trace,
+                            plan_call_index: call_index,
+                        }
+                        .emit_evaluate(
                             comp_json.clone(),
                             dag_json,
                             Some(plan_ux_reflection.clone()),
-                            call_index,
                         )
                         .await;
                         let mut plasm_obj = serde_json::Map::new();
@@ -1680,7 +1648,10 @@ impl ServerHandler for PlasmMcpHandler {
         runtime: Arc<dyn McpServer>,
     ) -> Result<ReadResourceResult, RpcError> {
         let started = Instant::now();
-        let uri = params.uri.trim();
+        let raw_uri = params.uri.trim();
+        let (uri_owned, read_source) = strip_plasm_resource_read_source(raw_uri);
+        let uri = uri_owned.as_str();
+        let read_source = read_source.as_deref();
         if let Some(bundle) = crate::mcp_app::bundle_for_uri(uri) {
             let Some((content, result_meta)) = crate::mcp_app::read_resource_text(uri) else {
                 return Err(
@@ -1724,15 +1695,15 @@ impl ServerHandler for PlasmMcpHandler {
                     "no_binding",
                     started.elapsed(),
                 );
-                self.emit_mcp_resource_read_trace(
+                resource_read_trace::McpResourceReadTrace::error(
                     Some(&ls_key),
-                    None,
+                    read_source,
+                    started,
                     uri,
                     None,
-                    started,
-                    "error",
-                    Some("no_binding"),
+                    "no_binding",
                 )
+                .emit(&self.plasm)
                 .await;
                 return Err(RpcError::invalid_params().with_message(
                     "no execute session for this logical session: call plasm_context with capability picks (`seeds`) first",
@@ -1787,15 +1758,15 @@ impl ServerHandler for PlasmMcpHandler {
                             run_id: run_id.to_wire(),
                             resource_index: Some(resource_index),
                         });
-                        self.emit_mcp_resource_read_trace(
+                        resource_read_trace::McpResourceReadTrace::error(
                             Some(&ls_key),
-                            arch,
-                            uri,
-                            None,
+                            read_source,
                             started,
-                            "error",
-                            Some("decode_failed"),
+                            uri,
+                            arch,
+                            "decode_failed",
                         )
+                        .emit(&self.plasm)
                         .await;
                         return Err(RpcError::internal_error()
                             .with_message(format!("run artifact decode failed: {e}")));
@@ -1814,15 +1785,15 @@ impl ServerHandler for PlasmMcpHandler {
                     "unknown_artifact",
                     started.elapsed(),
                 );
-                self.emit_mcp_resource_read_trace(
+                resource_read_trace::McpResourceReadTrace::error(
                     Some(&ls_key),
-                    None,
+                    read_source,
+                    started,
                     uri,
                     None,
-                    started,
-                    "error",
-                    Some("unknown_artifact"),
+                    "unknown_artifact",
                 )
+                .emit(&self.plasm)
                 .await;
                 return Err(RpcError::invalid_params().with_message(format!(
                     "unknown run artifact index {resource_index} for this session"
@@ -1861,15 +1832,15 @@ impl ServerHandler for PlasmMcpHandler {
                 "none",
                 started.elapsed(),
             );
-            self.emit_mcp_resource_read_trace(
+            resource_read_trace::McpResourceReadTrace::success(
                 Some(&ls_key),
-                archive,
-                uri,
-                Some(&payload),
+                read_source,
                 started,
-                "success",
-                None,
+                uri,
+                archive,
+                &payload,
             )
+            .emit(&self.plasm)
             .await;
             return read_resource_result_for_payload(uri, payload);
         }
@@ -1926,15 +1897,15 @@ impl ServerHandler for PlasmMcpHandler {
                         "decode_failed",
                         started.elapsed(),
                     );
-                    self.emit_mcp_resource_read_trace(
+                    resource_read_trace::McpResourceReadTrace::error(
                         ls_key_opt.as_deref(),
-                        Some(canonical_archive.clone()),
-                        uri,
-                        None,
+                        read_source,
                         started,
-                        "error",
-                        Some("decode_failed"),
+                        uri,
+                        Some(canonical_archive.clone()),
+                        "decode_failed",
                     )
+                    .emit(&self.plasm)
                     .await;
                     return Err(RpcError::internal_error()
                         .with_message(format!("run artifact decode failed: {e}")));
@@ -1953,15 +1924,15 @@ impl ServerHandler for PlasmMcpHandler {
                 "unknown_artifact",
                 started.elapsed(),
             );
-            self.emit_mcp_resource_read_trace(
+            resource_read_trace::McpResourceReadTrace::error(
                 ls_key_opt.as_deref(),
-                Some(canonical_archive.clone()),
-                uri,
-                None,
+                read_source,
                 started,
-                "error",
-                Some("unknown_artifact"),
+                uri,
+                Some(canonical_archive.clone()),
+                "unknown_artifact",
             )
+            .emit(&self.plasm)
             .await;
             return Err(RpcError::invalid_params().with_message(
                 "unknown run artifact (wrong run_id or not yet stored for this session)",
@@ -1979,15 +1950,15 @@ impl ServerHandler for PlasmMcpHandler {
             );
         });
         crate::metrics::record_mcp_resource_read("canonical", "success", "none", started.elapsed());
-        self.emit_mcp_resource_read_trace(
+        resource_read_trace::McpResourceReadTrace::success(
             ls_key_opt.as_deref(),
-            Some(canonical_archive),
-            uri,
-            Some(&payload),
+            read_source,
             started,
-            "success",
-            None,
+            uri,
+            Some(canonical_archive),
+            &payload,
         )
+        .emit(&self.plasm)
         .await;
         read_resource_result_for_payload(uri, payload)
     }

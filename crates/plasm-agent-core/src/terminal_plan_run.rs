@@ -59,7 +59,9 @@ fn empty_plan_run_with_markdown(
     }
 }
 
-fn plasm_meta_object(meta: &serde_json::Map<String, serde_json::Value>) -> Option<&serde_json::Map<String, serde_json::Value>> {
+fn plasm_meta_object(
+    meta: &serde_json::Map<String, serde_json::Value>,
+) -> Option<&serde_json::Map<String, serde_json::Value>> {
     meta.get("plasm").and_then(|v| v.as_object())
 }
 
@@ -107,10 +109,7 @@ fn markdown_has_result_rows(md: &str) -> bool {
 fn is_op_poll_markdown(md: &str) -> bool {
     let t = md.trim();
     t.starts_with('`')
-        && (t.contains("` =")
-            || t.contains("` ~")
-            || t.contains("` +")
-            || t.ends_with('`'))
+        && (t.contains("` =") || t.contains("` ~") || t.contains("` +") || t.ends_with('`'))
 }
 
 /// True when a plan run result carries terminal rows/meta (not an in-flight operation poll).
@@ -129,9 +128,7 @@ pub(crate) fn plan_run_result_is_terminal(res: &PlasmPlanRunResult) -> bool {
         if is_operation_pending_plasm_meta(meta) {
             return false;
         }
-        if meta.get("code").and_then(|v| v.as_str())
-            == Some(OperationError::CODE_NOT_ON_REPLICA)
-        {
+        if meta.get("code").and_then(|v| v.as_str()) == Some(OperationError::CODE_NOT_ON_REPLICA) {
             return false;
         }
     }

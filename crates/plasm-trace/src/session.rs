@@ -4,7 +4,13 @@ use std::collections::VecDeque;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{TraceEvent, TraceSegment};
+use crate::{
+    segment_counters::{
+        apply_code_plan_evaluate_counters, apply_code_plan_execute_counters,
+        apply_mcp_resource_read_counters,
+    },
+    TraceEvent, TraceSegment,
+};
 
 /// Default max events retained in RAM for the live timeline window ([`SessionTraceData::records`]).
 pub const DEFAULT_TRACE_TIMELINE_MAX_EVENTS: usize = 4096;
@@ -18,6 +24,8 @@ pub struct SessionTraceData {
     pub plasm_response_chars: u64,
     #[serde(default)]
     pub mcp_resource_read_chars: u64,
+    #[serde(default)]
+    pub mcp_resource_read_ui_chars: u64,
     pub plasm_call_count: u64,
     /// Cumulative line-level stats for the whole session (not reduced when the in-memory window drops old events).
     #[serde(default)]
@@ -65,6 +73,8 @@ pub struct SessionTraceCountersSnapshot {
     pub plasm_response_chars: u64,
     #[serde(default)]
     pub mcp_resource_read_chars: u64,
+    #[serde(default)]
+    pub mcp_resource_read_ui_chars: u64,
     pub plasm_call_count: u64,
     pub aggregate_plasm_expressions: u64,
     pub aggregate_multi_line_plasm_invocations: u64,
@@ -93,6 +103,7 @@ impl From<&SessionTraceData> for SessionTraceCountersSnapshot {
             plasm_invocation_chars: d.plasm_invocation_chars,
             plasm_response_chars: d.plasm_response_chars,
             mcp_resource_read_chars: d.mcp_resource_read_chars,
+            mcp_resource_read_ui_chars: d.mcp_resource_read_ui_chars,
             plasm_call_count: d.plasm_call_count,
             aggregate_plasm_expressions: d.aggregate_plasm_expressions,
             aggregate_multi_line_plasm_invocations: d.aggregate_multi_line_plasm_invocations,
@@ -120,6 +131,7 @@ impl SessionTraceCountersSnapshot {
             plasm_invocation_chars: self.plasm_invocation_chars,
             plasm_response_chars: self.plasm_response_chars,
             mcp_resource_read_chars: self.mcp_resource_read_chars,
+            mcp_resource_read_ui_chars: self.mcp_resource_read_ui_chars,
             plasm_call_count: self.plasm_call_count,
             aggregate_plasm_expressions: self.aggregate_plasm_expressions,
             aggregate_multi_line_plasm_invocations: self.aggregate_multi_line_plasm_invocations,
@@ -148,6 +160,7 @@ impl Default for SessionTraceData {
             plasm_invocation_chars: 0,
             plasm_response_chars: 0,
             mcp_resource_read_chars: 0,
+            mcp_resource_read_ui_chars: 0,
             plasm_call_count: 0,
             aggregate_plasm_expressions: 0,
             aggregate_multi_line_plasm_invocations: 0,
@@ -229,13 +242,17 @@ impl SessionTraceData {
             TraceSegment::McpResourceRead {
                 chars_added,
                 duration_ms,
+                read_source,
                 ..
             } => {
-                self.mcp_resource_read_chars =
-                    self.mcp_resource_read_chars.saturating_add(*chars_added);
-                self.aggregate_total_duration_ms = self
-                    .aggregate_total_duration_ms
-                    .saturating_add(*duration_ms);
+                apply_mcp_resource_read_counters(
+                    &mut self.mcp_resource_read_chars,
+                    &mut self.mcp_resource_read_ui_chars,
+                    &mut self.aggregate_total_duration_ms,
+                    *chars_added,
+                    *duration_ms,
+                    read_source.as_deref(),
+                );
             }
             TraceSegment::PlasmLine {
                 duration_ms,
@@ -265,23 +282,33 @@ impl SessionTraceData {
                 code_chars,
                 ..
             } => {
-                self.code_plans_evaluated = self.code_plans_evaluated.saturating_add(1);
-                self.code_plan_code_chars = self.code_plan_code_chars.saturating_add(*code_chars);
-                self.code_plan_nodes = self.code_plan_nodes.saturating_add(*node_count as u64);
+                apply_code_plan_evaluate_counters(
+                    &mut self.code_plans_evaluated,
+                    &mut self.code_plan_code_chars,
+                    &mut self.code_plan_nodes,
+                    *node_count,
+                    *code_chars,
+                );
             }
             TraceSegment::CodePlanExecute {
+                execution_phase,
                 node_count,
                 code_chars,
                 run_ids,
                 run_artifacts,
                 ..
             } => {
-                self.code_plans_executed = self.code_plans_executed.saturating_add(1);
-                self.code_plan_code_chars = self.code_plan_code_chars.saturating_add(*code_chars);
-                self.code_plan_nodes = self.code_plan_nodes.saturating_add(*node_count as u64);
-                self.code_plan_derived_runs = self
-                    .code_plan_derived_runs
-                    .saturating_add(run_artifacts.len().max(run_ids.len()) as u64);
+                apply_code_plan_execute_counters(
+                    &mut self.code_plans_executed,
+                    &mut self.code_plan_code_chars,
+                    &mut self.code_plan_nodes,
+                    &mut self.code_plan_derived_runs,
+                    execution_phase,
+                    *node_count,
+                    *code_chars,
+                    run_ids.len(),
+                    run_artifacts.len(),
+                );
             }
             TraceSegment::PlasmError { .. } => {}
         }
@@ -385,11 +412,46 @@ mod tests {
                 duration_ms: 42,
                 result: "success".into(),
                 error_class: None,
+                read_source: None,
             },
         );
         let _ = d.push_event(ev);
         let totals = crate::totals_from_session_data(&d);
         assert_eq!(totals.mcp_resource_read_chars, 100);
         assert_eq!(totals.total_duration_ms, 42);
+    }
+
+    #[test]
+    fn code_plan_execute_failed_does_not_increment_executed_kpi() {
+        use crate::CODE_PLAN_EXECUTION_FAILED;
+        let mut d = SessionTraceData::new("s1");
+        for phase in [CODE_PLAN_EXECUTION_FAILED, crate::CODE_PLAN_EXECUTION_STARTED] {
+            let ev = TraceEvent::at(
+                1,
+                TraceSegment::CodePlanExecute {
+                    plan_handle: "p1".into(),
+                    plan_id: "id".into(),
+                    plan_name: "demo".into(),
+                    plan_hash: "abc".into(),
+                    plan_uri: String::new(),
+                    canonical_plan_uri: String::new(),
+                    plan_http_path: String::new(),
+                    prompt_hash: "p".repeat(64),
+                    session_id: "s1".into(),
+                    node_count: 2,
+                    code_chars: 10,
+                    comp: None,
+                    dag: None,
+                    plasm_call_index: Some(1),
+                    run_ids: vec![],
+                    run_artifacts: vec![],
+                    plan_ux_reflection: None,
+                    execution_phase: phase.to_string(),
+                },
+            );
+            let _ = d.push_event(ev);
+        }
+        let totals = crate::totals_from_session_data(&d);
+        assert_eq!(totals.code_plans_executed, 0);
     }
 }

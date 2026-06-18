@@ -2,6 +2,7 @@ use super::types::RunArtifactId;
 use crate::mcp_logical_ref::{
     format_logical_session_wire_ref_from_uuid, parse_logical_session_wire_ref,
 };
+use plasm_trace::MCP_RESOURCE_READ_SOURCE_QUERY_KEY;
 use uuid::Uuid;
 
 pub fn plasm_run_resource_uri(
@@ -146,6 +147,31 @@ pub fn artifact_http_path(prompt_hash: &str, session_id: &str, run_id: &RunArtif
 
 pub fn code_plan_http_path(prompt_hash: &str, session_id: &str, plan_id: &Uuid) -> String {
     format!("/execute/{prompt_hash}/{session_id}/plans/{plan_id}")
+}
+
+/// Strip optional `plasm.read_source=` query hint from MCP resource URIs before resolution.
+pub fn strip_plasm_resource_read_source(uri: &str) -> (String, Option<String>) {
+    let Some((base, query)) = uri.split_once('?') else {
+        return (uri.to_string(), None);
+    };
+    let mut read_source = None;
+    let kept: Vec<&str> = query
+        .split('&')
+        .filter(|pair| {
+            if let Some(v) = pair.strip_prefix(&format!("{MCP_RESOURCE_READ_SOURCE_QUERY_KEY}=")) {
+                if !v.is_empty() {
+                    read_source = Some(v.to_string());
+                }
+                return false;
+            }
+            true
+        })
+        .collect();
+    if kept.is_empty() {
+        (base.to_string(), read_source)
+    } else {
+        (format!("{}?{}", base, kept.join("&")), read_source)
+    }
 }
 
 /// Parse `plasm://execute/{prompt_hash}/{session_id}/run/{run_id}` (`run_id` = prefixed hex digest).

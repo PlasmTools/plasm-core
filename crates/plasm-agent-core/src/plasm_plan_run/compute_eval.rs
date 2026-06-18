@@ -1755,10 +1755,7 @@ fn wire_id_from_row(
     id_field: &str,
     id_from: Option<&[String]>,
 ) -> Option<String> {
-    if let Some(id) = row
-        .get(id_field)
-        .and_then(json_value_to_wire_id)
-    {
+    if let Some(id) = row.get(id_field).and_then(json_value_to_wire_id) {
         return Some(id);
     }
     id_from
