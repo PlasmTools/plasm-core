@@ -299,21 +299,22 @@ pub async fn deliver_http_live_run(
     let accept_payload = build_run_explorer_accept_payload(&req.dry, Some(req.es.as_ref()));
     match decide_delivery(RunDeliveryPolicy::HttpExecute, req.wait_live, &req.review) {
         RunDeliveryDecision::ReturnAccept { auto_async } => {
-            let handle = spawn_live_plan_run(LiveRunSpawn {
-                es: Arc::clone(&req.es),
-                st: Arc::clone(&req.st),
-                prompt_hash: req.prompt_hash,
-                session_id: req.session_id,
-                bundle: req.bundle,
-                wire: OperationWire::HttpPlain,
-                plan_commit_ref: req.plan_commit_ref.clone(),
-                dry_verdict: req.verdict_for_gate,
-                auto_async,
-                accept_payload: accept_payload.clone(),
-                dry: Some(req.dry),
-            },
-            LiveRunSpawnOpts::default(),
-        )?;
+            let handle = spawn_live_plan_run(
+                LiveRunSpawn {
+                    es: Arc::clone(&req.es),
+                    st: Arc::clone(&req.st),
+                    prompt_hash: req.prompt_hash,
+                    session_id: req.session_id,
+                    bundle: req.bundle,
+                    wire: OperationWire::HttpPlain,
+                    plan_commit_ref: req.plan_commit_ref.clone(),
+                    dry_verdict: req.verdict_for_gate,
+                    auto_async,
+                    accept_payload: accept_payload.clone(),
+                    dry: Some(req.dry),
+                },
+                LiveRunSpawnOpts::default(),
+            )?;
             let (markdown, mut meta) = async_live_run_accept_parts(
                 &handle,
                 req.plan_commit_ref.as_ref(),

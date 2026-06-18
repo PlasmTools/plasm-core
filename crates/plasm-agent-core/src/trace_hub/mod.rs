@@ -11,7 +11,7 @@ mod tests;
 
 use std::collections::{HashMap, VecDeque};
 use std::env;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 

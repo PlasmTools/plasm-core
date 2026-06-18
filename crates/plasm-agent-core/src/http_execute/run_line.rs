@@ -10,10 +10,8 @@ use super::ingress::{
 use super::proof_bind::{
     maybe_proof_refresh_session_base_token, try_proof_document_share_bind, ProofBindError,
 };
-use super::trace::{emit_plasm_line_trace, PlasmLineTraceSink, trace_expr_api_meta};
-use super::{
-    resolve_paging_storage_handle, trace_api_entry_id_for_execute_root, *,
-};
+use super::trace::{emit_plasm_line_trace, trace_expr_api_meta, PlasmLineTraceSink};
+use super::{resolve_paging_storage_handle, trace_api_entry_id_for_execute_root, *};
 
 impl From<PersistExecuteRunError> for RunLineError {
     fn from(e: PersistExecuteRunError) -> Self {

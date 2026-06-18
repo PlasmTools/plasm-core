@@ -317,9 +317,15 @@ pub(crate) fn human_ux_summary_for_op(op: &PlanDryOp) -> String {
         PlanDryOp::Dedupe { keys } if keys.is_empty() => "Distinct rows".into(),
         PlanDryOp::Dedupe { keys } => format!("Dedupe on {}", keys.join(", ")),
         PlanDryOp::Render { columns, .. } => format!("Render {}", columns.join(", ")),
-        PlanDryOp::Relation { relation, target, .. } => format!("Via {relation} → {target}"),
-        PlanDryOp::ForEach { source, binding, .. } => format!("For each row in {source} as {binding}"),
-        PlanDryOp::Derive { source, binding, .. } => format!("Derive from {source} as {binding}"),
+        PlanDryOp::Relation {
+            relation, target, ..
+        } => format!("Via {relation} → {target}"),
+        PlanDryOp::ForEach {
+            source, binding, ..
+        } => format!("For each row in {source} as {binding}"),
+        PlanDryOp::Derive {
+            source, binding, ..
+        } => format!("Derive from {source} as {binding}"),
         PlanDryOp::Data { summary } => format!("Data · {summary}"),
     }
 }

@@ -38,7 +38,12 @@ pub(super) fn start_ingest_channel(
 ) -> mpsc::Sender<TraceIngestJob> {
     let queue_cap_i64 = queue_capacity as i64;
     let (tx, rx) = mpsc::channel(queue_capacity);
-    tokio::spawn(trace_ingest_worker(rx, trace_ingest, backlog, queue_cap_i64));
+    tokio::spawn(trace_ingest_worker(
+        rx,
+        trace_ingest,
+        backlog,
+        queue_cap_i64,
+    ));
     tx
 }
 

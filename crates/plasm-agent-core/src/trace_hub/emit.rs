@@ -2,7 +2,7 @@
 
 use plasm_trace::{TraceEvent, TraceSegment};
 
-use super::resume::{CompletedResumeCriteria, ensure_active_locked};
+use super::resume::{ensure_active_locked, CompletedResumeCriteria};
 use super::state::{trace_segment_kind, TraceIngestJob};
 use super::{now_ms, TraceHub, TraceSsePayload};
 

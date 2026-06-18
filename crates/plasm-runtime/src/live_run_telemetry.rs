@@ -52,12 +52,7 @@ impl LiveRunTelemetry {
     }
 
     pub fn record_http_completion(&self, duration: Duration) {
-        self.record_http_trace(
-            "HTTP",
-            "",
-            duration,
-            HttpTraceOutcome::Ok,
-        );
+        self.record_http_trace("HTTP", "", duration, HttpTraceOutcome::Ok);
     }
 
     /// Take HTTP trace rows accumulated since the previous drain (per plan line / expression).

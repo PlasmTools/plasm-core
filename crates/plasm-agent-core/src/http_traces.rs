@@ -28,10 +28,10 @@ use crate::http_problem_util::{problem_response, problem_types};
 use crate::incoming_auth::IncomingPrincipal;
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::{TraceDetailDto, TraceListStatus, TraceSummaryDto};
-use plasm_trace::{merge_trace_totals, TraceTotals};
 use plasm_observability_contracts::{
     TraceDetailResponse as SinkTraceDetailResponse, TraceListResponse as SinkTraceListResponse,
 };
+use plasm_trace::merge_trace_totals;
 use tracing::Instrument;
 
 #[derive(Debug, Deserialize)]

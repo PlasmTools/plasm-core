@@ -103,7 +103,10 @@ fn prepare_plasm_line_trace(
     parsed: &ParsedExpr,
     result: &ExecutionResult,
     api_entry_id: Option<String>,
-) -> (PlasmLineTraceMeta, Vec<plasm_runtime::http_trace::HttpTraceEntry>) {
+) -> (
+    PlasmLineTraceMeta,
+    Vec<plasm_runtime::http_trace::HttpTraceEntry>,
+) {
     let meta = plasm_line_trace_meta(line, parsed, result, api_entry_id);
     let http_calls = plasm_runtime::drain_active_live_http_trace_entries();
     (meta, http_calls)

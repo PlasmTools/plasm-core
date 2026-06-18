@@ -96,8 +96,7 @@ fn mcp_logical_trace_id_is_stable_per_tenant_and_logical_session() {
     let ls = "550e8400-e29b-41d4-a716-446655440000";
     let a = trace_id_for_mcp_logical_session("tenant-1", ls);
     let b = trace_id_for_mcp_logical_session("tenant-1", ls);
-    let c =
-        trace_id_for_mcp_logical_session("tenant-1", "6ba7b810-9dad-11d1-80b4-00c04fd430c8");
+    let c = trace_id_for_mcp_logical_session("tenant-1", "6ba7b810-9dad-11d1-80b4-00c04fd430c8");
     let d = trace_id_for_mcp_logical_session("tenant-2", ls);
     assert_eq!(a, b);
     assert_ne!(a, c);
@@ -158,9 +157,7 @@ async fn emit_after_finalize_resumes_completed_trace() {
         mcp_config: None,
     };
     let ls = "550e8400-e29b-41d4-a716-446655440001";
-    let trace_id = hub
-        .ensure_logical_session(ls, None, meta.clone())
-        .await;
+    let trace_id = hub.ensure_logical_session(ls, None, meta.clone()).await;
     hub.finalize_mcp_session(ls).await;
     hub.trace_record_code_plan_execute(
         ls,
@@ -195,7 +192,7 @@ async fn emit_after_finalize_resumes_completed_trace() {
         .filter_map(|r| r.get("kind").and_then(|v| v.as_str()))
         .collect();
     assert!(
-        kinds.iter().any(|k| *k == "code_plan_execute"),
+        kinds.contains(&"code_plan_execute"),
         "expected code_plan_execute segment, got {kinds:?}"
     );
 }

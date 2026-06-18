@@ -5,7 +5,9 @@ use plasm_runtime::ExecutionResult;
 use plasm_trace::{PlasmLineTraceMeta, RunArtifactArchiveRef, TraceEvent, TraceSegment};
 
 use super::state::TraceIngestJob;
-use super::{now_ms, truncate_trace_reasoning, CodePlanTrace, PlasmContextTrace, TraceHub, TraceSsePayload};
+use super::{
+    now_ms, truncate_trace_reasoning, CodePlanTrace, PlasmContextTrace, TraceHub, TraceSsePayload,
+};
 
 impl TraceHub {
     pub async fn trace_note_teaching_prompt_chars(&self, mcp_key: &str, chars_added: u64) {

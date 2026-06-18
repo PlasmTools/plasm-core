@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::detail::tenant_visible_to_viewer;
 use super::state::TraceHubInner;
-use super::{TraceDetailDto, TraceHub, TraceSsePayload};
+use super::{TraceHub, TraceSsePayload};
 
 impl TraceHub {
     pub(crate) fn broadcast_tx(

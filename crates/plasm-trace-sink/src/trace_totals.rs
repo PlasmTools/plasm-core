@@ -53,13 +53,6 @@ fn plasm_trace_totals_from_head_row(h: &TraceHeadRow) -> PlasmTraceTotals {
 }
 
 /// Recompute totals from flattened trace segment JSON (detail projection / legacy heads).
-pub(crate) fn trace_totals_from_segment_records(
-    records: &[serde_json::Value],
-    mcp_session_id: &str,
-) -> TraceTotals {
-    plasm_trace_totals_from_segment_records(records, mcp_session_id).into()
-}
-
 fn plasm_trace_totals_from_segment_records(
     records: &[serde_json::Value],
     mcp_session_id: &str,

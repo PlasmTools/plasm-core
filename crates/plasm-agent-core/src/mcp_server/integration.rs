@@ -72,11 +72,7 @@ fn matrix_federated_host_with_base(base_url: Option<&str>) -> PlasmHostState {
 }
 
 async fn spawn_matrix_langitem_mock() -> String {
-    use axum::{
-        extract::Path,
-        routing::get,
-        Json, Router,
-    };
+    use axum::{extract::Path, routing::get, Json, Router};
 
     async fn list_items() -> Json<serde_json::Value> {
         Json(serde_json::json!([{"id": "a", "title": "trace-test"}]))
@@ -492,24 +488,24 @@ async fn mcp_query_limit_uses_async_await_path() {
         std::time::Duration::from_secs(30),
         deliver_live_run_await(
             LiveRunAwaitContext::for_mcp_plasm_run(
-            Arc::clone(&es),
-            Arc::clone(&st),
-            out.prompt_hash.clone(),
-            out.session_id.clone(),
-            "l_AAAAAAAAQACAAAAAAAAAAQ".to_string(),
-            "mcp".to_string(),
-            bundle,
-            accept_payload,
-            compact.verdict,
-            None,
-            PlasmTraceContext {
-                trace_id: Uuid::nil(),
-                call_index: None,
-                mcp_session_id: None,
-                logical_session_id: None,
-                logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
-            },
-            dry,
+                Arc::clone(&es),
+                Arc::clone(&st),
+                out.prompt_hash.clone(),
+                out.session_id.clone(),
+                "l_AAAAAAAAQACAAAAAAAAAAQ".to_string(),
+                "mcp".to_string(),
+                bundle,
+                accept_payload,
+                compact.verdict,
+                None,
+                PlasmTraceContext {
+                    trace_id: Uuid::nil(),
+                    call_index: None,
+                    mcp_session_id: None,
+                    logical_session_id: None,
+                    logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
+                },
+                dry,
             ),
             LiveRunSpawnOpts::default(),
         ),
@@ -574,24 +570,24 @@ async fn matrix_query_limit_on_injected_live_plan_pool() {
         std::time::Duration::from_secs(30),
         deliver_live_run_await(
             LiveRunAwaitContext::for_mcp_plasm_run(
-            Arc::clone(&es),
-            Arc::clone(&st),
-            out.prompt_hash.clone(),
-            out.session_id.clone(),
-            "l_AAAAAAAAQACAAAAAAAAAAQ".to_string(),
-            "mcp".to_string(),
-            bundle,
-            accept_payload,
-            compact.verdict,
-            None,
-            PlasmTraceContext {
-                trace_id: Uuid::nil(),
-                call_index: None,
-                mcp_session_id: None,
-                logical_session_id: None,
-                logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
-            },
-            dry,
+                Arc::clone(&es),
+                Arc::clone(&st),
+                out.prompt_hash.clone(),
+                out.session_id.clone(),
+                "l_AAAAAAAAQACAAAAAAAAAAQ".to_string(),
+                "mcp".to_string(),
+                bundle,
+                accept_payload,
+                compact.verdict,
+                None,
+                PlasmTraceContext {
+                    trace_id: Uuid::nil(),
+                    call_index: None,
+                    mcp_session_id: None,
+                    logical_session_id: None,
+                    logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
+                },
+                dry,
             ),
             LiveRunSpawnOpts::default(),
         ),
@@ -652,24 +648,24 @@ async fn matrix_query_limit_on_release_stack_budget() {
         std::time::Duration::from_secs(30),
         deliver_live_run_await(
             LiveRunAwaitContext::for_mcp_plasm_run(
-            Arc::clone(&es),
-            Arc::clone(&st),
-            out.prompt_hash.clone(),
-            out.session_id.clone(),
-            "l_AAAAAAAAQACAAAAAAAAAAQ".to_string(),
-            "mcp".to_string(),
-            bundle,
-            accept_payload,
-            compact.verdict,
-            None,
-            PlasmTraceContext {
-                trace_id: Uuid::nil(),
-                call_index: None,
-                mcp_session_id: None,
-                logical_session_id: None,
-                logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
-            },
-            dry,
+                Arc::clone(&es),
+                Arc::clone(&st),
+                out.prompt_hash.clone(),
+                out.session_id.clone(),
+                "l_AAAAAAAAQACAAAAAAAAAAQ".to_string(),
+                "mcp".to_string(),
+                bundle,
+                accept_payload,
+                compact.verdict,
+                None,
+                PlasmTraceContext {
+                    trace_id: Uuid::nil(),
+                    call_index: None,
+                    mcp_session_id: None,
+                    logical_session_id: None,
+                    logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
+                },
+                dry,
             ),
             LiveRunSpawnOpts::default(),
         ),
@@ -739,24 +735,24 @@ async fn mcp_pc_n_committed_await_uses_stored_review() {
         std::time::Duration::from_secs(30),
         deliver_live_run_await(
             LiveRunAwaitContext::for_mcp_plasm_run(
-            Arc::clone(&es2),
-            Arc::clone(&fx.st),
-            fx.out.prompt_hash.clone(),
-            fx.out.session_id.clone(),
-            "l_AAAAAAAAQACAAAAAAAAAAQ".to_string(),
-            "mcp".to_string(),
-            fx.bundle,
-            accept_payload,
-            committed2.verdict,
-            Some(fx.pc),
-            PlasmTraceContext {
-                trace_id: Uuid::nil(),
-                call_index: None,
-                mcp_session_id: None,
-                logical_session_id: None,
-                logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
-            },
-            fx.dry,
+                Arc::clone(&es2),
+                Arc::clone(&fx.st),
+                fx.out.prompt_hash.clone(),
+                fx.out.session_id.clone(),
+                "l_AAAAAAAAQACAAAAAAAAAAQ".to_string(),
+                "mcp".to_string(),
+                fx.bundle,
+                accept_payload,
+                committed2.verdict,
+                Some(fx.pc),
+                PlasmTraceContext {
+                    trace_id: Uuid::nil(),
+                    call_index: None,
+                    mcp_session_id: None,
+                    logical_session_id: None,
+                    logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
+                },
+                fx.dry,
             ),
             LiveRunSpawnOpts::default(),
         ),
@@ -772,12 +768,8 @@ async fn mcp_pc_n_committed_await_uses_stored_review() {
 async fn mcp_plan_trace_hooks_emit_plasm_line_and_network_totals() {
     let base_url = spawn_matrix_langitem_mock().await;
     let st = Arc::new(matrix_federated_host_with_base(Some(base_url.as_str())));
-    let fx = MatrixPcNFixture::open(
-        Arc::clone(&st),
-        "trace hooks plasm_line",
-        "mcp_trace_hooks",
-    )
-    .await;
+    let fx =
+        MatrixPcNFixture::open(Arc::clone(&st), "trace hooks plasm_line", "mcp_trace_hooks").await;
     fx.persist_plan_commit().await;
 
     let ls_key = "550e8400-e29b-41d4-a716-446655440099";
@@ -818,24 +810,24 @@ async fn mcp_plan_trace_hooks_emit_plasm_line_and_network_totals() {
         std::time::Duration::from_secs(30),
         deliver_live_run_await(
             LiveRunAwaitContext::for_mcp_plasm_run(
-            Arc::clone(&fx.es),
-            Arc::clone(&fx.st),
-            fx.out.prompt_hash.clone(),
-            fx.out.session_id.clone(),
-            session_ref.to_string(),
-            "mcp-trace-hooks".to_string(),
-            fx.bundle,
-            accept_payload,
-            fx.compact.verdict,
-            Some(fx.pc),
-            PlasmTraceContext {
-                trace_id,
-                call_index: Some(call_index as i64),
-                mcp_session_id: None,
-                logical_session_id: Some(ls_key.into()),
-                logical_session_ref: Some(session_ref.into()),
-            },
-            fx.dry,
+                Arc::clone(&fx.es),
+                Arc::clone(&fx.st),
+                fx.out.prompt_hash.clone(),
+                fx.out.session_id.clone(),
+                session_ref.to_string(),
+                "mcp-trace-hooks".to_string(),
+                fx.bundle,
+                accept_payload,
+                fx.compact.verdict,
+                Some(fx.pc),
+                PlasmTraceContext {
+                    trace_id,
+                    call_index: Some(call_index as i64),
+                    mcp_session_id: None,
+                    logical_session_id: Some(ls_key.into()),
+                    logical_session_ref: Some(session_ref.into()),
+                },
+                fx.dry,
             ),
             LiveRunSpawnOpts {
                 plan_trace: Some(plan_trace),
@@ -858,9 +850,10 @@ async fn mcp_plan_trace_hooks_emit_plasm_line_and_network_totals() {
         .await
         .expect("trace detail after live run");
     assert!(
-        detail.records.iter().any(|r| {
-            r.get("kind").and_then(|v| v.as_str()) == Some("plasm_line")
-        }),
+        detail
+            .records
+            .iter()
+            .any(|r| { r.get("kind").and_then(|v| v.as_str()) == Some("plasm_line") }),
         "expected plasm_line in trace records: {:?}",
         detail.records
     );

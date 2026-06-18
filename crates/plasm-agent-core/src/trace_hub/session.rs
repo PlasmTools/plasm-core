@@ -86,8 +86,7 @@ impl TraceHub {
 
             let last_activity_ms = now_ms();
             let cap = self.config.bounds.max_timeline_events;
-            let criteria =
-                CompletedResumeCriteria::strict(trace_id, meta.tenant_id.as_str());
+            let criteria = CompletedResumeCriteria::strict(trace_id, meta.tenant_id.as_str());
             let resumed = find_completed_index(&g.completed, &session_trace_key, criteria)
                 .and_then(|pos| g.completed.remove(pos));
             let mut active = if let Some(c) = resumed {
