@@ -148,6 +148,8 @@ pub enum TraceSegment {
         code_chars: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         comp: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dag: Option<serde_json::Value>,
     },
     CodePlanExecute {
         plan_handle: String,
@@ -168,6 +170,8 @@ pub enum TraceSegment {
         code_chars: u64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         comp: Option<serde_json::Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dag: Option<serde_json::Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         plasm_call_index: Option<u64>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -198,6 +202,7 @@ mod tests {
             node_count: 2,
             code_chars: 42,
             comp: Some(serde_json::json!({"steps": {"n1": {}}, "bind": {"topo": ["n1"]}})),
+            dag: None,
         };
         let v = serde_json::to_value(eval).expect("json");
         assert_eq!(v["kind"], "code_plan_evaluate");
@@ -219,6 +224,7 @@ mod tests {
             node_count: 2,
             code_chars: 42,
             comp: Some(serde_json::json!({"steps": {"n1": {}}, "bind": {"topo": ["n1"]}})),
+            dag: None,
             plasm_call_index: Some(7),
             run_ids: vec!["r1".into()],
             run_artifacts: vec![super::CodePlanRunArtifactRef {

@@ -58,6 +58,9 @@ mod parse;
 mod relation_hydrate;
 mod row_json;
 
+#[cfg(all(test, feature = "alloc-bench"))]
+mod alloc_bench_test;
+
 pub(crate) use compute_eval::*;
 pub(crate) use materialize::*;
 pub(crate) use relation_hydrate::finalize_typed_relation_materialized_node;
@@ -80,7 +83,9 @@ pub(crate) use dry::{
     enrich_graph_summary_auth_scoped_reads, for_each_body_mutates_remote, graph_summary,
     unused_seed_hints,
 };
-pub(crate) use orchestrator::{inline_row_source, MaterializedInputRow, MaterializedNode};
+pub(crate) use orchestrator::{
+    inline_row_source, inline_row_source_owned, MaterializedInputRow, MaterializedNode,
+};
 pub(crate) use parse::{
     entry_scoped_execute_session, propagate_row_identities, row_identities_from_entities,
 };
@@ -149,8 +154,51 @@ impl DryPlasmPlanEvaluation {
         })
     }
 
+    /// Detach dry simulation JSON during live execution; restore on the run result.
+    pub fn take_node_results_for_live(&mut self) -> Vec<serde_json::Value> {
+        std::mem::take(&mut self.node_results)
+    }
+
     pub(crate) fn artifact(&self) -> &plasm_core::PlasmCompArtifact {
         &self.artifact
+    }
+
+    /// Rehydrate dry evaluation from a reviewed plan commit (skips simulation when cache is populated).
+    pub fn from_plan_commit_cache(
+        bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
+        cache: &crate::operation::PlanCommitDryCache,
+        review: PlanDryReview,
+    ) -> Result<Self, String> {
+        let executable = bundle.executable();
+        let artifact = bundle.artifact().clone();
+        let prepared =
+            crate::plan_prepare::build_prepared_validated_plan(&artifact.comp, executable)?;
+        Ok(Self {
+            version: if cache.version.is_null() {
+                serde_json::json!(artifact.comp.version)
+            } else {
+                cache.version.clone()
+            },
+            name: cache.name.clone().or_else(|| artifact.comp.name.clone()),
+            artifact,
+            executable: executable.clone(),
+            cached_validated: std::cell::OnceCell::from(prepared),
+            topological_order: if cache.topological_order.is_empty() {
+                executable
+                    .steps_topo
+                    .iter()
+                    .map(|(id, _)| id.as_str().to_string())
+                    .collect()
+            } else {
+                cache.topological_order.clone()
+            },
+            node_results: cache.node_results.clone(),
+            parallel_root_surfaces_only: cache.parallel_root_surfaces_only,
+            staged_nodes: cache.staged_nodes.clone(),
+            execution_unsupported: cache.execution_unsupported.clone(),
+            graph_summary: cache.graph_summary.clone(),
+            review,
+        })
     }
 }
 
@@ -272,7 +320,7 @@ mod tests {
             MaterializedNode {
                 entry_id: "acme".to_string(),
                 entity: "PlanComputed_workspace_id".to_string(),
-                result: ExecutionResult {
+                result: Arc::new(ExecutionResult {
                     count: entities.len(),
                     entities: entities.clone(),
                     has_more: false,
@@ -287,9 +335,8 @@ mod tests {
                         ..Default::default()
                     },
                     request_fingerprints: vec![],
-                },
+                }),
                 row_source: MaterializedRowSource::Inline(vec![row.clone()]),
-                rows: vec![row.clone()],
                 row_identities: vec![None],
                 artifact: None,
                 display: "workspace_id".to_string(),
@@ -1763,7 +1810,7 @@ rows"#;
             MaterializedNode {
                 entry_id: "acme".into(),
                 entity: "Report".into(),
-                result: ExecutionResult {
+                result: Arc::new(ExecutionResult {
                     entities: vec![],
                     count: 1,
                     has_more: false,
@@ -1778,11 +1825,10 @@ rows"#;
                         ..Default::default()
                     },
                     request_fingerprints: vec![],
-                },
+                }),
                 row_source: MaterializedRowSource::Inline(vec![
                     serde_json::json!({"content": "STATS"}),
                 ]),
-                rows: vec![serde_json::json!({"content": "STATS"})],
                 row_identities: vec![None],
                 artifact: None,
                 display: String::new(),
@@ -1872,7 +1918,7 @@ rows"#;
         let source_mat = MaterializedNode {
             entry_id: "acme".into(),
             entity: "Product".into(),
-            result: ExecutionResult {
+            result: Arc::new(ExecutionResult {
                 count: 1,
                 entities: vec![parent.clone()],
                 has_more: false,
@@ -1881,9 +1927,8 @@ rows"#;
                 source: ExecutionSource::Cache,
                 stats: ExecutionStats::default(),
                 request_fingerprints: vec![],
-            },
+            }),
             row_source: MaterializedRowSource::Inline(vec![parent_row.clone()]),
-            rows: vec![parent_row],
             row_identities: vec![None],
             artifact: None,
             display: r#"Product("p1")"#.into(),
@@ -1935,7 +1980,7 @@ rows"#;
                 _ => panic!("relation node"),
             },
             &source_mat,
-            &source_mat.rows,
+            source_mat.row_source.inline_rows().expect("inline rows"),
             None,
         )
         .await

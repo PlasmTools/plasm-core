@@ -318,13 +318,18 @@ pub(crate) fn propagate_row_identities(
     match op {
         ComputeOp::Limit { count } => Ok(mat.row_identities.iter().take(*count).cloned().collect()),
         ComputeOp::Project { .. } => Ok(mat.row_identities.iter().take(out_len).cloned().collect()),
-        ComputeOp::Filter { predicates } => Ok(mat
-            .row_identities
-            .iter()
-            .zip(mat.rows.iter())
-            .filter(|(_, row)| predicates.iter().all(|p| predicate_matches(row, p)))
-            .map(|(id, _)| id.clone())
-            .collect()),
+        ComputeOp::Filter { predicates } => {
+            let Some(rows) = mat.row_source.inline_rows() else {
+                return Ok(Vec::new());
+            };
+            Ok(mat
+                .row_identities
+                .iter()
+                .zip(rows.iter())
+                .filter(|(_, row)| predicates.iter().all(|p| predicate_matches(row, p)))
+                .map(|(id, _)| id.clone())
+                .collect())
+        }
         _ => Ok(vec![None; out_len]),
     }
 }

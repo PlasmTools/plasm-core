@@ -86,7 +86,8 @@ use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
 use crate::operation::{
-    compute_plan_commit_id_from_dry, plan_commit_meta, PlanCommitRecord, PLAN_COMMIT_TTL,
+    compute_plan_commit_id_from_dry, plan_commit_meta, PlanCommitDryCache, PlanCommitRecord,
+    PLAN_COMMIT_TTL,
 };
 use crate::plan_dry_display::build_plan_dry_compact_view;
 use crate::plasm_comp_wire::plasm_comp_json_from_dry;
@@ -143,6 +144,7 @@ pub(crate) use tool_parse::{
     plan_node_count_from_comp,
 };
 pub(crate) use trace::trace_archive_and_emit_code_plan_evaluate;
+pub(crate) use trace::trace_archive_and_emit_code_plan_execute;
 pub(crate) use transport::{
     mcp_chars_to_token_est, plasm_invocation_char_count, McpLogicalSessionState,
     McpSessionPlasmStats, McpTransportState, PlasmExecBinding,
@@ -835,7 +837,7 @@ impl PlasmMcpHandler {
         };
         let run_live = matches!(invocation, McpPlasmInvocation::Run { .. });
         let plan_commit_ref = invocation.plan_commit_ref().cloned();
-        let (binding, this_invocation_chars, mut idx, call_count) = {
+        let (binding, this_invocation_chars, idx, call_count) = {
             let mut g = state.lock().await;
             let binding = g.binding.clone();
             let this_invocation_chars =
@@ -917,7 +919,7 @@ impl PlasmMcpHandler {
             )
             .await;
 
-        let sink = McpPlasmTraceSink {
+        let _sink = McpPlasmTraceSink {
             hub: Arc::clone(&self.plasm.trace_hub),
             mcp_key: ls_key.clone(),
             call_index,
@@ -983,27 +985,29 @@ impl PlasmMcpHandler {
                             .as_ref()
                             .expect("run invocation resolves committed plan");
                         committed_plasm_run::execute_committed_plasm_run(
-                            committed_plasm_run::CommittedPlasmRunContext {
+                            committed_plasm_run::ExecuteCommittedMcpRun {
                                 es: Arc::clone(&es),
                                 host: Arc::clone(&self.plasm),
-                                prompt_hash: b.prompt_hash.clone(),
-                                session_id: b.session_id.clone(),
-                                session_ref: session_ref.clone(),
-                                ls_key: ls_key.clone(),
-                                mcp_session_key: key.to_string(),
+                                wire: committed_plasm_run::McpExecuteWire {
+                                    prompt_hash: b.prompt_hash.clone(),
+                                    session_id: b.session_id.clone(),
+                                    session_ref: session_ref.clone(),
+                                    ls_key: ls_key.clone(),
+                                    mcp_session_key: key.to_string(),
+                                },
                                 plan_commit_ref: plan_commit_ref.clone(),
                                 committed: committed.clone(),
                                 bundle: bundle.clone(),
-                                program_for_trace: program_for_trace.clone(),
-                                comp_archive: comp_archive.clone(),
                                 mcp_trace: mcp_trace.clone(),
-                                call_count,
+                                artifacts: committed_plasm_run::CommittedRunArtifacts {
+                                    trace_hub: Arc::clone(&self.plasm.trace_hub),
+                                    run_artifacts: Arc::clone(&self.plasm.run_artifacts),
+                                    comp_archive: comp_archive.clone(),
+                                    program_for_trace: program_for_trace.clone(),
+                                    call_count,
+                                },
                                 force_run,
                                 wait_live,
-                                idx: &mut idx,
-                                sink: sink.clone(),
-                                trace_hub: Arc::clone(&self.plasm.trace_hub),
-                                run_artifacts: Arc::clone(&self.plasm.run_artifacts),
                             },
                         )
                         .await
@@ -1025,6 +1029,7 @@ impl PlasmMcpHandler {
                             Some(&es),
                         );
                         let comp_json = plasm_comp_json_from_dry(&dry);
+                        let dag_json = crate::plasm_plan_run::plasm_plan_dag_json(&dry);
                         let compact = build_plan_dry_compact_view(
                             dry.validated_plan(),
                             &dry.topological_order,
@@ -1046,6 +1051,7 @@ impl PlasmMcpHandler {
                             dry_review: dry.review.clone(),
                             verdict: compact.verdict,
                             expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
+                            dry_cache: PlanCommitDryCache::from_dry(&dry),
                         };
                         crate::plan_commit_store::register_plan_commit_and_persist(
                             self.plasm.as_ref(),
@@ -1067,6 +1073,7 @@ impl PlasmMcpHandler {
                             &comp_archive,
                             &program_for_trace,
                             comp_json.clone(),
+                            dag_json,
                             call_count,
                         )
                         .await;

@@ -326,7 +326,10 @@ impl ProjectionStore {
         if records.is_empty() {
             return Ok(None);
         }
-        let totals = trace_totals_from_head_row(&head);
+        let record_values: Vec<serde_json::Value> =
+            records.iter().map(|r| r.record.clone()).collect();
+        let totals =
+            crate::trace_totals::trace_totals_from_head_or_records(&head, &record_values);
         Ok(Some(DurableTraceDetail {
             summary: TraceSummary {
                 trace_id,

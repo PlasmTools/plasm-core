@@ -249,22 +249,42 @@ pub(crate) async fn post_execute_session_plan(
     );
     let ph_str = prompt_hash.to_string();
     let sid_str = session_id.to_string();
-    let outcome = crate::execute_pipeline::ExecutePipeline::run_program(
-        &sess,
-        &st,
-        ph_str.as_str(),
-        sid_str.as_str(),
-        &prepared.bundle,
-        if run_live {
-            crate::execute_pipeline::ExecutionIntent::Live
-        } else {
-            crate::execute_pipeline::ExecutionIntent::PlanOnly
-        },
-        None,
-        None,
-        None,
-    )
-    .await;
+    let outcome = if run_live {
+        let es = Arc::clone(&sess);
+        let st_arc = Arc::new(st.clone());
+        let bundle = prepared.bundle.clone();
+        let ph = ph_str.clone();
+        let sid = sid_str.clone();
+        st.live_plan_pool()
+            .run(move || async move {
+                crate::plasm_plan_run::run_plasm_comp(
+                    es.as_ref(),
+                    st_arc.as_ref(),
+                    ph.as_str(),
+                    sid.as_str(),
+                    &bundle,
+                    true,
+                    None,
+                    None,
+                    None,
+                )
+                .await
+            })
+            .await
+    } else {
+        crate::execute_pipeline::ExecutePipeline::run_program(
+            &sess,
+            &st,
+            ph_str.as_str(),
+            sid_str.as_str(),
+            &prepared.bundle,
+            crate::execute_pipeline::ExecutionIntent::PlanOnly,
+            None,
+            None,
+            None,
+        )
+        .await
+    };
 
     match outcome {
         Ok(result) => {

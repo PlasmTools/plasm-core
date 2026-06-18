@@ -95,6 +95,7 @@ impl ExecutePipeline {
             None,
             None,
             Some(plasm_core::PreflightToken::VERIFIED),
+            None,
         )
         .await
     }

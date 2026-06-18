@@ -143,104 +143,6 @@ pub fn should_emit_agent_progress(
         && last_emit_at.elapsed() >= OP_PROGRESS_COALESCE
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum McpEmitCoalesce {
-    /// Accept line: always emit with seq 1.
-    Accept,
-    /// Running: emit on step/row change per [`should_emit_agent_progress`].
-    OnChange,
-    /// Running: ~1s wall clock or on change.
-    Coalesced,
-    /// Terminal done/failed/cancelled: always emit.
-    Terminal,
-}
-
-/// Queue one MCP progress wire line for bounded sync (shared by accept/running/terminal).
-#[allow(clippy::too_many_arguments)]
-pub fn try_queue_mcp_sync_progress_line(
-    hub: &OperationProgressHub,
-    stats: OpNotifyStats,
-    transport_key: &str,
-    plan_commit: Option<&PlanCommitRef>,
-    handle: &OperationHandle,
-    emit_state: &mut OperationAgentEmitState,
-    sig: OpWireSig,
-    progress: Option<&OperationProgress>,
-    dry_verdict: Option<PlanDryVerdict>,
-    error: Option<&str>,
-    coalesce: McpEmitCoalesce,
-) -> bool {
-    let default_progress = OperationProgress::default();
-    let progress_ref = progress.unwrap_or(&default_progress);
-
-    match coalesce {
-        McpEmitCoalesce::Accept => {
-            emit_state.seq = 1;
-            emit_state.last_emit_at = Instant::now();
-        }
-        McpEmitCoalesce::Terminal => {
-            emit_state.seq = emit_state.seq.saturating_add(1);
-            emit_state.last_emit_at = Instant::now();
-        }
-        McpEmitCoalesce::OnChange => {
-            if sig != OpWireSig::Running {
-                return false;
-            }
-            let snapshot = OpAgentSnapshot::from_running(progress_ref);
-            if !should_emit_agent_progress(
-                emit_state.last_emitted,
-                snapshot,
-                emit_state.last_emit_at,
-            ) {
-                return false;
-            }
-            emit_state.seq = emit_state.seq.saturating_add(1);
-            emit_state.last_emitted = snapshot;
-            emit_state.last_emit_at = Instant::now();
-        }
-        McpEmitCoalesce::Coalesced => {
-            if sig != OpWireSig::Running {
-                return false;
-            }
-            let snapshot = OpAgentSnapshot::from_running(progress_ref);
-            let time_due = emit_state.last_emit_at.elapsed() >= Duration::from_secs(1);
-            if !time_due
-                && !should_emit_agent_progress(
-                    emit_state.last_emitted,
-                    snapshot,
-                    emit_state.last_emit_at,
-                )
-            {
-                return false;
-            }
-            emit_state.seq = emit_state.seq.saturating_add(1);
-            emit_state.last_emitted = snapshot;
-            emit_state.last_emit_at = Instant::now();
-        }
-    }
-
-    let line = render_op_wire_line(
-        handle,
-        sig,
-        progress,
-        if coalesce == McpEmitCoalesce::Accept {
-            plan_commit
-        } else {
-            None
-        },
-        if coalesce == McpEmitCoalesce::Accept {
-            dry_verdict
-        } else {
-            None
-        },
-        error,
-    );
-    emit_state.last_line = line.clone();
-    let seq = emit_state.seq;
-    hub.queue_mcp_notify(transport_key, &line, seq, plan_commit, stats);
-    true
-}
-
 pub fn render_op_wire_line(
     handle: &OperationHandle,
     sig: OpWireSig,
@@ -326,6 +228,27 @@ pub fn render_op_wire_line(
 
 pub fn render_op_wire_markdown(line: &str) -> String {
     format!("```text\n{line}\n```")
+}
+
+pub fn http_poll_accept_markdown_suffix(handle: &OperationHandle) -> String {
+    format!(
+        "\n\nPoll with `wait({})` until `!` / `x` / `?`. Do not start unrelated live programs while this handle is open.",
+        handle.as_str()
+    )
+}
+
+pub fn http_poll_unchanged_markdown_suffix(handle: &OperationHandle) -> String {
+    format!(
+        "\n\nStill open — poll again with `wait({})` in 3–5s.",
+        handle.as_str()
+    )
+}
+
+pub fn http_poll_progress_markdown_suffix(handle: &OperationHandle) -> String {
+    format!(
+        "\n\nIn flight — keep polling with `wait({})` until terminal.",
+        handle.as_str()
+    )
 }
 
 pub fn async_poll_accept_markdown_suffix(handle: &OperationHandle) -> String {

@@ -7,10 +7,12 @@ use crate::mcp_transport_store::execute_session_registry::{
     ExecuteSessionPersistError, ExecuteSessionPersistOutcome,
 };
 use crate::operation::{
-    compute_plan_commit_id_from_semantic, plan_commit_canonical_comp, PlanCommitRecord,
+    compute_plan_commit_id_from_semantic, plan_commit_canonical_comp, PlanCommitDryCache,
+    PlanCommitRecord,
 };
 use crate::plan_dry_display::{PlanDryReview, PlanDryVerdict};
 use crate::plasm_comp_bundle::PlasmCompBundle;
+use crate::plasm_plan_run::{evaluate_plasm_comp_dry, DryPlasmPlanEvaluation};
 use crate::server_state::PlasmHostState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +112,44 @@ pub struct CommittedPlan {
     pub program: String,
     pub dry_review: PlanDryReview,
     pub verdict: PlanDryVerdict,
+    pub dry_cache: PlanCommitDryCache,
+}
+
+/// Prove live bundle semantic commit matches the reviewed [`CommittedPlan`].
+pub fn verify_bundle_matches_committed_plan(
+    bundle: &PlasmCompBundle,
+    committed: &CommittedPlan,
+) -> Result<(), PlanCommitVerifyError> {
+    let live_id = compute_plan_commit_id_from_semantic(&plan_commit_canonical_comp(
+        &bundle.artifact().comp,
+    ));
+    let stored_id = compute_plan_commit_id_from_semantic(&plan_commit_canonical_comp(
+        &committed.artifact.comp,
+    ));
+    if live_id != stored_id {
+        return Err(PlanCommitVerifyError::Mismatch {
+            commit_ref: committed.commit_ref.as_str().to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Dry evaluation for `plasm_run`: reuse commit cache when populated; otherwise evaluate once.
+pub fn dry_for_committed_plasm_run(
+    es: &ExecuteSession,
+    bundle: &PlasmCompBundle,
+    committed: &CommittedPlan,
+) -> Result<DryPlasmPlanEvaluation, String> {
+    verify_bundle_matches_committed_plan(bundle, committed).map_err(|e| e.detail())?;
+    if committed.dry_cache.is_populated() {
+        DryPlasmPlanEvaluation::from_plan_commit_cache(
+            bundle,
+            &committed.dry_cache,
+            committed.dry_review.clone(),
+        )
+    } else {
+        evaluate_plasm_comp_dry(es, bundle)
+    }
 }
 
 pub fn resolve_committed_plan(
@@ -135,6 +175,7 @@ pub fn resolve_committed_plan(
         program: record.program,
         dry_review: record.dry_review,
         verdict: record.verdict,
+        dry_cache: record.dry_cache,
     })
 }
 
@@ -260,6 +301,7 @@ mod tests {
             dry_review: Default::default(),
             verdict: PlanDryVerdict::Ok,
             expires_at: std::time::Instant::now() - PLAN_COMMIT_TTL,
+            dry_cache: PlanCommitDryCache::default(),
         };
         es.register_plan_commit(record);
         let err = verify_plan_commit_id(&es, &pc, PlanCommitId::from_canonical_bytes([1u8; 32]))
@@ -274,6 +316,7 @@ mod tests {
             dry_review: Default::default(),
             verdict: PlanDryVerdict::Ok,
             expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
+            dry_cache: PlanCommitDryCache::default(),
         });
         let err = verify_plan_commit_id(&es, &pc, PlanCommitId::from_canonical_bytes([9u8; 32]))
             .expect_err("mismatch");
@@ -293,6 +336,7 @@ mod tests {
             dry_review: Default::default(),
             verdict: PlanDryVerdict::Ok,
             expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
+            dry_cache: PlanCommitDryCache::default(),
         });
         verify_plan_commit_id(&es, &pc, commit_id).expect("roundtrip");
     }
@@ -318,6 +362,7 @@ mod tests {
             dry_review: review.clone(),
             verdict: PlanDryVerdict::Review,
             expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
+            dry_cache: PlanCommitDryCache::default(),
         });
 
         let accepted = accept_plan_commit_for_bundle(
@@ -412,6 +457,7 @@ mod tests {
                 dry_review: Default::default(),
                 verdict: PlanDryVerdict::Ok,
                 expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
+                dry_cache: PlanCommitDryCache::default(),
             },
         )
         .await
@@ -437,5 +483,30 @@ mod tests {
             accepted.record.as_ref().map(|r| r.program.as_str()),
             Some("test")
         );
+    }
+
+    #[test]
+    fn dry_for_committed_reuses_plan_commit_cache() {
+        let es = minimal_session();
+        let artifact = minimal_artifact();
+        let bundle = PlasmCompBundle::new(artifact.clone()).expect("bundle");
+        let cache = PlanCommitDryCache {
+            topological_order: vec!["items".into()],
+            node_results: vec![serde_json::json!({"ok": true})],
+            graph_summary: serde_json::json!({"nodes": 1}),
+            ..PlanCommitDryCache::default()
+        };
+        let committed = CommittedPlan {
+            commit_ref: es.mint_plan_commit_ref(),
+            artifact: artifact.clone(),
+            program: "e1".into(),
+            dry_review: Default::default(),
+            verdict: PlanDryVerdict::Ok,
+            dry_cache: cache.clone(),
+        };
+        let dry = dry_for_committed_plasm_run(&es, &bundle, &committed).expect("hydrated dry");
+        assert_eq!(dry.topological_order, cache.topological_order);
+        assert_eq!(dry.node_results.len(), 1);
+        verify_bundle_matches_committed_plan(&bundle, &committed).expect("bundle matches");
     }
 }

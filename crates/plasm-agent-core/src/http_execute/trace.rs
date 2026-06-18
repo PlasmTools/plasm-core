@@ -151,6 +151,7 @@ pub async fn execute_plasm_parsed_expr(
     host_page_size: Option<usize>,
     surface_read_budget: Option<crate::plan_read_bounds::PushedReadBudget>,
     rows_progress: Option<plasm_runtime::RowsProgressFn>,
+    plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), String> {
     crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(sess, source_label, &parsed)
         .map_err(|e| run_line_error_string(RunLineError::Parse(e)))?;
@@ -166,6 +167,7 @@ pub async fn execute_plasm_parsed_expr(
         surface_read_budget,
         rows_progress,
         Some(plasm_core::PreflightToken::VERIFIED),
+        plan_shared,
     )
     .await
     .map_err(run_line_error_string)
@@ -236,4 +238,95 @@ pub async fn run_seal_record_for_handle(
         parsed: artifact.parsed_preimage,
         request_fingerprints: handle.request_fingerprints.clone(),
     })
+}
+
+/// Emit `code_plan_evaluate` when HTTP execute dry-run shares an MCP logical session binding.
+pub(crate) async fn maybe_emit_http_code_plan_evaluate(
+    st: &PlasmHostState,
+    sess: &ExecuteSession,
+    prompt_hash: &str,
+    session_id: &str,
+    program: &str,
+    bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
+    plan_call_index: u64,
+) {
+    let Ok(dry) = crate::plasm_plan_run::evaluate_plasm_comp_dry(sess, bundle) else {
+        return;
+    };
+    let Some(logical_uuid) = st
+        .logical_session_id_for_execute_binding(prompt_hash, session_id)
+        .await
+    else {
+        return;
+    };
+    let ls_key = logical_uuid.to_string();
+    let session_ref =
+        crate::mcp_logical_ref::format_logical_session_wire_ref(crate::session_identity::LogicalSessionId(
+            logical_uuid,
+        ));
+    let comp_archive =
+        crate::plasm_comp_wire::plasm_comp_wire_json(dry.artifact(), Some(&dry.graph_summary));
+    let comp_json = crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry);
+    let dag_json = crate::plasm_plan_run::plasm_plan_dag_json(&dry);
+    crate::mcp_server::trace_archive_and_emit_code_plan_evaluate(
+        &st.trace_hub,
+        &st.run_artifacts,
+        &ls_key,
+        sess,
+        prompt_hash,
+        session_id,
+        &session_ref,
+        &comp_archive,
+        program,
+        comp_json,
+        dag_json,
+        plan_call_index,
+    )
+    .await;
+}
+
+/// Emit `code_plan_execute` when HTTP live run shares an MCP logical session binding.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn maybe_emit_http_code_plan_execute(
+    st: &PlasmHostState,
+    sess: &ExecuteSession,
+    prompt_hash: &str,
+    session_id: &str,
+    program: &str,
+    bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
+    plan_call_index: u64,
+    out: &crate::plasm_plan_run::PlasmPlanRunResult,
+) {
+    let Ok(dry) = crate::plasm_plan_run::evaluate_plasm_comp_dry(sess, bundle) else {
+        return;
+    };
+    let Some(logical_uuid) = st
+        .logical_session_id_for_execute_binding(prompt_hash, session_id)
+        .await
+    else {
+        return;
+    };
+    let ls_key = logical_uuid.to_string();
+    let session_ref =
+        crate::mcp_logical_ref::format_logical_session_wire_ref(crate::session_identity::LogicalSessionId(
+            logical_uuid,
+        ));
+    let comp_archive =
+        crate::plasm_comp_wire::plasm_comp_wire_json(dry.artifact(), Some(&dry.graph_summary));
+    crate::mcp_server::trace_archive_and_emit_code_plan_execute(
+        &st.trace_hub,
+        &st.run_artifacts,
+        &ls_key,
+        sess,
+        prompt_hash,
+        session_id,
+        &session_ref,
+        &comp_archive,
+        program,
+        out.comp.clone(),
+        crate::plasm_plan_run::plasm_plan_dag_json(&dry),
+        plan_call_index,
+        out,
+    )
+    .await;
 }

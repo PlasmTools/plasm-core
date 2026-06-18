@@ -109,6 +109,8 @@ pub struct PersistedPlanCommitRecord {
     pub dry_review: crate::plan_dry_display::PlanDryReview,
     pub verdict: crate::plan_dry_display::PlanDryVerdict,
     pub expires_at_unix: u64,
+    #[serde(default)]
+    pub dry_cache: crate::operation::PlanCommitDryCache,
 }
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]

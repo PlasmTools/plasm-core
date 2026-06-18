@@ -468,6 +468,7 @@ pub struct CodePlanTrace {
     pub node_count: usize,
     pub code_chars: u64,
     pub comp: serde_json::Value,
+    pub dag: serde_json::Value,
     pub plasm_call_index: Option<u64>,
     pub run_ids: Vec<String>,
     pub run_artifacts: Vec<CodePlanRunArtifactRef>,
@@ -1125,6 +1126,7 @@ impl TraceHub {
                 node_count: trace.node_count,
                 code_chars: trace.code_chars,
                 comp: Some(trace.comp),
+                dag: Some(trace.dag),
             },
         )
         .await;
@@ -1146,6 +1148,7 @@ impl TraceHub {
                 node_count: trace.node_count,
                 code_chars: trace.code_chars,
                 comp: Some(trace.comp),
+                dag: Some(trace.dag),
                 plasm_call_index: trace.plasm_call_index,
                 run_ids: trace.run_ids,
                 run_artifacts: trace.run_artifacts,

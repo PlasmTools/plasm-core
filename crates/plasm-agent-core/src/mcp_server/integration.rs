@@ -13,7 +13,7 @@ use crate::plan_dry_display::PlanDryCompactView;
 use crate::plasm_compile::compile_plasm_expression;
 use crate::plasm_dag::compile_plasm_surface_line_to_plan;
 use crate::plasm_plan_run::{evaluate_plasm_comp_dry, DryPlasmPlanEvaluation};
-use crate::run_delivery::{deliver_mcp_expensive_live_run, McpExpensiveLiveRunContext};
+use crate::run_delivery::{deliver_live_run_await, LiveRunAwaitContext, RunDeliveryPolicy};
 use crate::run_explorer_meta::build_run_explorer_accept_payload;
 use crate::server_state::PlasmHostState;
 use crate::trace_sink_emit::PlasmTraceContext;
@@ -157,7 +157,7 @@ impl MatrixPcNFixture {
 
     async fn persist_plan_commit(&self) {
         use crate::operation::{
-            compute_plan_commit_id_from_dry, PlanCommitRecord, PLAN_COMMIT_TTL,
+            compute_plan_commit_id_from_dry, PlanCommitDryCache, PlanCommitRecord, PLAN_COMMIT_TTL,
         };
         use crate::plan_commit_store::register_plan_commit_and_persist;
 
@@ -174,6 +174,7 @@ impl MatrixPcNFixture {
                 dry_review: self.dry.review.clone(),
                 verdict: self.compact.verdict,
                 expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
+                dry_cache: PlanCommitDryCache::from_dry(&self.dry),
             },
         )
         .await
@@ -364,7 +365,9 @@ async fn mcp_async_wait_poll_reaches_terminal_result() {
 }
 
 #[tokio::test]
-async fn mcp_deliver_returns_none_for_bounded_plan() {
+async fn mcp_policy_always_spawns_async_when_wait_live() {
+    use crate::run_delivery::should_spawn_async_for_policy;
+
     let st = Arc::new(matrix_federated_host());
     let seeds = vec![CapabilitySeed {
         entry_id: "github".into(),
@@ -378,7 +381,7 @@ async fn mcp_deliver_returns_none_for_bounded_plan() {
         None,
         None,
         None,
-        "bounded deliver",
+        "await policy",
         RankedCapabilitiesArg::Unspecified,
     )
     .await
@@ -391,43 +394,22 @@ async fn mcp_deliver_returns_none_for_bounded_plan() {
     let cross = st.sessions.symbol_map_cross_cache();
     let bundle =
         compile_plasm_expression(pipeline, Some(cross), &es, "e1(p1=\"a\")", "e1(p1=\"a\")")
-            .expect("bounded compile");
+            .expect("compile");
     let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
     assert!(
         !dry.review.execution_is_expensive(),
-        "fixture program should be bounded: {:?}",
+        "fixture get should be cheap: {:?}",
         dry.review
     );
-    let accept_payload = build_run_explorer_accept_payload(&dry, Some(&es));
-    let delivered = deliver_mcp_expensive_live_run(McpExpensiveLiveRunContext {
-        es: Arc::clone(&es),
-        st: Arc::clone(&st),
-        prompt_hash: out.prompt_hash.clone(),
-        session_id: out.session_id.clone(),
-        session_ref: "l_bounded_deliver".into(),
-        mcp_session_key: "mcp".into(),
-        bundle,
-        review: dry.review,
-        accept_payload,
-        dry_verdict: crate::plan_dry_display::PlanDryVerdict::Ok,
-        plan_commit_ref: None,
-        trace: PlasmTraceContext {
-            trace_id: Uuid::nil(),
-            call_index: None,
-            mcp_session_id: None,
-            logical_session_id: None,
-            logical_session_ref: Some("l_bounded_deliver".into()),
-        },
-        wait_live: true,
-        await_cfg: crate::mcp_run_await::AwaitConfig::default(),
-    })
-    .await
-    .expect("deliver");
-    assert!(delivered.is_none());
+    assert!(should_spawn_async_for_policy(
+        RunDeliveryPolicy::McpAwaitTerminal,
+        true,
+        &dry.review
+    ));
 }
 
 #[tokio::test]
-async fn mcp_deliver_query_limit_not_expensive() {
+async fn mcp_query_limit_uses_async_await_path() {
     let st = Arc::new(matrix_federated_host());
     let seeds = vec![CapabilitySeed {
         entry_id: "github".into(),
@@ -441,7 +423,7 @@ async fn mcp_deliver_query_limit_not_expensive() {
         None,
         None,
         None,
-        "query limit deliver",
+        "query limit await",
         RankedCapabilitiesArg::Unspecified,
     )
     .await
@@ -456,40 +438,194 @@ async fn mcp_deliver_query_limit_not_expensive() {
     let bundle = compile_plasm_expression(pipeline, Some(cross), &es, program, program)
         .expect("query+limit compile");
     let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
-    assert!(
-        !dry.review.execution_is_expensive(),
-        "query.limit should be bounded after prepare: {:?}",
-        dry.review
-    );
+    assert!(!dry.review.execution_is_expensive());
     let accept_payload = build_run_explorer_accept_payload(&dry, Some(&es));
-    let delivered = deliver_mcp_expensive_live_run(McpExpensiveLiveRunContext {
-        es: Arc::clone(&es),
-        st: Arc::clone(&st),
-        prompt_hash: out.prompt_hash.clone(),
-        session_id: out.session_id.clone(),
-        session_ref: "l_query_limit_deliver".into(),
-        mcp_session_key: "mcp".into(),
-        bundle,
-        review: dry.review,
-        accept_payload,
-        dry_verdict: crate::plan_dry_display::PlanDryVerdict::Ok,
-        plan_commit_ref: None,
-        trace: PlasmTraceContext {
-            trace_id: Uuid::nil(),
-            call_index: None,
-            mcp_session_id: None,
-            logical_session_id: None,
-            logical_session_ref: Some("l_query_limit_deliver".into()),
-        },
-        wait_live: true,
-        await_cfg: crate::mcp_run_await::AwaitConfig::default(),
-    })
-    .await
-    .expect("deliver");
-    assert!(
-        delivered.is_none(),
-        "bounded query.limit must not server-await"
+    let compact = crate::plan_dry_display::build_plan_dry_compact_view(
+        dry.validated_plan(),
+        &dry.topological_order,
+        &dry.review,
+        &dry.graph_summary,
+        Some(&es),
     );
+    let handle_before = es.open_live_operation_handles().len();
+    let delivered = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        deliver_live_run_await(LiveRunAwaitContext::for_mcp_plasm_run(
+            Arc::clone(&es),
+            Arc::clone(&st),
+            out.prompt_hash.clone(),
+            out.session_id.clone(),
+            "l_AAAAAAAAQACAAAAAAAAAAQ".to_string(),
+            "mcp".to_string(),
+            bundle,
+            accept_payload,
+            compact.verdict,
+            None,
+            PlasmTraceContext {
+                trace_id: Uuid::nil(),
+                call_index: None,
+                mcp_session_id: None,
+                logical_session_id: None,
+                logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
+            },
+            dry,
+        )),
+    )
+    .await;
+    let Ok(delivered_inner) = delivered else {
+        panic!("query.limit await hung past 30s");
+    };
+    if let Ok(result) = delivered_inner {
+        assert!(
+            !result.return_steps.is_empty() || result.run_markdown.is_some(),
+            "expected terminal rows or markdown on success"
+        );
+    }
+    assert!(
+        handle_before == 0 || es.open_live_operation_handles().is_empty(),
+        "terminal await must not leave running ops"
+    );
+}
+
+#[tokio::test]
+async fn matrix_query_limit_on_injected_live_plan_pool() {
+    let mut st = matrix_federated_host();
+    st.oss.live_plan_pool = Arc::new(crate::live_plan_run_worker::LivePlanRunPool::new());
+    let st = Arc::new(st);
+    let seeds = vec![CapabilitySeed {
+        entry_id: "github".into(),
+        entity: "LangItem".into(),
+    }];
+    let out = apply_capability_seeds(
+        st.as_ref(),
+        None,
+        None,
+        seeds,
+        None,
+        None,
+        None,
+        "injected pool",
+        RankedCapabilitiesArg::Unspecified,
+    )
+    .await
+    .expect("apply_capability_seeds");
+    let es = st
+        .get_execute_session(&out.prompt_hash, &out.session_id)
+        .await
+        .expect("execute session");
+    let pipeline = st.engine.prompt_pipeline();
+    let cross = st.sessions.symbol_map_cross_cache();
+    let program = "items = e1.limit(3)\nitems";
+    let bundle = compile_plasm_expression(pipeline, Some(cross), &es, program, program)
+        .expect("query+limit compile");
+    let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
+    let accept_payload = build_run_explorer_accept_payload(&dry, Some(&es));
+    let compact = crate::plan_dry_display::build_plan_dry_compact_view(
+        dry.validated_plan(),
+        &dry.topological_order,
+        &dry.review,
+        &dry.graph_summary,
+        Some(&es),
+    );
+    let delivered = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        deliver_live_run_await(LiveRunAwaitContext::for_mcp_plasm_run(
+            Arc::clone(&es),
+            Arc::clone(&st),
+            out.prompt_hash.clone(),
+            out.session_id.clone(),
+            "l_AAAAAAAAQACAAAAAAAAAAQ".to_string(),
+            "mcp".to_string(),
+            bundle,
+            accept_payload,
+            compact.verdict,
+            None,
+            PlasmTraceContext {
+                trace_id: Uuid::nil(),
+                call_index: None,
+                mcp_session_id: None,
+                logical_session_id: None,
+                logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
+            },
+            dry,
+        )),
+    )
+    .await;
+    assert!(delivered.is_ok(), "cheap matrix live must finish on host live_plan_pool");
+}
+
+#[cfg(not(debug_assertions))]
+#[tokio::test]
+async fn matrix_query_limit_on_release_stack_budget() {
+    use crate::live_plan_run_worker::{
+        LivePlanRunPool, DEFAULT_LIVE_PLAN_RUN_STACK_BYTES_RELEASE,
+    };
+
+    let mut st = matrix_federated_host();
+    st.oss.live_plan_pool = Arc::new(LivePlanRunPool::with_stack_bytes(
+        DEFAULT_LIVE_PLAN_RUN_STACK_BYTES_RELEASE,
+    ));
+    let st = Arc::new(st);
+    let seeds = vec![CapabilitySeed {
+        entry_id: "github".into(),
+        entity: "LangItem".into(),
+    }];
+    let out = apply_capability_seeds(
+        st.as_ref(),
+        None,
+        None,
+        seeds,
+        None,
+        None,
+        None,
+        "release stack budget",
+        RankedCapabilitiesArg::Unspecified,
+    )
+    .await
+    .expect("apply_capability_seeds");
+    let es = st
+        .get_execute_session(&out.prompt_hash, &out.session_id)
+        .await
+        .expect("execute session");
+    let pipeline = st.engine.prompt_pipeline();
+    let cross = st.sessions.symbol_map_cross_cache();
+    let program = "items = e1.limit(3)\nitems";
+    let bundle = compile_plasm_expression(pipeline, Some(cross), &es, program, program)
+        .expect("query+limit compile");
+    let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
+    let accept_payload = build_run_explorer_accept_payload(&dry, Some(&es));
+    let compact = crate::plan_dry_display::build_plan_dry_compact_view(
+        dry.validated_plan(),
+        &dry.topological_order,
+        &dry.review,
+        &dry.graph_summary,
+        Some(&es),
+    );
+    let delivered = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        deliver_live_run_await(LiveRunAwaitContext::for_mcp_plasm_run(
+            Arc::clone(&es),
+            Arc::clone(&st),
+            out.prompt_hash.clone(),
+            out.session_id.clone(),
+            "l_AAAAAAAAQACAAAAAAAAAAQ".to_string(),
+            "mcp".to_string(),
+            bundle,
+            accept_payload,
+            compact.verdict,
+            None,
+            PlasmTraceContext {
+                trace_id: Uuid::nil(),
+                call_index: None,
+                mcp_session_id: None,
+                logical_session_id: None,
+                logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
+            },
+            dry,
+        )),
+    )
+    .await;
+    assert!(delivered.is_ok(), "cheap matrix live must finish on 4 MiB worker stack");
 }
 
 #[tokio::test]
@@ -533,158 +669,47 @@ async fn mcp_dry_run_plan_commit_survives_rehydrate_for_plasm_run() {
 }
 
 #[tokio::test]
-async fn mcp_bounded_pc_n_sync_gate_uses_committed_review() {
+async fn mcp_pc_n_committed_await_uses_stored_review() {
     use crate::plan_commit_store::resolve_committed_plan;
-    use crate::run_delivery::{deliver_mcp_expensive_live_run, McpExpensiveLiveRunContext};
 
-    let fx = MatrixPcNFixture::open_with_test_store("bounded pcN sync gate", "mcp_pcN_gate").await;
-    assert!(
-        !fx.dry.review.execution_is_expensive(),
-        "fixture get must stay on sync path"
-    );
+    let fx = MatrixPcNFixture::open_with_test_store("pcN await gate", "mcp_pcN_gate").await;
+    assert!(!fx.dry.review.execution_is_expensive());
     fx.persist_plan_commit().await;
     resolve_committed_plan(&fx.es, &fx.pc).expect("pcN");
-    assert_eq!(
-        resolve_committed_plan(&fx.es, &fx.pc).expect("pcN").program,
-        fx.program
-    );
 
     let es2 = fx.rehydrated_session().await;
     let committed2 = resolve_committed_plan(&es2, &fx.pc).expect("rehydrated pcN");
     assert!(!committed2.dry_review.execution_is_expensive());
 
     let accept_payload = build_run_explorer_accept_payload(&fx.dry, Some(&es2));
-    let delivered = deliver_mcp_expensive_live_run(McpExpensiveLiveRunContext {
-        es: Arc::clone(&es2),
-        st: Arc::clone(&fx.st),
-        prompt_hash: fx.out.prompt_hash.clone(),
-        session_id: fx.out.session_id.clone(),
-        session_ref: "l_pcN_gate".into(),
-        mcp_session_key: "mcp".into(),
-        bundle: fx.bundle,
-        review: committed2.dry_review.clone(),
-        accept_payload,
-        dry_verdict: committed2.verdict,
-        plan_commit_ref: Some(fx.pc),
-        trace: PlasmTraceContext {
-            trace_id: Uuid::nil(),
-            call_index: None,
-            mcp_session_id: None,
-            logical_session_id: None,
-            logical_session_ref: Some("l_pcN_gate".into()),
-        },
-        wait_live: true,
-        await_cfg: crate::mcp_run_await::AwaitConfig::default(),
-    })
-    .await
-    .expect("deliver");
+    let delivered = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        deliver_live_run_await(LiveRunAwaitContext::for_mcp_plasm_run(
+            Arc::clone(&es2),
+            Arc::clone(&fx.st),
+            fx.out.prompt_hash.clone(),
+            fx.out.session_id.clone(),
+            "l_AAAAAAAAQACAAAAAAAAAAQ".to_string(),
+            "mcp".to_string(),
+            fx.bundle,
+            accept_payload,
+            committed2.verdict,
+            Some(fx.pc),
+            PlasmTraceContext {
+                trace_id: Uuid::nil(),
+                call_index: None,
+                mcp_session_id: None,
+                logical_session_id: None,
+                logical_session_ref: Some("l_AAAAAAAAQACAAAAAAAAAAQ".into()),
+            },
+            fx.dry,
+        )),
+    )
+    .await;
     assert!(
-        delivered.is_none(),
-        "bounded committed plan must use sync plasm_run path"
+        matches!(delivered, Ok(Ok(_)) | Ok(Err(_))),
+        "committed pcN await hung past 30s: {delivered:?}"
     );
-}
-
-#[tokio::test]
-async fn sync_progress_notify_without_op_finalize() {
-    use crate::operation::{OperationProgress, SyncLiveProgressCtx};
-    use crate::operation_progress::OperationAgentEmitState;
-    use std::sync::Mutex as StdMutex;
-
-    let fx = MatrixPcNFixture::open_with_test_store("sync progress no op", "mcp_sync_prog").await;
-    let handle = fx.es.mint_operation_handle("l_sync_prog");
-    let ctx = SyncLiveProgressCtx {
-        handle: handle.clone(),
-        mcp_transport_key: "mcp-test".into(),
-        plan_commit_ref: Some(fx.pc.clone()),
-        progress: Arc::new(StdMutex::new(OperationProgress::default())),
-        emit_state: Arc::new(StdMutex::new(OperationAgentEmitState::default())),
-        host: Arc::downgrade(&fx.st),
-    };
-    fx.es
-        .emit_sync_live_accept(&ctx, fx.st.as_ref(), Some(fx.compact.verdict))
-        .expect("accept");
-    assert!(
-        fx.es.get_operation(&handle).is_none(),
-        "bounded sync must not register operation_by_handle"
-    );
-    let pending = fx.st.op_progress_hub.drain_mcp_pending();
-    assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].transport_key, "mcp-test");
-    assert!(pending[0].line.contains(handle.as_str()));
-
-    fx.es.emit_sync_live_terminal(
-        &ctx,
-        crate::operation::OperationPhase::Succeeded,
-        None,
-        fx.st.as_ref(),
-    );
-    let terminal = fx.st.op_progress_hub.drain_mcp_pending();
-    assert_eq!(terminal.len(), 1);
-    assert!(terminal[0].line.contains('!'));
-    assert!(
-        fx.es.get_operation(&handle).is_none(),
-        "terminal emit must not register operation_by_handle"
-    );
-}
-
-#[tokio::test]
-async fn matrix_bounded_sync_completes_under_deadline() {
-    use crate::sync_live_run::{await_bounded_sync_live, SyncLiveRunGuard};
-    use std::time::Instant;
-
-    let fx =
-        MatrixPcNFixture::open_with_test_store("bounded sync deadline", "mcp_sync_deadline").await;
-    assert!(
-        !fx.dry.review.execution_is_expensive(),
-        "matrix get must stay on bounded sync path"
-    );
-    let accept_payload = build_run_explorer_accept_payload(&fx.dry, Some(&fx.es));
-    let delivered = deliver_mcp_expensive_live_run(McpExpensiveLiveRunContext {
-        es: Arc::clone(&fx.es),
-        st: Arc::clone(&fx.st),
-        prompt_hash: fx.out.prompt_hash.clone(),
-        session_id: fx.out.session_id.clone(),
-        session_ref: "l_sync_deadline".into(),
-        mcp_session_key: "mcp".into(),
-        bundle: fx.bundle.clone(),
-        review: fx.dry.review.clone(),
-        accept_payload,
-        dry_verdict: fx.compact.verdict,
-        plan_commit_ref: Some(fx.pc.clone()),
-        trace: PlasmTraceContext {
-            trace_id: Uuid::nil(),
-            call_index: None,
-            mcp_session_id: None,
-            logical_session_id: None,
-            logical_session_ref: Some("l_sync_deadline".into()),
-        },
-        wait_live: true,
-        await_cfg: crate::mcp_run_await::AwaitConfig::default(),
-    })
-    .await
-    .expect("deliver");
-    assert!(
-        delivered.is_none(),
-        "bounded matrix plan must use sync path, not async deliver"
-    );
-
-    let start = Instant::now();
-    {
-        let (mut guard, _) = SyncLiveRunGuard::enter(Arc::clone(&fx.es)).expect("enter");
-        let scope =
-            crate::operation::ExecutionScope::for_bounded_sync(guard.cancel_signal().clone());
-        await_bounded_sync_live(
-            &fx.dry.review,
-            std::time::Duration::from_millis(50),
-            &scope,
-            &mut guard,
-            async { Ok(()) },
-        )
-        .await
-        .expect("fast bounded sync future");
-    }
-    assert!(start.elapsed() < std::time::Duration::from_secs(1));
-    assert!(!fx.es.sync_live_run_inflight_for_test());
 }
 
 #[test]

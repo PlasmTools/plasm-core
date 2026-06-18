@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Bounded sync live run:** delete `sync_live_run`, `begin_sync_live_run`, and the 90s bounded-sync path — all MCP `plasm_run` and HTTP `wait=true` live executes use async spawn + terminal await only.
+
+### Added
+
+- **`LivePlanRunPool`:** injected on [`PlasmOssHostState`](plasm-oss/crates/plasm-agent-core/src/server_state.rs) (`live_plan_pool`); configurable stack (`PLASM_LIVE_RUN_STACK_BYTES`, default **4 MiB release** / **16 MiB debug**).
+- **Plan commit dry cache:** `PlanCommitDryCache` on `pcN` records — `plasm_run` rehydrates dry eval without re-simulating when bundle ≡ committed artifact.
+- **MCP committed run ingress:** `ExecuteCommittedMcpRun` + `McpExecuteWire` + `CommittedRunArtifacts` replace `CommittedPlasmRunContext` god-bag.
+- **Terminal watch notify:** pod-local `await_operation_terminal` uses `watch` channels instead of 200ms polling.
+- **Unified run delivery:** `deliver_http_live_run` + `LiveRunAwaitContext` builders consolidate MCP and HTTP ingress; dry evaluation passed once into spawn.
+- **`terminal_plan_run`:** shared `resolve_terminal_plan_run` for MCP server-await and HTTP `wait(oN)` (decouples `mcp_run_await` from `http_execute`).
+- **Smoke:** `scripts/smoke/mcp-pokeapi-pc1-bounded.sh` — pokeapi `pc1` + `e1.limit(3)` must complete within deadline (regression for async-await hang).
+- **`PlanLineExecuteShared`:** hoists per-plan execute line setup (session tokens, spill, cancel) for live `run_plasm_comp`.
+- **`alloc-bench` feature:** optional dhat heap regression test for matrix `e1.limit(3)` plan setup.
+
+### Changed
+
+- **`spawn_async_plan_run`:** routes live work through `PlasmHostState::live_plan_pool()`; accepts optional precomputed dry review.
+- **Run delivery refactor:** `RunDeliveryDecision`, `OperationWire`, `LiveRunSpawn` / `spawn_live_plan_run`, `HttpLiveRunRequest`, `LiveRunError` (HTTP timeout → 504).
+- **Resolved-plan HTTP live:** `session.rs` routes live runs through `LivePlanRunPool` (fixes tokio-stack bypass).
+- **CI guard:** `check_live_run_await_invariants.sh` replaces `check_sync_live_run_invariants.sh`.
+- **`run_plasm_comp` allocations:** `Arc<ExecutionResult>` on publish; single `MaterializedRowSource` row store; finalize moves `return_steps` without deep clone; detach `node_results` during live execution.
+- **Live surface steps:** match owned `ValidatedPlanNode::Surface` without clone before budget apply.
+
 ## [0.3.24] - 2026-06-17
 
 ### Fixed

@@ -81,7 +81,7 @@ fn plasm_plan_publication_renders_named_output_owner() {
             cgs: None,
             display: "Pokemon[id,name]".to_string(),
             projection: Some(vec!["id".to_string(), "name".to_string()]),
-            result: ExecutionResult {
+            result: Arc::new(ExecutionResult {
                 count: 0,
                 entities: vec![],
                 has_more: false,
@@ -96,7 +96,7 @@ fn plasm_plan_publication_renders_named_output_owner() {
                     ..Default::default()
                 },
                 request_fingerprints: vec![],
-            },
+            }),
             artifact: None,
         }],
     );

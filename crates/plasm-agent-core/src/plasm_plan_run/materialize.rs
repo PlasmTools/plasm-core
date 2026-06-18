@@ -81,10 +81,9 @@ pub(crate) async fn materialize_synthetic_node(
         entity: entity.clone(),
         display: synthetic_node_display(node),
         projection: synthetic_projection(node),
-        row_source: MaterializedRowSource::Inline(rows.clone()),
-        rows,
+        row_source: inline_row_source_owned(rows),
         row_identities,
-        result: ExecutionResult {
+        result: Arc::new(ExecutionResult {
             count: entities.len(),
             entities,
             has_more,
@@ -93,7 +92,7 @@ pub(crate) async fn materialize_synthetic_node(
             source: ExecutionSource::Cache,
             stats: full_result.stats,
             request_fingerprints,
-        },
+        }),
         artifact: Some(artifact),
     })
 }
@@ -121,6 +120,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     trace: Option<&PlasmTraceContext>,
     sink: Option<&McpPlasmTraceSink>,
+    plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
 ) -> Result<MaterializedNode, String> {
     let source_mat = materialized.get(&relation.relation.source).ok_or_else(|| {
         format!(
@@ -163,6 +163,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
                 materialized,
                 trace,
                 sink,
+                plan_shared,
             )
             .await
         }
@@ -184,6 +185,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
                     materialized,
                     trace,
                     sink,
+                    plan_shared,
                 )
                 .await
             } else {
@@ -208,6 +210,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
                     materialized,
                     trace,
                     sink,
+                    plan_shared,
                 )
                 .await
             }
@@ -234,6 +237,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
                 materialized,
                 trace,
                 sink,
+                plan_shared,
             )
             .await
         }
@@ -265,6 +269,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
                     materialized,
                     trace,
                     sink,
+                    plan_shared,
                 )
                 .await
             } else {
@@ -377,9 +382,8 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
             display,
             projection: relation.relation.ir.projection.clone(),
             row_source: inline_row_source(&[]),
-            rows: vec![],
             row_identities,
-            result: full_result,
+            result: Arc::new(full_result),
             artifact: Some(artifact),
         },
         trace,
@@ -403,6 +407,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     trace: Option<&PlasmTraceContext>,
     sink: Option<&McpPlasmTraceSink>,
+    plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
 ) -> Result<MaterializedNode, String> {
     let RelationMaterialization::PreferFromParentGet { path, .. } = &relation.relation.materialize
     else {
@@ -507,6 +512,11 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
             trace,
         )
         .await?;
+        let rows: Vec<_> = full_result
+            .entities
+            .iter()
+            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+            .collect();
         return finalize_typed_relation_materialized_node(
             st,
             es,
@@ -520,24 +530,13 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                     relation.id.as_str()
                 ),
                 projection: relation.relation.ir.projection.clone(),
-                row_source: inline_row_source(
-                    &full_result
-                        .entities
-                        .iter()
-                        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-                        .collect::<Vec<_>>(),
-                ),
-                rows: full_result
-                    .entities
-                    .iter()
-                    .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-                    .collect(),
+                row_source: inline_row_source_owned(rows),
                 row_identities: row_identities_from_entities(
                     &scoped_es,
                     target_entity,
                     &full_result.entities,
                 ),
-                result: full_result,
+                result: Arc::new(full_result),
                 artifact: Some(artifact),
             },
             trace,
@@ -657,6 +656,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                     None,
                     None,
                     Some(plasm_core::PreflightToken::VERIFIED),
+                    plan_shared,
                 )
                 .await
                 .map_err(|e| match e {
@@ -748,14 +748,13 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                 relation.id.as_str()
             ),
             projection: relation.relation.ir.projection.clone(),
-            row_source: inline_row_source(&rows),
-            rows,
+            row_source: inline_row_source_owned(rows),
             row_identities: row_identities_from_entities(
                 &scoped_es,
                 target_entity,
                 &full_result.entities,
             ),
-            result: full_result,
+            result: Arc::new(full_result),
             artifact: Some(artifact),
         },
         trace,

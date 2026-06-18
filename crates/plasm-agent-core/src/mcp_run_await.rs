@@ -6,10 +6,10 @@ use std::time::Duration;
 use plasm_core::OperationHandle;
 
 use crate::execute_session::ExecuteSession;
-use crate::http_execute::handle_wait_operation;
 use crate::operation::OperationPhase;
 use crate::plasm_plan_run::PlasmPlanRunResult;
 use crate::server_state::PlasmHostState;
+use crate::terminal_plan_run::resolve_terminal_plan_run;
 use crate::trace_sink_emit::PlasmTraceContext;
 
 #[derive(Debug, Clone)]
@@ -27,16 +27,20 @@ impl Default for AwaitConfig {
     }
 }
 
+pub struct TerminalAwaitContext {
+    pub es: Arc<ExecuteSession>,
+    pub st: Arc<PlasmHostState>,
+    pub handle: OperationHandle,
+    pub trace: PlasmTraceContext,
+    pub cfg: AwaitConfig,
+}
+
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum AwaitError {
     #[error("await timed out after {0:?}")]
     Timeout(Duration),
     #[error("{0}")]
     Operation(String),
-}
-
-fn operation_phase(es: &ExecuteSession, handle: &OperationHandle) -> Option<OperationPhase> {
-    es.get_operation(handle).map(|op| op.phase)
 }
 
 fn operation_is_terminal(phase: OperationPhase) -> bool {
@@ -46,44 +50,56 @@ fn operation_is_terminal(phase: OperationPhase) -> bool {
     )
 }
 
-async fn fetch_terminal_result(
-    es: &ExecuteSession,
-    st: &PlasmHostState,
-    handle: &OperationHandle,
-    trace: &PlasmTraceContext,
-) -> Result<PlasmPlanRunResult, AwaitError> {
-    handle_wait_operation(es, Some(st), Some(trace), handle)
-        .await
-        .map_err(|e| AwaitError::Operation(e.detail()))
+async fn fetch_terminal_result(ctx: &TerminalAwaitContext) -> Result<PlasmPlanRunResult, AwaitError> {
+    resolve_terminal_plan_run(
+        ctx.es.as_ref(),
+        Some(ctx.st.as_ref()),
+        Some(&ctx.trace),
+        &ctx.handle,
+    )
+    .await
+    .map_err(|e| AwaitError::Operation(e.detail()))
 }
 
-pub async fn await_operation_terminal(
-    es: Arc<ExecuteSession>,
-    st: Arc<PlasmHostState>,
-    handle: OperationHandle,
-    trace: PlasmTraceContext,
-    cfg: AwaitConfig,
-) -> Result<PlasmPlanRunResult, AwaitError> {
-    tokio::time::timeout(cfg.max_wait, async {
-        loop {
-            if let Some(phase) = operation_phase(es.as_ref(), &handle) {
-                if operation_is_terminal(phase) {
-                    return fetch_terminal_result(es.as_ref(), st.as_ref(), &handle, &trace).await;
-                }
-            } else {
-                match fetch_terminal_result(es.as_ref(), st.as_ref(), &handle, &trace).await {
-                    Ok(result) => return Ok(result),
-                    Err(AwaitError::Operation(_)) => {
-                        // cross-pod poll snapshot may not be materialized yet
-                    }
-                    Err(e @ AwaitError::Timeout(_)) => return Err(e),
-                }
+async fn await_via_terminal_watch(ctx: &TerminalAwaitContext) -> Result<PlasmPlanRunResult, AwaitError> {
+    let Some(mut rx) = ctx.es.subscribe_operation_terminal(&ctx.handle) else {
+        return await_via_cross_pod_poll(ctx).await;
+    };
+    while !operation_is_terminal(*rx.borrow()) {
+        if rx.changed().await.is_err() {
+            break;
+        }
+    }
+    fetch_terminal_result(ctx).await
+}
+
+async fn await_via_cross_pod_poll(ctx: &TerminalAwaitContext) -> Result<PlasmPlanRunResult, AwaitError> {
+    loop {
+        if let Some(phase) = ctx.es.get_operation(&ctx.handle).map(|op| op.phase) {
+            if operation_is_terminal(phase) {
+                return fetch_terminal_result(ctx).await;
             }
-            tokio::time::sleep(cfg.poll_interval).await;
+        } else {
+            match fetch_terminal_result(ctx).await {
+                Ok(result) => return Ok(result),
+                Err(AwaitError::Operation(_)) => {}
+                Err(e @ AwaitError::Timeout(_)) => return Err(e),
+            }
+        }
+        tokio::time::sleep(ctx.cfg.poll_interval).await;
+    }
+}
+
+pub async fn await_operation_terminal(ctx: TerminalAwaitContext) -> Result<PlasmPlanRunResult, AwaitError> {
+    tokio::time::timeout(ctx.cfg.max_wait, async {
+        if ctx.es.subscribe_operation_terminal(&ctx.handle).is_some() {
+            await_via_terminal_watch(&ctx).await
+        } else {
+            await_via_cross_pod_poll(&ctx).await
         }
     })
     .await
-    .map_err(|_| AwaitError::Timeout(cfg.max_wait))?
+    .map_err(|_| AwaitError::Timeout(ctx.cfg.max_wait))?
 }
 
 #[cfg(test)]
@@ -169,16 +185,16 @@ mod tests {
                 None,
             );
         });
-        let out = await_operation_terminal(
+        let out = await_operation_terminal(TerminalAwaitContext {
             es,
             st,
             handle,
-            plain_trace(),
-            AwaitConfig {
+            trace: plain_trace(),
+            cfg: AwaitConfig {
                 poll_interval: Duration::from_millis(20),
                 max_wait: Duration::from_secs(5),
             },
-        )
+        })
         .await
         .expect("terminal");
         assert_eq!(out.run_markdown.as_deref(), Some("## done"));
@@ -210,16 +226,16 @@ mod tests {
             OpAcceptContext::default(),
         )
         .expect("begin");
-        let err = await_operation_terminal(
+        let err = await_operation_terminal(TerminalAwaitContext {
             es,
-            minimal_host(),
+            st: minimal_host(),
             handle,
-            plain_trace(),
-            AwaitConfig {
+            trace: plain_trace(),
+            cfg: AwaitConfig {
                 poll_interval: Duration::from_millis(20),
                 max_wait: Duration::from_millis(80),
             },
-        )
+        })
         .await
         .expect_err("timeout");
         assert!(matches!(err, AwaitError::Timeout(_)));

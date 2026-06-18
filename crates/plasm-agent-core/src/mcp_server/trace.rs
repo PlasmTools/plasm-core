@@ -14,6 +14,7 @@ pub(crate) async fn trace_archive_and_emit_code_plan_evaluate(
     comp: &serde_json::Value,
     program: &str,
     comp_summary: serde_json::Value,
+    dag_summary: serde_json::Value,
     plan_call_index: u64,
 ) {
     let plan_hash_str = comp_content_sha256_hex(comp);
@@ -73,6 +74,7 @@ pub(crate) async fn trace_archive_and_emit_code_plan_evaluate(
             node_count,
             code_chars,
             comp: comp_summary,
+            dag: dag_summary,
             plasm_call_index: None,
             run_ids: Vec::new(),
             run_artifacts: Vec::new(),
@@ -93,6 +95,7 @@ pub(crate) async fn trace_archive_and_emit_code_plan_execute(
     comp: &serde_json::Value,
     program: &str,
     comp_summary: serde_json::Value,
+    dag_summary: serde_json::Value,
     plan_call_index: u64,
     out: &PlasmPlanRunResult,
 ) {
@@ -158,6 +161,7 @@ pub(crate) async fn trace_archive_and_emit_code_plan_execute(
             node_count,
             code_chars,
             comp: comp_summary,
+            dag: dag_summary,
             plasm_call_index: Some(plan_call_index),
             run_ids,
             run_artifacts: out.code_plan_run_artifacts.clone(),

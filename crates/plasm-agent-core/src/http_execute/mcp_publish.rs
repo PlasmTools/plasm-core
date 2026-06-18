@@ -462,7 +462,7 @@ mod tests {
             cgs: None,
             display: "pets".into(),
             projection: None,
-            result: ExecutionResult {
+            result: Arc::new(ExecutionResult {
                 count: 0,
                 entities: Vec::new(),
                 has_more: false,
@@ -471,7 +471,7 @@ mod tests {
                 source: ExecutionSource::Live,
                 stats: ExecutionStats::default(),
                 request_fingerprints: vec![],
-            },
+            }),
             artifact: Some(handle),
         };
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));

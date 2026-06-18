@@ -100,6 +100,8 @@ pub struct PlasmOssHostState {
     pub workflows: Arc<crate::workflow_registry::WorkflowRegistry>,
     /// Shared Redis backend for MCP transport + execute session externalization (when configured).
     pub redis_backend: Option<Arc<crate::mcp_transport_store::RedisBackend>>,
+    /// Large-stack worker pool for live `run_plasm_comp` (injected at bootstrap; shared via `Arc`).
+    pub live_plan_pool: Arc<crate::live_plan_run_worker::LivePlanRunPool>,
 }
 
 /// Hosted / control-plane state: same process as [`PlasmOssHostState`], but injected after OSS bootstrap.
@@ -190,6 +192,11 @@ impl PlasmHostState {
 
     pub fn workflows(&self) -> &crate::workflow_registry::WorkflowRegistry {
         &self.oss.workflows
+    }
+
+    /// Dedicated large-stack pool for live plan execution (see [`crate::live_plan_run_worker`]).
+    pub fn live_plan_pool(&self) -> Arc<crate::live_plan_run_worker::LivePlanRunPool> {
+        Arc::clone(&self.oss.live_plan_pool)
     }
 
     /// Outbound HTTP credentials: [`PlasmOssHostState::outbound_secret_provider`] when wired; otherwise [`EnvSecretProvider`].

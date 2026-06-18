@@ -143,15 +143,15 @@ pub(crate) fn materialized_singleton_inputs(
                 input.alias.as_str()
             )
         })?;
-        if mat.rows.len() != 1 {
+        if mat.inline_row_count() != 1 {
             return Err(singleton_input_row_count_error(
                 input.node.as_str(),
                 input.alias.as_str(),
-                mat.rows.len(),
+                mat.inline_row_count(),
                 format!("{:?} broadcast", input.proof).as_str(),
             ));
         }
-        let row = mat.rows.first().cloned().ok_or_else(|| {
+        let row = mat.first_inline_row().cloned().ok_or_else(|| {
             format!(
                 "Plan input {:?} for alias {:?} expected one row but was empty",
                 input.node.as_str(),
@@ -189,15 +189,15 @@ pub(crate) fn materialized_result_use_inputs(
                 alias.as_str()
             )
         })?;
-        if mat.rows.len() != 1 {
+        if mat.inline_row_count() != 1 {
             return Err(singleton_input_row_count_error(
                 node.as_str(),
                 alias.as_str(),
-                mat.rows.len(),
+                mat.inline_row_count(),
                 "staged expression rendering",
             ));
         }
-        let row = mat.rows.first().cloned().ok_or_else(|| {
+        let row = mat.first_inline_row().cloned().ok_or_else(|| {
             format!(
                 "Plan input {:?} for alias {:?} expected one row but was empty",
                 node.as_str(),
@@ -261,15 +261,15 @@ pub(crate) fn materialized_result_use_inputs_with_source_row(
                 source_row_identity.clone(),
             )
         } else {
-            if mat.rows.len() != 1 {
+            if mat.inline_row_count() != 1 {
                 return Err(singleton_input_row_count_error(
                     node.as_str(),
                     alias.as_str(),
-                    mat.rows.len(),
+                    mat.inline_row_count(),
                     "staged expression rendering",
                 ));
             }
-            let row = mat.rows.first().cloned().ok_or_else(|| {
+            let row = mat.first_inline_row().cloned().ok_or_else(|| {
                 format!(
                     "Plan input {:?} for alias {:?} expected one row but was empty",
                     node.as_str(),
@@ -361,6 +361,7 @@ pub(crate) async fn materialize_relation_singleton_chain(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     trace: Option<&PlasmTraceContext>,
     sink: Option<&McpPlasmTraceSink>,
+    plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
 ) -> Result<MaterializedNode, String> {
     let pe = ParsedExpr {
         expr: relation.relation.ir.expr.clone(),
@@ -385,6 +386,7 @@ pub(crate) async fn materialize_relation_singleton_chain(
         None,
         None,
         None,
+        plan_shared,
     )
     .await?;
     if let Some(sink) = sink {
@@ -401,13 +403,12 @@ pub(crate) async fn materialize_relation_singleton_chain(
             display: crate::expr_display::expr_display(&parsed.expr),
             projection: parsed.projection,
             row_source: inline_row_source(&[]),
-            rows: vec![],
             row_identities: row_identities_from_entities(
                 &scoped_es,
                 relation.relation.target.entity.as_str(),
                 &result.entities,
             ),
-            result,
+            result: Arc::new(result),
             artifact,
         },
         trace,
@@ -441,7 +442,11 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
     };
     drop(graph);
     let count = entities.len();
-    let source_rows: Vec<serde_json::Value> = source_mat.rows.clone();
+    let source_rows: Vec<serde_json::Value> = source_mat
+        .row_source
+        .inline_rows()
+        .map(|rows| rows.to_vec())
+        .unwrap_or_default();
     let full_result = ExecutionResult {
         count,
         entities: entities.clone(),
@@ -488,14 +493,13 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
             entity: relation.relation.target.entity.clone(),
             display: format!("plan.relation({}) cached_embed", relation.id.as_str()),
             projection: relation.relation.ir.projection.clone(),
-            row_source: inline_row_source(&rows),
-            rows,
+            row_source: inline_row_source_owned(rows),
             row_identities: row_identities_from_entities(
                 &scoped_es,
                 target_entity,
                 &full_result.entities,
             ),
-            result: full_result,
+            result: Arc::new(full_result),
             artifact: Some(artifact),
         },
         trace,
@@ -540,6 +544,7 @@ pub(crate) async fn materialize_relation_scoped_fanout(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     trace: Option<&PlasmTraceContext>,
     sink: Option<&McpPlasmTraceSink>,
+    plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
 ) -> Result<MaterializedNode, String> {
     let pe = ParsedExpr {
         expr: relation.relation.ir.expr.clone(),
@@ -604,6 +609,7 @@ pub(crate) async fn materialize_relation_scoped_fanout(
             None,
             None,
             Some(plasm_core::PreflightToken::VERIFIED),
+            plan_shared,
         )
         .await
         .map_err(|e| match e {
@@ -690,14 +696,13 @@ pub(crate) async fn materialize_relation_scoped_fanout(
         entity: relation.relation.target.entity.clone(),
         display,
         projection: relation.relation.ir.projection.clone(),
-        row_source: inline_row_source(&rows),
-        rows,
+        row_source: inline_row_source_owned(rows),
         row_identities: row_identities_from_entities(
             &scoped_es,
             relation.relation.target.entity.as_str(),
             &full_result.entities,
         ),
-        result: full_result,
+        result: Arc::new(full_result),
         artifact: Some(artifact),
     })
 }
@@ -1041,6 +1046,7 @@ pub(crate) async fn materialize_for_each_node(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     trace: Option<&PlasmTraceContext>,
     sink: Option<&McpPlasmTraceSink>,
+    plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
 ) -> Result<MaterializedNode, String> {
     let source_rows = materialized_rows(es, st, session_id, materialized, &for_each.source).await?;
     let input_rows = materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each))?;
@@ -1086,6 +1092,7 @@ pub(crate) async fn materialize_for_each_node(
             None,
             None,
             None,
+            plan_shared,
         )
         .await?;
         if let Some(sink) = sink {
@@ -1147,27 +1154,21 @@ pub(crate) async fn materialize_for_each_node(
             source_rows.len()
         )
     };
+    let rows: Vec<_> = result
+        .entities
+        .iter()
+        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+        .collect();
     Ok(MaterializedNode {
         entry_id: for_each.effect_template.qualified_entity.entry_id.clone(),
         entity: for_each.effect_template.qualified_entity.entity.clone(),
-        row_source: inline_row_source(
-            &result
-                .entities
-                .iter()
-                .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-                .collect::<Vec<_>>(),
-        ),
-        rows: result
-            .entities
-            .iter()
-            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-            .collect(),
+        row_source: inline_row_source_owned(rows),
         row_identities: row_identities_from_entities(
             &scoped_es,
             for_each.effect_template.qualified_entity.entity.as_str(),
             &result.entities,
         ),
-        result,
+        result: Arc::new(result),
         artifact: Some(artifact),
         display,
         projection: Some(for_each.projection.clone()).filter(|p| !p.is_empty()),

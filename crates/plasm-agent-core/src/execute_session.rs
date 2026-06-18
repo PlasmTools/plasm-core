@@ -17,7 +17,7 @@ use plasm_runtime::{
 };
 use std::collections::{HashMap, VecDeque};
 use std::env;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex as StdMutex;
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -473,10 +473,8 @@ pub struct ExecuteSession {
     plan_commit_next: Arc<AtomicU64>,
     /// Hash-chained evidence for intent→comp→execute (`PLASM_EVIDENCE_CHAIN=1`); lazy slot.
     pub(crate) evidence_chain: crate::evidence_chain::EvidenceChainSlot,
-    /// True while a synchronous (blocking) live plan run holds the execute session.
-    sync_live_run_inflight: Arc<AtomicBool>,
-    /// Outbound HTTP telemetry for the active sync or async live run (MCP App progress).
-    sync_live_telemetry: Arc<StdMutex<Option<Arc<plasm_runtime::LiveRunTelemetry>>>>,
+    /// Outbound HTTP telemetry for the active async live run (MCP App progress).
+    live_run_telemetry: Arc<StdMutex<Option<Arc<plasm_runtime::LiveRunTelemetry>>>>,
     /// Per-catalog session binding maps (MCP connect / REPL `--backend`).
     pub bindings_by_entry: indexmap::IndexMap<String, crate::binding_slots::SessionBindingMap>,
 }
@@ -574,8 +572,7 @@ impl ExecuteSession {
             plan_commits: Arc::new(StdMutex::new(HashMap::new())),
             plan_commit_next: Arc::new(AtomicU64::new(0)),
             evidence_chain: crate::evidence_chain::new_evidence_chain_slot(),
-            sync_live_run_inflight: Arc::new(AtomicBool::new(false)),
-            sync_live_telemetry: Arc::new(StdMutex::new(None)),
+            live_run_telemetry: Arc::new(StdMutex::new(None)),
             bindings_by_entry,
         }
     }
@@ -703,179 +700,23 @@ impl ExecuteSession {
             .insert(handle, state);
     }
 
-    /// Reject nested synchronous live runs on the same execute session.
-    pub(crate) fn begin_sync_live_run(
-        &self,
-    ) -> Result<Arc<plasm_runtime::LiveRunTelemetry>, String> {
-        if self
-            .sync_live_run_inflight
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
-            return Err(
-                "operation_in_flight: a synchronous live run is in progress on this execute session"
-                    .to_string(),
-            );
-        }
-        let telemetry = Arc::new(plasm_runtime::LiveRunTelemetry::new());
-        *self
-            .sync_live_telemetry
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(Arc::clone(&telemetry));
-        Ok(telemetry)
-    }
-
-    pub(crate) fn end_sync_live_run(&self) {
-        self.sync_live_run_inflight.store(false, Ordering::Release);
-        *self
-            .sync_live_telemetry
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = None;
-    }
-
     pub fn install_live_run_telemetry(&self, telemetry: Arc<plasm_runtime::LiveRunTelemetry>) {
         *self
-            .sync_live_telemetry
+            .live_run_telemetry
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = Some(telemetry);
     }
 
     pub fn clear_live_run_telemetry(&self) {
         *self
-            .sync_live_telemetry
+            .live_run_telemetry
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     #[cfg(test)]
-    pub(crate) fn sync_live_run_inflight_for_test(&self) -> bool {
-        self.sync_live_run_inflight.load(Ordering::Acquire)
-    }
-
-    /// Initial accept line for MCP bounded sync (no `operation_by_handle` registration).
-    pub(crate) fn emit_sync_live_accept(
-        &self,
-        ctx: &crate::operation::SyncLiveProgressCtx,
-        st: &crate::server_state::PlasmHostState,
-        dry_verdict: Option<crate::plan_dry_display::PlanDryVerdict>,
-    ) -> Result<(), String> {
-        let mut emit = ctx.emit_state.lock().unwrap_or_else(|e| e.into_inner());
-        let stats = self.live_run_notify_stats(None);
-        crate::operation_progress::try_queue_mcp_sync_progress_line(
-            st.op_progress_hub.as_ref(),
-            stats,
-            ctx.mcp_transport_key.as_str(),
-            ctx.plan_commit_ref.as_ref(),
-            &ctx.handle,
-            &mut emit,
-            crate::operation_progress::OpWireSig::Accept,
-            None,
-            dry_verdict,
-            None,
-            crate::operation_progress::McpEmitCoalesce::Accept,
-        );
-        Ok(())
-    }
-
-    pub(crate) fn try_emit_sync_live_progress(
-        &self,
-        ctx: &crate::operation::SyncLiveProgressCtx,
-        progress: &crate::operation::OperationProgress,
-        st: &crate::server_state::PlasmHostState,
-    ) -> bool {
-        let mut emit = ctx.emit_state.lock().unwrap_or_else(|e| e.into_inner());
-        let rows = (progress.rows_materialized > 0).then_some(progress.rows_materialized);
-        let stats = self.live_run_notify_stats(rows);
-        crate::operation_progress::try_queue_mcp_sync_progress_line(
-            st.op_progress_hub.as_ref(),
-            stats,
-            ctx.mcp_transport_key.as_str(),
-            ctx.plan_commit_ref.as_ref(),
-            &ctx.handle,
-            &mut emit,
-            crate::operation_progress::OpWireSig::Running,
-            Some(progress),
-            None,
-            None,
-            crate::operation_progress::McpEmitCoalesce::OnChange,
-        )
-    }
-
-    /// Emit running progress at most every ~1s (HTTP telemetry) even when plan step is unchanged.
-    pub(crate) fn try_emit_sync_live_progress_coalesced(
-        &self,
-        ctx: &crate::operation::SyncLiveProgressCtx,
-        st: &crate::server_state::PlasmHostState,
-    ) -> bool {
-        let progress = ctx
-            .progress
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        let mut emit = ctx.emit_state.lock().unwrap_or_else(|e| e.into_inner());
-        let rows = (progress.rows_materialized > 0).then_some(progress.rows_materialized);
-        let stats = self.live_run_notify_stats(rows);
-        crate::operation_progress::try_queue_mcp_sync_progress_line(
-            st.op_progress_hub.as_ref(),
-            stats,
-            ctx.mcp_transport_key.as_str(),
-            ctx.plan_commit_ref.as_ref(),
-            &ctx.handle,
-            &mut emit,
-            crate::operation_progress::OpWireSig::Running,
-            Some(&progress),
-            None,
-            None,
-            crate::operation_progress::McpEmitCoalesce::Coalesced,
-        )
-    }
-
-    /// Terminal `Done` / `Failed` / `Cancelled` for bounded sync (no `operation_by_handle`).
-    pub(crate) fn emit_sync_live_terminal(
-        &self,
-        ctx: &crate::operation::SyncLiveProgressCtx,
-        phase: crate::operation::OperationPhase,
-        error: Option<&str>,
-        st: &crate::server_state::PlasmHostState,
-    ) {
-        let sig = match phase {
-            crate::operation::OperationPhase::Succeeded => {
-                crate::operation_progress::OpWireSig::Done
-            }
-            crate::operation::OperationPhase::Cancelled => {
-                crate::operation_progress::OpWireSig::Cancelled
-            }
-            crate::operation::OperationPhase::Failed => {
-                crate::operation_progress::OpWireSig::Failed
-            }
-            crate::operation::OperationPhase::Running => return,
-        };
-        let progress = ctx
-            .progress
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
-        let rows = (progress.rows_materialized > 0).then_some(progress.rows_materialized);
-        let stats = self.live_run_notify_stats(rows);
-        let mut emit = ctx.emit_state.lock().unwrap_or_else(|e| e.into_inner());
-        crate::operation_progress::try_queue_mcp_sync_progress_line(
-            st.op_progress_hub.as_ref(),
-            stats,
-            ctx.mcp_transport_key.as_str(),
-            ctx.plan_commit_ref.as_ref(),
-            &ctx.handle,
-            &mut emit,
-            sig,
-            Some(&progress),
-            None,
-            error,
-            crate::operation_progress::McpEmitCoalesce::Terminal,
-        );
-    }
-
-    #[cfg(test)]
-    pub(crate) fn sync_live_telemetry_active_for_test(&self) -> bool {
-        self.sync_live_telemetry
+    pub(crate) fn live_run_telemetry_active_for_test(&self) -> bool {
+        self.live_run_telemetry
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .is_some()
@@ -883,7 +724,7 @@ impl ExecuteSession {
 
     fn live_run_notify_stats(&self, rows: Option<u64>) -> crate::operation_progress::OpNotifyStats {
         let tel = self
-            .sync_live_telemetry
+            .live_run_telemetry
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
@@ -920,6 +761,7 @@ impl ExecuteSession {
             return Err(format_too_many_operations_error(&running, cap));
         }
         let (progress_tx, _) = tokio::sync::broadcast::channel(64);
+        let (terminal_tx, _) = tokio::sync::watch::channel(crate::operation::OperationPhase::Running);
         map.insert(
             handle.clone(),
             crate::operation::OperationState {
@@ -939,6 +781,7 @@ impl ExecuteSession {
                 mcp_transport_key: accept.mcp_transport_key,
                 progress_host: accept.host,
                 progress_tx,
+                terminal_tx: Some(terminal_tx),
                 comp: accept.comp,
                 plan_ux_reflection: accept.plan_ux_reflection,
                 step_order: accept.step_order,
@@ -962,6 +805,31 @@ impl ExecuteSession {
             .unwrap_or_else(|e| e.into_inner())
             .get(handle)
             .cloned()
+    }
+
+    /// Subscribe to terminal phase transitions for a pod-local live executor.
+    pub fn subscribe_operation_terminal(
+        &self,
+        handle: &OperationHandle,
+    ) -> Option<tokio::sync::watch::Receiver<crate::operation::OperationPhase>> {
+        self.operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(handle)
+            .and_then(|op| op.terminal_tx.as_ref().map(|tx| tx.subscribe()))
+    }
+
+    fn notify_operation_terminal(&self, handle: &OperationHandle, phase: crate::operation::OperationPhase) {
+        if let Some(op) = self
+            .operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(handle)
+        {
+            if let Some(tx) = &op.terminal_tx {
+                let _ = tx.send(phase);
+            }
+        }
     }
 
     /// Running async operations with a live executor on this session (for stale-handle diagnostics).
@@ -1329,6 +1197,7 @@ impl ExecuteSession {
             op.phase = crate::operation::OperationPhase::Succeeded;
             op.result = Some(Arc::new(result));
         }
+        self.notify_operation_terminal(handle, crate::operation::OperationPhase::Succeeded);
         self.emit_op_terminal(handle, crate::operation::OperationPhase::Succeeded, st);
         self.persist_operation_state(handle, crate::operation_persist::PersistUrgency::Immediate);
     }
@@ -1364,6 +1233,7 @@ impl ExecuteSession {
             op.phase = crate::operation::OperationPhase::Failed;
             op.error = Some(error);
         }
+        self.notify_operation_terminal(handle, crate::operation::OperationPhase::Failed);
         self.emit_op_terminal(handle, crate::operation::OperationPhase::Failed, st);
         self.persist_operation_state(handle, crate::operation_persist::PersistUrgency::Immediate);
     }
@@ -1386,6 +1256,7 @@ impl ExecuteSession {
         op.cancel.cancel();
         op.phase = crate::operation::OperationPhase::Cancelled;
         drop(map);
+        self.notify_operation_terminal(handle, crate::operation::OperationPhase::Cancelled);
         self.emit_op_terminal(handle, crate::operation::OperationPhase::Cancelled, st);
         self.persist_operation_state(handle, crate::operation_persist::PersistUrgency::Immediate);
         true
@@ -1471,6 +1342,7 @@ impl ExecuteSession {
                 dry_review: record.dry_review.clone(),
                 verdict: record.verdict,
                 expires_at_unix,
+                dry_cache: record.dry_cache.clone(),
             });
         }
         crate::mcp_transport_store::execute_session_registry::PlanCommitPersistSnapshot {
@@ -1538,6 +1410,7 @@ impl ExecuteSession {
                     dry_review: persisted.dry_review.clone(),
                     verdict: persisted.verdict,
                     expires_at: std::time::Instant::now() + Duration::from_secs(ttl_secs),
+                    dry_cache: persisted.dry_cache.clone(),
                 },
             );
         }
@@ -2359,18 +2232,20 @@ mod tests {
             None,
             None,
         );
-        let telemetry = es.begin_sync_live_run().expect("telemetry");
+        let telemetry = Arc::new(plasm_runtime::LiveRunTelemetry::new());
+        es.install_live_run_telemetry(Arc::clone(&telemetry));
         telemetry.record_http_completion(std::time::Duration::from_millis(250));
         let stats = es.live_run_notify_stats(Some(3));
         assert_eq!(stats.calls, Some(1));
         assert_eq!(stats.last_ms, Some(250));
         assert!(stats.elapsed_ms.is_some());
         assert_eq!(stats.rows, Some(3));
-        es.end_sync_live_run();
+        es.clear_live_run_telemetry();
+        assert!(!es.live_run_telemetry_active_for_test());
     }
 
     #[test]
-    fn sync_live_run_allowed_while_async_running() {
+    fn async_operation_allows_parallel_second_async() {
         let cgs = Arc::new(CGS::new());
         let mut ctxs = IndexMap::new();
         ctxs.insert(
@@ -2401,8 +2276,13 @@ mod tests {
             crate::operation::OpAcceptContext::default(),
         )
         .expect("async op");
-        es.begin_sync_live_run().expect("sync while async running");
-        es.end_sync_live_run();
+        let h2 = es.mint_operation_handle("l_AAAAAAAAQACAAAAAAAAAAQ");
+        es.try_begin_async_operation(
+            h2,
+            plasm_runtime::CancelSignal::new(),
+            crate::operation::OpAcceptContext::default(),
+        )
+        .expect("second async op");
     }
 
     #[test]

@@ -134,6 +134,7 @@ impl super::ExecuteSession {
                     mcp_transport_key: None,
                     progress_host: None,
                     progress_tx,
+                    terminal_tx: None,
                     comp: None,
                     plan_ux_reflection: None,
                     step_order: Vec::new(),

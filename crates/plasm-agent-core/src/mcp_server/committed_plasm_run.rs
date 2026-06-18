@@ -5,52 +5,64 @@ use std::sync::Arc;
 use plasm_core::PlanCommitRef;
 
 use crate::execute_session::ExecuteSession;
-use crate::mcp_plasm_meta::PlasmMetaIndex;
-use crate::plan_commit_store::CommittedPlan;
+use crate::plan_commit_store::{dry_for_committed_plasm_run, CommittedPlan};
 use crate::plasm_comp_bundle::PlasmCompBundle;
-use crate::plasm_plan_run::{evaluate_plasm_comp_dry, PlasmPlanRunHooks, PlasmPlanRunResult};
+use crate::plasm_plan_run::PlasmPlanRunResult;
 use crate::run_artifacts::RunArtifactStore;
-use crate::run_delivery::{run_bounded_sync_live_run, BoundedSyncLiveRunRequest, SyncLiveProgress};
+use crate::run_delivery::{deliver_live_run_await, LiveRunAwaitContext, LiveRunError};
+use crate::run_explorer_meta::build_run_explorer_accept_payload;
 use crate::server_state::PlasmHostState;
-use crate::trace_hub::{McpPlasmTraceSink, TraceHub};
+use crate::trace_hub::TraceHub;
 use crate::trace_sink_emit::PlasmTraceContext;
 
 use super::trace::trace_archive_and_emit_code_plan_execute;
 
-pub struct CommittedPlasmRunContext<'a> {
-    pub es: Arc<ExecuteSession>,
-    pub host: Arc<PlasmHostState>,
+/// MCP execute-row wire + logical session identity.
+#[derive(Clone)]
+pub struct McpExecuteWire {
     pub prompt_hash: String,
     pub session_id: String,
     pub session_ref: String,
     pub ls_key: String,
     pub mcp_session_key: String,
+}
+
+/// Trace + artifact persistence inputs for a committed live run.
+#[derive(Clone)]
+pub struct CommittedRunArtifacts {
+    pub trace_hub: Arc<TraceHub>,
+    pub run_artifacts: Arc<RunArtifactStore>,
+    pub comp_archive: serde_json::Value,
+    pub program_for_trace: String,
+    pub call_count: u64,
+}
+
+/// Ingress for MCP `plasm_run` with a reviewed plan commit.
+#[derive(Clone)]
+pub struct ExecuteCommittedMcpRun {
+    pub es: Arc<ExecuteSession>,
+    pub host: Arc<PlasmHostState>,
+    pub wire: McpExecuteWire,
     pub plan_commit_ref: Option<PlanCommitRef>,
     pub committed: CommittedPlan,
     pub bundle: PlasmCompBundle,
-    pub program_for_trace: String,
-    pub comp_archive: serde_json::Value,
     pub mcp_trace: PlasmTraceContext,
-    pub call_count: u64,
+    pub artifacts: CommittedRunArtifacts,
     pub force_run: bool,
     pub wait_live: bool,
-    pub idx: &'a mut PlasmMetaIndex,
-    pub sink: McpPlasmTraceSink,
-    pub trace_hub: Arc<TraceHub>,
-    pub run_artifacts: Arc<RunArtifactStore>,
 }
 
 pub async fn execute_committed_plasm_run(
-    ctx: CommittedPlasmRunContext<'_>,
+    run: ExecuteCommittedMcpRun,
 ) -> Result<PlasmPlanRunResult, String> {
     crate::mcp_plasm_run_phases::mcp_plasm_run_phase("evidence_begin", || async {
         crate::evidence_chain::begin_plan_evidence_with_anchors(
-            ctx.es.as_ref(),
-            ctx.session_id.as_str(),
+            run.es.as_ref(),
+            run.wire.session_id.as_str(),
             crate::evidence_chain::evidence_anchors(
-                ctx.plan_commit_ref.as_ref(),
-                Some(ctx.mcp_trace.trace_id),
-                Some(ctx.call_count),
+                run.plan_commit_ref.as_ref(),
+                Some(run.mcp_trace.trace_id),
+                Some(run.artifacts.call_count),
             ),
         )
         .map_err(|e| format!("evidence begin: {e}"))
@@ -58,9 +70,9 @@ pub async fn execute_committed_plasm_run(
     .await?;
 
     if crate::operation::plan_requires_review_gate(
-        ctx.committed.verdict,
-        ctx.force_run,
-        ctx.plan_commit_ref.as_ref(),
+        run.committed.verdict,
+        run.force_run,
+        run.plan_commit_ref.as_ref(),
     ) {
         return Err(
             "plan_requires_review: call `plasm` dry-run first, then pass the returned `plan_commit_ref` (`pcN`) to `plasm_run`"
@@ -68,88 +80,57 @@ pub async fn execute_committed_plasm_run(
         );
     }
 
-    if crate::run_delivery::should_spawn_async_for_policy(
-        crate::run_delivery::RunDeliveryPolicy::McpAwaitTerminal,
-        ctx.wait_live,
-        &ctx.committed.dry_review,
-    ) {
-        let awaited =
-            crate::mcp_plasm_run_phases::mcp_plasm_run_phase("async_dry_eval", || async {
-                let dry_gate = evaluate_plasm_comp_dry(ctx.es.as_ref(), &ctx.bundle)?;
-                let accept_payload = crate::run_explorer_meta::build_run_explorer_accept_payload(
-                    &dry_gate,
-                    Some(ctx.es.as_ref()),
-                );
-                crate::run_delivery::deliver_mcp_expensive_live_run(
-                    crate::run_delivery::McpExpensiveLiveRunContext {
-                        es: Arc::clone(&ctx.es),
-                        st: Arc::clone(&ctx.host),
-                        prompt_hash: ctx.prompt_hash.clone(),
-                        session_id: ctx.session_id.clone(),
-                        session_ref: ctx.session_ref.clone(),
-                        mcp_session_key: ctx.mcp_session_key.clone(),
-                        bundle: ctx.bundle.clone(),
-                        review: ctx.committed.dry_review.clone(),
-                        accept_payload,
-                        dry_verdict: ctx.committed.verdict,
-                        plan_commit_ref: ctx.plan_commit_ref.clone(),
-                        trace: ctx.mcp_trace.clone(),
-                        wait_live: ctx.wait_live,
-                        await_cfg: crate::mcp_run_await::AwaitConfig::default(),
-                    },
-                )
-                .await
-                .map_err(|e| e.to_string())
-            })
-            .await?;
-        if let Some(result) = awaited {
-            return Ok(result);
-        }
+    if !run.wait_live {
+        return Err("plasm_run requires live execute".to_string());
     }
 
-    let sync_result =
-        crate::mcp_plasm_run_phases::mcp_plasm_run_phase("bounded_sync_live", || async {
-            run_bounded_sync_live_run(BoundedSyncLiveRunRequest {
-                es: Arc::clone(&ctx.es),
-                st: Arc::clone(&ctx.host),
-                prompt_hash: ctx.prompt_hash.clone(),
-                session_id: ctx.session_id.clone(),
-                bundle: ctx.bundle.clone(),
-                dry_review: ctx.committed.dry_review.clone(),
-                dry_verdict: Some(ctx.committed.verdict),
-                dry_gate: None,
-                hooks: Some(PlasmPlanRunHooks {
-                    meta_index: ctx.idx,
-                    trace: ctx.mcp_trace.clone(),
-                    sink: ctx.sink.clone(),
-                }),
-                progress: Some(SyncLiveProgress {
-                    session_ref: ctx.session_ref.clone(),
-                    mcp_transport_key: ctx.mcp_session_key.clone(),
-                    plan_commit_ref: ctx.plan_commit_ref.clone(),
-                }),
-            })
-            .await
-        })
-        .await?;
+    let await_out = crate::mcp_plasm_run_phases::mcp_plasm_run_phase("async_live_await", || async {
+        let dry = dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, &run.committed)?;
+        let dag_json = crate::plasm_plan_run::plasm_plan_dag_json(&dry);
+        let accept_payload = build_run_explorer_accept_payload(&dry, Some(run.es.as_ref()));
+        let run_result = deliver_live_run_await(LiveRunAwaitContext::for_mcp_plasm_run(
+            Arc::clone(&run.es),
+            Arc::clone(&run.host),
+            run.wire.prompt_hash.clone(),
+            run.wire.session_id.clone(),
+            run.wire.session_ref.clone(),
+            run.wire.mcp_session_key.clone(),
+            run.bundle.clone(),
+            accept_payload,
+            run.committed.verdict,
+            run.plan_commit_ref.clone(),
+            run.mcp_trace.clone(),
+            dry,
+        ))
+        .await
+        .map_err(|e| match e {
+            LiveRunError::Timeout(d) => format!("live run timed out after {d:?}"),
+            LiveRunError::Failed(msg) => msg,
+        })?;
+        Ok::<(PlasmPlanRunResult, serde_json::Value), String>((run_result, dag_json))
+    })
+    .await?;
+
+    let (result, dag_json) = await_out;
 
     crate::mcp_plasm_run_phases::mcp_plasm_run_phase("artifact_persist", || async {
         trace_archive_and_emit_code_plan_execute(
-            ctx.trace_hub.as_ref(),
-            ctx.run_artifacts.as_ref(),
-            ctx.ls_key.as_str(),
-            ctx.es.as_ref(),
-            ctx.prompt_hash.as_str(),
-            ctx.session_id.as_str(),
-            ctx.session_ref.as_str(),
-            &ctx.comp_archive,
-            ctx.program_for_trace.as_str(),
-            sync_result.comp.clone(),
-            ctx.call_count,
-            &sync_result,
+            run.artifacts.trace_hub.as_ref(),
+            run.artifacts.run_artifacts.as_ref(),
+            run.wire.ls_key.as_str(),
+            run.es.as_ref(),
+            run.wire.prompt_hash.as_str(),
+            run.wire.session_id.as_str(),
+            run.wire.session_ref.as_str(),
+            &run.artifacts.comp_archive,
+            run.artifacts.program_for_trace.as_str(),
+            result.comp.clone(),
+            dag_json,
+            run.artifacts.call_count,
+            &result,
         )
         .await;
-        Ok(sync_result)
+        Ok(result)
     })
     .await
 }

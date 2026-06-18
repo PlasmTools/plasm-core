@@ -115,7 +115,7 @@ pub struct PublishedResultStep {
     pub cgs: Option<Arc<CGS>>,
     pub display: String,
     pub projection: Option<Vec<String>>,
-    pub result: ExecutionResult,
+    pub result: Arc<ExecutionResult>,
     pub artifact: Option<RunArtifactHandle>,
 }
 
@@ -242,6 +242,7 @@ pub use context::{
     normalize_capability_seeds, resolve_capability_seeds,
 };
 pub(crate) use ingress::parse_execute_program_body;
+pub(crate) use ingress::plugin_execute_options_from_session;
 pub(crate) use mcp_publish::{publish_plasm_result_steps, tool_meta_from_handles};
 pub(crate) use response::ExecuteRunQuery;
 pub(crate) use response::{

@@ -7,6 +7,8 @@ build = "build.rs"
 
 [features]
 default = []
+# Heap profiling integration test (`tests/plasm_plan_run_alloc_budget.rs`).
+alloc-bench = []
 # In-crate Shuttle concurrency tests (`graph_execute/concurrency_shuttle.rs`).
 shuttle-tests = []
 # Local-only: allow bootstrap secrets from process env when `PLASM_SECRETS_DIR` is unset (never enable for k8s images).
@@ -72,6 +74,7 @@ futures = { workspace = true }
 redis = { workspace = true }
 
 [dev-dependencies]
+dhat = "0.3"
 tempfile = { workspace = true }
 insta = { workspace = true, features = ["json"] }
 jsonwebtoken = { workspace = true }

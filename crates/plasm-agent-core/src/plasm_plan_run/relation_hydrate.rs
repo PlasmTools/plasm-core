@@ -2,7 +2,9 @@
 
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::{EntityName, Expr, GetExpr, Ref, CGS};
-use plasm_runtime::{entity_to_agent_row_json, CachedEntity};
+use plasm_runtime::{entity_to_agent_row_json, CachedEntity, ExecutionResult};
+
+use std::sync::Arc;
 
 use crate::execute_session::ExecuteSession;
 use crate::http_execute::execute_plasm_parsed_expr;
@@ -72,6 +74,7 @@ async fn fetch_entity_get_by_ref(
         parsed,
         trace,
         0,
+        None,
         None,
         None,
         None,
@@ -150,9 +153,16 @@ pub(crate) async fn finalize_typed_relation_materialized_node(
     .await?;
     let rows = relation_rows_from_entities(&hydrated, cgs);
     let count = hydrated.len();
-    mat.result.entities = hydrated;
-    mat.result.count = count;
-    mat.rows = rows.clone();
+    mat.result = Arc::new(ExecutionResult {
+        count,
+        entities: hydrated,
+        has_more: mat.result.has_more,
+        pagination_resume: mat.result.pagination_resume.clone(),
+        paging_handle: mat.result.paging_handle.clone(),
+        source: mat.result.source,
+        stats: mat.result.stats.clone(),
+        request_fingerprints: mat.result.request_fingerprints.clone(),
+    });
     mat.row_source = super::inline_row_source(&rows);
     mat.row_identities =
         super::row_identities_from_entities(&scoped, entity_type, &mat.result.entities);

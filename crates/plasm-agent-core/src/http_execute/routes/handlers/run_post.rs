@@ -171,6 +171,7 @@ pub(crate) async fn post_run_execute_session(
                 dry_review: dry.review.clone(),
                 verdict: compact.verdict,
                 expires_at: std::time::Instant::now() + crate::operation::PLAN_COMMIT_TTL,
+                dry_cache: crate::operation::PlanCommitDryCache::from_dry(&dry),
             },
         )
         .await
@@ -207,6 +208,16 @@ pub(crate) async fn post_run_execute_session(
                 "plasm": plasm_meta,
             },
         });
+        crate::http_execute::trace::maybe_emit_http_code_plan_evaluate(
+            &st,
+            &sess,
+            prompt_hash.as_str(),
+            session_id.as_str(),
+            &program,
+            &bundle,
+            1,
+        )
+        .await;
         return respond_plan_payload(kind, preview);
     }
 
@@ -290,90 +301,46 @@ pub(crate) async fn post_run_execute_session(
             ),
         );
     }
-    if crate::run_delivery::should_spawn_async_for_policy(
-        crate::run_delivery::RunDeliveryPolicy::HttpExecute,
+    match crate::run_delivery::deliver_http_live_run(crate::run_delivery::HttpLiveRunRequest {
+        es: Arc::clone(&sess),
+        st: Arc::new(st.clone()),
+        prompt_hash: ph_str.clone(),
+        session_id: sid_str.clone(),
+        bundle: bundle.clone(),
+        dry: dry_gate,
         wait_live,
-        &accepted.review_for_delivery,
-    ) {
-        let auto_async = crate::run_delivery::live_run_should_auto_async_for_policy(
-            crate::run_delivery::RunDeliveryPolicy::HttpExecute,
-            wait_live,
-            &accepted.review_for_delivery,
-        );
-        let handle = sess.mint_operation_handle_plain();
-        let payload =
-            crate::run_explorer_meta::build_run_explorer_accept_payload(&dry_gate, Some(&sess));
-        let mut accept = crate::operation::op_accept_context_from_executable(
-            plan_commit_ref.clone(),
-            Some(accepted.verdict_for_gate),
-            auto_async,
-            None,
-            bundle.executable(),
-            &bundle.artifact().comp,
-        );
-        accept.comp = Some(payload.comp.clone());
-        accept.plan_ux_reflection = Some(payload.plan_ux_reflection.clone());
-        accept.step_order = payload.step_order.clone();
-        if let Err(e) = crate::operation::spawn_async_plan_run(
-            Arc::clone(&sess),
-            Arc::new(st.clone()),
-            ph_str.clone(),
-            sid_str.clone(),
-            bundle.clone(),
-            handle.clone(),
-            plasm_runtime::CancelSignal::new(),
-            accept,
-        ) {
-            return problem_response(
-                Problem::custom(
-                    ProblemStatus::BAD_REQUEST,
-                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                )
-                .with_title("Bad Request")
-                .with_detail(e),
-            );
+        review: accepted.review_for_delivery,
+        verdict_for_gate: accepted.verdict_for_gate,
+        plan_commit_ref: plan_commit_ref.clone(),
+    })
+    .await
+    {
+        Ok(crate::run_delivery::HttpLiveRunOutcome::Accept { result, .. }) => {
+            respond_plan_run_live_result(kind, &result, &sess)
         }
-        let (markdown, mut meta) = crate::operation::async_live_run_accept_parts(
-            &handle,
-            plan_commit_ref.as_ref(),
-            compact.verdict,
-            auto_async,
-        );
-        crate::run_explorer_meta::merge_accept_payload_into_meta(&mut meta, "oN", &payload);
-        return respond_plan_run_live_result(
-            kind,
-            &crate::plasm_plan_run::PlasmPlanRunResult {
-                version: serde_json::json!({}),
-                node_results: Vec::new(),
-                graph_summary: serde_json::json!({}),
-                comp: payload.comp,
-                code_plan_run_artifacts: Vec::new(),
-                run_markdown: Some(markdown),
-                run_plasm_meta: Some(meta),
-                return_steps: Vec::new(),
-            },
-            &sess,
-        );
-    }
-
-    let sync_result = crate::run_delivery::run_bounded_sync_live_run(
-        crate::run_delivery::BoundedSyncLiveRunRequest {
-            es: Arc::clone(&sess),
-            st: Arc::new(st.clone()),
-            prompt_hash: ph_str.clone(),
-            session_id: sid_str.clone(),
-            bundle: bundle.clone(),
-            dry_review: accepted.review_for_delivery.clone(),
-            dry_verdict: Some(accepted.verdict_for_gate),
-            dry_gate: Some(dry_gate),
-            hooks: None,
-            progress: None,
-        },
-    )
-    .await;
-    match sync_result {
-        Ok(result) => respond_plan_run_live_result(kind, &result, &sess),
-        Err(e) => problem_response(
+        Ok(crate::run_delivery::HttpLiveRunOutcome::Completed(result)) => {
+            crate::http_execute::trace::maybe_emit_http_code_plan_execute(
+                &st,
+                &sess,
+                ph_str.as_str(),
+                sid_str.as_str(),
+                &program,
+                &bundle,
+                1,
+                &result,
+            )
+            .await;
+            respond_plan_run_live_result(kind, &result, &sess)
+        }
+        Err(crate::run_delivery::LiveRunError::Timeout(d)) => problem_response(
+            Problem::custom(
+                ProblemStatus::GATEWAY_TIMEOUT,
+                Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+            )
+            .with_title("Gateway Timeout")
+            .with_detail(format!("live run timed out after {d:?}")),
+        ),
+        Err(crate::run_delivery::LiveRunError::Failed(e)) => problem_response(
             Problem::custom(
                 ProblemStatus::BAD_REQUEST,
                 Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),

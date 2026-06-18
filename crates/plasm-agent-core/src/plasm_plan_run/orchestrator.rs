@@ -9,6 +9,7 @@ use crate::plasm_comp_lift::ExecutablePlasmComp;
 use crate::plasm_plan_run::evidence_plan::parsed_expr_for_plan_node;
 use crate::plasm_step_convert::step_payload_to_validated_node;
 use plasm_core::PlasmReturn;
+use std::sync::Arc;
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_plasm_comp(
@@ -83,11 +84,8 @@ pub(crate) async fn run_plasm_comp_scoped(
 pub(crate) struct MaterializedNode {
     pub(crate) entry_id: String,
     pub(crate) entity: String,
-    pub(crate) result: ExecutionResult,
+    pub(crate) result: Arc<ExecutionResult>,
     pub(crate) row_source: MaterializedRowSource,
-    /// Raw row values for downstream language semantics. Synthetic scalar bindings stay scalar here
-    /// even though display/publication wraps them as `{ "value": ... }` cached entities.
-    pub(crate) rows: Vec<serde_json::Value>,
     /// Parallel canonical identity handles (one per row when known).
     pub(crate) row_identities: Vec<Option<plasm_core::RowIdentity>>,
     pub(crate) artifact: Option<crate::run_artifacts::RunArtifactHandle>,
@@ -95,8 +93,22 @@ pub(crate) struct MaterializedNode {
     pub(crate) projection: Option<Vec<String>>,
 }
 
+impl MaterializedNode {
+    pub(crate) fn inline_row_count(&self) -> usize {
+        self.row_source.inline_rows().map_or(0, |rows| rows.len())
+    }
+
+    pub(crate) fn first_inline_row(&self) -> Option<&serde_json::Value> {
+        self.row_source.inline_rows()?.first()
+    }
+}
+
 pub(crate) fn inline_row_source(rows: &[serde_json::Value]) -> MaterializedRowSource {
     MaterializedRowSource::Inline(rows.to_vec())
+}
+
+pub(crate) fn inline_row_source_owned(rows: Vec<serde_json::Value>) -> MaterializedRowSource {
+    MaterializedRowSource::Inline(rows)
 }
 
 pub(crate) struct MaterializedInputRow {
@@ -113,10 +125,17 @@ pub(crate) async fn run_executable_plan_phased(
     prompt_hash: &str,
     session_id: &str,
     executable: &ExecutablePlasmComp,
-    dry: DryPlasmPlanEvaluation,
+    mut dry: DryPlasmPlanEvaluation,
     mcp_tool_hooks: Option<PlasmPlanRunHooks<'_>>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
 ) -> Result<PlasmPlanRunResult, String> {
+    let node_results = dry.take_node_results_for_live();
+    let plan_shared = crate::plan_execute_shared::PlanLineExecuteShared::prepare(
+        es,
+        st,
+        session_id,
+    )
+    .await;
     let mut materialized: BTreeMap<PlanNodeId, MaterializedNode> = BTreeMap::new();
     let approval_policy = PlasmPlanApprovalPolicy::automatic();
     let mut approval_receipts: Vec<PlasmPlanApprovalReceipt> = Vec::new();
@@ -142,15 +161,17 @@ pub(crate) async fn run_executable_plan_phased(
             );
         }
         let node = step_payload_to_validated_node(step_id, payload, &executable.bind)?;
+        let source_line = render_node_operation(&node);
+        let parsed_evidence = parsed_expr_for_plan_node(&node);
         if let Some(gate) = inferred_node_approval(&node) {
             let receipt = approval_policy.review(gate);
             match receipt.decision {
                 PlasmPlanApprovalDecision::Approved => approval_receipts.push(receipt),
             }
         }
-        let mat = match &node {
-            ValidatedPlanNode::Surface(surface) => {
-                let mut surface = surface.clone();
+        let node_id = node.id().clone();
+        let mat = match node {
+            ValidatedPlanNode::Surface(mut surface) => {
                 crate::plan_prepare::apply_prepared_surface_budget(&mut surface, &prepared_budgets);
                 let parsed = if let Some(ir) = &surface.ir {
                     let pe = ParsedExpr {
@@ -198,6 +219,7 @@ pub(crate) async fn run_executable_plan_phased(
                     host_page,
                     surface.pushed_read_budget.clone(),
                     rows_progress,
+                    Some(&plan_shared),
                 )
                 .await?;
                 if let Some(cap) = host_page {
@@ -210,7 +232,7 @@ pub(crate) async fn run_executable_plan_phased(
                     .qualified_entity
                     .as_ref()
                     .map(|q| q.entity.as_str())
-                    .unwrap_or_else(|| node.id().as_str());
+                    .unwrap_or_else(|| surface.id.as_str());
                 // Graph-backed entity sync runs inside `run_parsed_plasm_line` (spill I/O without lock).
                 let row_source = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
                     &scoped_es,
@@ -220,11 +242,11 @@ pub(crate) async fn run_executable_plan_phased(
                 )
                 .materialize_surface_rows(entity_type, &result)
                 .await;
-                let mat_entities = result.entities.clone();
-                let mat_rows = match &row_source {
-                    MaterializedRowSource::Inline(rows) => rows.clone(),
-                    MaterializedRowSource::GraphBacked { .. } => Vec::new(),
-                };
+                let row_identities = row_identities_from_entities(
+                    &scoped_es,
+                    parsed.expr.primary_entity(),
+                    &result.entities,
+                );
                 if let Some(scope) = execution_scope {
                     scope.sync_rows_materialized(result.count.max(result.entities.len()));
                 }
@@ -253,23 +275,19 @@ pub(crate) async fn run_executable_plan_phased(
                         .qualified_entity
                         .as_ref()
                         .map(|q| q.entity.clone())
-                        .unwrap_or_else(|| node.id().as_str().to_string()),
+                        .unwrap_or_else(|| surface.id.as_str().to_string()),
                     display: crate::expr_display::expr_display(&parsed.expr),
                     projection: parsed.projection,
                     row_source,
-                    rows: mat_rows,
-                    row_identities: row_identities_from_entities(
-                        &scoped_es,
-                        parsed.expr.primary_entity(),
-                        &mat_entities,
-                    ),
-                    result,
+                    row_identities,
+                    result: Arc::new(result),
                     artifact,
                 }
             }
             ValidatedPlanNode::Data(data) => {
                 let rows = plan_value_to_rows(&data.data)?;
                 let empty_identities = vec![None; rows.len()];
+                let node = ValidatedPlanNode::Data(data);
                 materialize_synthetic_node(
                     st,
                     es,
@@ -306,6 +324,7 @@ pub(crate) async fn run_executable_plan_phased(
                     rows.push(eval_plan_value(&derive.value, &env)?);
                 }
                 let empty_identities = vec![None; rows.len()];
+                let node = ValidatedPlanNode::Derive(derive);
                 materialize_synthetic_node(
                     st,
                     es,
@@ -347,13 +366,20 @@ pub(crate) async fn run_executable_plan_phased(
                     &materialized,
                     rows.len(),
                 )?;
+                let entity_override = compute
+                    .compute
+                    .schema
+                    .entity
+                    .as_deref()
+                    .map(str::to_string);
+                let node = ValidatedPlanNode::Compute(compute);
                 materialize_synthetic_node(
                     st,
                     es,
                     session_id,
                     &node,
                     owner_entry_id.as_str(),
-                    compute.compute.schema.entity.as_deref(),
+                    entity_override.as_deref(),
                     rows,
                     row_identities,
                     trace.as_ref(),
@@ -361,20 +387,25 @@ pub(crate) async fn run_executable_plan_phased(
                 .await?
             }
             ValidatedPlanNode::RelationTraversal(relation) => {
+                let node = ValidatedPlanNode::RelationTraversal(relation);
+                let ValidatedPlanNode::RelationTraversal(relation_ref) = &node else {
+                    unreachable!("relation traversal node");
+                };
                 materialize_validated_relation_traversal(
                     st,
                     es,
                     session_id,
                     step_idx,
                     &node,
-                    relation,
+                    relation_ref,
                     &materialized,
                     trace.as_ref(),
                     sink.as_ref(),
+                    Some(&plan_shared),
                 )
                 .await?
             }
-            ValidatedPlanNode::ForEach(for_each) => {
+            ValidatedPlanNode::ForEach(ref for_each) => {
                 materialize_for_each_node(
                     st,
                     es,
@@ -384,15 +415,14 @@ pub(crate) async fn run_executable_plan_phased(
                     &materialized,
                     trace.as_ref(),
                     sink.as_ref(),
+                    Some(&plan_shared),
                 )
                 .await?
             }
         };
-        let source_line = render_node_operation(&node);
-        let parsed_evidence = parsed_expr_for_plan_node(&node);
         let step_entry_id = mat.entry_id.clone();
         let step_fps = mat.result.request_fingerprints.clone();
-        materialized.insert(node.id().clone(), mat);
+        materialized.insert(node_id, mat);
         evidence_steps.push(StepExecutedRecord {
             step_id: step_id.as_str().to_string(),
             step_index: step_idx as u32,
@@ -445,11 +475,10 @@ pub(crate) async fn run_executable_plan_phased(
                 .map(|ctx| ctx.cgs.clone()),
             display: mat.display.clone(),
             projection: mat.projection.clone(),
-            result: mat.result.clone(),
+            result: Arc::clone(&mat.result),
             artifact: mat.artifact.clone(),
         });
     }
-    let return_steps = steps.clone();
     let out = publish_plasm_result_steps(es.cgs.as_ref().into(), meta_index, &steps);
     let comp = crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry);
     let mut code_plan_run_artifacts = Vec::new();
@@ -501,13 +530,13 @@ pub(crate) async fn run_executable_plan_phased(
     }
     Ok(PlasmPlanRunResult {
         version: dry.version,
-        node_results: dry.node_results,
+        node_results,
         graph_summary: graph_summary_with_approval_receipts(dry.graph_summary, &approval_receipts),
         comp,
         code_plan_run_artifacts,
         run_markdown: Some(out.markdown),
         run_plasm_meta,
-        return_steps,
+        return_steps: steps,
     })
 }
 

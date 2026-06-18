@@ -173,6 +173,7 @@ mod tests {
             mcp_transport_key: None,
             progress_host: None,
             progress_tx: tokio::sync::broadcast::channel(1).0,
+            terminal_tx: None,
             comp: None,
             plan_ux_reflection: None,
             step_order: Vec::new(),

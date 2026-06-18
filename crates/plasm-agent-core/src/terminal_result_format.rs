@@ -84,7 +84,7 @@ pub fn published_step_from_artifact_doc(
         cgs: Some(cgs),
         display,
         projection: None,
-        result,
+        result: Arc::new(result),
         artifact,
     })
 }

@@ -111,6 +111,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
     for manifest in crate::workflow_registry::demo_workflow_manifests() {
         workflows.register(manifest);
     }
+    let live_plan_pool = Arc::new(crate::live_plan_run_worker::LivePlanRunPool::new());
     PlasmHostState {
         oss: PlasmOssHostState {
             engine: Arc::new(engine),
@@ -149,6 +150,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             )),
             workflows,
             redis_backend: None,
+            live_plan_pool,
         },
         saas: None,
     }

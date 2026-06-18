@@ -166,6 +166,7 @@ pub(crate) async fn run_parsed_plasm_line(
     surface_read_budget: Option<crate::plan_read_bounds::PushedReadBudget>,
     rows_progress: Option<plasm_runtime::RowsProgressFn>,
     preflight: Option<plasm_core::PreflightToken>,
+    plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
 ) -> Result<(ParsedExpr, ExecutionResult, Option<RunArtifactHandle>), RunLineError> {
     let preflight_token = match preflight {
         Some(token) => token,
@@ -293,63 +294,74 @@ pub(crate) async fn run_parsed_plasm_line(
         catalog_backend.as_ref(),
     )
     .map(|origin| origin.as_str().to_string());
-    let auth_for_exec = exec_cgs.auth.clone();
-    let (compile_operation_fn, compile_query_fn, plugin_generation_id) =
-        plugin_execute_options_from_session(sess);
     let fp_sink = Arc::new(Mutex::new(Vec::<String>::new()));
-    let secret_provider = st.effective_outbound_secret_provider();
     let (_, operation) = trace_expr_api_meta(&parsed.expr);
 
-    let bound_share = sess.session_share_token.read().await.clone();
-    let bound_proof_base_token = sess.session_proof_base_token.read().await.clone();
-    let catalog_entry_for_bind = sess
-        .federation_dispatch()
-        .as_ref()
-        .and_then(|_| {
-            sess.contexts_by_entry.keys().find(|eid| {
-                sess.contexts_by_entry
-                    .get(*eid)
-                    .and_then(|ctx| ctx.get_entity(root_entity))
-                    .is_some()
+    let exec_opts = if let Some(shared) = plan_shared {
+        shared.build_exec_opts(
+            sess,
+            st,
+            exec_cgs,
+            root_entity,
+            fp_sink.clone(),
+            preflight_token,
+            rows_progress.clone(),
+        )
+    } else {
+        let auth_for_exec = exec_cgs.auth.clone();
+        let (compile_operation_fn, compile_query_fn, plugin_generation_id) =
+            plugin_execute_options_from_session(sess);
+        let secret_provider = st.effective_outbound_secret_provider();
+        let bound_share = sess.session_share_token.read().await.clone();
+        let bound_proof_base_token = sess.session_proof_base_token.read().await.clone();
+        let catalog_entry_for_bind = sess
+            .federation_dispatch()
+            .as_ref()
+            .and_then(|_| {
+                sess.contexts_by_entry.keys().find(|eid| {
+                    sess.contexts_by_entry
+                        .get(*eid)
+                        .and_then(|ctx| ctx.get_entity(root_entity))
+                        .is_some()
+                })
             })
-        })
-        .cloned()
-        .unwrap_or_else(|| sess.entry_id.clone());
-    let catalog_bind = sess
-        .session_bindings_for_entry(&catalog_entry_for_bind)
-        .map(|m| m.cml_env_entries());
-
-    let exec_opts = ExecuteOptions {
-        request_fingerprint_sink: Some(fp_sink.clone()),
-        http_base_url_override: http_backend_for_root.clone(),
-        auth_resolver_override: auth_for_exec.clone().map(|scheme| {
-            Arc::new(
-                AuthResolver::new(scheme, secret_provider.clone())
-                    .with_session_bearer_override(bound_share.clone()),
-            )
-        }),
-        compile_operation_fn,
-        compile_query_fn,
-        plugin_generation_id,
-        federation: fed_holder.clone(),
-        preflight: Some(preflight_token),
-        execute_session: Some(Arc::new(ExecuteSessionMaterial {
-            prompt_hash: sess.prompt_hash.clone(),
-            session_id: session_id.to_string(),
-            share_token: bound_share.clone(),
-            proof_base_token: bound_proof_base_token.clone(),
-            transport_origin: http_backend_for_root.clone(),
-            ui_origin: http_backend_for_root.clone(),
-            catalog_bind,
-        })),
-        cancel: crate::operation::plan_execute_cancel_signal(),
-        graph_page_spill: crate::graph_page_spill_host::graph_page_spill_for_execute(
-            st.session_graph_persistence.as_ref(),
-            sess.core.clone(),
-            sess.prompt_hash.as_str(),
-            session_id,
-        ),
-        rows_progress: rows_progress.clone(),
+            .cloned()
+            .unwrap_or_else(|| sess.entry_id.clone());
+        let catalog_bind = sess
+            .session_bindings_for_entry(&catalog_entry_for_bind)
+            .map(|m| m.cml_env_entries());
+        ExecuteOptions {
+            request_fingerprint_sink: Some(fp_sink.clone()),
+            http_base_url_override: http_backend_for_root.clone(),
+            auth_resolver_override: auth_for_exec.map(|scheme| {
+                Arc::new(
+                    AuthResolver::new(scheme, secret_provider.clone())
+                        .with_session_bearer_override(bound_share.clone()),
+                )
+            }),
+            compile_operation_fn,
+            compile_query_fn,
+            plugin_generation_id,
+            federation: fed_holder.clone(),
+            preflight: Some(preflight_token),
+            execute_session: Some(Arc::new(ExecuteSessionMaterial {
+                prompt_hash: sess.prompt_hash.clone(),
+                session_id: session_id.to_string(),
+                share_token: bound_share,
+                proof_base_token: bound_proof_base_token,
+                transport_origin: http_backend_for_root.clone(),
+                ui_origin: http_backend_for_root,
+                catalog_bind,
+            })),
+            cancel: crate::operation::plan_execute_cancel_signal(),
+            graph_page_spill: crate::graph_page_spill_host::graph_page_spill_for_execute(
+                st.session_graph_persistence.as_ref(),
+                sess.core.clone(),
+                sess.prompt_hash.as_str(),
+                session_id,
+            ),
+            rows_progress: rows_progress.clone(),
+        }
     };
     let graph_spill_active = exec_opts.graph_page_spill.is_some();
     let page_resume_backup = page_resume_owned.clone();

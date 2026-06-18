@@ -2,9 +2,7 @@
 
 use crate::execute_session::ExecuteSession;
 use crate::operation_progress::{
-    async_poll_accept_markdown_suffix, async_poll_progress_markdown_suffix,
-    async_poll_unchanged_markdown_suffix, op_plasm_meta_short, render_op_wire_line,
-    render_op_wire_markdown, OpWireSig,
+    op_plasm_meta_short, render_op_wire_line, render_op_wire_markdown, OpWireSig,
 };
 use crate::plan_dry_display::{PlanDryReview, PlanDryVerdict};
 use crate::plasm_plan_run::{DryPlasmPlanEvaluation, PlasmPlanRunResult};
@@ -52,18 +50,6 @@ pub fn plan_requires_review_gate(
     verdict == PlanDryVerdict::Review && !force && plan_commit_ref.is_none()
 }
 
-/// Review/unbounded plans must not block MCP/HTTP handlers when `wait` defaults to true.
-#[must_use]
-pub fn live_run_should_auto_async(review: &PlanDryReview, wait_live: bool) -> bool {
-    wait_live && review.execution_is_expensive()
-}
-
-/// Whether live execute should spawn a background operation (explicit `wait=false` or auto-async).
-#[must_use]
-pub fn should_spawn_async_live_run(wait_live: bool, review: &PlanDryReview) -> bool {
-    !wait_live || live_run_should_auto_async(review, wait_live)
-}
-
 pub fn verify_plan_commit_for_run(
     es: &ExecuteSession,
     commit_ref: &PlanCommitRef,
@@ -101,17 +87,6 @@ pub fn verify_plan_commit_for_dry(
 }
 pub const PLAN_COMMIT_TTL: Duration = Duration::from_secs(600);
 
-/// MCP sync live-run progress without registering [`OperationState`] (bounded sync path).
-#[derive(Clone)]
-pub struct SyncLiveProgressCtx {
-    pub handle: OperationHandle,
-    pub mcp_transport_key: String,
-    pub plan_commit_ref: Option<PlanCommitRef>,
-    pub progress: Arc<StdMutex<OperationProgress>>,
-    pub emit_state: Arc<StdMutex<crate::operation_progress::OperationAgentEmitState>>,
-    pub host: std::sync::Weak<PlasmHostState>,
-}
-
 /// Cooperative cancellation + optional progress sink for phased plan execution.
 #[derive(Clone)]
 pub struct ExecutionScope {
@@ -119,7 +94,6 @@ pub struct ExecutionScope {
     token: CancellationToken,
     progress: Option<Arc<StdMutex<OperationProgress>>>,
     operation_sink: Option<(Arc<ExecuteSession>, OperationHandle)>,
-    sync_progress_sink: Option<(Arc<ExecuteSession>, Arc<SyncLiveProgressCtx>)>,
 }
 
 impl ExecutionScope {
@@ -130,19 +104,6 @@ impl ExecutionScope {
             token: CancellationToken::new(),
             progress: None,
             operation_sink: None,
-            sync_progress_sink: None,
-        }
-    }
-
-    /// Bounded synchronous live execute (HTTP + MCP): cooperative cancel only.
-    #[must_use]
-    pub fn for_bounded_sync(cancel: CancelSignal) -> Self {
-        Self {
-            cancel,
-            token: CancellationToken::new(),
-            progress: None,
-            operation_sink: None,
-            sync_progress_sink: None,
         }
     }
 
@@ -157,23 +118,6 @@ impl ExecutionScope {
             token: CancellationToken::new(),
             progress: Some(Arc::new(StdMutex::new(OperationProgress::default()))),
             operation_sink: Some((es, handle)),
-            sync_progress_sink: None,
-        }
-    }
-
-    /// MCP bounded sync: progress notifications without [`operation_by_handle`] registration.
-    #[must_use]
-    pub fn for_sync_live(
-        es: Arc<ExecuteSession>,
-        ctx: Arc<SyncLiveProgressCtx>,
-        cancel: CancelSignal,
-    ) -> Self {
-        Self {
-            cancel,
-            token: CancellationToken::new(),
-            progress: Some(Arc::clone(&ctx.progress)),
-            operation_sink: None,
-            sync_progress_sink: Some((es, ctx)),
         }
     }
 
@@ -247,11 +191,6 @@ impl ExecutionScope {
         if let Some((es, handle)) = &self.operation_sink {
             es.update_operation_progress(handle, progress.clone());
         }
-        if let Some((es, ctx)) = &self.sync_progress_sink {
-            if let Some(st) = ctx.host.upgrade() {
-                es.try_emit_sync_live_progress(ctx, &progress, st.as_ref());
-            }
-        }
     }
 
     #[must_use]
@@ -318,6 +257,8 @@ pub struct OperationState {
     pub mcp_transport_key: Option<String>,
     pub progress_host: Option<std::sync::Weak<PlasmHostState>>,
     pub progress_tx: tokio::sync::broadcast::Sender<crate::operation_progress::OpProgressEvent>,
+    /// Wakes server-side `await_operation_terminal` when phase becomes terminal.
+    pub terminal_tx: Option<tokio::sync::watch::Sender<OperationPhase>>,
     pub comp: Option<serde_json::Value>,
     pub plan_ux_reflection: Option<serde_json::Value>,
     pub step_order: Vec<String>,
@@ -346,6 +287,46 @@ pub enum OperationPollSnapshot {
     Cancelled(OperationProgress),
 }
 
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct PlanCommitDryCache {
+    #[serde(default)]
+    pub version: serde_json::Value,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub topological_order: Vec<String>,
+    #[serde(default)]
+    pub node_results: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub graph_summary: serde_json::Value,
+    #[serde(default)]
+    pub parallel_root_surfaces_only: bool,
+    #[serde(default)]
+    pub staged_nodes: Vec<String>,
+    #[serde(default)]
+    pub execution_unsupported: Vec<String>,
+}
+
+impl PlanCommitDryCache {
+    pub fn from_dry(dry: &crate::plasm_plan_run::DryPlasmPlanEvaluation) -> Self {
+        Self {
+            version: dry.version.clone(),
+            name: dry.name.clone(),
+            topological_order: dry.topological_order.clone(),
+            node_results: dry.node_results.clone(),
+            graph_summary: dry.graph_summary.clone(),
+            parallel_root_surfaces_only: dry.parallel_root_surfaces_only,
+            staged_nodes: dry.staged_nodes.clone(),
+            execution_unsupported: dry.execution_unsupported.clone(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_populated(&self) -> bool {
+        !self.topological_order.is_empty() || !self.node_results.is_empty()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PlanCommitRecord {
     pub commit_ref: PlanCommitRef,
@@ -355,6 +336,7 @@ pub struct PlanCommitRecord {
     pub dry_review: PlanDryReview,
     pub verdict: PlanDryVerdict,
     pub expires_at: Instant,
+    pub dry_cache: PlanCommitDryCache,
 }
 
 impl PlanCommitRecord {
@@ -429,6 +411,15 @@ pub(crate) fn op_accept_context_from_executable(
     }
 }
 
+impl OpAcceptContext {
+    pub(crate) fn with_run_explorer(mut self, payload: &crate::run_explorer_meta::RunExplorerAcceptPayload) -> Self {
+        self.comp = Some(payload.comp.clone());
+        self.plan_ux_reflection = Some(payload.plan_ux_reflection.clone());
+        self.step_order = payload.step_order.clone();
+        self
+    }
+}
+
 pub fn operation_accept_markdown(
     handle: &OperationHandle,
     plan_commit_ref: Option<&PlanCommitRef>,
@@ -443,7 +434,12 @@ pub fn operation_accept_markdown(
         dry_verdict,
         None,
     );
-    render_op_wire_markdown(&line) + &async_poll_accept_markdown_suffix(handle)
+    let suffix = if handle.is_plain() {
+        crate::operation_progress::http_poll_accept_markdown_suffix(handle)
+    } else {
+        crate::operation_progress::async_poll_accept_markdown_suffix(handle)
+    };
+    render_op_wire_markdown(&line) + &suffix
 }
 
 pub fn operation_running_markdown(
@@ -457,10 +453,16 @@ pub fn operation_running_markdown(
         OpWireSig::Running
     };
     let line = render_op_wire_line(handle, sig, Some(progress), None, None, None);
-    let suffix = if unchanged {
-        async_poll_unchanged_markdown_suffix(handle)
+    let suffix = if handle.is_plain() {
+        if unchanged {
+            crate::operation_progress::http_poll_unchanged_markdown_suffix(handle)
+        } else {
+            crate::operation_progress::http_poll_progress_markdown_suffix(handle)
+        }
+    } else if unchanged {
+        crate::operation_progress::async_poll_unchanged_markdown_suffix(handle)
     } else {
-        async_poll_progress_markdown_suffix(handle)
+        crate::operation_progress::async_poll_progress_markdown_suffix(handle)
     };
     render_op_wire_markdown(&line) + &suffix
 }
@@ -654,6 +656,7 @@ pub fn spawn_async_plan_run(
     handle: OperationHandle,
     cancel: CancelSignal,
     accept: OpAcceptContext,
+    dry: Option<crate::plasm_plan_run::DryPlasmPlanEvaluation>,
 ) -> Result<(), String> {
     let mut accept = accept;
     accept.host = Some(Arc::downgrade(&st));
@@ -670,22 +673,32 @@ pub fn spawn_async_plan_run(
         Arc::clone(&st),
         ticker_cancel.clone(),
     );
+    let scope_for_run = scope.clone();
+    let es_run = Arc::clone(&es);
+    let st_run = Arc::clone(&st);
+    let pool = st.live_plan_pool();
     tokio::spawn(async move {
-        let result = plasm_runtime::with_live_run_telemetry(telemetry, async {
-            crate::plasm_plan_run::run_plasm_comp(
-                es.as_ref(),
-                st.as_ref(),
-                prompt_hash.as_str(),
-                session_id.as_str(),
-                &bundle,
-                true,
-                None,
-                Some(&scope),
-                None,
-            )
-            .await
-        })
-        .await;
+        let result = pool
+            .run(move || {
+                async move {
+                    plasm_runtime::with_live_run_telemetry(telemetry, async move {
+                        crate::plasm_plan_run::run_plasm_comp(
+                            es_run.as_ref(),
+                            st_run.as_ref(),
+                            prompt_hash.as_str(),
+                            session_id.as_str(),
+                            &bundle,
+                            true,
+                            None,
+                            Some(&scope_for_run),
+                            dry,
+                        )
+                        .await
+                    })
+                    .await
+                }
+            })
+            .await;
         ticker_cancel.cancel();
         let _ = ticker.await;
         es.clear_live_run_telemetry();
@@ -749,16 +762,16 @@ mod tests {
     }
 
     #[test]
-    fn operation_accept_markdown_includes_poll_discipline() {
+    fn operation_accept_markdown_notes_server_await() {
         let handle = OperationHandle::mint_namespaced("l_AAAAAAAAQACAAAAAAAAAAQ", 1);
         let md = operation_accept_markdown(&handle, None, None, true);
-        assert!(md.contains("wait(l_AAAAAAAAQACAAAAAAAAAAQ_o1)"));
-        assert!(md.contains("unrelated live programs"));
-        assert!(md.contains("`=`"));
+        assert!(md.contains("l_AAAAAAAAQACAAAAAAAAAAQ_o1"));
+        assert!(md.contains("awaits server-side"));
+        assert!(md.contains("do not poll"));
     }
 
     #[test]
-    fn operation_running_markdown_unchanged_includes_keep_polling() {
+    fn operation_running_markdown_unchanged_notes_server_await() {
         let handle = OperationHandle::mint_namespaced("l_AAAAAAAAQACAAAAAAAAAAQ", 2);
         let progress = OperationProgress {
             step: 1,
@@ -767,27 +780,9 @@ mod tests {
             rows_materialized: 120,
         };
         let md = operation_running_markdown(&handle, &progress, true);
-        assert!(md.contains("Still open"));
-        assert!(md.contains("wait(l_AAAAAAAAQACAAAAAAAAAAQ_o2)"));
-    }
-
-    #[test]
-    fn live_run_should_auto_async_only_for_expensive_review_with_default_wait() {
-        let expensive = PlanDryReview {
-            has_unbounded_read_root: true,
-            has_paginated_list_fetch_all_default: false,
-            ..PlanDryReview::default()
-        };
-        let advisory = PlanDryReview {
-            has_full_collection_compute: true,
-            ..PlanDryReview::default()
-        };
-        assert!(live_run_should_auto_async(&expensive, true));
-        assert!(!live_run_should_auto_async(&expensive, false));
-        assert!(!live_run_should_auto_async(&advisory, true));
-        assert!(should_spawn_async_live_run(false, &advisory));
-        assert!(should_spawn_async_live_run(true, &expensive));
-        assert!(!should_spawn_async_live_run(true, &advisory));
+        assert!(md.contains('='));
+        assert!(md.contains("items"));
+        assert!(md.contains("awaits server-side"));
     }
 
     #[test]
@@ -798,7 +793,6 @@ mod tests {
             token: CancellationToken::new(),
             progress: Some(Arc::clone(&progress)),
             operation_sink: None,
-            sync_progress_sink: None,
         };
         scope.add_rows_materialized(50);
         scope.add_rows_materialized(50);
