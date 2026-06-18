@@ -66,8 +66,8 @@ pub(crate) use materialize::*;
 pub(crate) use relation_hydrate::finalize_typed_relation_materialized_node;
 
 pub use dry::{
-    evaluate_plasm_comp_dry, node_dependencies, plan_dry_compact_view, plan_semantic_dag_json,
-    plasm_plan_dag_json, render_node_operation, render_plasm_plan_dry_text,
+    evaluate_plasm_comp_dry, node_dependencies, plan_dag_trace_json, plan_dry_compact_view,
+    plan_semantic_dag_json, plasm_plan_dag_json, render_node_operation, render_plasm_plan_dry_text,
     render_plasm_plan_dry_text_for_session,
 };
 pub use orchestrator::run_plasm_comp;

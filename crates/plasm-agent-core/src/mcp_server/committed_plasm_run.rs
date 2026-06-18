@@ -84,32 +84,33 @@ pub async fn execute_committed_plasm_run(
         return Err("plasm_run requires live execute".to_string());
     }
 
-    let await_out = crate::mcp_plasm_run_phases::mcp_plasm_run_phase("async_live_await", || async {
-        let dry = dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, &run.committed)?;
-        let dag_json = crate::plasm_plan_run::plasm_plan_dag_json(&dry);
-        let accept_payload = build_run_explorer_accept_payload(&dry, Some(run.es.as_ref()));
-        let run_result = deliver_live_run_await(LiveRunAwaitContext::for_mcp_plasm_run(
-            Arc::clone(&run.es),
-            Arc::clone(&run.host),
-            run.wire.prompt_hash.clone(),
-            run.wire.session_id.clone(),
-            run.wire.session_ref.clone(),
-            run.wire.mcp_session_key.clone(),
-            run.bundle.clone(),
-            accept_payload,
-            run.committed.verdict,
-            run.plan_commit_ref.clone(),
-            run.mcp_trace.clone(),
-            dry,
-        ))
-        .await
-        .map_err(|e| match e {
-            LiveRunError::Timeout(d) => format!("live run timed out after {d:?}"),
-            LiveRunError::Failed(msg) => msg,
-        })?;
-        Ok::<(PlasmPlanRunResult, serde_json::Value), String>((run_result, dag_json))
-    })
-    .await?;
+    let await_out =
+        crate::mcp_plasm_run_phases::mcp_plasm_run_phase("async_live_await", || async {
+            let dry = dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, &run.committed)?;
+            let dag_json = crate::plasm_plan_run::plan_dag_trace_json(&dry);
+            let accept_payload = build_run_explorer_accept_payload(&dry, Some(run.es.as_ref()));
+            let run_result = deliver_live_run_await(LiveRunAwaitContext::for_mcp_plasm_run(
+                Arc::clone(&run.es),
+                Arc::clone(&run.host),
+                run.wire.prompt_hash.clone(),
+                run.wire.session_id.clone(),
+                run.wire.session_ref.clone(),
+                run.wire.mcp_session_key.clone(),
+                run.bundle.clone(),
+                accept_payload,
+                run.committed.verdict,
+                run.plan_commit_ref.clone(),
+                run.mcp_trace.clone(),
+                dry,
+            ))
+            .await
+            .map_err(|e| match e {
+                LiveRunError::Timeout(d) => format!("live run timed out after {d:?}"),
+                LiveRunError::Failed(msg) => msg,
+            })?;
+            Ok::<(PlasmPlanRunResult, serde_json::Value), String>((run_result, dag_json))
+        })
+        .await?;
 
     let (result, dag_json) = await_out;
 

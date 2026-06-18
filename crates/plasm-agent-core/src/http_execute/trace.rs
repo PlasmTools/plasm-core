@@ -260,14 +260,13 @@ pub(crate) async fn maybe_emit_http_code_plan_evaluate(
         return;
     };
     let ls_key = logical_uuid.to_string();
-    let session_ref =
-        crate::mcp_logical_ref::format_logical_session_wire_ref(crate::session_identity::LogicalSessionId(
-            logical_uuid,
-        ));
+    let session_ref = crate::mcp_logical_ref::format_logical_session_wire_ref(
+        crate::session_identity::LogicalSessionId(logical_uuid),
+    );
     let comp_archive =
         crate::plasm_comp_wire::plasm_comp_wire_json(dry.artifact(), Some(&dry.graph_summary));
     let comp_json = crate::plasm_comp_wire::plasm_comp_json_from_dry(&dry);
-    let dag_json = crate::plasm_plan_run::plasm_plan_dag_json(&dry);
+    let dag_json = crate::plasm_plan_run::plan_dag_trace_json(&dry);
     crate::mcp_server::trace_archive_and_emit_code_plan_evaluate(
         &st.trace_hub,
         &st.run_artifacts,
@@ -307,10 +306,9 @@ pub(crate) async fn maybe_emit_http_code_plan_execute(
         return;
     };
     let ls_key = logical_uuid.to_string();
-    let session_ref =
-        crate::mcp_logical_ref::format_logical_session_wire_ref(crate::session_identity::LogicalSessionId(
-            logical_uuid,
-        ));
+    let session_ref = crate::mcp_logical_ref::format_logical_session_wire_ref(
+        crate::session_identity::LogicalSessionId(logical_uuid),
+    );
     let comp_archive =
         crate::plasm_comp_wire::plasm_comp_wire_json(dry.artifact(), Some(&dry.graph_summary));
     crate::mcp_server::trace_archive_and_emit_code_plan_execute(
@@ -324,7 +322,7 @@ pub(crate) async fn maybe_emit_http_code_plan_execute(
         &comp_archive,
         program,
         out.comp.clone(),
-        crate::plasm_plan_run::plasm_plan_dag_json(&dry),
+        crate::plasm_plan_run::plan_dag_trace_json(&dry),
         plan_call_index,
         out,
     )

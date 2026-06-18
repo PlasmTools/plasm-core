@@ -276,6 +276,11 @@ pub fn plan_semantic_dag_json(dry: &DryPlasmPlanEvaluation) -> serde_json::Value
     })
 }
 
+/// Trace/UI DAG payload (name + summary). Call sites outside `dry.rs` must use this helper.
+pub fn plan_dag_trace_json(dry: &DryPlasmPlanEvaluation) -> serde_json::Value {
+    plasm_plan_dag_json(dry)
+}
+
 /// Structured DAG payload for trace/UI renderers. This is the machine-readable companion to the
 /// compact dry-run text, so clients do not have to parse Markdown to draw plan topology.
 pub fn plasm_plan_dag_json(dry: &DryPlasmPlanEvaluation) -> serde_json::Value {

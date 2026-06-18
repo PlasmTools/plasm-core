@@ -1029,7 +1029,7 @@ impl PlasmMcpHandler {
                             Some(&es),
                         );
                         let comp_json = plasm_comp_json_from_dry(&dry);
-                        let dag_json = crate::plasm_plan_run::plasm_plan_dag_json(&dry);
+                        let dag_json = crate::plasm_plan_run::plan_dag_trace_json(&dry);
                         let compact = build_plan_dry_compact_view(
                             dry.validated_plan(),
                             &dry.topological_order,
