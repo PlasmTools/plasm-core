@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.25] - 2026-06-18
+
 ### Removed
 
 - **Bounded sync live run:** delete `sync_live_run`, `begin_sync_live_run`, and the 90s bounded-sync path — all MCP `plasm_run` and HTTP `wait=true` live executes use async spawn + terminal await only.
