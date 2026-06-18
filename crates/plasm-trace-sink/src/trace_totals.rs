@@ -1,8 +1,8 @@
 //! Trace head row → [`TraceTotals`] for list views (shared by Iceberg decoders and SQL projection).
 
 use plasm_trace::{
-    session_data_from_ordered_events, totals_from_session_data, SessionTraceCountersSnapshot,
-    SessionTraceData, TraceEvent,
+    merge_trace_totals, session_data_from_ordered_events, totals_from_session_data,
+    SessionTraceCountersSnapshot, SessionTraceData, TraceEvent, TraceTotals as PlasmTraceTotals,
 };
 
 use crate::model::{TraceHeadRow, TraceTotals};
@@ -10,6 +10,12 @@ use crate::model::{TraceHeadRow, TraceTotals};
 /// True when list/detail should recompute KPIs from durable segment rows instead of head snapshot.
 pub(crate) fn head_needs_segment_recompute(h: &TraceHeadRow) -> bool {
     head_totals_snapshot_stale(h)
+}
+
+fn head_line_rollups_present(snap: &SessionTraceCountersSnapshot) -> bool {
+    snap.aggregate_expression_lines > 0
+        || snap.aggregate_network_requests > 0
+        || snap.aggregate_http_trace_entry_count > 0
 }
 
 fn head_totals_snapshot_stale(h: &TraceHeadRow) -> bool {
@@ -20,28 +26,29 @@ fn head_totals_snapshot_stale(h: &TraceHeadRow) -> bool {
     let Ok(snap) = serde_json::from_str::<SessionTraceCountersSnapshot>(tj) else {
         return false;
     };
-    snap.aggregate_expression_lines == 0
-        && snap.aggregate_network_requests == 0
-        && snap.code_plans_evaluated == 0
-        && snap.code_plans_executed == 0
-        && snap.plasm_call_count == 0
+    // Stale when head lacks line/network rollups (segments may supply them).
+    !head_line_rollups_present(&snap)
 }
 
 /// Derive list totals from a durable head row (`totals_json` snapshot or line-based fallback).
 pub(crate) fn trace_totals_from_head_row(h: &TraceHeadRow) -> TraceTotals {
+    plasm_trace_totals_from_head_row(h).into()
+}
+
+fn plasm_trace_totals_from_head_row(h: &TraceHeadRow) -> PlasmTraceTotals {
     let tj = h.totals_json.trim();
     if !tj.is_empty() {
-        if let Ok(snap) = serde_json::from_str::<plasm_trace::SessionTraceCountersSnapshot>(tj) {
+        if let Ok(snap) = serde_json::from_str::<SessionTraceCountersSnapshot>(tj) {
             let mcp = h.mcp_session_id.clone().unwrap_or_default();
             let data = snap.into_session_data(mcp);
-            return totals_from_session_data(&data).into();
+            return totals_from_session_data(&data);
         }
     }
-    TraceTotals {
+    PlasmTraceTotals {
         plasm_tool_calls: h.max_call_index.map(|c| (c.max(0) as u64) + 1).unwrap_or(0),
         plasm_expressions: 0,
         expression_lines: h.expression_lines.max(0) as u64,
-        ..TraceTotals::default()
+        ..PlasmTraceTotals::default()
     }
 }
 
@@ -50,15 +57,22 @@ pub(crate) fn trace_totals_from_segment_records(
     records: &[serde_json::Value],
     mcp_session_id: &str,
 ) -> TraceTotals {
+    plasm_trace_totals_from_segment_records(records, mcp_session_id).into()
+}
+
+fn plasm_trace_totals_from_segment_records(
+    records: &[serde_json::Value],
+    mcp_session_id: &str,
+) -> PlasmTraceTotals {
     let events: Vec<TraceEvent> = records
         .iter()
         .filter_map(|v| serde_json::from_value(v.clone()).ok())
         .collect();
     if events.is_empty() {
-        return TraceTotals::default();
+        return PlasmTraceTotals::default();
     }
     let session: SessionTraceData = session_data_from_ordered_events(mcp_session_id, events);
-    totals_from_session_data(&session).into()
+    totals_from_session_data(&session)
 }
 
 /// Prefer head snapshot when populated; otherwise recompute from segment rows.
@@ -66,13 +80,17 @@ pub(crate) fn trace_totals_from_head_or_records(
     h: &TraceHeadRow,
     records: &[serde_json::Value],
 ) -> TraceTotals {
-    if !records.is_empty() && head_needs_segment_recompute(h) {
-        return trace_totals_from_segment_records(
+    if records.is_empty() || !head_needs_segment_recompute(h) {
+        return trace_totals_from_head_row(h);
+    }
+    merge_trace_totals(
+        &plasm_trace_totals_from_head_row(h),
+        &plasm_trace_totals_from_segment_records(
             records,
             h.mcp_session_id.as_deref().unwrap_or(""),
-        );
-    }
-    trace_totals_from_head_row(h)
+        ),
+    )
+    .into()
 }
 
 #[cfg(test)]
@@ -156,6 +174,80 @@ mod tests {
         let totals = trace_totals_from_head_or_records(&head, &records);
         assert_eq!(totals.mcp_resource_read_chars, 100);
         assert_eq!(totals.total_duration_ms, 42);
+    }
+
+    #[test]
+    fn code_plan_head_without_line_kpis_recomputes_from_segments() {
+        let mut head = test_head();
+        head.totals_json = serde_json::to_string(&plasm_trace::SessionTraceCountersSnapshot {
+            code_plans_evaluated: 4,
+            code_plans_executed: 7,
+            plasm_call_count: 7,
+            ..Default::default()
+        })
+        .unwrap();
+        let records = vec![serde_json::json!({
+            "emitted_at_ms": 100,
+            "kind": "plasm_line",
+            "call_index": 1,
+            "line_index": 0,
+            "source_expression": "e5(p33=electric)",
+            "duration_ms": 42,
+            "stats": {
+                "network_requests": 2,
+                "cache_hits": 0,
+                "cache_misses": 2,
+                "duration_ms": 42
+            },
+            "source": "live",
+            "request_fingerprints": ["abc"],
+            "http_calls": [
+                {"method": "GET", "url": "https://pokeapi.co/api/v2/type/electric", "duration_ms": 20, "outcome": "ok"}
+            ]
+        })];
+        assert!(
+            head_needs_segment_recompute(&head),
+            "code-plan-only head snapshot must recompute line/network KPIs from segments"
+        );
+        let totals = trace_totals_from_head_or_records(&head, &records);
+        assert_eq!(totals.network_requests, 2);
+        assert_eq!(totals.http_trace_entry_count, 1);
+    }
+
+    #[test]
+    fn code_plan_head_merge_preserves_plan_kpis_with_segment_network() {
+        let mut head = test_head();
+        head.totals_json = serde_json::to_string(&plasm_trace::SessionTraceCountersSnapshot {
+            code_plans_evaluated: 4,
+            code_plans_executed: 7,
+            plasm_call_count: 7,
+            ..Default::default()
+        })
+        .unwrap();
+        let records = vec![serde_json::json!({
+            "emitted_at_ms": 100,
+            "kind": "plasm_line",
+            "call_index": 1,
+            "line_index": 0,
+            "source_expression": "e5",
+            "duration_ms": 42,
+            "stats": {
+                "network_requests": 2,
+                "cache_hits": 0,
+                "cache_misses": 2,
+                "duration_ms": 42
+            },
+            "source": "live",
+            "request_fingerprints": ["abc"],
+            "http_calls": [
+                {"method": "GET", "url": "https://example.test/items", "duration_ms": 20, "outcome": "ok"}
+            ]
+        })];
+        let totals = trace_totals_from_head_or_records(&head, &records);
+        assert_eq!(totals.code_plans_evaluated, 4);
+        assert_eq!(totals.code_plans_executed, 7);
+        assert_eq!(totals.network_requests, 2);
+        assert_eq!(totals.http_trace_entry_count, 1);
     }
 
     #[test]

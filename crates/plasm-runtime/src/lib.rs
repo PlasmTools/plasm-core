@@ -176,7 +176,8 @@ pub use hosted_oauth_kv::{
 pub use http_resilience::{HttpResiliencePolicy, ResilientHttpTransport};
 pub use http_transport::{HttpTransport, ReqwestHttpTransport};
 pub use live_run_telemetry::{
-    record_live_http_completion, with_live_run_telemetry, LiveRunTelemetry,
+    drain_active_live_http_trace_entries, record_live_http_completion,
+    record_live_http_trace, with_live_run_telemetry, LiveRunTelemetry,
 };
 pub use materialization::{
     CacheDecision, CacheTelemetry, EntityGraphSnapshot, ExecutionCacheConsult, FanoutCoordinator,

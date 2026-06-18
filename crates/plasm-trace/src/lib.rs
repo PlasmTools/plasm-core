@@ -13,4 +13,4 @@ pub use session::{
     session_data_from_events, session_data_from_ordered_events, SessionTraceCountersSnapshot,
     SessionTraceData, DEFAULT_TRACE_TIMELINE_MAX_EVENTS,
 };
-pub use totals::{totals_from_session_data, TraceTotals};
+pub use totals::{merge_trace_totals, totals_from_session_data, TraceTotals};

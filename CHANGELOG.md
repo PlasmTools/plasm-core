@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.27] - 2026-06-18
+
+### Fixed
+
+- **Trace correlation:** MCP `code_plan_execute.plasm_call_index` aligns with hub `plasm_line.call_index` (restores nested CALLS in Program DAG UI).
+- **Trace list NET=0:** head `totals_json` with code-plan KPIs but missing line rollups triggers segment recompute; field-wise merge preserves code-plan totals.
+- **HTTP trace detail:** live runs emit populated `http_calls` on `plasm_line` segments via `LiveRunTelemetry`.
+
+### Changed
+
+- **Canonical trace emit:** single `emit_plasm_line_trace` for hub and durable paths.
+- **Plan naming:** dry-run plans use `trace_record_plasm_invocation` `call_index` for `plasm_dag_call_{n}` labels.
+- **Trace totals merge:** shared `plasm_trace::merge_trace_totals`; simplified stale-head predicate (line rollups required).
+
 ## [0.3.26] - 2026-06-18
 
 ### Added

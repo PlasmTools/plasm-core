@@ -34,7 +34,7 @@ pub struct CommittedRunArtifacts {
     pub run_artifacts: Arc<RunArtifactStore>,
     pub comp_archive: serde_json::Value,
     pub program_for_trace: String,
-    pub call_count: u64,
+    pub plan_call_index: u64,
 }
 
 /// Ingress for MCP `plasm_run` with a reviewed plan commit.
@@ -63,7 +63,7 @@ pub async fn execute_committed_plasm_run(
             crate::evidence_chain::evidence_anchors(
                 run.plan_commit_ref.as_ref(),
                 Some(run.mcp_trace.trace_id),
-                Some(run.artifacts.call_count),
+                Some(run.artifacts.plan_call_index),
             ),
         )
         .map_err(|e| format!("evidence begin: {e}"))
@@ -142,7 +142,7 @@ pub async fn execute_committed_plasm_run(
             result.comp.clone(),
             dag_json,
             plan_ux_reflection,
-            run.artifacts.call_count,
+            run.artifacts.plan_call_index,
             &result,
         )
         .await;

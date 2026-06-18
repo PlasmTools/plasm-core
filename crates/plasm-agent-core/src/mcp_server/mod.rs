@@ -837,7 +837,7 @@ impl PlasmMcpHandler {
         };
         let run_live = matches!(invocation, McpPlasmInvocation::Run { .. });
         let plan_commit_ref = invocation.plan_commit_ref().cloned();
-        let (binding, this_invocation_chars, idx, call_count) = {
+        let (binding, this_invocation_chars, idx) = {
             let mut g = state.lock().await;
             let binding = g.binding.clone();
             let this_invocation_chars =
@@ -847,9 +847,8 @@ impl PlasmMcpHandler {
                 .plasm_invocation_chars
                 .saturating_add(this_invocation_chars);
             g.stats.plasm_call_count = g.stats.plasm_call_count.saturating_add(1);
-            let call_count = g.stats.plasm_call_count;
             let idx = std::mem::take(&mut g.meta_index);
-            (binding, this_invocation_chars, idx, call_count)
+            (binding, this_invocation_chars, idx)
         };
         let Some(b) = binding else {
             crate::metrics::record_mcp_tool(
@@ -898,13 +897,6 @@ impl PlasmMcpHandler {
             .trace_hub
             .ensure_logical_session(&ls_key, Some(key), trace_meta)
             .await;
-        let mcp_trace = PlasmTraceContext {
-            trace_id,
-            call_index: Some(call_count as i64),
-            mcp_session_id: Some(key.to_string()),
-            logical_session_id: Some(ls_key.clone()),
-            logical_session_ref: Some(session_ref.clone()),
-        };
         let reasoning_chars = reasoning.map(|r| r.chars().count() as u64);
         let call_index = self
             .plasm
@@ -918,6 +910,13 @@ impl PlasmMcpHandler {
                 reasoning.map(str::to_string),
             )
             .await;
+        let mcp_trace = PlasmTraceContext {
+            trace_id,
+            call_index: Some(call_index as i64),
+            mcp_session_id: Some(key.to_string()),
+            logical_session_id: Some(ls_key.clone()),
+            logical_session_ref: Some(session_ref.clone()),
+        };
 
         let sink = McpPlasmTraceSink {
             hub: Arc::clone(&self.plasm.trace_hub),
@@ -971,7 +970,7 @@ impl PlasmMcpHandler {
                 let program = invocation
                     .program()
                     .ok_or_else(|| "missing `program`: call `plasm` with a program".to_string())?;
-                let plan_name = format!("plasm_dag_call_{call_count}");
+                let plan_name = format!("plasm_dag_call_{call_index}");
                 let pipeline = self.plasm.engine.prompt_pipeline();
                 let cross = self.plasm.sessions.symbol_map_cross_cache();
                 (
@@ -1008,7 +1007,7 @@ impl PlasmMcpHandler {
                                     run_artifacts: Arc::clone(&self.plasm.run_artifacts),
                                     comp_archive: comp_archive.clone(),
                                     program_for_trace: program_for_trace.clone(),
-                                    call_count,
+                                    plan_call_index: call_index,
                                 },
                                 plan_trace: Some(plan_trace),
                                 force_run,
@@ -1023,7 +1022,7 @@ impl PlasmMcpHandler {
                             crate::evidence_chain::evidence_anchors(
                                 None,
                                 Some(mcp_trace.trace_id),
-                                Some(call_count),
+                                Some(call_index),
                             ),
                         )
                         .map_err(|e| format!("evidence begin: {e}"))?;
@@ -1086,7 +1085,7 @@ impl PlasmMcpHandler {
                             comp_json.clone(),
                             dag_json,
                             Some(plan_ux_reflection.clone()),
-                            call_count,
+                            call_index,
                         )
                         .await;
                         let mut plasm_obj = serde_json::Map::new();

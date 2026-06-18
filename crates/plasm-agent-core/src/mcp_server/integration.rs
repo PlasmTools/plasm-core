@@ -864,9 +864,27 @@ async fn mcp_plan_trace_hooks_emit_plasm_line_and_network_totals() {
         "expected plasm_line in trace records: {:?}",
         detail.records
     );
+    let plasm_line = detail
+        .records
+        .iter()
+        .find(|r| r.get("kind").and_then(|v| v.as_str()) == Some("plasm_line"))
+        .expect("plasm_line record");
+    let http_calls = plasm_line
+        .get("http_calls")
+        .and_then(|v| v.as_array())
+        .expect("plasm_line.http_calls array");
+    assert!(
+        !http_calls.is_empty(),
+        "expected non-empty http_calls on plasm_line: {plasm_line:?}"
+    );
     assert!(
         detail.summary.totals.network_requests > 0,
         "expected non-zero network_requests, got {:?}",
+        detail.summary.totals
+    );
+    assert!(
+        detail.summary.totals.http_trace_entry_count > 0,
+        "expected non-zero http_trace_entry_count, got {:?}",
         detail.summary.totals
     );
 }

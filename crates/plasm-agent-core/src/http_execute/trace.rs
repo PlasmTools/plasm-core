@@ -84,6 +84,106 @@ pub(crate) fn plasm_line_trace_meta(
     }
 }
 
+/// Where a executed expression line should land in the trace timeline.
+pub(crate) enum PlasmLineTraceSink<'a> {
+    /// MCP / plan run: hub timeline + durable ingest via trace hub worker.
+    Hub(&'a McpPlasmTraceSink),
+    /// Standalone HTTP execute (no hub sink on this path).
+    Durable {
+        st: &'a PlasmHostState,
+        ctx: &'a PlasmTraceContext,
+        sess: &'a ExecuteSession,
+        session_id: &'a str,
+        run_id: Option<String>,
+    },
+}
+
+fn prepare_plasm_line_trace(
+    line: &str,
+    parsed: &ParsedExpr,
+    result: &ExecutionResult,
+    api_entry_id: Option<String>,
+) -> (PlasmLineTraceMeta, Vec<plasm_runtime::http_trace::HttpTraceEntry>) {
+    let meta = plasm_line_trace_meta(line, parsed, result, api_entry_id);
+    let http_calls = plasm_runtime::drain_active_live_http_trace_entries();
+    (meta, http_calls)
+}
+
+/// Single canonical `plasm_line` segment emit (hub and/or durable ingest).
+pub(crate) async fn emit_plasm_line_trace(
+    sink: PlasmLineTraceSink<'_>,
+    line: &str,
+    parsed: &ParsedExpr,
+    result: &ExecutionResult,
+    api_entry_id: Option<String>,
+    call_index: u64,
+    line_index: usize,
+) {
+    let (meta, http_calls) = prepare_plasm_line_trace(line, parsed, result, api_entry_id);
+    match sink {
+        PlasmLineTraceSink::Hub(hub_sink) => {
+            hub_sink
+                .hub
+                .trace_add_plasm_line(
+                    &hub_sink.mcp_key,
+                    hub_sink.call_index,
+                    line_index,
+                    meta,
+                    result,
+                    http_calls,
+                )
+                .await;
+        }
+        PlasmLineTraceSink::Durable {
+            st,
+            ctx,
+            sess,
+            session_id,
+            run_id,
+        } => {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let wall_ms = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let ev = TraceEvent::at(
+                wall_ms,
+                TraceSegment::PlasmLine {
+                    call_index,
+                    line_index,
+                    source_expression: meta.source_expression,
+                    repl_pre: meta.repl_pre,
+                    repl_post: meta.repl_post,
+                    capability: meta.capability,
+                    operation: meta.operation,
+                    api_entry_id: meta.api_entry_id,
+                    duration_ms: result.stats.duration_ms,
+                    stats: result.stats.clone(),
+                    source: result.source,
+                    request_fingerprints: result.request_fingerprints.clone(),
+                    http_calls,
+                },
+            );
+            crate::trace_sink_emit::spawn_emit_mcp_trace_segment(
+                st.trace_ingest.as_ref(),
+                &McpTraceAuditFields {
+                    trace_id: ctx.trace_id,
+                    mcp_session_id: ctx.mcp_session_id.clone(),
+                    logical_session_id: ctx.logical_session_id.clone(),
+                    plasm_prompt_hash: Some(sess.prompt_hash.to_string()),
+                    plasm_execute_session: Some(session_id.to_string()),
+                    run_id,
+                    tenant_id: (!sess.tenant_scope.is_empty()).then(|| sess.tenant_scope.clone()),
+                    principal_sub: (!sess.principal_subject.is_empty())
+                        .then(|| sess.principal_subject.clone()),
+                },
+                &ev,
+                None,
+            );
+        }
+    }
+}
+
 async fn trace_emit_plasm_line(
     sink: &McpPlasmTraceSink,
     line_index: usize,
@@ -93,17 +193,16 @@ async fn trace_emit_plasm_line(
     sess: &ExecuteSession,
 ) {
     let api = Some(trace_api_entry_id_for_parsed_line(sess, parsed));
-    let meta = plasm_line_trace_meta(line, parsed, result, api);
-    sink.hub
-        .trace_add_plasm_line(
-            &sink.mcp_key,
-            sink.call_index,
-            line_index,
-            meta,
-            result,
-            vec![],
-        )
-        .await;
+    emit_plasm_line_trace(
+        PlasmLineTraceSink::Hub(sink),
+        line,
+        parsed,
+        result,
+        api,
+        sink.call_index,
+        line_index,
+    )
+    .await;
 }
 
 fn run_line_error_string(e: RunLineError) -> String {

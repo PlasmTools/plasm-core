@@ -28,7 +28,7 @@ use crate::http_problem_util::{problem_response, problem_types};
 use crate::incoming_auth::IncomingPrincipal;
 use crate::server_state::PlasmHostState;
 use crate::trace_hub::{TraceDetailDto, TraceListStatus, TraceSummaryDto};
-use plasm_trace::TraceTotals;
+use plasm_trace::{merge_trace_totals, TraceTotals};
 use plasm_observability_contracts::{
     TraceDetailResponse as SinkTraceDetailResponse, TraceListResponse as SinkTraceListResponse,
 };
@@ -52,31 +52,6 @@ fn default_limit() -> usize {
 
 fn trace_list_limit(limit: usize) -> usize {
     limit.clamp(1, 200)
-}
-
-fn merge_trace_totals(a: &TraceTotals, b: &TraceTotals) -> TraceTotals {
-    TraceTotals {
-        plasm_tool_calls: a.plasm_tool_calls.max(b.plasm_tool_calls),
-        plasm_expressions: a.plasm_expressions.max(b.plasm_expressions),
-        expression_lines: a.expression_lines.max(b.expression_lines),
-        multi_line_plasm_invocations: a
-            .multi_line_plasm_invocations
-            .max(b.multi_line_plasm_invocations),
-        teaching_prompt_chars: a.teaching_prompt_chars.max(b.teaching_prompt_chars),
-        plasm_invocation_chars: a.plasm_invocation_chars.max(b.plasm_invocation_chars),
-        plasm_response_chars: a.plasm_response_chars.max(b.plasm_response_chars),
-        mcp_resource_read_chars: a.mcp_resource_read_chars.max(b.mcp_resource_read_chars),
-        total_duration_ms: a.total_duration_ms.max(b.total_duration_ms),
-        network_requests: a.network_requests.max(b.network_requests),
-        cache_hits: a.cache_hits.max(b.cache_hits),
-        cache_misses: a.cache_misses.max(b.cache_misses),
-        http_trace_entry_count: a.http_trace_entry_count.max(b.http_trace_entry_count),
-        code_plans_evaluated: a.code_plans_evaluated.max(b.code_plans_evaluated),
-        code_plans_executed: a.code_plans_executed.max(b.code_plans_executed),
-        code_plan_code_chars: a.code_plan_code_chars.max(b.code_plan_code_chars),
-        code_plan_nodes: a.code_plan_nodes.max(b.code_plan_nodes),
-        code_plan_derived_runs: a.code_plan_derived_runs.max(b.code_plan_derived_runs),
-    }
 }
 
 fn merge_live_trace_summary(d: &mut TraceSummaryDto, live: &TraceSummaryDto) {

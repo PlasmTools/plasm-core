@@ -10,9 +10,9 @@ use super::ingress::{
 use super::proof_bind::{
     maybe_proof_refresh_session_base_token, try_proof_document_share_bind, ProofBindError,
 };
-use super::trace::trace_expr_api_meta;
+use super::trace::{emit_plasm_line_trace, PlasmLineTraceSink, trace_expr_api_meta};
 use super::{
-    plasm_line_trace_meta, resolve_paging_storage_handle, trace_api_entry_id_for_execute_root, *,
+    resolve_paging_storage_handle, trace_api_entry_id_for_execute_root, *,
 };
 
 impl From<PersistExecuteRunError> for RunLineError {
@@ -459,48 +459,27 @@ pub(crate) async fn run_parsed_plasm_line(
     let artifact = Some(artifact);
 
     if let Some(ctx) = trace {
-        let run_id = artifact.as_ref().map(|a| a.run_id.to_wire());
-        let wall_ms = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        let api = Some(trace_api_entry_id_for_execute_root(sess, root_entity));
-        let meta = plasm_line_trace_meta(line, &parsed, &result, api);
-        let call_idx = ctx.call_index.unwrap_or(0).max(0) as u64;
-        let ev = TraceEvent::at(
-            wall_ms,
-            TraceSegment::PlasmLine {
-                call_index: call_idx,
-                line_index: line_index.max(0) as usize,
-                source_expression: meta.source_expression,
-                repl_pre: meta.repl_pre,
-                repl_post: meta.repl_post,
-                capability: meta.capability,
-                operation: meta.operation,
-                api_entry_id: meta.api_entry_id,
-                duration_ms: result.stats.duration_ms,
-                stats: result.stats.clone(),
-                source: result.source,
-                request_fingerprints: result.request_fingerprints.clone(),
-                http_calls: vec![],
-            },
-        );
-        crate::trace_sink_emit::spawn_emit_mcp_trace_segment(
-            st.trace_ingest.as_ref(),
-            &McpTraceAuditFields {
-                trace_id: ctx.trace_id,
-                mcp_session_id: ctx.mcp_session_id.clone(),
-                logical_session_id: ctx.logical_session_id.clone(),
-                plasm_prompt_hash: Some(sess.prompt_hash.to_string()),
-                plasm_execute_session: Some(session_id.to_string()),
-                run_id: run_id.clone(),
-                tenant_id: (!sess.tenant_scope.is_empty()).then(|| sess.tenant_scope.clone()),
-                principal_sub: (!sess.principal_subject.is_empty())
-                    .then(|| sess.principal_subject.clone()),
-            },
-            &ev,
-            None,
-        );
+        if plan_shared.is_none() {
+            let run_id = artifact.as_ref().map(|a| a.run_id.to_wire());
+            let api = Some(trace_api_entry_id_for_execute_root(sess, root_entity));
+            let call_idx = ctx.call_index.unwrap_or(0).max(0) as u64;
+            emit_plasm_line_trace(
+                PlasmLineTraceSink::Durable {
+                    st,
+                    ctx,
+                    sess,
+                    session_id,
+                    run_id,
+                },
+                line,
+                &parsed,
+                &result,
+                api,
+                call_idx,
+                line_index.max(0) as usize,
+            )
+            .await;
+        }
     }
 
     let ms = wall.elapsed().as_secs_f64() * 1000.0;

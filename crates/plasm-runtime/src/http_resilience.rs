@@ -3,6 +3,7 @@
 use crate::auth::ResolvedAuth;
 use crate::error::RuntimeError;
 use crate::execution::ExecutionConfig;
+use crate::http_trace::HttpTraceOutcome;
 use crate::http_transport::{
     compiled_method_label, host_key_from_url, http_retryable_is_rate_limited, is_safe_http_method,
     join_base_url_path, HttpAttemptResult, HttpTransport, ReqwestHttpTransport,
@@ -288,7 +289,12 @@ impl HttpTransport for ResilientHttpTransport {
         };
         let elapsed = started.elapsed();
         crate::runtime_metrics::record_outbound_http_request(method, &url, result.is_ok(), elapsed);
-        crate::live_run_telemetry::record_live_http_completion(elapsed);
+        crate::live_run_telemetry::record_live_http_trace(
+            method,
+            &url,
+            elapsed,
+            http_trace_outcome(&result),
+        );
         result
     }
 
@@ -322,8 +328,22 @@ impl HttpTransport for ResilientHttpTransport {
         };
         let elapsed = started.elapsed();
         crate::runtime_metrics::record_outbound_http_request("GET", url, result.is_ok(), elapsed);
-        crate::live_run_telemetry::record_live_http_completion(elapsed);
+        crate::live_run_telemetry::record_live_http_trace(
+            "GET",
+            url,
+            elapsed,
+            http_trace_outcome(&result),
+        );
         result
+    }
+}
+
+fn http_trace_outcome<T, E: std::fmt::Display>(result: &Result<T, E>) -> HttpTraceOutcome {
+    match result {
+        Ok(_) => HttpTraceOutcome::Ok,
+        Err(e) => HttpTraceOutcome::Error {
+            message: e.to_string(),
+        },
     }
 }
 
