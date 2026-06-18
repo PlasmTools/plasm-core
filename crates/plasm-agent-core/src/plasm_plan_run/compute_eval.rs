@@ -1683,6 +1683,89 @@ pub(crate) fn json_rows_to_entities(entity: &str, rows: &[serde_json::Value]) ->
     json_rows_to_entities_with_refs(entity, rows, None)
 }
 
+/// Hoist nested parent-get embed rows (e.g. `{ "pokemon": { "name": "x" } }`) to target entity shape.
+pub(crate) fn normalize_parent_get_target_rows(
+    rows: Vec<serde_json::Value>,
+    path: &[plasm_core::JsonPathSegment],
+    cgs: Option<&CGS>,
+    entity: &str,
+) -> Vec<serde_json::Value> {
+    let embed_key = path.iter().rev().find_map(|seg| match seg {
+        plasm_core::JsonPathSegment::Key { key } => Some(key.as_str()),
+        _ => None,
+    });
+    rows.into_iter()
+        .map(|row| normalize_parent_get_target_row(row, embed_key, cgs, entity))
+        .collect()
+}
+
+fn normalize_parent_get_target_row(
+    row: serde_json::Value,
+    embed_key: Option<&str>,
+    cgs: Option<&CGS>,
+    entity: &str,
+) -> serde_json::Value {
+    let mut v = row;
+    if let Some(key) = embed_key {
+        v = hoist_embed_key_object(v, key);
+    }
+    if let Some(ent) = cgs.and_then(|c| c.get_entity(entity)) {
+        let id_field = ent.id_field.as_str();
+        if wire_id_from_row(&v, id_field, ent.id_from.as_deref()).is_none() {
+            if let Some(path) = ent.id_from.as_deref() {
+                if let Some(extracted) = super::row_json::value_at_segments(&v, path) {
+                    if let Some(id) = json_value_to_wire_id(extracted) {
+                        if let Some(obj) = v.as_object_mut() {
+                            obj.insert(id_field.to_string(), serde_json::Value::String(id));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    v
+}
+
+fn hoist_embed_key_object(row: serde_json::Value, embed_key: &str) -> serde_json::Value {
+    if let Some(obj) = row.as_object() {
+        if let Some(inner) = obj.get(embed_key) {
+            if inner.is_object() {
+                return inner.clone();
+            }
+        }
+    }
+    row
+}
+
+fn json_value_to_wire_id(v: &serde_json::Value) -> Option<String> {
+    if let Some(s) = v.as_str().filter(|s| !s.is_empty()) {
+        return Some(s.to_string());
+    }
+    if let Some(n) = v.as_i64() {
+        return Some(n.to_string());
+    }
+    if let Some(n) = v.as_u64() {
+        return Some(n.to_string());
+    }
+    None
+}
+
+fn wire_id_from_row(
+    row: &serde_json::Value,
+    id_field: &str,
+    id_from: Option<&[String]>,
+) -> Option<String> {
+    if let Some(id) = row
+        .get(id_field)
+        .and_then(json_value_to_wire_id)
+    {
+        return Some(id);
+    }
+    id_from
+        .and_then(|path| super::row_json::value_at_segments(row, path))
+        .and_then(json_value_to_wire_id)
+}
+
 pub(crate) fn json_rows_to_entities_with_refs(
     entity: &str,
     rows: &[serde_json::Value],
@@ -1692,6 +1775,9 @@ pub(crate) fn json_rows_to_entities_with_refs(
         .and_then(|c| c.get_entity(entity))
         .map(|e| e.id_field.as_str())
         .unwrap_or("id");
+    let id_from = cgs
+        .and_then(|c| c.get_entity(entity))
+        .and_then(|e| e.id_from.as_deref());
     rows.iter()
         .enumerate()
         .map(|(idx, row)| {
@@ -1709,14 +1795,9 @@ pub(crate) fn json_rows_to_entities_with_refs(
                     );
                 }
             }
-            let wire_id = row
-                .get(id_field)
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty());
             let reference = Ref::new(
                 EntityName::new(entity.to_string()),
-                wire_id
-                    .map(str::to_string)
+                wire_id_from_row(row, id_field, id_from)
                     .unwrap_or_else(|| format!("synthetic-{}", idx + 1)),
             );
             CachedEntity {
@@ -1855,4 +1936,33 @@ pub(crate) fn compute_fingerprint(node: &ValidatedPlanNode, rows: &[serde_json::
         Err(e) => hasher.update(format!("rows-serialization-error:{e}").as_bytes()),
     }
     format!("plan-compute:{}", hex::encode(hasher.finalize()))
+}
+
+#[cfg(test)]
+mod parent_get_row_tests {
+    use super::*;
+    use plasm_core::JsonPathSegment;
+
+    #[test]
+    fn normalize_hoists_nested_pokemon_embed() {
+        let path = vec![JsonPathSegment::Key {
+            key: "pokemon".into(),
+        }];
+        let rows = normalize_parent_get_target_rows(
+            vec![serde_json::json!({
+                "pokemon": { "name": "jolteon", "url": "https://pokeapi.co/api/v2/pokemon/135/" }
+            })],
+            &path,
+            None,
+            "Pokemon",
+        );
+        assert_eq!(rows[0]["name"], "jolteon");
+    }
+
+    #[test]
+    fn json_rows_avoids_synthetic_when_id_present() {
+        let rows = vec![serde_json::json!({ "name": "pikachu", "id": 25 })];
+        let entities = json_rows_to_entities_with_refs("Pokemon", &rows, None);
+        assert_eq!(entities[0].reference.primary_slot_str(), "25");
+    }
 }

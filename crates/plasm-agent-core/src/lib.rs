@@ -85,7 +85,10 @@ pub mod oauth_runtime_source;
 pub mod operation;
 pub mod operation_error;
 mod operation_persist;
+mod op_ui_telemetry;
 mod operation_progress;
+mod operation_progress_sse;
+mod run_progress_resolve;
 #[cfg(test)]
 mod operation_progress_coalesce_integration;
 pub mod oss_local_state;
@@ -150,6 +153,7 @@ mod terminal_state;
 pub use terminal::DEFAULT_PLASM_HTTP_ORIGIN;
 mod http_plan_ui;
 mod http_run_ui;
+mod run_ui_progress;
 mod http_workflow;
 mod mcp_app;
 mod plan_ui_mcp;

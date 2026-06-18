@@ -59,6 +59,96 @@ fn empty_plan_run_with_markdown(
     }
 }
 
+fn plasm_meta_object(meta: &serde_json::Map<String, serde_json::Value>) -> Option<&serde_json::Map<String, serde_json::Value>> {
+    meta.get("plasm").and_then(|v| v.as_object())
+}
+
+fn is_operation_pending_plasm_meta(plasm: &serde_json::Map<String, serde_json::Value>) -> bool {
+    if plasm.get("dry_run").and_then(|v| v.as_bool()) == Some(true) {
+        return false;
+    }
+    if let Some(phase) = plasm
+        .get("continuity")
+        .and_then(|v| v.as_object())
+        .and_then(|c| c.get("p"))
+        .and_then(|v| v.as_str())
+    {
+        if matches!(phase, "succeeded" | "failed" | "cancelled") {
+            return false;
+        }
+    }
+    let has_handle = plasm
+        .get("continuity")
+        .and_then(|v| v.as_object())
+        .and_then(|c| c.get("h"))
+        .and_then(|v| v.as_str())
+        .is_some_and(|s| !s.is_empty());
+    if plasm
+        .get("steps")
+        .and_then(|v| v.as_array())
+        .is_some_and(|a| !a.is_empty())
+    {
+        return false;
+    }
+    if !has_handle {
+        return plasm.get("auto_async").and_then(|v| v.as_bool()) == Some(true);
+    }
+    plasm.get("op").and_then(|v| v.as_object()).is_some()
+        || plasm.get("auto_async").and_then(|v| v.as_bool()) == Some(true)
+}
+
+fn markdown_has_result_rows(md: &str) -> bool {
+    md.lines().any(|line| {
+        let t = line.trim();
+        t.starts_with("## ") && t.contains(" rows)")
+    })
+}
+
+fn is_op_poll_markdown(md: &str) -> bool {
+    let t = md.trim();
+    t.starts_with('`')
+        && (t.contains("` =")
+            || t.contains("` ~")
+            || t.contains("` +")
+            || t.ends_with('`'))
+}
+
+/// True when a plan run result carries terminal rows/meta (not an in-flight operation poll).
+pub(crate) fn plan_run_result_is_terminal(res: &PlasmPlanRunResult) -> bool {
+    if !res.return_steps.is_empty() {
+        return true;
+    }
+    if let Some(meta) = res.run_plasm_meta.as_ref().and_then(plasm_meta_object) {
+        if meta
+            .get("steps")
+            .and_then(|v| v.as_array())
+            .is_some_and(|a| !a.is_empty())
+        {
+            return true;
+        }
+        if is_operation_pending_plasm_meta(meta) {
+            return false;
+        }
+        if meta.get("code").and_then(|v| v.as_str())
+            == Some(OperationError::CODE_NOT_ON_REPLICA)
+        {
+            return false;
+        }
+    }
+    if !res.node_results.is_empty() {
+        return true;
+    }
+    if let Some(md) = res.run_markdown.as_deref() {
+        if markdown_has_result_rows(md) {
+            return true;
+        }
+        if is_op_poll_markdown(md) {
+            return false;
+        }
+    }
+    !res.code_plan_run_artifacts.is_empty()
+}
+
 fn not_on_replica_running_result(
     sess: &ExecuteSession,
     key: &OperationHandle,

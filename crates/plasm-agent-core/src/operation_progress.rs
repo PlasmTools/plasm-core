@@ -127,6 +127,7 @@ pub struct OpProgressEvent {
     pub seq: u64,
     pub line: String,
     pub terminal: bool,
+    pub stats: OpNotifyStats,
 }
 
 #[must_use]

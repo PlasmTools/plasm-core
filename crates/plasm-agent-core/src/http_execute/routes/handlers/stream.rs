@@ -60,33 +60,7 @@ pub(crate) async fn get_operation_progress_stream(
             .with_detail(format!("unknown operation handle `{}`", handle.as_str())),
         ));
     };
-    let first = stream::once(async move {
-        Ok::<Event, Infallible>(Event::default().event("snapshot").data(line))
-    });
-    let body: std::pin::Pin<Box<dyn Stream<Item = Result<Event, Infallible>> + Send>> =
-        Box::pin(first.chain(stream::unfold(
-            (rx, seq),
-            |(mut rx, mut last_seq)| async move {
-                loop {
-                    match rx.recv().await {
-                        Ok(ev) => {
-                            if ev.seq <= last_seq {
-                                continue;
-                            }
-                            last_seq = ev.seq;
-                            let event_name = if ev.terminal { "terminal" } else { "progress" };
-                            return Some((
-                                Ok(Event::default().event(event_name).data(ev.line)),
-                                (rx, last_seq),
-                            ));
-                        }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
-                    }
-                }
-            },
-        )));
-    Ok(Sse::new(body)
-        .keep_alive(KeepAlive::default())
-        .into_response())
+    Ok(crate::operation_progress_sse::operation_progress_wire_sse(
+        rx, seq, line,
+    ))
 }

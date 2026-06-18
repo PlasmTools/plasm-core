@@ -722,7 +722,10 @@ impl ExecuteSession {
             .is_some()
     }
 
-    fn live_run_notify_stats(&self, rows: Option<u64>) -> crate::operation_progress::OpNotifyStats {
+    pub(crate) fn live_run_notify_stats(
+        &self,
+        rows: Option<u64>,
+    ) -> crate::operation_progress::OpNotifyStats {
         let tel = self
             .live_run_telemetry
             .lock()
@@ -742,6 +745,25 @@ impl ExecuteSession {
             elapsed_ms: Some(tel.elapsed_ms()),
             rows,
         }
+    }
+
+    /// Full Run Explorer progress snapshot for a handle (live session only).
+    pub fn operation_progress_ui_snapshot(
+        &self,
+        handle: &OperationHandle,
+    ) -> Option<crate::op_ui_telemetry::OpUiTelemetry> {
+        crate::op_ui_telemetry::OpUiTelemetry::from_live(self, handle)
+    }
+
+    /// Running ops including rehydrated stubs without a live executor (cross-replica poll path).
+    pub(crate) fn list_running_operation_handles(&self) -> Vec<OperationHandle> {
+        self.operation_by_handle
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .filter(|(_, op)| op.phase == crate::operation::OperationPhase::Running)
+            .map(|(h, _)| h.clone())
+            .collect()
     }
 
     /// Register an async operation; rejects when running-op cap is reached.
@@ -941,6 +963,7 @@ impl ExecuteSession {
                     seq,
                     line: line.to_string(),
                     terminal,
+                    stats,
                 });
             if let (Some(st), Some(tk)) = (st, op.mcp_transport_key.as_deref()) {
                 st.op_progress_hub.queue_mcp_notify(

@@ -3,5 +3,6 @@
 use axum::Router;
 
 pub fn run_ui_routes() -> Router {
-    crate::mcp_app::mount_bundle(&crate::mcp_app::RUN_EXPLORER)
+    crate::run_ui_progress::run_ui_progress_routes()
+        .merge(crate::mcp_app::mount_bundle(&crate::mcp_app::RUN_EXPLORER))
 }

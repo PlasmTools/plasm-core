@@ -880,6 +880,41 @@ async fn mcp_plan_trace_hooks_emit_plasm_line_and_network_totals() {
         "expected non-zero http_trace_entry_count, got {:?}",
         detail.summary.totals
     );
+    assert!(
+        crate::terminal_plan_run::plan_run_result_is_terminal(&delivered),
+        "plasm_run must return terminal rows, not operation poll: {:?}",
+        delivered.run_markdown
+    );
+}
+
+#[test]
+fn plan_run_result_is_terminal_rejects_operation_poll_markdown() {
+    use crate::operation_progress::{op_plasm_meta_short, OpWireSig};
+    use plasm_core::OperationHandle;
+
+    let handle = OperationHandle::parse("o1").expect("handle");
+    let mut root = serde_json::Map::new();
+    root.insert(
+        "plasm".into(),
+        serde_json::Value::Object(op_plasm_meta_short(
+            &handle,
+            OpWireSig::Unchanged,
+            2,
+            None,
+            None,
+        )),
+    );
+    let poll = crate::plasm_plan_run::PlasmPlanRunResult {
+        version: serde_json::json!({}),
+        node_results: Vec::new(),
+        graph_summary: serde_json::json!({}),
+        comp: serde_json::json!({}),
+        code_plan_run_artifacts: Vec::new(),
+        run_markdown: Some(format!("`{}` =", handle.as_str())),
+        run_plasm_meta: Some(root),
+        return_steps: Vec::new(),
+    };
+    assert!(!crate::terminal_plan_run::plan_run_result_is_terminal(&poll));
 }
 
 #[test]

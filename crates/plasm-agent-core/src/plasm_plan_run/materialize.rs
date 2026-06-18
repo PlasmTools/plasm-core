@@ -331,9 +331,14 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
     {
         return Ok(Some(mat));
     }
-    let rows = flatten_from_parent_get_source_rows(source_rows, path, rel_schema.cardinality);
     let target = relation.relation.target.entity.as_str();
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
+    let rows = normalize_parent_get_target_rows(
+        flatten_from_parent_get_source_rows(source_rows, path, rel_schema.cardinality),
+        path,
+        Some(scoped_es.cgs.as_ref()),
+        target,
+    );
     let entities = json_rows_to_entities_with_refs(target, &rows, Some(scoped_es.cgs.as_ref()));
     let request_fingerprints = vec![compute_fingerprint(node, &rows)];
     let full_result = ExecutionResult {
@@ -598,10 +603,15 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                 }
             }
             RelationRowResolution::ScopedQuery => {
-                let wire_rows = flatten_from_parent_get_source_rows(
-                    std::slice::from_ref(source_row),
+                let wire_rows = normalize_parent_get_target_rows(
+                    flatten_from_parent_get_source_rows(
+                        std::slice::from_ref(source_row),
+                        path,
+                        rel_schema.cardinality,
+                    ),
                     path,
-                    rel_schema.cardinality,
+                    Some(scoped_es.cgs.as_ref()),
+                    target_entity,
                 );
                 if !wire_rows.is_empty() {
                     let wire_entities = json_rows_to_entities_with_refs(

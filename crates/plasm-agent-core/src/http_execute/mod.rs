@@ -255,8 +255,8 @@ pub use response::{
     ExecuteSessionSymbolsResponse,
 };
 pub use routes::execute_routes;
+pub(crate) use trace::trace_api_entry_id_for_execute_root;
 pub use trace::{
     archive_plasm_result_snapshot, execute_plasm_parsed_expr, execute_plasm_plasm_line,
     run_seal_record_for_handle, trace_record_plasm_line,
 };
-pub(crate) use trace::trace_api_entry_id_for_execute_root;
