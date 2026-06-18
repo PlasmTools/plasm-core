@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.31] - 2026-06-18
+
+### Added
+
+- **Run Explorer cross-origin progress:** inject `window.__PLASM_API_ORIGIN__` from `PLASM_MCP_PUBLIC_BASE_URL` on MCP resource read; `resolveProgressApiOrigin()` in run-explorer-ui.
+- **Public progress routes:** `/v1/run/ui/progress/*` mounted outside incoming-auth (capability-scoped by `logical_session_ref`).
+- **Progress smoke:** `scripts/smoke/mcp-ui-progress-live.sh`.
+
+### Fixed
+
+- **Cursor in-chat Run Explorer:** HTTP progress polls hosted API origin instead of opaque iframe `window.location.origin` (fixes perpetual "Waiting for live run to register…" during live `plasm_run`).
+- **Run Explorer status footer:** no longer duplicates elapsed telemetry header text.
+
+### Changed
+
+- **Run Explorer bundle:** regenerated `run_ui.html` with progress API origin client.
+- **docs/mcp-client-conformance.md:** document cross-origin progress model.
+
 ## [0.3.30] - 2026-06-18
 
 ### Added

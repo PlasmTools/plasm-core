@@ -63,21 +63,14 @@ impl<'a> McpResourceReadTrace<'a> {
     }
 
     pub(crate) async fn emit(self, plasm: &PlasmHostState) {
-        let Some(mcp_key) = self
-            .logical_session_trace_key
-            .filter(|s| !s.is_empty())
-        else {
+        let Some(mcp_key) = self.logical_session_trace_key.filter(|s| !s.is_empty()) else {
             return;
         };
         let (chars_added, is_binary) = self
             .payload
             .map(mcp_artifact_payload_chars)
             .unwrap_or((0, false));
-        let duration_ms = self
-            .started
-            .elapsed()
-            .as_millis()
-            .min(u128::from(u64::MAX)) as u64;
+        let duration_ms = self.started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
         plasm
             .trace_hub
             .trace_record_mcp_resource_read(

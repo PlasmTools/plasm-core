@@ -425,7 +425,10 @@ mod tests {
     fn code_plan_execute_failed_does_not_increment_executed_kpi() {
         use crate::CODE_PLAN_EXECUTION_FAILED;
         let mut d = SessionTraceData::new("s1");
-        for phase in [CODE_PLAN_EXECUTION_FAILED, crate::CODE_PLAN_EXECUTION_STARTED] {
+        for phase in [
+            CODE_PLAN_EXECUTION_FAILED,
+            crate::CODE_PLAN_EXECUTION_STARTED,
+        ] {
             let ev = TraceEvent::at(
                 1,
                 TraceSegment::CodePlanExecute {

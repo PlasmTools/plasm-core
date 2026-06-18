@@ -6,7 +6,8 @@ use plasm_trace::{PlasmLineTraceMeta, RunArtifactArchiveRef, TraceEvent, TraceSe
 
 use super::state::TraceIngestJob;
 use super::{
-    now_ms, truncate_trace_reasoning, CodePlanEvaluateTrace, CodePlanExecuteTrace, PlasmContextTrace, TraceHub, TraceSsePayload,
+    now_ms, truncate_trace_reasoning, CodePlanEvaluateTrace, CodePlanExecuteTrace,
+    PlasmContextTrace, TraceHub, TraceSsePayload,
 };
 
 impl TraceHub {
@@ -56,7 +57,11 @@ impl TraceHub {
         .await;
     }
 
-    pub async fn trace_record_code_plan_evaluate(&self, mcp_key: &str, trace: CodePlanEvaluateTrace) {
+    pub async fn trace_record_code_plan_evaluate(
+        &self,
+        mcp_key: &str,
+        trace: CodePlanEvaluateTrace,
+    ) {
         self.bump_and_emit(
             mcp_key,
             TraceSegment::CodePlanEvaluate {

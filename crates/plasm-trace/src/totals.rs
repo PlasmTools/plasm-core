@@ -184,7 +184,9 @@ pub fn merge_trace_totals(a: &TraceTotals, b: &TraceTotals) -> TraceTotals {
         plasm_invocation_chars: a.plasm_invocation_chars.max(b.plasm_invocation_chars),
         plasm_response_chars: a.plasm_response_chars.max(b.plasm_response_chars),
         mcp_resource_read_chars: a.mcp_resource_read_chars.max(b.mcp_resource_read_chars),
-        mcp_resource_read_ui_chars: a.mcp_resource_read_ui_chars.max(b.mcp_resource_read_ui_chars),
+        mcp_resource_read_ui_chars: a
+            .mcp_resource_read_ui_chars
+            .max(b.mcp_resource_read_ui_chars),
         total_duration_ms: a.total_duration_ms.max(b.total_duration_ms),
         network_requests: a.network_requests.max(b.network_requests),
         cache_hits: a.cache_hits.max(b.cache_hits),

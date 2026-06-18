@@ -87,7 +87,13 @@ pub(crate) async fn emit_code_plan_trace(
     } else {
         match input
             .store
-            .insert_code_plan(input.prompt_hash, input.session_id, plan_id, plan_index, &doc)
+            .insert_code_plan(
+                input.prompt_hash,
+                input.session_id,
+                plan_id,
+                plan_index,
+                &doc,
+            )
             .await
         {
             Ok(h) => (h.plasm_uri, h.canonical_plasm_uri, h.http_path),

@@ -156,12 +156,13 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
     }
 }
 
-/// Public liveness and auth status routes (kept out of the traced subtree to avoid log noise on probes).
+/// Public liveness, auth status, and Run Explorer progress (capability-scoped by logical session ref).
 pub fn health_public_routes() -> Router {
     Router::new()
         .route("/v1/health", get(health_response))
         .route("/v1/auth/status", get(get_auth_status))
         .merge(incoming_auth_device_public_routes())
+        .merge(crate::run_ui_progress::run_ui_progress_routes())
 }
 
 /// The traced OSS tool/discovery/execute surface (and related `/v1/*` helpers) under incoming-auth

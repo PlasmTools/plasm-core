@@ -232,9 +232,6 @@ async fn code_plan_execute_failed_does_not_increment_executed_kpi() {
         },
     )
     .await;
-    let detail = hub
-        .get_detail(trace_id, Some("t1"))
-        .await
-        .expect("detail");
+    let detail = hub.get_detail(trace_id, Some("t1")).await.expect("detail");
     assert_eq!(detail.summary.totals.code_plans_executed, 0);
 }

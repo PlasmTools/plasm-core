@@ -423,11 +423,7 @@ pub(crate) async fn maybe_emit_http_code_plan_evaluate(
         plan_call_index,
     };
     input
-        .emit_evaluate(
-            ctx.comp_json,
-            ctx.dag_json,
-            ctx.plan_ux_reflection,
-        )
+        .emit_evaluate(ctx.comp_json, ctx.dag_json, ctx.plan_ux_reflection)
         .await;
 }
 

@@ -116,43 +116,44 @@ pub async fn execute_committed_plasm_run(
     let trace_input = run.code_plan_trace_input();
     let execute_plan_id = trace_input.emit_execute_started().await;
 
-    let await_out = match crate::mcp_plasm_run_phases::mcp_plasm_run_phase("async_live_await", || async {
-        let accept_payload = build_run_explorer_accept_payload(&dry, Some(run.es.as_ref()));
-        deliver_live_run_await(
-            LiveRunAwaitContext::for_mcp_plasm_run(
-                Arc::clone(&run.es),
-                Arc::clone(&run.host),
-                run.wire.prompt_hash.clone(),
-                run.wire.session_id.clone(),
-                run.wire.session_ref.clone(),
-                run.wire.mcp_session_key.clone(),
-                run.bundle.clone(),
-                accept_payload,
-                run.committed.verdict,
-                run.plan_commit_ref.clone(),
-                run.mcp_trace.clone(),
-                dry,
-            ),
-            LiveRunSpawnOpts {
-                plan_trace: run.plan_trace.clone(),
-            },
-        )
-        .await
-        .map_err(|e| match e {
-            LiveRunError::Timeout(d) => format!("live run timed out after {d:?}"),
-            LiveRunError::Failed(msg) => msg,
+    let await_out =
+        match crate::mcp_plasm_run_phases::mcp_plasm_run_phase("async_live_await", || async {
+            let accept_payload = build_run_explorer_accept_payload(&dry, Some(run.es.as_ref()));
+            deliver_live_run_await(
+                LiveRunAwaitContext::for_mcp_plasm_run(
+                    Arc::clone(&run.es),
+                    Arc::clone(&run.host),
+                    run.wire.prompt_hash.clone(),
+                    run.wire.session_id.clone(),
+                    run.wire.session_ref.clone(),
+                    run.wire.mcp_session_key.clone(),
+                    run.bundle.clone(),
+                    accept_payload,
+                    run.committed.verdict,
+                    run.plan_commit_ref.clone(),
+                    run.mcp_trace.clone(),
+                    dry,
+                ),
+                LiveRunSpawnOpts {
+                    plan_trace: run.plan_trace.clone(),
+                },
+            )
+            .await
+            .map_err(|e| match e {
+                LiveRunError::Timeout(d) => format!("live run timed out after {d:?}"),
+                LiveRunError::Failed(msg) => msg,
+            })
         })
-    })
-    .await
-    {
-        Ok(result) => result,
-        Err(err) => {
-            run.code_plan_trace_input()
-                .emit_execute_failed(execute_plan_id)
-                .await;
-            return Err(err);
-        }
-    };
+        .await
+        {
+            Ok(result) => result,
+            Err(err) => {
+                run.code_plan_trace_input()
+                    .emit_execute_failed(execute_plan_id)
+                    .await;
+                return Err(err);
+            }
+        };
 
     crate::mcp_plasm_run_phases::mcp_plasm_run_phase("artifact_persist", || async {
         run.code_plan_trace_input()

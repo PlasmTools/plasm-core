@@ -250,6 +250,35 @@ mod tests {
         assert_eq!(picked.as_str(), h2.as_str());
     }
 
+    #[test]
+    fn plan_commit_ref_filter_matches_running_op() {
+        let cgs = Arc::new(CGS::new());
+        let sess = test_session("ph".into(), cgs);
+        let ref_str = "l_AAAAAAAAQACAAAAAAAAAAQ";
+        let h1 = sess.mint_operation_handle(ref_str);
+        let mut accept = crate::operation::OpAcceptContext::default();
+        accept.plan_commit_ref = Some(plasm_core::PlanCommitRef::parse("pc1").expect("pc1"));
+        sess.try_begin_async_operation(
+            h1.clone(),
+            plasm_runtime::CancelSignal::new(),
+            accept,
+        )
+        .expect("op");
+        let picked = pick_latest_running(
+            running_picks_from_session(&sess),
+            ref_str,
+            Some("pc1"),
+        )
+        .expect("handle");
+        assert_eq!(picked.as_str(), h1.as_str());
+        assert!(pick_latest_running(
+            running_picks_from_session(&sess),
+            ref_str,
+            Some("pc2"),
+        )
+        .is_none());
+    }
+
     #[tokio::test]
     async fn resolve_bound_logical_session_returns_running_op() {
         let cgs = Arc::new(CGS::new());

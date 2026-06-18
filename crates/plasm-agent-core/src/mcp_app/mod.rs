@@ -93,7 +93,7 @@ pub fn read_resource_text(
         TextResourceContents {
             uri: uri.to_string(),
             mime_type: Some(bundle.mime.into()),
-            text: bundle.mcp_inline_html.to_string(),
+            text: inject_mcp_app_client_config(bundle.mcp_inline_html),
             meta: Some(resource_read_content_meta()),
         },
         resource_read_content_meta(),
@@ -169,6 +169,43 @@ pub fn mount_bundle(bundle: &'static McpAppBundle) -> Router {
 
 const MCP_SHELL_CONFIG_MARKER: &str = "<!-- plasm-mcp-config -->";
 
+/// HTTP API origin for MCP App iframes (Cursor in-chat is not same-origin with `plasm-mcp`).
+pub fn mcp_public_api_origin() -> Option<String> {
+    std::env::var("PLASM_MCP_PUBLIC_BASE_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .and_then(|base| url::Url::parse(base.trim()).ok())
+        .map(|u| u.origin().ascii_serialization())
+}
+
+fn mcp_app_client_config_script() -> String {
+    let stream = mcp_public_stream_path();
+    let mut script = format!(
+        r#"<script>window.__PLASM_MCP_STREAM_PATH__={stream:?};"#,
+    );
+    if let Some(origin) = mcp_public_api_origin() {
+        script.push_str(&format!("window.__PLASM_API_ORIGIN__={origin:?};"));
+    }
+    script.push_str("</script>");
+    script
+}
+
+/// Inject MCP App client globals into inline resource HTML or shell pages.
+pub fn inject_mcp_app_client_config(html: &str) -> String {
+    let inject = mcp_app_client_config_script();
+    if html.contains(MCP_SHELL_CONFIG_MARKER) {
+        return html.replace(MCP_SHELL_CONFIG_MARKER, &inject);
+    }
+    if let Some(head_end) = html.find("</head>") {
+        let mut out = String::with_capacity(html.len() + inject.len() + 8);
+        out.push_str(&html[..head_end]);
+        out.push_str(&inject);
+        out.push_str(&html[head_end..]);
+        return out;
+    }
+    format!("{inject}{html}")
+}
+
 /// Streamable HTTP path for browser MCP App shells (`/mcp` vs ingress `/plasm/mcp`).
 pub fn mcp_public_stream_path() -> String {
     std::env::var("PLASM_MCP_PUBLIC_BASE_URL")
@@ -188,15 +225,7 @@ pub fn mcp_public_stream_path() -> String {
 }
 
 fn shell_html_with_mcp_config(body: &str) -> String {
-    let inject = format!(
-        r#"<script>window.__PLASM_MCP_STREAM_PATH__={path:?};</script>"#,
-        path = mcp_public_stream_path()
-    );
-    if body.contains(MCP_SHELL_CONFIG_MARKER) {
-        body.replace(MCP_SHELL_CONFIG_MARKER, &inject)
-    } else {
-        format!("{inject}{body}")
-    }
+    inject_mcp_app_client_config(body)
 }
 
 fn mount_bundle_routes(router: Router, bundle: &'static McpAppBundle) -> Router {
@@ -372,6 +401,22 @@ mod tests {
                     "<html><head><!-- plasm-mcp-config --></head></html>",
                 );
                 assert!(html.contains(r#"window.__PLASM_MCP_STREAM_PATH__="/plasm/mcp""#));
+                assert!(html.contains(r#"window.__PLASM_API_ORIGIN__="https://platform.plasm.tools""#));
+            },
+        );
+    }
+
+    #[test]
+    fn inline_resource_html_injects_api_origin_after_head() {
+        with_env(
+            "PLASM_MCP_PUBLIC_BASE_URL",
+            Some("https://platform.plasm.tools/plasm"),
+            || {
+                let html = super::inject_mcp_app_client_config(
+                    "<!DOCTYPE html><html><head><title>x</title></head><body></body></html>",
+                );
+                assert!(html.contains(r#"window.__PLASM_API_ORIGIN__="https://platform.plasm.tools""#));
+                assert!(html.find("</head>").is_some_and(|i| html[..i].contains("__PLASM_API_ORIGIN__")));
             },
         );
     }

@@ -1,8 +1,9 @@
 //! Run Explorer HTTP progress for MCP App iframes (Cursor in-chat fallback).
 //!
 //! Access is scoped by bound `logical_session_ref` (128-bit wire token) — the same capability
-//! model as MCP `plasm_run`. Handlers do not re-check execute principal; iframe clients rely on
-//! ref secrecy plus same-origin cookies when incoming auth is enabled.
+//! model as MCP `plasm_run`. Handlers do not re-check execute principal. Routes are mounted
+//! outside incoming-auth middleware so Cursor in-chat iframes can poll cross-origin via
+//! `connectDomains` without session cookies.
 
 use axum::extract::{Extension, Path, Query};
 use axum::response::Response;

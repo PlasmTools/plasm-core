@@ -126,9 +126,9 @@ mod integration;
 mod tests;
 
 pub(crate) use discover::{
-    discovery_mcp_error, mcp_call_tool_error_class,
-    mcp_discover_query_from_arguments, mcp_key, mcp_typed_discovery_query_from_arguments,
-    read_resource_result_for_payload, typed_discovery_mcp_error,
+    discovery_mcp_error, mcp_call_tool_error_class, mcp_discover_query_from_arguments, mcp_key,
+    mcp_typed_discovery_query_from_arguments, read_resource_result_for_payload,
+    typed_discovery_mcp_error,
 };
 pub(crate) use prompt::{
     mcp_plasm_context_tool_description, mcp_server_initialize_instructions,
