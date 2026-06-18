@@ -5,7 +5,7 @@
 //! [`ProjectionStore::segment_ttl_secs`] is non-zero, traces older than the TTL fall back to Iceberg
 //! and expired rows are purged in the background.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,10 +18,10 @@ use crate::append_port::{TraceListFilter, TraceListStatusFilter};
 use crate::iceberg_writer::trace_detail_record_from_audit_event;
 use crate::metrics::record_segment_projection_gc;
 use crate::model::{
-    AuditEvent, DurableTraceDetail, TraceDetailRecord, TraceHeadRow, TraceSummary, TraceTotals,
+    AuditEvent, DurableTraceDetail, TraceDetailRecord, TraceHeadRow, TraceSummary,
     AUDIT_EVENT_KIND_MCP_TRACE_SEGMENT,
 };
-use crate::trace_totals::trace_totals_from_head_row;
+use crate::trace_totals::trace_totals_from_head_or_records;
 
 /// Connection to projection tables (same Postgres as JanKaul SqlCatalog).
 pub struct ProjectionStore {
@@ -289,10 +289,28 @@ impl ProjectionStore {
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;
-        let mut summaries = Vec::with_capacity(rows.len());
+        let mut heads = Vec::with_capacity(rows.len());
         for r in rows {
-            let h = row_to_head_pg(&r)?;
-            let totals: TraceTotals = trace_totals_from_head_row(&h);
+            heads.push(row_to_head_pg(&r)?);
+        }
+        let sparse_ids: Vec<Uuid> = heads
+            .iter()
+            .filter(|h| h.totals_json.trim().is_empty())
+            .map(|h| h.trace_id)
+            .collect();
+        let segments_by_trace = if sparse_ids.is_empty() {
+            HashMap::new()
+        } else {
+            self.batch_load_trace_segment_json(tenant, &sparse_ids)
+                .await?
+        };
+        let mut summaries = Vec::with_capacity(heads.len());
+        for h in heads {
+            let records = segments_by_trace
+                .get(&h.trace_id)
+                .map(|v| v.as_slice())
+                .unwrap_or(&[]);
+            let totals = trace_totals_from_head_or_records(&h, records);
             summaries.push(TraceSummary {
                 trace_id: h.trace_id,
                 mcp_session_id: h.mcp_session_id.unwrap_or_default(),
@@ -328,8 +346,7 @@ impl ProjectionStore {
         }
         let record_values: Vec<serde_json::Value> =
             records.iter().map(|r| r.record.clone()).collect();
-        let totals =
-            crate::trace_totals::trace_totals_from_head_or_records(&head, &record_values);
+        let totals = crate::trace_totals::trace_totals_from_head_or_records(&head, &record_values);
         Ok(Some(DurableTraceDetail {
             summary: TraceSummary {
                 trace_id,
@@ -471,6 +488,33 @@ impl ProjectionStore {
         .fetch_optional(&self.pool)
         .await?;
         row.map(|r| row_to_head_pg(&r)).transpose()
+    }
+
+    async fn batch_load_trace_segment_json(
+        &self,
+        tenant_partition: &str,
+        trace_ids: &[Uuid],
+    ) -> anyhow::Result<HashMap<Uuid, Vec<serde_json::Value>>> {
+        if trace_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let rows = sqlx::query(
+            r#"SELECT trace_id, record_json FROM plasm_trace_sink.trace_segments
+               WHERE tenant_partition = $1 AND trace_id = ANY($2)
+               ORDER BY trace_id, sort_key ASC, call_index ASC NULLS LAST, line_index ASC NULLS LAST"#,
+        )
+        .bind(tenant_partition)
+        .bind(trace_ids)
+        .fetch_all(&self.pool)
+        .await?;
+        let mut out: HashMap<Uuid, Vec<serde_json::Value>> = HashMap::new();
+        for r in rows {
+            let trace_id: Uuid = r.try_get("trace_id")?;
+            let json: String = r.try_get("record_json")?;
+            let record: serde_json::Value = serde_json::from_str(&json)?;
+            out.entry(trace_id).or_default().push(record);
+        }
+        Ok(out)
     }
 
     async fn load_trace_segment_records(
