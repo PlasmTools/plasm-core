@@ -477,8 +477,8 @@ fn discover_markdown_emits_tsv_snapshot() {
         crate::discovery_human_format::format_discovery_markdown(&r),
         @"
 ```tsv
-api\tentity\tdescription
-demo\tWidget\tA contrived widget line
+api\tentity\tdescription\toutgoing_relations
+demo\tWidget\tA contrived widget line\t
 ```
 
 "

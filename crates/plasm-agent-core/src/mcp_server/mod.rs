@@ -553,7 +553,7 @@ impl PlasmMcpHandler {
                 name: "discover_capabilities".into(),
                 title: Some("Resolve intent to capabilities".into()),
                 description: Some(
-                    "Resolve one user goal to catalog capabilities. **Default:** fenced **`tsv`** table (`api`, `entity`, `description`). **One `intent` string per goal** — see MCP initialize workflow. Skip when you already know every `api`/`entity`. Set **`typed: true`** only when the TSV ambiguity note requires structured disambiguation (returns fenced **`json`** instead).".into(),
+                    "Resolve one user goal to catalog capabilities. **Default:** fenced **`tsv`** table (`api`, `entity`, `description`, `outgoing_relations`). **One `intent` string per goal** — see MCP initialize workflow. Skip when you already know every `api`/`entity`. Set **`typed: true`** only when the TSV ambiguity note requires structured disambiguation (returns fenced **`json`** instead).".into(),
                 ),
                 input_schema: ToolInputSchema::new(vec!["intent".into()], Some(discover_props), None),
                 annotations: Some(ToolAnnotations {
