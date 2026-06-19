@@ -256,6 +256,7 @@ pub(crate) fn build_plasm_context_tool_meta(
     out: &ApplyCapabilitySeedsOutcome,
     domain_revision: Option<u32>,
     relations: Option<serde_json::Value>,
+    relations_delta: Option<serde_json::Value>,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut plasm = serde_json::Map::new();
     plasm.insert(
@@ -294,6 +295,9 @@ pub(crate) fn build_plasm_context_tool_meta(
     }
     if let Some(rel) = relations {
         plasm.insert("relations".to_string(), rel);
+    }
+    if let Some(delta) = relations_delta {
+        plasm.insert("relations_delta".to_string(), delta);
     }
     plasm
 }

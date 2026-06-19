@@ -164,3 +164,65 @@ pub fn replay_teaching_exposure_waves(
     }
     exp
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use plasm_core::{load_schema_dir, PromptPipelineConfig};
+    use std::sync::Arc;
+
+    #[test]
+    fn expand_wave_teaches_berry_firmness_hop_via_exposure_replay() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = Arc::new(load_schema_dir(&dir).expect("pokeapi schema"));
+        let mut contexts = IndexMap::new();
+        contexts.insert(
+            "pokeapi".to_string(),
+            Arc::new(CgsContext::entry("pokeapi", cgs.clone())),
+        );
+        let intent = "cheri berry firmness";
+        let mut exp = build_initial_exposure_wave(
+            &contexts,
+            &ExposureCatalogWave {
+                entry_id: "pokeapi".to_string(),
+                entities: vec!["Berry".to_string()],
+                read_first_seeded: false,
+            },
+            Some(intent),
+            None,
+        );
+        let slots_before = exp.surface.slots.clone();
+        let n0 = exp.entities.len();
+        apply_federate_exposure_wave(
+            &mut exp,
+            &[cgs.as_ref()],
+            &contexts,
+            &ExposureCatalogWave {
+                entry_id: "pokeapi".to_string(),
+                entities: vec!["BerryFirmness".to_string()],
+                read_first_seeded: true,
+            },
+            Some(intent),
+            None,
+        );
+        let added = exp.qualified_entities_since(n0);
+        let edge_slots = exp.relation_edge_delta_slots(&slots_before, &added);
+        exp.admit_relation_edge_slots_for_render(&[cgs.as_ref()], &edge_slots);
+        let pipeline = PromptPipelineConfig::default();
+        let delta = pipeline.render_teaching_exposure_delta_with_edges(
+            cgs.as_ref(),
+            &exp,
+            &["BerryFirmness"],
+            &edge_slots,
+            None,
+        );
+        assert!(
+            delta.contains("relation e1 → e2"),
+            "http-style expand delta should teach Berry→BerryFirmness hop: {delta}"
+        );
+        assert!(delta.contains(".r"), "delta should include r# symbol: {delta}");
+    }
+}

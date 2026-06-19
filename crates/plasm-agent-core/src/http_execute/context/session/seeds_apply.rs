@@ -165,6 +165,7 @@ pub(crate) async fn apply_capability_seeds(
                 markdown_delta: open_md.clone(),
                 reused_session: created.reused,
                 teaching_prompt_chars_added,
+                relations_delta: Vec::new(),
             });
             (created.prompt_hash, created.session, true)
         }
@@ -199,6 +200,7 @@ pub(crate) async fn apply_capability_seeds(
                             markdown_delta: format_session_unchanged_one_liner(n),
                             reused_session: true,
                             teaching_prompt_chars_added: 0,
+                            relations_delta: Vec::new(),
                         }],
                         binding_updated,
                         new_symbol_space: false,
@@ -237,7 +239,7 @@ pub(crate) async fn apply_capability_seeds(
             .await?;
             waves.push(wave);
         } else {
-            let md = expand_execute_teaching_session(
+            let expand = expand_execute_teaching_session(
                 st,
                 principal_incoming,
                 prompt_hash.as_str(),
@@ -255,9 +257,10 @@ pub(crate) async fn apply_capability_seeds(
                 mode: "expand".to_string(),
                 entry_id: eid.clone(),
                 entities: entities.clone(),
-                teaching_prompt_chars_added: md.chars().count() as u64,
-                markdown_delta: md,
+                teaching_prompt_chars_added: expand.markdown.chars().count() as u64,
+                markdown_delta: expand.markdown,
                 reused_session: false,
+                relations_delta: expand.relations_delta,
             });
         }
     }
@@ -281,6 +284,7 @@ pub(crate) async fn apply_capability_seeds(
             markdown_delta: format_session_unchanged_one_liner(n),
             reused_session: true,
             teaching_prompt_chars_added: 0,
+            relations_delta: Vec::new(),
         }];
     }
 

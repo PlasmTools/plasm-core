@@ -718,16 +718,19 @@ async fn expand_domain_session_updates_session_entities() {
     .await
     .expect("expand");
     assert!(
-        first_wave.contains("```tsv"),
-        "expected fenced teaching TSV (default TSV render): {first_wave}"
+        first_wave.markdown.contains("```tsv"),
+        "expected fenced teaching TSV (default TSV render): {}",
+        first_wave.markdown
     );
     assert!(
-        !first_wave.contains("Added capabilities"),
-        "expand wave must not repeat seed accounting: {first_wave}"
+        !first_wave.markdown.contains("Added capabilities"),
+        "expand wave must not repeat seed accounting: {}",
+        first_wave.markdown
     );
     assert!(
-        !first_wave.contains("`e1`…`e"),
-        "expand wave must not repeat symbol reminder prose: {first_wave}"
+        !first_wave.markdown.contains("`e1`…`e"),
+        "expand wave must not repeat symbol reminder prose: {}",
+        first_wave.markdown
     );
 
     let sess = st
@@ -754,7 +757,7 @@ async fn expand_domain_session_updates_session_entities() {
     .await
     .expect("expand duplicate");
     assert!(
-        dup.trim().is_empty(),
+        dup.markdown.trim().is_empty(),
         "no-op expand returns empty markdown: {dup:?}"
     );
     let sess2 = st

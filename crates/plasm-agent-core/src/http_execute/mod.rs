@@ -164,6 +164,8 @@ pub struct CapabilityWaveOutcome {
     pub markdown_delta: String,
     pub reused_session: bool,
     pub teaching_prompt_chars_added: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relations_delta: Vec<plasm_core::ExposedRelationSymbolRow>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -239,7 +241,7 @@ pub(crate) use context::{
 };
 pub use context::{
     execute_session_create_response, expand_execute_teaching_session, federate_execute_session,
-    normalize_capability_seeds, resolve_capability_seeds,
+    normalize_capability_seeds, resolve_capability_seeds, ExpandTeachingWaveResult,
 };
 pub(crate) use ingress::parse_execute_program_body;
 pub(crate) use ingress::plugin_execute_options_from_session;

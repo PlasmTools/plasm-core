@@ -88,6 +88,8 @@ pub async fn federate_execute_session(
         return Err("session has no incremental exposure state".into());
     };
 
+    let slots_before = exp.surface.slots.clone();
+
     let n0 = exp.entities.len();
     apply_federate_exposure_wave(
         &mut exp,
@@ -106,6 +108,14 @@ pub async fn federate_execute_session(
         ranked_slice,
     );
     let added_qualified = exp.qualified_entities_since(n0);
+    let new_relation_slots = exp.relation_edge_delta_slots(&slots_before, &added_qualified);
+    let layers: Vec<&CGS> = sess
+        .contexts_by_entry
+        .values()
+        .map(|c| c.cgs.as_ref())
+        .collect();
+    exp.admit_relation_edge_slots_for_render(&layers, &new_relation_slots);
+    let relations_delta = exp.relations_delta_rows_for_slots(&new_relation_slots);
 
     if added_qualified.is_empty() {
         sess.teaching_exposure = Some(exp);
@@ -118,6 +128,7 @@ pub async fn federate_execute_session(
             markdown_delta: String::new(),
             reused_session: true,
             teaching_prompt_chars_added: 0,
+            relations_delta: Vec::new(),
         });
     }
 
@@ -130,10 +141,11 @@ pub async fn federate_execute_session(
     let delta = st
         .engine
         .prompt_pipeline()
-        .render_teaching_exposure_delta_federated(
+        .render_teaching_exposure_delta_federated_with_edges(
             &by_entry,
             &exp,
             &added_qualified,
+            &new_relation_slots,
             Some(sym_cross),
         );
     let wave =
@@ -153,5 +165,6 @@ pub async fn federate_execute_session(
         markdown_delta: wave.clone(),
         reused_session: false,
         teaching_prompt_chars_added: wave.chars().count() as u64,
+        relations_delta,
     })
 }

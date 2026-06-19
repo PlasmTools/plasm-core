@@ -7,6 +7,13 @@ use super::super::seeds::{
     wrap_teaching_markdown_literal_block,
 };
 
+/// Markdown delta plus relation-hop metadata from one expand wave.
+#[derive(Debug, Clone, Default)]
+pub struct ExpandTeachingWaveResult {
+    pub markdown: String,
+    pub relations_delta: Vec<plasm_core::ExposedRelationSymbolRow>,
+}
+
 /// Append expand-wave Plasm instruction blocks for more entity names; [`TeachingExposureSession`] keeps `e#`/`m#`/`p#` stable.
 pub async fn expand_execute_teaching_session(
     st: &PlasmHostState,
@@ -14,7 +21,7 @@ pub async fn expand_execute_teaching_session(
     prompt_hash: &str,
     session_id: &str,
     seeds: Vec<CapabilitySeed>,
-) -> Result<String, String> {
+) -> Result<ExpandTeachingWaveResult, String> {
     let seeds = normalize_capability_seeds(seeds);
     if seeds.is_empty() {
         return Err("`seeds` must be non-empty".into());
@@ -41,6 +48,8 @@ pub async fn expand_execute_teaching_session(
     let Some(mut exp) = sess.teaching_exposure.take() else {
         return Err("session has no incremental exposure state".into());
     };
+
+    let slots_before = exp.surface.slots.clone();
 
     let layers: Vec<&CGS> = sess
         .contexts_by_entry
@@ -116,13 +125,16 @@ pub async fn expand_execute_teaching_session(
     }
     let added_qualified = exp.qualified_entities_since(n0);
     let added: Vec<&str> = added_qualified.iter().map(|k| k.entity.as_str()).collect();
+    let new_relation_slots = exp.relation_edge_delta_slots(&slots_before, &added_qualified);
+    exp.admit_relation_edge_slots_for_render(&layers, &new_relation_slots);
+    let relations_delta = exp.relations_delta_rows_for_slots(&new_relation_slots);
 
     if added_qualified.is_empty() {
         sess.entities = exp.entities.clone();
         sess.teaching_exposure = Some(exp);
         st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
             .await;
-        return Ok(String::new());
+        return Ok(ExpandTeachingWaveResult::default());
     }
 
     let cgs_primary = sess.cgs.as_ref();
@@ -135,17 +147,19 @@ pub async fn expand_execute_teaching_session(
             .collect();
         st.engine
             .prompt_pipeline()
-            .render_teaching_exposure_delta_federated(
+            .render_teaching_exposure_delta_federated_with_edges(
                 &by_entry,
                 &exp,
                 &added_qualified,
+                &new_relation_slots,
                 Some(sym_cross),
             )
     } else {
-        st.engine.prompt_pipeline().render_teaching_exposure_delta(
+        st.engine.prompt_pipeline().render_teaching_exposure_delta_with_edges(
             cgs_primary,
             &exp,
             &added,
+            &new_relation_slots,
             Some(sym_cross),
         )
     };
@@ -158,5 +172,8 @@ pub async fn expand_execute_teaching_session(
     sess.domain_revision = sess.domain_revision.saturating_add(1);
     st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
         .await;
-    Ok(wave)
+    Ok(ExpandTeachingWaveResult {
+        markdown: wave,
+        relations_delta,
+    })
 }
