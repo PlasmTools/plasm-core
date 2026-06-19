@@ -39,8 +39,8 @@ use crate::trace_hub::{CodePlanRunArtifactRef, McpPlasmTraceSink};
 use crate::trace_sink_emit::PlasmTraceContext;
 use indexmap::IndexMap;
 use plasm_core::{
-    flatten_from_parent_get_source_rows, EntityName, Expr, Ref,
-    RelationMaterialization, RelationRowResolution, TypedFieldValue, Value,
+    flatten_from_parent_get_source_rows, EntityName, Expr, Ref, RelationMaterialization,
+    RelationRowResolution, TypedFieldValue, Value,
 };
 use plasm_runtime::{
     entity_to_row_json, CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource,

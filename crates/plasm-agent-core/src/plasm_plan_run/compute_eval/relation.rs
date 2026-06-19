@@ -139,14 +139,13 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
         .resolve_row_source_rows(&source_mat.row_source, None)
         .await
         .unwrap_or_default();
-    let Some((mut entities, embed_lookup)) =
-        crate::graph_rehydrate::snapshot_cached_embed_targets(
-            &scoped_es,
-            rel_name,
-            target_entity,
-            &parents,
-        )
-        .await?
+    let Some((mut entities, embed_lookup)) = crate::graph_rehydrate::snapshot_cached_embed_targets(
+        &scoped_es,
+        rel_name,
+        target_entity,
+        &parents,
+    )
+    .await?
     else {
         return Ok(None);
     };

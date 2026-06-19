@@ -11,8 +11,8 @@
 //! **all spill / object-store I/O runs without the graph mutex held**.
 
 mod ctx;
-mod relation_embed;
 mod rehydrator;
+mod relation_embed;
 mod walk;
 
 #[cfg(test)]
@@ -20,5 +20,6 @@ mod tests;
 
 pub(crate) use rehydrator::GraphSurfaceRehydrator;
 pub(crate) use relation_embed::{
-    plan_prefer_from_parent_get, snapshot_cached_embed_targets, wire_rows_with_nested_relation_embeds,
+    plan_prefer_from_parent_get, snapshot_cached_embed_targets,
+    wire_rows_with_nested_relation_embeds,
 };

@@ -6,7 +6,10 @@
 use std::collections::HashSet;
 
 use indexmap::IndexMap;
-use plasm_core::{partition_prefer_resolutions, Cardinality, CGS, Ref, RelationMaterialization, RelationRowResolution};
+use plasm_core::{
+    partition_prefer_resolutions, Cardinality, Ref, RelationMaterialization, RelationRowResolution,
+    CGS,
+};
 use plasm_runtime::{CachedEntity, SessionMaterialization};
 
 use crate::execute_session::ExecuteSession;
@@ -35,9 +38,7 @@ impl RefEmbedLookup {
     }
 
     pub(crate) fn materialization_view(&self) -> EmbedLookupMaterialization<'_> {
-        EmbedLookupMaterialization {
-            lookup: self,
-        }
+        EmbedLookupMaterialization { lookup: self }
     }
 }
 
@@ -82,13 +83,10 @@ pub(crate) async fn plan_prefer_from_parent_get(
 
     let guard = scoped_es.lock_graph_cache().await;
     let mat = guard.materialization();
-    let resolutions = partition_prefer_resolutions(
-        materialize,
-        rel_name,
-        target_entity,
-        parent_rows,
-        |r| mat.get(r).is_some(),
-    );
+    let resolutions =
+        partition_prefer_resolutions(materialize, rel_name, target_entity, parent_rows, |r| {
+            mat.get(r).is_some()
+        });
     let row_count = resolutions.len();
     let mut embedded_per_row = vec![Vec::new(); row_count];
     let all_rows_embedded = resolutions
@@ -315,9 +313,7 @@ mod tests {
     #[test]
     fn partition_prefer_resolutions_matches_row_resolution() {
         let mat = RelationMaterialization::PreferFromParentGet {
-            path: vec![JsonPathSegment::Key {
-                key: "tags".into(),
-            }],
+            path: vec![JsonPathSegment::Key { key: "tags".into() }],
             on_embed_miss: EmbedOnMissPolicy::FallbackScoped,
             fallback: RelationScopedFallback::QueryScoped {
                 capability: "cap".into(),

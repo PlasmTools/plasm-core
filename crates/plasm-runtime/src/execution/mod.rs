@@ -2421,10 +2421,7 @@ pub(crate) fn partition_prefer_from_parent_get(
         .map(|parent| {
             (
                 parent.payload_to_json(),
-                parent
-                    .relations
-                    .get(relation_key)
-                    .map(|refs| refs.to_vec()),
+                parent.relations.get(relation_key).map(|refs| refs.to_vec()),
             )
         })
         .collect();
