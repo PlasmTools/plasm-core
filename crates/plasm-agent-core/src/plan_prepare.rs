@@ -11,8 +11,8 @@ use crate::plan_dry_display::PlanDryReview;
 use crate::plan_read_bounds::{apply_read_budgets, read_execution_is_expensive, PushedReadBudget};
 use crate::plasm_comp_lift::ExecutablePlasmComp;
 use crate::plasm_plan::{
-    ComputeOp, Plan, PlanNodeKind, PlanValue, ValidatedPlan, ValidatedPlanNode, ValidatedPlanReturn,
-    ValidatedPlanState, ValidatedSurfaceNode,
+    ComputeOp, Plan, PlanNodeKind, PlanValue, ValidatedPlan, ValidatedPlanNode,
+    ValidatedPlanReturn, ValidatedPlanState, ValidatedSurfaceNode,
 };
 use crate::plasm_plan_run::{graph_summary, unused_seed_hints};
 use crate::plasm_step_convert::build_validated_plan_from_executable;
@@ -65,6 +65,34 @@ pub(crate) fn prepared_surface_budget_lookup(
             ))
         })
         .collect()
+}
+
+/// Read budgets from a prepared validated plan, keyed by relation node id.
+#[must_use]
+pub(crate) fn prepared_relation_budget_lookup(
+    plan: &Plan<ValidatedPlanState>,
+) -> HashMap<String, PushedReadBudget> {
+    plan.nodes
+        .iter()
+        .filter_map(|n| {
+            let ValidatedPlanNode::RelationTraversal(r) = n else {
+                return None;
+            };
+            r.pushed_read_budget
+                .clone()
+                .map(|budget| (r.id.as_str().to_string(), budget))
+        })
+        .collect()
+}
+
+pub(crate) fn apply_prepared_relation_budget(
+    relation: &mut crate::plasm_plan::ValidatedRelationTraversalNode,
+    lookup: &HashMap<String, PushedReadBudget>,
+) {
+    let Some(budget) = lookup.get(relation.id.as_str()) else {
+        return;
+    };
+    relation.pushed_read_budget = Some(budget.clone());
 }
 
 pub(crate) fn apply_prepared_surface_budget(
@@ -135,6 +163,7 @@ pub fn analyze_read_boundedness(plan: &Plan<ValidatedPlanState>) -> ReadBoundedn
         }
         if let ValidatedPlanNode::RelationTraversal(rel) = n {
             if rel.relation.source_cardinality == crate::plasm_plan::RelationSourceCardinality::Many
+                && crate::plan_read_bounds::effective_relation_read_cap(rel).is_none()
             {
                 out.has_relation_many_source_fanout = true;
             }
@@ -236,6 +265,73 @@ pub(crate) fn return_path_has_unprojected_multi_row_read(plan: &Plan<ValidatedPl
     let reachable = return_reachable_node_ids(plan);
     plan.nodes.iter().any(|n| {
         reachable.contains(n.id().as_str()) && return_path_node_is_unprojected_multi_row_read(n)
+    })
+}
+
+#[must_use]
+fn relation_materialize_is_embed(materialize: &plasm_core::RelationMaterialization) -> bool {
+    matches!(
+        materialize,
+        plasm_core::RelationMaterialization::FromParentGet { .. }
+            | plasm_core::RelationMaterialization::PreferFromParentGet { .. }
+    )
+}
+
+#[must_use]
+pub(crate) fn limit_compute_downstream_of_node(
+    plan: &Plan<ValidatedPlanState>,
+    node_id: &str,
+) -> bool {
+    let by_id: HashMap<String, usize> = plan
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.id().as_str().to_string(), i))
+        .collect();
+    plan.nodes.iter().any(|n| {
+        let ValidatedPlanNode::Compute(c) = n else {
+            return false;
+        };
+        if !matches!(c.compute.op, ComputeOp::Limit { .. }) {
+            return false;
+        }
+        let mut current = c.compute.source.clone();
+        loop {
+            if current == node_id {
+                return true;
+            }
+            let Some(idx) = by_id.get(current.as_str()) else {
+                return false;
+            };
+            match &plan.nodes[*idx] {
+                ValidatedPlanNode::Compute(inner) => current = inner.compute.source.clone(),
+                ValidatedPlanNode::RelationTraversal(r) if r.id.as_str() == node_id => return true,
+                _ => return false,
+            }
+        }
+    })
+}
+
+/// Embed-style relation on the return path with downstream `.limit` but no pushed relation budget.
+#[must_use]
+pub(crate) fn return_path_has_unbounded_relation_embed_hydrate(
+    plan: &Plan<ValidatedPlanState>,
+) -> bool {
+    let reachable = return_reachable_node_ids(plan);
+    plan.nodes.iter().any(|n| {
+        let ValidatedPlanNode::RelationTraversal(rel) = n else {
+            return false;
+        };
+        if !reachable.contains(rel.id.as_str()) {
+            return false;
+        }
+        if crate::plan_read_bounds::effective_relation_read_cap(rel).is_some() {
+            return false;
+        }
+        if !relation_materialize_is_embed(&rel.relation.materialize) {
+            return false;
+        }
+        limit_compute_downstream_of_node(plan, rel.id.as_str())
     })
 }
 
@@ -401,7 +497,9 @@ fn collect_entities_from_comparison_value(value: &TypedComparisonValue, out: &mu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plan_read_bounds::effective_host_page_size;
+    use crate::plan_read_bounds::{
+        effective_host_page_size, effective_relation_read_cap, PushedReadBudget,
+    };
     use crate::plasm_plan_run::evaluate_plasm_plan_dry;
     use indexmap::IndexMap;
     use plasm_core::load_schema;
@@ -491,6 +589,83 @@ mod tests {
             effective_host_page_size(surface),
             Some(3),
             "expected pushed limit on query surface"
+        );
+    }
+
+    #[test]
+    fn prepared_plan_applies_relation_limit_pushdown() {
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "get-relation-limit",
+            "nodes": [
+                {
+                    "id": "product",
+                    "kind": "get",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr": "Product(\"p1\")",
+                    "ir": { "expr": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } } },
+                    "effect_class": "read",
+                    "result_shape": "single"
+                },
+                {
+                    "id": "category",
+                    "kind": "relation",
+                    "effect_class": "read",
+                    "result_shape": "list",
+                    "relation": {
+                        "source": "product",
+                        "relation": "category",
+                        "target": { "entry_id": "acme", "entity": "Category" },
+                        "cardinality": "one",
+                        "source_cardinality": "single",
+                        "materialize": { "kind": "from_parent_get", "path": [{ "key": "category" }] },
+                        "expr": "Product(\"p1\").category",
+                        "ir": { "expr": { "op": "chain", "source": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } }, "selector": "category", "step": { "type": "auto_get" } } }
+                    },
+                    "depends_on": ["product"],
+                    "uses_result": [{ "node": "product", "as": "source" }]
+                },
+                {
+                    "id": "limited",
+                    "kind": "compute",
+                    "effect_class": "read",
+                    "result_shape": "list",
+                    "depends_on": ["category"],
+                    "compute": {
+                        "source": "category",
+                        "op": { "kind": "limit", "count": 3 },
+                        "schema": {
+                            "entity": "Category",
+                            "fields": [{ "name": "id", "value_kind": "string", "source": ["id"] }]
+                        }
+                    }
+                }
+            ],
+            "return": { "kind": "node", "node": "limited" }
+        });
+        let mut validated =
+            crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate");
+        apply_read_budgets(&mut validated);
+        let relation = validated
+            .nodes()
+            .iter()
+            .find_map(|n| {
+                let ValidatedPlanNode::RelationTraversal(r) = n else {
+                    return None;
+                };
+                Some(r)
+            })
+            .expect("relation");
+        assert_eq!(effective_relation_read_cap(relation), Some(3));
+        assert_eq!(
+            relation.pushed_read_budget,
+            Some(PushedReadBudget::Limit(3))
+        );
+        assert!(
+            !crate::plan_prepare::return_path_has_unbounded_relation_embed_hydrate(
+                validated.artifact()
+            )
         );
     }
 
@@ -686,8 +861,17 @@ mod tests {
             &dry.graph_summary,
             Some(&s),
         );
-        assert_eq!(compact.verdict, PlanDryVerdict::Ok, "review: {:?}", dry.review);
-        assert!(compact.warnings.is_none(), "warnings: {:?}", compact.warnings);
+        assert_eq!(
+            compact.verdict,
+            PlanDryVerdict::Ok,
+            "review: {:?}",
+            dry.review
+        );
+        assert!(
+            compact.warnings.is_none(),
+            "warnings: {:?}",
+            compact.warnings
+        );
         assert!(
             !dry.review.unused_seeds.is_empty(),
             "unused seeds remain session advisory"

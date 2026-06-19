@@ -120,7 +120,7 @@ pub(crate) async fn materialize_validated_relation_traversal(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     trace: Option<&PlasmTraceContext>,
     sink: Option<&McpPlasmTraceSink>,
-    plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
+    plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
 ) -> Result<MaterializedNode, String> {
     let source_mat = materialized.get(&relation.relation.source).ok_or_else(|| {
         format!(
@@ -128,9 +128,10 @@ pub(crate) async fn materialize_validated_relation_traversal(
             relation.relation.source.as_str()
         )
     })?;
+    let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
     let source_rows =
         crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, es.cgs.as_ref())
-            .resolve_row_source_rows(&source_mat.row_source)
+            .resolve_row_source_rows(&source_mat.row_source, read_cap)
             .await?;
     match &relation.relation.materialize {
         RelationMaterialization::FromParentGet { .. } => try_materialize_from_parent_get_relation(
@@ -254,6 +255,8 @@ pub(crate) async fn materialize_validated_relation_traversal(
                     &relation.relation.target,
                     mat,
                     trace,
+                    read_cap,
+                    plan_shared.clone(),
                 )
                 .await
             } else if matches!(
@@ -340,6 +343,9 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
         target,
     );
     let entities = json_rows_to_entities_with_refs(target, &rows, Some(scoped_es.cgs.as_ref()));
+    let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
+    let mut entities = entities;
+    crate::plan_read_bounds::truncate_to_read_cap(&mut entities, read_cap);
     let request_fingerprints = vec![compute_fingerprint(node, &rows)];
     let full_result = ExecutionResult {
         count: entities.len(),
@@ -392,6 +398,8 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
             artifact: Some(artifact),
         },
         trace,
+        read_cap,
+        None,
     )
     .await
     .map(Some)
@@ -412,7 +420,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
     trace: Option<&PlasmTraceContext>,
     sink: Option<&McpPlasmTraceSink>,
-    plan_shared: Option<&crate::plan_execute_shared::PlanLineExecuteShared>,
+    plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
 ) -> Result<MaterializedNode, String> {
     let RelationMaterialization::PreferFromParentGet { path, .. } = &relation.relation.materialize
     else {
@@ -422,6 +430,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
         ));
     };
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
+    let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
     let rel_name = relation.relation.relation.as_str();
     let target_entity = relation.relation.target.entity.as_str();
     let source_entity_def = scoped_es
@@ -484,7 +493,8 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
             None
         }
     };
-    if let Some(entities) = all_embedded_entities {
+    if let Some(mut entities) = all_embedded_entities {
+        crate::plan_read_bounds::truncate_to_read_cap(&mut entities, read_cap);
         let count = entities.len();
         let full_result = ExecutionResult {
             count,
@@ -545,6 +555,8 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                 artifact: Some(artifact),
             },
             trace,
+            read_cap,
+            plan_shared,
         )
         .await;
     }
@@ -579,7 +591,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
             })
             .collect()
     };
-    let mut entities = Vec::new();
+    let mut per_row: Vec<Vec<CachedEntity>> = vec![Vec::new(); resolutions.len()];
     let mut request_fingerprints = Vec::new();
     let mut stats = ExecutionStats {
         duration_ms: 0,
@@ -589,6 +601,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
         ..Default::default()
     };
     let mut source = ExecutionSource::Cache;
+    let mut scoped_jobs = Vec::new();
     for (row_index, resolution) in resolutions.iter().enumerate() {
         let source_row = &source_rows[row_index];
         match resolution {
@@ -599,7 +612,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                         .get(r)
                         .ok_or_else(|| format!("prefer embed: missing graph target {r}"))?
                         .clone();
-                    entities.push(e);
+                    per_row[row_index].push(e);
                 }
             }
             RelationRowResolution::ScopedQuery => {
@@ -619,7 +632,7 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                         &wire_rows,
                         Some(scoped_es.cgs.as_ref()),
                     );
-                    entities.extend(wire_entities);
+                    per_row[row_index].extend(wire_entities);
                     continue;
                 }
                 let row_identity = source_mat
@@ -643,131 +656,64 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                     &input_rows,
                     wire_coercion,
                 )?;
-                let trace_line_index = node_index
-                    .checked_mul(1000)
-                    .and_then(|base| base.checked_add(row_index))
-                    .unwrap_or(node_index);
                 let expr_label = format!("{base_display} [row {row_index}]");
-                crate::execute_pipeline::PlasmPreflight::preflight_parsed_line(
+                super::plan_fanout_parallel::push_verified_row_job(
+                    &mut scoped_jobs,
                     &scoped_es,
-                    &expr_label,
-                    &parsed,
-                )
-                .map_err(|e| e.to_string())?;
-                let (parsed, result, _artifact) = run_parsed_plasm_line(
-                    &expr_label,
-                    &scoped_es,
-                    st,
-                    session_id,
+                    node_index,
+                    row_index,
+                    expr_label,
                     parsed,
-                    trace,
-                    trace_line_index as i64,
-                    None,
-                    None,
-                    None,
-                    Some(plasm_core::PreflightToken::VERIFIED),
-                    plan_shared,
-                )
-                .await
-                .map_err(|e| match e {
-                    crate::http_execute::RunLineError::Parse(d)
-                    | crate::http_execute::RunLineError::Normalize(d)
-                    | crate::http_execute::RunLineError::Projection(d) => d,
-                    crate::http_execute::RunLineError::Operation(_) => {
-                        "operation continuation is not valid inside a plan surface node".to_string()
-                    }
-                    crate::http_execute::RunLineError::Runtime(e, src) => {
-                        format!("{e}\nsource expression: {src}")
-                    }
-                    crate::http_execute::RunLineError::ArtifactSerialization(e) => {
-                        format!("artifact serialization failed: {e}")
-                    }
-                    crate::http_execute::RunLineError::ArtifactPersist(d) => {
-                        format!("run artifact persist failed: {d}")
-                    }
-                    crate::http_execute::RunLineError::StaleGraphEpoch { .. } => {
-                        "session graph changed during concurrent execute; retry the request"
-                            .to_string()
-                    }
-                })?;
-                if let Some(sink) = sink {
-                    trace_record_plasm_line(
-                        sink,
-                        trace_line_index,
-                        &expr_label,
-                        &parsed,
-                        &result,
-                        &scoped_es,
-                    )
-                    .await;
-                }
-                source = combine_execution_source(source, result.source);
-                stats.duration_ms = stats.duration_ms.saturating_add(result.stats.duration_ms);
-                stats.network_requests = stats
-                    .network_requests
-                    .saturating_add(result.stats.network_requests);
-                stats.merge_telemetry(&result.stats.cache);
-                stats.cache_hits = stats.cache.legacy_cache_hits();
-                stats.cache_misses = stats.cache.legacy_cache_misses();
-                request_fingerprints.extend(result.request_fingerprints);
-                entities.extend(result.entities);
+                )?;
             }
         }
     }
-    let count = entities.len();
-    let full_result = ExecutionResult {
-        count,
-        entities: entities.clone(),
-        has_more: false,
-        pagination_resume: None,
-        paging_handle: None,
-        source,
-        stats,
-        request_fingerprints: request_fingerprints.clone(),
-    };
-    let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(node);
-    let artifact = archive_plasm_result_snapshot(
+    if !scoped_jobs.is_empty() {
+        let policy = super::plan_fanout_parallel::RowFanoutPolicy::relation_scoped(read_cap);
+        let results = super::plan_fanout_parallel::run_plan_line_jobs_parallel(
+            st,
+            &scoped_es,
+            session_id,
+            scoped_jobs,
+            trace,
+            sink,
+            plan_shared.clone(),
+            policy.preflight,
+            policy.concurrency,
+        )
+        .await?;
+        super::plan_fanout_parallel::merge_fanout_job_results(
+            &mut source,
+            &mut stats,
+            &mut request_fingerprints,
+            &mut per_row,
+            &results,
+            policy.stats,
+        );
+    }
+    let mut entities = super::plan_fanout_parallel::flatten_per_row_entities(per_row);
+    crate::plan_read_bounds::truncate_to_read_cap(&mut entities, read_cap);
+    let full_result =
+        execution_result_from_relation_entities(entities, source, stats, request_fingerprints);
+    archive_materialize_relation_result_hydrated(
         st,
         es,
         session_id,
-        Some(relation.relation.target.entry_id.as_str()),
-        vec![format!(
+        &scoped_es,
+        relation,
+        node,
+        full_result,
+        format!(
+            "plan.relation({}) prefer_from_parent_get",
+            relation.id.as_str()
+        ),
+        format!(
             "plan.relation({}) prefer_from_parent_get (mixed)",
             relation.id.as_str()
-        )],
-        &parsed_preimage,
-        &full_result,
+        ),
+        read_cap,
         trace,
-    )
-    .await?;
-    let rows: Vec<_> = full_result
-        .entities
-        .iter()
-        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-        .collect();
-    finalize_typed_relation_materialized_node(
-        st,
-        es,
-        session_id,
-        &relation.relation.target,
-        MaterializedNode {
-            entry_id: relation.relation.target.entry_id.clone(),
-            entity: relation.relation.target.entity.clone(),
-            display: format!(
-                "plan.relation({}) prefer_from_parent_get",
-                relation.id.as_str()
-            ),
-            projection: relation.relation.ir.projection.clone(),
-            row_source: inline_row_source_owned(rows),
-            row_identities: row_identities_from_entities(
-                &scoped_es,
-                target_entity,
-                &full_result.entities,
-            ),
-            result: Arc::new(full_result),
-            artifact: Some(artifact),
-        },
-        trace,
+        plan_shared.clone(),
     )
     .await
 }
@@ -786,7 +732,7 @@ pub(crate) async fn materialized_rows(
         )
     })?;
     crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, es.cgs.as_ref())
-        .resolve_row_source_rows(&mat.row_source)
+        .resolve_row_source_rows(&mat.row_source, None)
         .await
 }
 
@@ -799,4 +745,238 @@ pub(crate) fn compute_needs_full_materialize(op: &ComputeOp) -> bool {
             | ComputeOp::DedupeBy { .. }
             | ComputeOp::Render { .. }
     )
+}
+
+#[must_use]
+pub(crate) fn execution_result_from_fanout_fold(
+    fold: super::plan_fanout_parallel::PlanLineExecutionFold,
+) -> ExecutionResult {
+    ExecutionResult {
+        count: fold.entities.len(),
+        entities: fold.entities,
+        has_more: false,
+        pagination_resume: None,
+        paging_handle: None,
+        source: fold.source,
+        stats: fold.stats,
+        request_fingerprints: fold.request_fingerprints,
+    }
+}
+
+#[must_use]
+pub(crate) fn execution_result_from_relation_entities(
+    entities: Vec<CachedEntity>,
+    source: ExecutionSource,
+    stats: ExecutionStats,
+    request_fingerprints: Vec<String>,
+) -> ExecutionResult {
+    let count = entities.len();
+    ExecutionResult {
+        count,
+        entities,
+        has_more: false,
+        pagination_resume: None,
+        paging_handle: None,
+        source,
+        stats,
+        request_fingerprints,
+    }
+}
+
+fn relation_materialized_node_from_result(
+    scoped_es: &ExecuteSession,
+    relation: &ValidatedRelationTraversalNode,
+    full_result: ExecutionResult,
+    display: String,
+    artifact: crate::run_artifacts::RunArtifactHandle,
+) -> MaterializedNode {
+    let rows: Vec<_> = full_result
+        .entities
+        .iter()
+        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+        .collect();
+    MaterializedNode {
+        entry_id: relation.relation.target.entry_id.clone(),
+        entity: relation.relation.target.entity.clone(),
+        display,
+        projection: relation.relation.ir.projection.clone(),
+        row_source: inline_row_source_owned(rows),
+        row_identities: row_identities_from_entities(
+            scoped_es,
+            relation.relation.target.entity.as_str(),
+            &full_result.entities,
+        ),
+        result: Arc::new(full_result),
+        artifact: Some(artifact),
+    }
+}
+
+/// Archive snapshot + build a relation `MaterializedNode`, optionally GET-hydrating rows.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn archive_materialize_relation(
+    st: &PlasmHostState,
+    es: &ExecuteSession,
+    session_id: &str,
+    scoped_es: &ExecuteSession,
+    relation: &ValidatedRelationTraversalNode,
+    node: &ValidatedPlanNode,
+    full_result: ExecutionResult,
+    display: String,
+    snapshot_label: String,
+    trace: Option<&PlasmTraceContext>,
+    hydrate: Option<(
+        Option<usize>,
+        Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
+    )>,
+) -> Result<MaterializedNode, String> {
+    let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(node);
+    let artifact = archive_plasm_result_snapshot(
+        st,
+        es,
+        session_id,
+        Some(relation.relation.target.entry_id.as_str()),
+        vec![snapshot_label],
+        &parsed_preimage,
+        &full_result,
+        trace,
+    )
+    .await?;
+    let mat =
+        relation_materialized_node_from_result(scoped_es, relation, full_result, display, artifact);
+    let Some((read_cap, plan_shared)) = hydrate else {
+        return Ok(mat);
+    };
+    finalize_typed_relation_materialized_node(
+        st,
+        es,
+        session_id,
+        &relation.relation.target,
+        mat,
+        trace,
+        read_cap,
+        plan_shared,
+    )
+    .await
+}
+
+/// Archive snapshot + build a relation `MaterializedNode` (no GET-hydrate pass).
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn archive_materialize_relation_fanout(
+    st: &PlasmHostState,
+    es: &ExecuteSession,
+    session_id: &str,
+    scoped_es: &ExecuteSession,
+    relation: &ValidatedRelationTraversalNode,
+    node: &ValidatedPlanNode,
+    fold: super::plan_fanout_parallel::PlanLineExecutionFold,
+    display: String,
+    snapshot_label: String,
+    trace: Option<&PlasmTraceContext>,
+) -> Result<MaterializedNode, String> {
+    archive_materialize_relation(
+        st,
+        es,
+        session_id,
+        scoped_es,
+        relation,
+        node,
+        execution_result_from_fanout_fold(fold),
+        display,
+        snapshot_label,
+        trace,
+        None,
+    )
+    .await
+}
+
+/// Archive snapshot + hydrate from a fully assembled relation execution result.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn archive_materialize_relation_result_hydrated(
+    st: &PlasmHostState,
+    es: &ExecuteSession,
+    session_id: &str,
+    scoped_es: &ExecuteSession,
+    relation: &ValidatedRelationTraversalNode,
+    node: &ValidatedPlanNode,
+    full_result: ExecutionResult,
+    display: String,
+    snapshot_label: String,
+    read_cap: Option<usize>,
+    trace: Option<&PlasmTraceContext>,
+    plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
+) -> Result<MaterializedNode, String> {
+    archive_materialize_relation(
+        st,
+        es,
+        session_id,
+        scoped_es,
+        relation,
+        node,
+        full_result,
+        display,
+        snapshot_label,
+        trace,
+        Some((read_cap, plan_shared)),
+    )
+    .await
+}
+
+/// Archive snapshot + build a for_each `MaterializedNode`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn archive_materialize_for_each_fanout(
+    st: &PlasmHostState,
+    es: &ExecuteSession,
+    session_id: &str,
+    scoped_es: &ExecuteSession,
+    for_each: &ValidatedForEachNode,
+    fold: super::plan_fanout_parallel::PlanLineExecutionFold,
+    source_row_count: usize,
+    snapshot_expressions: Vec<String>,
+    trace: Option<&PlasmTraceContext>,
+) -> Result<MaterializedNode, String> {
+    let result = execution_result_from_fanout_fold(fold.clone());
+    let for_each_node = ValidatedPlanNode::ForEach(for_each.clone());
+    let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(&for_each_node);
+    let display = if fold.displays.len() == 1 {
+        fold.displays
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| format!("for_each {}", for_each.id.as_str()))
+    } else {
+        format!(
+            "for_each {} ({} calls)",
+            for_each.id.as_str(),
+            source_row_count
+        )
+    };
+    let artifact = archive_plasm_result_snapshot(
+        st,
+        es,
+        session_id,
+        Some(for_each.effect_template.qualified_entity.entry_id.as_str()),
+        snapshot_expressions,
+        &parsed_preimage,
+        &result,
+        trace,
+    )
+    .await?;
+    let rows: Vec<_> = result
+        .entities
+        .iter()
+        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
+        .collect();
+    Ok(MaterializedNode {
+        entry_id: for_each.effect_template.qualified_entity.entry_id.clone(),
+        entity: for_each.effect_template.qualified_entity.entity.clone(),
+        row_source: inline_row_source_owned(rows),
+        row_identities: row_identities_from_entities(
+            scoped_es,
+            for_each.effect_template.qualified_entity.entity.as_str(),
+            &result.entities,
+        ),
+        result: Arc::new(result),
+        artifact: Some(artifact),
+        display,
+        projection: Some(for_each.projection.clone()).filter(|p| !p.is_empty()),
+    })
 }

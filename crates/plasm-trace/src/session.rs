@@ -423,8 +423,8 @@ mod tests {
 
     #[test]
     fn code_plan_execute_failed_does_not_increment_executed_kpi() {
-        use crate::CODE_PLAN_EXECUTION_FAILED;
         use crate::trace_comp::minimal_trace_comp_wire;
+        use crate::CODE_PLAN_EXECUTION_FAILED;
         use std::sync::Arc;
         let comp = Arc::new(minimal_trace_comp_wire());
         let mut d = SessionTraceData::new("s1");

@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.33] - 2026-06-18
+
+### Added
+
+- **Parallel plan execute:** bind-graph layer scheduler runs independent read/pure comp steps concurrently; row fan-out and relation GET hydrate use bounded parallel HTTP (`PLASM_PLAN_HTTP_CONCURRENCY`, default 16).
+- **Plan fan-out module:** `plan_bounded_parallel`, `plan_fanout_parallel`, `plan_schedule`, and `step_materialize` consolidate relation scoped query, for_each reads, and prefer-mixed HTTP batches.
+- **CI guard:** `check_graph_cache_concurrency.sh` enforces graph-cache lock routing during parallel rehydrate.
+
+### Changed
+
+- **plasm_plan_run decomposition:** split `compute_eval` into focused modules; extracted `integration_tests.rs` from `mod.rs`; removed 1.9k-line monolithic `compute_eval.rs`.
+- **Prefer-mixed relations:** preserve parent row order via per-row entity slots; merge HTTP fan-out stats/fingerprints without replacing embed accumulators.
+- **Fold semantics:** `read_cap` truncates entities only after merging all job stats and request fingerprints.
+
+### Fixed
+
+- **bounded_parallel_map deadlock** when batch size exceeded concurrency (permits acquired before futures polled).
+- **Parallel comp layer** now passes cloned `ExecutionScope` into step materialize (progress + cancellation).
+- **Relation hydrate tests** use `fixtures/schemas/plasm_language_matrix` instead of production `apis/pokeapi`.
+
 ## [0.3.32] - 2026-06-18
 
 ### Added

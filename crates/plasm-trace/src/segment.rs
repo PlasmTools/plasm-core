@@ -199,9 +199,7 @@ mod tests {
     use crate::{minimal_trace_comp_json, TraceCompWire};
 
     fn minimal_shared_comp() -> Arc<TraceCompWire> {
-        Arc::new(
-            TraceCompWire::from_json_value(minimal_trace_comp_json()).expect("minimal comp"),
-        )
+        Arc::new(TraceCompWire::from_json_value(minimal_trace_comp_json()).expect("minimal comp"))
     }
 
     #[test]

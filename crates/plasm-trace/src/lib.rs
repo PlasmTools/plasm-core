@@ -4,10 +4,10 @@
 mod contract;
 mod event;
 mod segment;
-mod trace_comp;
 mod segment_counters;
 mod session;
 mod totals;
+mod trace_comp;
 
 pub use contract::{
     code_plan_execution_phase_counts_as_executed, mcp_resource_read_chars_bucket,
@@ -19,9 +19,9 @@ pub use contract::{
 pub use event::TraceEvent;
 pub use plasm_observability_contracts::RunArtifactArchiveRef;
 pub use segment::{CodePlanRunArtifactRef, PlasmLineTraceMeta, TraceSegment};
-pub use trace_comp::{minimal_trace_comp_json, TraceCompWire};
 pub use session::{
     session_data_from_events, session_data_from_ordered_events, SessionTraceCountersSnapshot,
     SessionTraceData, DEFAULT_TRACE_TIMELINE_MAX_EVENTS,
 };
 pub use totals::{merge_trace_totals, totals_from_session_data, TraceTotals};
+pub use trace_comp::{minimal_trace_comp_json, TraceCompWire};

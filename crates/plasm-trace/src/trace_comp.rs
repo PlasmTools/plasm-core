@@ -134,27 +134,31 @@ mod tests {
     #[test]
     fn strips_wire_extras_before_plasm_comp_deserialize() {
         let mut v = minimal_trace_comp_json();
-        v.as_object_mut().unwrap().insert(
-            "summary".into(),
-            serde_json::json!({"nodes": 1}),
-        );
+        v.as_object_mut()
+            .unwrap()
+            .insert("summary".into(), serde_json::json!({"nodes": 1}));
         let wire = TraceCompWire::from_json_value(v).expect("valid comp");
-        assert_eq!(wire.summary.as_ref().and_then(|s| s.get("nodes")), Some(&serde_json::json!(1)));
+        assert_eq!(
+            wire.summary.as_ref().and_then(|s| s.get("nodes")),
+            Some(&serde_json::json!(1))
+        );
     }
 
     #[test]
     fn round_trips_valid_comp_with_summary() {
         let mut v = minimal_trace_comp_json();
-        v.as_object_mut().unwrap().insert(
-            "summary".into(),
-            serde_json::json!({"nodes": 1}),
-        );
+        v.as_object_mut()
+            .unwrap()
+            .insert("summary".into(), serde_json::json!({"nodes": 1}));
         v.as_object_mut()
             .unwrap()
             .insert("returns".into(), serde_json::json!(["n1"]));
         let wire = TraceCompWire::from_json_value(v.clone()).expect("valid comp");
         assert_eq!(wire.plan_display_name(), "demo");
         assert_eq!(wire.node_count(), 1);
-        assert_eq!(wire.to_json_value()["bind"]["topo"], serde_json::json!(["n1"]));
+        assert_eq!(
+            wire.to_json_value()["bind"]["topo"],
+            serde_json::json!(["n1"])
+        );
     }
 }

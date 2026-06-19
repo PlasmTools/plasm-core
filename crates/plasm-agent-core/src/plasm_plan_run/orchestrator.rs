@@ -1,14 +1,16 @@
 //! Live plan orchestration.
 
 use super::*;
-use crate::evidence_chain::{
-    attach_evidence_meta, chain, persist_evidence_sidecars, StepExecutedRecord,
-};
+use crate::evidence_chain::{attach_evidence_meta, chain, persist_evidence_sidecars};
 use crate::http_execute::run_seal_record_for_handle;
 use crate::plasm_comp_lift::ExecutablePlasmComp;
-use crate::plasm_plan_run::evidence_plan::parsed_expr_for_plan_node;
-use crate::plasm_step_convert::step_payload_to_validated_node;
+use crate::plasm_plan_run::step_materialize::{
+    apply_step_materialize_outcomes, materialize_executable_plan_step,
+};
+use futures::future::try_join_all;
+use plasm_core::plasm_monad::{PlasmStepPayload, StepId};
 use plasm_core::PlasmReturn;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 #[allow(clippy::too_many_arguments)]
@@ -130,8 +132,9 @@ pub(crate) async fn run_executable_plan_phased(
     execution_scope: Option<&crate::operation::ExecutionScope>,
 ) -> Result<PlasmPlanRunResult, String> {
     let node_results = dry.take_node_results_for_live();
-    let plan_shared =
-        crate::plan_execute_shared::PlanLineExecuteShared::prepare(es, st, session_id).await;
+    let plan_shared = Arc::new(
+        crate::plan_execute_shared::PlanLineExecuteShared::prepare(es, st, session_id).await,
+    );
     let mut materialized: BTreeMap<PlanNodeId, MaterializedNode> = BTreeMap::new();
     let approval_policy = PlasmPlanApprovalPolicy::automatic();
     let mut approval_receipts: Vec<PlasmPlanApprovalReceipt> = Vec::new();
@@ -144,282 +147,145 @@ pub(crate) async fn run_executable_plan_phased(
     let step_total = executable.steps_topo.len() as u32;
     let prepared_budgets =
         crate::plan_prepare::prepared_surface_budget_lookup(dry.validated_plan());
+    let prepared_relation_budgets =
+        crate::plan_prepare::prepared_relation_budget_lookup(dry.validated_plan());
     let mut evidence_steps = Vec::with_capacity(step_total as usize);
-    for (step_idx, (step_id, payload)) in executable.steps_topo.iter().enumerate() {
+    let step_topo_index: HashMap<StepId, usize> = executable
+        .steps_topo
+        .iter()
+        .enumerate()
+        .map(|(i, (id, _))| (id.clone(), i))
+        .collect();
+    let payload_by_step: HashMap<StepId, PlasmStepPayload> = executable
+        .steps_topo
+        .iter()
+        .map(|(id, payload)| (id.clone(), payload.clone()))
+        .collect();
+    let layers = super::plan_schedule::bind_topo_execution_layers(&executable.bind)?;
+    let rows_progress = execution_scope.and_then(|s| s.rows_progress_fn());
+    for layer in layers {
         if let Some(scope) = execution_scope {
             scope.check()?;
-            scope.set_progress(
-                step_idx as u32 + 1,
-                step_total,
-                Some(step_id.as_str().to_string()),
+        }
+        let parallel = super::plan_schedule::layer_parallel_safe(&layer, &payload_by_step);
+        if parallel {
+            let rows_progress_parallel = rows_progress.clone();
+            if let Some(scope) = execution_scope {
+                if let Some(max_idx) = layer
+                    .iter()
+                    .filter_map(|id| step_topo_index.get(id).copied())
+                    .max()
+                {
+                    scope.set_progress(
+                        max_idx as u32 + 1,
+                        step_total,
+                        Some(format!("parallel layer ({} steps)", layer.len())),
+                    );
+                }
+            }
+            let materialized_snap = materialized.clone();
+            let es = es.clone();
+            let st = st.clone();
+            let session_id = session_id.to_string();
+            let plan_shared = Arc::clone(&plan_shared);
+            let prepared_budgets = prepared_budgets.clone();
+            let prepared_relation_budgets = prepared_relation_budgets.clone();
+            let approval_policy = approval_policy.clone();
+            let trace_ctx = trace.clone();
+            let sink = sink.clone();
+            let bind = Arc::new(executable.bind.clone());
+            let execution_scope_parallel = execution_scope.cloned();
+            let mut joins = Vec::with_capacity(layer.len());
+            for step_id in &layer {
+                let step_idx = step_topo_index[step_id];
+                let payload = payload_by_step[step_id].clone();
+                let step_id = step_id.clone();
+                let es = es.clone();
+                let st = st.clone();
+                let session_id = session_id.clone();
+                let materialized_snap = materialized_snap.clone();
+                let plan_shared = Arc::clone(&plan_shared);
+                let prepared_budgets = prepared_budgets.clone();
+                let prepared_relation_budgets = prepared_relation_budgets.clone();
+                let approval_policy = approval_policy.clone();
+                let trace_ctx = trace_ctx.clone();
+                let sink = sink.clone();
+                let bind = Arc::clone(&bind);
+                let rows_progress_step = rows_progress_parallel.clone();
+                let execution_scope_step = execution_scope_parallel.clone();
+                joins.push(async move {
+                    materialize_executable_plan_step(
+                        &es,
+                        &st,
+                        session_id.as_str(),
+                        step_idx,
+                        &step_id,
+                        &payload,
+                        bind.as_ref(),
+                        &materialized_snap,
+                        &plan_shared,
+                        &prepared_budgets,
+                        &prepared_relation_budgets,
+                        &approval_policy,
+                        trace_ctx.as_ref(),
+                        sink.as_ref(),
+                        rows_progress_step,
+                        execution_scope_step.as_ref(),
+                    )
+                    .await
+                });
+            }
+            let mut outcomes = try_join_all(joins).await?;
+            outcomes.sort_by_key(|o| o.evidence.step_index);
+            apply_step_materialize_outcomes(
+                &mut materialized,
+                &mut evidence_steps,
+                &mut approval_receipts,
+                outcomes,
+                execution_scope,
             );
-        }
-        let node = step_payload_to_validated_node(step_id, payload, &executable.bind)?;
-        let source_line = render_node_operation(&node);
-        let parsed_evidence = parsed_expr_for_plan_node(&node);
-        if let Some(gate) = inferred_node_approval(&node) {
-            let receipt = approval_policy.review(gate);
-            match receipt.decision {
-                PlasmPlanApprovalDecision::Approved => approval_receipts.push(receipt),
-            }
-        }
-        let node_id = node.id().clone();
-        let mat = match node {
-            ValidatedPlanNode::Surface(mut surface) => {
-                crate::plan_prepare::apply_prepared_surface_budget(&mut surface, &prepared_budgets);
-                let parsed = if let Some(ir) = &surface.ir {
-                    let pe = ParsedExpr {
-                        expr: ir.expr.clone(),
-                        projection: ir.projection.clone(),
-                    };
-                    instantiate_parsed_expr_plan_inputs(pe, &surface.uses_result, &materialized)?
-                } else if let Some(template) = &surface.ir_template {
-                    let input_rows =
-                        materialized_result_use_inputs(&materialized, &surface.uses_result)?;
-                    let scope = EvalScope::Root {
-                        row: &serde_json::Value::Null,
-                    };
-                    let inputs = InputEnv { rows: &input_rows };
-                    let env = PlanEvalEnv {
-                        scope,
-                        inputs,
-                        wire_coercion: None,
-                    };
-                    instantiate_expr_template(template, &env)?
-                } else {
-                    return Err(format!(
-                        "plan node {} has no executable IR",
-                        surface.id.as_str()
-                    ));
-                };
-                let expr_label = surface
-                    .ir
-                    .as_ref()
-                    .and_then(|ir| ir.display_expr.as_deref())
-                    .or(surface.display_expr.as_deref())
-                    .unwrap_or("<ir>");
-                let scoped_es =
-                    entry_scoped_execute_session(es, surface.qualified_entity.as_ref())?;
-                let host_page = crate::plan_read_bounds::effective_host_page_size(&surface);
-                let rows_progress = execution_scope.and_then(|s| s.rows_progress_fn());
-                let (parsed, mut result, artifact) = execute_plasm_parsed_expr(
-                    st,
-                    &scoped_es,
-                    session_id,
-                    expr_label,
-                    parsed,
-                    trace.as_ref(),
-                    step_idx as i64,
-                    host_page,
-                    surface.pushed_read_budget.clone(),
-                    rows_progress,
-                    Some(&plan_shared),
-                )
-                .await?;
-                if let Some(cap) = host_page {
-                    if result.entities.len() > cap {
-                        result.entities.truncate(cap);
-                        result.count = result.entities.len();
-                    }
-                }
-                let entity_type = surface
-                    .qualified_entity
-                    .as_ref()
-                    .map(|q| q.entity.as_str())
-                    .unwrap_or_else(|| surface.id.as_str());
-                // Graph-backed entity sync runs inside `run_parsed_plasm_line` (spill I/O without lock).
-                let row_source = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
-                    &scoped_es,
-                    st,
-                    session_id,
-                    scoped_es.cgs.as_ref(),
-                )
-                .materialize_surface_rows(entity_type, &result)
-                .await;
-                let row_identities = row_identities_from_entities(
-                    &scoped_es,
-                    parsed.expr.primary_entity(),
-                    &result.entities,
-                );
+        } else {
+            let rows_progress = rows_progress.clone();
+            for step_id in &layer {
+                let step_idx = step_topo_index[step_id];
                 if let Some(scope) = execution_scope {
-                    scope.sync_rows_materialized(result.count.max(result.entities.len()));
+                    scope.set_progress(
+                        step_idx as u32 + 1,
+                        step_total,
+                        Some(step_id.as_str().to_string()),
+                    );
                 }
-                if let Some(sink) = sink.as_ref() {
-                    trace_record_plasm_line(
-                        sink, step_idx, expr_label, &parsed, &result, &scoped_es,
-                    )
-                    .await;
-                }
-                MaterializedNode {
-                    entry_id: surface
-                        .qualified_entity
-                        .as_ref()
-                        .map(|q| q.entry_id.clone())
-                        .or_else(|| {
-                            crate::catalog_ownership::resolve_qualified_entity_key(
-                                &scoped_es,
-                                parsed.expr.primary_entity(),
-                                None,
-                            )
-                            .ok()
-                            .map(|q| q.entry_id)
-                        })
-                        .unwrap_or_else(|| es.entry_id.clone()),
-                    entity: surface
-                        .qualified_entity
-                        .as_ref()
-                        .map(|q| q.entity.clone())
-                        .unwrap_or_else(|| surface.id.as_str().to_string()),
-                    display: crate::expr_display::expr_display(&parsed.expr),
-                    projection: parsed.projection,
-                    row_source,
-                    row_identities,
-                    result: Arc::new(result),
-                    artifact,
-                }
-            }
-            ValidatedPlanNode::Data(data) => {
-                let rows = plan_value_to_rows(&data.data)?;
-                let empty_identities = vec![None; rows.len()];
-                let node = ValidatedPlanNode::Data(data);
-                materialize_synthetic_node(
-                    st,
+                let payload = payload_by_step
+                    .get(step_id)
+                    .ok_or_else(|| format!("missing payload for step {step_id}"))?;
+                let outcome = materialize_executable_plan_step(
                     es,
+                    st,
                     session_id,
-                    &node,
-                    es.entry_id.as_str(),
-                    None,
-                    rows,
-                    empty_identities,
+                    step_idx,
+                    step_id,
+                    payload,
+                    &executable.bind,
+                    &materialized,
+                    &plan_shared,
+                    &prepared_budgets,
+                    &prepared_relation_budgets,
+                    &approval_policy,
                     trace.as_ref(),
-                )
-                .await?
-            }
-            ValidatedPlanNode::Derive(derive) => {
-                let owner_entry_id = materialized
-                    .get(&derive.source)
-                    .map(|m| m.entry_id.clone())
-                    .unwrap_or_else(|| es.entry_id.clone());
-                let source_rows =
-                    materialized_rows(es, st, session_id, &materialized, &derive.source).await?;
-                let input_rows = materialized_singleton_inputs(&materialized, &derive.inputs)?;
-                let mut rows = Vec::with_capacity(source_rows.len());
-                for row in source_rows {
-                    let scope = EvalScope::Bound {
-                        row: &row,
-                        binding: &derive.item_binding,
-                    };
-                    let inputs = InputEnv { rows: &input_rows };
-                    let env = PlanEvalEnv {
-                        scope,
-                        inputs,
-                        wire_coercion: None,
-                    };
-                    rows.push(eval_plan_value(&derive.value, &env)?);
-                }
-                let empty_identities = vec![None; rows.len()];
-                let node = ValidatedPlanNode::Derive(derive);
-                materialize_synthetic_node(
-                    st,
-                    es,
-                    session_id,
-                    &node,
-                    owner_entry_id.as_str(),
-                    None,
-                    rows,
-                    empty_identities,
-                    trace.as_ref(),
-                )
-                .await?
-            }
-            ValidatedPlanNode::Compute(compute) => {
-                let owner_entry_id = PlanNodeId::new(compute.compute.source.clone())
-                    .ok()
-                    .and_then(|source| materialized.get(&source).map(|m| m.entry_id.clone()))
-                    .unwrap_or_else(|| es.entry_id.clone());
-                let source_id = PlanNodeId::new(compute.compute.source.clone())?;
-                let source_mat = materialized.get(&source_id).ok_or_else(|| {
-                    format!(
-                        "source node {:?} has not been materialized",
-                        source_id.as_str()
-                    )
-                })?;
-                let scoped_cgs = es.cgs.as_ref();
-                let rows = eval_compute_with_row_source(
-                    &compute.compute,
-                    &source_mat.row_source,
-                    es,
-                    st,
-                    session_id,
-                    scoped_cgs,
+                    sink.as_ref(),
+                    rows_progress.clone(),
+                    execution_scope,
                 )
                 .await?;
-                let row_identities = propagate_row_identities(
-                    &source_id,
-                    &compute.compute.op,
-                    &materialized,
-                    rows.len(),
-                )?;
-                let entity_override = compute.compute.schema.entity.as_deref().map(str::to_string);
-                let node = ValidatedPlanNode::Compute(compute);
-                materialize_synthetic_node(
-                    st,
-                    es,
-                    session_id,
-                    &node,
-                    owner_entry_id.as_str(),
-                    entity_override.as_deref(),
-                    rows,
-                    row_identities,
-                    trace.as_ref(),
-                )
-                .await?
+                apply_step_materialize_outcomes(
+                    &mut materialized,
+                    &mut evidence_steps,
+                    &mut approval_receipts,
+                    [outcome],
+                    execution_scope,
+                );
             }
-            ValidatedPlanNode::RelationTraversal(relation) => {
-                let node = ValidatedPlanNode::RelationTraversal(relation);
-                let ValidatedPlanNode::RelationTraversal(relation_ref) = &node else {
-                    unreachable!("relation traversal node");
-                };
-                materialize_validated_relation_traversal(
-                    st,
-                    es,
-                    session_id,
-                    step_idx,
-                    &node,
-                    relation_ref,
-                    &materialized,
-                    trace.as_ref(),
-                    sink.as_ref(),
-                    Some(&plan_shared),
-                )
-                .await?
-            }
-            ValidatedPlanNode::ForEach(ref for_each) => {
-                materialize_for_each_node(
-                    st,
-                    es,
-                    session_id,
-                    step_idx,
-                    for_each,
-                    &materialized,
-                    trace.as_ref(),
-                    sink.as_ref(),
-                    Some(&plan_shared),
-                )
-                .await?
-            }
-        };
-        let step_entry_id = mat.entry_id.clone();
-        let step_fps = mat.result.request_fingerprints.clone();
-        materialized.insert(node_id, mat);
-        evidence_steps.push(StepExecutedRecord {
-            step_id: step_id.as_str().to_string(),
-            step_index: step_idx as u32,
-            entry_id: Some(step_entry_id),
-            source_line,
-            parsed: parsed_evidence,
-            request_fingerprints: step_fps,
-        });
+        }
     }
     if let Some(evidence) = chain(es) {
         evidence

@@ -186,7 +186,9 @@ fn session_advisory_from_dry(dry: &DryPlasmPlanEvaluation) -> Option<PlanUxSessi
     if unused.is_empty() {
         return None;
     }
-    Some(PlanUxSession { unused_seeds: unused })
+    Some(PlanUxSession {
+        unused_seeds: unused,
+    })
 }
 
 /// JSON value for `_meta.plasm.plan_ux_reflection` (mandatory for MCP App hosts).

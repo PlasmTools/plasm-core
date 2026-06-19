@@ -440,6 +440,18 @@ pub(crate) fn graph_summary(
                 .to_string(),
         );
     }
+    let has_unbounded_relation_embed_hydrate =
+        crate::plan_prepare::return_path_has_unbounded_relation_embed_hydrate(plan);
+    if has_unbounded_relation_embed_hydrate {
+        warnings.push(
+            "Relation embed hydrate is unbounded: `.limit(n)` after a relation does not cap GET-hydrate unless the limit chain is pushable (no sort/group_by between limit and relation)."
+                .to_string(),
+        );
+        boundedness_facts.push(
+            "Relation embed hydrate may fetch every embedded ref before `.limit` (add a direct `.limit` on the relation chain)."
+                .to_string(),
+        );
+    }
 
     let review = PlanDryReview {
         has_unprojected_multi_row_read,
@@ -449,6 +461,7 @@ pub(crate) fn graph_summary(
         has_relation_many_source_fanout,
         has_query_limit_row_filter: plan_has_query_limit_row_filter_chain(plan),
         has_paginated_list_fetch_all_default,
+        has_unbounded_relation_embed_hydrate,
         unused_seeds: Vec::new(),
     };
 

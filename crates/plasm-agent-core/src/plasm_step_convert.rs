@@ -326,6 +326,7 @@ pub(crate) fn step_payload_to_validated_node(
                 relation: relation_traversal_to_validated(&p.relation)?,
                 depends_on,
                 uses_result,
+                pushed_read_budget: None,
             },
         )),
         PlasmStepPayload::FlatMapEffect(p) => {

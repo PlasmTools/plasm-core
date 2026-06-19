@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::plasm_plan::{
     ComputeOp, FieldPath, PlanNodeKind, PlanPredicate, ValidatedComputeNode, ValidatedPlanArtifact,
-    ValidatedPlanNode, ValidatedPlanReturn, ValidatedSurfaceNode,
+    ValidatedPlanNode, ValidatedPlanReturn, ValidatedRelationTraversalNode, ValidatedSurfaceNode,
 };
 use plasm_runtime::row_predicate::{JsonRowPredicate, JsonRowPredicateOp};
 use plasm_runtime::{RowMatchBudget, TopKSpec};
@@ -39,6 +39,22 @@ pub fn read_execution_is_expensive(
         || has_foreach_fanout_risk
 }
 
+/// Pushed `.limit(n)` / filter+limit cap on a relation traversal node (host-only overlay).
+#[must_use]
+pub fn effective_relation_read_cap(relation: &ValidatedRelationTraversalNode) -> Option<usize> {
+    relation.pushed_read_budget.as_ref().and_then(|b| match b {
+        PushedReadBudget::Limit(n) | PushedReadBudget::FilterLimit { count: n, .. } => Some(*n),
+        PushedReadBudget::TopK { .. } => None,
+    })
+}
+
+/// Truncate materialized rows/entities when a read budget cap applies.
+pub fn truncate_to_read_cap<T>(items: &mut Vec<T>, cap: Option<usize>) {
+    if let Some(n) = cap {
+        items.truncate(n);
+    }
+}
+
 /// Explicit `.page_size(n)` on the surface node merged with any pushed budget.
 #[must_use]
 pub fn effective_host_page_size(surface: &ValidatedSurfaceNode) -> Option<usize> {
@@ -68,15 +84,31 @@ pub fn apply_read_budgets(plan: &mut ValidatedPlanArtifact) {
         if !reachable.contains(plan.nodes()[compute_idx].id().as_str()) {
             continue;
         }
-        let Some((surface_idx, budget)) = classify_limit_chain(plan.nodes(), &by_id, compute_idx)
-        else {
+        let Some((target, budget)) = classify_limit_chain(plan.nodes(), &by_id, compute_idx) else {
             continue;
         };
-        let ValidatedPlanNode::Surface(surface) = &mut plan.nodes_mut()[surface_idx] else {
-            continue;
-        };
-        merge_budget_into_surface(surface, budget);
+        match target {
+            LimitChainTarget::Surface(idx) => {
+                let ValidatedPlanNode::Surface(surface) = &mut plan.nodes_mut()[idx] else {
+                    continue;
+                };
+                merge_budget_into_surface(surface, budget);
+            }
+            LimitChainTarget::Relation(idx) => {
+                let ValidatedPlanNode::RelationTraversal(relation) = &mut plan.nodes_mut()[idx]
+                else {
+                    continue;
+                };
+                merge_budget_into_relation(relation, budget);
+            }
+        }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LimitChainTarget {
+    Surface(usize),
+    Relation(usize),
 }
 
 fn return_reachable_node_ids(
@@ -127,8 +159,19 @@ fn upstream_node_ids(node: &ValidatedPlanNode) -> Vec<String> {
 }
 
 fn merge_budget_into_surface(surface: &mut ValidatedSurfaceNode, budget: PushedReadBudget) {
-    match &mut surface.pushed_read_budget {
-        None => surface.pushed_read_budget = Some(budget),
+    merge_pushed_budget_into(&mut surface.pushed_read_budget, budget);
+}
+
+fn merge_budget_into_relation(
+    relation: &mut ValidatedRelationTraversalNode,
+    budget: PushedReadBudget,
+) {
+    merge_pushed_budget_into(&mut relation.pushed_read_budget, budget);
+}
+
+fn merge_pushed_budget_into(slot: &mut Option<PushedReadBudget>, budget: PushedReadBudget) {
+    match slot {
+        None => *slot = Some(budget),
         Some(existing) => {
             let merged = merge_pushed_budget(existing.clone(), budget);
             *existing = merged;
@@ -173,7 +216,7 @@ fn classify_limit_chain(
     nodes: &[ValidatedPlanNode],
     by_id: &HashMap<String, usize>,
     compute_idx: usize,
-) -> Option<(usize, PushedReadBudget)> {
+) -> Option<(LimitChainTarget, PushedReadBudget)> {
     let ValidatedPlanNode::Compute(compute) = &nodes[compute_idx] else {
         return None;
     };
@@ -188,10 +231,15 @@ fn classify_limit_chain(
             ValidatedPlanNode::Surface(surface)
                 if matches!(surface.kind, PlanNodeKind::Query | PlanNodeKind::Search) =>
             {
-                return budget_from_chain(&chain).map(|budget| (idx, budget));
+                return budget_from_chain(&chain)
+                    .map(|budget| (LimitChainTarget::Surface(idx), budget));
             }
             ValidatedPlanNode::Surface(surface) if surface.kind == PlanNodeKind::Get => {
                 return None;
+            }
+            ValidatedPlanNode::RelationTraversal(_) => {
+                return budget_from_chain(&chain)
+                    .map(|budget| (LimitChainTarget::Relation(idx), budget));
             }
             ValidatedPlanNode::Compute(ValidatedComputeNode { compute: tpl, .. }) => {
                 chain.push(tpl.op.clone());
@@ -320,7 +368,7 @@ pub fn pushed_budget_to_stream_fields(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plasm_plan::ComputeOp;
+    use crate::plasm_plan::{ComputeOp, ValidatedPlanNode};
 
     #[test]
     fn limit_only_chain_budget() {
@@ -355,6 +403,77 @@ mod tests {
             },
         ];
         assert!(budget_from_chain(&chain).is_none());
+    }
+
+    #[test]
+    fn apply_read_budgets_pushes_limit_onto_relation_traversal() {
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "relation-limit",
+            "nodes": [
+                {
+                    "id": "product",
+                    "kind": "get",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr": "Product(\"p1\")",
+                    "ir": { "expr": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } } },
+                    "effect_class": "read",
+                    "result_shape": "single"
+                },
+                {
+                    "id": "category",
+                    "kind": "relation",
+                    "effect_class": "read",
+                    "result_shape": "list",
+                    "relation": {
+                        "source": "product",
+                        "relation": "category",
+                        "target": { "entry_id": "acme", "entity": "Category" },
+                        "cardinality": "one",
+                        "source_cardinality": "single",
+                        "materialize": { "kind": "from_parent_get", "path": [{ "key": "category" }] },
+                        "expr": "Product(\"p1\").category",
+                        "ir": { "expr": { "op": "chain", "source": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } }, "selector": "category", "step": { "type": "auto_get" } } }
+                    },
+                    "depends_on": ["product"],
+                    "uses_result": [{ "node": "product", "as": "source" }]
+                },
+                {
+                    "id": "limited",
+                    "kind": "compute",
+                    "effect_class": "read",
+                    "result_shape": "list",
+                    "depends_on": ["category"],
+                    "compute": {
+                        "source": "category",
+                        "op": { "kind": "limit", "count": 3 },
+                        "schema": {
+                            "entity": "Category",
+                            "fields": [{ "name": "id", "value_kind": "string", "source": ["id"] }]
+                        }
+                    }
+                }
+            ],
+            "return": { "kind": "node", "node": "limited" }
+        });
+        let mut validated =
+            crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate");
+        apply_read_budgets(&mut validated);
+        let relation = validated
+            .nodes()
+            .iter()
+            .find_map(|n| {
+                let ValidatedPlanNode::RelationTraversal(r) = n else {
+                    return None;
+                };
+                Some(r)
+            })
+            .expect("relation node");
+        assert_eq!(
+            relation.pushed_read_budget,
+            Some(PushedReadBudget::Limit(3))
+        );
     }
 
     #[test]

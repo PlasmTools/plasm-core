@@ -514,6 +514,7 @@ pub struct ValidatedRelationTraversalNode {
     pub(crate) relation: ValidatedPlanRelationTraversal,
     pub(crate) depends_on: Vec<PlanNodeId>,
     pub(crate) uses_result: Vec<PlanResultUse>,
+    pub(crate) pushed_read_budget: Option<crate::plan_read_bounds::PushedReadBudget>,
 }
 
 #[derive(Debug, Clone)]
@@ -1427,6 +1428,7 @@ fn validated_node_from_raw(
                     },
                     depends_on,
                     uses_result,
+                    pushed_read_budget: None,
                 },
             ))
         }

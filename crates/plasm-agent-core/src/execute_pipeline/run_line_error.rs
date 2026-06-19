@@ -24,3 +24,22 @@ pub enum RunLineError {
     /// Async operation continuation (`wait` / `cancel`) — success payload via `Err` channel for unified ingress.
     Operation(Box<crate::plasm_plan_run::PlasmPlanRunResult>),
 }
+
+/// User-facing message for HTTP/MCP/plan fan-out execute paths.
+#[must_use]
+pub fn display_run_line_error(e: RunLineError) -> String {
+    match e {
+        RunLineError::Parse(d) | RunLineError::Normalize(d) | RunLineError::Projection(d) => d,
+        RunLineError::Runtime(err, src) => format!("{err}\nsource expression: {src}"),
+        RunLineError::ArtifactSerialization(err) => {
+            format!("artifact serialization failed: {err}")
+        }
+        RunLineError::ArtifactPersist(d) => format!("run artifact persist failed: {d}"),
+        RunLineError::StaleGraphEpoch { .. } => {
+            "session graph changed during concurrent execute; retry the request".to_string()
+        }
+        RunLineError::Operation(_) => {
+            "operation continuation is not valid inside a plan surface node".to_string()
+        }
+    }
+}

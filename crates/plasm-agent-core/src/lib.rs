@@ -111,8 +111,8 @@ mod plasm_step_convert;
 pub(crate) mod test_support;
 pub use plasm_comp_bundle::PlasmCompBundle;
 pub use plasm_comp_wire::{
-    plasm_comp_commit_canonical, plasm_comp_from_validated,
-    plasm_comp_wire_json, trace_comp_wire_from_dry, PlasmCompArtifact,
+    plasm_comp_commit_canonical, plasm_comp_from_validated, plasm_comp_wire_json,
+    trace_comp_wire_from_dry, PlasmCompArtifact,
 };
 pub use plasm_compile::{
     compile_plasm_expression, compile_plasm_program, compile_plasm_surface_line_to_comp,

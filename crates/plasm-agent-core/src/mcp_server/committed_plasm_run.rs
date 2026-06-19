@@ -159,11 +159,7 @@ pub async fn execute_committed_plasm_run(
 
     crate::mcp_plasm_run_phases::mcp_plasm_run_phase("artifact_persist", || async {
         run.code_plan_trace_input(Arc::clone(&comp_wire))
-            .emit_execute_completed(
-                Some(execute_plan_id),
-                plan_ux_reflection,
-                &await_out,
-            )
+            .emit_execute_completed(Some(execute_plan_id), plan_ux_reflection, &await_out)
             .await;
         Ok(await_out)
     })

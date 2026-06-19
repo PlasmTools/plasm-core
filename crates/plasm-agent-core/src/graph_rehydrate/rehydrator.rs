@@ -214,18 +214,23 @@ impl<'a> GraphSurfaceRehydrator<'a> {
     pub(crate) async fn resolve_row_source_rows(
         &self,
         row_source: &MaterializedRowSource,
+        max_rows: Option<usize>,
     ) -> Result<Vec<serde_json::Value>, String> {
-        match row_source {
-            MaterializedRowSource::Inline(rows) => Ok(rows.clone()),
+        let mut rows = match row_source {
+            MaterializedRowSource::Inline(rows) => rows.clone(),
             MaterializedRowSource::GraphBacked {
                 entity_type,
                 logical_count,
                 hot_snapshot,
             } => {
                 self.rehydrate_rows(Arc::clone(hot_snapshot), entity_type, *logical_count)
-                    .await
+                    .await?
             }
+        };
+        if let Some(n) = max_rows {
+            rows.truncate(n);
         }
+        Ok(rows)
     }
 }
 

@@ -32,6 +32,8 @@ pub struct PlanDryReview {
     pub has_query_limit_row_filter: bool,
     /// Paginated list/search surface without pushed read budget or explicit page_size.
     pub has_paginated_list_fetch_all_default: bool,
+    /// Embed-style relation with downstream `.limit` but no pushed relation read budget.
+    pub has_unbounded_relation_embed_hydrate: bool,
     pub unused_seeds: Vec<String>,
 }
 
@@ -73,6 +75,9 @@ impl PlanDryReview {
         }
         if self.has_relation_many_source_fanout {
             parts.push("relation per-row fanout".to_string());
+        }
+        if self.has_unbounded_relation_embed_hydrate {
+            parts.push("relation embed hydrate unbounded".to_string());
         }
         if self.has_query_limit_row_filter && !parts.iter().any(|p| p.contains("fetch filter")) {
             parts.push("fetch filter: e1{…} at HTTP, binding.filter{…} on rows".to_string());

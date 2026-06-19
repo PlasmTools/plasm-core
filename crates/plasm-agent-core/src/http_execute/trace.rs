@@ -213,20 +213,7 @@ async fn trace_emit_plasm_line(
 }
 
 fn run_line_error_string(e: RunLineError) -> String {
-    match e {
-        RunLineError::Parse(d) | RunLineError::Normalize(d) | RunLineError::Projection(d) => d,
-        RunLineError::Runtime(e, src) => format!("{e}\nsource expression: {src}"),
-        RunLineError::ArtifactSerialization(e) => format!("artifact serialization failed: {e}"),
-        RunLineError::ArtifactPersist(d) => format!("run artifact persist failed: {d}"),
-        RunLineError::StaleGraphEpoch {
-            expected,
-            found,
-            attempts,
-        } => format!(
-            "session graph changed during execute (epoch {found:?} != {expected:?}) after {attempts} attempt(s); retry"
-        ),
-        RunLineError::Operation(_) => "operation continuation".to_string(),
-    }
+    crate::execute_pipeline::display_run_line_error(e)
 }
 
 pub async fn execute_plasm_plasm_line(

@@ -112,9 +112,7 @@ pub(crate) async fn emit_code_plan_trace(
     };
     let node_count = plan_node_count_from_comp(comp);
     match emit {
-        CodePlanTraceEmit::Evaluate {
-            plan_ux_reflection,
-        } => {
+        CodePlanTraceEmit::Evaluate { plan_ux_reflection } => {
             input
                 .hub
                 .trace_record_code_plan_evaluate(
@@ -185,13 +183,7 @@ pub(crate) async fn emit_code_plan_trace(
 
 impl<'a> CodePlanTraceInput<'a> {
     pub(crate) async fn emit_evaluate(self, plan_ux_reflection: Option<serde_json::Value>) {
-        emit_code_plan_trace(
-            self,
-            CodePlanTraceEmit::Evaluate {
-                plan_ux_reflection,
-            },
-        )
-        .await;
+        emit_code_plan_trace(self, CodePlanTraceEmit::Evaluate { plan_ux_reflection }).await;
     }
 
     pub(crate) async fn emit_execute_started(self) -> Uuid {
@@ -245,14 +237,12 @@ mod tests {
     use std::sync::Arc;
 
     use plasm_trace::{
-        minimal_trace_comp_json, SessionTraceData, TraceCompWire, TraceEvent,
-        TraceSegment, CODE_PLAN_EXECUTION_FAILED, CODE_PLAN_EXECUTION_STARTED,
+        minimal_trace_comp_json, SessionTraceData, TraceCompWire, TraceEvent, TraceSegment,
+        CODE_PLAN_EXECUTION_FAILED, CODE_PLAN_EXECUTION_STARTED,
     };
 
     fn minimal_shared_comp() -> Arc<TraceCompWire> {
-        Arc::new(
-            TraceCompWire::from_json_value(minimal_trace_comp_json()).expect("minimal comp"),
-        )
+        Arc::new(TraceCompWire::from_json_value(minimal_trace_comp_json()).expect("minimal comp"))
     }
 
     fn minimal_execute_segment(phase: &str, plan_id: &str) -> TraceSegment {
@@ -298,9 +288,7 @@ mod tests {
         });
         comp_json["bind"]["topo"] = serde_json::json!(["a"]);
         comp_json["return"]["step"] = serde_json::json!("a");
-        let comp = Arc::new(
-            TraceCompWire::from_json_value(comp_json).expect("valid comp"),
-        );
+        let comp = Arc::new(TraceCompWire::from_json_value(comp_json).expect("valid comp"));
         let mut d = SessionTraceData::new("s1");
         let seg = TraceSegment::CodePlanExecute {
             plan_handle: "p1".into(),

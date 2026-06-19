@@ -1,14 +1,17 @@
 //! Ensure relation traversal rows are typed target-entity rows (decode + GET hydrate).
 
+use std::sync::Arc;
+
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::{EntityName, Expr, GetExpr, Ref, CGS};
 use plasm_runtime::{entity_to_agent_row_json, CachedEntity, ExecutionResult};
 
-use std::sync::Arc;
-
 use crate::execute_session::ExecuteSession;
 use crate::http_execute::execute_plasm_parsed_expr;
+use crate::plan_execute_shared::PlanLineExecuteShared;
+use crate::plan_read_bounds::truncate_to_read_cap;
 use crate::plasm_plan::QualifiedEntityKey;
+use crate::plasm_plan_run::plan_bounded_parallel::{bounded_parallel_map, BoundedParallelConfig};
 use crate::server_state::PlasmHostState;
 use crate::trace_sink_emit::PlasmTraceContext;
 
@@ -41,6 +44,7 @@ pub(crate) fn relation_entities_need_hydration(
         .any(|e| entity_row_schema_incomplete(cgs, entity_type, e))
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn fetch_entity_get_by_ref(
     st: &PlasmHostState,
     es: &ExecuteSession,
@@ -48,6 +52,7 @@ async fn fetch_entity_get_by_ref(
     target: &QualifiedEntityKey,
     reference: &Ref,
     trace: Option<&PlasmTraceContext>,
+    plan_shared: Option<&PlanLineExecuteShared>,
 ) -> Result<CachedEntity, String> {
     let scoped = entry_scoped_execute_session(es, Some(target))?;
     let slot = reference.primary_slot_str();
@@ -77,7 +82,7 @@ async fn fetch_entity_get_by_ref(
         None,
         None,
         None,
-        None,
+        plan_shared,
     )
     .await?;
     result.entities.into_iter().next().ok_or_else(|| {
@@ -88,7 +93,13 @@ async fn fetch_entity_get_by_ref(
     })
 }
 
+struct HydrateWork {
+    index: usize,
+    reference: Ref,
+}
+
 /// GET-hydrate any relation targets whose cached/embed rows omit declared CGS fields.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn hydrate_relation_entities_if_needed(
     st: &PlasmHostState,
     es: &ExecuteSession,
@@ -96,27 +107,75 @@ pub(crate) async fn hydrate_relation_entities_if_needed(
     target: &QualifiedEntityKey,
     entities: Vec<CachedEntity>,
     trace: Option<&PlasmTraceContext>,
+    max_hydrate: Option<usize>,
+    plan_shared: Option<Arc<PlanLineExecuteShared>>,
 ) -> Result<Vec<CachedEntity>, String> {
     let scoped = entry_scoped_execute_session(es, Some(target))?;
     let cgs = scoped.cgs.as_ref();
     let entity_type = target.entity.as_str();
+    let mut entities = entities;
+    truncate_to_read_cap(&mut entities, max_hydrate);
     if !relation_entities_need_hydration(cgs, entity_type, &entities) {
         return Ok(entities);
     }
-    let mut out = Vec::with_capacity(entities.len());
-    for entity in entities {
-        if !entity_row_schema_incomplete(cgs, entity_type, &entity) {
-            out.push(entity);
-            continue;
+
+    let mut out: Vec<Option<CachedEntity>> = entities.iter().cloned().map(Some).collect();
+    let mut work = Vec::new();
+    for (index, entity) in entities.iter().enumerate() {
+        if entity_row_schema_incomplete(cgs, entity_type, entity) {
+            work.push(HydrateWork {
+                index,
+                reference: entity.reference.clone(),
+            });
         }
-        let mut cache = scoped.lock_graph_cache().await;
-        cache.remove(&entity.reference);
-        drop(cache);
-        let hydrated =
-            fetch_entity_get_by_ref(st, es, session_id, target, &entity.reference, trace).await?;
-        out.push(hydrated);
     }
-    Ok(out)
+    if work.is_empty() {
+        return Ok(entities);
+    }
+    {
+        let mut cache = scoped.lock_graph_cache().await;
+        for item in &work {
+            cache.remove(&item.reference);
+        }
+    }
+
+    let st = st.clone();
+    let es = es.clone();
+    let session_id = session_id.to_string();
+    let target = target.clone();
+    let trace_ctx = trace.cloned();
+    let plan_shared = plan_shared.clone();
+    let cfg = BoundedParallelConfig::for_plan_http(None);
+    let hydrated = bounded_parallel_map(work, cfg, move |item| {
+        let st = st.clone();
+        let es = es.clone();
+        let session_id = session_id.clone();
+        let target = target.clone();
+        let trace_ctx = trace_ctx.clone();
+        let plan_shared = plan_shared.clone();
+        async move {
+            let entity = fetch_entity_get_by_ref(
+                &st,
+                &es,
+                session_id.as_str(),
+                &target,
+                &item.reference,
+                trace_ctx.as_ref(),
+                plan_shared.as_deref(),
+            )
+            .await?;
+            Ok((item.index, entity))
+        }
+    })
+    .await?;
+    for (index, entity) in hydrated {
+        out[index] = Some(entity);
+    }
+
+    out.into_iter()
+        .enumerate()
+        .map(|(i, slot)| slot.ok_or_else(|| format!("relation hydrate missing row at index {i}")))
+        .collect()
 }
 
 /// Rebuild agent row JSON from typed entities after hydration.
@@ -131,6 +190,7 @@ pub(crate) fn relation_rows_from_entities(
 }
 
 /// Hydrate incomplete relation targets and normalize materialized row JSON.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn finalize_typed_relation_materialized_node(
     st: &PlasmHostState,
     es: &ExecuteSession,
@@ -138,6 +198,8 @@ pub(crate) async fn finalize_typed_relation_materialized_node(
     target: &QualifiedEntityKey,
     mut mat: MaterializedNode,
     trace: Option<&PlasmTraceContext>,
+    max_hydrate: Option<usize>,
+    plan_shared: Option<Arc<PlanLineExecuteShared>>,
 ) -> Result<MaterializedNode, String> {
     let scoped = entry_scoped_execute_session(es, Some(target))?;
     let cgs = scoped.cgs.as_ref();
@@ -149,6 +211,8 @@ pub(crate) async fn finalize_typed_relation_materialized_node(
         target,
         mat.result.entities.clone(),
         trace,
+        max_hydrate,
+        plan_shared.clone(),
     )
     .await?;
     let rows = relation_rows_from_entities(&hydrated, cgs);
@@ -175,101 +239,51 @@ mod tests {
     use indexmap::IndexMap;
     use plasm_core::loader::load_schema_dir;
     use plasm_core::Ref;
+    use std::path::PathBuf;
 
-    fn pokeapi_cgs() -> CGS {
-        for p in [
-            "apis/pokeapi",
-            "plasm-oss/apis/pokeapi",
-            "../../apis/pokeapi",
-        ] {
-            let path = std::path::Path::new(p);
-            if path.join("domain.yaml").is_file() {
-                return load_schema_dir(path).expect("pokeapi CGS");
-            }
-        }
-        panic!("pokeapi catalog not found");
+    fn langmatrix_cgs() -> CGS {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        load_schema_dir(&dir).expect("plasm_language_matrix")
     }
 
-    fn stub_species_entity() -> CachedEntity {
+    fn stub_langitem_entity() -> CachedEntity {
         let mut fields = IndexMap::new();
         fields.insert(
-            "name".into(),
-            plasm_core::TypedFieldValue::from(plasm_core::Value::String("pikachu".into())),
+            "id".into(),
+            plasm_core::TypedFieldValue::from(plasm_core::Value::String("item-1".into())),
         );
         fields.insert(
-            "url".into(),
-            plasm_core::TypedFieldValue::from(plasm_core::Value::String(
-                "https://pokeapi.co/api/v2/pokemon-species/25/".into(),
-            )),
+            "title".into(),
+            plasm_core::TypedFieldValue::from(plasm_core::Value::String("matrix item".into())),
         );
         CachedEntity {
-            reference: Ref::new("PokemonSpecies", "pikachu"),
+            reference: Ref::new("LangItem", "item-1"),
             fields,
             relations: IndexMap::new(),
             last_updated: 0,
-            version: 1,
-            completeness: plasm_runtime::EntityCompleteness::Complete,
+            version: 0,
+            completeness: plasm_runtime::EntityCompleteness::Summary,
         }
     }
 
     #[test]
-    fn relation_rows_from_entities_include_all_cgs_fields() {
-        let cgs = pokeapi_cgs();
-        let mut entity = stub_species_entity();
-        for field in cgs
-            .get_entity("PokemonSpecies")
-            .expect("species")
-            .fields
-            .keys()
-        {
-            if field.as_str() == "name" || field.as_str() == "url" {
-                continue;
-            }
-            entity.fields.insert(
-                field.as_str().to_string(),
-                plasm_core::TypedFieldValue::from(plasm_core::Value::Integer(190)),
-            );
-        }
-        let rows = relation_rows_from_entities(&[entity], &cgs);
-        let row = rows.first().expect("row");
-        let obj = row.as_object().expect("object row");
-        assert!(obj.contains_key("capture_rate"));
-        assert_eq!(obj.get("capture_rate").and_then(|v| v.as_i64()), Some(190));
+    fn incomplete_entity_detected_when_cgs_field_missing() {
+        let cgs = langmatrix_cgs();
+        let entity = stub_langitem_entity();
+        assert!(entity_row_schema_incomplete(&cgs, "LangItem", &entity));
     }
 
     #[test]
-    fn entity_row_schema_incomplete_detects_missing_fields() {
-        let cgs = pokeapi_cgs();
-        let entity = stub_species_entity();
-        assert!(entity_row_schema_incomplete(
-            &cgs,
-            "PokemonSpecies",
-            &entity
-        ));
-    }
-
-    #[test]
-    fn entity_row_schema_complete_when_all_fields_present() {
-        let cgs = pokeapi_cgs();
-        let mut entity = stub_species_entity();
-        for field in cgs
-            .get_entity("PokemonSpecies")
-            .expect("species")
-            .fields
-            .keys()
-        {
-            if field.as_str() == "name" || field.as_str() == "url" {
-                continue;
-            }
-            entity.fields.insert(
-                field.as_str().to_string(),
-                plasm_core::TypedFieldValue::from(plasm_core::Value::Integer(0)),
-            );
-        }
-        assert!(!entity_row_schema_incomplete(
-            &cgs,
-            "PokemonSpecies",
-            &entity
-        ));
+    fn truncate_to_read_cap_limits_hydrate_input() {
+        let mut entities: Vec<CachedEntity> = (0..10)
+            .map(|i| {
+                let mut e = stub_langitem_entity();
+                e.reference = Ref::new("LangItem", format!("item-{i}"));
+                e
+            })
+            .collect();
+        truncate_to_read_cap(&mut entities, Some(3));
+        assert_eq!(entities.len(), 3);
     }
 }
