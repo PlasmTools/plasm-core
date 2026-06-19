@@ -26,9 +26,10 @@ impl<'a> DcrHandle<'a> {
         body: &str,
         client_ip: Option<IpAddr>,
     ) -> Result<McpOAuthRegisterResponse, McpOAuthError> {
-        let payload: ClientRegistrationRequest = serde_json::from_str(body.trim()).map_err(|_| {
-            McpOAuthError::bad_request("invalid_request", "invalid registration JSON")
-        })?;
+        let payload: ClientRegistrationRequest =
+            serde_json::from_str(body.trim()).map_err(|_| {
+                McpOAuthError::bad_request("invalid_request", "invalid registration JSON")
+            })?;
 
         if payload
             .redirect_uris
@@ -62,7 +63,9 @@ impl<'a> DcrHandle<'a> {
             .map(|g| g.trim().to_ascii_lowercase())
             .filter(|g| !g.is_empty())
             .collect();
-        if !normalized_grant_types.iter().any(|g| g == "authorization_code")
+        if !normalized_grant_types
+            .iter()
+            .any(|g| g == "authorization_code")
             || !normalized_grant_types
                 .iter()
                 .all(|g| g == "authorization_code" || g == "refresh_token")

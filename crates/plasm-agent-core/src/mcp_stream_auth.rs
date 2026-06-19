@@ -236,12 +236,16 @@ impl PlasmMcpApiKeyAuthProvider {
     }
 
     async fn verify_oauth_bearer(&self, raw: &str) -> Result<AuthInfo, AuthenticationError> {
-        let oauth = self.oauth_service().await.map_err(|_| self.oauth_not_configured_error())?;
-        let principal = oauth.verify_access_token(raw).map_err(|_| {
-            AuthenticationError::InvalidToken {
-                description: "invalid OAuth bearer token",
-            }
-        })?;
+        let oauth = self
+            .oauth_service()
+            .await
+            .map_err(|_| self.oauth_not_configured_error())?;
+        let principal =
+            oauth
+                .verify_access_token(raw)
+                .map_err(|_| AuthenticationError::InvalidToken {
+                    description: "invalid OAuth bearer token",
+                })?;
 
         let repo = self.mcp_repo()?;
         let Some(cfg) = repo
@@ -481,7 +485,10 @@ impl PlasmMcpApiKeyAuthProvider {
         match oauth.register_client(request.body(), None).await {
             Ok(response) => {
                 let value = serde_json::to_value(response).unwrap_or_else(|_| {
-                    Self::oauth_error_json("server_error", "registration response serialization failed")
+                    Self::oauth_error_json(
+                        "server_error",
+                        "registration response serialization failed",
+                    )
                 });
                 Ok(Self::json_response(StatusCode::CREATED, value))
             }

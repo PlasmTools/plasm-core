@@ -36,9 +36,10 @@ pub struct McpOAuthJwt {
 
 impl McpOAuthJwt {
     pub fn new(jwt_secret: &str, canonical_resource: &str) -> Self {
-        let config = JwtConfig::with_symmetric_key(jwt_secret.as_bytes(), canonical_resource.to_string())
-            .with_audience(canonical_resource.to_string())
-            .with_expiration(OAUTH_ACCESS_TOKEN_TTL_SECS);
+        let config =
+            JwtConfig::with_symmetric_key(jwt_secret.as_bytes(), canonical_resource.to_string())
+                .with_audience(canonical_resource.to_string())
+                .with_expiration(OAUTH_ACCESS_TOKEN_TTL_SECS);
         Self {
             manager: JwtManager::new(config),
             issuer: canonical_resource.to_string(),

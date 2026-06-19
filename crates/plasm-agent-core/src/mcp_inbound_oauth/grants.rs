@@ -140,10 +140,7 @@ impl McpInboundOAuthService {
             ));
         }
 
-        let resource = resolve_resource_param(
-            &self.canonical_resource,
-            form.resource.as_deref(),
-        )?;
+        let resource = resolve_resource_param(&self.canonical_resource, form.resource.as_deref())?;
 
         let client = load_registered_client(self.storage.as_ref(), client_id).await?;
         if !redirect_uri_allowed(&client, redirect_uri) {
@@ -189,10 +186,7 @@ impl McpInboundOAuthService {
             ));
         }
 
-        let resource = resolve_resource_param(
-            &self.canonical_resource,
-            form.resource.as_deref(),
-        )?;
+        let resource = resolve_resource_param(&self.canonical_resource, form.resource.as_deref())?;
 
         let client = load_registered_client(self.storage.as_ref(), client_id).await?;
         if !grant_type_allowed(&client, "refresh_token") {
@@ -286,7 +280,9 @@ impl McpInboundOAuthService {
         resource: &str,
         with_refresh: bool,
     ) -> Result<McpOAuthTokenResponse, McpOAuthError> {
-        let access_token = self.jwt.mint_access_token(client_id, tenant_id, subject, scope, resource)?;
+        let access_token = self
+            .jwt
+            .mint_access_token(client_id, tenant_id, subject, scope, resource)?;
         let refresh_token = if with_refresh {
             Some(
                 OAuthSessionStore::new(self.storage.as_ref())

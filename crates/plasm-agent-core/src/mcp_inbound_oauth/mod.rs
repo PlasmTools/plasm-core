@@ -49,10 +49,8 @@ impl McpInboundOAuthService {
 
     pub async fn new(storage: Arc<dyn AuthStorage>, jwt_secret: String) -> Result<Self, AuthError> {
         let canonical_resource = mcp_resource_base_url();
-        let dcr = ClientRegistrationManager::new(
-            dcr::dcr_config(&canonical_resource),
-            storage.clone(),
-        );
+        let dcr =
+            ClientRegistrationManager::new(dcr::dcr_config(&canonical_resource), storage.clone());
         let jwt = jwt::McpOAuthJwt::new(&jwt_secret, &canonical_resource);
         Ok(Self {
             storage,

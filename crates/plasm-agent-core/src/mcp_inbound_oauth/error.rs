@@ -1,24 +1,11 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpOAuthError {
-    OAuth {
-        error: String,
-        description: String,
-    },
-    InvalidTarget {
-        description: String,
-    },
-    AccessDenied {
-        description: String,
-    },
-    Unavailable {
-        description: String,
-    },
-    Server {
-        description: String,
-    },
-    RateLimited {
-        description: String,
-    },
+    OAuth { error: String, description: String },
+    InvalidTarget { description: String },
+    AccessDenied { description: String },
+    Unavailable { description: String },
+    Server { description: String },
+    RateLimited { description: String },
 }
 
 impl McpOAuthError {

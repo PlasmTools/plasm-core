@@ -110,7 +110,9 @@ impl<'a> OAuthSessionStore<'a> {
             .unwrap_or_default()
             .as_secs();
         if ttl == 0 {
-            return Err(McpOAuthError::server("refresh token TTL computation failed"));
+            return Err(McpOAuthError::server(
+                "refresh token TTL computation failed",
+            ));
         }
         let bytes = serde_json::to_vec(record)
             .map_err(|_| McpOAuthError::server("OAuth refresh token encode failed"))?;
@@ -120,7 +122,10 @@ impl<'a> OAuthSessionStore<'a> {
             .map_err(|_| McpOAuthError::server("OAuth refresh token storage failed"))
     }
 
-    pub async fn load_refresh_token(&self, wire: &str) -> Result<PlasmOAuthRefreshRecord, McpOAuthError> {
+    pub async fn load_refresh_token(
+        &self,
+        wire: &str,
+    ) -> Result<PlasmOAuthRefreshRecord, McpOAuthError> {
         let key = refresh_key(&sha256_hex(wire.as_bytes()));
         let bytes = self
             .storage
@@ -128,10 +133,7 @@ impl<'a> OAuthSessionStore<'a> {
             .await
             .map_err(|_| McpOAuthError::server("OAuth refresh token read failed"))?
             .ok_or_else(|| {
-                McpOAuthError::bad_request(
-                    "invalid_grant",
-                    "refresh token is invalid or expired",
-                )
+                McpOAuthError::bad_request("invalid_grant", "refresh token is invalid or expired")
             })?;
         serde_json::from_slice(&bytes)
             .map_err(|_| McpOAuthError::server("OAuth refresh token decode failed"))
