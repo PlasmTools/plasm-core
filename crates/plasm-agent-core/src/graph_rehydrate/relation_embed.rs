@@ -17,7 +17,7 @@ pub(crate) struct RelationEmbedSnapshot {
     pub all_embedded: Option<Vec<CachedEntity>>,
 }
 
-/// Frozen ref → entity map for nested wire-row rebuild (no live graph access).
+/// Frozen ref → entity map for single-hop wire-row rebuild (no live graph access).
 #[derive(Default, Clone)]
 pub(crate) struct RefEmbedLookup {
     entities: IndexMap<Ref, CachedEntity>,
@@ -47,7 +47,7 @@ impl EmbedLookupMaterialization<'_> {
     }
 }
 
-/// Single lock: resolutions + cloned embed targets (+ lookup for nested wire rows).
+/// Single lock: resolutions + cloned embed targets (+ plan-scoped lookup for wire rows).
 pub(crate) async fn plan_prefer_from_parent_get(
     scoped_es: &ExecuteSession,
     materialize: &RelationMaterialization,
