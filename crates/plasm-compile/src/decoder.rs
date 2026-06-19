@@ -2,7 +2,6 @@ use crate::DecodeError;
 use indexmap::IndexMap;
 use plasm_core::{Cardinality, FieldDeriveRule, Ref, Value};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 
 /// Entity decoder - specifies how to extract entities from API responses
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -360,7 +359,7 @@ fn colon_segment_pair_extract(s: &str, segment: &str) -> Option<String> {
     None
 }
 
-fn apply_field_derive_rule(
+pub(crate) fn apply_field_derive_rule(
     rule: &FieldDeriveRule,
     v: &serde_json::Value,
 ) -> Result<serde_json::Value, DecodeError> {
@@ -587,234 +586,6 @@ pub fn apply_transform(
     }
 }
 
-/// Decode entities using an EntityDecoder
-pub fn decode_entities(
-    decoder: &EntityDecoder,
-    response: &serde_json::Value,
-) -> Result<Vec<DecodedEntity>, DecodeError> {
-    // Extract source values
-    let source_values = extract_path(&decoder.source, response)?;
-    let mut entities = Vec::new();
-
-    for source_value in source_values {
-        let entity = decode_single_entity(decoder, &source_value)?;
-        entities.push(entity);
-    }
-
-    Ok(entities)
-}
-
-fn value_to_key_slot(v: &Value) -> Option<String> {
-    match v {
-        Value::PlasmInputRef(_) => None,
-        Value::String(s) => Some(s.clone()),
-        Value::Integer(i) => Some(i.to_string()),
-        Value::Float(f) => {
-            if f.is_finite() && f.fract() == 0.0 {
-                Some((*f as i64).to_string())
-            } else {
-                Some(f.to_string())
-            }
-        }
-        Value::Bool(b) => Some(b.to_string()),
-        Value::Null | Value::Array(_) | Value::Object(_) | Value::UnionCtor { .. } => None,
-    }
-}
-
-/// Build [`Ref`] from CGS `key_vars`, decoded row fields, and optional ambient scope (CML env / GET ref).
-fn build_decoded_reference(
-    decoder: &EntityDecoder,
-    fields: &IndexMap<String, Value>,
-    simple_id: &str,
-) -> Result<Ref, DecodeError> {
-    if decoder.key_vars.len() >= 2 {
-        let mut parts = BTreeMap::new();
-        for k in &decoder.key_vars {
-            let v = fields
-                .get(k)
-                .and_then(value_to_key_slot)
-                .or_else(|| decoder.identity_ambient.get(k).cloned())
-                .ok_or_else(|| DecodeError::InvalidStructure {
-                    message: format!(
-                        "compound key part `{k}` missing for entity `{}` (row fields and identity ambient do not supply it)",
-                        decoder.entity
-                    ),
-                })?;
-            parts.insert(k.clone(), v);
-        }
-        Ok(Ref::compound(&decoder.entity, parts))
-    } else if decoder.key_vars.len() == 1 {
-        let k0 = decoder.key_vars[0].as_str();
-        let v = fields
-            .get(k0)
-            .and_then(value_to_key_slot)
-            .or_else(|| decoder.identity_ambient.get(k0).cloned())
-            .unwrap_or_else(|| simple_id.to_string());
-        Ok(Ref::new(&decoder.entity, v))
-    } else {
-        Ok(Ref::new(&decoder.entity, simple_id.to_string()))
-    }
-}
-
-/// Scalar JSON values that can fill a compound-key slot (aligned with [`value_to_key_slot`] for [`Value`]).
-fn json_value_identity_slot_string(v: &serde_json::Value) -> Option<String> {
-    match v {
-        serde_json::Value::String(s) => Some(s.clone()),
-        serde_json::Value::Number(n) => Some(n.to_string()),
-        serde_json::Value::Bool(b) => Some(b.to_string()),
-        serde_json::Value::Null | serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-            None
-        }
-    }
-}
-
-/// For nested relation rows (e.g. API `sheets[]`) that omit a parent key (`spreadsheetId`) present only
-/// on the parent object, merge those scalars into the child decoder's [`EntityDecoder::identity_ambient`]
-/// so [`build_decoded_reference`] can assemble compound [`Ref`]s (same invariant as top-level ambient).
-fn child_decoder_with_parent_ambient(
-    parent: &serde_json::Value,
-    child: &EntityDecoder,
-) -> EntityDecoder {
-    let mut out = child.clone();
-    if child.key_vars.len() < 2 {
-        return out;
-    }
-    let Some(parent_obj) = parent.as_object() else {
-        return out;
-    };
-    for kv in &child.key_vars {
-        if out.identity_ambient.contains_key(kv) {
-            continue;
-        }
-        if let Some(v) = parent_obj.get(kv.as_str()) {
-            if let Some(s) = json_value_identity_slot_string(v) {
-                out.identity_ambient.insert(kv.clone(), s);
-            }
-        }
-    }
-    for hint in &child.parent_identity_field_hints {
-        if out.identity_ambient.contains_key(&hint.slot) {
-            continue;
-        }
-        let Ok(vals) = extract_path(&hint.from, parent) else {
-            continue;
-        };
-        let Some(first) = vals.first() else {
-            continue;
-        };
-        let mut raw = first.clone();
-        if let Some(ref dr) = hint.derive {
-            if let Ok(derived) = apply_field_derive_rule(dr, &raw) {
-                raw = derived;
-            }
-        }
-        if let Ok(s) = json_scalar_to_id_string(&raw) {
-            out.identity_ambient.insert(hint.slot.clone(), s);
-        }
-    }
-    out
-}
-
-fn decode_single_entity(
-    decoder: &EntityDecoder,
-    source: &serde_json::Value,
-) -> Result<DecodedEntity, DecodeError> {
-    let mut fields = IndexMap::new();
-    let mut relations = IndexMap::new();
-    let mut embedded_entities = Vec::new();
-
-    // Extract ID field (required for reference)
-    let id_value = if let Some(ref rid) = decoder.request_identity_override {
-        rid.clone()
-    } else if let Some(ref path) = decoder.id_path {
-        let vals = extract_path(path, source)?;
-        let first = vals.first().ok_or_else(|| DecodeError::InvalidStructure {
-            message: "id_path matched no value".to_string(),
-        })?;
-        json_scalar_to_id_string(first)?
-    } else {
-        extract_id_from_source(source, decoder.id_field.as_deref())?
-    };
-
-    // Decode fields (object rows). Scalar rows (e.g. HN `topstories.json` id list) carry identity only.
-    if source.is_object() {
-        for field_decoder in &decoder.fields {
-            let field_values = extract_path(&field_decoder.from, source)?;
-
-            if let Some(first_value) = field_values.first() {
-                let mut raw = first_value.clone();
-                if let Some(ref dr) = field_decoder.derive {
-                    raw = apply_field_derive_rule(dr, &raw)?;
-                }
-                let decoded_value = if let Some(transform) = &field_decoder.transform {
-                    apply_transform(transform, &raw)?
-                } else {
-                    json_to_value(&raw)
-                };
-
-                fields.insert(field_decoder.field.clone(), decoded_value);
-            }
-            // Missing fields are simply not included
-        }
-        if decoder.id_path.is_none() && decoder.request_identity_override.is_none() {
-            if let Some(ref name) = decoder.id_field {
-                if !fields.contains_key(name) {
-                    fields.insert(name.clone(), value_for_id_field_from_string(&id_value));
-                }
-            }
-        }
-    } else if matches!(
-        source,
-        serde_json::Value::String(_) | serde_json::Value::Number(_)
-    ) {
-        if let Some(ref name) = decoder.id_field {
-            fields.insert(name.clone(), json_to_value(source));
-        }
-    } else {
-        return Err(DecodeError::InvalidStructure {
-            message: "entity decode source must be a JSON object or a string/number id scalar"
-                .to_string(),
-        });
-    }
-
-    if decoder.id_path.is_some() || decoder.request_identity_override.is_some() {
-        if let Some(ref name) = decoder.id_field {
-            if !fields.contains_key(name) {
-                fields.insert(name.clone(), Value::String(id_value.clone()));
-            }
-        }
-    }
-
-    let reference = build_decoded_reference(decoder, &fields, &id_value)?;
-
-    // Decode relations — only [`DecodedRelation::Specified`] when the relation path exists on the wire.
-    for relation_decoder in &decoder.relations {
-        let rel = if relation_decode_path_specified(source, &relation_decoder.decoder.source) {
-            let child_dec = child_decoder_with_parent_ambient(source, &relation_decoder.decoder);
-            let related_entities = decode_entities(&child_dec, source)?;
-            for related in &related_entities {
-                embedded_entities.push(related.clone());
-                embedded_entities.extend(related.embedded_entities.iter().cloned());
-            }
-            let refs: Vec<Ref> = related_entities
-                .iter()
-                .map(|e| e.reference.clone())
-                .collect();
-            DecodedRelation::Specified(refs)
-        } else {
-            DecodedRelation::Unspecified
-        };
-        relations.insert(relation_decoder.relation.clone(), rel);
-    }
-
-    Ok(DecodedEntity {
-        reference,
-        fields,
-        relations,
-        embedded_entities,
-    })
-}
-
 /// True when the relation's [`EntityDecoder::source`] path is present enough to treat the decode as authoritative:
 /// every key segment exists, values are non-null along the walk, and a terminal wildcard sits on a JSON array.
 ///
@@ -856,74 +627,8 @@ pub fn relation_decode_path_specified(value: &serde_json::Value, path: &PathExpr
     true
 }
 
-fn json_scalar_to_id_string(v: &serde_json::Value) -> Result<String, DecodeError> {
-    match v {
-        serde_json::Value::String(s) => Ok(s.clone()),
-        serde_json::Value::Number(n) => Ok(n.to_string()),
-        _ => Err(DecodeError::InvalidStructure {
-            message: "id_path must resolve to a string or number".to_string(),
-        }),
-    }
-}
-
-/// Decode CGS `id` from a string identity (numeric HN id, non-numeric keys, …).
-fn value_for_id_field_from_string(s: &str) -> Value {
-    if let Ok(i) = s.parse::<i64>() {
-        Value::Integer(i)
-    } else {
-        Value::String(s.to_string())
-    }
-}
-
-/// Extract ID field from source value
-fn extract_id_from_source(
-    source: &serde_json::Value,
-    schema_id_field: Option<&str>,
-) -> Result<String, DecodeError> {
-    let mut candidates: Vec<&str> = Vec::new();
-    if let Some(k) = schema_id_field.filter(|k| !k.is_empty()) {
-        candidates.push(k);
-    }
-    for fb in ["id", "_id", "uuid", "key"] {
-        if !candidates.contains(&fb) {
-            candidates.push(fb);
-        }
-    }
-
-    for field_name in candidates {
-        if let Some(obj) = source.as_object() {
-            if let Some(id_value) = obj.get(field_name) {
-                return match id_value {
-                    serde_json::Value::String(s) => Ok(s.clone()),
-                    serde_json::Value::Number(n) => Ok(n.to_string()),
-                    _ => continue,
-                };
-            }
-        }
-    }
-
-    if let Some(obj) = source.as_object() {
-        if let Some(oid) = obj.get("objectID") {
-            match oid {
-                serde_json::Value::String(s) => return Ok(s.clone()),
-                serde_json::Value::Number(n) => return Ok(n.to_string()),
-                _ => {}
-            }
-        }
-    }
-
-    // Bare numeric/string row (e.g. each element of `[1,2,3]` from a feed endpoint).
-    match source {
-        serde_json::Value::String(s) => Ok(s.clone()),
-        serde_json::Value::Number(n) => Ok(n.to_string()),
-        _ => Err(DecodeError::InvalidStructure {
-            message: "No valid ID field found in source object".to_string(),
-        }),
-    }
-}
-
 /// Convert serde_json::Value to plasm_core::Value
-fn json_to_value(json: &serde_json::Value) -> Value {
+pub(crate) fn json_to_value(json: &serde_json::Value) -> Value {
     match json {
         serde_json::Value::Null => Value::Null,
         serde_json::Value::Bool(b) => Value::Bool(*b),
@@ -985,6 +690,7 @@ fn format_path_up_to(segments: &[PathSegment], up_to: &PathSegment) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::decode_entities;
     use serde_json::json;
 
     #[test]
@@ -1640,84 +1346,5 @@ mod tests {
             Some(&Value::String("Hello".to_string()))
         );
         assert_eq!(entities[0].reference.simple_id().unwrap().as_str(), "42");
-    }
-
-    #[test]
-    fn decode_langitem_embedded_summary_detail_from_parent_get() {
-        let json = json!({
-            "id": "i1",
-            "title": "Alpha",
-            "summary": {
-                "id": "sum-i1",
-                "headline": "Alpha summary",
-                "detail": { "id": "det-i1", "body": "nested detail" }
-            }
-        });
-
-        let detail_decoder = EntityDecoder::new("LangDetail", PathExpr::from_slice(&["detail"]))
-            .with_fields(vec![
-                FieldDecoder::new("id", PathExpr::from_slice(&["id"])),
-                FieldDecoder::new("body", PathExpr::from_slice(&["body"])),
-            ])
-            .with_id_field("id");
-
-        let summary_decoder = EntityDecoder::new("LangSummary", PathExpr::from_slice(&["summary"]))
-            .with_fields(vec![
-                FieldDecoder::new("id", PathExpr::from_slice(&["id"])),
-                FieldDecoder::new("headline", PathExpr::from_slice(&["headline"])),
-            ])
-            .with_id_field("id")
-            .with_relations(vec![RelationDecoder {
-                relation: "detail".into(),
-                decoder: detail_decoder,
-                cardinality: plasm_core::Cardinality::One,
-            }]);
-
-        let item_decoder = EntityDecoder::new("LangItem", PathExpr::empty())
-            .with_fields(vec![
-                FieldDecoder::new("id", PathExpr::from_slice(&["id"])),
-                FieldDecoder::new("title", PathExpr::from_slice(&["title"])),
-            ])
-            .with_id_field("id")
-            .with_relations(vec![RelationDecoder {
-                relation: "summary".into(),
-                decoder: summary_decoder,
-                cardinality: plasm_core::Cardinality::One,
-            }]);
-
-        let entities = decode_entities(&item_decoder, &json).unwrap();
-        assert_eq!(entities.len(), 1);
-        let item = &entities[0];
-        let summary_refs = match item.relations.get("summary").expect("summary") {
-            DecodedRelation::Specified(refs) => refs,
-            _ => panic!("expected summary refs"),
-        };
-        assert_eq!(summary_refs[0].simple_id().unwrap().as_str(), "sum-i1");
-        assert_eq!(item.embedded_entities.len(), 2);
-        assert!(
-            item.embedded_entities
-                .iter()
-                .any(|e| e.reference.entity_type == "LangSummary"),
-            "{:?}",
-            item.embedded_entities
-        );
-        assert!(
-            item.embedded_entities
-                .iter()
-                .any(|e| e.reference.entity_type == "LangDetail"),
-            "{:?}",
-            item.embedded_entities
-        );
-        let summary = item
-            .embedded_entities
-            .iter()
-            .find(|e| e.reference.entity_type == "LangSummary")
-            .expect("embedded summary");
-        match summary.relations.get("detail").expect("detail rel") {
-            DecodedRelation::Specified(refs) => {
-                assert_eq!(refs[0].simple_id().unwrap().as_str(), "det-i1");
-            }
-            _ => panic!("expected detail refs on embedded summary"),
-        }
     }
 }

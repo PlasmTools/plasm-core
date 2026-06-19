@@ -7,6 +7,7 @@
 
 pub mod backend_filter;
 pub mod decoder;
+pub mod embed_decode;
 pub mod error;
 pub mod json_path;
 pub mod predicate_compiler;
@@ -26,6 +27,7 @@ pub use plasm_cml::evm_transport::*;
 
 pub use backend_filter::*;
 pub use decoder::*;
+pub use embed_decode::decode_entities;
 pub use error::{CompileError, DecodeError};
 pub use json_path::path_expr_from_json_segments;
 pub use plasm_cml::CmlError;

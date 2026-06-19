@@ -1,9 +1,4 @@
 //! CEP-4: relation embed snapshot — one graph lock, then lock-free apply.
-//!
-//! [`RelationEmbedSnapshot`] mirrors [`super::rehydrator::GraphSpillSyncPlan`]: plan under lock,
-//! HTTP/spill apply without lock.
-
-use std::collections::HashSet;
 
 use indexmap::IndexMap;
 use plasm_core::{
@@ -22,7 +17,7 @@ pub(crate) struct RelationEmbedSnapshot {
     pub all_embedded: Option<Vec<CachedEntity>>,
 }
 
-/// Frozen ref → entity map for nested wire-row rebuild (no live graph access).
+/// Frozen ref → entity map for single-hop wire-row rebuild (no live graph access).
 #[derive(Default, Clone)]
 pub(crate) struct RefEmbedLookup {
     entities: IndexMap<Ref, CachedEntity>,
@@ -52,7 +47,7 @@ impl EmbedLookupMaterialization<'_> {
     }
 }
 
-/// Single lock: resolutions + cloned embed targets (+ lookup for nested wire rows).
+/// Single lock: resolutions + cloned embed targets (+ plan-scoped lookup for wire rows).
 pub(crate) async fn plan_prefer_from_parent_get(
     scoped_es: &ExecuteSession,
     materialize: &RelationMaterialization,
@@ -152,21 +147,33 @@ fn relation_materialize_is_parent_get(mat: &Option<RelationMaterialization>) -> 
     )
 }
 
-/// Rebuild wire rows from snapshot-resolved targets, nesting declared `from_parent_get` embeds.
-pub(crate) fn wire_rows_with_nested_relation_embeds(
+fn plain_entity_rows(entities: &[CachedEntity], cgs: &CGS) -> Vec<serde_json::Value> {
+    use plasm_runtime::entity_to_row_json;
+    entities
+        .iter()
+        .map(|e| entity_to_row_json(e, Some(cgs)))
+        .collect()
+}
+
+/// Rebuild wire rows from snapshot-resolved targets, embedding one relation hop (plan-scoped).
+pub(crate) fn wire_rows_with_path_embeds(
     entities: &[CachedEntity],
     entity_type: &str,
     cgs: &CGS,
     graph: &EmbedLookupMaterialization<'_>,
+    relation_name: &str,
 ) -> Vec<serde_json::Value> {
     use plasm_runtime::entity_to_row_json;
 
     let Some(def) = cgs.get_entity(entity_type) else {
-        return entities
-            .iter()
-            .map(|e| entity_to_row_json(e, Some(cgs)))
-            .collect();
+        return plain_entity_rows(entities, cgs);
     };
+    let Some(rel_schema) = def.relations.get(relation_name) else {
+        return plain_entity_rows(entities, cgs);
+    };
+    if !relation_materialize_is_parent_get(&rel_schema.materialize) {
+        return plain_entity_rows(entities, cgs);
+    }
     entities
         .iter()
         .map(|entity| {
@@ -174,47 +181,24 @@ pub(crate) fn wire_rows_with_nested_relation_embeds(
             let Some(obj) = row.as_object_mut() else {
                 return row;
             };
-            for (rel_name, rel_schema) in &def.relations {
-                if !relation_materialize_is_parent_get(&rel_schema.materialize) {
-                    continue;
-                }
-                let Some(refs) = entity.relations.get(rel_name.as_str()) else {
-                    continue;
-                };
-                let target = rel_schema.target_resource.as_str();
-                match rel_schema.cardinality {
-                    Cardinality::One => {
-                        if let Some(child) = refs.first().and_then(|r| graph.get(r)) {
-                            let nested = wire_rows_with_nested_relation_embeds(
-                                std::slice::from_ref(child),
-                                target,
-                                cgs,
-                                graph,
-                            );
-                            if let Some(n) = nested.into_iter().next() {
-                                obj.insert(rel_name.as_str().to_string(), n);
-                            }
-                        }
+            let Some(refs) = entity.relations.get(relation_name) else {
+                return row;
+            };
+            match rel_schema.cardinality {
+                Cardinality::One => {
+                    if let Some(child) = refs.first().and_then(|r| graph.get(r)) {
+                        let child_row = entity_to_row_json(child, Some(cgs));
+                        obj.insert(relation_name.to_string(), child_row);
                     }
-                    Cardinality::Many => {
-                        let arr: Vec<_> = refs
-                            .iter()
-                            .filter_map(|r| graph.get(r))
-                            .flat_map(|child| {
-                                wire_rows_with_nested_relation_embeds(
-                                    std::slice::from_ref(child),
-                                    target,
-                                    cgs,
-                                    graph,
-                                )
-                            })
-                            .collect();
-                        if !arr.is_empty() {
-                            obj.insert(
-                                rel_name.as_str().to_string(),
-                                serde_json::Value::Array(arr),
-                            );
-                        }
+                }
+                Cardinality::Many => {
+                    let arr: Vec<_> = refs
+                        .iter()
+                        .filter_map(|r| graph.get(r))
+                        .map(|child| entity_to_row_json(child, Some(cgs)))
+                        .collect();
+                    if !arr.is_empty() {
+                        obj.insert(relation_name.to_string(), serde_json::Value::Array(arr));
                     }
                 }
             }
@@ -223,7 +207,7 @@ pub(crate) fn wire_rows_with_nested_relation_embeds(
         .collect()
 }
 
-/// Brief lock: collect embedded targets + extend lookup with nested refs for wire rows.
+/// Brief lock: collect embedded targets + plan-scoped single-hop lookup for wire rows.
 pub(crate) async fn snapshot_cached_embed_targets(
     scoped_es: &ExecuteSession,
     rel_name: &str,
@@ -240,10 +224,11 @@ pub(crate) async fn snapshot_cached_embed_targets(
     for entity in &entities {
         embed_lookup.insert(entity.reference.clone(), entity.clone());
     }
-    extend_lookup_nested_embeds(
+    extend_lookup_single_hop_embeds(
         &mut embed_lookup,
         &entities,
         target_entity,
+        rel_name,
         &guard,
         scoped_es.cgs.as_ref(),
     );
@@ -251,55 +236,34 @@ pub(crate) async fn snapshot_cached_embed_targets(
     Ok(Some((entities, embed_lookup)))
 }
 
-fn extend_lookup_nested_embeds(
+/// One hop: load direct embed targets for `relation_name` (plan-scoped; CEP-10).
+fn extend_lookup_single_hop_embeds(
     lookup: &mut RefEmbedLookup,
     entities: &[CachedEntity],
     entity_type: &str,
+    relation_name: &str,
     graph: &SessionMaterialization,
     cgs: &CGS,
 ) {
     let Some(def) = cgs.get_entity(entity_type) else {
         return;
     };
-    let mut pending: Vec<Ref> = Vec::new();
-    for entity in entities {
-        for (rel_name, rel_schema) in &def.relations {
-            if !relation_materialize_is_parent_get(&rel_schema.materialize) {
-                continue;
-            }
-            if let Some(refs) = entity.relations.get(rel_name.as_str()) {
-                for r in refs {
-                    if lookup.get(r).is_none() {
-                        pending.push(r.clone());
-                    }
-                }
-            }
-        }
+    let Some(rel_schema) = def.relations.get(relation_name) else {
+        return;
+    };
+    if !relation_materialize_is_parent_get(&rel_schema.materialize) {
+        return;
     }
-    let mut seen = HashSet::new();
-    pending.retain(|r| seen.insert(r.clone()));
-    let mut queue = pending;
-    while let Some(r) = queue.pop() {
-        if lookup.get(&r).is_some() {
-            continue;
-        }
-        let Some(entity) = graph.get(&r).cloned() else {
+    for entity in entities {
+        let Some(refs) = entity.relations.get(relation_name) else {
             continue;
         };
-        let nested_type = entity.reference.entity_type.as_str();
-        lookup.insert(r, entity.clone());
-        if let Some(nested_def) = cgs.get_entity(nested_type) {
-            for (rel_name, rel_schema) in &nested_def.relations {
-                if !relation_materialize_is_parent_get(&rel_schema.materialize) {
-                    continue;
-                }
-                if let Some(refs) = entity.relations.get(rel_name.as_str()) {
-                    for child_ref in refs {
-                        if lookup.get(child_ref).is_none() {
-                            queue.push(child_ref.clone());
-                        }
-                    }
-                }
+        for r in refs {
+            if lookup.get(r).is_some() {
+                continue;
+            }
+            if let Some(child) = graph.get(r) {
+                lookup.insert(r.clone(), child.clone());
             }
         }
     }
@@ -309,6 +273,118 @@ fn extend_lookup_nested_embeds(
 mod tests {
     use super::*;
     use plasm_core::{EmbedOnMissPolicy, JsonPathSegment, RelationScopedFallback};
+
+    #[test]
+    fn wire_embed_lookup_single_hop_does_not_transitively_load() {
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&dir).expect("langmatrix");
+        let summary = CachedEntity {
+            reference: Ref::new("LangSummary", "sum-i1"),
+            fields: indexmap::IndexMap::new(),
+            relations: indexmap::IndexMap::from([(
+                "detail".into(),
+                vec![Ref::new("LangDetail", "det-i1")],
+            )]),
+            last_updated: 0,
+            version: 0,
+            completeness: plasm_runtime::EntityCompleteness::Complete,
+        };
+        let detail = CachedEntity {
+            reference: Ref::new("LangDetail", "det-i1"),
+            fields: indexmap::IndexMap::new(),
+            relations: indexmap::IndexMap::new(),
+            last_updated: 0,
+            version: 0,
+            completeness: plasm_runtime::EntityCompleteness::Complete,
+        };
+        let mut graph = SessionMaterialization::new();
+        graph
+            .merge_graph(vec![summary.clone(), detail.clone()])
+            .expect("seed graph");
+
+        let mut lookup = RefEmbedLookup::default();
+        lookup.insert(summary.reference.clone(), summary.clone());
+        extend_lookup_single_hop_embeds(
+            &mut lookup,
+            std::slice::from_ref(&summary),
+            "LangSummary",
+            "detail",
+            &graph,
+            &cgs,
+        );
+        assert!(
+            lookup.get(&Ref::new("LangDetail", "det-i1")).is_some(),
+            "direct embed target must be in lookup"
+        );
+
+        let graph_view = lookup.materialization_view();
+        let rows = wire_rows_with_path_embeds(
+            std::slice::from_ref(&summary),
+            "LangSummary",
+            &cgs,
+            &graph_view,
+            "detail",
+        );
+        assert_eq!(rows.len(), 1);
+        assert!(
+            rows[0].get("detail").is_some(),
+            "wire row must embed the requested relation hop"
+        );
+        assert!(
+            rows[0].pointer("/detail/body").is_none(),
+            "wire embed must not transitively embed nested relations"
+        );
+    }
+
+    #[test]
+    fn lookup_extension_is_plan_scoped_to_relation_name() {
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&dir).expect("langmatrix");
+        let summary = CachedEntity {
+            reference: Ref::new("LangSummary", "sum-i1"),
+            fields: indexmap::IndexMap::new(),
+            relations: indexmap::IndexMap::from([(
+                "detail".into(),
+                vec![Ref::new("LangDetail", "det-i1")],
+            )]),
+            last_updated: 0,
+            version: 0,
+            completeness: plasm_runtime::EntityCompleteness::Complete,
+        };
+        let detail = CachedEntity {
+            reference: Ref::new("LangDetail", "det-i1"),
+            fields: indexmap::IndexMap::new(),
+            relations: indexmap::IndexMap::new(),
+            last_updated: 0,
+            version: 0,
+            completeness: plasm_runtime::EntityCompleteness::Complete,
+        };
+        let mut graph = SessionMaterialization::new();
+        graph
+            .merge_graph(vec![summary.clone(), detail.clone()])
+            .expect("seed graph");
+
+        let mut lookup = RefEmbedLookup::default();
+        lookup.insert(summary.reference.clone(), summary.clone());
+        extend_lookup_single_hop_embeds(
+            &mut lookup,
+            std::slice::from_ref(&summary),
+            "LangSummary",
+            "nonexistent_relation",
+            &graph,
+            &cgs,
+        );
+        assert!(
+            lookup.get(&Ref::new("LangDetail", "det-i1")).is_none(),
+            "lookup must not load embed targets for unrelated relation names"
+        );
+    }
 
     #[test]
     fn partition_prefer_resolutions_matches_row_resolution() {

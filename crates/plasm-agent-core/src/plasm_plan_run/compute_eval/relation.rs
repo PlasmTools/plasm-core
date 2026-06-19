@@ -161,11 +161,12 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
         target_entity,
     ) {
         Ok(rows) if rows.len() == count && !rows.is_empty() => rows,
-        _ => crate::graph_rehydrate::wire_rows_with_nested_relation_embeds(
+        _ => crate::graph_rehydrate::wire_rows_with_path_embeds(
             &entities,
             target_entity,
             scoped_es.cgs.as_ref(),
             &graph_view,
+            rel_name,
         ),
     };
     let full_result = ExecutionResult {

@@ -9,7 +9,7 @@ use crate::{AuthResolver, CachedEntity, CancelSignal, EntityCompleteness, Runtim
 use indexmap::IndexMap;
 use plasm_compile::{
     compile_operation, compile_query, decode_entities, parse_capability_template,
-    path_expr_from_json_segments, path_var_names_from_request, template_pagination,
+    path_var_names_from_request, template_pagination,
     template_var_names, BackendFilter, CapabilityTemplate, CmlEnv, CmlRequest,
     CompileOperationHook, CompileQueryHook, CompiledOperation, CompiledRequest, HttpBodyFormat,
     PaginationConfig, PathExpr, PathSegment, ResponsePreprocess,
@@ -38,12 +38,18 @@ use tracing::Instrument;
 
 mod chain;
 mod compile_preflight;
+mod entity_decoder;
 mod http_exec;
 mod mutators;
 mod pagination_state;
 mod projection;
 mod query_stream;
 mod resume;
+
+use self::entity_decoder::{
+    create_entity_decoder, create_entity_decoder_for_capability,
+    mutating_capability_response_decoder,
+};
 
 pub use compile_preflight::preflight_compile_expr;
 
@@ -3094,7 +3100,7 @@ fn value_to_ambient_string(v: &Value) -> Option<String> {
 }
 
 /// CML env slots usable as compound-key fallbacks (string-like values only).
-fn cml_env_to_identity_strings(env: &CmlEnv) -> IndexMap<String, String> {
+pub(crate) fn cml_env_to_identity_strings(env: &CmlEnv) -> IndexMap<String, String> {
     let mut out = IndexMap::new();
     for (k, v) in env.iter() {
         if let Some(s) = value_to_ambient_string(v) {
@@ -3149,338 +3155,6 @@ fn merge_entity_id_from_into_input_env(
     };
     map.entry(wire_key.clone())
         .or_insert_with(|| Value::String(id));
-}
-
-/// Decoder for create/update/action invoke responses: capability name + CML env ambient (e.g. overlay
-/// `database` scope) drive overlay entity resolution.
-fn mutating_capability_response_decoder(
-    entity_type: &str,
-    capability_name: &str,
-    cgs: &CGS,
-    env: &CmlEnv,
-    request_identity: Option<&str>,
-) -> plasm_compile::EntityDecoder {
-    let identity_ambient = cml_env_to_identity_strings(env);
-    create_entity_decoder_for_capability(
-        entity_type,
-        cgs,
-        Some(capability_name),
-        None,
-        request_identity,
-        Some(&identity_ambient),
-    )
-}
-
-/// Create a decoder for an entity type, driven by the CGS schema.
-/// - `collection_source: Some(path)` — `path` ends in a wildcard over the entity array
-/// - `None` — single entity at the response root
-/// - `identity_ambient` — scope / request key parts merged when a row omits a compound-key field
-fn create_entity_decoder(
-    entity_type: &str,
-    cgs: &CGS,
-    collection_source: Option<PathExpr>,
-    request_identity: Option<&str>,
-    identity_ambient: Option<&IndexMap<String, String>>,
-) -> plasm_compile::EntityDecoder {
-    create_entity_decoder_for_capability(
-        entity_type,
-        cgs,
-        None,
-        collection_source,
-        request_identity,
-        identity_ambient,
-    )
-}
-
-fn resolve_overlay_decode_entity(
-    cgs: &CGS,
-    capability_name: &str,
-    identity_ambient: Option<&IndexMap<String, String>>,
-) -> Option<String> {
-    let spec = cgs.schema_overlay.as_ref()?;
-    let listed = if spec.decode.capabilities.is_empty() {
-        capability_name == "entity_query" || capability_name == "entity_get"
-    } else {
-        spec.decode
-            .capabilities
-            .iter()
-            .any(|c| c == capability_name)
-    };
-    if !listed {
-        return None;
-    }
-    let ambient = identity_ambient?;
-    let scope_value =
-        plasm_core::schema_overlay::build_decode_scope_key(&spec.decode.scope, ambient)?;
-    cgs.schema_overlay_scope_index
-        .get(scope_value.as_str())
-        .map(|n| n.to_string())
-}
-
-fn create_entity_decoder_for_capability(
-    declared_entity: &str,
-    cgs: &CGS,
-    capability_name: Option<&str>,
-    collection_source: Option<PathExpr>,
-    request_identity: Option<&str>,
-    identity_ambient: Option<&IndexMap<String, String>>,
-) -> plasm_compile::EntityDecoder {
-    let entity_type = capability_name
-        .and_then(|cap| resolve_overlay_decode_entity(cgs, cap, identity_ambient))
-        .unwrap_or_else(|| declared_entity.to_string());
-    create_entity_decoder_inner(
-        &entity_type,
-        cgs,
-        collection_source,
-        request_identity,
-        identity_ambient,
-    )
-}
-
-fn parent_identity_field_hints_for_child(
-    parent_ent: &plasm_core::EntityDef,
-    child_ent: &plasm_core::EntityDef,
-) -> Vec<plasm_compile::ParentIdentityFieldHint> {
-    use plasm_compile::{ParentIdentityFieldHint, PathExpr, PathSegment};
-
-    let mut hints = Vec::new();
-    for kv in &child_ent.key_vars {
-        let Some(fs) = parent_ent.fields.get(kv.as_str()) else {
-            continue;
-        };
-        let from = if let Some(wp) = &fs.wire_path {
-            PathExpr::new(
-                wp.iter()
-                    .map(|n| PathSegment::Key { name: n.clone() })
-                    .collect(),
-            )
-        } else {
-            PathExpr::new(vec![PathSegment::Key {
-                name: kv.as_str().to_string(),
-            }])
-        };
-        let derive = fs.derive.clone();
-        hints.push(ParentIdentityFieldHint {
-            slot: kv.as_str().to_string(),
-            from,
-            derive,
-        });
-    }
-    hints
-}
-
-fn entity_decoder_for_from_parent_get_target(
-    target_ent: &plasm_core::EntityDef,
-    parent_ent: &plasm_core::EntityDef,
-    rel_path: plasm_compile::PathExpr,
-    cgs: &CGS,
-) -> plasm_compile::EntityDecoder {
-    use plasm_compile::{EntityDecoder, FieldDecoder, PathExpr, PathSegment};
-
-    let mut cf = Vec::new();
-    for (fname, fschema) in &target_ent.fields {
-        let from_path = if let Some(wp) = &fschema.wire_path {
-            PathExpr::new(
-                wp.iter()
-                    .map(|n| PathSegment::Key { name: n.clone() })
-                    .collect(),
-            )
-        } else {
-            PathExpr::new(vec![PathSegment::Key {
-                name: fname.as_str().to_string(),
-            }])
-        };
-        let fd = FieldDecoder::new(fname.as_str(), from_path);
-        cf.push(match &fschema.derive {
-            Some(d) => fd.with_derive(d.clone()),
-            None => fd,
-        });
-    }
-    let child_kv: Vec<String> = target_ent
-        .key_vars
-        .iter()
-        .map(|k| k.as_str().to_string())
-        .collect();
-    let parent_hints = parent_identity_field_hints_for_child(parent_ent, target_ent);
-    let nested_relations = from_parent_get_relation_decoders(target_ent, cgs);
-    EntityDecoder::new(target_ent.name.as_str(), rel_path)
-        .with_fields(cf)
-        .with_id_field(target_ent.id_field.clone())
-        .with_key_vars(child_kv)
-        .with_identity_ambient(IndexMap::new())
-        .with_parent_identity_field_hints(parent_hints)
-        .with_relations(nested_relations)
-}
-
-fn from_parent_get_relation_decoders(
-    entity: &plasm_core::EntityDef,
-    cgs: &CGS,
-) -> Vec<plasm_compile::RelationDecoder> {
-    use plasm_compile::RelationDecoder;
-
-    let mut relation_decoders = Vec::new();
-    for (rel_name, rel) in &entity.relations {
-        let Some(path) = (match &rel.materialize {
-            Some(RelationMaterialization::FromParentGet { path })
-            | Some(RelationMaterialization::PreferFromParentGet { path, .. }) => Some(path),
-            _ => None,
-        }) else {
-            continue;
-        };
-        let rel_path = path_expr_from_json_segments(path).unwrap_or_else(|e| {
-            panic!("CGS must reject invalid from_parent_get paths: {e}");
-        });
-        let Some(target_ent) = cgs.get_entity(rel.target_resource.as_str()) else {
-            continue;
-        };
-        let child = entity_decoder_for_from_parent_get_target(target_ent, entity, rel_path, cgs);
-        relation_decoders.push(RelationDecoder {
-            relation: rel_name.as_str().to_string(),
-            decoder: child,
-            cardinality: rel.cardinality,
-        });
-    }
-    relation_decoders
-}
-
-fn create_entity_decoder_inner(
-    entity_type: &str,
-    cgs: &CGS,
-    collection_source: Option<PathExpr>,
-    request_identity: Option<&str>,
-    identity_ambient: Option<&IndexMap<String, String>>,
-) -> plasm_compile::EntityDecoder {
-    use plasm_compile::{EntityDecoder, FieldDecoder, PathExpr, PathSegment};
-
-    let ambient = identity_ambient.cloned().unwrap_or_default();
-
-    let source = match collection_source {
-        Some(p) => p,
-        None => PathExpr::empty(),
-    };
-
-    let mut field_decoders = Vec::new();
-
-    if let Some(entity) = cgs.get_entity(entity_type) {
-        for (field_name, field_schema) in &entity.fields {
-            let from_path = if let Some(wp) = &field_schema.wire_path {
-                PathExpr::new(
-                    wp.iter()
-                        .map(|n| PathSegment::Key { name: n.clone() })
-                        .collect(),
-                )
-            } else {
-                PathExpr::new(vec![PathSegment::Key {
-                    name: field_name.as_str().to_string(),
-                }])
-            };
-            let fd = FieldDecoder::new(field_name.as_str(), from_path);
-            field_decoders.push(match &field_schema.derive {
-                Some(d) => fd.with_derive(d.clone()),
-                None => fd,
-            });
-        }
-        // For cardinality-one declared relations, decode the nested **target id** (per target
-        // `id_field`) so ChainExpr can batch-fetch by ref. Example: Linear `state.id` (uuid);
-        // PokéAPI `species.name` when [`EntityDef::id_field`] is `name`.
-        for (rel_name, rel) in &entity.relations {
-            if rel.cardinality == plasm_core::Cardinality::One {
-                let Some(target_ent) = cgs.get_entity(rel.target_resource.as_str()) else {
-                    continue;
-                };
-                let nested_key = target_ent.id_field.clone();
-                field_decoders.push(FieldDecoder::new(
-                    rel_name.as_str(),
-                    PathExpr::new(vec![
-                        PathSegment::Key {
-                            name: rel_name.as_str().to_string(),
-                        },
-                        PathSegment::Key {
-                            name: nested_key.into(),
-                        },
-                    ]),
-                ));
-            }
-        }
-    } else {
-        // Fallback: at least decode the ID
-        field_decoders.push(FieldDecoder::new(
-            "id",
-            PathExpr::new(vec![PathSegment::Key {
-                name: "id".to_string(),
-            }]),
-        ));
-    }
-
-    let mut relation_decoders: Vec<plasm_compile::RelationDecoder> = Vec::new();
-    if let Some(entity) = cgs.get_entity(entity_type) {
-        for (rel_name, rel) in &entity.relations {
-            if let Some(path) = match &rel.materialize {
-                Some(RelationMaterialization::FromParentGet { path })
-                | Some(RelationMaterialization::PreferFromParentGet { path, .. }) => Some(path),
-                _ => None,
-            } {
-                let rel_path = path_expr_from_json_segments(path).unwrap_or_else(|e| {
-                    panic!("CGS must reject invalid from_parent_get paths: {e}");
-                });
-                let Some(target_ent) = cgs.get_entity(rel.target_resource.as_str()) else {
-                    continue;
-                };
-                let child =
-                    entity_decoder_for_from_parent_get_target(target_ent, entity, rel_path, cgs);
-                relation_decoders.push(plasm_compile::RelationDecoder {
-                    relation: rel_name.as_str().to_string(),
-                    decoder: child,
-                    cardinality: rel.cardinality,
-                });
-            } else if rel.cardinality == plasm_core::Cardinality::One {
-                let Some(target_ent) = cgs.get_entity(rel.target_resource.as_str()) else {
-                    continue;
-                };
-                let rel_path = PathExpr::new(vec![PathSegment::Key {
-                    name: rel_name.as_str().to_string(),
-                }]);
-                let id_path = PathExpr::new(vec![PathSegment::Key {
-                    name: target_ent.id_field.as_str().to_string(),
-                }]);
-                let child = EntityDecoder::new(rel.target_resource.as_str(), rel_path)
-                    .with_id_field(target_ent.id_field.clone())
-                    .with_id_path(id_path);
-                relation_decoders.push(plasm_compile::RelationDecoder {
-                    relation: rel_name.as_str().to_string(),
-                    decoder: child,
-                    cardinality: rel.cardinality,
-                });
-            }
-        }
-    }
-
-    let mut decoder = EntityDecoder::new(entity_type, source)
-        .with_fields(field_decoders)
-        .with_relations(relation_decoders)
-        .with_identity_ambient(ambient);
-    if let Some(entity) = cgs.get_entity(entity_type) {
-        let key_vars: Vec<String> = entity
-            .key_vars
-            .iter()
-            .map(|k| k.as_str().to_string())
-            .collect();
-        decoder = decoder
-            .with_id_field(entity.id_field.clone())
-            .with_key_vars(key_vars);
-        if let Some(parts) = entity.id_from.as_ref().filter(|p| !p.is_empty()) {
-            let segments: Vec<PathSegment> = parts
-                .iter()
-                .cloned()
-                .map(|name| PathSegment::Key { name })
-                .collect();
-            decoder = decoder.with_id_path(PathExpr::new(segments));
-        }
-        if let Some(rid) = request_identity {
-            decoder = decoder.with_request_identity_override(rid);
-        }
-    }
-    decoder
 }
 
 pub(crate) fn current_timestamp() -> u64 {
@@ -4689,7 +4363,7 @@ mod tests {
 
         let mut ambient = IndexMap::new();
         ambient.insert("database".to_string(), "Cricket/Player".to_string());
-        let entity = resolve_overlay_decode_entity(&cgs, "entity_query", Some(&ambient))
+        let entity = entity_decoder::resolve_overlay_decode_entity(&cgs, "entity_query", Some(&ambient))
             .expect("overlay entity for scope");
         assert_eq!(entity, "Cricket__Player");
         let ent = cgs.get_entity("Cricket__Player").expect("overlay entity");
@@ -4728,7 +4402,7 @@ mod tests {
 
         let mut single = IndexMap::new();
         single.insert("database".to_string(), "Cricket/Player".to_string());
-        let entity = resolve_overlay_decode_entity(&cgs, "entity_query", Some(&single))
+        let entity = entity_decoder::resolve_overlay_decode_entity(&cgs, "entity_query", Some(&single))
             .expect("overlay entity for scope");
         assert_eq!(entity, "Cricket__Player");
     }
@@ -4750,7 +4424,7 @@ mod tests {
         let cgs = base.with_overlay(overlay).expect("merge");
 
         let empty = IndexMap::new();
-        let entity = resolve_overlay_decode_entity(&cgs, "task_get", Some(&empty))
+        let entity = entity_decoder::resolve_overlay_decode_entity(&cgs, "task_get", Some(&empty))
             .expect("overlay entity for global augment_base");
         assert_eq!(entity, "Task");
         let task = cgs.get_entity("Task").expect("augmented Task");
@@ -4857,8 +4531,14 @@ mod tests {
             "database".into(),
             plasm_core::Value::String("Cricket/Player".into()),
         );
-        let decoder =
-            mutating_capability_response_decoder("Record", "entity_create", &cgs, &env, None);
+        let identity_ambient = cml_env_to_identity_strings(&env);
+        let decoder = mutating_capability_response_decoder(
+            "Record",
+            "entity_create",
+            &cgs,
+            &identity_ambient,
+            None,
+        );
         let entities = decode_entities(&decoder, &narrowed).expect("decode Record");
         assert_eq!(entities.len(), 1);
         assert_eq!(
@@ -5146,7 +4826,7 @@ mod tests {
     }
 
     #[test]
-    fn langitem_get_decoder_decodes_nested_summary_detail_chain() {
+    fn langitem_get_decoder_decodes_summary_embed_single_hop() {
         use plasm_compile::decode_entities;
         use plasm_compile::DecodedRelation;
         use plasm_core::loader::load_schema_dir;
@@ -5168,12 +4848,8 @@ mod tests {
             .find(|r| r.relation == "summary")
             .expect("summary relation decoder");
         assert!(
-            summary_rel
-                .decoder
-                .relations
-                .iter()
-                .any(|r| r.relation == "detail"),
-            "nested summary decoder must include detail for chained from_parent_get hops"
+            summary_rel.decoder.relations.is_empty(),
+            "single-hop summary decoder must not nest further from_parent_get decoders"
         );
 
         let body = serde_json::json!({
@@ -5191,12 +4867,83 @@ mod tests {
             .iter()
             .find(|e| e.reference.entity_type.as_str() == "LangSummary")
             .expect("embedded summary");
-        match summary.relations.get("detail") {
-            Some(DecodedRelation::Specified(refs)) => {
-                assert_eq!(refs[0].simple_id().unwrap().as_str(), "det-i1");
-            }
-            other => panic!("expected detail relation on embedded summary, got {other:?}"),
+        assert!(
+            summary.relations.get("detail").is_none()
+                || matches!(summary.relations.get("detail"), Some(DecodedRelation::Unspecified)),
+            "detail hop is plan-scoped; GET decode does not embed nested relation decoders"
+        );
+    }
+
+    #[test]
+    fn pokemon_get_decoder_is_single_hop() {
+        use plasm_core::loader::load_schema_dir;
+
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+        let cgs = load_schema_dir(&dir).expect("pokeapi");
+        let decoder = create_entity_decoder_for_capability(
+            "Pokemon",
+            &cgs,
+            Some("pokemon_get"),
+            None,
+            Some("pikachu"),
+            None,
+        );
+        for rel in ["types", "abilities", "species", "forms", "moves"] {
+            let rd = decoder
+                .relations
+                .iter()
+                .find(|r| r.relation == rel)
+                .unwrap_or_else(|| panic!("missing {rel} relation decoder"));
+            assert!(
+                rd.decoder.relations.is_empty(),
+                "{rel} embed decoder must be single-hop (no nested from_parent_get tree)"
+            );
         }
+    }
+
+    #[test]
+    fn pokemon_get_decode_on_release_stack_budget() {
+        use plasm_compile::decode_entities;
+        use plasm_core::loader::load_schema_dir;
+
+        if cfg!(debug_assertions) {
+            return;
+        }
+
+        let dir =
+            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+        let cgs = load_schema_dir(&dir).expect("pokeapi");
+        let decoder = create_entity_decoder_for_capability(
+            "Pokemon",
+            &cgs,
+            Some("pokemon_get"),
+            None,
+            Some("pikachu"),
+            None,
+        );
+        let body = serde_json::json!({
+            "id": 25,
+            "name": "pikachu",
+            "species": { "name": "pikachu", "id": 25, "is_legendary": false, "is_mythical": false },
+            "types": [
+                { "slot": 1, "type": { "name": "electric", "url": "https://pokeapi.co/api/v2/type/13/" } }
+            ],
+            "abilities": [
+                { "is_hidden": false, "slot": 1, "ability": { "name": "static", "url": "https://pokeapi.co/api/v2/ability/9/" } }
+            ]
+        });
+
+        std::thread::Builder::new()
+            .stack_size(4 * 1024 * 1024)
+            .spawn(move || {
+                let decoded = decode_entities(&decoder, &body).expect("decode pikachu");
+                assert_eq!(decoded.len(), 1);
+                assert!(decoded[0].relations.contains_key("species"));
+            })
+            .expect("spawn 4MiB decode thread")
+            .join()
+            .expect("join decode thread");
     }
 
     #[test]

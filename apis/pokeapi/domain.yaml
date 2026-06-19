@@ -31,12 +31,6 @@ entities:
         description: Pokémon that can have this ability.
         target: Pokemon
         cardinality: many
-        materialize:
-          kind: from_parent_get
-          path:
-          - key: pokemon
-          - wildcard: true
-          - key: pokemon
   Berry:
     id_field: name
     description: A berry item found in the Pokémon world.
@@ -1161,12 +1155,6 @@ entities:
         description: Pokémon with this type.
         target: Pokemon
         cardinality: many
-        materialize:
-          kind: from_parent_get
-          path:
-          - key: pokemon
-          - wildcard: true
-          - key: pokemon
   Version:
     id_field: name
     description: A specific game version (e.g. Red, Blue).

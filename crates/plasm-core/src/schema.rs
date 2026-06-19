@@ -2660,6 +2660,8 @@ impl CGS {
             }
         }
 
+        self.validate_from_parent_get_embed_acyclic()?;
+
         // Relation materialization (many requires `materialize:`; one must omit it)
         for (entity_name, entity) in &self.entities {
             for (relation_name, relation) in &entity.relations {
@@ -4312,6 +4314,12 @@ impl CGS {
             }
         }
         out
+    }
+
+    fn validate_from_parent_get_embed_acyclic(&self) -> Result<(), SchemaError> {
+        crate::relation_materialize::validate_from_parent_get_embed_acyclic(self).map_err(|cycle| {
+            SchemaError::FromParentGetEmbedCycle { cycle }
+        })
     }
 
     fn validate_from_parent_get_path(
