@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.35] - 2026-06-19
+
+### Added
+
+- **Incremental teaching exposure replay:** `TeachingExposureSession` replays federated seed waves with monotonic `e#`/`m#`/`p#`/`r#`; scoped `r#` expansion emits `plasm_expr` on relation symbol rows; `prompt_render` module split from symbol tuning.
+- **CEP-10 single-hop embed cutover:** flat `embed_decode` (no nested `.relations` queue); CGS cycle validation for `from_parent_get`; plan-scoped single-hop lookup; PokeAPI inverse embeds removed on `Type.pokemon` / `Ability.pokemon`.
+- **CI guard:** `check_no_graph_recursion.sh` bans decode recursion env knobs and nested relation compile paths.
+- **Smoke:** optional `scripts/smoke/mcp-pokeapi-pc1-bounded.sh` species hop boundedness check.
+
+### Changed
+
+- **Relation embed / decoder:** `wire_rows_with_path_embeds`, `extend_lookup_single_hop_embeds`, shared `json_to_value`; decoder construction extracted to `entity_decoder` module.
+- **Docs:** incremental teaching exposure replay section in monorepo `docs/incremental-teaching-prompts.md`; CEP-10 in `docs/concurrent-execute-invariants.md`.
+
+### Fixed
+
+- **Graph recursion stack overflow:** relation materialize and wire embed cap at one hop (fixes unbounded `Pokemon.species` / cyclic PokeAPI embed chains during live execute).
+
 ## [0.3.34] - 2026-06-19
 
 ### Added
