@@ -319,14 +319,14 @@ fn extract_id_from_source(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decoder::{FieldDecoder, PathExpr, RelationDecoder};
+    use crate::decoder::{PathExpr, RelationDecoder};
     use plasm_core::Cardinality;
     use serde_json::json;
 
     #[test]
     fn nested_embed_decoder_rejected() {
-        let detail = EntityDecoder::new("LangDetail", PathExpr::from_slice(&["detail"]))
-            .with_id_field("id");
+        let detail =
+            EntityDecoder::new("LangDetail", PathExpr::from_slice(&["detail"])).with_id_field("id");
         let summary = EntityDecoder::new("LangSummary", PathExpr::from_slice(&["summary"]))
             .with_id_field("id")
             .with_relations(vec![RelationDecoder {
@@ -346,9 +346,6 @@ mod tests {
             "summary": { "id": "s1", "detail": { "id": "d1" } }
         });
         let err = decode_entities(&item, &body).unwrap_err();
-        assert!(
-            err.to_string().contains("single-hop"),
-            "{err}"
-        );
+        assert!(err.to_string().contains("single-hop"), "{err}");
     }
 }
