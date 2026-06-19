@@ -1,11 +1,14 @@
 //! Fork–execute–commit graph path: live HTTP runs on a branch snapshot without
 //! holding the session graph mutex.
+//!
+//! **CEP-1..3:** epoch monotonicity, stale commit discard, single winner — validated by
+//! `shuttle_*` tests in [`concurrency_shuttle`] (primary graph concurrency gate).
 
 mod branch_ops;
 mod live_execute;
 mod stale_commit;
 
-#[cfg(all(test, feature = "shuttle-tests"))]
+#[cfg(test)]
 mod concurrency_shuttle;
 
 use plasm_runtime::SessionMaterialization;

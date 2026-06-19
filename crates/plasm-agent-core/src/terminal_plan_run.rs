@@ -28,6 +28,13 @@ fn session_unknown_handle(
     }
 }
 
+fn session_operation_failed(handle: impl AsRef<str>, error: String) -> OperationError {
+    OperationError::OperationFailed {
+        handle: handle.as_ref().to_string(),
+        error,
+    }
+}
+
 fn wait_hint(
     trace: Option<&PlasmTraceContext>,
     handle: &OperationHandle,
@@ -275,7 +282,7 @@ pub async fn resolve_terminal_plan_run(
         }
         if op.phase == crate::operation::OperationPhase::Failed {
             if let Some(err) = op.error.clone() {
-                return Err(session_unknown_handle(sess, key.as_str(), err));
+                return Err(session_operation_failed(key.as_str(), err));
             }
         }
     }
@@ -295,7 +302,7 @@ pub async fn resolve_terminal_plan_run(
         }
         crate::operation::OperationPollSnapshot::Succeeded(result) => Ok((*result).clone()),
         crate::operation::OperationPollSnapshot::Failed(error) => {
-            Err(session_unknown_handle(sess, key.as_str(), error))
+            Err(session_operation_failed(key.as_str(), error))
         }
         crate::operation::OperationPollSnapshot::Cancelled(progress) => {
             Ok(cancelled_plan_run_result(&key, &progress, sess))

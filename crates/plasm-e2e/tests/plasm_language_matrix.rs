@@ -1269,6 +1269,21 @@ fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<(), String> {
             ));
         }
     }
+    if row.features.iter().any(|f| f.starts_with("relation_")) {
+        let return_rows: usize = out.return_steps.iter().map(|s| s.result.count).sum();
+        if return_rows == 0 {
+            return Err(format!(
+                "row {}: relation feature set requires non-zero return step rows (CEP-5/6)",
+                row.id
+            ));
+        }
+        if md.contains("(no results)") {
+            return Err(format!(
+                "row {}: relation live run must not publish (no results)",
+                row.id
+            ));
+        }
+    }
     Ok(())
 }
 
@@ -1483,7 +1498,7 @@ const MATRIX_ROWS: &[MatrixRow] = &[
             "relation_prefer_from_parent_get",
         ],
         min_node_results: 1,
-        expect_markdown_substrings: &["```tsv", "LangTag"],
+        expect_markdown_substrings: &["```tsv", "item_id", "label"],
     },
     MatrixRow {
         id: "lang_bindings_render",
@@ -1593,7 +1608,7 @@ tags"#,
             "dry_live_parity",
         ],
         min_node_results: 2,
-        expect_markdown_substrings: &["```tsv", "LangTag"],
+        expect_markdown_substrings: &["```tsv", "item_id", "label"],
     },
     MatrixRow {
         id: "lang_relation_prefer_embed_miss",

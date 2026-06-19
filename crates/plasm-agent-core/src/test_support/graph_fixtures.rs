@@ -8,7 +8,7 @@ use plasm_core::{CgsContext, Ref, TypedFieldValue, Value, CGS};
 use plasm_runtime::{EntityCompleteness, ExecutionConfig, ExecutionEngine, ExecutionMode};
 
 use crate::execute_session::ExecuteSession;
-#[cfg(all(test, feature = "shuttle-tests"))]
+#[cfg(test)]
 use crate::execute_session::SessionCore;
 use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
 use crate::run_artifacts::RunArtifactStore;
@@ -101,7 +101,7 @@ impl SpillHostFixture {
     }
 }
 
-#[cfg(all(test, feature = "shuttle-tests"))]
+#[cfg(test)]
 pub async fn spill_one_page(
     fx: &SpillHostFixture,
     prompt_hash: &str,

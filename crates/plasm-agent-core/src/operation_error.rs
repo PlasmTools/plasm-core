@@ -1,4 +1,7 @@
 //! Structured errors for async operation wait/cancel continuations.
+//!
+//! **CEP-7:** terminal plan failures use [`OperationFailed`]; [`UnknownHandle`] is only for
+//! absent or unrecognized handles while the operation may still be in flight.
 
 use crate::operation::OperationProgress;
 
@@ -8,6 +11,10 @@ pub enum OperationError {
         handle: String,
         hint: String,
         open_handles: Vec<String>,
+    },
+    OperationFailed {
+        handle: String,
+        error: String,
     },
     NotOnReplica {
         handle: String,
@@ -23,12 +30,14 @@ pub enum OperationError {
 
 impl OperationError {
     pub const CODE_UNKNOWN: &'static str = "unknown_operation_handle";
+    pub const CODE_OPERATION_FAILED: &'static str = "operation_failed";
     pub const CODE_NOT_ON_REPLICA: &'static str = "operation_not_on_replica";
     pub const CODE_ARTIFACT_MISSING: &'static str = "operation_result_unavailable";
 
     pub fn code(&self) -> &'static str {
         match self {
             Self::UnknownHandle { .. } => Self::CODE_UNKNOWN,
+            Self::OperationFailed { .. } => Self::CODE_OPERATION_FAILED,
             Self::NotOnReplica { .. } => Self::CODE_NOT_ON_REPLICA,
             Self::ResultArtifactMissing { .. } => Self::CODE_ARTIFACT_MISSING,
         }
@@ -55,6 +64,9 @@ impl OperationError {
                 }
                 msg
             }
+            Self::OperationFailed { handle, error } => {
+                format!("operation `{handle}` failed: {error}")
+            }
             Self::NotOnReplica { handle, .. } => format!(
                 "operation `{handle}` is running on another host; poll `wait({handle})` until terminal or retry after completion"
             ),
@@ -77,6 +89,19 @@ impl std::fmt::Display for OperationError {
 #[cfg(test)]
 mod operation_error_tests {
     use super::*;
+
+    #[test]
+    fn operation_failed_detail_is_verbatim() {
+        let err = OperationError::OperationFailed {
+            handle: "o1".into(),
+            error: "session graph changed during concurrent execute; retry the request".into(),
+        };
+        assert_eq!(err.code(), OperationError::CODE_OPERATION_FAILED);
+        assert_eq!(
+            err.detail(),
+            "operation `o1` failed: session graph changed during concurrent execute; retry the request"
+        );
+    }
 
     #[test]
     fn unknown_handle_lists_open_handles_in_detail() {

@@ -331,4 +331,10 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
         !md_many.contains("(no results)"),
         "limit-many markdown must include rows, got: {md_many}"
     );
+
+    // CEP-5: graph-backed list surface → limit chain must rehydrate parent rows for downstream steps.
+    assert!(
+        one_step.result.entities.len() >= 1 && one_step.result.count >= 1,
+        "graph-backed limit step must materialize at least one entity row"
+    );
 }

@@ -39,7 +39,7 @@ use crate::trace_hub::{CodePlanRunArtifactRef, McpPlasmTraceSink};
 use crate::trace_sink_emit::PlasmTraceContext;
 use indexmap::IndexMap;
 use plasm_core::{
-    flatten_from_parent_get_source_rows, resolve_relation_row_resolution, EntityName, Expr, Ref,
+    flatten_from_parent_get_source_rows, EntityName, Expr, Ref,
     RelationMaterialization, RelationRowResolution, TypedFieldValue, Value,
 };
 use plasm_runtime::{
@@ -53,6 +53,7 @@ mod compute_eval;
 mod dry;
 pub mod evidence_plan;
 mod materialize;
+mod materialize_prefer;
 mod orchestrator;
 mod parse;
 mod plan_bounded_parallel;
@@ -299,5 +300,10 @@ fn graph_summary_with_approval_receipts(
 }
 
 #[cfg(test)]
-#[path = "integration_tests.rs"]
-mod tests;
+mod tests {
+    mod approval_policy;
+    mod compute_render;
+    mod dry_run;
+    mod materialize_tests;
+    mod support;
+}

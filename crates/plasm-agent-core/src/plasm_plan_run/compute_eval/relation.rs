@@ -77,6 +77,38 @@ pub(crate) async fn materialize_relation_singleton_chain(
     .await
 }
 
+/// Wire JSON rows extracted along a `from_parent_get` path — preserves nested embeds for chained hops.
+pub(crate) fn parent_get_wire_rows(
+    source_rows: &[serde_json::Value],
+    relation: &ValidatedRelationTraversalNode,
+    source_entity: &str,
+    cgs: &CGS,
+    target_entity: &str,
+) -> Result<Vec<serde_json::Value>, String> {
+    let rel_name = relation.relation.relation.as_str();
+    let path = match &relation.relation.materialize {
+        RelationMaterialization::FromParentGet { path }
+        | RelationMaterialization::PreferFromParentGet { path, .. } => path,
+        other => {
+            return Err(format!(
+                "parent_get_wire_rows expected from_parent_get materialize, got {other:?}"
+            ));
+        }
+    };
+    let rel_schema = cgs
+        .get_entity(source_entity)
+        .ok_or_else(|| format!("unknown source entity `{source_entity}`"))?
+        .relations
+        .get(rel_name)
+        .ok_or_else(|| format!("entity `{source_entity}` has no relation `{rel_name}`"))?;
+    Ok(normalize_parent_get_target_rows(
+        flatten_from_parent_get_source_rows(source_rows, path, rel_schema.cardinality),
+        path,
+        Some(cgs),
+        target_entity,
+    ))
+}
+
 /// When view `relation_outputs` (or other embed paths) populated `CachedEntity.relations`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn try_materialize_from_cached_relation_refs(
@@ -90,27 +122,53 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
 ) -> Result<Option<MaterializedNode>, String> {
     let rel_name = relation.relation.relation.as_str();
     let target_entity = relation.relation.target.entity.as_str();
-    let parents = &source_mat.result.entities;
+    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
+    let rehydrator = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
+        es,
+        st,
+        session_id,
+        scoped_es.cgs.as_ref(),
+    );
+    let parents = source_mat
+        .resolve_materialized_source_parents(&rehydrator)
+        .await;
     if parents.is_empty() || !parents.iter().all(|p| p.relations.contains_key(rel_name)) {
         return Ok(None);
     }
-    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
-    let graph = scoped_es.lock_graph_cache().await;
-    let Some(entities) =
-        collect_all_embedded_relation_targets(rel_name, target_entity, parents, &graph)
+    let source_rows: Vec<serde_json::Value> = rehydrator
+        .resolve_row_source_rows(&source_mat.row_source, None)
+        .await
+        .unwrap_or_default();
+    let Some((mut entities, embed_lookup)) =
+        crate::graph_rehydrate::snapshot_cached_embed_targets(
+            &scoped_es,
+            rel_name,
+            target_entity,
+            &parents,
+        )
+        .await?
     else {
         return Ok(None);
     };
-    drop(graph);
     let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
-    let mut entities = entities;
     crate::plan_read_bounds::truncate_to_read_cap(&mut entities, read_cap);
     let count = entities.len();
-    let source_rows: Vec<serde_json::Value> = source_mat
-        .row_source
-        .inline_rows()
-        .map(|rows| rows.to_vec())
-        .unwrap_or_default();
+    let graph_view = embed_lookup.materialization_view();
+    let wire_rows = match parent_get_wire_rows(
+        &source_rows,
+        relation,
+        source_mat.entity.as_str(),
+        scoped_es.cgs.as_ref(),
+        target_entity,
+    ) {
+        Ok(rows) if rows.len() == count && !rows.is_empty() => rows,
+        _ => crate::graph_rehydrate::wire_rows_with_nested_relation_embeds(
+            &entities,
+            target_entity,
+            scoped_es.cgs.as_ref(),
+            &graph_view,
+        ),
+    };
     let full_result = ExecutionResult {
         count,
         entities: entities.clone(),
@@ -142,11 +200,6 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
         trace,
     )
     .await?;
-    let rows: Vec<_> = full_result
-        .entities
-        .iter()
-        .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-        .collect();
     finalize_typed_relation_materialized_node(
         st,
         es,
@@ -157,7 +210,7 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
             entity: relation.relation.target.entity.clone(),
             display: format!("plan.relation({}) cached_embed", relation.id.as_str()),
             projection: relation.relation.ir.projection.clone(),
-            row_source: inline_row_source_owned(rows),
+            row_source: inline_row_source_owned(wire_rows),
             row_identities: row_identities_from_entities(
                 &scoped_es,
                 target_entity,
@@ -172,29 +225,6 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
     )
     .await
     .map(Some)
-}
-
-/// When every parent row has fully resolved embed refs in the session graph.
-pub(crate) fn collect_all_embedded_relation_targets(
-    relation_name: &str,
-    target_entity: &str,
-    parents: &[CachedEntity],
-    graph: &plasm_runtime::GraphCache,
-) -> Option<Vec<CachedEntity>> {
-    let mut out = Vec::new();
-    for parent in parents {
-        if !parent.relations.contains_key(relation_name) {
-            return None;
-        }
-        let refs = parent.relations.get(relation_name)?;
-        for r in refs {
-            if r.entity_type.as_str() != target_entity {
-                return None;
-            }
-            out.push(graph.get(r)?.clone());
-        }
-    }
-    Some(out)
 }
 
 #[allow(clippy::too_many_arguments)]

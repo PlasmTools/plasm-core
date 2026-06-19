@@ -1,4 +1,7 @@
 //! Server-side await loop for MCP live runs (internal async; one terminal tool response).
+//!
+//! **CEP-8:** propagate terminal [`OperationFailed`] immediately; retry polling only while
+//! the operation phase is still `Running`.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -69,7 +72,7 @@ async fn try_fetch_terminal_result(
     match fetch_terminal_result(ctx).await {
         Ok(result) if plan_run_result_is_terminal(&result) => Ok(Some(result)),
         Ok(_) => Ok(None),
-        Err(AwaitError::Operation(_)) => Ok(None),
+        Err(e @ AwaitError::Operation(_)) => Err(e),
         Err(e @ AwaitError::Timeout(_)) => Err(e),
     }
 }
@@ -78,8 +81,10 @@ async fn poll_until_terminal_result(
     ctx: &TerminalAwaitContext,
 ) -> Result<PlasmPlanRunResult, AwaitError> {
     loop {
-        if let Some(result) = try_fetch_terminal_result(ctx).await? {
-            return Ok(result);
+        match try_fetch_terminal_result(ctx).await {
+            Ok(Some(result)) => return Ok(result),
+            Ok(None) => {}
+            Err(e) => return Err(e),
         }
         let phase = ctx
             .es
@@ -134,41 +139,10 @@ pub async fn await_operation_terminal(
 
 #[cfg(test)]
 mod tests {
-    use uuid::Uuid;
-
     use super::*;
     use crate::operation::OpAcceptContext;
     use crate::operation_progress::{op_plasm_meta_short, OpWireSig};
-
-    fn minimal_host() -> Arc<PlasmHostState> {
-        let engine = plasm_runtime::ExecutionEngine::new(plasm_runtime::ExecutionConfig::default())
-            .expect("engine");
-        Arc::new(crate::http::build_plasm_host_state(
-            crate::http::PlasmHostBootstrap {
-                engine,
-                mode: plasm_runtime::ExecutionMode::Live,
-                registry: Arc::new(plasm_core::discovery::InMemoryCgsRegistry::from_pairs(
-                    Vec::new(),
-                )),
-                catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
-                plugin_manager: None,
-                incoming_auth: None,
-                run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
-                session_graph_persistence: None,
-                oss_local_filesystem_defaults: false,
-            },
-        ))
-    }
-
-    fn plain_trace() -> PlasmTraceContext {
-        PlasmTraceContext {
-            trace_id: Uuid::nil(),
-            call_index: None,
-            mcp_session_id: None,
-            logical_session_id: None,
-            logical_session_ref: None,
-        }
-    }
+    use crate::test_support::operation_fixtures::{minimal_host, plain_trace};
 
     #[test]
     fn plan_run_result_is_terminal_rejects_poll_snapshot() {

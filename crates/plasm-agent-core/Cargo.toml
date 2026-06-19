@@ -9,8 +9,6 @@ build = "build.rs"
 default = []
 # Heap profiling integration test (`tests/plasm_plan_run_alloc_budget.rs`).
 alloc-bench = []
-# In-crate Shuttle concurrency tests (`graph_execute/concurrency_shuttle.rs`).
-shuttle-tests = []
 # Local-only: allow bootstrap secrets from process env when `PLASM_SECRETS_DIR` is unset (never enable for k8s images).
 local_env_bootstrap_secrets = []
 # Forward to plasm-compile for EVM-backed schemas (e.g. apis/evm-erc20).

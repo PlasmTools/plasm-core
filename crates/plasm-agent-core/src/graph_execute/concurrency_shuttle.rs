@@ -235,17 +235,23 @@ async fn tokio_spill_apply_while_commit() {
     let cgs_apply = Arc::clone(&cgs);
     let apply = tokio::spawn(async move {
         let mut result = empty_graph_result(3);
-        {
+        let plan = {
             let guard = sess_apply.lock_graph_cache().await;
-            GraphSurfaceRehydrator::sync_result_from_materialization(
+            GraphSurfaceRehydrator::plan_spill_sync(
                 guard.materialization(),
+                host_apply.st.as_ref(),
+                "Berry",
+                &result,
+            )
+        };
+        if let Some(plan) = plan {
+            GraphSurfaceRehydrator::new(
                 &sess_apply,
                 host_apply.st.as_ref(),
                 "spill_sid",
-                "Berry",
                 cgs_apply.as_ref(),
-                &mut result,
             )
+            .apply_spill_sync(plan, &mut result)
             .await;
         }
         result.entities.len()
@@ -265,6 +271,55 @@ async fn tokio_spill_apply_while_commit() {
     assert_eq!(entity_count.expect("apply task"), 3);
 }
 
+#[tokio::test]
+async fn tokio_prefer_embed_apply_while_commit() {
+    let cgs = load_pokeapi_mini_cgs();
+    let sess = Arc::new(test_execute_session(cgs.clone(), "embed_plan_interleave"));
+    let host = SpillHostFixture::new();
+
+    {
+        let mut guard = sess.lock_graph_cache().await;
+        guard.insert(berry_entity("cheri")).expect("hot");
+        guard.insert(berry_entity("pecha")).expect("hot");
+    }
+
+    let sess_snap = Arc::clone(&sess);
+    let host_snap = host.clone();
+    let cgs_snap = Arc::clone(&cgs);
+    let snapshot = tokio::spawn(async move {
+        let rehydrator = GraphSurfaceRehydrator::new(
+            sess_snap.as_ref(),
+            host_snap.st.as_ref(),
+            "embed_sid",
+            cgs_snap.as_ref(),
+        );
+        for _ in 0..32 {
+            let _hot = rehydrator.snapshot_hot_locked("Berry").await;
+            tokio::task::yield_now().await;
+        }
+        true
+    });
+
+    let sess_commit = Arc::clone(&sess);
+    let commit = tokio::spawn(async move {
+        for i in 0..8 {
+            let mut branch = GraphExecuteBranch::fork(&sess_commit).await;
+            branch
+                .mat_mut()
+                .insert(berry_entity(&format!("commit_{i}")))
+                .expect("insert");
+            if branch.commit(&sess_commit).await.is_err() {
+                return false;
+            }
+        }
+        true
+    });
+
+    let (snap_ok, commit_ok) = tokio::join!(snapshot, commit);
+    assert!(snap_ok.expect("snapshot task"));
+    assert!(commit_ok.expect("commit task"));
+}
+
 fn empty_graph_result(count: usize) -> plasm_runtime::ExecutionResult {
     plasm_runtime::ExecutionResult {
         entities: Vec::new(),
@@ -276,4 +331,164 @@ fn empty_graph_result(count: usize) -> plasm_runtime::ExecutionResult {
         stats: plasm_runtime::ExecutionStats::default(),
         request_fingerprints: Vec::new(),
     }
+}
+
+/// CEP-1..3: N branches forked at one epoch, each committed in its **own** task — the PCT
+/// scheduler interleaves the commits and exactly one wins the optimistic epoch CAS.
+#[test]
+fn shuttle_parallel_fanout_commits() {
+    shuttle::check_pct(
+        || {
+            future::block_on(async {
+                let session = shuttle_session();
+                let mut forks = Vec::new();
+                for _ in 0..4 {
+                    let fork = {
+                        let guard = lock_session(&session);
+                        fork_materialization(&guard)
+                    };
+                    forks.push(fork);
+                }
+                let epoch0 = forks[0].1;
+                assert!(
+                    forks.iter().all(|(_, e)| *e == epoch0),
+                    "all branches fork from the same epoch"
+                );
+
+                let wins = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let mut handles = Vec::new();
+                for (mut branch, epoch) in forks {
+                    insert_on(&mut branch, berry_entity("fanout_win"));
+                    let session_t = ShuttleArc::clone(&session);
+                    let wins_t = std::sync::Arc::clone(&wins);
+                    handles.push(future::spawn(async move {
+                        future::yield_now().await;
+                        let mut guard = lock_session(&session_t);
+                        if commit_materialization(&mut guard, epoch, branch).is_ok() {
+                            wins_t.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }));
+                }
+                for handle in handles {
+                    handle.await.expect("commit task");
+                }
+
+                let guard = lock_session(&session);
+                let commit_wins = wins.load(std::sync::atomic::Ordering::SeqCst);
+                assert_eq!(
+                    commit_wins, 1,
+                    "exactly one parallel fan-out commit may win (CEP-1..3)"
+                );
+                assert!(
+                    has_ref(&guard, "fanout_win"),
+                    "winning branch entity present"
+                );
+            });
+        },
+        PCT_DEPTH,
+        PCT_ITERATIONS,
+    );
+}
+
+/// CEP-5: hot snapshot row count matches logical GraphBacked count (no HTTP).
+#[tokio::test]
+async fn cep_5_graph_backed_parent_row_count() {
+    use plasm_runtime::MaterializedRowSource;
+
+    let cgs = load_pokeapi_mini_cgs();
+    let sess = test_execute_session(cgs.clone(), "cep5_rows");
+    {
+        let mut guard = sess.lock_graph_cache().await;
+        for name in ["cheri", "pecha", "oran"] {
+            guard.insert(berry_entity(name)).expect("insert");
+        }
+    }
+    let result = empty_graph_result(3);
+    let host = SpillHostFixture::new();
+    let rehydrator = GraphSurfaceRehydrator::new(&sess, host.st.as_ref(), "cep5_sid", cgs.as_ref());
+    let parents = rehydrator.resolve_source_parents("Berry", &result).await;
+    assert_eq!(parents.len(), 3, "CEP-5: parents must match logical count");
+    let row_source = MaterializedRowSource::GraphBacked {
+        entity_type: "Berry".into(),
+        logical_count: 3,
+        hot_snapshot: rehydrator.snapshot_hot_locked("Berry").await,
+    };
+    let rows = rehydrator
+        .resolve_row_source_rows(&row_source, None)
+        .await
+        .expect("rows");
+    assert_eq!(
+        rows.len(),
+        parents.len(),
+        "CEP-5: row_source rows must align with parent entities"
+    );
+}
+
+/// CEP: the branch retry loop (`run_with_stale_epoch_retry` shape) makes progress under
+/// bounded concurrent epoch bumps. A background writer bumps the epoch fewer times than the
+/// retry budget, so across every PCT interleaving the loop must commit its entity, and the
+/// discarded (stale) branches never leak a second copy.
+#[test]
+fn shuttle_branch_retry_loop_commits_under_bounded_contention() {
+    use crate::graph_execute::stale_commit::{stale_commit_should_retry, MAX_STALE_EPOCH_RETRIES};
+
+    shuttle::check_pct(
+        || {
+            future::block_on(async {
+                let session = shuttle_session();
+                // Strictly fewer epoch bumps than the retry budget => the loop must win.
+                let bumps = MAX_STALE_EPOCH_RETRIES - 1;
+                let session_bg = ShuttleArc::clone(&session);
+                let bumper = future::spawn(async move {
+                    for i in 0..bumps {
+                        future::yield_now().await;
+                        let mut guard = lock_session(&session_bg);
+                        insert_on(&mut guard, berry_entity(&format!("bg_bump_{i}")));
+                    }
+                });
+
+                let mut committed = false;
+                let mut exhausted = None;
+                for attempt in 0..=MAX_STALE_EPOCH_RETRIES {
+                    let (mut branch, epoch) = {
+                        let guard = lock_session(&session);
+                        fork_materialization(&guard)
+                    };
+                    future::yield_now().await;
+                    insert_on(&mut branch, berry_entity("retry_loop_win"));
+                    future::yield_now().await;
+                    let mut guard = lock_session(&session);
+                    match commit_materialization(&mut guard, epoch, branch) {
+                        Ok(_) => {
+                            committed = true;
+                            break;
+                        }
+                        Err(GraphCommitError::StaleParentEpoch { .. })
+                            if stale_commit_should_retry(attempt) =>
+                        {
+                            drop(guard);
+                            future::yield_now().await;
+                        }
+                        Err(e) => {
+                            exhausted = Some(e);
+                            break;
+                        }
+                    }
+                }
+                bumper.await.expect("bumper task");
+
+                let guard = lock_session(&session);
+                assert!(
+                    committed,
+                    "bounded contention (< retry budget) must let the loop commit: {exhausted:?}"
+                );
+                assert!(
+                    has_ref(&guard, "retry_loop_win"),
+                    "retry loop entity present after the winning commit"
+                );
+            });
+        },
+        PCT_DEPTH,
+        PCT_ITERATIONS,
+    );
 }

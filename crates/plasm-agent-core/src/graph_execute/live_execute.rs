@@ -202,7 +202,10 @@ pub async fn run_with_stale_epoch_retry(
         match branch.commit(sess).await {
             Ok(_epoch) => return branch_result,
             Err(GraphCommitError::StaleParentEpoch { expected, found })
-                if stale_commit_should_retry(attempt, expected, found) => {}
+                if stale_commit_should_retry(attempt) =>
+            {
+                super::stale_commit::record_stale_epoch_branch_retry(attempt, expected, found);
+            }
             Err(GraphCommitError::StaleParentEpoch { expected, found }) => {
                 return Err(GraphBranchRunError::StaleCommit {
                     expected,

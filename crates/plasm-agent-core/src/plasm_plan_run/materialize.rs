@@ -1,4 +1,7 @@
 //! Plan node and relation materialization.
+//!
+//! **CEP-5:** relation paths resolve parent rows via [`GraphSurfaceRehydrator::resolve_source_parents`],
+//! not `result.entities` alone when the source node is GraphBacked.
 
 use super::*;
 
@@ -307,15 +310,15 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
     let ent = cgs
         .get_entity(source_mat.entity.as_str())
         .ok_or_else(|| format!("unknown source entity `{}`", source_mat.entity))?;
-    let rel_schema = ent
+    if !ent
         .relations
-        .get(relation.relation.relation.as_str())
-        .ok_or_else(|| {
-            format!(
-                "entity `{}` has no relation `{}`",
-                source_mat.entity, relation.relation.relation
-            )
-        })?;
+        .contains_key(relation.relation.relation.as_str())
+    {
+        return Err(format!(
+            "entity `{}` has no relation `{}`",
+            source_mat.entity, relation.relation.relation
+        ));
+    }
     let path = match &relation.relation.materialize {
         RelationMaterialization::FromParentGet { path }
         | RelationMaterialization::PreferFromParentGet { path, .. } => path,
@@ -336,17 +339,19 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
     }
     let target = relation.relation.target.entity.as_str();
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
-    let rows = normalize_parent_get_target_rows(
-        flatten_from_parent_get_source_rows(source_rows, path, rel_schema.cardinality),
-        path,
-        Some(scoped_es.cgs.as_ref()),
+    let wire_rows = super::compute_eval::parent_get_wire_rows(
+        source_rows,
+        relation,
+        source_mat.entity.as_str(),
+        scoped_es.cgs.as_ref(),
         target,
-    );
-    let entities = json_rows_to_entities_with_refs(target, &rows, Some(scoped_es.cgs.as_ref()));
+    )?;
+    let entities =
+        json_rows_to_entities_with_refs(target, &wire_rows, Some(scoped_es.cgs.as_ref()));
     let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
     let mut entities = entities;
     crate::plan_read_bounds::truncate_to_read_cap(&mut entities, read_cap);
-    let request_fingerprints = vec![compute_fingerprint(node, &rows)];
+    let request_fingerprints = vec![compute_fingerprint(node, &wire_rows)];
     let full_result = ExecutionResult {
         count: entities.len(),
         entities: entities.clone(),
@@ -392,7 +397,7 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
             entity: relation.relation.target.entity.clone(),
             display,
             projection: relation.relation.ir.projection.clone(),
-            row_source: inline_row_source(&[]),
+            row_source: inline_row_source_owned(wire_rows),
             row_identities,
             result: Arc::new(full_result),
             artifact: Some(artifact),
@@ -405,319 +410,7 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
     .map(Some)
 }
 
-/// PreferFromParentGet: embed from graph when possible; otherwise per-row scoped GET via
-/// [`run_parsed_plasm_line`] (graph branch fork/commit — session mutex not held during HTTP).
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn materialize_prefer_from_parent_get_relation(
-    st: &PlasmHostState,
-    es: &ExecuteSession,
-    session_id: &str,
-    node_index: usize,
-    node: &ValidatedPlanNode,
-    relation: &ValidatedRelationTraversalNode,
-    source_mat: &MaterializedNode,
-    source_rows: &[serde_json::Value],
-    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-    trace: Option<&PlasmTraceContext>,
-    sink: Option<&McpPlasmTraceSink>,
-    plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
-) -> Result<MaterializedNode, String> {
-    let RelationMaterialization::PreferFromParentGet { path, .. } = &relation.relation.materialize
-    else {
-        return Err(format!(
-            "relation `{}` expected PreferFromParentGet materialize",
-            relation.relation.relation
-        ));
-    };
-    let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
-    let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
-    let rel_name = relation.relation.relation.as_str();
-    let target_entity = relation.relation.target.entity.as_str();
-    let source_entity_def = scoped_es
-        .cgs
-        .entities
-        .values()
-        .find(|ent| ent.relations.contains_key(rel_name))
-        .ok_or_else(|| {
-            format!("no catalog entity declares relation `{rel_name}` for prefer embed")
-        })?;
-    let rel_schema = source_entity_def
-        .relations
-        .get(rel_name)
-        .ok_or_else(|| format!("relation `{rel_name}` missing on catalog entity"))?;
-    let all_wire_embedded = !source_rows.is_empty()
-        && source_rows.iter().all(|row| {
-            !flatten_from_parent_get_source_rows(
-                std::slice::from_ref(row),
-                path,
-                rel_schema.cardinality,
-            )
-            .is_empty()
-        });
-    if all_wire_embedded {
-        if let Some(node) = try_materialize_from_parent_get_relation(
-            st,
-            es,
-            session_id,
-            node,
-            relation,
-            source_mat,
-            source_rows,
-            trace,
-        )
-        .await?
-        {
-            return Ok(node);
-        }
-    }
-    let parents = &source_mat.result.entities;
-    let all_embedded_entities: Option<Vec<CachedEntity>> = {
-        let graph = scoped_es.lock_graph_cache().await;
-        let all_embed = parents.len() == source_rows.len()
-            && parents.iter().zip(source_rows).all(|(parent, row)| {
-                matches!(
-                    resolve_relation_row_resolution(
-                        &relation.relation.materialize,
-                        rel_name,
-                        target_entity,
-                        row,
-                        parent.relations.get(rel_name).map(|v| v.as_slice()),
-                        |r| graph.get(r).is_some(),
-                    ),
-                    RelationRowResolution::EmbeddedRefs(_)
-                )
-            });
-        if all_embed {
-            collect_all_embedded_relation_targets(rel_name, target_entity, parents, &graph)
-        } else {
-            None
-        }
-    };
-    if let Some(mut entities) = all_embedded_entities {
-        crate::plan_read_bounds::truncate_to_read_cap(&mut entities, read_cap);
-        let count = entities.len();
-        let full_result = ExecutionResult {
-            count,
-            entities: entities.clone(),
-            has_more: false,
-            pagination_resume: None,
-            paging_handle: None,
-            source: ExecutionSource::Cache,
-            stats: ExecutionStats {
-                duration_ms: 0,
-                network_requests: 0,
-                cache_hits: count,
-                cache_misses: 0,
-                ..Default::default()
-            },
-            request_fingerprints: vec![compute_fingerprint(node, source_rows)],
-        };
-        let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(node);
-        let artifact = archive_plasm_result_snapshot(
-            st,
-            es,
-            session_id,
-            Some(relation.relation.target.entry_id.as_str()),
-            vec![format!(
-                "plan.relation({}) prefer_embed_all",
-                relation.id.as_str()
-            )],
-            &parsed_preimage,
-            &full_result,
-            trace,
-        )
-        .await?;
-        let rows: Vec<_> = full_result
-            .entities
-            .iter()
-            .map(|e| cached_entity_row_json(e, scoped_es.cgs.as_ref()))
-            .collect();
-        return finalize_typed_relation_materialized_node(
-            st,
-            es,
-            session_id,
-            &relation.relation.target,
-            MaterializedNode {
-                entry_id: relation.relation.target.entry_id.clone(),
-                entity: relation.relation.target.entity.clone(),
-                display: format!(
-                    "plan.relation({}) prefer_from_parent_get (all embedded)",
-                    relation.id.as_str()
-                ),
-                projection: relation.relation.ir.projection.clone(),
-                row_source: inline_row_source_owned(rows),
-                row_identities: row_identities_from_entities(
-                    &scoped_es,
-                    target_entity,
-                    &full_result.entities,
-                ),
-                result: Arc::new(full_result),
-                artifact: Some(artifact),
-            },
-            trace,
-            read_cap,
-            plan_shared,
-        )
-        .await;
-    }
-    let pe = ParsedExpr {
-        expr: relation.relation.ir.expr.clone(),
-        projection: relation.relation.ir.projection.clone(),
-    };
-    let source_node = &relation.relation.source;
-    let base_display = relation
-        .relation
-        .ir
-        .display_expr
-        .clone()
-        .unwrap_or_else(|| format!("plan.relation({})", relation.id.as_str()));
-    let resolutions: Vec<RelationRowResolution> = {
-        let graph = scoped_es.lock_graph_cache().await;
-        source_rows
-            .iter()
-            .enumerate()
-            .map(|(row_index, source_row)| {
-                let parent = parents.get(row_index);
-                resolve_relation_row_resolution(
-                    &relation.relation.materialize,
-                    rel_name,
-                    target_entity,
-                    source_row,
-                    parent
-                        .and_then(|p| p.relations.get(rel_name))
-                        .map(|v| v.as_slice()),
-                    |r| graph.get(r).is_some(),
-                )
-            })
-            .collect()
-    };
-    let mut per_row: Vec<Vec<CachedEntity>> = vec![Vec::new(); resolutions.len()];
-    let mut request_fingerprints = Vec::new();
-    let mut stats = ExecutionStats {
-        duration_ms: 0,
-        network_requests: 0,
-        cache_hits: 0,
-        cache_misses: 0,
-        ..Default::default()
-    };
-    let mut source = ExecutionSource::Cache;
-    let mut scoped_jobs = Vec::new();
-    for (row_index, resolution) in resolutions.iter().enumerate() {
-        let source_row = &source_rows[row_index];
-        match resolution {
-            RelationRowResolution::EmbeddedRefs(refs) => {
-                let graph = scoped_es.lock_graph_cache().await;
-                for r in refs {
-                    let e = graph
-                        .get(r)
-                        .ok_or_else(|| format!("prefer embed: missing graph target {r}"))?
-                        .clone();
-                    per_row[row_index].push(e);
-                }
-            }
-            RelationRowResolution::ScopedQuery => {
-                let wire_rows = normalize_parent_get_target_rows(
-                    flatten_from_parent_get_source_rows(
-                        std::slice::from_ref(source_row),
-                        path,
-                        rel_schema.cardinality,
-                    ),
-                    path,
-                    Some(scoped_es.cgs.as_ref()),
-                    target_entity,
-                );
-                if !wire_rows.is_empty() {
-                    let wire_entities = json_rows_to_entities_with_refs(
-                        target_entity,
-                        &wire_rows,
-                        Some(scoped_es.cgs.as_ref()),
-                    );
-                    per_row[row_index].extend(wire_entities);
-                    continue;
-                }
-                let row_identity = source_mat
-                    .row_identities
-                    .get(row_index)
-                    .and_then(|i| i.as_ref())
-                    .cloned();
-                let input_rows = materialized_result_use_inputs_with_source_row(
-                    materialized,
-                    &relation.uses_result,
-                    source_node,
-                    source_row,
-                    row_identity,
-                )?;
-                let wire_coercion = wire_coercion_ctx_for_source_entity(
-                    scoped_es.cgs.as_ref(),
-                    source_mat.entity.as_str(),
-                );
-                let parsed = instantiate_parsed_expr_plan_inputs_with_rows(
-                    pe.clone(),
-                    &input_rows,
-                    wire_coercion,
-                )?;
-                let expr_label = format!("{base_display} [row {row_index}]");
-                super::plan_fanout_parallel::push_verified_row_job(
-                    &mut scoped_jobs,
-                    &scoped_es,
-                    node_index,
-                    row_index,
-                    expr_label,
-                    parsed,
-                )?;
-            }
-        }
-    }
-    if !scoped_jobs.is_empty() {
-        let policy = super::plan_fanout_parallel::RowFanoutPolicy::relation_scoped(read_cap);
-        let results = super::plan_fanout_parallel::run_plan_line_jobs_parallel(
-            st,
-            &scoped_es,
-            session_id,
-            scoped_jobs,
-            trace,
-            sink,
-            plan_shared.clone(),
-            policy.preflight,
-            policy.concurrency,
-        )
-        .await?;
-        super::plan_fanout_parallel::merge_fanout_job_results(
-            &mut source,
-            &mut stats,
-            &mut request_fingerprints,
-            &mut per_row,
-            &results,
-            policy.stats,
-        );
-    }
-    let mut entities = super::plan_fanout_parallel::flatten_per_row_entities(per_row);
-    crate::plan_read_bounds::truncate_to_read_cap(&mut entities, read_cap);
-    let full_result =
-        execution_result_from_relation_entities(entities, source, stats, request_fingerprints);
-    archive_materialize_relation_result_hydrated(
-        st,
-        es,
-        session_id,
-        &scoped_es,
-        relation,
-        node,
-        full_result,
-        format!(
-            "plan.relation({}) prefer_from_parent_get",
-            relation.id.as_str()
-        ),
-        format!(
-            "plan.relation({}) prefer_from_parent_get (mixed)",
-            relation.id.as_str()
-        ),
-        read_cap,
-        trace,
-        plan_shared.clone(),
-    )
-    .await
-}
-
+pub(crate) use materialize_prefer::materialize_prefer_from_parent_get_relation;
 pub(crate) async fn materialized_rows(
     es: &ExecuteSession,
     st: &PlasmHostState,

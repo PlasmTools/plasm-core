@@ -4,6 +4,15 @@ use plasm_runtime::RuntimeError;
 
 use crate::execute_session::GraphEpoch;
 
+/// Stable user-facing copy when optimistic graph commit loses the epoch race.
+pub const STALE_GRAPH_EPOCH_USER_MESSAGE: &str =
+    "session graph changed during concurrent execute; retry the request";
+
+#[must_use]
+pub fn stale_graph_epoch_user_message() -> String {
+    STALE_GRAPH_EPOCH_USER_MESSAGE.to_string()
+}
+
 #[derive(Debug)]
 pub enum RunLineError {
     Parse(String),
@@ -35,9 +44,7 @@ pub fn display_run_line_error(e: RunLineError) -> String {
             format!("artifact serialization failed: {err}")
         }
         RunLineError::ArtifactPersist(d) => format!("run artifact persist failed: {d}"),
-        RunLineError::StaleGraphEpoch { .. } => {
-            "session graph changed during concurrent execute; retry the request".to_string()
-        }
+        RunLineError::StaleGraphEpoch { .. } => stale_graph_epoch_user_message(),
         RunLineError::Operation(_) => {
             "operation continuation is not valid inside a plan surface node".to_string()
         }
