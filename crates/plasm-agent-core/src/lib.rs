@@ -70,6 +70,7 @@ pub mod mcp_run_await;
 mod mcp_run_markdown;
 pub mod mcp_runtime_config;
 pub mod mcp_server;
+mod mcp_inbound_oauth;
 mod mcp_stream_auth;
 pub mod mcp_transport_auth;
 pub mod mcp_transport_store;

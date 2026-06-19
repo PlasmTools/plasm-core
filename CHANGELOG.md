@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.37] - 2026-06-19
+
+### Changed
+
+- **MCP inbound OAuth:** full cutover to auth-framework — DCR (`ClientRegistrationManager`), session KV (`oauth_auth_code:*`, `oauth_refresh:*`), and access tokens via `JwtManager` with RFC 8707 `resource` / `aud` scoping. Removed custom `plasm:incoming_oauth:*` KV.
+- **Module split:** `mcp_inbound_oauth/` submodules (resource, client, session store, JWT, grants, DCR); `mcp_stream_auth.rs` is a thin HTTP/`AuthProvider` adapter. Single client store via DCR registration KV only; peek-then-consume auth codes; typed JWT claims.
+
 ## [0.3.36] - 2026-06-19
 
 ### Added

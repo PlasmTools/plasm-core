@@ -4,7 +4,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use auth_framework::storage::MemoryStorage;
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Header, Validation};
+use jsonwebtoken::{encode, EncodingKey};
 use plasm_agent::http::{build_plasm_host_state, PlasmHostBootstrap};
 use plasm_agent::incoming_auth::{IncomingAuthConfig, IncomingAuthMode, IncomingAuthVerifier};
 use plasm_agent::mcp_api_key_registry::McpApiKeyRegistry;
@@ -19,7 +20,7 @@ use plasm_agent::server_state::PlasmSaaSHostExtension;
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_core::loader::load_schema;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode, SecretProvider};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -74,6 +75,32 @@ fn mint_principal_jwt(subject: &str, tenant_id: &str) -> String {
         &EncodingKey::from_secret(TEST_JWT_SECRET.as_bytes()),
     )
     .expect("mint principal jwt")
+}
+
+fn decode_oauth_access_token_claims(token: &str) -> (String, Vec<String>) {
+    #[derive(Debug, Deserialize)]
+    struct AccessClaims {
+        iss: String,
+        aud: serde_json::Value,
+    }
+
+    let mut validation = Validation::new(Algorithm::HS256);
+    validation.validate_exp = false;
+    let data = decode::<AccessClaims>(
+        token,
+        &DecodingKey::from_secret(TEST_JWT_SECRET.as_bytes()),
+        &validation,
+    )
+    .expect("decode oauth access token");
+    let aud = match &data.claims.aud {
+        serde_json::Value::String(s) => vec![s.clone()],
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect(),
+        _ => panic!("unexpected aud claim shape"),
+    };
+    (data.claims.iss, aud)
 }
 
 fn base64url_sha256(input: &str) -> String {
@@ -150,6 +177,7 @@ async fn spawn_mcp_server() -> Option<(String, tokio::task::JoinHandle<()>, Opti
     let port = listener.local_addr().expect("local addr").port();
     drop(listener);
 
+    std::env::set_var("PLASM_AUTH_JWT_SECRET", TEST_JWT_SECRET);
     std::env::set_var(
         "PLASM_MCP_PUBLIC_BASE_URL",
         format!("http://127.0.0.1:{port}"),
@@ -263,6 +291,7 @@ async fn inbound_oauth_dynamic_registration_pkce_and_transport_access() {
             ("state", "s1"),
             ("code_challenge", challenge.as_str()),
             ("code_challenge_method", "S256"),
+            ("resource", resource),
             ("principal_token", principal.as_str()),
         ])
         .send()
@@ -290,6 +319,7 @@ async fn inbound_oauth_dynamic_registration_pkce_and_transport_access() {
             ("code", code.as_str()),
             ("redirect_uri", "https://example.com/callback"),
             ("code_verifier", verifier),
+            ("resource", resource),
         ])
         .send()
         .await
@@ -298,6 +328,12 @@ async fn inbound_oauth_dynamic_registration_pkce_and_transport_access() {
     let token_body: serde_json::Value = token.json().await.expect("token body");
     let access_token = token_body["access_token"].as_str().expect("access_token");
     let refresh_token = token_body["refresh_token"].as_str().expect("refresh_token");
+    let (iss, aud) = decode_oauth_access_token_claims(access_token);
+    assert_eq!(iss, resource, "access token iss must be MCP resource URL");
+    assert!(
+        aud.iter().any(|a| a == resource),
+        "access token aud must include MCP resource URL"
+    );
 
     // Auth passes if MCP does not return transport auth failures (content may still be invalid).
     let mcp = client
@@ -319,6 +355,7 @@ async fn inbound_oauth_dynamic_registration_pkce_and_transport_access() {
             ("grant_type", "refresh_token"),
             ("client_id", client_id.as_str()),
             ("refresh_token", refresh_token),
+            ("resource", resource),
         ])
         .send()
         .await
@@ -378,6 +415,78 @@ async fn inbound_oauth_dynamic_registration_pkce_and_transport_access() {
         .expect("mcp request with refreshed access token");
     assert_ne!(mcp_refreshed.status(), reqwest::StatusCode::UNAUTHORIZED);
     assert_ne!(mcp_refreshed.status(), reqwest::StatusCode::FORBIDDEN);
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn inbound_oauth_rejects_wrong_resource_parameter() {
+    let Some((base, handle, _keep)) = spawn_mcp_server().await else {
+        return;
+    };
+    let client = http_client();
+
+    let prm = client
+        .get(format!(
+            "{base}/mcp/.well-known/oauth-protected-resource/mcp"
+        ))
+        .send()
+        .await
+        .expect("protected resource metadata request");
+    let prm_body: serde_json::Value = prm.json().await.expect("protected resource metadata body");
+    let resource = prm_body["resource"]
+        .as_str()
+        .expect("resource metadata URL");
+
+    let client_id =
+        register_dynamic_client(&client, &base, &["authorization_code", "refresh_token"]).await;
+    let verifier = "verifier-resource-test-1234567890";
+    let challenge = base64url_sha256(verifier);
+    let principal = mint_principal_jwt("user-a", "tenant-a");
+    let authz = client
+        .get(format!("{base}/mcp/oauth/authorize"))
+        .query(&[
+            ("response_type", "code"),
+            ("client_id", client_id.as_str()),
+            ("redirect_uri", "https://example.com/callback"),
+            ("code_challenge", challenge.as_str()),
+            ("code_challenge_method", "S256"),
+            ("resource", resource),
+            ("principal_token", principal.as_str()),
+        ])
+        .send()
+        .await
+        .expect("authorize request");
+    assert_eq!(authz.status(), reqwest::StatusCode::FOUND);
+    let location = authz
+        .headers()
+        .get(reqwest::header::LOCATION)
+        .expect("location header")
+        .to_str()
+        .expect("location string");
+    let code = reqwest::Url::parse(location)
+        .expect("redirect URL")
+        .query_pairs()
+        .find(|(k, _)| k == "code")
+        .map(|(_, v)| v.to_string())
+        .expect("auth code");
+
+    let bad_resource = client
+        .post(format!("{base}/mcp/oauth/token"))
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("client_id", client_id.as_str()),
+            ("code", code.as_str()),
+            ("redirect_uri", "https://example.com/callback"),
+            ("code_verifier", verifier),
+            ("resource", "https://evil.example/mcp"),
+        ])
+        .send()
+        .await
+        .expect("token request with wrong resource");
+    assert_eq!(bad_resource.status(), reqwest::StatusCode::BAD_REQUEST);
+    let body: serde_json::Value = bad_resource.json().await.expect("error body");
+    assert_eq!(body["error"].as_str(), Some("invalid_target"));
 
     handle.abort();
 }
