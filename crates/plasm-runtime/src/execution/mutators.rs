@@ -75,11 +75,12 @@ impl ExecutionEngine {
                 .await?;
                 let response =
                     narrow_http_graphql_response_for_entity_decode(&capability_template, response)?;
+                let identity_ambient = cml_env_to_identity_strings(&env);
                 let decoder = mutating_capability_response_decoder(
                     create.entity.as_str(),
                     create.capability.as_str(),
                     cgs,
-                    &env,
+                    &identity_ambient,
                     None,
                 );
                 let decoded = decode_entities(&decoder, &response)?;
@@ -297,11 +298,12 @@ impl ExecutionEngine {
                 // the cache's additive merge preserves existing fields from other
                 // projections (e.g. url, timestamps from page_get).
                 let rid = invoke.target.simple_id().map(|s| s.as_str());
+                let identity_ambient = cml_env_to_identity_strings(&env);
                 let decoder = mutating_capability_response_decoder(
                     invoke.target.entity_type.as_str(),
                     invoke.capability.as_str(),
                     cgs,
-                    &env,
+                    &identity_ambient,
                     rid,
                 );
                 let decoded = decode_entities(&decoder, &response).unwrap_or_default();

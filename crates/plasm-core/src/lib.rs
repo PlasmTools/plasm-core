@@ -249,7 +249,8 @@ pub use wire_coercion::{
 pub mod relation_materialize;
 pub use relation_materialize::{
     extract_from_parent_get_value, flatten_from_parent_get_source_rows,
-    partition_prefer_resolutions, relation_refs_fully_resolved, resolve_relation_row_resolution,
+    from_parent_get_embed_edges, partition_prefer_resolutions, relation_refs_fully_resolved,
+    resolve_relation_row_resolution, validate_from_parent_get_embed_acyclic,
     RelationRowResolution,
 };
 pub use relation_segment::{

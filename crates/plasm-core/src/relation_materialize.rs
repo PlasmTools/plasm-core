@@ -140,6 +140,92 @@ where
         .collect()
 }
 
+/// Directed edges `(source_entity, relation) → target_entity` for embed materialization strategies.
+pub fn from_parent_get_embed_edges(cgs: &crate::CGS) -> Vec<(String, String, String)> {
+    use crate::RelationMaterialization;
+
+    let mut edges = Vec::new();
+    for (entity_name, entity) in &cgs.entities {
+        for (relation_name, relation) in &entity.relations {
+            let Some(target) = (match &relation.materialize {
+                Some(RelationMaterialization::FromParentGet { .. })
+                | Some(RelationMaterialization::PreferFromParentGet { .. }) => {
+                    Some(relation.target_resource.to_string())
+                }
+                _ => None,
+            }) else {
+                continue;
+            };
+            edges.push((
+                entity_name.to_string(),
+                relation_name.to_string(),
+                target,
+            ));
+        }
+    }
+    edges
+}
+
+/// Fail when `from_parent_get` / `prefer_from_parent_get` edges form an entity-level cycle.
+pub fn validate_from_parent_get_embed_acyclic(cgs: &crate::CGS) -> Result<(), String> {
+    let edges = from_parent_get_embed_edges(cgs);
+    let mut adj: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for (from, _rel, to) in &edges {
+        // Self-embed (e.g. HN Item.kids → Item) is single-hop safe; skip for cycle detection.
+        if from == to {
+            continue;
+        }
+        adj.entry(from.clone()).or_default().push(to.clone());
+    }
+    for start in adj.keys().cloned().collect::<Vec<_>>() {
+        if let Some(cycle) = find_entity_cycle(&adj, &start) {
+            return Err(cycle.join(" → "));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn find_entity_cycle(
+    adj: &std::collections::HashMap<String, Vec<String>>,
+    start: &str,
+) -> Option<Vec<String>> {
+    fn dfs(
+        adj: &std::collections::HashMap<String, Vec<String>>,
+        node: &str,
+        stack: &mut Vec<String>,
+        on_stack: &mut std::collections::HashSet<String>,
+        visited: &mut std::collections::HashSet<String>,
+    ) -> Option<Vec<String>> {
+        if on_stack.contains(node) {
+            let pos = stack.iter().position(|n| n == node).unwrap_or(stack.len());
+            let mut cycle = stack[pos..].to_vec();
+            cycle.push(node.to_string());
+            return Some(cycle);
+        }
+        if visited.contains(node) {
+            return None;
+        }
+        visited.insert(node.to_string());
+        on_stack.insert(node.to_string());
+        stack.push(node.to_string());
+        if let Some(nexts) = adj.get(node) {
+            for next in nexts {
+                if let Some(cycle) = dfs(adj, next, stack, on_stack, visited) {
+                    return Some(cycle);
+                }
+            }
+        }
+        stack.pop();
+        on_stack.remove(node);
+        None
+    }
+
+    let mut stack = Vec::new();
+    let mut on_stack = std::collections::HashSet::new();
+    let mut visited = std::collections::HashSet::new();
+    dfs(adj, start, &mut stack, &mut on_stack, &mut visited)
+}
+
 /// Flatten extracted path values across parent rows (plan materialize helper).
 pub fn flatten_from_parent_get_source_rows(
     source_rows: &[Value],
@@ -235,6 +321,25 @@ mod tests {
         );
         assert_eq!(resolutions.len(), 1);
         assert_eq!(resolutions[0], RelationRowResolution::ScopedQuery);
+    }
+
+    #[test]
+    fn from_parent_get_cycle_rejected() {
+    use std::collections::HashMap;
+
+        let mut adj: HashMap<String, Vec<String>> = HashMap::new();
+        adj.insert("Pokemon".into(), vec!["Type".into()]);
+        adj.insert("Type".into(), vec!["Pokemon".into()]);
+        let cycle = find_entity_cycle(&adj, "Pokemon").expect("cycle");
+        assert!(cycle.first().map(|s| s.as_str()) == Some("Pokemon"));
+        assert!(cycle.contains(&"Type".to_string()));
+    }
+
+    #[test]
+    fn pokeapi_from_parent_get_embed_is_acyclic() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+        let cgs = crate::loader::load_schema(&dir).expect("pokeapi");
+        validate_from_parent_get_embed_acyclic(&cgs).expect("pokeapi embed acyclic");
     }
 
     #[test]

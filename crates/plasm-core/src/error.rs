@@ -312,6 +312,9 @@ pub enum SchemaError {
     #[error("Entity '{entity}' relation '{relation}': query_scoped_bindings must be non-empty")]
     RelationMaterializeEmptyBindings { entity: String, relation: String },
 
+    #[error("from_parent_get embed graph has a cycle: {cycle}")]
+    FromParentGetEmbedCycle { cycle: String },
+
     #[error("Entity '{entity}' relation '{relation}': from_parent_get `path` must be non-empty")]
     RelationFromParentGetEmptyPath { entity: String, relation: String },
 
