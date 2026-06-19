@@ -48,7 +48,6 @@ use base64::Engine as _;
 use plasm_core::discovery::{CapabilityQuery, CgsCatalog, DiscoveryError};
 use plasm_core::CgsDiscovery;
 use plasm_core::PlanCommitRef;
-use plasm_discovery::DiscoveryQuery;
 use rust_mcp_sdk::error::SdkResult;
 use rust_mcp_sdk::event_store::InMemoryEventStore;
 use rust_mcp_sdk::mcp_server::hyper_server;
@@ -104,7 +103,6 @@ use crate::run_artifacts::{
 use crate::server_state::PlasmHostState;
 use crate::session_identity::{ClientSessionKey, LogicalSessionId};
 use crate::trace_sink_emit::PlasmTraceContext;
-use crate::typed_discovery_host::run_typed_catalog_discovery;
 use chrono::Utc;
 use plasm_trace::RunArtifactArchiveRef;
 use serde_json::json;
@@ -127,16 +125,16 @@ mod tests;
 
 pub(crate) use discover::{
     discovery_mcp_error, mcp_call_tool_error_class, mcp_discover_query_from_arguments, mcp_key,
-    mcp_typed_discovery_query_from_arguments, read_resource_result_for_payload,
-    typed_discovery_mcp_error,
+    read_resource_result_for_payload,
 };
 pub(crate) use prompt::{
-    mcp_discover_tool_description, mcp_plasm_context_tool_description, mcp_plasm_run_tool_description,
-    mcp_plasm_tool_description, mcp_program_param_description, mcp_server_initialize_instructions,
+    mcp_discover_tool_description, mcp_plasm_context_tool_description,
+    mcp_plasm_run_tool_description, mcp_plasm_tool_description, mcp_program_param_description,
+    mcp_server_initialize_instructions,
 };
 pub(crate) use schema::{
-    args_value, json_schema_bool_type, json_schema_non_empty_object_array,
-    json_schema_non_empty_string_type, json_schema_string_type,
+    args_value, json_schema_non_empty_object_array, json_schema_non_empty_string_type,
+    json_schema_string_type,
 };
 pub(crate) use tool_parse::{
     comp_content_sha256_hex, parse_logical_session_ref_arg, parse_optional_principal,
@@ -452,39 +450,8 @@ impl PlasmMcpHandler {
         discover_props.insert(
             "intent".into(),
             json_schema_non_empty_string_type(
-                "One plain-language task description for the whole user goal. Reuse the same intent for the resulting `plasm_context` session.",
+                "One plain-language task description for the whole user goal. Returns catalog `api`/`entity` picks — not program symbols. Reuse the same intent for the resulting `plasm_context` session.",
             ),
-        );
-        discover_props.insert(
-            "typed".into(),
-            json_schema_bool_type(
-                "If **true**, response is fenced **`json`** (`DiscoveryDecision`) for structured disambiguation **instead of the default TSV table**. Leave unset/false for normal discovery.",
-            ),
-        );
-        discover_props.insert(
-            "max_options".into(),
-            serde_json::from_value(serde_json::json!({
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 32,
-                "description": "Typed mode: max clarification options (default 8)."
-            }))
-            .expect("max_options schema"),
-        );
-        discover_props.insert(
-            "enable_embeddings".into(),
-            json_schema_bool_type(
-                "Typed mode: when **true**, request local embedding rerank (requires binary built with `local-embeddings`; OSS release builds are lexical-only). Default **false**.",
-            ),
-        );
-        discover_props.insert(
-            "allowed_entry_ids".into(),
-            serde_json::from_value(serde_json::json!({
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Typed mode: optional restrict list of registry `entry_id`s."
-            }))
-            .expect("allowed_entry_ids schema"),
         );
         let mut context_props = init_props;
         context_props.insert(
@@ -552,10 +519,12 @@ impl PlasmMcpHandler {
             Tool {
                 name: "discover_capabilities".into(),
                 title: Some("Resolve intent to capabilities".into()),
-                description: Some(
-                    mcp_discover_tool_description().into(),
+                description: Some(mcp_discover_tool_description().into()),
+                input_schema: ToolInputSchema::new(
+                    vec!["intent".into()],
+                    Some(discover_props),
+                    None,
                 ),
-                input_schema: ToolInputSchema::new(vec!["intent".into()], Some(discover_props), None),
                 annotations: Some(ToolAnnotations {
                     read_only_hint: Some(true),
                     open_world_hint: Some(true),
@@ -1430,50 +1399,6 @@ impl PlasmMcpHandler {
             "MCP tool: discover_capabilities (search)"
         );
         let reg = self.plasm.catalog.snapshot();
-        let Some(obj) = v.as_object() else {
-            return Err(CallToolError::invalid_arguments(
-                "discover_capabilities",
-                Some("arguments must be a JSON object".into()),
-            ));
-        };
-        let typed = obj.get("typed").and_then(|x| x.as_bool()).unwrap_or(false);
-        if typed {
-            let intent = q.tokens.first().map(String::as_str).unwrap_or_default();
-            let mut dq = mcp_typed_discovery_query_from_arguments(obj, intent).map_err(|msg| {
-                CallToolError::invalid_arguments("discover_capabilities", Some(msg))
-            })?;
-            let tcfg = self.tenant_mcp_cfg(runtime).await?;
-            if let Some(cfg) = tcfg {
-                if dq.allowed_entry_ids.is_empty() {
-                    dq.allowed_entry_ids =
-                        mcp_policy::filter_registry_entries(reg.list_entries(), cfg.as_ref())
-                            .into_iter()
-                            .map(|m| m.entry_id)
-                            .collect();
-                } else {
-                    dq.allowed_entry_ids.retain(|e| cfg.entry_allowed(e));
-                }
-            }
-            let decision = run_typed_catalog_discovery(
-                &reg,
-                dq,
-                self.plasm.discovery_embedding_store(),
-                Some(self.plasm.discovery_index_cache()),
-                #[cfg(feature = "local-embeddings")]
-                Some(self.plasm.discovery_embedder()),
-            )
-            .await
-            .map_err(typed_discovery_mcp_error)?;
-            drop(_discover_guard);
-            let json = serde_json::to_string_pretty(&decision).map_err(|e| {
-                CallToolError::from_message(format!("serialize typed discovery: {e}"))
-            })?;
-            let text = format!("```json\n{json}\n```");
-            return Ok(CallToolResult::text_content(vec![TextContent::new(
-                text, None, None,
-            )]));
-        }
-
         let mut r = reg.discover(&q).map_err(discovery_mcp_error)?;
         drop(_discover_guard);
         let tcfg = self.tenant_mcp_cfg(runtime).await?;
@@ -1483,27 +1408,14 @@ impl PlasmMcpHandler {
         let formatted = format_discovery_markdown_for_mcp(&r, &DiscoveryTablePolicy::default());
         let mut res =
             CallToolResult::text_content(vec![TextContent::new(formatted.markdown, None, None)]);
-        if formatted.omission.truncated {
-            let mut meta = serde_json::Map::new();
-            let mut discovery = serde_json::Map::new();
-            discovery.insert("truncated".into(), serde_json::json!(true));
-            discovery.insert("shown".into(), serde_json::json!(formatted.omission.shown));
-            discovery.insert(
-                "omitted".into(),
-                serde_json::json!(formatted.omission.omitted),
-            );
-            let top: Vec<serde_json::Value> = formatted
-                .omission
-                .top_omitted
-                .iter()
-                .map(|(api, entity)| serde_json::json!({ "api": api, "entity": entity }))
-                .collect();
-            discovery.insert("top_omitted".into(), serde_json::Value::Array(top));
-            let mut plasm = serde_json::Map::new();
-            plasm.insert("discovery".into(), serde_json::Value::Object(discovery));
-            meta.insert("plasm".into(), serde_json::Value::Object(plasm));
-            res = res.with_meta(Some(meta));
-        }
+        let mut meta = serde_json::Map::new();
+        meta.insert(
+            "plasm".into(),
+            serde_json::Value::Object(crate::discovery_human_format::discovery_plasm_tool_meta(
+                &formatted.omission,
+            )),
+        );
+        res = res.with_meta(Some(meta));
         Ok(res)
     }
 

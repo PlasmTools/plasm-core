@@ -2,7 +2,7 @@
 
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::{
-    prefer_hydrate_embed_path, Cardinality, CapabilityName, EntityName, Expr, GetExpr, Ref,
+    prefer_hydrate_embed_path, CapabilityName, Cardinality, EntityName, Expr, GetExpr, Ref,
     RelationScopedFallback, CGS,
 };
 use plasm_runtime::CachedEntity;
@@ -98,11 +98,8 @@ pub(crate) fn push_prefer_hydrate_get_jobs(
         if slot.is_empty() {
             continue;
         }
-        let mut get_expr = GetExpr::new(
-            EntityName::new(target_entity.to_string()),
-            slot,
-        )
-        .with_capability(get_capability.clone());
+        let mut get_expr = GetExpr::new(EntityName::new(target_entity.to_string()), slot)
+            .with_capability(get_capability.clone());
         get_expr.catalog_entry_id = Some(target.entry_id.to_string());
         let parsed = ParsedExpr {
             expr: Expr::Get(get_expr),
@@ -159,8 +156,7 @@ pub(crate) async fn plan_prefer_hydrate_fallback_row(
             "relation `{rel_name}` hydrate_from_embed_path: no embed identities on parent row {row_index}"
         ));
     }
-    let (cached, need_get) =
-        partition_prefer_hydrate_refs(scoped_es, target_entity, refs).await;
+    let (cached, need_get) = partition_prefer_hydrate_refs(scoped_es, target_entity, refs).await;
     per_row[row_index].extend(cached);
     if !need_get.is_empty() {
         push_prefer_hydrate_get_jobs(

@@ -329,8 +329,12 @@ impl PromptPipelineConfig {
                 symbol_map_cross_cache,
                 ..self.render_config_for_focus(FocusSpec::All)
             };
-            let bundle =
-                render_teaching_prompt_bundle_for_exposure(cgs, cfg, exposure, Some(new_entity_names));
+            let bundle = render_teaching_prompt_bundle_for_exposure(
+                cgs,
+                cfg,
+                exposure,
+                Some(new_entity_names),
+            );
             let ident_meta = self.build_ident_meta_for_entities(new_entity_names, |_| cgs);
             self.render_teaching_bundle_surface(
                 &bundle,

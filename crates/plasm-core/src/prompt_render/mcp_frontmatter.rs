@@ -14,8 +14,7 @@ pub(crate) struct PromptContractSpec {
 }
 
 /// Marker for tests; compact MCP tool syntax contract in the `plasm` tool description.
-pub const MCP_TOOL_SYNTAX_CONTRACT_MARKER: &str =
-    "`program` is Plasm source text, not JSON data.";
+pub const MCP_TOOL_SYNTAX_CONTRACT_MARKER: &str = "`program` is Plasm source text, not JSON data.";
 
 const MCP_TOOL_SYNTAX_EXAMPLE: &str = "e3(p15=\"electric\").r2[p4,p5]";
 const MCP_TOOL_PARAM_EXAMPLE: &str = "e3(p15=\"value\").r2[p4]";

@@ -4464,10 +4464,7 @@ impl CGS {
             ));
         }
         if cap.kind != CapabilityKind::Get {
-            return err(format!(
-                "capability kind must be get (got {:?})",
-                cap.kind
-            ));
+            return err(format!("capability kind must be get (got {:?})", cap.kind));
         }
         Ok(())
     }

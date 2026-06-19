@@ -3,8 +3,8 @@
 use crate::mcp_plasm_meta::PlasmPagingStepMeta;
 use crate::mcp_run_markdown::{
     mcp_compact_markdown_multi_line, mcp_compact_markdown_single,
-    mcp_format_execute_result_table_or_tsv, mcp_inline_run_snapshot_line,
-    mcp_in_band_row_limit_note, mcp_prepend_artifact_followup_markdown,
+    mcp_format_execute_result_table_or_tsv, mcp_in_band_row_limit_note,
+    mcp_inline_run_snapshot_line, mcp_prepend_artifact_followup_markdown,
     slim_result_section_header, OmittedReferenceOnlyFields,
 };
 use crate::output::LossySummaryFieldNames;

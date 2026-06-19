@@ -40,55 +40,6 @@ pub(crate) fn discovery_mcp_error(e: DiscoveryError) -> CallToolError {
     }
 }
 
-pub(crate) fn typed_discovery_mcp_error(e: plasm_discovery::DiscoveryError) -> CallToolError {
-    match e {
-        plasm_discovery::DiscoveryError::EmptyUtterance
-        | plasm_discovery::DiscoveryError::InvalidClarificationAnswer => {
-            CallToolError::invalid_arguments("discover_capabilities", Some(e.to_string()))
-        }
-        plasm_discovery::DiscoveryError::UnknownEntry(_) => {
-            CallToolError::from_message(format!("typed discovery: {e}"))
-        }
-        _ => CallToolError::from_message(format!("typed discovery: {e}")),
-    }
-}
-
-pub(crate) fn mcp_typed_discovery_query_from_arguments(
-    obj: &serde_json::Map<String, serde_json::Value>,
-    intent: &str,
-) -> Result<DiscoveryQuery, String> {
-    let utterance = intent.trim().to_string();
-    if utterance.is_empty() {
-        return Err("typed discovery requires a non-empty `intent`".to_string());
-    }
-    let max_options = obj
-        .get("max_options")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(8)
-        .clamp(1, 32) as usize;
-    let enable_embeddings = obj
-        .get("enable_embeddings")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let allowed_entry_ids = match obj.get("allowed_entry_ids") {
-        Some(serde_json::Value::Array(a)) => a
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .filter(|s| !s.is_empty())
-            .collect(),
-        _ => Vec::new(),
-    };
-    Ok(DiscoveryQuery {
-        utterance,
-        allowed_entry_ids,
-        prior_state: None,
-        max_options,
-        enable_embeddings,
-        force_entry_id: None,
-        force_entity: None,
-    })
-}
-
 pub(crate) fn mcp_key(runtime: &Arc<dyn McpServer>) -> Result<String, CallToolError> {
     runtime.session_id().ok_or_else(|| {
         CallToolError::from_message(

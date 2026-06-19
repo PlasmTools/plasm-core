@@ -45,13 +45,43 @@ impl Default for DiscoveryTablePolicy {
     }
 }
 
-/// Omission stats for `_meta.plasm.discovery` on capped MCP responses.
+/// Structured discovery branch encoded in TSV `# decision:` lines and `_meta.plasm.discovery`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DiscoveryDecision {
+    #[default]
+    Match,
+    Clarify,
+    NoMatch,
+}
+
+impl DiscoveryDecision {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Match => plasm_core::prompt_render::DISCOVER_DECISION_MATCH,
+            Self::Clarify => plasm_core::prompt_render::DISCOVER_DECISION_CLARIFY,
+            Self::NoMatch => plasm_core::prompt_render::DISCOVER_DECISION_NO_MATCH,
+        }
+    }
+
+    pub fn from_result(result: &DiscoveryResult, shown_rows: usize) -> Self {
+        if shown_rows == 0 {
+            Self::NoMatch
+        } else if !result.ambiguities.is_empty() {
+            Self::Clarify
+        } else {
+            Self::Match
+        }
+    }
+}
+
+/// Omission stats and decision branch for `_meta.plasm.discovery` on MCP responses.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DiscoveryOmissionMeta {
     pub truncated: bool,
     pub shown: usize,
     pub omitted: usize,
     pub top_omitted: Vec<(String, String)>,
+    pub decision: DiscoveryDecision,
 }
 
 /// MCP discovery markdown plus omission metadata.
@@ -139,6 +169,7 @@ fn apply_global_top_n_policy(
         shown: shown.len(),
         omitted: omitted.len(),
         top_omitted: omitted.into_iter().take(5).collect(),
+        decision: DiscoveryDecision::default(),
     };
     (shown, omission)
 }
@@ -198,6 +229,7 @@ fn apply_per_entry_fair_share_policy(
         shown: shown.len(),
         omitted: omitted.len(),
         top_omitted: omitted.into_iter().take(5).collect(),
+        decision: DiscoveryDecision::default(),
     };
     (shown, omission)
 }
@@ -208,10 +240,18 @@ pub fn discovery_capability_tsv_for_candidates(
     candidates: &[RankedCandidate],
     entity_summaries: &[EntitySummary],
 ) -> String {
-    discovery_capability_tsv_for_rows(&ranked_deduped_entity_rows(candidates), entity_summaries, None)
+    discovery_capability_tsv_for_rows(
+        &ranked_deduped_entity_rows(candidates),
+        entity_summaries,
+        None,
+        DiscoveryDecision::Match,
+    )
 }
 
-fn discovery_cgs_for_entry<'a>(result: &'a DiscoveryResult, entry_id: &str) -> Option<&'a plasm_core::CGS> {
+fn discovery_cgs_for_entry<'a>(
+    result: &'a DiscoveryResult,
+    entry_id: &str,
+) -> Option<&'a plasm_core::CGS> {
     result.contexts.iter().find_map(|ctx| {
         let Prefix::Entry { id } = &ctx.prefix else {
             return None;
@@ -224,12 +264,31 @@ fn discovery_cgs_for_entry<'a>(result: &'a DiscoveryResult, entry_id: &str) -> O
     })
 }
 
+fn discovery_tsv_preamble(decision: DiscoveryDecision) -> String {
+    let mut lines = vec![plasm_core::prompt_render::DISCOVER_TSV_LANGUAGE_PREAMBLE.to_string()];
+    lines.push(format!("# decision: {}", decision.as_str()));
+    match decision {
+        DiscoveryDecision::Clarify => lines.push(
+            "# choose the api/entity rows that match the user goal, then call plasm_context once with all seeds"
+                .to_string(),
+        ),
+        DiscoveryDecision::NoMatch => lines.push(
+            "# evidence: no loaded catalog matched the intent; narrow the intent or check registry availability"
+                .to_string(),
+        ),
+        DiscoveryDecision::Match => {}
+    }
+    lines.join("\n")
+}
+
 fn discovery_capability_tsv_for_rows(
     rows: &[(String, String)],
     entity_summaries: &[EntitySummary],
     result: Option<&DiscoveryResult>,
+    decision: DiscoveryDecision,
 ) -> String {
-    let mut lines = vec!["api\tentity\tdescription\toutgoing_relations".to_string()];
+    let mut lines = vec![discovery_tsv_preamble(decision)];
+    lines.push("api\tentity\tdescription\toutgoing_relations".to_string());
     for (eid, entity) in rows {
         let description = entity_summary_description(entity_summaries, eid, entity)
             .map(|raw| mcp_discovery_tsv_field(raw, MCP_DISCOVERY_ENTITY_SUMMARY_MAX))
@@ -259,11 +318,9 @@ fn discovery_capability_tsv_for_rows(
 /// Full structured discovery result (all ranked candidates).
 #[allow(dead_code)]
 pub fn discovery_capability_tsv(result: &DiscoveryResult) -> String {
-    discovery_capability_tsv_for_rows(
-        &ranked_deduped_entity_rows(&result.candidates),
-        &result.entity_summaries,
-        Some(result),
-    )
+    let ranked = ranked_deduped_entity_rows(&result.candidates);
+    let decision = DiscoveryDecision::from_result(result, ranked.len());
+    discovery_capability_tsv_for_rows(&ranked, &result.entity_summaries, Some(result), decision)
 }
 
 fn ambiguity_markdown_lines(ambiguities: &[Ambiguity]) -> String {
@@ -300,20 +357,18 @@ fn discovery_markdown_body(
     omission: &DiscoveryOmissionMeta,
 ) -> String {
     let mut s = String::new();
-    if tsv.lines().count() <= 1 {
-        s.push_str("_No matching entities._\n\n");
-    } else {
-        s.push_str("```tsv\n");
-        s.push_str(tsv);
-        s.push_str("\n```\n\n");
-        if omission.truncated {
-            s.push_str(&format!(
-                "_Showing top {} discovery rows ({} omitted). Narrow `intent` or pass seeds you already know._\n\n",
-                omission.shown, omission.omitted
-            ));
-        }
+    s.push_str("```tsv\n");
+    s.push_str(tsv);
+    s.push_str("\n```\n\n");
+    if omission.truncated && omission.decision != DiscoveryDecision::NoMatch {
+        s.push_str(&format!(
+            "_Showing top {} discovery rows ({} omitted). Narrow `intent` or pass seeds you already know._\n\n",
+            omission.shown, omission.omitted
+        ));
     }
-    s.push_str(&discovery_ambiguity_markdown(result));
+    if omission.decision == DiscoveryDecision::Clarify {
+        s.push_str(&discovery_ambiguity_markdown(result));
+    }
     s
 }
 
@@ -336,10 +391,41 @@ pub fn format_discovery_markdown_for_mcp(
     policy: &DiscoveryTablePolicy,
 ) -> FormattedDiscovery {
     let ranked = ranked_deduped_entity_rows(&result.candidates);
-    let (shown, omission) = apply_discovery_table_policy(ranked, policy);
-    let tsv = discovery_capability_tsv_for_rows(&shown, &result.entity_summaries, Some(result));
+    let (shown, mut omission) = apply_discovery_table_policy(ranked, policy);
+    omission.decision = DiscoveryDecision::from_result(result, shown.len());
+    let tsv = discovery_capability_tsv_for_rows(
+        &shown,
+        &result.entity_summaries,
+        Some(result),
+        omission.decision,
+    );
     let markdown = discovery_markdown_body(&tsv, result, &omission);
     FormattedDiscovery { markdown, omission }
+}
+
+/// `_meta.plasm` payload for MCP `discover_capabilities` tool results.
+pub fn discovery_plasm_tool_meta(
+    omission: &DiscoveryOmissionMeta,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut discovery = serde_json::Map::new();
+    discovery.insert(
+        "decision".into(),
+        serde_json::json!(omission.decision.as_str()),
+    );
+    if omission.truncated {
+        discovery.insert("truncated".into(), serde_json::json!(true));
+        discovery.insert("shown".into(), serde_json::json!(omission.shown));
+        discovery.insert("omitted".into(), serde_json::json!(omission.omitted));
+        let top: Vec<serde_json::Value> = omission
+            .top_omitted
+            .iter()
+            .map(|(api, entity)| serde_json::json!({ "api": api, "entity": entity }))
+            .collect();
+        discovery.insert("top_omitted".into(), serde_json::Value::Array(top));
+    }
+    let mut plasm = serde_json::Map::new();
+    plasm.insert("discovery".into(), serde_json::Value::Object(discovery));
+    plasm
 }
 
 #[cfg(test)]
@@ -386,7 +472,9 @@ mod tests {
             capability_description: "List widgets".into(),
         }]);
         let tsv = discovery_capability_tsv(&r);
-        assert!(tsv.starts_with("api\tentity\tdescription\toutgoing_relations\n"));
+        assert!(tsv.contains("# Plasm is a source language"));
+        assert!(tsv.contains("# decision: match"));
+        assert!(tsv.contains("api\tentity\tdescription\toutgoing_relations\n"));
         assert!(tsv.contains("demo\tWidget\tWidget summary.\t"));
     }
 
@@ -402,6 +490,7 @@ mod tests {
         }]);
         let md = format_discovery_markdown(&r);
         assert!(md.contains("```tsv"));
+        assert!(md.contains("# Plasm is a source language"));
         assert!(md.contains("demo\tWidget\tWidget summary."));
         assert!(!md.contains("typed:"));
     }

@@ -2,18 +2,6 @@
 
 use rust_mcp_sdk::schema::CallToolRequestParams;
 
-pub(crate) fn json_schema_bool_type(
-    description: &str,
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut m = serde_json::Map::new();
-    m.insert("type".into(), serde_json::json!("boolean"));
-    m.insert(
-        "description".into(),
-        serde_json::Value::String(description.to_string()),
-    );
-    m
-}
-
 pub(crate) fn json_schema_string_type(
     description: &str,
 ) -> serde_json::Map<String, serde_json::Value> {

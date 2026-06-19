@@ -150,23 +150,21 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     assert!(syntax.contains(plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
     assert!(syntax.contains("literal no-op"));
 
-    assert!(super::mcp_plasm_tool_description().contains(
-        plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER
-    ));
+    assert!(super::mcp_plasm_tool_description()
+        .contains(plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
     assert!(super::mcp_plasm_tool_description().contains("literal no-op"));
-    assert!(super::mcp_plasm_tool_description().contains(
-        plasm_core::prompt_render::MCP_PROGRAM_CONSTRUCTION_LINE
-    ));
+    assert!(super::mcp_plasm_tool_description()
+        .contains(plasm_core::prompt_render::MCP_PROGRAM_CONSTRUCTION_LINE));
     assert!(super::mcp_plasm_tool_description().contains("pcN"));
     assert!(super::mcp_plasm_context_tool_description().contains("active symbol table"));
     assert!(super::mcp_plasm_context_tool_description().contains("Call before `plasm`"));
-    assert!(super::mcp_plasm_context_tool_description().contains(
-        plasm_core::prompt_render::MCP_TOOL_SEQUENCING_MARKER
-    ));
-    assert!(super::mcp_discover_tool_description().contains(
-        plasm_core::prompt_render::MCP_TOOL_SEQUENCING_MARKER
-    ));
-    assert!(super::mcp_discover_tool_description().contains("plasm_context"));
+    assert!(super::mcp_plasm_context_tool_description()
+        .contains(plasm_core::prompt_render::MCP_TOOL_SEQUENCING_MARKER));
+    assert!(super::mcp_discover_tool_description()
+        .contains(plasm_core::prompt_render::MCP_TOOL_SEQUENCING_MARKER));
+    assert!(super::mcp_discover_tool_description().contains("Plasm is a source language"));
+    assert!(super::mcp_discover_tool_description().contains("plasm.program"));
+    assert!(super::mcp_discover_tool_description().contains("no alternate JSON"));
     assert!(super::mcp_plasm_tool_description().contains("do **not** echo the program"));
     assert!(!super::mcp_plasm_run_tool_description().contains("echo the program"));
     assert!(super::mcp_program_param_description().contains("not JSON data"));
@@ -180,9 +178,24 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
             "{} description leaks hidden initialize dependency",
             tool.name
         );
+        if tool.name == "discover_capabilities" {
+            let v = serde_json::to_value(tool.input_schema.clone()).expect("discover schema");
+            let props = v
+                .get("properties")
+                .and_then(|p| p.as_object())
+                .expect("discover schema properties");
+            assert!(
+                !props.contains_key("typed"),
+                "discover_capabilities must not expose typed to agents"
+            );
+            assert!(
+                !props.contains_key("allowed_entry_ids"),
+                "discover_capabilities must not expose allowed_entry_ids to agents"
+            );
+        }
     }
-    let tools_json = serde_json::to_string(&super::PlasmMcpHandler::plasm_tools())
-        .expect("serialize tools");
+    let tools_json =
+        serde_json::to_string(&super::PlasmMcpHandler::plasm_tools()).expect("serialize tools");
     assert!(!tools_json.contains("MCP initialize"));
 }
 
@@ -531,6 +544,9 @@ fn discover_markdown_emits_tsv_snapshot() {
         crate::discovery_human_format::format_discovery_markdown(&r),
         @"
 ```tsv
+# Plasm is a source language. These rows are NOT a program.
+# Next: pass selected api/entity rows to plasm_context.seeds, then write plasm.program using returned e#/m#/p#/r# symbols.
+# decision: match
 api	entity	description	outgoing_relations
 demo	Widget	A contrived widget line	
 ```

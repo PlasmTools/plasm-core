@@ -78,11 +78,8 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
     let parents = source_mat
         .resolve_materialized_source_parents(&rehydrator)
         .await;
-    let RelationMaterialization::PreferFromParentGet {
-        path,
-        fallback,
-        ..
-    } = &relation.relation.materialize
+    let RelationMaterialization::PreferFromParentGet { path, fallback, .. } =
+        &relation.relation.materialize
     else {
         unreachable!("PreferFromParentGet materialize checked above");
     };

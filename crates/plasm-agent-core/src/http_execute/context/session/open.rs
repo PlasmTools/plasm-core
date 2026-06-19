@@ -5,10 +5,9 @@ use super::super::super::*;
 use super::super::backend::tenant_outbound_hosted_kv_for_entries;
 use super::super::seeds::{
     apply_ranked_capabilities_session_update, build_capability_exposure_plan,
-    format_session_unchanged_one_liner, normalize_execute_entity_names,
-    normalize_ranked_capabilities_for_gate, process_order_for_expand_group,
-    relation_endpoint_keys_for_wave, seeds_fully_exposed, wrap_teaching_markdown_literal_block,
-    RankedCapabilitiesArg, STALE_EXECUTE_BINDING_NOTICE,
+    normalize_execute_entity_names, normalize_ranked_capabilities_for_gate,
+    process_order_for_expand_group, relation_endpoint_keys_for_wave, seeds_fully_exposed,
+    wrap_teaching_markdown_literal_block, RankedCapabilitiesArg, STALE_EXECUTE_BINDING_NOTICE,
 };
 use plasm_core::plasm_grammar_frontmatter_revision_hex;
 

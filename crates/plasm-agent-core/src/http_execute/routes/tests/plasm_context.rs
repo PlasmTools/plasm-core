@@ -204,15 +204,24 @@ async fn same_intent_federated_expand_assigns_distinct_e_symbols() {
         .find(|w| w.mode == "expand" && w.reused_session)
         .expect("unchanged expand wave");
     assert!(
-        unchanged.markdown_delta.contains("logical_session_ref"),
-        "fully exposed seeds should return reuse cheat sheet: {}",
+        unchanged.markdown_delta.contains("Unchanged"),
+        "fully exposed seeds should return compact reuse status: {}",
         unchanged.markdown_delta
     );
     assert!(
-        unchanged
-            .markdown_delta
-            .contains(plasm_core::prompt_render::REUSE_CHEATSHEET_TAIL.trim()),
-        "reuse cheat sheet must include shared fragment tail"
+        unchanged.markdown_delta.contains("e1=") && unchanged.markdown_delta.contains("e2="),
+        "reuse must include compact entity symbol map: {}",
+        unchanged.markdown_delta
+    );
+    assert!(
+        unchanged.markdown_delta.contains("Next: `plasm`"),
+        "reuse must name next step: {}",
+        unchanged.markdown_delta
+    );
+    assert!(
+        !unchanged.markdown_delta.contains("rows:` fields only"),
+        "reuse must not replay grammar cheat sheet: {}",
+        unchanged.markdown_delta
     );
 }
 

@@ -53,7 +53,14 @@ pub(crate) fn format_result_tsv_with_cgs(
     let policy = TsvCellPolicy::mcp_default();
     let mut omitted = BTreeSet::new();
     let mut report = InBandSummaryReport::default();
-    let text = format_tsv_inner(result, cgs, max_entity_rows, &mut omitted, &policy, &mut report);
+    let text = format_tsv_inner(
+        result,
+        cgs,
+        max_entity_rows,
+        &mut omitted,
+        &policy,
+        &mut report,
+    );
     (text, omitted.into_iter().collect(), report)
 }
 

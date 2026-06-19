@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.40] - 2026-06-20
+
+### Changed
+
+- **MCP `plasm_context` reuse:** compact `e#=Entity` status line instead of verbose grammar replay; `render_compact_exposure_symbol_map` on reuse paths.
+- **Unified `discover_capabilities`:** single TSV-first agent surface with `# decision:` / language-flow preamble; removed typed JSON mode and `typed`/`allowed_entry_ids`/embedding params from MCP tool schema; `_meta.plasm.discovery.decision` on every response.
+- **Discover tool copy:** imperative “Plasm is a source language” entry-point framing in `tools/list` and initialize workflow.
+
 ## [0.3.39] - 2026-06-19
 
 ### Added

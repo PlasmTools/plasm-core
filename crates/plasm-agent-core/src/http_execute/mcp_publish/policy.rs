@@ -84,7 +84,11 @@ impl ResolvedStepPublish {
                 || fmt.in_band.any_loss())
     }
 
-    pub(crate) fn include_preview_entities(&self, truncated: bool, policy: &McpResultTransportPolicy) -> bool {
+    pub(crate) fn include_preview_entities(
+        &self,
+        truncated: bool,
+        policy: &McpResultTransportPolicy,
+    ) -> bool {
         !truncated || self.row_count <= policy.in_band_entity_rows
     }
 }
@@ -118,7 +122,11 @@ impl PublishPlan {
         }
     }
 
-    pub(crate) fn preview_needed(&self, inline_char_count: usize, policy: &McpResultTransportPolicy) -> bool {
+    pub(crate) fn preview_needed(
+        &self,
+        inline_char_count: usize,
+        policy: &McpResultTransportPolicy,
+    ) -> bool {
         mcp_preview_markdown_needed(self.artifact_snapshot_preview, inline_char_count, policy)
     }
 }

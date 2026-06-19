@@ -223,6 +223,9 @@ mod tests {
             delta.contains("relation e1 → e2"),
             "http-style expand delta should teach Berry→BerryFirmness hop: {delta}"
         );
-        assert!(delta.contains(".r"), "delta should include r# symbol: {delta}");
+        assert!(
+            delta.contains(".r"),
+            "delta should include r# symbol: {delta}"
+        );
     }
 }

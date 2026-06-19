@@ -21,7 +21,12 @@ pub fn publish_plasm_result_steps(
     meta_index: Option<&mut PlasmMetaIndex>,
     steps: &[PublishedResultStep],
 ) -> ExecuteRunToolOutput {
-    publish_plasm_result_steps_with_policy(cgs, meta_index, steps, &McpResultTransportPolicy::default())
+    publish_plasm_result_steps_with_policy(
+        cgs,
+        meta_index,
+        steps,
+        &McpResultTransportPolicy::default(),
+    )
 }
 
 pub fn publish_plasm_result_steps_with_policy(
@@ -68,11 +73,7 @@ pub(crate) fn publish_with_shared_meta_index(
             let mut guard = arc
                 .lock()
                 .map_err(|e| format!("meta_index lock poisoned: {e}"))?;
-            Ok(publish_plasm_result_steps(
-                cgs,
-                Some(&mut *guard),
-                steps,
-            ))
+            Ok(publish_plasm_result_steps(cgs, Some(&mut *guard), steps))
         }
         None => Ok(publish_plasm_result_steps(cgs, None, steps)),
     }
@@ -178,7 +179,12 @@ mod tests {
     fn publish_row_cap_without_snapshot_truncates_inline_tsv() {
         let policy = McpResultTransportPolicy::default();
         let step = synthetic_published_result_step(40, None);
-        let out = publish_plasm_result_steps_with_policy(None, None, std::slice::from_ref(&step), &policy);
+        let out = publish_plasm_result_steps_with_policy(
+            None,
+            None,
+            std::slice::from_ref(&step),
+            &policy,
+        );
         assert!(
             out.markdown.contains("```tsv"),
             "expected capped inline TSV: {}",

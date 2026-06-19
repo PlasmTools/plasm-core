@@ -242,9 +242,9 @@ pub(crate) fn build_ui_steps(
                 step.entity.as_deref(),
             )
             .map(|s| crate::run_ui_column_schema::column_schema_json(&s));
-            let lossy = fmt.map(|f| {
-                merge_snapshot_column_hints(&f.lossy, &f.in_band)
-            }).unwrap_or_default();
+            let lossy = fmt
+                .map(|f| merge_snapshot_column_hints(&f.lossy, &f.in_band))
+                .unwrap_or_default();
             RunUiStepFields {
                 run_step: i + 1,
                 return_label: resolved.label.clone(),
@@ -252,7 +252,11 @@ pub(crate) fn build_ui_steps(
                 row_count: resolved.row_count,
                 node_id: step.node_id.clone(),
                 preview_entities: if resolved.include_preview_entities(truncated, policy) {
-                    Some(preview_entities_for_step(step, cgs, policy.in_band_entity_rows))
+                    Some(preview_entities_for_step(
+                        step,
+                        cgs,
+                        policy.in_band_entity_rows,
+                    ))
                 } else {
                     None
                 },

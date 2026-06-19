@@ -98,8 +98,8 @@ where
 
 /// Re-export: MCP adaptive preview threshold (Unicode scalars).
 pub use crate::mcp_run_markdown::{
-    MCP_IN_BAND_ENTITY_ROW_CAP, MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS,
-    McpResultTransportPolicy,
+    McpResultTransportPolicy, MCP_IN_BAND_ENTITY_ROW_CAP,
+    MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS,
 };
 
 /// Result of [`publish_plasm_result_steps`] for MCP tool shaping (`_meta` only; snapshot URIs are inline in Markdown).

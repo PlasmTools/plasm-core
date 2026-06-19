@@ -155,13 +155,15 @@ pub async fn expand_execute_teaching_session(
                 Some(sym_cross),
             )
     } else {
-        st.engine.prompt_pipeline().render_teaching_exposure_delta_with_edges(
-            cgs_primary,
-            &exp,
-            &added,
-            &new_relation_slots,
-            Some(sym_cross),
-        )
+        st.engine
+            .prompt_pipeline()
+            .render_teaching_exposure_delta_with_edges(
+                cgs_primary,
+                &exp,
+                &added,
+                &new_relation_slots,
+                Some(sym_cross),
+            )
     };
     let wave =
         wrap_teaching_markdown_literal_block(&delta, st.engine.prompt_pipeline().render_mode);

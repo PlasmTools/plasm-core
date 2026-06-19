@@ -951,8 +951,7 @@ fn materialization_view(m: &RelationMaterialization) -> ExplorerRelationMaterial
                     binding_keys: Some(bindings.keys().map(|k| k.to_string()).collect()),
                 },
                 plasm_core::RelationScopedFallback::HydrateFromEmbedPath {
-                    get_capability,
-                    ..
+                    get_capability, ..
                 } => ExplorerRelationMaterialization {
                     kind: "prefer_from_parent_get",
                     capability: Some(get_capability.to_string()),

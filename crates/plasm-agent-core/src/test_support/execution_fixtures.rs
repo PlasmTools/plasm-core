@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use indexmap::IndexMap;
 use plasm_core::{EntityKey, Ref, Value};
-use plasm_runtime::{CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats};
+use plasm_runtime::{
+    CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource, ExecutionStats,
+};
 
 use crate::http_execute::PublishedResultStep;
 

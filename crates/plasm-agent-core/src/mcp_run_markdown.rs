@@ -121,7 +121,10 @@ pub(crate) fn execute_expression_preview(expr: &str) -> String {
     format!("{truncated}… (truncated, total {n} chars)")
 }
 
-pub(crate) fn mcp_step_exceeds_in_band_row_cap(row_count: usize, policy: &McpResultTransportPolicy) -> bool {
+pub(crate) fn mcp_step_exceeds_in_band_row_cap(
+    row_count: usize,
+    policy: &McpResultTransportPolicy,
+) -> bool {
     row_count > policy.in_band_entity_rows
 }
 
@@ -173,8 +176,7 @@ pub(crate) fn mcp_format_execute_result_table_or_tsv(
     max_entity_rows: Option<usize>,
 ) -> McpFormattedExecuteResult {
     let lossy_summary_fields = lossy_summary_field_names(result, cgs);
-    let (tsv, omitted_vec, tsv_report) =
-        format_result_tsv_with_cgs(result, cgs, max_entity_rows);
+    let (tsv, omitted_vec, tsv_report) = format_result_tsv_with_cgs(result, cgs, max_entity_rows);
     let reference_only_omitted = OmittedReferenceOnlyFields::from_vec_sorted_dedup(omitted_vec);
     if reference_only_omitted.is_empty() {
         McpFormattedExecuteResult {

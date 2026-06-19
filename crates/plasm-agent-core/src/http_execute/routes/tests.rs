@@ -2,7 +2,7 @@ use super::super::*;
 use crate::http;
 use crate::http_execute::context::{
     build_capability_exposure_plan, build_plasm_context_agent_markdown,
-    build_plasm_context_tool_meta, format_session_unchanged_one_liner,
+    build_plasm_context_tool_meta, format_session_unchanged_reuse_markdown,
     group_seed_entities_by_entry, primary_entry_id_for_grouped,
 };
 use crate::http_execute::mcp_publish::build_mcp_run_tool_meta;
@@ -779,14 +779,25 @@ fn parse_execute_program_body_rejects_lines_array() {
 }
 
 #[test]
-fn format_session_unchanged_one_liner_shape() {
-    let s = format_session_unchanged_one_liner(3);
-    assert!(s.contains("`e1`…`e3`"));
+fn format_session_unchanged_reuse_markdown_shape() {
+    let s = format_session_unchanged_reuse_markdown(None);
+    assert!(s.contains("Unchanged"));
+    assert!(s.contains("Next: `plasm`"));
     assert!(s.contains("plasm_run"));
-    assert!(s.contains("logical_session_ref"));
-    assert!(s.contains("rows:` fields only"));
-    assert!(s.contains("e#~$"));
-    assert!(s.contains(plasm_core::prompt_render::REUSE_SESSION_UNCHANGED_DISCIPLINE));
+    assert!(!s.contains("rows:` fields only"));
+    assert!(!s.contains("e#~$"));
+
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
+    let cgs = load_schema_dir(&dir).expect("overshow_tools");
+    let exp = plasm_core::TeachingExposureSession::new(&cgs, "overshow", &["Profile", "Meeting"]);
+    let body = format_session_unchanged_reuse_markdown(Some(&exp));
+    assert!(body.contains("e1=Profile"));
+    assert!(body.contains("e2=Meeting"));
+    assert!(
+        body.len() <= 200,
+        "reuse body too long for 3 entities: {} chars — {body}",
+        body.len()
+    );
 }
 
 #[tokio::test]

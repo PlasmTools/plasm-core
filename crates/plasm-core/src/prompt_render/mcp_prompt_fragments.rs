@@ -1,4 +1,6 @@
-//! Shared MCP / reuse prompt copy — single source for contract, initialize workflow, tool docs, and reuse cheat sheet.
+//! Shared MCP / reuse prompt copy — single source for contract, initialize workflow, tool docs, and reuse surfaces.
+
+use crate::TeachingExposureSession;
 
 /// Marker for tests; compact tool-order line in MCP tool descriptions.
 pub const MCP_TOOL_SEQUENCING_MARKER: &str =
@@ -14,14 +16,43 @@ pub const SESSION_DISCIPLINE_PROGRAM: &str = "**Session:** one goal → one **`i
 pub const MCP_PROGRAM_CONSTRUCTION_LINE: &str =
     "Prefer: bind rows → filter/project/sort/limit → few final roots. Plan with `plasm`; pass returned `pcN` to `plasm_run` only.";
 
-/// Reuse one-liner: same-ref discipline (embedded in `_Session unchanged …_` wrapper).
-pub const REUSE_SESSION_UNCHANGED_DISCIPLINE: &str = "Reuse this `logical_session_ref`; do not re-open `plasm_context` with identical seeds or a new `intent` for the same goal.";
+/// Compact `e#=Entity` map for reuse responses (federated rows prefix `entry_id:` only when entity names collide).
+pub fn render_compact_exposure_symbol_map(exp: &TeachingExposureSession) -> String {
+    let mut name_counts = std::collections::HashMap::<&str, usize>::new();
+    for entity in &exp.entities {
+        *name_counts.entry(entity.as_str()).or_insert(0) += 1;
+    }
+    let needs_catalog_prefix = name_counts.values().any(|&c| c > 1);
 
-/// Reuse-path cheat sheet tail (after entity-range notice).
-pub const REUSE_CHEATSHEET_TAIL: &str = "\
-**Symbols:** only `e#`/`m#`/`p#`/`r#` from the teaching TSV bound to this ref — not contract examples or other sessions.\n\
-**Expand:** same `intent`, more `seeds` — read delta TSV for new symbols. Search: `e#~$` or `e#~\"text\"`; scoped: `e#{{p#=…}}`. Row compute: bind first; `.group_by` / `.filter` on **`rows:` fields only**.\n\
-Use `plasm` / `plasm_run` with this ref.\n";
+    exp.entities
+        .iter()
+        .zip(exp.entity_catalog_entry_ids.iter())
+        .enumerate()
+        .map(|(i, (entity, entry_id))| {
+            let sym = exp
+                .qualified_entity_symbol(entry_id, entity)
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("e{}", i + 1));
+            let label = if needs_catalog_prefix {
+                format!("{entry_id}:{entity}")
+            } else {
+                entity.clone()
+            };
+            format!("{sym}={label}")
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// MCP unified discovery TSV preamble (language flow + decision semantics).
+pub const DISCOVER_TSV_LANGUAGE_PREAMBLE: &str = "\
+# Plasm is a source language. These rows are NOT a program.\n\
+# Next: pass selected api/entity rows to plasm_context.seeds, then write plasm.program using returned e#/m#/p#/r# symbols.";
+
+/// Discovery decision values embedded as `# decision: …` TSV comment lines.
+pub const DISCOVER_DECISION_MATCH: &str = "match";
+pub const DISCOVER_DECISION_CLARIFY: &str = "clarify";
+pub const DISCOVER_DECISION_NO_MATCH: &str = "no_match";
 
 /// One-line tool sequencing for model-visible MCP `tools/list` descriptions.
 pub fn render_plasm_mcp_tool_sequencing_line() -> String {
@@ -40,7 +71,7 @@ pub fn render_plasm_mcp_program_construction_line() -> String {
 
 /// Initialize / rollup header: tool order and discover → context flow.
 pub fn render_plasm_mcp_initialize_workflow_head() -> String {
-    "Plasm MCP tools (in order): **`plasm_context`** (session + teaching TSV), **`plasm`** (dry-run plan), **`plasm_run`** (live execute), **`discover_capabilities`** (when **`api`/`entity`** unknown).\n     **`discover_capabilities`**: one **`intent`** per goal. Default **fenced `tsv`** — skip **`typed`** unless the TSV note requires it. Merge rows into **`plasm_context`** **`seeds`**.\n     **`plasm_context`**: **`intent`** + **`seeds`** → ref + teaching TSV. Reuse ref for **`plasm`** / **`plasm_run`**; extend via same **`intent`**, more **`seeds`** (delta **`e#`**)."
+    "Plasm MCP tools (in order): **`plasm_context`** (session + teaching TSV), **`plasm`** (dry-run plan), **`plasm_run`** (live execute), **`discover_capabilities`** (when **`api`/`entity`** unknown).\n     **`discover_capabilities`**: one **`intent`** per goal; returns fenced **`tsv`** catalog picks (not a program). Merge rows into **`plasm_context`** **`seeds`**.\n     **`plasm_context`**: **`intent`** + **`seeds`** → ref + teaching TSV. Reuse ref for **`plasm`** / **`plasm_run`**; extend via same **`intent`**, more **`seeds`** (delta **`e#`**)."
         .to_string()
 }
 
@@ -53,7 +84,7 @@ pub fn render_plasm_mcp_initialize_workflow_tail() -> String {
 /// Model-facing `discover_capabilities` tool description.
 pub fn render_plasm_mcp_discover_tool_description() -> String {
     format!(
-        "Resolve one user goal to catalog capabilities. {}\n     **Next:** merge TSV rows into one **`plasm_context`** **`seeds`** array on the same **`intent`**. **Default:** fenced **`tsv`** table (`api`, `entity`, `description`). Skip when you already know every `api`/`entity`. Set **`typed: true`** only when the TSV ambiguity note requires structured disambiguation (returns fenced **`json`** instead).",
+        "Plasm is a source language. Pick catalogs/entities for one user goal — this tool does **not** produce program symbols. {}\n     **Next:** copy TSV `api`/`entity` rows into one **`plasm_context`** **`seeds`** array on the same **`intent`**, then write **`plasm.program`** from returned teaching TSV symbols. Skip when you already know every `api`/`entity`. There is no alternate JSON discovery mode for agents.",
         MCP_TOOL_SEQUENCING_MARKER,
     )
 }

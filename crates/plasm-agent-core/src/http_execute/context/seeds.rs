@@ -54,15 +54,39 @@ pub(super) fn relation_endpoint_keys_for_wave(
     exp.relation_endpoint_keys_for_wave(batch_entry_id, batch_names)
 }
 
-pub(crate) fn format_session_unchanged_one_liner(entity_count: usize) -> String {
-    if entity_count == 0 {
-        "_Session unchanged — no exposed entities yet._\n".to_string()
+pub(crate) fn format_session_unchanged_reuse_markdown(
+    exp: Option<&plasm_core::TeachingExposureSession>,
+) -> String {
+    if let Some(exp) = exp.filter(|e| !e.entities.is_empty()) {
+        let map = plasm_core::prompt_render::render_compact_exposure_symbol_map(exp);
+        format!("Unchanged — {map}. Next: `plasm` / `plasm_run`.\n")
     } else {
-        format!(
-            "_Session unchanged (`e1`…`e{entity_count}`). {}_\n{}",
-            plasm_core::prompt_render::REUSE_SESSION_UNCHANGED_DISCIPLINE,
-            plasm_core::prompt_render::REUSE_CHEATSHEET_TAIL,
-        )
+        "Unchanged — no exposed entities yet. Next: `plasm` / `plasm_run`.\n".to_string()
+    }
+}
+
+pub(crate) async fn teaching_exposure_at(
+    st: &PlasmHostState,
+    prompt_hash: &str,
+    session_id: &str,
+) -> Option<plasm_core::TeachingExposureSession> {
+    st.get_execute_session(prompt_hash, session_id)
+        .await
+        .and_then(|s| s.teaching_exposure.clone())
+}
+
+pub(crate) fn unchanged_expand_wave(
+    entry_id: String,
+    exposure: Option<&plasm_core::TeachingExposureSession>,
+) -> CapabilityWaveOutcome {
+    CapabilityWaveOutcome {
+        mode: "expand".to_string(),
+        entry_id,
+        entities: vec![],
+        markdown_delta: format_session_unchanged_reuse_markdown(exposure),
+        reused_session: true,
+        teaching_prompt_chars_added: 0,
+        relations_delta: Vec::new(),
     }
 }
 

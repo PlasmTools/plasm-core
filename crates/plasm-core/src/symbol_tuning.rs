@@ -2609,8 +2609,8 @@ fn expand_relation_tokens(input: &str, map: &SymbolMap) -> String {
             if let Some(sym) = syms.iter().find(|s| rest.starts_with(s.as_str())) {
                 let sym_len = sym.len();
                 let after = i + 1 + sym_len;
-                let boundary_ok = after >= input.len()
-                    || !ident_continue(input[after..].chars().next().unwrap());
+                let boundary_ok =
+                    after >= input.len() || !ident_continue(input[after..].chars().next().unwrap());
                 if boundary_ok {
                     if let Some(left_ent) = find_entity_before_dot(input, i) {
                         let receiver_wire = entity_surface_wire_name(&left_ent, map);
@@ -3803,8 +3803,10 @@ impl TeachingExposureSession {
     ) -> Vec<ExposureSlotKey> {
         use crate::schema::IncomingNavSlotKind;
 
-        let mut out: BTreeSet<ExposureSlotKey> =
-            self.relation_slots_added_since(slots_before).into_iter().collect();
+        let mut out: BTreeSet<ExposureSlotKey> = self
+            .relation_slots_added_since(slots_before)
+            .into_iter()
+            .collect();
 
         for target in added_qualified {
             let Some(cgs) = self.catalog_cgs_for_entry(target.entry_id.as_str()) else {
@@ -3819,10 +3821,7 @@ impl TeachingExposureSession {
                     entity: edge.source_entity.clone(),
                 };
                 if self
-                    .qualified_entity_symbol(
-                        target.entry_id.as_str(),
-                        edge.source_entity.as_str(),
-                    )
+                    .qualified_entity_symbol(target.entry_id.as_str(), edge.source_entity.as_str())
                     .is_none()
                 {
                     continue;

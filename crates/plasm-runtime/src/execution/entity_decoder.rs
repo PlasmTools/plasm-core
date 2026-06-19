@@ -349,14 +349,8 @@ mod tests {
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
         let cgs = load_schema_dir(&dir).expect("pokeapi");
         for (entity, cap) in [("Type", "type_get"), ("Ability", "ability_get")] {
-            let decoder = create_entity_decoder_for_capability(
-                entity,
-                &cgs,
-                Some(cap),
-                None,
-                None,
-                None,
-            );
+            let decoder =
+                create_entity_decoder_for_capability(entity, &cgs, Some(cap), None, None, None);
             assert_embed_decoders_single_hop(&decoder);
             let pokemon_rel = decoder
                 .relations

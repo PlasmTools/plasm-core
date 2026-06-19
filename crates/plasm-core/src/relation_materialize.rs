@@ -377,14 +377,8 @@ mod tests {
         let extracted = extract_from_parent_get_value(&row, &path);
         assert_eq!(extracted.len(), 1);
         assert_eq!(extracted[0]["name"], "pikachu");
-        let res = resolve_relation_row_resolution(
-            &mat,
-            "pokemon",
-            "Pokemon",
-            &row,
-            None,
-            |_| false,
-        );
+        let res =
+            resolve_relation_row_resolution(&mat, "pokemon", "Pokemon", &row, None, |_| false);
         assert_eq!(res, RelationRowResolution::ScopedQuery);
     }
 
@@ -392,8 +386,10 @@ mod tests {
     fn pokeapi_mutual_prefer_embed_loads_and_validates() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
         let cgs = crate::loader::load_schema(&dir).expect("pokeapi");
-        cgs.validate().expect("pokeapi validates with mutual prefer embeds");
-        validate_from_parent_get_embed_acyclic(&cgs).expect("forward from_parent_get edges acyclic");
+        cgs.validate()
+            .expect("pokeapi validates with mutual prefer embeds");
+        validate_from_parent_get_embed_acyclic(&cgs)
+            .expect("forward from_parent_get edges acyclic");
         let type_rel = cgs
             .get_entity("Type")
             .and_then(|e| e.relations.get("pokemon"))

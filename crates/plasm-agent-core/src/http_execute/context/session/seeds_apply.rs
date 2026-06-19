@@ -5,9 +5,10 @@ use super::super::super::*;
 use super::super::backend::tenant_outbound_hosted_kv_for_entries;
 use super::super::seeds::{
     apply_ranked_capabilities_session_update, build_capability_exposure_plan,
-    format_session_unchanged_one_liner, group_seed_entities_by_entry,
+    format_session_unchanged_reuse_markdown, group_seed_entities_by_entry,
     normalize_ranked_capabilities_for_gate, primary_entry_id_for_grouped, seeds_fully_exposed,
-    wrap_teaching_markdown_literal_block, RankedCapabilitiesArg, STALE_EXECUTE_BINDING_NOTICE,
+    teaching_exposure_at, unchanged_expand_wave, wrap_teaching_markdown_literal_block,
+    RankedCapabilitiesArg, STALE_EXECUTE_BINDING_NOTICE,
 };
 use super::expand::expand_execute_teaching_session;
 use super::federate::federate_execute_session;
@@ -134,9 +135,13 @@ pub(crate) async fn apply_capability_seeds(
                 open_md.push_str(STALE_EXECUTE_BINDING_NOTICE);
             }
             if created.reused {
-                open_md.push_str(&format_session_unchanged_one_liner(
-                    created.entities.len().max(1),
-                ));
+                let exposure = teaching_exposure_at(
+                    st,
+                    created.prompt_hash.as_str(),
+                    created.session.as_str(),
+                )
+                .await;
+                open_md.push_str(&format_session_unchanged_reuse_markdown(exposure.as_ref()));
             } else {
                 let mode = st.engine.prompt_pipeline().render_mode;
                 if mode.is_tsv() {
@@ -187,21 +192,12 @@ pub(crate) async fn apply_capability_seeds(
                     .iter()
                     .all(|eid| sess_arc.contexts_by_entry.contains_key(eid));
                 if catalogs_ready && seeds_fully_exposed(exp, &seeds) {
-                    let n = exp.entities.len().max(1);
                     return Ok(ApplyCapabilitySeedsOutcome {
                         prompt_hash,
                         session_id,
                         primary_entry_id: primary_entry_id.clone(),
                         principal,
-                        waves: vec![CapabilityWaveOutcome {
-                            mode: "expand".to_string(),
-                            entry_id: primary_entry_id,
-                            entities: vec![],
-                            markdown_delta: format_session_unchanged_one_liner(n),
-                            reused_session: true,
-                            teaching_prompt_chars_added: 0,
-                            relations_delta: Vec::new(),
-                        }],
+                        waves: vec![unchanged_expand_wave(primary_entry_id, Some(exp))],
                         binding_updated,
                         new_symbol_space: false,
                         stale_execute_binding_recovered,
@@ -270,22 +266,11 @@ pub(crate) async fn apply_capability_seeds(
             .iter()
             .all(|w| w.teaching_prompt_chars_added == 0 && w.markdown_delta.trim().is_empty())
     {
-        let n = st
-            .sessions
-            .get_by_strs(&prompt_hash, &session_id)
-            .await
-            .and_then(|s| s.teaching_exposure.as_ref().map(|e| e.entities.len()))
-            .unwrap_or(0)
-            .max(1);
-        waves = vec![CapabilityWaveOutcome {
-            mode: "expand".to_string(),
-            entry_id: primary_entry_id.clone(),
-            entities: vec![],
-            markdown_delta: format_session_unchanged_one_liner(n),
-            reused_session: true,
-            teaching_prompt_chars_added: 0,
-            relations_delta: Vec::new(),
-        }];
+        let exposure = teaching_exposure_at(st, prompt_hash.as_str(), session_id.as_str()).await;
+        waves = vec![unchanged_expand_wave(
+            primary_entry_id.clone(),
+            exposure.as_ref(),
+        )];
     }
 
     Ok(ApplyCapabilitySeedsOutcome {

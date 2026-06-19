@@ -141,12 +141,13 @@ pub use mcp_frontmatter::{
     render_plasm_mcp_tool_syntax_contract, MCP_TOOL_SYNTAX_CONTRACT_MARKER,
 };
 pub use mcp_prompt_fragments::{
-    render_plasm_mcp_context_tool_workflow_lines, render_plasm_mcp_discover_tool_description,
-    render_plasm_mcp_initialize_workflow_head, render_plasm_mcp_initialize_workflow_tail,
-    render_plasm_mcp_program_construction_line, render_plasm_mcp_run_tool_operational_tail,
-    render_plasm_mcp_session_discipline_block, render_plasm_mcp_tool_sequencing_line,
-    MCP_PROGRAM_CONSTRUCTION_LINE, MCP_TOOL_SEQUENCING_MARKER, REUSE_CHEATSHEET_TAIL,
-    REUSE_SESSION_UNCHANGED_DISCIPLINE, SESSION_DISCIPLINE_MCP, SESSION_DISCIPLINE_PROGRAM,
+    render_compact_exposure_symbol_map, render_plasm_mcp_context_tool_workflow_lines,
+    render_plasm_mcp_discover_tool_description, render_plasm_mcp_initialize_workflow_head,
+    render_plasm_mcp_initialize_workflow_tail, render_plasm_mcp_program_construction_line,
+    render_plasm_mcp_run_tool_operational_tail, render_plasm_mcp_session_discipline_block,
+    render_plasm_mcp_tool_sequencing_line, DISCOVER_DECISION_CLARIFY, DISCOVER_DECISION_MATCH,
+    DISCOVER_DECISION_NO_MATCH, DISCOVER_TSV_LANGUAGE_PREAMBLE, MCP_PROGRAM_CONSTRUCTION_LINE,
+    MCP_TOOL_SEQUENCING_MARKER, SESSION_DISCIPLINE_MCP, SESSION_DISCIPLINE_PROGRAM,
 };
 #[cfg(test)]
 pub(crate) use stats::domain_expression_tool_count_resolved;
@@ -2324,8 +2325,11 @@ pub(crate) fn render_relation_edge_delta_rows(
                 source: sb,
                 relation: rb,
             },
-        ) => (sa.entry_id.as_str(), sa.entity.as_str(), ra.as_str())
-            .cmp(&(sb.entry_id.as_str(), sb.entity.as_str(), rb.as_str())),
+        ) => (sa.entry_id.as_str(), sa.entity.as_str(), ra.as_str()).cmp(&(
+            sb.entry_id.as_str(),
+            sb.entity.as_str(),
+            rb.as_str(),
+        )),
         _ => std::cmp::Ordering::Equal,
     });
 
@@ -2352,11 +2356,17 @@ pub(crate) fn render_relation_edge_delta_rows(
         if !many_relation_nav_emittable(rel_schema) {
             continue;
         }
-        let Some(es) = exposure.qualified_entity_symbol(source.entry_id.as_str(), source.entity.as_str())
+        let Some(es) =
+            exposure.qualified_entity_symbol(source.entry_id.as_str(), source.entity.as_str())
         else {
             continue;
         };
-        let r_sym = id_sym_rel(map, source.entry_id.as_str(), source.entity.as_str(), relation.as_str());
+        let r_sym = id_sym_rel(
+            map,
+            source.entry_id.as_str(),
+            source.entity.as_str(),
+            relation.as_str(),
+        );
         if !r_sym.starts_with('r') {
             continue;
         }
@@ -5719,13 +5729,7 @@ mod tests {
                 read_first_seeded: true,
             },
         );
-        exp.expose_surface(
-            &[&cgs],
-            cgs_arc,
-            "pokeapi",
-            &["BerryFirmness"],
-            delta2,
-        );
+        exp.expose_surface(&[&cgs], cgs_arc, "pokeapi", &["BerryFirmness"], delta2);
         let added = exp.qualified_entities_since(1);
         let new_relation_slots = exp.relation_edge_delta_slots(&slots_before, &added);
         exp.admit_relation_edge_slots_for_render(&[&cgs], &new_relation_slots);

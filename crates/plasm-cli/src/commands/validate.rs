@@ -307,9 +307,9 @@ pub async fn execute(schema: &str, spec: &str) -> Result<(), Box<dyn std::error:
                                     q.capability_name = Some(capability.clone());
                                     Some(q)
                                 }
-                                plasm_core::RelationScopedFallback::HydrateFromEmbedPath { .. } => {
-                                    None
-                                }
+                                plasm_core::RelationScopedFallback::HydrateFromEmbedPath {
+                                    ..
+                                } => None,
                             }
                         }
                         RelationMaterialization::FromParentGet { .. }
