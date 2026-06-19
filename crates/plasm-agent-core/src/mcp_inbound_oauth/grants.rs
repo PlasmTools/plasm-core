@@ -163,6 +163,7 @@ impl McpInboundOAuthService {
 
         let scope = stored.enhanced.scopes.join(" ");
         self.issue_token_response(
+            "authorization_code",
             client_id,
             &stored.tenant_id,
             &stored.enhanced.user_id,
@@ -220,6 +221,7 @@ impl McpInboundOAuthService {
         let scope = stored.enhanced.scopes.join(" ");
         let response = self
             .issue_token_response(
+                "refresh_token",
                 client_id,
                 &stored.tenant_id,
                 &stored.enhanced.user_id,
@@ -271,8 +273,10 @@ impl McpInboundOAuthService {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn issue_token_response(
         &self,
+        grant_type: &str,
         client_id: &str,
         tenant_id: &str,
         subject: &str,
@@ -292,6 +296,14 @@ impl McpInboundOAuthService {
         } else {
             None
         };
+        tracing::info!(
+            grant_type = grant_type,
+            client_id = client_id,
+            tenant_id = tenant_id,
+            subject = subject,
+            resource = resource,
+            "mcp inbound oauth access token issued"
+        );
         Ok(McpOAuthTokenResponse {
             access_token,
             token_type: "Bearer".to_string(),

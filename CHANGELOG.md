@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.38] - 2026-06-19
+
+### Added
+
+- **Claude Web MCP OAuth discovery:** `/.well-known/openid-configuration` on plasm-mcp (same metadata as `oauth-authorization-server`) for ingress-routed production hosts.
+- **Smoke:** `scripts/smoke/mcp-claude-web-oauth-chain.sh` — well-known metadata, DCR, optional full PKCE + initialize chain.
+- **Docs/UI:** `docs/claude-web-mcp-connector.md`; Claude Web installer in project MCP settings.
+
+### Changed
+
+- **OAuth observability:** structured tracing for token mint and bearer verify accept/reject paths.
+- **Phoenix compat:** `OauthDiscoveryCompatController` advertises `refresh_token` grant (local dev parity).
+
 ## [0.3.37] - 2026-06-19
 
 ### Changed

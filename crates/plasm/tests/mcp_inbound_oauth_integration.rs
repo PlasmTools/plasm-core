@@ -275,6 +275,22 @@ async fn inbound_oauth_dynamic_registration_pkce_and_transport_access() {
         "registration endpoint must be the canonical /mcp/oauth/register path"
     );
 
+    let oidc = client
+        .get(format!("{base}/mcp/.well-known/openid-configuration"))
+        .send()
+        .await
+        .expect("openid configuration metadata request");
+    assert_eq!(oidc.status(), reqwest::StatusCode::OK);
+    let oidc_body: serde_json::Value = oidc.json().await.expect("openid configuration body");
+    assert_eq!(
+        oidc_body["grant_types_supported"], asm_body["grant_types_supported"],
+        "openid-configuration must match oauth-authorization-server grant_types"
+    );
+    assert_eq!(
+        oidc_body["token_endpoint"], asm_body["token_endpoint"],
+        "openid-configuration must match oauth-authorization-server token_endpoint"
+    );
+
     let client_id =
         register_dynamic_client(&client, &base, &["authorization_code", "refresh_token"]).await;
 

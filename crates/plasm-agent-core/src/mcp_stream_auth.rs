@@ -37,6 +37,7 @@ const OAUTH_AUTHORIZE_PATH: &str = "/oauth/authorize";
 const OAUTH_TOKEN_PATH: &str = "/oauth/token";
 const OAUTH_REGISTER_PATH: &str = "/oauth/register";
 const OAUTH_AS_METADATA_PATH: &str = "/.well-known/oauth-authorization-server";
+const OAUTH_OPENID_CONFIGURATION_PATH: &str = "/.well-known/openid-configuration";
 const OAUTH_PROTECTED_RESOURCE_PATH: &str = "/.well-known/oauth-protected-resource/mcp";
 const MCP_OAUTH_PREFIX: &str = "/mcp";
 /// Non-empty bearer value for **anonymous** Streamable HTTP MCP when no tenant configs exist.
@@ -83,6 +84,10 @@ fn oauth_endpoint_map() -> HashMap<String, OauthEndpoint> {
     let endpoints = [
         (
             OAUTH_AS_METADATA_PATH.to_string(),
+            OauthEndpoint::AuthorizationServerMetadata,
+        ),
+        (
+            OAUTH_OPENID_CONFIGURATION_PATH.to_string(),
             OauthEndpoint::AuthorizationServerMetadata,
         ),
         (
@@ -236,30 +241,51 @@ impl PlasmMcpApiKeyAuthProvider {
     }
 
     async fn verify_oauth_bearer(&self, raw: &str) -> Result<AuthInfo, AuthenticationError> {
-        let oauth = self
-            .oauth_service()
-            .await
-            .map_err(|_| self.oauth_not_configured_error())?;
-        let principal =
-            oauth
-                .verify_access_token(raw)
-                .map_err(|_| AuthenticationError::InvalidToken {
-                    description: "invalid OAuth bearer token",
-                })?;
+        let oauth = self.oauth_service().await.map_err(|_| {
+            tracing::warn!("mcp oauth bearer rejected: inbound oauth service unavailable");
+            self.oauth_not_configured_error()
+        })?;
+        let principal = oauth.verify_access_token(raw).map_err(|_| {
+            tracing::warn!("mcp oauth bearer rejected: invalid or expired access token");
+            AuthenticationError::InvalidToken {
+                description: "invalid OAuth bearer token",
+            }
+        })?;
 
         let repo = self.mcp_repo()?;
         let Some(cfg) = repo
             .find_personal_runtime(&principal.tenant_id, &principal.subject)
             .await
-            .map_err(|_| AuthenticationError::InvalidToken {
-                description: "MCP configuration store error",
+            .map_err(|_| {
+                tracing::warn!(
+                    tenant_id = %principal.tenant_id,
+                    subject = %principal.subject,
+                    "mcp oauth bearer rejected: personal MCP config store error"
+                );
+                AuthenticationError::InvalidToken {
+                    description: "MCP configuration store error",
+                }
             })?
         else {
+            tracing::warn!(
+                tenant_id = %principal.tenant_id,
+                subject = %principal.subject,
+                client_id = %principal.client_id,
+                "mcp oauth bearer rejected: no active personal MCP configuration"
+            );
             return Err(AuthenticationError::InvalidToken {
                 description:
                     "OAuth token subject is not bound to an active personal MCP configuration",
             });
         };
+
+        tracing::info!(
+            tenant_id = %principal.tenant_id,
+            subject = %principal.subject,
+            client_id = %principal.client_id,
+            config_id = %cfg.id,
+            "mcp oauth bearer accepted"
+        );
 
         let mut extra = serde_json::Map::new();
         extra.insert("plasm_mcp_config_id".to_string(), json!(cfg.id.to_string()));
@@ -544,7 +570,14 @@ impl PlasmMcpApiKeyAuthProvider {
                 });
                 Ok(Self::json_response(StatusCode::OK, payload))
             }
-            Err(err) => Ok(Self::oauth_error_from_domain(err)),
+            Err(err) => {
+                tracing::warn!(
+                    oauth_error = err.oauth_error_code(),
+                    description = err.description(),
+                    "mcp inbound oauth token exchange failed"
+                );
+                Ok(Self::oauth_error_from_domain(err))
+            }
         }
     }
 }
