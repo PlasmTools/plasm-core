@@ -56,10 +56,43 @@ pub(crate) fn layer_parallel_safe(
     layer: &[StepId],
     payload_by_step: &HashMap<StepId, PlasmStepPayload>,
 ) -> bool {
-    layer.len() > 1
-        && layer
-            .iter()
-            .all(|id| payload_by_step.get(id).is_some_and(comp_step_parallel_safe))
+    if layer.len() <= 1 {
+        return false;
+    }
+    if !layer
+        .iter()
+        .all(|id| payload_by_step.get(id).is_some_and(comp_step_parallel_safe))
+    {
+        return false;
+    }
+    // **CEP-9:** a relation flat-map's source is always an upstream dependency (see
+    // `node_dependencies`), so it lands in an earlier layer. A same-layer source means the
+    // bind graph dropped that edge — assert in debug, refuse to parallelize in release.
+    // Linear scan (no allocation); layers are small and relations rare.
+    for id in layer {
+        let Some(PlasmStepPayload::FlatMapRelation(p)) = payload_by_step.get(id) else {
+            continue;
+        };
+        let Ok(source) = StepId::new(p.relation.source.clone()) else {
+            continue;
+        };
+        if layer.contains(&source) {
+            debug_assert!(
+                false,
+                "CEP-9: relation `{}` shares a layer with its source `{}`",
+                id.as_str(),
+                source.as_str()
+            );
+            tracing::warn!(
+                target: "plasm_agent::plan_schedule",
+                relation = id.as_str(),
+                source = source.as_str(),
+                "CEP-9: relation flat-map shares a layer with its source; refusing parallel execution"
+            );
+            return false;
+        }
+    }
+    true
 }
 
 #[cfg(test)]
@@ -115,5 +148,63 @@ mod tests {
         let layers = bind_topo_execution_layers(&bind).expect("layers");
         assert_eq!(layers.len(), 1);
         assert!(layer_parallel_safe(&layers[0], &payload_by_step));
+    }
+
+    #[test]
+    #[should_panic(expected = "CEP-9")]
+    fn cep_9_parallel_layer_rejects_relation_with_source_in_same_layer() {
+        use plasm_core::plasm_monad::{
+            FlatMapRelationPayload, PlanExprIr, PlanQualifiedEntityKey, PlasmStepPayload,
+            PurePayload, ResultShape,
+        };
+        use plasm_core::RelationMaterialization;
+
+        let src = step("item");
+        let rel = step("tags");
+        let bind = PlasmBindGraph {
+            topo: vec![src.clone(), rel.clone()],
+            deps: Default::default(),
+            ..Default::default()
+        };
+        let pure = PurePayload {
+            data: plasm_core::PlasmDataValue::Literal {
+                value: serde_json::Value::Null,
+            },
+            effect_class: EffectClass::Read,
+            result_shape: ResultShape::List,
+        };
+        let relation_payload = FlatMapRelationPayload {
+            relation: plasm_core::PlanRelationTraversal {
+                source: src.as_str().to_string(),
+                relation: "tags".into(),
+                target: PlanQualifiedEntityKey {
+                    entry_id: "acme".into(),
+                    entity: "Tag".into(),
+                },
+                cardinality: plasm_core::RelationCardinality::Many,
+                source_cardinality: plasm_core::RelationSourceCardinality::Single,
+                expr: String::new(),
+                ir: PlanExprIr {
+                    expr: serde_json::json!({"op": "query", "entity": "Tag"}),
+                    projection: None,
+                    display_expr: None,
+                },
+                binding_proofs: Vec::new(),
+                materialize: Some(RelationMaterialization::FromParentGet { path: vec![] }),
+            },
+            effect_class: EffectClass::Read,
+            result_shape: ResultShape::List,
+        };
+        let payload_by_step = HashMap::from([
+            (src.clone(), PlasmStepPayload::Pure(pure)),
+            (
+                rel.clone(),
+                PlasmStepPayload::FlatMapRelation(relation_payload),
+            ),
+        ]);
+        let layers = bind_topo_execution_layers(&bind).expect("layers");
+        assert_eq!(layers.len(), 1);
+        assert_eq!(layers[0].len(), 2);
+        assert!(!layer_parallel_safe(&layers[0], &payload_by_step));
     }
 }

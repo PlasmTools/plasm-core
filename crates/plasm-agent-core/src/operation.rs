@@ -5,7 +5,7 @@ use crate::operation_progress::{
     op_plasm_meta_short, render_op_wire_line, render_op_wire_markdown, OpWireSig,
 };
 use crate::plan_dry_display::{PlanDryReview, PlanDryVerdict};
-use crate::plasm_plan_run::{DryPlasmPlanEvaluation, PlasmPlanRunResult};
+use crate::plasm_plan_run::{DryPlasmPlanEvaluation, PlanRunTraceHooks, PlasmPlanRunResult};
 use crate::server_state::PlasmHostState;
 use plasm_core::{OperationHandle, PlanCommitId, PlanCommitRef};
 use plasm_runtime::CancelSignal;
@@ -655,6 +655,40 @@ pub(crate) fn try_parse_operation_continuation(
     }
 }
 
+/// Run one live plan on the host worker pool (shared by async spawn + stale-epoch retry).
+#[allow(clippy::too_many_arguments)]
+async fn run_plasm_comp_on_pool(
+    pool: &crate::live_plan_run_worker::LivePlanRunPool,
+    es: Arc<ExecuteSession>,
+    st: Arc<crate::server_state::PlasmHostState>,
+    prompt_hash: String,
+    session_id: String,
+    bundle: crate::plasm_comp_bundle::PlasmCompBundle,
+    scope: ExecutionScope,
+    plan_hooks: Option<PlanRunTraceHooks>,
+    telemetry: Arc<plasm_runtime::LiveRunTelemetry>,
+    dry: Option<DryPlasmPlanEvaluation>,
+) -> Result<PlasmPlanRunResult, String> {
+    pool.run(move || async move {
+        plasm_runtime::with_live_run_telemetry(telemetry, async move {
+            crate::plasm_plan_run::run_plasm_comp(
+                es.as_ref(),
+                st.as_ref(),
+                prompt_hash.as_str(),
+                session_id.as_str(),
+                &bundle,
+                true,
+                plan_hooks,
+                Some(&scope),
+                dry,
+            )
+            .await
+        })
+        .await
+    })
+    .await
+}
+
 /// Start a background live plan run; poll with `wait(handle)` / cancel with `cancel(handle)`.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_async_plan_run(
@@ -687,28 +721,24 @@ pub fn spawn_async_plan_run(
     let scope_for_run = scope.clone();
     let es_run = Arc::clone(&es);
     let st_run = Arc::clone(&st);
-    let pool = st.live_plan_pool();
     tokio::spawn(async move {
-        let plan_hooks = plan_hooks;
-        let result = pool
-            .run(move || async move {
-                plasm_runtime::with_live_run_telemetry(telemetry, async move {
-                    crate::plasm_plan_run::run_plasm_comp(
-                        es_run.as_ref(),
-                        st_run.as_ref(),
-                        prompt_hash.as_str(),
-                        session_id.as_str(),
-                        &bundle,
-                        true,
-                        plan_hooks,
-                        Some(&scope_for_run),
-                        dry,
-                    )
-                    .await
-                })
-                .await
-            })
-            .await;
+        // Stale-epoch retry lives at the branch level (`run_with_stale_epoch_retry`), which
+        // re-forks only the contended line before any commit is visible. Re-running the whole
+        // plan here would re-issue already-committed mutating lines, so the plan executes once.
+        let pool = st_run.live_plan_pool();
+        let result = run_plasm_comp_on_pool(
+            pool.as_ref(),
+            es_run,
+            st_run,
+            prompt_hash,
+            session_id,
+            bundle,
+            scope_for_run,
+            plan_hooks,
+            telemetry,
+            dry,
+        )
+        .await;
         ticker_cancel.cancel();
         let _ = ticker.await;
         es.clear_live_run_telemetry();

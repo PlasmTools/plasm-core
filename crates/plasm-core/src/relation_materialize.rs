@@ -114,6 +114,32 @@ fn resolve_prefer_from_parent_get_row(
     }
 }
 
+/// Per-parent embed vs scoped resolution for plan/runtime prefer materialization.
+pub fn partition_prefer_resolutions<'a, F>(
+    materialize: &RelationMaterialization,
+    relation_key: &str,
+    expected_target: &str,
+    parent_rows: impl IntoIterator<Item = (&'a Value, Option<&'a [Ref]>)>,
+    graph_has_ref: F,
+) -> Vec<RelationRowResolution>
+where
+    F: Fn(&Ref) -> bool,
+{
+    parent_rows
+        .into_iter()
+        .map(|(parent_json, relation_refs)| {
+            resolve_relation_row_resolution(
+                materialize,
+                relation_key,
+                expected_target,
+                parent_json,
+                relation_refs,
+                &graph_has_ref,
+            )
+        })
+        .collect()
+}
+
 /// Flatten extracted path values across parent rows (plan materialize helper).
 pub fn flatten_from_parent_get_source_rows(
     source_rows: &[Value],
@@ -199,15 +225,16 @@ mod tests {
             },
         };
         let refs = vec![Ref::new("Label", "99")];
-        let res = resolve_relation_row_resolution(
+        let row = serde_json::json!({"labels": [{"id": 99}]});
+        let resolutions = partition_prefer_resolutions(
             &mat,
             "labels",
             "Label",
-            &serde_json::json!({"labels": [{"id": 99}]}),
-            Some(&refs),
+            [(&row, Some(refs.as_slice()))],
             |_| false,
         );
-        assert_eq!(res, RelationRowResolution::ScopedQuery);
+        assert_eq!(resolutions.len(), 1);
+        assert_eq!(resolutions[0], RelationRowResolution::ScopedQuery);
     }
 
     #[test]

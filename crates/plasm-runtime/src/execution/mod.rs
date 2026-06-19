@@ -14,6 +14,7 @@ use plasm_compile::{
     CompileOperationHook, CompileQueryHook, CompiledOperation, CompiledRequest, HttpBodyFormat,
     PaginationConfig, PathExpr, PathSegment, ResponsePreprocess,
 };
+use plasm_core::partition_prefer_resolutions;
 use plasm_core::resolve_relation_row_resolution;
 use plasm_core::{
     cross_entity::{
@@ -2415,18 +2416,33 @@ pub(crate) fn partition_prefer_from_parent_get(
     fallback: &RelationScopedFallback,
 ) -> Result<(Vec<Vec<CachedEntity>>, Vec<(usize, QueryExpr)>), RuntimeError> {
     let n = parents.len();
+    let parent_rows: Vec<(serde_json::Value, Option<Vec<Ref>>)> = parents
+        .iter()
+        .map(|parent| {
+            (
+                parent.payload_to_json(),
+                parent
+                    .relations
+                    .get(relation_key)
+                    .map(|refs| refs.to_vec()),
+            )
+        })
+        .collect();
+    let parent_row_refs: Vec<(&serde_json::Value, Option<&[Ref]>)> = parent_rows
+        .iter()
+        .map(|(json, refs)| (json, refs.as_deref()))
+        .collect();
+    let resolutions = partition_prefer_resolutions(
+        materialize,
+        relation_key,
+        expected_target,
+        parent_row_refs,
+        |r| mat.get(r).is_some(),
+    );
     let mut per_parent: Vec<Vec<CachedEntity>> = (0..n).map(|_| Vec::new()).collect();
     let mut network_jobs: Vec<(usize, QueryExpr)> = Vec::new();
-    for (i, parent) in parents.iter().enumerate() {
-        let parent_json = parent.payload_to_json();
-        let resolution = resolve_relation_row_resolution(
-            materialize,
-            relation_key,
-            expected_target,
-            &parent_json,
-            parent.relations.get(relation_key).map(|v| v.as_slice()),
-            |r| mat.get(r).is_some(),
-        );
+    for (i, resolution) in resolutions.into_iter().enumerate() {
+        let parent = &parents[i];
         match resolution {
             RelationRowResolution::EmbeddedRefs(refs) => {
                 per_parent[i] =
@@ -3256,6 +3272,80 @@ fn parent_identity_field_hints_for_child(
     hints
 }
 
+fn entity_decoder_for_from_parent_get_target(
+    target_ent: &plasm_core::EntityDef,
+    parent_ent: &plasm_core::EntityDef,
+    rel_path: plasm_compile::PathExpr,
+    cgs: &CGS,
+) -> plasm_compile::EntityDecoder {
+    use plasm_compile::{EntityDecoder, FieldDecoder, PathExpr, PathSegment};
+
+    let mut cf = Vec::new();
+    for (fname, fschema) in &target_ent.fields {
+        let from_path = if let Some(wp) = &fschema.wire_path {
+            PathExpr::new(
+                wp.iter()
+                    .map(|n| PathSegment::Key { name: n.clone() })
+                    .collect(),
+            )
+        } else {
+            PathExpr::new(vec![PathSegment::Key {
+                name: fname.as_str().to_string(),
+            }])
+        };
+        let fd = FieldDecoder::new(fname.as_str(), from_path);
+        cf.push(match &fschema.derive {
+            Some(d) => fd.with_derive(d.clone()),
+            None => fd,
+        });
+    }
+    let child_kv: Vec<String> = target_ent
+        .key_vars
+        .iter()
+        .map(|k| k.as_str().to_string())
+        .collect();
+    let parent_hints = parent_identity_field_hints_for_child(parent_ent, target_ent);
+    let nested_relations = from_parent_get_relation_decoders(target_ent, cgs);
+    EntityDecoder::new(target_ent.name.as_str(), rel_path)
+        .with_fields(cf)
+        .with_id_field(target_ent.id_field.clone())
+        .with_key_vars(child_kv)
+        .with_identity_ambient(IndexMap::new())
+        .with_parent_identity_field_hints(parent_hints)
+        .with_relations(nested_relations)
+}
+
+fn from_parent_get_relation_decoders(
+    entity: &plasm_core::EntityDef,
+    cgs: &CGS,
+) -> Vec<plasm_compile::RelationDecoder> {
+    use plasm_compile::RelationDecoder;
+
+    let mut relation_decoders = Vec::new();
+    for (rel_name, rel) in &entity.relations {
+        let Some(path) = (match &rel.materialize {
+            Some(RelationMaterialization::FromParentGet { path })
+            | Some(RelationMaterialization::PreferFromParentGet { path, .. }) => Some(path),
+            _ => None,
+        }) else {
+            continue;
+        };
+        let rel_path = path_expr_from_json_segments(path).unwrap_or_else(|e| {
+            panic!("CGS must reject invalid from_parent_get paths: {e}");
+        });
+        let Some(target_ent) = cgs.get_entity(rel.target_resource.as_str()) else {
+            continue;
+        };
+        let child = entity_decoder_for_from_parent_get_target(target_ent, entity, rel_path, cgs);
+        relation_decoders.push(RelationDecoder {
+            relation: rel_name.as_str().to_string(),
+            decoder: child,
+            cardinality: rel.cardinality,
+        });
+    }
+    relation_decoders
+}
+
 fn create_entity_decoder_inner(
     entity_type: &str,
     cgs: &CGS,
@@ -3339,37 +3429,8 @@ fn create_entity_decoder_inner(
                 let Some(target_ent) = cgs.get_entity(rel.target_resource.as_str()) else {
                     continue;
                 };
-                let mut cf = Vec::new();
-                for (fname, fschema) in &target_ent.fields {
-                    let from_path = if let Some(wp) = &fschema.wire_path {
-                        PathExpr::new(
-                            wp.iter()
-                                .map(|n| PathSegment::Key { name: n.clone() })
-                                .collect(),
-                        )
-                    } else {
-                        PathExpr::new(vec![PathSegment::Key {
-                            name: fname.as_str().to_string(),
-                        }])
-                    };
-                    let fd = FieldDecoder::new(fname.as_str(), from_path);
-                    cf.push(match &fschema.derive {
-                        Some(d) => fd.with_derive(d.clone()),
-                        None => fd,
-                    });
-                }
-                let child_kv: Vec<String> = target_ent
-                    .key_vars
-                    .iter()
-                    .map(|k| k.as_str().to_string())
-                    .collect();
-                let parent_hints = parent_identity_field_hints_for_child(entity, target_ent);
-                let child = EntityDecoder::new(rel.target_resource.as_str(), rel_path)
-                    .with_fields(cf)
-                    .with_id_field(target_ent.id_field.clone())
-                    .with_key_vars(child_kv)
-                    .with_identity_ambient(IndexMap::new())
-                    .with_parent_identity_field_hints(parent_hints);
+                let child =
+                    entity_decoder_for_from_parent_get_target(target_ent, entity, rel_path, cgs);
                 relation_decoders.push(plasm_compile::RelationDecoder {
                     relation: rel_name.as_str().to_string(),
                     decoder: child,
@@ -5084,6 +5145,60 @@ mod tests {
                 assert!(!decoded[0].embedded_entities.is_empty());
             }
             other => panic!("expected Specified labels relation, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn langitem_get_decoder_decodes_nested_summary_detail_chain() {
+        use plasm_compile::decode_entities;
+        use plasm_compile::DecodedRelation;
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&dir).expect("langmatrix");
+        let decoder = create_entity_decoder_for_capability(
+            "LangItem",
+            &cgs,
+            Some("langitem_get"),
+            None,
+            Some("i1"),
+            None,
+        );
+        let summary_rel = decoder
+            .relations
+            .iter()
+            .find(|r| r.relation == "summary")
+            .expect("summary relation decoder");
+        assert!(
+            summary_rel
+                .decoder
+                .relations
+                .iter()
+                .any(|r| r.relation == "detail"),
+            "nested summary decoder must include detail for chained from_parent_get hops"
+        );
+
+        let body = serde_json::json!({
+            "id": "i1",
+            "title": "Alpha",
+            "summary": {
+                "id": "sum-i1",
+                "headline": "Alpha summary",
+                "detail": { "id": "det-i1", "body": "nested detail" }
+            }
+        });
+        let decoded = decode_entities(&decoder, &body).expect("decode langitem get");
+        let summary = decoded[0]
+            .embedded_entities
+            .iter()
+            .find(|e| e.reference.entity_type.as_str() == "LangSummary")
+            .expect("embedded summary");
+        match summary.relations.get("detail") {
+            Some(DecodedRelation::Specified(refs)) => {
+                assert_eq!(refs[0].simple_id().unwrap().as_str(), "det-i1");
+            }
+            other => panic!("expected detail relation on embedded summary, got {other:?}"),
         }
     }
 

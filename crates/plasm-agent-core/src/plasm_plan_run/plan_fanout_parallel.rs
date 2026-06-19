@@ -1,4 +1,7 @@
 //! Bounded concurrent fan-out for plan row jobs (relation scoped query, for_each reads).
+//!
+//! **CEP-6:** each row job runs an independent graph branch cycle; merged results preserve
+//! source row order by `job.index` after parallel completion.
 
 use std::sync::Arc;
 

@@ -189,6 +189,49 @@ pub(crate) fn relation_rows_from_entities(
         .collect()
 }
 
+/// Preserve nested wire embed keys (e.g. `detail` on LangSummary) not declared on the target
+/// entity so chained `from_parent_get` hops can read the next path segment.
+fn merge_wire_embed_superset_rows(
+    prior_wire: &[serde_json::Value],
+    entity_rows: &[serde_json::Value],
+    cgs: &CGS,
+    entity_type: &str,
+) -> Vec<serde_json::Value> {
+    use std::collections::HashSet;
+
+    let declared: HashSet<&str> = cgs
+        .get_entity(entity_type)
+        .map(|e| e.fields.keys().map(|k| k.as_str()).collect())
+        .unwrap_or_default();
+    entity_rows
+        .iter()
+        .enumerate()
+        .map(|(i, entity_row)| {
+            prior_wire
+                .get(i)
+                .map(|wire| merge_wire_embed_superset_row(wire, entity_row, &declared))
+                .unwrap_or_else(|| entity_row.clone())
+        })
+        .collect()
+}
+
+fn merge_wire_embed_superset_row(
+    wire: &serde_json::Value,
+    entity_row: &serde_json::Value,
+    declared_fields: &std::collections::HashSet<&str>,
+) -> serde_json::Value {
+    let mut merged = entity_row.clone();
+    let (Some(wire_obj), Some(merged_obj)) = (wire.as_object(), merged.as_object_mut()) else {
+        return merged;
+    };
+    for (k, v) in wire_obj {
+        if !declared_fields.contains(k.as_str()) {
+            merged_obj.insert(k.clone(), v.clone());
+        }
+    }
+    merged
+}
+
 /// Hydrate incomplete relation targets and normalize materialized row JSON.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn finalize_typed_relation_materialized_node(
@@ -215,7 +258,13 @@ pub(crate) async fn finalize_typed_relation_materialized_node(
         plan_shared.clone(),
     )
     .await?;
-    let rows = relation_rows_from_entities(&hydrated, cgs);
+    let entity_rows = relation_rows_from_entities(&hydrated, cgs);
+    let rows = match mat.row_source.inline_rows() {
+        Some(prior) if !prior.is_empty() && prior.len() == hydrated.len() => {
+            merge_wire_embed_superset_rows(prior, &entity_rows, cgs, entity_type)
+        }
+        _ => entity_rows,
+    };
     let count = hydrated.len();
     mat.result = Arc::new(ExecutionResult {
         count,
@@ -272,6 +321,59 @@ mod tests {
         let cgs = langmatrix_cgs();
         let entity = stub_langitem_entity();
         assert!(entity_row_schema_incomplete(&cgs, "LangItem", &entity));
+    }
+
+    #[test]
+    fn merge_wire_embed_superset_preserves_nested_detail_for_chained_hop() {
+        use plasm_core::JsonPathSegment;
+        use plasm_core::{flatten_from_parent_get_source_rows, Cardinality};
+
+        let cgs = langmatrix_cgs();
+        let item_row = serde_json::json!({
+            "id": "i1",
+            "title": "Alpha",
+            "summary": {
+                "id": "sum-i1",
+                "headline": "Alpha summary",
+                "detail": { "id": "det-i1", "body": "nested detail" }
+            }
+        });
+        let summary_path = [JsonPathSegment::Key {
+            key: "summary".into(),
+        }];
+        let wire_summary = flatten_from_parent_get_source_rows(
+            std::slice::from_ref(&item_row),
+            &summary_path,
+            Cardinality::One,
+        );
+        assert_eq!(wire_summary.len(), 1);
+        let summary_entity_row = serde_json::json!({
+            "id": "sum-i1",
+            "headline": "Alpha summary"
+        });
+        let merged = merge_wire_embed_superset_rows(
+            &wire_summary,
+            std::slice::from_ref(&summary_entity_row),
+            &cgs,
+            "LangSummary",
+        );
+        assert_eq!(merged.len(), 1);
+        assert_eq!(
+            merged[0].pointer("/detail/body").and_then(|v| v.as_str()),
+            Some("nested detail"),
+            "chained hop must retain nested detail embed on summary row_source"
+        );
+
+        let detail_path = [JsonPathSegment::Key {
+            key: "detail".into(),
+        }];
+        let detail_rows =
+            flatten_from_parent_get_source_rows(&merged, &detail_path, Cardinality::One);
+        assert_eq!(detail_rows.len(), 1);
+        assert_eq!(
+            detail_rows[0].pointer("/body").and_then(|v| v.as_str()),
+            Some("nested detail")
+        );
     }
 
     #[test]

@@ -1,4 +1,8 @@
 //! Unified graph-surface rehydrate API (plan / apply / materialize / stream).
+//!
+//! **CEP-4:** spill/rehydrate I/O runs without the session graph mutex held.
+//! **CEP-5:** [`Self::resolve_source_parents`] keeps parent entities aligned with
+//! [`MaterializedRowSource`] when [`ExecutionResult::entities`] is empty (GraphBacked).
 
 use std::sync::Arc;
 
@@ -129,8 +133,9 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) async fn materialize_entities_for_result(
+    /// CEP-5: parent entities for relation materialize — uses hot cache + spill when
+    /// `result.entities` is empty but `result.count > 0` (GraphBacked surface).
+    pub(crate) async fn resolve_source_parents(
         &self,
         entity_type: &str,
         result: &ExecutionResult,
@@ -151,6 +156,15 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         )
         .await
         .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn materialize_entities_for_result(
+        &self,
+        entity_type: &str,
+        result: &ExecutionResult,
+    ) -> Vec<CachedEntity> {
+        self.resolve_source_parents(entity_type, result).await
     }
 
     pub(crate) async fn rehydrate_rows(

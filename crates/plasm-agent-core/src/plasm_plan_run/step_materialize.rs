@@ -131,18 +131,22 @@ pub(crate) async fn materialize_executable_plan_step(
                 .as_ref()
                 .map(|q| q.entity.as_str())
                 .unwrap_or_else(|| surface.id.as_str());
-            let row_source = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
+            let rehydrator = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
                 &scoped_es,
                 st,
                 session_id,
                 scoped_es.cgs.as_ref(),
-            )
-            .materialize_surface_rows(entity_type, &result)
-            .await;
+            );
+            let row_source = rehydrator
+                .materialize_surface_rows(entity_type, &result)
+                .await;
+            let identity_entities = rehydrator
+                .resolve_source_parents(entity_type, &result)
+                .await;
             let row_identities = row_identities_from_entities(
                 &scoped_es,
                 parsed.expr.primary_entity(),
-                &result.entities,
+                &identity_entities,
             );
             if let Some(sink) = sink {
                 trace_record_plasm_line(sink, step_idx, expr_label, &parsed, &result, &scoped_es)

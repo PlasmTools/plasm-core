@@ -103,6 +103,16 @@ impl MaterializedNode {
     pub(crate) fn first_inline_row(&self) -> Option<&serde_json::Value> {
         self.row_source.inline_rows()?.first()
     }
+
+    /// **CEP-5:** parent entities for relation materialize when the source is GraphBacked.
+    pub(crate) async fn resolve_materialized_source_parents(
+        &self,
+        rehydrator: &crate::graph_rehydrate::GraphSurfaceRehydrator<'_>,
+    ) -> Vec<plasm_runtime::CachedEntity> {
+        rehydrator
+            .resolve_source_parents(self.entity.as_str(), self.result.as_ref())
+            .await
+    }
 }
 
 pub(crate) fn inline_row_source(rows: &[serde_json::Value]) -> MaterializedRowSource {
