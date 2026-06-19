@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.34] - 2026-06-19
+
+### Added
+
+- **Concurrent execute invariants (CEP-1..9):** documented in monorepo `docs/concurrent-execute-invariants.md`; Shuttle PCT tests are the primary graph fork/commit validation gate (no feature flag).
+- **CEP-4 materialize lock refactor:** `RelationEmbedSnapshot` — single graph lock for prefer-from-parent-get embed resolution; HTTP fan-out and spill rehydrate run without the session mutex.
+- **`plasm-core::partition_prefer_resolutions`:** shared embed vs scoped classification for plan and runtime paths.
+- **Operation lifecycle tests:** terminal failures surface as `OperationFailed` (not `UnknownHandle`); MCP await propagates terminal state (CEP-7/8).
+- **E2E:** `lang_relation_hop_one_one` regression for nested `from_parent_get` relation decoders; graph spill + relation coverage extended.
+
+### Changed
+
+- **Stale-epoch retry:** branch-level only (`run_with_stale_epoch_retry`); removed full-plan stale retry that could re-issue committed mutating lines.
+- **`materialize_prefer`:** apply-only orchestration; source-entity CGS lookup for relation cardinality (federated-safe).
+- **CI guard:** `check_graph_cache_concurrency.sh` enforces CEP-4/5 lock routing, no await-under-lock in plan materialize paths.
+- **Plan tests:** decomposed `integration_tests.rs` into focused modules under `plasm_plan_run/tests/`.
+
+### Fixed
+
+- **Cached-embed materialize:** `resolve_row_source_rows` no longer runs under graph lock (spill I/O CEP-4 violation).
+- **Nested relation hop:** decoder + plan materialize preserve chained embed keys (`summary.detail` two-hop matrix case).
+- **Shuttle:** `shuttle_parallel_fanout_commits` asserts exactly one commit winner; branch retry loop progress under bounded contention.
+
 ## [0.3.33] - 2026-06-18
 
 ### Added
