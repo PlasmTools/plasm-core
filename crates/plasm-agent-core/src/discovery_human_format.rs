@@ -4,6 +4,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use indexmap::IndexMap;
+use plasm_core::cgs_context::Prefix;
 use plasm_core::discovery::{Ambiguity, DiscoveryResult, EntitySummary, RankedCandidate};
 
 /// MCP entity `description` column: max chars (Unicode scalars).
@@ -207,23 +208,49 @@ pub fn discovery_capability_tsv_for_candidates(
     candidates: &[RankedCandidate],
     entity_summaries: &[EntitySummary],
 ) -> String {
-    discovery_capability_tsv_for_rows(&ranked_deduped_entity_rows(candidates), entity_summaries)
+    discovery_capability_tsv_for_rows(&ranked_deduped_entity_rows(candidates), entity_summaries, None)
+}
+
+fn discovery_cgs_for_entry<'a>(result: &'a DiscoveryResult, entry_id: &str) -> Option<&'a plasm_core::CGS> {
+    result.contexts.iter().find_map(|ctx| {
+        let Prefix::Entry { id } = &ctx.prefix else {
+            return None;
+        };
+        if id == entry_id {
+            Some(&ctx.cgs)
+        } else {
+            None
+        }
+    })
 }
 
 fn discovery_capability_tsv_for_rows(
     rows: &[(String, String)],
     entity_summaries: &[EntitySummary],
+    result: Option<&DiscoveryResult>,
 ) -> String {
-    let mut lines = vec!["api\tentity\tdescription".to_string()];
+    let mut lines = vec!["api\tentity\tdescription\toutgoing_relations".to_string()];
     for (eid, entity) in rows {
         let description = entity_summary_description(entity_summaries, eid, entity)
             .map(|raw| mcp_discovery_tsv_field(raw, MCP_DISCOVERY_ENTITY_SUMMARY_MAX))
             .unwrap_or_default();
+        let outgoing = result
+            .and_then(|r| discovery_cgs_for_entry(r, eid))
+            .map(|cgs| {
+                plasm_core::discovery::outgoing_relation_hints_for_entity(
+                    cgs,
+                    entity,
+                    plasm_core::discovery::DISCOVERY_OUTGOING_RELATIONS_MAX,
+                )
+            })
+            .map(|raw| mcp_discovery_tsv_field(&raw, 120))
+            .unwrap_or_default();
         lines.push(format!(
-            "{}\t{}\t{}",
+            "{}\t{}\t{}\t{}",
             mcp_discovery_tsv_field(eid, 200),
             mcp_discovery_tsv_field(entity, 200),
             description,
+            outgoing,
         ));
     }
     lines.join("\n")
@@ -232,7 +259,11 @@ fn discovery_capability_tsv_for_rows(
 /// Full structured discovery result (all ranked candidates).
 #[allow(dead_code)]
 pub fn discovery_capability_tsv(result: &DiscoveryResult) -> String {
-    discovery_capability_tsv_for_candidates(&result.candidates, &result.entity_summaries)
+    discovery_capability_tsv_for_rows(
+        &ranked_deduped_entity_rows(&result.candidates),
+        &result.entity_summaries,
+        Some(result),
+    )
 }
 
 fn ambiguity_markdown_lines(ambiguities: &[Ambiguity]) -> String {
@@ -306,7 +337,7 @@ pub fn format_discovery_markdown_for_mcp(
 ) -> FormattedDiscovery {
     let ranked = ranked_deduped_entity_rows(&result.candidates);
     let (shown, omission) = apply_discovery_table_policy(ranked, policy);
-    let tsv = discovery_capability_tsv_for_rows(&shown, &result.entity_summaries);
+    let tsv = discovery_capability_tsv_for_rows(&shown, &result.entity_summaries, Some(result));
     let markdown = discovery_markdown_body(&tsv, result, &omission);
     FormattedDiscovery { markdown, omission }
 }
@@ -355,8 +386,8 @@ mod tests {
             capability_description: "List widgets".into(),
         }]);
         let tsv = discovery_capability_tsv(&r);
-        assert!(tsv.starts_with("api\tentity\tdescription\n"));
-        assert!(tsv.contains("demo\tWidget\tWidget summary."));
+        assert!(tsv.starts_with("api\tentity\tdescription\toutgoing_relations\n"));
+        assert!(tsv.contains("demo\tWidget\tWidget summary.\t"));
     }
 
     #[test]

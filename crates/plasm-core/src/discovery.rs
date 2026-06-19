@@ -1074,6 +1074,29 @@ fn seed_entity_surface_always_includes(
         .is_some_and(|pr| pr == cap.name.as_str())
 }
 
+/// Max outgoing relation hints per entity in discover TSV (`wire→Target`).
+pub const DISCOVERY_OUTGOING_RELATIONS_MAX: usize = 3;
+
+/// Compact relation navigation chart for discover TSV (no session-local `r#`).
+pub fn outgoing_relation_hints_for_entity(cgs: &CGS, entity: &str, max: usize) -> String {
+    let Some(ent) = cgs.get_entity(entity) else {
+        return String::new();
+    };
+    let mut rels: Vec<_> = ent.relations.iter().collect();
+    rels.sort_by_key(|(wire, _)| wire.as_str());
+    let mut parts = Vec::new();
+    for (wire, rel) in rels {
+        if parts.len() >= max {
+            break;
+        }
+        if cgs.get_entity(rel.target_resource.as_str()).is_none() {
+            continue;
+        }
+        parts.push(format!("{}→{}", wire, rel.target_resource));
+    }
+    parts.join("; ")
+}
+
 /// Minimal intent-filtered teaching surface for MCP `plasm_context` / incremental expand waves.
 ///
 /// - **Seeded entities** (`entity_batch`): always admit `query` / `search` / `get` on that

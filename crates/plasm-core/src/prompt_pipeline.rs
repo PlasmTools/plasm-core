@@ -7,14 +7,16 @@
 use crate::prompt_render::{
     contract_slice_hints_from_exposure, prompt_surface_stats, render_prompt_surface_from_bundle,
     render_prompt_tsv_for_single_catalog_exposure, render_prompt_tsv_with_config,
-    render_teaching_prompt_bundle_for_exposure,
+    render_relation_edge_delta_rows, render_teaching_prompt_bundle_for_exposure,
     render_teaching_prompt_bundle_for_exposure_federated, ContractSliceHints, DomainWaveSurface,
     PromptRenderMode, PromptSurfaceStats, RenderConfig, TeachingPromptBundle,
+    TSV_TEACHING_TABLE_HEADER,
 };
 use crate::schema::CGS;
 use crate::symbol_tuning::{
-    expand_expr_for_parse, expand_expr_for_teaching_session, ExposureEntityKey, FocusSpec,
-    IdentMetaKey, IdentMetadata, SymbolMap, SymbolMapCrossRequestCache, TeachingExposureSession,
+    expand_expr_for_parse, expand_expr_for_teaching_session, ExposureEntityKey, ExposureSlotKey,
+    FocusSpec, IdentMetaKey, IdentMetadata, SymbolMap, SymbolMapCrossRequestCache,
+    TeachingExposureSession,
 };
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -304,20 +306,46 @@ impl PromptPipelineConfig {
         new_entity_names: &[&str],
         symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     ) -> String {
-        let cfg = RenderConfig {
-            symbol_map_cross_cache,
-            ..self.render_config_for_focus(FocusSpec::All)
-        };
-        let bundle =
-            render_teaching_prompt_bundle_for_exposure(cgs, cfg, exposure, Some(new_entity_names));
-        let ident_meta = self.build_ident_meta_for_entities(new_entity_names, |_| cgs);
-        self.render_teaching_bundle_surface(
-            &bundle,
-            new_entity_names,
+        self.render_teaching_exposure_delta_with_edges(
+            cgs,
             exposure,
-            ident_meta.as_ref(),
-            |_| cgs,
-            DomainWaveSurface::AdditiveWave,
+            new_entity_names,
+            &[],
+            symbol_map_cross_cache,
+        )
+    }
+
+    /// Like [`Self::render_teaching_exposure_delta`], prepending relation-hop rows unlocked this wave.
+    pub fn render_teaching_exposure_delta_with_edges(
+        &self,
+        cgs: &CGS,
+        exposure: &TeachingExposureSession,
+        new_entity_names: &[&str],
+        new_relation_slots: &[ExposureSlotKey],
+        symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    ) -> String {
+        let entity_delta = {
+            let cfg = RenderConfig {
+                symbol_map_cross_cache,
+                ..self.render_config_for_focus(FocusSpec::All)
+            };
+            let bundle =
+                render_teaching_prompt_bundle_for_exposure(cgs, cfg, exposure, Some(new_entity_names));
+            let ident_meta = self.build_ident_meta_for_entities(new_entity_names, |_| cgs);
+            self.render_teaching_bundle_surface(
+                &bundle,
+                new_entity_names,
+                exposure,
+                ident_meta.as_ref(),
+                |_| cgs,
+                DomainWaveSurface::AdditiveWave,
+            )
+        };
+        splice_relation_edge_rows_into_delta(
+            exposure,
+            new_relation_slots,
+            self.session_symbol_map(exposure).as_deref(),
+            entity_delta,
         )
     }
 
@@ -327,6 +355,24 @@ impl PromptPipelineConfig {
         by_entry: &'b IndexMap<String, &'b CGS>,
         exposure: &'b TeachingExposureSession,
         new_entities: &[ExposureEntityKey],
+        symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    ) -> String {
+        self.render_teaching_exposure_delta_federated_with_edges(
+            by_entry,
+            exposure,
+            new_entities,
+            &[],
+            symbol_map_cross_cache,
+        )
+    }
+
+    /// Like [`Self::render_teaching_exposure_delta_federated`], prepending relation-hop rows unlocked this wave.
+    pub fn render_teaching_exposure_delta_federated_with_edges<'b>(
+        &self,
+        by_entry: &'b IndexMap<String, &'b CGS>,
+        exposure: &'b TeachingExposureSession,
+        new_entities: &[ExposureEntityKey],
+        new_relation_slots: &[ExposureSlotKey],
         symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     ) -> String {
         let cfg = RenderConfig {
@@ -348,7 +394,7 @@ impl PromptPipelineConfig {
                 .expect("new entity key");
             resolver.resolve_qualified(key.entry_id.as_str(), key.entity.as_str())
         });
-        self.render_teaching_bundle_surface(
+        let entity_delta = self.render_teaching_bundle_surface(
             &bundle,
             &entity_names,
             exposure,
@@ -361,6 +407,12 @@ impl PromptPipelineConfig {
                 resolver.resolve_qualified(key.entry_id.as_str(), key.entity.as_str())
             },
             DomainWaveSurface::AdditiveWave,
+        );
+        splice_relation_edge_rows_into_delta(
+            exposure,
+            new_relation_slots,
+            self.session_symbol_map(exposure).as_deref(),
+            entity_delta,
         )
     }
 
@@ -423,5 +475,25 @@ impl PromptPipelineConfig {
         } else {
             self.expand_expr_for_session_entities(line, cgs, entities)
         }
+    }
+}
+
+fn splice_relation_edge_rows_into_delta(
+    exposure: &TeachingExposureSession,
+    new_relation_slots: &[ExposureSlotKey],
+    map: Option<&SymbolMap>,
+    entity_delta: String,
+) -> String {
+    if new_relation_slots.is_empty() {
+        return entity_delta;
+    }
+    let edge_body = render_relation_edge_delta_rows(exposure, new_relation_slots, map);
+    if edge_body.is_empty() {
+        return entity_delta;
+    }
+    if let Some(rest) = entity_delta.strip_prefix(TSV_TEACHING_TABLE_HEADER) {
+        format!("{TSV_TEACHING_TABLE_HEADER}{edge_body}{rest}")
+    } else {
+        format!("{TSV_TEACHING_TABLE_HEADER}{edge_body}{entity_delta}")
     }
 }

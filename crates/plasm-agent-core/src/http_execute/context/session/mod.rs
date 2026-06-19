@@ -6,7 +6,7 @@ mod federate;
 mod open;
 mod seeds_apply;
 
-pub use expand::expand_execute_teaching_session;
+pub use expand::{expand_execute_teaching_session, ExpandTeachingWaveResult};
 pub(crate) use exposure_replay::{
     apply_federate_exposure_wave, catalog_waves_from_pairing, replay_teaching_exposure_waves,
     ExposureCatalogWave,

@@ -1541,6 +1541,9 @@ pub struct ExposedRelationSymbolRow {
     pub entity: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub target_entity: String,
+    /// Executable hop when both endpoints have `e#` symbols (`e1.r2`).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub plasm_expr: String,
 }
 
 /// Bidirectional maps for one prompt/eval slice.
@@ -1663,12 +1666,18 @@ impl SymbolMap {
                         }
                     }
                 }
+                let plasm_expr = self
+                    .qualified_entity_to_sym
+                    .get(&(entry_id.clone(), entity.clone()))
+                    .map(|es| format!("{es}.{sym}"))
+                    .unwrap_or_default();
                 ExposedRelationSymbolRow {
                     symbol: sym.clone(),
                     wire: wire.clone(),
                     entry_id: entry_id.clone(),
                     entity: entity.clone(),
                     target_entity,
+                    plasm_expr,
                 }
             })
             .collect();
@@ -2001,6 +2010,37 @@ impl SymbolMap {
     #[inline]
     pub fn is_relation_symbol(&self, sym: &str) -> bool {
         self.sym_to_relation_wire.contains_key(sym)
+    }
+
+    /// Relation wire for `r_sym` on `receiver_entity`, optionally scoped to `entry_id`.
+    /// Used by [`expand_relation_tokens`] so `.r#` is not expanded globally across entities.
+    pub(crate) fn relation_wire_for_receiver(
+        &self,
+        entry_id: Option<&str>,
+        receiver_entity: &str,
+        r_sym: &str,
+    ) -> Option<&str> {
+        let mut matches: Vec<&str> = self
+            .relation_to_sym
+            .iter()
+            .filter(|((eid, entity, _), sym)| {
+                sym.as_str() == r_sym
+                    && entity.as_str() == receiver_entity
+                    && match entry_id {
+                        Some(want) => eid.as_str() == want,
+                        None => true,
+                    }
+            })
+            .map(|((_, _, wire), _)| wire.as_str())
+            .collect();
+        matches.sort_unstable();
+        matches.dedup();
+        match matches.len() {
+            0 => None,
+            1 => Some(matches[0]),
+            _ if entry_id.is_some() => None,
+            _ => matches.first().copied(),
+        }
     }
 
     /// teaching table term for one relation `r#` on a qualified entity row.
@@ -2513,7 +2553,7 @@ pub fn expand_path_symbols_with_options(
         input.to_string()
     };
     s = replace_sym_tokens(&s, map, SymPhase::Ident);
-    s = replace_sym_tokens(&s, map, SymPhase::Relation);
+    s = expand_relation_tokens(&s, map);
     s = expand_method_tokens(&s, map);
     s
 }
@@ -2521,16 +2561,85 @@ pub fn expand_path_symbols_with_options(
 enum SymPhase {
     Entity,
     Ident,
-    Relation,
 }
 
 fn replace_sym_tokens(input: &str, map: &SymbolMap, phase: SymPhase) -> String {
     let replacements = match phase {
         SymPhase::Entity => map.entity_replacements.as_ref(),
         SymPhase::Ident => map.ident_replacements.as_ref(),
-        SymPhase::Relation => map.relation_replacements.as_ref(),
     };
     scan_replace_sorted_pairs(input, replacements)
+}
+
+/// Expand `.r#` only when the receiver entity owns that relation symbol (mirrors [`expand_method_tokens`]).
+fn expand_relation_tokens(input: &str, map: &SymbolMap) -> String {
+    let syms = sorted_relation_syms(&map.sym_to_relation_wire);
+    if syms.is_empty() {
+        return input.to_string();
+    }
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0usize;
+    let mut in_string = false;
+    let mut escape = false;
+
+    while i < input.len() {
+        let ch = input[i..].chars().next().unwrap();
+        let ch_len = ch.len_utf8();
+        if in_string {
+            out.push(ch);
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            i += ch_len;
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            out.push(ch);
+            i += ch_len;
+            continue;
+        }
+        let mut advanced = false;
+        if ch == '.' && i + 1 < input.len() {
+            let rest = &input[i + 1..];
+            if let Some(sym) = syms.iter().find(|s| rest.starts_with(s.as_str())) {
+                let sym_len = sym.len();
+                let after = i + 1 + sym_len;
+                let boundary_ok = after >= input.len()
+                    || !ident_continue(input[after..].chars().next().unwrap());
+                if boundary_ok {
+                    if let Some(left_ent) = find_entity_before_dot(input, i) {
+                        let receiver_wire = entity_surface_wire_name(&left_ent, map);
+                        let entry_id = map.entry_id_for_entity_symbol(&left_ent);
+                        if let Some(wire) =
+                            map.relation_wire_for_receiver(entry_id.as_deref(), &receiver_wire, sym)
+                        {
+                            out.push('.');
+                            out.push_str(wire);
+                            i += 1 + sym_len;
+                            advanced = true;
+                        }
+                    }
+                }
+            }
+        }
+        if advanced {
+            continue;
+        }
+        out.push(ch);
+        i += ch_len;
+    }
+    out
+}
+
+fn sorted_relation_syms(map: &IndexMap<String, String>) -> Vec<String> {
+    let mut syms: Vec<String> = map.keys().cloned().collect();
+    syms.sort_by_key(|k| std::cmp::Reverse(k.len()));
+    syms
 }
 
 /// When [`expand_path_symbols_with_options`] keeps `e#` opaque, method expansion must still
@@ -3671,10 +3780,162 @@ impl TeachingExposureSession {
             .collect()
     }
 
+    /// Relation navigation slots newly present in [`Self::surface`] vs a snapshot before an expand/federate wave.
+    pub fn relation_slots_added_since(
+        &self,
+        before: &BTreeSet<ExposureSlotKey>,
+    ) -> Vec<ExposureSlotKey> {
+        self.surface
+            .slots
+            .iter()
+            .filter(|slot| matches!(slot, ExposureSlotKey::Relation { .. }))
+            .filter(|slot| !before.contains(*slot))
+            .cloned()
+            .collect()
+    }
+
+    /// Relation hops to teach in an expand/federate delta: newly added slots plus parent→target edges
+    /// unlocked when a new entity receives an `e#` symbol.
+    pub fn relation_edge_delta_slots(
+        &self,
+        slots_before: &BTreeSet<ExposureSlotKey>,
+        added_qualified: &[ExposureEntityKey],
+    ) -> Vec<ExposureSlotKey> {
+        use crate::schema::IncomingNavSlotKind;
+
+        let mut out: BTreeSet<ExposureSlotKey> =
+            self.relation_slots_added_since(slots_before).into_iter().collect();
+
+        for target in added_qualified {
+            let Some(cgs) = self.catalog_cgs_for_entry(target.entry_id.as_str()) else {
+                continue;
+            };
+            for edge in cgs.incoming_nav_edges_to(target.entity.as_str()) {
+                if !matches!(edge.kind, IncomingNavSlotKind::Relation) {
+                    continue;
+                }
+                let source = ExposureEntityKey {
+                    entry_id: target.entry_id.clone(),
+                    entity: edge.source_entity.clone(),
+                };
+                if self
+                    .qualified_entity_symbol(
+                        target.entry_id.as_str(),
+                        edge.source_entity.as_str(),
+                    )
+                    .is_none()
+                {
+                    continue;
+                }
+                let Some(src_ent) = cgs.get_entity(edge.source_entity.as_str()) else {
+                    continue;
+                };
+                if !src_ent.relations.contains_key(edge.slot_name.as_str()) {
+                    continue;
+                }
+                let slot = ExposureSlotKey::Relation {
+                    source,
+                    relation: RelationName::new(edge.slot_name.clone()),
+                };
+                out.insert(slot);
+            }
+        }
+        out.into_iter().collect()
+    }
+
+    /// `_meta.plasm.relations_delta` rows for relation slots unlocked this wave.
+    pub fn relations_delta_rows_for_slots(
+        &self,
+        slots: &[ExposureSlotKey],
+    ) -> Vec<ExposedRelationSymbolRow> {
+        let map = self.symbol_map_arc();
+        let mut rows = Vec::new();
+        let mut seen: BTreeSet<(String, String, String)> = BTreeSet::new();
+        for slot in slots {
+            let ExposureSlotKey::Relation { source, relation } = slot else {
+                continue;
+            };
+            let key = (
+                source.entry_id.clone(),
+                source.entity.to_string(),
+                relation.to_string(),
+            );
+            if !seen.insert(key) {
+                continue;
+            }
+            let Some(cgs) = self.catalog_cgs_for_entry(source.entry_id.as_str()) else {
+                continue;
+            };
+            let Some(ent) = cgs.get_entity(source.entity.as_str()) else {
+                continue;
+            };
+            let Some(rel_schema) = ent.relations.get(relation.as_str()) else {
+                continue;
+            };
+            let sym = map.ident_sym_relation_for(
+                source.entry_id.as_str(),
+                source.entity.as_str(),
+                relation.as_str(),
+            );
+            if sym.is_empty() || !sym.starts_with('r') {
+                continue;
+            }
+            let plasm_expr = self
+                .qualified_entity_symbol(source.entry_id.as_str(), source.entity.as_str())
+                .map(|es| format!("{es}.{sym}"))
+                .unwrap_or_default();
+            rows.push(ExposedRelationSymbolRow {
+                symbol: sym,
+                wire: relation.to_string(),
+                entry_id: source.entry_id.clone(),
+                entity: source.entity.to_string(),
+                target_entity: rel_schema.target_resource.to_string(),
+                plasm_expr,
+            });
+        }
+        rows.sort_by(|a, b| {
+            (&a.entry_id, &a.entity, &a.wire).cmp(&(&b.entry_id, &b.entity, &b.wire))
+        });
+        rows
+    }
+
+    /// Merge relation-hop slots into the cumulative surface and refresh `r#` symbols before edge-delta render.
+    pub fn admit_relation_edge_slots_for_render(
+        &mut self,
+        cgs_layers: &[&CGS],
+        slots: &[ExposureSlotKey],
+    ) {
+        if slots.is_empty() {
+            return;
+        }
+        for slot in slots {
+            if let ExposureSlotKey::Relation { .. } = slot {
+                self.surface.slots.insert(slot.clone());
+            }
+        }
+        *self
+            .symbol_map_cache
+            .write()
+            .expect("symbol_map_cache lock poisoned") = None;
+        self.assign_new_methods_and_idents(cgs_layers);
+    }
+
     /// Whether `(entry_id, entity)` is already in this session's symbol space.
     pub fn contains_qualified_entity(&self, entry_id: &str, entity: &str) -> bool {
         self.qualified_entity_to_sym
             .contains_key(&(entry_id.to_string(), entity.to_string()))
+    }
+
+    /// Loaded catalog graph for one registry row in this session.
+    pub fn catalog_cgs_for_entry(&self, entry_id: &str) -> Option<&CGS> {
+        self.catalog_cgs.get(entry_id).map(|arc| arc.as_ref())
+    }
+
+    /// Opaque `e#` for a qualified `(entry_id, entity)` when exposed.
+    pub fn qualified_entity_symbol(&self, entry_id: &str, entity: &str) -> Option<&str> {
+        self.qualified_entity_to_sym
+            .get(&(entry_id.to_string(), entity.to_string()))
+            .map(|s| s.as_str())
     }
 
     /// Union of already-exposed qualified keys plus a new wave's `(entry_id, entity)` seeds.
@@ -4493,6 +4754,42 @@ mod tests {
         let expr = format!("{}(1).{}()", pet, m);
         let back = expand_path_symbols(&expr, &map);
         assert!(back.contains("upload-image"), "got {back}");
+    }
+
+    #[test]
+    fn relation_expand_does_not_apply_foreign_entity_r_sym() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let exp = TeachingExposureSession::new(&cgs, "pokeapi", &["Berry", "BerryFirmness"]);
+        let map = exp.to_symbol_map();
+        let berry = map.entity_sym_for("pokeapi", "Berry");
+        let firmness = map.ident_sym_relation_for("pokeapi", "Berry", "firmness");
+        let berries = map.ident_sym_relation_for("pokeapi", "BerryFirmness", "berries");
+        if firmness == "firmness" || berries == "berries" {
+            return;
+        }
+        let expr = format!(
+            "cheri = {berry}(\"cheri\")\nfirm = cheri.{berries}",
+            berries = berries
+        );
+        let back = expand_path_symbols(&expr, &map);
+        assert!(
+            !back.contains("cheri.berries"),
+            "foreign r# must not expand on Berry receiver: {back}"
+        );
+        assert!(
+            back.contains(&format!("cheri.{berries}")),
+            "expected unexpanded r# on binding receiver: {back}"
+        );
+        let expr2 = format!("firm = {berry}(\"cheri\").{firmness}", firmness = firmness);
+        let back2 = expand_path_symbols(&expr2, &map);
+        assert!(
+            back2.contains(".firmness"),
+            "owned r# on e# receiver should expand to wire: {back2}"
+        );
     }
 
     #[test]

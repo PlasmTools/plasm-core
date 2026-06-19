@@ -24,4 +24,5 @@ pub(crate) use session::execute_session_create_response_inner;
 pub(crate) use session::replay_teaching_exposure_waves;
 pub use session::{
     execute_session_create_response, expand_execute_teaching_session, federate_execute_session,
+    ExpandTeachingWaveResult,
 };

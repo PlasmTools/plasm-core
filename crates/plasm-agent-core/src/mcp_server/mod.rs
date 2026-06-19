@@ -1383,11 +1383,24 @@ impl PlasmMcpHandler {
         } else {
             (None, None)
         };
+        let relations_delta = {
+            let deltas: Vec<_> = out
+                .waves
+                .iter()
+                .flat_map(|w| w.relations_delta.iter().cloned())
+                .collect();
+            if deltas.is_empty() {
+                None
+            } else {
+                Some(json!(deltas))
+            }
+        };
         let plasm = build_plasm_context_tool_meta(
             logical_session_ref.as_str(),
             &out,
             domain_revision,
             relations,
+            relations_delta,
         );
         let mut res = CallToolResult::text_content(vec![TextContent::new(text, None, None)]);
         if !plasm.is_empty() {

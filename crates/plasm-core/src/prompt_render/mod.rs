@@ -2294,6 +2294,106 @@ fn relation_nav_meaning_result_gloss(
     }
 }
 
+/// Thin relation-hop rows for expand/federate waves (parent entity already exposed; target just seeded).
+pub(crate) fn render_relation_edge_delta_rows(
+    exposure: &crate::symbol_tuning::TeachingExposureSession,
+    new_relation_slots: &[crate::symbol_tuning::ExposureSlotKey],
+    map: Option<&SymbolMap>,
+) -> String {
+    const MAX_EDGE_DELTA_ROWS: usize = 8;
+    let mut out = String::new();
+    let mut seen_expr: HashSet<String> = HashSet::new();
+    let mut slots: Vec<_> = new_relation_slots
+        .iter()
+        .filter(|slot| matches!(slot, crate::symbol_tuning::ExposureSlotKey::Relation { .. }))
+        .collect();
+    slots.sort_by(|a, b| match (a, b) {
+        (
+            crate::symbol_tuning::ExposureSlotKey::Relation {
+                source: sa,
+                relation: ra,
+            },
+            crate::symbol_tuning::ExposureSlotKey::Relation {
+                source: sb,
+                relation: rb,
+            },
+        ) => (sa.entry_id.as_str(), sa.entity.as_str(), ra.as_str())
+            .cmp(&(sb.entry_id.as_str(), sb.entity.as_str(), rb.as_str())),
+        _ => std::cmp::Ordering::Equal,
+    });
+
+    let empty_heading = TeachingHeading {
+        description: String::new(),
+    };
+
+    for slot in slots {
+        if seen_expr.len() >= MAX_EDGE_DELTA_ROWS {
+            break;
+        }
+        let crate::symbol_tuning::ExposureSlotKey::Relation { source, relation } = slot else {
+            continue;
+        };
+        let Some(cgs) = exposure.catalog_cgs_for_entry(source.entry_id.as_str()) else {
+            continue;
+        };
+        let Some(ent) = cgs.get_entity(source.entity.as_str()) else {
+            continue;
+        };
+        let Some(rel_schema) = ent.relations.get(relation.as_str()) else {
+            continue;
+        };
+        if !many_relation_nav_emittable(rel_schema) {
+            continue;
+        }
+        let Some(es) = exposure.qualified_entity_symbol(source.entry_id.as_str(), source.entity.as_str())
+        else {
+            continue;
+        };
+        let r_sym = id_sym_rel(map, source.entry_id.as_str(), source.entity.as_str(), relation.as_str());
+        if !r_sym.starts_with('r') {
+            continue;
+        }
+        let plasm_expr = format!("{es}.{r_sym}");
+        if !seen_expr.insert(plasm_expr.clone()) {
+            continue;
+        }
+        let cardinality_many = rel_schema.cardinality == Cardinality::Many;
+        let target_gloss = crate::result_gloss::result_gloss_for_relation_nav(
+            rel_schema.target_resource.as_str(),
+            map,
+            cardinality_many,
+        );
+        let result_type = relation_nav_meaning_result_gloss(&plasm_expr, map, target_gloss);
+        let description = {
+            let d = rel_schema.description.as_str().trim();
+            if d.is_empty() {
+                String::new()
+            } else {
+                truncate_inline_desc(d, 120)
+            }
+        };
+        let line = TeachingExprLine {
+            expression: plasm_expr,
+            result_type,
+            scope: String::new(),
+            optional_params: String::new(),
+            compact_args: String::new(),
+            description,
+            is_projection_teaching: false,
+        };
+        write_teaching_tsv_row(
+            &mut out,
+            DomainTsvRow::TeachingExpr {
+                line: &line,
+                identity_returns_row: false,
+                attach_entity_heading: false,
+                heading: &empty_heading,
+            },
+        );
+    }
+    out
+}
+
 /// Compound `Entity(p#=$,…)` when the target has multiple `key_vars` (per-key placeholders are still the string `$`).
 ///
 /// Unary entity refs use [`unary_entity_id_teaching_expr_line`] / `$` fallback like scalar identity GET teaching.
@@ -5565,6 +5665,89 @@ mod tests {
         assert!(
             delta.contains(TSV_TEACHING_TABLE_HEADER.trim_end()),
             "additive TSV should keep column header"
+        );
+    }
+
+    #[test]
+    fn expand_wave_emits_parent_relation_edge_for_pokeapi_berry_firmness() {
+        use crate::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+        use crate::symbol_tuning::ExposureEntityKey;
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let pipeline = PromptPipelineConfig::default();
+        let intent = "cheri berry firmness";
+        let relation_keys = vec![ExposureEntityKey {
+            entry_id: "pokeapi".to_string(),
+            entity: crate::EntityName::from("Berry"),
+        }];
+        let delta1 = derive_intent_exposure_surface_batch(
+            &cgs,
+            "pokeapi",
+            intent,
+            &relation_keys,
+            &["Berry".to_string()],
+            None,
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        let mut exp =
+            TeachingExposureSession::new_with_intent_delta(&cgs, "pokeapi", &["Berry"], delta1);
+        let slots_before = exp.surface.slots.clone();
+        let cgs_arc = std::sync::Arc::new(cgs.clone());
+        let relation_keys_wave2 =
+            exp.relation_endpoint_keys_for_wave("pokeapi", &["BerryFirmness".to_string()]);
+        let delta2 = derive_intent_exposure_surface_batch(
+            &cgs,
+            "pokeapi",
+            intent,
+            &relation_keys_wave2,
+            &["BerryFirmness".to_string()],
+            None,
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        exp.expose_surface(
+            &[&cgs],
+            cgs_arc,
+            "pokeapi",
+            &["BerryFirmness"],
+            delta2,
+        );
+        let added = exp.qualified_entities_since(1);
+        let new_relation_slots = exp.relation_edge_delta_slots(&slots_before, &added);
+        exp.admit_relation_edge_slots_for_render(&[&cgs], &new_relation_slots);
+        assert!(
+            new_relation_slots.iter().any(|slot| {
+                matches!(
+                    slot,
+                    ExposureSlotKey::Relation {
+                        source,
+                        relation,
+                    } if source.entity.as_str() == "Berry" && relation.as_str() == "firmness"
+                )
+            }),
+            "expand should add Berry.firmness relation slot"
+        );
+        let delta = pipeline.render_teaching_exposure_delta_with_edges(
+            &cgs,
+            &exp,
+            &["BerryFirmness"],
+            &new_relation_slots,
+            None,
+        );
+        assert!(
+            delta.contains("relation e1 → e2"),
+            "delta should teach parent hop: {delta}"
+        );
+        assert!(
+            delta.contains(".r"),
+            "delta should include opaque relation symbol: {delta}"
         );
     }
 
