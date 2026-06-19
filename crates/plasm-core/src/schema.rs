@@ -504,6 +504,13 @@ pub enum RelationScopedFallback {
         capability: CapabilityName,
         bindings: IndexMap<CapabilityParamName, EntityFieldName>,
     },
+    /// Per-ref target GET when parent wire embed is absent or graph targets are incomplete.
+    /// `path` may be omitted — it defaults to the enclosing `prefer_from_parent_get.path`.
+    HydrateFromEmbedPath {
+        #[serde(default)]
+        path: Vec<JsonPathSegment>,
+        get_capability: CapabilityName,
+    },
 }
 
 /// How a relation’s targets are resolved at runtime (scoped query vs embedded GET payload).
@@ -2660,6 +2667,7 @@ impl CGS {
             }
         }
 
+        // Plain `from_parent_get` chains must stay acyclic; inverse `prefer_from_parent_get` is excluded.
         self.validate_from_parent_get_embed_acyclic()?;
 
         // Relation materialization (many requires `materialize:`; one must omit it)
@@ -2694,6 +2702,7 @@ impl CGS {
                                     relation.target_resource.as_str(),
                                     fallback,
                                     entity,
+                                    Some(path.as_slice()),
                                 )?;
                             }
                             RelationMaterialization::QueryScoped { capability, param } => {
@@ -4317,9 +4326,8 @@ impl CGS {
     }
 
     fn validate_from_parent_get_embed_acyclic(&self) -> Result<(), SchemaError> {
-        crate::relation_materialize::validate_from_parent_get_embed_acyclic(self).map_err(|cycle| {
-            SchemaError::FromParentGetEmbedCycle { cycle }
-        })
+        crate::relation_materialize::validate_from_parent_get_embed_acyclic(self)
+            .map_err(|cycle| SchemaError::FromParentGetEmbedCycle { cycle })
     }
 
     fn validate_from_parent_get_path(
@@ -4354,6 +4362,7 @@ impl CGS {
         target_entity: &str,
         fallback: &RelationScopedFallback,
         entity: &EntityDef,
+        prefer_path: Option<&[JsonPathSegment]>,
     ) -> Result<(), SchemaError> {
         match fallback {
             RelationScopedFallback::QueryScoped { capability, param } => self
@@ -4405,7 +4414,62 @@ impl CGS {
                     bindings,
                 )
             }
+            RelationScopedFallback::HydrateFromEmbedPath {
+                path,
+                get_capability,
+            } => {
+                let embed_path = if path.is_empty() {
+                    prefer_path.ok_or_else(|| SchemaError::RelationFromParentGetEmptyPath {
+                        entity: parent_entity.to_string(),
+                        relation: relation.to_string(),
+                    })?
+                } else {
+                    path.as_slice()
+                };
+                Self::validate_from_parent_get_path(parent_entity, relation, embed_path)?;
+                self.validate_hydrate_from_embed_get_capability(
+                    parent_entity,
+                    relation,
+                    target_entity,
+                    get_capability,
+                )
+            }
         }
+    }
+
+    /// Validates [`RelationScopedFallback::HydrateFromEmbedPath`]: `get_capability` must be a `get` on `target_entity`.
+    pub fn validate_hydrate_from_embed_get_capability(
+        &self,
+        parent_entity: &str,
+        relation: &str,
+        target_entity: &str,
+        capability: &CapabilityName,
+    ) -> Result<(), SchemaError> {
+        let err = |detail: String| {
+            Err(SchemaError::RelationMaterializeCapabilityInvalid {
+                entity: parent_entity.to_string(),
+                relation: relation.to_string(),
+                target: target_entity.to_string(),
+                capability: capability.to_string(),
+                detail,
+            })
+        };
+        let Some(cap) = self.get_capability(capability.as_str()) else {
+            return err("no such capability name".into());
+        };
+        if cap.domain.as_str() != target_entity {
+            return err(format!(
+                "capability is declared on entity '{}' but relation targets '{}'",
+                cap.domain, target_entity
+            ));
+        }
+        if cap.kind != CapabilityKind::Get {
+            return err(format!(
+                "capability kind must be get (got {:?})",
+                cap.kind
+            ));
+        }
+        Ok(())
     }
 
     /// Validates [`RelationMaterialization::QueryScoped`] / [`QueryScopedBindings`]: `capability` must

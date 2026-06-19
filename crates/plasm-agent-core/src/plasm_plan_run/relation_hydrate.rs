@@ -51,6 +51,7 @@ async fn fetch_entity_get_by_ref(
     session_id: &str,
     target: &QualifiedEntityKey,
     reference: &Ref,
+    get_capability: Option<&str>,
     trace: Option<&PlasmTraceContext>,
     plan_shared: Option<&PlanLineExecuteShared>,
 ) -> Result<CachedEntity, String> {
@@ -66,6 +67,9 @@ async fn fetch_entity_get_by_ref(
         EntityName::new(reference.entity_type.as_str().to_string()),
         slot,
     );
+    if let Some(cap) = get_capability {
+        get_expr = get_expr.with_capability(cap);
+    }
     get_expr.catalog_entry_id = Some(target.entry_id.clone());
     let parsed = ParsedExpr {
         expr: Expr::Get(get_expr),
@@ -160,6 +164,7 @@ pub(crate) async fn hydrate_relation_entities_if_needed(
                 session_id.as_str(),
                 &target,
                 &item.reference,
+                None,
                 trace_ctx.as_ref(),
                 plan_shared.as_deref(),
             )

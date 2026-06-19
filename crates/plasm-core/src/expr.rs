@@ -138,6 +138,9 @@ pub struct GetExpr {
     pub path_vars: Option<IndexMap<String, Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub catalog_entry_id: Option<String>,
+    /// When set, dispatches to this GET capability instead of the entity default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_name: Option<CapabilityName>,
 }
 
 /// Create expression: create a new resource (no target ID).
@@ -312,7 +315,14 @@ impl GetExpr {
             reference: Ref::new(entity_type, id),
             path_vars: None,
             catalog_entry_id: None,
+            capability_name: None,
         }
+    }
+
+    /// Attach the GET capability wire name (overrides entity default get).
+    pub fn with_capability(mut self, name: impl Into<CapabilityName>) -> Self {
+        self.capability_name = Some(name.into());
+        self
     }
 
     /// Get by reference (compound or simple).
@@ -321,6 +331,7 @@ impl GetExpr {
             reference,
             path_vars: None,
             catalog_entry_id: None,
+            capability_name: None,
         }
     }
 
@@ -333,6 +344,7 @@ impl GetExpr {
             reference,
             path_vars,
             catalog_entry_id: None,
+            capability_name: None,
         }
     }
 }

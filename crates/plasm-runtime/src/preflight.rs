@@ -147,6 +147,7 @@ async fn hydrate_invoke_target(
         reference: invoke.target.clone(),
         path_vars: None,
         catalog_entry_id: None,
+        capability_name: None,
     };
     let (cached, _source) = engine
         .fetch_get_decoded(
@@ -192,6 +193,7 @@ async fn hydrate_entity_ref_param(
         reference,
         path_vars: None,
         catalog_entry_id: None,
+        capability_name: None,
     };
     let (cached, _source) = engine
         .fetch_get_decoded(

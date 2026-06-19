@@ -950,6 +950,15 @@ fn materialization_view(m: &RelationMaterialization) -> ExplorerRelationMaterial
                     param: None,
                     binding_keys: Some(bindings.keys().map(|k| k.to_string()).collect()),
                 },
+                plasm_core::RelationScopedFallback::HydrateFromEmbedPath {
+                    get_capability,
+                    ..
+                } => ExplorerRelationMaterialization {
+                    kind: "prefer_from_parent_get",
+                    capability: Some(get_capability.to_string()),
+                    param: None,
+                    binding_keys: None,
+                },
             };
             view
         }
@@ -1523,6 +1532,7 @@ fn relation_scope_meta(
             plasm_core::RelationScopedFallback::QueryScopedBindings { bindings, .. } => {
                 bindings.keys().map(|k| k.to_string()).collect()
             }
+            plasm_core::RelationScopedFallback::HydrateFromEmbedPath { .. } => Vec::new(),
         },
         _ => Vec::new(),
     };

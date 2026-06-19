@@ -59,6 +59,7 @@ mod parse;
 mod plan_bounded_parallel;
 mod plan_fanout_parallel;
 mod plan_schedule;
+mod prefer_embed_hydrate;
 mod relation_hydrate;
 mod row_json;
 mod step_materialize;

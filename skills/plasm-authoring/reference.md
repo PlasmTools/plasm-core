@@ -158,6 +158,27 @@ Symbolic teaching table / TSV teaching attaches **`entities.<Name>.description`*
 
 **`from_parent_get` pitfall:** The JSON path must match the **parent GET response** for that relation. Array-of-ref shapes differ by API (e.g. PokéAPI Pokémon `moves[].move` vs Type `moves[]` as bare `{name,url}`). Copying one entity's `materialize.path` to another without checking the wire JSON yields empty relations at decode time.
 
+**Mutual embed pairs (CEP-10):** When both directions expose nested refs on parent GET bodies (e.g. Pokémon `types[].type` and Type `pokemon[].pokemon`), declare **one forward** edge as plain `from_parent_get` and the **inverse** as `prefer_from_parent_get`. Runtime decode is **single-hop** (no nested embed decoders), so mutual pairs do not recurse on the stack. When the inverse API has no scoped list filter (PokéAPI has no “Pokémon by type” query), use a `hydrate_from_embed_path` fallback that GET-hydrates identities extracted from the parent wire JSON:
+
+```yaml
+relations:
+  pokemon:
+    target: Pokemon
+    cardinality: many
+    materialize:
+      kind: prefer_from_parent_get
+      path:
+      - key: pokemon
+      - wildcard: true
+      - key: pokemon
+      on_embed_miss: fallback_scoped
+      fallback:
+        kind: hydrate_from_embed_path
+        get_capability: pokemon_get
+```
+
+Do **not** add a second plain `from_parent_get` on the inverse edge — entity-level cycle validation applies only to plain `from_parent_get` chains; prefer inverse edges are excluded.
+
 **Cardinality `one` + nested child:** When the child ref is not top-level `{relation_name}.name` (e.g. under `meta.ailment` on a move), declare `materialize: { kind: from_parent_get, path: [...] }` on that **one** relation. Only `from_parent_get` is allowed on cardinality `one`; query-scoped materialization remains for **many** relations.
 
 **`id_from` (optional):** sequence of JSON object keys from the row object to a scalar `string` or `number` used as the stable id (e.g. a canonical URL). YAML may be a list `[location_area, url]` or a dotted string `location_area.url`. When `id_from` is present and non-empty, you do not need a `fields` entry named `id_field` solely for decoding.

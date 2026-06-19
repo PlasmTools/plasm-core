@@ -78,6 +78,14 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
     let parents = source_mat
         .resolve_materialized_source_parents(&rehydrator)
         .await;
+    let RelationMaterialization::PreferFromParentGet {
+        path,
+        fallback,
+        ..
+    } = &relation.relation.materialize
+    else {
+        unreachable!("PreferFromParentGet materialize checked above");
+    };
     let snapshot = crate::graph_rehydrate::plan_prefer_from_parent_get(
         &scoped_es,
         &relation.relation.materialize,
@@ -184,14 +192,11 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
         };
         // ScopedQuery rows may still use wire JSON without HTTP when parent payload embeds targets.
         let source_row = &source_rows[row_index];
-        let wire_rows = normalize_parent_get_target_rows(
-            flatten_from_parent_get_source_rows(
-                std::slice::from_ref(source_row),
-                path,
-                rel_schema.cardinality,
-            ),
+        let wire_rows = super::prefer_embed_hydrate::prefer_embed_wire_rows(
+            source_row,
             path,
-            Some(scoped_es.cgs.as_ref()),
+            rel_schema.cardinality,
+            scoped_es.cgs.as_ref(),
             target_entity,
         );
         if !wire_rows.is_empty() {
@@ -201,6 +206,26 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
                 Some(scoped_es.cgs.as_ref()),
             );
             per_row[row_index].extend(wire_entities);
+            continue;
+        }
+        if super::prefer_embed_hydrate::plan_prefer_hydrate_fallback_row(
+            &mut scoped_jobs,
+            &mut per_row,
+            &scoped_es,
+            fallback,
+            path,
+            rel_name,
+            &relation.relation.target,
+            target_entity,
+            rel_schema.cardinality,
+            node_index,
+            row_index,
+            &base_display,
+            source_row,
+            parents.get(row_index),
+        )
+        .await?
+        {
             continue;
         }
         let row_identity = source_mat

@@ -9,10 +9,10 @@ use crate::{AuthResolver, CachedEntity, CancelSignal, EntityCompleteness, Runtim
 use indexmap::IndexMap;
 use plasm_compile::{
     compile_operation, compile_query, decode_entities, parse_capability_template,
-    path_var_names_from_request, template_pagination,
-    template_var_names, BackendFilter, CapabilityTemplate, CmlEnv, CmlRequest,
-    CompileOperationHook, CompileQueryHook, CompiledOperation, CompiledRequest, HttpBodyFormat,
-    PaginationConfig, PathExpr, PathSegment, ResponsePreprocess,
+    path_var_names_from_request, template_pagination, template_var_names, BackendFilter,
+    CapabilityTemplate, CmlEnv, CmlRequest, CompileOperationHook, CompileQueryHook,
+    CompiledOperation, CompiledRequest, HttpBodyFormat, PaginationConfig, PathExpr, PathSegment,
+    ResponsePreprocess,
 };
 use plasm_core::partition_prefer_resolutions;
 use plasm_core::resolve_relation_row_resolution;
@@ -1492,7 +1492,15 @@ impl ExecutionEngine {
         }
 
         let (cached, source) = self
-            .fetch_get_decoded(get, cgs, mode, None, true, Some(mat), ambient)
+            .fetch_get_decoded(
+                get,
+                cgs,
+                mode,
+                get.capability_name.as_deref(),
+                true,
+                Some(mat),
+                ambient,
+            )
             .await?;
         mat.insert(cached.clone())?;
 
@@ -2404,6 +2412,11 @@ fn build_scoped_query_from_fallback(
             let mut q = QueryExpr::filtered(target_entity.clone(), pred);
             q.capability_name = Some(capability.clone());
             Ok(q)
+        }
+        RelationScopedFallback::HydrateFromEmbedPath { .. } => {
+            Err(RuntimeError::ConfigurationError {
+                message: "hydrate_from_embed_path fallback is plan-materialized only".into(),
+            })
         }
     }
 }
@@ -4363,8 +4376,9 @@ mod tests {
 
         let mut ambient = IndexMap::new();
         ambient.insert("database".to_string(), "Cricket/Player".to_string());
-        let entity = entity_decoder::resolve_overlay_decode_entity(&cgs, "entity_query", Some(&ambient))
-            .expect("overlay entity for scope");
+        let entity =
+            entity_decoder::resolve_overlay_decode_entity(&cgs, "entity_query", Some(&ambient))
+                .expect("overlay entity for scope");
         assert_eq!(entity, "Cricket__Player");
         let ent = cgs.get_entity("Cricket__Player").expect("overlay entity");
         assert!(ent
@@ -4402,8 +4416,9 @@ mod tests {
 
         let mut single = IndexMap::new();
         single.insert("database".to_string(), "Cricket/Player".to_string());
-        let entity = entity_decoder::resolve_overlay_decode_entity(&cgs, "entity_query", Some(&single))
-            .expect("overlay entity for scope");
+        let entity =
+            entity_decoder::resolve_overlay_decode_entity(&cgs, "entity_query", Some(&single))
+                .expect("overlay entity for scope");
         assert_eq!(entity, "Cricket__Player");
     }
 
@@ -4869,7 +4884,10 @@ mod tests {
             .expect("embedded summary");
         assert!(
             summary.relations.get("detail").is_none()
-                || matches!(summary.relations.get("detail"), Some(DecodedRelation::Unspecified)),
+                || matches!(
+                    summary.relations.get("detail"),
+                    Some(DecodedRelation::Unspecified)
+                ),
             "detail hop is plan-scoped; GET decode does not embed nested relation decoders"
         );
     }
@@ -4878,8 +4896,7 @@ mod tests {
     fn pokemon_get_decoder_is_single_hop() {
         use plasm_core::loader::load_schema_dir;
 
-        let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
         let cgs = load_schema_dir(&dir).expect("pokeapi");
         let decoder = create_entity_decoder_for_capability(
             "Pokemon",
@@ -4911,8 +4928,7 @@ mod tests {
             return;
         }
 
-        let dir =
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
         let cgs = load_schema_dir(&dir).expect("pokeapi");
         let decoder = create_entity_decoder_for_capability(
             "Pokemon",
@@ -5003,6 +5019,39 @@ mod tests {
             |_| false,
         );
         assert_eq!(res, RelationRowResolution::ScopedQuery);
+    }
+
+    #[test]
+    fn hydrate_from_embed_path_fallback_is_plan_materialized_only() {
+        let cgs = create_test_cgs();
+        let parent_def = cgs
+            .get_entity("Account")
+            .expect("Account entity in test cgs");
+        let parent = CachedEntity::from_decoded(
+            Ref::new("Account", "1"),
+            IndexMap::new(),
+            IndexMap::new(),
+            0,
+            EntityCompleteness::Summary,
+        );
+        let fallback = RelationScopedFallback::HydrateFromEmbedPath {
+            path: Vec::new(),
+            get_capability: "get_account".into(),
+        };
+        let err = build_scoped_query_from_fallback(
+            &fallback,
+            &parent,
+            parent_def,
+            &EntityName::from("Account"),
+            &cgs,
+        )
+        .expect_err("runtime must not build scoped queries for hydrate fallback");
+        match err {
+            RuntimeError::ConfigurationError { message } => {
+                assert!(message.contains("plan-materialized"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]

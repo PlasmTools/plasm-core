@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.36] - 2026-06-19
+
+### Added
+
+- **Inverse embed prefer + hydrate fallback:** `prefer_from_parent_get` with `hydrate_from_embed_path` plan-materializes per-ref GET jobs when wire embed is empty; `GetExpr.capability_name` honors catalog `get_capability`.
+- **Plan helper module:** `plasm_plan_run::prefer_embed_hydrate` — wire ref extraction, graph-resident partition, hydrate GET job fan-out.
+- **PokeAPI inverse relations restored:** `Type.pokemon` and `Ability.pokemon` use prefer embed with hydrate fallback (optional `fallback.path` defaults to prefer path).
+- **Runtime guard:** `hydrate_from_embed_path` is plan-materialized only; runtime returns `ConfigurationError` if invoked directly.
+- **Tests:** `prefer_embed_hydrate` wire/relation-ref coverage; runtime plan-only fallback test; entity decoder inverse embed tests.
+
+### Changed
+
+- **CGS validation:** plain `from_parent_get` embed graphs must stay acyclic; `prefer_from_parent_get` edges excluded from cycle detection.
+- **Docs:** CEP-10 wording in `docs/concurrent-execute-invariants.md`; mutual inverse embed pattern in plasm-authoring reference.
+- **Smoke:** optional `PLASM_SMOKE_PROGRAM_PK03` in `scripts/smoke/mcp-pokeapi-pc1-bounded.sh`.
+
+### Fixed
+
+- **Type.pokemon / Ability.pokemon live execute:** inverse relation nav resolves via prefer embed + hydrate GET without stack blow-up from cyclic embed graphs.
+
 ## [0.3.35] - 2026-06-19
 
 ### Added

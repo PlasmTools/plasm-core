@@ -3,7 +3,7 @@
 #
 # Live/MCP notes:
 # - pk-01/pk-02 row filters run after `pokemon_query` fetch-all (paginated HTTP). Expect async long ops even with `.limit(10)`.
-# - pk-03 (type → pokemon relation) is the fast live smoke.
+# - pk-03 (type → pokemon relation) is the fast live smoke; uses Type.pokemon prefer embed from type_get.
 # - pk-05 is the intentional unbounded/async stress case.
 
 - id: pk-01

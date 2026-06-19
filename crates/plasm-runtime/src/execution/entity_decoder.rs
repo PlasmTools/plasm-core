@@ -5,7 +5,7 @@ use plasm_compile::{
     path_expr_from_json_segments, EntityDecoder, FieldDecoder, ParentIdentityFieldHint, PathExpr,
     PathSegment, RelationDecoder,
 };
-use plasm_core::{Cardinality, CGS, RelationMaterialization};
+use plasm_core::{Cardinality, RelationMaterialization, CGS};
 
 pub(crate) fn create_entity_decoder_for_capability(
     declared_entity: &str,
@@ -235,8 +235,7 @@ fn create_entity_decoder_inner(
                 let Some(target_ent) = cgs.get_entity(rel.target_resource.as_str()) else {
                     continue;
                 };
-                let child =
-                    entity_decoder_for_from_parent_get_target(target_ent, entity, rel_path);
+                let child = entity_decoder_for_from_parent_get_target(target_ent, entity, rel_path);
                 relation_decoders.push(RelationDecoder {
                     relation: rel_name.as_str().to_string(),
                     decoder: child,
@@ -343,5 +342,32 @@ mod tests {
             .find(|r| r.relation == "types")
             .expect("types relation decoder");
         assert_eq!(types_rel.decoder.entity, "Type");
+    }
+
+    #[test]
+    fn pokeapi_type_and_ability_get_embed_decoders_are_single_hop() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+        let cgs = load_schema_dir(&dir).expect("pokeapi");
+        for (entity, cap) in [("Type", "type_get"), ("Ability", "ability_get")] {
+            let decoder = create_entity_decoder_for_capability(
+                entity,
+                &cgs,
+                Some(cap),
+                None,
+                None,
+                None,
+            );
+            assert_embed_decoders_single_hop(&decoder);
+            let pokemon_rel = decoder
+                .relations
+                .iter()
+                .find(|r| r.relation == "pokemon")
+                .expect("pokemon relation decoder");
+            assert_eq!(pokemon_rel.decoder.entity, "Pokemon");
+            assert!(
+                pokemon_rel.decoder.relations.is_empty(),
+                "{entity}.pokemon embed must be single-hop"
+            );
+        }
     }
 }

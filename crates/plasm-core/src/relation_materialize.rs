@@ -148,25 +148,23 @@ pub fn from_parent_get_embed_edges(cgs: &crate::CGS) -> Vec<(String, String, Str
     for (entity_name, entity) in &cgs.entities {
         for (relation_name, relation) in &entity.relations {
             let Some(target) = (match &relation.materialize {
-                Some(RelationMaterialization::FromParentGet { .. })
-                | Some(RelationMaterialization::PreferFromParentGet { .. }) => {
+                Some(RelationMaterialization::FromParentGet { .. }) => {
                     Some(relation.target_resource.to_string())
                 }
                 _ => None,
             }) else {
                 continue;
             };
-            edges.push((
-                entity_name.to_string(),
-                relation_name.to_string(),
-                target,
-            ));
+            edges.push((entity_name.to_string(), relation_name.to_string(), target));
         }
     }
     edges
 }
 
-/// Fail when `from_parent_get` / `prefer_from_parent_get` edges form an entity-level cycle.
+/// Fail when plain [`RelationMaterialization::FromParentGet`] edges form an entity-level cycle.
+///
+/// [`RelationMaterialization::PreferFromParentGet`] inverse edges are excluded — mutual embed
+/// pairs are allowed when runtime decode is single-hop (CEP-10).
 pub fn validate_from_parent_get_embed_acyclic(cgs: &crate::CGS) -> Result<(), String> {
     let edges = from_parent_get_embed_edges(cgs);
     let mut adj: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
@@ -249,6 +247,20 @@ pub fn flatten_from_parent_get_source_rows(
     out
 }
 
+/// Embed path for [`RelationScopedFallback::HydrateFromEmbedPath`]: defaults to `prefer_path` when omitted.
+pub fn prefer_hydrate_embed_path<'a>(
+    prefer_path: &'a [JsonPathSegment],
+    fallback: &'a crate::RelationScopedFallback,
+) -> Option<&'a [JsonPathSegment]> {
+    match fallback {
+        crate::RelationScopedFallback::HydrateFromEmbedPath { path, .. } if path.is_empty() => {
+            Some(prefer_path)
+        }
+        crate::RelationScopedFallback::HydrateFromEmbedPath { path, .. } => Some(path.as_slice()),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,7 +337,7 @@ mod tests {
 
     #[test]
     fn from_parent_get_cycle_rejected() {
-    use std::collections::HashMap;
+        use std::collections::HashMap;
 
         let mut adj: HashMap<String, Vec<String>> = HashMap::new();
         adj.insert("Pokemon".into(), vec!["Type".into()]);
@@ -336,10 +348,60 @@ mod tests {
     }
 
     #[test]
-    fn pokeapi_from_parent_get_embed_is_acyclic() {
+    fn prefer_type_pokemon_wire_embed_extracts_identities() {
+        use crate::{EmbedOnMissPolicy, JsonPathSegment, RelationScopedFallback};
+
+        let path = vec![
+            JsonPathSegment::Key {
+                key: "pokemon".into(),
+            },
+            JsonPathSegment::Wildcard { wildcard: true },
+            JsonPathSegment::Key {
+                key: "pokemon".into(),
+            },
+        ];
+        let mat = RelationMaterialization::PreferFromParentGet {
+            path: path.clone(),
+            on_embed_miss: EmbedOnMissPolicy::FallbackScoped,
+            fallback: RelationScopedFallback::HydrateFromEmbedPath {
+                path: path.clone(),
+                get_capability: "pokemon_get".into(),
+            },
+        };
+        let row = serde_json::json!({
+            "name": "electric",
+            "pokemon": [
+                { "pokemon": { "name": "pikachu", "url": "https://pokeapi.co/api/v2/pokemon/25/" } }
+            ]
+        });
+        let extracted = extract_from_parent_get_value(&row, &path);
+        assert_eq!(extracted.len(), 1);
+        assert_eq!(extracted[0]["name"], "pikachu");
+        let res = resolve_relation_row_resolution(
+            &mat,
+            "pokemon",
+            "Pokemon",
+            &row,
+            None,
+            |_| false,
+        );
+        assert_eq!(res, RelationRowResolution::ScopedQuery);
+    }
+
+    #[test]
+    fn pokeapi_mutual_prefer_embed_loads_and_validates() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
         let cgs = crate::loader::load_schema(&dir).expect("pokeapi");
-        validate_from_parent_get_embed_acyclic(&cgs).expect("pokeapi embed acyclic");
+        cgs.validate().expect("pokeapi validates with mutual prefer embeds");
+        validate_from_parent_get_embed_acyclic(&cgs).expect("forward from_parent_get edges acyclic");
+        let type_rel = cgs
+            .get_entity("Type")
+            .and_then(|e| e.relations.get("pokemon"))
+            .expect("Type.pokemon");
+        assert!(matches!(
+            type_rel.materialize,
+            Some(RelationMaterialization::PreferFromParentGet { .. })
+        ));
     }
 
     #[test]

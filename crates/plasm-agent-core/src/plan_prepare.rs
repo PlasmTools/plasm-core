@@ -705,6 +705,7 @@ mod tests {
             },
             path_vars: None,
             catalog_entry_id: None,
+            capability_name: None,
         });
         let mut used = HashSet::new();
         collect_entities_from_expr(&expr, &mut used);

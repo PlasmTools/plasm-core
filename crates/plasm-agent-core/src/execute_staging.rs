@@ -126,6 +126,7 @@ mod tests {
                 reference: Ref::new("Pet", "1"),
                 path_vars: None,
                 catalog_entry_id: None,
+                capability_name: None,
             }),
             projection: None,
         };
@@ -197,6 +198,7 @@ mod property_tests {
                             reference: Ref::new("Pet", "1"),
                             path_vars: None,
                             catalog_entry_id: None,
+                            capability_name: None,
                         }),
                         projection: None,
                     },
