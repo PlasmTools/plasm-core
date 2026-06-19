@@ -808,6 +808,7 @@ async fn mcp_plan_trace_hooks_emit_plasm_line_and_network_totals() {
             mcp_key: ls_key.to_string(),
             call_index,
         },
+        meta_index: None,
     };
 
     let accept_payload = build_run_explorer_accept_payload(&fx.dry, Some(fx.es.as_ref()));

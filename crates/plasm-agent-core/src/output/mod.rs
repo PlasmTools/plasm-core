@@ -76,7 +76,7 @@ pub fn reference_only_omitted_field_names(
 ) -> Vec<String> {
     let mut omitted = BTreeSet::new();
     let mut report = InBandSummaryReport::default();
-    let _ = format_table_inner(result, cgs, &mut omitted, &mut report);
+    let _ = format_table_inner(result, cgs, None, &mut omitted, &mut report);
     omitted.into_iter().collect()
 }
 
@@ -175,17 +175,24 @@ fn field_type_is_blob(cgs: Option<&CGS>, entity_type: &EntityName, field: &str) 
 pub(crate) fn union_entity_table_columns(
     result: &ExecutionResult,
     cgs: Option<&CGS>,
+    max_entity_rows: Option<usize>,
 ) -> Vec<String> {
+    let entities: &[plasm_runtime::CachedEntity] = match max_entity_rows {
+        Some(max) => {
+            let end = result.entities.len().min(max);
+            &result.entities[..end]
+        }
+        None => &result.entities,
+    };
     let mut columns: Vec<String> = Vec::new();
     let mut emitted: BTreeSet<String> = BTreeSet::new();
 
-    for entity in &result.entities {
+    for entity in entities {
         for key in entity.fields.keys() {
             if emitted.contains(key.as_str()) {
                 continue;
             }
-            let any_blob = result
-                .entities
+            let any_blob = entities
                 .iter()
                 .any(|e| field_type_is_blob(cgs, &e.reference.entity_type, key.as_str()));
             if any_blob {
@@ -512,15 +519,25 @@ fn format_table_with_cgs(
     result: &ExecutionResult,
     cgs: Option<&CGS>,
 ) -> (String, Vec<String>, InBandSummaryReport) {
+    format_result_table_with_cgs(result, cgs, None)
+}
+
+/// ASCII table with optional in-band entity row cap (same omission rules as [`format_result_tsv_with_cgs`]).
+pub(crate) fn format_result_table_with_cgs(
+    result: &ExecutionResult,
+    cgs: Option<&CGS>,
+    max_entity_rows: Option<usize>,
+) -> (String, Vec<String>, InBandSummaryReport) {
     let mut omitted = BTreeSet::new();
     let mut report = InBandSummaryReport::default();
-    let text = format_table_inner(result, cgs, &mut omitted, &mut report);
+    let text = format_table_inner(result, cgs, max_entity_rows, &mut omitted, &mut report);
     (text, omitted.into_iter().collect(), report)
 }
 
-fn format_table_inner(
+pub(crate) fn format_table_inner(
     result: &ExecutionResult,
     cgs: Option<&CGS>,
+    max_entity_rows: Option<usize>,
     omitted: &mut BTreeSet<String>,
     report: &mut InBandSummaryReport,
 ) -> String {
@@ -528,12 +545,14 @@ fn format_table_inner(
         return "(no results)".into();
     }
 
-    let columns = union_entity_table_columns(result, cgs);
+    let columns = union_entity_table_columns(result, cgs, max_entity_rows);
 
     let mut widths: Vec<usize> = columns.iter().map(|c| c.len()).collect();
+    let row_limit = max_entity_rows.unwrap_or(usize::MAX);
     let rows: Vec<Vec<String>> = result
         .entities
         .iter()
+        .take(row_limit)
         .map(|entity| {
             columns
                 .iter()
@@ -831,7 +850,7 @@ mod tests {
         assert!(s.contains(REFERENCE_ONLY_PLACEHOLDER), "{}", s);
         assert_eq!(omitted, vec!["id".to_string()]);
 
-        let (tsv, omitted_tsv, _) = format_result_tsv_with_cgs(&result, Some(&cgs));
+        let (tsv, omitted_tsv, _) = format_result_tsv_with_cgs(&result, Some(&cgs), None);
         assert!(tsv.contains(REFERENCE_ONLY_PLACEHOLDER), "{}", tsv);
         assert_eq!(omitted_tsv, omitted);
     }
@@ -1056,7 +1075,7 @@ mod tests {
             },
             request_fingerprints: vec![],
         };
-        let (tsv, omitted, report) = format_result_tsv_with_cgs(&result, None);
+        let (tsv, omitted, report) = format_result_tsv_with_cgs(&result, None, None);
         assert!(omitted.is_empty(), "{omitted:?}");
         assert!(
             !report.any_loss(),
@@ -1103,7 +1122,7 @@ mod tests {
             },
             request_fingerprints: vec![],
         };
-        let (tsv, omitted, report) = format_result_tsv_with_cgs(&result, None);
+        let (tsv, omitted, report) = format_result_tsv_with_cgs(&result, None, None);
         assert!(omitted.iter().any(|c| c == "desc"), "{omitted:?}");
         assert!(tsv.contains("(in artifact)"), "{tsv}");
         assert!(

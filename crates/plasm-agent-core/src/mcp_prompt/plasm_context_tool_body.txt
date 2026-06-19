@@ -1,7 +1,7 @@
 
 **Open or extend:** stable **`intent`** + **`seeds`** (`{api, entity}`). Multi-API: one **`seeds`** array on the same intent.
 
-Returns **`logical_session_ref`** + fenced teaching TSV (executable rows/symbols only; grammar is in MCP initialize). Delta waves assign new **`e#`** monotonically.
+Returns **`logical_session_ref`** + fenced teaching TSV. TSV is the active symbol table and fragment catalog: left cells are copyable Plasm fragments, while the **`plasm`** tool's **`program`** argument must still be a Plasm source string such as `e3(p15="electric").r2[p4,p5]`, not JSON data or table rows. Delta waves assign new **`e#`** monotonically.
 
 **Extend picks:** same **`intent`**, expanded **`seeds`** — delta TSV or reuse cheat sheet when already exposed.
 

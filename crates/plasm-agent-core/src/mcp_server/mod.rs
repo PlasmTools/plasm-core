@@ -131,8 +131,8 @@ pub(crate) use discover::{
     typed_discovery_mcp_error,
 };
 pub(crate) use prompt::{
-    mcp_plasm_context_tool_description, mcp_server_initialize_instructions,
-    MCP_PLASM_RUN_TOOL_DESCRIPTION, MCP_PLASM_TOOL_DESCRIPTION, MCP_PROGRAM_PARAM_DESCRIPTION,
+    mcp_discover_tool_description, mcp_plasm_context_tool_description, mcp_plasm_run_tool_description,
+    mcp_plasm_tool_description, mcp_program_param_description, mcp_server_initialize_instructions,
 };
 pub(crate) use schema::{
     args_value, json_schema_bool_type, json_schema_non_empty_object_array,
@@ -452,7 +452,7 @@ impl PlasmMcpHandler {
         discover_props.insert(
             "intent".into(),
             json_schema_non_empty_string_type(
-                "One plain-language task description for the whole user goal. See MCP initialize workflow for discover orchestration.",
+                "One plain-language task description for the whole user goal. Reuse the same intent for the resulting `plasm_context` session.",
             ),
         );
         discover_props.insert(
@@ -490,7 +490,7 @@ impl PlasmMcpHandler {
         context_props.insert(
             "seeds".into(),
             json_schema_non_empty_object_array(
-                "Non-empty array of `{api, entity}` capability picks (or `{entry_id, entity}`). See MCP initialize workflow and `plasm_context` tool description.",
+                "Non-empty array of `{api, entity}` capability picks (or `{entry_id, entity}`). The `plasm_context` response returns the active symbols for `plasm` programs.",
                 vec!["api", "entity"],
             ),
         );
@@ -512,7 +512,7 @@ impl PlasmMcpHandler {
         );
         plasm_program_props.insert(
             "program".into(),
-            json_schema_string_type(MCP_PROGRAM_PARAM_DESCRIPTION),
+            json_schema_string_type(mcp_program_param_description()),
         );
         plasm_program_props.insert(
             "reasoning".into(),
@@ -523,7 +523,7 @@ impl PlasmMcpHandler {
         plasm_run_props.insert(
             "plan_commit_ref".into(),
             json_schema_string_type(
-                "Executable plan token (`pcN`) from a prior `plasm` dry-run. `plasm_run` executes this stored reviewed plan; do not echo the program.",
+                "Executable plan token (`pcN`) from a prior `plasm` dry-run. Executes the stored reviewed plan.",
             ),
         );
 
@@ -553,7 +553,7 @@ impl PlasmMcpHandler {
                 name: "discover_capabilities".into(),
                 title: Some("Resolve intent to capabilities".into()),
                 description: Some(
-                    "Resolve one user goal to catalog capabilities. **Default:** fenced **`tsv`** table (`api`, `entity`, `description`). **One `intent` string per goal** — see MCP initialize workflow. Skip when you already know every `api`/`entity`. Set **`typed: true`** only when the TSV ambiguity note requires structured disambiguation (returns fenced **`json`** instead).".into(),
+                    mcp_discover_tool_description().into(),
                 ),
                 input_schema: ToolInputSchema::new(vec!["intent".into()], Some(discover_props), None),
                 annotations: Some(ToolAnnotations {
@@ -572,7 +572,7 @@ impl PlasmMcpHandler {
         tools.push(Tool {
             name: "plasm".into(),
             title: Some("Plan Plasm (dry-run)".into()),
-            description: Some(MCP_PLASM_TOOL_DESCRIPTION.into()),
+            description: Some(mcp_plasm_tool_description().into()),
             input_schema: ToolInputSchema::new(
                 vec!["logical_session_ref".into(), "program".into()],
                 Some(plasm_program_props.clone()),
@@ -593,7 +593,7 @@ impl PlasmMcpHandler {
         tools.push(Tool {
             name: "plasm_run".into(),
             title: Some("Run Plasm (execute)".into()),
-            description: Some(MCP_PLASM_RUN_TOOL_DESCRIPTION.into()),
+            description: Some(mcp_plasm_run_tool_description().into()),
             input_schema: ToolInputSchema::new(
                 vec!["logical_session_ref".into(), "plan_commit_ref".into()],
                 Some(plasm_run_props),
@@ -803,18 +803,20 @@ impl PlasmMcpHandler {
         };
         let run_live = matches!(invocation, McpPlasmInvocation::Run { .. });
         let plan_commit_ref = invocation.plan_commit_ref().cloned();
-        let (binding, this_invocation_chars, idx) = {
-            let mut g = state.lock().await;
+        let (binding, this_invocation_chars, meta_index) = {
+            let g = state.lock().await;
             let binding = g.binding.clone();
             let this_invocation_chars =
                 plasm_invocation_char_count(invocation.program().unwrap_or_default(), reasoning);
+            let meta_index = Arc::clone(&g.meta_index);
+            drop(g);
+            let mut g = state.lock().await;
             g.stats.plasm_invocation_chars = g
                 .stats
                 .plasm_invocation_chars
                 .saturating_add(this_invocation_chars);
             g.stats.plasm_call_count = g.stats.plasm_call_count.saturating_add(1);
-            let idx = std::mem::take(&mut g.meta_index);
-            (binding, this_invocation_chars, idx)
+            (binding, this_invocation_chars, meta_index)
         };
         let Some(b) = binding else {
             crate::metrics::record_mcp_tool(
@@ -892,6 +894,7 @@ impl PlasmMcpHandler {
         let plan_trace = PlanRunTraceHooks {
             trace: mcp_trace.clone(),
             sink,
+            meta_index: Some(meta_index),
         };
 
         let run_result = async {
@@ -1098,10 +1101,6 @@ impl PlasmMcpHandler {
         }
         .instrument(plasm_tool_span)
         .await;
-        {
-            let mut g = state.lock().await;
-            g.meta_index = idx;
-        }
         match run_result {
             Ok(out) => {
                 let markdown = out

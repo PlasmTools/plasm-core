@@ -1,4 +1,0 @@
-     **`plasm`** is plan-only (no live HTTP). One `program` per call; bare comma-separated roots (no `return`).
-     **Run gate:** pass the **`plan_commit_ref`** (`pcN`) from **`plasm`** to **`plasm_run`**; do not echo the program.
-     **`plasm_run`**: live execute the stored reviewed plan; may return snapshots.
-     **Snapshots:** `(in artifact)` / **`resource_link`** / `_meta.plasm.steps` → **`resources/read`** required before concluding data is missing.

@@ -48,17 +48,19 @@ fn sanitize_tsv_cell_with_flag(s: &str, policy: &TsvCellPolicy) -> (String, bool
 pub(crate) fn format_result_tsv_with_cgs(
     result: &ExecutionResult,
     cgs: Option<&CGS>,
+    max_entity_rows: Option<usize>,
 ) -> (String, Vec<String>, InBandSummaryReport) {
     let policy = TsvCellPolicy::mcp_default();
     let mut omitted = BTreeSet::new();
     let mut report = InBandSummaryReport::default();
-    let text = format_tsv_inner(result, cgs, &mut omitted, &policy, &mut report);
+    let text = format_tsv_inner(result, cgs, max_entity_rows, &mut omitted, &policy, &mut report);
     (text, omitted.into_iter().collect(), report)
 }
 
 fn format_tsv_inner(
     result: &ExecutionResult,
     cgs: Option<&CGS>,
+    max_entity_rows: Option<usize>,
     omitted: &mut BTreeSet<String>,
     policy: &TsvCellPolicy,
     report: &mut InBandSummaryReport,
@@ -67,7 +69,7 @@ fn format_tsv_inner(
         return "(no results)".into();
     }
 
-    let columns = super::union_entity_table_columns(result, cgs);
+    let columns = super::union_entity_table_columns(result, cgs, max_entity_rows);
 
     let mut lines: Vec<String> = Vec::new();
     let header_cells: Vec<String> = columns
@@ -76,7 +78,8 @@ fn format_tsv_inner(
         .collect();
     lines.push(header_cells.join("\t"));
 
-    for entity in &result.entities {
+    let row_limit = max_entity_rows.unwrap_or(usize::MAX);
+    for entity in result.entities.iter().take(row_limit) {
         let row: Vec<String> = columns
             .iter()
             .map(|col| {

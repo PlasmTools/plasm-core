@@ -25,7 +25,7 @@ pub(crate) fn build_run_step_column_schema(
         .unwrap_or_else(|| first.reference.entity_type.to_string());
     let cgs = cgs?;
     let ent = cgs.get_entity(entity_type.as_str())?;
-    let column_names = union_entity_table_columns(result, Some(cgs));
+    let column_names = union_entity_table_columns(result, Some(cgs), None);
     if column_names.is_empty() {
         return None;
     }

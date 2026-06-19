@@ -1,1 +1,1 @@
-**Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and an executable **`plan_commit_ref`** (`pcN`) in the Markdown body (and `_meta.plasm`). Pass that token to **`plasm_run`**; do **not** echo the program. Grammar is in MCP initialize; symbols come from **`plasm_context`** TSV.
+**Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and executable **`plan_commit_ref`** (`pcN`). Pass that token to **`plasm_run`**; do **not** echo the program.

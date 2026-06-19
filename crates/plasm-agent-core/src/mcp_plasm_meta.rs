@@ -69,7 +69,10 @@ pub(crate) struct RunUiStepFields {
 }
 
 /// Max inline entity rows emitted per step for MCP Run Explorer preview tables.
-pub(crate) const MCP_UI_PREVIEW_ENTITY_ROW_CAP: usize = 100;
+/// Kept aligned with [`crate::mcp_run_markdown::MCP_IN_BAND_ENTITY_ROW_CAP`].
+#[allow(dead_code)]
+pub(crate) const MCP_UI_PREVIEW_ENTITY_ROW_CAP: usize =
+    crate::mcp_run_markdown::MCP_IN_BAND_ENTITY_ROW_CAP;
 
 /// Per MCP transport session + execute session: intern repeated `_meta.plasm` strings and fingerprint lists.
 #[derive(Debug)]

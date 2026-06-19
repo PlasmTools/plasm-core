@@ -150,6 +150,9 @@ pub(crate) async fn run_executable_plan_phased(
     let mut approval_receipts: Vec<PlasmPlanApprovalReceipt> = Vec::new();
     let mut trace = None;
     let mut sink = None;
+    let meta_index_for_publish = mcp_tool_hooks
+        .as_ref()
+        .and_then(|hooks| hooks.meta_index.clone());
     if let Some(hooks) = mcp_tool_hooks {
         trace = Some(hooks.trace);
         sink = Some(hooks.sink);
@@ -344,7 +347,11 @@ pub(crate) async fn run_executable_plan_phased(
             artifact: mat.artifact.clone(),
         });
     }
-    let out = publish_plasm_result_steps(es.cgs.as_ref().into(), None, &steps);
+    let out = crate::http_execute::publish_with_shared_meta_index(
+        es.cgs.as_ref().into(),
+        meta_index_for_publish,
+        &steps,
+    )?;
     let comp = crate::plasm_comp_wire::trace_comp_wire_from_dry(&dry);
     let mut code_plan_run_artifacts = Vec::new();
     let mut evidence_run_ids = Vec::new();

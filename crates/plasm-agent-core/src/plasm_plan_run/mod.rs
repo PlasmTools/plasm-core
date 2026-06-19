@@ -22,8 +22,8 @@ use crate::execute_session::ExecuteSession;
 use crate::expr_display::expr_display_resolved;
 use crate::expr_display::expr_display_resolved_federated;
 use crate::http_execute::{
-    archive_plasm_result_snapshot, execute_plasm_parsed_expr, publish_plasm_result_steps,
-    trace_record_plasm_line, PublishedResultStep,
+    archive_plasm_result_snapshot, execute_plasm_parsed_expr, trace_record_plasm_line,
+    PublishedResultStep,
 };
 use crate::plan_dry_display;
 pub use crate::plan_dry_display::PlanDryReview;

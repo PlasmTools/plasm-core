@@ -1,5 +1,9 @@
 ---
 source: crates/plasm-agent-core/src/mcp_server/tests.rs
-expression: "super::MCP_PLASM_TOOL_DESCRIPTION"
+expression: "super::mcp_plasm_tool_description()"
 ---
-**Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and an executable **`plan_commit_ref`** (`pcN`) in the Markdown body (and `_meta.plasm`). Pass that token to **`plasm_run`**; do **not** echo the program. Grammar is in MCP initialize; symbols come from **`plasm_context`** TSV.
+**Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and executable **`plan_commit_ref`** (`pcN`). Pass that token to **`plasm_run`**; do **not** echo the program.
+
+Prefer: bind rows → filter/project/sort/limit → few final roots. Plan with `plasm`; pass returned `pcN` to `plasm_run` only.
+
+**`program` is Plasm source text, not JSON data.** Write one raw expression such as `e3(p15="electric").r2[p4,p5]`, or multiline bindings with final roots. Copy left cells from `plasm_context` TSV, substitute placeholders, then chain with `.r#`/`.wire`, `[p#]`, `.filter{…}`, `.sort(...)`, `.limit(...)`, etc. If a plan merely echoes an object/array/string literal, that is a literal no-op; rewrite as Plasm source.

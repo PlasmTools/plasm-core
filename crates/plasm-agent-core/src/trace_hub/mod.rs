@@ -404,6 +404,8 @@ pub struct McpPlasmTraceSink {
 pub struct PlanRunTraceHooks {
     pub trace: crate::trace_sink_emit::PlasmTraceContext,
     pub sink: McpPlasmTraceSink,
+    /// Shared MCP `_meta.plasm` compaction index for live plan publish on the worker pool.
+    pub meta_index: Option<std::sync::Arc<std::sync::Mutex<crate::mcp_plasm_meta::PlasmMetaIndex>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

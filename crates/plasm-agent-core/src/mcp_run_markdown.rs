@@ -8,8 +8,8 @@
 //! path expressions and cannot be executed via the `plasm` tool alone.
 
 use crate::output::{
-    format_result_tsv_with_cgs, format_result_with_cgs, lossy_summary_field_names,
-    InBandSummaryReport, LossySummaryFieldNames, OutputFormat,
+    format_result_table_with_cgs, format_result_tsv_with_cgs, lossy_summary_field_names,
+    InBandSummaryReport, LossySummaryFieldNames,
 };
 use crate::run_artifacts::RunArtifactHandle;
 use plasm_core::CGS;
@@ -18,6 +18,26 @@ use std::collections::BTreeSet;
 
 /// When MCP uses session meta compaction + adaptive preview; above this Unicode scalar count, markdown omits full tables.
 pub const MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS: usize = 4_000;
+
+/// Hard cap on entity rows rendered inline in MCP tool Markdown (TSV fence or ASCII table).
+/// Larger results with a stored run snapshot defer to compact preview + `resources/read`.
+pub const MCP_IN_BAND_ENTITY_ROW_CAP: usize = 25;
+
+/// Unified transport policy for MCP `plasm` / `plasm_run` tool bodies and `_meta` preview rows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct McpResultTransportPolicy {
+    pub in_band_entity_rows: usize,
+    pub markdown_preview_chars: usize,
+}
+
+impl Default for McpResultTransportPolicy {
+    fn default() -> Self {
+        Self {
+            in_band_entity_rows: MCP_IN_BAND_ENTITY_ROW_CAP,
+            markdown_preview_chars: MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS,
+        }
+    }
+}
 
 /// Reserved after `## Result (preview)`; snapshot lines in the body carry the `resources/read` hint.
 pub(crate) const MCP_MARKDOWN_PREVIEW_SINGLE_PROLOGUE: &str = "";
@@ -101,8 +121,30 @@ pub(crate) fn execute_expression_preview(expr: &str) -> String {
     format!("{truncated}… (truncated, total {n} chars)")
 }
 
-pub(crate) fn mcp_preview_markdown_needed(use_mcp_meta_profile: bool, full: &str) -> bool {
-    use_mcp_meta_profile && full.chars().count() > MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS
+pub(crate) fn mcp_step_exceeds_in_band_row_cap(row_count: usize, policy: &McpResultTransportPolicy) -> bool {
+    row_count > policy.in_band_entity_rows
+}
+
+/// Compact preview when a stored snapshot backs an over-cap return, or the full body is huge.
+pub(crate) fn mcp_preview_markdown_needed(
+    artifact_backed_over_cap: bool,
+    full_char_count: usize,
+    policy: &McpResultTransportPolicy,
+) -> bool {
+    artifact_backed_over_cap || full_char_count > policy.markdown_preview_chars
+}
+
+pub(crate) fn mcp_in_band_row_limit_note(shown: usize, total: usize, has_snapshot: bool) -> String {
+    if shown >= total {
+        return String::new();
+    }
+    if has_snapshot {
+        format!(
+            "\n\n_Showing {shown} of {total} rows — use MCP `resources/read` on the snapshot URI for the full result._\n"
+        )
+    } else {
+        format!("\n\n_Showing {shown} of {total} rows (no run snapshot stored)._\n")
+    }
 }
 
 /// Union of schema-tagged lossy columns and any field names recorded while formatting in-band cells
@@ -128,9 +170,11 @@ pub(crate) fn mcp_inline_run_snapshot_line(handle: &RunArtifactHandle) -> String
 pub(crate) fn mcp_format_execute_result_table_or_tsv(
     result: &ExecutionResult,
     cgs: Option<&CGS>,
+    max_entity_rows: Option<usize>,
 ) -> McpFormattedExecuteResult {
     let lossy_summary_fields = lossy_summary_field_names(result, cgs);
-    let (tsv, omitted_vec, tsv_report) = format_result_tsv_with_cgs(result, cgs);
+    let (tsv, omitted_vec, tsv_report) =
+        format_result_tsv_with_cgs(result, cgs, max_entity_rows);
     let reference_only_omitted = OmittedReferenceOnlyFields::from_vec_sorted_dedup(omitted_vec);
     if reference_only_omitted.is_empty() {
         McpFormattedExecuteResult {
@@ -141,7 +185,7 @@ pub(crate) fn mcp_format_execute_result_table_or_tsv(
         }
     } else {
         let (table, omitted2, table_report) =
-            format_result_with_cgs(result, OutputFormat::Table, cgs);
+            format_result_table_with_cgs(result, cgs, max_entity_rows);
         let omitted2 = OmittedReferenceOnlyFields::from_vec_sorted_dedup(omitted2);
         debug_assert_eq!(
             reference_only_omitted, omitted2,
@@ -254,6 +298,14 @@ mod tests {
     use super::*;
     use crate::output::LossySummaryFieldNames;
     use crate::run_artifacts::{artifact_http_path, plasm_run_resource_uri, RunArtifactId};
+
+    #[test]
+    fn mcp_preview_markdown_needed_on_row_cap_with_snapshot() {
+        let policy = McpResultTransportPolicy::default();
+        assert!(mcp_preview_markdown_needed(true, 100, &policy));
+        assert!(!mcp_preview_markdown_needed(false, 100, &policy));
+        assert!(mcp_preview_markdown_needed(false, 5_000, &policy));
+    }
 
     #[test]
     fn mcp_markdown_preview_prologues_are_empty() {

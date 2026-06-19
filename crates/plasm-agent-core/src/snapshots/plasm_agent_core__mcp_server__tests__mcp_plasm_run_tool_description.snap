@@ -1,8 +1,8 @@
 ---
 source: crates/plasm-agent-core/src/mcp_server/tests.rs
-expression: "super::MCP_PLASM_RUN_TOOL_DESCRIPTION"
+expression: "super::mcp_plasm_run_tool_description()"
 ---
-**Run Plasm** (live): **`logical_session_ref`** + executable **`plan_commit_ref`** (`pcN`) from a prior **`plasm`** dry-run. Do **not** echo the program. Real HTTP/API; may return **`resource_link`** / `_meta.plasm` snapshots.
+**Run Plasm** (live): **`logical_session_ref`** + **`plan_commit_ref`** (`pcN`) from a prior **`plasm`** dry-run. Real HTTP/API; may return **`resource_link`** / `_meta.plasm` snapshots.
 
 **Review gate:** `plasm_run` executes exactly the reviewed plan stored under the **`plan_commit_ref`**. If the token is missing, expired, or from another plan, call **`plasm`** again.
 

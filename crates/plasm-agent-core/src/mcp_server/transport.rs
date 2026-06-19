@@ -1,6 +1,9 @@
 //! MCP transport session state and telemetry counters.
 
+use std::sync::{Arc, Mutex as StdMutex};
+
 use super::*;
+use tokio::sync::Mutex;
 
 pub(crate) use crate::mcp_transport_store::PlasmExecBinding;
 
@@ -16,11 +19,20 @@ pub(crate) struct McpSessionPlasmStats {
     pub(crate) plasm_call_count: u64,
 }
 
-#[derive(Default)]
 pub(crate) struct McpLogicalSessionState {
     pub(crate) binding: Option<PlasmExecBinding>,
     pub(crate) stats: McpSessionPlasmStats,
-    pub(crate) meta_index: PlasmMetaIndex,
+    pub(crate) meta_index: Arc<StdMutex<PlasmMetaIndex>>,
+}
+
+impl Default for McpLogicalSessionState {
+    fn default() -> Self {
+        Self {
+            binding: None,
+            stats: McpSessionPlasmStats::default(),
+            meta_index: Arc::new(StdMutex::new(PlasmMetaIndex::new())),
+        }
+    }
 }
 
 #[derive(Default)]

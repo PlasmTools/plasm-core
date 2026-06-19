@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.39] - 2026-06-19
+
+### Added
+
+- **MCP prompt cutover:** canonical syntax/workflow fragments in `plasm-core` `mcp_prompt_fragments`; self-contained `tools/list` descriptions (no “see MCP initialize”); slim initialize rollup.
+- **MCP run transport caps:** `McpResultTransportPolicy` — 25-row in-band limit; snapshot-backed large results defer to compact preview + `resources/read` (fixes megabyte inline TSV on `plasm_run`).
+- **MCP publish refactor:** `http_execute/mcp_publish/{policy,render,meta}` modules; wired `PlasmMetaIndex` through `PlanRunTraceHooks` for live runs.
+
+### Changed
+
+- **MCP `plasm_run` copy:** removed redundant “do not echo program” from execute tool (schema has no `program`); review gate + `plan_commit_ref` only.
+- **Discover TSV:** `outgoing_relations` column in discovery markdown tables.
+- **Unified preview row cap:** `_meta.plasm` preview entities align with in-band row cap (25).
+
 ## [0.3.38] - 2026-06-19
 
 ### Added

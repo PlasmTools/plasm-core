@@ -136,10 +136,17 @@ pub use contract::{
     teaching_tsv_from_wrapped_prompt, teaching_tsv_table_from_wrapped_prompt, TeachingFenceSlice,
     ROW_COMPUTE_EXEMPLAR_THRESHOLD,
 };
-pub use mcp_frontmatter::render_plasm_mcp_language_frontmatter;
+pub use mcp_frontmatter::{
+    render_plasm_mcp_language_frontmatter, render_plasm_mcp_program_param_description,
+    render_plasm_mcp_tool_syntax_contract, MCP_TOOL_SYNTAX_CONTRACT_MARKER,
+};
 pub use mcp_prompt_fragments::{
-    REUSE_CHEATSHEET_TAIL, REUSE_SESSION_UNCHANGED_DISCIPLINE, SESSION_DISCIPLINE_MCP,
-    SESSION_DISCIPLINE_PROGRAM,
+    render_plasm_mcp_context_tool_workflow_lines, render_plasm_mcp_discover_tool_description,
+    render_plasm_mcp_initialize_workflow_head, render_plasm_mcp_initialize_workflow_tail,
+    render_plasm_mcp_program_construction_line, render_plasm_mcp_run_tool_operational_tail,
+    render_plasm_mcp_session_discipline_block, render_plasm_mcp_tool_sequencing_line,
+    MCP_PROGRAM_CONSTRUCTION_LINE, MCP_TOOL_SEQUENCING_MARKER, REUSE_CHEATSHEET_TAIL,
+    REUSE_SESSION_UNCHANGED_DISCIPLINE, SESSION_DISCIPLINE_MCP, SESSION_DISCIPLINE_PROGRAM,
 };
 #[cfg(test)]
 pub(crate) use stats::domain_expression_tool_count_resolved;
@@ -6763,8 +6770,61 @@ mod tests {
     }
 
     #[test]
+    fn mcp_workflow_contract_byte_budget() {
+        const MAX_WORKFLOW_FRAGMENT_BYTES: usize = 400;
+        let sequencing = super::render_plasm_mcp_tool_sequencing_line();
+        let session = super::render_plasm_mcp_session_discipline_block();
+        let construction = super::render_plasm_mcp_program_construction_line();
+        let discover = super::render_plasm_mcp_discover_tool_description();
+        let context_workflow = super::render_plasm_mcp_context_tool_workflow_lines();
+        assert!(
+            sequencing.len() <= MAX_WORKFLOW_FRAGMENT_BYTES,
+            "sequencing line too long: {} bytes",
+            sequencing.len()
+        );
+        assert!(
+            construction.len() <= MAX_WORKFLOW_FRAGMENT_BYTES,
+            "program construction line too long: {} bytes",
+            construction.len()
+        );
+        assert!(
+            session.len() <= 600,
+            "session discipline block too long: {} bytes",
+            session.len()
+        );
+        assert!(
+            discover.len() <= 550,
+            "discover tool description too long: {} bytes",
+            discover.len()
+        );
+        assert!(
+            context_workflow.len() <= 700,
+            "plasm_context workflow lines too long: {} bytes",
+            context_workflow.len()
+        );
+        assert!(sequencing.contains(super::MCP_TOOL_SEQUENCING_MARKER));
+    }
+
+    #[test]
+    fn mcp_tool_syntax_contract_byte_budget() {
+        const MAX_MCP_TOOL_SYNTAX_CONTRACT_BYTES: usize = 600;
+        let compact = super::render_plasm_mcp_tool_syntax_contract();
+        let param = super::render_plasm_mcp_program_param_description();
+        assert!(
+            compact.len() <= MAX_MCP_TOOL_SYNTAX_CONTRACT_BYTES,
+            "compact tool syntax contract too long: {} bytes",
+            compact.len()
+        );
+        assert!(compact.contains(super::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
+        assert!(compact.contains("literal no-op"));
+        assert!(param.contains("not JSON data"));
+        assert!(param.contains("e3(p15=\"value\").r2[p4]"));
+        assert!(param.len() < 200);
+    }
+
+    #[test]
     fn grammar_frontmatter_byte_budget() {
-        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 4310;
+        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 4300;
         const MAX_GRAMMAR_FRONTMATTER_BYTES: usize = 5500;
         const MINIMAL_GRAMMAR_FRONTMATTER_BYTES: usize = 7200;
 

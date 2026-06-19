@@ -97,7 +97,10 @@ where
 }
 
 /// Re-export: MCP adaptive preview threshold (Unicode scalars).
-pub use crate::mcp_run_markdown::MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS;
+pub use crate::mcp_run_markdown::{
+    MCP_IN_BAND_ENTITY_ROW_CAP, MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS,
+    McpResultTransportPolicy,
+};
 
 /// Result of [`publish_plasm_result_steps`] for MCP tool shaping (`_meta` only; snapshot URIs are inline in Markdown).
 #[derive(Debug)]
@@ -245,7 +248,9 @@ pub use context::{
 };
 pub(crate) use ingress::parse_execute_program_body;
 pub(crate) use ingress::plugin_execute_options_from_session;
-pub(crate) use mcp_publish::{publish_plasm_result_steps, tool_meta_from_handles};
+pub(crate) use mcp_publish::{
+    publish_plasm_result_steps, publish_with_shared_meta_index, tool_meta_from_handles,
+};
 pub(crate) use response::ExecuteRunQuery;
 pub(crate) use response::{
     negotiate_accept, respond_execute_result, respond_plan_payload,
