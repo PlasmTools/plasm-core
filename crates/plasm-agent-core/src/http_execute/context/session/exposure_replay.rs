@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use indexmap::{IndexMap, IndexSet};
 use plasm_core::discovery::ExposureSurfaceOptions;
-use plasm_core::{CgsContext, TeachingExposureSession, CGS};
+use plasm_core::{CgsContext, TeachingExposureSession, TeachingExposureWaveDelta, CGS};
 
 use super::super::seeds::relation_endpoint_keys_for_wave;
 
@@ -88,7 +88,9 @@ pub fn apply_federate_exposure_wave(
     wave: &ExposureCatalogWave,
     context_intent: Option<&str>,
     ranked_capabilities: Option<&[String]>,
-) {
+) -> TeachingExposureWaveDelta {
+    let entity_count_before = exp.entities.len();
+    let slots_before = exp.surface.slots.clone();
     let ctx = contexts_by_entry
         .get(&wave.entry_id)
         .expect("catalog context must exist for exposure wave");
@@ -120,6 +122,7 @@ pub fn apply_federate_exposure_wave(
     } else {
         exp.expose_entities(layers, ctx.cgs.clone(), wave.entry_id.as_str(), &refs);
     }
+    exp.finish_wave_delta(layers, entity_count_before, &slots_before)
 }
 
 pub fn replay_teaching_exposure_waves(
@@ -172,57 +175,47 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
-    fn expand_wave_teaches_berry_firmness_hop_via_exposure_replay() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
-        if !dir.is_dir() {
-            return;
-        }
-        let cgs = Arc::new(load_schema_dir(&dir).expect("pokeapi schema"));
+    fn expand_wave_teaches_matrix_summary_hop_via_exposure_replay() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("matrix schema"));
         let mut contexts = IndexMap::new();
         contexts.insert(
-            "pokeapi".to_string(),
-            Arc::new(CgsContext::entry("pokeapi", cgs.clone())),
+            "matrix".to_string(),
+            Arc::new(CgsContext::entry("matrix", cgs.clone())),
         );
-        let intent = "cheri berry firmness";
+        let intent = "lang item summary";
         let mut exp = build_initial_exposure_wave(
             &contexts,
             &ExposureCatalogWave {
-                entry_id: "pokeapi".to_string(),
-                entities: vec!["Berry".to_string()],
+                entry_id: "matrix".to_string(),
+                entities: vec!["LangItem".to_string()],
                 read_first_seeded: false,
             },
             Some(intent),
             None,
         );
-        let slots_before = exp.surface.slots.clone();
-        let n0 = exp.entities.len();
-        apply_federate_exposure_wave(
+        let wave = apply_federate_exposure_wave(
             &mut exp,
             &[cgs.as_ref()],
             &contexts,
             &ExposureCatalogWave {
-                entry_id: "pokeapi".to_string(),
-                entities: vec!["BerryFirmness".to_string()],
+                entry_id: "matrix".to_string(),
+                entities: vec!["LangSummary".to_string()],
                 read_first_seeded: true,
             },
             Some(intent),
             None,
         );
-        let added = exp.qualified_entities_since(n0);
-        let edge_slots = exp.relation_edge_delta_slots(&slots_before, &added);
-        exp.admit_relation_edge_slots_for_render(&[cgs.as_ref()], &edge_slots);
         let pipeline = PromptPipelineConfig::default();
-        let delta = pipeline.render_teaching_exposure_delta_with_edges(
-            cgs.as_ref(),
-            &exp,
-            &["BerryFirmness"],
-            &edge_slots,
-            None,
-        );
+        let delta = pipeline.render_teaching_exposure_wave_delta(cgs.as_ref(), &exp, &wave, None);
         assert!(
             delta.contains("relation e1 → e2"),
-            "http-style expand delta should teach Berry→BerryFirmness hop: {delta}"
+            "http-style expand delta should teach LangItem→LangSummary hop: {delta}"
         );
-        assert!(delta.contains(".r"), "delta should include r# symbol: {delta}");
+        assert!(
+            delta.contains(".r"),
+            "delta should include r# symbol: {delta}"
+        );
     }
 }

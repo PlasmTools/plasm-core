@@ -56,7 +56,7 @@ pub async fn expand_execute_teaching_session(
         .values()
         .map(|c| c.cgs.as_ref())
         .collect();
-    let n0 = exp.entities.len();
+    let entity_count_before = exp.entities.len();
     let mut groups: IndexMap<String, Vec<String>> = IndexMap::new();
     for seed in &seeds {
         let Some(ctx) = sess.contexts_by_entry.get(&seed.entry_id) else {
@@ -123,13 +123,9 @@ pub async fn expand_execute_teaching_session(
             exp.expose_entities(&layers, ctx.cgs.clone(), eid.as_str(), &refs);
         }
     }
-    let added_qualified = exp.qualified_entities_since(n0);
-    let added: Vec<&str> = added_qualified.iter().map(|k| k.entity.as_str()).collect();
-    let new_relation_slots = exp.relation_edge_delta_slots(&slots_before, &added_qualified);
-    exp.admit_relation_edge_slots_for_render(&layers, &new_relation_slots);
-    let relations_delta = exp.relations_delta_rows_for_slots(&new_relation_slots);
+    let exposure_delta = exp.finish_wave_delta(&layers, entity_count_before, &slots_before);
 
-    if added_qualified.is_empty() {
+    if exposure_delta.added_entities.is_empty() {
         sess.entities = exp.entities.clone();
         sess.teaching_exposure = Some(exp);
         st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
@@ -147,21 +143,21 @@ pub async fn expand_execute_teaching_session(
             .collect();
         st.engine
             .prompt_pipeline()
-            .render_teaching_exposure_delta_federated_with_edges(
+            .render_teaching_exposure_wave_delta_federated(
                 &by_entry,
                 &exp,
-                &added_qualified,
-                &new_relation_slots,
+                &exposure_delta,
                 Some(sym_cross),
             )
     } else {
-        st.engine.prompt_pipeline().render_teaching_exposure_delta_with_edges(
-            cgs_primary,
-            &exp,
-            &added,
-            &new_relation_slots,
-            Some(sym_cross),
-        )
+        st.engine
+            .prompt_pipeline()
+            .render_teaching_exposure_wave_delta(
+                cgs_primary,
+                &exp,
+                &exposure_delta,
+                Some(sym_cross),
+            )
     };
     let wave =
         wrap_teaching_markdown_literal_block(&delta, st.engine.prompt_pipeline().render_mode);
@@ -174,6 +170,6 @@ pub async fn expand_execute_teaching_session(
         .await;
     Ok(ExpandTeachingWaveResult {
         markdown: wave,
-        relations_delta,
+        relations_delta: exposure_delta.relations_delta,
     })
 }

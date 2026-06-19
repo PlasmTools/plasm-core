@@ -16,7 +16,7 @@ use crate::schema::CGS;
 use crate::symbol_tuning::{
     expand_expr_for_parse, expand_expr_for_teaching_session, ExposureEntityKey, ExposureSlotKey,
     FocusSpec, IdentMetaKey, IdentMetadata, SymbolMap, SymbolMapCrossRequestCache,
-    TeachingExposureSession,
+    TeachingExposureSession, TeachingExposureWaveDelta,
 };
 use indexmap::IndexMap;
 use std::collections::HashMap;
@@ -306,46 +306,11 @@ impl PromptPipelineConfig {
         new_entity_names: &[&str],
         symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     ) -> String {
-        self.render_teaching_exposure_delta_with_edges(
+        self.render_single_catalog_delta_body(
             cgs,
             exposure,
             new_entity_names,
-            &[],
             symbol_map_cross_cache,
-        )
-    }
-
-    /// Like [`Self::render_teaching_exposure_delta`], prepending relation-hop rows unlocked this wave.
-    pub fn render_teaching_exposure_delta_with_edges(
-        &self,
-        cgs: &CGS,
-        exposure: &TeachingExposureSession,
-        new_entity_names: &[&str],
-        new_relation_slots: &[ExposureSlotKey],
-        symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
-    ) -> String {
-        let entity_delta = {
-            let cfg = RenderConfig {
-                symbol_map_cross_cache,
-                ..self.render_config_for_focus(FocusSpec::All)
-            };
-            let bundle =
-                render_teaching_prompt_bundle_for_exposure(cgs, cfg, exposure, Some(new_entity_names));
-            let ident_meta = self.build_ident_meta_for_entities(new_entity_names, |_| cgs);
-            self.render_teaching_bundle_surface(
-                &bundle,
-                new_entity_names,
-                exposure,
-                ident_meta.as_ref(),
-                |_| cgs,
-                DomainWaveSurface::AdditiveWave,
-            )
-        };
-        splice_relation_edge_rows_into_delta(
-            exposure,
-            new_relation_slots,
-            self.session_symbol_map(exposure).as_deref(),
-            entity_delta,
         )
     }
 
@@ -357,22 +322,77 @@ impl PromptPipelineConfig {
         new_entities: &[ExposureEntityKey],
         symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     ) -> String {
-        self.render_teaching_exposure_delta_federated_with_edges(
+        self.render_federated_delta_body(by_entry, exposure, new_entities, symbol_map_cross_cache)
+    }
+
+    /// Incremental teaching table for one completed exposure wave, including relation-hop edge rows.
+    pub fn render_teaching_exposure_wave_delta(
+        &self,
+        cgs: &CGS,
+        exposure: &TeachingExposureSession,
+        wave: &TeachingExposureWaveDelta,
+        symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    ) -> String {
+        let entity_names: Vec<&str> = wave
+            .added_entities
+            .iter()
+            .map(|k| k.entity.as_str())
+            .collect();
+        let entity_delta = self.render_single_catalog_delta_body(
+            cgs,
+            exposure,
+            &entity_names,
+            symbol_map_cross_cache,
+        );
+        self.prepend_relation_edge_rows(exposure, &wave.relation_slots, entity_delta)
+    }
+
+    /// Federated variant of [`Self::render_teaching_exposure_wave_delta`].
+    pub fn render_teaching_exposure_wave_delta_federated<'b>(
+        &self,
+        by_entry: &'b IndexMap<String, &'b CGS>,
+        exposure: &'b TeachingExposureSession,
+        wave: &TeachingExposureWaveDelta,
+        symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    ) -> String {
+        let entity_delta = self.render_federated_delta_body(
             by_entry,
             exposure,
-            new_entities,
-            &[],
+            &wave.added_entities,
             symbol_map_cross_cache,
+        );
+        self.prepend_relation_edge_rows(exposure, &wave.relation_slots, entity_delta)
+    }
+
+    fn render_single_catalog_delta_body(
+        &self,
+        cgs: &CGS,
+        exposure: &TeachingExposureSession,
+        new_entity_names: &[&str],
+        symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    ) -> String {
+        let cfg = RenderConfig {
+            symbol_map_cross_cache,
+            ..self.render_config_for_focus(FocusSpec::All)
+        };
+        let bundle =
+            render_teaching_prompt_bundle_for_exposure(cgs, cfg, exposure, Some(new_entity_names));
+        let ident_meta = self.build_ident_meta_for_entities(new_entity_names, |_| cgs);
+        self.render_teaching_bundle_surface(
+            &bundle,
+            new_entity_names,
+            exposure,
+            ident_meta.as_ref(),
+            |_| cgs,
+            DomainWaveSurface::AdditiveWave,
         )
     }
 
-    /// Like [`Self::render_teaching_exposure_delta_federated`], prepending relation-hop rows unlocked this wave.
-    pub fn render_teaching_exposure_delta_federated_with_edges<'b>(
+    fn render_federated_delta_body<'b>(
         &self,
         by_entry: &'b IndexMap<String, &'b CGS>,
         exposure: &'b TeachingExposureSession,
         new_entities: &[ExposureEntityKey],
-        new_relation_slots: &[ExposureSlotKey],
         symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     ) -> String {
         let cfg = RenderConfig {
@@ -394,7 +414,7 @@ impl PromptPipelineConfig {
                 .expect("new entity key");
             resolver.resolve_qualified(key.entry_id.as_str(), key.entity.as_str())
         });
-        let entity_delta = self.render_teaching_bundle_surface(
+        self.render_teaching_bundle_surface(
             &bundle,
             &entity_names,
             exposure,
@@ -407,10 +427,18 @@ impl PromptPipelineConfig {
                 resolver.resolve_qualified(key.entry_id.as_str(), key.entity.as_str())
             },
             DomainWaveSurface::AdditiveWave,
-        );
+        )
+    }
+
+    fn prepend_relation_edge_rows(
+        &self,
+        exposure: &TeachingExposureSession,
+        relation_slots: &[ExposureSlotKey],
+        entity_delta: String,
+    ) -> String {
         splice_relation_edge_rows_into_delta(
             exposure,
-            new_relation_slots,
+            relation_slots,
             self.session_symbol_map(exposure).as_deref(),
             entity_delta,
         )

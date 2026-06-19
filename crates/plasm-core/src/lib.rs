@@ -291,7 +291,7 @@ pub use symbol_tuning::{
     strip_prompt_expression_annotations, symbol_map_cache_key_federated,
     symbol_map_cache_key_single_catalog, symbol_map_for_prompt, ExposedEntitySymbolRow,
     ExposedRelationSymbolRow, ExposureEntityKey, FocusSpec, SymbolMap, SymbolMapCacheKey,
-    SymbolMapCrossRequestCache, TeachingExposureSession,
+    SymbolMapCrossRequestCache, TeachingExposureSession, TeachingExposureWaveDelta,
 };
 pub use template_interpolate::{
     dollar_interpolation_roots, interpolate_string, interpolate_string_map,

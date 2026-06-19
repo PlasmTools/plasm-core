@@ -2317,8 +2317,11 @@ pub(crate) fn render_relation_edge_delta_rows(
                 source: sb,
                 relation: rb,
             },
-        ) => (sa.entry_id.as_str(), sa.entity.as_str(), ra.as_str())
-            .cmp(&(sb.entry_id.as_str(), sb.entity.as_str(), rb.as_str())),
+        ) => (sa.entry_id.as_str(), sa.entity.as_str(), ra.as_str()).cmp(&(
+            sb.entry_id.as_str(),
+            sb.entity.as_str(),
+            rb.as_str(),
+        )),
         _ => std::cmp::Ordering::Equal,
     });
 
@@ -2345,11 +2348,17 @@ pub(crate) fn render_relation_edge_delta_rows(
         if !many_relation_nav_emittable(rel_schema) {
             continue;
         }
-        let Some(es) = exposure.qualified_entity_symbol(source.entry_id.as_str(), source.entity.as_str())
+        let Some(es) =
+            exposure.qualified_entity_symbol(source.entry_id.as_str(), source.entity.as_str())
         else {
             continue;
         };
-        let r_sym = id_sym_rel(map, source.entry_id.as_str(), source.entity.as_str(), relation.as_str());
+        let r_sym = id_sym_rel(
+            map,
+            source.entry_id.as_str(),
+            source.entity.as_str(),
+            relation.as_str(),
+        );
         if !r_sym.starts_with('r') {
             continue;
         }
@@ -5669,78 +5678,57 @@ mod tests {
     }
 
     #[test]
-    fn expand_wave_emits_parent_relation_edge_for_pokeapi_berry_firmness() {
+    fn expand_wave_emits_parent_relation_edge_for_matrix_summary() {
         use crate::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
-        use crate::symbol_tuning::ExposureEntityKey;
 
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
-        if !dir.is_dir() {
-            return;
-        }
+        let dir = fixtures_schemas_dir("plasm_language_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
         let pipeline = PromptPipelineConfig::default();
-        let intent = "cheri berry firmness";
-        let relation_keys = vec![ExposureEntityKey {
-            entry_id: "pokeapi".to_string(),
-            entity: crate::EntityName::from("Berry"),
-        }];
+        let intent = "lang item summary";
+        let relation_keys = crate::relation_endpoint_keys("matrix", &["LangItem".to_string()]);
         let delta1 = derive_intent_exposure_surface_batch(
             &cgs,
-            "pokeapi",
+            "matrix",
             intent,
             &relation_keys,
-            &["Berry".to_string()],
+            &["LangItem".to_string()],
             None,
             ExposureSurfaceOptions {
                 read_first_seeded: true,
             },
         );
         let mut exp =
-            TeachingExposureSession::new_with_intent_delta(&cgs, "pokeapi", &["Berry"], delta1);
+            TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &["LangItem"], delta1);
         let slots_before = exp.surface.slots.clone();
         let cgs_arc = std::sync::Arc::new(cgs.clone());
         let relation_keys_wave2 =
-            exp.relation_endpoint_keys_for_wave("pokeapi", &["BerryFirmness".to_string()]);
+            exp.relation_endpoint_keys_for_wave("matrix", &["LangSummary".to_string()]);
         let delta2 = derive_intent_exposure_surface_batch(
             &cgs,
-            "pokeapi",
+            "matrix",
             intent,
             &relation_keys_wave2,
-            &["BerryFirmness".to_string()],
+            &["LangSummary".to_string()],
             None,
             ExposureSurfaceOptions {
                 read_first_seeded: true,
             },
         );
-        exp.expose_surface(
-            &[&cgs],
-            cgs_arc,
-            "pokeapi",
-            &["BerryFirmness"],
-            delta2,
-        );
-        let added = exp.qualified_entities_since(1);
-        let new_relation_slots = exp.relation_edge_delta_slots(&slots_before, &added);
-        exp.admit_relation_edge_slots_for_render(&[&cgs], &new_relation_slots);
+        exp.expose_surface(&[&cgs], cgs_arc, "matrix", &["LangSummary"], delta2);
+        let wave = exp.finish_wave_delta(&[&cgs], 1, &slots_before);
         assert!(
-            new_relation_slots.iter().any(|slot| {
+            wave.relation_slots.iter().any(|slot| {
                 matches!(
                     slot,
                     ExposureSlotKey::Relation {
                         source,
                         relation,
-                    } if source.entity.as_str() == "Berry" && relation.as_str() == "firmness"
+                    } if source.entity.as_str() == "LangItem" && relation.as_str() == "summary"
                 )
             }),
-            "expand should add Berry.firmness relation slot"
+            "expand should add LangItem.summary relation slot"
         );
-        let delta = pipeline.render_teaching_exposure_delta_with_edges(
-            &cgs,
-            &exp,
-            &["BerryFirmness"],
-            &new_relation_slots,
-            None,
-        );
+        let delta = pipeline.render_teaching_exposure_wave_delta(&cgs, &exp, &wave, None);
         assert!(
             delta.contains("relation e1 → e2"),
             "delta should teach parent hop: {delta}"

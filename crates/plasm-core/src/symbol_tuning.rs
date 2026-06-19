@@ -176,6 +176,13 @@ pub struct ExposureAppendReport {
     pub entities_added: usize,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TeachingExposureWaveDelta {
+    pub added_entities: Vec<ExposureEntityKey>,
+    pub relation_slots: Vec<ExposureSlotKey>,
+    pub relations_delta: Vec<ExposedRelationSymbolRow>,
+}
+
 impl ExposureSurface {
     pub fn merge_from(&mut self, other: &ExposureSurface) {
         self.entities.extend(other.entities.iter().cloned());
@@ -2609,8 +2616,8 @@ fn expand_relation_tokens(input: &str, map: &SymbolMap) -> String {
             if let Some(sym) = syms.iter().find(|s| rest.starts_with(s.as_str())) {
                 let sym_len = sym.len();
                 let after = i + 1 + sym_len;
-                let boundary_ok = after >= input.len()
-                    || !ident_continue(input[after..].chars().next().unwrap());
+                let boundary_ok =
+                    after >= input.len() || !ident_continue(input[after..].chars().next().unwrap());
                 if boundary_ok {
                     if let Some(left_ent) = find_entity_before_dot(input, i) {
                         let receiver_wire = entity_surface_wire_name(&left_ent, map);
@@ -3781,7 +3788,7 @@ impl TeachingExposureSession {
     }
 
     /// Relation navigation slots newly present in [`Self::surface`] vs a snapshot before an expand/federate wave.
-    pub fn relation_slots_added_since(
+    fn relation_slots_added_since(
         &self,
         before: &BTreeSet<ExposureSlotKey>,
     ) -> Vec<ExposureSlotKey> {
@@ -3794,17 +3801,40 @@ impl TeachingExposureSession {
             .collect()
     }
 
+    /// Complete the current incremental wave after callers have exposed its requested entities.
+    ///
+    /// This keeps relation-hop edge admission and `_meta.plasm.relations_delta` generation in the
+    /// same layer that owns the symbol/session invariants.
+    pub fn finish_wave_delta(
+        &mut self,
+        cgs_layers: &[&CGS],
+        entity_count_before: usize,
+        slots_before: &BTreeSet<ExposureSlotKey>,
+    ) -> TeachingExposureWaveDelta {
+        let added_entities = self.qualified_entities_since(entity_count_before);
+        let relation_slots = self.relation_edge_delta_slots(slots_before, &added_entities);
+        self.admit_relation_edge_slots_for_render(cgs_layers, &relation_slots);
+        let relations_delta = self.relations_delta_rows_for_slots(&relation_slots);
+        TeachingExposureWaveDelta {
+            added_entities,
+            relation_slots,
+            relations_delta,
+        }
+    }
+
     /// Relation hops to teach in an expand/federate delta: newly added slots plus parent→target edges
     /// unlocked when a new entity receives an `e#` symbol.
-    pub fn relation_edge_delta_slots(
+    fn relation_edge_delta_slots(
         &self,
         slots_before: &BTreeSet<ExposureSlotKey>,
         added_qualified: &[ExposureEntityKey],
     ) -> Vec<ExposureSlotKey> {
         use crate::schema::IncomingNavSlotKind;
 
-        let mut out: BTreeSet<ExposureSlotKey> =
-            self.relation_slots_added_since(slots_before).into_iter().collect();
+        let mut out: BTreeSet<ExposureSlotKey> = self
+            .relation_slots_added_since(slots_before)
+            .into_iter()
+            .collect();
 
         for target in added_qualified {
             let Some(cgs) = self.catalog_cgs_for_entry(target.entry_id.as_str()) else {
@@ -3819,10 +3849,7 @@ impl TeachingExposureSession {
                     entity: edge.source_entity.clone(),
                 };
                 if self
-                    .qualified_entity_symbol(
-                        target.entry_id.as_str(),
-                        edge.source_entity.as_str(),
-                    )
+                    .qualified_entity_symbol(target.entry_id.as_str(), edge.source_entity.as_str())
                     .is_none()
                 {
                     continue;
@@ -3844,7 +3871,7 @@ impl TeachingExposureSession {
     }
 
     /// `_meta.plasm.relations_delta` rows for relation slots unlocked this wave.
-    pub fn relations_delta_rows_for_slots(
+    fn relations_delta_rows_for_slots(
         &self,
         slots: &[ExposureSlotKey],
     ) -> Vec<ExposedRelationSymbolRow> {
@@ -3900,7 +3927,7 @@ impl TeachingExposureSession {
     }
 
     /// Merge relation-hop slots into the cumulative surface and refresh `r#` symbols before edge-delta render.
-    pub fn admit_relation_edge_slots_for_render(
+    fn admit_relation_edge_slots_for_render(
         &mut self,
         cgs_layers: &[&CGS],
         slots: &[ExposureSlotKey],
@@ -4758,36 +4785,39 @@ mod tests {
 
     #[test]
     fn relation_expand_does_not_apply_foreign_entity_r_sym() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
-        if !dir.is_dir() {
-            return;
-        }
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).unwrap();
-        let exp = TeachingExposureSession::new(&cgs, "pokeapi", &["Berry", "BerryFirmness"]);
+        let exp = TeachingExposureSession::new(&cgs, "matrix", &["LangItem", "LangSummary"]);
         let map = exp.to_symbol_map();
-        let berry = map.entity_sym_for("pokeapi", "Berry");
-        let firmness = map.ident_sym_relation_for("pokeapi", "Berry", "firmness");
-        let berries = map.ident_sym_relation_for("pokeapi", "BerryFirmness", "berries");
-        if firmness == "firmness" || berries == "berries" {
-            return;
-        }
+        let item = map.entity_sym_for("matrix", "LangItem");
+        let summary = map.ident_sym_relation_for("matrix", "LangItem", "summary");
+        let detail = map.ident_sym_relation_for("matrix", "LangSummary", "detail");
+        assert_ne!(
+            summary, "summary",
+            "LangItem.summary should receive an r# symbol"
+        );
+        assert_ne!(
+            detail, "detail",
+            "LangSummary.detail should receive an r# symbol"
+        );
         let expr = format!(
-            "cheri = {berry}(\"cheri\")\nfirm = cheri.{berries}",
-            berries = berries
+            "item = {item}(\"item-1\")\nsummary = item.{detail}",
+            detail = detail
         );
         let back = expand_path_symbols(&expr, &map);
         assert!(
-            !back.contains("cheri.berries"),
-            "foreign r# must not expand on Berry receiver: {back}"
+            !back.contains("item.detail"),
+            "foreign r# must not expand on LangItem receiver: {back}"
         );
         assert!(
-            back.contains(&format!("cheri.{berries}")),
+            back.contains(&format!("item.{detail}")),
             "expected unexpanded r# on binding receiver: {back}"
         );
-        let expr2 = format!("firm = {berry}(\"cheri\").{firmness}", firmness = firmness);
+        let expr2 = format!("summary = {item}(\"item-1\").{summary}", summary = summary);
         let back2 = expand_path_symbols(&expr2, &map);
         assert!(
-            back2.contains(".firmness"),
+            back2.contains(".summary"),
             "owned r# on e# receiver should expand to wire: {back2}"
         );
     }

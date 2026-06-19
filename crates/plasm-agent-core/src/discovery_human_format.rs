@@ -208,10 +208,17 @@ pub fn discovery_capability_tsv_for_candidates(
     candidates: &[RankedCandidate],
     entity_summaries: &[EntitySummary],
 ) -> String {
-    discovery_capability_tsv_for_rows(&ranked_deduped_entity_rows(candidates), entity_summaries, None)
+    discovery_capability_tsv_for_rows(
+        &ranked_deduped_entity_rows(candidates),
+        entity_summaries,
+        None,
+    )
 }
 
-fn discovery_cgs_for_entry<'a>(result: &'a DiscoveryResult, entry_id: &str) -> Option<&'a plasm_core::CGS> {
+fn discovery_cgs_for_entry<'a>(
+    result: &'a DiscoveryResult,
+    entry_id: &str,
+) -> Option<&'a plasm_core::CGS> {
     result.contexts.iter().find_map(|ctx| {
         let Prefix::Entry { id } = &ctx.prefix else {
             return None;
