@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.41] - 2026-06-20
+
+### Changed
+
+- **Concurrent execute invariants:** formalized CEP-1..12 as named, test-backed properties; added release-gated checks for graph version monotonicity, fan-out ordering, GraphBacked parent coherence, pre-layer materialized snapshots, and per-store write conflicts.
+- **Graph execute commits:** per-store optimistic validation now uses graph `Ref`, response fingerprint, and query-index write sets so disjoint branches can commit without false conflicts while contended writes are retried at branch scope only.
+- **Relation materialization:** projected rows retain canonical graph identity for project-then-relate flows, preferring graph parent refs and rejecting thin projected fallbacks when identity-bound lookup misses.
+- **Teaching TSV:** bare query row emission is driven by explicit row-producer projection intent instead of string-shape heuristics.
+
 ## [0.3.40] - 2026-06-20
 
 ### Changed
