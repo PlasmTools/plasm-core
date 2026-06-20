@@ -332,6 +332,8 @@ impl PlanCommitDryCache {
 pub struct PlanCommitRecord {
     pub commit_ref: PlanCommitRef,
     pub commit_id: PlanCommitId,
+    /// Pinned [`ExecuteSession::domain_revision`] at dry-run registration (CEP-13 stale `pcN` guard).
+    pub domain_revision: u32,
     pub artifact: crate::plasm_comp_wire::PlasmCompArtifact,
     pub program: String,
     pub dry_review: PlanDryReview,

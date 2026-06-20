@@ -9,7 +9,6 @@ use super::super::seeds::{
     process_order_for_expand_group, relation_endpoint_keys_for_wave, seeds_fully_exposed,
     wrap_teaching_markdown_literal_block, RankedCapabilitiesArg, STALE_EXECUTE_BINDING_NOTICE,
 };
-use plasm_core::plasm_grammar_frontmatter_revision_hex;
 
 pub(crate) async fn execute_session_create_response_inner(
     st: &PlasmHostState,
@@ -221,7 +220,6 @@ pub(crate) async fn execute_session_create_response_inner(
         prompt,
         entry_id: body.entry_id,
         entities: names,
-        grammar_revision: plasm_grammar_frontmatter_revision_hex().to_string(),
         reused: false,
         principal: principal_stored,
     })

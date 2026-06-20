@@ -3794,6 +3794,84 @@ impl TeachingExposureSession {
             .collect()
     }
 
+    /// Relation hops between exposed `endpoints` that are missing from the cumulative surface or lack
+    /// assigned `r#` symbols (e.g. target entity qualified after the relation slot first appeared).
+    pub fn pending_relation_slots_among(
+        &self,
+        endpoints: &[ExposureEntityKey],
+    ) -> Vec<ExposureSlotKey> {
+        use crate::schema::IncomingNavSlotKind;
+
+        let map = self.symbol_map_arc();
+        let qualified: BTreeSet<(String, String)> = endpoints
+            .iter()
+            .filter(|k| self.contains_qualified_entity(k.entry_id.as_str(), k.entity.as_str()))
+            .map(|k| (k.entry_id.clone(), k.entity.to_string()))
+            .collect();
+        let mut out = BTreeSet::new();
+        for target in endpoints {
+            let target_key = (target.entry_id.clone(), target.entity.to_string());
+            if !qualified.contains(&target_key) {
+                continue;
+            }
+            let Some(cgs) = self.catalog_cgs_for_entry(target.entry_id.as_str()) else {
+                continue;
+            };
+            for edge in cgs.incoming_nav_edges_to(target.entity.as_str()) {
+                if !matches!(edge.kind, IncomingNavSlotKind::Relation) {
+                    continue;
+                }
+                let source_key = ExposureEntityKey {
+                    entry_id: target.entry_id.clone(),
+                    entity: edge.source_entity.clone(),
+                };
+                let source_pair = (source_key.entry_id.clone(), source_key.entity.to_string());
+                if !qualified.contains(&source_pair) {
+                    continue;
+                }
+                let Some(src_ent) = cgs.get_entity(edge.source_entity.as_str()) else {
+                    continue;
+                };
+                if !src_ent.relations.contains_key(edge.slot_name.as_str()) {
+                    continue;
+                }
+                let relation = RelationName::new(edge.slot_name.clone());
+                let sym = map.ident_sym_relation_for(
+                    source_key.entry_id.as_str(),
+                    source_key.entity.as_str(),
+                    relation.as_str(),
+                );
+                let needs_sym = sym.is_empty() || !sym.starts_with('r');
+                let slot = ExposureSlotKey::Relation {
+                    source: source_key,
+                    relation,
+                };
+                let needs_slot = !self.surface.slots.contains(&slot);
+                if needs_slot || needs_sym {
+                    out.insert(slot);
+                }
+            }
+        }
+        out.into_iter().collect()
+    }
+
+    /// Union of [`Self::relation_edge_delta_slots`] and [`Self::pending_relation_slots_among`].
+    pub fn relation_slots_for_expand_wave(
+        &self,
+        slots_before: &BTreeSet<ExposureSlotKey>,
+        added_qualified: &[ExposureEntityKey],
+        relation_keys: &[ExposureEntityKey],
+    ) -> Vec<ExposureSlotKey> {
+        let mut out = self.relation_edge_delta_slots(slots_before, added_qualified);
+        let mut seen: BTreeSet<ExposureSlotKey> = out.iter().cloned().collect();
+        for slot in self.pending_relation_slots_among(relation_keys) {
+            if seen.insert(slot.clone()) {
+                out.push(slot);
+            }
+        }
+        out
+    }
+
     /// Relation hops to teach in an expand/federate delta: newly added slots plus parent→target edges
     /// unlocked when a new entity receives an `e#` symbol.
     pub fn relation_edge_delta_slots(
@@ -5414,5 +5492,73 @@ mod tests {
         assert_eq!(map.entity_sym_for("github", "LangItem"), "e1");
         assert_eq!(map.entity_sym_for("linear", "LangItem"), "e2");
         assert_eq!(map.entity_sym("LangItem"), "LangItem");
+    }
+
+    #[test]
+    fn pending_relation_slots_repair_relation_target_qualified_in_later_wave() {
+        // Relation-slot repair: a source entity's outgoing relation slot (`LangItem.summary` →
+        // `LangSummary`) is created when the source is exposed, but its target only qualifies in a
+        // later wave. `relation_slots_for_expand_wave` must then surface the hop as pending and the
+        // symbol map must assign it an `r#`. Driven by the abstract `plasm_language_matrix` fixture
+        // (strict rule: plasm-core language tests must not couple to `apis/<name>/` catalogs).
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
+        let cgs_arc = std::sync::Arc::new(cgs.clone());
+        let layers = [&cgs];
+        let intent = "lang items and their summaries";
+        let relation_keys = crate::relation_endpoint_keys("matrix", &["LangItem".to_string()]);
+        let delta = crate::discovery::derive_intent_exposure_surface_batch(
+            &cgs,
+            "matrix",
+            intent,
+            &relation_keys,
+            &["LangItem".to_string()],
+            None,
+            crate::discovery::ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        let mut exp =
+            TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &["LangItem"], delta);
+        let slots_before = exp.surface.slots.clone();
+        let n0 = exp.entities.len();
+        let summary_delta = crate::discovery::derive_intent_exposure_surface_batch(
+            &cgs,
+            "matrix",
+            intent,
+            &exp.relation_endpoint_keys_for_wave("matrix", &["LangSummary".to_string()]),
+            &["LangSummary".to_string()],
+            None,
+            crate::discovery::ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        exp.expose_surface(
+            &layers,
+            cgs_arc.clone(),
+            "matrix",
+            &["LangSummary"],
+            summary_delta,
+        );
+        let added = exp.qualified_entities_since(n0);
+        let relation_keys =
+            exp.relation_endpoint_keys_for_wave("matrix", &["LangSummary".to_string()]);
+        let edge_slots = exp.relation_slots_for_expand_wave(&slots_before, &added, &relation_keys);
+        assert!(
+            edge_slots.iter().any(|slot| matches!(
+                slot,
+                ExposureSlotKey::Relation { source, relation }
+                    if source.entity.as_str() == "LangItem" && relation.as_str() == "summary"
+            )),
+            "LangItem→summary hop should be pending after LangSummary qualifies: {edge_slots:?}"
+        );
+        exp.admit_relation_edge_slots_for_render(&layers, &edge_slots);
+        let map = exp.symbol_map_arc();
+        let r_sym = map.ident_sym_relation_for("matrix", "LangItem", "summary");
+        assert!(
+            r_sym.starts_with('r'),
+            "parser symbol map must assign r# for LangItem.summary after repair: {r_sym}"
+        );
     }
 }

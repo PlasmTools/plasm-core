@@ -59,8 +59,11 @@ pub(crate) async fn materialize_synthetic_node(
     )
     .await?;
     let page_size = match node {
-        ValidatedPlanNode::Compute(compute) => compute.compute.page_size.unwrap_or(50),
-        _ => 50,
+        ValidatedPlanNode::Compute(compute) => compute
+            .compute
+            .page_size
+            .unwrap_or(crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE),
+        _ => crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE,
     };
     let (entities, has_more, paging_handle) = if full_entities.len() > page_size {
         let first = full_entities[..page_size].to_vec();

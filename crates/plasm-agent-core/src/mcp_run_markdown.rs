@@ -20,8 +20,12 @@ use std::collections::BTreeSet;
 pub const MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS: usize = 4_000;
 
 /// Hard cap on entity rows rendered inline in MCP tool Markdown (TSV fence or ASCII table).
-/// Larger results with a stored run snapshot defer to compact preview + `resources/read`.
-pub const MCP_IN_BAND_ENTITY_ROW_CAP: usize = 25;
+/// Derived from the canonical host first-page size ([`crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE`])
+/// so the first host page fits one MCP tool response; continue with `page(l_<token>_pgN)`.
+pub const MCP_IN_BAND_ENTITY_ROW_CAP: usize = crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE;
+
+/// Above this row count, MCP may omit inline TSV and defer to snapshot-only preview (extreme results).
+pub const MCP_SNAPSHOT_ONLY_ROW_THRESHOLD: usize = 500;
 
 /// Unified transport policy for MCP `plasm` / `plasm_run` tool bodies and `_meta` preview rows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

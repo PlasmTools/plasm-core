@@ -28,7 +28,7 @@ resolver = "2"
 
 # Single SemVer for the OSS workspace (see monorepo RELEASING.md on PlasmTools/plasm).
 [workspace.package]
-version = "0.3.42"
+version = "0.3.43"
 edition = "2021"
 
 [workspace.dependencies]
@@ -192,6 +192,7 @@ iceberg-sql-catalog = { git = "https://github.com/JanKaul/iceberg-rust", package
 ] }
 object_store = { version = "0.13", features = ["aws", "gcp", "azure", "fs"] }
 shuttle = "0.9"
+dashmap = "6.1"
 
 # EVM / Alloy
 alloy = "1.8.2"

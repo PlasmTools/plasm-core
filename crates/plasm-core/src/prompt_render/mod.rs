@@ -9,14 +9,13 @@
 //! Build via [`render_prompt_with_config`] or [`render_prompt_tsv_with_config`]. Both now emit the
 //! TSV teaching surface. [`RenderConfig::for_eval`] defaults to [`PromptRenderMode::Tsv`] (`e#` /
 //! `m#` / `p#`); legacy compact/canonical modes affect symbol naming only, not the output format.
-//! The prompt opens with a compact pseudo-EBNF **Plasm language contract** (see
-//! [`TEACHING_VALID_EXPR_MARKER`]) defining the stable syntax surface (`{ }`, `.`, `[ ]`, assignments,
-//! final roots, `;;`, etc.). Catalogue-specific teaching rows then act as many-shot semantic
-//! instantiations: they teach which concrete `e#` / `m#` / `p#` symbols, fields, methods, scoped
-//! filters, and relations are valid for this catalogue wave. The `~` search form is mentioned in the
-//! contract **only** when at least one entity in the rendered slice has a Search capability (matching
-//! per-entity teaching rows). A mandatory tagged `<<TAG` heredoc bullet appears when the slice includes
-//! any non-`short` [`StringSemantics`](crate::StringSemantics).
+//! The Plasm language grammar (composition / postfix / heredoc / row-to-text) lives **statically** in
+//! the MCP `plasm` tool description ([`PLASM_TOOL_DESCRIPTION`]); the prompt rendered here is the
+//! **table-only** teaching TSV — no grammar contract is interleaved per wave. Catalogue-specific
+//! teaching rows act as many-shot semantic instantiations: they teach which concrete `e#` / `m#` /
+//! `p#` symbols, fields, methods, scoped filters, and relations are valid for this catalogue wave.
+//! The `~` search form and tagged `<<TAG` heredocs are taught unconditionally by the static grammar;
+//! per-entity teaching rows still witness the concrete search / string-valued slots for each entity.
 //!
 //! **teaching table** is **per-entity blocks** of **valid Plasm expressions only** (CGS-validated before emit).
 //! In the teaching TSV, the entity `description` is attached to the **first projection witness** for that
@@ -127,6 +126,7 @@ pub const TSV_TEACHING_TABLE_HEADER: &str = "plasm_expr\tMeaning\n";
 mod contract;
 mod mcp_frontmatter;
 mod mcp_prompt_fragments;
+mod mcp_tool_descriptions;
 mod row_producer;
 mod stats;
 
@@ -136,24 +136,19 @@ mod query_teaching_tests;
 use row_producer::RowProducerProjection;
 
 pub use contract::{
-    client_has_cached_grammar, grammar_revision_from_wire, markdown_fence_body_inner,
-    plasm_grammar_frontmatter_revision_hex, split_tsv_teaching_contract_and_table,
-    teaching_prompt_omit_contract_if_cached, teaching_tsv_agent_body_from_wrapped_prompt,
-    teaching_tsv_from_wrapped_prompt, teaching_tsv_table_from_wrapped_prompt, TeachingFenceSlice,
-    ROW_COMPUTE_EXEMPLAR_THRESHOLD,
-};
-pub use mcp_frontmatter::{
-    render_plasm_mcp_language_frontmatter, render_plasm_mcp_program_param_description,
-    render_plasm_mcp_tool_syntax_contract, MCP_TOOL_SYNTAX_CONTRACT_MARKER,
+    markdown_fence_body_inner, split_tsv_teaching_contract_and_table,
+    teaching_tsv_agent_body_from_wrapped_prompt, teaching_tsv_from_wrapped_prompt,
+    teaching_tsv_table_from_wrapped_prompt, TeachingFenceSlice, ROW_COMPUTE_EXEMPLAR_THRESHOLD,
 };
 pub use mcp_prompt_fragments::{
-    render_compact_exposure_symbol_map, render_plasm_mcp_context_tool_workflow_lines,
-    render_plasm_mcp_discover_tool_description, render_plasm_mcp_initialize_workflow_head,
-    render_plasm_mcp_initialize_workflow_tail, render_plasm_mcp_program_construction_line,
-    render_plasm_mcp_run_tool_operational_tail, render_plasm_mcp_session_discipline_block,
-    render_plasm_mcp_tool_sequencing_line, DISCOVER_DECISION_CLARIFY, DISCOVER_DECISION_MATCH,
-    DISCOVER_DECISION_NO_MATCH, DISCOVER_TSV_LANGUAGE_PREAMBLE, MCP_PROGRAM_CONSTRUCTION_LINE,
-    MCP_TOOL_SEQUENCING_MARKER, SESSION_DISCIPLINE_MCP, SESSION_DISCIPLINE_PROGRAM,
+    render_compact_exposure_symbol_map, DISCOVER_DECISION_CLARIFY, DISCOVER_DECISION_MATCH,
+    DISCOVER_DECISION_NO_MATCH, DISCOVER_TSV_LANGUAGE_PREAMBLE,
+};
+pub use mcp_tool_descriptions::{
+    DISCOVER_TOOL_DESCRIPTION, MCP_INITIALIZE_WORKFLOW, MCP_TOOL_SEQUENCING_MARKER,
+    MCP_TOOL_SYNTAX_CONTRACT_MARKER, PLASM_CONTEXT_TOOL_DESCRIPTION,
+    PLASM_PROGRAM_PARAM_DESCRIPTION, PLASM_RUN_TOOL_DESCRIPTION, PLASM_TOOL_DESCRIPTION,
+    TEACHING_VALID_EXPR_MARKER,
 };
 #[cfg(test)]
 pub(crate) use stats::domain_expression_tool_count_resolved;
@@ -163,9 +158,9 @@ pub use stats::{
     strip_tsv_comment_contract_prefix, GrammarFrontmatterStats,
 };
 
+pub(crate) use contract::enforce_teaching_tsv_teaching_invariant;
 #[cfg(test)]
 pub(crate) use contract::validate_teaching_tsv_teaching_table;
-pub(crate) use contract::{enforce_teaching_tsv_teaching_invariant, DomainWaveSurface};
 pub(crate) use mcp_frontmatter::*;
 
 #[derive(Clone, Copy, Debug)]
@@ -328,7 +323,8 @@ pub fn render_teaching_bundle(
     }
 }
 
-/// Render teaching table as the teaching TSV (`plasm_expr` + `Meaning`), including contract header on first wave.
+/// Render the teaching table as table-only teaching TSV (`plasm_expr` + `Meaning`); the grammar
+/// contract lives statically in [`PLASM_TOOL_DESCRIPTION`], never interleaved here.
 pub fn render_teaching_tsv(
     cgs: &CGS,
     source: TeachingPromptSource<'_>,
@@ -363,12 +359,7 @@ pub fn render_teaching_tsv(
                 include_domain_execution_model: settings.include_domain_execution_model,
                 symbol_map_cross_cache: settings.symbol_map_cross_cache,
             };
-            render_prompt_tsv_for_single_catalog_exposure(
-                cgs,
-                cfg,
-                exposure,
-                DomainWaveSurface::AdditiveWave,
-            )
+            render_prompt_tsv_for_single_catalog_exposure(cgs, cfg, exposure)
         }
     }
 }
@@ -731,56 +722,9 @@ pub(crate) fn render_prompt_tsv_for_single_catalog_exposure(
     cgs: &CGS,
     config: RenderConfig<'_>,
     exposure: &TeachingExposureSession,
-    wave_surface: DomainWaveSurface,
 ) -> String {
-    let full_entities: Vec<&str> = exposure.entities.iter().map(|s| s.as_str()).collect();
     let bundle = render_teaching_prompt_bundle_for_exposure(cgs, config, exposure, None);
-    if config.uses_symbols() {
-        let key = config
-            .symbol_map_cross_cache
-            .filter(|c| c.is_enabled())
-            .map(|_| symbol_map_cache_key_single_catalog(cgs, exposure));
-        let (symbol_map_arc, _) = exposure.symbol_map_arc_cross(config.symbol_map_cross_cache, key);
-        let ident_meta = exposure.ident_metadata_for_exposure_entities(&full_entities);
-        let hints = contract_slice_hints_from_exposure(exposure);
-        render_prompt_tsv_from_bundle(
-            &bundle,
-            &full_entities,
-            Some(symbol_map_arc.as_ref()),
-            Some(&ident_meta),
-            wave_surface,
-            true,
-            |_| cgs,
-            hints,
-        )
-    } else {
-        let hints = contract_slice_hints_from_exposure(exposure);
-        render_prompt_tsv_from_bundle(
-            &bundle,
-            &full_entities,
-            None,
-            None,
-            wave_surface,
-            false,
-            |_| cgs,
-            hints,
-        )
-    }
-}
-
-pub(crate) fn contract_slice_hints_from_exposure(
-    exposure: &crate::symbol_tuning::TeachingExposureSession,
-) -> ContractSliceHints {
-    let distinct_catalog_count = exposure
-        .entity_catalog_entry_ids
-        .iter()
-        .collect::<HashSet<_>>()
-        .len()
-        .max(1);
-    ContractSliceHints {
-        distinct_catalog_count,
-        has_relation_nav_exemplar: false,
-    }
+    render_prompt_tsv_from_bundle(&bundle)
 }
 
 /// Render the teaching table teaching surface as TSV with stable, Plasm-expression-first rows.
@@ -791,54 +735,11 @@ pub fn render_prompt_tsv_with_config(cgs: &CGS, config: RenderConfig<'_>) -> Str
     if config.uses_symbols() {
         let exposure =
             crate::symbol_tuning::teaching_exposure_session_from_focus(cgs, config.focus);
-        return render_prompt_tsv_for_single_catalog_exposure(
-            cgs,
-            config,
-            &exposure,
-            DomainWaveSurface::InitialTeaching,
-        );
+        return render_prompt_tsv_for_single_catalog_exposure(cgs, config, &exposure);
     }
     // Canonical names: 2-hop neighbourhood slice (not execute-parity [`TeachingExposureSession`]).
-    let (full_entity_names, _) =
-        crate::symbol_tuning::resolve_prompt_surface_entities(cgs, config.focus, false);
-    let full_entities: Vec<&str> = full_entity_names.iter().map(|s| s.as_str()).collect();
     let bundle = render_teaching_prompt_bundle(cgs, config);
-    render_prompt_tsv_from_bundle(
-        &bundle,
-        &full_entities,
-        None,
-        None,
-        DomainWaveSurface::InitialTeaching,
-        false,
-        |_| cgs,
-        ContractSliceHints::single_catalog(),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn render_prompt_surface_from_bundle<'b, F>(
-    bundle: &TeachingPromptBundle,
-    symbolic: bool,
-    full_entities: &[&str],
-    symbol_map: Option<&SymbolMap>,
-    ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
-    resolve: F,
-    wave_surface: DomainWaveSurface,
-    slice_hints: ContractSliceHints,
-) -> String
-where
-    F: FnMut(&str) -> &'b CGS,
-{
-    render_prompt_tsv_from_bundle(
-        bundle,
-        full_entities,
-        symbol_map,
-        ident_meta,
-        wave_surface,
-        symbolic,
-        resolve,
-        slice_hints,
-    )
+    render_prompt_tsv_from_bundle(&bundle)
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1050,29 +951,8 @@ fn opaque_pv_symbol_sort_key(sym: &str) -> Option<(u32, u32)> {
     Some((prefix as u32, n))
 }
 
-#[allow(clippy::too_many_arguments)]
-fn render_prompt_tsv_from_bundle<'b, F>(
-    bundle: &TeachingPromptBundle,
-    full_entities: &[&str],
-    _symbol_map: Option<&SymbolMap>,
-    _ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
-    wave_surface: DomainWaveSurface,
-    symbolic: bool,
-    mut resolve: F,
-    slice_hints: ContractSliceHints,
-) -> String
-where
-    F: FnMut(&str) -> &'b CGS,
-{
-    let mut hints = slice_hints;
-    hints.has_relation_nav_exemplar =
-        hints.has_relation_nav_exemplar || teaching_bundle_has_relation_nav_exemplar(bundle);
-    let spec = prompt_contract_spec_resolved(&mut resolve, full_entities, symbolic, hints);
+pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> String {
     let mut out = String::new();
-    if matches!(wave_surface, DomainWaveSurface::InitialTeaching) {
-        out.push_str(&comment_prefix_block(&render_prompt_contract(spec)));
-        out.push('\n');
-    }
     out.push_str(TSV_TEACHING_TABLE_HEADER);
     let mut global_p_gloss_emitted: HashMap<String, String> = HashMap::new();
     let gloss_emit_fingerprint =
@@ -1263,6 +1143,7 @@ enum TeachingMeaningAtom {
 }
 
 /// True when the teaching bundle includes at least one **relation navigation** exemplar row.
+#[allow(dead_code)]
 pub(crate) fn teaching_bundle_has_relation_nav_exemplar(bundle: &TeachingPromptBundle) -> bool {
     bundle.teaching_blocks.iter().any(|block| {
         block
@@ -5126,28 +5007,6 @@ pub(crate) fn query_construct_display(es: &str, scope_variant: &str) -> String {
     format!("{es}{{{inner}}}")
 }
 
-/// Marker substring for tests; must appear once at the start of the rendered prompt contract.
-pub const TEACHING_VALID_EXPR_MARKER: &str =
-    "Grammar below; symbols from `plasm_context` TSV. Reply with one valid plasm_program:";
-
-/// Slice shape for conditioning the teaching table contract preamble (first-wave TSV only).
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct ContractSliceHints {
-    /// Distinct registry `entry_id`s in the exposed slice (1 for single-catalog sessions).
-    pub distinct_catalog_count: usize,
-    /// Teaching table includes a receiver `.r#` relation navigation exemplar.
-    pub has_relation_nav_exemplar: bool,
-}
-
-impl ContractSliceHints {
-    pub(crate) fn single_catalog() -> Self {
-        Self {
-            distinct_catalog_count: 1,
-            has_relation_nav_exemplar: false,
-        }
-    }
-}
-
 #[cfg(test)]
 fn is_field_gloss_line(trimmed: &str) -> bool {
     let t = trimmed.trim_start();
@@ -5450,7 +5309,7 @@ mod tests {
 
     #[test]
     fn plasm_language_contract_is_tsv_first_and_avoids_legacy_terms() {
-        let contract = render_plasm_mcp_language_frontmatter();
+        let contract = super::PLASM_TOOL_DESCRIPTION;
         assert!(
             contract.contains("TSV table semantics:"),
             "contract should teach TSV interpretation before catalog rows"
@@ -5567,7 +5426,7 @@ mod tests {
         let out = render_prompt_with_config(&cgs, cfg);
         assert!(
             !out.contains("Federated sessions"),
-            "single-catalog github slice should omit federation pitfall"
+            "single-catalog github slice teaching TSV should not embed grammar pitfalls"
         );
         assert!(
             out.contains(br.as_str()),
@@ -5706,8 +5565,12 @@ mod tests {
         );
         let eval_prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         assert!(
-            eval_prompt.contains(TEACHING_VALID_EXPR_MARKER),
-            "eval/REPL full-schema prompt still ships grammar contract"
+            !eval_prompt.contains(TEACHING_VALID_EXPR_MARKER),
+            "teaching TSV is table-only; grammar lives in PLASM_TOOL_DESCRIPTION"
+        );
+        assert!(
+            super::PLASM_TOOL_DESCRIPTION.contains(TEACHING_VALID_EXPR_MARKER),
+            "canonical grammar const must include contract marker"
         );
         exp.expose_entities(&[&cgs], std::sync::Arc::new(cgs.clone()), "", &["Order"]);
         let delta = pipeline.render_teaching_exposure_delta(&cgs, &exp, &["Order"], None);
@@ -5988,16 +5851,20 @@ mod tests {
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         let mut lines = tsv.lines();
-        let first = lines.next().expect("tsv frontmatter");
-        assert!(
-            first.starts_with("# ") && first.contains(TEACHING_VALID_EXPR_MARKER),
-            "TSV output should begin with comment-prefixed frontmatter"
+        let first = lines.next().expect("tsv header");
+        assert_eq!(
+            first,
+            TSV_TEACHING_TABLE_HEADER.trim_end(),
+            "TSV output should begin with plasm_expr/Meaning header (grammar is static in PLASM_TOOL_DESCRIPTION)"
         );
-        let header = tsv
-            .lines()
-            .find(|line| *line == TSV_TEACHING_TABLE_HEADER.trim_end())
-            .expect("tsv header");
-        assert_eq!(header, TSV_TEACHING_TABLE_HEADER.trim_end());
+        assert!(
+            !tsv.contains(TEACHING_VALID_EXPR_MARKER),
+            "teaching TSV must not embed grammar contract"
+        );
+        assert!(
+            super::PLASM_TOOL_DESCRIPTION.contains(TEACHING_VALID_EXPR_MARKER),
+            "canonical grammar const must include contract marker"
+        );
         let issue_identity = tsv
             .lines()
             .find(|l| {
@@ -6772,20 +6639,17 @@ mod tests {
         );
     }
 
-    /// Contract text for MCP / TSV frontmatter; update with `INSTA_UPDATE=1 cargo test -p plasm-core plasm_mcp_language_frontmatter_snapshot`.
+    /// Canonical static `plasm` tool description; update with `INSTA_UPDATE=1 cargo test -p plasm-core plasm_tool_description_snapshot`.
     #[test]
-    fn plasm_mcp_language_frontmatter_snapshot() {
+    fn plasm_tool_description_snapshot() {
         with_insta_snapshots(|| {
-            insta::assert_snapshot!(
-                "plasm_mcp_language_frontmatter",
-                render_plasm_mcp_language_frontmatter()
-            );
+            insta::assert_snapshot!("plasm_tool_description", super::PLASM_TOOL_DESCRIPTION);
         });
     }
 
     #[test]
-    fn grammar_frontmatter_includes_row_compute_worked_example() {
-        let frontmatter = render_plasm_mcp_language_frontmatter();
+    fn plasm_tool_description_includes_row_compute_worked_example() {
+        let frontmatter = super::PLASM_TOOL_DESCRIPTION;
         let threshold = ROW_COMPUTE_EXEMPLAR_THRESHOLD;
         assert!(frontmatter.contains(&format!(">={threshold}")));
         assert!(frontmatter.contains(".filter{"));
@@ -6798,7 +6662,7 @@ mod tests {
         assert!(frontmatter.contains("e#~$"));
         assert!(
             !frontmatter.contains("Session and symbol discipline"),
-            "session discipline belongs in MCP initialize, not the canonical grammar body"
+            "session discipline belongs in tool workflow descriptions, not duplicated in grammar"
         );
         assert!(
             !frontmatter.contains(" ::="),
@@ -6815,27 +6679,25 @@ mod tests {
     }
 
     #[test]
-    fn mcp_workflow_contract_byte_budget() {
-        const MAX_WORKFLOW_FRAGMENT_BYTES: usize = 400;
-        let sequencing = super::render_plasm_mcp_tool_sequencing_line();
-        let session = super::render_plasm_mcp_session_discipline_block();
-        let construction = super::render_plasm_mcp_program_construction_line();
-        let discover = super::render_plasm_mcp_discover_tool_description();
-        let context_workflow = super::render_plasm_mcp_context_tool_workflow_lines();
+    fn mcp_static_tool_descriptions_byte_budget() {
+        const MAX_WORKFLOW_BYTES: usize = 2500;
+        const MAX_PLASM_TOOL_DESCRIPTION_BYTES: usize = 8000;
+
+        let workflow = super::MCP_INITIALIZE_WORKFLOW;
+        let plasm_tool = super::PLASM_TOOL_DESCRIPTION;
+        let discover = super::DISCOVER_TOOL_DESCRIPTION;
+        let context = super::PLASM_CONTEXT_TOOL_DESCRIPTION;
+        let param = super::PLASM_PROGRAM_PARAM_DESCRIPTION;
+
         assert!(
-            sequencing.len() <= MAX_WORKFLOW_FRAGMENT_BYTES,
-            "sequencing line too long: {} bytes",
-            sequencing.len()
+            workflow.len() <= MAX_WORKFLOW_BYTES,
+            "initialize workflow too long: {} bytes",
+            workflow.len()
         );
         assert!(
-            construction.len() <= MAX_WORKFLOW_FRAGMENT_BYTES,
-            "program construction line too long: {} bytes",
-            construction.len()
-        );
-        assert!(
-            session.len() <= 600,
-            "session discipline block too long: {} bytes",
-            session.len()
+            plasm_tool.len() <= MAX_PLASM_TOOL_DESCRIPTION_BYTES,
+            "plasm tool description too long: {} bytes",
+            plasm_tool.len()
         );
         assert!(
             discover.len() <= 550,
@@ -6843,53 +6705,29 @@ mod tests {
             discover.len()
         );
         assert!(
-            context_workflow.len() <= 700,
-            "plasm_context workflow lines too long: {} bytes",
-            context_workflow.len()
+            context.len() <= 1400,
+            "plasm_context tool description too long: {} bytes",
+            context.len()
         );
-        assert!(sequencing.contains(super::MCP_TOOL_SEQUENCING_MARKER));
-    }
-
-    #[test]
-    fn mcp_tool_syntax_contract_byte_budget() {
-        const MAX_MCP_TOOL_SYNTAX_CONTRACT_BYTES: usize = 600;
-        let compact = super::render_plasm_mcp_tool_syntax_contract();
-        let param = super::render_plasm_mcp_program_param_description();
-        assert!(
-            compact.len() <= MAX_MCP_TOOL_SYNTAX_CONTRACT_BYTES,
-            "compact tool syntax contract too long: {} bytes",
-            compact.len()
-        );
-        assert!(compact.contains(super::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
-        assert!(compact.contains("literal no-op"));
+        assert!(plasm_tool.contains(super::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
+        assert!(plasm_tool.contains("literal no-op"));
         assert!(param.contains("not JSON data"));
         assert!(param.contains("e3(p15=\"value\").r2[p4]"));
         assert!(param.len() < 200);
     }
 
     #[test]
-    fn grammar_frontmatter_byte_budget() {
-        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 4527;
-        const MAX_GRAMMAR_FRONTMATTER_BYTES: usize = 5500;
-        const MINIMAL_GRAMMAR_FRONTMATTER_BYTES: usize = 7200;
+    fn plasm_tool_description_stats() {
+        const MAX_PLASM_TOOL_DESCRIPTION_BYTES: usize = 8000;
 
-        let full = render_plasm_mcp_language_frontmatter();
-        assert_eq!(
-            full.len(),
-            CANONICAL_GRAMMAR_FRONTMATTER_BYTES,
-            "update CANONICAL_GRAMMAR_FRONTMATTER_BYTES when intentionally changing contract size"
-        );
+        let full = super::PLASM_TOOL_DESCRIPTION;
         assert!(
-            full.len() <= MAX_GRAMMAR_FRONTMATTER_BYTES,
+            full.len() <= MAX_PLASM_TOOL_DESCRIPTION_BYTES,
             "grammar contract grew past max budget: {} bytes",
             full.len()
         );
 
-        let full_stats = super::grammar_frontmatter_stats_from_contract(&full);
-        assert_eq!(
-            full_stats.contract_bytes,
-            CANONICAL_GRAMMAR_FRONTMATTER_BYTES
-        );
+        let full_stats = super::grammar_frontmatter_stats_from_contract(full);
         assert!(
             full_stats
                 .section_bytes
@@ -6905,17 +6743,6 @@ mod tests {
                 .copied()
                 .unwrap_or(0)
                 > 500
-        );
-
-        let minimal = render_prompt_contract(prompt_contract_spec_minimal_for_test());
-        assert!(
-            minimal.len() <= MINIMAL_GRAMMAR_FRONTMATTER_BYTES,
-            "minimal contract too long: {} bytes",
-            minimal.len()
-        );
-        assert!(
-            minimal.len() < full.len(),
-            "minimal spec should be strictly smaller than canonical frontmatter"
         );
 
         let dir = fixtures_schemas_dir("plasm_prompt_matrix");
@@ -6935,19 +6762,8 @@ mod tests {
         let single_stats = super::grammar_frontmatter_stats_from_prompt(&single_prompt);
         assert!(
             single_stats.contract_comment_bytes <= full_prompt_stats.contract_comment_bytes,
-            "single-entity slice contract should not exceed full-schema contract"
+            "single-entity slice should not add contract comments to teaching TSV"
         );
-        assert!(
-            single_stats.contract_comment_bytes < full.len(),
-            "slice-adaptive contract should be smaller than canonical MCP frontmatter when optional sections are omitted"
-        );
-    }
-
-    #[test]
-    fn grammar_revision_hex() {
-        let rev = super::plasm_grammar_frontmatter_revision_hex();
-        assert_eq!(rev.len(), 64);
-        eprintln!("plasm grammar revision: {rev}");
     }
 
     /// Reports contract/table ratio for matrix fixture and one real catalog (stderr only on failure).
@@ -6960,7 +6776,7 @@ mod tests {
         let cgs = load_schema_dir(&matrix_dir).unwrap();
         let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         let st = super::grammar_frontmatter_stats_from_prompt(&prompt);
-        assert!(st.contract_comment_bytes > 0);
+        assert_eq!(st.contract_comment_bytes, 0);
         assert!(st.table_bytes > 0);
         assert!(
             st.contract_comment_bytes + st.table_bytes <= st.total_prompt_bytes,
@@ -6979,7 +6795,7 @@ mod tests {
             let cgs = load_schema_dir(&dir).unwrap();
             let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
             let st = super::grammar_frontmatter_stats_from_prompt(&prompt);
-            assert!(st.contract_comment_bytes > 0);
+            assert_eq!(st.contract_comment_bytes, 0);
             assert!(st.table_bytes > 0);
             eprintln!(
                 "grammar_frontmatter_stats apis/{catalog}: {}",
@@ -7085,45 +6901,10 @@ mod tests {
     }
 
     #[test]
-    fn federated_slice_contract_includes_federation_pitfall() {
-        use std::sync::Arc;
-
-        let root = fixtures_schemas_dir("plasm_language_matrix");
-        let cgs = load_schema_dir(&root).expect("plasm_language_matrix");
-        let layers = [&cgs, &cgs];
-        let mut exp = TeachingExposureSession::new(&cgs, "github", &["LangItem"]);
-        exp.expose_entities(&layers, Arc::new(cgs.clone()), "linear", &["LangItem"]);
-        let mut by_entry: IndexMap<String, &CGS> = IndexMap::new();
-        by_entry.insert("github".into(), &cgs);
-        by_entry.insert("linear".into(), &cgs);
-        let bundle = render_teaching_prompt_bundle_for_exposure_federated(
-            &by_entry,
-            RenderConfig::for_eval(None),
-            &exp,
-            None,
-        );
-        let full_entities: Vec<&str> = exp.entities.iter().map(|s| s.as_str()).collect();
-        let qualified = exposure_qualified_catalog_ids(&exp);
-        let hints = contract_slice_hints_from_exposure(&exp);
-        assert!(hints.distinct_catalog_count >= 2);
-        let ident_meta = exp.ident_metadata_for_exposure_entities(&full_entities);
-        let prompt = render_prompt_surface_from_bundle(
-            &bundle,
-            true,
-            &full_entities,
-            Some(exp.symbol_map_arc().as_ref()),
-            Some(&ident_meta),
-            |entity| {
-                let entry =
-                    catalog_entry_id_for_exposed_entity(&qualified, entity).unwrap_or("github");
-                *by_entry.get(entry).expect("entry cgs")
-            },
-            DomainWaveSurface::InitialTeaching,
-            hints,
-        );
+    fn federated_slice_static_grammar_includes_federation_pitfall() {
         assert!(
-            prompt.contains("Federated sessions"),
-            "multi-catalog slice must retain federation pitfall"
+            super::PLASM_TOOL_DESCRIPTION.contains("Federated sessions"),
+            "canonical static grammar must teach federation pitfall"
         );
     }
 
@@ -7336,14 +7117,14 @@ mod tests {
             "METHODS table removed — invoke glosses live on teaching lines"
         );
         let domain_start = sym
-            .find(TEACHING_VALID_EXPR_MARKER)
-            .expect("valid expressions preamble");
+            .find(TSV_TEACHING_TABLE_HEADER.trim_end())
+            .expect("teaching table header");
         let domain_block = &sym[domain_start..];
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
         let team_sym = map.entity_sym("Team");
         assert!(
-            domain_block.contains(super::TEACHING_VALID_EXPR_MARKER),
-            "TSV contract should open with valid-expression rules"
+            super::PLASM_TOOL_DESCRIPTION.contains(super::TEACHING_VALID_EXPR_MARKER),
+            "canonical grammar const should include valid-expression rules"
         );
         assert!(
             domain_block.lines().any(|line| {

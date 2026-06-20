@@ -18,9 +18,9 @@ pub(crate) use plasm_core::discovery::{CgsCatalog, DiscoveryError};
 pub(crate) use plasm_core::error_render::{render_parse_error_with_feedback, FeedbackStyle};
 pub(crate) use plasm_core::{
     expr_parser::{self, ParsedExpr},
-    grammar_revision_from_wire, normalize_expr_query_capabilities,
-    normalize_expr_query_capabilities_federated, teaching_tsv_from_wrapped_prompt, AuthScheme,
-    CgsContext, Expr, SymbolMap, TeachingFenceSlice, CGS,
+    normalize_expr_query_capabilities, normalize_expr_query_capabilities_federated,
+    teaching_tsv_from_wrapped_prompt, AuthScheme, CgsContext, Expr, SymbolMap, TeachingFenceSlice,
+    CGS,
 };
 pub(crate) use plasm_runtime::{
     auth_resolution_mode_from_env, entity_to_agent_row_json, validate_principal_for_mode,

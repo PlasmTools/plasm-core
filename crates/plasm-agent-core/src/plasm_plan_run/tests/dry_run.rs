@@ -669,8 +669,7 @@ fn dry_run_text_renders_dependency_dag_snapshot() {
     insta::assert_snapshot!(
         text,
         @"
-        plan review · 3n 1r → parallel(2) · p7
-        warn: project list reads; unbounded read
+        plan ok · 3n 1r → parallel(2) · p7
 
         01 products     query Query(Product all)
         02 summary      project name, sku ← products
@@ -977,8 +976,12 @@ fn dry_run_text_renders_staged_read_map_body() {
     );
     assert!(!text.contains("=> {}"), "{text}");
     assert!(
-        text.contains("plan review"),
-        "root list read is unbounded in this fixture: {text}"
+        text.starts_with("plan ok"),
+        "root list read is bounded by the default host page (paged-by-default): {text}"
+    );
+    assert!(
+        !text.contains("unbounded read"),
+        "paged-by-default reads are not unbounded: {text}"
     );
 }
 

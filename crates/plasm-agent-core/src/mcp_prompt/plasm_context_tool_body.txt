@@ -1,8 +1,0 @@
-
-**Open or extend:** **`intent`** + **`seeds`** (`{api, entity}`).
-
-Returns **`logical_session_ref`** + fenced teaching TSV. TSV is the active symbol table: copy left cells into **`plasm.program`** (Plasm source, not JSON). Delta waves assign new **`e#`** monotonically.
-
-**Extend picks:** same **`intent`**, expanded **`seeds`** — delta TSV or reuse cheat sheet when already exposed.
-
-**`_meta.plasm`:** `logical_session_ref`, `continuity`, `domain_revision`, optional **`relations`**.

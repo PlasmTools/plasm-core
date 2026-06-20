@@ -209,7 +209,9 @@ mod tests {
             None,
         );
         let added = exp.qualified_entities_since(n0);
-        let edge_slots = exp.relation_edge_delta_slots(&slots_before, &added);
+        let relation_keys =
+            exp.relation_endpoint_keys_for_wave("pokeapi", &["BerryFirmness".to_string()]);
+        let edge_slots = exp.relation_slots_for_expand_wave(&slots_before, &added, &relation_keys);
         exp.admit_relation_edge_slots_for_render(&[cgs.as_ref()], &edge_slots);
         let pipeline = PromptPipelineConfig::default();
         let delta = pipeline.render_teaching_exposure_delta_with_edges(

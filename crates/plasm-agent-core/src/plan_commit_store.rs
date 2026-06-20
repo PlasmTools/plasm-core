@@ -20,6 +20,7 @@ pub enum PlanCommitVerifyError {
     Unknown { commit_ref: String },
     Expired { commit_ref: String },
     Mismatch { commit_ref: String },
+    StaleDomain { commit_ref: String },
     Evidence { commit_ref: String, detail: String },
 }
 
@@ -34,6 +35,9 @@ impl PlanCommitVerifyError {
             ),
             Self::Mismatch { commit_ref } => format!(
                 "plan_commit_ref `{commit_ref}` does not match the current program — call `plasm` dry-run again"
+            ),
+            Self::StaleDomain { commit_ref } => format!(
+                "plan_commit_ref `{commit_ref}` is stale after `plasm_context` extended the session — call `plasm` dry-run again (check `_meta.plasm.domain_revision`)"
             ),
             Self::Evidence { commit_ref, detail } => format!(
                 "plan_commit_ref `{commit_ref}` evidence mismatch: {detail}"
@@ -82,6 +86,11 @@ pub fn verify_plan_commit_id(
             commit_ref: commit_ref.as_str().to_string(),
         });
     }
+    if record.domain_revision != es.domain_revision {
+        return Err(PlanCommitVerifyError::StaleDomain {
+            commit_ref: commit_ref.as_str().to_string(),
+        });
+    }
     if commit_id != record.commit_id {
         return Err(PlanCommitVerifyError::Mismatch {
             commit_ref: commit_ref.as_str().to_string(),
@@ -89,7 +98,7 @@ pub fn verify_plan_commit_id(
     }
     if let Some(evidence) = crate::evidence_chain::chain(es) {
         evidence
-            .verify_comp_commit_matches(&commit_id)
+            .verify_comp_commit_matches(&record.commit_id)
             .map_err(|e| PlanCommitVerifyError::Evidence {
                 commit_ref: commit_ref.as_str().to_string(),
                 detail: e.to_string(),
@@ -294,6 +303,7 @@ mod tests {
         let record = PlanCommitRecord {
             commit_ref: pc.clone(),
             commit_id: PlanCommitId::from_canonical_bytes([1u8; 32]),
+            domain_revision: 0,
             artifact: minimal_artifact(),
             program: "test".into(),
             dry_review: Default::default(),
@@ -309,6 +319,7 @@ mod tests {
         es.register_plan_commit(PlanCommitRecord {
             commit_ref: pc.clone(),
             commit_id: PlanCommitId::from_canonical_bytes([2u8; 32]),
+            domain_revision: 0,
             artifact: minimal_artifact(),
             program: "test".into(),
             dry_review: Default::default(),
@@ -322,6 +333,27 @@ mod tests {
     }
 
     #[test]
+    fn domain_revision_mismatch_rejects_stale_pc() {
+        let mut es = minimal_session();
+        let pc = es.mint_plan_commit_ref();
+        let commit_id = PlanCommitId::from_canonical_bytes([4u8; 32]);
+        es.register_plan_commit(PlanCommitRecord {
+            commit_ref: pc.clone(),
+            commit_id: commit_id.clone(),
+            domain_revision: 0,
+            artifact: minimal_artifact(),
+            program: "test".into(),
+            dry_review: Default::default(),
+            verdict: PlanDryVerdict::Ok,
+            expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
+            dry_cache: PlanCommitDryCache::default(),
+        });
+        es.domain_revision = 1;
+        let err = verify_plan_commit_id(&es, &pc, commit_id).expect_err("stale domain");
+        assert!(matches!(err, PlanCommitVerifyError::StaleDomain { .. }));
+    }
+
+    #[test]
     fn register_roundtrip_on_session() {
         let es = minimal_session();
         let pc = es.mint_plan_commit_ref();
@@ -329,6 +361,7 @@ mod tests {
         es.register_plan_commit(PlanCommitRecord {
             commit_ref: pc.clone(),
             commit_id: commit_id.clone(),
+            domain_revision: 0,
             artifact: minimal_artifact(),
             program: "test".into(),
             dry_review: Default::default(),
@@ -355,6 +388,7 @@ mod tests {
         es.register_plan_commit(PlanCommitRecord {
             commit_ref: pc.clone(),
             commit_id,
+            domain_revision: es.domain_revision,
             artifact,
             program: "e1.limit(3)".into(),
             dry_review: review.clone(),
@@ -450,6 +484,7 @@ mod tests {
             PlanCommitRecord {
                 commit_ref: pc.clone(),
                 commit_id: commit_id.clone(),
+                domain_revision: es.domain_revision,
                 artifact: artifact.clone(),
                 program: "test".into(),
                 dry_review: Default::default(),

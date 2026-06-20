@@ -1,7 +1,3 @@
----
-source: crates/plasm-agent-core/src/mcp_server/tests.rs
-expression: "super::mcp_server_initialize_instructions()"
----
 Plasm MCP tools (in order): **`plasm_context`** (session + teaching TSV), **`plasm`** (dry-run plan), **`plasm_run`** (live execute), **`discover_capabilities`** (when **`api`/`entity`** unknown).
      **`discover_capabilities`**: one **`intent`** per goal; returns fenced **`tsv`** catalog picks (not a program). Merge rows into **`plasm_context`** **`seeds`**.
      **`plasm_context`**: **`intent`** + **`seeds`** → ref + teaching TSV. Reuse ref for **`plasm`** / **`plasm_run`**; extend via same **`intent`**, more **`seeds`** (delta **`e#`**).

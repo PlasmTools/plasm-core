@@ -355,7 +355,7 @@ async fn create_session_then_bad_expression_is_400() {
 }
 
 #[tokio::test]
-async fn get_execute_session_omits_contract_when_grammar_revision_matches() {
+async fn get_execute_session_prompt_is_table_only() {
     let st = test_state_with_registry();
     let app = test_app_execute(st.clone());
 
@@ -378,19 +378,17 @@ async fn get_execute_session_omits_contract_when_grammar_revision_matches() {
         .to_owned();
 
     let full = get_execute_session_json(&app, loc.as_str()).await;
-    assert_eq!(full.grammar_revision.len(), 64);
     assert!(
         !full
             .prompt
             .contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER),
-        "execute session prompt is table-only; grammar is taught via MCP initialize / plasm init"
+        "execute session prompt is table-only; grammar is taught via MCP tools/list"
     );
     assert!(full.prompt.contains("plasm_expr"));
 
-    let cached_uri = format!("{loc}?grammar_revision={}", full.grammar_revision);
     let get = Request::builder()
         .method("GET")
-        .uri(cached_uri.as_str())
+        .uri(loc.as_str())
         .header("accept", "application/json")
         .body(Body::empty())
         .unwrap();
@@ -405,7 +403,7 @@ async fn get_execute_session_omits_contract_when_grammar_revision_matches() {
         !cached
             .prompt
             .contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER),
-        "cached grammar GET stays table-only for execute sessions"
+        "GET session stays table-only"
     );
     assert!(cached.prompt.contains("plasm_expr"));
 }

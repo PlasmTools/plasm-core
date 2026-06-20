@@ -4,10 +4,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use http_problem::prelude::{StatusCode as ProblemStatus, Uri};
 use http_problem::Problem;
-use plasm_core::{
-    plasm_grammar_frontmatter_revision_hex, teaching_prompt_omit_contract_if_cached,
-    PromptRenderMode,
-};
+use plasm_core::{teaching_tsv_table_from_wrapped_prompt, PromptRenderMode};
 
 use crate::http_problem_util::{problem_response, problem_types};
 
@@ -42,13 +39,13 @@ pub(crate) fn problem_response_invalid_execute_path(
 pub(crate) fn wire_execute_session_prompt(
     stored_prompt: &str,
     render_mode: PromptRenderMode,
-    grammar_revision: Option<&str>,
 ) -> String {
-    teaching_prompt_omit_contract_if_cached(
-        stored_prompt,
-        grammar_revision,
-        Some(render_mode.markdown_fence_info_string()),
-    )
+    let fence = render_mode.markdown_fence_info_string();
+    if let Some(table) = teaching_tsv_table_from_wrapped_prompt(stored_prompt, fence) {
+        format!("```{fence}\n{}\n```\n", table.trim_end())
+    } else {
+        stored_prompt.to_string()
+    }
 }
 
 pub(crate) fn create_execute_session_response(
@@ -63,7 +60,6 @@ pub(crate) fn create_execute_session_response(
         prompt,
         entry_id: sess.entry_id.clone(),
         entities: sess.entities.clone(),
-        grammar_revision: plasm_grammar_frontmatter_revision_hex().to_string(),
         reused,
         principal: sess.principal.clone(),
     }

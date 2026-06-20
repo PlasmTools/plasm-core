@@ -99,6 +99,39 @@ pub(super) fn seeds_fully_exposed(
         .all(|s| exp.contains_qualified_entity(s.entry_id.as_str(), s.entity.as_str()))
 }
 
+fn relation_endpoint_keys_for_seeds(
+    exp: &plasm_core::TeachingExposureSession,
+    seeds: &[CapabilitySeed],
+) -> Vec<plasm_core::ExposureEntityKey> {
+    let mut keys = exp.all_qualified_entities();
+    let mut seen: std::collections::BTreeSet<(String, String)> = keys
+        .iter()
+        .map(|k| (k.entry_id.clone(), k.entity.to_string()))
+        .collect();
+    for seed in seeds {
+        let pair = (seed.entry_id.clone(), seed.entity.clone());
+        if seen.insert(pair.clone()) {
+            keys.push(plasm_core::ExposureEntityKey {
+                entry_id: pair.0,
+                entity: plasm_core::EntityName::from(pair.1.as_str()),
+            });
+        }
+    }
+    keys
+}
+
+/// Seeds are present **and** cross-entity relation hops among them are admitted with `r#` symbols.
+pub(super) fn seeds_exposure_ready_for_reuse(
+    exp: &plasm_core::TeachingExposureSession,
+    seeds: &[CapabilitySeed],
+) -> bool {
+    if !seeds_fully_exposed(exp, seeds) {
+        return false;
+    }
+    let relation_keys = relation_endpoint_keys_for_seeds(exp, seeds);
+    exp.pending_relation_slots_among(&relation_keys).is_empty()
+}
+
 pub(crate) fn group_seed_entities_by_entry(
     seeds: &[CapabilitySeed],
 ) -> IndexMap<String, Vec<String>> {
@@ -195,7 +228,7 @@ pub(crate) fn normalize_context_intent_for_domain_filter(raw: Option<&str>) -> O
 
 /// MCP `plasm_context` `ranked_capabilities` argument: omitted vs explicit replace/clear.
 #[derive(Clone, Debug)]
-pub(crate) enum RankedCapabilitiesArg {
+pub enum RankedCapabilitiesArg {
     /// Key absent — keep the session's ranked list on expand waves.
     Unspecified,
     /// Key present (`null`, `[]`, or string array) — replace the session list when intent-scoped.

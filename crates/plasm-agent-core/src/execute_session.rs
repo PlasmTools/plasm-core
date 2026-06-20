@@ -1365,6 +1365,7 @@ impl ExecuteSession {
             records.push(PersistedPlanCommitRecord {
                 commit_ref: record.commit_ref.as_str().to_string(),
                 commit_id_hex: record.commit_id.to_string(),
+                domain_revision: record.domain_revision,
                 comp: Some(comp),
                 program: record.program.clone(),
                 dry_review: record.dry_review.clone(),
@@ -1433,6 +1434,7 @@ impl ExecuteSession {
                 crate::operation::PlanCommitRecord {
                     commit_ref,
                     commit_id: PlanCommitId::from_canonical_bytes(arr),
+                    domain_revision: persisted.domain_revision,
                     artifact,
                     program: persisted.program.clone(),
                     dry_review: persisted.dry_review.clone(),

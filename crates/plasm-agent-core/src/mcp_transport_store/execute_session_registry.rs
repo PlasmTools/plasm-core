@@ -103,6 +103,8 @@ pub struct PersistedPlanCommitRecord {
     pub commit_ref: String,
     pub commit_id_hex: String,
     #[serde(default)]
+    pub domain_revision: u32,
+    #[serde(default)]
     pub comp: Option<serde_json::Value>,
     #[serde(default)]
     pub program: String,

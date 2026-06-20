@@ -1,5 +1,6 @@
 //! Execute session open, federate, expand, and capability seed application.
 
+mod commit;
 mod expand;
 mod exposure_replay;
 mod federate;
@@ -14,4 +15,4 @@ pub(crate) use exposure_replay::{
 pub use federate::federate_execute_session;
 pub use open::execute_session_create_response;
 pub(crate) use open::execute_session_create_response_inner;
-pub(crate) use seeds_apply::apply_capability_seeds;
+pub use seeds_apply::apply_capability_seeds;

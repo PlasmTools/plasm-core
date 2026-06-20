@@ -89,7 +89,7 @@ fn mcp_plasm_tool_description_snapshot() {
     with_insta_snapshots(|| {
         insta::assert_snapshot!(
             "mcp_plasm_tool_description",
-            super::mcp_plasm_tool_description()
+            plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION
         );
     });
 }
@@ -99,7 +99,7 @@ fn mcp_plasm_run_tool_description_snapshot() {
     with_insta_snapshots(|| {
         insta::assert_snapshot!(
             "mcp_plasm_run_tool_description",
-            super::mcp_plasm_run_tool_description()
+            plasm_core::prompt_render::PLASM_RUN_TOOL_DESCRIPTION
         );
     });
 }
@@ -109,16 +109,16 @@ fn mcp_server_initialize_instructions_snapshot() {
     with_insta_snapshots(|| {
         insta::assert_snapshot!(
             "mcp_server_initialize_instructions",
-            super::mcp_server_initialize_instructions()
+            plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW
         );
     });
 }
 
 #[test]
 fn mcp_server_initialize_workflow_uses_intent_not_query() {
-    let text = super::prompt::mcp_server_initialize_workflow();
-    assert!(text.contains(plasm_core::prompt_render::SESSION_DISCIPLINE_MCP));
-    assert!(text.contains(plasm_core::prompt_render::SESSION_DISCIPLINE_PROGRAM));
+    let text = plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW;
+    assert!(text.contains("one stable `intent`"));
+    assert!(text.contains("one **`intent`** per goal"));
     assert!(!text.contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER));
     assert!(!text.contains("Row text:"));
     assert!(!text.contains("Heredoc:"));
@@ -145,35 +145,46 @@ fn mcp_server_initialize_workflow_uses_intent_not_query() {
 
 #[test]
 fn mcp_tool_descriptions_are_self_contained_without_initialize() {
-    let syntax = plasm_core::prompt_render::render_plasm_mcp_tool_syntax_contract();
-    assert!(syntax.contains(plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
-    assert!(syntax.contains("literal no-op"));
+    let plasm_desc = plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION;
+    assert!(plasm_desc.contains(plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
+    assert!(plasm_desc.contains("literal no-op"));
+    assert!(plasm_desc.contains("<<TAG"));
+    assert!(plasm_desc.contains("Row text:"));
+    assert!(plasm_desc.contains("binding.content"));
+    assert!(plasm_desc.contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER));
 
-    assert!(super::mcp_plasm_tool_description()
+    assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION
         .contains(plasm_core::prompt_render::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
-    assert!(super::mcp_plasm_tool_description().contains("literal no-op"));
-    assert!(super::mcp_plasm_tool_description()
-        .contains(plasm_core::prompt_render::MCP_PROGRAM_CONSTRUCTION_LINE));
-    assert!(super::mcp_plasm_tool_description().contains("pcN"));
-    assert!(super::mcp_plasm_context_tool_description().contains("active symbol table"));
-    assert!(super::mcp_plasm_context_tool_description().contains("Call before `plasm`"));
+    assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("literal no-op"));
+    assert!(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("pcN"));
     assert!(
-        super::mcp_plasm_context_tool_description().contains("msg 3: sort moves"),
+        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("active symbol table")
+    );
+    assert!(
+        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
+    );
+    assert!(
+        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("msg 3: sort moves"),
         "expected stable-intent anti-pattern in plasm_context description"
     );
-    assert!(super::mcp_plasm_context_tool_description()
+    assert!(plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION
         .contains(plasm_core::prompt_render::MCP_TOOL_SEQUENCING_MARKER));
-    assert!(super::mcp_discover_tool_description()
+    assert!(plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION
         .contains(plasm_core::prompt_render::MCP_TOOL_SEQUENCING_MARKER));
-    assert!(super::mcp_discover_tool_description().contains("Plasm is a source language"));
-    assert!(super::mcp_discover_tool_description().contains("plasm.program"));
-    assert!(super::mcp_discover_tool_description().contains("alternate JSON"));
-    assert!(super::mcp_plasm_tool_description().contains("do **not** echo the program"));
-    assert!(!super::mcp_plasm_run_tool_description().contains("echo the program"));
-    assert!(super::mcp_program_param_description().contains("not JSON data"));
-    assert!(super::mcp_program_param_description().contains("e3(p15=\"value\").r2[p4]"));
-    assert!(!super::mcp_plasm_tool_description().contains("MCP initialize"));
-    assert!(!super::mcp_plasm_context_tool_description().contains("MCP initialize"));
+    assert!(
+        plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.contains("Plasm is a source language")
+    );
+    assert!(plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.contains("plasm.program"));
+    assert!(plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.contains("alternate JSON"));
+    assert!(
+        plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("do **not** echo the program")
+    );
+    assert!(!plasm_core::prompt_render::PLASM_RUN_TOOL_DESCRIPTION.contains("echo the program"));
+    assert!(plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION.contains("not JSON data"));
+    assert!(plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION
+        .contains("e3(p15=\"value\").r2[p4]"));
+    assert!(!plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("MCP initialize"));
+    assert!(!plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("MCP initialize"));
     for tool in super::PlasmMcpHandler::plasm_tools() {
         let desc = tool.description.as_deref().unwrap_or("");
         assert!(
@@ -202,70 +213,34 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     assert!(!tools_json.contains("MCP initialize"));
 }
 
-/// Static MCP prompt byte budgets (UTF-8 byte length). Targets from MCP prompt dedup plan.
+/// Static MCP tool descriptions carry canonical grammar; initialize workflow stays supplementary.
 #[test]
-fn mcp_prompt_char_budget() {
-    let init = super::mcp_server_initialize_instructions();
-    let workflow = super::prompt::mcp_server_initialize_workflow();
+fn mcp_prompt_static_tool_descriptions() {
+    let init = plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW;
     assert!(
         init.len() < 2500,
         "initialize instructions too long: {} chars",
         init.len()
     );
-    let head = plasm_core::prompt_render::render_plasm_mcp_initialize_workflow_head();
-    let tail = plasm_core::prompt_render::render_plasm_mcp_initialize_workflow_tail();
     assert!(
-        head.len() < 950,
-        "workflow head too long: {} chars",
-        head.len()
-    );
-    let grammar = plasm_core::prompt_render::render_plasm_mcp_language_frontmatter();
-    assert!(
-        grammar.len() < 5500,
-        "full grammar frontmatter too long: {} chars",
-        grammar.len()
-    );
-    let tool_syntax = plasm_core::prompt_render::render_plasm_mcp_tool_syntax_contract();
-    assert!(
-        tool_syntax.len() < 600,
-        "compact tool syntax contract too long: {} chars",
-        tool_syntax.len()
-    );
-    let sequencing = plasm_core::prompt_render::render_plasm_mcp_tool_sequencing_line();
-    assert!(
-        sequencing.len() < 400,
-        "tool sequencing line too long: {} chars",
-        sequencing.len()
-    );
-    assert!(
-        tail.len() < 1500,
-        "workflow tail too long: {} chars",
-        tail.len()
-    );
-    assert_eq!(
-        init.len(),
-        workflow.len(),
-        "initialize instructions must equal workflow (MCP await-by-default; no async poll appendix)"
-    );
-    assert!(
-        super::mcp_plasm_tool_description().len() < 1400,
+        plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.len() < 8000,
         "plasm tool description too long: {} chars",
-        super::mcp_plasm_tool_description().len()
+        plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.len()
     );
     assert!(
-        super::mcp_plasm_context_tool_description().len() < 1400,
+        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.len() < 1400,
         "plasm_context tool description too long: {} chars",
-        super::mcp_plasm_context_tool_description().len()
+        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.len()
     );
     assert!(
-        super::mcp_discover_tool_description().len() < 550,
+        plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.len() < 550,
         "discover tool description too long: {} chars",
-        super::mcp_discover_tool_description().len()
+        plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.len()
     );
     assert!(
-        super::mcp_program_param_description().len() < 200,
+        plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION.len() < 200,
         "program param description too long: {} chars",
-        super::mcp_program_param_description().len()
+        plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION.len()
     );
     let tools = super::PlasmMcpHandler::plasm_tools();
     let v = serde_json::to_value(
@@ -283,7 +258,10 @@ fn mcp_prompt_char_budget() {
         .and_then(|s| s.get("description"))
         .and_then(|d| d.as_str())
         .expect("plasm program param description");
-    assert_eq!(program_desc, super::mcp_program_param_description());
+    assert_eq!(
+        program_desc,
+        plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION
+    );
 }
 
 #[test]
@@ -336,13 +314,13 @@ fn plasm_context_tool_description_contract_append_vs_refresh() {
         .find(|t| t.name == "plasm_context")
         .and_then(|t| t.description.as_deref())
         .expect("plasm_context description");
-    let workflow = super::prompt::mcp_server_initialize_workflow();
+    let workflow = plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW;
     assert!(
         desc.contains("**Extend picks:**"),
         "expected append guidance in plasm_context description"
     );
     assert!(
-        workflow.contains(plasm_core::prompt_render::SESSION_DISCIPLINE_MCP),
+        workflow.contains("one stable `intent`"),
         "expected session discipline in initialize workflow"
     );
     assert!(

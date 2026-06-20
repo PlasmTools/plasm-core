@@ -16,11 +16,10 @@ pub(crate) use seeds::{
     build_plasm_context_tool_meta, format_session_unchanged_reuse_markdown,
     group_seed_entities_by_entry, normalize_context_intent_for_domain_filter,
     normalize_ranked_capabilities_for_gate, primary_entry_id_for_grouped, teaching_exposure_at,
-    unchanged_expand_wave, CapabilityExposurePlan, RankedCapabilitiesArg,
-    STALE_EXECUTE_BINDING_NOTICE,
+    unchanged_expand_wave, CapabilityExposurePlan, STALE_EXECUTE_BINDING_NOTICE,
 };
-pub use seeds::{normalize_capability_seeds, resolve_capability_seeds};
-pub(crate) use session::apply_capability_seeds;
+pub use seeds::{normalize_capability_seeds, resolve_capability_seeds, RankedCapabilitiesArg};
+pub use session::apply_capability_seeds;
 pub(crate) use session::execute_session_create_response_inner;
 pub(crate) use session::replay_teaching_exposure_waves;
 pub use session::{

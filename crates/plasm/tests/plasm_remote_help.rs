@@ -98,7 +98,7 @@ fn plasm_init_writes_profile_and_search_uses_it() {
     let grammar_raw =
         std::fs::read_to_string(workspace.join(".plasm/grammar.md")).expect("grammar");
     assert!(grammar_raw.contains("# Plasm Grammar"));
-    let expected_frontmatter = plasm_core::prompt_render::render_plasm_mcp_language_frontmatter();
+    let expected_frontmatter = plasm_core::PLASM_TOOL_DESCRIPTION;
     let expected_block = format!("```text\n{}\n```", expected_frontmatter.trim());
     assert!(grammar_raw.contains(&expected_block));
 

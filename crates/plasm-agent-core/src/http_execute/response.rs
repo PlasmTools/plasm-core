@@ -26,12 +26,6 @@ pub(crate) struct ExecuteRunQuery {
     pub plan_commit_ref: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Default)]
-pub(crate) struct ExecuteSessionGetQuery {
-    #[serde(default)]
-    pub(crate) grammar_revision: Option<String>,
-}
-
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ExecuteSessionContextBody {
     /// Optional; when opening intent-scoped teaching table via MCP this is required — HTTP expand may omit when session already has intent.

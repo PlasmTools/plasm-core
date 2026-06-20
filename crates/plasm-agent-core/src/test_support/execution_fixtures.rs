@@ -14,6 +14,14 @@ pub fn synthetic_published_result_step(
     row_count: usize,
     artifact: Option<crate::run_artifacts::RunArtifactHandle>,
 ) -> PublishedResultStep {
+    synthetic_published_result_step_with_paging(row_count, artifact, None)
+}
+
+pub fn synthetic_published_result_step_with_paging(
+    row_count: usize,
+    artifact: Option<crate::run_artifacts::RunArtifactHandle>,
+    paging_handle: Option<plasm_core::PagingHandle>,
+) -> PublishedResultStep {
     let entities: Vec<CachedEntity> = (0..row_count)
         .map(|i| {
             let mut fields = IndexMap::new();
@@ -42,9 +50,9 @@ pub fn synthetic_published_result_step(
         result: Arc::new(ExecutionResult {
             count: row_count,
             entities,
-            has_more: false,
+            has_more: paging_handle.is_some(),
             pagination_resume: None,
-            paging_handle: None,
+            paging_handle,
             source: ExecutionSource::Live,
             stats: ExecutionStats::default(),
             request_fingerprints: vec![],

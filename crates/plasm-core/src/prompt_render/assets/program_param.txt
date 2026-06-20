@@ -1,0 +1,1 @@
+Plasm source string, not JSON data. Example: `e3(p15="value").r2[p4]`; replace symbols from `plasm_context` TSV.

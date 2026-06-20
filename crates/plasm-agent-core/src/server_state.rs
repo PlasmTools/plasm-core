@@ -22,6 +22,7 @@ use crate::oauth_link_catalog::OauthLinkCatalog;
 use crate::operation_persist::OperationPersistScheduler;
 use crate::operation_progress::OperationProgressHub;
 use crate::run_artifacts::RunArtifactStore;
+use crate::session_coordination::SessionCoordination;
 use crate::session_graph_persistence::SessionGraphPersistence;
 use crate::session_identity::LogicalSessionRegistry;
 use crate::tenant_binding::TenantBindingStore;
@@ -102,6 +103,8 @@ pub struct PlasmOssHostState {
     pub redis_backend: Option<Arc<crate::mcp_transport_store::RedisBackend>>,
     /// Large-stack worker pool for live `run_plasm_comp` (injected at bootstrap; shared via `Arc`).
     pub live_plan_pool: Arc<crate::live_plan_run_worker::LivePlanRunPool>,
+    /// CEP-13: single-flight logical open + serialized teaching exposure commits per execute row.
+    pub session_coordination: Arc<SessionCoordination>,
 }
 
 /// Hosted / control-plane state: same process as [`PlasmOssHostState`], but injected after OSS bootstrap.

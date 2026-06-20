@@ -11,8 +11,11 @@ use crate::plasm_plan::{
 use plasm_runtime::row_predicate::{JsonRowPredicate, JsonRowPredicateOp};
 use plasm_runtime::{CachedEntity, ExecutionResult, RowMatchBudget, TopKSpec};
 
-/// Default host page size for unbounded list/page read roots (first page in-band; continue via `page(...)`).
-pub const DEFAULT_HOST_PAGE_SIZE: usize = 50;
+/// Canonical host page size for unbounded list/page read roots: the first page is materialized
+/// in-band, with continuation via `page(...)`. The MCP inline row cap
+/// ([`crate::mcp_run_markdown::MCP_IN_BAND_ENTITY_ROW_CAP`]) derives from this constant so the first
+/// host page always fits a single MCP tool response.
+pub const DEFAULT_HOST_PAGE_SIZE: usize = 25;
 
 /// Host-only read budget applied to a surface node after plan validation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -548,6 +551,14 @@ mod tests {
         assert_eq!(
             effective_host_page_size(surface),
             Some(DEFAULT_HOST_PAGE_SIZE)
+        );
+    }
+
+    #[test]
+    fn default_host_page_size_matches_mcp_in_band_cap() {
+        assert_eq!(
+            DEFAULT_HOST_PAGE_SIZE,
+            crate::mcp_run_markdown::MCP_IN_BAND_ENTITY_ROW_CAP
         );
     }
 

@@ -8,10 +8,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use plasm_core::domain_lexicon::DomainLexicon;
 use plasm_core::loader::load_schema_dir;
 use plasm_core::CGS;
-use plasm_core::{
-    client_has_cached_grammar, plasm_grammar_frontmatter_revision_hex,
-    teaching_prompt_omit_contract_if_cached,
-};
+use plasm_core::PLASM_TOOL_DESCRIPTION;
 use plasm_core::{PromptPipelineConfig, PromptRenderMode};
 use plasm_eval::baml_client::sync_client::B;
 use plasm_eval::baml_client::types::{PlanChatTurn, Union2KassistantOrKuser};
@@ -112,10 +109,6 @@ struct RunArgs {
     /// Default: writes `{model-slug}.latest.human.txt` and `{model-slug}.latest.json` next to `--cases`.
     #[arg(long)]
     report_dir: Option<PathBuf>,
-    /// When set to the current canonical grammar revision ([`plasm_grammar_frontmatter_revision_hex`]),
-    /// omit the grammar contract from the first-turn teaching table (table-only; MCP / cached HTTP GET parity).
-    #[arg(long)]
-    grammar_revision: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
@@ -524,13 +517,7 @@ fn main() -> anyhow::Result<()> {
                 } else {
                     pipeline.render_prompt(&cgs, None)
                 };
-                if client_has_cached_grammar(run.grammar_revision.as_deref()) {
-                    prompt = teaching_prompt_omit_contract_if_cached(
-                        &prompt,
-                        run.grammar_revision.as_deref(),
-                        None,
-                    );
-                }
+                prompt = prepend_eval_grammar_contract(&prompt);
                 let st = pipeline.prompt_surface_stats(&cgs, None, &prompt);
                 // Write prompt first so a line-buffered terminal shows teaching table immediately; stats on
                 // stderr last so they stay visible below the bundle (and after tracing lines).
@@ -581,15 +568,7 @@ fn run_eval_harness(schema: PathBuf, cases: PathBuf, cli: RunArgs) -> anyhow::Re
     let pipeline = PromptPipelineConfig::for_cli_focus(cli.focus.as_deref()).with_render_mode(
         PromptRenderMode::parse_user_facing_or_default(cli.symbol_tuning.as_str()),
     );
-    let mut prompt = pipeline.render_prompt(&cgs, None);
-    if client_has_cached_grammar(cli.grammar_revision.as_deref()) {
-        prompt =
-            teaching_prompt_omit_contract_if_cached(&prompt, cli.grammar_revision.as_deref(), None);
-        eprintln!(
-            "eval: grammar contract omitted (revision matches {})",
-            plasm_grammar_frontmatter_revision_hex()
-        );
-    }
+    let prompt = prepend_eval_grammar_contract(&pipeline.render_prompt(&cgs, None));
     let st = pipeline.prompt_surface_stats(&cgs, None, &prompt);
     let prompt_stats = PromptStatsSnapshot::from(st);
     eprintln!("schema prompt: {}", st.summary_line_body());
@@ -771,6 +750,15 @@ fn write_eval_report_artifacts(
     Ok(())
 }
 
+/// Eval first-turn prompt: canonical static `plasm` tool description + per-catalog teaching TSV.
+fn prepend_eval_grammar_contract(teaching_table: &str) -> String {
+    format!(
+        "{}\n\n{}",
+        PLASM_TOOL_DESCRIPTION.trim_end(),
+        teaching_table.trim_start()
+    )
+}
+
 /// Schema prompt (full teaching table bundle) plus one-line summary and grouped failure blocks.
 fn format_eval_report(model: &str, schema_prompt: &str, report: &[serde_json::Value]) -> String {
     let mut out = String::new();
@@ -779,7 +767,7 @@ fn format_eval_report(model: &str, schema_prompt: &str, report: &[serde_json::Va
     let _ = writeln!(out, "{}", "─".repeat(72));
     let _ = writeln!(
         out,
-        "Plasm schema prompt (eval: teaching table only in the **first** user turn; later user turns are `--- GOAL ---` + goal; each assistant turn is the Plasm expression only, no reasoning — keeps requests small.)"
+        "Plasm eval first user turn: canonical `plasm` MCP tool description (grammar) + teaching table; later user turns are `--- GOAL ---` + goal; each assistant turn is the Plasm expression only, no reasoning — keeps requests small.)"
     );
     let _ = writeln!(out, "{}", "─".repeat(72));
     out.push_str(schema_prompt);

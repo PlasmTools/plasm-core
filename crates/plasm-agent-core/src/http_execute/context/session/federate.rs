@@ -2,22 +2,28 @@
 
 use super::super::super::*;
 
-use super::super::seeds::{normalize_execute_entity_names, wrap_teaching_markdown_literal_block};
+use super::super::seeds::normalize_execute_entity_names;
 use super::exposure_replay::{apply_federate_exposure_wave, ExposureCatalogWave};
+use crate::session_coordination::ExecuteCoordKey;
 
-/// Append another registry row’s [`plasm_core::CgsContext`] to an existing execute session (same
-/// `prompt_hash` / `session`); monotonic `e#` / `m#` / `p#` via [`plasm_core::TeachingExposureSession`].
+/// Federate materialization completed outside exposure commit gates (I/O allowed).
+pub struct PreparedFederateWave {
+    pub ctx_arc: Arc<CgsContext>,
+    pub registry_pin: String,
+    pub new_entry_id: String,
+    pub names: Vec<String>,
+    pub entry_bindings: Option<crate::binding_slots::SessionBindingMap>,
+}
+
 #[allow(clippy::too_many_arguments)]
-pub async fn federate_execute_session(
+pub async fn prepare_federate_wave(
     st: &PlasmHostState,
-    prompt_hash: &str,
-    session_id: &str,
     new_entry_id: String,
     entities: Vec<String>,
     principal: Option<String>,
     outbound_hosted_kv_by_entry: Option<&HashMap<String, String>>,
     bindings_by_entry: Option<&HashMap<String, crate::binding_slots::SessionBindingMap>>,
-) -> Result<CapabilityWaveOutcome, String> {
+) -> Result<PreparedFederateWave, String> {
     let mode = auth_resolution_mode_from_env();
     validate_principal_for_mode(mode, principal.as_deref())?;
 
@@ -25,6 +31,74 @@ pub async fn federate_execute_session(
     if names.is_empty() {
         return Err("`entities` must be non-empty".into());
     }
+
+    let reg = st.catalog.snapshot();
+    let registry_pin = reg
+        .load_context(&new_entry_id)
+        .map(|ctx| ctx.cgs.catalog_cgs_hash_hex())
+        .map_err(|e| e.to_string())?;
+    let hosted_kv_key = outbound_hosted_kv_by_entry
+        .and_then(|map| map.get(&new_entry_id))
+        .map(|s| s.as_str());
+    let entry_bindings = bindings_by_entry
+        .and_then(|m| m.get(&new_entry_id))
+        .cloned();
+    let materialized = crate::execute_session_materialize::materialize_entry_context(
+        st,
+        new_entry_id.as_str(),
+        hosted_kv_key,
+        entry_bindings.as_ref(),
+    )
+    .await?;
+    let ctx_arc = materialized.ctx;
+
+    for e in &names {
+        if ctx_arc.get_entity(e).is_none() {
+            return Err(format!("unknown entity `{e}` in this schema"));
+        }
+    }
+
+    Ok(PreparedFederateWave {
+        ctx_arc,
+        registry_pin,
+        new_entry_id,
+        names,
+        entry_bindings,
+    })
+}
+
+/// Commit a prepared federate wave under the per-execute-row exposure-commit gate (CEP-13). The
+/// caller principal was already validated in [`prepare_federate_wave`]; commit needs no re-check.
+pub async fn commit_federate_wave(
+    st: &PlasmHostState,
+    prompt_hash: &str,
+    session_id: &str,
+    prepared: PreparedFederateWave,
+) -> Result<CapabilityWaveOutcome, String> {
+    let key = ExecuteCoordKey {
+        prompt_hash: prompt_hash.to_string(),
+        session_id: session_id.to_string(),
+    };
+    st.session_coordination
+        .with_exposure_commit(&key, || async {
+            commit_federate_wave_inner(st, prompt_hash, session_id, prepared).await
+        })
+        .await
+}
+
+async fn commit_federate_wave_inner(
+    st: &PlasmHostState,
+    prompt_hash: &str,
+    session_id: &str,
+    prepared: PreparedFederateWave,
+) -> Result<CapabilityWaveOutcome, String> {
+    let PreparedFederateWave {
+        ctx_arc,
+        registry_pin,
+        new_entry_id,
+        names,
+        entry_bindings,
+    } = prepared;
 
     let prompt_hash_p: PromptHashHex = prompt_hash
         .parse()
@@ -49,39 +123,12 @@ pub async fn federate_execute_session(
         ));
     }
 
-    let reg = st.catalog.snapshot();
-    let registry_pin = reg
-        .load_context(&new_entry_id)
-        .map(|ctx| ctx.cgs.catalog_cgs_hash_hex())
-        .map_err(|e| e.to_string())?;
-    let hosted_kv_key = outbound_hosted_kv_by_entry
-        .and_then(|map| map.get(&new_entry_id))
-        .map(|s| s.as_str());
-    let entry_bindings = bindings_by_entry.and_then(|m| m.get(&new_entry_id));
-    let materialized = crate::execute_session_materialize::materialize_entry_context(
-        st,
-        new_entry_id.as_str(),
-        hosted_kv_key,
-        entry_bindings,
-    )
-    .await?;
-    let ctx_arc = materialized.ctx;
-
-    for e in &names {
-        if ctx_arc.get_entity(e).is_none() {
-            return Err(format!("unknown entity `{e}` in this schema"));
-        }
-    }
-
     sess.contexts_by_entry
         .insert(new_entry_id.clone(), ctx_arc.clone());
     sess.registry_catalog_hashes_by_entry
         .insert(new_entry_id.clone(), registry_pin);
-    if let Some(map) = bindings_by_entry {
-        if let Some(b) = map.get(&new_entry_id) {
-            sess.bindings_by_entry
-                .insert(new_entry_id.clone(), b.clone());
-        }
+    if let Some(b) = entry_bindings {
+        sess.bindings_by_entry.insert(new_entry_id.clone(), b);
     }
 
     let Some(mut exp) = sess.teaching_exposure.take() else {
@@ -107,64 +154,52 @@ pub async fn federate_execute_session(
         scope_intent.as_deref(),
         ranked_slice,
     );
-    let added_qualified = exp.qualified_entities_since(n0);
-    let new_relation_slots = exp.relation_edge_delta_slots(&slots_before, &added_qualified);
-    let layers: Vec<&CGS> = sess
-        .contexts_by_entry
-        .values()
-        .map(|c| c.cgs.as_ref())
-        .collect();
-    exp.admit_relation_edge_slots_for_render(&layers, &new_relation_slots);
-    let relations_delta = exp.relations_delta_rows_for_slots(&new_relation_slots);
+    let relation_keys = exp.relation_endpoint_keys_for_wave(new_entry_id.as_str(), &names);
+    let committed = super::commit::commit_exposure_wave_delta(
+        st,
+        &prompt_hash_p,
+        &session_id_p,
+        sess,
+        exp,
+        &slots_before,
+        n0,
+        &relation_keys,
+    )
+    .await;
 
-    if added_qualified.is_empty() {
-        sess.teaching_exposure = Some(exp);
-        st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
-            .await;
-        return Ok(CapabilityWaveOutcome {
-            mode: "federate".to_string(),
-            entry_id: new_entry_id,
-            entities: names,
-            markdown_delta: String::new(),
-            reused_session: true,
-            teaching_prompt_chars_added: 0,
-            relations_delta: Vec::new(),
-        });
-    }
-
-    let by_entry: IndexMap<String, &CGS> = sess
-        .contexts_by_entry
-        .iter()
-        .map(|(k, v)| (k.clone(), v.cgs.as_ref()))
-        .collect();
-    let sym_cross = st.sessions.symbol_map_cross_cache();
-    let delta = st
-        .engine
-        .prompt_pipeline()
-        .render_teaching_exposure_delta_federated_with_edges(
-            &by_entry,
-            &exp,
-            &added_qualified,
-            &new_relation_slots,
-            Some(sym_cross),
-        );
-    let wave =
-        wrap_teaching_markdown_literal_block(&delta, st.engine.prompt_pipeline().render_mode);
-    sess.prompt_text.push_str("\n\n");
-    sess.prompt_text.push_str(&wave);
-    sess.entities = exp.entities.clone();
-    sess.teaching_exposure = Some(exp);
-    sess.domain_revision = sess.domain_revision.saturating_add(1);
-    st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
-        .await;
-
+    let teaching_prompt_chars_added = committed.markdown.chars().count() as u64;
     Ok(CapabilityWaveOutcome {
         mode: "federate".to_string(),
         entry_id: new_entry_id,
         entities: names,
-        markdown_delta: wave.clone(),
-        reused_session: false,
-        teaching_prompt_chars_added: wave.chars().count() as u64,
-        relations_delta,
+        markdown_delta: committed.markdown,
+        reused_session: committed.reused,
+        teaching_prompt_chars_added,
+        relations_delta: committed.relations_delta,
     })
+}
+
+/// Append another registry row’s [`plasm_core::CgsContext`] to an existing execute session (same
+/// `prompt_hash` / `session`); monotonic `e#` / `m#` / `p#` via [`plasm_core::TeachingExposureSession`].
+#[allow(clippy::too_many_arguments)]
+pub async fn federate_execute_session(
+    st: &PlasmHostState,
+    prompt_hash: &str,
+    session_id: &str,
+    new_entry_id: String,
+    entities: Vec<String>,
+    principal: Option<String>,
+    outbound_hosted_kv_by_entry: Option<&HashMap<String, String>>,
+    bindings_by_entry: Option<&HashMap<String, crate::binding_slots::SessionBindingMap>>,
+) -> Result<CapabilityWaveOutcome, String> {
+    let prepared = prepare_federate_wave(
+        st,
+        new_entry_id,
+        entities,
+        principal,
+        outbound_hosted_kv_by_entry,
+        bindings_by_entry,
+    )
+    .await?;
+    commit_federate_wave(st, prompt_hash, session_id, prepared).await
 }

@@ -5,21 +5,18 @@
 //! [`FocusSpec`](crate::symbol_tuning::FocusSpec) lifetimes stay correct for `Seeds` neighbourhoods.
 
 use crate::prompt_render::{
-    contract_slice_hints_from_exposure, prompt_surface_stats, render_prompt_surface_from_bundle,
-    render_prompt_tsv_for_single_catalog_exposure, render_prompt_tsv_with_config,
-    render_relation_edge_delta_rows, render_teaching_prompt_bundle_for_exposure,
-    render_teaching_prompt_bundle_for_exposure_federated, ContractSliceHints, DomainWaveSurface,
-    PromptRenderMode, PromptSurfaceStats, RenderConfig, TeachingPromptBundle,
-    TSV_TEACHING_TABLE_HEADER,
+    prompt_surface_stats, render_prompt_tsv_for_single_catalog_exposure,
+    render_prompt_tsv_from_bundle, render_prompt_tsv_with_config, render_relation_edge_delta_rows,
+    render_teaching_prompt_bundle_for_exposure,
+    render_teaching_prompt_bundle_for_exposure_federated, PromptRenderMode, PromptSurfaceStats,
+    RenderConfig, TSV_TEACHING_TABLE_HEADER,
 };
 use crate::schema::CGS;
 use crate::symbol_tuning::{
     expand_expr_for_parse, expand_expr_for_teaching_session, ExposureEntityKey, ExposureSlotKey,
-    FocusSpec, IdentMetaKey, IdentMetadata, SymbolMap, SymbolMapCrossRequestCache,
-    TeachingExposureSession,
+    FocusSpec, SymbolMap, SymbolMapCrossRequestCache, TeachingExposureSession,
 };
 use indexmap::IndexMap;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Which entities drive teaching table slicing (mirrors [`FocusSpec`](crate::symbol_tuning::FocusSpec) but owned).
@@ -49,64 +46,6 @@ impl Default for PromptPipelineConfig {
     }
 }
 
-type IdentMetadataMap = HashMap<IdentMetaKey, IdentMetadata>;
-
-struct FederatedExposureResolver<'exposure, 'cgs> {
-    by_qualified: HashMap<(String, String), &'cgs CGS>,
-    by_entity_unique: HashMap<&'exposure str, &'cgs CGS>,
-}
-
-impl<'exposure, 'cgs> FederatedExposureResolver<'exposure, 'cgs> {
-    fn new(
-        by_entry: &'cgs IndexMap<String, &'cgs CGS>,
-        exposure: &'exposure TeachingExposureSession,
-    ) -> Self {
-        let mut by_qualified: HashMap<(String, String), &'cgs CGS> = HashMap::new();
-        let mut by_entity_unique: HashMap<&str, &'cgs CGS> = HashMap::new();
-        for (entity, entry_id) in exposure
-            .entities
-            .iter()
-            .zip(exposure.entity_catalog_entry_ids.iter())
-        {
-            let cgs = by_entry
-                .get(entry_id)
-                .copied()
-                .expect("CGS for catalog entry id");
-            by_qualified.insert((entry_id.clone(), entity.clone()), cgs);
-            match by_entity_unique.entry(entity.as_str()) {
-                std::collections::hash_map::Entry::Vacant(e) => {
-                    e.insert(cgs);
-                }
-                std::collections::hash_map::Entry::Occupied(e) => {
-                    if !std::ptr::eq(*e.get(), cgs) {
-                        e.remove();
-                    }
-                }
-            }
-        }
-        Self {
-            by_qualified,
-            by_entity_unique,
-        }
-    }
-
-    fn resolve_qualified(&self, entry_id: &str, entity: &str) -> &'cgs CGS {
-        self.by_qualified
-            .get(&(entry_id.to_string(), entity.to_string()))
-            .copied()
-            .unwrap_or_else(|| {
-                panic!("qualified entity ({entry_id}, {entity}) must appear in exposure session")
-            })
-    }
-
-    fn resolve(&self, entity: &str) -> &'cgs CGS {
-        self.by_entity_unique
-            .get(entity)
-            .copied()
-            .unwrap_or_else(|| panic!("entity `{entity}` must appear uniquely in exposure session"))
-    }
-}
-
 impl PromptPipelineConfig {
     fn render_surface(&self, cgs: &CGS, cfg: RenderConfig<'_>) -> String {
         render_prompt_tsv_with_config(cgs, cfg)
@@ -132,57 +71,6 @@ impl PromptPipelineConfig {
 
     fn session_symbol_map(&self, exposure: &TeachingExposureSession) -> Option<Arc<SymbolMap>> {
         self.uses_symbols().then(|| exposure.symbol_map_arc())
-    }
-
-    fn build_ident_meta_for_entities<'b, F>(
-        &self,
-        entities: &[&str],
-        mut resolve_cgs: F,
-    ) -> Option<IdentMetadataMap>
-    where
-        F: FnMut(&str) -> &'b CGS,
-    {
-        if !self.uses_symbols() {
-            return None;
-        }
-        let mut acc = HashMap::new();
-        for &entity in entities {
-            acc.extend(crate::symbol_tuning::build_ident_metadata(
-                resolve_cgs(entity),
-                &[entity],
-            ));
-        }
-        Some(acc)
-    }
-
-    fn render_teaching_bundle_surface<'b, F>(
-        &self,
-        bundle: &TeachingPromptBundle,
-        full_entities: &[&str],
-        exposure: &TeachingExposureSession,
-        ident_meta: Option<&IdentMetadataMap>,
-        resolve: F,
-        wave_surface: DomainWaveSurface,
-    ) -> String
-    where
-        F: FnMut(&str) -> &'b CGS,
-    {
-        let symbol_map = self.session_symbol_map(exposure);
-        let slice_hints = if matches!(wave_surface, DomainWaveSurface::InitialTeaching) {
-            contract_slice_hints_from_exposure(exposure)
-        } else {
-            ContractSliceHints::single_catalog()
-        };
-        render_prompt_surface_from_bundle(
-            bundle,
-            self.uses_symbols(),
-            full_entities,
-            symbol_map.as_deref(),
-            ident_meta,
-            resolve,
-            wave_surface,
-            slice_hints,
-        )
     }
 
     /// CLI `--focus` → optional single-entity neighbourhood; otherwise full schema with opaque symbols when render mode uses them (eval / REPL default: see `--symbol-tuning`).
@@ -263,12 +151,7 @@ impl PromptPipelineConfig {
             symbol_map_cross_cache,
             ..self.render_config_for_focus(FocusSpec::All)
         };
-        render_prompt_tsv_for_single_catalog_exposure(
-            cgs,
-            cfg,
-            exposure,
-            DomainWaveSurface::AdditiveWave,
-        )
+        render_prompt_tsv_for_single_catalog_exposure(cgs, cfg, exposure)
     }
 
     /// First teaching wave for a **federated** session: one [`CGS`] per registry `entry_id`.
@@ -284,18 +167,7 @@ impl PromptPipelineConfig {
         };
         let bundle =
             render_teaching_prompt_bundle_for_exposure_federated(by_entry, cfg, exposure, None);
-        let full_entities: Vec<&str> = exposure.entities.iter().map(|s| s.as_str()).collect();
-        let resolver = FederatedExposureResolver::new(by_entry, exposure);
-        let ident_meta =
-            self.build_ident_meta_for_entities(&full_entities, |entity| resolver.resolve(entity));
-        self.render_teaching_bundle_surface(
-            &bundle,
-            &full_entities,
-            exposure,
-            ident_meta.as_ref(),
-            |entity| resolver.resolve(entity),
-            DomainWaveSurface::AdditiveWave,
-        )
+        render_prompt_tsv_from_bundle(&bundle)
     }
 
     /// Incremental teaching table: append table blocks for `new_entity_names` only (symbols stable vs `exposure`).
@@ -335,15 +207,7 @@ impl PromptPipelineConfig {
                 exposure,
                 Some(new_entity_names),
             );
-            let ident_meta = self.build_ident_meta_for_entities(new_entity_names, |_| cgs);
-            self.render_teaching_bundle_surface(
-                &bundle,
-                new_entity_names,
-                exposure,
-                ident_meta.as_ref(),
-                |_| cgs,
-                DomainWaveSurface::AdditiveWave,
-            )
+            render_prompt_tsv_from_bundle(&bundle)
         };
         splice_relation_edge_rows_into_delta(
             exposure,
@@ -389,29 +253,7 @@ impl PromptPipelineConfig {
             exposure,
             Some(new_entities),
         );
-        let resolver = FederatedExposureResolver::new(by_entry, exposure);
-        let entity_names: Vec<&str> = new_entities.iter().map(|k| k.entity.as_str()).collect();
-        let ident_meta = self.build_ident_meta_for_entities(&entity_names, |entity| {
-            let key = new_entities
-                .iter()
-                .find(|k| k.entity.as_str() == entity)
-                .expect("new entity key");
-            resolver.resolve_qualified(key.entry_id.as_str(), key.entity.as_str())
-        });
-        let entity_delta = self.render_teaching_bundle_surface(
-            &bundle,
-            &entity_names,
-            exposure,
-            ident_meta.as_ref(),
-            |entity| {
-                let key = new_entities
-                    .iter()
-                    .find(|k| k.entity.as_str() == entity)
-                    .expect("new entity key");
-                resolver.resolve_qualified(key.entry_id.as_str(), key.entity.as_str())
-            },
-            DomainWaveSurface::AdditiveWave,
-        );
+        let entity_delta = render_prompt_tsv_from_bundle(&bundle);
         splice_relation_edge_rows_into_delta(
             exposure,
             new_relation_slots,

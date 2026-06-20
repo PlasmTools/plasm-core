@@ -4589,8 +4589,8 @@ labels"#;
         assert!(
             joined
                 .iter()
-                .any(|f: &String| f.contains("all API pages by default")),
-            "expected default fetch-all boundedness fact: {joined:?}"
+                .any(|f: &String| f.contains("Includes relation traversal")),
+            "expected relation-traversal boundedness fact: {joined:?}"
         );
     }
 

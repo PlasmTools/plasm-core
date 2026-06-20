@@ -1,7 +1,3 @@
----
-source: crates/plasm-agent-core/src/mcp_server/tests.rs
-expression: "super::mcp_plasm_tool_description()"
----
 **Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and executable **`plan_commit_ref`** (`pcN`). Pass that token to **`plasm_run`**; do **not** echo the program.
 
 **`program` is Plasm source text, not JSON data.** Write one raw expression (e.g. `e3(p15="electric").r2[p4,p5]`) or multiline bindings with final roots. If a plan merely echoes an object/array/string literal, that is a literal no-op; rewrite as Plasm source.

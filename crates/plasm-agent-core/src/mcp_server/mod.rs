@@ -111,7 +111,6 @@ use uuid::Uuid;
 /// Best-effort bound on concurrent MCP transport sessions holding an execute binding (see module doc).
 mod committed_plasm_run;
 mod discover;
-pub(crate) mod prompt;
 mod resource_read_trace;
 mod schema;
 mod tool_parse;
@@ -127,10 +126,9 @@ pub(crate) use discover::{
     discovery_mcp_error, mcp_call_tool_error_class, mcp_discover_query_from_arguments, mcp_key,
     read_resource_result_for_payload,
 };
-pub(crate) use prompt::{
-    mcp_discover_tool_description, mcp_plasm_context_tool_description,
-    mcp_plasm_run_tool_description, mcp_plasm_tool_description, mcp_program_param_description,
-    mcp_server_initialize_instructions,
+use plasm_core::prompt_render::{
+    DISCOVER_TOOL_DESCRIPTION, MCP_INITIALIZE_WORKFLOW, PLASM_CONTEXT_TOOL_DESCRIPTION,
+    PLASM_PROGRAM_PARAM_DESCRIPTION, PLASM_RUN_TOOL_DESCRIPTION, PLASM_TOOL_DESCRIPTION,
 };
 pub(crate) use schema::{
     args_value, json_schema_non_empty_object_array, json_schema_non_empty_string_type,
@@ -479,7 +477,7 @@ impl PlasmMcpHandler {
         );
         plasm_program_props.insert(
             "program".into(),
-            json_schema_string_type(mcp_program_param_description()),
+            json_schema_string_type(PLASM_PROGRAM_PARAM_DESCRIPTION),
         );
         plasm_program_props.insert(
             "reasoning".into(),
@@ -498,7 +496,7 @@ impl PlasmMcpHandler {
             Tool {
                 name: "plasm_context".into(),
                 title: Some("Open or extend Plasm context".into()),
-                description: Some(mcp_plasm_context_tool_description().into()),
+                description: Some(PLASM_CONTEXT_TOOL_DESCRIPTION.into()),
                 input_schema: ToolInputSchema::new(
                     vec!["intent".into(), "seeds".into()],
                     Some(context_props),
@@ -519,7 +517,7 @@ impl PlasmMcpHandler {
             Tool {
                 name: "discover_capabilities".into(),
                 title: Some("Resolve intent to capabilities".into()),
-                description: Some(mcp_discover_tool_description().into()),
+                description: Some(DISCOVER_TOOL_DESCRIPTION.into()),
                 input_schema: ToolInputSchema::new(
                     vec!["intent".into()],
                     Some(discover_props),
@@ -541,7 +539,7 @@ impl PlasmMcpHandler {
         tools.push(Tool {
             name: "plasm".into(),
             title: Some("Plan Plasm (dry-run)".into()),
-            description: Some(mcp_plasm_tool_description().into()),
+            description: Some(PLASM_TOOL_DESCRIPTION.into()),
             input_schema: ToolInputSchema::new(
                 vec!["logical_session_ref".into(), "program".into()],
                 Some(plasm_program_props.clone()),
@@ -562,7 +560,7 @@ impl PlasmMcpHandler {
         tools.push(Tool {
             name: "plasm_run".into(),
             title: Some("Run Plasm (execute)".into()),
-            description: Some(mcp_plasm_run_tool_description().into()),
+            description: Some(PLASM_RUN_TOOL_DESCRIPTION.into()),
             input_schema: ToolInputSchema::new(
                 vec!["logical_session_ref".into(), "plan_commit_ref".into()],
                 Some(plasm_run_props),
@@ -949,16 +947,6 @@ impl PlasmMcpHandler {
                         )
                         .await
                     } else {
-                        crate::evidence_chain::begin_plan_evidence_with_anchors(
-                            &es,
-                            b.session_id.as_str(),
-                            crate::evidence_chain::evidence_anchors(
-                                None,
-                                Some(mcp_trace.trace_id),
-                                Some(call_index),
-                            ),
-                        )
-                        .map_err(|e| format!("evidence begin: {e}"))?;
                         let dry = evaluate_plasm_comp_dry(&es, &bundle)?;
                         let dry_text = render_plasm_plan_dry_text_for_session(
                             &dry,
@@ -982,6 +970,7 @@ impl PlasmMcpHandler {
                         let commit_record = PlanCommitRecord {
                             commit_ref: commit_ref.clone(),
                             commit_id: compute_plan_commit_id_from_dry(&dry),
+                            domain_revision: es.domain_revision,
                             artifact: dry.artifact().clone(),
                             program: program_for_trace.clone(),
                             dry_review: dry.review.clone(),
@@ -1032,6 +1021,10 @@ impl PlasmMcpHandler {
                             &dry.review,
                             compact.verdict,
                         ));
+                        plasm_obj.insert(
+                            "domain_revision".into(),
+                            serde_json::json!(es.domain_revision),
+                        );
                         plasm_obj.insert("plan_ux_reflection".into(), plan_ux_reflection);
                         if dry
                             .graph_summary
@@ -2191,7 +2184,7 @@ fn mcp_initialize_result() -> InitializeResult {
             ..Default::default()
         },
         protocol_version: ProtocolVersion::V2025_11_25.into(),
-        instructions: Some(mcp_server_initialize_instructions()),
+        instructions: Some(MCP_INITIALIZE_WORKFLOW.to_string()),
         meta: None,
     }
 }

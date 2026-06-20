@@ -152,7 +152,6 @@ pub struct CreateExecuteSessionResponse {
     pub prompt: String,
     pub entry_id: String,
     pub entities: Vec<String>,
-    pub grammar_revision: String,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reused: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -237,14 +236,15 @@ pub use crate::execute_pipeline::RunLineError;
 pub(crate) use run_line::run_parsed_plasm_line;
 
 pub(crate) use context::replay_teaching_exposure_waves;
-pub(crate) use context::{
-    apply_capability_seeds, build_capability_exposure_plan, build_plasm_context_agent_markdown,
-    build_plasm_context_tool_meta, cgs_entity_names_sample,
-    normalize_context_intent_for_domain_filter, RankedCapabilitiesArg,
-};
 pub use context::{
-    execute_session_create_response, expand_execute_teaching_session, federate_execute_session,
-    normalize_capability_seeds, resolve_capability_seeds, ExpandTeachingWaveResult,
+    apply_capability_seeds, execute_session_create_response, expand_execute_teaching_session,
+    federate_execute_session, normalize_capability_seeds, resolve_capability_seeds,
+    ExpandTeachingWaveResult, RankedCapabilitiesArg,
+};
+pub(crate) use context::{
+    build_capability_exposure_plan, build_plasm_context_agent_markdown,
+    build_plasm_context_tool_meta, cgs_entity_names_sample,
+    normalize_context_intent_for_domain_filter,
 };
 pub(crate) use ingress::parse_execute_program_body;
 pub(crate) use ingress::plugin_execute_options_from_session;
@@ -255,7 +255,7 @@ pub(crate) use response::ExecuteRunQuery;
 pub(crate) use response::{
     negotiate_accept, respond_execute_result, respond_plan_payload,
     respond_staged_lines_execute_result, run_mode_is_plan, AcceptNegotiationError,
-    ExecResponseKind, ExecuteSessionGetQuery,
+    ExecResponseKind,
 };
 pub use response::{
     ExecuteSessionContextBody, ExecuteSessionRunsResponse, ExecuteSessionStatusResponse,

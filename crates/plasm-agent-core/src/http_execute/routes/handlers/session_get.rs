@@ -9,8 +9,6 @@ pub(crate) async fn handle_execute_session_get(
         prompt_hash,
         session_id,
     }: ExecutePath,
-    Query(query): Query<ExecuteSessionGetQuery>,
-    headers: HeaderMap,
 ) -> Response {
     let Some(sess) = st
         .get_execute_session(prompt_hash.as_str(), session_id.as_str())
@@ -41,17 +39,11 @@ pub(crate) async fn handle_execute_session_get(
         );
     }
 
-    let grammar_revision = grammar_revision_from_wire(
-        query.grammar_revision.as_deref(),
-        headers
-            .get("x-plasm-grammar-revision")
-            .and_then(|v| v.to_str().ok()),
-    );
     let render_mode = st.engine.prompt_pipeline().render_mode;
     Json(create_execute_session_response(
         &sess,
         session_id.to_string(),
-        wire_execute_session_prompt(&sess.prompt_text, render_mode, grammar_revision),
+        wire_execute_session_prompt(&sess.prompt_text, render_mode),
         false,
     ))
     .into_response()

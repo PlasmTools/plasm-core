@@ -205,6 +205,7 @@ impl MatrixPcNFixture {
             PlanCommitRecord {
                 commit_ref: self.pc.clone(),
                 commit_id: compute_plan_commit_id_from_dry(&self.dry),
+                domain_revision: self.es.domain_revision,
                 artifact: self.dry.artifact().clone(),
                 program: self.program.clone(),
                 dry_review: self.dry.review.clone(),

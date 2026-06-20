@@ -3843,21 +3843,14 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(dir).unwrap();
+        // `List{id=<bigint>}` is referentially `List(<id>)`: the id-field brace sugar
+        // (`expr_sugar::rewrite_id_field_brace_query_to_get`) rewrites it to a Get whose key preserves
+        // the string-typed id verbatim — no integer coercion or precision loss on the 18-digit literal.
         let r = parse("List{id=123456789012345678}", &cgs).unwrap();
-        let Expr::Query(q) = &r.expr else {
-            panic!("expected query");
+        let Expr::Get(g) = &r.expr else {
+            panic!("expected get (id-field brace sugar), got {:?}", r.expr);
         };
-        let Some(pred) = &q.predicate else {
-            panic!("expected predicate");
-        };
-        let Predicate::Comparison { field, value, .. } = pred else {
-            panic!("expected comparison");
-        };
-        assert_eq!(field, "id");
-        assert_eq!(
-            value.to_value(),
-            Value::String("123456789012345678".to_string())
-        );
+        assert_eq!(g.reference.primary_slot_str(), "123456789012345678");
     }
 
     #[test]
@@ -3925,17 +3918,12 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         let u = "550e8400-e29b-41d4-a716-446655440000";
+        // id-field brace sugar: `List{id=<uuid>}` ≡ `List(<uuid>)`; the uuid survives as a string key.
         let r = parse(&format!("List{{id={u}}}"), &cgs).unwrap();
-        let Expr::Query(q) = &r.expr else {
-            panic!("expected query");
+        let Expr::Get(g) = &r.expr else {
+            panic!("expected get (id-field brace sugar), got {:?}", r.expr);
         };
-        let Some(pred) = &q.predicate else {
-            panic!("expected predicate");
-        };
-        let Predicate::Comparison { value, .. } = pred else {
-            panic!("expected comparison");
-        };
-        assert_eq!(value.to_value(), Value::String(u.to_string()));
+        assert_eq!(g.reference.primary_slot_str(), u);
     }
 
     #[test]

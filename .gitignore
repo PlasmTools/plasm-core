@@ -9,6 +9,13 @@ docker/.buildx-cache/
 # Local runtime / cache (trace sink JSONL, Iceberg warehouse, etc.) — not for VCS
 var/
 
+# Profiling output (dhat, etc.) — never commit
+dhat-heap.json
+# insta scratch (accepted snapshots are committed as *.snap only)
+*.pending-snap
+.*.pending-snap
+*.snap.new
+
 # Python bytecode
 __pycache__/
 *.pyc

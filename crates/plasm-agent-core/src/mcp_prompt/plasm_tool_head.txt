@@ -1,1 +1,0 @@
-**Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and executable **`plan_commit_ref`** (`pcN`). Pass that token to **`plasm_run`**; do **not** echo the program.

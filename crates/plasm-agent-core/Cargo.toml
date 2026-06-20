@@ -70,6 +70,7 @@ opentelemetry = { workspace = true }
 minijinja = { version = "2.19.0", default-features = false, features = ["builtins", "serde"] }
 futures = { workspace = true }
 redis = { workspace = true }
+dashmap = { workspace = true }
 
 [dev-dependencies]
 dhat = "0.3"

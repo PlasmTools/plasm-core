@@ -418,7 +418,7 @@ pub(crate) fn graph_summary(
     }
     if has_unbounded_read_root {
         warnings.push(
-            "Unbounded root read; paginated APIs fetch all pages by default — add API filters/search text or .limit(n) / .page_size(n) when cost or latency is uncertain"
+            "Root read is unnarrowed; it returns the default host page (not all pages) — add API filters/search text or .page_size(n) / .limit(n) to shape the result when cost or latency is uncertain"
                 .to_string(),
         );
     }

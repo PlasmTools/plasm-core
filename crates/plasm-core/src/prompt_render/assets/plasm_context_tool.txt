@@ -1,7 +1,3 @@
----
-source: crates/plasm-agent-core/src/mcp_server/tests.rs
-expression: context
----
 Tool order: optional `discover_capabilities` → `plasm_context` → `plasm` (dry-run) → `plasm_run` (live).
      **Call before `plasm` / `plasm_run`.** **One goal → one stable `intent` → one `logical_session_ref`.** Stable = same `intent` string on every turn for that goal (not per message/API). Bad: `intent: "msg 3: sort moves"` each turn — breaks reuse and fragments `e#`/`p#`. Multi-API: one **`seeds`** array on the same intent.
 **Session:** one goal → one **`intent`** → one **`logical_session_ref`**; use **`e#`/`m#`/`p#`/`r#` from this session's teaching TSV only** (contract examples are shapes; substitute from your table).

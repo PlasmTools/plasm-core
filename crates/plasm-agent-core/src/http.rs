@@ -151,6 +151,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             workflows,
             redis_backend: None,
             live_plan_pool,
+            session_coordination: Arc::new(crate::session_coordination::SessionCoordination::new()),
         },
         saas: None,
     }

@@ -191,9 +191,9 @@ fn run_init(
     }
     let path = profile_path(profile_name);
     save_profile(profile_name, profile)?;
-    let grammar = plasm_core::prompt_render::render_plasm_mcp_language_frontmatter();
-    let grammar_path = write_language_frontmatter_markdown(&grammar)?;
-    let skill_path = write_plasm_cli_agent_skill(&grammar)?;
+    let grammar = plasm_core::PLASM_TOOL_DESCRIPTION;
+    let grammar_path = write_language_frontmatter_markdown(grammar)?;
+    let skill_path = write_plasm_cli_agent_skill(grammar)?;
     println!("configured {}", path.display());
     println!(
         "  workspace: {}",

@@ -1,7 +1,11 @@
 ---
 source: crates/plasm-core/src/prompt_render/mod.rs
-expression: render_plasm_mcp_language_frontmatter()
+expression: "super::PLASM_TOOL_DESCRIPTION"
 ---
+**Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and executable **`plan_commit_ref`** (`pcN`). Pass that token to **`plasm_run`**; do **not** echo the program.
+
+**`program` is Plasm source text, not JSON data.** Write one raw expression (e.g. `e3(p15="electric").r2[p4,p5]`) or multiline bindings with final roots. If a plan merely echoes an object/array/string literal, that is a literal no-op; rewrite as Plasm source.
+
 Grammar below; symbols from `plasm_context` TSV. Reply with one valid plasm_program:
 
 Output:
@@ -24,7 +28,7 @@ Symbol and fill rules:
 Core surface:
 - Program shape: one `plasm_expr`, or `label = …` bindings then comma-separated final roots (no `return`).
 - Postfix on row producers: `.limit(N)` | `.page_size(N)` | `.sort(p#, desc)` / `.sort(p#,dir)` | `.filter{…}` | `.filter(…)` | `.aggregate(specs)` | `.group_by(p#, specs)` | `.dedupe(p#[, …])` | `.distinct(p#[, …])` | `.distinct()` | `.singleton()` | `[p#,…]`. Row postfix fields use teaching `rows:` `p#` symbols; wire field names are sugar.
-- Large list reads return the first page in `plasm_run`; continue with `page(l_<token>_pgN)` from the tool result — not `resources/read`.
+- Large list reads return the first **25 rows** in `plasm_run`; continue with `page(l_<token>_pgN)` from the tool result — not `resources/read`.
 - Run gate: pass `pcN` from a prior dry-run to `plasm_run`; MCP `plasm_run` does not accept program continuations.
 - Copy teaching TSV left cells; substitute placeholders; compose via bindings.
 - Search when exposed: `e#~$` or `e#~"text"` (bare `e#~` is invalid); optional scoped filters `e#~"text"[{p#=…}]`.

@@ -126,16 +126,6 @@ pub(crate) async fn post_run_execute_session(
     };
 
     if plan_only {
-        if let Err(e) = crate::evidence_chain::begin_plan_evidence(&sess, session_id.as_str()) {
-            return problem_response(
-                Problem::custom(
-                    ProblemStatus::INTERNAL_SERVER_ERROR,
-                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-                )
-                .with_title("Evidence error")
-                .with_detail(e.to_string()),
-            );
-        }
         let dry = match crate::plasm_plan_run::evaluate_plasm_comp_dry(&sess, &bundle) {
             Ok(d) => d,
             Err(e) => {
@@ -166,6 +156,7 @@ pub(crate) async fn post_run_execute_session(
             crate::operation::PlanCommitRecord {
                 commit_ref: commit_ref.clone(),
                 commit_id: crate::operation::compute_plan_commit_id_from_dry(&dry),
+                domain_revision: sess.domain_revision,
                 artifact: dry.artifact().clone(),
                 program: program.clone(),
                 dry_review: dry.review.clone(),

@@ -2,7 +2,7 @@
 
 use crate::mcp_run_markdown::{
     mcp_preview_markdown_needed, McpFormattedExecuteResult, McpResultTransportPolicy,
-    OmittedReferenceOnlyFields,
+    OmittedReferenceOnlyFields, MCP_SNAPSHOT_ONLY_ROW_THRESHOLD,
 };
 use crate::output::{InBandSummaryReport, LossySummaryFieldNames};
 
@@ -54,10 +54,7 @@ impl ResolvedStepPublish {
             step.node_id.as_deref(),
         );
         let row_count = step.result.count;
-        let has_artifact = step.artifact.is_some();
-        let mode = if crate::mcp_run_markdown::mcp_step_exceeds_in_band_row_cap(row_count, policy)
-            && has_artifact
-        {
+        let mode = if row_count > MCP_SNAPSHOT_ONLY_ROW_THRESHOLD && step.artifact.is_some() {
             StepInBandMode::SnapshotOnly
         } else if crate::mcp_run_markdown::mcp_step_exceeds_in_band_row_cap(row_count, policy) {
             StepInBandMode::CappedInline {
@@ -84,11 +81,18 @@ impl ResolvedStepPublish {
                 || fmt.in_band.any_loss())
     }
 
+    /// Whether to attach `_meta` preview entity rows for this step. We skip them when an inline
+    /// formatted body already carries the rows (`format.is_some()` and the mode is not deferring the
+    /// table to a snapshot) — duplicating rows into `_meta` would be wasteful. Otherwise we include a
+    /// preview when the result is untruncated, or small enough to fit the in-band cap.
     pub(crate) fn include_preview_entities(
         &self,
         truncated: bool,
         policy: &McpResultTransportPolicy,
     ) -> bool {
+        if self.format.is_some() && !self.mode.defers_inline_table() {
+            return false;
+        }
         !truncated || self.row_count <= policy.in_band_entity_rows
     }
 }

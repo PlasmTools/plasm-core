@@ -2,10 +2,8 @@
 
 use super::super::super::*;
 
-use super::super::seeds::{
-    normalize_execute_entity_names, process_order_for_expand_group,
-    wrap_teaching_markdown_literal_block,
-};
+use super::super::seeds::{normalize_execute_entity_names, process_order_for_expand_group};
+use crate::session_coordination::ExecuteCoordKey;
 
 /// Markdown delta plus relation-hop metadata from one expand wave.
 #[derive(Debug, Clone, Default)]
@@ -14,24 +12,17 @@ pub struct ExpandTeachingWaveResult {
     pub relations_delta: Vec<plasm_core::ExposedRelationSymbolRow>,
 }
 
-/// Append expand-wave Plasm instruction blocks for more entity names; [`TeachingExposureSession`] keeps `e#`/`m#`/`p#` stable.
-pub async fn expand_execute_teaching_session(
+async fn commit_expand_wave(
     st: &PlasmHostState,
     principal: Option<&crate::incoming_auth::TenantPrincipal>,
-    prompt_hash: &str,
-    session_id: &str,
+    prompt_hash_p: PromptHashHex,
+    session_id_p: ExecuteSessionId,
     seeds: Vec<CapabilitySeed>,
 ) -> Result<ExpandTeachingWaveResult, String> {
     let seeds = normalize_capability_seeds(seeds);
     if seeds.is_empty() {
         return Err("`seeds` must be non-empty".into());
     }
-    let prompt_hash_p: PromptHashHex = prompt_hash
-        .parse()
-        .map_err(|e: &'static str| e.to_string())?;
-    let session_id_p: ExecuteSessionId = session_id
-        .parse()
-        .map_err(|e: &'static str| e.to_string())?;
 
     let Some(sess_arc) = st
         .get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
@@ -123,59 +114,44 @@ pub async fn expand_execute_teaching_session(
             exp.expose_entities(&layers, ctx.cgs.clone(), eid.as_str(), &refs);
         }
     }
-    let added_qualified = exp.qualified_entities_since(n0);
-    let added: Vec<&str> = added_qualified.iter().map(|k| k.entity.as_str()).collect();
-    let new_relation_slots = exp.relation_edge_delta_slots(&slots_before, &added_qualified);
-    exp.admit_relation_edge_slots_for_render(&layers, &new_relation_slots);
-    let relations_delta = exp.relations_delta_rows_for_slots(&new_relation_slots);
-
-    if added_qualified.is_empty() {
-        sess.entities = exp.entities.clone();
-        sess.teaching_exposure = Some(exp);
-        st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
-            .await;
-        return Ok(ExpandTeachingWaveResult::default());
-    }
-
-    let cgs_primary = sess.cgs.as_ref();
-    let sym_cross = st.sessions.symbol_map_cross_cache();
-    let delta = if sess.contexts_by_entry.len() > 1 {
-        let by_entry: IndexMap<String, &CGS> = sess
-            .contexts_by_entry
-            .iter()
-            .map(|(k, v)| (k.clone(), v.cgs.as_ref()))
-            .collect();
-        st.engine
-            .prompt_pipeline()
-            .render_teaching_exposure_delta_federated_with_edges(
-                &by_entry,
-                &exp,
-                &added_qualified,
-                &new_relation_slots,
-                Some(sym_cross),
-            )
-    } else {
-        st.engine
-            .prompt_pipeline()
-            .render_teaching_exposure_delta_with_edges(
-                cgs_primary,
-                &exp,
-                &added,
-                &new_relation_slots,
-                Some(sym_cross),
-            )
-    };
-    let wave =
-        wrap_teaching_markdown_literal_block(&delta, st.engine.prompt_pipeline().render_mode);
-    sess.prompt_text.push_str("\n\n");
-    sess.prompt_text.push_str(&wave);
-    sess.entities = exp.entities.clone();
-    sess.teaching_exposure = Some(exp);
-    sess.domain_revision = sess.domain_revision.saturating_add(1);
-    st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
-        .await;
+    let committed = super::commit::commit_exposure_wave_delta(
+        st,
+        &prompt_hash_p,
+        &session_id_p,
+        sess,
+        exp,
+        &slots_before,
+        n0,
+        &relation_keys,
+    )
+    .await;
     Ok(ExpandTeachingWaveResult {
-        markdown: wave,
-        relations_delta,
+        markdown: committed.markdown,
+        relations_delta: committed.relations_delta,
     })
+}
+
+/// Append expand-wave Plasm instruction blocks for more entity names; [`TeachingExposureSession`] keeps `e#`/`m#`/`p#` stable.
+pub async fn expand_execute_teaching_session(
+    st: &PlasmHostState,
+    principal: Option<&crate::incoming_auth::TenantPrincipal>,
+    prompt_hash: &str,
+    session_id: &str,
+    seeds: Vec<CapabilitySeed>,
+) -> Result<ExpandTeachingWaveResult, String> {
+    let prompt_hash_p: PromptHashHex = prompt_hash
+        .parse()
+        .map_err(|e: &'static str| e.to_string())?;
+    let session_id_p: ExecuteSessionId = session_id
+        .parse()
+        .map_err(|e: &'static str| e.to_string())?;
+    let key = ExecuteCoordKey {
+        prompt_hash: prompt_hash.to_string(),
+        session_id: session_id.to_string(),
+    };
+    st.session_coordination
+        .with_exposure_commit(&key, || async {
+            commit_expand_wave(st, principal, prompt_hash_p, session_id_p, seeds).await
+        })
+        .await
 }

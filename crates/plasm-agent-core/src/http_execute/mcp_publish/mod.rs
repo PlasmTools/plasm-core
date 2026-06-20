@@ -86,7 +86,10 @@ mod tests {
     use super::*;
     use crate::http_execute::PublishedResultStep;
     use crate::run_artifacts::{RunArtifactHandle, RunArtifactId};
-    use crate::test_support::execution_fixtures::synthetic_published_result_step;
+    use crate::test_support::execution_fixtures::{
+        synthetic_published_result_step, synthetic_published_result_step_with_paging,
+    };
+    use plasm_core::PagingHandle;
 
     #[test]
     fn publish_includes_artifact_meta_when_result_not_truncated() {
@@ -135,7 +138,72 @@ mod tests {
     }
 
     #[test]
-    fn publish_large_row_count_with_snapshot_uses_compact_preview() {
+    fn publish_over_cap_with_snapshot_renders_capped_tsv_paging_and_snapshot_uri() {
+        let run_id = RunArtifactId::from_wire(&format!("pr{}", "a".repeat(64))).expect("wire");
+        let handle = RunArtifactHandle {
+            run_id,
+            resource_index: 1,
+            plasm_uri: crate::run_artifacts::plasm_short_resource_uri(1),
+            canonical_plasm_uri: crate::run_artifacts::plasm_run_resource_uri("ph", "sid", &run_id),
+            http_path: crate::run_artifacts::artifact_http_path("ph", "sid", &run_id),
+            payload_len: 0,
+            request_fingerprints: vec!["fp".into()],
+        };
+        let paging = PagingHandle::parse("l_AAAAAAAAQACAAAAAAAAAAQ_pg1").expect("paging handle");
+        let step =
+            synthetic_published_result_step_with_paging(49, Some(handle.clone()), Some(paging));
+        let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
+        assert!(
+            out.markdown.contains("```tsv"),
+            "expected capped inline TSV: {}",
+            out.markdown
+        );
+        assert!(
+            out.markdown.contains("move-24") && !out.markdown.contains("move-30"),
+            "expected at most 25 rows inline: {}",
+            out.markdown
+        );
+        assert!(
+            out.markdown.contains("Showing 25 of 49 rows"),
+            "expected row-limit note: {}",
+            out.markdown
+        );
+        assert!(
+            out.markdown.contains("resources/read"),
+            "expected snapshot URI hint: {}",
+            out.markdown
+        );
+        assert!(
+            out.markdown.contains(&handle.plasm_uri),
+            "expected inline snapshot URI: {}",
+            out.markdown
+        );
+        assert!(
+            out.markdown.contains("page(l_AAAAAAAAQACAAAAAAAAAAQ_pg1)"),
+            "expected paging continuation: {}",
+            out.markdown
+        );
+        assert!(
+            !out.markdown.contains("(preview)"),
+            "must not use metadata-only preview for moderate over-cap: {}",
+            out.markdown
+        );
+        let preview = out
+            .tool_meta
+            .as_ref()
+            .and_then(|m| m.get("plasm"))
+            .and_then(|p| p.get("steps"))
+            .and_then(|s| s.as_array())
+            .and_then(|a| a.first())
+            .and_then(|s| s.get("preview_entities"));
+        assert!(
+            preview.is_none(),
+            "preview_entities should be omitted when markdown carries TSV"
+        );
+    }
+
+    #[test]
+    fn publish_extreme_row_count_with_snapshot_uses_metadata_preview() {
         let run_id = RunArtifactId::from_wire(&format!("pr{}", "a".repeat(64))).expect("wire");
         let handle = RunArtifactHandle {
             run_id,

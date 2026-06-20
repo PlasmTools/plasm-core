@@ -1,4 +1,4 @@
-//! Emit the eval **teaching table** prompt for a CGS directory ([`PromptPipelineConfig::default`]: default **TSV** `Expression`/`Meaning` table + comment contract). For the compact markdown teaching string, set `render_mode` to **compact** on the pipeline (e.g. `plasm-mcp --symbol-tuning compact`).
+//! Emit the eval **teaching table** prompt for a CGS directory ([`PromptPipelineConfig::default`]: default **TSV** `Expression`/`Meaning` table, table-only — the grammar contract lives statically in `PLASM_TOOL_DESCRIPTION`). For the compact markdown teaching string, set `render_mode` to **compact** on the pipeline (e.g. `plasm-mcp --symbol-tuning compact`).
 //! Per entity block, teaching TSV orders **value-domain `v#` gloss**, then **`p#` gloss**, then **union constructor exemplars** (`v101{p#=…}`, …), then the synthetic **union summary** row (`vN` / `union · v101 | …`, `N` allocated after existing map/tokens). Look for ctor exemplars near that summary, not only among bare `v#` metadata rows.
 //! Only links `plasm-core` (no plasm-eval / BAML).
 //!

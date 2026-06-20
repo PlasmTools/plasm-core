@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.43] - 2026-06-20
+
+### Changed
+
+- **Static MCP grammar cutover:** canonical Plasm language grammar (composition, postfix, heredoc, `binding.content`, row-to-text Minijinja) lives as compile-time consts in [`plasm-core/src/prompt_render/assets/`](crates/plasm-core/src/prompt_render/assets/) — primarily [`PLASM_TOOL_DESCRIPTION`](crates/plasm-core/src/prompt_render/mcp_tool_descriptions.rs). MCP `tools/list` descriptions are static; MCP initialize remains a supplementary workflow rollup only.
+- **Removed dynamic guidance:** deleted `render_prompt_contract_dense`, grammar-revision hashing, HTTP `grammar_revision` on execute sessions, and per-wave `#` grammar comments in teaching TSV. Teaching tables are always table-only (`plasm_expr` / `Meaning`).
+- **Eval / REPL / `plasm init`:** prepend the same static `PLASM_TOOL_DESCRIPTION` as production MCP agents see (`plasm-eval` first user turn).
+- **Default read paging unified at 25:** `DEFAULT_HOST_PAGE_SIZE` is the single source of truth for unbounded list/query read roots (was 50); the MCP in-band row cap (`MCP_IN_BAND_ENTITY_ROW_CAP`) derives from it so the first host page always fits one MCP tool response. Dry-run treats paged-by-default reads as bounded (`plan ok`, not `plan review`); the unbounded-root warning now states the read returns the default host page (not all pages).
+
+### Refactored
+
+- **Shared exposure-wave commit tail:** federate and expand converge on `commit_exposure_wave_delta` ([`http_execute/context/session/commit.rs`](crates/plasm-agent-core/src/http_execute/context/session/commit.rs)), deleting duplicated derive-slots → admit → render-delta → persist logic.
+- **`apply_capability_seeds` decomposition:** split into `resolve_execute_binding` (gate-free) and `commit_federate_and_expand_waves` (two-pass: federate network I/O before per-row CEP-13 exposure-commit gates), preserving the lock-light, agent-governed concurrency design.
+- **Relation-slot repair:** `relation_slots_for_expand_wave` surfaces relation hops whose target entity qualifies in a later wave and assigns them `r#` symbols.
+- **Dependency hygiene:** removed dead `ExecuteSessionGetQuery`, dead `principal` threading on the federate commit path, and `O(n²)` symbol-tuning dedup; inverted the `plan_read_bounds` ↔ `mcp_run_markdown` page-size dependency.
+
+### Fixed
+
+- **`expr_parser` id-field brace sugar:** `Entity{id=<literal>}` is referentially `Entity(<id>)` — rewritten to a `Get` that preserves string-typed ids verbatim (no integer coercion / precision loss on large numeric id literals).
+
+### Tests
+
+- **CEP-13 concurrent `plasm_run`:** `concurrent_mcp_plasm` asserts two concurrent legs on one execute session resolve distinct, correctly-namespaced operation handles.
+- **Fixture-only language coverage:** relation-slot repair regression migrated from `apis/pokeapi` to the abstract `plasm_language_matrix` fixture (strict-rule compliance).
+
 ## [0.3.42] - 2026-06-20
 
 ### Fixed

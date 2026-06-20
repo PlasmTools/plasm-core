@@ -4,9 +4,10 @@ expression: tsv2
 ---
 intent	recorded content
 row	api	entity	description
-1	overshow	RecordedContent	A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text.
-2	overshow	Profile	A person, organisation, or project profile.
-3	overshow	CaptureItem	One capture pipeline item.
-4	overshow	DetectedQuestion	A detected question with optional answers.
-5	overshow	Meeting	A detected meeting.
-6	overshow	PipelineEvent	One pipeline bus event.
+1	api	entity	description	outgoing_relations
+2	overshow	RecordedContent	A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text.
+3	overshow	Profile	A person, organisation, or project profile.	recorded_matches→RecordedContent
+4	overshow	CaptureItem	One capture pipeline item.
+5	overshow	DetectedQuestion	A detected question with optional answers.
+6	overshow	Meeting	A detected meeting.
+7	overshow	PipelineEvent	One pipeline bus event.
