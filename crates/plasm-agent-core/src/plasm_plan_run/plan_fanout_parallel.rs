@@ -270,6 +270,10 @@ pub(crate) fn merge_fanout_job_results(
     }
 }
 
+pub(crate) fn sort_plan_line_job_results_by_index(results: &mut [PlanLineJobResult]) {
+    results.sort_by_key(|r| r.index);
+}
+
 #[must_use]
 pub(crate) fn flatten_per_row_entities(per_row: Vec<Vec<CachedEntity>>) -> Vec<CachedEntity> {
     per_row.into_iter().flatten().collect()
@@ -344,7 +348,7 @@ pub(crate) async fn run_plan_line_jobs_parallel(
         }
     })
     .await?;
-    results.sort_by_key(|r| r.index);
+    sort_plan_line_job_results_by_index(&mut results);
     if let Some(sink) = sink {
         for r in &results {
             trace_record_plasm_line(
@@ -422,6 +426,69 @@ async fn run_plan_line_job(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_entity(id: &str) -> CachedEntity {
+        CachedEntity {
+            reference: plasm_core::Ref::new("E", id),
+            fields: Default::default(),
+            relations: Default::default(),
+            last_updated: 0,
+            version: 0,
+            completeness: plasm_runtime::EntityCompleteness::Summary,
+        }
+    }
+
+    fn test_job_result(index: usize, id: &str) -> PlanLineJobResult {
+        PlanLineJobResult {
+            index,
+            expr_label: id.into(),
+            trace_line_index: index,
+            parsed: ParsedExpr {
+                expr: plasm_core::Expr::get(plasm_core::GetExpr::new(
+                    plasm_core::EntityName::new("E".to_string()),
+                    id,
+                )),
+                projection: None,
+            },
+            result: ExecutionResult {
+                count: 1,
+                entities: vec![test_entity(id)],
+                has_more: false,
+                pagination_resume: None,
+                paging_handle: None,
+                source: ExecutionSource::Live,
+                stats: ExecutionStats::default(),
+                request_fingerprints: vec![format!("fp-{id}")],
+            },
+        }
+    }
+
+    #[test]
+    fn cep_6_parallel_fanout_preserves_job_index_order() {
+        let mut results = vec![
+            test_job_result(2, "third"),
+            test_job_result(0, "first"),
+            test_job_result(1, "second"),
+        ];
+
+        sort_plan_line_job_results_by_index(&mut results);
+        let folded = fold_plan_line_results(&results, None, ExecutionStatsFold::Telemetry, false);
+
+        let refs: Vec<_> = folded
+            .entities
+            .iter()
+            .map(|e| e.reference.clone())
+            .collect();
+        assert_eq!(
+            refs,
+            vec![
+                plasm_core::Ref::new("E", "first"),
+                plasm_core::Ref::new("E", "second"),
+                plasm_core::Ref::new("E", "third"),
+            ],
+            "CEP-6: completion order must not leak into merged row order"
+        );
+    }
 
     #[test]
     fn fold_plan_line_results_truncates_at_read_cap() {

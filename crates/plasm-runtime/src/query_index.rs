@@ -83,6 +83,46 @@ impl QueryIndex {
     pub fn merge_from(&mut self, other: QueryIndex) {
         self.entries.extend(other.entries);
     }
+
+    pub(crate) fn entries_snapshot(&self) -> HashMap<QueryCacheKey, Vec<Ref>> {
+        self.entries.clone()
+    }
+
+    pub(crate) fn branch_write_keys(
+        &self,
+        base: &HashMap<QueryCacheKey, Vec<Ref>>,
+    ) -> Vec<QueryCacheKey> {
+        self.entries
+            .iter()
+            .filter_map(|(k, v)| match base.get(k) {
+                None => Some(k.clone()),
+                Some(base_v) if base_v != v => Some(k.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub(crate) fn detect_write_conflicts(
+        session: &Self,
+        base: &HashMap<QueryCacheKey, Vec<Ref>>,
+        write_set: &[QueryCacheKey],
+    ) -> Vec<QueryCacheKey> {
+        write_set
+            .iter()
+            .filter(|k| match base.get(*k) {
+                None => session.entries.contains_key(*k),
+                Some(base_v) => session.entries.get(*k) != Some(base_v),
+            })
+            .cloned()
+            .collect()
+    }
+}
+
+#[cfg(test)]
+impl QueryCacheKey {
+    pub fn test(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
 }
 
 #[cfg(test)]

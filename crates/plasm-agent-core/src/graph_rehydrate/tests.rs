@@ -219,3 +219,210 @@ async fn materialized_entities_use_walker_when_persistence_exists() {
     assert!(names.contains("cheri"));
     assert!(names.contains("pecha"));
 }
+
+const PROJECT_THEN_RELATE_SID: &str = "project_then_relate_sid";
+
+#[tokio::test]
+async fn matrix_row_identity_upgrades_to_graph_parent() {
+    use std::sync::Arc;
+
+    use indexmap::IndexMap;
+    use plasm_core::{
+        loader::load_schema_dir, IdEncoding, QualifiedEntityKey, Ref, RowIdentity, TypedFieldValue,
+        Value,
+    };
+    use plasm_runtime::{CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource};
+
+    use crate::test_support::graph_fixtures::{test_execute_session, SpillHostFixture};
+
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
+    let sess = test_execute_session(cgs.clone(), "project_relate_matrix");
+    let tag_ref = Ref::new("LangTag", "t1");
+    let item_ref = Ref::new("LangItem", "i1");
+    let parent = CachedEntity {
+        reference: item_ref.clone(),
+        fields: IndexMap::new(),
+        relations: IndexMap::from([("tags".into(), vec![tag_ref])]),
+        last_updated: 1,
+        version: 1,
+        completeness: EntityCompleteness::Complete,
+    };
+    let projected = CachedEntity {
+        reference: item_ref.clone(),
+        fields: IndexMap::from([(
+            "title".into(),
+            TypedFieldValue::from(Value::String("Demo".into())),
+        )]),
+        relations: IndexMap::new(),
+        last_updated: 1,
+        version: 1,
+        completeness: EntityCompleteness::Summary,
+    };
+    {
+        let mut guard = sess.lock_graph_cache().await;
+        guard.insert(parent).expect("insert");
+    }
+
+    let row_identity = RowIdentity::new(
+        QualifiedEntityKey::new("default", "LangItem"),
+        item_ref,
+        IndexMap::new(),
+        IdEncoding::Simple,
+    );
+    let result = ExecutionResult {
+        entities: vec![projected],
+        count: 1,
+        has_more: false,
+        pagination_resume: None,
+        paging_handle: None,
+        source: ExecutionSource::Cache,
+        stats: Default::default(),
+        request_fingerprints: Vec::new(),
+    };
+    let host = SpillHostFixture::new();
+    let parents = super::GraphSurfaceRehydrator::new(
+        &sess,
+        host.st.as_ref(),
+        PROJECT_THEN_RELATE_SID,
+        cgs.as_ref(),
+    )
+    .resolve_source_parents_with_identities("LangItem", &result, &[Some(row_identity)])
+    .await;
+    assert_eq!(parents.len(), 1);
+    assert_eq!(
+        parents[0].relations.get("tags").map(|v| v.len()),
+        Some(1),
+        "projected row must upgrade to graph parent with tags relation refs"
+    );
+}
+
+#[tokio::test]
+async fn row_identity_graph_miss_omits_thin_projected_fallback() {
+    use std::sync::Arc;
+
+    use indexmap::IndexMap;
+    use plasm_core::{
+        loader::load_schema_dir, IdEncoding, QualifiedEntityKey, Ref, RowIdentity, TypedFieldValue,
+        Value,
+    };
+    use plasm_runtime::{CachedEntity, EntityCompleteness, ExecutionResult, ExecutionSource};
+
+    use crate::test_support::graph_fixtures::{test_execute_session, SpillHostFixture};
+
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let cgs = Arc::new(load_schema_dir(&dir).expect("plasm_language_matrix"));
+    let sess = test_execute_session(cgs.clone(), "project_relate_miss");
+    let item_ref = Ref::new("LangItem", "i1");
+    let projected = CachedEntity {
+        reference: item_ref.clone(),
+        fields: IndexMap::from([(
+            "title".into(),
+            TypedFieldValue::from(Value::String("Demo".into())),
+        )]),
+        relations: IndexMap::new(),
+        last_updated: 1,
+        version: 1,
+        completeness: EntityCompleteness::Summary,
+    };
+    let row_identity = RowIdentity::new(
+        QualifiedEntityKey::new("default", "LangItem"),
+        item_ref,
+        IndexMap::new(),
+        IdEncoding::Simple,
+    );
+    let result = ExecutionResult {
+        entities: vec![projected],
+        count: 1,
+        has_more: false,
+        pagination_resume: None,
+        paging_handle: None,
+        source: ExecutionSource::Cache,
+        stats: Default::default(),
+        request_fingerprints: Vec::new(),
+    };
+    let host = SpillHostFixture::new();
+    let parents = super::GraphSurfaceRehydrator::new(
+        &sess,
+        host.st.as_ref(),
+        PROJECT_THEN_RELATE_SID,
+        cgs.as_ref(),
+    )
+    .resolve_source_parents_with_identities("LangItem", &result, &[Some(row_identity)])
+    .await;
+    assert!(
+        parents.is_empty(),
+        "identity-bound rows must not fall back to thin projected entities when graph parent is missing"
+    );
+}
+
+#[tokio::test]
+async fn pokeapi_type_pokemon_plan_prefers_graph_parent() {
+    use std::sync::Arc;
+
+    use indexmap::IndexMap;
+    use plasm_core::{loader::load_schema_dir, Ref, TypedFieldValue, Value};
+    use plasm_runtime::{CachedEntity, EntityCompleteness};
+
+    use crate::test_support::graph_fixtures::test_execute_session;
+
+    let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+    if !dir.is_dir() {
+        return;
+    }
+    let cgs = Arc::new(load_schema_dir(&dir).expect("pokeapi"));
+    let type_rel = cgs
+        .get_entity("Type")
+        .and_then(|e| e.relations.get("pokemon"))
+        .and_then(|r| r.materialize.clone())
+        .expect("Type.pokemon materialize");
+    let sess = test_execute_session(cgs.clone(), "type_pokemon_plan");
+    let pikachu = CachedEntity {
+        reference: Ref::new("Pokemon", "pikachu"),
+        fields: IndexMap::from([(
+            "name".into(),
+            TypedFieldValue::from(Value::String("pikachu".into())),
+        )]),
+        relations: IndexMap::new(),
+        last_updated: 1,
+        version: 1,
+        completeness: EntityCompleteness::Complete,
+    };
+    let electric = CachedEntity {
+        reference: Ref::new("Type", "electric"),
+        fields: IndexMap::from([
+            (
+                "name".into(),
+                TypedFieldValue::from(Value::String("electric".into())),
+            ),
+            ("id".into(), TypedFieldValue::from(Value::Integer(13))),
+        ]),
+        relations: IndexMap::from([("pokemon".into(), vec![Ref::new("Pokemon", "pikachu")])]),
+        last_updated: 1,
+        version: 1,
+        completeness: EntityCompleteness::Complete,
+    };
+    {
+        let mut guard = sess.lock_graph_cache().await;
+        guard.insert(pikachu).expect("insert pikachu");
+        guard.insert(electric.clone()).expect("insert electric");
+    }
+    let projected_row = serde_json::json!({"name": "electric"});
+    let snapshot = super::plan_prefer_from_parent_get(
+        &sess,
+        &type_rel,
+        "pokemon",
+        "Pokemon",
+        std::slice::from_ref(&electric),
+        std::slice::from_ref(&projected_row),
+    )
+    .await
+    .expect("plan prefer");
+    let embedded = snapshot
+        .all_embedded
+        .expect("graph parent pokemon refs should fully embed");
+    assert_eq!(embedded.len(), 1);
+    assert_eq!(embedded[0].reference.primary_slot_str(), "pikachu");
+}

@@ -1,4 +1,4 @@
-//! Fork → engine execute → rehydrate → projection on a branch; bounded stale-epoch retry.
+//! Fork → engine execute → rehydrate → projection on a branch; bounded write-conflict retry.
 
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::{Expr, CGS};
@@ -10,8 +10,8 @@ use tracing::Instrument;
 use crate::execute_pipeline::RunLineError;
 use crate::execute_session::ExecuteSession;
 use crate::graph_execute::{
-    stale_commit_should_retry, GraphBranchRunError, GraphCommitError, GraphExecuteBranch,
-    MAX_STALE_EPOCH_RETRIES,
+    write_conflict_should_retry, GraphBranchRunError, GraphCommitError, GraphExecuteBranch,
+    MAX_WRITE_CONFLICT_RETRIES,
 };
 use crate::output::apply_projection;
 use crate::server_state::PlasmHostState;
@@ -190,26 +190,25 @@ async fn execute_on_branch(
     Ok(result)
 }
 
-/// Full branch cycle with bounded stale-epoch retry ([`MAX_STALE_EPOCH_RETRIES`]).
-pub async fn run_with_stale_epoch_retry(
+/// Full branch cycle with bounded write-conflict retry ([`MAX_WRITE_CONFLICT_RETRIES`]).
+pub async fn run_with_write_conflict_retry(
     sess: &ExecuteSession,
     input: &LiveBranchExecuteInput<'_>,
 ) -> Result<ExecutionResult, RunLineError> {
     let line = input.line;
-    for attempt in 0..=MAX_STALE_EPOCH_RETRIES {
+    for attempt in 0..=MAX_WRITE_CONFLICT_RETRIES {
         let mut branch = GraphExecuteBranch::fork(sess).await;
         let branch_result = execute_on_branch(&mut branch, input).await;
         match branch.commit(sess).await {
-            Ok(_epoch) => return branch_result,
-            Err(GraphCommitError::StaleParentEpoch { expected, found })
-                if stale_commit_should_retry(attempt) =>
+            Ok(()) => return branch_result,
+            Err(GraphCommitError::WriteConflict(details))
+                if write_conflict_should_retry(attempt) =>
             {
-                super::stale_commit::record_stale_epoch_branch_retry(attempt, expected, found);
+                super::write_conflict::record_write_conflict_branch_retry(attempt, &details);
             }
-            Err(GraphCommitError::StaleParentEpoch { expected, found }) => {
-                return Err(GraphBranchRunError::StaleCommit {
-                    expected,
-                    found,
+            Err(GraphCommitError::WriteConflict(details)) => {
+                return Err(GraphBranchRunError::WriteConflict {
+                    details,
                     attempts: attempt + 1,
                 }
                 .into());
@@ -219,5 +218,5 @@ pub async fn run_with_stale_epoch_retry(
             }
         }
     }
-    unreachable!("stale retry loop bounded by MAX_STALE_EPOCH_RETRIES");
+    unreachable!("write-conflict retry loop bounded by MAX_WRITE_CONFLICT_RETRIES");
 }

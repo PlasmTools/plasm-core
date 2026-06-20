@@ -1,16 +1,14 @@
 //! Shared execute-line error surface for HTTP/MCP ingress and graph branch paths.
 
-use plasm_runtime::RuntimeError;
+use plasm_runtime::{RuntimeError, WriteConflictDetails};
 
-use crate::execute_session::GraphEpoch;
-
-/// Stable user-facing copy when optimistic graph commit loses the epoch race.
-pub const STALE_GRAPH_EPOCH_USER_MESSAGE: &str =
-    "session graph changed during concurrent execute; retry the request";
+/// Stable user-facing copy when optimistic materialization commit loses a concurrent race.
+pub const GRAPH_WRITE_CONFLICT_USER_MESSAGE: &str =
+    "session materialization changed during concurrent execute; retry the request";
 
 #[must_use]
-pub fn stale_graph_epoch_user_message() -> String {
-    STALE_GRAPH_EPOCH_USER_MESSAGE.to_string()
+pub fn graph_write_conflict_user_message() -> String {
+    GRAPH_WRITE_CONFLICT_USER_MESSAGE.to_string()
 }
 
 #[derive(Debug)]
@@ -24,10 +22,9 @@ pub enum RunLineError {
     ArtifactSerialization(serde_json::Error),
     /// Durable run snapshot write failed (object store / memory backend).
     ArtifactPersist(String),
-    /// Optimistic graph commit lost the epoch race after bounded retries.
-    StaleGraphEpoch {
-        expected: GraphEpoch,
-        found: GraphEpoch,
+    /// Optimistic branch commit lost a per-store write race after bounded retries.
+    GraphWriteConflict {
+        details: WriteConflictDetails,
         attempts: u32,
     },
     /// Async operation continuation (`wait` / `cancel`) — success payload via `Err` channel for unified ingress.
@@ -44,7 +41,7 @@ pub fn display_run_line_error(e: RunLineError) -> String {
             format!("artifact serialization failed: {err}")
         }
         RunLineError::ArtifactPersist(d) => format!("run artifact persist failed: {d}"),
-        RunLineError::StaleGraphEpoch { .. } => stale_graph_epoch_user_message(),
+        RunLineError::GraphWriteConflict { .. } => graph_write_conflict_user_message(),
         RunLineError::Operation(_) => {
             "operation continuation is not valid inside a plan surface node".to_string()
         }

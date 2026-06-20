@@ -127,7 +127,13 @@ pub const TSV_TEACHING_TABLE_HEADER: &str = "plasm_expr\tMeaning\n";
 mod contract;
 mod mcp_frontmatter;
 mod mcp_prompt_fragments;
+mod row_producer;
 mod stats;
+
+#[cfg(test)]
+mod query_teaching_tests;
+
+use row_producer::RowProducerProjection;
 
 pub use contract::{
     client_has_cached_grammar, grammar_revision_from_wire, markdown_fence_body_inner,
@@ -2497,6 +2503,64 @@ fn field_is_filter_like(f: &crate::InputFieldSchema) -> bool {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
+fn enrich_row_producer_teaching_line(
+    cgs: &CGS,
+    cap: &crate::CapabilitySchema,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    ename: &str,
+    surface_filter: Option<&ExposureSurface>,
+    base_expr: &str,
+    base_gloss: Option<String>,
+    projection: RowProducerProjection,
+) -> (String, Option<String>) {
+    let bracket = match projection {
+        RowProducerProjection::BareQueryListAll => None,
+        RowProducerProjection::CapabilityProvides => capability_row_projection_bracket(
+            cgs,
+            cap,
+            map,
+            catalog_entry_id,
+            ename,
+            surface_filter,
+        ),
+    };
+    let row_syms = bracket
+        .as_ref()
+        .map(|b| {
+            b.trim()
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let input_syms = input_param_syms_from_teaching_expr(base_expr, cap, map, catalog_entry_id);
+    let expr = if let Some(b) = bracket {
+        format!("{}{}", base_expr.trim(), b)
+    } else {
+        base_expr.trim().to_string()
+    };
+    let gloss = merge_result_gloss_with_row_contract(base_gloss, &input_syms, &row_syms);
+    (expr, gloss)
+}
+
+fn row_producer_projection_for_query_line(
+    cap: &crate::CapabilitySchema,
+    entity_sym: &str,
+    line: &str,
+) -> RowProducerProjection {
+    if cap.kind == crate::CapabilityKind::Query && line == entity_sym {
+        RowProducerProjection::BareQueryListAll
+    } else {
+        RowProducerProjection::CapabilityProvides
+    }
+}
+
 /// Bracket `[p#,…]` from a capability's ordered `provides` (row contract), when non-empty.
 fn capability_row_projection_bracket(
     cgs: &CGS,
@@ -2607,42 +2671,6 @@ fn merge_result_gloss_with_row_contract(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn enrich_row_producer_teaching_line(
-    cgs: &CGS,
-    cap: &crate::CapabilitySchema,
-    map: Option<&SymbolMap>,
-    catalog_entry_id: &str,
-    ename: &str,
-    surface_filter: Option<&ExposureSurface>,
-    base_expr: &str,
-    base_gloss: Option<String>,
-) -> (String, Option<String>) {
-    let bracket =
-        capability_row_projection_bracket(cgs, cap, map, catalog_entry_id, ename, surface_filter);
-    let row_syms = bracket
-        .as_ref()
-        .map(|b| {
-            b.trim()
-                .trim_start_matches('[')
-                .trim_end_matches(']')
-                .split(',')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let input_syms = input_param_syms_from_teaching_expr(base_expr, cap, map, catalog_entry_id);
-    let expr = if let Some(b) = bracket {
-        format!("{}{}", base_expr.trim(), b)
-    } else {
-        base_expr.trim().to_string()
-    };
-    let gloss = merge_result_gloss_with_row_contract(base_gloss, &input_syms, &row_syms);
-    (expr, gloss)
-}
-
-#[allow(clippy::too_many_arguments)]
 fn try_push_row_producer_teaching_example(
     gloss_emit: &mut Option<GlossScratch<'_>>,
     teaching_rows: &mut Vec<EntityTeachingExprRow>,
@@ -2661,6 +2689,7 @@ fn try_push_row_producer_teaching_example(
     line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
     map_arc: Option<std::sync::Arc<SymbolMap>>,
+    projection: RowProducerProjection,
 ) -> bool {
     let (expr, gloss) = enrich_row_producer_teaching_line(
         cgs,
@@ -2671,6 +2700,7 @@ fn try_push_row_producer_teaching_example(
         surface_filter,
         base_expr,
         base_gloss,
+        projection,
     );
     try_push_teaching_example(
         gloss_emit,
@@ -4513,6 +4543,7 @@ fn collect_entity_teaching_block(
                 capability_legend_for_domain(map, cgs, cap, ename, ident_meta, catalog_entry_id);
             let mut added = false;
             if let Some(line) = query_expr_maximal(cap, &es, cgs, map, catalog_entry_id) {
+                let projection = row_producer_projection_for_query_line(cap, &es, &line);
                 if local_seen.insert(line.clone())
                     && try_push_row_producer_teaching_example(
                         gloss_emit,
@@ -4532,6 +4563,7 @@ fn collect_entity_teaching_block(
                         line_valid_cache,
                         line_valid_cache_seed,
                         map_arc.clone(),
+                        projection,
                     )
                 {
                     added = true;
@@ -4559,6 +4591,7 @@ fn collect_entity_teaching_block(
                             line_valid_cache,
                             line_valid_cache_seed,
                             map_arc.clone(),
+                            RowProducerProjection::CapabilityProvides,
                         )
                     {
                         added = true;
@@ -4587,6 +4620,7 @@ fn collect_entity_teaching_block(
                             line_valid_cache,
                             line_valid_cache_seed,
                             map_arc.clone(),
+                            RowProducerProjection::CapabilityProvides,
                         )
                     {
                         query_line_count += 1;
@@ -4651,6 +4685,7 @@ fn collect_entity_teaching_block(
                     surface_filter,
                     &line,
                     sg.clone(),
+                    RowProducerProjection::CapabilityProvides,
                 )
             },
         );
@@ -4692,6 +4727,7 @@ fn collect_entity_teaching_block(
                 line_valid_cache,
                 line_valid_cache_seed,
                 map_arc.clone(),
+                RowProducerProjection::CapabilityProvides,
             );
         }
     }

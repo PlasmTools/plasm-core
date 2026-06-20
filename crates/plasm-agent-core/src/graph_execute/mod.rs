@@ -1,37 +1,38 @@
 //! Fork–execute–commit graph path: live HTTP runs on a branch snapshot without
 //! holding the session graph mutex.
 //!
-//! **CEP-1..3:** epoch monotonicity, stale commit discard, single winner — validated by
-//! `shuttle_*` tests in [`concurrency_shuttle`] (primary graph concurrency gate).
+//! **CEP-1..3, CEP-11, CEP-12:** graph version monotonicity, write-conflict discard,
+//! single winner on same-key races, per-store write-set conflicts, and disjoint concurrent
+//! commits — validated by named cache/unit tests and `shuttle_*` tests in
+//! [`concurrency_shuttle`] (primary graph concurrency gate).
 
 mod branch_ops;
 mod live_execute;
-mod stale_commit;
+mod write_conflict;
 
 #[cfg(test)]
 mod concurrency_shuttle;
 
-use plasm_runtime::SessionMaterialization;
+use plasm_runtime::{BranchMaterializationBase, SessionMaterialization, WriteConflictDetails};
 
-use crate::execute_session::{ExecuteSession, GraphEpoch};
+use crate::execute_session::ExecuteSession;
 
 use branch_ops::{commit_materialization, fork_materialization};
 
-pub use live_execute::{run_with_stale_epoch_retry, LiveBranchExecuteInput};
-pub use stale_commit::{stale_commit_should_retry, GraphBranchRunError, MAX_STALE_EPOCH_RETRIES};
+pub use live_execute::{run_with_write_conflict_retry, LiveBranchExecuteInput};
+pub use write_conflict::{
+    write_conflict_should_retry, GraphBranchRunError, MAX_WRITE_CONFLICT_RETRIES,
+};
 
-/// Materialization fork + parent epoch for optimistic single-writer commit.
+/// Materialization fork + per-store base snapshots for optimistic commit validation.
 pub struct GraphExecuteBranch {
     mat: SessionMaterialization,
-    parent_epoch: GraphEpoch,
+    base: BranchMaterializationBase,
 }
 
 #[derive(Debug)]
 pub enum GraphCommitError {
-    StaleParentEpoch {
-        expected: GraphEpoch,
-        found: GraphEpoch,
-    },
+    WriteConflict(WriteConflictDetails),
     Merge(plasm_runtime::RuntimeError),
 }
 
@@ -39,17 +40,17 @@ impl GraphExecuteBranch {
     /// Snapshot graph + clone response/query stores under the session lock.
     pub async fn fork(sess: &ExecuteSession) -> Self {
         let guard = sess.lock_graph_cache().await;
-        let (mat, parent_epoch) = fork_materialization(guard.materialization());
-        Self { mat, parent_epoch }
+        let (mat, base) = fork_materialization(guard.materialization());
+        Self { mat, base }
     }
 
     pub fn mat_mut(&mut self) -> &mut SessionMaterialization {
         &mut self.mat
     }
 
-    /// Merge branch into session if the graph epoch is unchanged since fork.
-    pub async fn commit(self, sess: &ExecuteSession) -> Result<GraphEpoch, GraphCommitError> {
+    /// Merge branch into session when no write-set entry raced a concurrent writer.
+    pub async fn commit(self, sess: &ExecuteSession) -> Result<(), GraphCommitError> {
         let mut guard = sess.lock_graph_cache().await;
-        commit_materialization(&mut guard, self.parent_epoch, self.mat)
+        commit_materialization(&mut guard, self.base, self.mat)
     }
 }

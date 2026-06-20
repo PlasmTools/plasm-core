@@ -96,19 +96,22 @@ fn resolve_prefer_from_parent_get_row(
     relation_refs: Option<&[Ref]>,
     graph_has_ref: impl Fn(&Ref) -> bool,
 ) -> RelationRowResolution {
+    if let Some(refs) = relation_refs.filter(|r| !r.is_empty()) {
+        if relation_refs_fully_resolved(refs, expected_target, |r| graph_has_ref(r).then_some(&()))
+        {
+            return RelationRowResolution::EmbeddedRefs(refs.to_vec());
+        }
+    }
+
     let extracted = extract_from_parent_get_value(parent_json, path);
-    if extracted.iter().all(|v| v.is_null()) || extracted.is_empty() {
+    let path_empty = extracted.is_empty() || extracted.iter().all(|v| v.is_null());
+    if path_empty {
+        if let Some(refs) = relation_refs.filter(|r| !r.is_empty()) {
+            return RelationRowResolution::EmbeddedRefs(refs.to_vec());
+        }
         return RelationRowResolution::ScopedQuery;
     }
-    let Some(refs) = relation_refs else {
-        return RelationRowResolution::ScopedQuery;
-    };
-    if refs.is_empty() {
-        return RelationRowResolution::ScopedQuery;
-    }
-    if relation_refs_fully_resolved(refs, expected_target, |r| graph_has_ref(r).then_some(&())) {
-        return RelationRowResolution::EmbeddedRefs(refs.to_vec());
-    }
+
     match on_embed_miss {
         EmbedOnMissPolicy::FallbackScoped => RelationRowResolution::ScopedQuery,
     }
@@ -333,6 +336,56 @@ mod tests {
         );
         assert_eq!(resolutions.len(), 1);
         assert_eq!(resolutions[0], RelationRowResolution::ScopedQuery);
+    }
+
+    #[test]
+    fn prefer_graph_refs_when_projected_parent_strips_embed() {
+        use crate::{EmbedOnMissPolicy, JsonPathSegment, RelationScopedFallback};
+
+        let mat = RelationMaterialization::PreferFromParentGet {
+            path: vec![
+                JsonPathSegment::Key { key: "tags".into() },
+                JsonPathSegment::Wildcard { wildcard: true },
+            ],
+            on_embed_miss: EmbedOnMissPolicy::FallbackScoped,
+            fallback: RelationScopedFallback::QueryScopedBindings {
+                capability: "langtag_query".into(),
+                bindings: IndexMap::new(),
+            },
+        };
+        let refs = vec![Ref::new("LangTag", "t1")];
+        let projected = serde_json::json!({"id": "i1", "title": "Demo"});
+        let res = resolve_relation_row_resolution(
+            &mat,
+            "tags",
+            "LangTag",
+            &projected,
+            Some(&refs),
+            |_| true,
+        );
+        assert_eq!(res, RelationRowResolution::EmbeddedRefs(refs));
+    }
+
+    #[test]
+    fn prefer_partial_graph_miss_falls_back_scoped() {
+        use crate::{EmbedOnMissPolicy, JsonPathSegment, RelationScopedFallback};
+
+        let mat = RelationMaterialization::PreferFromParentGet {
+            path: vec![
+                JsonPathSegment::Key { key: "tags".into() },
+                JsonPathSegment::Wildcard { wildcard: true },
+            ],
+            on_embed_miss: EmbedOnMissPolicy::FallbackScoped,
+            fallback: RelationScopedFallback::QueryScopedBindings {
+                capability: "langtag_query".into(),
+                bindings: IndexMap::new(),
+            },
+        };
+        let refs = vec![Ref::new("LangTag", "t1")];
+        let row = serde_json::json!({"tags": [{"id": "t1"}]});
+        let res =
+            resolve_relation_row_resolution(&mat, "tags", "LangTag", &row, Some(&refs), |_| false);
+        assert_eq!(res, RelationRowResolution::ScopedQuery);
     }
 
     #[test]

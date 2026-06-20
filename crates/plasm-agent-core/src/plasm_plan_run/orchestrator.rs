@@ -110,7 +110,11 @@ impl MaterializedNode {
         rehydrator: &crate::graph_rehydrate::GraphSurfaceRehydrator<'_>,
     ) -> Vec<plasm_runtime::CachedEntity> {
         rehydrator
-            .resolve_source_parents(self.entity.as_str(), self.result.as_ref())
+            .resolve_source_parents_with_identities(
+                self.entity.as_str(),
+                self.result.as_ref(),
+                &self.row_identities,
+            )
             .await
     }
 }
@@ -121,6 +125,12 @@ pub(crate) fn inline_row_source(rows: &[serde_json::Value]) -> MaterializedRowSo
 
 pub(crate) fn inline_row_source_owned(rows: Vec<serde_json::Value>) -> MaterializedRowSource {
     MaterializedRowSource::Inline(rows)
+}
+
+fn pre_layer_materialized_snapshot(
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+) -> Arc<BTreeMap<PlanNodeId, MaterializedNode>> {
+    Arc::new(materialized.clone())
 }
 
 pub(crate) struct MaterializedInputRow {
@@ -196,7 +206,7 @@ pub(crate) async fn run_executable_plan_phased(
                     );
                 }
             }
-            let materialized_snap = materialized.clone();
+            let materialized_snap = pre_layer_materialized_snapshot(&materialized);
             let es = es.clone();
             let st = st.clone();
             let session_id = session_id.to_string();
@@ -428,5 +438,53 @@ fn plasm_return_names(ret: &PlasmReturn) -> Vec<Option<String>> {
         PlasmReturn::Parallel { steps } => {
             steps.iter().map(|s| Some(s.as_str().to_string())).collect()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_node(display: &str) -> MaterializedNode {
+        MaterializedNode {
+            entry_id: "test".into(),
+            entity: "Item".into(),
+            result: Arc::new(ExecutionResult {
+                count: 0,
+                entities: Vec::new(),
+                has_more: false,
+                pagination_resume: None,
+                paging_handle: None,
+                source: ExecutionSource::Cache,
+                stats: ExecutionStats::default(),
+                request_fingerprints: Vec::new(),
+            }),
+            row_source: MaterializedRowSource::Inline(Vec::new()),
+            row_identities: Vec::new(),
+            artifact: None,
+            display: display.into(),
+            projection: None,
+        }
+    }
+
+    #[test]
+    fn cep_9_parallel_layer_uses_frozen_materialized_snapshot() {
+        let source = PlanNodeId::new("source").expect("source id");
+        let later = PlanNodeId::new("later").expect("later id");
+        let mut materialized = BTreeMap::from([(source.clone(), test_node("before"))]);
+
+        let snapshot = pre_layer_materialized_snapshot(&materialized);
+        materialized.get_mut(&source).expect("source node").display = "after".into();
+        materialized.insert(later.clone(), test_node("later"));
+
+        assert_eq!(
+            snapshot.get(&source).expect("snapshot source").display,
+            "before",
+            "CEP-9: parallel workers must observe pre-layer materialized state"
+        );
+        assert!(
+            !snapshot.contains_key(&later),
+            "CEP-9: same-layer materialization must not appear in the worker snapshot"
+        );
     }
 }

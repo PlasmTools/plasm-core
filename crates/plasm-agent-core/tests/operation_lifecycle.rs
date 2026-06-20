@@ -5,7 +5,7 @@ mod common;
 use std::time::Duration;
 
 use common::{begin_plain_operation, empty_session, minimal_host};
-use plasm_agent_core::execute_pipeline::STALE_GRAPH_EPOCH_USER_MESSAGE;
+use plasm_agent_core::execute_pipeline::GRAPH_WRITE_CONFLICT_USER_MESSAGE;
 use plasm_agent_core::mcp_run_await::{
     await_operation_terminal, AwaitConfig, AwaitError, TerminalAwaitContext,
 };
@@ -19,14 +19,14 @@ use uuid::Uuid;
 async fn cep_7_failed_operation_surfaces_verbatim_error() {
     let es = empty_session();
     let handle = begin_plain_operation(es.as_ref());
-    es.finalize_operation_failed(&handle, STALE_GRAPH_EPOCH_USER_MESSAGE.to_string(), None);
+    es.finalize_operation_failed(&handle, GRAPH_WRITE_CONFLICT_USER_MESSAGE.to_string(), None);
     let err = resolve_terminal_plan_run(es.as_ref(), None, None, &handle)
         .await
         .expect_err("terminal failed");
     assert!(matches!(err, OperationError::OperationFailed { .. }));
     assert_eq!(
         err.detail(),
-        format!("operation `{handle}` failed: {STALE_GRAPH_EPOCH_USER_MESSAGE}")
+        format!("operation `{handle}` failed: {GRAPH_WRITE_CONFLICT_USER_MESSAGE}")
     );
     assert_eq!(err.code(), OperationError::CODE_OPERATION_FAILED);
 }

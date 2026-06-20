@@ -364,4 +364,57 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn type_get_decodes_id_and_pokemon_relations() {
+        use plasm_compile::decode_entities;
+        use plasm_compile::DecodedRelation;
+        use plasm_core::Value;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+        let cgs = load_schema_dir(&dir).expect("pokeapi");
+        let decoder = create_entity_decoder_for_capability(
+            "Type",
+            &cgs,
+            Some("type_get"),
+            None,
+            Some("electric"),
+            None,
+        );
+        let body = serde_json::json!({
+            "id": 13,
+            "name": "electric",
+            "url": "https://pokeapi.co/api/v2/type/13/",
+            "pokemon": [
+                {
+                    "slot": 1,
+                    "pokemon": {
+                        "name": "pikachu",
+                        "url": "https://pokeapi.co/api/v2/pokemon/25/"
+                    }
+                }
+            ]
+        });
+        let decoded = decode_entities(&decoder, &body).expect("decode electric type");
+        assert_eq!(decoded.len(), 1);
+        assert!(
+            matches!(decoded[0].fields.get("id"), Some(Value::Integer(13))),
+            "type_get must decode numeric id from wire JSON, got {:?}",
+            decoded[0].fields.get("id")
+        );
+        let pokemon_rel = decoded[0]
+            .relations
+            .get("pokemon")
+            .expect("pokemon relation");
+        let DecodedRelation::Specified(refs) = pokemon_rel else {
+            panic!("expected Specified pokemon refs, got {pokemon_rel:?}");
+        };
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].primary_slot_str(), "pikachu");
+        assert_eq!(decoded[0].embedded_entities.len(), 1);
+        assert_eq!(
+            decoded[0].embedded_entities[0].reference.primary_slot_str(),
+            "pikachu"
+        );
+    }
 }

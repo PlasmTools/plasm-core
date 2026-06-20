@@ -67,22 +67,26 @@ pub(crate) fn layer_parallel_safe(
     }
     // **CEP-9:** a relation flat-map's source is always an upstream dependency (see
     // `node_dependencies`), so it lands in an earlier layer. A same-layer source means the
-    // bind graph dropped that edge — assert in debug, refuse to parallelize in release.
+    // bind graph dropped that edge; refuse parallel execution in every profile.
     // Linear scan (no allocation); layers are small and relations rare.
     for id in layer {
         let Some(PlasmStepPayload::FlatMapRelation(p)) = payload_by_step.get(id) else {
             continue;
         };
-        let Ok(source) = StepId::new(p.relation.source.clone()) else {
-            continue;
+        let source = match StepId::new(p.relation.source.clone()) {
+            Ok(source) => source,
+            Err(err) => {
+                tracing::warn!(
+                    target: "plasm_agent::plan_schedule",
+                    relation = id.as_str(),
+                    source = p.relation.source.as_str(),
+                    error = err.as_str(),
+                    "CEP-9: relation flat-map has an invalid source id; refusing parallel execution"
+                );
+                return false;
+            }
         };
         if layer.contains(&source) {
-            debug_assert!(
-                false,
-                "CEP-9: relation `{}` shares a layer with its source `{}`",
-                id.as_str(),
-                source.as_str()
-            );
             tracing::warn!(
                 target: "plasm_agent::plan_schedule",
                 relation = id.as_str(),
@@ -98,11 +102,50 @@ pub(crate) fn layer_parallel_safe(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use plasm_core::plasm_monad::StepId;
+    use plasm_core::plasm_monad::{
+        FlatMapRelationPayload, PlanExprIr, PlanQualifiedEntityKey, PlasmStepPayload, PurePayload,
+        ResultShape, StepId,
+    };
+    use plasm_core::RelationMaterialization;
     use std::collections::BTreeSet;
 
     fn step(id: &str) -> StepId {
         StepId::new(id.to_string()).expect("step id")
+    }
+
+    fn pure_payload() -> PlasmStepPayload {
+        PlasmStepPayload::Pure(PurePayload {
+            data: plasm_core::PlasmDataValue::Literal {
+                value: serde_json::Value::Null,
+            },
+            effect_class: EffectClass::Read,
+            result_shape: ResultShape::List,
+        })
+    }
+
+    fn relation_payload(source: &str) -> PlasmStepPayload {
+        PlasmStepPayload::FlatMapRelation(FlatMapRelationPayload {
+            relation: plasm_core::PlanRelationTraversal {
+                source: source.to_string(),
+                relation: "tags".into(),
+                target: PlanQualifiedEntityKey {
+                    entry_id: "acme".into(),
+                    entity: "Tag".into(),
+                },
+                cardinality: plasm_core::RelationCardinality::Many,
+                source_cardinality: plasm_core::RelationSourceCardinality::Single,
+                expr: String::new(),
+                ir: PlanExprIr {
+                    expr: serde_json::json!({"op": "query", "entity": "Tag"}),
+                    projection: None,
+                    display_expr: None,
+                },
+                binding_proofs: Vec::new(),
+                materialize: Some(RelationMaterialization::FromParentGet { path: vec![] }),
+            },
+            effect_class: EffectClass::Read,
+            result_shape: ResultShape::List,
+        })
     }
 
     #[test]
@@ -125,8 +168,6 @@ mod tests {
 
     #[test]
     fn parallel_layer_when_two_pure_steps_share_no_deps() {
-        use plasm_core::plasm_monad::{PlasmStepPayload, PurePayload, ResultShape};
-
         let a = step("pure_a");
         let b = step("pure_b");
         let bind = PlasmBindGraph {
@@ -134,31 +175,14 @@ mod tests {
             deps: Default::default(),
             ..Default::default()
         };
-        let pure = PurePayload {
-            data: plasm_core::PlasmDataValue::Literal {
-                value: serde_json::Value::Null,
-            },
-            effect_class: EffectClass::Read,
-            result_shape: ResultShape::List,
-        };
-        let payload_by_step = HashMap::from([
-            (a, PlasmStepPayload::Pure(pure.clone())),
-            (b, PlasmStepPayload::Pure(pure)),
-        ]);
+        let payload_by_step = HashMap::from([(a, pure_payload()), (b, pure_payload())]);
         let layers = bind_topo_execution_layers(&bind).expect("layers");
         assert_eq!(layers.len(), 1);
         assert!(layer_parallel_safe(&layers[0], &payload_by_step));
     }
 
     #[test]
-    #[should_panic(expected = "CEP-9")]
     fn cep_9_parallel_layer_rejects_relation_with_source_in_same_layer() {
-        use plasm_core::plasm_monad::{
-            FlatMapRelationPayload, PlanExprIr, PlanQualifiedEntityKey, PlasmStepPayload,
-            PurePayload, ResultShape,
-        };
-        use plasm_core::RelationMaterialization;
-
         let src = step("item");
         let rel = step("tags");
         let bind = PlasmBindGraph {
@@ -166,45 +190,29 @@ mod tests {
             deps: Default::default(),
             ..Default::default()
         };
-        let pure = PurePayload {
-            data: plasm_core::PlasmDataValue::Literal {
-                value: serde_json::Value::Null,
-            },
-            effect_class: EffectClass::Read,
-            result_shape: ResultShape::List,
-        };
-        let relation_payload = FlatMapRelationPayload {
-            relation: plasm_core::PlanRelationTraversal {
-                source: src.as_str().to_string(),
-                relation: "tags".into(),
-                target: PlanQualifiedEntityKey {
-                    entry_id: "acme".into(),
-                    entity: "Tag".into(),
-                },
-                cardinality: plasm_core::RelationCardinality::Many,
-                source_cardinality: plasm_core::RelationSourceCardinality::Single,
-                expr: String::new(),
-                ir: PlanExprIr {
-                    expr: serde_json::json!({"op": "query", "entity": "Tag"}),
-                    projection: None,
-                    display_expr: None,
-                },
-                binding_proofs: Vec::new(),
-                materialize: Some(RelationMaterialization::FromParentGet { path: vec![] }),
-            },
-            effect_class: EffectClass::Read,
-            result_shape: ResultShape::List,
-        };
         let payload_by_step = HashMap::from([
-            (src.clone(), PlasmStepPayload::Pure(pure)),
-            (
-                rel.clone(),
-                PlasmStepPayload::FlatMapRelation(relation_payload),
-            ),
+            (src.clone(), pure_payload()),
+            (rel.clone(), relation_payload(src.as_str())),
         ]);
         let layers = bind_topo_execution_layers(&bind).expect("layers");
         assert_eq!(layers.len(), 1);
         assert_eq!(layers[0].len(), 2);
         assert!(!layer_parallel_safe(&layers[0], &payload_by_step));
+    }
+
+    #[test]
+    fn cep_9_parallel_layer_rejects_relation_with_invalid_source_id() {
+        let pure = step("pure");
+        let rel = step("tags");
+        let payload_by_step = HashMap::from([
+            (pure.clone(), pure_payload()),
+            (rel.clone(), relation_payload("")),
+        ]);
+        let layer = vec![pure, rel];
+
+        assert!(
+            !layer_parallel_safe(&layer, &payload_by_step),
+            "CEP-9: malformed relation source ids must fail closed"
+        );
     }
 }

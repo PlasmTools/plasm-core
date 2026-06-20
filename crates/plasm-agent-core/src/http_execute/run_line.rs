@@ -32,15 +32,9 @@ impl From<ProofBindError> for RunLineError {
 impl From<crate::graph_execute::GraphBranchRunError> for RunLineError {
     fn from(e: crate::graph_execute::GraphBranchRunError) -> Self {
         match e {
-            crate::graph_execute::GraphBranchRunError::StaleCommit {
-                expected,
-                found,
-                attempts,
-            } => RunLineError::StaleGraphEpoch {
-                expected,
-                found,
-                attempts,
-            },
+            crate::graph_execute::GraphBranchRunError::WriteConflict { details, attempts } => {
+                RunLineError::GraphWriteConflict { details, attempts }
+            }
         }
     }
 }
@@ -53,7 +47,7 @@ fn run_line_error_metric_labels(err: &RunLineError) -> (&'static str, &'static s
         RunLineError::Runtime(_, _) => ("execute", "runtime"),
         RunLineError::ArtifactSerialization(_) => ("artifact", "serialization"),
         RunLineError::ArtifactPersist(_) => ("artifact", "persist"),
-        RunLineError::StaleGraphEpoch { .. } => ("execute", "stale_graph_epoch"),
+        RunLineError::GraphWriteConflict { .. } => ("execute", "graph_write_conflict"),
         RunLineError::Operation(_) => ("operation", "continuation"),
     }
 }
@@ -383,7 +377,7 @@ pub(crate) async fn run_parsed_plasm_line(
                 surface_read_budget: surface_read_budget.clone(),
                 expr_span: expr_span.clone(),
             };
-            match crate::graph_execute::run_with_stale_epoch_retry(sess, &input).await {
+            match crate::graph_execute::run_with_write_conflict_retry(sess, &input).await {
                 Ok(r) => r,
                 Err(e) => {
                     record_run_line_error_metrics(

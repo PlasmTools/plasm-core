@@ -95,7 +95,7 @@ pub struct SessionResponseStore {
     entries: std::collections::HashMap<RequestFingerprint, Arc<StoredResponse>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StoredResponse {
     pub response: serde_json::Value,
     pub source: ExecutionSource,
@@ -123,6 +123,44 @@ impl SessionResponseStore {
 
     pub fn merge_from(&mut self, other: SessionResponseStore) {
         self.entries.extend(other.entries);
+    }
+
+    pub(crate) fn entries_snapshot(
+        &self,
+    ) -> std::collections::HashMap<RequestFingerprint, Arc<StoredResponse>> {
+        self.entries.clone()
+    }
+
+    pub(crate) fn branch_write_fingerprints(
+        &self,
+        base: &std::collections::HashMap<RequestFingerprint, Arc<StoredResponse>>,
+    ) -> Vec<RequestFingerprint> {
+        self.entries
+            .iter()
+            .filter_map(|(fp, arc)| match base.get(fp) {
+                None => Some(fp.clone()),
+                Some(base_arc) if !Arc::ptr_eq(arc, base_arc) => Some(fp.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    pub(crate) fn detect_write_conflicts(
+        session: &Self,
+        base: &std::collections::HashMap<RequestFingerprint, Arc<StoredResponse>>,
+        write_set: &[RequestFingerprint],
+    ) -> Vec<RequestFingerprint> {
+        write_set
+            .iter()
+            .filter(|fp| match base.get(*fp) {
+                None => session.entries.contains_key(*fp),
+                Some(base_arc) => session
+                    .entries
+                    .get(*fp)
+                    .is_none_or(|live| !Arc::ptr_eq(live, base_arc)),
+            })
+            .cloned()
+            .collect()
     }
 }
 

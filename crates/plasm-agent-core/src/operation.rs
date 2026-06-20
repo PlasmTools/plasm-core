@@ -722,7 +722,7 @@ pub fn spawn_async_plan_run(
     let es_run = Arc::clone(&es);
     let st_run = Arc::clone(&st);
     tokio::spawn(async move {
-        // Stale-epoch retry lives at the branch level (`run_with_stale_epoch_retry`), which
+        // Write-conflict retry lives at the branch level (`run_with_write_conflict_retry`), which
         // re-forks only the contended line before any commit is visible. Re-running the whole
         // plan here would re-issue already-committed mutating lines, so the plan executes once.
         let pool = st_run.live_plan_pool();

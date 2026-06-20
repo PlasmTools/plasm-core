@@ -349,6 +349,33 @@ fn plasm_context_tool_description_contract_append_vs_refresh() {
 }
 
 #[test]
+fn discover_capabilities_input_schema() {
+    let tools = super::PlasmMcpHandler::plasm_tools();
+    let discover = tools
+        .iter()
+        .find(|t| t.name == "discover_capabilities")
+        .expect("discover_capabilities tool");
+    let v = serde_json::to_value(&discover.input_schema).expect("input_schema json");
+    let required = v
+        .get("required")
+        .and_then(|x| x.as_array())
+        .expect("required array");
+    assert_eq!(required.len(), 1);
+    assert_eq!(required[0].as_str(), Some("intent"));
+    let props = v
+        .get("properties")
+        .and_then(|x| x.as_object())
+        .expect("properties object");
+    assert!(props.contains_key("intent"));
+    assert!(!props.contains_key("typed"));
+    assert!(!props.contains_key("allowed_entry_ids"));
+    assert!(!props.contains_key("query"));
+    with_insta_snapshots(|| {
+        insta::assert_json_snapshot!("discover_capabilities_input_schema", v);
+    });
+}
+
+#[test]
 fn plasm_context_input_schema_requires_intent_and_seeds() {
     let tools = super::PlasmMcpHandler::plasm_tools();
     let ctx = tools

@@ -19,8 +19,8 @@
 //!
 //! ## Temporal / versioning
 //!
-//! - **I3 (monotonic clock).** Each internal `current_timestamp()` call strictly increases
-//!   `version_counter` and supplies `last_updated` on insert paths.
+//! - **I3 / CEP-1 (monotonic graph clock).** Each successful insert/merge path calls
+//!   `current_timestamp()`, strictly increases `version_counter`, and supplies `last_updated`.
 //! - **I4 (entity version).** [`CachedEntity::version`] and `last_updated` are updated on merges per
 //!   [`CachedEntity::merge`].
 //!
@@ -676,6 +676,74 @@ impl GraphCache {
         self.version_counter = 0;
     }
 
+    /// Per-entity optimistic version for fine-grained branch commit validation.
+    pub(crate) fn entity_version(&self, reference: &Ref) -> Option<u64> {
+        self.get(reference).map(|e| e.version)
+    }
+
+    /// Snapshot `(Ref → entity.version)` for branch fork base state.
+    #[cfg(test)]
+    pub(crate) fn ref_version_snapshot(&self) -> std::collections::HashMap<Ref, u64> {
+        self.entities
+            .iter()
+            .map(|(r, e)| (r.clone(), e.version))
+            .collect()
+    }
+
+    /// Deep clone plus per-ref versions in one entity walk (branch fork hot path).
+    pub(crate) fn clone_capturing_ref_versions(
+        &self,
+    ) -> (Self, std::collections::HashMap<Ref, u64>) {
+        let mut versions = std::collections::HashMap::with_capacity(self.entities.len());
+        let mut entities = std::collections::HashMap::with_capacity(self.entities.len());
+        for (r, e) in &self.entities {
+            versions.insert(r.clone(), e.version);
+            entities.insert(r.clone(), e.clone());
+        }
+        (
+            Self {
+                entities,
+                version_counter: self.version_counter,
+                type_index: self.type_index.clone(),
+                insertion_order: self.insertion_order.clone(),
+            },
+            versions,
+        )
+    }
+
+    /// Refs written on this branch relative to `base` (new entities or bumped versions).
+    pub(crate) fn branch_write_set(&self, base: &std::collections::HashMap<Ref, u64>) -> Vec<Ref> {
+        let mut writes: Vec<Ref> = self
+            .entities
+            .iter()
+            .filter_map(|(r, e)| match base.get(r) {
+                None => Some(r.clone()),
+                Some(&base_v) if e.version > base_v => Some(r.clone()),
+                _ => None,
+            })
+            .collect();
+        sort_refs(&mut writes);
+        writes
+    }
+
+    /// Refs in `write_set` that changed in `session` since `base` (true write conflicts).
+    pub(crate) fn detect_write_conflicts(
+        session: &GraphCache,
+        base: &std::collections::HashMap<Ref, u64>,
+        write_set: &[Ref],
+    ) -> Vec<Ref> {
+        let mut conflicts: Vec<Ref> = write_set
+            .iter()
+            .filter(|r| match base.get(*r) {
+                None => session.contains(r),
+                Some(&base_v) => session.entity_version(r).unwrap_or(0) > base_v,
+            })
+            .cloned()
+            .collect();
+        sort_refs(&mut conflicts);
+        conflicts
+    }
+
     /// Get cache statistics
     pub fn stats(&self) -> CacheStats {
         CacheStats {
@@ -746,6 +814,15 @@ impl Default for GraphCache {
     }
 }
 
+pub(crate) fn sort_refs(refs: &mut [Ref]) {
+    refs.sort_by(|a, b| {
+        a.entity_type
+            .to_string()
+            .cmp(&b.entity_type.to_string())
+            .then_with(|| format!("{:?}", a.key).cmp(&format!("{:?}", b.key)))
+    });
+}
+
 /// Cache statistics
 #[derive(Debug, Clone, Serialize)]
 pub struct CacheStats {
@@ -773,6 +850,71 @@ mod tests {
             1,
             EntityCompleteness::Complete,
         )
+    }
+
+    #[test]
+    fn per_ref_write_set_and_conflict_detection() {
+        let mut cache = GraphCache::new();
+        let a = create_test_entity("a", "Berry");
+        let ref_a = a.reference.clone();
+        cache.insert(a).unwrap();
+        let base = cache.ref_version_snapshot();
+
+        let mut branch = GraphCache::new();
+        let b = create_test_entity("b", "Berry");
+        let ref_b = b.reference.clone();
+        branch.insert(b).unwrap();
+        let write_set = branch.branch_write_set(&base);
+        assert_eq!(write_set, vec![ref_b.clone()]);
+        assert!(GraphCache::detect_write_conflicts(&cache, &base, &write_set).is_empty());
+
+        cache.insert(create_test_entity("b", "Berry")).unwrap();
+        let conflicts = GraphCache::detect_write_conflicts(&cache, &base, &write_set);
+        assert_eq!(conflicts, vec![ref_b]);
+
+        let base2 = cache.ref_version_snapshot();
+        let mut branch2 = cache.clone();
+        branch2.get_mut(&ref_a).unwrap().update_field(
+            "name".into(),
+            Value::String("changed".into()),
+            99,
+        );
+        let write_a = branch2.branch_write_set(&base2);
+        assert_eq!(write_a, vec![ref_a.clone()]);
+        assert!(
+            GraphCache::detect_write_conflicts(&cache, &base2, &write_a).is_empty(),
+            "unchanged session entity should not conflict"
+        );
+
+        cache.get_mut(&ref_a).unwrap().update_field(
+            "name".into(),
+            Value::String("session".into()),
+            100,
+        );
+        let conflicts_a = GraphCache::detect_write_conflicts(&cache, &base2, &write_a);
+        assert_eq!(conflicts_a, vec![ref_a]);
+    }
+
+    #[test]
+    fn cep_1_version_counter_monotonic_on_insert_and_merge() {
+        let mut cache = GraphCache::new();
+        assert_eq!(cache.version_counter, 0);
+
+        let first = create_test_entity("versioned", "Berry");
+        let reference = first.reference.clone();
+        cache.insert(first).expect("initial insert");
+        let inserted_version = cache.version_counter;
+        assert_eq!(inserted_version, 1);
+        assert_eq!(cache.get(&reference).expect("inserted").last_updated, 1);
+
+        let mut update = create_test_entity("versioned", "Berry");
+        update.update_field("name".into(), Value::String("merged".into()), 7);
+        cache.insert(update).expect("merge update");
+        assert!(
+            cache.version_counter > inserted_version,
+            "CEP-1: every successful merge must advance the global graph version counter"
+        );
+        assert_eq!(cache.get(&reference).expect("merged").last_updated, 2);
     }
 
     #[test]

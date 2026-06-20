@@ -140,6 +140,41 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         entity_type: &str,
         result: &ExecutionResult,
     ) -> Vec<CachedEntity> {
+        self.resolve_source_parents_with_identities(entity_type, result, &[])
+            .await
+    }
+
+    /// CEP-5 / project-then-relate: prefer session-graph parents keyed by [`RowIdentity`]
+    /// (and graph upgrades for synthetic/projected `result.entities`).
+    pub(crate) async fn resolve_source_parents_with_identities(
+        &self,
+        entity_type: &str,
+        result: &ExecutionResult,
+        row_identities: &[Option<plasm_core::RowIdentity>],
+    ) -> Vec<CachedEntity> {
+        let identity_bound = row_identities.iter().any(|opt| opt.is_some());
+        let row_count = result.entities.len().max(row_identities.len());
+        if row_count > 0 || identity_bound {
+            let guard = self.ctx.es.lock_graph_cache().await;
+            let mat = guard.materialization();
+            let mut out = Vec::with_capacity(row_count);
+            for idx in 0..row_count {
+                let identity_row = row_identities.get(idx).and_then(|opt| opt.as_ref());
+                let graph_parent = identity_row
+                    .and_then(|id| mat.get(&id.reference))
+                    .or_else(|| result.entities.get(idx).and_then(|e| mat.get(&e.reference)));
+                if let Some(parent) = graph_parent {
+                    out.push(parent.clone());
+                } else if identity_row.is_none() {
+                    if let Some(fallback) = result.entities.get(idx) {
+                        out.push(fallback.clone());
+                    }
+                }
+            }
+            if !out.is_empty() || identity_bound {
+                return out;
+            }
+        }
         if !result.entities.is_empty() {
             return result.entities.clone();
         }

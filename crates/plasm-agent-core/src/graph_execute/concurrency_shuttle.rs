@@ -47,14 +47,14 @@ fn shuttle_branch_commit_merges_entity() {
         || {
             future::block_on(async {
                 let session = shuttle_session();
-                let (mut branch, epoch) = {
+                let (mut branch, base) = {
                     let guard = lock_session(&session);
                     fork_materialization(&guard)
                 };
                 insert_on(&mut branch, berry_entity("pecha"));
                 {
                     let mut guard = lock_session(&session);
-                    commit_materialization(&mut guard, epoch, branch).expect("commit");
+                    commit_materialization(&mut guard, base, branch).expect("commit");
                 }
                 assert!(has_ref(&lock_session(&session), "pecha"));
             });
@@ -69,7 +69,7 @@ fn shuttle_stale_commit_never_writes_branch_entities() {
         || {
             future::block_on(async {
                 let session = shuttle_session();
-                let (mut branch, epoch) = {
+                let (mut branch, base) = {
                     let guard = lock_session(&session);
                     fork_materialization(&guard)
                 };
@@ -78,14 +78,13 @@ fn shuttle_stale_commit_never_writes_branch_entities() {
                 future::yield_now().await;
                 {
                     let mut guard = lock_session(&session);
-                    insert_on(&mut guard, berry_entity("session_bump"));
+                    insert_on(&mut guard, berry_entity("stale_berry"));
                 }
                 future::yield_now().await;
                 let mut guard = lock_session(&session);
-                let err = commit_materialization(&mut guard, epoch, branch).expect_err("stale");
-                assert!(matches!(err, GraphCommitError::StaleParentEpoch { .. }));
-                assert!(!has_ref(&guard, "stale_berry"));
-                assert!(has_ref(&guard, "session_bump"));
+                let err = commit_materialization(&mut guard, base, branch).expect_err("conflict");
+                assert!(matches!(err, GraphCommitError::WriteConflict { .. }));
+                assert!(has_ref(&guard, "stale_berry"));
             });
         },
         RANDOM_ITERATIONS,
@@ -98,7 +97,7 @@ fn shuttle_read_lock_available_while_branch_alive() {
         || {
             future::block_on(async {
                 let session = shuttle_session();
-                let (mut branch, epoch) = {
+                let (mut branch, base) = {
                     let guard = lock_session(&session);
                     fork_materialization(&guard)
                 };
@@ -109,7 +108,7 @@ fn shuttle_read_lock_available_while_branch_alive() {
                 }
                 future::yield_now().await;
                 let mut guard = lock_session(&session);
-                commit_materialization(&mut guard, epoch, branch).expect("commit");
+                commit_materialization(&mut guard, base, branch).expect("commit");
                 assert!(has_ref(&guard, "mid"));
             });
         },
@@ -117,46 +116,99 @@ fn shuttle_read_lock_available_while_branch_alive() {
     );
 }
 
-/// Two concurrent commits: at most one branch wins; session stays consistent.
+/// Two concurrent commits on disjoint `Ref`s: both branches win (CEP-11).
 #[test]
-fn shuttle_dual_fork_epoch_cas() {
+fn shuttle_disjoint_ref_commits_both_succeed() {
     shuttle::check_pct(
         || {
             future::block_on(async {
                 let session = shuttle_session();
-                let (mut branch_a, epoch_a) = {
+                let (mut branch_a, base_a) = {
                     let guard = lock_session(&session);
                     fork_materialization(&guard)
                 };
                 future::yield_now().await;
-                let (mut branch_b, epoch_b) = {
+                let (mut branch_b, base_b) = {
                     let guard = lock_session(&session);
                     fork_materialization(&guard)
                 };
-                assert_eq!(epoch_a.0, epoch_b.0);
+                assert_eq!(base_a, base_b);
                 insert_on(&mut branch_a, berry_entity("a"));
                 insert_on(&mut branch_b, berry_entity("b"));
 
                 let session_a = ShuttleArc::clone(&session);
                 let session_b = ShuttleArc::clone(&session);
-                future::spawn(async move {
+                let handle_a = future::spawn(async move {
                     future::yield_now().await;
                     let mut guard = lock_session(&session_a);
-                    let _ = commit_materialization(&mut guard, epoch_a, branch_a);
+                    commit_materialization(&mut guard, base_a, branch_a).expect("commit a");
                 });
-                future::spawn(async move {
+                let handle_b = future::spawn(async move {
                     future::yield_now().await;
                     let mut guard = lock_session(&session_b);
-                    let _ = commit_materialization(&mut guard, epoch_a, branch_b);
+                    commit_materialization(&mut guard, base_b, branch_b).expect("commit b");
                 });
-                future::yield_now().await;
+                handle_a.await.expect("task a");
+                handle_b.await.expect("task b");
 
                 let guard = lock_session(&session);
-                let has_a = has_ref(&guard, "a");
-                let has_b = has_ref(&guard, "b");
+                assert!(has_ref(&guard, "a"), "disjoint ref a committed");
+                assert!(has_ref(&guard, "b"), "disjoint ref b committed");
+            });
+        },
+        PCT_DEPTH,
+        PCT_ITERATIONS,
+    );
+}
+
+/// Two concurrent commits on the same `Ref`: at most one branch wins (CEP-3).
+#[test]
+fn shuttle_same_ref_dual_commit_serializes() {
+    shuttle::check_pct(
+        || {
+            future::block_on(async {
+                let session = shuttle_session();
+                let (mut branch_a, base_a) = {
+                    let guard = lock_session(&session);
+                    fork_materialization(&guard)
+                };
+                future::yield_now().await;
+                let (mut branch_b, base_b) = {
+                    let guard = lock_session(&session);
+                    fork_materialization(&guard)
+                };
+                assert_eq!(base_a, base_b);
+                insert_on(&mut branch_a, berry_entity("contended"));
+                insert_on(&mut branch_b, berry_entity("contended"));
+
+                let session_a = ShuttleArc::clone(&session);
+                let session_b = ShuttleArc::clone(&session);
+                let wins = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let wins_a = std::sync::Arc::clone(&wins);
+                let wins_b = std::sync::Arc::clone(&wins);
+                let handle_a = future::spawn(async move {
+                    future::yield_now().await;
+                    let mut guard = lock_session(&session_a);
+                    if commit_materialization(&mut guard, base_a, branch_a).is_ok() {
+                        wins_a.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                });
+                let handle_b = future::spawn(async move {
+                    future::yield_now().await;
+                    let mut guard = lock_session(&session_b);
+                    if commit_materialization(&mut guard, base_b, branch_b).is_ok() {
+                        wins_b.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                });
+                handle_a.await.expect("task a");
+                handle_b.await.expect("task b");
+
+                let guard = lock_session(&session);
+                let commit_wins = wins.load(std::sync::atomic::Ordering::SeqCst);
+                assert_eq!(commit_wins, 1, "exactly one same-ref branch may commit");
                 assert!(
-                    !(has_a && has_b),
-                    "both branches must not commit after epoch bump from first absorb"
+                    has_ref(&guard, "contended"),
+                    "winning same-ref branch entity present"
                 );
             });
         },
@@ -174,7 +226,7 @@ fn shuttle_interleaved_fork_commit() {
                 let session_b = ShuttleArc::clone(&session);
 
                 future::spawn(async move {
-                    let (mut branch, epoch) = {
+                    let (mut branch, base) = {
                         let guard = lock_session(&session);
                         fork_materialization(&guard)
                     };
@@ -182,7 +234,7 @@ fn shuttle_interleaved_fork_commit() {
                     insert_on(&mut branch, berry_entity("interleave"));
                     future::yield_now().await;
                     let mut guard = lock_session(&session);
-                    let _ = commit_materialization(&mut guard, epoch, branch);
+                    let _ = commit_materialization(&mut guard, base, branch);
                 });
 
                 future::spawn(async move {
@@ -333,8 +385,8 @@ fn empty_graph_result(count: usize) -> plasm_runtime::ExecutionResult {
     }
 }
 
-/// CEP-1..3: N branches forked at one epoch, each committed in its **own** task — the PCT
-/// scheduler interleaves the commits and exactly one wins the optimistic epoch CAS.
+/// CEP-3: N branches writing the same `Ref`, each committed in its **own** task — exactly
+/// one wins the per-Ref optimistic validation.
 #[test]
 fn shuttle_parallel_fanout_commits() {
     shuttle::check_pct(
@@ -349,22 +401,22 @@ fn shuttle_parallel_fanout_commits() {
                     };
                     forks.push(fork);
                 }
-                let epoch0 = forks[0].1;
+                let base0 = forks[0].1.clone();
                 assert!(
-                    forks.iter().all(|(_, e)| *e == epoch0),
-                    "all branches fork from the same epoch"
+                    forks.iter().all(|(_, b)| *b == base0),
+                    "all branches fork from the same base snapshot"
                 );
 
                 let wins = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
                 let mut handles = Vec::new();
-                for (mut branch, epoch) in forks {
+                for (mut branch, base) in forks {
                     insert_on(&mut branch, berry_entity("fanout_win"));
                     let session_t = ShuttleArc::clone(&session);
                     let wins_t = std::sync::Arc::clone(&wins);
                     handles.push(future::spawn(async move {
                         future::yield_now().await;
                         let mut guard = lock_session(&session_t);
-                        if commit_materialization(&mut guard, epoch, branch).is_ok() {
+                        if commit_materialization(&mut guard, base, branch).is_ok() {
                             wins_t.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                         }
                     }));
@@ -424,33 +476,31 @@ async fn cep_5_graph_backed_parent_row_count() {
     );
 }
 
-/// CEP: the branch retry loop (`run_with_stale_epoch_retry` shape) makes progress under
-/// bounded concurrent epoch bumps. A background writer bumps the epoch fewer times than the
-/// retry budget, so across every PCT interleaving the loop must commit its entity, and the
-/// discarded (stale) branches never leak a second copy.
+/// CEP-2: the branch retry loop makes progress under bounded same-`Ref` contention.
 #[test]
 fn shuttle_branch_retry_loop_commits_under_bounded_contention() {
-    use crate::graph_execute::stale_commit::{stale_commit_should_retry, MAX_STALE_EPOCH_RETRIES};
+    use crate::graph_execute::write_conflict::{
+        write_conflict_should_retry, MAX_WRITE_CONFLICT_RETRIES,
+    };
 
     shuttle::check_pct(
         || {
             future::block_on(async {
                 let session = shuttle_session();
-                // Strictly fewer epoch bumps than the retry budget => the loop must win.
-                let bumps = MAX_STALE_EPOCH_RETRIES - 1;
+                let bumps = MAX_WRITE_CONFLICT_RETRIES - 1;
                 let session_bg = ShuttleArc::clone(&session);
                 let bumper = future::spawn(async move {
-                    for i in 0..bumps {
+                    for _ in 0..bumps {
                         future::yield_now().await;
                         let mut guard = lock_session(&session_bg);
-                        insert_on(&mut guard, berry_entity(&format!("bg_bump_{i}")));
+                        insert_on(&mut guard, berry_entity("retry_loop_win"));
                     }
                 });
 
                 let mut committed = false;
                 let mut exhausted = None;
-                for attempt in 0..=MAX_STALE_EPOCH_RETRIES {
-                    let (mut branch, epoch) = {
+                for attempt in 0..=MAX_WRITE_CONFLICT_RETRIES {
+                    let (mut branch, base) = {
                         let guard = lock_session(&session);
                         fork_materialization(&guard)
                     };
@@ -458,13 +508,13 @@ fn shuttle_branch_retry_loop_commits_under_bounded_contention() {
                     insert_on(&mut branch, berry_entity("retry_loop_win"));
                     future::yield_now().await;
                     let mut guard = lock_session(&session);
-                    match commit_materialization(&mut guard, epoch, branch) {
-                        Ok(_) => {
+                    match commit_materialization(&mut guard, base, branch) {
+                        Ok(()) => {
                             committed = true;
                             break;
                         }
-                        Err(GraphCommitError::StaleParentEpoch { .. })
-                            if stale_commit_should_retry(attempt) =>
+                        Err(GraphCommitError::WriteConflict { .. })
+                            if write_conflict_should_retry(attempt) =>
                         {
                             drop(guard);
                             future::yield_now().await;

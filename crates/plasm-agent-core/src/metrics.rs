@@ -40,7 +40,7 @@ struct AgentMetrics {
     run_artifact_archive_puts: Counter<u64>,
     trace_timeline_events_dropped: Counter<u64>,
     mcp_plasm_run_phase_duration_ms: Histogram<f64>,
-    plan_execute_stale_epoch_retry: Counter<u64>,
+    plan_execute_write_conflict_retry: Counter<u64>,
 }
 
 static AGENT_METRICS: OnceLock<AgentMetrics> = OnceLock::new();
@@ -177,19 +177,21 @@ fn agent_metrics() -> &'static AgentMetrics {
                 .f64_histogram("plasm.mcp.plasm_run.phase_duration_ms")
                 .with_description("Wall time between MCP plasm_run phase checkpoints.")
                 .build(),
-            plan_execute_stale_epoch_retry: m
-                .u64_counter("plasm.plan_execute.stale_epoch_retry_total")
+            plan_execute_write_conflict_retry: m
+                .u64_counter("plasm.plan_execute.write_conflict_retry_total")
                 .with_description(
-                    "Stale graph epoch branch-cycle retries during concurrent execute (re-fork before any commit is visible).",
+                    "Per-store materialization write-conflict branch-cycle retries during concurrent execute (re-fork before any commit is visible).",
                 )
                 .build(),
         }
     })
 }
 
-/// Record one stale-epoch branch-cycle retry (single expression fork/commit re-run).
-pub fn record_graph_branch_stale_retry() {
-    agent_metrics().plan_execute_stale_epoch_retry.add(1, &[]);
+/// Record one write-conflict branch-cycle retry (single expression fork/commit re-run).
+pub fn record_graph_branch_write_conflict_retry() {
+    agent_metrics()
+        .plan_execute_write_conflict_retry
+        .add(1, &[]);
 }
 
 pub fn record_mcp_plasm_run_phase(phase: &'static str, duration: Duration) {

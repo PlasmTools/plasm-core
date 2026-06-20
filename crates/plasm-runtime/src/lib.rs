@@ -103,6 +103,7 @@ pub mod api_error_detail;
 pub mod auth;
 pub mod auth_resolution;
 pub mod binding_kv;
+pub mod branch_commit;
 pub mod cache;
 pub mod error;
 pub mod evm;
@@ -157,6 +158,9 @@ pub use auth::*;
 pub use auth_resolution::{
     auth_resolution_mode_from_env, auth_resolution_mode_from_str, validate_principal_for_mode,
     AuthResolutionMode,
+};
+pub use branch_commit::{
+    detect_materialization_conflicts, BranchMaterializationBase, WriteConflictDetails,
 };
 pub use cache::*;
 pub use cancel_signal::{check_cancel, CancelSignal};

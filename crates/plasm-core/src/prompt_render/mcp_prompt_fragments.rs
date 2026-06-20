@@ -47,7 +47,8 @@ pub fn render_compact_exposure_symbol_map(exp: &TeachingExposureSession) -> Stri
 /// MCP unified discovery TSV preamble (language flow + decision semantics).
 pub const DISCOVER_TSV_LANGUAGE_PREAMBLE: &str = "\
 # Plasm is a source language. These rows are NOT a program.\n\
-# Next: pass selected api/entity rows to plasm_context.seeds, then write plasm.program using returned e#/m#/p#/r# symbols.";
+# Next: pass selected api/entity rows to plasm_context.seeds, then write plasm.program using returned e#/m#/p#/r# symbols.\n\
+# Catalogs with Get but no Search teach identity get (e#(p#=…)) after plasm_context — not e#~\"text\" search syntax.";
 
 /// Discovery decision values embedded as `# decision: …` TSV comment lines.
 pub const DISCOVER_DECISION_MATCH: &str = "match";
@@ -84,7 +85,7 @@ pub fn render_plasm_mcp_initialize_workflow_tail() -> String {
 /// Model-facing `discover_capabilities` tool description.
 pub fn render_plasm_mcp_discover_tool_description() -> String {
     format!(
-        "Plasm is a source language. Pick catalogs/entities for one user goal — this tool does **not** produce program symbols. {}\n     **Next:** copy TSV `api`/`entity` rows into one **`plasm_context`** **`seeds`** array on the same **`intent`**, then write **`plasm.program`** from returned teaching TSV symbols. Skip when you already know every `api`/`entity`. There is no alternate JSON discovery mode for agents.",
+        "Plasm is a source language. Pick catalogs/entities for one user goal — this tool does **not** produce program symbols. {}\n     **Next:** copy TSV `api`/`entity` rows into one **`plasm_context`** **`seeds`** array on the same **`intent`**, then write **`plasm.program`** from teaching TSV (get `e#(p#)` vs search `e#~\"…\"` when exposed). Skip when you already know every `api`/`entity`. No alternate JSON discovery mode.",
         MCP_TOOL_SEQUENCING_MARKER,
     )
 }
