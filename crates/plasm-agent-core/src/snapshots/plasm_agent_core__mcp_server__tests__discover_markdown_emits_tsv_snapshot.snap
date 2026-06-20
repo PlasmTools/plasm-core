@@ -1,0 +1,12 @@
+---
+source: crates/plasm-agent-core/src/mcp_server/tests.rs
+expression: "crate::discovery_human_format::format_discovery_markdown(&r)"
+---
+```tsv
+# Plasm is a source language. These rows are NOT a program.
+# Next: pass selected api/entity rows to plasm_context.seeds, then write plasm.program using returned e#/m#/p#/r# symbols.
+# Catalogs with Get but no Search teach identity get (e#(p#=…)) after plasm_context — not e#~"text" search syntax.
+# decision: match
+api	entity	description	outgoing_relations
+demo	Widget	A contrived widget line	
+```

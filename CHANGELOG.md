@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.42] - 2026-06-20
+
+### Fixed
+
+- **Row compute postfix:** `.sort(p#, desc)` / `.group_by(p#, …)` / `.filter{…}` / `.dedupe` / `.distinct` resolve teaching `p#` symbols before schema checks; diagnostics steer to `rows:` contract instead of wire column names.
+- **Default read paging:** unbounded query/list read roots get host page size 50; `plasm_run` surfaces `page(l_<token>_pgN)` continuations in-band.
+
+### Changed
+
+- **MCP language frontmatter:** symbolic postfix bullets (`p#` primary) and first-page paging guidance in grammar contract.
+- **MCP session copy:** stable `intent` definition + anti-pattern in `plasm_context` workflow; removed agent-facing `unused_seeds` / over-seeding warnings (lazy evaluation — not an agent concern).
+- **Docs:** `plasm-language-definition.md`, `plasm-row-compute.md`, `mcp-session-reuse.md`, `incremental-teaching-prompts.md` aligned with symbolic row fields and session discipline.
+
 ## [0.3.41] - 2026-06-20
 
 ### Changed

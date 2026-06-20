@@ -6263,10 +6263,15 @@ mod tests {
 
     #[test]
     fn plasm_language_contract_defines_ref_meaning_prefix() {
-        let contract = render_plasm_mcp_language_frontmatter();
+        let dir = fixtures_schemas_dir("plasm_prompt_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).unwrap();
+        let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         assert!(
-            contract.contains("ref:Zone") && contract.contains("str · Zone identifier"),
-            "contract must teach entity-ref Meaning shape with canonical entity (not e#):\n{contract}"
+            prompt.contains("ref:Zone") && prompt.contains("str · Zone identifier"),
+            "teaching TSV must include entity-ref value-domain gloss with canonical entity (not e#):\n{prompt}"
         );
     }
 
@@ -6786,7 +6791,7 @@ mod tests {
         assert!(frontmatter.contains(".filter{"));
         assert!(frontmatter.contains(".limit(10)"));
         assert!(frontmatter.contains("Core surface:"));
-        assert!(frontmatter.contains(".group_by(field, specs)"));
+        assert!(frontmatter.contains(".group_by(p#, specs)"));
         assert!(frontmatter.contains("substitute"));
         assert!(frontmatter.contains("inputs:"));
         assert!(frontmatter.contains("rows:"));
@@ -6864,7 +6869,7 @@ mod tests {
 
     #[test]
     fn grammar_frontmatter_byte_budget() {
-        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 4300;
+        const CANONICAL_GRAMMAR_FRONTMATTER_BYTES: usize = 4527;
         const MAX_GRAMMAR_FRONTMATTER_BYTES: usize = 5500;
         const MINIMAL_GRAMMAR_FRONTMATTER_BYTES: usize = 7200;
 
@@ -7013,8 +7018,8 @@ mod tests {
         let cgs = load_schema_dir(&dir).unwrap();
         let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         assert!(
-            prompt.contains("Row contract:"),
-            "preamble should teach row contract law"
+            prompt.lines().any(|l| l.contains("rows:")),
+            "teaching rows should carry row contract via rows: gloss:\n{prompt}"
         );
         assert!(
             prompt

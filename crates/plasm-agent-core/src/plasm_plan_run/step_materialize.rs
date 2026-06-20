@@ -117,20 +117,24 @@ pub(crate) async fn materialize_executable_plan_step(
                 Some(plan_shared.as_ref()),
             )
             .await?;
-            if let Some(cap) = host_page {
-                if result.entities.len() > cap {
-                    result.entities.truncate(cap);
-                    result.count = result.entities.len();
-                }
-            }
-            if let Some(scope) = execution_scope {
-                scope.sync_rows_materialized(result.count.max(result.entities.len()));
-            }
             let entity_type = surface
                 .qualified_entity
                 .as_ref()
                 .map(|q| q.entity.as_str())
                 .unwrap_or_else(|| surface.id.as_str());
+            if let Some(cap) = host_page {
+                crate::plan_read_bounds::cap_execution_result_page(
+                    &scoped_es,
+                    &mut result,
+                    cap,
+                    surface.id.as_str(),
+                    entity_type,
+                    trace.and_then(|t| t.logical_session_ref.as_deref()),
+                );
+            }
+            if let Some(scope) = execution_scope {
+                scope.sync_rows_materialized(result.count.max(result.entities.len()));
+            }
             let rehydrator = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
                 &scoped_es,
                 st,

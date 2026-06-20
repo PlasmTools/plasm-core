@@ -847,7 +847,7 @@ fn for_each_templates_render_concrete_row_bound_plasm_calls() {
 }
 
 #[test]
-fn dry_run_text_includes_review_for_unbounded_list_root() {
+fn dry_run_text_default_page_bounds_bare_list_root() {
     let s = test_session();
     let plan = serde_json::json!({
         "version": 1,
@@ -868,11 +868,15 @@ fn dry_run_text_includes_review_for_unbounded_list_root() {
     });
     let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
     let text = render_plasm_plan_dry_text(&dry, None);
-    assert!(text.contains("plan review"), "{text}");
-    assert!(text.contains("warn:"), "{text}");
-    assert!(text.contains("unbounded read"), "{text}");
-    assert!(text.contains("project list reads"), "{text}");
-    assert!(dry.review.has_unbounded_read_root, "{:?}", dry.review);
+    assert!(
+        !dry.review.has_unbounded_read_root,
+        "default host page bounds bare query roots: {:?}",
+        dry.review
+    );
+    assert!(
+        !text.contains("unbounded read"),
+        "default page should avoid unbounded warning: {text}"
+    );
 }
 
 #[test]

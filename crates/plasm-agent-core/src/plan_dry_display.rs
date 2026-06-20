@@ -705,8 +705,10 @@ fn surface_read_list_root_unbounded(s: &ValidatedSurfaceNode) -> bool {
         && s.effect_class == EffectClass::Read
         && s.depends_on.is_empty()
         && s.page_size.is_none()
+        && s.pushed_read_budget.is_none()
         && s.kind != PlanNodeKind::Search
         && s.predicates.is_empty()
+        && crate::plan_read_bounds::effective_host_page_size(s).is_none()
 }
 
 fn return_roots_include_unbounded_list_surface(plan: &Plan<ValidatedPlanState>) -> bool {

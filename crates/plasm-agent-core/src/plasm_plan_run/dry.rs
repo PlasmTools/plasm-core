@@ -396,7 +396,7 @@ pub(crate) fn graph_summary(
     }
     if has_paginated_list_fetch_all_default {
         boundedness_facts.push(
-            "Paginated list reads consume all API pages by default (runtime page cap); use .limit(n) or .page_size(n) to bound."
+            "Paginated list reads without `.page_size(n)` use the default host page; continue with `page(...)` when more rows exist."
                 .to_string(),
         );
     }

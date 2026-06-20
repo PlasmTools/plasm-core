@@ -8,4 +8,4 @@ expression: "super::mcp_plasm_run_tool_description()"
 
 **Live execute:** server spawns one async operation and awaits terminal rows in the tool response. Progress uses standard `notifications/plasm/op` on the registered handle.
 
-**Live results:** `## {return_label} ({n} rows)` + TSV/table; multi-return programs use `# Results` with `### {label} ({n} rows)` per root. Truncated rows: `_meta.plasm.steps` + MCP **`resources/read`** on snapshot URIs — required before concluding fields are absent.
+**Live results:** `## {return_label} ({n} rows)` + TSV/table; multi-return programs use `# Results` with `### {label} ({n} rows)` per root. Unbounded list reads return the first page in-band; when more rows exist, continue with `page(l_<token>_pgN)` from the tool result or `_meta.plasm.paging`. MCP **`resources/read`** / Run Explorer are supplemental when your host exposes them — not the required model continuation path.

@@ -213,6 +213,15 @@ fn surface_is_read_bounded(surface: &ValidatedSurfaceNode) -> bool {
     if !surface.predicates.is_empty() {
         return true;
     }
+    if surface.effect_class == crate::plasm_plan::EffectClass::Read
+        && matches!(
+            surface.result_shape,
+            crate::plasm_plan::ResultShape::List | crate::plasm_plan::ResultShape::Page
+        )
+        && matches!(surface.kind, PlanNodeKind::Query | PlanNodeKind::Search)
+    {
+        return true;
+    }
     false
 }
 
@@ -670,7 +679,7 @@ mod tests {
     }
 
     #[test]
-    fn unbounded_query_still_expensive_after_prepare() {
+    fn unbounded_query_gets_default_host_page_after_prepare() {
         let plan = serde_json::json!({
             "version": 1,
             "kind": "program",
@@ -690,7 +699,18 @@ mod tests {
             crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate");
         apply_read_budgets(&mut validated);
         let bounded = analyze_read_boundedness(validated.artifact());
-        assert!(bounded.execution_is_expensive());
+        assert!(
+            !bounded.execution_is_expensive(),
+            "default host page should bound bare query returns: {bounded:?}"
+        );
+        let surface = match &validated.nodes()[0] {
+            ValidatedPlanNode::Surface(s) => s,
+            _ => panic!("expected surface"),
+        };
+        assert_eq!(
+            effective_host_page_size(surface),
+            Some(crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE)
+        );
     }
 
     #[test]
@@ -807,7 +827,7 @@ mod tests {
             dry_unbounded.review.execution_is_expensive(),
             analyze_read_boundedness(dry_unbounded.validated_plan()).execution_is_expensive(),
         );
-        assert!(dry_unbounded.review.execution_is_expensive());
+        assert!(!dry_unbounded.review.execution_is_expensive());
     }
 
     fn project_compute_json(source: &str, id: &str) -> serde_json::Value {
@@ -880,7 +900,7 @@ mod tests {
     }
 
     #[test]
-    fn dry_review_unbounded_list_all_needs_review() {
+    fn dry_review_default_page_bounds_bare_list_query() {
         use crate::plan_dry_display::{build_plan_dry_compact_view, PlanDryVerdict};
 
         let s = test_session(vec!["Product"]);
@@ -907,13 +927,14 @@ mod tests {
             &dry.graph_summary,
             Some(&s),
         );
-        assert_eq!(compact.verdict, PlanDryVerdict::Review);
+        assert_eq!(compact.verdict, PlanDryVerdict::Ok);
         assert!(
-            compact
-                .warnings
-                .as_deref()
-                .is_some_and(|w| w.contains("unbounded")),
-            "warnings: {:?}",
+            compact.warnings.is_none()
+                || !compact
+                    .warnings
+                    .as_deref()
+                    .is_some_and(|w| w.contains("unbounded")),
+            "default host page should avoid unbounded warning: {:?}",
             compact.warnings
         );
     }

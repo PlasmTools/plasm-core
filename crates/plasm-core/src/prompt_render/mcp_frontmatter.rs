@@ -187,13 +187,20 @@ pub(crate) fn prompt_contract_spec_minimal_for_test() -> PromptContractSpec {
 
 const ROW_POSTFIX_OPS_BULLET: &str = "- Postfix on row producers: `.limit(N)` | `.page_size(N)` | `.sort(field[, dir])` | `.filter{…}` | `.filter(…)` | `.aggregate(specs)` | `.group_by(field, specs)` | `.dedupe(field[, …])` | `.distinct(field[, …])` | `.distinct()` | `.singleton()` | `[fields]`.\n";
 
+const ROW_POSTFIX_OPS_BULLET_SYMBOLIC: &str = "- Postfix on row producers: `.limit(N)` | `.page_size(N)` | `.sort(p#, desc)` / `.sort(p#,dir)` | `.filter{…}` | `.filter(…)` | `.aggregate(specs)` | `.group_by(p#, specs)` | `.dedupe(p#[, …])` | `.distinct(p#[, …])` | `.distinct()` | `.singleton()` | `[p#,…]`. Row postfix fields use teaching `rows:` `p#` symbols; wire field names are sugar.\n";
+
 fn render_core_surface_bullets(spec: &PromptContractSpec, projection: &str) -> String {
     let mut s = String::new();
     s.push_str("Core surface:\n");
     s.push_str(
         "- Program shape: one `plasm_expr`, or `label = …` bindings then comma-separated final roots (no `return`).\n",
     );
-    s.push_str(ROW_POSTFIX_OPS_BULLET);
+    if spec.symbolic {
+        s.push_str(ROW_POSTFIX_OPS_BULLET_SYMBOLIC);
+        s.push_str("- Large list reads return the first page in `plasm_run`; continue with `page(l_<token>_pgN)` from the tool result — not `resources/read`.\n");
+    } else {
+        s.push_str(ROW_POSTFIX_OPS_BULLET);
+    }
     s.push_str("- Run gate: pass `pcN` from a prior dry-run to `plasm_run`; MCP `plasm_run` does not accept program continuations.\n");
     if spec.symbolic {
         s.push_str(

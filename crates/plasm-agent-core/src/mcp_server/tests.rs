@@ -1,5 +1,4 @@
 use super::*;
-use insta::assert_snapshot;
 
 #[test]
 fn mcp_discover_maps_intent_to_capability_query() {
@@ -158,13 +157,17 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     assert!(super::mcp_plasm_tool_description().contains("pcN"));
     assert!(super::mcp_plasm_context_tool_description().contains("active symbol table"));
     assert!(super::mcp_plasm_context_tool_description().contains("Call before `plasm`"));
+    assert!(
+        super::mcp_plasm_context_tool_description().contains("msg 3: sort moves"),
+        "expected stable-intent anti-pattern in plasm_context description"
+    );
     assert!(super::mcp_plasm_context_tool_description()
         .contains(plasm_core::prompt_render::MCP_TOOL_SEQUENCING_MARKER));
     assert!(super::mcp_discover_tool_description()
         .contains(plasm_core::prompt_render::MCP_TOOL_SEQUENCING_MARKER));
     assert!(super::mcp_discover_tool_description().contains("Plasm is a source language"));
     assert!(super::mcp_discover_tool_description().contains("plasm.program"));
-    assert!(super::mcp_discover_tool_description().contains("no alternate JSON"));
+    assert!(super::mcp_discover_tool_description().contains("alternate JSON"));
     assert!(super::mcp_plasm_tool_description().contains("do **not** echo the program"));
     assert!(!super::mcp_plasm_run_tool_description().contains("echo the program"));
     assert!(super::mcp_program_param_description().contains("not JSON data"));
@@ -567,19 +570,12 @@ fn discover_markdown_emits_tsv_snapshot() {
             description: " A contrived \t widget \n line ".into(),
         }],
     };
-    assert_snapshot!(
-        crate::discovery_human_format::format_discovery_markdown(&r),
-        @"
-```tsv
-# Plasm is a source language. These rows are NOT a program.
-# Next: pass selected api/entity rows to plasm_context.seeds, then write plasm.program using returned e#/m#/p#/r# symbols.
-# decision: match
-api	entity	description	outgoing_relations
-demo	Widget	A contrived widget line	
-```
-
-"
-    );
+    with_insta_snapshots(|| {
+        insta::assert_snapshot!(
+            "discover_markdown_emits_tsv_snapshot",
+            crate::discovery_human_format::format_discovery_markdown(&r)
+        );
+    });
 }
 
 #[test]

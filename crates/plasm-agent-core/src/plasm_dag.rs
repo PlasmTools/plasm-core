@@ -761,6 +761,9 @@ fn resolve_immediate_compute_schema(
 }
 
 fn validate_compute_paths_for_schema(
+    session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    qe: Option<&QualifiedEntityKey>,
     schema: &SyntheticResultSchema,
     paths: &[FieldPath],
     op_label: &str,
@@ -771,13 +774,22 @@ fn validate_compute_paths_for_schema(
         .map(|f| f.name.as_str().to_string())
         .collect();
     for path in paths {
-        let dotted = path.dotted();
-        if allowed.contains(&dotted) {
+        let wire = if path.segments().len() == 1 {
+            crate::plasm_plan_run::resolve_wire_field_token(
+                session,
+                symbol_map_cross_cache,
+                qe,
+                path.segments()[0].as_str(),
+            )
+        } else {
+            path.dotted()
+        };
+        if allowed.contains(&wire) {
             continue;
         }
         let cols: Vec<&str> = allowed.iter().map(String::as_str).collect();
         return Err(format!(
-            "Plasm program {op_label}: field path `{dotted}` is not a row field of the upstream compute output (columns: {}). Use aggregate output names such as `n` after `group_by`.",
+            "Plasm program {op_label}: field path `{wire}` is not a row field of the upstream compute output (row fields: {}). Use `p#` symbols from the teaching `rows:` column, or wire field names as sugar — for example after `group_by`, use aggregate output names such as `n`.",
             cols.join(", ")
         ));
     }
@@ -800,7 +812,15 @@ fn validate_compute_paths_for_dag_source(
 ) -> Result<(), String> {
     if let Some(schema) = resolve_immediate_compute_schema(state, staged, source_id) {
         if !is_opaque_passthrough_compute_schema(&schema) {
-            return validate_compute_paths_for_schema(&schema, paths, op_label);
+            let qe = resolve_qualified_entity_for_dag_source(state, staged, source_id.to_string());
+            return validate_compute_paths_for_schema(
+                session,
+                state.cross_cache,
+                qe.as_ref(),
+                &schema,
+                paths,
+                op_label,
+            );
         }
     }
     if let Some(surface) = resolve_surface_dag_node(state, staged, source_id.to_string()) {
@@ -858,7 +878,7 @@ fn row_contract_field_error(
         }
     }
     format!(
-        "Plasm program {op_label}: field path `{}` is not a row field of the upstream capability output for entity `{}` (catalog entry `{}`); projected columns: {}.{hint}",
+        "Plasm program {op_label}: field path `{}` is not a row field of the upstream capability output for entity `{}` (catalog entry `{}`); row fields: {}. Use `p#` symbols from the teaching `rows:` column, or wire field names as sugar.{hint}",
         path.dotted(),
         qe.entity,
         qe.entry_id,
@@ -1199,21 +1219,16 @@ fn postfix_op_to_compute(
             Ok(mk(ComputeOp::Filter { predicates }, schema, false))
         }
         PlasmPostfixOp::Sort { args } => {
-            let parts = split_top_level(args, ',')?;
-            let key = parts
-                .first()
-                .ok_or_else(|| "sort(...) requires a field".to_string())?
-                .trim();
+            let (key, descending) = parse_sort_field_and_direction(args)?;
             if key.is_empty() {
                 return Err("sort(...) requires a non-empty field".into());
             }
-            let descending = parse_sort_direction(&parts)?;
             let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
             let key_fp = resolve_compute_field_path(
                 session,
                 state.cross_cache,
                 qe.as_ref(),
-                &FieldPath::from_dotted(key)?,
+                &FieldPath::from_dotted(&key)?,
             )?;
             validate_compute_paths_for_dag_source(
                 session,
@@ -3228,24 +3243,52 @@ fn parse_aggregates(args: &str) -> Result<Vec<crate::plasm_plan::AggregateSpec>,
         .collect()
 }
 
-fn parse_sort_direction(parts: &[&str]) -> Result<bool, String> {
+fn parse_sort_direction_token(direction: &str) -> Result<bool, String> {
+    let d = direction.trim();
+    if d.is_empty() {
+        return Err("sort(...) direction must not be empty when a comma is present".to_string());
+    }
+    match d.to_ascii_lowercase().as_str() {
+        "desc" | "descending" => Ok(true),
+        "asc" | "ascending" => Ok(false),
+        other => Err(format!(
+            "sort(...) unknown direction `{other}`; use `desc` / `descending` for descending, omit the direction or use `asc` / `ascending` for ascending"
+        )),
+    }
+}
+
+/// Parse `.sort(...)` args: `field`, `field, desc`, or whitespace sugar `field desc`.
+fn parse_sort_field_and_direction(args: &str) -> Result<(String, bool), String> {
+    let trimmed = args.trim();
+    if trimmed.is_empty() {
+        return Err("sort(...) requires a field".to_string());
+    }
+    let parts = split_top_level(trimmed, ',')?;
     match parts.len() {
         0 => Err("sort(...) requires a field".to_string()),
-        1 => Ok(false),
+        1 => {
+            let single = parts[0].trim();
+            if single.is_empty() {
+                return Err("sort(...) requires a non-empty field".to_string());
+            }
+            if let Some((field, dir)) = single.rsplit_once(|c: char| c.is_ascii_whitespace()) {
+                let field = field.trim();
+                let dir = dir.trim();
+                if !field.is_empty() && !dir.is_empty() {
+                    if let Ok(descending) = parse_sort_direction_token(dir) {
+                        return Ok((field.to_string(), descending));
+                    }
+                }
+            }
+            Ok((single.to_string(), false))
+        }
         2 => {
-            let d = parts[1].trim();
-            if d.is_empty() {
-                return Err(
-                    "sort(...) direction must not be empty when a comma is present".to_string(),
-                );
+            let key = parts[0].trim();
+            if key.is_empty() {
+                return Err("sort(...) requires a non-empty field".to_string());
             }
-            match d.to_ascii_lowercase().as_str() {
-                "desc" | "descending" => Ok(true),
-                "asc" | "ascending" => Ok(false),
-                other => Err(format!(
-                    "sort(...) unknown direction `{other}`; use `desc` / `descending` for descending, omit the direction or use `asc` / `ascending` for ascending"
-                )),
-            }
+            let descending = parse_sort_direction_token(parts[1].trim())?;
+            Ok((key.to_string(), descending))
         }
         _ => {
             Err("sort(...) expects at most `.sort(field)` or `.sort(field, direction)`".to_string())
@@ -3740,8 +3783,12 @@ bad"#,
             "{err}"
         );
         assert!(
-            err.contains("projected columns") || err.contains(" rows: "),
+            err.contains("row fields") || err.contains(" rows: "),
             "{err}"
+        );
+        assert!(
+            !err.contains("projected columns"),
+            "diagnostic must not steer agents toward wire column names: {err}"
         );
     }
 
@@ -4972,6 +5019,115 @@ paged"#;
         assert_eq!(op["kind"], "sort");
         assert_eq!(op["key"], json!(["message"]));
         assert_eq!(op["descending"], true);
+    }
+
+    #[test]
+    fn dag_postfix_sort_whitespace_direction_expands_domain_field_symbol() {
+        let session = github_repository_commit_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let p_msg = map.ident_sym_entity_field("Commit", "message");
+        let source = format!(
+            "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(3)\nordered = commits.sort({p_msg} desc)\nordered"
+        );
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "github-domain-sort-whitespace",
+            &source,
+        )
+        .expect("compile");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let sort_node = nodes
+            .iter()
+            .find(|n| n["id"] == "ordered")
+            .expect("sort node");
+        let op = &sort_node["compute"]["op"];
+        assert_eq!(op["kind"], "sort");
+        assert_eq!(op["key"], json!(["message"]));
+        assert_eq!(op["descending"], true);
+    }
+
+    #[test]
+    fn dag_postfix_sort_on_projected_binding_accepts_p_symbol() {
+        let session = test_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let p_id = map.ident_sym_entity_field("LangItem", "id");
+        let p_score = map.ident_sym_entity_field("LangItem", "score");
+        let source = format!(
+            "rows = LangItem.limit(5)\nnarrow = rows[{p_id},{p_score}]\nordered = narrow.sort({p_score} desc)\nordered"
+        );
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "matrix-projected-sort",
+            &source,
+        )
+        .expect("compile");
+        let sort_node = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "ordered")
+            .expect("sort node");
+        let op = &sort_node["compute"]["op"];
+        assert_eq!(op["kind"], "sort");
+        assert_eq!(op["key"], json!(["score"]));
+        assert_eq!(op["descending"], true);
+    }
+
+    #[test]
+    fn dag_postfix_group_by_filter_dedupe_accept_p_symbols() {
+        let session = test_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let p_owner = map.ident_sym_entity_field("LangItem", "owner");
+        let p_score = map.ident_sym_entity_field("LangItem", "score");
+        let p_id = map.ident_sym_entity_field("LangItem", "id");
+        for (name, source) in [
+            (
+                "group_by",
+                format!("rows = LangItem.limit(5)\nout = rows.group_by({p_owner})\nout"),
+            ),
+            (
+                "filter",
+                format!("rows = LangItem.limit(5)\nout = rows.filter{{{p_score}>0}}\nout"),
+            ),
+            (
+                "dedupe",
+                format!("rows = LangItem.limit(5)\nout = rows.dedupe({p_id})\nout"),
+            ),
+        ] {
+            compile_plasm_dag_to_plan(
+                &PromptPipelineConfig::default(),
+                None,
+                &session,
+                name,
+                &source,
+            )
+            .unwrap_or_else(|e| panic!("{name} should accept p# symbols: {e}"));
+        }
+    }
+
+    #[test]
+    fn sort_field_error_recommends_p_symbols_not_projected_columns() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "sort-bad-field",
+            "rows = LangItem.limit(2)\nrows.sort(not_a_field desc)\nrows",
+        )
+        .expect_err("unknown sort field");
+        assert!(
+            err.contains("p#") || err.contains("rows:"),
+            "expected p# guidance, got: {err}"
+        );
+        assert!(
+            !err.contains("projected columns"),
+            "must not steer to wire column names: {err}"
+        );
     }
 
     #[test]

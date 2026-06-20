@@ -7,7 +7,7 @@ pub const MCP_TOOL_SEQUENCING_MARKER: &str =
     "Tool order: optional `discover_capabilities` → `plasm_context` → `plasm` (dry-run) → `plasm_run` (live).";
 
 /// MCP initialize workflow + tool-description session line.
-pub const SESSION_DISCIPLINE_MCP: &str = "**One goal → one stable `intent` → one `logical_session_ref`.** No new `intent` per API or message. Multi-API: one **`seeds`** array on the same intent.";
+pub const SESSION_DISCIPLINE_MCP: &str = "**One goal → one stable `intent` → one `logical_session_ref`.** Stable = same `intent` string on every turn for that goal (not per message/API). Bad: `intent: \"msg 3: sort moves\"` each turn — breaks reuse and fragments `e#`/`p#`. Multi-API: one **`seeds`** array on the same intent.";
 
 /// `plasm` program-contract header plus `plasm_run` review-gate note (MCP initialize).
 pub const SESSION_DISCIPLINE_PROGRAM: &str = "**Session:** one goal → one **`intent`** → one **`logical_session_ref`**; use **`e#`/`m#`/`p#`/`r#` from this session's teaching TSV only** (contract examples are shapes; substitute from your table).";
@@ -78,7 +78,7 @@ pub fn render_plasm_mcp_initialize_workflow_head() -> String {
 
 /// Initialize / rollup tail: plan-only, run gate, snapshots.
 pub fn render_plasm_mcp_initialize_workflow_tail() -> String {
-    "     **`plasm`** is plan-only (no live HTTP). One `program` per call; bare comma-separated roots (no `return`). Pass returned **`plan_commit_ref`** (`pcN`) to **`plasm_run`** only — do not re-send the program on live execute.\n     **`plasm_run`**: **`logical_session_ref`** + **`plan_commit_ref`** only; live execute the stored reviewed plan; may return snapshots.\n     **Snapshots:** `(in artifact)` / **`resource_link`** / `_meta.plasm.steps` → **`resources/read`** required before concluding data is missing."
+    "     **`plasm`** is plan-only (no live HTTP). One `program` per call; bare comma-separated roots (no `return`). Pass returned **`plan_commit_ref`** (`pcN`) to **`plasm_run`** only — do not re-send the program on live execute.\n     **`plasm_run`**: **`logical_session_ref`** + **`plan_commit_ref`** only; live execute the stored reviewed plan. Large list reads return the first page in-band; continue with `page(l_<token>_pgN)` when more rows exist.\n     **Snapshots:** `(in artifact)` / **`resource_link`** / `_meta.plasm.steps` are supplemental; use in-band rows + paging first. **`resources/read`** only when your MCP host exposes it."
         .to_string()
 }
 
@@ -101,6 +101,6 @@ pub fn render_plasm_mcp_context_tool_workflow_lines() -> String {
 
 /// Operational tail for the `plasm_run` tool description (live execute + snapshots).
 pub fn render_plasm_mcp_run_tool_operational_tail() -> String {
-    "**Review gate:** `plasm_run` executes exactly the reviewed plan stored under the **`plan_commit_ref`**. If the token is missing, expired, or from another plan, call **`plasm`** again.\n\n**Live execute:** server spawns one async operation and awaits terminal rows in the tool response. Progress uses standard `notifications/plasm/op` on the registered handle.\n\n**Live results:** `## {return_label} ({n} rows)` + TSV/table; multi-return programs use `# Results` with `### {label} ({n} rows)` per root. Truncated rows: `_meta.plasm.steps` + MCP **`resources/read`** on snapshot URIs — required before concluding fields are absent."
+    "**Review gate:** `plasm_run` executes exactly the reviewed plan stored under the **`plan_commit_ref`**. If the token is missing, expired, or from another plan, call **`plasm`** again.\n\n**Live execute:** server spawns one async operation and awaits terminal rows in the tool response. Progress uses standard `notifications/plasm/op` on the registered handle.\n\n**Live results:** `## {return_label} ({n} rows)` + TSV/table; multi-return programs use `# Results` with `### {label} ({n} rows)` per root. Unbounded list reads return the first page in-band; when more rows exist, continue with `page(l_<token>_pgN)` from the tool result or `_meta.plasm.paging`. MCP **`resources/read`** / Run Explorer are supplemental when your host exposes them — not the required model continuation path."
         .to_string()
 }
