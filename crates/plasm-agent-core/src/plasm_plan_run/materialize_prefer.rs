@@ -30,8 +30,11 @@ pub(crate) async fn materialize_prefer_from_parent_get_relation(
     let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
     let rel_name = relation.relation.relation.as_str();
     let target_entity = relation.relation.target.entity.as_str();
-    let source_cgs =
-        crate::catalog_ownership::resolve_cgs_for_entity(es, source_mat.entity.as_str(), None)?;
+    let source_cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
+        es,
+        source_mat.entry_id.as_str(),
+        source_mat.entity.as_str(),
+    )?;
     let rel_schema = source_cgs
         .get_entity(source_mat.entity.as_str())
         .ok_or_else(|| format!("unknown source entity `{}`", source_mat.entity))?

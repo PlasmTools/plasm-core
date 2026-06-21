@@ -302,14 +302,17 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
     source_rows: &[serde_json::Value],
     trace: Option<&PlasmTraceContext>,
 ) -> Result<Option<MaterializedNode>, String> {
-    let cgs = match crate::catalog_ownership::resolve_cgs_for_entity(
+    let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
         es,
+        source_mat.entry_id.as_str(),
         source_mat.entity.as_str(),
-        None,
-    ) {
-        Ok(cgs) => cgs,
-        Err(_) => return Ok(None),
-    };
+    )
+    .map_err(|e| {
+        format!(
+            "relation `{}` FromParentGet source catalog: {e}",
+            relation.relation.relation
+        )
+    })?;
     let ent = cgs
         .get_entity(source_mat.entity.as_str())
         .ok_or_else(|| format!("unknown source entity `{}`", source_mat.entity))?;

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.49] - 2026-06-21
+
+### Fixed
+
+- **Federated FromParentGet materialize:** `try_materialize_from_parent_get_relation` and `materialize_prefer_from_parent_get_relation` resolve source CGS via stamped `(entry_id, entity)` (`resolve_cgs_for_entry_entity`) instead of ambiguous `resolve_cgs_for_entity(..., None)` — fixes live `parent.r2` / linear `Issue.children` after v0.3.48 TC/DAG hardening.
+
+### Added
+
+- **Test:** `resolve_cgs_for_entry_entity_federated_homonym` in `catalog_ownership`.
+
 ## [0.3.48] - 2026-06-21
 
 ### Fixed

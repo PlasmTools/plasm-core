@@ -68,6 +68,28 @@ pub(crate) fn resolve_cgs_for_entity<'a>(
         })
 }
 
+/// Resolve CGS for a plan/materialized node that already stamps catalog ownership.
+pub(crate) fn resolve_cgs_for_entry_entity<'a>(
+    session: &'a ExecuteSession,
+    entry_id: &str,
+    entity: &str,
+) -> Result<&'a CGS, String> {
+    if let Some(ctx) = session.contexts_by_entry.get(entry_id) {
+        if ctx.cgs.entities.contains_key(entity) {
+            return Ok(ctx.cgs.as_ref());
+        }
+    }
+    if session.contexts_by_entry.len() <= 1
+        && session.entry_id == entry_id
+        && session.cgs.entities.contains_key(entity)
+    {
+        return Ok(session.cgs.as_ref());
+    }
+    Err(format!(
+        "entity `{entity}` is not present under catalog `{entry_id}` in this session"
+    ))
+}
+
 /// Re-export for in-crate callers that already import `catalog_ownership`.
 pub(crate) use crate::http_backend::plan_http_origin;
 
@@ -180,6 +202,23 @@ mod tests {
         let session = session_with_contexts("solo", cgs, vec![], None);
         let got = resolve_cgs_for_entity(&session, "LangItem", None).expect("ok");
         assert!(got.entities.contains_key("LangItem"));
+    }
+
+    #[test]
+    fn resolve_cgs_for_entry_entity_federated_homonym() {
+        let cgs = matrix_cgs();
+        let mut exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+        let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
+        exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
+        let session = session_with_contexts(
+            "github",
+            cgs.clone(),
+            vec![("linear", cgs.clone())],
+            Some(exp),
+        );
+        assert!(resolve_cgs_for_entity(&session, "LangItem", None).is_err());
+        assert!(resolve_cgs_for_entry_entity(&session, "linear", "LangItem").is_ok());
+        assert!(resolve_cgs_for_entry_entity(&session, "github", "LangItem").is_ok());
     }
 
     #[test]
