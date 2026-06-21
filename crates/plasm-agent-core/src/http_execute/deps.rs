@@ -24,7 +24,7 @@ pub(crate) use plasm_core::{
 };
 pub(crate) use plasm_runtime::{
     auth_resolution_mode_from_env, entity_to_agent_row_json, validate_principal_for_mode,
-    AuthResolutionMode, AuthResolver, CompileOperationFn, CompileQueryFn, ExecuteOptions,
+    AuthResolutionMode, AuthResolver, ExecuteOptions,
     ExecuteSessionMaterial, ExecutionResult, ExecutionSource, ExecutionStats,
     QueryPaginationResumeData, RuntimeError,
 };

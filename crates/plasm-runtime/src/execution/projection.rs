@@ -29,7 +29,6 @@ impl ExecutionEngine {
     ) -> Result<Vec<CachedEntity>, RuntimeError> {
         let base = self.resolve_http_base_from_opts(&opts);
         let auth_override = opts.auth_resolver_override.clone();
-        let plugin_hooks = PluginCompileHooks::snapshot_from_execute_options(&opts);
         let fp_sink = opts.request_fingerprint_sink.clone();
         let federation = opts.federation.clone();
         let execute_session = opts.execute_session.clone();
@@ -38,7 +37,6 @@ impl ExecutionEngine {
         Self::run_in_execute_task_scopes(
             base,
             auth_override,
-            plugin_hooks,
             fp_sink,
             federation,
             execute_session,

@@ -26,6 +26,7 @@ rustc-hash = "2"
 riptoken = "0.3.0"
 rayon = { workspace = true }
 minijinja = { version = "2.19.0", default-features = false, features = ["builtins", "serde"] }
+ciborium = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

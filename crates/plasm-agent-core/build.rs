@@ -36,9 +36,6 @@ fn assert_no_dev_refs(label: &str, body: &str) {
 }
 
 fn main() {
-    let target = std::env::var("TARGET").expect("TARGET must be set by Cargo for build scripts");
-    println!("cargo:rustc-env=PLASM_HOST_TARGET_TRIPLE={target}");
-
     for path in EMBEDDED_UI_ASSETS {
         println!("cargo:rerun-if-changed={path}");
         let body = std::fs::read_to_string(path).unwrap_or_else(|e| {

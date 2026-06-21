@@ -151,7 +151,6 @@ mod tests {
             vec!["Pet".into()],
             None,
             None,
-            None,
             "hash".into(),
             None,
             None,

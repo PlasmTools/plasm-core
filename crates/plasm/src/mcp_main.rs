@@ -41,7 +41,7 @@ pub async fn run_mcp_main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Keep this in sync with Helm `deploy/charts/plasm-mcp/values.yaml` default `args` for the
     // *hosted* image. OSS `plasm-mcp` does not run `--migrate-mcp-config-db` (SaaS / ops tooling).
-    // Unknown flags here make clap drop earlier flags (e.g. `--plugin-dir`) even with `ignore_errors`.
+    // Unknown flags here make clap drop earlier flags (e.g. `--catalog-dir`) even with `ignore_errors`.
     let pre_matches = mcp_host_bootstrap::preparse_mcp_command().get_matches_from(&argv);
 
     if pre_matches.get_flag("migrate_mcp_config_db") {
@@ -80,7 +80,7 @@ pub async fn run_mcp_main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("plasm-mcp: {e}");
             eprintln!("Usage: plasm-mcp --schema <path> [--http] [--mcp] …");
             eprintln!(
-                "   or: plasm-mcp --plugin-dir <dir> --http and/or --mcp (multi-entry plugin catalogs)"
+                "   or: plasm-mcp --catalog-dir <dir> --http and/or --mcp (multi-entry plugin catalogs)"
             );
             std::process::exit(1);
         }
@@ -98,9 +98,9 @@ pub async fn run_mcp_main() -> Result<(), Box<dyn std::error::Error>> {
     let matches = app.get_matches_from(&argv);
 
     if matches.get_one::<String>("schema").is_some()
-        && matches.get_one::<String>("plugin_dir").is_some()
+        && matches.get_one::<String>("catalog_dir").is_some()
     {
-        eprintln!("plasm-mcp: do not combine --schema with --plugin-dir");
+        eprintln!("plasm-mcp: do not combine --schema with --catalog-dir");
         std::process::exit(1);
     }
 

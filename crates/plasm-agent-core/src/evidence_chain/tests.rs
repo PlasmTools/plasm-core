@@ -209,7 +209,6 @@ fn minimal_execute_session() -> ExecuteSession {
         vec!["Product".into(), "Category".into()],
         Some(exp),
         None,
-        None,
         cgs.catalog_cgs_hash_hex(),
         None,
         None,

@@ -219,7 +219,6 @@ mod tests {
             vec!["Pet".into()],
             None,
             None,
-            None,
             cgs.catalog_cgs_hash_hex(),
             None,
             None,
@@ -283,8 +282,7 @@ mod tests {
                 cgs.clone(),
             )])),
             catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
-            plugin_manager: None,
-            incoming_auth: None,
+                        incoming_auth: None,
             run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,
@@ -311,7 +309,6 @@ mod tests {
             context_intent: None,
             ranked_capabilities: None,
             principal: None,
-            plugin_generation_id: None,
             logical_session_id: Some(logical_id.as_uuid().to_string()),
         };
         st.sessions

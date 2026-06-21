@@ -32,8 +32,7 @@ async fn seeded_host_with_running_op() -> (plasm_agent_core::server_state::Plasm
             cgs.clone(),
         )])),
         catalog_bootstrap: CatalogBootstrap::Fixed,
-        plugin_manager: None,
-        incoming_auth: None,
+                incoming_auth: None,
         run_artifacts: Arc::new(plasm_agent_core::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
@@ -53,7 +52,6 @@ async fn seeded_host_with_running_op() -> (plasm_agent_core::server_state::Plasm
         String::new(),
         None,
         vec!["Pet".into()],
-        None,
         None,
         None,
         cgs.catalog_cgs_hash_hex(),
@@ -76,7 +74,6 @@ async fn seeded_host_with_running_op() -> (plasm_agent_core::server_state::Plasm
         context_intent: None,
         ranked_capabilities: None,
         principal: None,
-        plugin_generation_id: None,
         logical_session_id: Some(logical_id.as_uuid().to_string()),
     };
 

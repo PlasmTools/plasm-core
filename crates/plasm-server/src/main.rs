@@ -65,14 +65,14 @@ pub(crate) struct ServeCli {
     /// Override with `--data-dir` or `PLASM_APPLIANCE_DIR` (same path as `install.sh`).
     #[arg(long, value_name = "DIR")]
     data_dir: Option<PathBuf>,
-    /// CGS schema path (exactly one of `--schema` or `--plugin-dir` required unless `--migrate-mcp-config-db`).
+    /// CGS schema path (exactly one of `--schema` or `--catalog-dir` required unless `--migrate-mcp-config-db`).
     ///
-    /// When omitted, uses `{appliance}/plugins` if that directory exists (OSS installer default).
+    /// When omitted, uses `{appliance}/catalogs` when that directory exists.
     #[arg(long, value_name = "PATH", group = "catalog")]
     schema: Option<PathBuf>,
-    /// Packed plugin directory (ABI v4). Defaults to `{appliance}/plugins` when present.
+    /// Compiled catalog artifact directory (CBOR IL + manifests). Defaults to `{appliance}/catalogs`.
     #[arg(long, value_name = "DIR", group = "catalog")]
-    plugin_dir: Option<PathBuf>,
+    catalog_dir: Option<PathBuf>,
     /// TCP listen host (default: `127.0.0.1`, or `0.0.0.0` in Kubernetes; see `PLASM_LISTEN_HOST`).
     #[arg(long, value_name = "HOST")]
     listen_host: Option<String>,
@@ -100,7 +100,7 @@ fn env_str_nonempty(key: &str) -> bool {
 }
 
 const DEFAULT_APPLIANCE_DIR_NAME: &str = ".plasm/appliance";
-const DEFAULT_PLUGINS_DIR_NAME: &str = "plugins";
+const DEFAULT_CATALOGS_DIR_NAME: &str = "catalogs";
 
 /// OSS installer layout: `PLASM_APPLIANCE_DIR` or `~/.plasm/appliance` (see `install.sh`).
 fn default_appliance_root() -> PathBuf {
@@ -120,17 +120,17 @@ fn resolve_appliance_root(cli: &ServeCli) -> PathBuf {
     cli.data_dir.clone().unwrap_or_else(default_appliance_root)
 }
 
-/// Default `--plugin-dir` to `{appliance}/plugins` when the OSS installer laid out plugins there.
+/// Default `--catalog-dir` to `{appliance}/catalogs` when present.
 fn apply_serve_cli_release_defaults(cli: &mut ServeCli) {
     if cli.migrate_mcp_config_db {
         return;
     }
-    if cli.schema.is_some() || cli.plugin_dir.is_some() {
+    if cli.schema.is_some() || cli.catalog_dir.is_some() {
         return;
     }
-    let plugins = resolve_appliance_root(cli).join(DEFAULT_PLUGINS_DIR_NAME);
-    if plugins.is_dir() {
-        cli.plugin_dir = Some(plugins);
+    let catalogs = resolve_appliance_root(cli).join(DEFAULT_CATALOGS_DIR_NAME);
+    if catalogs.is_dir() {
+        cli.catalog_dir = Some(catalogs);
     }
 }
 
@@ -495,17 +495,17 @@ fn validate_serve_catalog(cli: &ServeCli) {
     if cli.migrate_mcp_config_db {
         return;
     }
-    match (&cli.schema, &cli.plugin_dir) {
+    match (&cli.schema, &cli.catalog_dir) {
         (Some(_), None) | (None, Some(_)) => {}
         _ => {
             let root = resolve_appliance_root(cli);
-            let plugins = root.join(DEFAULT_PLUGINS_DIR_NAME);
+            let catalogs = root.join(DEFAULT_CATALOGS_DIR_NAME);
             eprintln!(
-                "plasm-server: pass exactly one of --schema PATH or --plugin-dir DIR (unless --migrate-mcp-config-db)"
+                "plasm-server: pass exactly one of --schema PATH or --catalog-dir DIR (unless --migrate-mcp-config-db)"
             );
             eprintln!(
-                "plasm-server: after install.sh, plugins are usually at {}",
-                plugins.display()
+                "plasm-server: after install.sh, catalogs are usually at {}",
+                catalogs.display()
             );
             std::process::exit(1);
         }
@@ -601,8 +601,8 @@ fn synthesize_inner_argv(cli: &ServeCli) -> Vec<OsString> {
         v.push(OsString::from("--schema"));
         v.push(p.as_os_str().to_owned());
     }
-    if let Some(ref p) = cli.plugin_dir {
-        v.push(OsString::from("--plugin-dir"));
+    if let Some(ref p) = cli.catalog_dir {
+        v.push(OsString::from("--catalog-dir"));
         v.push(p.as_os_str().to_owned());
     }
     if let Some(ref st) = cli.symbol_tuning {
@@ -624,7 +624,7 @@ fn catalog_detail_line(cli: &ServeCli, outcome: &CatalogLoadOutcome) -> String {
     let loc = if cli.schema.is_some() {
         format!("--schema {}", outcome.schema_path)
     } else {
-        format!("--plugin-dir {}", outcome.schema_path)
+        format!("--catalog-dir {}", outcome.schema_path)
     };
     let n = outcome
         .prebuilt_registry
@@ -746,14 +746,14 @@ async fn bootstrap_appliance_core(
         ));
     }
     if mirror_boot_stderr {
-        if let Some(ref pd) = cli.plugin_dir {
+        if let Some(ref pd) = cli.catalog_dir {
             match std::fs::canonicalize(pd) {
                 Ok(abs) => stderr_log::line(format!(
-                    "[plasm-server] --plugin-dir resolves to {}",
+                    "[plasm-server] --catalog-dir resolves to {}",
                     abs.display()
                 )),
                 Err(e) => stderr_log::line(format!(
-                    "[plasm-server] --plugin-dir {:?} does not resolve ({e}); relative paths depend on the current working directory",
+                    "[plasm-server] --catalog-dir {:?} does not resolve ({e}); relative paths depend on the current working directory",
                     pd
                 )),
             }
@@ -1596,7 +1596,7 @@ mod tests {
         let cli = ServeCli {
             data_dir: Some(temp.path().to_path_buf()),
             schema: None,
-            plugin_dir: None,
+            catalog_dir: None,
             listen_host: None,
             port: 3000,
             symbol_tuning: None,

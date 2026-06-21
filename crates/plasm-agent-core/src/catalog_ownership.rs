@@ -120,7 +120,6 @@ mod tests {
             entities,
             exposure,
             None,
-            None,
             primary.catalog_cgs_hash_hex(),
             None,
             None,

@@ -501,9 +501,18 @@ pub fn load_schema(path: &Path) -> Result<CGS, String> {
         })?;
         return assemble_cgs(combined.domain, combined.mappings);
     }
+    if path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.ends_with(".cgs.cbor"))
+    {
+        debug!("load_schema branch: compiled catalog CBOR IL");
+        let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
+        return crate::catalog_il::load_catalog_il_cbor(&bytes);
+    }
     if path.extension().is_some_and(|e| e == "json") {
         Err(format!(
-            "CGS JSON is no longer supported ({}). Use a directory with domain.yaml + mappings.yaml, or a .cgs.yaml / .yaml CGS file.",
+            "CGS JSON is no longer supported ({}). Use a directory with domain.yaml + mappings.yaml, a .cgs.yaml / .yaml CGS file, or a .cgs.cbor compiled catalog.",
             path.display()
         ))
     } else {
@@ -1262,7 +1271,7 @@ mod tests {
         }
     }
 
-    /// Pack embeds CGS via `serde_yaml`; must round-trip (same as `plasm-pack-plugins`).
+    /// Pack embeds CGS via `serde_yaml`; must round-trip (same as `plasm-pack-catalogs`).
     #[test]
     fn test_cgs_serde_yaml_roundtrip_smoke() {
         use crate::schema::CGS;

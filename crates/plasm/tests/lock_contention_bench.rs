@@ -18,7 +18,6 @@ async fn bench_session_get_contention() {
         context_intent: None,
         ranked_capabilities: None,
         principal: None,
-        plugin_generation_id: None,
         logical_session_id: None,
     };
     let mut ctxs = IndexMap::new();
@@ -36,7 +35,6 @@ async fn bench_session_get_contention() {
         String::new(),
         None,
         vec!["Pet".into()],
-        None,
         None,
         None,
         "hash".into(),

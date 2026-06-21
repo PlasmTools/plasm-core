@@ -149,7 +149,6 @@ mod tests {
             vec!["LangItem".into()],
             Some(exp),
             None,
-            None,
             cgs.catalog_cgs_hash_hex(),
             None,
             None,

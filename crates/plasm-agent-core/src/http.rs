@@ -42,7 +42,6 @@ use crate::session_identity::LogicalSessionRegistry;
 use crate::trace_hub::{TraceHubBuilder, TraceHubConfig};
 use crate::trace_sink_emit::{EnvTraceIngestClient, TraceIngestClient};
 use plasm_otel::tower_http_trace_parent_span;
-use plasm_plugin_host::PluginManager;
 use reqwest::Client;
 use std::time::Duration;
 
@@ -59,8 +58,7 @@ pub struct PlasmHostBootstrap {
     pub mode: ExecutionMode,
     pub registry: Arc<InMemoryCgsRegistry>,
     pub catalog_bootstrap: CatalogBootstrap,
-    pub plugin_manager: Option<Arc<PluginManager>>,
-    pub incoming_auth: Option<Arc<IncomingAuthVerifier>>,
+        pub incoming_auth: Option<Arc<IncomingAuthVerifier>>,
     pub run_artifacts: Arc<RunArtifactStore>,
     pub session_graph_persistence: Option<Arc<SessionGraphPersistence>>,
     /// When true, [`LocalTraceArchive::from_env_or_oss_default`] uses `~/.plasm/local` if `PLASM_TRACE_ARCHIVE_DIR` is unset.
@@ -74,8 +72,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
         mode,
         registry,
         catalog_bootstrap,
-        plugin_manager,
-        incoming_auth,
+                incoming_auth,
         run_artifacts,
         session_graph_persistence,
         oss_local_filesystem_defaults,
@@ -123,8 +120,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             execute_session_registry: ExecuteSessionRegistry::new_in_memory(),
             run_artifacts,
             session_graph_persistence,
-            plugin_manager,
-            incoming_auth,
+                        incoming_auth,
             incoming_auth_device: Arc::new(crate::incoming_auth_device::IncomingAuthDeviceStore),
             trace_hub,
             op_progress_hub,

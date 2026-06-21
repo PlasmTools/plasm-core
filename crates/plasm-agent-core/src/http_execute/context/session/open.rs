@@ -59,11 +59,6 @@ pub(crate) async fn execute_session_create_response_inner(
     let http_backend = materialized.http_backend;
     let catalog_cgs_hash = effective_cgs.effective_catalog_cgs_hash_hex();
 
-    let plugin_generation = st
-        .plugin_manager
-        .as_ref()
-        .and_then(|m| m.current_generation());
-    let plugin_generation_id = plugin_generation.as_ref().map(|g| g.id);
 
     let scope = tenant_scope(principal);
     let subj = principal.map(|p| p.subject.clone()).unwrap_or_default();
@@ -83,7 +78,6 @@ pub(crate) async fn execute_session_create_response_inner(
         context_intent: domain_filter_intent.clone(),
         ranked_capabilities: ranked_for_domain.clone(),
         principal: principal_stored.clone(),
-        plugin_generation_id,
         logical_session_id: body.logical_session_id.map(|u| u.hyphenated().to_string()),
     };
 
@@ -197,7 +191,6 @@ pub(crate) async fn execute_session_create_response_inner(
         names.clone(),
         Some(teaching_exposure),
         principal_stored.clone(),
-        plugin_generation,
         catalog_cgs_hash,
         domain_filter_intent,
         ranked_for_domain,

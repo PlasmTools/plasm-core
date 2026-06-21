@@ -5,7 +5,6 @@ use crate::run_artifacts::{persist_execute_run, PersistExecuteRunError, PersistE
 
 use super::ingress::{
     augment_unknown_entity_parse_error, execute_session_parse_error_message,
-    plugin_execute_options_from_session,
 };
 use super::proof_bind::{
     maybe_proof_refresh_session_base_token, try_proof_document_share_bind, ProofBindError,
@@ -301,8 +300,6 @@ pub(crate) async fn run_parsed_plasm_line(
         )
     } else {
         let auth_for_exec = exec_cgs.auth.clone();
-        let (compile_operation_fn, compile_query_fn, plugin_generation_id) =
-            plugin_execute_options_from_session(sess);
         let secret_provider = st.effective_outbound_secret_provider();
         let bound_share = sess.session_share_token.read().await.clone();
         let bound_proof_base_token = sess.session_proof_base_token.read().await.clone();
@@ -331,9 +328,6 @@ pub(crate) async fn run_parsed_plasm_line(
                         .with_session_bearer_override(bound_share.clone()),
                 )
             }),
-            compile_operation_fn,
-            compile_query_fn,
-            plugin_generation_id,
             federation: fed_holder.clone(),
             preflight: Some(preflight_token),
             execute_session: Some(Arc::new(ExecuteSessionMaterial {

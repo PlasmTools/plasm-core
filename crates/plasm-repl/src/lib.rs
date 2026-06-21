@@ -6,7 +6,7 @@ use clap::{Arg, Command};
 use plasm_agent::error::AgentError;
 use plasm_agent::output::OutputFormat;
 use plasm_agent::{
-    backend_normalize, cli_builder, init_agent_runtime, plugin_catalog, AgentCliSurface,
+    backend_normalize, catalog_data, cli_builder, init_agent_runtime, AgentCliSurface,
 };
 use plasm_core::{PromptPipelineConfig, PromptRenderMode};
 use plasm_runtime::{AuthResolver, ExecutionConfig, ExecutionEngine, ExecutionMode};
@@ -28,45 +28,47 @@ pub async fn run_repl_main() -> Result<(), Box<dyn std::error::Error>> {
                 .help("Path to CGS schema file"),
         )
         .arg(
-            Arg::new("plugin_dir")
-                .long("plugin-dir")
+            Arg::new("catalog_dir")
+                .long("catalog-dir")
                 .value_name("DIR")
-                .help("Plugin cdylib directory (ABI v4)"),
+                .help("Compiled catalog artifact directory (CBOR IL + manifests)"),
         )
         .ignore_errors(true);
 
     let pre_matches = pre_cmd.get_matches_from(&argv);
 
-    let plugin_dir = pre_matches.get_one::<String>("plugin_dir");
+    let catalog_dir = pre_matches.get_one::<String>("catalog_dir");
 
-    let (schema_path, cgs) = match pre_matches.get_one::<String>("schema") {
+    let (schema_path, cgs, templates_prevalidated) = match pre_matches.get_one::<String>("schema") {
         Some(path) => {
-            if plugin_dir.is_some() {
-                eprintln!("plasm-repl: do not combine --schema with --plugin-dir");
+            if catalog_dir.is_some() {
+                eprintln!("plasm-repl: do not combine --schema with --catalog-dir");
                 std::process::exit(1);
             }
             let cgs = plasm_core::loader::load_schema(std::path::Path::new(path))
                 .map_err(AgentError::Schema)?;
-            (path.clone(), cgs)
+            (path.clone(), cgs, false)
         }
         None => {
-            if let Some(pd) = plugin_dir {
-                let reg = plugin_catalog::load_registry_from_plugin_dir(std::path::Path::new(pd))
+            if let Some(pd) = catalog_dir {
+                let reg = catalog_data::load_registry_from_catalog_dir(std::path::Path::new(pd))
                     .map_err(AgentError::Schema)?;
                 let arc_cgs = reg.first_cgs().ok_or_else(|| {
-                    AgentError::Schema("plugin-dir catalog has no entries".into())
+                    AgentError::Schema("catalog-dir catalog has no entries".into())
                 })?;
                 let cgs = (*arc_cgs).clone();
-                (pd.clone(), cgs)
+                (pd.clone(), cgs, true)
             } else {
-                eprintln!("plasm-repl: pass --schema <path> or --plugin-dir <dir>");
+                eprintln!("plasm-repl: pass --schema <path> or --catalog-dir <dir>");
                 std::process::exit(1);
             }
         }
     };
 
-    plasm_compile::validate_cgs_capability_templates(&cgs)
-        .map_err(|e| AgentError::Schema(e.to_string()))?;
+    if !templates_prevalidated {
+        plasm_compile::validate_cgs_capability_templates(&cgs)
+            .map_err(|e| AgentError::Schema(e.to_string()))?;
+    }
 
     let app = cli_builder::build_app(&cgs, AgentCliSurface::Repl);
     let matches = app.get_matches_from(&argv);

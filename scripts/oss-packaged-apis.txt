@@ -1,4 +1,4 @@
-# APIs packed into OSS appliance release tarballs (`plasm-pack-plugins --package-list`).
+# APIs packed into OSS appliance release tarballs (`plasm-pack-catalogs --package-list`).
 # One directory name per line under `apis/<name>/`. Canonical for OSS releases — not the SaaS list.
 # SaaS hosted images use monorepo `deploy/saas-packaged-apis.txt` (no Google Workspace).
 

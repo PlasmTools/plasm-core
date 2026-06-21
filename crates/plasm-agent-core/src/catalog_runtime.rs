@@ -1,4 +1,4 @@
-//! Swappable in-process catalog for HTTP/MCP (`--plugin-dir` multi-entry or fixed in-memory registry).
+//! Swappable in-process catalog for HTTP/MCP (`--catalog-dir` multi-entry or fixed in-memory registry).
 //!
 //! ## Snapshot contract
 //!
@@ -21,8 +21,8 @@ use std::sync::Arc;
 /// How the catalog was bootstrapped — drives whether control-plane hot reload is allowed.
 #[derive(Clone, Debug)]
 pub enum CatalogBootstrap {
-    /// Multi-entry catalogs from `--plugin-dir` (ABI v4 cdylibs); [`CatalogRuntime::snapshot`] can be refreshed via reload endpoint.
-    PluginDir { path: PathBuf },
+    /// Multi-entry catalogs from `--catalog-dir` (compiled CBOR IL); [`CatalogRuntime::snapshot`] can be refreshed via reload endpoint.
+    CatalogDir { path: PathBuf },
     /// Not hot-reloadable: `--schema`, synthetic `default` entry, or tests building [`PlasmHostState`](crate::server_state::PlasmHostState) manually.
     Fixed,
 }
@@ -44,7 +44,7 @@ impl CatalogRuntime {
         }
     }
 
-    /// Current catalog snapshot (may change after a successful plugin-dir reload).
+    /// Current catalog snapshot (may change after a successful catalog-dir reload).
     #[inline]
     pub fn snapshot(&self) -> Arc<InMemoryCgsRegistry> {
         self.swap.load_full()
@@ -56,14 +56,14 @@ impl CatalogRuntime {
         self.swap.store(reg);
     }
 
-    /// Increments on each successful `POST /internal/plugin-registry/v1/reload` (first success → 1).
+    /// Increments on each successful `POST /internal/catalog-registry/v1/reload` (first success → 1).
     pub fn bump_reload_generation(&self) -> u64 {
         self.reload_generation.fetch_add(1, Ordering::SeqCst) + 1
     }
 
-    pub fn plugin_dir_path(&self) -> Option<&Path> {
+    pub fn catalog_dir_path(&self) -> Option<&Path> {
         match &self.bootstrap {
-            CatalogBootstrap::PluginDir { path } => Some(path.as_path()),
+            CatalogBootstrap::CatalogDir { path } => Some(path.as_path()),
             CatalogBootstrap::Fixed => None,
         }
     }

@@ -11,7 +11,6 @@ use plasm_core::PagingHandle;
 use plasm_core::PlanCommitRef;
 use plasm_core::TeachingExposureSession;
 use plasm_core::CGS;
-use plasm_plugin_host::LoadedPluginGeneration;
 use plasm_runtime::{
     CachedEntity, GraphCache, MutexGraphCacheSession, QueryPaginationResumeData, ViewAmbientContext,
 };
@@ -268,8 +267,6 @@ pub struct SessionReuseKey {
     pub ranked_capabilities: Option<Vec<String>>,
     /// Set when `PLASM_AUTH_RESOLUTION=delegated` so distinct users do not share a session.
     pub principal: Option<String>,
-    /// Pinned compile-plugin generation when [`ExecuteSession::plugin_generation`] is set.
-    pub plugin_generation_id: Option<u64>,
     /// MCP logical session UUID string (canonical); `None` for HTTP-only execute without a logical id.
     pub logical_session_id: Option<String>,
 }
@@ -438,8 +435,6 @@ pub struct ExecuteSession {
     pub domain_revision: u32,
     /// End-user / tenant id when using delegated credential resolution (`PLASM_AUTH_RESOLUTION=delegated`).
     pub principal: Option<String>,
-    /// Pins [`plasm_plugin_host::LoadedPluginGeneration`] for compile overrides (hot-swap safe).
-    pub plugin_generation: Option<Arc<LoadedPluginGeneration>>,
     /// Canonical digest of the pinned primary CGS at session open (effective, post-overlay).
     pub catalog_cgs_hash: String,
     /// Registry-base `catalog_cgs_hash_hex` per entry at open (before tenant/http/overlay patches).
@@ -493,7 +488,6 @@ impl ExecuteSession {
         entities: Vec<String>,
         teaching_exposure: Option<TeachingExposureSession>,
         principal: Option<String>,
-        plugin_generation: Option<Arc<LoadedPluginGeneration>>,
         catalog_cgs_hash: String,
         context_intent: Option<String>,
         ranked_capabilities: Option<Vec<String>>,
@@ -510,7 +504,6 @@ impl ExecuteSession {
             entities,
             teaching_exposure,
             principal,
-            plugin_generation,
             catalog_cgs_hash,
             context_intent,
             ranked_capabilities,
@@ -531,7 +524,6 @@ impl ExecuteSession {
         entities: Vec<String>,
         teaching_exposure: Option<TeachingExposureSession>,
         principal: Option<String>,
-        plugin_generation: Option<Arc<LoadedPluginGeneration>>,
         catalog_cgs_hash: String,
         context_intent: Option<String>,
         ranked_capabilities: Option<Vec<String>>,
@@ -551,7 +543,6 @@ impl ExecuteSession {
             teaching_exposure,
             domain_revision: 0,
             principal,
-            plugin_generation,
             catalog_cgs_hash,
             registry_catalog_hashes_by_entry: HashMap::new(),
             context_intent,
@@ -1643,7 +1634,7 @@ impl ExecuteSessionStore {
     }
 
     /// Clears process-wide caches derived from loaded [`CGS`](plasm_core::schema::CGS) (symbol-map LRU).
-    /// Call after plugin-dir catalog reload when the API schema set changed so no snapshot from a prior `.so` remains.
+    /// Call after catalog-dir catalog reload when the API schema set changed so no snapshot from a prior `.so` remains.
     pub fn invalidate_cgs_derived_caches(&self) {
         self.symbol_map_cross_cache.clear();
     }
@@ -1875,7 +1866,6 @@ mod tests {
             context_intent: None,
             ranked_capabilities: None,
             principal: None,
-            plugin_generation_id: None,
             logical_session_id: None,
         };
 
@@ -1894,7 +1884,6 @@ mod tests {
             String::new(),
             None,
             vec!["Pet".into(), "Store".into()],
-            None,
             None,
             None,
             cgs.catalog_cgs_hash_hex(),
@@ -1932,7 +1921,6 @@ mod tests {
             vec!["Pet".into()],
             None,
             None,
-            None,
             cgs.catalog_cgs_hash_hex(),
             None,
             None,
@@ -1947,7 +1935,6 @@ mod tests {
             String::new(),
             None,
             vec!["Pet".into()],
-            None,
             None,
             None,
             s1.catalog_cgs_hash.clone(),
@@ -2007,7 +1994,6 @@ mod tests {
             context_intent: None,
             ranked_capabilities: None,
             principal: None,
-            plugin_generation_id: None,
             logical_session_id: None,
         };
         let mut ctxs = IndexMap::new();
@@ -2025,7 +2011,6 @@ mod tests {
             String::new(),
             None,
             vec!["Pet".into()],
-            None,
             None,
             None,
             "hash".into(),
@@ -2078,7 +2063,6 @@ mod tests {
             String::new(),
             None,
             vec!["Pet".into()],
-            None,
             None,
             None,
             cgs.catalog_cgs_hash_hex(),
@@ -2158,7 +2142,6 @@ mod tests {
             vec!["Pet".into()],
             None,
             None,
-            None,
             "hash".into(),
             None,
             None,
@@ -2201,7 +2184,6 @@ mod tests {
             String::new(),
             None,
             vec!["Pet".into()],
-            None,
             None,
             None,
             "hash".into(),
@@ -2257,7 +2239,6 @@ mod tests {
             vec!["Pet".into()],
             None,
             None,
-            None,
             "hash".into(),
             None,
             None,
@@ -2292,7 +2273,6 @@ mod tests {
             String::new(),
             None,
             vec!["Pet".into()],
-            None,
             None,
             None,
             "hash".into(),
@@ -2333,7 +2313,6 @@ mod tests {
             String::new(),
             None,
             vec!["Pet".into()],
-            None,
             None,
             None,
             "hash".into(),

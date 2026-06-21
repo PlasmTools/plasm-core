@@ -6,7 +6,7 @@ use plasm_core::discovery::CgsCatalog;
 
 use crate::server_state::PlasmHostState;
 
-/// Catalog entries from the current registry snapshot (respects plugin-dir reload generation).
+/// Catalog entries from the current registry snapshot (respects catalog-dir reload generation).
 pub fn list_catalog_entries(state: &PlasmHostState) -> Vec<CatalogEntryMeta> {
     state.catalog.snapshot().list_entries()
 }

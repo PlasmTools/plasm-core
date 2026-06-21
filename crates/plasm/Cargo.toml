@@ -2,7 +2,7 @@
 name = "plasm"
 version.workspace = true
 edition.workspace = true
-description = "Open-source `plasm-mcp` / `plasm` (HTTP terminal) / `plasm-pack-plugins` and `plasm_agent` re-exports of plasm-agent-core"
+description = "Open-source `plasm-mcp` / `plasm` (HTTP terminal) / `plasm-pack-catalogs` and `plasm_agent` re-exports of plasm-agent-core"
 readme = "README.md"
 
 [features]
@@ -27,8 +27,8 @@ name = "plasm"
 path = "src/bin/plasm.rs"
 
 [[bin]]
-name = "plasm-pack-plugins"
-path = "src/bin/plasm_pack_plugins.rs"
+name = "plasm-pack-catalogs"
+path = "src/bin/plasm_pack_catalogs.rs"
 
 [dependencies]
 plasm-agent-core = { path = "../plasm-agent-core", default-features = false }
@@ -36,7 +36,6 @@ plasm-core = { path = "../plasm-core" }
 plasm-compile = { path = "../plasm-compile" }
 plasm-runtime = { path = "../plasm-runtime" }
 plasm-trace = { path = "../plasm-trace" }
-plasm-plugin-host = { path = "../plasm-plugin-host" }
 plasm-otel = { path = "../plasm-otel" }
 arc-swap = { workspace = true }
 anyhow = { workspace = true }

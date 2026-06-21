@@ -14,9 +14,6 @@ members = [
     "crates/plasm-repl",
     "crates/plasm-eval",
     "crates/plasm-sdk-transport",
-    "crates/plasm-plugin-abi",
-    "crates/plasm-plugin-host",
-    "crates/plasm-plugin-stub",
     "crates/plasm-trace-sink",
     "crates/plasm-otel",
     "crates/plasm-discovery",
@@ -28,7 +25,7 @@ resolver = "2"
 
 # Single SemVer for the OSS workspace (see monorepo RELEASING.md on PlasmTools/plasm).
 [workspace.package]
-version = "0.3.44"
+version = "0.3.45"
 edition = "2021"
 
 [workspace.dependencies]

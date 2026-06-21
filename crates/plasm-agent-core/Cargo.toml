@@ -27,7 +27,6 @@ plasm-discovery = { path = "../plasm-discovery", default-features = false }
 plasm-compile = { path = "../plasm-compile" }
 plasm-runtime = { path = "../plasm-runtime" }
 plasm-trace = { path = "../plasm-trace" }
-plasm-plugin-host = { path = "../plasm-plugin-host" }
 plasm-observability-contracts = { path = "../plasm-observability-contracts" }
 plasm-otel = { path = "../plasm-otel" }
 fastembed = { workspace = true, optional = true }

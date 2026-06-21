@@ -39,7 +39,7 @@ pub use predicate_compiler::*;
 
 use plasm_core::{CapabilitySchema, QueryExpr, CGS};
 
-/// Canonical compile-plugin hook trait objects (shared by `plasm-runtime` and `plasm-plugin-host`).
+/// Canonical compile hook trait objects (shared by `plasm-runtime`).
 ///
 /// [`CmlEnv`] remains a map of [`plasm_core::value::Value`]. Invoke/create IR may hold structured
 /// [`plasm_core::InvokeInputPayload`] internally; execution lowers that to [`Value`] before building the

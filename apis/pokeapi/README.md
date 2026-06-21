@@ -20,14 +20,14 @@ No API key is required for the public service.
 
 ## HTTP execute (`plasm-mcp --http`)
 
-Multi-entry catalogs: **`just build-plugins`** then **`--plugin-dir target/plasm-plugins`** (each packed plugin corresponds to an `apis/<name>/` tree). PokéAPI’s default HTTP origin is **`http_backend`** in [`domain.yaml`](domain.yaml).
+Multi-entry catalogs: **`just build-catalogs`** then **`--catalog-dir target/plasm-catalogs`** (each packed catalog corresponds to an `apis/<name>/` tree). PokéAPI’s default HTTP origin is **`http_backend`** in [`domain.yaml`](domain.yaml).
 
 `plasm-mcp --http` and `--mcp` require a strong JWT secret for auth-framework initialization (see [AGENTS.md](../../AGENTS.md)). Example:
 
 ```bash
 export PLASM_AUTH_JWT_SECRET='<long random string>'
-just build-plugins
-cargo run -p plasm --bin plasm-mcp -- --plugin-dir target/plasm-plugins --backend http://localhost:1080 \
+just build-catalogs
+cargo run -p plasm --bin plasm-mcp -- --catalog-dir target/plasm-catalogs --backend http://localhost:1080 \
   --http --port 3001 --mcp --mcp-port 3000
 ```
 

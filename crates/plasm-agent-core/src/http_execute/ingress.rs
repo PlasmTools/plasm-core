@@ -56,23 +56,6 @@ pub(crate) fn parse_execute_program_body(
     Ok(program.to_string())
 }
 
-pub(crate) fn plugin_execute_options_from_session(
-    sess: &ExecuteSession,
-) -> (
-    Option<Arc<CompileOperationFn>>,
-    Option<Arc<CompileQueryFn>>,
-    Option<u64>,
-) {
-    let Some(pg) = sess.plugin_generation.as_ref() else {
-        return (None, None, None);
-    };
-    (
-        Some(pg.compile_operation_fn.clone()),
-        Some(pg.compile_query_fn.clone()),
-        Some(pg.id),
-    )
-}
-
 /// Upper bound for valid `e#` indices: number of entities exposed in this session (initial open + expand waves).
 fn session_entity_symbol_upper_bound(sess: &ExecuteSession) -> Option<usize> {
     if let Some(exp) = sess.teaching_exposure.as_ref() {

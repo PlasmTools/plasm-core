@@ -19,7 +19,7 @@ pub struct McpCliRoot {
     pub schema: Option<PathBuf>,
     /// Packed plugin directory (optional metadata for `apis list`).
     #[arg(long, value_name = "DIR", group = "mcp_catalog")]
-    pub plugin_dir: Option<PathBuf>,
+    pub catalog_dir: Option<PathBuf>,
     #[arg(long)]
     pub symbol_tuning: Option<String>,
     #[command(subcommand)]
@@ -301,15 +301,15 @@ fn scope_json(scope: &plasm_agent_core::mcp_config_admin::McpConfigScope) -> ser
 async fn load_optional_registry(
     cli: &McpCliRoot,
 ) -> Result<Option<Arc<InMemoryCgsRegistry>>, Box<dyn std::error::Error + Send + Sync>> {
-    match (&cli.schema, &cli.plugin_dir) {
+    match (&cli.schema, &cli.catalog_dir) {
         (None, None) => Ok(None),
         (Some(_), Some(_)) => {
-            Err("pass at most one of --schema or --plugin-dir for mcp commands".into())
+            Err("pass at most one of --schema or --catalog-dir for mcp commands".into())
         }
-        (schema_path, plugin_dir) => {
+        (schema_path, catalog_dir) => {
             let mut argv = vec![std::ffi::OsString::from("plasm-server-mcp-catalog")];
-            if let Some(pd) = plugin_dir {
-                argv.push(std::ffi::OsString::from("--plugin-dir"));
+            if let Some(pd) = catalog_dir {
+                argv.push(std::ffi::OsString::from("--catalog-dir"));
                 argv.push(pd.clone().into_os_string());
             } else if let Some(sp) = schema_path {
                 argv.push(std::ffi::OsString::from("--schema"));

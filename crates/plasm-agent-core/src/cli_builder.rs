@@ -567,10 +567,10 @@ pub fn build_app(cgs: &CGS, surface: AgentCliSurface) -> Command {
         AgentCliSurface::McpServer => {
             app = app
                 .arg(
-                    Arg::new("plugin_dir")
-                        .long("plugin-dir")
+                    Arg::new("catalog_dir")
+                        .long("catalog-dir")
                         .value_name("DIR")
-                        .help("Load catalogs from self-describing plugin cdylibs in this directory (ABI v4); use with --http/--mcp if omitting --schema"),
+                        .help("Load catalogs from compiled CBOR IL artifacts in this directory; use with --http/--mcp if omitting --schema"),
                 )
                 .arg(
                     Arg::new("http")
@@ -605,21 +605,16 @@ pub fn build_app(cgs: &CGS, surface: AgentCliSurface) -> Command {
                         .value_parser(clap::value_parser!(u16))
                         .help("MCP-only mode: listen port (defaults to --port). With **both** --http and --mcp, must match --port or be omitted"),
                 )
-                .arg(
-                    Arg::new("compile_plugin")
-                        .long("compile-plugin")
-                        .help("Compile plugin cdylib (plasm-plugin-abi); execute sessions pin generation"),
-                )
                 .subcommand_required(false);
             app
         }
         AgentCliSurface::Repl => {
             app = app
                 .arg(
-                    Arg::new("plugin_dir")
-                        .long("plugin-dir")
+                    Arg::new("catalog_dir")
+                        .long("catalog-dir")
                         .value_name("DIR")
-                        .help("Plugin cdylib directory (first entry's CGS when omitting --schema)"),
+                        .help("Catalog CBOR IL directory (first entry's CGS when omitting --schema)"),
                 )
                 .subcommand_required(false);
             app

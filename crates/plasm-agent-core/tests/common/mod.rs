@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use plasm_agent_core::execute_session::ExecuteSession;
+use plasm_agent_core::test_support::session_fixtures::ExecuteSessionFixture;
 use plasm_agent_core::http::{build_plasm_host_state, PlasmHostBootstrap};
 use plasm_agent_core::operation::OpAcceptContext;
 use plasm_agent_core::run_artifacts::RunArtifactStore;
@@ -18,8 +19,7 @@ pub fn minimal_host() -> Arc<PlasmHostState> {
         mode: ExecutionMode::Live,
         registry: Arc::new(InMemoryCgsRegistry::from_pairs(Vec::new())),
         catalog_bootstrap: CatalogBootstrap::Fixed,
-        plugin_manager: None,
-        incoming_auth: None,
+                incoming_auth: None,
         run_artifacts: Arc::new(RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,
@@ -27,23 +27,12 @@ pub fn minimal_host() -> Arc<PlasmHostState> {
 }
 
 pub fn empty_session() -> Arc<ExecuteSession> {
-    Arc::new(ExecuteSession::new(
-        "ph".into(),
-        "p".into(),
-        Arc::new(plasm_core::CGS::new()),
-        indexmap::IndexMap::new(),
-        "default".into(),
-        String::new(),
-        String::new(),
-        None,
-        vec!["Pet".into()],
-        None,
-        None,
-        None,
-        "hash".into(),
-        None,
-        None,
-    ))
+    Arc::new(
+        ExecuteSessionFixture::new()
+            .prompt_hash("ph")
+            .catalog_cgs_hash("hash")
+            .build(Arc::new(plasm_core::CGS::new())),
+    )
 }
 
 pub fn begin_plain_operation(es: &ExecuteSession) -> OperationHandle {

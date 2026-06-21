@@ -6,7 +6,7 @@
 #   PLASM_RELEASE_WORKSPACE_ROOT — monorepo root (default: auto-detect plasm-core vs parent monorepo)
 #
 # Writes (version is the Git release tag, not in filenames):
-#   plasm-appliance-<triple>.tar.gz  (plasm-server + plugins/)
+#   plasm-appliance-<triple>.tar.gz  (plasm-server + catalogs/)
 #   plasm-<triple>.tar.gz            (plasm client)
 #   plasm-cgs-<triple>.tar.gz        (plasm-cgs)
 
@@ -71,14 +71,14 @@ build_binaries() {
     -p plasm-cli --bin plasm-cgs
 }
 
-pack_plugins() {
-  local plugins_dir="${pack_root}/plugins"
-  mkdir -p "${plugins_dir}"
-  cargo build --release -p plasm --bin plasm-pack-plugins
-  cargo run --release -p plasm --bin plasm-pack-plugins -- \
+pack_catalogs() {
+  local catalogs_dir="${pack_root}/catalogs"
+  mkdir -p "${catalogs_dir}"
+  cargo build --release -p plasm --bin plasm-pack-catalogs
+  cargo run --release -p plasm --bin plasm-pack-catalogs -- \
     --workspace "${workspace_root}" \
     --apis-root "${apis_root}" \
-    --output-dir "${plugins_dir}" \
+    --output-dir "${catalogs_dir}" \
     --package-list "${package_list}"
 }
 
@@ -95,8 +95,8 @@ for bin in plasm-server plasm plasm-cgs; do
   fi
 done
 
-echo "oss-release-pack-native: packing plugins for ${triple}…"
-pack_plugins
+echo "oss-release-pack-native: packing catalogs for ${triple}…"
+pack_catalogs
 
 appliance="${pack_root}/appliance"
 client="${pack_root}/client"
@@ -104,8 +104,8 @@ cgs="${pack_root}/cgs"
 mkdir -p "${appliance}" "${client}" "${cgs}"
 
 cp "${release_dir}/plasm-server" "${appliance}/"
-if find "${pack_root}/plugins" -maxdepth 1 \( -name 'libplasm_plugin_*.so' -o -name 'libplasm_plugin_*.dylib' \) 2>/dev/null | grep -q .; then
-  cp -R "${pack_root}/plugins" "${appliance}/plugins"
+if find "${pack_root}/catalogs" -maxdepth 1 -name '*.cgs.cbor' 2>/dev/null | grep -q .; then
+  cp -R "${pack_root}/catalogs" "${appliance}/catalogs"
 fi
 cp "${release_dir}/plasm" "${client}/"
 cp "${release_dir}/plasm-cgs" "${cgs}/"
@@ -118,7 +118,7 @@ cgs_out="${out_dir}/plasm-cgs-${triple}.tar.gz"
 
 tar -czf "${appliance_out}" -C "${appliance}" .
 tar -czf "${client_out}" -C "${client}" plasm
-tar -czf "${cgs_out}" -C "${cgs}" plasm-cgs
+tar -czf "${cgs_out}" -C "${cgs}" plasm-cgs"
 
 echo "oss-release-pack-native: ${appliance_out}"
 echo "oss-release-pack-native: ${client_out}"

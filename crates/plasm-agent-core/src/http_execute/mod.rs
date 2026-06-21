@@ -247,7 +247,6 @@ pub(crate) use context::{
     normalize_context_intent_for_domain_filter,
 };
 pub(crate) use ingress::parse_execute_program_body;
-pub(crate) use ingress::plugin_execute_options_from_session;
 pub(crate) use mcp_publish::{
     publish_plasm_result_steps, publish_with_shared_meta_index, tool_meta_from_handles,
 };

@@ -31,8 +31,8 @@ struct AgentMetrics {
     trace_sink_http_calls: Counter<u64>,
     trace_sink_http_duration_ms: Histogram<f64>,
     trace_sink_batch_serialize_errors: Counter<u64>,
-    plugin_catalog_reload_calls: Counter<u64>,
-    plugin_catalog_reload_duration_ms: Histogram<f64>,
+    catalog_registry_reload_calls: Counter<u64>,
+    catalog_registry_reload_duration_ms: Histogram<f64>,
     tenant_outbound_hosted_kv_lookups: Counter<u64>,
     mcp_transport_auth: Counter<u64>,
     audit_control_plane: Counter<u64>,
@@ -125,16 +125,16 @@ fn agent_metrics() -> &'static AgentMetrics {
                 .u64_counter("plasm.trace_sink.batch_serialize_errors_total")
                 .with_description("Failed to JSON-serialize a trace sink ingest batch before POST.")
                 .build(),
-            plugin_catalog_reload_calls: m
-                .u64_counter("plasm.plugin_catalog.reload.calls_total")
+            catalog_registry_reload_calls: m
+                .u64_counter("plasm.catalog_registry.reload.calls_total")
                 .with_description(
-                    "POST /internal/plugin-registry/v1/reload outcomes (plugin-dir catalog hot reload).",
+                    "POST /internal/catalog-registry/v1/reload outcomes (catalog-dir hot reload).",
                 )
                 .build(),
-            plugin_catalog_reload_duration_ms: m
-                .f64_histogram("plasm.plugin_catalog.reload.duration_ms")
+            catalog_registry_reload_duration_ms: m
+                .f64_histogram("plasm.catalog_registry.reload.duration_ms")
                 .with_description(
-                    "Wall time for plugin catalog reload (load dir + validate + publish snapshot).",
+                    "Wall time for catalog registry reload (load dir + validate + publish snapshot).",
                 )
                 .build(),
             tenant_outbound_hosted_kv_lookups: m
@@ -359,7 +359,7 @@ pub fn record_trace_sink_batch_serialize_failed() {
 /// `outcome`: `unauthorized` | `conflict` | `load_error` | `validate_error` | `success`.
 /// `error_kind`: `""` | `catalog_load` | `template_validate` (only for `load_error` / `validate_error`).
 /// On `success`, pass `entry_count` and whether the catalog diff was non-empty (`catalog_changed`).
-pub fn record_plugin_catalog_reload(
+pub fn record_catalog_registry_reload(
     outcome: &'static str,
     error_kind: &'static str,
     duration: Duration,
@@ -382,8 +382,8 @@ pub fn record_plugin_catalog_reload(
     }
     let a: &[KeyValue] = attrs.as_slice();
     let m = agent_metrics();
-    m.plugin_catalog_reload_calls.add(1, a);
-    m.plugin_catalog_reload_duration_ms.record(ms, a);
+    m.catalog_registry_reload_calls.add(1, a);
+    m.catalog_registry_reload_duration_ms.record(ms, a);
 }
 
 /// `outcome`: `hit` | `miss` | `error` (per entry_id lookup in tenant outbound resolution).
@@ -455,16 +455,16 @@ mod tests {
     }
 
     #[test]
-    fn plugin_catalog_reload_metrics_smoke() {
-        record_plugin_catalog_reload(
+    fn catalog_registry_reload_metrics_smoke() {
+        record_catalog_registry_reload(
             "success",
             "",
             Duration::from_millis(12),
             Some(3),
             Some(true),
         );
-        record_plugin_catalog_reload("unauthorized", "", Duration::from_millis(1), None, None);
-        record_plugin_catalog_reload(
+        record_catalog_registry_reload("unauthorized", "", Duration::from_millis(1), None, None);
+        record_catalog_registry_reload(
             "load_error",
             "catalog_load",
             Duration::from_millis(4),

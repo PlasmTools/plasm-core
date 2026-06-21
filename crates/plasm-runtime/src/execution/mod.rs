@@ -10,8 +10,7 @@ use indexmap::IndexMap;
 use plasm_compile::{
     compile_operation, compile_query, decode_entities_with_cgs, parse_capability_template,
     path_var_names_from_request, template_pagination, template_var_names, BackendFilter,
-    CapabilityTemplate, CmlEnv, CmlRequest, CompileOperationHook, CompileQueryHook,
-    CompiledOperation, CompiledRequest, HttpBodyFormat, PaginationConfig, PathExpr, PathSegment,
+    CapabilityTemplate, CmlEnv, CmlRequest, CompiledOperation, CompiledRequest, HttpBodyFormat, PaginationConfig, PathExpr, PathSegment,
     ResponsePreprocess,
 };
 use plasm_core::partition_prefer_resolutions;
@@ -395,11 +394,6 @@ tokio::task_local! {
 }
 
 tokio::task_local! {
-    /// Optional compile-plugin hooks for one [`ExecutionEngine::execute`] / stream (see [`ExecuteOptions`]).
-    static EXECUTION_PLUGIN_HOOKS: Option<PluginCompileHooks>;
-}
-
-tokio::task_local! {
     /// When [`ExecuteOptions::request_fingerprint_sink`] is [`Some`], successful compiled ops append hex fingerprints here.
     static EXECUTION_FINGERPRINT_SINK: Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>;
 }
@@ -574,43 +568,10 @@ fn append_request_fingerprint(hex: String) {
     });
 }
 
-/// Compile-plugin hooks copied from [`ExecuteOptions`] into [`EXECUTION_PLUGIN_HOOKS`] for the execute task.
-#[derive(Clone)]
-pub struct PluginCompileHooks {
-    pub compile_operation_fn: Option<Arc<CompileOperationFn>>,
-    pub compile_query_fn: Option<Arc<CompileQueryFn>>,
-}
-
-impl PluginCompileHooks {
-    fn snapshot_from_execute_options(opts: &ExecuteOptions) -> Self {
-        Self {
-            compile_operation_fn: opts.compile_operation_fn.clone(),
-            compile_query_fn: opts.compile_query_fn.clone(),
-        }
-    }
-}
-
-/// Compile-plugin hook: replaces [`compile_operation`] when set (see `plasm-plugin-host`).
-pub type CompileOperationFn = CompileOperationHook;
-/// Compile-plugin hook: replaces [`compile_query`] when set.
-pub type CompileQueryFn = CompileQueryHook;
-
 fn compile_operation_dispatch(
     template: &CapabilityTemplate,
     env: &CmlEnv,
 ) -> Result<CompiledOperation, RuntimeError> {
-    let hooks = match EXECUTION_PLUGIN_HOOKS.try_with(|h| h.clone()) {
-        Ok(h) => h,
-        Err(_) => {
-            tracing::debug!("EXECUTION_PLUGIN_HOOKS unset; using builtin compile_operation");
-            None
-        }
-    };
-    if let Some(hooks) = hooks {
-        if let Some(f) = hooks.compile_operation_fn {
-            return f(template, env).map_err(|e| RuntimeError::CmlError { source: e });
-        }
-    }
     compile_operation(template, env).map_err(|e| RuntimeError::CmlError { source: e })
 }
 
@@ -618,18 +579,6 @@ fn compile_query_dispatch(
     query: &QueryExpr,
     cgs: &CGS,
 ) -> Result<Option<BackendFilter>, RuntimeError> {
-    let hooks = match EXECUTION_PLUGIN_HOOKS.try_with(|h| h.clone()) {
-        Ok(h) => h,
-        Err(_) => {
-            tracing::debug!("EXECUTION_PLUGIN_HOOKS unset; using builtin compile_query");
-            None
-        }
-    };
-    if let Some(hooks) = hooks {
-        if let Some(f) = hooks.compile_query_fn {
-            return f(query, cgs).map_err(|e| RuntimeError::CompilationError { source: e });
-        }
-    }
     compile_query(query, cgs).map_err(|e| RuntimeError::CompilationError { source: e })
 }
 
@@ -644,12 +593,6 @@ pub struct ExecuteOptions {
     /// When set, outbound **HTTP** requests resolve credentials from this resolver instead of the engine's
     /// [`ExecutionEngine::new_with_auth`] resolver. EVM paths ignore this and use the engine resolver only.
     pub auth_resolver_override: Option<Arc<AuthResolver>>,
-    /// Optional compile plugin: replaces [`compile_operation`] when set (e.g. dynamic `cdylib` generation).
-    pub compile_operation_fn: Option<Arc<CompileOperationFn>>,
-    /// Optional compile plugin: replaces [`compile_query`] when set.
-    pub compile_query_fn: Option<Arc<CompileQueryFn>>,
-    /// Pinned plugin generation id for observability (HTTP/MCP execute sessions).
-    pub plugin_generation_id: Option<u64>,
     /// When set, typecheck and HTTP dispatch use per-entity owning [`plasm_core::CgsContext`].
     pub federation: Option<std::sync::Arc<plasm_core::FederationDispatch>>,
     /// When set, agent-core preflight already type-checked and placeholder-gated this expression.
@@ -679,9 +622,6 @@ impl std::fmt::Debug for ExecuteOptions {
                 "auth_resolver_override",
                 &self.auth_resolver_override.is_some(),
             )
-            .field("compile_operation_fn", &self.compile_operation_fn.is_some())
-            .field("compile_query_fn", &self.compile_query_fn.is_some())
-            .field("plugin_generation_id", &self.plugin_generation_id)
             .field("federation", &self.federation.is_some())
             .field("preflight", &self.preflight.is_some())
             .field("execute_session", &self.execute_session.is_some())
@@ -746,12 +686,11 @@ impl ExecutionEngine {
             .into()
     }
 
-    /// Task locals for fingerprint sink, HTTP base URL, auth override, compile-plugin hooks (one nested region).
+    /// Task locals for fingerprint sink, HTTP base URL, auth override (one nested region).
     #[allow(clippy::too_many_arguments)]
     async fn run_in_execute_task_scopes<Fut, T>(
         base: Arc<str>,
         auth_override: Option<Arc<AuthResolver>>,
-        plugin_hooks: PluginCompileHooks,
         request_fingerprint_sink: Option<std::sync::Arc<std::sync::Mutex<Vec<String>>>>,
         federation: Option<std::sync::Arc<plasm_core::FederationDispatch>>,
         execute_session: Option<std::sync::Arc<ExecuteSessionMaterial>>,
@@ -769,18 +708,14 @@ impl ExecutionEngine {
                     .scope(federation, async move {
                         EXECUTION_FINGERPRINT_SINK
                             .scope(request_fingerprint_sink, async move {
-                                EXECUTION_PLUGIN_HOOKS
-                                    .scope(Some(plugin_hooks), async move {
-                                        EXECUTION_AUTH_RESOLVER
-                                            .scope(auth_override, async move {
-                                                EXECUTION_CANCEL
-                                                    .scope(cancel, async move {
-                                                        EXECUTION_ROWS_PROGRESS
-                                                            .scope(rows_progress, async move {
-                                                                EXECUTION_HTTP_BASE
-                                                                    .scope(base, fut)
-                                                                    .await
-                                                            })
+                                EXECUTION_AUTH_RESOLVER
+                                    .scope(auth_override, async move {
+                                        EXECUTION_CANCEL
+                                            .scope(cancel, async move {
+                                                EXECUTION_ROWS_PROGRESS
+                                                    .scope(rows_progress, async move {
+                                                        EXECUTION_HTTP_BASE
+                                                            .scope(base, fut)
                                                             .await
                                                     })
                                                     .await
@@ -936,10 +871,6 @@ impl ExecutionEngine {
         Self::run_in_execute_task_scopes(
             base.into(),
             auth_resolver_override,
-            PluginCompileHooks {
-                compile_operation_fn: None,
-                compile_query_fn: None,
-            },
             None,
             None,
             None,
@@ -1120,7 +1051,6 @@ impl ExecutionEngine {
             let start_time = std::time::Instant::now();
             let base = self.resolve_http_base_from_opts(&opts);
             let auth_override = opts.auth_resolver_override.clone();
-            let plugin_hooks = PluginCompileHooks::snapshot_from_execute_options(&opts);
             let fp_sink = opts.request_fingerprint_sink.clone();
             let federation = opts.federation.clone();
             let execute_session = opts.execute_session.clone();
@@ -1129,7 +1059,6 @@ impl ExecutionEngine {
             let mut result = Self::run_in_execute_task_scopes(
                 base,
                 auth_override,
-                plugin_hooks,
                 fp_sink.clone(),
                 federation,
                 execute_session,

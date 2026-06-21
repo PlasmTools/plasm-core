@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.45] - 2026-06-21
+
+### Changed
+
+- **Catalog distribution cutover:** native compile `cdylib` plugins (`plasm-plugin-*`, `--compile-plugin`, `EXECUTION_PLUGIN_HOOKS`) removed in favor of **CBOR IL + JSON manifest** artifacts loaded via **`--catalog-dir`** and **`plasm-pack-catalogs`**.
+- **Registry loader:** `catalog_data` single-pass version resolution with fail-fast artifact validation; IL boundary consolidated in `plasm-core::catalog_il`.
+- **Hot reload:** control-plane **`POST /internal/catalog-registry/v1/reload`** (replaces plugin-registry path).
+
+### Removed
+
+- **`plasm-plugin-abi`**, **`plasm-plugin-host`**, **`plasm-plugin-stub`**, **`plasm-pack-plugins`**, and **`plugin_generation_id`** session reuse key.
+
 ## [0.3.44] - 2026-06-21
 
 ### Fixed

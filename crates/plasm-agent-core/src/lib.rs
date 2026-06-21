@@ -109,8 +109,8 @@ mod plasm_comp_lift;
 mod plasm_comp_wire;
 pub mod plasm_compile;
 mod plasm_step_convert;
-#[cfg(test)]
-pub(crate) mod test_support;
+#[doc(hidden)]
+pub mod test_support;
 pub use plasm_comp_bundle::PlasmCompBundle;
 pub use plasm_comp_wire::{
     plasm_comp_commit_canonical, plasm_comp_from_validated, plasm_comp_wire_json,
@@ -123,7 +123,7 @@ pub(crate) mod plasm_dag;
 /// Serializable effect [`Plan`](plasm_plan::Plan) contract and DAG validation (Plasm programs, archived plans).
 pub mod plasm_plan;
 pub mod plasm_plan_run;
-pub mod plugin_catalog;
+pub mod catalog_data;
 mod program_binding;
 pub mod query_args;
 pub(crate) mod resolved_plan_http;

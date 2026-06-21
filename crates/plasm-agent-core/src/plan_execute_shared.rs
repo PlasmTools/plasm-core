@@ -6,13 +6,12 @@ use plasm_core::PreflightToken;
 use plasm_core::CGS;
 use plasm_runtime::CancelSignal;
 use plasm_runtime::{
-    AuthResolver, CompileOperationFn, CompileQueryFn, ExecuteOptions, ExecuteSessionMaterial,
+    AuthResolver, ExecuteOptions, ExecuteSessionMaterial,
     GraphPageSpillHandle, RowsProgressFn, SecretProvider,
 };
 
 use crate::execute_session::ExecuteSession;
 use crate::graph_page_spill_host::graph_page_spill_for_execute;
-use crate::http_execute::plugin_execute_options_from_session;
 use crate::operation::plan_execute_cancel_signal;
 use crate::server_state::PlasmHostState;
 
@@ -20,9 +19,6 @@ use crate::server_state::PlasmHostState;
 pub struct PlanLineExecuteShared {
     secret_provider: Arc<dyn SecretProvider>,
     federation: Option<Arc<plasm_core::cgs_federation::FederationDispatch>>,
-    compile_operation_fn: Option<Arc<CompileOperationFn>>,
-    compile_query_fn: Option<Arc<CompileQueryFn>>,
-    plugin_generation_id: Option<u64>,
     bound_share: Option<String>,
     bound_proof_base_token: Option<String>,
     graph_page_spill: Option<GraphPageSpillHandle>,
@@ -35,8 +31,6 @@ impl PlanLineExecuteShared {
     pub async fn prepare(es: &ExecuteSession, st: &PlasmHostState, session_id: &str) -> Self {
         let bound_share = es.session_share_token.read().await.clone();
         let bound_proof_base_token = es.session_proof_base_token.read().await.clone();
-        let (compile_operation_fn, compile_query_fn, plugin_generation_id) =
-            plugin_execute_options_from_session(es);
         let federation = es.federation_dispatch();
         let secret_provider = st.effective_outbound_secret_provider();
         let graph_page_spill = graph_page_spill_for_execute(
@@ -49,9 +43,6 @@ impl PlanLineExecuteShared {
         Self {
             secret_provider,
             federation,
-            compile_operation_fn,
-            compile_query_fn,
-            plugin_generation_id,
             bound_share,
             bound_proof_base_token,
             graph_page_spill,
@@ -119,9 +110,6 @@ impl PlanLineExecuteShared {
                         .with_session_bearer_override(self.bound_share.clone()),
                 )
             }),
-            compile_operation_fn: self.compile_operation_fn.clone(),
-            compile_query_fn: self.compile_query_fn.clone(),
-            plugin_generation_id: self.plugin_generation_id,
             federation: self.federation.clone(),
             preflight: Some(preflight),
             execute_session: Some(Arc::new(ExecuteSessionMaterial {

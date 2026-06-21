@@ -32,7 +32,6 @@ use auth_framework::storage::AuthStorage;
 use auth_framework::AuthFramework;
 use plasm_discovery::embedding_store::CatalogEmbeddingStore;
 use plasm_discovery::CatalogIndexCache;
-use plasm_plugin_host::PluginManager;
 use plasm_runtime::{EnvSecretProvider, ExecutionEngine, ExecutionMode, SecretProvider};
 use std::ops::Deref;
 use std::sync::Arc;
@@ -62,8 +61,6 @@ pub struct PlasmOssHostState {
     pub run_artifacts: Arc<RunArtifactStore>,
     /// Optional object-store-backed delta/snapshot persistence for session graph state.
     pub session_graph_persistence: Option<Arc<SessionGraphPersistence>>,
-    /// Optional compile-plugin manager (`--compile-plugin`); new execute sessions pin current generation.
-    pub plugin_manager: Option<Arc<PluginManager>>,
     /// When set, HTTP routes run [`crate::incoming_auth::incoming_auth_http_middleware`].
     pub incoming_auth: Option<Arc<IncomingAuthVerifier>>,
     /// CLI device-login marker ([`crate::incoming_auth_device`] sessions live in auth-framework KV).
@@ -360,7 +357,6 @@ fn rehydrate_error_kind(err: &crate::execute_session_rehydrate::RehydrateError) 
         RehydrateError::DescriptorExpired => "descriptor_expired",
         RehydrateError::EntityCatalogPairingMismatch { .. } => "entity_catalog_pairing_mismatch",
         RehydrateError::Discovery(_) => "discovery",
-        RehydrateError::PluginGenerationUnavailable { .. } => "plugin_generation_unavailable",
     }
 }
 
@@ -388,8 +384,7 @@ mod tests {
             mode: ExecutionMode::Live,
             registry: Arc::new(reg),
             catalog_bootstrap: CatalogBootstrap::Fixed,
-            plugin_manager: None,
-            incoming_auth: None,
+                        incoming_auth: None,
             run_artifacts: Arc::new(RunArtifactStore::memory()),
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,
@@ -419,8 +414,7 @@ mod tests {
             mode: ExecutionMode::Live,
             registry,
             catalog_bootstrap: CatalogBootstrap::Fixed,
-            plugin_manager: None,
-            incoming_auth: None,
+                        incoming_auth: None,
             run_artifacts: Arc::new(RunArtifactStore::memory()),
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,

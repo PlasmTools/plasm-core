@@ -1,5 +1,5 @@
 //! Every split schema under `apis/<name>/` must have CML mapping templates that parse.
-//! Mirrors `plasm-pack-plugins` validation (same `plasm-compile` + `plasm-cml` feature graph as the binary).
+//! Mirrors `plasm-pack-catalogs` validation (same `plasm-compile` + `plasm-cml` feature graph as the binary).
 
 use plasm_compile::validate_cgs_capability_templates;
 use plasm_core::loader::load_schema_dir;

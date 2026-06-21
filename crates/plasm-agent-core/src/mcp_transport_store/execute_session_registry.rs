@@ -62,7 +62,6 @@ pub struct PersistedSessionReuseKey {
     pub context_intent: Option<String>,
     pub ranked_capabilities: Option<Vec<String>>,
     pub principal: Option<String>,
-    pub plugin_generation_id: Option<u64>,
     pub logical_session_id: Option<String>,
 }
 
@@ -76,7 +75,6 @@ impl From<&SessionReuseKey> for PersistedSessionReuseKey {
             context_intent: k.context_intent.clone(),
             ranked_capabilities: k.ranked_capabilities.clone(),
             principal: k.principal.clone(),
-            plugin_generation_id: k.plugin_generation_id,
             logical_session_id: k.logical_session_id.clone(),
         }
     }
@@ -92,7 +90,6 @@ impl From<PersistedSessionReuseKey> for SessionReuseKey {
             context_intent: k.context_intent,
             ranked_capabilities: k.ranked_capabilities,
             principal: k.principal,
-            plugin_generation_id: k.plugin_generation_id,
             logical_session_id: k.logical_session_id,
         }
     }
@@ -133,7 +130,6 @@ pub struct PersistedExecuteSessionDescriptor {
     pub catalog_cgs_hash: String,
     pub context_intent: Option<String>,
     pub ranked_capabilities: Option<Vec<String>>,
-    pub plugin_generation_id: Option<u64>,
     pub domain_revision: u32,
     pub reuse_key: PersistedSessionReuseKey,
     /// Unix seconds after which rehydrate must reject (aligned with in-memory session TTL).
@@ -207,7 +203,6 @@ impl PersistedExecuteSessionDescriptor {
             catalog_cgs_hash: session.catalog_cgs_hash.clone(),
             context_intent: session.context_intent.clone(),
             ranked_capabilities: session.ranked_capabilities.clone(),
-            plugin_generation_id: session.plugin_generation.as_ref().map(|g| g.id),
             domain_revision: session.domain_revision,
             reuse_key: PersistedSessionReuseKey::from(reuse_key),
             expires_at_unix: expires_at_from_now(),
@@ -373,7 +368,7 @@ impl ExecuteSessionRegistry {
         }
     }
 
-    /// Drop all cross-pod execute session descriptors (e.g. after plugin catalog reload).
+    /// Drop all cross-pod execute session descriptors (e.g. after catalog-dir reload).
     pub async fn purge_redis(&self) -> u64 {
         if let Some(redis) = self.redis().await {
             redis.delete_keys_matching_prefix(SESSION_KEY_PREFIX).await

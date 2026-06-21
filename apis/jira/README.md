@@ -10,7 +10,7 @@ cargo run --bin plasm -- \
   --repl
 ```
 
-With a **multi-entry** catalog (`--plugin-dir` after packing) or federation via MCP `plasm_context`, Jira credentials come from the **Jira** catalog entry’s [`domain.yaml`](domain.yaml) (`auth:` / `JIRA_AUTH`) on Jira execute sessions, not from another entry’s CGS.
+With a **multi-entry** catalog (`--catalog-dir` after packing) or federation via MCP `plasm_context`, Jira credentials come from the **Jira** catalog entry’s [`domain.yaml`](domain.yaml) (`auth:` / `JIRA_AUTH`) on Jira execute sessions, not from another entry’s CGS.
 
 ### Empty lists vs HTTP errors
 

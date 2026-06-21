@@ -29,9 +29,6 @@ pub enum RehydrateError {
         catalog_ids: usize,
     },
     Discovery(String),
-    PluginGenerationUnavailable {
-        generation_id: u64,
-    },
 }
 
 impl std::fmt::Display for RehydrateError {
@@ -55,10 +52,6 @@ impl std::fmt::Display for RehydrateError {
                 "entity/catalog pairing mismatch ({entities} entities, {catalog_ids} catalog ids)"
             ),
             Self::Discovery(e) => write!(f, "{e}"),
-            Self::PluginGenerationUnavailable { generation_id } => write!(
-                f,
-                "pinned compile plugin generation `{generation_id}` is not available on this host"
-            ),
         }
     }
 }
@@ -208,7 +201,6 @@ pub fn should_discard_persisted_execute_on_rehydrate_error(err: &RehydrateError)
             | RehydrateError::CatalogHashMismatch { .. }
             | RehydrateError::DescriptorExpired
             | RehydrateError::EntityCatalogPairingMismatch { .. }
-            | RehydrateError::PluginGenerationUnavailable { .. }
     )
 }
 
@@ -274,16 +266,6 @@ pub async fn rehydrate_execute_session(
         desc.ranked_capabilities.as_deref(),
     );
 
-    let plugin_generation = match desc.plugin_generation_id {
-        Some(id) => Some(
-            st.plugin_manager
-                .as_ref()
-                .and_then(|pm| pm.generation(id))
-                .ok_or(RehydrateError::PluginGenerationUnavailable { generation_id: id })?,
-        ),
-        None => None,
-    };
-
     let mut session = ExecuteSession::new_with_bindings(
         desc.prompt_hash.clone(),
         desc.prompt_text.clone(),
@@ -296,7 +278,6 @@ pub async fn rehydrate_execute_session(
         desc.entities.clone(),
         Some(teaching_exposure),
         desc.principal.clone(),
-        plugin_generation,
         desc.catalog_cgs_hash.clone(),
         desc.context_intent.clone(),
         desc.ranked_capabilities.clone(),
@@ -355,7 +336,6 @@ mod tests {
             catalog_cgs_hash: "h".into(),
             context_intent: None,
             ranked_capabilities: None,
-            plugin_generation_id: None,
             domain_revision: 0,
             reuse_key: PersistedSessionReuseKey {
                 tenant_scope: "t".into(),
@@ -365,7 +345,6 @@ mod tests {
                 context_intent: None,
                 ranked_capabilities: None,
                 principal: None,
-                plugin_generation_id: None,
                 logical_session_id: None,
             },
             expires_at_unix: 1,
@@ -432,8 +411,7 @@ mod tests {
             mode: plasm_runtime::ExecutionMode::Live,
             registry: reg,
             catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
-            plugin_manager: None,
-            incoming_auth: None,
+                        incoming_auth: None,
             run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,
@@ -453,17 +431,15 @@ mod tests {
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
             context_intent: None,
             ranked_capabilities: None,
-            plugin_generation_id: None,
             domain_revision: 0,
             reuse_key: PersistedSessionReuseKey {
                 tenant_scope: String::new(),
                 entry_id: "github".into(),
-                catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
                 entities: vec!["LangItem".into(), "LangItem".into()],
                 context_intent: None,
                 ranked_capabilities: None,
                 principal: None,
-                plugin_generation_id: None,
                 logical_session_id: None,
             },
             expires_at_unix: u64::MAX,
@@ -503,17 +479,15 @@ mod tests {
             catalog_cgs_hash: "deadbeef".into(),
             context_intent: None,
             ranked_capabilities: None,
-            plugin_generation_id: None,
             domain_revision: 0,
             reuse_key: PersistedSessionReuseKey {
                 tenant_scope: "t".into(),
                 entry_id: "overshow".into(),
-                catalog_cgs_hash: "deadbeef".into(),
+            catalog_cgs_hash: "deadbeef".into(),
                 entities: vec!["demo".into()],
                 context_intent: None,
                 ranked_capabilities: None,
                 principal: None,
-                plugin_generation_id: None,
                 logical_session_id: None,
             },
             expires_at_unix: u64::MAX,
@@ -591,17 +565,15 @@ mod tests {
             catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
             context_intent: None,
             ranked_capabilities: None,
-            plugin_generation_id: None,
             domain_revision: 0,
             reuse_key: PersistedSessionReuseKey {
                 tenant_scope: String::new(),
                 entry_id: "github".into(),
-                catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
                 entities: vec!["LangItem".into(), "LangItem".into()],
                 context_intent: None,
                 ranked_capabilities: None,
                 principal: None,
-                plugin_generation_id: None,
                 logical_session_id: None,
             },
             expires_at_unix: u64::MAX,

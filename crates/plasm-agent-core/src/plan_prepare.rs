@@ -538,7 +538,6 @@ mod tests {
             entities.into_iter().map(str::to_string).collect(),
             Some(exp),
             None,
-            None,
             cgs.catalog_cgs_hash_hex(),
             None,
             None,

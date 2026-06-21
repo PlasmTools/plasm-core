@@ -10,7 +10,6 @@ use clap::{Arg, ArgAction, ArgMatches, Command};
 use plasm_core::discovery::InMemoryCgsRegistry;
 use plasm_core::schema::CGS;
 use plasm_core::{PromptPipelineConfig, PromptRenderMode};
-use plasm_plugin_host::PluginManager;
 use plasm_runtime::{
     AuthResolver, ExecutionConfig, ExecutionEngine, ExecutionMode, SecretProvider,
 };
@@ -34,11 +33,11 @@ pub fn preparse_mcp_command() -> Command {
                 .help("Path to CGS schema file"),
         )
         .arg(
-            Arg::new("plugin_dir")
-                .long("plugin-dir")
+            Arg::new("catalog_dir")
+                .long("catalog-dir")
                 .value_name("DIR")
                 .help(
-                    "Load catalogs from self-describing plugin cdylibs in this directory (ABI v4)",
+                    "Load catalogs from compiled CBOR IL artifacts in this directory (.cgs.cbor + .manifest.json)",
                 ),
         )
         .arg(
@@ -83,11 +82,11 @@ Uses PLASM_MCP_CONFIG_DATABASE_URL, else PLASM_AUTH_STORAGE_URL, else DATABASE_U
         .ignore_errors(true)
 }
 
-/// Result of the early `--schema` / `--plugin-dir` parse before the full CLI match.
+/// Result of the early `--schema` / `--catalog-dir` parse before the full CLI match.
 pub struct CatalogLoadOutcome {
     pub schema_path: String,
     pub cgs: CGS,
-    /// When `--plugin-dir` was used, the registry snapshot (shared Arc — no second disk load).
+    /// When `--catalog-dir` was used, the registry snapshot (shared Arc — no second disk load).
     pub prebuilt_registry: Option<Arc<InMemoryCgsRegistry>>,
 }
 
@@ -105,12 +104,12 @@ pub fn load_catalog_for_mcp_server_with_progress<P: FnMut(&str)>(
     server_mode: bool,
     progress: &mut P,
 ) -> Result<CatalogLoadOutcome, AgentError> {
-    let plugin_dir = pre_matches.get_one::<String>("plugin_dir");
+    let catalog_dir = pre_matches.get_one::<String>("catalog_dir");
     match pre_matches.get_one::<String>("schema") {
         Some(path) => {
-            if plugin_dir.is_some() {
+            if catalog_dir.is_some() {
                 return Err(AgentError::Schema(
-                    "do not combine --schema with --plugin-dir".into(),
+                    "do not combine --schema with --catalog-dir".into(),
                 ));
             }
             progress(&format!("loading CGS schema from {path}"));
@@ -125,26 +124,26 @@ pub fn load_catalog_for_mcp_server_with_progress<P: FnMut(&str)>(
         }
         None => {
             if server_mode {
-                if let Some(pd) = plugin_dir {
-                    progress("loading multi-entry registry from plugin-dir…");
-                    let reg = crate::plugin_catalog::load_registry_from_plugin_dir_with_progress(
-                        Path::new(pd),
+                if let Some(cd) = catalog_dir {
+                    progress("loading multi-entry registry from catalog-dir…");
+                    let reg = crate::catalog_data::load_registry_from_catalog_dir_with_progress(
+                        Path::new(cd),
                         progress,
                     )
                     .map_err(AgentError::Schema)?;
                     let reg = Arc::new(reg);
                     let arc_cgs = reg.first_cgs().ok_or_else(|| {
-                        AgentError::Schema("plugin-dir catalog has no entries".into())
+                        AgentError::Schema("catalog-dir catalog has no entries".into())
                     })?;
                     let cgs = (*arc_cgs).clone();
                     Ok(CatalogLoadOutcome {
-                        schema_path: pd.clone(),
+                        schema_path: cd.clone(),
                         cgs,
                         prebuilt_registry: Some(reg),
                     })
                 } else {
                     Err(AgentError::Schema(
-                        "pass --schema <path> or --plugin-dir <dir> with --http/--mcp".into(),
+                        "pass --schema <path> or --catalog-dir <dir> with --http/--mcp".into(),
                     ))
                 }
             } else {
@@ -164,14 +163,13 @@ pub fn validate_catalog_templates_with_progress<P: FnMut(&str)>(
     outcome: &CatalogLoadOutcome,
     progress: &mut P,
 ) -> Result<(), AgentError> {
-    if let Some(reg) = &outcome.prebuilt_registry {
-        crate::plugin_catalog::validate_registry_templates_with_progress(reg, progress)
-            .map_err(AgentError::Schema)?;
-    } else {
-        progress("validating capability templates (single schema)…");
-        plasm_compile::validate_cgs_capability_templates(&outcome.cgs)
-            .map_err(|e| AgentError::Schema(e.to_string()))?;
+    if outcome.prebuilt_registry.is_some() {
+        // Capability templates are validated during `load_registry_from_catalog_dir`.
+        return Ok(());
     }
+    progress("validating capability templates (single schema)…");
+    plasm_compile::validate_cgs_capability_templates(&outcome.cgs)
+        .map_err(|e| AgentError::Schema(e.to_string()))?;
     Ok(())
 }
 
@@ -182,8 +180,8 @@ pub fn build_registry_arc(
     if let Some(reg) = &outcome.prebuilt_registry {
         return Ok(Arc::clone(reg));
     }
-    if let Some(pd) = matches.get_one::<String>("plugin_dir") {
-        let reg = crate::plugin_catalog::load_registry_from_plugin_dir(Path::new(pd))
+    if let Some(cd) = matches.get_one::<String>("catalog_dir") {
+        let reg = crate::catalog_data::load_registry_from_catalog_dir(Path::new(cd))
             .map_err(AgentError::Schema)?;
         return Ok(Arc::new(reg));
     }
@@ -196,12 +194,12 @@ pub fn build_registry_arc(
 }
 
 pub fn catalog_bootstrap_from_matches(matches: &ArgMatches) -> CatalogBootstrap {
-    if matches.get_one::<String>("plugin_dir").is_some() {
-        CatalogBootstrap::PluginDir {
+    if matches.get_one::<String>("catalog_dir").is_some() {
+        CatalogBootstrap::CatalogDir {
             path: std::path::PathBuf::from(
                 matches
-                    .get_one::<String>("plugin_dir")
-                    .expect("plugin-dir checked"),
+                    .get_one::<String>("catalog_dir")
+                    .expect("catalog-dir checked"),
             ),
         }
     } else {
@@ -252,19 +250,6 @@ pub fn build_execution_engine_from_matches(
     Ok((engine, mode))
 }
 
-pub fn plugin_manager_from_matches(
-    matches: &ArgMatches,
-) -> Result<Option<Arc<PluginManager>>, std::io::Error> {
-    match matches.get_one::<String>("compile_plugin") {
-        Some(path) => {
-            let pm = PluginManager::load(Path::new(path))
-                .map_err(|e| std::io::Error::other(format!("--compile-plugin {path}: {e}")))?;
-            Ok(Some(Arc::new(pm)))
-        }
-        None => Ok(None),
-    }
-}
-
 /// Validates incoming-auth env and returns a verifier for HTTP/MCP middleware.
 pub fn incoming_verifier_from_env() -> Result<Arc<IncomingAuthVerifier>, std::io::Error> {
     let incoming_cfg = IncomingAuthConfig::from_env();
@@ -283,7 +268,6 @@ pub struct BuildInitialHostStateArgs {
     pub mode: ExecutionMode,
     pub registry: Arc<InMemoryCgsRegistry>,
     pub catalog_bootstrap: CatalogBootstrap,
-    pub plugin_manager: Option<Arc<PluginManager>>,
     pub incoming_auth: Option<Arc<IncomingAuthVerifier>>,
     pub run_artifacts_policy: RunArtifactInitPolicy,
     pub oss_local_filesystem_defaults: bool,
@@ -296,7 +280,6 @@ pub async fn build_initial_host_state(
         mode,
         registry,
         catalog_bootstrap,
-        plugin_manager,
         incoming_auth,
         run_artifacts_policy,
         oss_local_filesystem_defaults,
@@ -312,7 +295,6 @@ pub async fn build_initial_host_state(
         mode,
         registry,
         catalog_bootstrap,
-        plugin_manager,
         incoming_auth,
         run_artifacts,
         session_graph_persistence,
@@ -499,14 +481,12 @@ pub async fn bootstrap_plasm_host_state_oss(
         &catalog_outcome.cgs,
     )
     .map_err(|e| std::io::Error::other(e.to_string()))?;
-    let plugin_manager = plugin_manager_from_matches(matches)?;
     let incoming_verifier = incoming_verifier_from_env()?;
     let mut app_state = build_initial_host_state(BuildInitialHostStateArgs {
         engine,
         mode,
         registry,
         catalog_bootstrap,
-        plugin_manager,
         incoming_auth: Some(incoming_verifier),
         run_artifacts_policy: crate::run_artifacts::RunArtifactInitPolicy::OssFilesystemDefaults,
         oss_local_filesystem_defaults: true,

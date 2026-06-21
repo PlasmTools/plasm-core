@@ -81,6 +81,7 @@
 #![allow(clippy::result_large_err)]
 
 pub mod bind_wire_validate;
+pub mod catalog_il;
 pub mod cgs_context;
 pub mod cgs_expression_validate;
 pub mod cgs_federation;
@@ -142,6 +143,11 @@ mod wire_coercion;
 /// Local `o200k_base` BPE length (OpenAI `o200k_base` via riptoken).
 pub use o200k_token_count::o200k_token_count;
 
+pub use catalog_il::{
+    catalog_artifact_stem, cgs_to_catalog_il_cbor, is_catalog_manifest_path,
+    load_catalog_artifact, load_catalog_il_cbor, load_catalog_il_cbor_verified,
+    read_catalog_manifest, CatalogManifest, PLASM_CATALOG_FORMAT_VERSION,
+};
 pub use cgs_context::{CgsContext, Prefix};
 pub use cgs_federation::{
     CatalogResolver, FederationDispatch, FederationResolveError, QualifiedEntityKey,

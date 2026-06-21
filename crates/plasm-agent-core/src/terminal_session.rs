@@ -459,7 +459,6 @@ impl ClientSymbolSession {
             entities,
             Some(exposure),
             None,
-            None,
             catalog_cgs_hash,
             Some(self.intent.clone()),
             None,

@@ -1,6 +1,6 @@
 //! Interactive REPL for the Plasm path expression language.
 //!
-//! Run the **`plasm-repl`** binary: `plasm-repl --schema <dir-or-yaml> --backend <url>` (or `--plugin-dir` instead of `--schema`).
+//! Run the **`plasm-repl`** binary: `plasm-repl --schema <dir-or-yaml> --backend <url>` (or `--catalog-dir` instead of `--schema`).
 //!
 //! On startup:
 //!   - Renders the same teaching prompt as `plasm-eval` / BAML `TranslatePlan` (one expression per goal)
