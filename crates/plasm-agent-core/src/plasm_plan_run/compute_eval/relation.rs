@@ -109,7 +109,7 @@ pub(crate) fn parent_get_wire_rows(
     ))
 }
 
-struct EmbedRelationGraphSnapshot {
+pub(crate) struct EmbedRelationGraphSnapshot {
     pub(crate) entities: Vec<CachedEntity>,
     pub(crate) wire_rows: Vec<serde_json::Value>,
     pub(crate) read_cap: Option<usize>,
