@@ -118,7 +118,7 @@ cgs_out="${out_dir}/plasm-cgs-${triple}.tar.gz"
 
 tar -czf "${appliance_out}" -C "${appliance}" .
 tar -czf "${client_out}" -C "${client}" plasm
-tar -czf "${cgs_out}" -C "${cgs}" plasm-cgs"
+tar -czf "${cgs_out}" -C "${cgs}" plasm-cgs
 
 echo "oss-release-pack-native: ${appliance_out}"
 echo "oss-release-pack-native: ${client_out}"
