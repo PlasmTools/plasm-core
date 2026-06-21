@@ -574,9 +574,11 @@ impl<'a> Parser<'a> {
     fn cgs_for_entity_required(&self, entity: &str) -> Result<&CGS, ParseError> {
         match self.cgs_for_entity(entity) {
             Some(cgs) => Ok(cgs),
-            None if self.layers_slice().len() > 1 => Err(self.err(ParseErrorKind::AmbiguousEntityCatalog {
-                entity: entity.to_string(),
-            })),
+            None if self.layers_slice().len() > 1 => {
+                Err(self.err(ParseErrorKind::AmbiguousEntityCatalog {
+                    entity: entity.to_string(),
+                }))
+            }
             None => Ok(self.primary_cgs()),
         }
     }
@@ -1063,15 +1065,13 @@ impl<'a> Parser<'a> {
         entity_name: &str,
         field: &str,
     ) -> Option<(FieldType, Option<ValueWireFormat>, Option<ArrayItemsSchema>)> {
-        let ec = self
-            .cgs_for_entity(entity_name)
-            .or_else(|| {
-                if self.layers_slice().len() == 1 {
-                    Some(self.primary_cgs())
-                } else {
-                    None
-                }
-            })?;
+        let ec = self.cgs_for_entity(entity_name).or_else(|| {
+            if self.layers_slice().len() == 1 {
+                Some(self.primary_cgs())
+            } else {
+                None
+            }
+        })?;
         if let Some(ent) = ec.get_entity(entity_name) {
             if let Some(fs) = ent.fields.get(field) {
                 let nv = fs.named_value(ec).ok()?;
@@ -5091,9 +5091,15 @@ mod tests {
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
         let layers = [&cgs];
-        let r =
-            parse_with_cgs_layers_program(r#"Pet(name=pikachu)"#, &layers, sym_map, None, false, None)
-                .expect("parse");
+        let r = parse_with_cgs_layers_program(
+            r#"Pet(name=pikachu)"#,
+            &layers,
+            sym_map,
+            None,
+            false,
+            None,
+        )
+        .expect("parse");
         let Expr::Get(g) = r.expr else {
             panic!("expected Get, got {:?}", r.expr);
         };

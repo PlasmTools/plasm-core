@@ -1,0 +1,94 @@
+/** MCP-aligned tool descriptions (from plasm-core prompt_render assets). */
+
+export const DISCOVER_TOOL_DESCRIPTION = `Plasm is a source language. Pick catalogs/entities for one user goal — this tool does **not** produce program symbols. Tool order: optional \`discover_capabilities\` → \`plasm_context\` → \`plasm\` (dry-run) → \`plasm_run\` (live).
+     **Next:** copy TSV \`api\`/\`entity\` rows into one **\`plasm_context\`** **\`seeds\`** array on the same **\`intent\`**, then write **\`plasm.program\`** from teaching TSV (get \`e#(p#)\` vs search \`e#~"…"\` when exposed). Skip when you already know every \`api\`/\`entity\`. No alternate JSON discovery mode.`;
+
+export const PLASM_CONTEXT_TOOL_DESCRIPTION = `Tool order: optional \`discover_capabilities\` → \`plasm_context\` → \`plasm\` (dry-run) → \`plasm_run\` (live).
+     **Call before \`plasm\` / \`plasm_run\`.** **One goal → one stable \`intent\` → one \`logical_session_ref\`.** Stable = same \`intent\` string on every turn for that goal (not per message/API). Bad: \`intent: "msg 3: sort moves"\` each turn — breaks reuse and fragments \`e#\`/\`p#\`. Multi-API: one **\`seeds\`** array on the same intent.
+**Session:** one goal → one **\`intent\`** → one **\`logical_session_ref\`**; use **\`e#\`/\`m#\`/\`p#\`/\`r#\` from this session's teaching TSV only** (contract examples are shapes; substitute from your table).
+
+**Federated homonyms:** when multiple catalogs expose the same wire entity, method, relation, or field name, programs must use opaque **\`e#\` / \`m#\` / \`r#\` / \`p#\`** from this table — not bare wire names and not \`entry_id:Entity\` syntax. Each symbol is catalog-scoped; copying the wrong row's symbol is a compile error.
+
+**Open or extend:** **\`intent\`** + **\`seeds\`** (\`{api, entity}\`).
+
+Returns **\`logical_session_ref\`** + fenced teaching TSV. TSV is the active symbol table: copy left cells into **\`plasm.program\`** (Plasm source, not JSON). Delta waves assign new **\`e#\`** monotonically.
+
+**Extend picks:** same **\`intent\`**, expanded **\`seeds\`** — delta TSV or reuse cheat sheet when already exposed.
+
+**\`_meta.plasm\`:** \`logical_session_ref\`, \`continuity\`, \`domain_revision\`, optional **\`relations\`**.`;
+
+export const PLASM_TOOL_DESCRIPTION = `**Plan Plasm** (dry-run): **\`logical_session_ref\`** + **\`program\`**. Returns reviewable plan topology and executable **\`plan_commit_ref\`** (\`pcN\`). Pass that token to **\`plasm_run\`**; do **not** echo the program.
+
+**\`program\` is Plasm source text, not JSON data.** Write one raw expression (e.g. \`e3(p15="electric").r2[p4,p5]\`) or multiline bindings with final roots. If a plan merely echoes an object/array/string literal, that is a literal no-op; rewrite as Plasm source.
+
+Grammar below; symbols from \`plasm_context\` TSV. Reply with one valid plasm_program:
+
+Output:
+- Emit only code: one \`plasm_expr\`, or bindings then final roots. No prose, JSON, \`return\`, fences, or table rows.
+- Prefer bind → narrow/project/transform → few final roots.
+
+TSV table semantics:
+- Header: \`plasm_expr<TAB>Meaning\`; one tab per row. Left = syntax/metadata; right = guidance only (never copy \`Meaning\`).
+- Executable rows start with \`e#\`/Entity; metadata-only \`p#\`/\`v#\` rows are never roots.
+
+Symbol and fill rules:
+- \`e#\` entity; \`m#\` method; \`p#\` field/param/filter; \`r#\` relation nav; \`v#\` value-domain metadata only.
+- Relation hops: \`.wire\` or \`.r#\` on row producers — never bare \`p#\` after \`.\` (\`p#\` in \`e#{…}\` is filter/param).
+- Never write \`v#\` in code; use \`p#\` keys and read \`v#\` rows for allowed values.
+- \`e#(p#)\` identity rows: substitute real wire ids for \`<id>\`, \`<value>\`, \`<receiver>\`, \`elem\`.
+- Remove \`..\` ellipses or replace with real \`p#=\` assignments before output.
+- Optional keys (\`opt:\` in \`Meaning\`): add only as keyed assignments with real values.
+- Projection rows ending \`[p#,…]\` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
+
+Core surface:
+- Program shape: one \`plasm_expr\`, or \`label = …\` bindings then comma-separated final roots (no \`return\`).
+- Postfix on row producers: \`.limit(N)\` | \`.page_size(N)\` | \`.sort(p#, desc)\` / \`.sort(p#,dir)\` | \`.filter{…}\` | \`.filter(…)\` | \`.aggregate(specs)\` | \`.group_by(p#)\` then \`.aggregate(specs)\` | \`.group_by(p#, specs)\` (comma sugar) | \`.dedupe(p#[, …])\` | \`.distinct(p#[, …])\` | \`.distinct()\` | \`.singleton()\` | \`[p#,…]\`. Row postfix fields use teaching \`rows:\` \`p#\` symbols; wire field names are sugar.
+- Large list reads return the first **25 rows** in \`plasm_run\`; continue with \`page(l_<token>_pgN)\` from the tool result — not \`resources/read\`.
+- Run gate: pass \`pcN\` from a prior dry-run to \`plasm_run\`; MCP \`plasm_run\` does not accept program continuations.
+- Copy teaching TSV left cells; substitute placeholders; compose via bindings.
+- Search when exposed: \`e#~$\` or \`e#~"text"\` (bare \`e#~\` is invalid); optional scoped filters \`e#~"text"[{p#=…}]\`.
+- Field projection suffix: \`[p#,…]\`.
+
+Composition rules:
+- One binding per line; final roots last (preferred). Single-line bindings coerced; default return is first binding.
+- Postfix/\`[fields]\` chain on any row-producing binding or expression.
+- Row text: \`label = source <<TAG\` … \`TAG\` (equals required — never \`label source <<TAG\`); optional column list: \`label = source[p#,…] <<TAG\`. Minijinja \`rows\` = that source's projected rows only — not \`\${}\`.
+- Pass \`binding.content\` to string params; compose with \`\${report.content}\` in later heredocs/strings (never bare \`\${}\` in prose; \`$$\` escapes \`$\`).
+- Minijinja \`{{ }}\` / \`{% %}\` only inside row-to-text heredoc bodies — not in capability heredocs that use \`\${binding.path}\`.
+- Do not use \`report.content\` as a final root or relation receiver.
+- Action/create roots: return the action row or follow with \`e#(p#=…)\` get — not \`created.p#\` as a program root.
+- Relation embed fan-out (\`Type.pokemon\` / \`.r#\`): prefer explicit Gets until embed path is warm; \`.limit\` on relation hops may need hydrate when graph targets are missing.
+- Heredoc: \`<<TAG\` + newline; first trimmed \`TAG\` line closes; pick a tag absent from the body.
+- Examples: array argument \`p#=[e#(<id>), …]\`. Quoted strings use only \`\\"\` and \`\\\\\` escapes.
+- Worked row-compute program (shape only — substitute \`e#\` / \`p#\` from your table below):
+items = e_source
+filtered = items.filter{p_field>=300}  # prefer bind; bare \`e_source.filter{…}\` list-alls first
+sorted = filtered.sort(p_field, desc)
+limited = sorted.limit(10)
+limited[p_a,p_field]
+- Worked federated relation + row compute (shape only — copy \`e#\` / \`.r#\` from your table's left column):
+parent = e2(p_key=<val>)
+children = parent.rN
+limited = children.limit(5)
+limited[p_a,p_b]
+- \`markdown\`/\`html\`/\`document\`/\`json_text\`/\`blob\` values (per \`Meaning\`): \`<<TAG\` … \`TAG\` only; e.g. \`e2.mN(..., p#=<<TXT\` + newline body + \`TXT\` newline \`)\`.
+
+Common pitfalls:
+- \`[fields]\`/\`.group_by\`/\`.sort\`/\`.dedupe\`/row \`.filter\` use \`rows:\` fields only — not \`inputs:\`/\`opt:\` filter keys.
+- \`e#{…}\` filters at HTTP; \`binding.filter{…}\` filters materialized rows. Prefer \`label = e#\` then filter; bare \`e#.filter{…}\` list-alls first.
+- Primary group/agg: \`group_by(p_key).aggregate(n=count)\`; bare \`group_by(p_key)\` ≡ \`group_by(p_key, count=count)\`; multi-key comma sugar: \`group_by(k1, k2, n=count)\`.
+- \`=>\` only for derive \`{ k: _.field }\` or \`for_each\` updates — not relation reads (\`labels = issues.r#\`).
+- Homograph: relation fanout via \`.r#\`/wire; \`labels = issues.p#\` forgiven when binding name matches.
+- Never emit \`$\` from teaching rows; substitute real ids and \`e#~"text"\` search terms.
+- Search operand: \`e#~$\` or \`e#~"text"\` required — bare \`e#~\` is a parse error.
+- Federated sessions: when the same wire entity/method/relation/field name appears in multiple catalogs, bare wire tokens are compile errors — copy the session \`e#\` / \`m#\` / \`r#\` / \`p#\` from the teaching row for that catalog. Never write \`entry_id:Entity\` or \`catalog.Entity\` in programs.
+- Cross-catalog stitch (shape only — substitute symbols from your TSV): pokeapi \`Type\` get → row-to-text bindings → proof \`ShareLink\` document param with \`\${binding.content}\` inside \`<<TAG\` … \`TAG\`.
+- Search-only entities (no query): no \`e#{}\` list-all — scoped \`e#{p#=…}\` and/or \`e#~"text"\`.`;
+
+export const PLASM_RUN_TOOL_DESCRIPTION = `**Run Plasm** (live): **\`logical_session_ref\`** + **\`plan_commit_ref\`** (\`pcN\`) from a prior **\`plasm\`** dry-run. Real HTTP/API; may return **\`resource_link\`** / \`_meta.plasm\` snapshots.
+
+**Review gate:** \`plasm_run\` executes exactly the reviewed plan stored under the **\`plan_commit_ref\`**. If the token is missing, expired, or from another plan, call **\`plasm\`** again.
+
+**Live execute:** server spawns one async operation and awaits terminal rows in the tool response. Progress uses standard \`notifications/plasm/op\` on the registered handle.
+
+**Live results:** \`## {return_label} ({n} rows)\` + capped TSV (25 rows inline); multi-return programs use \`# Results\` with \`### {label} ({n} rows)\` per root. When more rows exist, continue with \`page(l_<token>_pgN)\` from the tool result or \`_meta.plasm.paging\`. Snapshot URI lines point at full JSON via MCP **\`resources/read\`** when needed. Run Explorer is supplemental.`;

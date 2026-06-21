@@ -1,0 +1,10 @@
+account_update:
+  method: PATCH
+  path:
+    - type: literal
+      value: accounts
+    - type: var
+      name: id
+  body:
+    type: var
+    name: input

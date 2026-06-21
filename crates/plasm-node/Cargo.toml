@@ -1,0 +1,32 @@
+[package]
+name = "plasm-node"
+version.workspace = true
+edition.workspace = true
+description = "Node.js NAPI bindings for the Plasm catalog-native agent engine"
+readme = "README.md"
+
+[package.metadata.napi]
+name = "plasm-engine"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+plasm-core = { path = "../plasm-core" }
+plasm-agent-core = { path = "../plasm-agent-core", default-features = false }
+plasm-runtime = { path = "../plasm-runtime" }
+plasm-compile = { path = "../plasm-compile" }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+indexmap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+napi = { version = "3", default-features = false, features = ["napi9", "napi4", "serde-json", "async"] }
+napi-derive = "3"
+
+[build-dependencies]
+napi-build = "2"
+
+[dev-dependencies]
+tempfile = { workspace = true }

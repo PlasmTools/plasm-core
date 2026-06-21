@@ -19,7 +19,7 @@ Prerequisites: **Rust** (`cargo`). Optional: **Just**, **Elixir** (for downstrea
 ```bash
 cargo build -p plasm-server --release
 cargo run -p plasm-server --release -- \
-  --schema fixtures/schemas/capability_with_input.cgs.yaml
+  --schema fixtures/schemas/capability_with_input
 ```
 
 After **`install.sh`**, run **`plasm-server`** with no flags. From a checkout with packed plugins, pass **`--plugin-dir target/plasm-plugins`** (see **[Plugins & compile pipeline](https://plasmtools.github.io/plasm-core/reference/genco-plugin-pipeline/)**). **`--no-tui`** runs headless. For `project_mcp_*` persistence run **`plasm-server mcp migrate-db`**. Details: [Appliance quick start](https://plasmtools.github.io/plasm-core/appliance/quickstart/).

@@ -1,0 +1,4 @@
+node_modules/
+# Generated catalog stubs (build output)
+agent/.plasm/stubs/*.ts
+!agent/.plasm/stubs/.gitkeep

@@ -5,15 +5,15 @@ use plasm_core::{type_check_expr, Expr, InvokeExpr, Value, CGS};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("🔒 CAPABILITY INPUT VALIDATION DEMONSTRATION\n");
 
-    let cgs: CGS = plasm_core::loader::load_schema(std::path::Path::new(
-        "fixtures/schemas/capability_with_input.cgs.yaml",
+    let cgs: CGS = plasm_core::loader::load_schema_dir(std::path::Path::new(
+        "fixtures/schemas/capability_with_input",
     ))
     .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
     validate_cgs_capability_templates(&cgs)
         .map_err(|e| -> Box<dyn std::error::Error> { format!("{e}").into() })?;
 
-    println!("Loaded schema with update_account capability");
-    if let Some(cap) = cgs.get_capability("update_account") {
+    println!("Loaded schema with account_update capability");
+    if let Some(cap) = cgs.get_capability("account_update") {
         println!("✓ Capability found: {} ({})", cap.name, cap.domain);
         if cap.input_schema.is_some() {
             println!("✓ Input schema defined for validation");
@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     valid_input.insert("priority".to_string(), Value::String("high".to_string()));
 
     let valid_invoke = InvokeExpr::new(
-        "update_account",
+        "account_update",
         "Account",
         "acc-1",
         Some(Value::Object(valid_input)),
@@ -48,7 +48,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     invalid_input.insert("revenue".to_string(), Value::Float(-100.0)); // Negative revenue
 
     let invalid_invoke = InvokeExpr::new(
-        "update_account",
+        "account_update",
         "Account",
         "acc-2",
         Some(Value::Object(invalid_input)),
@@ -68,7 +68,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let type_error_invoke = InvokeExpr::new(
-        "update_account",
+        "account_update",
         "Account",
         "acc-3",
         Some(Value::Object(type_error_input)),
@@ -85,7 +85,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     enum_error_input.insert("priority".to_string(), Value::String("invalid".to_string()));
 
     let enum_error_invoke = InvokeExpr::new(
-        "update_account",
+        "account_update",
         "Account",
         "acc-4",
         Some(Value::Object(enum_error_input)),
@@ -101,7 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let empty_input = IndexMap::new();
 
     let empty_invoke = InvokeExpr::new(
-        "update_account",
+        "account_update",
         "Account",
         "acc-5",
         Some(Value::Object(empty_input)),

@@ -61,7 +61,7 @@ apis/<api-name>/
   eval/cases.yaml  # natural-language eval cases for plasm-eval
 ```
 
-`fixtures/schemas/` holds **test-only** single-file CGS examples (e.g. `test_schema.cgs.yaml`, `capability_with_input.cgs.yaml`, `plasm_language_matrix*`); do not use it for new REST API authoring unless you are intentionally adding a tiny fixture for tests.
+`fixtures/schemas/` holds **test-only** split catalog dirs (e.g. `capability_with_input/`, `plasm_language_matrix*`); do not use it for new REST API authoring unless you are intentionally adding a tiny fixture for tests.
 
 ### NL eval cases (`plasm-eval`)
 

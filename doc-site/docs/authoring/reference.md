@@ -229,7 +229,7 @@ Use **`type: blob`** when the wire value is **not** human prose (base64/base64ur
 
 **HTTP runtime:** on 2xx responses whose body is not JSON, the default transport may coerce the body into a JSON object `{ "__plasm_attachment": { "bytes_base64": "…", "mime_type": "…" } }` unless the body looks like HTML/XML. Design decoders / `provides` so this shape can land on a `blob` field when APIs return raw octets.
 
-**Fixtures:** see `fixtures/schemas/test_schema.cgs.yaml` entity `BlobAsset` and `fixtures/schemas/capability_with_input.cgs.yaml` optional `artifact` field.
+**Fixtures:** see `fixtures/schemas/test_schema.cgs.yaml` entity `BlobAsset` and `fixtures/schemas/capability_with_input/` optional `artifact` field.
 
 ### Array element typing (`items:` under `values:`)
 

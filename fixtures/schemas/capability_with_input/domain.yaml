@@ -1,0 +1,92 @@
+version: 1
+auth:
+  scheme: none
+http_backend: http://localhost:1080
+entities:
+  Account:
+    id_field: id
+    description: Account row for input-schema validation fixture
+    fields:
+      id:
+        required: true
+        value_ref: nv_account_id
+      name:
+        required: true
+        value_ref: nv_account_name
+      revenue:
+        required: false
+        value_ref: nv_account_revenue
+capabilities:
+  account_update:
+    description: Update account fields
+    kind: update
+    entity: Account
+    input_schema:
+      description: Update account fields
+      input_type:
+        type: object
+        additional_fields: false
+        fields:
+          - name: name
+            value_ref: nv_update_name
+            required: false
+            description: Updated account name
+          - name: revenue
+            value_ref: nv_update_revenue
+            required: false
+            description: Updated revenue amount
+          - name: priority
+            value_ref: nv_update_priority
+            required: false
+            description: Account priority level
+          - name: artifact
+            value_ref: nv_update_artifact
+            required: false
+            description: Optional opaque attachment bytes
+      validation:
+        predicates:
+          - field_path: revenue
+            operator: min_value
+            value: 0
+            error_message: Revenue must be non-negative
+          - field_path: name
+            operator: min_length
+            value: 2
+            error_message: Name must be at least 2 characters
+        allow_null: false
+        cross_field_rules:
+          - rule_type: at_least_one
+            fields:
+              - name
+              - revenue
+              - priority
+            error_message: At least one field must be provided for update
+      examples:
+        - name: Updated Corp
+          revenue: 1500
+        - priority: high
+        - name: New Name
+          priority: medium
+          revenue: 2000
+values:
+  nv_account_id:
+    type: string
+    string_semantics: short
+  nv_account_name:
+    type: string
+    string_semantics: short
+  nv_account_revenue:
+    type: number
+  nv_update_name:
+    type: string
+    string_semantics: short
+  nv_update_revenue:
+    type: number
+  nv_update_priority:
+    type: select
+    allowed_values:
+      - low
+      - medium
+      - high
+  nv_update_artifact:
+    type: blob

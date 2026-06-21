@@ -1,0 +1,5 @@
+{
+  "$schema": "https://napi.rs/schema.json",
+  "binaryName": "plasm-engine",
+  "packageName": "@plasm_lang/engine"
+}

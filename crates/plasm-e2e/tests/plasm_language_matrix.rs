@@ -49,11 +49,11 @@ use plasm_agent::plasm_plan::{AggregateFunction, ComputeOp, ComputeTemplate, Pla
 use plasm_agent::plasm_plan_run::{
     evaluate_plasm_comp_dry, run_plasm_comp, DryPlasmPlanEvaluation, PlasmPlanRunResult,
 };
+use plasm_agent::server_state::PlasmHostState;
 use plasm_core::{
     ChainStep, CompOp, EntityKey, Expr, GetExpr, InvokeExpr, Predicate, PromptPipelineConfig,
     QueryExpr, TypedComparisonValue, Value,
 };
-use plasm_agent::server_state::PlasmHostState;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine};
 
 /// Every tag listed here must appear on at least one passing [`MATRIX_ROWS`] entry (`features` column).
@@ -2221,24 +2221,16 @@ async fn plasm_language_matrix_cgs_templates_validate() {
 
 #[test]
 fn plasm_language_matrix_live_runs() {
-    // Debug builds can overflow the default test thread stack while compiling/running the full matrix.
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(|| {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("matrix live runtime");
-            rt.block_on(async {
-                let base = hermit_lang_matrix::language_matrix_hermit_base_url()
-                    .await
-                    .clone();
-                plasm_language_matrix_live_runs_impl(base).await;
-            });
-        })
-        .expect("spawn matrix live thread")
-        .join()
-        .expect("matrix live thread join");
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("matrix live runtime");
+    rt.block_on(async {
+        let base = hermit_lang_matrix::language_matrix_hermit_base_url()
+            .await
+            .clone();
+        plasm_language_matrix_live_runs_sync(base);
+    });
 }
 
 async fn matrix_live_run_row(
@@ -2293,25 +2285,27 @@ async fn matrix_live_run_row(
     assert_row(row, &live).unwrap_or_else(|e| panic!("row {} assertion: {e}", row.id));
 }
 
-async fn plasm_language_matrix_live_runs_impl(base: String) {
+fn plasm_language_matrix_live_runs_sync(base: String) {
+    use std::sync::Arc;
+
     let cgs = language_matrix::load_language_matrix_cgs();
     plasm_compile::validate_cgs_capability_templates(&cgs).expect("templates");
 
-    let es = language_matrix::matrix_execute_session(cgs.clone());
+    let es = Arc::new(language_matrix::matrix_execute_session(cgs.clone()));
     let cgs_secondary = language_matrix::load_language_matrix_cgs();
-    let es_federated = language_matrix::matrix_federated_relation_target_session(
+    let es_federated = Arc::new(language_matrix::matrix_federated_relation_target_session(
         cgs.clone(),
         cgs_secondary.clone(),
-    );
-    let st = language_matrix::matrix_host_state(
+    ));
+    let st = Arc::new(language_matrix::matrix_host_state(
         ExecutionEngine::new(ExecutionConfig {
             base_url: Some(base.clone()),
             ..Default::default()
         })
         .expect("ExecutionEngine"),
         cgs.clone(),
-    );
-    let st_federated = language_matrix::matrix_federated_host_state(
+    ));
+    let st_federated = Arc::new(language_matrix::matrix_federated_host_state(
         ExecutionEngine::new(ExecutionConfig {
             base_url: Some(base.clone()),
             ..Default::default()
@@ -2319,15 +2313,19 @@ async fn plasm_language_matrix_live_runs_impl(base: String) {
         .expect("ExecutionEngine"),
         cgs.clone(),
         cgs_secondary.clone(),
-    );
-    let es_federated_dup = language_matrix::matrix_federated_duplicate_entity_session(cgs.clone());
-    let st_federated_dup = language_matrix::matrix_federated_duplicate_entity_host_state(
-        ExecutionEngine::new(ExecutionConfig {
-            base_url: Some(base.clone()),
-            ..Default::default()
-        })
-        .expect("ExecutionEngine"),
-        cgs,
+    ));
+    let es_federated_dup = Arc::new(language_matrix::matrix_federated_duplicate_entity_session(
+        cgs.clone(),
+    ));
+    let st_federated_dup = Arc::new(
+        language_matrix::matrix_federated_duplicate_entity_host_state(
+            ExecutionEngine::new(ExecutionConfig {
+                base_url: Some(base.clone()),
+                ..Default::default()
+            })
+            .expect("ExecutionEngine"),
+            cgs,
+        ),
     );
 
     let mut tags_seen: BTreeSet<String> = BTreeSet::new();
@@ -2343,13 +2341,26 @@ async fn plasm_language_matrix_live_runs_impl(base: String) {
                 | "lang_federated_group_by_on_e1"
                 | "lang_bind_template_inline_on_e1"
         ) {
-            (&es_federated_dup, &st_federated_dup)
+            (Arc::clone(&es_federated_dup), Arc::clone(&st_federated_dup))
         } else if row.federated {
-            (&es_federated, &st_federated)
+            (Arc::clone(&es_federated), Arc::clone(&st_federated))
         } else {
-            (&es, &st)
+            (Arc::clone(&es), Arc::clone(&st))
         };
-        Box::pin(matrix_live_run_row(row, row_es, row_st)).await;
+
+        // One OS thread per row: fresh default stack + small current-thread runtime (no 16MB hack).
+        std::thread::Builder::new()
+            .spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("row runtime");
+                rt.block_on(matrix_live_run_row(row, row_es.as_ref(), row_st.as_ref()));
+            })
+            .expect("spawn matrix row")
+            .join()
+            .expect("join matrix row");
+
         for t in row.features {
             tags_seen.insert((*t).to_string());
         }

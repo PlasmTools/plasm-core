@@ -648,9 +648,10 @@ pub(crate) fn try_parse_operation_continuation(
             cross_cache: symbol_map_cross_cache,
         },
     );
-    let parsed =
-        plasm_core::expr_parser::parse_with_cgs_layers_program(trimmed, &layers, map, None, false, None)
-            .ok()?;
+    let parsed = plasm_core::expr_parser::parse_with_cgs_layers_program(
+        trimmed, &layers, map, None, false, None,
+    )
+    .ok()?;
     match parsed.expr {
         plasm_core::Expr::Wait(_) | plasm_core::Expr::Cancel(_) => Some(parsed.expr),
         _ => None,
