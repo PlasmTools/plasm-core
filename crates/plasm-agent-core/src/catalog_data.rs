@@ -123,7 +123,6 @@ pub fn load_registry_from_catalog_dir_with_progress<P: FnMut(&str)>(
 mod tests {
     use super::*;
     use plasm_core::catalog_il::{CatalogManifest, PLASM_CATALOG_FORMAT_VERSION};
-    use std::path::PathBuf;
 
     fn write_manifest(dir: &Path, name: &str, manifest: &CatalogManifest) {
         let path = dir.join(name);
@@ -146,35 +145,60 @@ mod tests {
     #[test]
     fn ingest_prefers_higher_version() {
         let dir = tempfile::tempdir().expect("tempdir");
-        write_manifest(dir.path(), "a.manifest.json", &manifest("github", 1, &"a".repeat(64)));
-        write_manifest(dir.path(), "b.manifest.json", &manifest("github", 2, &"b".repeat(64)));
+        write_manifest(
+            dir.path(),
+            "a.manifest.json",
+            &manifest("github", 1, &"a".repeat(64)),
+        );
+        write_manifest(
+            dir.path(),
+            "b.manifest.json",
+            &manifest("github", 2, &"b".repeat(64)),
+        );
         let mut best = HashMap::new();
         ingest_manifest_candidate(&dir.path().join("a.manifest.json"), &mut best).unwrap();
         ingest_manifest_candidate(&dir.path().join("b.manifest.json"), &mut best).unwrap();
         assert_eq!(best["github"].0, 2);
-        assert_eq!(best["github"].2, PathBuf::from(dir.path().join("b.manifest.json")));
+        assert_eq!(best["github"].2, dir.path().join("b.manifest.json"));
     }
 
     #[test]
     fn ingest_keeps_higher_version_when_seen_first() {
         let dir = tempfile::tempdir().expect("tempdir");
-        write_manifest(dir.path(), "a.manifest.json", &manifest("github", 1, &"a".repeat(64)));
-        write_manifest(dir.path(), "b.manifest.json", &manifest("github", 2, &"b".repeat(64)));
+        write_manifest(
+            dir.path(),
+            "a.manifest.json",
+            &manifest("github", 1, &"a".repeat(64)),
+        );
+        write_manifest(
+            dir.path(),
+            "b.manifest.json",
+            &manifest("github", 2, &"b".repeat(64)),
+        );
         let mut best = HashMap::new();
         ingest_manifest_candidate(&dir.path().join("b.manifest.json"), &mut best).unwrap();
         ingest_manifest_candidate(&dir.path().join("a.manifest.json"), &mut best).unwrap();
         assert_eq!(best["github"].0, 2);
-        assert_eq!(best["github"].2, PathBuf::from(dir.path().join("b.manifest.json")));
+        assert_eq!(best["github"].2, dir.path().join("b.manifest.json"));
     }
 
     #[test]
     fn ingest_rejects_same_version_conflicting_hash() {
         let dir = tempfile::tempdir().expect("tempdir");
-        write_manifest(dir.path(), "a.manifest.json", &manifest("github", 3, &"a".repeat(64)));
-        write_manifest(dir.path(), "b.manifest.json", &manifest("github", 3, &"b".repeat(64)));
+        write_manifest(
+            dir.path(),
+            "a.manifest.json",
+            &manifest("github", 3, &"a".repeat(64)),
+        );
+        write_manifest(
+            dir.path(),
+            "b.manifest.json",
+            &manifest("github", 3, &"b".repeat(64)),
+        );
         let mut best = HashMap::new();
         ingest_manifest_candidate(&dir.path().join("a.manifest.json"), &mut best).unwrap();
-        let err = ingest_manifest_candidate(&dir.path().join("b.manifest.json"), &mut best).unwrap_err();
+        let err =
+            ingest_manifest_candidate(&dir.path().join("b.manifest.json"), &mut best).unwrap_err();
         assert!(err.contains("conflicting catalogs"));
     }
 
@@ -187,6 +211,6 @@ mod tests {
         let mut best = HashMap::new();
         ingest_manifest_candidate(&dir.path().join("z.manifest.json"), &mut best).unwrap();
         ingest_manifest_candidate(&dir.path().join("a.manifest.json"), &mut best).unwrap();
-        assert_eq!(best["github"].2, PathBuf::from(dir.path().join("a.manifest.json")));
+        assert_eq!(best["github"].2, dir.path().join("a.manifest.json"));
     }
 }

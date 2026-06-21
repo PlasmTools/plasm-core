@@ -4,17 +4,17 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use indexmap::IndexMap;
-use plasm_core::{CgsContext, Ref, TypedFieldValue, Value, CGS};
+use plasm_core::{Ref, TypedFieldValue, Value, CGS};
 use plasm_runtime::{EntityCompleteness, ExecutionConfig, ExecutionEngine, ExecutionMode};
 
 use crate::execute_session::ExecuteSession;
-use crate::test_support::session_fixtures::ExecuteSessionFixture;
 #[cfg(test)]
 use crate::execute_session::SessionCore;
 use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
 use crate::run_artifacts::RunArtifactStore;
 use crate::server_state::{CatalogBootstrap, PlasmHostState};
 use crate::session_graph_persistence::SessionGraphPersistence;
+use crate::test_support::session_fixtures::ExecuteSessionFixture;
 use plasm_core::discovery::InMemoryCgsRegistry;
 
 pub fn load_pokeapi_mini_cgs() -> Arc<CGS> {
@@ -60,6 +60,12 @@ pub struct SpillHostFixture {
     _store_root: PathBuf,
 }
 
+impl Default for SpillHostFixture {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SpillHostFixture {
     pub fn new() -> Self {
         let nonce = std::time::SystemTime::now()
@@ -77,7 +83,7 @@ impl SpillHostFixture {
             mode: ExecutionMode::Live,
             registry: Arc::new(InMemoryCgsRegistry::from_pairs(vec![])),
             catalog_bootstrap: CatalogBootstrap::Fixed,
-                        incoming_auth: None,
+            incoming_auth: None,
             run_artifacts: Arc::new(RunArtifactStore::memory()),
             session_graph_persistence: Some(Arc::clone(&persistence)),
             oss_local_filesystem_defaults: false,
