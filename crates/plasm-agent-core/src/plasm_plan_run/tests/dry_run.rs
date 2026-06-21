@@ -196,9 +196,8 @@ fn federated_linear_issue_create_dry_run_preflight_compiles() {
     let e3 = map.entity_sym_for("linear", "Team");
     let m_create = map.method_sym_for("linear", "Issue", "create");
     let p_key = map.ident_sym_entity_field_for("linear", "Team", "key");
-    let program = format!(
-        "{e2}.{m_create}(team={e3}({p_key}=EVA), title=\"federation triage dry-run\")"
-    );
+    let program =
+        format!("{e2}.{m_create}(team={e3}({p_key}=EVA), title=\"federation triage dry-run\")");
     let plan = crate::plasm_dag::compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,
