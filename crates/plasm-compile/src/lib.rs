@@ -8,6 +8,8 @@
 pub mod backend_filter;
 pub mod decoder;
 pub mod embed_decode;
+pub mod embed_target_decoder;
+pub mod embed_tree;
 pub mod error;
 pub mod json_path;
 pub mod predicate_compiler;
@@ -27,7 +29,9 @@ pub use plasm_cml::evm_transport::*;
 
 pub use backend_filter::*;
 pub use decoder::*;
-pub use embed_decode::decode_entities;
+pub use embed_decode::{decode_entities, decode_entities_with_cgs};
+pub use embed_target_decoder::entity_decoder_for_from_parent_get_target;
+pub use embed_tree::flatten_decoded_embed_descendants;
 pub use error::{CompileError, DecodeError};
 pub use json_path::path_expr_from_json_segments;
 pub use plasm_cml::CmlError;

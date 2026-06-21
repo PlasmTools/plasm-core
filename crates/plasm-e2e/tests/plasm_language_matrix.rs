@@ -114,6 +114,7 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "postfix_dedupe",
     "agg_first_last",
     "dry_live_parity",
+    "utf8_dollar_interpolate",
     "host_wait_cancel",
     "monadic_comp_witness",
 ];
@@ -738,6 +739,31 @@ fn assert_planning_ir(
                 .any(|c| matches!(c.op, ComputeOp::Render { .. }))
             {
                 return Err("expected bracket Render compute before create".into());
+            }
+        }
+        "lang_utf8_minijinja_dollar_stitch" => {
+            let has_create_node = comp_has_invoke_plan_kind(comp, "create");
+            if !has_create_node {
+                return Err(format!(
+                    "expected a comp invoke `create` step, got {:?}",
+                    comp.get("steps")
+                ));
+            }
+            if !computes
+                .iter()
+                .any(|c| matches!(c.op, ComputeOp::Render { .. }))
+            {
+                return Err("expected bracket Render compute before create".into());
+            }
+            let mut saw_utf8 = false;
+            for nr in &dry.node_results {
+                if json_value_contains_substring(nr, "Pokémon") {
+                    saw_utf8 = true;
+                    break;
+                }
+            }
+            if !saw_utf8 {
+                return Err("expected UTF-8 Pokémon literal in dry plan payload".into());
             }
         }
         "lang_heredoc_binding" => {
@@ -1885,6 +1911,28 @@ summary"#,
         features: &["domain_symbol_e1", "pagination_page_size"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "owner"],
+    },
+    MatrixRow {
+        id: "lang_utf8_minijinja_dollar_stitch",
+        program: r#"type_md = LangItem.limit(1)[title] <<UTF8_ROW_EOF
+# Pokémon — {{ rows[0].title }}
+UTF8_ROW_EOF
+LangItem.create(title=<<UTF8_DOC_EOF
+Featured Pokémon
+${type_md.content}
+UTF8_DOC_EOF
+, score=0, owner="utf8-matrix-owner")"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "utf8_dollar_interpolate",
+            "bracket_render",
+            "bracket_render_content_ref",
+            "effect_create",
+            "bindings_assignment",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "utf8-matrix-owner", "Pokémon"],
     },
 ];
 

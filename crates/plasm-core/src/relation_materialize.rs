@@ -9,6 +9,9 @@
 use crate::{Cardinality, EmbedOnMissPolicy, JsonPathSegment, Ref, RelationMaterialization};
 use serde_json::Value;
 
+/// Max depth for chained `from_parent_get` embed decode, graph insert, and wire-row rebuild (CEP-10).
+pub const MAX_FROM_PARENT_GET_EMBED_DEPTH: usize = 8;
+
 /// Whether a parent row is served from the session graph or needs a scoped query.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelationRowResolution {
@@ -107,7 +110,10 @@ fn resolve_prefer_from_parent_get_row(
     let path_empty = extracted.is_empty() || extracted.iter().all(|v| v.is_null());
     if path_empty {
         if let Some(refs) = relation_refs.filter(|r| !r.is_empty()) {
-            return RelationRowResolution::EmbeddedRefs(refs.to_vec());
+            if relation_refs_fully_resolved(refs, expected_target, |r| graph_has_ref(r).then_some(&()))
+            {
+                return RelationRowResolution::EmbeddedRefs(refs.to_vec());
+            }
         }
         return RelationRowResolution::ScopedQuery;
     }
@@ -167,7 +173,7 @@ pub fn from_parent_get_embed_edges(cgs: &crate::CGS) -> Vec<(String, String, Str
 /// Fail when plain [`RelationMaterialization::FromParentGet`] edges form an entity-level cycle.
 ///
 /// [`RelationMaterialization::PreferFromParentGet`] inverse edges are excluded — mutual embed
-/// pairs are allowed when runtime decode is single-hop (CEP-10).
+/// pairs are allowed when runtime decode uses leaf embed decoders (CEP-10).
 pub fn validate_from_parent_get_embed_acyclic(cgs: &crate::CGS) -> Result<(), String> {
     let edges = from_parent_get_embed_edges(cgs);
     let mut adj: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();

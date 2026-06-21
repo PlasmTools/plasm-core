@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use plasm_core::text::{parse_brace_template, BraceParseError, BraceSegment};
 use plasm_core::Value;
 use thiserror::Error;
 
@@ -37,60 +38,29 @@ pub enum InstantiateError {
     Parse(#[from] TemplateParseError),
 }
 
+fn map_brace_parse_error(err: BraceParseError) -> TemplateParseError {
+    match err {
+        BraceParseError::UnclosedHole(i) => TemplateParseError::UnclosedHole(i),
+        BraceParseError::EmptyHole(i) => TemplateParseError::EmptyHole(i),
+        BraceParseError::InvalidSym(s) => TemplateParseError::InvalidSym(s),
+    }
+}
+
 /// Parse `{{param:name}}` and `{{sym:entry_id.Entity}}` holes into segments.
 pub fn parse_program_template(source: &str) -> Result<WorkflowProgramTemplate, TemplateParseError> {
-    let mut segments = Vec::new();
-    let mut literal = String::new();
-    let bytes = source.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if i + 1 < bytes.len() && bytes[i] == b'{' && bytes[i + 1] == b'{' {
-            if !literal.is_empty() {
-                segments.push(TemplateSegment::Literal(std::mem::take(&mut literal)));
-            }
-            let start = i + 2;
-            let Some(end_rel) = source[start..].find("}}") else {
-                return Err(TemplateParseError::UnclosedHole(i));
-            };
-            let inner = source[start..start + end_rel].trim();
-            if inner.is_empty() {
-                return Err(TemplateParseError::EmptyHole(i));
-            }
-            let segment = if let Some(name) = inner.strip_prefix("param:") {
-                if name.is_empty() {
-                    return Err(TemplateParseError::EmptyHole(i));
-                }
-                TemplateSegment::Param {
-                    name: name.to_string(),
-                }
-            } else if let Some(sym) = inner.strip_prefix("sym:") {
-                let Some((entry_id, entity)) = sym.split_once('.') else {
-                    return Err(TemplateParseError::InvalidSym(sym.to_string()));
-                };
-                if entry_id.is_empty() || entity.is_empty() {
-                    return Err(TemplateParseError::InvalidSym(sym.to_string()));
-                }
-                TemplateSegment::Sym {
-                    entry_id: entry_id.to_string(),
-                    entity: entity.to_string(),
-                }
-            } else {
-                literal.push_str("{{");
-                literal.push_str(inner);
-                literal.push_str("}}");
-                i = start + end_rel + 2;
-                continue;
-            };
-            segments.push(segment);
-            i = start + end_rel + 2;
-            continue;
-        }
-        literal.push(char::from(bytes[i]));
-        i += 1;
-    }
-    if !literal.is_empty() {
-        segments.push(TemplateSegment::Literal(literal));
-    }
+    let parsed = parse_brace_template(source).map_err(map_brace_parse_error)?;
+    let segments = parsed
+        .segments
+        .into_iter()
+        .map(|seg| match seg {
+            BraceSegment::Literal(lit) => TemplateSegment::Literal(lit.into_string()),
+            BraceSegment::Param { name } => TemplateSegment::Param { name },
+            BraceSegment::Sym { entry_id, entity } => TemplateSegment::Sym {
+                entry_id,
+                entity,
+            },
+        })
+        .collect();
     Ok(WorkflowProgramTemplate { segments })
 }
 
@@ -183,5 +153,15 @@ mod tests {
         let out = instantiate_template(&t, &params, &BTreeMap::new()).expect("inst");
         assert!(out.contains("<<PLASM_WF_"));
         assert!(out.contains("line1\nline2"));
+    }
+
+    #[test]
+    fn preserves_utf8_in_literals() {
+        let t = parse_program_template("Pokémon {{param:q}}").expect("parse");
+        let lit = match &t.segments[0] {
+            TemplateSegment::Literal(s) => s,
+            _ => panic!("expected literal"),
+        };
+        assert!(lit.contains('é'));
     }
 }

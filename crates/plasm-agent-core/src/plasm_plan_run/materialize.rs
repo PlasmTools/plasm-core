@@ -342,72 +342,62 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
     }
     let target = relation.relation.target.entity.as_str();
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
-    let wire_rows = super::compute_eval::parent_get_wire_rows(
+    let rel_name = relation.relation.relation.as_str();
+    let rehydrator = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
+        es,
+        st,
+        session_id,
+        scoped_es.cgs.as_ref(),
+    );
+    let parents = source_mat
+        .resolve_materialized_source_parents(&rehydrator)
+        .await;
+    let guard = scoped_es.lock_graph_cache().await;
+    let mat = guard.materialization();
+    let wire_fallback = super::compute_eval::parent_get_wire_rows(
         source_rows,
         relation,
         source_mat.entity.as_str(),
         scoped_es.cgs.as_ref(),
         target,
-    )?;
-    let entities =
-        json_rows_to_entities_with_refs(target, &wire_rows, Some(scoped_es.cgs.as_ref()));
-    let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
-    let mut entities = entities;
-    crate::plan_read_bounds::truncate_to_read_cap(&mut entities, read_cap);
-    let request_fingerprints = vec![compute_fingerprint(node, &wire_rows)];
-    let full_result = ExecutionResult {
-        count: entities.len(),
-        entities: entities.clone(),
-        has_more: false,
-        pagination_resume: None,
-        paging_handle: None,
-        source: ExecutionSource::Cache,
-        stats: ExecutionStats {
-            duration_ms: 0,
-            network_requests: 0,
-            cache_hits: 0,
-            cache_misses: 0,
-            ..Default::default()
-        },
-        request_fingerprints: request_fingerprints.clone(),
-    };
-    let parsed_preimage = evidence_plan::parsed_expr_for_plan_node(node);
-    let artifact = archive_plasm_result_snapshot(
-        st,
-        es,
-        session_id,
-        Some(relation.relation.target.entry_id.as_str()),
-        vec![synthetic_node_display(node)],
-        &parsed_preimage,
-        &full_result,
-        trace,
     )
-    .await?;
-    let row_identities = row_identities_from_entities(&scoped_es, target, &full_result.entities);
+    .ok()
+    .filter(|rows| !rows.is_empty());
+    let mut entities = super::compute_eval::resolve_embed_target_entities(
+        rel_name,
+        target,
+        &parents,
+        &mat,
+        wire_fallback.as_deref(),
+        scoped_es.cgs.as_ref(),
+    );
+    let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
+    crate::plan_read_bounds::truncate_to_read_cap(&mut entities, read_cap);
+    let wire_rows =
+        crate::graph_rehydrate::wire_rows_for_embed_entities(&entities, scoped_es.cgs.as_ref(), &mat);
+    drop(guard);
     let display = relation
         .relation
         .ir
         .display_expr
         .clone()
         .unwrap_or_else(|| format!("plan.relation({})", node.id().as_str()));
-    finalize_typed_relation_materialized_node(
+    super::compute_eval::finalize_embed_relation_materialized_node(
         st,
         es,
         session_id,
-        &relation.relation.target,
-        MaterializedNode {
-            entry_id: relation.relation.target.entry_id.clone(),
-            entity: relation.relation.target.entity.clone(),
-            display,
-            projection: relation.relation.ir.projection.clone(),
-            row_source: inline_row_source_owned(wire_rows),
-            row_identities,
-            result: Arc::new(full_result),
-            artifact: Some(artifact),
-        },
+        node,
+        relation,
+        &scoped_es,
+        target,
+        entities,
+        wire_rows,
+        None,
+        display,
+        vec![synthetic_node_display(node)],
         trace,
         read_cap,
-        None,
+        0,
     )
     .await
     .map(Some)

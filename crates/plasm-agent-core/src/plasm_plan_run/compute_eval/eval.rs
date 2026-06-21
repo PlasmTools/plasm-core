@@ -665,39 +665,18 @@ pub(crate) fn render_template_with(
     env: &PlanEvalEnv<'_>,
     render_value: fn(&serde_json::Value) -> String,
 ) -> Result<String, String> {
-    let mut out = String::new();
-    let bytes = template.as_bytes();
-    let mut i = 0;
-    let mut literal_start = 0;
-    while i + 1 < bytes.len() {
-        if bytes[i] == b'$' {
-            if bytes[i + 1] == b'$' {
-                out.push_str(&template[literal_start..i]);
-                out.push('$');
-                i += 2;
-                literal_start = i;
-                continue;
-            }
-            if bytes[i + 1] == b'{' {
-                out.push_str(&template[literal_start..i]);
-                let start = i + 2;
-                let Some(end_rel) = template[start..].find('}') else {
-                    return Err("template contains an unterminated ${...} substitution".to_string());
-                };
-                let raw_path = template[start..start + end_rel].trim();
-                let rendered = resolve_template_path(raw_path, env)
-                    .map(render_value)
-                    .ok_or_else(|| format!("template path {raw_path:?} did not resolve"))?;
-                out.push_str(&rendered);
-                i = start + end_rel + 1;
-                literal_start = i;
-                continue;
-            }
-        }
-        i += 1;
-    }
-    out.push_str(&template[literal_start..]);
-    Ok(out)
+    plasm_core::text::interpolate_dollar_template(
+        template,
+        |raw_path| {
+            let rendered = resolve_template_path(raw_path, env)
+                .map(render_value)
+                .ok_or_else(|| format!("template path {raw_path:?} did not resolve"))?;
+            Ok(rendered)
+        },
+        plasm_core::text::DEFAULT_MAX_INTERPOLATED_LEN,
+    )
+    .map(|t| t.into_string())
+    .map_err(|e| e.to_string())
 }
 
 pub(crate) fn resolve_template_path<'a>(

@@ -8,7 +8,8 @@ use crate::view_plan::ViewAmbientContext;
 use crate::{AuthResolver, CachedEntity, CancelSignal, EntityCompleteness, RuntimeError};
 use indexmap::IndexMap;
 use plasm_compile::{
-    compile_operation, compile_query, decode_entities, parse_capability_template,
+    compile_operation, compile_query, decode_entities, decode_entities_with_cgs,
+    parse_capability_template,
     path_var_names_from_request, template_pagination, template_var_names, BackendFilter,
     CapabilityTemplate, CmlEnv, CmlRequest, CompileOperationHook, CompileQueryHook,
     CompiledOperation, CompiledRequest, HttpBodyFormat, PaginationConfig, PathExpr, PathSegment,
@@ -38,6 +39,7 @@ use tracing::Instrument;
 
 mod chain;
 mod compile_preflight;
+mod embed_cache;
 mod entity_decoder;
 mod http_exec;
 mod mutators;
@@ -1740,7 +1742,7 @@ impl ExecutionEngine {
             rid,
             Some(&identity_ambient),
         );
-        let decoded_entities = decode_entities(&decoder, &response)?;
+        let decoded_entities = decode_entities_with_cgs(&decoder, &response, Some(cgs))?;
 
         let decoded = decoded_entities
             .first()
@@ -1939,25 +1941,7 @@ fn cache_decoded_entity_tree(
     timestamp: u64,
     completeness: EntityCompleteness,
 ) -> Result<CachedEntity, RuntimeError> {
-    for embedded in decoded.embedded_entities {
-        let child = CachedEntity::from_decoded(
-            embedded.reference,
-            embedded.fields,
-            embedded.relations,
-            timestamp,
-            EntityCompleteness::Complete,
-        );
-        mat.insert(child)?;
-    }
-    let cached = CachedEntity::from_decoded(
-        decoded.reference,
-        decoded.fields,
-        decoded.relations,
-        timestamp,
-        completeness,
-    );
-    mat.insert(cached.clone())?;
-    Ok(cached)
+    embed_cache::cache_decoded_entity_tree(mat, decoded, timestamp, completeness)
 }
 
 fn query_result_merge_cache(
@@ -4841,7 +4825,7 @@ mod tests {
     }
 
     #[test]
-    fn langitem_get_decoder_decodes_summary_embed_single_hop() {
+    fn langitem_get_decoder_embed_decoders_are_leaf() {
         use plasm_compile::decode_entities;
         use plasm_compile::DecodedRelation;
         use plasm_core::loader::load_schema_dir;
@@ -4864,7 +4848,7 @@ mod tests {
             .expect("summary relation decoder");
         assert!(
             summary_rel.decoder.relations.is_empty(),
-            "single-hop summary decoder must not nest further from_parent_get decoders"
+            "leaf summary decoder must not nest further embed decoders (CEP-10)"
         );
 
         let body = serde_json::json!({
@@ -4876,24 +4860,28 @@ mod tests {
                 "detail": { "id": "det-i1", "body": "nested detail" }
             }
         });
-        let decoded = decode_entities(&decoder, &body).expect("decode langitem get");
+        let decoded = decode_entities_with_cgs(&decoder, &body, Some(&cgs)).expect("decode langitem get");
         let summary = decoded[0]
             .embedded_entities
             .iter()
             .find(|e| e.reference.entity_type.as_str() == "LangSummary")
             .expect("embedded summary");
-        assert!(
-            summary.relations.get("detail").is_none()
-                || matches!(
-                    summary.relations.get("detail"),
-                    Some(DecodedRelation::Unspecified)
-                ),
-            "detail hop is plan-scoped; GET decode does not embed nested relation decoders"
-        );
+        let detail_rel = summary.relations.get("detail").expect("summary.detail relation");
+        let DecodedRelation::Specified(refs) = detail_rel else {
+            panic!("expected specified detail refs, got {detail_rel:?}");
+        };
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].primary_slot_str(), "det-i1");
+        let detail = summary
+            .embedded_entities
+            .iter()
+            .find(|e| e.reference.entity_type.as_str() == "LangDetail")
+            .expect("embedded detail");
+        assert_eq!(detail.reference.primary_slot_str(), "det-i1");
     }
 
     #[test]
-    fn pokemon_get_decoder_is_single_hop() {
+    fn pokemon_get_decoder_embed_decoders_are_leaf() {
         use plasm_core::loader::load_schema_dir;
 
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
@@ -4914,14 +4902,14 @@ mod tests {
                 .unwrap_or_else(|| panic!("missing {rel} relation decoder"));
             assert!(
                 rd.decoder.relations.is_empty(),
-                "{rel} embed decoder must be single-hop (no nested from_parent_get tree)"
+                "{rel} embed decoder must be leaf (no nested .relations; CEP-10)"
             );
         }
     }
 
     #[test]
     fn pokemon_get_decode_on_release_stack_budget() {
-        use plasm_compile::decode_entities;
+        use plasm_compile::decode_entities_with_cgs;
         use plasm_core::loader::load_schema_dir;
 
         if cfg!(debug_assertions) {
@@ -4953,7 +4941,8 @@ mod tests {
         std::thread::Builder::new()
             .stack_size(4 * 1024 * 1024)
             .spawn(move || {
-                let decoded = decode_entities(&decoder, &body).expect("decode pikachu");
+                let decoded =
+                    decode_entities_with_cgs(&decoder, &body, Some(&cgs)).expect("decode pikachu");
                 assert_eq!(decoded.len(), 1);
                 assert!(decoded[0].relations.contains_key("species"));
             })

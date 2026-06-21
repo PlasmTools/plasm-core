@@ -1,13 +1,20 @@
-//! Single-hop relation embed decode (CEP-10). No nested [`EntityDecoder::relations`].
+//! Relation embed decode (CEP-10).
+//!
+//! Top-level [`EntityDecoder::relations`] are **leaf** embed decoders (no nested `.relations`).
+//! When a [`CGS`] is supplied, nested `from_parent_get` chains are expanded iteratively up to
+//! [`plasm_core::MAX_FROM_PARENT_GET_EMBED_DEPTH`] so chained plan hops (e.g. `summary.detail`) populate
+//! the session graph without recursive stack growth.
 
 use indexmap::IndexMap;
-use plasm_core::{Ref, Value};
-use std::collections::BTreeMap;
+use plasm_core::{CGS, MAX_FROM_PARENT_GET_EMBED_DEPTH, Ref, RelationMaterialization, Value};
+use std::collections::{BTreeMap, VecDeque};
 
 use crate::decoder::{
     apply_field_derive_rule, apply_transform, extract_path, json_to_value,
     relation_decode_path_specified, DecodedEntity, DecodedRelation, EntityDecoder,
 };
+use crate::embed_target_decoder::entity_decoder_for_from_parent_get_target;
+use crate::json_path::path_expr_from_json_segments;
 use crate::DecodeError;
 
 /// Decode entities using an [`EntityDecoder`].
@@ -15,10 +22,19 @@ pub fn decode_entities(
     decoder: &EntityDecoder,
     response: &serde_json::Value,
 ) -> Result<Vec<DecodedEntity>, DecodeError> {
+    decode_entities_with_cgs(decoder, response, None)
+}
+
+/// Decode entities and, when `cgs` is set, iteratively expand nested `from_parent_get` embeds.
+pub fn decode_entities_with_cgs(
+    decoder: &EntityDecoder,
+    response: &serde_json::Value,
+    cgs: Option<&CGS>,
+) -> Result<Vec<DecodedEntity>, DecodeError> {
     let source_values = extract_path(&decoder.source, response)?;
     let mut entities = Vec::with_capacity(source_values.len());
     for source_value in &source_values {
-        entities.push(decode_single_entity(decoder, source_value)?);
+        entities.push(decode_single_entity(decoder, source_value, cgs)?);
     }
     Ok(entities)
 }
@@ -26,6 +42,7 @@ pub fn decode_entities(
 fn decode_single_entity(
     decoder: &EntityDecoder,
     source: &serde_json::Value,
+    cgs: Option<&CGS>,
 ) -> Result<DecodedEntity, DecodeError> {
     let core = decode_entity_fields_and_ref(decoder, source)?;
     let mut relations = IndexMap::new();
@@ -42,7 +59,7 @@ fn decode_single_entity(
         if !relation_decoder.decoder.relations.is_empty() {
             return Err(DecodeError::InvalidStructure {
                 message: format!(
-                    "relation `{}` embed decoder must be single-hop (nested .relations forbidden)",
+                    "relation `{}` embed decoder must be a leaf (nested .relations forbidden; CEP-10)",
                     relation_decoder.relation
                 ),
             });
@@ -54,12 +71,22 @@ fn decode_single_entity(
             let related = decode_entity_fields_and_ref(&child_decoder, &child_source)?;
             let reference = related.reference;
             refs.push(reference.clone());
-            embedded_entities.push(DecodedEntity {
+            let mut child_entity = DecodedEntity {
                 reference,
                 fields: related.fields,
                 relations: IndexMap::new(),
                 embedded_entities: Vec::new(),
-            });
+            };
+            if let Some(cgs) = cgs {
+                expand_transitive_from_parent_get_embeds(
+                    &mut child_entity,
+                    &child_source,
+                    child_decoder.entity.as_str(),
+                    cgs,
+                    MAX_FROM_PARENT_GET_EMBED_DEPTH,
+                )?;
+            }
+            embedded_entities.push(child_entity);
         }
         relations.insert(
             relation_decoder.relation.clone(),
@@ -271,6 +298,77 @@ fn value_for_id_field_from_string(s: &str) -> Value {
     }
 }
 
+fn expand_transitive_from_parent_get_embeds(
+    root: &mut DecodedEntity,
+    root_wire: &serde_json::Value,
+    root_type: &str,
+    cgs: &CGS,
+    max_depth: usize,
+) -> Result<(), DecodeError> {
+    let mut queue: VecDeque<(Vec<usize>, serde_json::Value, String, usize)> = VecDeque::new();
+    queue.push_back((Vec::new(), root_wire.clone(), root_type.to_string(), 0));
+
+    while let Some((path, wire, ent_type, depth)) = queue.pop_front() {
+        if depth >= max_depth {
+            continue;
+        }
+        let entity = entity_at_embed_path_mut(root, &path);
+        let Some(def) = cgs.get_entity(ent_type.as_str()) else {
+            continue;
+        };
+        for (rel_name, rel_schema) in &def.relations {
+            let path_seg = match &rel_schema.materialize {
+                Some(RelationMaterialization::FromParentGet { path })
+                | Some(RelationMaterialization::PreferFromParentGet { path, .. }) => path,
+                _ => continue,
+            };
+            let rel_path = path_expr_from_json_segments(path_seg).map_err(|e| {
+                DecodeError::InvalidStructure {
+                    message: e.to_string(),
+                }
+            })?;
+            if !relation_decode_path_specified(&wire, &rel_path) {
+                continue;
+            }
+            let target_type = rel_schema.target_resource.as_str();
+            let Some(target_ent) = cgs.get_entity(target_type) else {
+                continue;
+            };
+            let child_decoder =
+                entity_decoder_for_from_parent_get_target(target_ent, def, rel_path.clone());
+            let child_sources = extract_path(&rel_path, &wire)?;
+            let mut refs = Vec::new();
+            for child_wire in child_sources {
+                let related = decode_entity_fields_and_ref(&child_decoder, &child_wire)?;
+                let reference = related.reference;
+                refs.push(reference.clone());
+                let child_idx = entity.embedded_entities.len();
+                entity.embedded_entities.push(DecodedEntity {
+                    reference,
+                    fields: related.fields,
+                    relations: IndexMap::new(),
+                    embedded_entities: Vec::new(),
+                });
+                let mut child_path = path.clone();
+                child_path.push(child_idx);
+                queue.push_back((child_path, child_wire, target_type.to_string(), depth + 1));
+            }
+            if !refs.is_empty() {
+                entity.relations.insert(rel_name.as_str().to_string(), DecodedRelation::Specified(refs));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn entity_at_embed_path_mut<'a>(root: &'a mut DecodedEntity, path: &[usize]) -> &'a mut DecodedEntity {
+    let mut cur = root;
+    for &idx in path {
+        cur = &mut cur.embedded_entities[idx];
+    }
+    cur
+}
+
 fn extract_id_from_source(
     source: &serde_json::Value,
     schema_id_field: Option<&str>,
@@ -324,7 +422,49 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn nested_embed_decoder_rejected() {
+    fn transitive_from_parent_get_expand_with_cgs() {
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&dir).expect("langmatrix");
+        let summary = EntityDecoder::new("LangSummary", PathExpr::from_slice(&["summary"]))
+            .with_id_field("id");
+        let item = EntityDecoder::new("LangItem", PathExpr::empty())
+            .with_id_field("id")
+            .with_relations(vec![RelationDecoder {
+                relation: "summary".into(),
+                decoder: summary,
+                cardinality: Cardinality::One,
+            }]);
+        let body = json!({
+            "id": "i1",
+            "summary": {
+                "id": "sum-i1",
+                "headline": "Alpha summary",
+                "detail": { "id": "det-i1", "body": "nested detail" }
+            }
+        });
+        let decoded =
+            decode_entities_with_cgs(&item, &body, Some(&cgs)).expect("decode with transitive embed");
+        let summary = decoded[0]
+            .embedded_entities
+            .iter()
+            .find(|e| e.reference.entity_type.as_str() == "LangSummary")
+            .expect("summary embed");
+        let detail_rel = summary.relations.get("detail").expect("detail relation");
+        assert!(matches!(detail_rel, DecodedRelation::Specified(_)));
+        assert!(
+            summary
+                .embedded_entities
+                .iter()
+                .any(|e| e.reference.primary_slot_str() == "det-i1"),
+            "detail entity must be in embedded_entities"
+        );
+    }
+
+    #[test]
+    fn nested_embed_decoder_on_entity_decoder_rejected() {
         let detail =
             EntityDecoder::new("LangDetail", PathExpr::from_slice(&["detail"])).with_id_field("id");
         let summary = EntityDecoder::new("LangSummary", PathExpr::from_slice(&["summary"]))
@@ -346,6 +486,6 @@ mod tests {
             "summary": { "id": "s1", "detail": { "id": "d1" } }
         });
         let err = decode_entities(&item, &body).unwrap_err();
-        assert!(err.to_string().contains("single-hop"), "{err}");
+        assert!(err.to_string().contains("leaf"), "{err}");
     }
 }

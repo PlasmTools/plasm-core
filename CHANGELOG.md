@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.44] - 2026-06-21
+
+### Fixed
+
+- **Chained `from_parent_get` embeds:** nested relation embeds (e.g. `summary.detail`) decode transitively into the session graph and plan `row_source` preserves nested wire shape — fixes chained-hop materialize/hydrate (`lang_relation_hop_one_one`).
+- **CEP-10 embed depth:** bounded iterative expand at HTTP decode (`decode_entities_with_cgs`), graph insert (`flatten_decoded_embed_descendants`), and wire-row rebuild (`wire_row_with_from_parent_embeds`) — cap [`MAX_FROM_PARENT_GET_EMBED_DEPTH`](crates/plasm-core/src/relation_materialize.rs); leaf embed decoders have no nested `.relations`.
+
+### Changed
+
+- **Embed decode compile/runtime split:** `embed_target_decoder`, `embed_tree`, `execution/embed_cache`; shared `entity_decoder_for_from_parent_get_target`; runtime GET paths use `decode_entities_with_cgs`.
+- **Plan embed materialize:** `resolve_embed_target_entities` + `finalize_embed_relation_materialized_node` unify cached-ref and `from_parent_get` finalize paths; truncate before wire-row embed closure.
+- **Template interpolation:** `plasm-core::text` module (`Utf8Text`, brace/dollar template IR) replaces ad-hoc `template_interpolate` internals.
+
+### Tests
+
+- **CEP-10:** `embed_decode`, `wire_row_embeds_declared_relation_from_graph`, `lang_relation_hop_one_one` matrix row; `scripts/guards/check_no_graph_recursion.sh` depth-cap guard.
+
 ## [0.3.43] - 2026-06-20
 
 ### Changed

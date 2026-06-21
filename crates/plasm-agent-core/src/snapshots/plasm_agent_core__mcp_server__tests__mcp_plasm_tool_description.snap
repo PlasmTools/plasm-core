@@ -1,6 +1,6 @@
 ---
 source: crates/plasm-agent-core/src/mcp_server/tests.rs
-expression: "super::mcp_plasm_tool_description()"
+expression: "plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION"
 ---
 **Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and executable **`plan_commit_ref`** (`pcN`). Pass that token to **`plasm_run`**; do **not** echo the program.
 
@@ -37,9 +37,12 @@ Core surface:
 Composition rules:
 - One binding per line; final roots last (preferred). Single-line bindings coerced; default return is first binding.
 - Postfix/`[fields]` chain on any row-producing binding or expression.
-- Row text: `report = rows[p#,…] <<TAG` … `TAG`; Minijinja `rows` = that source's projected rows only.
-- Pass `binding.content` to string params; compose with `${report.content}` in later heredocs/strings.
+- Row text: `label = source <<TAG` … `TAG` (equals required — never `label source <<TAG`); optional column list: `label = source[p#,…] <<TAG`. Minijinja `rows` = that source's projected rows only — not `${}`.
+- Pass `binding.content` to string params; compose with `${report.content}` in later heredocs/strings (never bare `${}` in prose; `$$` escapes `$`).
+- Minijinja `{{ }}` / `{% %}` only inside row-to-text heredoc bodies — not in capability heredocs that use `${binding.path}`.
 - Do not use `report.content` as a final root or relation receiver.
+- Action/create roots: return the action row or follow with `e#(p#=…)` get — not `created.p#` as a program root.
+- Relation embed fan-out (`Type.pokemon` / `.r#`): prefer explicit Gets until embed path is warm; `.limit` on relation hops may need hydrate when graph targets are missing.
 - Heredoc: `<<TAG` + newline; first trimmed `TAG` line closes; pick a tag absent from the body.
 - Examples: array argument `p#=[e#(<id>), …]`. Quoted strings use only `\"` and `\\` escapes.
 - Worked row-compute program (shape only — substitute `e#` / `p#` from your table below):
@@ -64,4 +67,5 @@ Common pitfalls:
 - Never emit `$` from teaching rows; substitute real ids and `e#~"text"` search terms.
 - Search operand: `e#~$` or `e#~"text"` required — bare `e#~` is a parse error.
 - Federated sessions: use the `e#` from the teaching row for that catalog when the same wire entity name appears in multiple APIs.
+- Cross-catalog stitch (shape only — substitute symbols from your TSV): pokeapi `Type` get → row-to-text bindings → proof `ShareLink` document param with `${binding.content}` inside `<<TAG` … `TAG`.
 - Search-only entities (no query): no `e#{}` list-all — scoped `e#{p#=…}` and/or `e#~"text"`.

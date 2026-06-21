@@ -187,7 +187,7 @@ impl ExecutionEngine {
                     })
                 }
             }?;
-            let decoded_entities = decode_entities(&decoder, &normalized)?;
+            let decoded_entities = decode_entities_with_cgs(&decoder, &normalized, Some(cgs))?;
 
             let response_completeness = {
                 let all_entity_fields: std::collections::HashSet<String> = cgs
@@ -365,7 +365,7 @@ impl ExecutionEngine {
                     };
 
                 let normalized = normalize_collection_response(response, wrap_key.as_str());
-                let mut decoded_entities = decode_entities(&decoder, &normalized)?;
+                let mut decoded_entities = decode_entities_with_cgs(&decoder, &normalized, Some(cgs))?;
                 let full_page_len = decoded_entities.len();
                 let last_id = decoded_entities
                     .last()

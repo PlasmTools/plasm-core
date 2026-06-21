@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use plasm_core::CGS;
 use plasm_runtime::{
-    entity_to_row_json, CachedEntity, ExecutionResult, MaterializedRowSource,
+    CachedEntity, ExecutionResult, MaterializedRowSource,
     SessionMaterialization,
 };
 
@@ -97,11 +97,17 @@ impl<'a> GraphSurfaceRehydrator<'a> {
         result: &ExecutionResult,
     ) -> MaterializedRowSource {
         if !result.entities.is_empty() {
+            let guard = self.ctx.es.lock_graph_cache().await;
+            let mat = guard.materialization();
             return MaterializedRowSource::Inline(
                 result
                     .entities
                     .iter()
-                    .map(|e| entity_to_row_json(e, Some(self.ctx.cgs)))
+                    .map(|e| super::relation_embed::wire_row_with_from_parent_embeds(
+                        e,
+                        self.ctx.cgs,
+                        &mat,
+                    ))
                     .collect(),
             );
         }

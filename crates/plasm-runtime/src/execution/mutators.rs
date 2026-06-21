@@ -83,7 +83,7 @@ impl ExecutionEngine {
                     &identity_ambient,
                     None,
                 );
-                let decoded = decode_entities(&decoder, &response)?;
+                let decoded = decode_entities_with_cgs(&decoder, &response, Some(cgs))?;
 
                 let timestamp = current_timestamp();
                 let entities: Vec<CachedEntity> = decoded
@@ -306,7 +306,8 @@ impl ExecutionEngine {
                     &identity_ambient,
                     rid,
                 );
-                let decoded = decode_entities(&decoder, &response).unwrap_or_default();
+                let decoded =
+                    decode_entities_with_cgs(&decoder, &response, Some(cgs)).unwrap_or_default();
 
                 let timestamp = current_timestamp();
                 let entities: Vec<CachedEntity> = decoded

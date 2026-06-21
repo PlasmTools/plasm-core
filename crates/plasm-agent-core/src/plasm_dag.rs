@@ -802,6 +802,22 @@ fn is_opaque_passthrough_compute_schema(schema: &SyntheticResultSchema) -> bool 
         && matches!(schema.fields[0].value_kind, SyntheticValueKind::Unknown)
 }
 
+/// Passthrough row schema for postfix compute on catalog surfaces, relations, or typed compute chains.
+fn compute_passthrough_or_fallback_schema(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    staged: &[DagNode],
+    source: &str,
+    fallback_entity: &str,
+) -> SyntheticResultSchema {
+    resolve_immediate_compute_schema(state, staged, source)
+        .filter(|s| !is_opaque_passthrough_compute_schema(s))
+        .unwrap_or_else(|| {
+            synthetic_schema_passthrough_rows(session, state, staged, source)
+                .unwrap_or_else(|_| single_unknown_schema(fallback_entity))
+        })
+}
+
 fn validate_compute_paths_for_dag_source(
     session: &ExecuteSession,
     state: &CompileState<'_>,
@@ -1165,7 +1181,7 @@ fn postfix_op_to_compute(
     match op {
         PlasmPostfixOp::Limit(n) => Ok(mk(
             ComputeOp::Limit { count: *n },
-            single_unknown_schema("PlanLimit"),
+            compute_passthrough_or_fallback_schema(session, state, staged, source, "PlanLimit"),
             *n <= 1,
         )),
         PlasmPostfixOp::Filter { body } => {
@@ -1238,9 +1254,13 @@ fn postfix_op_to_compute(
                 std::slice::from_ref(&key_fp),
                 "sort(...)",
             )?;
-            let schema = resolve_immediate_compute_schema(state, staged, source)
-                .filter(|s| !is_opaque_passthrough_compute_schema(s))
-                .unwrap_or_else(|| single_unknown_schema("PlanSort"));
+            let schema = compute_passthrough_or_fallback_schema(
+                session,
+                state,
+                staged,
+                source,
+                "PlanSort",
+            );
             Ok(mk(
                 ComputeOp::Sort {
                     key: key_fp,
@@ -1370,7 +1390,10 @@ fn postfix_op_to_compute(
                     &paths,
                     "postfix projection",
                 )?;
-                let _ = qe;
+                let entity = qe.entity.as_str();
+                let schema =
+                    schema_from_output_fields(entity, map.keys(), SyntheticValueKind::Unknown);
+                return Ok(mk(ComputeOp::Project { fields: map }, schema, false));
             }
             let schema =
                 schema_from_output_fields("PlanProject", map.keys(), SyntheticValueKind::Unknown);
@@ -4861,6 +4884,31 @@ one"#;
         assert_eq!(dry.node_results.len(), nodes.len());
     }
 
+    /// Matrix: `lang_bind_limit1_continuation` — limit on a surface bind must keep LangItem entity for `.tags` continuation.
+    #[test]
+    fn limit_on_surface_bind_preserves_langitem_entity() {
+        let session = test_session();
+        let source = r#"root = LangItem{owner="alice"}
+one = root.limit(1)
+tags = one.tags
+tags"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "limit-surface-bind",
+            source,
+        )
+        .expect("compile");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let one = nodes.iter().find(|n| n["id"] == "one").expect("one");
+        assert_eq!(one["kind"], "compute");
+        assert_eq!(one["compute"]["op"]["kind"], "limit");
+        assert_eq!(one["compute"]["schema"]["entity"], json!("LangItem"));
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+        assert_eq!(dry.node_results.len(), nodes.len());
+    }
+
     #[test]
     fn bare_label_page_size_lowers_to_identity_project() {
         let session = github_repository_commit_session();
@@ -5590,7 +5638,8 @@ commits"#,
         )
         .expect_err("cross-entity symbols must not compile");
         assert!(
-            err.contains("open_issues_count") && err.contains("Commit"),
+            err.contains("open_issues_count")
+                && (err.contains("not a row field") || err.contains("null columns")),
             "{err}"
         );
     }

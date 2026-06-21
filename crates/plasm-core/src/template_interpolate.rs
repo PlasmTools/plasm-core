@@ -4,22 +4,13 @@
 
 use std::collections::BTreeMap;
 
-use thiserror::Error;
-
+use crate::text::interpolate_dollar_template;
 use crate::value::Value;
+
+pub use crate::text::{DEFAULT_MAX_INTERPOLATED_LEN, InterpolateError};
 
 /// Binding name → value for `${alias.path}` resolution.
 pub type BindingScope<'a> = BTreeMap<&'a str, &'a Value>;
-
-#[derive(Debug, Error, PartialEq, Eq)]
-pub enum InterpolateError {
-    #[error("unresolved template reference `${path}` (in-scope bindings: {available})")]
-    UnresolvedReference { path: String, available: String },
-    #[error("interpolated string exceeds maximum length ({max} bytes)")]
-    MaxLengthExceeded { max: usize },
-}
-
-pub const DEFAULT_MAX_INTERPOLATED_LEN: usize = 512 * 1024;
 
 pub use crate::template_ref::{
     contains_dollar_interpolation, for_each_interpolation_path, interpolation_paths,
@@ -54,45 +45,8 @@ pub fn interpolate_string_with_max(
     scope: &BindingScope<'_>,
     max_len: usize,
 ) -> Result<String, InterpolateError> {
-    let mut out = String::with_capacity(input.len());
-    let mut i = 0;
-    let bytes = input.as_bytes();
-    while i < bytes.len() {
-        if bytes[i] == b'$' && i + 1 < bytes.len() {
-            if bytes[i + 1] == b'$' {
-                out.push('$');
-                i += 2;
-                continue;
-            }
-            if bytes[i + 1] == b'{' {
-                let start = i + 2;
-                let Some(end_rel) = input[start..].find('}') else {
-                    out.push('$');
-                    i += 1;
-                    continue;
-                };
-                let path = &input[start..start + end_rel];
-                let value = resolve_path(path, scope).map_err(|available| {
-                    InterpolateError::UnresolvedReference {
-                        path: path.to_string(),
-                        available,
-                    }
-                })?;
-                out.push_str(&value);
-                i = start + end_rel + 1;
-                if out.len() > max_len {
-                    return Err(InterpolateError::MaxLengthExceeded { max: max_len });
-                }
-                continue;
-            }
-        }
-        out.push(char::from(bytes[i]));
-        i += 1;
-        if out.len() > max_len {
-            return Err(InterpolateError::MaxLengthExceeded { max: max_len });
-        }
-    }
-    Ok(out)
+    interpolate_dollar_template(input, |path| resolve_path(path, scope), max_len)
+        .map(crate::text::Utf8Text::into_string)
 }
 
 fn resolve_path(path: &str, scope: &BindingScope<'_>) -> Result<String, String> {
@@ -164,6 +118,26 @@ mod tests {
         let scope = BindingScope::from([("a", &binding)]);
         let err = interpolate_string("${missing}", &scope).unwrap_err();
         assert!(matches!(err, InterpolateError::UnresolvedReference { .. }));
+    }
+
+    #[test]
+    fn preserves_utf8_literals() {
+        let scope = BindingScope::new();
+        let out = interpolate_string("Featured Pokémon", &scope).unwrap();
+        assert_eq!(out, "Featured Pokémon");
+        assert!(out.contains('é'));
+    }
+
+    #[test]
+    fn preserves_utf8_with_stitch() {
+        let body = Value::Object(indexmap::IndexMap::from([(
+            "content".to_string(),
+            Value::String("électric".into()),
+        )]));
+        let scope = BindingScope::from([("type_md", &body)]);
+        let out = interpolate_string("# Pokémon\n${type_md.content}", &scope).unwrap();
+        assert!(out.starts_with("# Pokémon"));
+        assert!(out.ends_with("électric"));
     }
 
     #[test]
