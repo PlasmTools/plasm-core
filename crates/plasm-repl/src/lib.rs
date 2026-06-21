@@ -31,7 +31,7 @@ pub async fn run_repl_main() -> Result<(), Box<dyn std::error::Error>> {
             Arg::new("catalog_dir")
                 .long("catalog-dir")
                 .value_name("DIR")
-                .help("Compiled catalog artifact directory (CBOR IL + manifests)"),
+                .help("Compiled catalog artifact directory (JSON IL + manifests)"),
         )
         .ignore_errors(true);
 

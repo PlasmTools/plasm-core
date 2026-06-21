@@ -1,13 +1,17 @@
-//! Compiled catalog interchange (CBOR IL) for platform-independent distribution.
+//! Compiled catalog interchange (JSON IL) for platform-independent distribution.
 //!
-//! Artifacts: `<entry_id>.v<version>.<hash12>.cgs.cbor` + sibling `.manifest.json`.
+//! Artifacts: `<entry_id>.v<version>.<hash12>.cgs.json` + sibling `.manifest.json`.
+//! Wire bytes are serde JSON for the CGS — the same canonical form as [`CGS::catalog_cgs_hash_hex`].
 
 use crate::schema::CGS;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-/// Current compiled-catalog wire format version (manifest + CBOR body).
-pub const PLASM_CATALOG_FORMAT_VERSION: u32 = 1;
+/// Current compiled-catalog wire format version (manifest + JSON body).
+pub const PLASM_CATALOG_FORMAT_VERSION: u32 = 2;
+
+/// Filename suffix for compiled catalog body artifacts.
+pub const CATALOG_IL_BODY_SUFFIX: &str = ".cgs.json";
 
 /// Sidecar manifest for a compiled catalog artifact (JSON on disk).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -21,8 +25,8 @@ pub struct CatalogManifest {
     pub label: String,
     #[serde(default)]
     pub tags: Vec<String>,
-    /// Basename of the CBOR artifact in the same directory (e.g. `github.v3.a1b2c3d4e5f6.cgs.cbor`).
-    pub cgs_cbor: String,
+    /// Basename of the JSON artifact in the same directory (e.g. `github.v3.a1b2c3d4e5f6.cgs.json`).
+    pub cgs_json: String,
 }
 
 impl CatalogManifest {
@@ -48,9 +52,9 @@ impl CatalogManifest {
                 self.entry_id
             ));
         }
-        if self.cgs_cbor.is_empty() {
+        if self.cgs_json.is_empty() {
             return Err(format!(
-                "catalog manifest cgs_cbor must be non-empty for `{}`",
+                "catalog manifest cgs_json must be non-empty for `{}`",
                 self.entry_id
             ));
         }
@@ -58,26 +62,23 @@ impl CatalogManifest {
     }
 }
 
-/// Serialize a validated CGS to compiled CBOR IL bytes.
-pub fn cgs_to_catalog_il_cbor(cgs: &CGS) -> Result<Vec<u8>, String> {
-    let mut bytes = Vec::new();
-    ciborium::ser::into_writer(cgs, &mut bytes)
-        .map_err(|e| format!("CGS CBOR encode failed: {e}"))?;
-    Ok(bytes)
+/// Serialize a validated CGS to compiled JSON IL bytes.
+pub fn cgs_to_catalog_il_bytes(cgs: &CGS) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(cgs).map_err(|e| format!("CGS JSON encode failed: {e}"))
 }
 
-/// Decode compiled CBOR IL bytes into a CGS and run full validation.
-pub fn load_catalog_il_cbor(bytes: &[u8]) -> Result<CGS, String> {
+/// Decode compiled JSON IL bytes into a CGS and run full validation.
+pub fn load_catalog_il_bytes(bytes: &[u8]) -> Result<CGS, String> {
     let cgs: CGS =
-        ciborium::de::from_reader(bytes).map_err(|e| format!("CGS CBOR decode failed: {e}"))?;
+        serde_json::from_slice(bytes).map_err(|e| format!("CGS JSON decode failed: {e}"))?;
     cgs.validate()
-        .map_err(|e| format!("CGS validation failed after CBOR decode: {e}"))?;
+        .map_err(|e| format!("CGS validation failed after JSON decode: {e}"))?;
     Ok(cgs)
 }
 
-/// Decode CBOR IL and verify digest matches the manifest `cgs_hash`.
-pub fn load_catalog_il_cbor_verified(bytes: &[u8], expected_hash: &str) -> Result<CGS, String> {
-    let cgs = load_catalog_il_cbor(bytes)?;
+/// Decode JSON IL and verify digest matches the manifest `cgs_hash`.
+pub fn load_catalog_il_verified(bytes: &[u8], expected_hash: &str) -> Result<CGS, String> {
+    let cgs = load_catalog_il_bytes(bytes)?;
     let actual = cgs.catalog_cgs_hash_hex();
     if actual != expected_hash {
         return Err(format!(
@@ -107,23 +108,23 @@ pub fn read_catalog_manifest(path: &Path) -> Result<CatalogManifest, String> {
     Ok(manifest)
 }
 
-/// Load CGS from a manifest sidecar and its CBOR artifact in `dir`.
+/// Load CGS from a manifest sidecar and its JSON artifact in `dir`.
 pub fn load_catalog_artifact(dir: &Path, manifest: &CatalogManifest) -> Result<CGS, String> {
-    let cbor_path = dir.join(&manifest.cgs_cbor);
-    if !cbor_path.is_file() {
+    let json_path = dir.join(&manifest.cgs_json);
+    if !json_path.is_file() {
         return Err(format!(
-            "missing CBOR artifact `{}` for entry `{}`",
-            manifest.cgs_cbor, manifest.entry_id
+            "missing JSON artifact `{}` for entry `{}`",
+            manifest.cgs_json, manifest.entry_id
         ));
     }
     let bytes =
-        std::fs::read(&cbor_path).map_err(|e| format!("read CBOR {}: {e}", cbor_path.display()))?;
-    let cgs = match load_catalog_il_cbor_verified(&bytes, &manifest.cgs_hash) {
+        std::fs::read(&json_path).map_err(|e| format!("read JSON {}: {e}", json_path.display()))?;
+    let cgs = match load_catalog_il_verified(&bytes, &manifest.cgs_hash) {
         Ok(cgs) => cgs,
         Err(e) => {
             let detail = e.to_string();
             return Err(format!(
-                "{}: decode CBOR IL: {}{}",
+                "{}: decode JSON IL: {}{}",
                 manifest.entry_id,
                 detail,
                 stale_catalog_hint(&detail)
@@ -160,20 +161,29 @@ pub fn catalog_artifact_stem(entry_id: &str, version: u64, cgs_hash_hex: &str) -
     format!("{entry_id}.v{version}.{short_hash}")
 }
 
+/// Basename for a packed catalog JSON body artifact.
+pub fn catalog_il_body_name(entry_id: &str, version: u64, cgs_hash_hex: &str) -> String {
+    format!(
+        "{}{}",
+        catalog_artifact_stem(entry_id, version, cgs_hash_hex),
+        CATALOG_IL_BODY_SUFFIX
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::loader::load_schema_dir;
 
     #[test]
-    fn catalog_il_cbor_round_trip_preserves_cgs_hash() {
+    fn catalog_il_json_round_trip_preserves_cgs_hash() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/pokeapi_mini");
         let cgs = load_schema_dir(&dir).expect("load pokeapi_mini fixture");
         let hash_before = cgs.catalog_cgs_hash_hex();
-        let bytes = cgs_to_catalog_il_cbor(&cgs).expect("encode");
-        assert!(!bytes.is_empty(), "CBOR payload must be non-empty");
-        let decoded = load_catalog_il_cbor_verified(&bytes, &hash_before).expect("decode+verify");
+        let bytes = cgs_to_catalog_il_bytes(&cgs).expect("encode");
+        assert!(!bytes.is_empty(), "JSON payload must be non-empty");
+        let decoded = load_catalog_il_verified(&bytes, &hash_before).expect("decode+verify");
         assert_eq!(decoded.catalog_cgs_hash_hex(), hash_before);
     }
 
@@ -186,8 +196,21 @@ mod tests {
             cgs_hash: "a".repeat(64),
             label: String::new(),
             tags: vec![],
-            cgs_cbor: "x.cgs.cbor".into(),
+            cgs_json: "x.cgs.json".into(),
         };
         assert!(m.validate_format().is_err());
+    }
+
+    #[test]
+    fn clickup_catalog_il_round_trip_when_present() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/clickup");
+        if !dir.join("domain.yaml").is_file() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("load clickup");
+        let hash_before = cgs.catalog_cgs_hash_hex();
+        let bytes = cgs_to_catalog_il_bytes(&cgs).expect("encode clickup");
+        let decoded = load_catalog_il_verified(&bytes, &hash_before).expect("decode clickup");
+        assert_eq!(decoded.catalog_cgs_hash_hex(), hash_before);
     }
 }

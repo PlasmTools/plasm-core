@@ -70,7 +70,7 @@ pub(crate) struct ServeCli {
     /// When omitted, uses `{appliance}/catalogs` when that directory exists.
     #[arg(long, value_name = "PATH", group = "catalog")]
     schema: Option<PathBuf>,
-    /// Compiled catalog artifact directory (CBOR IL + manifests). Defaults to `{appliance}/catalogs`.
+    /// Compiled catalog artifact directory (JSON IL + manifests). Defaults to `{appliance}/catalogs`.
     #[arg(long, value_name = "DIR", group = "catalog")]
     catalog_dir: Option<PathBuf>,
     /// TCP listen host (default: `127.0.0.1`, or `0.0.0.0` in Kubernetes; see `PLASM_LISTEN_HOST`).

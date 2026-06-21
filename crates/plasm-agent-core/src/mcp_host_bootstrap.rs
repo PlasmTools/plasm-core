@@ -37,7 +37,7 @@ pub fn preparse_mcp_command() -> Command {
                 .long("catalog-dir")
                 .value_name("DIR")
                 .help(
-                    "Load catalogs from compiled CBOR IL artifacts in this directory (.cgs.cbor + .manifest.json)",
+                    "Load catalogs from compiled JSON IL artifacts in this directory (.cgs.json + .manifest.json)",
                 ),
         )
         .arg(

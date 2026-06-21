@@ -25,7 +25,7 @@ resolver = "2"
 
 # Single SemVer for the OSS workspace (see monorepo RELEASING.md on PlasmTools/plasm).
 [workspace.package]
-version = "0.3.45"
+version = "0.3.46"
 edition = "2021"
 
 [workspace.dependencies]
@@ -130,7 +130,6 @@ pg-embed = { version = "1.0.0", default-features = false, features = ["rt_tokio_
 # Dynamic loading (compile plugins)
 libloading = "0.8"
 ciborium = "0.2"
-
 # Oxc: TypeScript/JS transform (dev / test support; see https://oxc.rs/docs/guide/usage/transformer)
 oxc = { version = "0.127.0", default-features = false, features = [
     "codegen",

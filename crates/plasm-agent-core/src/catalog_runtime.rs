@@ -21,7 +21,7 @@ use std::sync::Arc;
 /// How the catalog was bootstrapped — drives whether control-plane hot reload is allowed.
 #[derive(Clone, Debug)]
 pub enum CatalogBootstrap {
-    /// Multi-entry catalogs from `--catalog-dir` (compiled CBOR IL); [`CatalogRuntime::snapshot`] can be refreshed via reload endpoint.
+    /// Multi-entry catalogs from `--catalog-dir` (compiled JSON IL); [`CatalogRuntime::snapshot`] can be refreshed via reload endpoint.
     CatalogDir { path: PathBuf },
     /// Not hot-reloadable: `--schema`, synthetic `default` entry, or tests building [`PlasmHostState`](crate::server_state::PlasmHostState) manually.
     Fixed,

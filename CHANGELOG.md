@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.46] - 2026-06-21
+
+### Fixed
+
+- **Catalog IL wire format:** replace CBOR with canonical JSON bytes (`*.cgs.json`, `format_version = 2`, manifest `cgs_json`). Fixes large catalogs (e.g. clickup) that exceeded ciborium decode recursion limits on startup.
+- **Release packaging:** stray quote in `oss-release-pack-native.sh` tar step.
+
+### Changed
+
+- **`PLASM_CATALOG_FORMAT_VERSION`:** `1` (CBOR) → `2` (JSON IL aligned with [`CGS::catalog_cgs_hash_hex`](crates/plasm-core/src/schema.rs)).
+
 ## [0.3.45] - 2026-06-21
 
 ### Changed

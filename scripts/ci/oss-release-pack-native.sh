@@ -104,7 +104,7 @@ cgs="${pack_root}/cgs"
 mkdir -p "${appliance}" "${client}" "${cgs}"
 
 cp "${release_dir}/plasm-server" "${appliance}/"
-if find "${pack_root}/catalogs" -maxdepth 1 -name '*.cgs.cbor' 2>/dev/null | grep -q .; then
+if find "${pack_root}/catalogs" -maxdepth 1 -name '*.cgs.json' 2>/dev/null | grep -q .; then
   cp -R "${pack_root}/catalogs" "${appliance}/catalogs"
 fi
 cp "${release_dir}/plasm" "${client}/"

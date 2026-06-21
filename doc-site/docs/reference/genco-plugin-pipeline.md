@@ -1,8 +1,8 @@
-# Catalog CBOR IL pipeline
+# Catalog JSON IL pipeline
 
 **Architecture context:** `saas-architecture.md` (catalog modes, auth boundaries).
 
-This document describes how authored **`apis/<name>/`** catalogs are packed into **portable CBOR IL artifacts**, loaded at runtime via **`--catalog-dir`**, and hot-reloaded without rebuilding the executor.
+This document describes how authored **`apis/<name>/`** catalogs are packed into **portable JSON IL artifacts**, loaded at runtime via **`--catalog-dir`**, and hot-reloaded without rebuilding the executor.
 
 ## Artifacts
 
@@ -10,10 +10,10 @@ Each packed catalog produces two files under the catalog directory:
 
 | File | Purpose |
 |------|---------|
-| `<entry_id>.v<version>.<hash12>.cgs.cbor` | CBOR-encoded [`CGS`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema.rs) interchange (`PLASM_CATALOG_FORMAT_VERSION = 1`) |
+| `<entry_id>.v<version>.<hash12>.cgs.json` | JSON-encoded [`CGS`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema.rs) interchange (`PLASM_CATALOG_FORMAT_VERSION = 1`) |
 | `<entry_id>.v<version>.<hash12>.manifest.json` | [`CatalogManifest`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/catalog_il.rs): `entry_id`, `version`, full `cgs_hash`, artifact filename |
 
-- **`cgs_hash`**: SHA-256 hex of canonical JSON ([`CGS::catalog_cgs_hash_hex`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema.rs)); verified after CBOR decode.
+- **`cgs_hash`**: SHA-256 hex of canonical JSON ([`CGS::catalog_cgs_hash_hex`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/schema.rs)); verified after JSON decode.
 - **No `target_triple`**: pack once, run on any supported host triple.
 - **Version pick**: highest `CGS.version` per `entry_id` when scanning a directory.
 
@@ -28,7 +28,7 @@ Compile and projection hydration always use in-tree [`plasm_compile::compile_ope
 | Phase | Tool | What happens |
 |------|------|----------------|
 | **Authoring** | Edit **`apis/<name>/domain.yaml`** + **`mappings.yaml`** | Source of truth in git. |
-| **Pack (build)** | **`plasm-pack-catalogs`** ([`plasm_pack_catalogs.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm/src/bin/plasm_pack_catalogs.rs)) | Emits CBOR IL + manifest per package. Default output: **`target/plasm-catalogs`**. |
+| **Pack (build)** | **`plasm-pack-catalogs`** ([`plasm_pack_catalogs.rs`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm/src/bin/plasm_pack_catalogs.rs)) | Emits JSON IL + manifest per package. Default output: **`target/plasm-catalogs`**. |
 | **Runtime** | **`plasm-mcp --catalog-dir <dir>`** | [`load_registry_from_catalog_dir`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-agent-core/src/catalog_data.rs) — highest **`version` per `entry_id`**. |
 | **Single schema** | **`--schema <path>`** | One CGS (no catalog dir). |
 
@@ -53,7 +53,7 @@ just build-catalogs
 
 ## HTTP / MCP examples
 
-**Catalog from packed CBOR IL** (no `--schema`):
+**Catalog from packed JSON IL** (no `--schema`):
 
 ```bash
 cargo run -p plasm-mcp-app --bin plasm-mcp-saas -- \
@@ -72,7 +72,7 @@ cargo run -p plasm-server --release -- --catalog-dir target/plasm-catalogs
 
 ## Kubernetes / Helm
 
-The `plasm-mcp` chart accepts **`--catalog-dir`** with a volume of `*.cgs.cbor` + `.manifest.json` files. Default images ship **`--catalog-dir /app/catalogs`** (CBOR IL produced at Docker build from repo `apis/`).
+The `plasm-mcp` chart accepts **`--catalog-dir`** with a volume of `*.cgs.json` + `.manifest.json` files. Default images ship **`--catalog-dir /app/catalogs`** (JSON IL produced at Docker build from repo `apis/`).
 
 **Hot reload:** **`pluginHotReload`** (Helm value name; writable catalog volume, sidecar polling bundle digest, **`POST /internal/catalog-registry/v1/reload`**). See monorepo `deploy/docs/catalog-hot-reload-k8s.md`.
 

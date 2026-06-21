@@ -98,7 +98,7 @@ nav:
       - Reference: authoring/reference.md
       - Composed views: authoring/views.md
       - Schema overlays: reference/schema-overlay.md
-  - Catalog CBOR IL pipeline: reference/genco-plugin-pipeline.md
+  - Catalog JSON IL pipeline: reference/genco-plugin-pipeline.md
   - Extensions roadmap: reference/cgs-extensions-roadmap.md
   - Embed Plasm: crates/index.md
   - CLI & env index: reference/cli-and-env.md

@@ -23,6 +23,6 @@ Release binaries:
 | **`plasm`** | Remote HTTP terminal client |
 | **`plasm-cgs`** | Schema-driven one-shot CLI (dev) |
 | **`plasm-repl`** | Interactive path expressions (dev) |
-| **`plasm-pack-catalogs`** | Pack `apis/<name>/` to CBOR IL + manifest artifacts |
+| **`plasm-pack-catalogs`** | Pack `apis/<name>/` to JSON IL + manifest artifacts |
 
 Operator docs: [Appliance quick start](../appliance/quickstart.md). Optional **features** — see each crate’s `Cargo.toml` on GitHub.

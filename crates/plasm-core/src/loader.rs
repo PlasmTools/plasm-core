@@ -504,16 +504,17 @@ pub fn load_schema(path: &Path) -> Result<CGS, String> {
     if path
         .file_name()
         .and_then(|n| n.to_str())
-        .is_some_and(|n| n.ends_with(".cgs.cbor"))
+        .is_some_and(|n| n.ends_with(crate::catalog_il::CATALOG_IL_BODY_SUFFIX))
     {
-        debug!("load_schema branch: compiled catalog CBOR IL");
+        debug!("load_schema branch: compiled catalog JSON IL");
         let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
-        return crate::catalog_il::load_catalog_il_cbor(&bytes);
+        return crate::catalog_il::load_catalog_il_bytes(&bytes);
     }
     if path.extension().is_some_and(|e| e == "json") {
         Err(format!(
-            "CGS JSON is no longer supported ({}). Use a directory with domain.yaml + mappings.yaml, a .cgs.yaml / .yaml CGS file, or a .cgs.cbor compiled catalog.",
-            path.display()
+            "bare CGS JSON is not supported ({}). Use a directory with domain.yaml + mappings.yaml, a .cgs.yaml / .yaml CGS file, or a compiled `{}` catalog artifact.",
+            path.display(),
+            crate::catalog_il::CATALOG_IL_BODY_SUFFIX
         ))
     } else {
         Err(format!("Unknown schema format: {}", path.display()))

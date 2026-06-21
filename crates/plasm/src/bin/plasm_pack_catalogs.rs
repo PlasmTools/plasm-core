@@ -1,4 +1,4 @@
-//! Build one compiled CBOR catalog artifact per `apis/<name>/` tree for `--catalog-dir` runtime loading.
+//! Build one compiled JSON catalog artifact per `apis/<name>/` tree for `--catalog-dir` runtime loading.
 //!
 //! Usage (from repo root):
 //!   cargo run -p plasm --bin plasm-pack-catalogs -- --apis-root apis --output-dir target/plasm-catalogs
@@ -10,7 +10,8 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 use plasm_compile::{validate_cgs_capability_templates, validate_cgs_views};
 use plasm_core::catalog_il::{
-    catalog_artifact_stem, cgs_to_catalog_il_cbor, CatalogManifest, PLASM_CATALOG_FORMAT_VERSION,
+    catalog_artifact_stem, catalog_il_body_name, cgs_to_catalog_il_bytes, CatalogManifest,
+    PLASM_CATALOG_FORMAT_VERSION,
 };
 use plasm_core::loader::{finalize_cgs_load, load_schema_dir_unvalidated};
 use plasm_core::schema::CGS;
@@ -26,7 +27,7 @@ struct Args {
     #[arg(long, default_value = "apis")]
     apis_root: PathBuf,
 
-    /// Directory to receive `<entry_id>.v<version>.<hash12>.cgs.cbor` + `.manifest.json` artifacts.
+    /// Directory to receive `<entry_id>.v<version>.<hash12>.cgs.json` + `.manifest.json` artifacts.
     #[arg(long, default_value = "target/plasm-catalogs")]
     output_dir: PathBuf,
 
@@ -45,11 +46,8 @@ struct Args {
     package_list: Option<PathBuf>,
 }
 
-fn packed_cbor_name(entry_id: &str, version: u64, cgs_hash_hex: &str) -> String {
-    format!(
-        "{}.cgs.cbor",
-        catalog_artifact_stem(entry_id, version, cgs_hash_hex)
-    )
+fn packed_json_name(entry_id: &str, version: u64, cgs_hash_hex: &str) -> String {
+    catalog_il_body_name(entry_id, version, cgs_hash_hex)
 }
 
 fn packed_manifest_name(entry_id: &str, version: u64, cgs_hash_hex: &str) -> String {
@@ -90,7 +88,7 @@ fn enforce_entry_retention(
         let Some(file_name) = p.file_name().and_then(|s| s.to_str()) else {
             continue;
         };
-        if !file_name.ends_with(".cgs.cbor") {
+        if !file_name.ends_with(".cgs.json") {
             continue;
         }
         let Some(version) = packed_file_version_for_entry(file_name, entry_id) else {
@@ -127,7 +125,7 @@ fn enforce_entry_retention(
             .path
             .file_name()
             .and_then(|s| s.to_str())
-            .and_then(|n| n.strip_suffix(".cgs.cbor"))
+            .and_then(|n| n.strip_suffix(".cgs.json"))
             .unwrap_or("");
         let manifest = out_dir.join(format!("{stem}.manifest.json"));
         fs::remove_file(&old.path).with_context(|| format!("remove {}", old.path.display()))?;
@@ -267,30 +265,30 @@ fn main() -> Result<()> {
 
         let cgs = prepare_cgs_for_catalog(&path, name)?;
         let cgs_hash = cgs.catalog_cgs_hash_hex();
-        let cbor_name = packed_cbor_name(name, cgs.version, &cgs_hash);
+        let json_name = packed_json_name(name, cgs.version, &cgs_hash);
         let manifest_name = packed_manifest_name(name, cgs.version, &cgs_hash);
-        let cbor_dest = out_dir.join(&cbor_name);
+        let json_dest = out_dir.join(&json_name);
         let manifest_dest = out_dir.join(&manifest_name);
         let stamp_path = cache_dir.join(format!("{name}.stamp"));
         let stamp_body = format!("{cgs_hash}\n{PLASM_CATALOG_FORMAT_VERSION}\n");
 
         if !args.force
-            && cbor_dest.is_file()
+            && json_dest.is_file()
             && manifest_dest.is_file()
             && fs::read_to_string(&stamp_path).ok().as_deref() == Some(stamp_body.as_str())
         {
             eprintln!("plasm-pack-catalogs: skip `{name}` (artifact up to date)");
-            enforce_entry_retention(&out_dir, name, 1, &cbor_dest)?;
+            enforce_entry_retention(&out_dir, name, 1, &json_dest)?;
             skipped += 1;
             packed += 1;
             continue;
         }
 
         eprintln!("plasm-pack-catalogs: packing `{name}` …");
-        let cbor_bytes =
-            cgs_to_catalog_il_cbor(&cgs).map_err(|e| anyhow::anyhow!("encode CGS CBOR IL: {e}"))?;
-        fs::write(&cbor_dest, &cbor_bytes)
-            .with_context(|| format!("write {}", cbor_dest.display()))?;
+        let json_bytes = cgs_to_catalog_il_bytes(&cgs)
+            .map_err(|e| anyhow::anyhow!("encode CGS JSON IL: {e}"))?;
+        fs::write(&json_dest, &json_bytes)
+            .with_context(|| format!("write {}", json_dest.display()))?;
 
         let label = cgs.entry_id.clone().unwrap_or_else(|| name.to_string());
         let manifest = CatalogManifest {
@@ -300,7 +298,7 @@ fn main() -> Result<()> {
             cgs_hash: cgs_hash.clone(),
             label,
             tags: vec![],
-            cgs_cbor: cbor_name,
+            cgs_json: json_name,
         };
         manifest
             .validate_format()
@@ -314,10 +312,10 @@ fn main() -> Result<()> {
 
         eprintln!(
             "plasm-pack-catalogs: wrote {} (catalog hash {})",
-            cbor_dest.display(),
+            json_dest.display(),
             cgs_hash
         );
-        enforce_entry_retention(&out_dir, name, 1, &cbor_dest)?;
+        enforce_entry_retention(&out_dir, name, 1, &json_dest)?;
         packed += 1;
     }
 

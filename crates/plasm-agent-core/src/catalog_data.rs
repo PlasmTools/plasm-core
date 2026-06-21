@@ -1,4 +1,4 @@
-//! Build an [`plasm_core::discovery::InMemoryCgsRegistry`] from compiled CBOR catalog artifacts.
+//! Build an [`plasm_core::discovery::InMemoryCgsRegistry`] from compiled JSON catalog artifacts.
 
 use plasm_core::catalog_il::{
     is_catalog_manifest_path, load_catalog_artifact, read_catalog_manifest, CatalogManifest,
@@ -97,7 +97,7 @@ pub fn load_registry_from_catalog_dir_with_progress<P: FnMut(&str)>(
         return Err(format!("no loadable catalogs in `{}`", dir.display()));
     }
 
-    progress("materializing CGS entries from compiled CBOR IL…");
+    progress("materializing CGS entries from compiled JSON IL…");
 
     let mut ids: Vec<String> = best_by_entry.keys().cloned().collect();
     ids.sort();
@@ -138,7 +138,7 @@ mod tests {
             cgs_hash: cgs_hash.into(),
             label: String::new(),
             tags: vec![],
-            cgs_cbor: format!("{entry_id}.v{version}.deadbeefcafe.cgs.cbor"),
+            cgs_json: format!("{entry_id}.v{version}.deadbeefcafe.cgs.json"),
         }
     }
 

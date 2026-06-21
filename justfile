@@ -8,6 +8,6 @@ export PATH := env_var_or_default("PATH", "/usr/bin:/bin")
 default:
 	@just --list
 
-# Pack apis/* into target/plasm-catalogs (CBOR IL + manifests).
+# Pack apis/* into target/plasm-catalogs (JSON IL + manifests).
 build-catalogs:
-	bash -c 'set -euo pipefail; cd "{{root}}"; _cr=(); [[ -z "$${PLASM_OSS_RUST_DEBUG:-}" ]] && _cr=(--release); cargo run "$${_cr[@]}" -p plasm --bin plasm-pack-catalogs -- --workspace "{{root}}" --apis-root "{{root}}/apis" --output-dir "{{root}}/target/plasm-catalogs; if ! find "{{root}}/target/plasm-catalogs" -maxdepth 1 -name "*.cgs.cbor" | grep -q .; then echo "build-catalogs: no *.cgs.cbor in {{root}}/target/plasm-catalogs — apis/ may be empty." >&2; exit 1; fi'
+	bash -c 'set -euo pipefail; cd "{{root}}"; _cr=(); [[ -z "$${PLASM_OSS_RUST_DEBUG:-}" ]] && _cr=(--release); cargo run "$${_cr[@]}" -p plasm --bin plasm-pack-catalogs -- --workspace "{{root}}" --apis-root "{{root}}/apis" --output-dir "{{root}}/target/plasm-catalogs; if ! find "{{root}}/target/plasm-catalogs" -maxdepth 1 -name "*.cgs.json" | grep -q .; then echo "build-catalogs: no *.cgs.json in {{root}}/target/plasm-catalogs — apis/ may be empty." >&2; exit 1; fi'

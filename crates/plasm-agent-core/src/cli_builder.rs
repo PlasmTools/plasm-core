@@ -570,7 +570,7 @@ pub fn build_app(cgs: &CGS, surface: AgentCliSurface) -> Command {
                     Arg::new("catalog_dir")
                         .long("catalog-dir")
                         .value_name("DIR")
-                        .help("Load catalogs from compiled CBOR IL artifacts in this directory; use with --http/--mcp if omitting --schema"),
+                        .help("Load catalogs from compiled JSON IL artifacts in this directory; use with --http/--mcp if omitting --schema"),
                 )
                 .arg(
                     Arg::new("http")
@@ -615,7 +615,7 @@ pub fn build_app(cgs: &CGS, surface: AgentCliSurface) -> Command {
                         .long("catalog-dir")
                         .value_name("DIR")
                         .help(
-                            "Catalog CBOR IL directory (first entry's CGS when omitting --schema)",
+                            "Catalog JSON IL directory (first entry's CGS when omitting --schema)",
                         ),
                 )
                 .subcommand_required(false);
