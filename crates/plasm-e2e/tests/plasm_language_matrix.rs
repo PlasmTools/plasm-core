@@ -43,6 +43,7 @@ mod language_matrix;
 
 use std::collections::BTreeSet;
 
+use plasm_agent::execute_session::ExecuteSession;
 use plasm_agent::plasm_compile::{compile_plasm_expression, compile_plasm_program};
 use plasm_agent::plasm_plan::{AggregateFunction, ComputeOp, ComputeTemplate, PlanValue};
 use plasm_agent::plasm_plan_run::{
@@ -52,6 +53,7 @@ use plasm_core::{
     ChainStep, CompOp, EntityKey, Expr, GetExpr, InvokeExpr, Predicate, PromptPipelineConfig,
     QueryExpr, TypedComparisonValue, Value,
 };
+use plasm_agent::server_state::PlasmHostState;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine};
 
 /// Every tag listed here must appear on at least one passing [`MATRIX_ROWS`] entry (`features` column).
@@ -2217,12 +2219,26 @@ async fn plasm_language_matrix_cgs_templates_validate() {
     plasm_compile::validate_cgs_capability_templates(&cgs).expect("capability CML templates");
 }
 
-#[tokio::test]
-async fn plasm_language_matrix_live_runs() {
-    let base = hermit_lang_matrix::language_matrix_hermit_base_url()
-        .await
-        .clone();
-    plasm_language_matrix_live_runs_impl(base).await;
+#[test]
+fn plasm_language_matrix_live_runs() {
+    // Debug builds can overflow the default test thread stack while compiling/running the full matrix.
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("matrix live runtime");
+            rt.block_on(async {
+                let base = hermit_lang_matrix::language_matrix_hermit_base_url()
+                    .await
+                    .clone();
+                plasm_language_matrix_live_runs_impl(base).await;
+            });
+        })
+        .expect("spawn matrix live thread")
+        .join()
+        .expect("matrix live thread join");
 }
 
 async fn matrix_live_run_row(
