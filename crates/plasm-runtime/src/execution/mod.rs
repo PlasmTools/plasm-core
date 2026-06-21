@@ -8,12 +8,11 @@ use crate::view_plan::ViewAmbientContext;
 use crate::{AuthResolver, CachedEntity, CancelSignal, EntityCompleteness, RuntimeError};
 use indexmap::IndexMap;
 use plasm_compile::{
-    compile_operation, compile_query, decode_entities, decode_entities_with_cgs,
-    parse_capability_template,
-    path_var_names_from_request, template_pagination, template_var_names, BackendFilter,
-    CapabilityTemplate, CmlEnv, CmlRequest, CompileOperationHook, CompileQueryHook,
-    CompiledOperation, CompiledRequest, HttpBodyFormat, PaginationConfig, PathExpr, PathSegment,
-    ResponsePreprocess,
+    compile_operation, compile_query, decode_entities_with_cgs,
+    parse_capability_template, path_var_names_from_request, template_pagination,
+    template_var_names, BackendFilter, CapabilityTemplate, CmlEnv, CmlRequest,
+    CompileOperationHook, CompileQueryHook, CompiledOperation, CompiledRequest, HttpBodyFormat,
+    PaginationConfig, PathExpr, PathSegment, ResponsePreprocess,
 };
 use plasm_core::partition_prefer_resolutions;
 use plasm_core::resolve_relation_row_resolution;
@@ -3229,6 +3228,7 @@ impl ExprExecutor for ExecutionEngine {
 mod tests {
     use super::*;
     use indexmap::IndexMap;
+    use plasm_compile::decode_entities;
     use plasm_core::{
         CapabilityKind, CapabilityMapping, CapabilitySchema, Expr, FieldSchema, FieldType,
         FieldValueKind, GetExpr, InputFieldSchema, InputFieldWire, InputSchema, InputValidation,
@@ -4826,7 +4826,6 @@ mod tests {
 
     #[test]
     fn langitem_get_decoder_embed_decoders_are_leaf() {
-        use plasm_compile::decode_entities;
         use plasm_compile::DecodedRelation;
         use plasm_core::loader::load_schema_dir;
 
@@ -4860,13 +4859,17 @@ mod tests {
                 "detail": { "id": "det-i1", "body": "nested detail" }
             }
         });
-        let decoded = decode_entities_with_cgs(&decoder, &body, Some(&cgs)).expect("decode langitem get");
+        let decoded =
+            decode_entities_with_cgs(&decoder, &body, Some(&cgs)).expect("decode langitem get");
         let summary = decoded[0]
             .embedded_entities
             .iter()
             .find(|e| e.reference.entity_type.as_str() == "LangSummary")
             .expect("embedded summary");
-        let detail_rel = summary.relations.get("detail").expect("summary.detail relation");
+        let detail_rel = summary
+            .relations
+            .get("detail")
+            .expect("summary.detail relation");
         let DecodedRelation::Specified(refs) = detail_rel else {
             panic!("expected specified detail refs, got {detail_rel:?}");
         };

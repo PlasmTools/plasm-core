@@ -2,8 +2,6 @@
 
 use indexmap::IndexMap;
 
-use plasm_core::CGS;
-
 use crate::decoder::{
     EntityDecoder, FieldDecoder, ParentIdentityFieldHint, PathExpr, PathSegment,
 };

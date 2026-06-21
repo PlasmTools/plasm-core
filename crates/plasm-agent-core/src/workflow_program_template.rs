@@ -55,10 +55,7 @@ pub fn parse_program_template(source: &str) -> Result<WorkflowProgramTemplate, T
         .map(|seg| match seg {
             BraceSegment::Literal(lit) => TemplateSegment::Literal(lit.into_string()),
             BraceSegment::Param { name } => TemplateSegment::Param { name },
-            BraceSegment::Sym { entry_id, entity } => TemplateSegment::Sym {
-                entry_id,
-                entity,
-            },
+            BraceSegment::Sym { entry_id, entity } => TemplateSegment::Sym { entry_id, entity },
         })
         .collect();
     Ok(WorkflowProgramTemplate { segments })

@@ -122,9 +122,9 @@ pub mod symbol_tuning;
 pub mod teaching_term;
 pub mod template_interpolate;
 pub mod template_ref;
-pub mod text;
 pub mod temporal;
 pub mod tests;
+pub mod text;
 pub mod type_checker;
 pub mod typed_invoke;
 pub mod typed_literal;
@@ -246,8 +246,7 @@ pub use relation_materialize::{
     extract_from_parent_get_value, flatten_from_parent_get_source_rows,
     from_parent_get_embed_edges, partition_prefer_resolutions, prefer_hydrate_embed_path,
     relation_refs_fully_resolved, resolve_relation_row_resolution,
-    validate_from_parent_get_embed_acyclic, RelationRowResolution,
-    MAX_FROM_PARENT_GET_EMBED_DEPTH,
+    validate_from_parent_get_embed_acyclic, RelationRowResolution, MAX_FROM_PARENT_GET_EMBED_DEPTH,
 };
 pub use relation_segment::{
     relation_segment_wrong_role_message, resolve_relation_segment, ProgramBindingLabel,

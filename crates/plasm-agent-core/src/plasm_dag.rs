@@ -1254,13 +1254,8 @@ fn postfix_op_to_compute(
                 std::slice::from_ref(&key_fp),
                 "sort(...)",
             )?;
-            let schema = compute_passthrough_or_fallback_schema(
-                session,
-                state,
-                staged,
-                source,
-                "PlanSort",
-            );
+            let schema =
+                compute_passthrough_or_fallback_schema(session, state, staged, source, "PlanSort");
             Ok(mk(
                 ComputeOp::Sort {
                     key: key_fp,

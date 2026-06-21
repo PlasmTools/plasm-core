@@ -6,7 +6,7 @@
 //! the session graph without recursive stack growth.
 
 use indexmap::IndexMap;
-use plasm_core::{CGS, MAX_FROM_PARENT_GET_EMBED_DEPTH, Ref, RelationMaterialization, Value};
+use plasm_core::{Ref, RelationMaterialization, Value, CGS, MAX_FROM_PARENT_GET_EMBED_DEPTH};
 use std::collections::{BTreeMap, VecDeque};
 
 use crate::decoder::{
@@ -354,14 +354,20 @@ fn expand_transitive_from_parent_get_embeds(
                 queue.push_back((child_path, child_wire, target_type.to_string(), depth + 1));
             }
             if !refs.is_empty() {
-                entity.relations.insert(rel_name.as_str().to_string(), DecodedRelation::Specified(refs));
+                entity.relations.insert(
+                    rel_name.as_str().to_string(),
+                    DecodedRelation::Specified(refs),
+                );
             }
         }
     }
     Ok(())
 }
 
-fn entity_at_embed_path_mut<'a>(root: &'a mut DecodedEntity, path: &[usize]) -> &'a mut DecodedEntity {
+fn entity_at_embed_path_mut<'a>(
+    root: &'a mut DecodedEntity,
+    path: &[usize],
+) -> &'a mut DecodedEntity {
     let mut cur = root;
     for &idx in path {
         cur = &mut cur.embedded_entities[idx];
@@ -445,8 +451,8 @@ mod tests {
                 "detail": { "id": "det-i1", "body": "nested detail" }
             }
         });
-        let decoded =
-            decode_entities_with_cgs(&item, &body, Some(&cgs)).expect("decode with transitive embed");
+        let decoded = decode_entities_with_cgs(&item, &body, Some(&cgs))
+            .expect("decode with transitive embed");
         let summary = decoded[0]
             .embedded_entities
             .iter()

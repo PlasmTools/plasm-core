@@ -110,8 +110,9 @@ fn resolve_prefer_from_parent_get_row(
     let path_empty = extracted.is_empty() || extracted.iter().all(|v| v.is_null());
     if path_empty {
         if let Some(refs) = relation_refs.filter(|r| !r.is_empty()) {
-            if relation_refs_fully_resolved(refs, expected_target, |r| graph_has_ref(r).then_some(&()))
-            {
+            if relation_refs_fully_resolved(refs, expected_target, |r| {
+                graph_has_ref(r).then_some(&())
+            }) {
                 return RelationRowResolution::EmbeddedRefs(refs.to_vec());
             }
         }

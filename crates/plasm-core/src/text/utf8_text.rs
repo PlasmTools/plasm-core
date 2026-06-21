@@ -7,7 +7,7 @@ use thiserror::Error;
 
 /// Valid UTF-8 text for program literals, template output, and wire payloads.
 ///
-/// Construct only via [`Self::from_str`], [`Self::from_string`], or [`Self::try_from_bytes`]
+/// Construct only via [`From`]/[`FromStr`], [`Self::from_string`], or [`Self::try_from_bytes`]
 /// at explicit decode boundaries — never from per-byte Latin-1 interpretation.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -20,11 +20,6 @@ pub enum Utf8FromBytesError {
 }
 
 impl Utf8Text {
-    #[must_use]
-    pub fn from_str(s: &str) -> Self {
-        Self(s.to_string())
-    }
-
     #[must_use]
     pub fn from_string(s: String) -> Self {
         Self(s)
@@ -73,6 +68,14 @@ impl AsRef<str> for Utf8Text {
 
 impl From<&str> for Utf8Text {
     fn from(s: &str) -> Self {
-        Self::from_str(s)
+        Self(s.to_string())
+    }
+}
+
+impl std::str::FromStr for Utf8Text {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(Self(s.to_string()))
     }
 }

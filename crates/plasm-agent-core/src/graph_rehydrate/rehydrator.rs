@@ -7,10 +7,7 @@
 use std::sync::Arc;
 
 use plasm_core::CGS;
-use plasm_runtime::{
-    CachedEntity, ExecutionResult, MaterializedRowSource,
-    SessionMaterialization,
-};
+use plasm_runtime::{CachedEntity, ExecutionResult, MaterializedRowSource, SessionMaterialization};
 
 use crate::execute_session::ExecuteSession;
 use crate::server_state::PlasmHostState;
@@ -103,11 +100,13 @@ impl<'a> GraphSurfaceRehydrator<'a> {
                 result
                     .entities
                     .iter()
-                    .map(|e| super::relation_embed::wire_row_with_from_parent_embeds(
-                        e,
-                        self.ctx.cgs,
-                        &mat,
-                    ))
+                    .map(|e| {
+                        super::relation_embed::wire_row_with_from_parent_embeds(
+                            e,
+                            self.ctx.cgs,
+                            mat,
+                        )
+                    })
                     .collect(),
             );
         }

@@ -367,14 +367,17 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
         rel_name,
         target,
         &parents,
-        &mat,
+        mat,
         wire_fallback.as_deref(),
         scoped_es.cgs.as_ref(),
     );
     let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
     crate::plan_read_bounds::truncate_to_read_cap(&mut entities, read_cap);
-    let wire_rows =
-        crate::graph_rehydrate::wire_rows_for_embed_entities(&entities, scoped_es.cgs.as_ref(), &mat);
+    let wire_rows = crate::graph_rehydrate::wire_rows_for_embed_entities(
+        &entities,
+        scoped_es.cgs.as_ref(),
+        mat,
+    );
     drop(guard);
     let display = relation
         .relation

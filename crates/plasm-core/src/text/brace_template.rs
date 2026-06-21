@@ -65,9 +65,9 @@ pub fn parse_brace_template(source: &str) -> Result<BraceTemplate, BraceParseErr
                 continue;
             };
             if literal_start < i {
-                segments.push(BraceSegment::Literal(
-                    Utf8Text::from_str(&source[literal_start..i]),
-                ));
+                segments.push(BraceSegment::Literal(Utf8Text::from(
+                    &source[literal_start..i],
+                )));
             }
             segments.push(segment);
             i = start + end_rel + 2;
@@ -77,9 +77,9 @@ pub fn parse_brace_template(source: &str) -> Result<BraceTemplate, BraceParseErr
         i += 1;
     }
     if literal_start < bytes.len() {
-        segments.push(BraceSegment::Literal(
-            Utf8Text::from_str(&source[literal_start..]),
-        ));
+        segments.push(BraceSegment::Literal(Utf8Text::from(
+            &source[literal_start..],
+        )));
     }
     Ok(BraceTemplate { segments })
 }

@@ -163,8 +163,7 @@ fn create_entity_decoder_inner(
                 let Some(target_ent) = cgs.get_entity(rel.target_resource.as_str()) else {
                     continue;
                 };
-                let child =
-                    entity_decoder_for_from_parent_get_target(target_ent, entity, rel_path);
+                let child = entity_decoder_for_from_parent_get_target(target_ent, entity, rel_path);
                 relation_decoders.push(RelationDecoder {
                     relation: rel_name.as_str().to_string(),
                     decoder: child,

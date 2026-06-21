@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use crate::text::interpolate_dollar_template;
 use crate::value::Value;
 
-pub use crate::text::{DEFAULT_MAX_INTERPOLATED_LEN, InterpolateError};
+pub use crate::text::{InterpolateError, DEFAULT_MAX_INTERPOLATED_LEN};
 
 /// Binding name → value for `${alias.path}` resolution.
 pub type BindingScope<'a> = BTreeMap<&'a str, &'a Value>;

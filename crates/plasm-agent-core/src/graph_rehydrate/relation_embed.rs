@@ -5,13 +5,11 @@ use plasm_core::{
     partition_prefer_resolutions, Cardinality, Ref, RelationMaterialization, RelationRowResolution,
     CGS, MAX_FROM_PARENT_GET_EMBED_DEPTH,
 };
-use plasm_runtime::{CachedEntity, SessionMaterialization, entity_to_row_json};
+use plasm_runtime::{entity_to_row_json, CachedEntity, SessionMaterialization};
 
 use crate::execute_session::ExecuteSession;
 
-fn relation_is_embed_materialize(
-    materialize: &Option<RelationMaterialization>,
-) -> bool {
+fn relation_is_embed_materialize(materialize: &Option<RelationMaterialization>) -> bool {
     matches!(
         materialize,
         Some(RelationMaterialization::FromParentGet { .. })

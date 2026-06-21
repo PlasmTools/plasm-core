@@ -45,20 +45,20 @@ pub fn parse_dollar_template(input: &str) -> Result<DollarTemplate, DollarParseE
         if bytes[i] == b'$' && i + 1 < bytes.len() {
             if bytes[i + 1] == b'$' {
                 if literal_start < i {
-                    segments.push(DollarSegment::Literal(
-                        Utf8Text::from_str(&input[literal_start..i]),
-                    ));
+                    segments.push(DollarSegment::Literal(Utf8Text::from(
+                        &input[literal_start..i],
+                    )));
                 }
-                segments.push(DollarSegment::Literal(Utf8Text::from_str("$")));
+                segments.push(DollarSegment::Literal(Utf8Text::from("$")));
                 i += 2;
                 literal_start = i;
                 continue;
             }
             if bytes[i + 1] == b'{' {
                 if literal_start < i {
-                    segments.push(DollarSegment::Literal(
-                        Utf8Text::from_str(&input[literal_start..i]),
-                    ));
+                    segments.push(DollarSegment::Literal(Utf8Text::from(
+                        &input[literal_start..i],
+                    )));
                 }
                 let start = i + 2;
                 let Some(end_rel) = input[start..].find('}') else {
@@ -79,9 +79,9 @@ pub fn parse_dollar_template(input: &str) -> Result<DollarTemplate, DollarParseE
         i += 1;
     }
     if literal_start < bytes.len() {
-        segments.push(DollarSegment::Literal(
-            Utf8Text::from_str(&input[literal_start..]),
-        ));
+        segments.push(DollarSegment::Literal(Utf8Text::from(
+            &input[literal_start..],
+        )));
     }
     Ok(DollarTemplate { segments })
 }

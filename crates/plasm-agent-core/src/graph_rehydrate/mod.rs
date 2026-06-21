@@ -21,5 +21,5 @@ mod tests;
 pub(crate) use rehydrator::GraphSurfaceRehydrator;
 pub(crate) use relation_embed::{
     collect_all_embedded_relation_targets, plan_prefer_from_parent_get,
-    wire_row_with_from_parent_embeds, wire_rows_for_embed_entities,
+    wire_rows_for_embed_entities,
 };

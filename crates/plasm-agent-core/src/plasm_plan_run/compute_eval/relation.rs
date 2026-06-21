@@ -158,7 +158,7 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
         rel_name,
         target_entity,
         &parents,
-        &mat,
+        mat,
         wire_extracted.as_deref(),
         scoped_es.cgs.as_ref(),
     );
@@ -168,13 +168,13 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
     let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
     crate::plan_read_bounds::truncate_to_read_cap(&mut entities, read_cap);
     let count = entities.len();
-    let wire_rows =
-        crate::graph_rehydrate::wire_rows_for_embed_entities(&entities, scoped_es.cgs.as_ref(), &mat);
-    drop(guard);
-    let display = format!(
-        "plan.relation({}) cached_embed",
-        relation.id.as_str()
+    let wire_rows = crate::graph_rehydrate::wire_rows_for_embed_entities(
+        &entities,
+        scoped_es.cgs.as_ref(),
+        mat,
     );
+    drop(guard);
+    let display = format!("plan.relation({}) cached_embed", relation.id.as_str());
     finalize_embed_relation_materialized_node(
         st,
         es,
@@ -495,7 +495,11 @@ pub(crate) async fn finalize_embed_relation_materialized_node(
             display,
             projection: relation.relation.ir.projection.clone(),
             row_source: inline_row_source_owned(wire_rows),
-            row_identities: row_identities_from_entities(&scoped_es, target_entity, &full_result.entities),
+            row_identities: row_identities_from_entities(
+                scoped_es,
+                target_entity,
+                &full_result.entities,
+            ),
             result: Arc::new(full_result),
             artifact: Some(artifact),
         },
