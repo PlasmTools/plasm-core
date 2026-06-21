@@ -2,9 +2,7 @@
 
 use indexmap::IndexMap;
 
-use crate::decoder::{
-    EntityDecoder, FieldDecoder, ParentIdentityFieldHint, PathExpr, PathSegment,
-};
+use crate::decoder::{EntityDecoder, FieldDecoder, ParentIdentityFieldHint, PathExpr, PathSegment};
 
 /// Build a single-hop embed decoder for a `from_parent_get` relation target (no nested `.relations`).
 pub fn entity_decoder_for_from_parent_get_target(

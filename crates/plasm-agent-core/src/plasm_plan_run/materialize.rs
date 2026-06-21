@@ -352,8 +352,6 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
     let parents = source_mat
         .resolve_materialized_source_parents(&rehydrator)
         .await;
-    let guard = scoped_es.lock_graph_cache().await;
-    let mat = guard.materialization();
     let wire_fallback = super::compute_eval::parent_get_wire_rows(
         source_rows,
         relation,
@@ -363,22 +361,15 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
     )
     .ok()
     .filter(|rows| !rows.is_empty());
-    let mut entities = super::compute_eval::resolve_embed_target_entities(
+    let snapshot = super::compute_eval::snapshot_embed_relation_under_graph_lock(
+        &scoped_es,
+        relation,
         rel_name,
         target,
         &parents,
-        mat,
         wire_fallback.as_deref(),
-        scoped_es.cgs.as_ref(),
-    );
-    let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
-    crate::plan_read_bounds::truncate_to_read_cap(&mut entities, read_cap);
-    let wire_rows = crate::graph_rehydrate::wire_rows_for_embed_entities(
-        &entities,
-        scoped_es.cgs.as_ref(),
-        mat,
-    );
-    drop(guard);
+    )
+    .await;
     let display = relation
         .relation
         .ir
@@ -393,13 +384,13 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
         relation,
         &scoped_es,
         target,
-        entities,
-        wire_rows,
+        snapshot.entities,
+        snapshot.wire_rows,
         None,
         display,
         vec![synthetic_node_display(node)],
         trace,
-        read_cap,
+        snapshot.read_cap,
         0,
     )
     .await

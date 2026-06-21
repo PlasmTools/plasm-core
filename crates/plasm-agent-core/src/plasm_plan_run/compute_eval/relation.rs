@@ -109,6 +109,45 @@ pub(crate) fn parent_get_wire_rows(
     ))
 }
 
+struct EmbedRelationGraphSnapshot {
+    pub(crate) entities: Vec<CachedEntity>,
+    pub(crate) wire_rows: Vec<serde_json::Value>,
+    pub(crate) read_cap: Option<usize>,
+}
+
+/// One graph lock: resolve embed targets + wire rows; no further `.await` (CEP-4).
+pub(crate) async fn snapshot_embed_relation_under_graph_lock(
+    scoped_es: &ExecuteSession,
+    relation: &ValidatedRelationTraversalNode,
+    rel_name: &str,
+    target_entity: &str,
+    parents: &[CachedEntity],
+    wire_fallback_rows: Option<&[serde_json::Value]>,
+) -> EmbedRelationGraphSnapshot {
+    let guard = scoped_es.lock_graph_cache().await;
+    let mat = guard.materialization();
+    let mut entities = resolve_embed_target_entities(
+        rel_name,
+        target_entity,
+        parents,
+        mat,
+        wire_fallback_rows,
+        scoped_es.cgs.as_ref(),
+    );
+    let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
+    crate::plan_read_bounds::truncate_to_read_cap(&mut entities, read_cap);
+    let wire_rows = crate::graph_rehydrate::wire_rows_for_embed_entities(
+        &entities,
+        scoped_es.cgs.as_ref(),
+        mat,
+    );
+    EmbedRelationGraphSnapshot {
+        entities,
+        wire_rows,
+        read_cap,
+    }
+}
+
 /// When view `relation_outputs` (or other embed paths) populated `CachedEntity.relations`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn try_materialize_from_cached_relation_refs(
@@ -152,28 +191,19 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
     if !relations_on_parents && wire_extracted.is_none() {
         return Ok(None);
     }
-    let guard = scoped_es.lock_graph_cache().await;
-    let mat = guard.materialization();
-    let mut entities = resolve_embed_target_entities(
+    let snapshot = snapshot_embed_relation_under_graph_lock(
+        &scoped_es,
+        relation,
         rel_name,
         target_entity,
         &parents,
-        mat,
         wire_extracted.as_deref(),
-        scoped_es.cgs.as_ref(),
-    );
-    if entities.is_empty() {
+    )
+    .await;
+    if snapshot.entities.is_empty() {
         return Ok(None);
     }
-    let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
-    crate::plan_read_bounds::truncate_to_read_cap(&mut entities, read_cap);
-    let count = entities.len();
-    let wire_rows = crate::graph_rehydrate::wire_rows_for_embed_entities(
-        &entities,
-        scoped_es.cgs.as_ref(),
-        mat,
-    );
-    drop(guard);
+    let count = snapshot.entities.len();
     let display = format!("plan.relation({}) cached_embed", relation.id.as_str());
     finalize_embed_relation_materialized_node(
         st,
@@ -183,13 +213,13 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
         relation,
         &scoped_es,
         target_entity,
-        entities,
-        wire_rows,
+        snapshot.entities,
+        snapshot.wire_rows,
         Some(&source_rows),
         display.clone(),
         vec![display],
         trace,
-        read_cap,
+        snapshot.read_cap,
         count,
     )
     .await
