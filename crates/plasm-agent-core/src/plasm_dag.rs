@@ -10,7 +10,10 @@ use crate::plasm_plan::{
     PlanRelationTraversal, PlanValue, QualifiedEntityKey, RelationCardinality,
     SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
 };
-use crate::plasm_plan_run::{parse_plasm_surface_line_program, symbol_map_for_plasm_surface_parse};
+use crate::plasm_plan_run::{
+    format_session_symbolic_parse_error, parse_plasm_surface_line_program,
+    symbol_map_for_plasm_surface_parse,
+};
 use crate::program_binding::{
     BoundedSingletonKind, ContinuationAnchor, ContinuationCapability, ProgramBindingContract,
     RowCardinalityProof, SegmentPolicy,
@@ -1825,7 +1828,18 @@ fn compile_node_expr(
                 Some(&refs),
                 true,
             )
-            .map_err(|e| format!("Plasm program `{id}` template parse: {e}"))?;
+            .map_err(|e| {
+                format!(
+                    "Plasm program `{id}` template parse: {}",
+                    format_session_symbolic_parse_error(
+                        session,
+                        state.cross_cache,
+                        state.pipeline,
+                        right.trim(),
+                        &e,
+                    )
+                )
+            })?;
             let uses = collect_template_uses_from_expr(&parsed.expr);
             let (kind, qualified, _effect, _shape) = infer_surface_contract(session, &parsed.expr)?;
             if !matches!(
@@ -2152,7 +2166,9 @@ fn resolve_cgs_for_qualified_entity<'a>(
         .map(|ctx| ctx.cgs.as_ref())
         .filter(|cgs| cgs.entities.contains_key(qe.entity.as_str()))
         .or_else(|| {
-            if session.entry_id == qe.entry_id && session.cgs.entities.contains_key(qe.entity.as_str()) {
+            if session.entry_id == qe.entry_id
+                && session.cgs.entities.contains_key(qe.entity.as_str())
+            {
                 Some(session.cgs.as_ref())
             } else {
                 None
@@ -2844,7 +2860,15 @@ fn compile_surface_node(
                 )
                 .map_err(|e| {
                     format!(
-                        "Plasm program `{id}` expression parse: {e}\n(hint: `{label}.…` substitutes the Plasm bound to `{label}`; expanded form `{expanded}`)"
+                        "Plasm program `{id}` expression parse: {}\n(hint: `{label}.…` substitutes the Plasm bound to `{label}`; expanded form `{expanded}`)",
+                        format_session_symbolic_parse_error(
+                            session,
+                            state.cross_cache,
+                            state.pipeline,
+                            &expanded,
+                            &e,
+                        ),
+                        expanded = expanded
                     )
                 })?;
                 if let Expr::Chain(ref chain) = parsed.expr {
@@ -2920,7 +2944,18 @@ fn compile_surface_node(
         Some(&refs),
         false,
     )
-    .map_err(|e| format!("Plasm program `{id}` expression parse: {e}"))?;
+    .map_err(|e| {
+        format!(
+            "Plasm program `{id}` expression parse: {}",
+            format_session_symbolic_parse_error(
+                session,
+                state.cross_cache,
+                state.pipeline,
+                expr,
+                &e,
+            )
+        )
+    })?;
     let uses = collect_template_uses_from_expr(&parsed.expr);
     let (kind, qualified_entity, effect_class, result_shape) =
         infer_surface_contract(session, &parsed.expr)?;
@@ -4272,8 +4307,10 @@ kids"#
         if !github_dir.is_dir() || !linear_dir.is_dir() {
             return;
         }
-        let cgs_github = Arc::new(plasm_core::loader::load_schema_dir(&github_dir).expect("github"));
-        let cgs_linear = Arc::new(plasm_core::loader::load_schema_dir(&linear_dir).expect("linear"));
+        let cgs_github =
+            Arc::new(plasm_core::loader::load_schema_dir(&github_dir).expect("github"));
+        let cgs_linear =
+            Arc::new(plasm_core::loader::load_schema_dir(&linear_dir).expect("linear"));
         let mut ctxs = indexmap::IndexMap::new();
         ctxs.insert(
             "github".into(),

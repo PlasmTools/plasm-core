@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.51] - 2026-06-21
+
+### Fixed
+
+- **Federated parse feedback on MCP/HTTP plan compile:** DAG and program compile paths now append SymbolicLlm corrections (session `e#` stamp lists for homonymous entities) via `format_session_symbolic_parse_error`.
+- **Federated mutator `p#` params:** `expand_method_invoke_capability_param_keys` rewrites `.m#(…)` capability arg keys and nested `e#(…)` constructor field keys before global symbol expansion — fixes `e2.m9(p35=e3(p44=EVA), …)` dry-run without wire-name-only workarounds.
+
+### Added
+
+- **Tests:** `federated_ambiguous_entity_parse_includes_session_stamps`, `federated_linear_issue_create_dry_run_preflight_compiles_p_sym_tokens`.
+
 ## [0.3.50] - 2026-06-21
 
 ### Fixed

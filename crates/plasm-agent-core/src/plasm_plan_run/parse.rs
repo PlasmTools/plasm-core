@@ -1,6 +1,7 @@
 //! Surface parse and typecheck.
 
 use super::*;
+use plasm_core::error_render::{render_parse_error_with_feedback, FeedbackStyle};
 
 pub fn session_cgs_layers(session: &ExecuteSession) -> Vec<&CGS> {
     if session.contexts_by_entry.is_empty() {
@@ -399,4 +400,26 @@ pub fn parse_plasm_line_for_session(
     line: &str,
 ) -> Result<(), ParseError> {
     parse_parsed_expr_for_session(session, line).map(|_| ())
+}
+
+/// Parser diagnostic plus SymbolicLlm correction (stamp lists, `e#` hints) for MCP/HTTP/DAG surfaces.
+pub fn format_session_symbolic_parse_error(
+    session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    pipeline: &PromptPipelineConfig,
+    source_line: &str,
+    err: &ParseError,
+) -> String {
+    let expanded = expand_program_surface_for_session_lower(session, pipeline, source_line);
+    let sym_map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
+    let step = render_parse_error_with_feedback(
+        err,
+        &expanded,
+        source_line.trim(),
+        session.cgs.as_ref(),
+        FeedbackStyle::SymbolicLlm {
+            map: sym_map.as_ref(),
+        },
+    );
+    format!("{err}\n\n{}", step.correction)
 }

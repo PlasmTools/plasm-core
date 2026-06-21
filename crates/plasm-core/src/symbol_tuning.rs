@@ -4264,6 +4264,7 @@ pub fn expand_expr_for_teaching_session(
     }
     let map = session.symbol_map_arc();
     let scoped = expand_search_filter_predicate_keys(input, session, map.as_ref());
+    let scoped = expand_method_invoke_capability_param_keys(&scoped, session, map.as_ref());
     expand_path_symbols_with_options(&scoped, map.as_ref(), false)
 }
 
@@ -4484,6 +4485,300 @@ fn copy_until_pred_comma_or_close(input: &str, mut pos: usize, out: &mut String)
         pos += ch.len_utf8();
     }
     Some(pos)
+}
+
+fn cap_param_wire_for_sym(
+    entry_id: &str,
+    entity: &str,
+    cap_name: &str,
+    sym: &str,
+    map: &SymbolMap,
+) -> Option<String> {
+    for ((eid, ent, cap, param), s) in &map.cap_param_to_sym {
+        if s.as_str() == sym && eid == entry_id && ent == entity && cap == cap_name {
+            return Some(param.clone());
+        }
+    }
+    None
+}
+
+fn entity_field_wire_for_sym(
+    entry_id: &str,
+    entity: &str,
+    sym: &str,
+    map: &SymbolMap,
+) -> Option<String> {
+    for ((eid, ent, wire), s) in &map.entity_field_to_sym {
+        if s.as_str() == sym && eid == entry_id && ent == entity {
+            return Some(wire.clone());
+        }
+    }
+    None
+}
+
+fn resolve_capability_name_for_method_kebab(
+    cgs: &CGS,
+    entity: &str,
+    kebab: &str,
+) -> Option<String> {
+    for kind in [
+        CapabilityKind::Create,
+        CapabilityKind::Update,
+        CapabilityKind::Delete,
+        CapabilityKind::Action,
+    ] {
+        for cap in cgs.find_capabilities(entity, kind) {
+            if capability_method_label_kebab(cap) == kebab {
+                return Some(cap.name.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Before global `p#`→wire expansion, rewrite invoke arg keys on `.m#(…)` to capability param wires and
+/// nested `e#(…)` constructor keys to entity field wires (mirrors [`expand_search_filter_predicate_keys`]).
+fn expand_method_invoke_capability_param_keys(
+    input: &str,
+    session: &TeachingExposureSession,
+    map: &SymbolMap,
+) -> String {
+    let syms = map.method_syms_sorted.as_ref();
+    if syms.is_empty() {
+        return input.to_string();
+    }
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0usize;
+    let mut in_string = false;
+    let mut escape = false;
+
+    while i < input.len() {
+        let ch = input[i..].chars().next().unwrap();
+        let ch_len = ch.len_utf8();
+        if in_string {
+            out.push(ch);
+            if escape {
+                escape = false;
+            } else if ch == '\\' {
+                escape = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            i += ch_len;
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            out.push(ch);
+            i += ch_len;
+            continue;
+        }
+        let mut advanced = false;
+        if ch == '.' && i + 1 < input.len() {
+            let rest = &input[i + 1..];
+            if let Some(sym) = syms.iter().find(|s| rest.starts_with(s.as_str())) {
+                let sym_len = sym.len();
+                let after = i + 1 + sym_len;
+                let boundary_ok =
+                    after >= input.len() || !ident_continue(input[after..].chars().next().unwrap());
+                if boundary_ok {
+                    if let Some((entry_id, entity, kebab)) = map.sym_to_method.get(sym.as_str()) {
+                        if let Some(left_ent) = find_entity_before_dot(input, i) {
+                            let left_wire = entity_surface_wire_name(&left_ent, map);
+                            if left_wire == *entity || left_ent == *entity {
+                                out.push('.');
+                                out.push_str(sym);
+                                i += 1 + sym_len;
+                                skip_ascii_whitespace(input, &mut i);
+                                if input.as_bytes().get(i) == Some(&b'(') {
+                                    out.push('(');
+                                    i += 1;
+                                    if let Some(cgs) = session.catalog_cgs.get(entry_id) {
+                                        if let Some(cap_name) =
+                                            resolve_capability_name_for_method_kebab(
+                                                cgs.as_ref(),
+                                                entity.as_str(),
+                                                kebab.as_str(),
+                                            )
+                                        {
+                                            if let Some(end) = rewrite_invoke_arg_list(
+                                                input,
+                                                i,
+                                                entry_id.as_str(),
+                                                entity.as_str(),
+                                                cap_name.as_str(),
+                                                map,
+                                                &mut out,
+                                            ) {
+                                                i = end;
+                                                advanced = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if advanced {
+            continue;
+        }
+        out.push(ch);
+        i += ch_len;
+    }
+    out
+}
+
+fn rewrite_invoke_arg_list(
+    input: &str,
+    mut pos: usize,
+    entry_id: &str,
+    entity: &str,
+    cap_name: &str,
+    map: &SymbolMap,
+    out: &mut String,
+) -> Option<usize> {
+    while pos < input.len() {
+        skip_ascii_whitespace(input, &mut pos);
+        if input.as_bytes().get(pos)? == &b')' {
+            out.push(')');
+            return Some(pos + 1);
+        }
+        let key_start = pos;
+        while pos < input.len() {
+            let b = input.as_bytes()[pos];
+            if b.is_ascii_alphanumeric() || b == b'_' || b == b'#' {
+                pos += 1;
+            } else {
+                break;
+            }
+        }
+        let key = input[key_start..pos].trim();
+        let rewritten_key = if is_opaque_param_sym(key) {
+            cap_param_wire_for_sym(entry_id, entity, cap_name, key, map)
+                .unwrap_or_else(|| key.to_string())
+        } else {
+            key.to_string()
+        };
+        out.push_str(&rewritten_key);
+        if input.as_bytes().get(pos)? != &b'=' {
+            return None;
+        }
+        out.push('=');
+        pos += 1;
+        pos = copy_invoke_arg_value(input, pos, map, out)?;
+        skip_ascii_whitespace(input, &mut pos);
+        if input.as_bytes().get(pos)? == &b',' {
+            out.push(',');
+            pos += 1;
+        }
+    }
+    None
+}
+
+fn copy_invoke_arg_value(
+    input: &str,
+    mut pos: usize,
+    map: &SymbolMap,
+    out: &mut String,
+) -> Option<usize> {
+    skip_ascii_whitespace(input, &mut pos);
+    if let Some(entity_sym) = read_entity_ctor_token(input, pos) {
+        let (sym, sym_len) = entity_sym;
+        if input.as_bytes().get(pos + sym_len)? == &b'(' {
+            if let Some((entry_id, entity)) = map.sym_to_entity.get(sym.as_str()).map(|ent| {
+                (
+                    map.entry_id_for_entity_symbol(sym.as_str())
+                        .unwrap_or_default(),
+                    ent.clone(),
+                )
+            }) {
+                out.push_str(sym.as_str());
+                out.push('(');
+                pos += sym_len + 1;
+                if let Some(end) = rewrite_entity_ctor_arg_list(
+                    input,
+                    pos,
+                    entry_id.as_str(),
+                    entity.as_str(),
+                    map,
+                    out,
+                ) {
+                    return Some(end);
+                }
+            }
+        }
+    }
+    copy_until_pred_comma_or_close(input, pos, out)
+}
+
+fn read_entity_ctor_token(input: &str, pos: usize) -> Option<(String, usize)> {
+    let rest = input.get(pos..)?;
+    if !rest.starts_with('e') {
+        return None;
+    }
+    let mut end = 1usize;
+    for ch in rest[1..].chars() {
+        if ch.is_ascii_digit() {
+            end += ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    if end <= 1 {
+        return None;
+    }
+    Some((rest[..end].to_string(), end))
+}
+
+fn rewrite_entity_ctor_arg_list(
+    input: &str,
+    mut pos: usize,
+    entry_id: &str,
+    entity: &str,
+    map: &SymbolMap,
+    out: &mut String,
+) -> Option<usize> {
+    while pos < input.len() {
+        skip_ascii_whitespace(input, &mut pos);
+        if input.as_bytes().get(pos)? == &b')' {
+            out.push(')');
+            return Some(pos + 1);
+        }
+        let key_start = pos;
+        while pos < input.len() {
+            let b = input.as_bytes()[pos];
+            if b.is_ascii_alphanumeric() || b == b'_' || b == b'#' {
+                pos += 1;
+            } else {
+                break;
+            }
+        }
+        if pos == key_start {
+            return copy_until_pred_comma_or_close(input, pos, out);
+        }
+        let key = input[key_start..pos].trim();
+        let rewritten_key = if is_opaque_param_sym(key) {
+            entity_field_wire_for_sym(entry_id, entity, key, map).unwrap_or_else(|| key.to_string())
+        } else {
+            key.to_string()
+        };
+        out.push_str(&rewritten_key);
+        if input.as_bytes().get(pos)? != &b'=' {
+            return copy_until_pred_comma_or_close(input, pos, out);
+        }
+        out.push('=');
+        pos += 1;
+        pos = copy_until_pred_comma_or_close(input, pos, out)?;
+        skip_ascii_whitespace(input, &mut pos);
+        if input.as_bytes().get(pos)? == &b',' {
+            out.push(',');
+            pos += 1;
+        }
+    }
+    None
 }
 
 /// Strip human-only suffixes from pasted prompt examples (`;;` comment may include `=>` result type,

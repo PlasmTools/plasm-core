@@ -210,6 +210,59 @@ fn federated_linear_issue_create_dry_run_preflight_compiles() {
 }
 
 #[test]
+fn federated_linear_issue_create_dry_run_preflight_compiles_p_sym_tokens() {
+    let Some(session) = federated_github_linear_issue_team_session() else {
+        return;
+    };
+    let map = session
+        .teaching_exposure
+        .as_ref()
+        .expect("exposure")
+        .symbol_map_arc();
+    let e2 = map.entity_sym_for("linear", "Issue");
+    let e3 = map.entity_sym_for("linear", "Team");
+    let m_create = map.method_sym_for("linear", "Issue", "create");
+    let p_team = map.ident_sym_cap_param_for("linear", "Issue", "issue_create", "team");
+    let p_title = map.ident_sym_cap_param_for("linear", "Issue", "issue_create", "title");
+    let p_key = map.ident_sym_entity_field_for("linear", "Team", "key");
+    let program = format!(
+        "{e2}.{m_create}({p_team}={e3}({p_key}=EVA), {p_title}=\"federation triage p# dry-run\")"
+    );
+    let plan = crate::plasm_dag::compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "fed-linear-create-p-sym",
+        &program,
+    )
+    .expect("compile federated linear issue create with p# tokens");
+    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run federated linear issue create p#");
+}
+
+#[test]
+fn federated_ambiguous_entity_parse_includes_session_stamps() {
+    let Some(session) = federated_github_linear_issue_session() else {
+        return;
+    };
+    let err = parse_parsed_expr_for_session(&session, "Issue.create(title=\"x\")")
+        .expect_err("ambiguous");
+    let msg = format_session_symbolic_parse_error(
+        &session,
+        None,
+        &PromptPipelineConfig::default(),
+        "Issue.create(title=\"x\")",
+        &err,
+    );
+    assert!(
+        msg.contains("e1")
+            && msg.contains("e2")
+            && msg.contains("github")
+            && msg.contains("linear"),
+        "{msg}"
+    );
+}
+
+#[test]
 fn plan_parses_product_query() {
     let s = test_session();
     let pe = parse_parsed_expr_for_session(&s, "Product").expect("parse");
