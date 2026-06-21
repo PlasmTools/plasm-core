@@ -114,6 +114,64 @@ pub(crate) async fn apply_preflight_steps(
     Ok(())
 }
 
+/// Compile-only preflight: inject stub merge keys so CML templates compile without HTTP hydration.
+pub(crate) fn apply_preflight_compile_stubs(env: &mut CmlEnv, capability: &CapabilitySchema) {
+    let Some(PreflightPlan(steps)) = capability.preflight.as_ref() else {
+        return;
+    };
+    for step in steps {
+        match step {
+            PreflightStep::HydrateEntityRefParam { param, merge, .. } => {
+                if !env_param_present(env, param) {
+                    continue;
+                }
+                for wire_key in merge.keys() {
+                    if env.get(wire_key).is_none() {
+                        env.insert(wire_key.clone(), preflight_compile_stub_value(wire_key));
+                    }
+                }
+            }
+            PreflightStep::QueryPick { when, merge, .. } => {
+                if let Some(w) = when {
+                    if !env_param_present(env, w) {
+                        continue;
+                    }
+                }
+                for wire_key in merge.keys() {
+                    if env.get(wire_key).is_none() {
+                        env.insert(wire_key.clone(), preflight_compile_stub_value(wire_key));
+                    }
+                }
+            }
+            PreflightStep::LabelIdsDelta {
+                merge,
+                add_when,
+                remove_when,
+                ..
+            } => {
+                if (env_param_present(env, add_when) || env_param_present(env, remove_when))
+                    && env.get(merge.as_str()).is_none()
+                {
+                    env.insert(merge.clone(), Value::Array(Vec::new()));
+                }
+            }
+            PreflightStep::HydrateInvokeTarget { .. } => {}
+        }
+    }
+}
+
+fn preflight_compile_stub_value(wire_key: &str) -> Value {
+    if wire_key.ends_with("Id")
+        || wire_key.ends_with("_id")
+        || wire_key == "id"
+        || wire_key.ends_with("Ids")
+    {
+        Value::String("00000000-0000-0000-0000-000000000000".to_string())
+    } else {
+        Value::String("preflight-stub".to_string())
+    }
+}
+
 fn env_param_present(env: &CmlEnv, name: &str) -> bool {
     matches!(env.get(name), Some(v) if !matches!(v, Value::Null))
 }

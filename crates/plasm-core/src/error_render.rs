@@ -492,14 +492,9 @@ pub fn render_parse_error_with_feedback(
             anchor_entity,
             label,
         } => correction_dotted_create_ambiguous(cgs, anchor_entity, label, &style),
-        ParseErrorKind::AmbiguousEntityCatalog { entity } => match style {
-            FeedbackStyle::CanonicalDev => format!(
-                "Entity `{entity}` exists in more than one loaded catalog — use the session teaching-table `e#` symbol (catalog ownership), not a bare wire entity name."
-            ),
-            FeedbackStyle::SymbolicLlm { .. } => format!(
-                "Entity `{entity}` is ambiguous across catalogs — use the session `e#` from the teaching table, not a bare wire name."
-            ),
-        },
+        ParseErrorKind::AmbiguousEntityCatalog { entity } => {
+            correction_ambiguous_entity_catalog(entity, &style)
+        }
         ParseErrorKind::InvokeRequiresTargetId { .. } => match style {
             FeedbackStyle::CanonicalDev => {
                 "This action needs an id from the path: write `Entity(<id>).method()` (see the expression examples in the prompt)."
@@ -1084,6 +1079,30 @@ fn correction_no_zero_arity_method_canonical(cgs: &CGS, entity: &str, label: &st
         }
     }
     "No zero-arity methods are defined for this entity on the left of `.`. Use kebab-case names with `()` when listed in the prompt, e.g. `User.get-me()` not `get_me`, or `Team(1).seats()` when the prompt lists `seats` for `Team`.".into()
+}
+
+fn correction_ambiguous_entity_catalog(entity: &str, style: &FeedbackStyle<'_>) -> String {
+    match style {
+        FeedbackStyle::CanonicalDev => format!(
+            "Entity `{entity}` exists in more than one loaded catalog — use the session teaching-table `e#` symbol (catalog ownership stamp), not a bare wire entity name."
+        ),
+        FeedbackStyle::SymbolicLlm { map } => {
+            let stamps = map.entity_stamps_for_wire(entity);
+            if stamps.is_empty() {
+                return format!(
+                    "Entity `{entity}` is ambiguous across catalogs — use the session `e#` from the teaching table, not a bare wire name."
+                );
+            }
+            let rows = stamps
+                .iter()
+                .map(|(entry_id, sym)| format!("`{sym}` → {entry_id}:{entity}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "Entity `{entity}` is ambiguous across catalogs — use a catalog-stamped `e#` from the teaching table, not bare `{entity}`.\n\nMatching rows in this session: {rows}"
+            )
+        }
+    }
 }
 
 fn correction_unknown_entity(
@@ -2471,6 +2490,52 @@ mod tests {
         );
         assert!(
             !se.correction.to_lowercase().contains("zero-arity"),
+            "{}",
+            se.correction
+        );
+    }
+
+    #[test]
+    fn ambiguous_entity_catalog_feedback_lists_session_stamps() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        if !root.is_dir() {
+            return;
+        }
+        let cgs = loader::load_schema_dir(&root).expect("plasm_language_matrix");
+        let layers = [&cgs, &cgs];
+        let mut exp = crate::TeachingExposureSession::new(&cgs, "github", &["LangItem"]);
+        exp.expose_entities(
+            &layers,
+            std::sync::Arc::new(cgs.clone()),
+            "linear",
+            &["LangItem"],
+        );
+        let map = exp.symbol_map_arc();
+        let err = expr_parser::parse_with_cgs_layers_program(
+            "LangItem",
+            &layers,
+            map.clone(),
+            None,
+            false,
+            None,
+        )
+        .expect_err("homonym should fail closed");
+        let se = render_parse_error_with_feedback(
+            &err,
+            "LangItem",
+            "LangItem",
+            &cgs,
+            FeedbackStyle::SymbolicLlm { map: &map },
+        );
+        assert!(
+            se.correction.contains("Matching rows in this session"),
+            "{}",
+            se.correction
+        );
+        assert!(
+            se.correction.contains("`e1` → github:LangItem")
+                && se.correction.contains("`e2` → linear:LangItem"),
             "{}",
             se.correction
         );

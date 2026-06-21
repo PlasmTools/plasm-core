@@ -1,6 +1,7 @@
 //! CML compile gates without HTTP I/O — shared by dry preflight and live execute.
 
 use super::*;
+use crate::preflight::apply_preflight_compile_stubs;
 use crate::view_plan::ViewAmbientContext;
 use crate::view_preflight::{preflight_view_get, preflight_view_query};
 
@@ -136,6 +137,7 @@ fn preflight_compile_create(
             message: e.to_string(),
         }
     })?;
+    apply_preflight_compile_stubs(&mut env, capability);
     merge_plasm_execute_session_env(&mut env);
     compile_operation_dispatch(&capability_template, &env).map(|_| ())
 }
@@ -226,6 +228,7 @@ fn preflight_compile_invoke(invoke: &InvokeExpr, cgs: &CGS) -> Result<(), Runtim
         }
     })?;
     merge_entity_id_from_into_input_env(&mut env, target_ent, capability);
+    apply_preflight_compile_stubs(&mut env, capability);
     merge_plasm_execute_session_env(&mut env);
     compile_operation_dispatch(&capability_template, &env).map(|_| ())
 }

@@ -1827,6 +1827,19 @@ impl SymbolMap {
             .unwrap_or_else(|| canonical.to_string())
     }
 
+    /// Federated homonym hints: `(entry_id, e#)` rows whose wire entity name equals `wire`.
+    #[must_use]
+    pub fn entity_stamps_for_wire(&self, wire: &str) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = self
+            .qualified_entity_to_sym
+            .iter()
+            .filter(|((_, entity), _)| entity.as_str() == wire)
+            .map(|((entry_id, _), sym)| (entry_id.clone(), sym.clone()))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+        out
+    }
+
     /// Opaque `e#` string — unambiguous wire name only; prefer [`Self::entity_sym_for`] under federation.
     #[inline]
     pub fn entity_sym(&self, canonical: &str) -> String {
@@ -5499,6 +5512,13 @@ mod tests {
         assert_eq!(map.entity_sym_for("github", "LangItem"), "e1");
         assert_eq!(map.entity_sym_for("linear", "LangItem"), "e2");
         assert_eq!(map.entity_sym("LangItem"), "LangItem");
+        assert_eq!(
+            map.entity_stamps_for_wire("LangItem"),
+            vec![
+                ("github".to_string(), "e1".to_string()),
+                ("linear".to_string(), "e2".to_string()),
+            ]
+        );
     }
 
     #[test]

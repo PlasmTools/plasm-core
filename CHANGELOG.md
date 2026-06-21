@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.50] - 2026-06-21
+
+### Fixed
+
+- **Federated ambiguous-entity feedback:** parse errors for homonymous wire names (e.g. bare `Issue.create`) now list matching session `e#` stamps (`e1` → github:Issue, `e2` → linear:Issue) via `SymbolMap::entity_stamps_for_wire`.
+- **Linear issue create dry-run:** `apply_preflight_compile_stubs` injects compile-time preflight merge keys (`teamId`, …) so `issue_create` CML compiles in plan review without live HTTP hydration.
+
+### Added
+
+- **Tests:** `ambiguous_entity_catalog_feedback_lists_session_stamps`, `federated_linear_issue_create_dry_run_preflight_compiles`.
+
 ## [0.3.49] - 2026-06-21
 
 ### Fixed
