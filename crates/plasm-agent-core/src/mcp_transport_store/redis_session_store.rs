@@ -195,7 +195,7 @@ mod tests {
             mode: ExecutionMode::Live,
             registry: std::sync::Arc::new(reg),
             catalog_bootstrap: CatalogBootstrap::Fixed,
-                        incoming_auth: None,
+            incoming_auth: None,
             run_artifacts: std::sync::Arc::new(RunArtifactStore::memory()),
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,

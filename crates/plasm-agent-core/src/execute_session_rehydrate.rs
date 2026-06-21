@@ -411,7 +411,7 @@ mod tests {
             mode: plasm_runtime::ExecutionMode::Live,
             registry: reg,
             catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
-                        incoming_auth: None,
+            incoming_auth: None,
             run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,
@@ -435,7 +435,7 @@ mod tests {
             reuse_key: PersistedSessionReuseKey {
                 tenant_scope: String::new(),
                 entry_id: "github".into(),
-            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+                catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
                 entities: vec!["LangItem".into(), "LangItem".into()],
                 context_intent: None,
                 ranked_capabilities: None,
@@ -483,7 +483,7 @@ mod tests {
             reuse_key: PersistedSessionReuseKey {
                 tenant_scope: "t".into(),
                 entry_id: "overshow".into(),
-            catalog_cgs_hash: "deadbeef".into(),
+                catalog_cgs_hash: "deadbeef".into(),
                 entities: vec!["demo".into()],
                 context_intent: None,
                 ranked_capabilities: None,
@@ -569,7 +569,7 @@ mod tests {
             reuse_key: PersistedSessionReuseKey {
                 tenant_scope: String::new(),
                 entry_id: "github".into(),
-            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+                catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
                 entities: vec!["LangItem".into(), "LangItem".into()],
                 context_intent: None,
                 ranked_capabilities: None,

@@ -96,7 +96,7 @@ async fn limit_pushdown_bounds_paginated_berry_query_async() {
         mode: plasm_runtime::ExecutionMode::Live,
         registry,
         catalog_bootstrap: CatalogBootstrap::Fixed,
-                incoming_auth: None,
+        incoming_auth: None,
         run_artifacts: Arc::new(RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,

@@ -6,8 +6,8 @@ use plasm_core::PreflightToken;
 use plasm_core::CGS;
 use plasm_runtime::CancelSignal;
 use plasm_runtime::{
-    AuthResolver, ExecuteOptions, ExecuteSessionMaterial,
-    GraphPageSpillHandle, RowsProgressFn, SecretProvider,
+    AuthResolver, ExecuteOptions, ExecuteSessionMaterial, GraphPageSpillHandle, RowsProgressFn,
+    SecretProvider,
 };
 
 use crate::execute_session::ExecuteSession;

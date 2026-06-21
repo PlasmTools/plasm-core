@@ -246,7 +246,7 @@ mod tests {
                 Arc::new(CGS::new()),
             )])),
             catalog_bootstrap: CatalogBootstrap::Fixed,
-                        incoming_auth: None,
+            incoming_auth: None,
             run_artifacts: Arc::new(RunArtifactStore::memory()),
             session_graph_persistence: None,
             oss_local_filesystem_defaults: false,

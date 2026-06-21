@@ -10,8 +10,8 @@ use indexmap::IndexMap;
 use plasm_compile::{
     compile_operation, compile_query, decode_entities_with_cgs, parse_capability_template,
     path_var_names_from_request, template_pagination, template_var_names, BackendFilter,
-    CapabilityTemplate, CmlEnv, CmlRequest, CompiledOperation, CompiledRequest, HttpBodyFormat, PaginationConfig, PathExpr, PathSegment,
-    ResponsePreprocess,
+    CapabilityTemplate, CmlEnv, CmlRequest, CompiledOperation, CompiledRequest, HttpBodyFormat,
+    PaginationConfig, PathExpr, PathSegment, ResponsePreprocess,
 };
 use plasm_core::partition_prefer_resolutions;
 use plasm_core::resolve_relation_row_resolution;
@@ -714,9 +714,7 @@ impl ExecutionEngine {
                                             .scope(cancel, async move {
                                                 EXECUTION_ROWS_PROGRESS
                                                     .scope(rows_progress, async move {
-                                                        EXECUTION_HTTP_BASE
-                                                            .scope(base, fut)
-                                                            .await
+                                                        EXECUTION_HTTP_BASE.scope(base, fut).await
                                                     })
                                                     .await
                                             })

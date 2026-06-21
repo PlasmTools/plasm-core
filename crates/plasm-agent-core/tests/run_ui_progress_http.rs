@@ -32,7 +32,7 @@ async fn seeded_host_with_running_op() -> (plasm_agent_core::server_state::Plasm
             cgs.clone(),
         )])),
         catalog_bootstrap: CatalogBootstrap::Fixed,
-                incoming_auth: None,
+        incoming_auth: None,
         run_artifacts: Arc::new(plasm_agent_core::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,

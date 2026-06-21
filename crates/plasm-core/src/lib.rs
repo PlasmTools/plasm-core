@@ -144,9 +144,9 @@ mod wire_coercion;
 pub use o200k_token_count::o200k_token_count;
 
 pub use catalog_il::{
-    catalog_artifact_stem, cgs_to_catalog_il_cbor, is_catalog_manifest_path,
-    load_catalog_artifact, load_catalog_il_cbor, load_catalog_il_cbor_verified,
-    read_catalog_manifest, CatalogManifest, PLASM_CATALOG_FORMAT_VERSION,
+    catalog_artifact_stem, cgs_to_catalog_il_cbor, is_catalog_manifest_path, load_catalog_artifact,
+    load_catalog_il_cbor, load_catalog_il_cbor_verified, read_catalog_manifest, CatalogManifest,
+    PLASM_CATALOG_FORMAT_VERSION,
 };
 pub use cgs_context::{CgsContext, Prefix};
 pub use cgs_federation::{

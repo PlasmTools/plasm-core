@@ -287,14 +287,12 @@ fn main() -> Result<()> {
         }
 
         eprintln!("plasm-pack-catalogs: packing `{name}` …");
-        let cbor_bytes = cgs_to_catalog_il_cbor(&cgs).map_err(|e| anyhow::anyhow!("encode CGS CBOR IL: {e}"))?;
+        let cbor_bytes =
+            cgs_to_catalog_il_cbor(&cgs).map_err(|e| anyhow::anyhow!("encode CGS CBOR IL: {e}"))?;
         fs::write(&cbor_dest, &cbor_bytes)
             .with_context(|| format!("write {}", cbor_dest.display()))?;
 
-        let label = cgs
-            .entry_id
-            .clone()
-            .unwrap_or_else(|| name.to_string());
+        let label = cgs.entry_id.clone().unwrap_or_else(|| name.to_string());
         let manifest = CatalogManifest {
             format_version: PLASM_CATALOG_FORMAT_VERSION,
             entry_id: name.to_string(),
@@ -304,7 +302,9 @@ fn main() -> Result<()> {
             tags: vec![],
             cgs_cbor: cbor_name,
         };
-        manifest.validate_format().map_err(|e| anyhow::anyhow!("manifest validate: {e}"))?;
+        manifest
+            .validate_format()
+            .map_err(|e| anyhow::anyhow!("manifest validate: {e}"))?;
         let manifest_json = serde_json::to_string_pretty(&manifest).context("manifest json")?;
         fs::write(&manifest_dest, manifest_json)
             .with_context(|| format!("write {}", manifest_dest.display()))?;

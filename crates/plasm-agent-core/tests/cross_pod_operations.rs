@@ -46,7 +46,7 @@ fn host_with_shared_registry(
         mode: ExecutionMode::Live,
         registry,
         catalog_bootstrap: CatalogBootstrap::Fixed,
-                incoming_auth: None,
+        incoming_auth: None,
         run_artifacts,
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,

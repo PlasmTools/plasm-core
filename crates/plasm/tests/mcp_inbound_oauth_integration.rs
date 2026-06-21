@@ -127,7 +127,7 @@ async fn spawn_mcp_server() -> Option<(String, tokio::task::JoinHandle<()>, Opti
         mode: ExecutionMode::Live,
         registry: dnd5e_registry(),
         catalog_bootstrap: CatalogBootstrap::Fixed,
-                incoming_auth: Some(Arc::new(incoming)),
+        incoming_auth: Some(Arc::new(incoming)),
         run_artifacts: Arc::new(plasm_agent::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,

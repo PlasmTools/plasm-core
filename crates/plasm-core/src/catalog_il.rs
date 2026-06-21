@@ -42,9 +42,7 @@ impl CatalogManifest {
                 self.entry_id
             ));
         }
-        if self.cgs_hash.len() != 64
-            || !self.cgs_hash.chars().all(|c| c.is_ascii_hexdigit())
-        {
+        if self.cgs_hash.len() != 64 || !self.cgs_hash.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err(format!(
                 "catalog manifest cgs_hash must be 64 hex chars for `{}`",
                 self.entry_id
@@ -70,8 +68,8 @@ pub fn cgs_to_catalog_il_cbor(cgs: &CGS) -> Result<Vec<u8>, String> {
 
 /// Decode compiled CBOR IL bytes into a CGS and run full validation.
 pub fn load_catalog_il_cbor(bytes: &[u8]) -> Result<CGS, String> {
-    let cgs: CGS = ciborium::de::from_reader(bytes)
-        .map_err(|e| format!("CGS CBOR decode failed: {e}"))?;
+    let cgs: CGS =
+        ciborium::de::from_reader(bytes).map_err(|e| format!("CGS CBOR decode failed: {e}"))?;
     cgs.validate()
         .map_err(|e| format!("CGS validation failed after CBOR decode: {e}"))?;
     Ok(cgs)
@@ -118,8 +116,8 @@ pub fn load_catalog_artifact(dir: &Path, manifest: &CatalogManifest) -> Result<C
             manifest.cgs_cbor, manifest.entry_id
         ));
     }
-    let bytes = std::fs::read(&cbor_path)
-        .map_err(|e| format!("read CBOR {}: {e}", cbor_path.display()))?;
+    let bytes =
+        std::fs::read(&cbor_path).map_err(|e| format!("read CBOR {}: {e}", cbor_path.display()))?;
     let cgs = match load_catalog_il_cbor_verified(&bytes, &manifest.cgs_hash) {
         Ok(cgs) => cgs,
         Err(e) => {

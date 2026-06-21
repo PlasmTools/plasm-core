@@ -48,7 +48,7 @@ fn test_host_state(storage: Arc<MemoryStorage>) -> plasm_agent_core::server_stat
         mode: ExecutionMode::Live,
         registry: fixture_registry(),
         catalog_bootstrap: CatalogBootstrap::Fixed,
-                incoming_auth: Some(Arc::new(incoming)),
+        incoming_auth: Some(Arc::new(incoming)),
         run_artifacts: Arc::new(plasm_agent_core::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,

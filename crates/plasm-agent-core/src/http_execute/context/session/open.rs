@@ -59,7 +59,6 @@ pub(crate) async fn execute_session_create_response_inner(
     let http_backend = materialized.http_backend;
     let catalog_cgs_hash = effective_cgs.effective_catalog_cgs_hash_hex();
 
-
     let scope = tenant_scope(principal);
     let subj = principal.map(|p| p.subject.clone()).unwrap_or_default();
 

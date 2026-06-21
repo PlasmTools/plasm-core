@@ -63,7 +63,7 @@ fn matrix_federated_host_with_base(base_url: Option<&str>) -> PlasmHostState {
         mode: ExecutionMode::Live,
         registry: Arc::new(reg),
         catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
-                incoming_auth: None,
+        incoming_auth: None,
         run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,

@@ -614,7 +614,9 @@ pub fn build_app(cgs: &CGS, surface: AgentCliSurface) -> Command {
                     Arg::new("catalog_dir")
                         .long("catalog-dir")
                         .value_name("DIR")
-                        .help("Catalog CBOR IL directory (first entry's CGS when omitting --schema)"),
+                        .help(
+                            "Catalog CBOR IL directory (first entry's CGS when omitting --schema)",
+                        ),
                 )
                 .subcommand_required(false);
             app

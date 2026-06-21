@@ -126,7 +126,7 @@ fn pokeapi_host_state(
         mode: ExecutionMode::Live,
         registry,
         catalog_bootstrap: CatalogBootstrap::Fixed,
-                incoming_auth: None,
+        incoming_auth: None,
         run_artifacts: Arc::new(RunArtifactStore::memory()),
         session_graph_persistence: Some(persistence),
         oss_local_filesystem_defaults: false,

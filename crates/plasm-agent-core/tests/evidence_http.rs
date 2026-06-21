@@ -37,7 +37,7 @@ fn test_app(store: Arc<RunArtifactStore>) -> Router<()> {
         mode: ExecutionMode::Live,
         registry: Arc::new(reg),
         catalog_bootstrap: CatalogBootstrap::Fixed,
-                incoming_auth: None,
+        incoming_auth: None,
         run_artifacts: store,
         session_graph_persistence: None,
         oss_local_filesystem_defaults: false,

@@ -3,9 +3,7 @@
 use crate::execute_pipeline::RunLineError;
 use crate::run_artifacts::{persist_execute_run, PersistExecuteRunError, PersistExecuteRunInput};
 
-use super::ingress::{
-    augment_unknown_entity_parse_error, execute_session_parse_error_message,
-};
+use super::ingress::{augment_unknown_entity_parse_error, execute_session_parse_error_message};
 use super::proof_bind::{
     maybe_proof_refresh_session_base_token, try_proof_document_share_bind, ProofBindError,
 };

@@ -119,11 +119,11 @@ pub use plasm_comp_wire::{
 pub use plasm_compile::{
     compile_plasm_expression, compile_plasm_program, compile_plasm_surface_line_to_comp,
 };
+pub mod catalog_data;
 pub(crate) mod plasm_dag;
 /// Serializable effect [`Plan`](plasm_plan::Plan) contract and DAG validation (Plasm programs, archived plans).
 pub mod plasm_plan;
 pub mod plasm_plan_run;
-pub mod catalog_data;
 mod program_binding;
 pub mod query_args;
 pub(crate) mod resolved_plan_http;
