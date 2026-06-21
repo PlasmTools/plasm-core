@@ -69,7 +69,7 @@ The CGS is the semantic domain model. It declares what entities exist, how they 
 ### CRITICAL: Versioning is mandatory
 
 - Every `apis/<api>/domain.yaml` must declare top-level `version: <n>` where `n > 0`.
-- Version defaulting is forbidden; omitted/zero versions are invalid for authoring and plugin packaging.
+- Version defaulting is forbidden; omitted/zero versions are invalid for authoring and catalog packaging.
 - Increment `version` whenever domain semantics change (entities, fields, relations, capability signatures, parameter typing/roles, auth contract, output/provides behavior).
 - Keep version unchanged only for non-semantic text edits (comments/prose) that do not affect runtime behavior, prompts, compile/decode, or dispatch.
 
@@ -508,7 +508,7 @@ Conformance fixture rows: `fixtures/schemas/plasm_language_matrix_views` (`lang_
 |-----------|----------------|
 | Fixed OpenAPI / GraphQL schema (GitHub, Linear core fields, Slack, …) | Static `entities:` + `path:` / `derive:` on fields |
 | Multi-hop read that does not depend on workspace schema | **`views:`** composed reads |
-| Per-contract ABI (EVM, plugin generation) | **Compile plugin** pipeline |
+| Per-contract EVM catalogs | Static **`apis/evm-*`** trees; compile stays in-tree ([`plasm-compile`](https://github.com/PlasmTools/plasm-core/tree/main/crates/plasm-compile)) |
 | You can list every column in `domain.yaml` without a runtime schema call | Static fields only |
 | Hierarchical field inheritance needs multiple schema sources merged | **`source.steps`** multi-fetch pipeline (list → scoped fetch per row → merge) |
 

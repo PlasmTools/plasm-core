@@ -81,7 +81,7 @@ The OSS appliance ships **one** idempotent sqlx migration ([`20260601000000_plas
 
 ```bash
 rm -rf ~/.plasm/appliance/postgres
-plasm-server --plugin-dir ~/.plasm/appliance/plugins
+plasm-server --catalog-dir ~/.plasm/appliance/catalogs
 ```
 
 `plasm-server mcp migrate-db` is safe to re-run on a healthy database (idempotent `IF NOT EXISTS` DDL).

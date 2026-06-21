@@ -46,13 +46,13 @@ cargo run -p plasm --bin plasm-cgs -- \
   pokemon pikachu
 ```
 
-### Step 4 — Pack plugins and run the appliance
+### Step 4 — Pack catalogs and run the appliance
 
 ```bash
-cargo run -p plasm --bin plasm-pack-plugins -- \
-  --apis-root apis --output-dir target/plasm-plugins
+cargo run -p plasm --bin plasm-pack-catalogs -- \
+  --workspace . --apis-root apis --output-dir target/plasm-catalogs
 
-cargo run -p plasm-server --release -- --plugin-dir target/plasm-plugins
+cargo run -p plasm-server --release -- --catalog-dir target/plasm-catalogs
 ```
 
 **Verify:**

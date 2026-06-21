@@ -33,7 +33,7 @@ Tabs (left → right): **Status · Clients · APIs · OAuth · Keys · Runs · S
 
 ## First-time setup (typical flow)
 
-After install, run **`plasm-server`**. The boot checklist runs embedded Postgres, loads catalog plugins, and opens MCP policy tables. When the **Status** tab shows listeners and Postgres as ready:
+After install, run **`plasm-server`**. The boot checklist runs embedded Postgres, loads compiled catalog artifacts, and opens MCP policy tables. When the **Status** tab shows listeners and Postgres as ready:
 
 1. **APIs** — enable the catalogs agents may call.
 2. **Keys** — create at least one **MCP transport** API key.
@@ -159,7 +159,7 @@ From **APIs**, **`o`** on a catalog jumps here with that catalog pre-selected.
 
 | Tab | Use |
 |-----|-----|
-| **Status** | HTTP/MCP URL, Postgres, plugin directory, boot milestones |
+| **Status** | HTTP/MCP URL, Postgres, catalog directory, boot milestones |
 | **Runs** | Recent execute runs and artifact links |
 | **Storage** | `PLASM_TRACE_ARCHIVE_DIR`, `PLASM_RUN_ARTIFACTS_DIR` paths |
 | **Logs** | In-process log tail; optional mirror file via **`PLASM_APPLIANCE_DIAG_LOG`** |

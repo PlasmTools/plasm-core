@@ -18,14 +18,15 @@ Appliance-only install:
 curl -fsSL https://plasm.tools/install/install.sh | bash -s -- --product appliance
 ```
 
-Default layout: **`~/.plasm/appliance/`** (`postgres/`, `local/`, `plugins/`). After install, **`plasm-server`** picks up `{appliance}/plugins` automatically.
+Default layout: **`~/.plasm/appliance/`** (`postgres/`, `local/`, `catalogs/`). After install, **`plasm-server`** picks up `{appliance}/catalogs` automatically.
 
 From source (plasm-core checkout):
 
 ```bash
 cargo build -p plasm-server --release
-cargo run -p plasm --bin plasm-pack-plugins -- --apis-root apis --output-dir target/plasm-plugins
-cargo run -p plasm-server --release -- --plugin-dir target/plasm-plugins
+cargo run -p plasm --bin plasm-pack-catalogs -- \
+  --workspace . --apis-root apis --output-dir target/plasm-catalogs
+cargo run -p plasm-server --release -- --catalog-dir target/plasm-catalogs
 ```
 
 ---

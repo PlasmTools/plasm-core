@@ -42,7 +42,7 @@ Full matrix: [Surface inventory](appliance-surface-inventory.md).
 
 [`AGENTS.md` (main branch)](https://github.com/PlasmTools/plasm-core/blob/main/AGENTS.md) covers:
 
-- HTTP / MCP ports, `--plugin-dir`, `--schema`, execute `Accept` negotiation, MCP tools
+- HTTP / MCP ports, `--catalog-dir`, `--schema`, execute `Accept` negotiation, MCP tools
 - **Trace hub** caps: `PLASM_TRACE_HUB_*`
 - **Run artifacts:** `PLASM_RUN_ARTIFACTS_URL`, retention and GC intervals
 - **Incoming auth:** `PLASM_INCOMING_AUTH_MODE`, `PLASM_AUTH_JWT_SECRET`

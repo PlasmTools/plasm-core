@@ -7,7 +7,7 @@
 | **teaching table** | Symbol-tuned teaching text (`e#` / `m#` / `p#`) for agents. |
 | **view** | CGS **`views:`** entry — composed read-only DAG over existing capabilities (not MCP tenant “registry views”). |
 | **schema overlay** | **`schema_overlay:`** block — session-open merge of workspace-specific typed columns or entities. |
-| **registry `entry_id`** | Identifier for one packed catalog / plugin entry in multi-entry mode. |
+| **registry `entry_id`** | Identifier for one packed catalog entry in multi-entry mode. |
 | **logical session** | MCP `plasm_context` / execute session key fan-out for traces and reuse. |
 | **`prompt_hash` / `session`** | Execute-session identifiers pinning one instruction bundle. |
 | **plasm-server** | OSS appliance binary — in-process kernel, HTTP/MCP, optional Ratatui control station. |

@@ -44,11 +44,10 @@ Defined in [execute_session.rs](https://github.com/PlasmTools/plasm-core/blob/ma
 | `catalog_cgs_hash`     | Pinned CGS digest.                                                                                                   |
 | `entities`             | Sorted, deduplicated primary-catalog entity seeds.                                                                   |
 | `principal`            | Present when `PLASM_AUTH_RESOLUTION=delegated`.                                                                      |
-| `plugin_generation_id` | Compile-plugin pin when a compile plugin is loaded.                                                                  |
 | `logical_session_id`   | **MCP only:** logical UUID string; scopes reuse per logical session. `None` for HTTP-only open without a logical id. |
 
 
-If any of these differ from a prior open, a **new** execute row may be created. Changing catalog hash or plugin generation is intentional: the old session is not a safe match.
+If any of these differ from a prior open, a **new** execute row may be created. Changing **`catalog_cgs_hash`** is intentional: the old session is not a safe match.
 
 ## 4. Stale execute binding (continuity break)
 

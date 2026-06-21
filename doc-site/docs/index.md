@@ -12,7 +12,7 @@ Repository: **[plasm-core](https://github.com/PlasmTools/plasm-core)**.
 |------|----------------|------------|
 | **Run the appliance** | Operate **`plasm-server`** locally — TUI, MCP, OAuth, embedded Postgres | [Appliance quick start](appliance/quickstart.md) |
 | **Use the remote terminal** | Connect agents/CI with **`plasm init`** → **`search`** → **`context`** → **`run`** | [Remote terminal (`plasm`)](reference/plasm-cgs-remote-terminal.md) |
-| **Connect an API** | Author `domain.yaml` + `mappings.yaml`, validate, pack plugins | [Catalog authoring](authoring/index.md) → [Catalog index](reference/apis-readme.md) |
+| **Connect an API** | Author `domain.yaml` + `mappings.yaml`, validate, pack catalogs | [Catalog authoring](authoring/index.md) → [Catalog index](reference/apis-readme.md) |
 | **Embed Plasm** | Use crates (`plasm-runtime`, `plasm-agent-core`) from your own binary | `Embed Plasm` |
 
 **New to the ideas?** Read [How Plasm fits together](concepts.md), then [Start here](getting-started.md).
