@@ -104,7 +104,10 @@ fn entry_scoped_surface_parse_preserves_typed_catalog_create() {
     let err = parse_parsed_expr_for_session(&s, "Product.create(name=\"bolt\")")
         .expect_err("unscoped federated create should be ambiguous")
         .to_string();
-    assert!(err.contains("ambiguous capability label `create`"), "{err}");
+    assert!(
+        err.contains("ambiguous entity `Product`") || err.contains("ambiguous capability label `create`"),
+        "{err}"
+    );
 
     let scoped = entry_scoped_execute_session(
         &s,
@@ -143,7 +146,38 @@ fn federated_bare_entity_mutator_stays_ambiguous() {
     let err = parse_parsed_expr_for_session(&s, "Product.create(name=\"bolt\")")
         .expect_err("unscoped federated create should stay ambiguous")
         .to_string();
-    assert!(err.contains("ambiguous capability label `create`"), "{err}");
+    assert!(
+        err.contains("ambiguous entity `Product`") || err.contains("ambiguous capability label `create`"),
+        "{err}"
+    );
+}
+
+#[test]
+fn federated_github_linear_issue_children_relation_dry_run() {
+    let Some(session) = federated_github_linear_issue_session() else {
+        return;
+    };
+    let map = session
+        .teaching_exposure
+        .as_ref()
+        .expect("exposure")
+        .symbol_map_arc();
+    let e2 = map.entity_sym_for("linear", "Issue");
+    let r_sym = map.ident_sym_relation_for("linear", "Issue", "children");
+    let program = format!(
+        r#"parent = {e2}("issue-id")
+kids = parent.{r_sym}
+kids"#
+    );
+    let plan = crate::plasm_dag::compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "fed-linear-children",
+        &program,
+    )
+    .expect("compile federated linear children hop");
+    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run federated linear children");
 }
 
 #[test]

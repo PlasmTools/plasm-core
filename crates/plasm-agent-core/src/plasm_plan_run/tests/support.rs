@@ -80,6 +80,45 @@ pub(super) fn duplicate_product_create_session() -> ExecuteSession {
     )
 }
 
+pub(super) fn federated_github_linear_issue_session() -> Option<ExecuteSession> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let github_dir = root.join("../../apis/github");
+    let linear_dir = root.join("../../apis/linear");
+    if !github_dir.is_dir() || !linear_dir.is_dir() {
+        return None;
+    }
+    let cgs_github = Arc::new(load_schema(&github_dir).ok()?);
+    let cgs_linear = Arc::new(load_schema(&linear_dir).ok()?);
+    let mut ctxs = indexmap::IndexMap::new();
+    ctxs.insert(
+        "github".into(),
+        Arc::new(CgsContext::entry("github", cgs_github.clone())),
+    );
+    ctxs.insert(
+        "linear".into(),
+        Arc::new(CgsContext::entry("linear", cgs_linear.clone())),
+    );
+    let layers: Vec<&plasm_core::CGS> = vec![cgs_github.as_ref(), cgs_linear.as_ref()];
+    let mut exp = TeachingExposureSession::new(cgs_github.as_ref(), "github", &["Issue"]);
+    exp.expose_entities(&layers, cgs_linear.clone(), "linear", &["Issue"]);
+    Some(ExecuteSession::new(
+        "ph".into(),
+        "p".into(),
+        cgs_github.clone(),
+        ctxs,
+        "github".into(),
+        String::new(),
+        String::new(),
+        None,
+        vec!["Issue".into()],
+        Some(exp),
+        None,
+        cgs_github.catalog_cgs_hash_hex(),
+        None,
+        None,
+    ))
+}
+
 #[test]
 fn cmp_json_sort_values_orders_multi_digit_numbers_numerically() {
     use std::cmp::Ordering;

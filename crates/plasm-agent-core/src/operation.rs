@@ -649,7 +649,7 @@ pub(crate) fn try_parse_operation_continuation(
         },
     );
     let parsed =
-        plasm_core::expr_parser::parse_with_cgs_layers_program(trimmed, &layers, map, None, false)
+        plasm_core::expr_parser::parse_with_cgs_layers_program(trimmed, &layers, map, None, false, None)
             .ok()?;
     match parsed.expr {
         plasm_core::Expr::Wait(_) | plasm_core::Expr::Cancel(_) => Some(parsed.expr),

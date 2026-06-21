@@ -14,6 +14,18 @@ pub fn session_cgs_layers(session: &ExecuteSession) -> Vec<&CGS> {
     }
 }
 
+pub(crate) fn session_layer_catalog_entry_ids(session: &ExecuteSession) -> Vec<Option<&str>> {
+    if session.contexts_by_entry.is_empty() {
+        vec![None]
+    } else {
+        session
+            .contexts_by_entry
+            .keys()
+            .map(|k| Some(k.as_str()))
+            .collect()
+    }
+}
+
 /// Resolve a teaching `p#` teaching symbol (or pass through an already-canonical wire name).
 pub fn resolve_wire_field_token(
     session: &ExecuteSession,
@@ -127,6 +139,7 @@ pub fn parse_plasm_surface_line_program(
         session.teaching_exposure.as_ref(),
     );
     let layers = session_cgs_layers(session);
+    let layer_entry_ids = session_layer_catalog_entry_ids(session);
     let sym_map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
     let mut parsed = parse_with_cgs_layers_program(
         &expanded,
@@ -134,6 +147,7 @@ pub fn parse_plasm_surface_line_program(
         sym_map,
         program_nodes,
         for_each_row_context,
+        Some(&layer_entry_ids),
     )?;
     normalize_query_capabilities_for_session(session, &mut parsed.expr).map_err(|message| {
         ParseError {

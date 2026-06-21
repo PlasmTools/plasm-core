@@ -90,7 +90,7 @@ impl<'a> Parser<'a> {
         _mode: EntityRefRhsMode,
     ) -> Result<Value, ParseError> {
         let ent = self
-            .cgs_for_entity_required(entity_canon)
+            .cgs_for_entity_required(entity_canon)?
             .get_entity(entity_canon)
             .ok_or_else(|| ParseError {
                 kind: ParseErrorKind::UnknownEntity {

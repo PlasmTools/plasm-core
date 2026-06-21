@@ -492,6 +492,14 @@ pub fn render_parse_error_with_feedback(
             anchor_entity,
             label,
         } => correction_dotted_create_ambiguous(cgs, anchor_entity, label, &style),
+        ParseErrorKind::AmbiguousEntityCatalog { entity } => match style {
+            FeedbackStyle::CanonicalDev => format!(
+                "Entity `{entity}` exists in more than one loaded catalog — use the session teaching-table `e#` symbol (catalog ownership), not a bare wire entity name."
+            ),
+            FeedbackStyle::SymbolicLlm { .. } => format!(
+                "Entity `{entity}` is ambiguous across catalogs — use the session `e#` from the teaching table, not a bare wire name."
+            ),
+        },
         ParseErrorKind::InvokeRequiresTargetId { .. } => match style {
             FeedbackStyle::CanonicalDev => {
                 "This action needs an id from the path: write `Entity(<id>).method()` (see the expression examples in the prompt)."

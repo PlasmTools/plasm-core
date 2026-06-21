@@ -2146,18 +2146,18 @@ fn resolve_cgs_for_qualified_entity<'a>(
     session: &'a ExecuteSession,
     qe: &QualifiedEntityKey,
 ) -> Option<&'a plasm_core::CGS> {
-    if let Some(ctx) = session.contexts_by_entry.get(&qe.entry_id) {
-        return Some(ctx.cgs.as_ref());
-    }
-    if session.entry_id == qe.entry_id {
-        return Some(session.cgs.as_ref());
-    }
-    for ctx in session.contexts_by_entry.values() {
-        if ctx.cgs.entities.contains_key(qe.entity.as_str()) {
-            return Some(ctx.cgs.as_ref());
-        }
-    }
-    Some(session.cgs.as_ref())
+    session
+        .contexts_by_entry
+        .get(&qe.entry_id)
+        .map(|ctx| ctx.cgs.as_ref())
+        .filter(|cgs| cgs.entities.contains_key(qe.entity.as_str()))
+        .or_else(|| {
+            if session.entry_id == qe.entry_id && session.cgs.entities.contains_key(qe.entity.as_str()) {
+                Some(session.cgs.as_ref())
+            } else {
+                None
+            }
+        })
 }
 
 fn relation_segment_context<'a>(
@@ -2683,7 +2683,25 @@ fn lookup_relation_chain_meta(
     chain: &plasm_core::ChainExpr,
     source_row_qe: Option<&QualifiedEntityKey>,
 ) -> Result<(QualifiedEntityKey, RelationCardinality), String> {
-    let cgs = if let Some(row_qe) = source_row_qe {
+    let inferred_row_qe;
+    let row_qe = if let Some(qe) = source_row_qe {
+        Some(qe)
+    } else if let Some(entry_id) = chain.source.session_catalog_entry_id() {
+        inferred_row_qe = QualifiedEntityKey {
+            entry_id: entry_id.to_string(),
+            entity: chain.source.primary_entity().to_string(),
+        };
+        Some(&inferred_row_qe)
+    } else {
+        None
+    };
+    if session.contexts_by_entry.len() > 1 && row_qe.is_none() {
+        return Err(
+            "federated relation continuation requires catalog ownership from the source row (use session e# / binding continuation, not bare wire entity names)"
+                .to_string(),
+        );
+    }
+    let cgs = if let Some(row_qe) = row_qe {
         resolve_cgs_for_qualified_entity(session, row_qe).ok_or_else(|| {
             format!(
                 "unknown catalog entity `{}` for entry `{}`",
@@ -2709,7 +2727,11 @@ fn lookup_relation_chain_meta(
     })?;
     let rel = ent.relations.get(chain.selector.as_str()).ok_or_else(|| {
         let map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
-        let sym = map.ident_sym_relation(source_entity, chain.selector.as_str());
+        let sym = row_qe.map(|qe| {
+            map.ident_sym_relation_for(qe.entry_id.as_str(), source_entity, chain.selector.as_str())
+        }).unwrap_or_else(|| {
+            map.ident_sym_relation(source_entity, chain.selector.as_str())
+        });
         let sym_note = if sym.as_str() != chain.selector.as_str() {
             format!(" Active teaching-table relation symbol for `{0}` on `{source_entity}` is `{sym}`.", chain.selector)
         } else {
@@ -2727,7 +2749,7 @@ fn lookup_relation_chain_meta(
             chain.selector, source_entity, target_ent
         ));
     }
-    let qe = if let Some(row_qe) = source_row_qe {
+    let qe = if let Some(row_qe) = row_qe {
         QualifiedEntityKey {
             entry_id: row_qe.entry_id.clone(),
             entity: target_ent.to_string(),
@@ -2826,8 +2848,12 @@ fn compile_surface_node(
                     )
                 })?;
                 if let Expr::Chain(ref chain) = parsed.expr {
-                    let (target_qe, rel_cardinality) =
-                        lookup_relation_chain_meta(session, state.cross_cache, chain, None)?;
+                    let (target_qe, rel_cardinality) = lookup_relation_chain_meta(
+                        session,
+                        state.cross_cache,
+                        chain,
+                        Some(&contract.row_entity),
+                    )?;
                     let source_card = contract.relation_source_cardinality();
                     let result_shape = match rel_cardinality {
                         RelationCardinality::Many => crate::plasm_plan::ResultShape::List,
@@ -4017,12 +4043,18 @@ bad"#,
             None,
             None,
         );
+        let map = session
+            .teaching_exposure
+            .as_ref()
+            .expect("exposure")
+            .symbol_map_arc();
+        let e_linear = map.entity_sym_for("linear", "LangLine");
         let plan = compile_plasm_surface_line_to_plan(
             &PromptPipelineConfig::default(),
             None,
             &session,
             "t",
-            "LangLine(\"L1\")",
+            &format!(r#"{e_linear}("L1")"#),
         )
         .expect("compile");
         let qe = &plan["nodes"][0]["qualified_entity"];
@@ -4121,15 +4153,23 @@ bad"#,
             None,
             None,
         );
-        let source = r#"item = LangItem("LI1")
+        let map = session
+            .teaching_exposure
+            .as_ref()
+            .expect("exposure")
+            .symbol_map_arc();
+        let e_poke = map.entity_sym_for("pokeapi", "LangItem");
+        let source = format!(
+            r#"item = {e_poke}("LI1")
 summary = item.summary
-summary"#;
+summary"#
+        );
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
             &session,
             "fed-relation-target",
-            source,
+            &source,
         )
         .expect("compile");
         let summary = plan["nodes"]
@@ -4221,6 +4261,120 @@ kids"#
         assert_eq!(kids["relation"]["target"]["entry_id"], "linear", "{kids}");
         assert_eq!(kids["relation"]["target"]["entity"], "LangItem");
         evaluate_plasm_plan_dry(&session, &plan).expect("dry-run");
+    }
+
+    /// Real github+linear catalogs: linear `Issue.children` hop from `e2` binding (not github `sub_issues`).
+    #[test]
+    fn federated_github_linear_issue_children_relation_dry_run() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let github_dir = root.join("../../apis/github");
+        let linear_dir = root.join("../../apis/linear");
+        if !github_dir.is_dir() || !linear_dir.is_dir() {
+            return;
+        }
+        let cgs_github = Arc::new(plasm_core::loader::load_schema_dir(&github_dir).expect("github"));
+        let cgs_linear = Arc::new(plasm_core::loader::load_schema_dir(&linear_dir).expect("linear"));
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "github".into(),
+            Arc::new(CgsContext::entry("github", cgs_github.clone())),
+        );
+        ctxs.insert(
+            "linear".into(),
+            Arc::new(CgsContext::entry("linear", cgs_linear.clone())),
+        );
+        let layers: Vec<&CGS> = vec![cgs_github.as_ref(), cgs_linear.as_ref()];
+        let mut exp = TeachingExposureSession::new(cgs_github.as_ref(), "github", &["Issue"]);
+        exp.expose_entities(&layers, cgs_linear.clone(), "linear", &["Issue"]);
+        let session = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs_github.clone(),
+            ctxs,
+            "github".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Issue".into()],
+            Some(exp),
+            None,
+            cgs_github.catalog_cgs_hash_hex(),
+            None,
+            None,
+        );
+        let map = session
+            .teaching_exposure
+            .as_ref()
+            .expect("exposure")
+            .symbol_map_arc();
+        let e2 = map.entity_sym_for("linear", "Issue");
+        let r_sym = map.ident_sym_relation_for("linear", "Issue", "children");
+        let source = format!(
+            r#"parent = {e2}("issue-id")
+kids = parent.{r_sym}
+kids"#
+        );
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "fed-linear-children-real",
+            &source,
+        )
+        .expect("compile real github+linear children hop");
+        let kids = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "kids")
+            .expect("kids node");
+        assert_eq!(kids["relation"]["target"]["entry_id"], "linear", "{kids}");
+        evaluate_plasm_plan_dry(&session, &plan).expect("dry-run real catalogs");
+    }
+
+    #[test]
+    fn lookup_relation_chain_meta_requires_qe_federated() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(
+            plasm_core::loader::load_schema_dir(
+                &root.join("../../fixtures/schemas/plasm_language_matrix"),
+            )
+            .expect("matrix"),
+        );
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "github".into(),
+            Arc::new(CgsContext::entry("github", cgs.clone())),
+        );
+        ctxs.insert(
+            "linear".into(),
+            Arc::new(CgsContext::entry("linear", cgs.clone())),
+        );
+        let session = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "github".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["LangItem".into()],
+            None,
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
+        );
+        let chain = plasm_core::ChainExpr::auto_get(
+            plasm_core::Expr::Get(plasm_core::GetExpr::new("LangItem", "LI1")),
+            "summary".to_string(),
+        );
+        let err = super::lookup_relation_chain_meta(&session, None, &chain, None).unwrap_err();
+        assert!(
+            err.contains("federated relation continuation requires catalog ownership"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -4791,7 +4945,7 @@ labels"#;
         let issue_e = map.entity_sym_for("github", "Issue");
         let line = format!("{issue_e}.{p_sym}");
         let layers = crate::plasm_plan_run::session_cgs_layers(&session);
-        let err = parse_with_cgs_layers_program(&line, &layers, map.clone(), None, false)
+        let err = parse_with_cgs_layers_program(&line, &layers, map.clone(), None, false, None)
             .expect_err("homograph p# in relation nav");
         assert!(matches!(
             err.kind,

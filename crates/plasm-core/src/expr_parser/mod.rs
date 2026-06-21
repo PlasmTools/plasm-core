@@ -201,6 +201,10 @@ pub enum ParseErrorKind {
         anchor_entity: String,
         label: String,
     },
+    /// Same wire entity name exists in multiple loaded catalogs without `catalog_entry_id` / `e#` stamp.
+    AmbiguousEntityCatalog {
+        entity: String,
+    },
     CapabilityMissingInternal {
         name: String,
     },
@@ -309,6 +313,10 @@ impl fmt::Display for ParseErrorKind {
             ParseErrorKind::DottedCreateAmbiguous { label, .. } => {
                 write!(f, "ambiguous create label `{label}`")
             }
+            ParseErrorKind::AmbiguousEntityCatalog { entity } => write!(
+                f,
+                "ambiguous entity `{entity}` across loaded catalogs — use session `e#` (catalog ownership stamp), not bare wire entity name"
+            ),
             ParseErrorKind::CapabilityMissingInternal { name } => {
                 write!(f, "internal: capability '{name}' missing")
             }
@@ -401,19 +409,21 @@ pub fn parse_with_cgs_layers(
     layers: &[&CGS],
     sym_map: Arc<SymbolMap>,
 ) -> Result<ParsedExpr, ParseError> {
-    parse_with_cgs_layers_program(input, layers, sym_map, None, false)
+    parse_with_cgs_layers_program(input, layers, sym_map, None, false, None)
 }
 
 /// Like [`parse_with_cgs_layers`], but when compiling a **Plasm program**, supply the set of
 /// in-scope program node ids so `method(p=report)` and `report.field` lower to
 /// [`crate::value::PlasmInputRef`] instead of string literals. `for_each_row_context` enables
 /// `_.field` row holes on the right-hand side of `=>`.
+/// `layer_catalog_entry_ids` parallels `layers` with registry `entry_id` per row when [`CGS::entry_id`] is unset.
 pub fn parse_with_cgs_layers_program(
     input: &str,
     layers: &[&CGS],
     sym_map: Arc<SymbolMap>,
     program_nodes: Option<&BTreeSet<String>>,
     for_each_row_context: bool,
+    layer_catalog_entry_ids: Option<&[Option<&str>]>,
 ) -> Result<ParsedExpr, ParseError> {
     if layers.is_empty() {
         return Err(ParseError {
@@ -423,7 +433,26 @@ pub fn parse_with_cgs_layers_program(
             offset: 0,
         });
     }
-    let mut p = Parser::new_with_sym_map(input, ParserLayers::Many(layers), sym_map);
+    if let Some(ids) = layer_catalog_entry_ids {
+        if ids.len() != layers.len() {
+            return Err(ParseError {
+                kind: ParseErrorKind::Other {
+                    message: format!(
+                        "parse_with_cgs_layers: layer_catalog_entry_ids length {} != layers length {}",
+                        ids.len(),
+                        layers.len()
+                    ),
+                },
+                offset: 0,
+            });
+        }
+    }
+    let mut p = Parser::new_with_sym_map(
+        input,
+        ParserLayers::Many(layers),
+        sym_map,
+        layer_catalog_entry_ids,
+    );
     p.program_nodes = program_nodes;
     p.for_each_row_context = for_each_row_context;
     let mut parsed = p.parse_expr()?;
@@ -466,16 +495,23 @@ pub(super) struct Parser<'a> {
     pub(super) active_entity_entry_id: Option<String>,
     /// Copied onto surface [`Expr`] nodes built from that opaque `e#` head (federated sessions).
     pending_session_catalog_entry_id: Option<String>,
+    /// Registry `entry_id` per federated layer when [`CGS::entry_id`] is unset (parallel to `layers`).
+    layer_catalog_entry_ids: Option<&'a [Option<&'a str>]>,
 }
 
 impl<'a> Parser<'a> {
     fn new(input: &'a str, cgs: &'a CGS) -> Self {
         let (full, _) = entity_slices_for_render(cgs, FocusSpec::All);
         let sym_map = Arc::new(SymbolMap::build(cgs, &full));
-        Self::new_with_sym_map(input, ParserLayers::Single([cgs]), sym_map)
+        Self::new_with_sym_map(input, ParserLayers::Single([cgs]), sym_map, None)
     }
 
-    fn new_with_sym_map(input: &'a str, layers: ParserLayers<'a>, sym_map: Arc<SymbolMap>) -> Self {
+    fn new_with_sym_map(
+        input: &'a str,
+        layers: ParserLayers<'a>,
+        sym_map: Arc<SymbolMap>,
+        layer_catalog_entry_ids: Option<&'a [Option<&'a str>]>,
+    ) -> Self {
         assert!(!layers.as_slice().is_empty());
         let mut p = Self {
             input,
@@ -486,6 +522,7 @@ impl<'a> Parser<'a> {
             for_each_row_context: false,
             active_entity_entry_id: None,
             pending_session_catalog_entry_id: None,
+            layer_catalog_entry_ids,
         };
         p.skip_ws();
         p
@@ -504,10 +541,16 @@ impl<'a> Parser<'a> {
     }
 
     fn cgs_for_catalog_entry_id(&self, entry_id: &str, entity: &str) -> Option<&'a CGS> {
-        self.layers_slice()
-            .iter()
-            .copied()
-            .find(|c| c.entry_id.as_deref() == Some(entry_id) && c.get_entity(entity).is_some())
+        for (i, c) in self.layers_slice().iter().enumerate() {
+            let layer_eid = c.entry_id.as_deref().or_else(|| {
+                self.layer_catalog_entry_ids
+                    .and_then(|ids| ids.get(i).and_then(|o| *o))
+            });
+            if layer_eid == Some(entry_id) && c.get_entity(entity).is_some() {
+                return Some(c);
+            }
+        }
+        None
     }
 
     fn cgs_for_entity(&self, entity: &str) -> Option<&CGS> {
@@ -528,9 +571,24 @@ impl<'a> Parser<'a> {
         None
     }
 
-    fn cgs_for_entity_required(&self, entity: &str) -> &CGS {
-        self.cgs_for_entity(entity)
-            .unwrap_or_else(|| self.primary_cgs())
+    fn cgs_for_entity_required(&self, entity: &str) -> Result<&CGS, ParseError> {
+        match self.cgs_for_entity(entity) {
+            Some(cgs) => Ok(cgs),
+            None if self.layers_slice().len() > 1 => Err(self.err(ParseErrorKind::AmbiguousEntityCatalog {
+                entity: entity.to_string(),
+            })),
+            None => Ok(self.primary_cgs()),
+        }
+    }
+
+    fn cgs_for_expr_source(&self, source: &Expr) -> Result<&CGS, ParseError> {
+        let entity = source.primary_entity();
+        if let Some(eid) = source.session_catalog_entry_id() {
+            if let Some(cgs) = self.cgs_for_catalog_entry_id(eid, entity) {
+                return Ok(cgs);
+            }
+        }
+        self.cgs_for_entity_required(entity)
     }
 
     fn canonical_entity_name_in_layers(&self, raw: &str) -> String {
@@ -940,7 +998,7 @@ impl<'a> Parser<'a> {
             CapabilityKind::Create,
         ] {
             for cap in self
-                .cgs_for_entity_required(entity)
+                .cgs_for_entity_required(entity)?
                 .find_capabilities(entity, kind)
             {
                 if matches!(kind, CapabilityKind::Get)
@@ -1005,7 +1063,15 @@ impl<'a> Parser<'a> {
         entity_name: &str,
         field: &str,
     ) -> Option<(FieldType, Option<ValueWireFormat>, Option<ArrayItemsSchema>)> {
-        let ec = self.cgs_for_entity_required(entity_name);
+        let ec = self
+            .cgs_for_entity(entity_name)
+            .or_else(|| {
+                if self.layers_slice().len() == 1 {
+                    Some(self.primary_cgs())
+                } else {
+                    None
+                }
+            })?;
         if let Some(ent) = ec.get_entity(entity_name) {
             if let Some(fs) = ent.fields.get(field) {
                 let nv = fs.named_value(ec).ok()?;
@@ -1047,7 +1113,7 @@ impl<'a> Parser<'a> {
         self.validate_entity(&entity)?;
         let cap_name = self.resolve_zero_arity_pipeline_cap(&entity, &label)?;
         let cap = self
-            .cgs_for_entity_required(&entity)
+            .cgs_for_entity_required(&entity)?
             .get_capability(&cap_name)
             .ok_or_else(|| {
                 self.err(ParseErrorKind::CapabilityMissingInternal {
@@ -1207,7 +1273,9 @@ impl<'a> Parser<'a> {
         }
         let src_ent = g.reference.entity_type.as_str();
         let expected_id_key = format!("{}_id", src_ent.to_lowercase());
-        let cgs_src = self.cgs_for_entity_required(src_ent);
+        let Ok(cgs_src) = self.cgs_for_expr_source(source) else {
+            return;
+        };
         let ent_src = cgs_src.get_entity(src_ent);
         match &g.reference.key {
             EntityKey::Compound(parts) => {
@@ -1254,7 +1322,7 @@ impl<'a> Parser<'a> {
         let InputType::Object { fields, .. } = &is.input_type else {
             return Ok(());
         };
-        let ec = self.cgs_for_entity_required(cap.domain.as_str());
+        let ec = self.cgs_for_entity_required(cap.domain.as_str())?;
         for f in fields {
             if let Some(v) = map.get_mut(&f.name) {
                 if matches!(&f.wire, crate::InputFieldWire::Inline(_)) {
@@ -1596,7 +1664,7 @@ impl<'a> Parser<'a> {
         // Validate field exists on entity OR as a query capability input parameter.
         // Scope and filter params (e.g. `team_id`, `space_id`) live in the capability
         // input schema, not on the entity definition itself.
-        let ec = self.cgs_for_entity_required(entity_name);
+        let ec = self.cgs_for_entity_required(entity_name)?;
         if let Some(ent) = ec.get_entity(entity_name) {
             if !ent.fields.contains_key(pred_wire.as_str()) {
                 let is_cap_param = ec
@@ -1763,7 +1831,7 @@ impl<'a> Parser<'a> {
         entity: &str,
         preds: Vec<Predicate>,
     ) -> Result<Expr, ParseError> {
-        let c = self.cgs_for_entity_required(entity);
+        let c = self.cgs_for_entity_required(entity)?;
         if c.find_capabilities(entity, CapabilityKind::Search)
             .is_empty()
         {
@@ -2139,7 +2207,7 @@ impl<'a> Parser<'a> {
             self.pending_session_catalog_entry_id = self.active_entity_entry_id.clone();
         }
         let ent = self
-            .cgs_for_entity_required(&entity)
+            .cgs_for_entity_required(&entity)?
             .get_entity(&entity)
             .ok_or_else(|| ParseError {
                 kind: ParseErrorKind::UnknownEntity {
@@ -2243,7 +2311,7 @@ impl<'a> Parser<'a> {
             Some('~') => {
                 // Full-text search (requires Search capability on this entity)
                 let search_empty = {
-                    let c = self.cgs_for_entity_required(&entity);
+                    let c = self.cgs_for_entity_required(&entity)?;
                     c.find_capabilities(&entity, CapabilityKind::Search)
                         .is_empty()
                 };
@@ -2262,7 +2330,7 @@ impl<'a> Parser<'a> {
                 };
                 // Find the search capability to get its primary text param name
                 let q_field = {
-                    let c = self.cgs_for_entity_required(&entity);
+                    let c = self.cgs_for_entity_required(&entity)?;
                     c.find_capabilities(&entity, CapabilityKind::Search)
                         .first()
                         .and_then(|cap| cap.object_params())
@@ -2279,7 +2347,7 @@ impl<'a> Parser<'a> {
                 };
 
                 let cap_name = {
-                    let c = self.cgs_for_entity_required(&entity);
+                    let c = self.cgs_for_entity_required(&entity)?;
                     c.find_capabilities(&entity, CapabilityKind::Search)
                         .first()
                         .map(|c| c.name.clone())
@@ -2388,17 +2456,20 @@ impl<'a> Parser<'a> {
                 return self.parse_dotted_call_with_payload(source, field_raw);
             }
 
-            let source_entity = source
-                .relation_navigation_entity(self.cgs_for_entity_required(source.primary_entity()))
-                .ok_or_else(|| ParseError {
-                    kind: ParseErrorKind::NotNavigable {
-                        field: field.clone(),
-                        entity: source.primary_entity().to_string(),
-                        span_start,
-                        span_end,
-                    },
-                    offset: span_start,
-                })?;
+            let source_entity = {
+                let cgs = self.cgs_for_expr_source(&source)?;
+                source
+                    .relation_navigation_entity(cgs)
+                    .ok_or_else(|| ParseError {
+                        kind: ParseErrorKind::NotNavigable {
+                            field: field.clone(),
+                            entity: source.primary_entity().to_string(),
+                            span_start,
+                            span_end,
+                        },
+                        offset: span_start,
+                    })?
+            };
             if let Some(expr) =
                 self.expand_team_members_sugar(&source, &field, source_entity.as_str())?
             {
@@ -2409,11 +2480,8 @@ impl<'a> Parser<'a> {
             {
                 return Ok(expr);
             }
-            if let Some(ent) = self
-                .cgs_for_entity_required(&source_entity)
-                .get_entity(&source_entity)
-                .cloned()
-            {
+            let cgs_src = self.cgs_for_expr_source(&source)?;
+            if let Some(ent) = cgs_src.get_entity(&source_entity).cloned() {
                 let seg_ctx = crate::relation_segment::RelationSegmentContext {
                     map: &self.sym_map,
                     entity: source_entity.as_str(),
@@ -2513,9 +2581,8 @@ impl<'a> Parser<'a> {
                 // Check EntityRef fields (e.g. .petId → ChainExpr)
                 match ent.fields.get(field.as_str()) {
                     Some(f) => {
-                        let ec = self.cgs_for_entity_required(&source_entity);
                         let is_ref = f
-                            .named_value(ec)
+                            .named_value(cgs_src)
                             .ok()
                             .is_some_and(|nv| matches!(nv.field_type, FieldType::EntityRef { .. }));
                         if !is_ref {
@@ -2584,11 +2651,11 @@ impl<'a> Parser<'a> {
         }
         // Second: check entity fields for EntityRef
         if let Some(ent) = self
-            .cgs_for_entity_required(target_entity)
+            .cgs_for_entity_required(target_entity)?
             .get_entity(target_entity)
         {
             for (fname, field) in &ent.fields {
-                if let Ok(nv) = field.named_value(self.cgs_for_entity_required(target_entity)) {
+                if let Ok(nv) = field.named_value(self.cgs_for_entity_required(target_entity)?) {
                     if let FieldType::EntityRef { target } = &nv.field_type {
                         if target.as_str() == source_entity {
                             return Ok(fname.as_str().to_string());
@@ -4390,6 +4457,7 @@ mod tests {
             sym_map,
             Some(&refs),
             false,
+            None,
         )
         .expect("compound get with program binding");
         let Expr::Get(g) = &r.expr else {
@@ -4684,6 +4752,7 @@ mod tests {
             sym_map,
             Some(&refs),
             false,
+            None,
         )
         .expect("parse program predicate");
         let Expr::Query(q) = &r.expr else {
@@ -4723,6 +4792,7 @@ mod tests {
             sym_map,
             Some(&refs),
             false,
+            None,
         )
         .expect("parse");
         let Expr::Query(q) = &r.expr else {
@@ -4910,7 +4980,7 @@ mod tests {
         let expr = format!(
             r#"{comment_ent}.{method_sym}({repo_param}={repo_sym}({owner}="octocat", {repo}="Hello-World"), {issue_num_param}=issue.{issue_id_field}, {body_param}=body.content)"#
         );
-        let r = parse_with_cgs_layers_program(&expr, &layers, sym_map, Some(&refs), false)
+        let r = parse_with_cgs_layers_program(&expr, &layers, sym_map, Some(&refs), false, None)
             .expect("method args with nested e# ctor + issue.p# + body.content");
         let _ = crate::type_checker::type_check_expr(&r.expr, &cgs);
         fn find_input_refs(v: &Value) -> Vec<PlasmInputRef> {
@@ -5004,6 +5074,7 @@ mod tests {
             sym_map,
             None,
             false,
+            None,
         )
         .expect("parse");
         let Expr::Get(g) = r.expr else {
@@ -5021,7 +5092,7 @@ mod tests {
         let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
         let layers = [&cgs];
         let r =
-            parse_with_cgs_layers_program(r#"Pet(name=pikachu)"#, &layers, sym_map, None, false)
+            parse_with_cgs_layers_program(r#"Pet(name=pikachu)"#, &layers, sym_map, None, false, None)
                 .expect("parse");
         let Expr::Get(g) = r.expr else {
             panic!("expected Get, got {:?}", r.expr);

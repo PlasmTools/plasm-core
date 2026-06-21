@@ -503,20 +503,19 @@ fn type_check_chain_federated(
 ) -> Result<(), TypeError> {
     type_check_expr_federated(&chain.source, fed, fallback)?;
 
+    let source_entity_wire = chain.source.primary_entity();
+    let cgs_src = resolve_cgs_for_catalog_entity(
+        chain.source.session_catalog_entry_id().as_deref(),
+        source_entity_wire,
+        fed,
+        fallback,
+    )?;
     let source_entity_name = chain
         .source
-        .relation_navigation_entity(fallback)
+        .relation_navigation_entity(cgs_src)
         .ok_or_else(|| TypeError::EntityNotFound {
-            entity: chain.source.primary_entity().to_string(),
+            entity: source_entity_wire.to_string(),
         })?;
-    let hint = crate::row_composition::ResolutionHint {
-        owning_cgs: None,
-        source_entity: Some(source_entity_name.as_str()),
-        plan_qe: None,
-    };
-    let cgs_src = fed
-        .resolve_entity(source_entity_name.as_str(), hint, fallback)
-        .unwrap_or(fallback);
     let source_entity = cgs_src
         .get_entity(source_entity_name.as_str())
         .ok_or_else(|| TypeError::EntityNotFound {
@@ -530,6 +529,7 @@ fn type_check_chain_federated(
         cgs_src,
     )?;
 
+    let source_qe = chain.source.qualified_entity_key();
     let cgs_tgt = if cgs_src.get_entity(&target_entity_name).is_some() {
         cgs_src
     } else {
@@ -538,13 +538,11 @@ fn type_check_chain_federated(
             crate::row_composition::ResolutionHint {
                 owning_cgs: Some(cgs_src),
                 source_entity: Some(source_entity_name.as_str()),
-                plan_qe: None,
+                plan_qe: source_qe.as_ref(),
             },
             fallback,
         )
-        .map_err(|e| TypeError::EntityNotFound {
-            entity: format!("{target_entity_name}: {e}"),
-        })?
+        .map_err(federation_resolve_type_error)?
     };
     cgs_tgt
         .get_entity(&target_entity_name)
@@ -2723,6 +2721,67 @@ mod tests {
                 );
             }
             other => panic!("expected ambiguous entity error, got {other:?}"),
+        }
+    }
+
+    /// Real `apis/github` + `apis/linear`: `Issue.children` exists only on linear; chain TC must use source catalog stamp.
+    #[test]
+    fn federated_chain_linear_children_resolves_in_source_catalog() {
+        use crate::{ChainExpr, Expr, GetExpr};
+
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let github_dir = root.join("../../apis/github");
+        let linear_dir = root.join("../../apis/linear");
+        if !github_dir.is_dir() || !linear_dir.is_dir() {
+            return;
+        }
+        let mut cgs_github = load_schema_dir(&github_dir).expect("github");
+        cgs_github.entry_id = Some("github".into());
+        let cgs_github = std::sync::Arc::new(cgs_github);
+        let mut cgs_linear = load_schema_dir(&linear_dir).expect("linear");
+        cgs_linear.entry_id = Some("linear".into());
+        let cgs_linear = std::sync::Arc::new(cgs_linear);
+        let mut by_entry = IndexMap::new();
+        by_entry.insert(
+            "github".into(),
+            std::sync::Arc::new(crate::CgsContext::entry("github", cgs_github.clone())),
+        );
+        by_entry.insert(
+            "linear".into(),
+            std::sync::Arc::new(crate::CgsContext::entry("linear", cgs_linear.clone())),
+        );
+        let layers: Vec<&CGS> = vec![cgs_github.as_ref(), cgs_linear.as_ref()];
+        let mut exp = crate::symbol_tuning::TeachingExposureSession::new(
+            cgs_github.as_ref(),
+            "github",
+            &["Issue"],
+        );
+        exp.expose_entities(&layers, cgs_linear.clone(), "linear", &["Issue"]);
+        let fed = FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
+
+        let mut get = GetExpr::new("Issue", "issue-id");
+        get.catalog_entry_id = Some("linear".into());
+        let chain = Expr::Chain(ChainExpr::auto_get(Expr::Get(get), "children".to_string()));
+        type_check_expr_federated(&chain, &fed, cgs_github.as_ref())
+            .expect("linear Issue.children chain typechecks in source catalog");
+
+        let bare = Expr::Chain(ChainExpr::auto_get(
+            Expr::Get(GetExpr::new("Issue", "issue-id")),
+            "children".to_string(),
+        ));
+        let err = type_check_expr_federated(&bare, &fed, cgs_github.as_ref()).unwrap_err();
+        match err {
+            TypeError::EntityNotFound { entity } => {
+                assert!(
+                    entity.contains("ambiguous"),
+                    "expected federated ambiguity, got {entity}"
+                );
+            }
+            TypeError::FieldNotFound { field, entity } => {
+                assert_eq!(field, "children");
+                assert_eq!(entity, "Issue");
+            }
+            other => panic!("expected ambiguous or FieldNotFound, got {other:?}"),
         }
     }
 }

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.48] - 2026-06-21
+
+### Fixed
+
+- **Federated catalog ownership:** every schema lookup at type-check, DAG, parser, and dry-run boundaries keys on `(entry_id, entity)` — not wire name or symbol alone.
+- **`type_check_chain_federated`:** resolves source CGS from `chain.source.session_catalog_entry_id()` via `resolve_cgs_for_catalog_entity`; relation navigation uses the stamped catalog (fixes `e2.r2` / linear `Issue.children` vs github `sub_issues`).
+- **DAG:** `resolve_cgs_for_qualified_entity` no longer scans catalogs by entity name; `lookup_relation_chain_meta` fails closed in federated sessions without row QE; text-parse continuations pass `contract.row_entity`.
+- **Parser:** `cgs_for_entity_required` errors on multi-catalog homonyms; relation nav uses `cgs_for_expr_source`; federated parse threads parallel `layer_catalog_entry_ids` from session contexts.
+- **Dry-run:** `ensure_relation_expr_matches_plan` requires `catalog_entry_id` on federated relation hops.
+
+### Added
+
+- **Tests:** real `apis/github` + `apis/linear` coverage for `Issue.children` chain type-check, DAG compile/dry-run, and `lookup_relation_chain_meta_requires_qe_federated`.
+
+### Changed
+
+- **Docs:** [`docs/plasm-language-definition.md`](../docs/plasm-language-definition.md) federated catalog ownership invariant at compile/TC/plan boundaries.
+
 ## [0.3.47] - 2026-06-21
 
 ### Fixed

@@ -42,7 +42,9 @@ pub async fn run_plasm_comp(
             return_steps: Vec::new(),
         });
     }
-    run_plasm_comp_scoped(
+    // Heap-box the scoped live runner: debug async state machines for plan materialize
+    // exceed the default thread stack when nested under callers (NAPI block_on, tests).
+    Box::pin(run_plasm_comp_scoped(
         es,
         st,
         prompt_hash,
@@ -51,7 +53,7 @@ pub async fn run_plasm_comp(
         dry,
         mcp_tool_hooks,
         execution_scope,
-    )
+    ))
     .await
 }
 
@@ -67,7 +69,7 @@ pub(crate) async fn run_plasm_comp_scoped(
     execution_scope: Option<&crate::operation::ExecutionScope>,
 ) -> Result<PlasmPlanRunResult, String> {
     crate::operation::with_plan_execute_scope(execution_scope, async {
-        run_executable_plan_phased(
+        Box::pin(run_executable_plan_phased(
             es,
             st,
             prompt_hash,
@@ -76,7 +78,7 @@ pub(crate) async fn run_plasm_comp_scoped(
             dry,
             mcp_tool_hooks,
             execution_scope,
-        )
+        ))
         .await
     })
     .await
@@ -237,7 +239,7 @@ pub(crate) async fn run_executable_plan_phased(
                 let rows_progress_step = rows_progress_parallel.clone();
                 let execution_scope_step = execution_scope_parallel.clone();
                 joins.push(async move {
-                    materialize_executable_plan_step(
+                    Box::pin(materialize_executable_plan_step(
                         &es,
                         &st,
                         session_id.as_str(),
@@ -254,7 +256,7 @@ pub(crate) async fn run_executable_plan_phased(
                         sink.as_ref(),
                         rows_progress_step,
                         execution_scope_step.as_ref(),
-                    )
+                    ))
                     .await
                 });
             }
@@ -281,7 +283,7 @@ pub(crate) async fn run_executable_plan_phased(
                 let payload = payload_by_step
                     .get(step_id)
                     .ok_or_else(|| format!("missing payload for step {step_id}"))?;
-                let outcome = materialize_executable_plan_step(
+                let outcome = Box::pin(materialize_executable_plan_step(
                     es,
                     st,
                     session_id,
@@ -298,7 +300,7 @@ pub(crate) async fn run_executable_plan_phased(
                     sink.as_ref(),
                     rows_progress.clone(),
                     execution_scope,
-                )
+                ))
                 .await?;
                 apply_step_materialize_outcomes(
                     &mut materialized,

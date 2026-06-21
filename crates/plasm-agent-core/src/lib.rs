@@ -22,7 +22,7 @@ mod discovery_embedding_chunks;
 #[cfg(feature = "local-embeddings")]
 pub mod discovery_embedding_reconcile;
 pub mod discovery_embedding_repository;
-mod discovery_human_format;
+pub mod discovery_human_format;
 pub mod dispatch;
 pub mod dotenv_safe;
 pub mod error;

@@ -2202,13 +2202,11 @@ fn matrix_program_for_row(
             );
             format!("e2.{m_sym}(title=\"fed-mutator-matrix\", score=0, owner=\"matrix-fed-owner\")")
         }
-        "lang_bind_template_inline_on_e1" => {
-            r#"report = e1{owner="alice"}[title] <<INLINE_E1
+        "lang_bind_template_inline_on_e1" => r#"report = e1{owner="alice"}[title] <<INLINE_E1
 # {{ rows | length }} row(s)
 INLINE_E1
 report"#
-            .to_string()
-        }
+            .to_string(),
         _ => row.program.to_string(),
     }
 }
@@ -2219,26 +2217,64 @@ async fn plasm_language_matrix_cgs_templates_validate() {
     plasm_compile::validate_cgs_capability_templates(&cgs).expect("capability CML templates");
 }
 
-#[test]
-fn plasm_language_matrix_live_runs() {
-    // Debug builds can overflow the default test thread stack while compiling/running the full matrix.
-    std::thread::Builder::new()
-        .stack_size(16 * 1024 * 1024)
-        .spawn(|| {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("matrix live runtime");
-            rt.block_on(async {
-                let base = hermit_lang_matrix::language_matrix_hermit_base_url()
-                    .await
-                    .clone();
-                plasm_language_matrix_live_runs_impl(base).await;
-            });
-        })
-        .expect("spawn matrix live thread")
-        .join()
-        .expect("matrix live thread join");
+#[tokio::test]
+async fn plasm_language_matrix_live_runs() {
+    let base = hermit_lang_matrix::language_matrix_hermit_base_url()
+        .await
+        .clone();
+    plasm_language_matrix_live_runs_impl(base).await;
+}
+
+async fn matrix_live_run_row(
+    row: &'static MatrixRow,
+    row_es: &ExecuteSession,
+    row_st: &PlasmHostState,
+) {
+    let program = matrix_program_for_row(row, row_es);
+    let bundle = if row.surface_line {
+        compile_plasm_expression(
+            &PromptPipelineConfig::default(),
+            None,
+            row_es,
+            row.id,
+            &program,
+        )
+    } else {
+        compile_plasm_program(
+            &PromptPipelineConfig::default(),
+            None,
+            row_es,
+            row.id,
+            &program,
+        )
+    }
+    .unwrap_or_else(|e| panic!("row {} compile: {e}", row.id));
+
+    let comp_json = serde_json::to_value(&bundle.artifact().comp)
+        .unwrap_or_else(|e| panic!("row {} comp json: {e}", row.id));
+
+    let dry = evaluate_plasm_comp_dry(row_es, &bundle)
+        .unwrap_or_else(|e| panic!("row {} evaluate_plasm_comp_dry: {e}", row.id));
+    assert_planning_ir(row, &dry, &comp_json)
+        .unwrap_or_else(|e| panic!("row {} planning IR: {e}", row.id));
+    assert_comp_witness(&dry)
+        .unwrap_or_else(|e| panic!("row {} monadic comp witness: {e}", row.id));
+
+    let live = Box::pin(run_plasm_comp(
+        row_es,
+        row_st,
+        row_es.prompt_hash.as_str(),
+        "matrix_sess",
+        &bundle,
+        true,
+        None,
+        None,
+        None,
+    ))
+    .await
+    .unwrap_or_else(|e| panic!("row {} run_plasm_comp: {e}", row.id));
+
+    assert_row(row, &live).unwrap_or_else(|e| panic!("row {} assertion: {e}", row.id));
 }
 
 async fn plasm_language_matrix_live_runs_impl(base: String) {
@@ -2297,51 +2333,7 @@ async fn plasm_language_matrix_live_runs_impl(base: String) {
         } else {
             (&es, &st)
         };
-        let program = matrix_program_for_row(row, row_es);
-        let bundle = if row.surface_line {
-            compile_plasm_expression(
-                &PromptPipelineConfig::default(),
-                None,
-                row_es,
-                row.id,
-                &program,
-            )
-        } else {
-            compile_plasm_program(
-                &PromptPipelineConfig::default(),
-                None,
-                row_es,
-                row.id,
-                &program,
-            )
-        }
-        .unwrap_or_else(|e| panic!("row {} compile: {e}", row.id));
-
-        let comp_json = serde_json::to_value(&bundle.artifact().comp)
-            .unwrap_or_else(|e| panic!("row {} comp json: {e}", row.id));
-
-        let dry = evaluate_plasm_comp_dry(row_es, &bundle)
-            .unwrap_or_else(|e| panic!("row {} evaluate_plasm_comp_dry: {e}", row.id));
-        assert_planning_ir(row, &dry, &comp_json)
-            .unwrap_or_else(|e| panic!("row {} planning IR: {e}", row.id));
-        assert_comp_witness(&dry)
-            .unwrap_or_else(|e| panic!("row {} monadic comp witness: {e}", row.id));
-
-        let live = run_plasm_comp(
-            row_es,
-            row_st,
-            row_es.prompt_hash.as_str(),
-            "matrix_sess",
-            &bundle,
-            true,
-            None,
-            None,
-            None,
-        )
-        .await
-        .unwrap_or_else(|e| panic!("row {} run_plasm_comp: {e}", row.id));
-
-        assert_row(row, &live).unwrap_or_else(|e| panic!("row {} assertion: {e}", row.id));
+        Box::pin(matrix_live_run_row(row, row_es, row_st)).await;
         for t in row.features {
             tags_seen.insert((*t).to_string());
         }
