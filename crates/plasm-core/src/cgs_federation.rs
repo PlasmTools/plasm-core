@@ -95,7 +95,15 @@ impl FederationDispatch {
 
     pub fn cgs_for_entity(&self, entity: &str) -> Option<&CGS> {
         let eid = self.entity_to_entry.get(entity)?;
-        self.by_entry.get(eid).map(|ctx| ctx.cgs.as_ref())
+        self.cgs_for_catalog_entry_id(eid, entity)
+    }
+
+    /// Owning [`CGS`] for one registry row when the surface stamps `catalog_entry_id` (`e#`, federated query).
+    pub fn cgs_for_catalog_entry_id(&self, entry_id: &str, entity: &str) -> Option<&CGS> {
+        self.by_entry
+            .get(entry_id)
+            .map(|ctx| ctx.cgs.as_ref())
+            .filter(|cgs| cgs.entities.contains_key(entity))
     }
 
     /// Prefer per-catalog backend; used when selecting HTTP origin for an operation.

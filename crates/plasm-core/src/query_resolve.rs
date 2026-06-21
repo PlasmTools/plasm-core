@@ -353,7 +353,18 @@ pub fn normalize_expr_query_capabilities_federated(
     match expr {
         crate::Expr::Query(q) => {
             if q.capability_name.is_none() {
-                let cgs = cgs_for(q.entity.as_str());
+                let cgs = if let Some(eid) = q.catalog_entry_id.as_deref() {
+                    fed.cgs_for_catalog_entry_id(eid, q.entity.as_str())
+                        .ok_or_else(|| QueryCapabilityResolveError::NoMatchingCapability {
+                            entity: q.entity.to_string(),
+                            message: format!(
+                                "catalog `{eid}` is not loaded or does not define `{}`",
+                                q.entity
+                            ),
+                        })?
+                } else {
+                    cgs_for(q.entity.as_str())
+                };
                 let cap = resolve_query_capability(q, cgs)?;
                 q.capability_name = Some(cap.name.clone());
             }
@@ -554,5 +565,56 @@ mod tests {
         );
         let cap = resolve_query_capability(&q, &cgs).unwrap();
         assert_eq!(cap.name.as_str(), "issue_search");
+    }
+
+    #[test]
+    fn federated_query_catalog_entry_id_pins_capability_resolution() {
+        use crate::cgs_context::CgsContext;
+        use crate::symbol_tuning::TeachingExposureSession;
+        use indexmap::IndexMap;
+        use std::sync::Arc;
+
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = Arc::new(load_schema_dir(dir).unwrap());
+        let mut cgs_github = (*cgs).clone();
+        cgs_github.entry_id = Some("github".into());
+        let mut cgs_linear = (*cgs).clone();
+        cgs_linear.entry_id = Some("linear".into());
+        let mut by_entry = IndexMap::new();
+        by_entry.insert(
+            "github".into(),
+            Arc::new(CgsContext::entry("github", Arc::new(cgs_github.clone()))),
+        );
+        by_entry.insert(
+            "linear".into(),
+            Arc::new(CgsContext::entry("linear", Arc::new(cgs_linear.clone()))),
+        );
+        let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["LangItem"]);
+        exp.expose_entities(
+            &[&cgs_github, &cgs_linear],
+            Arc::new(cgs_linear.clone()),
+            "linear",
+            &["LangItem"],
+        );
+        let fed =
+            crate::cgs_federation::FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
+        let mut expr = crate::Expr::Query(QueryExpr::filtered(
+            "LangItem",
+            Predicate::eq("owner", "alice"),
+        ));
+        if let crate::Expr::Query(q) = &mut expr {
+            q.catalog_entry_id = Some("github".into());
+        }
+        normalize_expr_query_capabilities_federated(&mut expr, &fed, &cgs_github).unwrap();
+        match &expr {
+            crate::Expr::Query(q) => {
+                assert_eq!(q.capability_name.as_deref(), Some("langitem_query_owner"));
+                assert_eq!(q.catalog_entry_id.as_deref(), Some("github"));
+            }
+            _ => panic!("expected query"),
+        }
     }
 }

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.47] - 2026-06-21
+
+### Fixed
+
+- **Federated symbol tuning:** relation continuation lowers through row-hole IR with `row_entity.catalog_entry_id` — homonymous entities (`Issue`, `LangItem`) no longer resolve via bare wire names across catalogs.
+- **Federated mutators:** `m#` and stamped `e#` anchor `catalog_entry_id` on dotted create/update/action/delete; ambiguous bare kebab labels fail closed when multiple catalogs expose the same method wire.
+- **Federated queries:** `normalize_expr_query_capabilities_federated` honors `QueryExpr.catalog_entry_id` so `e2{…}` list queries match the correct catalog capability set.
+
+### Added
+
+- **Postfix chain:** `.group_by(keys).aggregate(specs)` is primary syntax; fused `group_by(key, n=count)` remains sugar.
+- **Language matrix:** federated homonym rows (`r#` hop, `m#` mutator, parallel roots, group-by on `e1`, inline template on `e#`); MCP integration dry-run for federated relation hop.
+- **`FederationDispatch::cgs_for_catalog_entry_id`:** canonical lookup for stamped-surface query/mutator resolution.
+
+### Changed
+
+- **MCP prompts:** single-brace filter grammar; homonym doctrine for all symbol classes (`e#`/`m#`/`r#`/`p#`); federated examples and chained group-by teaching.
+- **Docs:** [`docs/plasm-language-definition.md`](../docs/plasm-language-definition.md) federated sessions + group-by chain syntax.
+
 ## [0.3.46] - 2026-06-21
 
 ### Fixed

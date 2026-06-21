@@ -2,6 +2,8 @@ Tool order: optional `discover_capabilities` → `plasm_context` → `plasm` (dr
      **Call before `plasm` / `plasm_run`.** **One goal → one stable `intent` → one `logical_session_ref`.** Stable = same `intent` string on every turn for that goal (not per message/API). Bad: `intent: "msg 3: sort moves"` each turn — breaks reuse and fragments `e#`/`p#`. Multi-API: one **`seeds`** array on the same intent.
 **Session:** one goal → one **`intent`** → one **`logical_session_ref`**; use **`e#`/`m#`/`p#`/`r#` from this session's teaching TSV only** (contract examples are shapes; substitute from your table).
 
+**Federated homonyms:** when multiple catalogs expose the same wire entity, method, relation, or field name, programs must use opaque **`e#` / `m#` / `r#` / `p#`** from this table — not bare wire names and not `entry_id:Entity` syntax. Each symbol is catalog-scoped; copying the wrong row's symbol is a compile error.
+
 **Open or extend:** **`intent`** + **`seeds`** (`{api, entity}`).
 
 Returns **`logical_session_ref`** + fenced teaching TSV. TSV is the active symbol table: copy left cells into **`plasm.program`** (Plasm source, not JSON). Delta waves assign new **`e#`** monotonically.

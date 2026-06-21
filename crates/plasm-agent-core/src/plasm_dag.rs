@@ -1298,9 +1298,10 @@ fn postfix_op_to_compute(
             let aggregates = if agg_tail.trim().is_empty() {
                 if key_names.len() != 1 {
                     return Err(
-                        "group_by(k1, k2, …) without aggregates requires exactly one key; add n=count".into(),
+                        "group_by(k1, k2, …) without aggregates requires .aggregate(...) — use group_by(k1, k2).aggregate(n=count) or group_by(k1, k2, n=count)".into(),
                     );
                 }
+                // Bare `group_by(key)` sugar alias (single key only).
                 parse_aggregates("count=count")?
             } else {
                 parse_aggregates(agg_tail.as_str())?
@@ -1506,6 +1507,26 @@ fn compile_state_with_nodes<'a>(
     scratch
 }
 
+/// Fuse `.group_by(keys).aggregate(specs)` into one `group_by` args tail for plan lowering.
+fn coalesce_group_by_aggregate_suffixes(steps: Vec<RowSuffix>) -> Vec<RowSuffix> {
+    let mut out = Vec::with_capacity(steps.len());
+    let mut i = 0;
+    while i < steps.len() {
+        if let RowSuffix::GroupBy { args: gb } = &steps[i] {
+            if let Some(RowSuffix::Aggregate { args: agg }) = steps.get(i + 1) {
+                out.push(RowSuffix::GroupBy {
+                    args: format!("{gb},{agg}"),
+                });
+                i += 2;
+                continue;
+            }
+        }
+        out.push(steps[i].clone());
+        i += 1;
+    }
+    out
+}
+
 /// Fold an ordered [`RowSuffix`] stream onto a surface or label head.
 fn lower_suffix_stream(
     session: &ExecuteSession,
@@ -1532,10 +1553,12 @@ fn lower_suffix_stream(
     let mut out: Vec<DagNode> = Vec::new();
     let head_trim = head.trim();
 
-    let steps: Vec<&RowSuffix> = suffixes
+    let mut steps: Vec<RowSuffix> = suffixes
         .iter()
         .filter(|s| !matches!(s, RowSuffix::Singleton | RowSuffix::PageSize { .. }))
+        .cloned()
         .collect();
+    steps = coalesce_group_by_aggregate_suffixes(steps);
 
     if steps.is_empty() && (tail_singleton || tail_page_size.is_some()) {
         let out_id = final_id
@@ -1601,7 +1624,7 @@ fn lower_suffix_stream(
             format!("__plasm_{binding_id}_s{i}")
         };
 
-        if let RowSuffix::Relation { wire } = *suffix {
+        if let RowSuffix::Relation { wire } = suffix {
             let scratch = compile_state_with_nodes(state, &out);
             let rel = lower_relation_continuation(
                 session,
@@ -2233,39 +2256,50 @@ fn relation_continuation_expr_from_source_row_hole(
                 row_qe.entity, rel.target_resource
             )
         })?;
-    let _target_qe = crate::catalog_ownership::resolve_qualified_entity_key(
-        session,
-        rel.target_resource.as_str(),
-        Some(cgs),
-    )?;
-    let source_get = if ent.key_vars.is_empty() {
-        let path_key = ent.id_field.as_str().to_string();
-        let hole = Value::PlasmInputRef(PlasmInputRef::NodeInput {
-            node: "source".into(),
-            path: vec![path_key.clone()],
-        });
-        Expr::Get(GetExpr::from_ref_with_path_vars(
-            Ref::new(row_qe.entity.as_str(), ""),
-            Some(indexmap::IndexMap::from([(path_key, hole)])),
-        ))
-    } else {
-        let mut path_vars = indexmap::IndexMap::new();
-        for key in &ent.key_vars {
-            path_vars.insert(
-                key.as_str().to_string(),
-                Value::PlasmInputRef(PlasmInputRef::NodeInput {
-                    node: "source".into(),
-                    path: vec![key.as_str().to_string()],
-                }),
-            );
+    let _target_qe = if cgs.entities.contains_key(rel.target_resource.as_str()) {
+        QualifiedEntityKey {
+            entry_id: row_qe.entry_id.clone(),
+            entity: rel.target_resource.to_string(),
         }
-        Expr::Get(GetExpr::from_ref_with_path_vars(
-            Ref {
-                entity_type: row_qe.entity.as_str().into(),
-                key: EntityKey::Compound(BTreeMap::new()),
-            },
-            Some(path_vars),
-        ))
+    } else {
+        crate::catalog_ownership::resolve_qualified_entity_key(
+            session,
+            rel.target_resource.as_str(),
+            Some(cgs),
+        )?
+    };
+    let source_get = {
+        let mut get = if ent.key_vars.is_empty() {
+            let path_key = ent.id_field.as_str().to_string();
+            let hole = Value::PlasmInputRef(PlasmInputRef::NodeInput {
+                node: "source".into(),
+                path: vec![path_key.clone()],
+            });
+            GetExpr::from_ref_with_path_vars(
+                Ref::new(row_qe.entity.as_str(), ""),
+                Some(indexmap::IndexMap::from([(path_key, hole)])),
+            )
+        } else {
+            let mut path_vars = indexmap::IndexMap::new();
+            for key in &ent.key_vars {
+                path_vars.insert(
+                    key.as_str().to_string(),
+                    Value::PlasmInputRef(PlasmInputRef::NodeInput {
+                        node: "source".into(),
+                        path: vec![key.as_str().to_string()],
+                    }),
+                );
+            }
+            GetExpr::from_ref_with_path_vars(
+                Ref {
+                    entity_type: row_qe.entity.as_str().into(),
+                    key: EntityKey::Compound(BTreeMap::new()),
+                },
+                Some(path_vars),
+            )
+        };
+        get.catalog_entry_id = Some(row_qe.entry_id.clone());
+        Expr::Get(get)
     };
     Ok(Expr::Chain(ChainExpr::auto_get(
         source_get,
@@ -2337,6 +2371,11 @@ fn prefer_row_hole_relation_continuation(
     session: &ExecuteSession,
 ) -> bool {
     if matches!(contract.anchor, ContinuationAnchor::BindingLabel) {
+        return true;
+    }
+    // Federated sessions: never re-parse RootSurface anchors — row-hole preserves
+    // `row_entity.catalog_entry_id` for homonymous entity/relation targets.
+    if session.contexts_by_entry.len() > 1 {
         return true;
     }
     // Relation-sourced rows (`species = pikachu.species`) must continue via materialized
@@ -2476,8 +2515,12 @@ fn lower_relation_continuation(
             "Plasm program `{id}`: relation wire mismatch for `{source_label}.{segment}`"
         ));
     }
-    let (target_qe, rel_cardinality) =
-        lookup_relation_chain_meta(session, state.cross_cache, chain)?;
+    let (target_qe, rel_cardinality) = lookup_relation_chain_meta(
+        session,
+        state.cross_cache,
+        chain,
+        Some(&contract.row_entity),
+    )?;
     let expanded = contract
         .continuation_text_expansion(segment)
         .unwrap_or_else(|| format!("{source_label}.{segment}"));
@@ -2638,9 +2681,20 @@ fn lookup_relation_chain_meta(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     chain: &plasm_core::ChainExpr,
+    source_row_qe: Option<&QualifiedEntityKey>,
 ) -> Result<(QualifiedEntityKey, RelationCardinality), String> {
+    let cgs = if let Some(row_qe) = source_row_qe {
+        resolve_cgs_for_qualified_entity(session, row_qe).ok_or_else(|| {
+            format!(
+                "unknown catalog entity `{}` for entry `{}`",
+                row_qe.entity, row_qe.entry_id
+            )
+        })?
+    } else {
+        let root_entity = chain.source.primary_entity();
+        crate::catalog_ownership::resolve_cgs_for_entity(session, root_entity, None)?
+    };
     let root_entity = chain.source.primary_entity();
-    let cgs = crate::catalog_ownership::resolve_cgs_for_entity(session, root_entity, None)?;
     let source_entity = chain
         .source
         .relation_navigation_entity(cgs)
@@ -2673,8 +2727,14 @@ fn lookup_relation_chain_meta(
             chain.selector, source_entity, target_ent
         ));
     }
-    let qe =
-        crate::catalog_ownership::resolve_qualified_entity_key(session, target_ent, Some(cgs))?;
+    let qe = if let Some(row_qe) = source_row_qe {
+        QualifiedEntityKey {
+            entry_id: row_qe.entry_id.clone(),
+            entity: target_ent.to_string(),
+        }
+    } else {
+        crate::catalog_ownership::resolve_qualified_entity_key(session, target_ent, Some(cgs))?
+    };
     let cardinality = match rel.cardinality {
         plasm_core::Cardinality::One => RelationCardinality::One,
         plasm_core::Cardinality::Many => RelationCardinality::Many,
@@ -2767,7 +2827,7 @@ fn compile_surface_node(
                 })?;
                 if let Expr::Chain(ref chain) = parsed.expr {
                     let (target_qe, rel_cardinality) =
-                        lookup_relation_chain_meta(session, state.cross_cache, chain)?;
+                        lookup_relation_chain_meta(session, state.cross_cache, chain, None)?;
                     let source_card = contract.relation_source_cardinality();
                     let result_shape = match rel_cardinality {
                         RelationCardinality::Many => crate::plasm_plan::ResultShape::List,
@@ -4094,6 +4154,75 @@ summary"#;
         evaluate_plasm_plan_dry(&session, &plan).expect("federated relation dry-run");
     }
 
+    /// Same wire entity in github+linear: relation hop from `e2` binding must target linear catalog.
+    #[test]
+    fn federated_duplicate_entity_relation_hop_preserves_source_catalog() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(
+            plasm_core::loader::load_schema_dir(
+                &root.join("../../fixtures/schemas/plasm_language_matrix"),
+            )
+            .expect("load plasm_language_matrix"),
+        );
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "github".into(),
+            Arc::new(CgsContext::entry("github", cgs.clone())),
+        );
+        ctxs.insert(
+            "linear".into(),
+            Arc::new(CgsContext::entry("linear", cgs.clone())),
+        );
+        let layers: Vec<&CGS> = vec![cgs.as_ref(), cgs.as_ref()];
+        let mut exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["LangItem"]);
+        exp.expose_entities(&layers, cgs.clone(), "linear", &["LangItem"]);
+        let session = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "github".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["LangItem".into()],
+            Some(exp),
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
+        );
+        let map = session
+            .teaching_exposure
+            .as_ref()
+            .expect("exposure")
+            .symbol_map_arc();
+        let e2 = map.entity_sym_for("linear", "LangItem");
+        let source = format!(
+            r#"parent = {e2}("LI1")
+kids = parent.children
+kids"#
+        );
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "fed-dup-relation",
+            &source,
+        )
+        .expect("compile federated duplicate-entity relation hop");
+        let kids = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "kids")
+            .expect("kids node");
+        assert_eq!(kids["kind"], "relation");
+        assert_eq!(kids["relation"]["target"]["entry_id"], "linear", "{kids}");
+        assert_eq!(kids["relation"]["target"]["entity"], "LangItem");
+        evaluate_plasm_plan_dry(&session, &plan).expect("dry-run");
+    }
+
     #[test]
     fn typed_relation_continuation_ir_has_no_domain_placeholder() {
         let session = github_repository_commit_session();
@@ -4125,6 +4254,27 @@ author"#;
     }
 
     /// Matrix analogue: parallel comma roots + search sugar (`lang_derive_map_parallel`, `lang_search`).
+    #[test]
+    fn group_by_aggregate_chain_lowers_to_single_group_by_node() {
+        let session = test_session();
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "gb-agg-chain",
+            "LangItem.group_by(owner).aggregate(n=count)",
+        )
+        .expect("group_by().aggregate() chain");
+        let computes: Vec<_> = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .filter(|n| n["kind"] == "compute")
+            .collect();
+        assert_eq!(computes.len(), 1, "expected fused GroupBy compute: {plan}");
+        assert_eq!(computes[0]["compute"]["op"]["kind"], "group_by", "{plan}");
+    }
+
     #[test]
     fn bare_comma_plasm_roots_compile_as_parallel_return() {
         let session = test_session();

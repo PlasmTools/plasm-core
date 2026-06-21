@@ -89,11 +89,17 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "for_each_effect",
     "domain_symbol_e1",
     "postfix_group_by",
+    "postfix_group_by_aggregate_chain",
     "postfix_row_filter",
     "postfix_group_by_sugar",
     "postfix_group_by_multi",
     "federated_relation_target_entry",
     "federated_duplicate_entity_symbol",
+    "federated_duplicate_entity_relation_r",
+    "federated_duplicate_entity_mutator_m",
+    "federated_parallel_roots",
+    "federated_group_by_on_e1",
+    "bracket_render_inline_on_e",
     "pagination_page_size",
     "pagination_fetch_all_default",
     "surface_line_compile",
@@ -603,6 +609,29 @@ fn assert_planning_ir(
             };
             if spec.function != AggregateFunction::Count {
                 return Err(format!("unexpected aggregate: {spec:?}"));
+            }
+        }
+        "lang_group_by_aggregate_chain" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::GroupBy { keys, aggregates },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::GroupBy { .. }))
+            else {
+                return Err(format!("expected GroupBy compute, got {:?}", computes));
+            };
+            if keys.len() != 2 {
+                return Err(format!("expected two group keys, got {:?}", keys));
+            }
+            if keys[0].dotted() != "owner" || keys[1].dotted() != "score" {
+                return Err(format!("expected owner+score keys, got {:?}", keys));
+            }
+            if !aggregates.iter().any(|a| a.name.as_str() == "n") {
+                return Err(format!("expected aggregate n, got {:?}", aggregates));
+            }
+            if !aggregates.iter().any(|a| a.name.as_str() == "title") {
+                return Err(format!("expected aggregate title, got {:?}", aggregates));
             }
         }
         "lang_search_then_group_by" => {
@@ -1144,6 +1173,83 @@ fn assert_planning_ir(
                 return Err(format!("comp qualified_entity must be linear: {qe:?}"));
             }
         }
+        "lang_federated_duplicate_entity_relation_r" => {
+            let rel = comp_relation_named(comp, "children")
+                .ok_or_else(|| "expected `.children` relation hop on e2 parent".to_string())?;
+            if rel.pointer("/target/entry_id").and_then(|v| v.as_str()) != Some("linear") {
+                return Err(format!(
+                    "homonymous LangItem relation target must stay on linear catalog: {rel:?}"
+                ));
+            }
+            if rel.pointer("/target/entity").and_then(|v| v.as_str()) != Some("LangItem") {
+                return Err(format!("expected LangItem target, got {rel:?}"));
+            }
+        }
+        "lang_federated_duplicate_entity_mutator_m" => {
+            let create = surfaces
+                .iter()
+                .find_map(|e| match e {
+                    Expr::Create(c) => Some(c),
+                    _ => None,
+                })
+                .ok_or_else(|| "expected Create surface from e2.m#".to_string())?;
+            if create.catalog_entry_id.as_deref() != Some("linear") {
+                return Err(format!(
+                    "e2 mutator must stamp linear catalog, got {:?}",
+                    create.catalog_entry_id
+                ));
+            }
+            if create.capability.as_str() != "langitem_create" {
+                return Err(format!(
+                    "expected langitem_create, got {}",
+                    create.capability
+                ));
+            }
+        }
+        "lang_federated_parallel_roots" => {
+            if surfaces.len() < 2 {
+                return Err(format!(
+                    "expected parallel github+linear roots, got {} surfaces",
+                    surfaces.len()
+                ));
+            }
+        }
+        "lang_federated_group_by_on_e1" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::GroupBy { keys, aggregates },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::GroupBy { .. }))
+            else {
+                return Err(format!("expected GroupBy on e1 query, got {:?}", computes));
+            };
+            if keys.len() != 1 || keys[0].dotted() != "owner" {
+                return Err(format!("expected group key owner, got {:?}", keys));
+            }
+            if !aggregates.iter().any(|a| a.name.as_str() == "n") {
+                return Err(format!("expected aggregate n, got {:?}", aggregates));
+            }
+            let q = first_query(&surfaces)?;
+            if q.catalog_entry_id.as_deref() != Some("github") {
+                return Err(format!(
+                    "e1 group_by query must be github, got {:?}",
+                    q.catalog_entry_id
+                ));
+            }
+        }
+        "lang_bind_template_inline_on_e1" => {
+            if computes.is_empty() {
+                return Err("expected render compute on inline e1 template".into());
+            }
+            let q = first_query(&surfaces)?;
+            if q.catalog_entry_id.as_deref() != Some("github") {
+                return Err(format!(
+                    "inline template query must be github e1, got {:?}",
+                    q.catalog_entry_id
+                ));
+            }
+        }
         "lang_effect_create_literal" => {
             let Some(Expr::Create(c)) = surfaces.iter().find(|e| matches!(e, Expr::Create(_)))
             else {
@@ -1434,10 +1540,19 @@ const MATRIX_ROWS: &[MatrixRow] = &[
     },
     MatrixRow {
         id: "lang_group_by",
-        program: "LangItem.group_by(owner, n=count)",
+        program: "LangItem.group_by(owner).aggregate(n=count)",
         surface_line: false,
         federated: false,
-        features: &["postfix_group_by"],
+        features: &["postfix_group_by", "postfix_group_by_aggregate_chain"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "owner"],
+    },
+    MatrixRow {
+        id: "lang_group_by_aggregate_chain",
+        program: "LangItem.group_by(owner, score).aggregate(n=count, title=first(title))",
+        surface_line: false,
+        federated: false,
+        features: &["postfix_group_by_aggregate_chain", "postfix_group_by_multi", "agg_first_last"],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "owner"],
     },
@@ -1904,6 +2019,75 @@ summary"#,
         expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
+        id: "lang_federated_duplicate_entity_relation_r",
+        program: "",
+        surface_line: false,
+        federated: true,
+        features: &[
+            "federated_duplicate_entity_symbol",
+            "federated_duplicate_entity_relation_r",
+            "relation_from_parent_get",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv"],
+    },
+    MatrixRow {
+        id: "lang_federated_duplicate_entity_mutator_m",
+        program: "",
+        surface_line: false,
+        federated: true,
+        features: &[
+            "federated_duplicate_entity_symbol",
+            "federated_duplicate_entity_mutator_m",
+            "effect_create",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv"],
+    },
+    MatrixRow {
+        id: "lang_federated_parallel_roots",
+        program: "e1{owner=\"alice\"}, e2~$",
+        surface_line: false,
+        federated: true,
+        features: &[
+            "federated_duplicate_entity_symbol",
+            "federated_parallel_roots",
+            "entity_query",
+            "entity_search",
+            "parallel_final_roots",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv"],
+    },
+    MatrixRow {
+        id: "lang_federated_group_by_on_e1",
+        program: "by = e1{owner=\"alice\"}.group_by(owner).aggregate(n=count)\nby",
+        surface_line: false,
+        federated: true,
+        features: &[
+            "federated_duplicate_entity_symbol",
+            "federated_group_by_on_e1",
+            "postfix_group_by_aggregate_chain",
+            "postfix_group_by",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "owner"],
+    },
+    MatrixRow {
+        id: "lang_bind_template_inline_on_e1",
+        program: "",
+        surface_line: false,
+        federated: true,
+        features: &[
+            "federated_duplicate_entity_symbol",
+            "bracket_render_inline_on_e",
+            "bracket_render",
+            "bindings_assignment",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["row(s)"],
+    },
+    MatrixRow {
         id: "lang_domain_symbol_page_size",
         program: "e1.page_size(10)",
         surface_line: false,
@@ -1992,6 +2176,39 @@ fn matrix_program_for_row(
             );
             format!("items = LangItem\ntags = items.{p_sym}\ntags")
         }
+        "lang_federated_duplicate_entity_relation_r" => {
+            let exp = es
+                .teaching_exposure
+                .as_ref()
+                .expect("federated dup session exposure");
+            let map = exp.symbol_map_arc();
+            let r_sym = map.ident_sym_relation_for("linear", "LangItem", "children");
+            assert!(
+                r_sym.starts_with('r'),
+                "expected opaque r# for linear LangItem.children, got {r_sym}"
+            );
+            format!("parent = e2(\"i1\")\nkids = parent.{r_sym}\nkids[id,title]")
+        }
+        "lang_federated_duplicate_entity_mutator_m" => {
+            let exp = es
+                .teaching_exposure
+                .as_ref()
+                .expect("federated dup session exposure");
+            let map = exp.symbol_map_arc();
+            let m_sym = map.method_sym_for("linear", "LangItem", "create");
+            assert!(
+                m_sym.starts_with('m'),
+                "expected opaque m# for linear LangItem.create, got {m_sym}"
+            );
+            format!("e2.{m_sym}(title=\"fed-mutator-matrix\", score=0, owner=\"matrix-fed-owner\")")
+        }
+        "lang_bind_template_inline_on_e1" => {
+            r#"report = e1{owner="alice"}[title] <<INLINE_E1
+# {{ rows | length }} row(s)
+INLINE_E1
+report"#
+            .to_string()
+        }
         _ => row.program.to_string(),
     }
 }
@@ -2068,6 +2285,11 @@ async fn plasm_language_matrix_live_runs_impl(base: String) {
             row.id,
             "lang_federated_duplicate_entity_e1_query"
                 | "lang_federated_duplicate_entity_e2_search"
+                | "lang_federated_duplicate_entity_relation_r"
+                | "lang_federated_duplicate_entity_mutator_m"
+                | "lang_federated_parallel_roots"
+                | "lang_federated_group_by_on_e1"
+                | "lang_bind_template_inline_on_e1"
         ) {
             (&es_federated_dup, &st_federated_dup)
         } else if row.federated {

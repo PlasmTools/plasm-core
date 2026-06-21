@@ -120,6 +120,33 @@ fn entry_scoped_surface_parse_preserves_typed_catalog_create() {
 }
 
 #[test]
+fn federated_e2_method_symbol_resolves_scoped_create() {
+    let s = duplicate_product_create_session();
+    let map = s
+        .teaching_exposure
+        .as_ref()
+        .expect("exposure")
+        .symbol_map_arc();
+    let m_sym = map.method_sym_for("other", "Product", "create");
+    assert!(
+        m_sym.starts_with('m'),
+        "expected opaque m# for other/Product.create, got {m_sym}"
+    );
+    let program = format!("e2.{m_sym}(name=\"bolt\")");
+    let parsed = parse_parsed_expr_for_session(&s, &program).expect("e2.m# create parses");
+    typecheck_parsed_for_session(&s, &parsed).expect("e2.m# create typechecks");
+}
+
+#[test]
+fn federated_bare_entity_mutator_stays_ambiguous() {
+    let s = duplicate_product_create_session();
+    let err = parse_parsed_expr_for_session(&s, "Product.create(name=\"bolt\")")
+        .expect_err("unscoped federated create should stay ambiguous")
+        .to_string();
+    assert!(err.contains("ambiguous capability label `create`"), "{err}");
+}
+
+#[test]
 fn plan_parses_product_query() {
     let s = test_session();
     let pe = parse_parsed_expr_for_session(&s, "Product").expect("parse");

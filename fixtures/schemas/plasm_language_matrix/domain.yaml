@@ -121,6 +121,15 @@ entities:
           capability: langtag_by_score_query
           bindings:
             seq: score
+      children:
+        description: Child LangItems on parent GET (homonymous relation target for federation tests)
+        target: LangItem
+        cardinality: many
+        materialize:
+          kind: from_parent_get
+          path:
+          - key: children
+          - wildcard: true
 capabilities:
   langitem_query:
     description: List LangItem rows (optional tags filter homographs tags relation wire)

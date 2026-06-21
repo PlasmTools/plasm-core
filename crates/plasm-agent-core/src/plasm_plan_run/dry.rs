@@ -655,16 +655,29 @@ pub(crate) fn ensure_relation_expr_matches_plan(
         ));
     }
     let root_entity = chain.source.primary_entity();
+    let owning_cgs = chain
+        .source
+        .session_catalog_entry_id()
+        .and_then(|eid| es.contexts_by_entry.get(eid))
+        .map(|ctx| ctx.cgs.as_ref());
+    let source_cgs = if let Some(cgs) = owning_cgs {
+        cgs
+    } else {
+        crate::catalog_ownership::resolve_cgs_for_entity(es, root_entity, None)?
+    };
     let source_entity = chain
         .source
-        .relation_navigation_entity(es.cgs.as_ref())
+        .relation_navigation_entity(source_cgs)
         .ok_or_else(|| {
             format!(
                 "plan.nodes[{index}].relation could not resolve navigation entity for chain root {root_entity:?}"
             )
         })?;
-    let source_cgs =
-        crate::catalog_ownership::resolve_cgs_for_entity(es, source_entity.as_str(), None)?;
+    let source_cgs = if owning_cgs.is_some() {
+        source_cgs
+    } else {
+        crate::catalog_ownership::resolve_cgs_for_entity(es, source_entity.as_str(), None)?
+    };
     let Some(source_def) = source_cgs.get_entity(source_entity.as_str()) else {
         return Err(format!(
             "plan.nodes[{index}].relation source entity {source_entity:?} is not present"

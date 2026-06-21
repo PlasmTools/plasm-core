@@ -503,11 +503,16 @@ impl<'a> Parser<'a> {
         self.layers_slice()[0]
     }
 
+    fn cgs_for_catalog_entry_id(&self, entry_id: &str, entity: &str) -> Option<&'a CGS> {
+        self.layers_slice()
+            .iter()
+            .copied()
+            .find(|c| c.entry_id.as_deref() == Some(entry_id) && c.get_entity(entity).is_some())
+    }
+
     fn cgs_for_entity(&self, entity: &str) -> Option<&CGS> {
         if let Some(ref eid) = self.active_entity_entry_id {
-            if let Some(cgs) = self.layers_slice().iter().copied().find(|c| {
-                c.entry_id.as_deref() == Some(eid.as_str()) && c.get_entity(entity).is_some()
-            }) {
+            if let Some(cgs) = self.cgs_for_catalog_entry_id(eid, entity) {
                 return Some(cgs);
             }
         }
@@ -1269,15 +1274,40 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
+    /// Catalog-scoped CGS layers for mutator resolution under federation (`e#` stamp or `m#` triple).
+    fn layers_for_dotted_call_source(
+        &self,
+        source: &Expr,
+        raw_label: Option<&str>,
+    ) -> Vec<&'a CGS> {
+        let primary = source.primary_entity();
+        let entry_id = raw_label
+            .and_then(|raw| self.sym_map.resolve_method_symbol_triple(raw))
+            .filter(|(_, domain, _)| *domain == primary)
+            .map(|(entry_id, _, _)| entry_id)
+            .or_else(|| source.session_catalog_entry_id());
+        if let Some(eid) = entry_id {
+            if let Some(cgs) = self.cgs_for_catalog_entry_id(eid, primary) {
+                return vec![cgs];
+            }
+        }
+        self.layers_slice().to_vec()
+    }
+
+    fn stamp_session_catalog_from_source(source: &Expr, expr: Expr) -> Expr {
+        expr.with_session_catalog_entry_id(source.session_catalog_entry_id().map(str::to_string))
+    }
+
     /// Resolve Create / Update / Action / Delete with object input; same-domain first, then cross-domain Create.
     fn resolve_dotted_call_capability(
         &self,
         label: &str,
+        raw_label: Option<&str>,
         source: &Expr,
     ) -> Result<&crate::CapabilitySchema, ParseError> {
         let primary = source.primary_entity();
-        let same_domain: Vec<_> = self
-            .layers_slice()
+        let scoped_layers = self.layers_for_dotted_call_source(source, raw_label);
+        let same_domain: Vec<_> = scoped_layers
             .iter()
             .flat_map(|c| c.capabilities.values())
             .filter(|cap| {
@@ -1302,8 +1332,7 @@ impl<'a> Parser<'a> {
             }));
         }
 
-        let cross: Vec<_> = self
-            .layers_slice()
+        let cross: Vec<_> = scoped_layers
             .iter()
             .flat_map(|c| c.capabilities.values())
             .filter(|cap| {
@@ -1359,7 +1388,7 @@ impl<'a> Parser<'a> {
         mut map: IndexMap<String, Value>,
     ) -> Result<Expr, ParseError> {
         let label = self.normalize_method_symbol_label(&field_raw);
-        let cap = self.resolve_dotted_call_capability(&label, &source)?;
+        let cap = self.resolve_dotted_call_capability(&label, Some(field_raw.as_str()), &source)?;
         self.inject_path_vars_from_get(cap, &source, &mut map);
         self.coerce_object_input_for_cap(cap, &mut map)?;
         let input = Value::Object(map);
@@ -1380,7 +1409,7 @@ impl<'a> Parser<'a> {
         mut value: Value,
     ) -> Result<Expr, ParseError> {
         let label = self.normalize_method_symbol_label(&field_raw);
-        let cap = self.resolve_dotted_call_capability(&label, &source)?;
+        let cap = self.resolve_dotted_call_capability(&label, Some(field_raw.as_str()), &source)?;
         let Some(is) = &cap.input_schema else {
             return Err(self.err(ParseErrorKind::Other {
                 message: "this capability has no input schema — use `key=value` arguments".into(),
@@ -1417,9 +1446,10 @@ impl<'a> Parser<'a> {
         input: Value,
     ) -> Result<Expr, ParseError> {
         match cap_kind {
-            CapabilityKind::Create => {
-                Ok(Expr::Create(CreateExpr::new(cap_name, cap_domain, input)))
-            }
+            CapabilityKind::Create => Ok(Self::stamp_session_catalog_from_source(
+                &source,
+                Expr::Create(CreateExpr::new(cap_name, cap_domain, input)),
+            )),
             CapabilityKind::Delete => {
                 let Expr::Get(g) = &source else {
                     return Err(self.err(ParseErrorKind::Other {
@@ -1430,11 +1460,14 @@ impl<'a> Parser<'a> {
                     Value::Object(map) if !map.is_empty() => Some(map),
                     _ => g.path_vars.clone(),
                 };
-                Ok(Expr::Delete(DeleteExpr::with_target_path_vars(
-                    cap_name,
-                    g.reference.clone(),
-                    path_vars,
-                )))
+                Ok(Self::stamp_session_catalog_from_source(
+                    &source,
+                    Expr::Delete(DeleteExpr::with_target_path_vars(
+                        cap_name,
+                        g.reference.clone(),
+                        path_vars,
+                    )),
+                ))
             }
             CapabilityKind::Update | CapabilityKind::Action => {
                 let Expr::Get(g) = &source else {
@@ -1442,12 +1475,15 @@ impl<'a> Parser<'a> {
                         message: "invoke with arguments requires Entity(id) on the left".into(),
                     }));
                 };
-                Ok(Expr::Invoke(InvokeExpr::with_target_path_vars(
-                    cap_name,
-                    g.reference.clone(),
-                    Some(input),
-                    g.path_vars.clone(),
-                )))
+                Ok(Self::stamp_session_catalog_from_source(
+                    &source,
+                    Expr::Invoke(InvokeExpr::with_target_path_vars(
+                        cap_name,
+                        g.reference.clone(),
+                        Some(input),
+                        g.path_vars.clone(),
+                    )),
+                ))
             }
             _ => Err(self.err(ParseErrorKind::Other {
                 message: "internal: dotted-call alias not supported for this capability kind"
@@ -1463,7 +1499,8 @@ impl<'a> Parser<'a> {
     ) -> Result<Expr, ParseError> {
         self.skip_ws();
         let label_norm = self.normalize_method_symbol_label(&label);
-        let cap = self.resolve_dotted_call_capability(&label_norm, &source)?;
+        let cap =
+            self.resolve_dotted_call_capability(&label_norm, Some(label.as_str()), &source)?;
         let root_union = cap
             .input_schema
             .as_ref()
@@ -2333,7 +2370,11 @@ impl<'a> Parser<'a> {
                     // Empty `()` must still run path-var injection when the capability has required
                     // inputs (e.g. scope copied from `Entity(k=$,…)`); zero-arity routing skips that.
                     let label_norm = self.normalize_method_symbol_label(&field_raw);
-                    if let Ok(cap) = self.resolve_dotted_call_capability(&label_norm, &source) {
+                    if let Ok(cap) = self.resolve_dotted_call_capability(
+                        &label_norm,
+                        Some(field_raw.as_str()),
+                        &source,
+                    ) {
                         if !capability_is_zero_arity_invoke(cap) {
                             return self.finish_dotted_call_with_payload(
                                 source,

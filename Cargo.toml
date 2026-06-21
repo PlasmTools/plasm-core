@@ -19,13 +19,14 @@ members = [
     "crates/plasm-discovery",
     "crates/plasm-server",
     "crates/plasm-workflow-codegen",
+    "crates/plasm-node",
 ]
 exclude = ["crates/plasm-server-pty-tests"]
 resolver = "2"
 
 # Single SemVer for the OSS workspace (see monorepo RELEASING.md on PlasmTools/plasm).
 [workspace.package]
-version = "0.3.46"
+version = "0.3.47"
 edition = "2021"
 
 [workspace.dependencies]

@@ -2177,16 +2177,23 @@ impl SymbolMap {
             .map(|(_, kebab)| kebab)
     }
 
-    /// `m#` → `(domain entity name, kebab label)` — disambiguates duplicate kebabs (e.g. `space_query` vs `task_query` both `query`).
+    /// `m#` → `(registry entry_id, domain entity name, kebab label)`.
     #[inline]
-    pub fn resolve_method_symbol_pair(&self, label: &str) -> Option<(&str, &str)> {
+    pub fn resolve_method_symbol_triple(&self, label: &str) -> Option<(&str, &str, &str)> {
         let rest = label.strip_prefix('m')?;
         if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
             return None;
         }
         self.sym_to_method
             .get(label)
-            .map(|(_, d, k)| (d.as_str(), k.as_str()))
+            .map(|(eid, d, k)| (eid.as_str(), d.as_str(), k.as_str()))
+    }
+
+    /// `m#` → `(domain entity name, kebab label)` — disambiguates duplicate kebabs (e.g. `space_query` vs `task_query` both `query`).
+    #[inline]
+    pub fn resolve_method_symbol_pair(&self, label: &str) -> Option<(&str, &str)> {
+        self.resolve_method_symbol_triple(label)
+            .map(|(_, d, k)| (d, k))
     }
 
     /// `[scope …]` fragment for teaching table `;;` legends only (no `optional params:` list).

@@ -10,7 +10,7 @@ use crate::http_execute::{
     CapabilitySeed, RankedCapabilitiesArg,
 };
 use crate::plan_dry_display::PlanDryCompactView;
-use crate::plasm_compile::compile_plasm_expression;
+use crate::plasm_compile::{compile_plasm_expression, compile_plasm_program};
 use crate::plasm_plan::ValidatedPlanNode;
 use crate::plasm_plan_run::{evaluate_plasm_comp_dry, DryPlasmPlanEvaluation};
 use crate::run_delivery::{
@@ -284,6 +284,15 @@ async fn mcp_apply_capability_seeds_federates_multi_catalog_and_dry_runs_distinc
         assert_eq!(qe.entry_id, entry_id);
         assert_eq!(qe.entity, "LangItem");
     }
+
+    let exp = es.teaching_exposure.as_ref().expect("exposure");
+    let map = exp.symbol_map_arc();
+    let r_sym = map.ident_sym_relation_for("linear", "LangItem", "children");
+    let rel_program = format!("parent = e2(\"i1\")\nkids = parent.{r_sym}\nkids[id,title]");
+    let rel_bundle =
+        compile_plasm_program(pipeline, Some(cross), &es, "federated_rel", &rel_program)
+            .unwrap_or_else(|e| panic!("compile federated relation hop: {e}"));
+    evaluate_plasm_comp_dry(&es, &rel_bundle).expect("dry-run federated relation hop");
 }
 
 #[tokio::test]

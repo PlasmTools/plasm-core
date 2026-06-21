@@ -34,24 +34,38 @@ pub(super) fn test_session() -> ExecuteSession {
 
 pub(super) fn duplicate_product_create_session() -> ExecuteSession {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let cgs = Arc::new(
-        load_schema(&root.join("tests/fixtures/scoped_create_tiny"))
-            .expect("load scoped_create_tiny"),
-    );
+    let cgs_base = load_schema(&root.join("tests/fixtures/scoped_create_tiny"))
+        .expect("load scoped_create_tiny");
+    let cgs_acme = Arc::new({
+        let mut c = cgs_base.clone();
+        c.entry_id = Some("acme".into());
+        c
+    });
+    let cgs_other = Arc::new({
+        let mut c = cgs_base;
+        c.entry_id = Some("other".into());
+        c
+    });
     let mut ctxs = indexmap::IndexMap::new();
     ctxs.insert(
         "acme".into(),
-        Arc::new(CgsContext::entry("acme", cgs.clone())),
+        Arc::new(CgsContext::entry("acme", cgs_acme.clone())),
     );
     ctxs.insert(
         "other".into(),
-        Arc::new(CgsContext::entry("other", cgs.clone())),
+        Arc::new(CgsContext::entry("other", cgs_other.clone())),
     );
-    let exp = TeachingExposureSession::new(cgs.as_ref(), "acme", &["Product"]);
+    let mut exp = TeachingExposureSession::new(cgs_acme.as_ref(), "acme", &["Product"]);
+    exp.expose_entities(
+        &[cgs_acme.as_ref(), cgs_other.as_ref()],
+        cgs_other.clone(),
+        "other",
+        &["Product"],
+    );
     ExecuteSession::new(
         "ph".into(),
         "p".into(),
-        cgs.clone(),
+        cgs_acme.clone(),
         ctxs,
         "acme".into(),
         String::new(),
@@ -60,7 +74,7 @@ pub(super) fn duplicate_product_create_session() -> ExecuteSession {
         vec!["Product".into()],
         Some(exp),
         None,
-        cgs.catalog_cgs_hash_hex(),
+        cgs_acme.catalog_cgs_hash_hex(),
         None,
         None,
     )
