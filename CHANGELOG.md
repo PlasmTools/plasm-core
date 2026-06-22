@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.54] - 2026-06-21
+
+### Fixed
+
+- **npm NAPI linux build:** Circle `napi-engine-linux-gnu` cross-compiles on `$BUILDPLATFORM` via `rust-cross-setup.sh` (avoids QEMU `rustc` SIGSEGV on Apple Silicon runners).
+
 ## [0.3.53] - 2026-06-21
 
 ### Fixed
