@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.55] - 2026-06-22
+
+### Fixed
+
+- **npm NAPI docker build:** run napi compile step under `bash -ec` (Debian `/bin/sh` lacks `pipefail` and `[[`).
+
 ## [0.3.54] - 2026-06-21
 
 ### Fixed
