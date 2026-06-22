@@ -25,7 +25,7 @@
     "build:debug": "napi build --manifest-path ../../crates/plasm-node/Cargo.toml -p plasm-node -o .",
     "artifacts": "napi artifacts --manifest-path ../../crates/plasm-node/Cargo.toml -p plasm-node",
     "create-npm-dirs": "napi create-npm-dirs",
-    "prepublishOnly": "napi prepublish -t npm --no-gh-release"
+    "prepublishOnly": "napi prepublish -t npm --no-gh-release --skip-optional-publish"
   },
   "devDependencies": {
     "@napi-rs/cli": "^3.7.2"

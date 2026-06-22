@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.59] - 2026-06-22
+
+### Fixed
+
+- **npm publish on Circle:** `napi prepublish --skip-optional-publish` + explicit platform `npm publish --provenance=false` (prepublish was publishing optionals without provenance disable).
+
 ## [0.3.58] - 2026-06-22
 
 ### Fixed
