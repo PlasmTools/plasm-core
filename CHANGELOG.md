@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **GitOps / ArgoCD:** `packages/plasm-agent/agent/catalogs/execute_tiny` symlink is repo-relative (was an absolute dev-machine path that blocked Argo manifest generation and pruned ingress).
+
 ## [0.3.51] - 2026-06-21
 
 ### Fixed
