@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.58] - 2026-06-22
+
+### Fixed
+
+- **npm NAPI artifacts:** Circle publish passes `--config-path napi.json` so `binaryName` is `plasm-engine`, platform npm dirs are created, and `napi artifacts` maps triples correctly.
+
 ## [0.3.57] - 2026-06-22
 
 ### Fixed

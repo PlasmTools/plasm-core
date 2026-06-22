@@ -1,5 +1,10 @@
 {
   "$schema": "https://napi.rs/schema.json",
   "binaryName": "plasm-engine",
-  "packageName": "@plasm_lang/engine"
+  "packageName": "@plasm_lang/engine",
+  "targets": [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-unknown-linux-gnu"
+  ]
 }
