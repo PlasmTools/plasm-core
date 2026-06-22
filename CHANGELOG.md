@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.53] - 2026-06-21
+
 ### Fixed
 
 - **GitOps / ArgoCD:** `packages/plasm-agent/agent/catalogs/execute_tiny` symlink is repo-relative (was an absolute dev-machine path that blocked Argo manifest generation and pruned ingress).
+
+### Changed
+
+- **npm publish:** `@plasm_lang/engine` and `@plasm_lang/vercel-agent` publish via Circle **`npm_publish_plasm_lang`** on tag pipelines (replaces GitHub Actions workflow).
 
 ## [0.3.51] - 2026-06-21
 
