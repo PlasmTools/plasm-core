@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.60] - 2026-06-22
+
+### Fixed
+
+- **Circle runner reuse:** reset `plasm-oss` before submodule checkout and restore after npm publish (sync/prepublish dirty `package.json`).
+
 ## [0.3.59] - 2026-06-22
 
 ### Fixed
