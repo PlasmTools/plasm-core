@@ -3366,8 +3366,6 @@ mod tests {
 
     #[test]
     fn parse_symbolic_union_ctor_resolves_opaque_field_keys_in_parse_tree() {
-        use std::sync::Arc;
-
         use crate::symbol_tuning::TeachingExposureSession;
 
         let cgs = root_union_heredoc_fixture_cgs();
