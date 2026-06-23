@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.63] - 2026-06-23
+
+### Changed
+
+- **npm CI:** Circle OIDC trusted publishing (`NPM_ID_TOKEN`) replaces `NPM_TOKEN`; see `docs/npm-publish-plasm-lang.md` and `scripts/ci/npm-trust-circleci-packages.sh`.
+
 ## [0.3.62] - 2026-06-23
 
 ### Fixed
