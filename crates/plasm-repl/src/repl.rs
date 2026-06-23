@@ -23,8 +23,8 @@ use anyhow::Context;
 use plasm_core::{
     domain_lexicon::DomainLexicon,
     error_render::{self, format_recovery_hints, FeedbackStyle},
-    expr_correction::recover_parse,
-    expr_parser::{self, ParsedExpr},
+    expr_correction::parse_session_line_with_rewrite_recovery,
+    expr_parser::ParsedExpr,
     normalize_expr_query_capabilities, symbol_map_for_prompt, PromptPipelineConfig, CGS,
 };
 use plasm_eval::baml_client::types::{PlanChatTurn, Union2KassistantOrKuser};
@@ -190,15 +190,17 @@ pub async fn run_repl(
                     continue;
                 }
 
-                // Parse and execute (same recovery as plasm-eval: case + lexicon Entity{…})
+                // Parse and execute (in-grammar symbol resolution; no string pre-expansion)
                 let pipeline = engine.prompt_pipeline();
-                let expanded =
-                    pipeline.expand_expr_line(&line, cgs.as_ref(), prompt_focus.as_deref());
-                let parsed = match expr_parser::parse(&expanded, cgs.as_ref()) {
-                    Ok(p) => Ok(p),
-                    Err(_) => recover_parse(&expanded, cgs.as_ref(), &lexicon),
-                };
-                match parsed {
+                let symbol_map = pipeline.with_focus_spec(prompt_focus.as_deref(), |focus| {
+                    symbol_map_for_prompt(cgs.as_ref(), focus, pipeline.uses_symbols())
+                });
+                match parse_session_line_with_rewrite_recovery(
+                    line.trim(),
+                    cgs.as_ref(),
+                    &lexicon,
+                    symbol_map,
+                ) {
                     Err((e, work, extra_hints)) => {
                         let sym_map = pipeline.with_focus_spec(prompt_focus.as_deref(), |focus| {
                             symbol_map_for_prompt(cgs.as_ref(), focus, pipeline.uses_symbols())
@@ -227,7 +229,7 @@ pub async fn run_repl(
                         }
                         eprintln!("\x1b[33mcorrection:\x1b[0m {}", step_err.correction);
                     }
-                    Ok(parsed) => {
+                    Ok((parsed, _)) => {
                         execute_parsed_expr(
                             line.as_str(),
                             parsed,

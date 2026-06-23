@@ -223,6 +223,28 @@ pub(crate) async fn materialize_validated_relation_traversal(
             }
         }
         RelationMaterialization::GetScopedBindings { .. } => {
+            // One-from-many flat-map: a plural source fans the scoped get out per parent row
+            // (one target per parent), exactly like QueryScopedBindings.
+            if matches!(
+                relation.relation.source_cardinality,
+                RelationSourceCardinality::Many
+            ) {
+                return materialize_relation_scoped_fanout(
+                    st,
+                    es,
+                    session_id,
+                    idx,
+                    node,
+                    relation,
+                    source_mat,
+                    &source_rows,
+                    materialized,
+                    trace,
+                    sink,
+                    plan_shared,
+                )
+                .await;
+            }
             if matches!(
                 relation.relation.source_cardinality,
                 RelationSourceCardinality::RuntimeCheckedSingleton
@@ -263,6 +285,26 @@ pub(crate) async fn materialize_validated_relation_traversal(
                     trace,
                     read_cap,
                     plan_shared.clone(),
+                )
+                .await
+            } else if matches!(
+                relation.relation.source_cardinality,
+                RelationSourceCardinality::Many
+            ) {
+                // Plural source → per-row fanout (covers one-from-many and many-from-many).
+                materialize_relation_scoped_fanout(
+                    st,
+                    es,
+                    session_id,
+                    idx,
+                    node,
+                    relation,
+                    source_mat,
+                    &source_rows,
+                    materialized,
+                    trace,
+                    sink,
+                    plan_shared,
                 )
                 .await
             } else if matches!(

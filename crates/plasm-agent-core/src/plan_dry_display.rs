@@ -466,18 +466,30 @@ fn render_plan_expr_ir_for_session(
     if let Some(display) = ir.display_expr.as_ref() {
         return display.clone();
     }
-    let Some(es) = es else {
-        return crate::expr_display::expr_display(&ir.expr);
-    };
-    let exp = match es.teaching_exposure.as_ref() {
-        Some(e) => e.clone(),
-        None => return crate::expr_display::expr_display_resolved(&ir.expr, es.cgs.as_ref()),
-    };
-    let fed = plasm_core::FederationDispatch::from_contexts_and_exposure(
-        es.contexts_by_entry.clone(),
-        &exp,
-    );
-    crate::expr_display::expr_display_resolved_federated(&ir.expr, &fed, es.cgs.as_ref())
+    render_expr_wire_for_execute_session(&ir.expr, es)
+}
+
+/// Canonical wire-surface renderer for typed [`Expr`] in an execute session (dry plan, artifacts).
+/// Compact IL summaries ([`crate::expr_display::expr_display_resolved`]) are a separate hint surface.
+pub(crate) fn render_expr_wire_for_execute_session(
+    expr: &plasm_core::Expr,
+    es: Option<&ExecuteSession>,
+) -> String {
+    match es {
+        None => crate::expr_display::expr_display(expr),
+        Some(es) => {
+            if es.contexts_by_entry.len() > 1 {
+                if let Some(exposure) = es.teaching_exposure.as_ref() {
+                    let fed = plasm_core::FederationDispatch::from_contexts_and_exposure(
+                        es.contexts_by_entry.clone(),
+                        exposure,
+                    );
+                    return plasm_core::render_expr_surface_federated(expr, &fed, es.cgs.as_ref());
+                }
+            }
+            plasm_core::render_expr_surface(expr, es.cgs.as_ref())
+        }
+    }
 }
 
 fn render_plan_expr_template(template: &ValidatedPlanExprTemplate) -> String {
@@ -854,5 +866,28 @@ mod tests {
             }
         );
         assert_eq!(render_plan_dry_op(&op), "project identifier, title");
+    }
+
+    #[test]
+    fn plan_expr_wire_surface_is_not_il_summary() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/petstore_minimal");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = plasm_core::load_schema_dir(&dir).expect("petstore_minimal");
+        let pe = plasm_core::expr_parser::parse("Pet(1)", &cgs).expect("parse");
+        let wire = plasm_core::render_expr_surface(&pe.expr, &cgs);
+        assert_eq!(wire, "Pet(1)");
+        assert!(
+            !wire.starts_with("Get("),
+            "wire surface must not be compact IL: {wire}"
+        );
+        let ir = ValidatedPlanExprIr {
+            expr: pe.expr,
+            projection: pe.projection,
+            display_expr: Some(wire.clone()),
+        };
+        assert_eq!(render_plan_expr_ir_for_session(&ir, None), wire);
     }
 }

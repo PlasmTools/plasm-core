@@ -13,7 +13,7 @@ use crate::prompt_render::{
 };
 use crate::schema::CGS;
 use crate::symbol_tuning::{
-    expand_expr_for_parse, expand_expr_for_teaching_session, ExposureEntityKey, ExposureSlotKey,
+    wire_surface_for_parse, wire_surface_for_teaching_session, ExposureEntityKey, ExposureSlotKey,
     FocusSpec, SymbolMap, SymbolMapCrossRequestCache, TeachingExposureSession,
 };
 use indexmap::IndexMap;
@@ -28,7 +28,7 @@ pub enum PromptFocus {
     Seeds(Vec<String>),
 }
 
-/// Single configuration bundle for prompt rendering and `expand_expr_for_parse` alignment.
+/// Single configuration bundle for prompt rendering and `wire_surface_for_parse` alignment.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PromptPipelineConfig {
     pub focus: PromptFocus,
@@ -284,32 +284,32 @@ impl PromptPipelineConfig {
         })
     }
 
-    /// Expand symbolic tokens before parse (REPL / eval); optional override wins over [`Self::focus`].
-    pub fn expand_expr_line(
+    /// Wire-surface render for parse (REPL / eval); optional override wins over [`Self::focus`].
+    pub fn wire_surface_line(
         &self,
         line: &str,
         cgs: &CGS,
         repl_focus_override: Option<&str>,
     ) -> String {
         self.with_focus_spec(repl_focus_override, |focus| {
-            expand_expr_for_parse(line, cgs, focus, self.uses_symbols())
+            wire_surface_for_parse(line, cgs, focus, self.uses_symbols())
         })
     }
 
-    /// Expand using session entity seeds (HTTP execute run line).
-    pub fn expand_expr_for_session_entities(
+    /// Wire-surface render using session entity seeds (HTTP execute run line).
+    pub fn wire_surface_for_session_entities(
         &self,
         line: &str,
         cgs: &CGS,
         entities: &[String],
     ) -> String {
         self.with_entity_seed_focus(entities, |focus| {
-            expand_expr_for_parse(line, cgs, focus, self.uses_symbols())
+            wire_surface_for_parse(line, cgs, focus, self.uses_symbols())
         })
     }
 
-    /// Expand using monotonic session symbols ([`TeachingExposureSession`]) when present.
-    pub fn expand_expr_for_session_with_optional_exposure(
+    /// Wire-surface render using monotonic session symbols ([`TeachingExposureSession`]) when present.
+    pub fn wire_surface_for_session_with_optional_exposure(
         &self,
         line: &str,
         cgs: &CGS,
@@ -317,9 +317,9 @@ impl PromptPipelineConfig {
         exposure: Option<&TeachingExposureSession>,
     ) -> String {
         if let Some(exp) = exposure {
-            expand_expr_for_teaching_session(line, exp, self.uses_symbols())
+            wire_surface_for_teaching_session(line, exp, self.uses_symbols())
         } else {
-            self.expand_expr_for_session_entities(line, cgs, entities)
+            self.wire_surface_for_session_entities(line, cgs, entities)
         }
     }
 }

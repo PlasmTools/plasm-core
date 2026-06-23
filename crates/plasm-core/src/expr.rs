@@ -151,6 +151,9 @@ pub struct CreateExpr {
     pub input: InvokeInputPayload,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub catalog_entry_id: Option<String>,
+    /// Surface receiver for dotted-call create (`Team(1).team-create-space(…)`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dotted_receiver: Option<Box<Expr>>,
 }
 
 /// Delete expression: remove a resource by ID.
@@ -360,6 +363,7 @@ impl CreateExpr {
             entity: entity.into(),
             input: input.into(),
             catalog_entry_id: None,
+            dotted_receiver: None,
         }
     }
 }

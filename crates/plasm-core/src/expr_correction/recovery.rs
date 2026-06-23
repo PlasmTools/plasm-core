@@ -61,6 +61,24 @@ pub fn recover_parse(
     recover_parse_with_rewrite(original, cgs, lexicon).map(|(p, _)| p)
 }
 
+/// In-grammar session parse when `sym_map` is set; otherwise wire [`expr_parser::parse`]. On failure,
+/// same lexicon / entity-case recovery as [`recover_parse_with_rewrite`].
+#[allow(clippy::type_complexity, clippy::result_large_err)]
+pub fn parse_session_line_with_rewrite_recovery(
+    original: &str,
+    cgs: &CGS,
+    lexicon: &DomainLexicon,
+    sym_map: Option<std::sync::Arc<crate::symbol_tuning::SymbolMap>>,
+) -> Result<
+    (expr_parser::ParsedExpr, Option<String>),
+    (expr_parser::ParseError, String, Vec<RecoveryHint>),
+> {
+    match expr_parser::parse_session_line(original, cgs, sym_map) {
+        Ok(p) => Ok((p, None)),
+        Err(_) => recover_parse_with_rewrite(original, cgs, lexicon),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

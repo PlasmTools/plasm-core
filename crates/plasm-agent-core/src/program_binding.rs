@@ -114,6 +114,12 @@ impl RowCardinalityProof {
     }
 
     /// After traversing a cardinality-one relation from this binding, what row proof does the result carry?
+    ///
+    /// A one-cardinality hop is a per-parent map: it preserves the parent's plurality.
+    /// - singleton parent → singleton child (enables multi-hop one-relation chains);
+    /// - **plural parent → plural child** (1:1 flat-map, one target per parent; see the cardinality
+    ///   lattice in `docs/plasm-language-definition.md`). This is **not** a singleton — no
+    ///   `Plan.singleton(...)` is required.
     pub(crate) fn after_one_cardinality_relation(self) -> Self {
         match self {
             Self::StaticSingleton => Self::StaticSingleton,
@@ -121,8 +127,9 @@ impl RowCardinalityProof {
                 from_plural_source: false,
                 ..
             } => Self::StaticSingleton,
-            Self::StaticPlural
-            | Self::BoundedSingleton {
+            // One-per-parent over a statically plural source is a 1:1 flat-map → plural result.
+            Self::StaticPlural => Self::StaticPlural,
+            Self::BoundedSingleton {
                 from_plural_source: true,
                 ..
             }
@@ -197,6 +204,23 @@ mod tests {
         assert_eq!(
             parent.after_one_cardinality_relation(),
             RowCardinalityProof::StaticSingleton
+        );
+    }
+
+    #[test]
+    fn one_rel_from_plural_parent_yields_plural_child() {
+        // 1:1 flat-map: a one-cardinality hop over a plural source preserves plurality.
+        let parent = RowCardinalityProof::StaticPlural;
+        assert_eq!(
+            parent.after_one_cardinality_relation(),
+            RowCardinalityProof::StaticPlural
+        );
+        // And it remains a many source for any further relation hop (fanout, not singleton).
+        assert_eq!(
+            parent
+                .after_one_cardinality_relation()
+                .to_relation_source_cardinality(),
+            RelationSourceCardinality::Many
         );
     }
 

@@ -90,8 +90,8 @@ use crate::symbol_tuning::{entity_slices_for_render, FocusSpec, SymbolMap};
 use crate::{
     coerce_value_for_field_type, ArrayItemsSchema, CapabilityKind, CapabilityName, ChainExpr,
     CompOp, CreateExpr, DeleteExpr, EntityDef, EntityKey, EntityName, Expr, FieldType, GetExpr,
-    InputType, InvokeExpr, PageExpr, ParameterRole, Predicate, QueryExpr, Ref, Value,
-    ValueWireFormat, CGS,
+    InputType, InvokeExpr, InvokeInputPayload, PageExpr, ParameterRole, Predicate, QueryExpr, Ref,
+    Value, ValueWireFormat, CGS,
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -412,6 +412,18 @@ pub fn parse_with_cgs_layers(
     parse_with_cgs_layers_program(input, layers, sym_map, None, false, None)
 }
 
+/// Parse one Plasm line against `cgs`, using in-grammar [`SymbolMap`] resolution when `sym_map` is set.
+pub fn parse_session_line(
+    input: &str,
+    cgs: &CGS,
+    sym_map: Option<Arc<SymbolMap>>,
+) -> Result<ParsedExpr, ParseError> {
+    match sym_map {
+        Some(map) => parse_with_cgs_layers(input, &[cgs], map),
+        None => parse(input, cgs),
+    }
+}
+
 /// Like [`parse_with_cgs_layers`], but when compiling a **Plasm program**, supply the set of
 /// in-scope program node ids so `method(p=report)` and `report.field` lower to
 /// [`crate::value::PlasmInputRef`] instead of string literals. `for_each_row_context` enables
@@ -616,6 +628,15 @@ impl<'a> Parser<'a> {
             .resolve_method_symbol_token(label)
             .map(str::to_string)
             .unwrap_or_else(|| label.to_string())
+    }
+
+    /// Resolve opaque `p#` / `r#` (or pass through wire names) at the grammar position where the
+    /// token occurs — symbols are semantic identities, not a pre-parse string rewrite.
+    fn resolve_opaque_ident_token(&self, raw: &str) -> String {
+        self.sym_map
+            .resolve_ident(raw)
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| raw.to_string())
     }
 
     fn err(&self, kind: ParseErrorKind) -> ParseError {
@@ -1207,6 +1228,7 @@ impl<'a> Parser<'a> {
                 break;
             }
             let (key, _, _) = self.parse_ident_with_span()?;
+            let wire_key = self.resolve_opaque_ident_token(&key);
             self.skip_ws();
             if self.peek_char() != Some('=') {
                 return Err(self.err(ParseErrorKind::ExpectedChar {
@@ -1216,7 +1238,7 @@ impl<'a> Parser<'a> {
             }
             self.pos += 1;
             let val = self.parse_dotted_call_arg_value_rhs()?;
-            map.insert(key, val);
+            map.insert(wire_key, val);
             self.skip_ws();
             if self.peek_char() == Some(')') {
                 break;
@@ -1516,7 +1538,13 @@ impl<'a> Parser<'a> {
         match cap_kind {
             CapabilityKind::Create => Ok(Self::stamp_session_catalog_from_source(
                 &source,
-                Expr::Create(CreateExpr::new(cap_name, cap_domain, input)),
+                Expr::Create(CreateExpr {
+                    capability: cap_name,
+                    entity: cap_domain,
+                    input: InvokeInputPayload::from(input),
+                    catalog_entry_id: None,
+                    dotted_receiver: Some(Box::new(source.clone())),
+                }),
             )),
             CapabilityKind::Delete => {
                 let Expr::Get(g) = &source else {

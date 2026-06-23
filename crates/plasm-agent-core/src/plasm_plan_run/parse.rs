@@ -75,8 +75,7 @@ pub fn resolve_wire_field_list(
         .collect()
 }
 
-/// Symbol map aligned with [`PromptPipelineConfig::expand_expr_for_session_with_optional_exposure`]
-/// and HTTP execute (`symbol_map_cross_cache` when available).
+/// Symbol map for in-grammar opaque symbol resolution on the parse / program ingress path.
 pub fn symbol_map_for_plasm_surface_parse(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
@@ -128,22 +127,17 @@ pub(crate) fn normalize_query_capabilities_for_session(
 pub fn parse_plasm_surface_line_program(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
-    pipeline: &PromptPipelineConfig,
+    _pipeline: &PromptPipelineConfig,
     line: &str,
     program_nodes: Option<&BTreeSet<String>>,
     for_each_row_context: bool,
 ) -> Result<ParsedExpr, ParseError> {
-    let expanded = pipeline.expand_expr_for_session_with_optional_exposure(
-        line,
-        session.cgs.as_ref(),
-        &session.entities,
-        session.teaching_exposure.as_ref(),
-    );
+    let surface = line.trim();
     let layers = session_cgs_layers(session);
     let layer_entry_ids = session_layer_catalog_entry_ids(session);
     let sym_map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
     let mut parsed = parse_with_cgs_layers_program(
-        &expanded,
+        surface,
         &layers,
         sym_map,
         program_nodes,
@@ -159,23 +153,16 @@ pub fn parse_plasm_surface_line_program(
     Ok(parsed)
 }
 
-/// Expand teaching gloss tokens the same way as [`parse_plasm_surface_line_program`], for program
-/// lowering paths that peel postfix or slice field lists before building [`Plan`](crate::plasm_plan::Plan) IR.
+/// Program surface fragment for DAG lowering — **no** textual symbol expansion.
 ///
-/// Call this **before** any step that turns comma-separated field names into
-/// [`FieldPath`](crate::plasm_plan::FieldPath) literals. The DAG compiler wraps the expanded text
-/// in [`crate::plasm_dag::ExpandedProgramSurface`] at the program-node boundary.
+/// Opaque `e#` / `m#` / `p#` / `r#` resolve in the parser and per-token field helpers
+/// ([`resolve_wire_field_token`], [`resolve_wire_field_list`]) against the session [`SymbolMap`].
 pub fn expand_program_surface_for_session_lower(
-    session: &ExecuteSession,
-    pipeline: &PromptPipelineConfig,
+    _session: &ExecuteSession,
+    _pipeline: &PromptPipelineConfig,
     fragment: &str,
 ) -> String {
-    pipeline.expand_expr_for_session_with_optional_exposure(
-        fragment,
-        session.cgs.as_ref(),
-        &session.entities,
-        session.teaching_exposure.as_ref(),
-    )
+    fragment.trim().to_string()
 }
 
 /// Parse a Plasm line to [`ParsedExpr`] (surface IR + optional projection) for the active session.
@@ -406,16 +393,16 @@ pub fn parse_plasm_line_for_session(
 pub fn format_session_symbolic_parse_error(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
-    pipeline: &PromptPipelineConfig,
+    _pipeline: &PromptPipelineConfig,
     source_line: &str,
     err: &ParseError,
 ) -> String {
-    let expanded = expand_program_surface_for_session_lower(session, pipeline, source_line);
+    let surface = source_line.trim();
     let sym_map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
     let step = render_parse_error_with_feedback(
         err,
-        &expanded,
-        source_line.trim(),
+        surface,
+        surface,
         session.cgs.as_ref(),
         FeedbackStyle::SymbolicLlm {
             map: sym_map.as_ref(),

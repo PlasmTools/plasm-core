@@ -45,12 +45,11 @@ fn seeded_pokemon_teaching_includes_bare_query_row() {
     let block = collect_entity_teaching_block(
         &cgs,
         "Pokemon",
-        Some(map.as_ref()),
+        Some(&map),
         None,
         false,
         &mut line_valid_cache,
         prompt_line_valid_cache_seed_cgs(&cgs),
-        None,
         &mut gloss_emit_none,
         Some(&delta.required),
         Some("pokeapi"),

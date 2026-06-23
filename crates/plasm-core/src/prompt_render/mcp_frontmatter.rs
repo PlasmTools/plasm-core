@@ -96,7 +96,6 @@ pub(crate) struct TeachingSynthesisSession<'a> {
     line_valid_cache: HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
     gloss_emit_state: FieldGlossEmitState,
-    map: Option<&'a SymbolMap>,
     map_arc: Option<std::sync::Arc<SymbolMap>>,
     ident_meta: Option<HashMap<crate::symbol_tuning::IdentMetaKey, IdentMetadata>>,
     surface_filter: Option<&'a ExposureSurface>,
@@ -107,7 +106,6 @@ pub(crate) struct TeachingSynthesisSession<'a> {
 impl<'a> TeachingSynthesisSession<'a> {
     fn new(
         line_valid_cache_seed: u64,
-        map: Option<&'a SymbolMap>,
         map_arc: Option<std::sync::Arc<SymbolMap>>,
         ident_meta: Option<HashMap<crate::symbol_tuning::IdentMetaKey, IdentMetadata>>,
         surface_filter: Option<&'a ExposureSurface>,
@@ -126,7 +124,6 @@ impl<'a> TeachingSynthesisSession<'a> {
                 non_registry_slots: HashMap::new(),
                 defined_value_domains: HashSet::new(),
             },
-            map,
             map_arc,
             ident_meta,
             surface_filter,
@@ -430,7 +427,6 @@ pub(crate) fn emit_field_def_lines_before_example(
 pub(crate) fn render_teaching_table_resolved<'b, F>(
     mut resolve: F,
     full_entities: &[&str],
-    map: Option<&SymbolMap>,
     map_arc: Option<std::sync::Arc<SymbolMap>>,
     exposure_for_ident: Option<&TeachingExposureSession>,
     teaching_blocks_out: &mut Vec<EntityTeachingBlock>,
@@ -455,7 +451,7 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
         .map(exposure_qualified_catalog_ids)
         .unwrap_or_default();
     let surface_filter = exposure_for_ident.map(|e| &e.surface);
-    let ident_meta = match (map, exposure_for_ident) {
+    let ident_meta = match (map_arc.as_deref(), exposure_for_ident) {
         (Some(_), Some(exposure)) => {
             Some(exposure.ident_metadata_for_exposure_entities(full_entities))
         }
@@ -472,7 +468,6 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
 
     let mut session = TeachingSynthesisSession::new(
         line_valid_cache_seed,
-        map,
         map_arc,
         ident_meta,
         surface_filter,
@@ -487,8 +482,9 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
                       teaching_blocks_out: &mut Vec<EntityTeachingBlock>,
                       model_out: &mut Vec<EntityTeachingPrompt>| {
         let mut field_gloss_accum = Vec::new();
+        let session_map = session.map_arc.as_ref().map(|a| a.as_ref());
         let mut gloss_emit: Option<GlossScratch<'_>> =
-            match (session.map, session.ident_meta.as_ref()) {
+            match (session_map, session.ident_meta.as_ref()) {
                 (Some(m), Some(meta)) => Some(GlossScratch {
                     field_gloss: &mut field_gloss_accum,
                     state: &mut session.gloss_emit_state,
@@ -503,12 +499,11 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
         let block = collect_entity_teaching_block(
             cgs,
             ename,
-            session.map,
+            session.map_arc.as_ref(),
             session.ident_meta.as_ref(),
             session.collect_meta,
             &mut session.line_valid_cache,
             session.line_valid_cache_seed,
-            session.map_arc.clone(),
             &mut gloss_emit,
             session.surface_filter,
             Some(catalog_entry_id),
@@ -603,7 +598,6 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
 pub(crate) fn render_teaching_table(
     cgs: &CGS,
     full_entities: &[&str],
-    map: Option<&SymbolMap>,
     map_arc: Option<std::sync::Arc<SymbolMap>>,
     teaching_blocks_out: &mut Vec<EntityTeachingBlock>,
     model_out: &mut Vec<EntityTeachingPrompt>,
@@ -614,7 +608,6 @@ pub(crate) fn render_teaching_table(
     render_teaching_table_resolved(
         |_| cgs,
         full_entities,
-        map,
         map_arc,
         None,
         teaching_blocks_out,

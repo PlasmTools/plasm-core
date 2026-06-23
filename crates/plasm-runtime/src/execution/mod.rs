@@ -762,7 +762,7 @@ impl ExecutionEngine {
         &self.config
     }
 
-    /// Prompt rendering / symbol expansion settings shared with teaching table and `expand_expr_for_parse`.
+    /// Prompt rendering / symbol expansion settings shared with teaching table and `wire_surface_for_parse`.
     #[inline]
     pub fn prompt_pipeline(&self) -> &PromptPipelineConfig {
         &self.config.prompt_pipeline

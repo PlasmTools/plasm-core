@@ -7,8 +7,9 @@
 //! `optional params: …` / `[scope …]` before the prose description (` — `), when present (required args appear in the expression).
 //! Programs use **`p#` only** for keyed slots; `v#` is prompt-teaching for shared value domains.
 //!
-//! [`SymbolMap`] is built from the same entity slice as [`crate::prompt_render`] uses. Call
-//! [`expand_path_symbols`] on model output **before** [`crate::expr_parser::parse`] (`v#` is not expanded).
+//! [`SymbolMap`] is built from the same entity slice as [`crate::prompt_render`] uses. Parse ingress
+//! resolves opaque `e#` / `m#` / `p#` / `r#` in-grammar via [`SymbolMap`]; display uses
+//! [`crate::expr_surface_render`] to render wire surface from parsed IR (`v#` is not expanded on ingress).
 //!
 //! **Caching (execute / MCP):** for a fixed loaded [`CGS`] (`catalog_cgs_hash_hex`), almost all teaching table
 //! symbol structure is stable. [`TeachingExposureSession`] memoizes [`SymbolMap`] behind
@@ -115,7 +116,7 @@ pub enum IdentMetadata {
     /// Inline capability input schema node (`operations`, `operations.replace_block.block`, …).
     /// [`SymbolMap`] maps dotted [`Self::param_path`] for [`SymbolMap::ident_sym_cap_param`]; teaching
     /// expansion uses the **leaf** segment so union ctor bodies type-check as `{ref=$,…}` after
-    /// [`expand_path_symbols`].
+    /// wire-surface render.
     CapabilityStructuralSlot {
         catalog_entry_id: String,
         entity: EntityName,
@@ -1089,7 +1090,7 @@ impl IdentMetadata {
         }
     }
 
-    /// Leaf wire key used after [`expand_path_symbols`] for capability input paths (`a.b.ref` → `ref`).
+    /// Wire leaf key for capability input paths (`a.b.ref` → `ref`) after wire-surface render.
     #[inline]
     pub(crate) fn symbolic_expand_target(&self) -> String {
         match self {
@@ -1556,9 +1557,6 @@ pub struct SymbolMap {
     sym_to_method: IndexMap<String, (String, String, String)>,
     /// (registry entry_id or `""`, domain entity, kebab method label)
     method_to_sym: IndexMap<(String, String, String), String>,
-    /// Dotted-call alias map: `(path anchor entity, m#)` → kebab when method is registered on another domain
-    /// (`Team(42).m22` → kebab when `m22` maps to a child-domain method on a path anchor).
-    anchor_scoped_method_sym: HashMap<(String, String), String>,
     sym_to_ident: IndexMap<String, String>,
     /// Wire name → first-assigned `p#` when multiple slots share a label (feedback collapse / legacy).
     ident_to_sym: IndexMap<String, String>,
@@ -1576,15 +1574,8 @@ pub struct SymbolMap {
     pub(crate) value_sym_to_fp: IndexMap<String, String>,
     /// `p#` → `v#` for registry-backed slots (relations / synthetic slots omit entries).
     pub(crate) p_sym_to_value_sym: HashMap<String, String>,
-    /// Pre-rendered `v#  ;;  …` gloss bodies (teaching table teaching only; not used by [`expand_path_symbols`]).
+    /// Pre-rendered `v#  ;;  …` gloss bodies (teaching table teaching only).
     value_sym_gloss: IndexMap<String, String>,
-    /// `(sym, wire)` pairs sorted by symbol length descending — built once per snapshot for [`expand_path_symbols`].
-    entity_replacements: Arc<[(String, String)]>,
-    ident_replacements: Arc<[(String, String)]>,
-    /// `r#` → relation wire (navigation expand for teaching table validation / execute).
-    relation_replacements: Arc<[(String, String)]>,
-    /// Method symbols sorted by length descending — built once per snapshot for [`expand_method_tokens`].
-    method_syms_sorted: Arc<[String]>,
 }
 
 #[inline]
@@ -1623,13 +1614,6 @@ pub(crate) fn next_opaque_v_symbol_after_map_and_extra_syms<'a>(
 }
 
 impl SymbolMap {
-    fn finalize_expand_tables(&mut self) {
-        self.entity_replacements = sorted_sym_replacements(&self.sym_to_entity);
-        self.ident_replacements = sorted_sym_replacements(&self.sym_to_ident);
-        self.relation_replacements = sorted_sym_replacements(&self.sym_to_relation_wire);
-        self.method_syms_sorted = sorted_method_syms(&self.sym_to_method);
-    }
-
     /// Stable `(entry_id, entity)` → `e#` assignments for HTTP `/symbols` and terminals.
     pub fn exposed_entity_symbol_rows(&self) -> Vec<ExposedEntitySymbolRow> {
         self.qualified_entity_to_sym
@@ -2025,37 +2009,6 @@ impl SymbolMap {
         self.sym_to_relation_wire.contains_key(sym)
     }
 
-    /// Relation wire for `r_sym` on `receiver_entity`, optionally scoped to `entry_id`.
-    /// Used by [`expand_relation_tokens`] so `.r#` is not expanded globally across entities.
-    pub(crate) fn relation_wire_for_receiver(
-        &self,
-        entry_id: Option<&str>,
-        receiver_entity: &str,
-        r_sym: &str,
-    ) -> Option<&str> {
-        let mut matches: Vec<&str> = self
-            .relation_to_sym
-            .iter()
-            .filter(|((eid, entity, _), sym)| {
-                sym.as_str() == r_sym
-                    && entity.as_str() == receiver_entity
-                    && match entry_id {
-                        Some(want) => eid.as_str() == want,
-                        None => true,
-                    }
-            })
-            .map(|((_, _, wire), _)| wire.as_str())
-            .collect();
-        matches.sort_unstable();
-        matches.dedup();
-        match matches.len() {
-            0 => None,
-            1 => Some(matches[0]),
-            _ if entry_id.is_some() => None,
-            _ => matches.first().copied(),
-        }
-    }
-
     /// teaching table term for one relation `r#` on a qualified entity row.
     pub fn try_relation_teaching_term_for(
         &self,
@@ -2131,7 +2084,7 @@ impl SymbolMap {
     }
 
     /// Rewrite canonical entity and field names in a short snippet into opaque `e#` / `p#` tokens for
-    /// LLM-facing recovery text (inverse of [`expand_path_symbols`] for identifier-shaped spans).
+    /// LLM-facing recovery text for identifier-shaped spans (inverse of wire-surface render).
     pub fn collapse_tokens_for_feedback(&self, input: &str) -> String {
         let mut keys: Vec<String> = self
             .qualified_entity_to_sym
@@ -2556,336 +2509,6 @@ pub(crate) fn gloss_description_truncated(s: &str) -> String {
     truncate_desc(s, 100)
 }
 
-/// Expand symbolic path text to canonical identifiers for the parser.
-pub fn expand_path_symbols(input: &str, map: &SymbolMap) -> String {
-    expand_path_symbols_with_options(input, map, true)
-}
-
-/// Expand `p#` / `r#` / `m#` for parse; optionally keep `e#` opaque so federated sessions retain catalog disambiguation.
-pub fn expand_path_symbols_with_options(
-    input: &str,
-    map: &SymbolMap,
-    expand_entity_symbols: bool,
-) -> String {
-    let mut s = if expand_entity_symbols {
-        replace_sym_tokens(input, map, SymPhase::Entity)
-    } else {
-        input.to_string()
-    };
-    s = replace_sym_tokens(&s, map, SymPhase::Ident);
-    s = expand_relation_tokens(&s, map);
-    s = expand_method_tokens(&s, map);
-    s
-}
-
-enum SymPhase {
-    Entity,
-    Ident,
-}
-
-fn replace_sym_tokens(input: &str, map: &SymbolMap, phase: SymPhase) -> String {
-    let replacements = match phase {
-        SymPhase::Entity => map.entity_replacements.as_ref(),
-        SymPhase::Ident => map.ident_replacements.as_ref(),
-    };
-    scan_replace_sorted_pairs(input, replacements)
-}
-
-/// Expand `.r#` only when the receiver entity owns that relation symbol (mirrors [`expand_method_tokens`]).
-fn expand_relation_tokens(input: &str, map: &SymbolMap) -> String {
-    let syms = sorted_relation_syms(&map.sym_to_relation_wire);
-    if syms.is_empty() {
-        return input.to_string();
-    }
-    let mut out = String::with_capacity(input.len());
-    let mut i = 0usize;
-    let mut in_string = false;
-    let mut escape = false;
-
-    while i < input.len() {
-        let ch = input[i..].chars().next().unwrap();
-        let ch_len = ch.len_utf8();
-        if in_string {
-            out.push(ch);
-            if escape {
-                escape = false;
-            } else if ch == '\\' {
-                escape = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            i += ch_len;
-            continue;
-        }
-        if ch == '"' {
-            in_string = true;
-            out.push(ch);
-            i += ch_len;
-            continue;
-        }
-        let mut advanced = false;
-        if ch == '.' && i + 1 < input.len() {
-            let rest = &input[i + 1..];
-            if let Some(sym) = syms.iter().find(|s| rest.starts_with(s.as_str())) {
-                let sym_len = sym.len();
-                let after = i + 1 + sym_len;
-                let boundary_ok =
-                    after >= input.len() || !ident_continue(input[after..].chars().next().unwrap());
-                if boundary_ok {
-                    if let Some(left_ent) = find_entity_before_dot(input, i) {
-                        let receiver_wire = entity_surface_wire_name(&left_ent, map);
-                        let entry_id = map.entry_id_for_entity_symbol(&left_ent);
-                        if let Some(wire) =
-                            map.relation_wire_for_receiver(entry_id.as_deref(), &receiver_wire, sym)
-                        {
-                            out.push('.');
-                            out.push_str(wire);
-                            i += 1 + sym_len;
-                            advanced = true;
-                        }
-                    }
-                }
-            }
-        }
-        if advanced {
-            continue;
-        }
-        out.push(ch);
-        i += ch_len;
-    }
-    out
-}
-
-fn sorted_relation_syms(map: &IndexMap<String, String>) -> Vec<String> {
-    let mut syms: Vec<String> = map.keys().cloned().collect();
-    syms.sort_by_key(|k| std::cmp::Reverse(k.len()));
-    syms
-}
-
-/// When [`expand_path_symbols_with_options`] keeps `e#` opaque, method expansion must still
-/// match `.m#` against the wire entity name stored in [`SymbolMap::sym_to_entity`].
-fn entity_surface_wire_name(left: &str, map: &SymbolMap) -> String {
-    map.sym_to_entity
-        .get(left)
-        .cloned()
-        .unwrap_or_else(|| left.to_string())
-}
-
-fn expand_method_tokens(input: &str, map: &SymbolMap) -> String {
-    let syms = map.method_syms_sorted.as_ref();
-    let mut out = String::with_capacity(input.len());
-    let mut i = 0usize;
-    let mut in_string = false;
-    let mut escape = false;
-
-    while i < input.len() {
-        let ch = input[i..].chars().next().unwrap();
-        let ch_len = ch.len_utf8();
-        if in_string {
-            out.push(ch);
-            if escape {
-                escape = false;
-            } else if ch == '\\' {
-                escape = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            i += ch_len;
-            continue;
-        }
-        if ch == '"' {
-            in_string = true;
-            out.push(ch);
-            i += ch_len;
-            continue;
-        }
-        let mut advanced = false;
-        if ch == '.' && i + 1 < input.len() {
-            let rest = &input[i + 1..];
-            if let Some(sym) = syms.iter().find(|s| rest.starts_with(s.as_str())) {
-                let sym_len = sym.len();
-                let after = i + 1 + sym_len;
-                let boundary_ok =
-                    after >= input.len() || !ident_continue(input[after..].chars().next().unwrap());
-                if boundary_ok {
-                    if let Some((_, ent, kebab)) = map.sym_to_method.get(sym.as_str()) {
-                        if let Some(left_ent) = find_entity_before_dot(input, i) {
-                            let left_wire = entity_surface_wire_name(&left_ent, map);
-                            if left_wire == *ent || left_ent == *ent {
-                                out.push('.');
-                                out.push_str(kebab);
-                                i += 1 + sym_len;
-                                advanced = true;
-                            } else if let Some(sk) = map
-                                .anchor_scoped_method_sym
-                                .get(&(left_wire.clone(), sym.clone()))
-                                .or_else(|| {
-                                    map.anchor_scoped_method_sym
-                                        .get(&(left_ent.clone(), sym.clone()))
-                                })
-                            {
-                                out.push('.');
-                                out.push_str(sk);
-                                i += 1 + sym_len;
-                                advanced = true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if advanced {
-            continue;
-        }
-        out.push(ch);
-        i += ch_len;
-    }
-    out
-}
-
-/// Like [`scan_replace`] but uses pre-sorted `(sym, replacement)` pairs (longest sym first).
-fn scan_replace_sorted_pairs(input: &str, replacements: &[(String, String)]) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut i = 0usize;
-    let mut in_string = false;
-    let mut escape = false;
-
-    while i < input.len() {
-        let ch = input[i..].chars().next().unwrap();
-        let ch_len = ch.len_utf8();
-        if in_string {
-            out.push(ch);
-            if escape {
-                escape = false;
-            } else if ch == '\\' {
-                escape = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            i += ch_len;
-            continue;
-        }
-        if ch == '"' {
-            in_string = true;
-            out.push(ch);
-            i += ch_len;
-            continue;
-        }
-        let mut replaced = false;
-        if ident_boundary_left(input, i) {
-            for (sym, wire) in replacements {
-                if input[i..].starts_with(sym) {
-                    let after = i + sym.len();
-                    let boundary_ok = after >= input.len()
-                        || !ident_continue(input[after..].chars().next().unwrap());
-                    if boundary_ok {
-                        out.push_str(wire);
-                        i = after;
-                        replaced = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if !replaced {
-            out.push(ch);
-            i += ch_len;
-        }
-    }
-    out
-}
-
-fn sorted_sym_replacements(map: &IndexMap<String, String>) -> Arc<[(String, String)]> {
-    let mut pairs: Vec<(String, String)> = map
-        .iter()
-        .map(|(sym, wire)| (sym.clone(), wire.clone()))
-        .collect();
-    pairs.sort_by_key(|(sym, _)| std::cmp::Reverse(sym.len()));
-    pairs.into()
-}
-
-fn sorted_method_syms(map: &IndexMap<String, (String, String, String)>) -> Arc<[String]> {
-    let mut syms: Vec<String> = map.keys().cloned().collect();
-    syms.sort_by_key(|k| std::cmp::Reverse(k.len()));
-    syms.into()
-}
-
-fn find_entity_before_dot(s: &str, dot_idx: usize) -> Option<String> {
-    if dot_idx == 0 {
-        return None;
-    }
-    let bytes = s.as_bytes();
-    let mut i = dot_idx - 1;
-    while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-        if i == 0 {
-            return None;
-        }
-        i -= 1;
-    }
-    if bytes[i] == b')' {
-        return entity_before_dot_after_close_paren(s, i);
-    }
-    // `Entity.method()` / `Entity.rel` — identifier immediately before `.`
-    let end = i + 1;
-    let mut start = end;
-    while start > 0 {
-        let c = bytes[start - 1];
-        if c.is_ascii_alphanumeric() || c == b'_' || c == b'-' {
-            start -= 1;
-        } else {
-            break;
-        }
-    }
-    (start < end).then(|| s[start..end].to_string())
-}
-
-/// `Something(…).method` — resolve `Something` from the `)` at `close_paren_idx`.
-fn entity_before_dot_after_close_paren(s: &str, close_paren_idx: usize) -> Option<String> {
-    let bytes = s.as_bytes();
-    let mut depth = 1usize;
-    let mut j = close_paren_idx;
-    while j > 0 {
-        j -= 1;
-        match bytes[j] {
-            b')' => depth += 1,
-            b'(' => {
-                depth -= 1;
-                if depth == 0 {
-                    let (start, end) = entity_ident_before_open_paren(s, j)?;
-                    return Some(s[start..end].to_string());
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn entity_ident_before_open_paren(s: &str, open_paren: usize) -> Option<(usize, usize)> {
-    if open_paren == 0 {
-        return None;
-    }
-    let bytes = s.as_bytes();
-    let mut end = open_paren;
-    while end > 0 && bytes[end - 1].is_ascii_whitespace() {
-        end -= 1;
-    }
-    let mut start = end;
-    while start > 0 {
-        let c = bytes[start - 1];
-        if c.is_ascii_alphanumeric() || c == b'_' || c == b'-' {
-            start -= 1;
-        } else {
-            break;
-        }
-    }
-    if start == end {
-        None
-    } else {
-        Some((start, end))
-    }
-}
-
 fn scan_replace(
     input: &str,
     syms_sorted_long_first: &[String],
@@ -3073,7 +2696,6 @@ pub struct TeachingExposureSession {
     sym_to_method: IndexMap<String, (String, String, String)>,
     ident_to_sym: IndexMap<String, String>,
     sym_to_ident: IndexMap<String, String>,
-    anchor_scoped_method_sym: HashMap<(String, String), String>,
     /// Share fingerprint → opaque `p#` (append-only; never renumbered). Registry-backed slots key on
     /// `(values row, wire)`; see [`slot_symbol_allocation_fingerprint`]. Relations use [`Self::relation_fingerprint_to_sym`].
     slot_fingerprint_to_sym: IndexMap<String, String>,
@@ -3110,7 +2732,6 @@ impl Clone for TeachingExposureSession {
             sym_to_method: self.sym_to_method.clone(),
             ident_to_sym: self.ident_to_sym.clone(),
             sym_to_ident: self.sym_to_ident.clone(),
-            anchor_scoped_method_sym: self.anchor_scoped_method_sym.clone(),
             slot_fingerprint_to_sym: self.slot_fingerprint_to_sym.clone(),
             relation_fingerprint_to_sym: self.relation_fingerprint_to_sym.clone(),
             fingerprint_meta: self.fingerprint_meta.clone(),
@@ -3146,7 +2767,6 @@ impl TeachingExposureSession {
             sym_to_method: IndexMap::new(),
             ident_to_sym: IndexMap::new(),
             sym_to_ident: IndexMap::new(),
-            anchor_scoped_method_sym: HashMap::new(),
             slot_fingerprint_to_sym: IndexMap::new(),
             relation_fingerprint_to_sym: IndexMap::new(),
             fingerprint_meta: IndexMap::new(),
@@ -3181,7 +2801,6 @@ impl TeachingExposureSession {
             sym_to_method: IndexMap::new(),
             ident_to_sym: IndexMap::new(),
             sym_to_ident: IndexMap::new(),
-            anchor_scoped_method_sym: HashMap::new(),
             slot_fingerprint_to_sym: IndexMap::new(),
             relation_fingerprint_to_sym: IndexMap::new(),
             fingerprint_meta: IndexMap::new(),
@@ -3238,7 +2857,6 @@ impl TeachingExposureSession {
         }
         self.union_legacy_surface_for_entities(catalog_entry_id, names);
         self.assign_new_methods_and_idents(cgs_layers);
-        self.rebuild_anchor_scoped_method_labels(cgs_layers);
     }
 
     fn union_legacy_surface_for_entities(&mut self, entry_id: &str, entities: &[&str]) {
@@ -3293,7 +2911,6 @@ impl TeachingExposureSession {
             self.sym_to_entity.insert(sym, (*n).to_string());
         }
         self.assign_new_methods_and_idents(cgs_layers);
-        self.rebuild_anchor_scoped_method_labels(cgs_layers);
         ExposureAppendReport { entities_added }
     }
 
@@ -3531,91 +3148,6 @@ impl TeachingExposureSession {
         }
     }
 
-    fn rebuild_anchor_scoped_method_labels(&mut self, cgs_layers: &[&CGS]) {
-        let _ = cgs_layers;
-        self.anchor_scoped_method_sym.clear();
-        let full_refs: Vec<&str> = self.entities.iter().map(|s| s.as_str()).collect();
-        let full_set: HashSet<&str> = full_refs.iter().copied().collect();
-        for i in 0..self.entities.len() {
-            let dom = self.entities[i].as_str();
-            if !full_set.contains(dom) {
-                continue;
-            }
-            let entry_id = self.entity_catalog_entry_ids[i].as_str();
-            let Some(cgs) = self.catalog_cgs.get(entry_id) else {
-                continue;
-            };
-            let Some(names) = cgs.capability_names_by_domain().get(dom) else {
-                continue;
-            };
-            for cap_name in names {
-                let Some(cap) = cgs.capabilities.get(cap_name) else {
-                    continue;
-                };
-                let cap_key = ExposureCapabilityKey {
-                    entry_id: entry_id.to_string(),
-                    domain: EntityName::from(dom),
-                    capability: cap_name.clone(),
-                };
-                if !self.surface.capabilities.contains(&cap_key) {
-                    continue;
-                }
-                if cap.kind != CapabilityKind::Create {
-                    continue;
-                }
-                let pvars =
-                    crate::schema::path_var_names_from_mapping_json(&cap.mapping.template.0);
-                if pvars.len() != 1 {
-                    continue;
-                }
-                let pv = pvars[0].as_str();
-                let Some(anchor_lower) = pv.strip_suffix("_id") else {
-                    continue;
-                };
-                let Some(anchor_entity) = cgs
-                    .entities
-                    .keys()
-                    .find(|e| e.as_str().to_lowercase() == anchor_lower)
-                else {
-                    continue;
-                };
-                let anchor = anchor_entity.as_str();
-                if !full_set.contains(anchor) {
-                    continue;
-                }
-                if cap.domain.as_str() == anchor {
-                    continue;
-                }
-                let Some(is) = cap.input_schema.as_ref() else {
-                    continue;
-                };
-                let InputType::Object { fields, .. } = &is.input_type else {
-                    continue;
-                };
-                let req: Vec<_> = fields.iter().filter(|f| f.required).collect();
-                if req.len() != 1 {
-                    continue;
-                }
-                let Ok(nv) = req[0].named_value(cgs) else {
-                    continue;
-                };
-                if nv.field_type != FieldType::String {
-                    continue;
-                }
-                let kebab = capability_method_label_kebab(cap);
-                let Some(sym) = self.method_to_sym.get(&(
-                    entry_id.to_string(),
-                    cap.domain.to_string(),
-                    kebab.clone(),
-                )) else {
-                    continue;
-                };
-                self.anchor_scoped_method_sym
-                    .insert((anchor.to_string(), sym.clone()), kebab);
-            }
-        }
-    }
-
     fn named_value_row_description(&self, meta: &IdentMetadata) -> String {
         let IdentMetadata::RegistryBacked {
             catalog_entry_id,
@@ -3664,7 +3196,6 @@ impl TeachingExposureSession {
             qualified_entity_to_sym: self.qualified_entity_to_sym.clone(),
             sym_to_method: self.sym_to_method.clone(),
             method_to_sym: self.method_to_sym.clone(),
-            anchor_scoped_method_sym: self.anchor_scoped_method_sym.clone(),
             sym_to_ident: self.sym_to_ident.clone(),
             ident_to_sym: self.ident_to_sym.clone(),
             entity_field_to_sym: self.entity_field_to_sym.clone(),
@@ -3675,10 +3206,6 @@ impl TeachingExposureSession {
             value_sym_to_fp,
             p_sym_to_value_sym,
             value_sym_gloss: IndexMap::new(),
-            entity_replacements: Arc::from([]),
-            ident_replacements: Arc::from([]),
-            relation_replacements: Arc::from([]),
-            method_syms_sorted: Arc::from([]),
         };
 
         for (fp, vsym) in &sm.value_domain_fp_to_sym {
@@ -3694,7 +3221,6 @@ impl TeachingExposureSession {
                 sm.value_sym_gloss.insert(vsym.clone(), g);
             }
         }
-        sm.finalize_expand_tables();
         sm
     }
 
@@ -3770,7 +3296,7 @@ impl TeachingExposureSession {
         (built, lru_hit)
     }
 
-    /// Snapshot for [`expand_path_symbols`] — matches teaching lines for this session (same `Arc` as [`Self::symbol_map_arc`]).
+    /// Snapshot for wire-surface display — matches teaching lines for this session (same `Arc` as [`Self::symbol_map_arc`]).
     pub fn to_symbol_map(&self) -> Arc<SymbolMap> {
         self.symbol_map_arc()
     }
@@ -4252,8 +3778,9 @@ impl SymbolMapCrossRequestCache {
     }
 }
 
-/// Expand using a [`TeachingExposureSession`] snapshot (HTTP execute / MCP); ignores [`FocusSpec`]. When `symbol_tuning` is false, only annotation stripping runs (canonical / tests).
-pub fn expand_expr_for_teaching_session(
+/// Wire surface for teaching-session display paths (parse opaque + AST render).
+/// **Never** call before [`crate::expr_parser::parse`] or program ingress.
+pub fn wire_surface_for_teaching_session(
     input: &str,
     session: &TeachingExposureSession,
     symbol_tuning: bool,
@@ -4262,523 +3789,8 @@ pub fn expand_expr_for_teaching_session(
     if !symbol_tuning {
         return input.to_string();
     }
-    let map = session.symbol_map_arc();
-    let scoped = expand_search_filter_predicate_keys(input, session, map.as_ref());
-    let scoped = expand_method_invoke_capability_param_keys(&scoped, session, map.as_ref());
-    expand_path_symbols_with_options(&scoped, map.as_ref(), false)
-}
-
-/// Before global `p#`→wire expansion, rewrite predicate **keys** inside `~\"…\"{…}` search filter
-/// blocks to the Search-capability param wire for that opaque symbol (avoids Create-param homographs).
-fn expand_search_filter_predicate_keys(
-    input: &str,
-    session: &TeachingExposureSession,
-    map: &SymbolMap,
-) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut i = 0;
-    while i < input.len() {
-        let Some(rel) = input[i..].find('~') else {
-            out.push_str(&input[i..]);
-            break;
-        };
-        let tilde = i + rel;
-        out.push_str(&input[i..tilde]);
-        let entity_start = search_entity_token_start(input, tilde);
-        let entity_token = input[entity_start..tilde].trim();
-        let (entity, entry_id) = resolve_entity_surface(entity_token, map);
-        if let Some(cgs) = session.catalog_cgs.get(&entry_id) {
-            if let Some(consumed) = rewrite_search_filter_brace(
-                input,
-                tilde,
-                entity.as_str(),
-                entry_id.as_str(),
-                map,
-                cgs.as_ref(),
-                &mut out,
-            ) {
-                i = consumed;
-                continue;
-            }
-        }
-        out.push('~');
-        i = tilde + '~'.len_utf8();
-    }
-    out
-}
-
-fn search_entity_token_start(input: &str, tilde_pos: usize) -> usize {
-    let prefix = input[..tilde_pos].trim_end();
-    let mut start = prefix.len();
-    for (idx, ch) in prefix.char_indices().rev() {
-        if ch.is_ascii_alphanumeric() || ch == '_' || ch == '#' {
-            start = idx;
-        } else {
-            break;
-        }
-    }
-    start
-}
-
-fn resolve_entity_surface(token: &str, map: &SymbolMap) -> (String, String) {
-    if let Some(ent) = map.sym_to_entity.get(token) {
-        let entry = map.entry_id_for_entity_symbol(token).unwrap_or_default();
-        return (ent.clone(), entry);
-    }
-    (token.to_string(), String::new())
-}
-
-fn search_param_wire_for_sym(
-    entity: &str,
-    entry_id: &str,
-    sym: &str,
-    map: &SymbolMap,
-    cgs: &CGS,
-) -> Option<String> {
-    for cap in cgs.find_capabilities(entity, crate::CapabilityKind::Search) {
-        for (key, s) in &map.cap_param_to_sym {
-            if s.as_str() != sym {
-                continue;
-            }
-            if key.0 != entry_id || key.1 != entity || key.2 != cap.name.as_str() {
-                continue;
-            }
-            return Some(key.3.clone());
-        }
-    }
-    None
-}
-
-fn rewrite_search_filter_brace(
-    input: &str,
-    tilde_pos: usize,
-    entity: &str,
-    entry_id: &str,
-    map: &SymbolMap,
-    cgs: &CGS,
-    out: &mut String,
-) -> Option<usize> {
-    let mut pos = tilde_pos + 1;
-    pos = skip_search_text_value(input, pos)?;
-    if input.as_bytes().get(pos)? != &b'{' {
-        return None;
-    }
-    out.push('~');
-    out.push_str(&input[tilde_pos + 1..pos]);
-    out.push('{');
-    pos += 1;
-    while pos < input.len() {
-        skip_ascii_whitespace(input, &mut pos);
-        if input.as_bytes().get(pos)? == &b'}' {
-            out.push('}');
-            return Some(pos + 1);
-        }
-        let key_start = pos;
-        while pos < input.len() {
-            let b = input.as_bytes()[pos];
-            if b == b'=' || b == b',' || b == b'}' {
-                break;
-            }
-            pos += 1;
-        }
-        let key = input[key_start..pos].trim();
-        let rewritten_key = if is_opaque_param_sym(key) {
-            search_param_wire_for_sym(entity, entry_id, key, map, cgs)
-                .unwrap_or_else(|| key.to_string())
-        } else {
-            key.to_string()
-        };
-        out.push_str(&rewritten_key);
-        if input.as_bytes().get(pos)? != &b'=' {
-            return None;
-        }
-        out.push('=');
-        pos += 1;
-        pos = copy_until_pred_comma_or_close(input, pos, out)?;
-        skip_ascii_whitespace(input, &mut pos);
-        if input.as_bytes().get(pos)? == &b',' {
-            out.push(',');
-            pos += 1;
-        }
-    }
-    None
-}
-
-fn is_opaque_param_sym(key: &str) -> bool {
-    key.starts_with('p') && key[1..].chars().all(|c| c.is_ascii_digit())
-}
-
-fn skip_search_text_value(input: &str, mut pos: usize) -> Option<usize> {
-    skip_ascii_whitespace(input, &mut pos);
-    match input.as_bytes().get(pos)? {
-        b'"' => {
-            pos += 1;
-            let mut escape = false;
-            while pos < input.len() {
-                let ch = input[pos..].chars().next()?;
-                if escape {
-                    escape = false;
-                } else if ch == '\\' {
-                    escape = true;
-                } else if ch == '"' {
-                    return Some(pos + 1);
-                }
-                pos += ch.len_utf8();
-            }
-            None
-        }
-        b'$' => Some(pos + 1),
-        _ => Some(pos),
-    }
-}
-
-fn skip_ascii_whitespace(input: &str, pos: &mut usize) {
-    while *pos < input.len() && input.as_bytes()[*pos].is_ascii_whitespace() {
-        *pos += 1;
-    }
-}
-
-fn copy_until_pred_comma_or_close(input: &str, mut pos: usize, out: &mut String) -> Option<usize> {
-    let mut depth_paren = 0i32;
-    let mut depth_brace = 0i32;
-    let mut in_string = false;
-    let mut escape = false;
-    while pos < input.len() {
-        let ch = input[pos..].chars().next()?;
-        if in_string {
-            out.push(ch);
-            if escape {
-                escape = false;
-            } else if ch == '\\' {
-                escape = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            pos += ch.len_utf8();
-            continue;
-        }
-        match ch {
-            '"' => {
-                in_string = true;
-                out.push(ch);
-            }
-            '(' => {
-                depth_paren += 1;
-                out.push(ch);
-            }
-            ')' => {
-                depth_paren -= 1;
-                out.push(ch);
-            }
-            '{' => {
-                depth_brace += 1;
-                out.push(ch);
-            }
-            '}' if depth_paren == 0 && depth_brace == 0 => return Some(pos),
-            '}' => {
-                depth_brace -= 1;
-                out.push(ch);
-            }
-            ',' if depth_paren == 0 && depth_brace == 0 => return Some(pos),
-            _ => out.push(ch),
-        }
-        pos += ch.len_utf8();
-    }
-    Some(pos)
-}
-
-fn cap_param_wire_for_sym(
-    entry_id: &str,
-    entity: &str,
-    cap_name: &str,
-    sym: &str,
-    map: &SymbolMap,
-) -> Option<String> {
-    for ((eid, ent, cap, param), s) in &map.cap_param_to_sym {
-        if s.as_str() == sym && eid == entry_id && ent == entity && cap == cap_name {
-            return Some(param.clone());
-        }
-    }
-    None
-}
-
-fn entity_field_wire_for_sym(
-    entry_id: &str,
-    entity: &str,
-    sym: &str,
-    map: &SymbolMap,
-) -> Option<String> {
-    for ((eid, ent, wire), s) in &map.entity_field_to_sym {
-        if s.as_str() == sym && eid == entry_id && ent == entity {
-            return Some(wire.clone());
-        }
-    }
-    None
-}
-
-fn resolve_capability_name_for_method_kebab(
-    cgs: &CGS,
-    entity: &str,
-    kebab: &str,
-) -> Option<String> {
-    for kind in [
-        CapabilityKind::Create,
-        CapabilityKind::Update,
-        CapabilityKind::Delete,
-        CapabilityKind::Action,
-    ] {
-        for cap in cgs.find_capabilities(entity, kind) {
-            if capability_method_label_kebab(cap) == kebab {
-                return Some(cap.name.to_string());
-            }
-        }
-    }
-    None
-}
-
-/// Before global `p#`→wire expansion, rewrite invoke arg keys on `.m#(…)` to capability param wires and
-/// nested `e#(…)` constructor keys to entity field wires (mirrors [`expand_search_filter_predicate_keys`]).
-fn expand_method_invoke_capability_param_keys(
-    input: &str,
-    session: &TeachingExposureSession,
-    map: &SymbolMap,
-) -> String {
-    let syms = map.method_syms_sorted.as_ref();
-    if syms.is_empty() {
-        return input.to_string();
-    }
-    let mut out = String::with_capacity(input.len());
-    let mut i = 0usize;
-    let mut in_string = false;
-    let mut escape = false;
-
-    while i < input.len() {
-        let ch = input[i..].chars().next().unwrap();
-        let ch_len = ch.len_utf8();
-        if in_string {
-            out.push(ch);
-            if escape {
-                escape = false;
-            } else if ch == '\\' {
-                escape = true;
-            } else if ch == '"' {
-                in_string = false;
-            }
-            i += ch_len;
-            continue;
-        }
-        if ch == '"' {
-            in_string = true;
-            out.push(ch);
-            i += ch_len;
-            continue;
-        }
-        let mut advanced = false;
-        if ch == '.' && i + 1 < input.len() {
-            let rest = &input[i + 1..];
-            if let Some(sym) = syms.iter().find(|s| rest.starts_with(s.as_str())) {
-                let sym_len = sym.len();
-                let after = i + 1 + sym_len;
-                let boundary_ok =
-                    after >= input.len() || !ident_continue(input[after..].chars().next().unwrap());
-                if boundary_ok {
-                    if let Some((entry_id, entity, kebab)) = map.sym_to_method.get(sym.as_str()) {
-                        if let Some(left_ent) = find_entity_before_dot(input, i) {
-                            let left_wire = entity_surface_wire_name(&left_ent, map);
-                            if left_wire == *entity || left_ent == *entity {
-                                out.push('.');
-                                out.push_str(sym);
-                                i += 1 + sym_len;
-                                skip_ascii_whitespace(input, &mut i);
-                                if input.as_bytes().get(i) == Some(&b'(') {
-                                    out.push('(');
-                                    i += 1;
-                                    if let Some(cgs) = session.catalog_cgs.get(entry_id) {
-                                        if let Some(cap_name) =
-                                            resolve_capability_name_for_method_kebab(
-                                                cgs.as_ref(),
-                                                entity.as_str(),
-                                                kebab.as_str(),
-                                            )
-                                        {
-                                            if let Some(end) = rewrite_invoke_arg_list(
-                                                input,
-                                                i,
-                                                entry_id.as_str(),
-                                                entity.as_str(),
-                                                cap_name.as_str(),
-                                                map,
-                                                &mut out,
-                                            ) {
-                                                i = end;
-                                                advanced = true;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if advanced {
-            continue;
-        }
-        out.push(ch);
-        i += ch_len;
-    }
-    out
-}
-
-fn rewrite_invoke_arg_list(
-    input: &str,
-    mut pos: usize,
-    entry_id: &str,
-    entity: &str,
-    cap_name: &str,
-    map: &SymbolMap,
-    out: &mut String,
-) -> Option<usize> {
-    while pos < input.len() {
-        skip_ascii_whitespace(input, &mut pos);
-        if input.as_bytes().get(pos)? == &b')' {
-            out.push(')');
-            return Some(pos + 1);
-        }
-        let key_start = pos;
-        while pos < input.len() {
-            let b = input.as_bytes()[pos];
-            if b.is_ascii_alphanumeric() || b == b'_' || b == b'#' {
-                pos += 1;
-            } else {
-                break;
-            }
-        }
-        let key = input[key_start..pos].trim();
-        let rewritten_key = if is_opaque_param_sym(key) {
-            cap_param_wire_for_sym(entry_id, entity, cap_name, key, map)
-                .unwrap_or_else(|| key.to_string())
-        } else {
-            key.to_string()
-        };
-        out.push_str(&rewritten_key);
-        if input.as_bytes().get(pos)? != &b'=' {
-            return None;
-        }
-        out.push('=');
-        pos += 1;
-        pos = copy_invoke_arg_value(input, pos, map, out)?;
-        skip_ascii_whitespace(input, &mut pos);
-        if input.as_bytes().get(pos)? == &b',' {
-            out.push(',');
-            pos += 1;
-        }
-    }
-    None
-}
-
-fn copy_invoke_arg_value(
-    input: &str,
-    mut pos: usize,
-    map: &SymbolMap,
-    out: &mut String,
-) -> Option<usize> {
-    skip_ascii_whitespace(input, &mut pos);
-    if let Some(entity_sym) = read_entity_ctor_token(input, pos) {
-        let (sym, sym_len) = entity_sym;
-        if input.as_bytes().get(pos + sym_len)? == &b'(' {
-            if let Some((entry_id, entity)) = map.sym_to_entity.get(sym.as_str()).map(|ent| {
-                (
-                    map.entry_id_for_entity_symbol(sym.as_str())
-                        .unwrap_or_default(),
-                    ent.clone(),
-                )
-            }) {
-                out.push_str(sym.as_str());
-                out.push('(');
-                pos += sym_len + 1;
-                if let Some(end) = rewrite_entity_ctor_arg_list(
-                    input,
-                    pos,
-                    entry_id.as_str(),
-                    entity.as_str(),
-                    map,
-                    out,
-                ) {
-                    return Some(end);
-                }
-            }
-        }
-    }
-    copy_until_pred_comma_or_close(input, pos, out)
-}
-
-fn read_entity_ctor_token(input: &str, pos: usize) -> Option<(String, usize)> {
-    let rest = input.get(pos..)?;
-    if !rest.starts_with('e') {
-        return None;
-    }
-    let mut end = 1usize;
-    for ch in rest[1..].chars() {
-        if ch.is_ascii_digit() {
-            end += ch.len_utf8();
-        } else {
-            break;
-        }
-    }
-    if end <= 1 {
-        return None;
-    }
-    Some((rest[..end].to_string(), end))
-}
-
-fn rewrite_entity_ctor_arg_list(
-    input: &str,
-    mut pos: usize,
-    entry_id: &str,
-    entity: &str,
-    map: &SymbolMap,
-    out: &mut String,
-) -> Option<usize> {
-    while pos < input.len() {
-        skip_ascii_whitespace(input, &mut pos);
-        if input.as_bytes().get(pos)? == &b')' {
-            out.push(')');
-            return Some(pos + 1);
-        }
-        let key_start = pos;
-        while pos < input.len() {
-            let b = input.as_bytes()[pos];
-            if b.is_ascii_alphanumeric() || b == b'_' || b == b'#' {
-                pos += 1;
-            } else {
-                break;
-            }
-        }
-        if pos == key_start {
-            return copy_until_pred_comma_or_close(input, pos, out);
-        }
-        let key = input[key_start..pos].trim();
-        let rewritten_key = if is_opaque_param_sym(key) {
-            entity_field_wire_for_sym(entry_id, entity, key, map).unwrap_or_else(|| key.to_string())
-        } else {
-            key.to_string()
-        };
-        out.push_str(&rewritten_key);
-        if input.as_bytes().get(pos)? != &b'=' {
-            return copy_until_pred_comma_or_close(input, pos, out);
-        }
-        out.push('=');
-        pos += 1;
-        pos = copy_until_pred_comma_or_close(input, pos, out)?;
-        skip_ascii_whitespace(input, &mut pos);
-        if input.as_bytes().get(pos)? == &b',' {
-            out.push(',');
-            pos += 1;
-        }
-    }
-    None
+    crate::expr_surface_render::wire_surface_from_teaching_session_line(input, session)
+        .unwrap_or_else(|| strip_prompt_expression_annotations(input))
 }
 
 /// Strip human-only suffixes from pasted prompt examples (`;;` comment may include `=>` result type,
@@ -4802,8 +3814,8 @@ pub fn strip_prompt_expression_annotations(input: &str) -> String {
     expr_only.to_string()
 }
 
-/// Rebuild-or-skip expansion for interactive / HTTP paths (reconstructs the map each call). `symbol_tuning` matches [`crate::prompt_render::RenderConfig::uses_symbols`].
-pub fn expand_expr_for_parse(
+/// Rebuild-or-skip wire surface for interactive display paths.
+pub fn wire_surface_for_parse(
     input: &str,
     cgs: &CGS,
     focus: FocusSpec<'_>,
@@ -4814,18 +3826,85 @@ pub fn expand_expr_for_parse(
         return input.to_string();
     }
     let exposure = teaching_exposure_session_from_focus(cgs, focus);
-    expand_expr_for_teaching_session(input, &exposure, true)
+    wire_surface_for_teaching_session(input, &exposure, true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::expr::Expr;
     use crate::loader::load_schema_dir;
     use crate::schema::{
         CapabilityMapping, CapabilitySchema, FieldSchema, FieldValueKind, NamedValueSchema,
         ResourceSchema, ValueDomainKey,
     };
     use crate::CapabilityKind;
+
+    #[test]
+    fn opaque_dotted_call_on_get_parses_without_string_expansion() {
+        let dir = std::path::Path::new("../../apis/proof");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let session = TeachingExposureSession::new(&cgs, "proof", &["Document"]);
+        let map = session.symbol_map_arc();
+        let layers = [&cgs];
+        let e_sym = session
+            .sym_to_entity
+            .iter()
+            .find(|(_, v)| v.as_str() == "Document")
+            .map(|(k, _)| k.clone())
+            .expect("Document e#");
+        let m_sym = session
+            .sym_to_method
+            .iter()
+            .find(|(_, (_, _, kebab))| kebab.contains("annotation") && kebab.contains("insert"))
+            .map(|(k, _)| k.clone())
+            .expect("annotation insert m#");
+        let slug_sym = session
+            .entity_field_to_sym
+            .iter()
+            .find(|((_, ent, wire), _)| ent == "Document" && wire == "slug")
+            .map(|(_, v)| v.clone())
+            .expect("slug p#");
+        let agent_sym = session
+            .cap_param_to_sym
+            .iter()
+            .find(|((_, ent, cap, param), _)| {
+                ent == "Document" && cap == "annotation_suggestion_insert" && param == "agent_id"
+            })
+            .map(|(_, v)| v.clone())
+            .expect("agent_id p#");
+        let opaque = format!(
+            "{e}({slug}=\"acme\").{m}({agent}=\"bot\")",
+            e = e_sym,
+            slug = slug_sym,
+            m = m_sym,
+            agent = agent_sym,
+        );
+        let cap = cgs
+            .get_capability("annotation_suggestion_insert")
+            .expect("annotation_suggestion_insert");
+        let label = crate::capability_method_label_kebab(cap);
+        let wire_line = format!("Document(slug=\"acme\").{label}(agent_id=\"bot\")");
+        let opaque_parsed =
+            crate::expr_parser::parse_with_cgs_layers(&opaque, &layers, map.clone())
+                .expect("opaque surface parses in-grammar");
+        let wire_parsed =
+            crate::expr_parser::parse_with_cgs_layers(&wire_line, &layers, map.clone())
+                .expect("wire surface parses with session map");
+        let Expr::Invoke(opaque_inv) = &opaque_parsed.expr else {
+            panic!("expected Invoke, got {:?}", opaque_parsed.expr);
+        };
+        let Expr::Invoke(wire_inv) = &wire_parsed.expr else {
+            panic!("expected Invoke, got {:?}", wire_parsed.expr);
+        };
+        assert_eq!(opaque_inv.capability, wire_inv.capability);
+        assert_eq!(opaque_inv.target, wire_inv.target);
+        assert_eq!(opaque_inv.input, wire_inv.input);
+        assert_eq!(opaque_inv.catalog_entry_id.as_deref(), Some("proof"));
+    }
 
     #[test]
     fn rewrite_opaque_ident_tokens_prefers_longest_symbol_match() {
@@ -5090,7 +4169,7 @@ mod tests {
     }
 
     #[test]
-    fn petstore_roundtrip_expand() {
+    fn wire_surface_opaque_get_petstore() {
         let dir = std::path::Path::new("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
@@ -5098,39 +4177,18 @@ mod tests {
         let cgs = load_schema_dir(dir).unwrap();
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let map = SymbolMap::build(&cgs, &full);
-        let expr = format!("{}(42)", map.entity_sym("Pet"));
-        let back = expand_path_symbols(&expr, &map);
-        assert_eq!(back, "Pet(42)");
+        let opaque = format!("{}(42)", map.entity_sym("Pet"));
+        let wire = crate::expr_surface_render::wire_surface_from_teaching_line(
+            &opaque,
+            &cgs,
+            std::sync::Arc::new(map),
+        )
+        .expect("wire");
+        assert_eq!(wire, "Pet(42)");
     }
 
     #[test]
-    fn method_expand_resolves_opaque_entity_surface_when_entities_not_expanded() {
-        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
-        if !dir.exists() {
-            return;
-        }
-        let cgs = load_schema_dir(dir).unwrap();
-        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
-        let map = SymbolMap::build(&cgs, &full);
-        let pet = map.entity_sym("Pet");
-        let m = map.method_sym("Pet", "upload-image");
-        if m == "upload-image" {
-            return;
-        }
-        let expr = format!("{}(1).{}()", pet, m);
-        let back = expand_path_symbols_with_options(&expr, &map, false);
-        assert!(
-            back.contains("upload-image"),
-            "opaque entity surface must still expand method: got {back}"
-        );
-        assert!(
-            back.starts_with(&format!("{pet}(")),
-            "entity stays opaque: {back}"
-        );
-    }
-
-    #[test]
-    fn method_expand_requires_entity_context() {
+    fn wire_surface_opaque_method_petstore() {
         let dir = std::path::Path::new("../../fixtures/schemas/petstore");
         if !dir.exists() {
             return;
@@ -5143,13 +4201,19 @@ mod tests {
         if m == "upload-image" {
             return;
         }
-        let expr = format!("{}(1).{}()", pet, m);
-        let back = expand_path_symbols(&expr, &map);
-        assert!(back.contains("upload-image"), "got {back}");
+        let opaque = format!("{}(1).{}()", pet, m);
+        let wire = crate::expr_surface_render::wire_surface_from_teaching_line(
+            &opaque,
+            &cgs,
+            std::sync::Arc::new(map),
+        )
+        .expect("wire");
+        assert!(wire.contains("upload-image"), "got {wire}");
+        assert!(wire.starts_with("Pet(1)"), "got {wire}");
     }
 
     #[test]
-    fn relation_expand_does_not_apply_foreign_entity_r_sym() {
+    fn wire_surface_relation_owned_on_receiver() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
         if !dir.is_dir() {
             return;
@@ -5159,29 +4223,13 @@ mod tests {
         let map = exp.to_symbol_map();
         let berry = map.entity_sym_for("pokeapi", "Berry");
         let firmness = map.ident_sym_relation_for("pokeapi", "Berry", "firmness");
-        let berries = map.ident_sym_relation_for("pokeapi", "BerryFirmness", "berries");
-        if firmness == "firmness" || berries == "berries" {
+        if firmness == "firmness" {
             return;
         }
-        let expr = format!(
-            "cheri = {berry}(\"cheri\")\nfirm = cheri.{berries}",
-            berries = berries
-        );
-        let back = expand_path_symbols(&expr, &map);
-        assert!(
-            !back.contains("cheri.berries"),
-            "foreign r# must not expand on Berry receiver: {back}"
-        );
-        assert!(
-            back.contains(&format!("cheri.{berries}")),
-            "expected unexpanded r# on binding receiver: {back}"
-        );
-        let expr2 = format!("firm = {berry}(\"cheri\").{firmness}", firmness = firmness);
-        let back2 = expand_path_symbols(&expr2, &map);
-        assert!(
-            back2.contains(".firmness"),
-            "owned r# on e# receiver should expand to wire: {back2}"
-        );
+        let opaque = format!("{berry}(\"cheri\").{firmness}", firmness = firmness);
+        let wire = crate::expr_surface_render::wire_surface_from_teaching_line(&opaque, &cgs, map)
+            .expect("wire");
+        assert!(wire.contains(".firmness"), "got {wire}");
     }
 
     #[test]
@@ -5256,18 +4304,18 @@ mod tests {
     }
 
     #[test]
-    fn expand_expr_for_parse_does_not_strip_prompt_annotation_tails() {
+    fn wire_surface_for_parse_does_not_strip_prompt_annotation_tails() {
         let cgs = CGS::new();
         assert_eq!(
-            expand_expr_for_parse("e1  ;;  old hint", &cgs, FocusSpec::All, false),
+            wire_surface_for_parse("e1  ;;  old hint", &cgs, FocusSpec::All, false),
             "e1  ;;  old hint"
         );
         assert_eq!(
-            expand_expr_for_parse("e1  =>  [e1]", &cgs, FocusSpec::All, false),
+            wire_surface_for_parse("e1  =>  [e1]", &cgs, FocusSpec::All, false),
             "e1  =>  [e1]"
         );
         assert_eq!(
-            expand_expr_for_parse("e1.m1() or e1.m2()", &cgs, FocusSpec::All, false),
+            wire_surface_for_parse("e1.m1() or e1.m2()", &cgs, FocusSpec::All, false),
             "e1.m1() or e1.m2()"
         );
     }

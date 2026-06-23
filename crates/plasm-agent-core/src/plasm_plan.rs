@@ -2007,13 +2007,10 @@ fn validate_relation_traversal(
         ));
     }
     validate_plan_expr_ir(&relation.ir, node_index, "relation.ir")?;
-    if relation.cardinality == RelationCardinality::One
-        && relation.source_cardinality == RelationSourceCardinality::Many
-    {
-        return Err(format!(
-            "plan.nodes[{node_index}].relation one-cardinality traversal requires a singleton source; wrap the source with Plan.singleton(...)"
-        ));
-    }
+    // A one-cardinality relation over a *plural* source is a valid 1:1 flat-map (one target per
+    // parent → a list aligned with the parents); it lowers to per-row fanout exactly like the
+    // many-relation case. `Plan.singleton(...)` is a narrowing assertion, never a prerequisite for
+    // traversal. See the cardinality lattice in `docs/plasm-language-definition.md`.
     if relation.cardinality == RelationCardinality::One
         && relation.source_cardinality == RelationSourceCardinality::Single
         && analyze_static_cardinality(plan, by_id, relation.source.as_str())
@@ -2967,7 +2964,11 @@ mod tests {
     }
 
     #[test]
-    fn relation_one_rejects_plural_source_without_singleton_proof() {
+    fn relation_one_from_plural_source_lowers_to_fanout() {
+        // A one-cardinality relation over a plural source is a valid 1:1 flat-map
+        // (one target per parent); it must validate and lower to a relation traversal
+        // node — no `Plan.singleton(...)` required. See the cardinality lattice in
+        // `docs/plasm-language-definition.md`.
         let v = serde_json::json!({
             "version": 1,
             "kind": "program",
@@ -3000,8 +3001,16 @@ mod tests {
             ],
             "return": { "kind": "node", "node": "category" }
         });
-        let err = validate_plan_value(&v).expect_err("plural one relation rejected");
-        assert!(err.contains("requires a singleton source"), "{err}");
+        validate_plan_value(&v).expect("plural one relation validates as fanout");
+        let plan = parse_plan_value(&v).expect("parse");
+        let validated = validate_plan_artifact(&plan).expect("validate");
+        assert!(matches!(
+            &validated.nodes()[1],
+            ValidatedPlanNode::RelationTraversal(node)
+                if node.relation.cardinality == RelationCardinality::One
+                    && node.relation.source_cardinality == RelationSourceCardinality::Many
+                    && node.relation.target.entity == "Category"
+        ));
     }
 
     #[test]

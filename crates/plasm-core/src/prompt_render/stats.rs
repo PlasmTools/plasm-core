@@ -181,12 +181,11 @@ pub(crate) fn domain_expression_tool_count_resolved(
         let block = collect_entity_teaching_block(
             cgs,
             ename,
-            map.as_deref(),
+            map.as_ref(),
             None,
             false,
             &mut line_valid_cache,
             line_valid_cache_seed,
-            map.clone(),
             &mut gloss_emit_none,
             surface_filter,
             session_entry_id.as_deref(),

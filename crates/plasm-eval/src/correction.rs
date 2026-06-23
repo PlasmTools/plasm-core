@@ -6,8 +6,8 @@ use plasm_core::error_render::{
     render_query_resolve_error_for_feedback, render_type_error_with_feedback, FeedbackStyle,
 };
 use plasm_core::expr::{ChainStep, Expr, QueryExpr, Ref};
-use plasm_core::expr_correction::recover_parse_with_rewrite;
-use plasm_core::expr_parser::{self, ParsedExpr};
+use plasm_core::expr_correction::parse_session_line_with_rewrite_recovery;
+use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::normalize_expr_query_capabilities;
 use plasm_core::predicate::Predicate;
 use plasm_core::step_semantics::{append_correction_lines, StepError};
@@ -241,9 +241,8 @@ pub fn validate_plan_steps_with_lexicon(
 
 /// Parse + type-check all steps; returns diagnostics (if any) and any deterministic rewrite notes.
 ///
-/// Each step is passed through the same expansion as teaching table / REPL ([`PromptPipelineConfig::expand_expr_line`])
-/// **before** parse and lexicon recovery, so `e#` / `p#` / `m#` and `;;` / legacy `=>` stripping match
-/// the interactive path when the same pipeline is used.
+/// Each step is parsed with in-grammar session [`SymbolMap`] resolution when symbol tuning is active
+/// (same as REPL / execute ingress — no string pre-expansion before parse).
 ///
 /// Notes are collected even when validation fails (e.g. step 0 lexicon-fixed, step 1 invalid).
 ///
@@ -291,25 +290,16 @@ pub fn validate_plan_steps_with_lexicon_detailed(
         };
         let t = text.trim();
         let contract_violation = output_contract_violation(t);
-        let expanded = pipeline.expand_expr_line(t, cgs, repl_focus_override);
-        let parsed = match expr_parser::parse(&expanded, cgs) {
-            Ok(p) => Ok((p, None::<String>)),
-            Err(_) => match recover_parse_with_rewrite(&expanded, cgs, lexicon) {
-                Ok((p, resolved)) => {
-                    if let Some(res) = resolved {
-                        lexicon_notes.push(StepLexiconNote {
-                            step_index: i,
-                            emitted: t.to_string(),
-                            resolved_to: res,
-                        });
-                    }
-                    Ok((p, None))
-                }
-                Err(e) => Err(e),
-            },
-        };
+        let parsed = parse_session_line_with_rewrite_recovery(t, cgs, lexicon, symbol_map.clone());
         match parsed {
-            Ok((mut p, _)) => {
+            Ok((mut p, resolved)) => {
+                if let Some(res) = resolved {
+                    lexicon_notes.push(StepLexiconNote {
+                        step_index: i,
+                        emitted: t.to_string(),
+                        resolved_to: res,
+                    });
+                }
                 if let Err(e) = normalize_expr_query_capabilities(&mut p.expr, cgs) {
                     diags.push(StepDiagnostic {
                         step_index: i,

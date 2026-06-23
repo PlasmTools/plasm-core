@@ -97,6 +97,7 @@ pub mod expr;
 pub mod expr_correction;
 pub mod expr_parser;
 pub mod expr_sugar;
+pub mod expr_surface_render;
 pub mod identifiers;
 pub mod identity;
 pub mod loader;
@@ -248,6 +249,10 @@ pub use wire_coercion::{
     plasm_value_to_json, relation_binding_assignable, RelationBindingProof,
 };
 pub mod relation_materialize;
+pub use expr_surface_render::{
+    render_expr_surface, render_expr_surface_federated, wire_surface_from_teaching_line,
+    wire_surface_from_teaching_session_line,
+};
 pub use relation_materialize::{
     extract_from_parent_get_value, flatten_from_parent_get_source_rows,
     from_parent_get_embed_edges, partition_prefer_resolutions, prefer_hydrate_embed_path,
@@ -288,12 +293,12 @@ pub use summary_render::{
     render_intent_with_projection, render_intent_with_projection_federated, render_outcome,
 };
 pub use symbol_tuning::{
-    entity_slices_for_render, expand_expr_for_parse, expand_expr_for_teaching_session,
-    expand_path_symbols, relation_endpoint_keys, resolve_prompt_surface_entities,
+    entity_slices_for_render, relation_endpoint_keys, resolve_prompt_surface_entities,
     strip_prompt_expression_annotations, symbol_map_cache_key_federated,
-    symbol_map_cache_key_single_catalog, symbol_map_for_prompt, ExposedEntitySymbolRow,
-    ExposedRelationSymbolRow, ExposureEntityKey, FocusSpec, SymbolMap, SymbolMapCacheKey,
-    SymbolMapCrossRequestCache, TeachingExposureSession,
+    symbol_map_cache_key_single_catalog, symbol_map_for_prompt, wire_surface_for_parse,
+    wire_surface_for_teaching_session, ExposedEntitySymbolRow, ExposedRelationSymbolRow,
+    ExposureEntityKey, FocusSpec, SymbolMap, SymbolMapCacheKey, SymbolMapCrossRequestCache,
+    TeachingExposureSession,
 };
 pub use template_interpolate::{
     dollar_interpolation_roots, interpolate_string, interpolate_string_map,

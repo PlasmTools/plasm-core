@@ -8,7 +8,7 @@ use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{
     AggregateFunction, ComputeOp, EffectClass, FieldPath, OutputName, PlanExprIr, PlanNodeKind,
     PlanRelationTraversal, PlanValue, QualifiedEntityKey, RelationCardinality,
-    SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
+    RelationSourceCardinality, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
 };
 use crate::plasm_plan_run::{
     format_session_symbolic_parse_error, parse_plasm_surface_line_program,
@@ -43,10 +43,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 use std::sync::Arc;
 
-/// Program RHS after session-scoped teaching table expansion (`e#` / `p#` / `m#` → wire/catalog text).
+/// Program RHS surface text for DAG lowering (opaque session symbols preserved).
 ///
-/// Construct only via [`Self::new`] at the [`compile_node_expr`] entry so postfix peel and field
-/// lists never see raw gloss tokens when lowering to [`ComputeOp`](crate::plasm_plan::ComputeOp).
+/// Symbol resolution happens in the parser and per-token field helpers — not via a textual
+/// pre-expansion pass. Construct only via [`Self::new`] at [`compile_node_expr`].
 #[derive(Debug, Clone)]
 pub struct ExpandedProgramSurface(String);
 
@@ -2486,6 +2486,23 @@ fn parse_relation_continuation_expr(
     })
 }
 
+/// Output shape of a relation traversal under the cardinality lattice
+/// (`docs/plasm-language-definition.md`): the result is a single row only when the
+/// relation is one-cardinality **and** the source is a singleton; a one-cardinality hop
+/// over a plural source is a 1:1 flat-map and therefore a list.
+fn relation_result_shape(
+    rel_cardinality: RelationCardinality,
+    source_card: RelationSourceCardinality,
+) -> crate::plasm_plan::ResultShape {
+    match (rel_cardinality, source_card) {
+        (RelationCardinality::Many, _) => crate::plasm_plan::ResultShape::List,
+        (RelationCardinality::One, RelationSourceCardinality::Many) => {
+            crate::plasm_plan::ResultShape::List
+        }
+        (RelationCardinality::One, _) => crate::plasm_plan::ResultShape::Single,
+    }
+}
+
 fn lower_relation_continuation(
     session: &ExecuteSession,
     state: &CompileState<'_>,
@@ -2541,10 +2558,7 @@ fn lower_relation_continuation(
         .continuation_text_expansion(segment)
         .unwrap_or_else(|| format!("{source_label}.{segment}"));
     let source_card = contract.relation_source_cardinality();
-    let result_shape = match rel_cardinality {
-        RelationCardinality::Many => crate::plasm_plan::ResultShape::List,
-        RelationCardinality::One => crate::plasm_plan::ResultShape::Single,
-    };
+    let result_shape = relation_result_shape(rel_cardinality, source_card);
     let ir = PlanExprIr {
         expr: serde_json::to_value(&parsed.expr).map_err(|e| e.to_string())?,
         projection: parsed.projection.clone(),
@@ -2879,10 +2893,7 @@ fn compile_surface_node(
                         Some(&contract.row_entity),
                     )?;
                     let source_card = contract.relation_source_cardinality();
-                    let result_shape = match rel_cardinality {
-                        RelationCardinality::Many => crate::plasm_plan::ResultShape::List,
-                        RelationCardinality::One => crate::plasm_plan::ResultShape::Single,
-                    };
+                    let result_shape = relation_result_shape(rel_cardinality, source_card);
                     let ir = PlanExprIr {
                         expr: serde_json::to_value(&parsed.expr).map_err(|e| e.to_string())?,
                         projection: parsed.projection.clone(),

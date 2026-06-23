@@ -74,18 +74,12 @@ pub(crate) fn parse_plasm_line_for_session(
         line,
     )
     .map_err(|e| {
-        let expanded = pipeline.expand_expr_for_session_with_optional_exposure(
-            line,
-            sess.cgs.as_ref(),
-            &sess.entities,
-            sess.teaching_exposure.as_ref(),
-        );
         let sym_map = crate::plasm_plan_run::symbol_map_for_plasm_surface_parse(
             sess,
             Some(st.sessions.symbol_map_cross_cache()),
         );
         RunLineError::Parse(augment_unknown_entity_parse_error(
-            execute_session_parse_error_message(&e, &expanded, line, sess.cgs.as_ref(), &sym_map),
+            execute_session_parse_error_message(&e, line, sess.cgs.as_ref(), &sym_map),
             sess,
         ))
     })?;

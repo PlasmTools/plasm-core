@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.64] - 2026-06-23
+
+### Changed
+
+- **Parse ingress:** in-grammar session [`SymbolMap`] resolution via `parse_session_line` and `parse_session_line_with_rewrite_recovery` (REPL, eval, execute) — no string pre-expansion before parse.
+- **Teaching validation:** `prompt_render/line_validate.rs` fuses opaque parse, normalize, typecheck, and wire render into one pass per cache miss (eliminates double-parse in teaching synthesis).
+- **Dry plan display:** session-aware wire surface via `render_expr_wire_for_execute_session` (compact IL summaries remain on separate hint surfaces).
+- **Plan lowering:** one-cardinality relations over plural sources lower as per-parent fanout without requiring `Plan.singleton(...)`.
+
+### Fixed
+
+- **Teaching synthesis:** `receiver_for_dotted_suffix` returns anchor receiver only (callers append suffix once).
+- **Execute errors:** collapsed redundant `expanded`/`source_line` params on session parse error messages.
+
 ## [0.3.63] - 2026-06-23
 
 ### Changed
@@ -1365,7 +1379,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Referential transparency:** unified session `e#` / wire entity constructor parsing across brace predicates, method args, and nested compound slots (`entity_ref_parse`); symbolic `p#` compound keys normalize without wire pre-expand.
 - **Program binding refs:** `issue.p27` / `body.content` lower to `PlasmInputRef` with opaque `p#` path segments resolved to wire field names in program context.
-- **Teaching QA:** teaching rows validate on the opaque agent parse path (`domain_line_validate_symbolic`) in addition to wire-expanded validation.
+- **Teaching QA:** teaching rows validate on the opaque agent parse path (`parse_with_cgs_layers` + session [`SymbolMap`]); nav receiver checks use the same path when symbols are enabled.
 
 ### Changed
 

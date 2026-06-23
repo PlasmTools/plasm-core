@@ -82,15 +82,14 @@ pub(crate) fn augment_unknown_entity_parse_error(msg: String, sess: &ExecuteSess
 /// Parser diagnostic plus imperative correction (same pipeline as REPL), for MCP/HTTP tool errors.
 pub(crate) fn execute_session_parse_error_message(
     err: &expr_parser::ParseError,
-    expanded: &str,
-    source_line: &str,
+    line: &str,
     cgs: &CGS,
     sym_map: &SymbolMap,
 ) -> String {
     let step = render_parse_error_with_feedback(
         err,
-        expanded,
-        source_line,
+        line,
+        line,
         cgs,
         FeedbackStyle::SymbolicLlm { map: sym_map },
     );

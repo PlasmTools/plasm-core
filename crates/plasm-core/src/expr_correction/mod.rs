@@ -52,5 +52,7 @@ mod recovery_hint;
 
 pub use auto_correct::{try_auto_correct, CorrectionOutcome};
 pub use entity_case::{resolve_entity_case_insensitive, try_normalize_entity_case};
-pub use recovery::{recover_parse, recover_parse_with_rewrite};
+pub use recovery::{
+    parse_session_line_with_rewrite_recovery, recover_parse, recover_parse_with_rewrite,
+};
 pub use recovery_hint::RecoveryHint;
