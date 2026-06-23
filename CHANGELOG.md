@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.61] - 2026-06-23
+
+### Fixed
+
+- **npm CI auth:** isolated `NPM_CONFIG_USERCONFIG` + `npm whoami` gate (self-hosted runner `~/.npmrc` was triggering web login instead of `NPM_TOKEN`).
+
 ## [0.3.60] - 2026-06-22
 
 ### Fixed
