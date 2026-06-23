@@ -1,4 +1,4 @@
-//! Teaching-row validation: one opaque parse → normalize → typecheck → wire surface (no double-parse).
+//! Teaching-row validation: one opaque [`parse_session_line`] → normalize → typecheck → wire surface.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -20,11 +20,25 @@ pub(crate) enum DomainLineValidEntry {
 }
 
 #[inline]
-fn domain_line_cache_key(cache_seed: u64, stripped_expr: &str) -> DomainLineValidCacheKey {
+fn domain_line_cache_key(
+    cache_seed: u64,
+    stripped_expr: &str,
+    map_arc: Option<&Arc<SymbolMap>>,
+) -> DomainLineValidCacheKey {
     use std::hash::{Hash, Hasher};
     let mut h = rustc_hash::FxHasher::default();
     cache_seed.hash(&mut h);
     stripped_expr.hash(&mut h);
+    map_arc.is_some().hash(&mut h);
+    if let Some(arc) = map_arc {
+        let rows = arc.exposed_entity_symbol_rows();
+        rows.len().hash(&mut h);
+        for row in rows.iter().take(8) {
+            row.entry_id.hash(&mut h);
+            row.entity.hash(&mut h);
+            row.symbol.hash(&mut h);
+        }
+    }
     h.finish()
 }
 
@@ -51,23 +65,16 @@ pub(crate) fn prompt_line_valid_cache_seed_exposure(exposure: &TeachingExposureS
     h.finish()
 }
 
-/// Parse (opaque or wire), normalize, type-check; render wire when session symbols are active.
+/// Parse with session map when present, normalize, type-check; render wire from parsed IR.
 fn validate_teaching_line_uncached(
     cgs: &CGS,
     stripped: &str,
     map_arc: Option<&Arc<SymbolMap>>,
 ) -> Option<(crate::expr_parser::ParsedExpr, String)> {
     let mut parsed = if let Some(arc) = map_arc {
-        let layers = [cgs];
-        match crate::expr_parser::parse_with_cgs_layers(stripped, &layers, Arc::clone(arc)) {
-            Ok(r) => r,
-            Err(_) => return None,
-        }
+        crate::expr_parser::parse_session_line(stripped, cgs, Some(Arc::clone(arc))).ok()?
     } else {
-        match crate::expr_parser::parse(stripped, cgs) {
-            Ok(r) => r,
-            Err(_) => return None,
-        }
+        crate::expr_parser::parse(stripped, cgs).ok()?
     };
     if crate::normalize_expr_query_capabilities(&mut parsed.expr, cgs).is_err() {
         return None;
@@ -101,7 +108,7 @@ pub(crate) fn domain_line_validate_cached(
     map_arc: Option<&Arc<SymbolMap>>,
 ) -> Option<(crate::expr_parser::ParsedExpr, String)> {
     let stripped = strip_prompt_expression_annotations(expr);
-    let key = domain_line_cache_key(cache_seed, &stripped);
+    let key = domain_line_cache_key(cache_seed, &stripped, map_arc);
     if let Some(entry) = cache.get(&key) {
         return match entry {
             DomainLineValidEntry::Invalid => None,
@@ -123,7 +130,10 @@ pub(crate) fn domain_line_validate_cached(
         }
         DomainLineValidEntry::Invalid => None,
     };
-    cache.insert(key, entry);
+    // Only memoize successes — a failed receiver probe for one suffix must not poison later witnesses.
+    if matches!(&entry, DomainLineValidEntry::Valid { .. }) {
+        cache.insert(key, entry);
+    }
     out
 }
 
@@ -136,4 +146,32 @@ pub(crate) fn domain_line_work_valid_cached(
     map_arc: Option<&Arc<SymbolMap>>,
 ) -> bool {
     domain_line_validate_cached(cache, cache_seed, cgs, expr, map_arc).is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+    use crate::loader::load_schema_dir_unvalidated;
+    use crate::symbol_tuning::{teaching_exposure_session_from_focus, FocusSpec};
+
+    #[test]
+    fn invalid_teaching_line_probe_is_not_memoized() {
+        let p = std::path::Path::new("../../fixtures/schemas/plasm_prompt_matrix");
+        if !p.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir_unvalidated(p).expect("plasm_prompt_matrix");
+        let exposure = teaching_exposure_session_from_focus(&cgs, FocusSpec::All);
+        let map = exposure.symbol_map_arc();
+        let seed = prompt_line_valid_cache_seed_cgs(&cgs);
+        let mut cache = HashMap::new();
+        let bogus = "e1(p1).m99()";
+        assert!(domain_line_validate_cached(&mut cache, seed, &cgs, bogus, Some(&map)).is_none());
+        assert!(
+            cache.is_empty(),
+            "invalid probes must not poison shared session cache"
+        );
+    }
 }

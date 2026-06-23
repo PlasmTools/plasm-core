@@ -578,7 +578,12 @@ impl<'a> Parser<'a> {
             }
             let key_start = self.pos;
             self.consume_raw_ident();
-            let key = self.input[key_start..self.pos].to_string();
+            let raw_key = self.input[key_start..self.pos].to_string();
+            let key = self
+                .sym_map
+                .resolve_ident(&raw_key)
+                .map(|w| w.to_string())
+                .unwrap_or(raw_key);
             self.skip_ws();
             if self.peek_char() != Some('=') {
                 return Err(self.err(ParseErrorKind::ExpectedChar {

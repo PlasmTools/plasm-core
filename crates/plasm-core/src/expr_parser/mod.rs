@@ -3365,6 +3365,38 @@ mod tests {
     }
 
     #[test]
+    fn parse_symbolic_union_ctor_resolves_opaque_field_keys_in_parse_tree() {
+        use std::sync::Arc;
+
+        use crate::symbol_tuning::TeachingExposureSession;
+
+        let cgs = root_union_heredoc_fixture_cgs();
+        let exposure = TeachingExposureSession::new(&cgs, "", &["Document"]);
+        let map = exposure.symbol_map_arc();
+        let cap = cgs.get_capability("document_suggest").unwrap();
+        let label = capability_method_label_kebab(cap);
+        let content_sym = map.ident_sym("content");
+        let parsed = parse_with_cgs_layers(
+            &format!("Document(doc).{label}(v111{{{content_sym}=$}})"),
+            &[&cgs],
+            map,
+        )
+        .expect("parse");
+        let Expr::Invoke(inv) = &parsed.expr else {
+            panic!("expected Invoke, got {:?}", parsed.expr);
+        };
+        let inp = inv.input.as_ref().expect("input").to_value();
+        let Value::UnionCtor { ctor_fields, .. } = inp else {
+            panic!("expected union ctor, got {inp:?}");
+        };
+        assert!(
+            ctor_fields.contains_key("content"),
+            "union ctor keys must be wire field names, got {ctor_fields:?}"
+        );
+        crate::type_check_expr(&parsed.expr, &cgs).unwrap();
+    }
+
+    #[test]
     fn parse_structured_heredoc_rejects_untagged_opener() {
         if !has_petstore() {
             return;

@@ -43,7 +43,7 @@ v104{p6=$}	→ delete_block — Delete one block
 v105{p5=$,p7=$,p12=$}	→ replace_range — Replace a range of blocks with new blocks
 v14	union · v210 | v211 | v212
 v15	union · v101 | v102 | v103 | v104 | v105 | v106 | v107
-e1(p10).p10[p10,p21,p34,p15,p14]	→ e1 · projection · Read or edit a shared Proof document
+e1(p10)[p10,p21,p34,p15,p14]	→ e1 · projection · Read or edit a shared Proof document
 e1(p10)	→ e1
 e1(p10).m17()	→ e1 · opt: p32, p31 · Bind this session to a share URL or token for this slug. Later calls reuse st…
 e1(p10).m1(p3=$, p28=$, p22=$, p24=$,..)	→ e1 · opt: p4, p31 · Start a comment thread on quoted text from the document

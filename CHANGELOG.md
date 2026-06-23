@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.65] - 2026-06-23
+
+### Fixed
+
+- **Parser:** union constructor brace maps resolve opaque `p#` keys via `SymbolMap::resolve_ident` (fixes teaching validation for capabilities such as `document_edit_v2` on Proof `Document`).
+- **Teaching validation:** `line_validate` uses one `parse_session_line` → normalize → typecheck → wire render pass per cache miss (no string pre-expansion workaround).
+
+### Changed
+
+- **Docs:** language definition, incremental teaching prompts, and README describe in-grammar symbol resolution (removed `expand_path_symbols` / `expand_expr_for_teaching_session` ingress narrative).
+
 ## [0.3.64] - 2026-06-23
 
 ### Changed

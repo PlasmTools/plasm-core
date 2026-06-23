@@ -57,6 +57,19 @@ pub(crate) fn teaching_expr_line_fingerprint(row: &TeachingExprLine) -> String {
     )
 }
 
+/// Post-alias dedupe must keep distinct capability witnesses even when `p#` collapse makes
+/// [`teaching_expr_line_fingerprint`] collide (Proof `document_edit_v2` vs other dotted calls).
+fn post_rewrite_teaching_row_fingerprint(
+    row: &EntityTeachingExprRow,
+    meta: &TeachingLineMeta,
+) -> String {
+    format!(
+        "{}|cap:{}",
+        teaching_expr_line_fingerprint(&row.teaching_expr),
+        meta.source_capability.as_deref().unwrap_or("")
+    )
+}
+
 pub(crate) fn rewrite_teaching_expr_line_opaque_tokens(
     row: &mut TeachingExprLine,
     rep: &HashMap<String, String>,
@@ -165,7 +178,7 @@ impl<'a> TeachingSynthesisSession<'a> {
                 let mut new_rows = Vec::new();
                 let mut new_lines = Vec::new();
                 for (row, meta) in block.teaching_rows.drain(..).zip(prompt.lines.drain(..)) {
-                    let fp = teaching_expr_line_fingerprint(&row.teaching_expr);
+                    let fp = post_rewrite_teaching_row_fingerprint(&row, &meta);
                     if seen.insert(fp) {
                         new_rows.push(row);
                         new_lines.push(meta);
@@ -188,7 +201,7 @@ impl<'a> TeachingSynthesisSession<'a> {
                 }
                 let mut seen = HashSet::new();
                 block.teaching_rows.retain(|row| {
-                    let fp = teaching_expr_line_fingerprint(&row.teaching_expr);
+                    let fp = post_rewrite_teaching_row_fingerprint(row, &row.meta);
                     seen.insert(fp)
                 });
             }
@@ -440,13 +453,14 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
 ) where
     F: FnMut(&str) -> &'b CGS,
 {
-    let line_valid_cache_seed = match exposure_for_ident {
-        Some(exp) => prompt_line_valid_cache_seed_exposure(exp),
-        None => full_entities
-            .first()
-            .map(|&ename| prompt_line_valid_cache_seed_cgs(resolve(ename)))
-            .unwrap_or(0),
-    };
+    let line_valid_cache_seed = full_entities
+        .first()
+        .map(|&ename| prompt_line_valid_cache_seed_cgs(resolve(ename)))
+        .unwrap_or_else(|| {
+            exposure_for_ident
+                .map(prompt_line_valid_cache_seed_exposure)
+                .unwrap_or(0)
+        });
     let entity_catalog_ids: IndexMap<(&str, &str), ()> = exposure_for_ident
         .map(exposure_qualified_catalog_ids)
         .unwrap_or_default();
@@ -481,6 +495,9 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
                       catalog_entry_id: &str,
                       teaching_blocks_out: &mut Vec<EntityTeachingBlock>,
                       model_out: &mut Vec<EntityTeachingPrompt>| {
+        // Validation memo is per-entity: a failed receiver probe for one domain must not
+        // stick in the shared session cache and block capability witnesses on another.
+        session.line_valid_cache.clear();
         let mut field_gloss_accum = Vec::new();
         let session_map = session.map_arc.as_ref().map(|a| a.as_ref());
         let mut gloss_emit: Option<GlossScratch<'_>> =

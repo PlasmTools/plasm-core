@@ -66,7 +66,7 @@ MCP initialize teaches these grammar rules once; `plasm_context` waves return te
 [`ExecuteSession`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-agent-core/src/execute_session.rs) holds:
 
 - `prompt_text` — Cumulative teaching text (wave 1 + optional `## Expanded capabilities` sections).
-- `teaching_exposure` — The [`TeachingExposureSession`] used for both teaching rendering and [`expand_expr_for_teaching_session`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/symbol_tuning.rs) (via [`expand_expr_for_session_with_optional_exposure`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/prompt_pipeline.rs)).
+- `teaching_exposure` — The [`TeachingExposureSession`] used for teaching rendering and session [`SymbolMap`] alignment (`parse_session_line`, wire-surface display via [`wire_surface_for_session_with_optional_exposure`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/prompt_pipeline.rs)).
 - `domain_revision` — Increments each time more entities are exposed (wire field name; teaching-table revision counter).
 
 Session identity (`prompt_hash`, `session` id) stays stable across waves; the hash is still derived from the **initial** prompt text for routing (see agent code paths).
