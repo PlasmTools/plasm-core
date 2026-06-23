@@ -83,7 +83,7 @@ use crate::mcp_logical_ref::{format_logical_session_wire_ref, parse_logical_sess
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
-use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth, tenant_principal_from_auth_info};
+use crate::mcp_stream_identity::McpTransportIdentity;
 use crate::operation::{
     compute_plan_commit_id_from_dry, plan_commit_meta, PlanCommitDryCache, PlanCommitRecord,
     PLAN_COMMIT_TTL,
@@ -318,11 +318,12 @@ impl PlasmMcpHandler {
             return Ok(None);
         };
 
-        if is_anonymous_mcp_auth(&info) {
+        if McpTransportIdentity::from_auth_info(&info).is_some_and(|i| i.anonymous) {
             return Ok(None);
         }
 
-        let Some(id) = config_id_from_auth_info(&info) else {
+        let identity = McpTransportIdentity::from_auth_info(&info);
+        let Some(id) = identity.and_then(|i| i.mcp_config_id) else {
             if has_tenant_configs {
                 return Err(CallToolError::from_message(
                     "MCP Authorization missing tenant binding (expected Bearer API key).",
@@ -359,7 +360,7 @@ impl PlasmMcpHandler {
         runtime: &Arc<dyn McpServer>,
     ) -> Option<TenantPrincipal> {
         let info = runtime.auth_info_cloned().await?;
-        tenant_principal_from_auth_info(&info)
+        McpTransportIdentity::from_auth_info(&info)?.to_tenant_principal()
     }
 
     fn incoming_mode(&self) -> IncomingAuthMode {
@@ -392,25 +393,35 @@ impl PlasmMcpHandler {
         runtime: &Arc<dyn McpServer>,
     ) -> crate::trace_hub::TraceSessionMeta {
         use crate::trace_hub::{McpConfigRef, TraceSessionMeta};
-        let tenant_incoming = self
-            .mcp_principal_from_transport_auth(runtime)
+
+        let identity = runtime
+            .auth_info_cloned()
             .await
-            .map(|p| p.tenant_id);
-        let (tenant_mcp, mcp_config) = match self.tenant_mcp_cfg(runtime).await {
-            Ok(Some(cfg)) => (
-                Some(cfg.tenant_id.clone()),
-                Some(McpConfigRef {
-                    config_id: cfg.id.to_string(),
-                    tenant_id: cfg.tenant_id.clone(),
-                }),
-            ),
-            _ => (None, None),
+            .and_then(|info| McpTransportIdentity::from_auth_info(&info));
+
+        let Some(identity) = identity else {
+            return TraceSessionMeta {
+                tenant_id: "anonymous".into(),
+                project_slug: "main".into(),
+                mcp_config: None,
+            };
         };
-        let tenant_id = tenant_incoming
-            .or(tenant_mcp)
-            .unwrap_or_else(|| "anonymous".to_string());
+
+        if identity.anonymous {
+            return TraceSessionMeta {
+                tenant_id: "anonymous".into(),
+                project_slug: "main".into(),
+                mcp_config: None,
+            };
+        }
+
+        let mcp_config = identity.mcp_config_id.map(|id| McpConfigRef {
+            config_id: id.to_string(),
+            tenant_id: identity.incoming_tenant_id.clone(),
+        });
+
         TraceSessionMeta {
-            tenant_id,
+            tenant_id: identity.incoming_tenant_id,
             project_slug: "main".into(),
             mcp_config,
         }

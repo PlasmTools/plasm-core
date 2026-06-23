@@ -7,9 +7,8 @@
 //! `rust-mcp-sdk` cannot forward an empty bearer secret). Once tenant configs exist, every MCP request must authenticate
 //! via API key or OAuth bearer token.
 //!
-//! **Incoming tenant contract:** [`AuthInfo::client_id`] is always the Plasm incoming-auth tenant id
-//! (`gh-*`, org tenant, …). OAuth dynamic-registration client ids (`client_*`) stay in OAuth JWT claims only.
-//! Downstream code must use [`tenant_principal_from_auth_info`], not raw `client_id` semantics from OAuth RFCs.
+//! Downstream code must interpret verified transport through [`crate::mcp_stream_identity::McpTransportIdentity`],
+//! not raw [`AuthInfo::client_id`] (OAuth RFC registration id vs Plasm incoming tenant).
 
 #![allow(clippy::result_large_err)]
 // Err variants are full HTTP responses; boxing every OAuth helper would be high churn for little gain.
@@ -29,9 +28,8 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::sync::OnceCell;
 use url::form_urlencoded;
-use uuid::Uuid;
 
-use crate::incoming_auth::{IncomingAuthMethod, TenantPrincipal};
+use crate::mcp_stream_identity::McpTransportIdentity;
 use crate::mcp_inbound_oauth::{
     mcp_resource_base_url, AuthorizeOutcome, McpInboundOAuthService, McpOAuthError,
     McpOAuthTokenRequest, OAUTH_SCOPE,
@@ -187,15 +185,12 @@ impl PlasmMcpApiKeyAuthProvider {
         }
         let mut extra = serde_json::Map::new();
         extra.insert("plasm_mcp_anonymous".to_string(), json!(true));
-        Ok(AuthInfo {
-            token_unique_id: "plasm_mcp_anonymous".into(),
-            client_id: None,
-            user_id: None,
-            scopes: None,
-            expires_at: Some(auth_expires_at(3600)),
-            audience: None,
-            extra: Some(extra),
-        })
+        Ok(McpTransportIdentity::anonymous().into_auth_info(
+            "plasm_mcp_anonymous".into(),
+            None,
+            Some(auth_expires_at(3600)),
+            extra,
+        ))
     }
 
     async fn verify_api_key(&self, raw: &str) -> Result<AuthInfo, AuthenticationError> {
@@ -231,18 +226,16 @@ impl PlasmMcpApiKeyAuthProvider {
             extra.insert("plasm_owner_subject".to_string(), json!(owner_subject));
         }
 
-        Ok(AuthInfo {
-            token_unique_id: format!("{:x}", Sha256::digest(raw.as_bytes())),
-            client_id: Some(cfg.tenant_id.clone()),
-            user_id: cfg
-                .owner_subject
-                .clone()
-                .or_else(|| Some(cfg.id.to_string())),
-            scopes: None,
-            expires_at: Some(auth_expires_at(86400 * 365)),
-            audience: None,
-            extra: Some(extra),
-        })
+        let subject = cfg
+            .owner_subject
+            .clone()
+            .unwrap_or_else(|| cfg.id.to_string());
+        Ok(McpTransportIdentity::api_key(cfg.tenant_id.clone(), subject, cfg.id).into_auth_info(
+            format!("{:x}", Sha256::digest(raw.as_bytes())),
+            None,
+            Some(auth_expires_at(86400 * 365)),
+            extra,
+        ))
     }
 
     async fn verify_oauth_bearer(&self, raw: &str) -> Result<AuthInfo, AuthenticationError> {
@@ -312,15 +305,18 @@ impl PlasmMcpApiKeyAuthProvider {
             scopes
         };
 
-        Ok(AuthInfo {
-            token_unique_id: format!("{:x}", Sha256::digest(raw.as_bytes())),
-            client_id: Some(principal.tenant_id.clone()),
-            user_id: Some(principal.subject.clone()),
-            scopes: Some(scopes),
-            expires_at: Some(auth_expires_at(OAUTH_ACCESS_TOKEN_TTL_SECS)),
-            audience: None,
-            extra: Some(extra),
-        })
+        Ok(McpTransportIdentity::oauth(
+            principal.tenant_id.clone(),
+            principal.subject.clone(),
+            principal.client_id.clone(),
+            cfg.id,
+        )
+        .into_auth_info(
+            format!("{:x}", Sha256::digest(raw.as_bytes())),
+            Some(scopes),
+            Some(auth_expires_at(OAUTH_ACCESS_TOKEN_TTL_SECS)),
+            extra,
+        ))
     }
 
     fn oauth_authorization_server_metadata_json(&self) -> serde_json::Value {
@@ -682,101 +678,5 @@ impl AuthProvider for PlasmMcpApiKeyAuthProvider {
 
     fn protected_resource_metadata_url(&self) -> Option<&str> {
         Some(self.protected_resource_metadata_url.as_str())
-    }
-}
-
-pub(crate) fn config_id_from_auth_info(info: &AuthInfo) -> Option<Uuid> {
-    let extra = info.extra.as_ref()?;
-    let v = extra.get("plasm_mcp_config_id")?;
-    let s = v.as_str()?;
-    Uuid::parse_str(s).ok()
-}
-
-/// Canonical mapping from Streamable HTTP MCP transport auth to incoming tenant principal.
-///
-/// **Contract:** for every non-anonymous transport mode, [`AuthInfo::client_id`] is the Plasm
-/// incoming-auth tenant id (`gh-*`, org tenant, …), never the OAuth dynamic-registration client id
-/// (`client_*`). OAuth registration ids live only in the OAuth JWT claims layer.
-pub(crate) fn tenant_principal_from_auth_info(info: &AuthInfo) -> Option<TenantPrincipal> {
-    let tenant_id = info.client_id.clone()?;
-    let subject = info.user_id.clone()?;
-    if tenant_id.trim().is_empty() || subject.trim().is_empty() {
-        return None;
-    }
-    let method = if info
-        .extra
-        .as_ref()
-        .and_then(|m| m.get("plasm_mcp_oauth"))
-        .and_then(|v| v.as_bool())
-        == Some(true)
-    {
-        IncomingAuthMethod::Jwt
-    } else {
-        IncomingAuthMethod::ApiKey
-    };
-    Some(TenantPrincipal {
-        tenant_id,
-        subject,
-        method,
-    })
-}
-
-pub(crate) fn is_anonymous_mcp_auth(info: &AuthInfo) -> bool {
-    info.extra
-        .as_ref()
-        .and_then(|m| m.get("plasm_mcp_anonymous"))
-        .and_then(|v| v.as_bool())
-        == Some(true)
-}
-
-#[cfg(test)]
-mod tenant_principal_tests {
-    use super::*;
-    use crate::incoming_auth::{IncomingAuthMethod, TenantPrincipal};
-    use serde_json::Map;
-
-    fn principal(info: &AuthInfo) -> TenantPrincipal {
-        tenant_principal_from_auth_info(info).expect("tenant principal")
-    }
-
-    fn oauth_extra() -> Map<String, serde_json::Value> {
-        let mut m = Map::new();
-        m.insert("plasm_mcp_oauth".into(), json!(true));
-        m
-    }
-
-    #[test]
-    fn oauth_transport_uses_incoming_tenant_not_registration_client_id() {
-        let info = AuthInfo {
-            token_unique_id: "tok".into(),
-            client_id: Some("gh-85869007".into()),
-            user_id: Some("github:85869007".into()),
-            scopes: None,
-            expires_at: None,
-            audience: None,
-            extra: Some(oauth_extra()),
-        };
-        let p = principal(&info);
-        assert_eq!(p.tenant_id, "gh-85869007");
-        assert_eq!(p.subject, "github:85869007");
-        assert_eq!(p.method, IncomingAuthMethod::Jwt);
-    }
-
-    #[test]
-    fn api_key_transport_uses_config_tenant() {
-        let mut extra = Map::new();
-        extra.insert("plasm_mcp_config_id".into(), json!(Uuid::nil().to_string()));
-        let info = AuthInfo {
-            token_unique_id: "tok".into(),
-            client_id: Some("gh-10488548".into()),
-            user_id: Some("github:10488548".into()),
-            scopes: None,
-            expires_at: None,
-            audience: None,
-            extra: Some(extra),
-        };
-        let p = principal(&info);
-        assert_eq!(p.tenant_id, "gh-10488548");
-        assert_eq!(p.method, IncomingAuthMethod::ApiKey);
     }
 }
