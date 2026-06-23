@@ -78,12 +78,12 @@ use crate::http_execute::{
     normalize_capability_seeds, try_dispatch_operation_program, ApplyCapabilitySeedsOutcome,
     CapabilitySeed, RankedCapabilitiesArg,
 };
-use crate::incoming_auth::{tenant_scope, IncomingAuthMethod, IncomingAuthMode, TenantPrincipal};
+use crate::incoming_auth::{tenant_scope, IncomingAuthMode, TenantPrincipal};
 use crate::mcp_logical_ref::{format_logical_session_wire_ref, parse_logical_session_wire_ref};
 use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
-use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth};
+use crate::mcp_stream_auth::{config_id_from_auth_info, is_anonymous_mcp_auth, tenant_principal_from_auth_info};
 use crate::operation::{
     compute_plan_commit_id_from_dry, plan_commit_meta, PlanCommitDryCache, PlanCommitRecord,
     PLAN_COMMIT_TTL,
@@ -359,27 +359,7 @@ impl PlasmMcpHandler {
         runtime: &Arc<dyn McpServer>,
     ) -> Option<TenantPrincipal> {
         let info = runtime.auth_info_cloned().await?;
-        let tenant_id = info.client_id?;
-        let subject = info.user_id?;
-        if tenant_id.trim().is_empty() || subject.trim().is_empty() {
-            return None;
-        }
-        let method = if info
-            .extra
-            .as_ref()
-            .and_then(|m| m.get("plasm_mcp_oauth"))
-            .and_then(|v| v.as_bool())
-            == Some(true)
-        {
-            IncomingAuthMethod::Jwt
-        } else {
-            IncomingAuthMethod::ApiKey
-        };
-        Some(TenantPrincipal {
-            tenant_id,
-            subject,
-            method,
-        })
+        tenant_principal_from_auth_info(&info)
     }
 
     fn incoming_mode(&self) -> IncomingAuthMode {
