@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.71] - 2026-06-24
+
+### Added
+
+- **Regression coverage — relation-hop + `.limit` + projection scope:** new `plasm-agent-core` tests
+  (`relation_hop_limit_projection_resolves_against_target_entity` — a table-driven case over
+  `from_parent_get` / `query_scoped` materialize with wire and opaque `e#`/`r#`/`p#` symbols,
+  `relation_hop_limit_then_separate_projection_resolves_target_entity`, and
+  `linear_issue_comments_limit_projection_opaque_resolves_target` against the real `apis/linear`
+  catalog) lock in that a projection after a relation hop with an intervening postfix transform
+  resolves field tokens against the relation **target** entity (not the receiver).
+- **`PLASM_MCP_RUN_AWAIT_MAX_SECS`:** env-tunable ceiling (default **600s**) for server-side terminal
+  await (MCP `plasm_run`, HTTP `wait`); a stuck upstream operation now surfaces an explicit timeout at
+  this bound instead of always hanging for the full default budget.
+
+### Changed
+
+- **Clearer "bare roots" diagnostic:** the multi-line program error now states that the
+  default-return-is-first-binding coercion applies only to single-physical-line, space-separated
+  programs; multi-line programs with two or more bindings must end with an explicit roots line.
+
 ## [0.3.70] - 2026-06-24
 
 ### Changed

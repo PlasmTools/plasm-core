@@ -21,11 +21,35 @@ pub struct AwaitConfig {
     pub max_wait: Duration,
 }
 
+/// Hard ceiling for a single server-side terminal await (MCP `plasm_run`, HTTP `wait`).
+const DEFAULT_AWAIT_MAX_WAIT_SECS: u64 = 600;
+
+/// Bounded, env-tunable await ceiling so a stuck upstream operation surfaces an explicit
+/// [`AwaitError::Timeout`] to the agent instead of hanging the tool for the full default budget.
+///
+/// `PLASM_MCP_RUN_AWAIT_MAX_SECS` overrides the ceiling (positive integer seconds; invalid or
+/// non-positive values are ignored and fall back to [`DEFAULT_AWAIT_MAX_WAIT_SECS`]).
+fn parse_await_max_wait_secs(raw: Option<&str>) -> Duration {
+    let secs = raw
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(DEFAULT_AWAIT_MAX_WAIT_SECS);
+    Duration::from_secs(secs)
+}
+
+fn await_max_wait_from_env() -> Duration {
+    parse_await_max_wait_secs(
+        std::env::var("PLASM_MCP_RUN_AWAIT_MAX_SECS")
+            .ok()
+            .as_deref(),
+    )
+}
+
 impl Default for AwaitConfig {
     fn default() -> Self {
         Self {
             poll_interval: Duration::from_millis(200),
-            max_wait: Duration::from_secs(600),
+            max_wait: await_max_wait_from_env(),
         }
     }
 }
@@ -143,6 +167,26 @@ mod tests {
     use crate::operation::OpAcceptContext;
     use crate::operation_progress::{op_plasm_meta_short, OpWireSig};
     use crate::test_support::operation_fixtures::{minimal_host, plain_trace};
+
+    #[test]
+    fn await_max_wait_env_parse_bounds() {
+        // Valid positive override.
+        assert_eq!(
+            parse_await_max_wait_secs(Some("30")),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            parse_await_max_wait_secs(Some("  45 ")),
+            Duration::from_secs(45)
+        );
+        // Invalid / non-positive / absent → default ceiling.
+        let default = Duration::from_secs(DEFAULT_AWAIT_MAX_WAIT_SECS);
+        assert_eq!(parse_await_max_wait_secs(None), default);
+        assert_eq!(parse_await_max_wait_secs(Some("0")), default);
+        assert_eq!(parse_await_max_wait_secs(Some("-5")), default);
+        assert_eq!(parse_await_max_wait_secs(Some("abc")), default);
+        assert_eq!(parse_await_max_wait_secs(Some("")), default);
+    }
 
     #[test]
     fn plan_run_result_is_terminal_rejects_poll_snapshot() {

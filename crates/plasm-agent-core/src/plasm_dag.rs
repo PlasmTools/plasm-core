@@ -399,7 +399,10 @@ pub(crate) fn compile_plasm_dag_to_plan_inner(
         }
     }
     let roots = final_roots.ok_or_else(|| {
-        "Plasm program needs a final line of bare roots (comma-separated expressions or node labels)"
+        "Plasm program needs a final line of bare roots (comma-separated expressions or node labels). \
+         The default-return-is-first-binding coercion applies only to single-physical-line, \
+         space-separated programs; multi-line programs with two or more bindings must end with an \
+         explicit roots line naming the binding(s) to return (e.g. a trailing `comments` line)."
             .to_string()
     })?;
     if roots.is_empty() {
@@ -4050,6 +4053,93 @@ bad"#,
         );
     }
 
+    /// Compile `program` and assert its post-`.limit` projection resolved against the relation
+    /// **target** entity: compilation succeeds and the plan does not leak the receiver-only field
+    /// `team_key`. Shared by the wire/opaque/`query_scoped` cases below.
+    fn assert_relation_limit_projection_targets(
+        session: &ExecuteSession,
+        what: &str,
+        program: &str,
+    ) {
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            session,
+            "relation-hop-limit-project",
+            program,
+        )
+        .unwrap_or_else(|e| {
+            panic!("{what}: projection after relation+limit must resolve against the relation target, got: {e}\nprogram:\n{program}")
+        });
+        assert!(
+            !format!("{plan:?}").contains("team_key"),
+            "{what}: plan leaked receiver-entity field `team_key`\nprogram:\n{program}"
+        );
+    }
+
+    /// Regression: a projection after `relation-hop + .limit(...)` must resolve field tokens against
+    /// the relation **target**, not the **receiver**. Covers `from_parent_get` and `query_scoped`
+    /// materialize, wire names and opaque `e#`/`r#`/`p#`. Before the fix the limit-compute qe traced
+    /// back to the receiver (`LangItem`) and could resolve a homograph to a receiver field
+    /// (`team_key`). The projected `note`/`label` fields exist only on the relation targets
+    /// (`LangLine`/`LangTag`), never on the `LangItem` receiver.
+    #[test]
+    fn relation_hop_limit_projection_resolves_against_target_entity() {
+        let session = test_session();
+        let map = session
+            .teaching_exposure
+            .as_ref()
+            .expect("exposure")
+            .symbol_map_arc();
+        let e_item = map.entity_sym_for("langmatrix", "LangItem");
+        let r_lines = map.ident_sym_relation_for("langmatrix", "LangItem", "lines");
+        let p_note = map.ident_sym_entity_field_for("langmatrix", "LangLine", "note");
+        assert_ne!(r_lines, "lines", "relation symbol not opaque: {r_lines}");
+        assert_ne!(p_note, "note", "field symbol not opaque: {p_note}");
+        let opaque =
+            format!("item = {e_item}(\"i1\")\nlines = item.{r_lines}.limit(2)\nlines[{p_note}]");
+        for (what, program) in [
+            (
+                "from_parent_get (wire)",
+                "item = LangItem(\"i1\")\nlines = item.lines.limit(2)\nlines[note]",
+            ),
+            (
+                "query_scoped (wire)",
+                "item = LangItem(\"i1\")\ntags = item.tags.limit(2)\ntags[label]",
+            ),
+            ("from_parent_get (opaque e#/r#/p#)", opaque.as_str()),
+        ] {
+            assert_relation_limit_projection_targets(&session, what, program);
+        }
+    }
+
+    /// Complement to the positive case: projecting a **receiver** field (`title`, a `LangItem` field)
+    /// after the relation hop + limit must be **rejected** against the target row, with a diagnostic
+    /// that names the missing row field rather than an unrelated receiver field.
+    #[test]
+    fn relation_hop_limit_then_separate_projection_resolves_target_entity() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "relation-hop-limit-split-project",
+            r#"item = LangItem("i1")
+lines = item.lines.limit(2)
+bad = lines[title]
+bad"#,
+        )
+        .expect_err("`title` is a LangItem field, not a LangLine row field — must be rejected against the target");
+        assert!(
+            err.contains("not a row field"),
+            "expected target-entity rejection, got: {err}"
+        );
+        assert!(
+            !err.contains("team_key"),
+            "diagnostic must not surface unrelated receiver fields: {err}"
+        );
+    }
+
     /// Primary session `entry_id` is `github`, but `LangLine` was exposed from `linear` in teaching table
     /// — plan `qualified_entity` must use the owning catalog, not the lexicographic primary.
     #[test]
@@ -4378,6 +4468,62 @@ kids"#
             .expect("kids node");
         assert_eq!(kids["relation"]["target"]["entry_id"], "linear", "{kids}");
         evaluate_plasm_plan_dry(&session, &plan).expect("dry-run real catalogs");
+    }
+
+    /// Faithful repro of the live Linear failure: real `apis/linear`, multi-entity opaque session
+    /// (Issue + Label + Comment), `issue.comments.limit(3)[id,body]` written with opaque `e#`/`r#`/`p#`.
+    /// Before the fix this surfaced `team_key` (a receiver Issue field) when validating the Comment
+    /// projection after the limit compute.
+    #[test]
+    fn linear_issue_comments_limit_projection_opaque_resolves_target() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let linear_dir = root.join("../../apis/linear");
+        if !linear_dir.is_dir() {
+            return;
+        }
+        let cgs = Arc::new(plasm_core::loader::load_schema_dir(&linear_dir).expect("linear"));
+        let mut ctxs = indexmap::IndexMap::new();
+        ctxs.insert(
+            "linear".into(),
+            Arc::new(CgsContext::entry("linear", cgs.clone())),
+        );
+        let exp =
+            TeachingExposureSession::new(cgs.as_ref(), "linear", &["Issue", "Label", "Comment"]);
+        let session = ExecuteSession::new(
+            "ph".into(),
+            "p".into(),
+            cgs.clone(),
+            ctxs,
+            "linear".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Issue".into(), "Label".into(), "Comment".into()],
+            Some(exp),
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
+        );
+        let map = session
+            .teaching_exposure
+            .as_ref()
+            .expect("exposure")
+            .symbol_map_arc();
+        let e_issue = map.entity_sym_for("linear", "Issue");
+        let r_comments = map.ident_sym_relation_for("linear", "Issue", "comments");
+        let p_id = map.ident_sym_entity_field_for("linear", "Comment", "id");
+        let p_body = map.ident_sym_entity_field_for("linear", "Comment", "body");
+        let source = format!(
+            r#"issue = {e_issue}("PLASM-1")
+comments = issue.{r_comments}.limit(3)
+comments[{p_id},{p_body}]"#
+        );
+        assert_relation_limit_projection_targets(
+            &session,
+            "linear Issue.comments (real catalog)",
+            &source,
+        );
     }
 
     #[test]
