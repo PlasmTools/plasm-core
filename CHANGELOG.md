@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.69] - 2026-06-24
+
+### Changed
+
+- Semver tag for monorepo release: Circle/npm OIDC trust ID verification in CI (fail fast before NAPI build).
+
 ## [0.3.68] - 2026-06-24
 
 ### Changed
