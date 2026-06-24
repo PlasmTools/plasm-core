@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.68] - 2026-06-24
+
+### Changed
+
+- Semver tag for monorepo release: GitHub `--latest` install manifest + npm OIDC publish CI fixes on PlasmTools/plasm.
+
 ## [0.3.67] - 2026-06-24
 
 ### Changed
