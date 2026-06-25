@@ -2714,7 +2714,7 @@ pub struct TeachingExposureSession {
     /// Fingerprint → representative registry-backed metadata for `v#` gloss text.
     value_domain_fp_to_repr_meta: IndexMap<String, IdentMetadata>,
     /// Memoized [`SymbolMap`] for this session; cleared in [`Self::expose_entities`].
-    symbol_map_cache: RwLock<Option<Arc<SymbolMap>>>,
+    symbol_map_cache: RwLock<Option<(u64, Arc<SymbolMap>)>>,
     /// `(catalog_entry_id, entity)` → wire name → slot metadata (rebuilt after each slot assignment wave).
     ident_meta_by_entity: HashMap<(String, EntityName), HashMap<String, IdentMetadata>>,
 }
@@ -3268,13 +3268,16 @@ impl TeachingExposureSession {
         cross: Option<&SymbolMapCrossRequestCache>,
         key: Option<SymbolMapCacheKey>,
     ) -> (Arc<SymbolMap>, Option<bool>) {
+        let exposure_fp = hash_exposure_session_rows(self);
         {
             let r = self
                 .symbol_map_cache
                 .read()
                 .expect("symbol_map_cache lock poisoned");
-            if let Some(arc) = r.as_ref() {
-                return (Arc::clone(arc), None);
+            if let Some((fp, arc)) = r.as_ref() {
+                if *fp == exposure_fp {
+                    return (Arc::clone(arc), None);
+                }
             }
         }
         let (built, lru_hit) = if let (Some(cache), Some(k)) = (cross, key) {
@@ -3292,7 +3295,7 @@ impl TeachingExposureSession {
             .symbol_map_cache
             .write()
             .expect("symbol_map_cache lock poisoned");
-        *w = Some(Arc::clone(&built));
+        *w = Some((exposure_fp, Arc::clone(&built)));
         (built, lru_hit)
     }
 
@@ -4166,6 +4169,50 @@ mod tests {
         let exp2 = TeachingExposureSession::new(&cgs, "", &["Pet"]);
         let (_, h2) = exp2.symbol_map_arc_cross(Some(&cache), Some(key));
         assert_eq!(h2, Some(false));
+    }
+
+    #[test]
+    fn symbol_map_session_local_cache_rejects_stale_snapshot_after_federated_extend() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = Arc::new(load_schema_dir(dir).expect("matrix"));
+        let mut contexts = indexmap::IndexMap::new();
+        contexts.insert(
+            "linear".to_string(),
+            Arc::new(crate::CgsContext::entry("linear", cgs.clone())),
+        );
+        contexts.insert(
+            "github".to_string(),
+            Arc::new(crate::CgsContext::entry("github", cgs.clone())),
+        );
+        let layers: Vec<&CGS> = contexts.values().map(|c| c.cgs.as_ref()).collect();
+        let mut exp = TeachingExposureSession::new(
+            cgs.as_ref(),
+            "linear",
+            &["LangItem", "LangLine", "LangTag"],
+        );
+        let cache = SymbolMapCrossRequestCache::new(8);
+        let key_three = symbol_map_cache_key_federated(&layers, &exp);
+        let (map_three, _) = exp.symbol_map_arc_cross(Some(&cache), Some(key_three));
+        assert!(map_three.resolve_session_entity_symbol("e3").is_some());
+        assert!(map_three.resolve_session_entity_symbol("e4").is_none());
+        let fp_three = hash_exposure_session_rows(&exp);
+
+        exp.expose_entities(&layers, cgs.clone(), "github", &["LangDetail"]);
+        // Simulate a stale session-local memo (e.g. concurrent compile during extend).
+        *exp.symbol_map_cache
+            .write()
+            .expect("symbol_map_cache lock poisoned") = Some((fp_three, Arc::clone(&map_three)));
+
+        let key_four = symbol_map_cache_key_federated(&layers, &exp);
+        let (map_four, _) = exp.symbol_map_arc_cross(Some(&cache), Some(key_four));
+        assert!(
+            map_four.resolve_session_entity_symbol("e4").is_some(),
+            "federated extend must rebuild symbol map when exposure fingerprint advances"
+        );
+        assert_eq!(map_four.entity_sym_for("github", "LangDetail"), "e4");
     }
 
     #[test]

@@ -484,10 +484,19 @@ pub fn expand_flattened_program_statements(lines: &[String]) -> FlattenedProgram
             }
         }
     }
+    if coerced_default_return.is_none() {
+        coerced_default_return = finalize_flattened_program_roots(&mut statements);
+    }
     FlattenedProgram {
         statements,
         coerced_default_return,
     }
+}
+
+/// Agent-facing hint when a program has bindings but no executable return roots.
+pub fn missing_program_roots_error() -> String {
+    "Missing return roots — add a final line with the binding to return (e.g. `labels`), or write bindings on one space-separated line (first binding is returned)."
+        .to_string()
 }
 
 #[cfg(test)]
@@ -573,5 +582,22 @@ mod tests {
         ]);
         assert_eq!(expanded.coerced_default_return.as_deref(), Some("repo"));
         assert!(expanded.statements.iter().any(|s| s.starts_with("repo = ")));
+    }
+
+    #[test]
+    fn expand_binding_only_newline_separated_coerces_first_binding_return() {
+        let expanded = expand_flattened_program_statements(&[
+            "hits = e4(p1=\"sha\")".to_string(),
+            "labels = hits.p5".to_string(),
+        ]);
+        assert_eq!(expanded.coerced_default_return.as_deref(), Some("hits"));
+        assert_eq!(expanded.statements.last().map(String::as_str), Some("hits"));
+    }
+
+    #[test]
+    fn expand_single_binding_line_coerces_default_return() {
+        let expanded = expand_flattened_program_statements(&["hits = e4(p1=\"sha\")".to_string()]);
+        assert_eq!(expanded.coerced_default_return.as_deref(), Some("hits"));
+        assert_eq!(expanded.statements.last().map(String::as_str), Some("hits"));
     }
 }

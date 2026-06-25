@@ -3,7 +3,7 @@
 use crate::execute_pipeline::RunLineError;
 use crate::run_artifacts::{persist_execute_run, PersistExecuteRunError, PersistExecuteRunInput};
 
-use super::ingress::{augment_unknown_entity_parse_error, execute_session_parse_error_message};
+use super::ingress::execute_session_parse_error_message;
 use super::proof_bind::{
     maybe_proof_refresh_session_base_token, try_proof_document_share_bind, ProofBindError,
 };
@@ -78,9 +78,11 @@ pub(crate) fn parse_plasm_line_for_session(
             sess,
             Some(st.sessions.symbol_map_cross_cache()),
         );
-        RunLineError::Parse(augment_unknown_entity_parse_error(
-            execute_session_parse_error_message(&e, line, sess.cgs.as_ref(), &sym_map),
-            sess,
+        RunLineError::Parse(execute_session_parse_error_message(
+            &e,
+            line,
+            sess.cgs.as_ref(),
+            &sym_map,
         ))
     })?;
     if let Some(ref fed) = sess.federation_dispatch() {

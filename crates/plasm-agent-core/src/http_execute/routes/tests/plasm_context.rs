@@ -265,3 +265,110 @@ fn tool_meta_keeps_slim_agent_keys() {
     assert!(!meta.contains_key("catalog_entry_ids"));
     assert!(!meta.contains_key("intent"));
 }
+
+/// Federated extend: TSV delta assigns `e4` for a new catalog row; `plasm` must parse the same `e#`.
+#[tokio::test]
+async fn federated_extend_second_catalog_e_symbol_compiles_after_delta_tsv() {
+    const INTENT: &str = "matrix federated extend e4 compile parity";
+    let Some(st) = test_state_with_matrix_federated_registry() else {
+        return;
+    };
+
+    let first = apply_capability_seeds(
+        &st,
+        None,
+        None,
+        vec![
+            CapabilitySeed {
+                entry_id: "linear".into(),
+                entity: "LangItem".into(),
+            },
+            CapabilitySeed {
+                entry_id: "linear".into(),
+                entity: "LangLine".into(),
+            },
+            CapabilitySeed {
+                entry_id: "linear".into(),
+                entity: "LangTag".into(),
+            },
+        ],
+        None,
+        None,
+        None,
+        INTENT,
+        RankedCapabilitiesArg::Unspecified,
+    )
+    .await
+    .expect("linear open");
+    assert!(first.new_symbol_space);
+
+    let binding = (first.prompt_hash.as_str(), first.session_id.as_str());
+    let extend = apply_capability_seeds(
+        &st,
+        None,
+        Some(binding),
+        vec![CapabilitySeed {
+            entry_id: "github".into(),
+            entity: "LangDetail".into(),
+        }],
+        None,
+        None,
+        None,
+        INTENT,
+        RankedCapabilitiesArg::Unspecified,
+    )
+    .await
+    .expect("github federate");
+    assert!(
+        !extend.new_symbol_space,
+        "same intent must reuse symbol space"
+    );
+    let federated = extend
+        .waves
+        .iter()
+        .find(|w| w.mode == "federate")
+        .expect("federate wave");
+    assert!(
+        federated.markdown_delta.contains("e4"),
+        "github LangDetail delta must assign e4: {}",
+        federated
+            .markdown_delta
+            .chars()
+            .take(500)
+            .collect::<String>()
+    );
+
+    let sess = st
+        .get_execute_session(&first.prompt_hash, &first.session_id)
+        .await
+        .expect("session row");
+    let exp = sess.teaching_exposure.as_ref().expect("exposure");
+    let map = exp.symbol_map_arc();
+    assert_eq!(
+        map.entity_sym_for("github", "LangDetail"),
+        "e4",
+        "exposure symbol map must stamp e4 for github LangDetail"
+    );
+
+    let pipeline = st.engine.prompt_pipeline();
+    let cross = st.sessions.symbol_map_cross_cache();
+    let compile_map = crate::symbol_map_resolve::resolve_session_symbol_map(
+        &crate::symbol_map_resolve::SessionSymbolMapContext {
+            session: &*sess,
+            cross_cache: Some(cross),
+        },
+    );
+    assert!(
+        compile_map.resolve_session_entity_symbol("e4").is_some(),
+        "compile-time symbol map must resolve e4"
+    );
+
+    crate::plasm_compile::compile_plasm_expression(
+        pipeline,
+        Some(cross),
+        &*sess,
+        "t",
+        "e4(\"LD1\")",
+    )
+    .expect("e4(...) must compile after federate wave assigns e4 in TSV");
+}

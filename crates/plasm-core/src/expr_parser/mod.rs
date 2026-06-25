@@ -75,10 +75,10 @@ pub use postfix::{
 pub use program::{parse_expr_node, parse_program_shape, ExprNode, ParsedProgram, Statement};
 pub use program_surface::{
     collect_program_statement_lines, expand_flattened_program_statements, is_valid_program_label,
-    looks_like_domain_symbol, scan_physical_line_stmt_state, split_assignment_at_top_level,
-    split_assignment_for_binding, split_flattened_program_line, split_token_top_level,
-    split_top_level, strip_line_comment, validate_program_label, FlattenedProgram,
-    FlattenedProgramLine, PhysicalLineStmtState,
+    looks_like_domain_symbol, missing_program_roots_error, scan_physical_line_stmt_state,
+    split_assignment_at_top_level, split_assignment_for_binding, split_flattened_program_line,
+    split_token_top_level, split_top_level, strip_line_comment, validate_program_label,
+    FlattenedProgram, FlattenedProgramLine, PhysicalLineStmtState,
 };
 pub use value_expr::{RenderExpr, ValueExpr};
 

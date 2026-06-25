@@ -56,29 +56,6 @@ pub(crate) fn parse_execute_program_body(
     Ok(program.to_string())
 }
 
-/// Upper bound for valid `e#` indices: number of entities exposed in this session (initial open + expand waves).
-fn session_entity_symbol_upper_bound(sess: &ExecuteSession) -> Option<usize> {
-    if let Some(exp) = sess.teaching_exposure.as_ref() {
-        let n = exp.entities.len();
-        return (n > 0).then_some(n);
-    }
-    let n = sess.entities.len();
-    (n > 0).then_some(n)
-}
-
-/// If the parser reports an unknown entity token, note how many `e#` symbols exist this session.
-pub(crate) fn augment_unknown_entity_parse_error(msg: String, sess: &ExecuteSession) -> String {
-    if !msg.contains("unknown entity") {
-        return msg;
-    }
-    let Some(k) = session_entity_symbol_upper_bound(sess) else {
-        return msg;
-    };
-    format!(
-        "{msg} (this session defines entity symbols e1..e{k} only; use the current Plasm instructions in the `prompt` field)"
-    )
-}
-
 /// Parser diagnostic plus imperative correction (same pipeline as REPL), for MCP/HTTP tool errors.
 pub(crate) fn execute_session_parse_error_message(
     err: &expr_parser::ParseError,

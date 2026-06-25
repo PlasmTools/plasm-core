@@ -230,4 +230,48 @@ mod tests {
             "delta should include r# symbol: {delta}"
         );
     }
+
+    #[test]
+    fn replay_federated_extend_preserves_e4_for_second_catalog_entity() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = Arc::new(load_schema_dir(&dir).expect("matrix"));
+        let mut contexts = IndexMap::new();
+        contexts.insert(
+            "linear".to_string(),
+            Arc::new(plasm_core::CgsContext::entry("linear", cgs.clone())),
+        );
+        contexts.insert(
+            "github".to_string(),
+            Arc::new(plasm_core::CgsContext::entry("github", cgs.clone())),
+        );
+        const INTENT: &str = "matrix federated extend e4 compile parity";
+        let exp = replay_teaching_exposure_waves(
+            &contexts,
+            &[
+                "LangItem".into(),
+                "LangLine".into(),
+                "LangTag".into(),
+                "LangDetail".into(),
+            ],
+            &[
+                "linear".into(),
+                "linear".into(),
+                "linear".into(),
+                "github".into(),
+            ],
+            Some(INTENT),
+            None,
+        );
+        let map = exp.symbol_map_arc();
+        assert_eq!(
+            map.entity_sym_for("github", "LangDetail"),
+            "e4",
+            "rehydrate replay must assign e4 to github LangDetail"
+        );
+        assert!(
+            map.resolve_session_entity_symbol("e4").is_some(),
+            "rehydrated symbol map must resolve opaque e4"
+        );
+    }
 }

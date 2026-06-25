@@ -9,7 +9,7 @@ use crate::schema::{
 };
 use crate::step_semantics::{append_correction_lines, StepError};
 use crate::symbol_tuning::SymbolMap;
-use crate::teaching_term::{resolve_parameter_slot, ParameterSlot};
+use crate::teaching_term::{resolve_parameter_slot, ParameterSlot, Symbol};
 use crate::FieldType;
 use crate::TypeError;
 
@@ -1105,6 +1105,61 @@ fn correction_ambiguous_entity_catalog(entity: &str, style: &FeedbackStyle<'_>) 
     }
 }
 
+fn looks_like_opaque_entity_symbol_token(token: &str) -> bool {
+    Symbol::parse_index(token, 'e').is_some()
+}
+
+const SESSION_ENTITY_SYMBOL_SUMMARY_CAP: usize = 6;
+
+fn format_session_entity_symbol_summary(map: &SymbolMap) -> String {
+    let mut rows = map.exposed_entity_symbol_rows();
+    rows.sort_by(|a, b| {
+        let ia = Symbol::parse_index(&a.symbol, 'e')
+            .map(|s| s.0)
+            .unwrap_or(0);
+        let ib = Symbol::parse_index(&b.symbol, 'e')
+            .map(|s| s.0)
+            .unwrap_or(0);
+        ia.cmp(&ib)
+            .then_with(|| a.entry_id.cmp(&b.entry_id))
+            .then_with(|| a.entity.cmp(&b.entity))
+    });
+    let shown: Vec<String> = rows
+        .iter()
+        .take(SESSION_ENTITY_SYMBOL_SUMMARY_CAP)
+        .map(|r| {
+            if r.entry_id.is_empty() {
+                format!("`{}`={}", r.symbol, r.entity)
+            } else {
+                format!("`{}`={}/{}", r.symbol, r.entry_id, r.entity)
+            }
+        })
+        .collect();
+    if rows.len() > SESSION_ENTITY_SYMBOL_SUMMARY_CAP {
+        format!(
+            "{}, … and {} more",
+            shown.join(", "),
+            rows.len() - SESSION_ENTITY_SYMBOL_SUMMARY_CAP
+        )
+    } else {
+        shown.join(", ")
+    }
+}
+
+/// Agent-facing correction when an entity root token is not in the **session** symbol table.
+fn correction_unknown_entity_symbolic_llm(map: &SymbolMap, bad: &str) -> String {
+    let summary = format_session_entity_symbol_summary(map);
+    if looks_like_opaque_entity_symbol_token(bad) {
+        format!(
+            "`{bad}` is not in this session — copy an `e#` from your latest `plasm_context` tsv ({summary})."
+        )
+    } else {
+        format!(
+            "`{bad}` is not a session entity token — use an `e#` from the teaching table ({summary})."
+        )
+    }
+}
+
 fn correction_unknown_entity(
     cgs: &CGS,
     bad: &str,
@@ -1112,6 +1167,11 @@ fn correction_unknown_entity(
     span_opt: Option<&(usize, usize)>,
     style: &FeedbackStyle<'_>,
 ) -> String {
+    if let FeedbackStyle::SymbolicLlm { map } = style {
+        if !map.exposed_entity_symbol_rows().is_empty() {
+            return correction_unknown_entity_symbolic_llm(map, bad);
+        }
+    }
     let (cands_canon, cands_disp) = entity_names_canonical_and_display(cgs, style);
     let empty = "This schema lists no entities.";
     if cands_canon.is_empty() {
@@ -2044,6 +2104,43 @@ mod tests {
     use crate::query_resolve::QueryCapabilityResolveError;
     use crate::step_semantics::StepErrorCategory;
     use crate::symbol_tuning::SymbolMap;
+
+    #[test]
+    fn unknown_entity_symbolic_llm_lists_session_symbols_not_catalog_dump() {
+        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = loader::load_schema_dir(dir).unwrap();
+        let map = SymbolMap::build(&cgs, &["Pet", "Order"]);
+        let err = expr_parser::parse_session_line("e9~\"x\"", &cgs, Some(std::sync::Arc::new(map)))
+            .unwrap_err();
+        let map = SymbolMap::build(&cgs, &["Pet", "Order"]);
+        let step = render_parse_error_with_feedback(
+            &err,
+            "e9~\"x\"",
+            "e9~\"x\"",
+            &cgs,
+            FeedbackStyle::SymbolicLlm { map: &map },
+        );
+        let s = step.correction;
+        assert!(s.contains("not in this session"), "{s}");
+        assert!(s.contains("plasm_context"), "{s}");
+        assert!(s.contains("`e1`") && s.contains("Pet"), "{s}");
+        assert!(s.len() < 400, "correction should stay short: {s}");
+        assert!(
+            !s.contains("Use one of:") && !s.contains("Valid entity symbols"),
+            "must not dump catalog entity names or levenshtein guesses: {s}"
+        );
+        assert!(
+            !s.contains("Change it to"),
+            "must not suggest arbitrary catalog entity substitutes: {s}"
+        );
+        assert!(
+            !s.contains("Expression:"),
+            "correction must not repeat the expression line: {s}"
+        );
+    }
 
     #[test]
     fn format_recovery_hints_symbolic_collapses_lexicon_options() {

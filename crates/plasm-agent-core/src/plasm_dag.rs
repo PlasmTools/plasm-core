@@ -19,9 +19,10 @@ use crate::program_binding::{
     RowCardinalityProof, SegmentPolicy,
 };
 use plasm_core::expr_parser::{
-    collect_program_statement_lines, expand_flattened_program_statements, peel_postfix_suffixes,
-    split_assignment_at_top_level, split_token_top_level, split_top_level, strip_line_comment,
-    try_parse_render_tail, validate_program_label, PlasmPostfixOp, RenderTailParse,
+    collect_program_statement_lines, expand_flattened_program_statements,
+    missing_program_roots_error, peel_postfix_suffixes, split_assignment_at_top_level,
+    split_token_top_level, split_top_level, strip_line_comment, try_parse_render_tail,
+    validate_program_label, PlasmPostfixOp, RenderTailParse,
 };
 use plasm_core::query_resolve;
 use plasm_core::row_composition::RowSuffix;
@@ -398,13 +399,7 @@ pub(crate) fn compile_plasm_dag_to_plan_inner(
             final_roots = Some(split_return_list(stmt, &mut state, session)?);
         }
     }
-    let roots = final_roots.ok_or_else(|| {
-        "Plasm program needs a final line of bare roots (comma-separated expressions or node labels). \
-         The default-return-is-first-binding coercion applies only to single-physical-line, \
-         space-separated programs; multi-line programs with two or more bindings must end with an \
-         explicit roots line naming the binding(s) to return (e.g. a trailing `comments` line)."
-            .to_string()
-    })?;
+    let roots = final_roots.ok_or_else(missing_program_roots_error)?;
     if roots.is_empty() {
         return Err("Plasm program final roots list is empty".to_string());
     }

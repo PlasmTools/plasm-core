@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.72] - 2026-06-24
+
+### Fixed
+
+- **Agent-facing unknown-entity parse errors:** MCP/HTTP `SymbolicLlm` feedback is one short line
+  (session `e#` summary capped at six rows) — no catalog dumps, Levenshtein guesses, or repeated
+  expression lines.
+- **Federated extend symbol drift:** after `plasm_context` federates a new catalog row (e.g. linear
+  `e1`–`e3` then github `e4`), `plasm` / execute ingress no longer reuse a stale session-local
+  `SymbolMap` memo from before the extend wave when the exposure fingerprint advances — TSV `e#` and
+  compile-time resolution stay aligned on the same binding.
+- **Program default-return coercion:** newline-separated binding lines (common when agents split a
+  logical single-liner across lines) now coerce the first binding as return, same as one
+  space-separated physical line; missing-roots parse errors are one short correction line.
+
 ## [0.3.71] - 2026-06-24
 
 ### Added
