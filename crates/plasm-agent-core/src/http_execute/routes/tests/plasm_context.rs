@@ -354,7 +354,7 @@ async fn federated_extend_second_catalog_e_symbol_compiles_after_delta_tsv() {
     let cross = st.sessions.symbol_map_cross_cache();
     let compile_map = crate::symbol_map_resolve::resolve_session_symbol_map(
         &crate::symbol_map_resolve::SessionSymbolMapContext {
-            session: &*sess,
+            session: &sess,
             cross_cache: Some(cross),
         },
     );
@@ -366,7 +366,7 @@ async fn federated_extend_second_catalog_e_symbol_compiles_after_delta_tsv() {
     crate::plasm_compile::compile_plasm_expression(
         pipeline,
         Some(cross),
-        &*sess,
+        &sess,
         "t",
         "e4(\"LD1\")",
     )
