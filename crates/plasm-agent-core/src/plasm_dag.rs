@@ -5170,6 +5170,29 @@ labels"#;
     }
 
     #[test]
+    fn multiline_explicit_return_position_not_first_binding() {
+        let session = test_session();
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "ml-return-position-limit-projection",
+            r#"item = LangItem("i1")
+lines = item.lines.limit(2)
+lines"#,
+        )
+        .expect("compile multiline program with explicit trailing return");
+        assert_eq!(
+            plan["return"]["node"], "lines",
+            "final line is return position; must not coerce to first binding `item`"
+        );
+        assert!(
+            plan["metadata"].get("coerced_default_return").is_none(),
+            "explicit roots line must not record coercion"
+        );
+    }
+
+    #[test]
     fn flattened_single_liner_lhs_gated_relation_primary_return() {
         let session = github_issue_label_session();
         let source = r#"repo = Repository(owner="octocat", repo="Hello-World") issues = Issue{repository=repo.full_name} labels = issues.labels labels"#;

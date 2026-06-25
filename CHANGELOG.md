@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.73] - 2026-06-25
+
+### Fixed
+
+- **Multiline return position:** explicit trailing roots lines (ML-style final expression after
+  bindings) are no longer overwritten by first-binding coercion — e.g. `limited[p2,p14]` after
+  relation hop + `.limit` returns `limited`, not the first binding. Flat single-line space-split
+  and binding-only omission sugars are documented as disjoint tiers in
+  `docs/plasm-language-definition.md`.
+
 ## [0.3.72] - 2026-06-24
 
 ### Fixed

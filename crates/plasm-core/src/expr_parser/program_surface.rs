@@ -442,15 +442,15 @@ pub fn split_flattened_program_line(line: &str) -> FlattenedProgramLine {
         parts.push(format!("{label} = {}", rhs.trim()));
         break;
     }
-    let coerced_default_return = finalize_flattened_program_roots(&mut parts);
+    let coerced_default_return = finalize_flattened_line_roots(&mut parts);
     FlattenedProgramLine {
         statements: parts,
         coerced_default_return,
     }
 }
 
-/// Primary binding is the default return root on coerced single-liners.
-fn finalize_flattened_program_roots(parts: &mut Vec<String>) -> Option<String> {
+/// Flat single-line sugar: append or replace trailing root within space-split `parts` only.
+fn finalize_flattened_line_roots(parts: &mut Vec<String>) -> Option<String> {
     if parts.is_empty() {
         return None;
     }
@@ -469,6 +469,23 @@ fn finalize_flattened_program_roots(parts: &mut Vec<String>) -> Option<String> {
     None
 }
 
+/// Binding-only omission: append first binding when no return line exists (Rule A only).
+fn coerce_binding_only_program_roots(statements: &mut Vec<String>) -> Option<String> {
+    if statements.is_empty() {
+        return None;
+    }
+    if !statements
+        .iter()
+        .all(|s| split_assignment_for_binding(s).is_some())
+    {
+        return None;
+    }
+    let first_label =
+        split_assignment_at_top_level(&statements[0]).map(|(label, _)| label.to_string())?;
+    statements.push(first_label.clone());
+    Some(first_label)
+}
+
 /// Expand physical statement lines, coercing space-separated single-liners when detected.
 pub fn expand_flattened_program_statements(lines: &[String]) -> FlattenedProgram {
     let mut statements = Vec::new();
@@ -485,7 +502,7 @@ pub fn expand_flattened_program_statements(lines: &[String]) -> FlattenedProgram
         }
     }
     if coerced_default_return.is_none() {
-        coerced_default_return = finalize_flattened_program_roots(&mut statements);
+        coerced_default_return = coerce_binding_only_program_roots(&mut statements);
     }
     FlattenedProgram {
         statements,
@@ -495,7 +512,7 @@ pub fn expand_flattened_program_statements(lines: &[String]) -> FlattenedProgram
 
 /// Agent-facing hint when a program has bindings but no executable return roots.
 pub fn missing_program_roots_error() -> String {
-    "Missing return roots — add a final line with the binding to return (e.g. `labels`), or write bindings on one space-separated line (first binding is returned)."
+    "Missing return roots — add a final line with the expression to return (e.g. `labels` or `limited[p2,p14]`), or omit it only when every line is a binding (first binding is returned) or bindings are on one space-separated line."
         .to_string()
 }
 
@@ -599,5 +616,31 @@ mod tests {
         let expanded = expand_flattened_program_statements(&["hits = e4(p1=\"sha\")".to_string()]);
         assert_eq!(expanded.coerced_default_return.as_deref(), Some("hits"));
         assert_eq!(expanded.statements.last().map(String::as_str), Some("hits"));
+    }
+
+    #[test]
+    fn expand_multiline_explicit_non_first_root_preserved() {
+        let expanded = expand_flattened_program_statements(&[
+            "issue = e2(p4=\"PLA-1\")".to_string(),
+            "comments = issue.r2".to_string(),
+            "limited = comments.limit(5)".to_string(),
+            "limited[p2,p14]".to_string(),
+        ]);
+        assert!(expanded.coerced_default_return.is_none());
+        assert_eq!(
+            expanded.statements.last().map(String::as_str),
+            Some("limited[p2,p14]")
+        );
+    }
+
+    #[test]
+    fn expand_multiline_explicit_side_label_root_preserved() {
+        let expanded = expand_flattened_program_statements(&[
+            "repo = e1".to_string(),
+            "labels = e2".to_string(),
+            "labels".to_string(),
+        ]);
+        assert!(expanded.coerced_default_return.is_none());
+        assert_eq!(expanded.statements.last().map(String::as_str), Some("labels"));
     }
 }
