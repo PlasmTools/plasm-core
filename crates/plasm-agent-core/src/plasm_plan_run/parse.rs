@@ -408,5 +408,9 @@ pub fn format_session_symbolic_parse_error(
             map: sym_map.as_ref(),
         },
     );
-    format!("{err}\n\n{}", step.correction)
+    if step.correction.is_empty() {
+        err.to_string()
+    } else {
+        step.correction
+    }
 }

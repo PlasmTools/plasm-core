@@ -20,9 +20,10 @@ use crate::program_binding::{
 };
 use plasm_core::expr_parser::{
     collect_program_statement_lines, expand_flattened_program_statements,
-    missing_program_roots_error, peel_postfix_suffixes, split_assignment_at_top_level,
+    missing_program_roots_error, peel_postfix_suffixes, program_duplicate_return_node_error,
+    program_empty_error, program_return_keyword_error, split_assignment_at_top_level,
     split_token_top_level, split_top_level, strip_line_comment, try_parse_render_tail,
-    validate_program_label, PlasmPostfixOp, RenderTailParse,
+    validate_program_label, validate_program_statement_order, PlasmPostfixOp, RenderTailParse,
 };
 use plasm_core::query_resolve;
 use plasm_core::row_composition::RowSuffix;
@@ -149,7 +150,13 @@ impl<'a> CompileState<'a> {
 
     fn insert(&mut self, node: DagNode) -> Result<(), String> {
         if self.labels.contains_key(&node.id) {
-            return Err(format!("duplicate Plasm program node label {:?}", node.id));
+            if node.id.starts_with("return_") {
+                return Err(program_duplicate_return_node_error());
+            }
+            return Err(format!(
+                "Duplicate program label `{label}` — use a unique binding name.",
+                label = node.id
+            ));
         }
         self.labels.insert(node.id.clone(), self.nodes.len());
         self.nodes.push(node);
@@ -379,8 +386,9 @@ pub(crate) fn compile_plasm_dag_to_plan_inner(
     let flattened = expand_flattened_program_statements(&collect_program_statement_lines(source)?);
     let statements = flattened.statements;
     if statements.is_empty() {
-        return Err("Plasm program is empty".to_string());
+        return Err(program_empty_error());
     }
+    validate_program_statement_order(&statements)?;
     let mut final_roots: Option<Vec<String>> = None;
     for stmt in statements {
         if let Some((id, rhs)) = split_assignment_at_top_level(&stmt) {
@@ -391,10 +399,7 @@ pub(crate) fn compile_plasm_dag_to_plan_inner(
         } else {
             let stmt = stmt.trim();
             if stmt.starts_with("return ") {
-                return Err(
-                    "return is not Plasm syntax; write bare comma-separated final roots (e.g. `a, b`, not `return a, b`)"
-                        .to_string(),
-                );
+                return Err(program_return_keyword_error());
             }
             final_roots = Some(split_return_list(stmt, &mut state, session)?);
         }
@@ -446,10 +451,7 @@ pub(crate) fn compile_plasm_surface_line_to_plan(
     }
     let mut state = CompileState::new(pipeline, symbol_map_cross_cache);
     if trimmed.starts_with("return ") {
-        return Err(
-            "return is not Plasm syntax; write bare comma-separated roots (e.g. `a, b`, not `return a, b`)"
-                .to_string(),
-        );
+        return Err(program_return_keyword_error());
     }
     let roots = split_return_list(trimmed, &mut state, session)?;
     if roots.is_empty() {
@@ -761,13 +763,21 @@ fn resolve_immediate_compute_schema(
     }
 }
 
+fn agent_program_error(head: impl AsRef<str>, help: Option<impl AsRef<str>>) -> String {
+    if let Some(h) = help {
+        format!("{}\nhelp: {}", head.as_ref(), h.as_ref())
+    } else {
+        head.as_ref().to_string()
+    }
+}
+
 fn validate_compute_paths_for_schema(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     qe: Option<&QualifiedEntityKey>,
     schema: &SyntheticResultSchema,
     paths: &[FieldPath],
-    op_label: &str,
+    _op_label: &str,
 ) -> Result<(), String> {
     let allowed: std::collections::BTreeSet<String> = schema
         .fields
@@ -788,10 +798,9 @@ fn validate_compute_paths_for_schema(
         if allowed.contains(&wire) {
             continue;
         }
-        let cols: Vec<&str> = allowed.iter().map(String::as_str).collect();
-        return Err(format!(
-            "Plasm program {op_label}: field path `{wire}` is not a row field of the upstream compute output (row fields: {}). Use `p#` symbols from the teaching `rows:` column, or wire field names as sugar — for example after `group_by`, use aggregate output names such as `n`.",
-            cols.join(", ")
+        return Err(agent_program_error(
+            &format!("`{wire}` is not a row field on this binding's compute output."),
+            Some("Use `p#` symbols from the teaching `rows:` column (e.g. `.sort(p#)`, `[p#,…]`)."),
         ));
     }
     Ok(())
@@ -873,33 +882,28 @@ fn capability_input_param_wires(cap: &CapabilitySchema) -> BTreeSet<String> {
 fn row_contract_field_error(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
-    qe: &QualifiedEntityKey,
+    _qe: &QualifiedEntityKey,
     cap: Option<&CapabilitySchema>,
-    path: &FieldPath,
+    _path: &FieldPath,
     wire: &str,
-    allowed_cols: &[String],
-    op_label: &str,
+    _allowed_cols: &[String],
+    _op_label: &str,
 ) -> String {
-    let hint = single_segment_teaching_field_hint(session, symbol_map_cross_cache, qe, path);
+    let _ = (session, symbol_map_cross_cache);
     if let Some(cap) = cap {
         let inputs = capability_input_param_wires(cap);
         if inputs.contains(wire) {
-            return format!(
-                "Plasm program {op_label}: `{wire}` is an input on {}, not a row field. {} rows: {}. Use one of those row fields, or fetch each {} first for the full {} row.{hint}",
-                cap.name.as_str(),
-                cap.name.as_str(),
-                allowed_cols.join(", "),
-                qe.entity,
-                qe.entity,
+            return agent_program_error(
+                &format!(
+                    "`{wire}` is a query/capability input on this fetch, not a row field."
+                ),
+                Some("Use `p#` from teaching `rows:` for row postfix (`.filter`, `[p#,…]`)."),
             );
         }
     }
-    format!(
-        "Plasm program {op_label}: field path `{}` is not a row field of the upstream capability output for entity `{}` (catalog entry `{}`); row fields: {}. Use `p#` symbols from the teaching `rows:` column, or wire field names as sugar.{hint}",
-        path.dotted(),
-        qe.entity,
-        qe.entry_id,
-        allowed_cols.join(", "),
+    agent_program_error(
+        &format!("`{wire}` is not a row field on this binding's rows."),
+        Some("Use `p#` symbols from the teaching `rows:` column for this binding."),
     )
 }
 
@@ -1827,15 +1831,12 @@ fn compile_node_expr(
                 true,
             )
             .map_err(|e| {
-                format!(
-                    "Plasm program `{id}` template parse: {}",
-                    format_session_symbolic_parse_error(
-                        session,
-                        state.cross_cache,
-                        state.pipeline,
-                        right.trim(),
-                        &e,
-                    )
+                format_session_symbolic_parse_error(
+                    session,
+                    state.cross_cache,
+                    state.pipeline,
+                    right.trim(),
+                    &e,
                 )
             })?;
             let uses = collect_template_uses_from_expr(&parsed.expr);
@@ -2645,9 +2646,12 @@ fn try_split_single_hop_surface_chain(
     None
 }
 
-fn plan_render_content_scalar_reference_err(id: &str, expr: &str, label: &str) -> String {
-    format!(
-        "Plasm program `{id}`: `{expr}` reads generated text from `{label}.content`. That path is a **scalar string** for `=>` derives and capability parameters only — not a final root and not a relation receiver. Return `{label}` if you want the generated text row, or use `{label}.content` only inside string/body/template/object payload positions."
+fn plan_render_content_scalar_reference_err(_id: &str, _expr: &str, label: &str) -> String {
+    agent_program_error(
+        &format!("Don't return `{label}.content` as the program root."),
+        Some(format!(
+            "Return `{label}` for the generated-text row, or use `{label}.content` only inside params/heredocs."
+        )),
     )
 }
 
@@ -2871,16 +2875,12 @@ fn compile_surface_node(
                     false,
                 )
                 .map_err(|e| {
-                    format!(
-                        "Plasm program `{id}` expression parse: {}\n(hint: `{label}.…` substitutes the Plasm bound to `{label}`; expanded form `{expanded}`)",
-                        format_session_symbolic_parse_error(
-                            session,
-                            state.cross_cache,
-                            state.pipeline,
-                            &expanded,
-                            &e,
-                        ),
-                        expanded = expanded
+                    format_session_symbolic_parse_error(
+                        session,
+                        state.cross_cache,
+                        state.pipeline,
+                        &expanded,
+                        &e,
                     )
                 })?;
                 if let Expr::Chain(ref chain) = parsed.expr {
@@ -2954,15 +2954,12 @@ fn compile_surface_node(
         false,
     )
     .map_err(|e| {
-        format!(
-            "Plasm program `{id}` expression parse: {}",
-            format_session_symbolic_parse_error(
-                session,
-                state.cross_cache,
-                state.pipeline,
-                expr,
-                &e,
-            )
+        format_session_symbolic_parse_error(
+            session,
+            state.cross_cache,
+            state.pipeline,
+            expr,
+            &e,
         )
     })?;
     let uses = collect_template_uses_from_expr(&parsed.expr);
@@ -3208,8 +3205,11 @@ fn is_known_postfix_method(name: &str) -> bool {
 }
 
 fn unknown_row_transform_error(id: &str, tail: &str) -> String {
-    format!(
-        "Plasm program `{id}`: unknown row transform `{tail}`; allowed postfix: .limit(N), .page_size(N), .sort(field[, dir]), .filter{{…}}, .filter(…), .aggregate(specs), .group_by(field, specs), .dedupe(field[, …]), .distinct(field[, …]), .distinct(), .singleton(), [fields]"
+    agent_program_error(
+        &format!("Unknown row transform `{tail}` on `{id}`."),
+        Some(
+            "Use postfix on a binding: `.limit(N)`, `.filter{p#=…}`, `.sort(p#)`, `.group_by(p#)`, `[p#,…]`, etc.",
+        ),
     )
 }
 
@@ -3925,18 +3925,66 @@ bad"#,
         )
         .expect_err("search rows omit relation fields from provides");
         assert!(
-            err.contains("not a row field of the upstream capability output")
-                || err.contains("not a row field"),
-            "{err}"
-        );
-        assert!(
-            err.contains("row fields") || err.contains(" rows: "),
+            err.contains("not a row field"),
             "{err}"
         );
         assert!(
             !err.contains("projected columns"),
             "diagnostic must not steer agents toward wire column names: {err}"
         );
+    }
+
+    #[test]
+    fn multi_postfix_roots_without_binding_errors_with_guidance() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "multi-postfix-roots",
+            r#"issue = LangItem("i1")
+comments = issue.lines
+comments.filter{title="a"}
+comments[title]"#,
+        )
+        .expect_err("intermediate postfix must be bound");
+        assert!(
+            err.contains("binding") || err.contains("Intermediate"),
+            "{err}"
+        );
+        assert!(!err.contains("return_1"), "{err}");
+        assert!(!err.contains("offset"), "{err}");
+    }
+
+    #[test]
+    fn binding_after_return_line_errors() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "binding-after-return",
+            r#"rows = LangItem
+rows[title]
+lines = rows.lines"#,
+        )
+        .expect_err("binding after return");
+        assert!(err.contains("Return must be last"), "{err}");
+    }
+
+    #[test]
+    fn flat_projection_on_in_scope_binding_still_compiles() {
+        let session = test_session();
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "flat-projection-regression",
+            "issue = LangItem(\"i1\") comments = issue.lines comments[note]",
+        )
+        .expect("flat projection return");
+        let ret = plan["return"].pointer("/node").and_then(|v| v.as_str());
+        assert_eq!(ret, Some("return_1"));
     }
 
     #[test]
@@ -3952,7 +4000,7 @@ bad = rows.group_by(q)
 bad"#,
         )
         .expect_err("search text param q is not a row field");
-        assert!(err.contains("is an input on langitem_search"), "{err}");
+        assert!(err.contains("query/capability input"), "{err}");
         assert!(err.contains("not a row field"), "{err}");
     }
 
@@ -3968,7 +4016,7 @@ bad"#,
 rows"#,
         )
         .expect_err("filter params are inputs not row fields for projection");
-        assert!(err.contains("is an input on langitem_search"), "{err}");
+        assert!(err.contains("not a row field"), "{err}");
     }
 
     #[test]

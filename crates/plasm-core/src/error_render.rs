@@ -1200,6 +1200,15 @@ fn correction_predicate_field(
     _span_start: usize,
     style: &FeedbackStyle<'_>,
 ) -> String {
+    if let FeedbackStyle::SymbolicLlm { map } = style {
+        if !map.exposed_entity_symbol_rows().is_empty() {
+            let es = entity_label_for_feedback(entity, style);
+            let bad = ident_label_for_feedback(field, style);
+            return format!(
+                "`{bad}` is not a filter on `{es}` — use `p#` from the teaching table query/filter columns."
+            );
+        }
+    }
     let es = entity_label_for_feedback(entity, style);
     let bad = ident_label_for_feedback(field, style);
     let (cands_canon, cands_disp) = predicate_field_canonical_and_display(cgs, entity, style);
@@ -1233,6 +1242,15 @@ fn correction_navigation_name(
     _span_start: usize,
     style: &FeedbackStyle<'_>,
 ) -> String {
+    if let FeedbackStyle::SymbolicLlm { map } = style {
+        if !map.exposed_entity_symbol_rows().is_empty() {
+            let es = entity_label_for_feedback(entity, style);
+            let bad = ident_label_for_feedback(field, style);
+            return format!(
+                "`{bad}` is not a field or relation on `{es}` — use `p#` / `r#` from the teaching table."
+            );
+        }
+    }
     let es = entity_label_for_feedback(entity, style);
     let bad = ident_label_for_feedback(field, style);
     let (cands_canon, cands_disp) =
@@ -1278,6 +1296,20 @@ fn correction_not_navigable(
     _span_start: usize,
     style: &FeedbackStyle<'_>,
 ) -> String {
+    if let FeedbackStyle::SymbolicLlm { map } = style {
+        if !map.exposed_entity_symbol_rows().is_empty() {
+            let es = entity_label_for_feedback(entity, style);
+            let bad = ident_label_for_feedback(field, style);
+            if field_is_declared_scalar(cgs, entity, field) {
+                return format!(
+                    "`{bad}` is a field on `{es}` — use `[p#,…]` projection, not `{es}.{bad}`."
+                );
+            }
+            return format!(
+                "`{bad}` is not navigable on `{es}` — use `.r#` relation hops or `[p#,…]` for fields."
+            );
+        }
+    }
     let es = entity_label_for_feedback(entity, style);
     let bad = ident_label_for_feedback(field, style);
     if field_is_declared_scalar(cgs, entity, field) {
@@ -2140,6 +2172,59 @@ mod tests {
             !s.contains("Expression:"),
             "correction must not repeat the expression line: {s}"
         );
+    }
+
+    #[test]
+    fn predicate_field_symbolic_llm_stays_short_without_catalog_dump() {
+        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = loader::load_schema_dir(dir).unwrap();
+        let map = SymbolMap::build(&cgs, &["Pet"]);
+        let err = expr_parser::parse_session_line("e1{bogus=1}", &cgs, Some(std::sync::Arc::new(map)))
+            .unwrap_err();
+        let map = SymbolMap::build(&cgs, &["Pet"]);
+        let step = render_parse_error_with_feedback(
+            &err,
+            "e1{bogus=1}",
+            "e1{bogus=1}",
+            &cgs,
+            FeedbackStyle::SymbolicLlm { map: &map },
+        );
+        let s = step.correction;
+        assert!(s.contains("not a filter"), "{s}");
+        assert!(s.contains("p#"), "{s}");
+        assert!(s.len() < 200, "correction should stay short: {s}");
+        assert!(!s.contains("Valid entity symbols"), "{s}");
+        assert!(!s.contains("catalog entry"), "{s}");
+        assert!(!s.contains("Expression:"), "{s}");
+    }
+
+    #[test]
+    fn not_navigable_symbolic_llm_stays_short_without_catalog_dump() {
+        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = loader::load_schema_dir(dir).unwrap();
+        let map = SymbolMap::build(&cgs, &["Pet"]);
+        let err = expr_parser::parse_session_line("e1(id).bogus", &cgs, Some(std::sync::Arc::new(map)))
+            .unwrap_err();
+        let map = SymbolMap::build(&cgs, &["Pet"]);
+        let step = render_parse_error_with_feedback(
+            &err,
+            "e1(id).bogus",
+            "e1(id).bogus",
+            &cgs,
+            FeedbackStyle::SymbolicLlm { map: &map },
+        );
+        let s = step.correction;
+        assert!(s.contains("not navigable") || s.contains("not a field"), "{s}");
+        assert!(s.len() < 200, "correction should stay short: {s}");
+        assert!(!s.contains("Valid entity symbols"), "{s}");
+        assert!(!s.contains("catalog entry"), "{s}");
+        assert!(!s.contains("Expression:"), "{s}");
     }
 
     #[test]

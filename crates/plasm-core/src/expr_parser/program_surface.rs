@@ -6,6 +6,7 @@
 use super::heredoc_surface::{
     heredoc_surface_step_at, tagged_heredoc_close_kind, HeredocSurfaceStep,
 };
+use std::collections::BTreeSet;
 
 /// Strip trailing `;;` line comments (teaching table-style).
 #[inline]
@@ -172,7 +173,7 @@ pub fn is_valid_program_label(label: &str) -> bool {
 
 pub fn validate_program_label(label: &str) -> Result<(), String> {
     if !is_valid_program_label(label) || matches!(label, "_" | "$" | "return") {
-        return Err(format!("invalid Plasm program label `{label}`"));
+        return Err(program_invalid_binding_label_error(label));
     }
     Ok(())
 }
@@ -541,8 +542,99 @@ pub fn expand_flattened_program_statements(lines: &[String]) -> FlattenedProgram
 
 /// Agent-facing hint when a program has bindings but no executable return roots.
 pub fn missing_program_roots_error() -> String {
-    "Missing return roots — add a final line with the expression to return (e.g. `labels` or `limited[p2,p14]`), or omit it only when every line is a binding (first binding is returned) or bindings are on one space-separated line."
+    "Add a final return line (e.g. `limited[p2,p14]`), or omit only when every line is `label = …` (first binding is returned)."
         .to_string()
+}
+
+pub fn program_empty_error() -> String {
+    "Program is empty.".to_string()
+}
+
+pub fn program_return_keyword_error() -> String {
+    "Remove `return` — write bare roots on the last line (e.g. `limited` or `a, b`).".to_string()
+}
+
+pub fn program_invalid_binding_label_error(label: &str) -> String {
+    if looks_like_domain_symbol(label) {
+        format!(
+            "Binding names must be labels like `issue`, not teaching symbols (`{label}`)."
+        )
+    } else {
+        format!("Binding names must be identifiers like `issue`, not `{label}`.")
+    }
+}
+
+pub fn program_binding_after_return_error() -> String {
+    "Return must be last — move bindings above the return line, or bind intermediate steps before returning."
+        .to_string()
+}
+
+pub fn program_intermediate_return_error(stmt: &str) -> String {
+    let stmt = stmt.trim();
+    format!(
+        "Only one return line allowed — bind this step first (e.g. `filtered = {stmt}`), then end with one return line."
+    )
+}
+
+pub fn program_intermediate_return_must_be_binding_error(stmt: &str) -> String {
+    let head = leading_identifier(stmt.trim());
+    format!(
+        "Intermediate step must be a binding — write `{head} = {stmt}` (not a bare `{stmt}` line), then return on the last line."
+    )
+}
+
+pub fn program_duplicate_return_node_error() -> String {
+    "Program has multiple return expressions — bind each step (`filtered = comments.filter{{…}}`), then one final return line."
+        .to_string()
+}
+
+/// ML `let` block: bindings first, one return last. Rejects multiple roots-only lines and bindings after return.
+pub fn validate_program_statement_order(statements: &[String]) -> Result<(), String> {
+    let stmts: Vec<&str> = statements
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let mut bindings: BTreeSet<String> = BTreeSet::new();
+    let mut saw_roots = false;
+    let n = stmts.len();
+    for (i, stmt) in stmts.iter().enumerate() {
+        let is_last = i + 1 == n;
+        if let Some((label, _)) = split_assignment_for_binding(stmt) {
+            if saw_roots {
+                return Err(program_binding_after_return_error());
+            }
+            bindings.insert(label.to_string());
+            continue;
+        }
+        if saw_roots && !is_last {
+            return Err(program_intermediate_return_error(stmt));
+        }
+        if !is_last && roots_line_is_postfix_on_binding(stmt, &bindings) {
+            return Err(program_intermediate_return_must_be_binding_error(stmt));
+        }
+        saw_roots = true;
+    }
+    Ok(())
+}
+
+fn roots_line_is_postfix_on_binding(stmt: &str, bindings: &BTreeSet<String>) -> bool {
+    let stmt = stmt.trim();
+    let head = leading_identifier(stmt);
+    if head.is_empty() || head.len() == stmt.len() {
+        return false;
+    }
+    if !is_valid_program_label(head) {
+        return false;
+    }
+    if !bindings.contains(head) {
+        return false;
+    }
+    let rest = stmt[head.len()..].trim_start();
+    if rest.is_empty() || rest.starts_with('[') {
+        return false;
+    }
+    rest.starts_with('.')
 }
 
 #[cfg(test)]
@@ -702,8 +794,9 @@ mod tests {
 
     #[test]
     fn split_flattened_line_keeps_projection_on_first_binding() {
-        let split =
-            split_flattened_program_line("issue = e2(p4=\"PLA-1\") comments = issue.r2 issue[p4,p19]");
+        let split = split_flattened_program_line(
+            "issue = e2(p4=\"PLA-1\") comments = issue.r2 issue[p4,p19]",
+        );
         assert_eq!(
             split.statements.last().map(String::as_str),
             Some("issue[p4,p19]")
@@ -718,5 +811,36 @@ mod tests {
         );
         assert_eq!(split.statements.last().map(String::as_str), Some("item"));
         assert_eq!(split.coerced_default_return.as_deref(), Some("item"));
+    }
+
+    #[test]
+    fn validate_rejects_intermediate_postfix_without_binding() {
+        let err = validate_program_statement_order(&[
+            "comments = issue.r2".to_string(),
+            "comments.filter{p14=\"a\"}".to_string(),
+            "comments[p2,p14]".to_string(),
+        ])
+        .expect_err("must bind intermediate postfix");
+        assert!(err.contains("binding") || err.contains("Intermediate"), "{err}");
+    }
+
+    #[test]
+    fn validate_rejects_binding_after_return_line() {
+        let err = validate_program_statement_order(&[
+            "limited[p2,p14]".to_string(),
+            "comments = issue.r2".to_string(),
+        ])
+        .expect_err("binding after return");
+        assert!(err.contains("Return must be last"), "{err}");
+    }
+
+    #[test]
+    fn validate_allows_bare_label_then_projection() {
+        validate_program_statement_order(&[
+            "comments = issue.r2".to_string(),
+            "comments".to_string(),
+            "comments[p2,p14]".to_string(),
+        ])
+        .expect("bare label before projection on last line");
     }
 }

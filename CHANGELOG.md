@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.75] - 2026-06-25
+
+### Fixed
+
+- **Agent-facing program errors:** multi-line programs with intermediate roots-only postfix lines
+  (e.g. bare `comments.filter{…}` before a final projection) now fail with imperative bind-step
+  guidance instead of leaking internal `return_1` duplicate-node ids. Bindings after a return line
+  are rejected (`Return must be last`).
+- **SymbolicLlm parse wrapper dedup:** MCP/HTTP agents see correction text only (no repeated
+  `parse error at offset …` plus correction). `correction_predicate_field`, `correction_not_navigable`,
+  and `correction_navigation_name` stay short when session teaching symbols are available.
+- **Shorter row/compute diagnostics:** unknown postfix transforms, row field mismatches, and
+  `.content` root misuse use concise imperative + `help:` lines.
+
 ## [0.3.74] - 2026-06-25
 
 ### Fixed

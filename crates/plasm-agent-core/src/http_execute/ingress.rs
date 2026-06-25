@@ -70,5 +70,9 @@ pub(crate) fn execute_session_parse_error_message(
         cgs,
         FeedbackStyle::SymbolicLlm { map: sym_map },
     );
-    format!("{err}\n\n{}", step.correction)
+    if step.correction.is_empty() {
+        err.to_string()
+    } else {
+        step.correction
+    }
 }
