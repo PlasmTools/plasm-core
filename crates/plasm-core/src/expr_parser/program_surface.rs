@@ -449,6 +449,32 @@ pub fn split_flattened_program_line(line: &str) -> FlattenedProgramLine {
     }
 }
 
+fn leading_identifier(s: &str) -> &str {
+    let end = s
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(s.len());
+    &s[..end]
+}
+
+/// A trailing flat-line root is a deliberate return when it applies a postfix/projection to an
+/// in-scope binding (e.g. `comments[p2,p14]`, `comments.limit(5)[p2,p14]`) — not a bare side-label
+/// echo and not a fresh-entity expression.
+fn trailing_root_returns_in_scope_binding(last: &str, prior: &[String]) -> bool {
+    let last = last.trim();
+    let head = leading_identifier(last);
+    if head.is_empty() || head.len() == last.len() {
+        return false;
+    }
+    if !is_valid_program_label(head) {
+        return false;
+    }
+    prior.iter().any(|p| {
+        split_assignment_for_binding(p)
+            .map(|(label, _)| label == head)
+            .unwrap_or(false)
+    })
+}
+
 /// Flat single-line sugar: append or replace trailing root within space-split `parts` only.
 fn finalize_flattened_line_roots(parts: &mut Vec<String>) -> Option<String> {
     if parts.is_empty() {
@@ -462,11 +488,14 @@ fn finalize_flattened_line_roots(parts: &mut Vec<String>) -> Option<String> {
         parts.push(first_label.clone());
         return Some(first_label);
     }
-    if last != first_label {
-        parts[last_idx] = first_label.clone();
-        return Some(first_label);
+    if last == first_label {
+        return None;
     }
-    None
+    if trailing_root_returns_in_scope_binding(&last, &parts[..last_idx]) {
+        return None;
+    }
+    parts[last_idx] = first_label.clone();
+    Some(first_label)
 }
 
 /// Binding-only omission: append first binding when no return line exists (Rule A only).
@@ -641,6 +670,53 @@ mod tests {
             "labels".to_string(),
         ]);
         assert!(expanded.coerced_default_return.is_none());
-        assert_eq!(expanded.statements.last().map(String::as_str), Some("labels"));
+        assert_eq!(
+            expanded.statements.last().map(String::as_str),
+            Some("labels")
+        );
+    }
+
+    #[test]
+    fn split_flattened_line_keeps_projection_on_in_scope_binding() {
+        let split = split_flattened_program_line(
+            "issue = e2(p4=\"PLA-1\") comments = issue.r2 comments[p2,p14]",
+        );
+        assert_eq!(
+            split.statements.last().map(String::as_str),
+            Some("comments[p2,p14]")
+        );
+        assert!(split.coerced_default_return.is_none());
+    }
+
+    #[test]
+    fn split_flattened_line_keeps_postfix_projection_on_in_scope_binding() {
+        let split = split_flattened_program_line(
+            "issue = e2(p4=\"PLA-1\") comments = issue.r2 comments.limit(5)[p2,p14]",
+        );
+        assert_eq!(
+            split.statements.last().map(String::as_str),
+            Some("comments.limit(5)[p2,p14]")
+        );
+        assert!(split.coerced_default_return.is_none());
+    }
+
+    #[test]
+    fn split_flattened_line_keeps_projection_on_first_binding() {
+        let split =
+            split_flattened_program_line("issue = e2(p4=\"PLA-1\") comments = issue.r2 issue[p4,p19]");
+        assert_eq!(
+            split.statements.last().map(String::as_str),
+            Some("issue[p4,p19]")
+        );
+        assert!(split.coerced_default_return.is_none());
+    }
+
+    #[test]
+    fn split_flattened_line_fresh_trailing_query_still_coerces() {
+        let split = split_flattened_program_line(
+            "item = LangItem(\"i1\") LangItem.sort(score, desc).limit(2)",
+        );
+        assert_eq!(split.statements.last().map(String::as_str), Some("item"));
+        assert_eq!(split.coerced_default_return.as_deref(), Some("item"));
     }
 }

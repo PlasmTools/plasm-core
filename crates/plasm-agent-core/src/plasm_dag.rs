@@ -4795,6 +4795,39 @@ by_team"#,
     }
 
     #[test]
+    fn flat_line_projection_on_binding_returns_projection() {
+        let session = test_session();
+        let source = r#"item = LangItem("i1") lines = item.lines lines[note]"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "flat-line-projection",
+            source,
+        )
+        .expect("flat line with trailing projection on in-scope binding");
+        let return_node = plan["return"]["node"].as_str().expect("return node id");
+        assert_ne!(
+            return_node, "item",
+            "must return lines projection, not first binding"
+        );
+        let return_entry = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == return_node)
+            .expect("return node in plan");
+        assert_eq!(
+            return_entry["kind"], "compute",
+            "return should be a projection node"
+        );
+        assert!(
+            plan["metadata"].get("coerced_default_return").is_none(),
+            "deliberate trailing projection must not record coercion"
+        );
+    }
+
+    #[test]
     fn flattened_dag_bindings_compile_with_coerced_return() {
         let session = test_session();
         let source = r#"item = LangItem("i1") lines = item.lines lines"#;

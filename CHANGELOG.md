@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.74] - 2026-06-25
+
+### Fixed
+
+- **Flat single-line trailing-root clobber:** space-separated programs ending in a projection or
+  postfix on an in-scope binding (e.g. `comments[p2,p14]`, `comments.limit(5)[p2,p14]`) now keep
+  that expression as the return instead of silently replacing it with the first binding. Bare
+  side-label echo (`… labels`) and fresh-entity trailing roots still coerce to the first binding.
+
 ## [0.3.73] - 2026-06-25
 
 ### Fixed
