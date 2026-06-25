@@ -799,7 +799,7 @@ fn validate_compute_paths_for_schema(
             continue;
         }
         return Err(agent_program_error(
-            &format!("`{wire}` is not a row field on this binding's compute output."),
+            format!("`{wire}` is not a row field on this binding's compute output."),
             Some("Use `p#` symbols from the teaching `rows:` column (e.g. `.sort(p#)`, `[p#,…]`)."),
         ));
     }
@@ -894,15 +894,13 @@ fn row_contract_field_error(
         let inputs = capability_input_param_wires(cap);
         if inputs.contains(wire) {
             return agent_program_error(
-                &format!(
-                    "`{wire}` is a query/capability input on this fetch, not a row field."
-                ),
+                format!("`{wire}` is a query/capability input on this fetch, not a row field."),
                 Some("Use `p#` from teaching `rows:` for row postfix (`.filter`, `[p#,…]`)."),
             );
         }
     }
     agent_program_error(
-        &format!("`{wire}` is not a row field on this binding's rows."),
+        format!("`{wire}` is not a row field on this binding's rows."),
         Some("Use `p#` symbols from the teaching `rows:` column for this binding."),
     )
 }
@@ -2648,7 +2646,7 @@ fn try_split_single_hop_surface_chain(
 
 fn plan_render_content_scalar_reference_err(_id: &str, _expr: &str, label: &str) -> String {
     agent_program_error(
-        &format!("Don't return `{label}.content` as the program root."),
+        format!("Don't return `{label}.content` as the program root."),
         Some(format!(
             "Return `{label}` for the generated-text row, or use `{label}.content` only inside params/heredocs."
         )),
@@ -2954,13 +2952,7 @@ fn compile_surface_node(
         false,
     )
     .map_err(|e| {
-        format_session_symbolic_parse_error(
-            session,
-            state.cross_cache,
-            state.pipeline,
-            expr,
-            &e,
-        )
+        format_session_symbolic_parse_error(session, state.cross_cache, state.pipeline, expr, &e)
     })?;
     let uses = collect_template_uses_from_expr(&parsed.expr);
     let (kind, qualified_entity, effect_class, result_shape) =
@@ -3206,7 +3198,7 @@ fn is_known_postfix_method(name: &str) -> bool {
 
 fn unknown_row_transform_error(id: &str, tail: &str) -> String {
     agent_program_error(
-        &format!("Unknown row transform `{tail}` on `{id}`."),
+        format!("Unknown row transform `{tail}` on `{id}`."),
         Some(
             "Use postfix on a binding: `.limit(N)`, `.filter{p#=…}`, `.sort(p#)`, `.group_by(p#)`, `[p#,…]`, etc.",
         ),
@@ -3924,10 +3916,7 @@ bad = rows.group_by(summary)
 bad"#,
         )
         .expect_err("search rows omit relation fields from provides");
-        assert!(
-            err.contains("not a row field"),
-            "{err}"
-        );
+        assert!(err.contains("not a row field"), "{err}");
         assert!(
             !err.contains("projected columns"),
             "diagnostic must not steer agents toward wire column names: {err}"
