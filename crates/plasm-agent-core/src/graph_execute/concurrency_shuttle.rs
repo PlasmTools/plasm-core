@@ -14,7 +14,8 @@ use crate::graph_execute::GraphCommitError;
 use crate::graph_execute::GraphExecuteBranch;
 use crate::graph_rehydrate::GraphSurfaceRehydrator;
 use crate::test_support::graph_fixtures::{
-    berry_entity, load_pokeapi_mini_cgs, spill_one_page, test_execute_session, SpillHostFixture,
+    berry_entity, load_pokeapi_mini_cgs, spill_one_page, test_execute_session,
+    type_entity_with_relation, SpillHostFixture,
 };
 
 use super::branch_ops::{commit_materialization, fork_materialization};
@@ -161,13 +162,21 @@ fn shuttle_disjoint_ref_commits_both_succeed() {
     );
 }
 
-/// Two concurrent commits on the same `Ref`: at most one branch wins (CEP-3).
+/// CEP-14: two branches additively materialize disjoint relation keys on a shared ancestor — both commit.
 #[test]
-fn shuttle_same_ref_dual_commit_serializes() {
+fn shuttle_idempotent_shared_ancestor_both_commit() {
     shuttle::check_pct(
         || {
             future::block_on(async {
                 let session = shuttle_session();
+                {
+                    let mut guard = lock_session(&session);
+                    insert_on(
+                        &mut guard,
+                        type_entity_with_relation("pokemon", Ref::new("Pokemon", "pikachu")),
+                    );
+                }
+
                 let (mut branch_a, base_a) = {
                     let guard = lock_session(&session);
                     fork_materialization(&guard)
@@ -178,8 +187,73 @@ fn shuttle_same_ref_dual_commit_serializes() {
                     fork_materialization(&guard)
                 };
                 assert_eq!(base_a, base_b);
-                insert_on(&mut branch_a, berry_entity("contended"));
-                insert_on(&mut branch_b, berry_entity("contended"));
+
+                insert_on(
+                    &mut branch_a,
+                    type_entity_with_relation("pokemon", Ref::new("Pokemon", "pikachu")),
+                );
+                insert_on(
+                    &mut branch_b,
+                    type_entity_with_relation("moves", Ref::new("Move", "thunderbolt")),
+                );
+
+                let session_a = ShuttleArc::clone(&session);
+                let session_b = ShuttleArc::clone(&session);
+                let handle_a = future::spawn(async move {
+                    future::yield_now().await;
+                    let mut guard = lock_session(&session_a);
+                    commit_materialization(&mut guard, base_a, branch_a).expect("commit a");
+                });
+                let handle_b = future::spawn(async move {
+                    future::yield_now().await;
+                    let mut guard = lock_session(&session_b);
+                    commit_materialization(&mut guard, base_b, branch_b).expect("commit b");
+                });
+                handle_a.await.expect("task a");
+                handle_b.await.expect("task b");
+
+                let guard = lock_session(&session);
+                let electric = guard
+                    .get(&Ref::new("PokemonType", "electric"))
+                    .expect("electric");
+                assert!(electric.relations.contains_key("pokemon"));
+                assert!(electric.relations.contains_key("moves"));
+            });
+        },
+        PCT_DEPTH,
+        PCT_ITERATIONS,
+    );
+}
+
+/// Two concurrent commits on the same `Ref` with divergent field values: at most one wins (CEP-3).
+#[test]
+fn shuttle_same_ref_dual_commit_serializes() {
+    shuttle::check_pct(
+        || {
+            future::block_on(async {
+                use plasm_core::Value;
+
+                let session = shuttle_session();
+                {
+                    let mut guard = lock_session(&session);
+                    insert_on(&mut guard, berry_entity("contended"));
+                }
+                let (mut branch_a, base_a) = {
+                    let guard = lock_session(&session);
+                    fork_materialization(&guard)
+                };
+                future::yield_now().await;
+                let (mut branch_b, base_b) = {
+                    let guard = lock_session(&session);
+                    fork_materialization(&guard)
+                };
+                assert_eq!(base_a, base_b);
+                let mut entity_a = berry_entity("contended");
+                entity_a.update_field("name".into(), Value::String("branch_a".into()), 2);
+                let mut entity_b = berry_entity("contended");
+                entity_b.update_field("name".into(), Value::String("branch_b".into()), 3);
+                insert_on(&mut branch_a, entity_a);
+                insert_on(&mut branch_b, entity_b);
 
                 let session_a = ShuttleArc::clone(&session);
                 let session_b = ShuttleArc::clone(&session);
@@ -370,6 +444,60 @@ async fn tokio_prefer_embed_apply_while_commit() {
     let (snap_ok, commit_ok) = tokio::join!(snapshot, commit);
     assert!(snap_ok.expect("snapshot task"));
     assert!(commit_ok.expect("commit task"));
+}
+
+/// Reproduction: two concurrent plan roots sharing `e3("electric")` with disjoint relation nav.
+#[tokio::test]
+async fn tokio_shared_ancestor_disjoint_relations_both_commit() {
+    use plasm_core::Ref;
+
+    let cgs = load_pokeapi_mini_cgs();
+    let sess = Arc::new(test_execute_session(cgs, "two_root_electric"));
+
+    {
+        let mut guard = sess.lock_graph_cache().await;
+        guard
+            .insert(type_entity_with_relation(
+                "pokemon",
+                Ref::new("Pokemon", "pikachu"),
+            ))
+            .expect("seed electric");
+    }
+
+    let sess_a = Arc::clone(&sess);
+    let sess_b = Arc::clone(&sess);
+    let commit_a = tokio::spawn(async move {
+        let mut branch = GraphExecuteBranch::fork(&sess_a).await;
+        branch
+            .mat_mut()
+            .insert(type_entity_with_relation(
+                "pokemon",
+                Ref::new("Pokemon", "pikachu"),
+            ))
+            .expect("pokemon relation");
+        branch.commit(&sess_a).await
+    });
+    let commit_b = tokio::spawn(async move {
+        let mut branch = GraphExecuteBranch::fork(&sess_b).await;
+        branch
+            .mat_mut()
+            .insert(type_entity_with_relation(
+                "moves",
+                Ref::new("Move", "thunderbolt"),
+            ))
+            .expect("moves relation");
+        branch.commit(&sess_b).await
+    });
+
+    commit_a.await.expect("task a").expect("commit a");
+    commit_b.await.expect("task b").expect("commit b");
+
+    let guard = sess.lock_graph_cache().await;
+    let electric = guard
+        .get(&Ref::new("PokemonType", "electric"))
+        .expect("electric");
+    assert!(electric.relations.contains_key("pokemon"));
+    assert!(electric.relations.contains_key("moves"));
 }
 
 fn empty_graph_result(count: usize) -> plasm_runtime::ExecutionResult {

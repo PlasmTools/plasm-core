@@ -87,6 +87,8 @@ pub struct GraphCache {
     type_index: HashMap<EntityName, Vec<Ref>>,
     /// FIFO insertion order for hot-RAM eviction after durable page spill.
     insertion_order: Vec<Ref>,
+    /// Lazy fork-base capture for branch execute (CEP-14); unset on session hot graph.
+    pub(crate) branch_fork: Option<crate::materialization_conflict::BranchForkTracker>,
 }
 
 /// Options for cache operations
@@ -546,6 +548,7 @@ impl GraphCache {
             version_counter: 0,
             type_index: HashMap::new(),
             insertion_order: Vec::new(),
+            branch_fork: None,
         }
     }
 
@@ -575,6 +578,7 @@ impl GraphCache {
     pub fn insert(&mut self, entity: CachedEntity) -> Result<bool, RuntimeError> {
         let timestamp = self.current_timestamp();
         let reference = entity.reference.clone();
+        self.capture_fork_base_before_mutate(&reference);
 
         // Update type index
         let entity_type = reference.entity_type.clone();
@@ -674,69 +678,77 @@ impl GraphCache {
         self.type_index.clear();
         self.insertion_order.clear();
         self.version_counter = 0;
+        self.branch_fork = None;
     }
 
-    /// Per-entity optimistic version for fine-grained branch commit validation.
-    pub(crate) fn entity_version(&self, reference: &Ref) -> Option<u64> {
-        self.get(reference).map(|e| e.version)
-    }
-
-    /// Snapshot `(Ref → entity.version)` for branch fork base state.
-    #[cfg(test)]
-    pub(crate) fn ref_version_snapshot(&self) -> std::collections::HashMap<Ref, u64> {
-        self.entities
-            .iter()
-            .map(|(r, e)| (r.clone(), e.version))
-            .collect()
-    }
-
-    /// Deep clone plus per-ref versions in one entity walk (branch fork hot path).
-    pub(crate) fn clone_capturing_ref_versions(
-        &self,
-    ) -> (Self, std::collections::HashMap<Ref, u64>) {
-        let mut versions = std::collections::HashMap::with_capacity(self.entities.len());
-        let mut entities = std::collections::HashMap::with_capacity(self.entities.len());
-        for (r, e) in &self.entities {
-            versions.insert(r.clone(), e.version);
-            entities.insert(r.clone(), e.clone());
+    /// Capture pre-mutation entity state for branch fork-base tracking (CEP-14).
+    pub(crate) fn capture_fork_base_before_mutate(&mut self, reference: &Ref) {
+        if let Some(tracker) = self.branch_fork.as_mut() {
+            tracker.capture_if_needed(reference, self.entities.get(reference));
         }
-        (
-            Self {
-                entities,
-                version_counter: self.version_counter,
-                type_index: self.type_index.clone(),
-                insertion_order: self.insertion_order.clone(),
-            },
-            versions,
-        )
     }
 
-    /// Refs written on this branch relative to `base` (new entities or bumped versions).
-    pub(crate) fn branch_write_set(&self, base: &std::collections::HashMap<Ref, u64>) -> Vec<Ref> {
+    /// Clone for branch execute with lazy fork-base tracking (CEP-14).
+    pub(crate) fn fork_for_branch(&self) -> Self {
+        use crate::materialization_conflict::BranchForkTracker;
+
+        let mut branch = self.clone();
+        branch.branch_fork = Some(BranchForkTracker::new(
+            self.entities.keys().cloned().collect(),
+        ));
+        branch
+    }
+
+    /// Refs written on this branch (new entities or lazy-captured content changes only).
+    pub(crate) fn branch_write_set(&self) -> Vec<Ref> {
+        let Some(tracker) = &self.branch_fork else {
+            return Vec::new();
+        };
         let mut writes: Vec<Ref> = self
             .entities
             .iter()
-            .filter_map(|(r, e)| match base.get(r) {
-                None => Some(r.clone()),
-                Some(&base_v) if e.version > base_v => Some(r.clone()),
-                _ => None,
+            .filter_map(|(reference, entity)| {
+                if !tracker.initial_refs.contains(reference) {
+                    return Some(reference.clone());
+                }
+                tracker
+                    .lazy_base
+                    .get(reference)
+                    .filter(|base| !base.content_equals(entity))
+                    .map(|_| reference.clone())
             })
             .collect();
         sort_refs(&mut writes);
         writes
     }
 
-    /// Refs in `write_set` that changed in `session` since `base` (true write conflicts).
-    pub(crate) fn detect_write_conflicts(
+    /// Refs in `write_set` with true per-key content divergence against live session state.
+    pub(crate) fn detect_branch_write_conflicts(
         session: &GraphCache,
-        base: &std::collections::HashMap<Ref, u64>,
+        branch: &GraphCache,
         write_set: &[Ref],
     ) -> Vec<Ref> {
+        use crate::materialization_conflict::entity_three_way_conflict;
+
+        let Some(tracker) = branch.branch_fork.as_ref() else {
+            return Vec::new();
+        };
         let mut conflicts: Vec<Ref> = write_set
             .iter()
-            .filter(|r| match base.get(*r) {
-                None => session.contains(r),
-                Some(&base_v) => session.entity_version(r).unwrap_or(0) > base_v,
+            .filter(|reference| {
+                if !tracker.initial_refs.contains(*reference) {
+                    return session.contains(reference);
+                }
+                let Some(base) = tracker.lazy_base.get(*reference) else {
+                    return false;
+                };
+                let Some(branch_entity) = branch.get(reference) else {
+                    return false;
+                };
+                let Some(session_entity) = session.get(reference) else {
+                    return false;
+                };
+                entity_three_way_conflict(base, branch_entity, session_entity)
             })
             .cloned()
             .collect();
@@ -858,31 +870,31 @@ mod tests {
         let a = create_test_entity("a", "Berry");
         let ref_a = a.reference.clone();
         cache.insert(a).unwrap();
-        let base = cache.ref_version_snapshot();
 
-        let mut branch = GraphCache::new();
+        let mut branch = cache.fork_for_branch();
         let b = create_test_entity("b", "Berry");
         let ref_b = b.reference.clone();
         branch.insert(b).unwrap();
-        let write_set = branch.branch_write_set(&base);
+        let write_set = branch.branch_write_set();
         assert_eq!(write_set, vec![ref_b.clone()]);
-        assert!(GraphCache::detect_write_conflicts(&cache, &base, &write_set).is_empty());
+        assert!(GraphCache::detect_branch_write_conflicts(&cache, &branch, &write_set).is_empty());
 
         cache.insert(create_test_entity("b", "Berry")).unwrap();
-        let conflicts = GraphCache::detect_write_conflicts(&cache, &base, &write_set);
+        let conflicts = GraphCache::detect_branch_write_conflicts(&cache, &branch, &write_set);
         assert_eq!(conflicts, vec![ref_b]);
 
-        let base2 = cache.ref_version_snapshot();
-        let mut branch2 = cache.clone();
-        branch2.get_mut(&ref_a).unwrap().update_field(
+        let mut branch2 = cache.fork_for_branch();
+        let mut updated = cache.get(&ref_a).expect("ref_a").clone();
+        updated.update_field(
             "name".into(),
             Value::String("changed".into()),
             99,
         );
-        let write_a = branch2.branch_write_set(&base2);
+        branch2.insert(updated).expect("branch update");
+        let write_a = branch2.branch_write_set();
         assert_eq!(write_a, vec![ref_a.clone()]);
         assert!(
-            GraphCache::detect_write_conflicts(&cache, &base2, &write_a).is_empty(),
+            GraphCache::detect_branch_write_conflicts(&cache, &branch2, &write_a).is_empty(),
             "unchanged session entity should not conflict"
         );
 
@@ -891,7 +903,7 @@ mod tests {
             Value::String("session".into()),
             100,
         );
-        let conflicts_a = GraphCache::detect_write_conflicts(&cache, &base2, &write_a);
+        let conflicts_a = GraphCache::detect_branch_write_conflicts(&cache, &branch2, &write_a);
         assert_eq!(conflicts_a, vec![ref_a]);
     }
 

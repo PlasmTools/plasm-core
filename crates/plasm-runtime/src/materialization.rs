@@ -139,7 +139,7 @@ impl SessionResponseStore {
             .iter()
             .filter_map(|(fp, arc)| match base.get(fp) {
                 None => Some(fp.clone()),
-                Some(base_arc) if !Arc::ptr_eq(arc, base_arc) => Some(fp.clone()),
+                Some(base_arc) if arc.response != base_arc.response => Some(fp.clone()),
                 _ => None,
             })
             .collect()
@@ -147,6 +147,7 @@ impl SessionResponseStore {
 
     pub(crate) fn detect_write_conflicts(
         session: &Self,
+        branch: &Self,
         base: &std::collections::HashMap<RequestFingerprint, Arc<StoredResponse>>,
         write_set: &[RequestFingerprint],
     ) -> Vec<RequestFingerprint> {
@@ -154,15 +155,19 @@ impl SessionResponseStore {
             .iter()
             .filter(|fp| match base.get(*fp) {
                 None => session.entries.contains_key(*fp),
-                Some(base_arc) => session
-                    .entries
-                    .get(*fp)
-                    .is_none_or(|live| !Arc::ptr_eq(live, base_arc)),
+                Some(base_arc) => {
+                    let base_val = Some(&base_arc.response);
+                    let branch_val = branch.entries.get(*fp).map(|a| &a.response);
+                    let session_val = session.entries.get(*fp).map(|a| &a.response);
+                    content_diverged(base_val, branch_val, session_val)
+                }
             })
             .cloned()
             .collect()
     }
 }
+
+use crate::materialization_conflict::content_diverged;
 
 /// Unified per-session materialization state.
 #[derive(Debug, Clone, Default)]

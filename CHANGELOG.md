@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.79] - 2026-06-26
+
+### Fixed
+
+- **CEP-14 concurrent execute write conflicts:** branch commit validation is content-divergence
+  aware (per-field / relation / completeness three-way merge) with lazy fork-base capture on
+  first branch mutation per `Ref`. Parallel plan roots that share an ancestor (e.g.
+  `e3("electric").r5[…]` and `e3("electric").r4[…]`) no longer spuriously fail with
+  `session materialization changed during concurrent execute` when writes are additive or
+  idempotent. New-`Ref` insert races remain CEP-3 single-winner semantics.
+
 ## [0.3.77] - 2026-06-26
 
 ### Added

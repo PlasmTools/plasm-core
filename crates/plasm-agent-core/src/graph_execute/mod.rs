@@ -1,9 +1,9 @@
 //! Fork–execute–commit graph path: live HTTP runs on a branch snapshot without
 //! holding the session graph mutex.
 //!
-//! **CEP-1..3, CEP-11, CEP-12:** graph version monotonicity, write-conflict discard,
-//! single winner on same-key races, per-store write-set conflicts, and disjoint concurrent
-//! commits — validated by named cache/unit tests and `shuttle_*` tests in
+//! **CEP-1..3, CEP-11, CEP-12, CEP-14:** graph version monotonicity, write-conflict discard,
+//! single winner on same-key divergent races, per-store write-set conflicts, disjoint/additive
+//! concurrent commits — validated by named cache/unit tests and `shuttle_*` tests in
 //! [`concurrency_shuttle`] (primary graph concurrency gate).
 
 mod branch_ops;

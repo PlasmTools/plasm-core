@@ -104,6 +104,7 @@ impl QueryIndex {
 
     pub(crate) fn detect_write_conflicts(
         session: &Self,
+        branch: &Self,
         base: &HashMap<QueryCacheKey, Vec<Ref>>,
         write_set: &[QueryCacheKey],
     ) -> Vec<QueryCacheKey> {
@@ -111,12 +112,19 @@ impl QueryIndex {
             .iter()
             .filter(|k| match base.get(*k) {
                 None => session.entries.contains_key(*k),
-                Some(base_v) => session.entries.get(*k) != Some(base_v),
+                Some(base_v) => {
+                    let base_slice = Some(base_v.as_slice());
+                    let branch_slice = branch.entries.get(*k).map(|v| v.as_slice());
+                    let session_slice = session.entries.get(*k).map(|v| v.as_slice());
+                    content_diverged(base_slice, branch_slice, session_slice)
+                }
             })
             .cloned()
             .collect()
     }
 }
+
+use crate::materialization_conflict::content_diverged;
 
 #[cfg(test)]
 impl QueryCacheKey {

@@ -115,6 +115,7 @@ pub mod http_resilience;
 pub mod http_trace;
 pub mod http_transport;
 pub mod materialization;
+pub mod materialization_conflict;
 pub mod mockserver;
 pub mod oauth_client;
 pub mod oauth_token_debug;

@@ -42,6 +42,26 @@ pub fn berry_entity(name: &str) -> plasm_runtime::CachedEntity {
     }
 }
 
+/// Shared ancestor with one relation edge (two-root plan reproduction fixture).
+pub fn type_entity_with_relation(relation: &str, target: Ref) -> plasm_runtime::CachedEntity {
+    let reference = Ref::new("PokemonType", "electric");
+    let mut fields = IndexMap::new();
+    fields.insert(
+        "name".to_string(),
+        TypedFieldValue::from(Value::String("electric".to_string())),
+    );
+    let mut relations = IndexMap::new();
+    relations.insert(relation.to_string(), vec![target]);
+    plasm_runtime::CachedEntity {
+        reference,
+        fields,
+        relations,
+        last_updated: 1,
+        version: 1,
+        completeness: EntityCompleteness::Complete,
+    }
+}
+
 pub fn test_execute_session(cgs: Arc<CGS>, prompt_hash: &str) -> ExecuteSession {
     test_execute_session_for_graph(cgs, prompt_hash)
 }
