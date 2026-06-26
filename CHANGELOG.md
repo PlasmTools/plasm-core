@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.76] - 2026-06-26
+
+### Added
+
+- **Federated write triage:** pokeapi→linear dry-run smoke locks singleton GET + single write + non-fanout
+  return shape; Linear `issue_create` exposes `description`; federated write recipe in Linear README.
+- **GraphQL mutation envelope errors:** `success: false` wrappers on mutation paths surface actionable
+  business failures before opaque items_path narrowing.
+- **Teaching vocabulary:** disambiguate MCP handles, EntityRef slots, identity syntax, bindings, `$`
+  placeholders, and rare exemplar literals (`pikachu`); keep positional identity exemplars only for
+  high-signal cases (Pokemon, name-field, email).
+
+### Fixed
+
+- **D1 foreach fanout:** singleton `get` sources no longer count as foreach fanout risk; cardinality
+  recomputed at plan prepare/dry-run instead of stored on validated nodes.
+- **Discovery read-first gate:** self-relation mutation closure respects seeded target entities.
+- **Parser:** nested id constructor sugar resolves via `sym_map.resolve_ident`.
+- **Catalog-stale tests:** `CGS::fresh_catalog_digest()` for post-mutation hash recomputation.
+
 ## [0.3.75] - 2026-06-25
 
 ### Fixed
