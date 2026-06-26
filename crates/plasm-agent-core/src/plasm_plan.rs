@@ -1919,14 +1919,12 @@ fn validated_analyze_static_cardinality(
                 {
                     CardinalityAnalysis::StaticSingleton
                 }
-                PlanValue::Array { .. } | PlanValue::Literal { .. } | PlanValue::EntityRefKey { .. } => {
-                    CardinalityAnalysis::PluralOrUnknown
-                }
+                PlanValue::Array { .. }
+                | PlanValue::Literal { .. }
+                | PlanValue::EntityRefKey { .. } => CardinalityAnalysis::PluralOrUnknown,
                 _ => CardinalityAnalysis::StaticSingleton,
             },
-            ValidatedPlanNode::Derive(d) => {
-                inner(plan, by_id, d.source.as_str(), memo)
-            }
+            ValidatedPlanNode::Derive(d) => inner(plan, by_id, d.source.as_str(), memo),
             ValidatedPlanNode::Compute(c) => match &c.compute.op {
                 ComputeOp::Aggregate { .. } | ComputeOp::Render { .. } => {
                     CardinalityAnalysis::StaticSingleton
@@ -1940,21 +1938,21 @@ fn validated_analyze_static_cardinality(
                     CardinalityAnalysis::PluralOrUnknown
                 }
             },
-            ValidatedPlanNode::RelationTraversal(r) => match (
-                r.relation.cardinality,
-                r.relation.source_cardinality,
-            ) {
-                (RelationCardinality::One, RelationSourceCardinality::Single) => {
-                    inner(plan, by_id, r.relation.source.as_str(), memo)
+            ValidatedPlanNode::RelationTraversal(r) => {
+                match (r.relation.cardinality, r.relation.source_cardinality) {
+                    (RelationCardinality::One, RelationSourceCardinality::Single) => {
+                        inner(plan, by_id, r.relation.source.as_str(), memo)
+                    }
+                    (
+                        RelationCardinality::One,
+                        RelationSourceCardinality::RuntimeCheckedSingleton,
+                    ) => CardinalityAnalysis::PluralOrUnknown,
+                    (RelationCardinality::Many, _)
+                    | (RelationCardinality::One, RelationSourceCardinality::Many) => {
+                        CardinalityAnalysis::PluralOrUnknown
+                    }
                 }
-                (RelationCardinality::One, RelationSourceCardinality::RuntimeCheckedSingleton) => {
-                    CardinalityAnalysis::PluralOrUnknown
-                }
-                (RelationCardinality::Many, _)
-                | (RelationCardinality::One, RelationSourceCardinality::Many) => {
-                    CardinalityAnalysis::PluralOrUnknown
-                }
-            },
+            }
             _ => CardinalityAnalysis::PluralOrUnknown,
         };
         memo.insert(node_id.to_string(), singleton);

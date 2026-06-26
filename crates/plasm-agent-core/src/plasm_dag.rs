@@ -5,6 +5,10 @@
 //! stitches labels, postfix transforms, and `=>` derives into a single coherent program surface.
 
 use crate::execute_session::ExecuteSession;
+use crate::plasm_dag_surface_guards::{
+    content_reference_error, looks_like_data_literal, reject_bare_literal_noop_root,
+    reject_derive_map_invalid_rhs, ContentReferenceSite,
+};
 use crate::plasm_plan::{
     AggregateFunction, ComputeOp, EffectClass, FieldPath, OutputName, PlanExprIr, PlanNodeKind,
     PlanRelationTraversal, PlanValue, QualifiedEntityKey, RelationCardinality,
@@ -453,6 +457,7 @@ pub(crate) fn compile_plasm_surface_line_to_plan(
     if trimmed.starts_with("return ") {
         return Err(program_return_keyword_error());
     }
+    reject_bare_literal_noop_root(trimmed)?;
     let roots = split_return_list(trimmed, &mut state, session)?;
     if roots.is_empty() {
         return Err("expression is empty".to_string());
@@ -1866,7 +1871,8 @@ fn compile_node_expr(
             }]);
         }
         let (value, inputs) = parse_plan_value_expr(right.trim(), state, Some("_"))?;
-        reject_derive_map_surface_expr_literal(&value)?;
+        let relation_wires = relation_wire_names_for_source(session, state, source);
+        reject_derive_map_invalid_rhs(&value, &relation_wires)?;
         return Ok(vec![DagNode {
             id: id.to_string(),
             expr: rhs_display.to_string(),
@@ -1918,6 +1924,29 @@ fn longest_matching_bound_prefix(expr: &str, state: &CompileState<'_>) -> Option
 }
 
 /// Unified binding contract for a program label (replaces parallel walkers).
+fn relation_wire_names_for_source(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    source: &str,
+) -> Vec<String> {
+    let contract = match binding_contract(state, source) {
+        Some(c) => c,
+        None => return Vec::new(),
+    };
+    let cgs = match cgs_for_qualified_entity(session, &contract.row_entity) {
+        Some(c) => c,
+        None => return Vec::new(),
+    };
+    let ent = match cgs.get_entity(contract.row_entity.entity.as_str()) {
+        Some(e) => e,
+        None => return Vec::new(),
+    };
+    ent.relations
+        .keys()
+        .map(|k| k.as_str().to_string())
+        .collect()
+}
+
 fn binding_contract(state: &CompileState<'_>, label: &str) -> Option<ProgramBindingContract> {
     let node = state.get(label)?;
     Some(binding_contract_for_node(state, label, node))
@@ -2644,15 +2673,6 @@ fn try_split_single_hop_surface_chain(
     None
 }
 
-fn plan_render_content_scalar_reference_err(_id: &str, _expr: &str, label: &str) -> String {
-    agent_program_error(
-        format!("Don't return `{label}.content` as the program root."),
-        Some(format!(
-            "Return `{label}` for the generated-text row, or use `{label}.content` only inside params/heredocs."
-        )),
-    )
-}
-
 fn relation_materialize_for_lower(
     session: &ExecuteSession,
     row_qe: &QualifiedEntityKey,
@@ -2810,12 +2830,13 @@ fn compile_surface_node(
             format!("Plasm program `{id}`: unknown binding `{label}` for continuation")
         })?;
         let tail_trim = tail.trim();
-        if matches!(
-            contract.continuation,
-            ContinuationCapability::RenderContentScalar
-        ) && (tail_trim == "content" || tail_trim.starts_with("content."))
-        {
-            return Err(plan_render_content_scalar_reference_err(id, expr, &label));
+        if tail_trim == "content" || tail_trim.starts_with("content.") {
+            let site = if id.starts_with("return_") {
+                ContentReferenceSite::ProgramRoot
+            } else {
+                ContentReferenceSite::Continuation
+            };
+            return Err(content_reference_error(&label, site, contract.continuation));
         }
         if matches!(contract.continuation, ContinuationCapability::Terminal) {
             return Err(format!(
@@ -3221,6 +3242,7 @@ fn split_return_list(
         if state.contains(part.as_str()) {
             roots.push(part);
         } else {
+            reject_bare_literal_noop_root(part.as_str())?;
             let id = format!("return_{}", roots.len() + 1);
             for node in compile_node_expr(session, state, &id, part.as_str())? {
                 state.insert(node)?;
@@ -3522,41 +3544,6 @@ fn parse_plan_value_expr(
     Ok((PlanValue::Literal { value }, Vec::new()))
 }
 
-/// `=>` derive maps accept `value_or_template` only — not surface `Entity(…)` calls.
-fn reject_derive_map_surface_expr_literal(value: &PlanValue) -> Result<(), String> {
-    let PlanValue::Literal { value } = value else {
-        return Ok(());
-    };
-    let Some(s) = value.as_str() else {
-        return Ok(());
-    };
-    let t = s.trim();
-    if derive_rhs_literal_looks_like_surface_call(t) {
-        return Err(format!(
-            "`=>` derive map does not accept surface expressions ({t:?}); use `binding.relation` / `binding.p#` for relation hops, or `source => {{ … }}` for per-row maps"
-        ));
-    }
-    Ok(())
-}
-
-fn derive_rhs_literal_looks_like_surface_call(s: &str) -> bool {
-    if !s.contains('(') {
-        return false;
-    }
-    let head = s.split('(').next().unwrap_or("").trim();
-    if head.is_empty() {
-        return false;
-    }
-    let mut chars = head.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    if first == 'e' && chars.next().is_some_and(|c| c.is_ascii_digit()) {
-        return true;
-    }
-    first.is_ascii_uppercase() && head.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
 fn parse_literal(raw: &str) -> Result<serde_json::Value, String> {
     if raw.starts_with('"') || raw == "null" || raw == "true" || raw == "false" {
         return serde_json::from_str(raw).map_err(|e| format!("literal `{raw}`: {e}"));
@@ -3836,11 +3823,6 @@ fn single_unknown_schema(entity: &str) -> SyntheticResultSchema {
     }
 }
 
-fn looks_like_data_literal(rhs: &str) -> bool {
-    let t = rhs.trim_start();
-    t.starts_with('{') || t.starts_with('[') || t.starts_with('"') || t.starts_with("<<")
-}
-
 fn looks_like_plasm_effect_template(rhs: &str) -> bool {
     // Distinguish for-each side effects from `source => { … }` derive. `.m#` (teaching-table methods) and
     // all readable verbs must register here—`.label(`, `.update(`, etc.—not just `.m`.
@@ -4038,10 +4020,121 @@ bad = hits => LangItem(id=_.id)
 bad"#,
         )
         .expect_err("entity ctor on => must not compile as derive literal");
+        assert!(err.contains("derive map does not accept"), "{err}");
+    }
+
+    #[test]
+    fn derive_map_rejects_relation_hop_symbol() {
+        let session = test_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let e_langline = map.entity_sym_for("langmatrix", "LangLine");
+        let r_lines = map.ident_sym_relation_for("langmatrix", "LangItem", "lines");
+        let program = format!("hits = LangItem\nbad = hits => {e_langline}.{r_lines}\nbad");
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "derive-reject-relation-hop-symbol",
+            &program,
+        )
+        .expect_err("entity relation hop on => must not compile as derive literal");
         assert!(
-            err.contains("derive map does not accept surface expressions"),
+            err.contains("Relation reads use") || err.contains("derive map does not accept"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn derive_map_rejects_binding_relation_hop() {
+        let session = test_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let r_lines = map.ident_sym_relation_for("langmatrix", "LangItem", "lines");
+        let program = format!("hits = LangItem\nbad = hits => hits.{r_lines}\nbad");
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "derive-reject-binding-relation-hop",
+            &program,
+        )
+        .expect_err("binding relation hop on => must not compile as derive");
+        assert!(err.contains("Relation reads use"), "{err}");
+    }
+
+    #[test]
+    fn derive_map_rejects_wire_relation_hop() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "derive-reject-wire-relation-hop",
+            r#"hits = LangItem
+bad = hits => hits.lines
+bad"#,
+        )
+        .expect_err("wire relation hop on => must not compile as derive");
+        assert!(err.contains("Relation reads use"), "{err}");
+    }
+
+    #[test]
+    fn json_object_dag_root_is_literal_noop_error() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "json-dag-root-noop",
+            r#"{"foo":"bar"}"#,
+        )
+        .expect_err("bare JSON DAG root must be rejected");
+        assert!(err.contains("literal no-op"), "{err}");
+    }
+
+    #[test]
+    fn json_object_root_is_literal_noop_error() {
+        let session = test_session();
+        let err = compile_plasm_surface_line_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "json-root-noop",
+            r#"{"foo":"bar"}"#,
+        )
+        .expect_err("bare JSON object root must be rejected");
+        assert!(err.contains("literal no-op"), "{err}");
+    }
+
+    #[test]
+    fn scalar_json_bind_still_compiles() {
+        let session = test_session();
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "scalar-json-bind",
+            r#"cfg = {"k":"v"}
+cfg"#,
+        )
+        .expect("assignment JSON bind should compile");
+        let nodes = plan["nodes"].as_array().expect("nodes");
+        let cfg = nodes.iter().find(|n| n["id"] == "cfg").expect("cfg node");
+        assert_eq!(cfg["kind"], "data");
+    }
+
+    #[test]
+    fn get_row_content_reference_errors_with_template_hint() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "get-row-content-hint",
+            r#"issue = LangItem("i1")
+issue.content"#,
+        )
+        .expect_err("GET row .content must not look like relation");
+        assert!(err.contains("row-to-text template bindings"), "{err}");
     }
 
     #[test]
@@ -4057,10 +4150,7 @@ bad = hits => e1(p5=_.id)
 bad"#,
         )
         .expect_err("e1(...) on => must not compile as derive literal");
-        assert!(
-            err.contains("derive map does not accept surface expressions"),
-            "{err}"
-        );
+        assert!(err.contains("derive map does not accept"), "{err}");
     }
 
     #[test]
@@ -4680,10 +4770,7 @@ author"#;
             "return LangItem, LangLine",
         )
         .expect_err("return prefix");
-        assert!(
-            err.contains("Remove `return`"),
-            "unexpected: {err}"
-        );
+        assert!(err.contains("Remove `return`"), "unexpected: {err}");
     }
 
     #[test]
@@ -4698,10 +4785,7 @@ author"#;
             source,
         )
         .expect_err("return");
-        assert!(
-            err.contains("Remove `return`"),
-            "unexpected: {err}"
-        );
+        assert!(err.contains("Remove `return`"), "unexpected: {err}");
     }
 
     fn linear_test_session(cgs: Arc<CGS>) -> ExecuteSession {

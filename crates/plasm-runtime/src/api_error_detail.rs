@@ -118,7 +118,10 @@ pub fn response_path_step<'a>(cur: &'a Value, key: &str) -> Option<&'a Value> {
 }
 
 /// Parent object immediately before the terminal entity segment in `items_path`.
-pub fn response_items_path_prefix<'a>(value: &'a Value, items_path: &[String]) -> Option<&'a Value> {
+pub fn response_items_path_prefix<'a>(
+    value: &'a Value,
+    items_path: &[String],
+) -> Option<&'a Value> {
     if items_path.len() < 2 {
         return None;
     }

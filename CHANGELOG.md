@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.77] - 2026-06-26
+
+### Added
+
+- **MCP language conformance guards:** extract `plasm_dag_surface_guards` module; reject `=>` relation
+  hops (teaching `r#` and wire names), bare JSON/data literal program roots on surface-line and DAG paths,
+  and misleading `.content` on non-render bindings.
+- **Teaching / smoke:** scalar predicate quote hint in predicate context; MCP language conformance smoke
+  script; conformance probe table in docs.
+
+### Fixed
+
+- **Derive trap:** `source => e#.r#` / `source => binding.wire` no longer lowers as silent derive literals.
+- **Literal no-op:** `{"foo":"bar"}` as a program root fails with actionable copy on all compile entry paths.
+
 ## [0.3.76] - 2026-06-26
 
 ### Added

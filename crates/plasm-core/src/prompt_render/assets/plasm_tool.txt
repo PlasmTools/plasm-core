@@ -19,6 +19,7 @@ Symbol and fill rules:
 - **Session/plan handles** (`logical_session_ref`, `plan_commit_ref` / `pcN`): MCP tokens only — copy verbatim; not program syntax.
 - **Teaching placeholders** (`$`, `<id>`, `<val>` in examples): replace with real ids, filters, and search terms before output.
 - **Teaching exemplars** (rare TSV literals like `pikachu`, `example-name`, `user@example.com`): sample identities — substitute the real id from context; do not treat as wire constants.
+- **Scalar predicate values** must be quoted strings (`key = "EVA"`, not `key = EVA`).
 - EntityRef slots take **identity** syntax (`e#(id)`), not bare scalars.
 - Get-head model: **parens = identity** (`e#(value)`; positional preferred — e.g. `e_mon(pikachu)`), **braces = query/filter** (`e#{p#=…}`). Keyed `e#(p#=…)` only when that `p#` is the entity identity field.
 - Remove `..` ellipses or replace with real `p#=` assignments before output.

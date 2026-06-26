@@ -381,9 +381,11 @@ fn federated_pokeapi_linear_write_plan_is_coherent() {
     let m_create = map.method_sym_for("linear", "Issue", "create");
     let p_team = map.ident_sym_cap_param_for("linear", "Issue", "issue_create", "team");
     let p_title = map.ident_sym_cap_param_for("linear", "Issue", "issue_create", "title");
+    let p_description =
+        map.ident_sym_cap_param_for("linear", "Issue", "issue_create", "description");
 
     let program = format!(
-        "pika = {e_mon}(pikachu)\nticket = pika => {e_issue}.{m_create}({p_team}={e_team}(EVA), {p_title}=\"Pokedex #025 Pikachu\")\nticket"
+        "pika = {e_mon}(pikachu)\nticket = pika => {e_issue}.{m_create}({p_team}={e_team}(EVA), {p_title}=\"Pokedex #025 Pikachu\", {p_description}=<<MD\n# Pikachu\n\nElectric-type Pokémon #025.\nMD\n)\nticket"
     );
     let plan = crate::plasm_dag::compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
@@ -668,10 +670,7 @@ fn dry_run_compiled_search_projection_rejects_filter_input_param() {
 rows"#;
     match compile_plasm_expression(&pipeline, None, &s, "search-proj-input", source) {
         Err(err) => {
-            assert!(
-                err.contains("query/capability input"),
-                "{err}"
-            );
+            assert!(err.contains("query/capability input"), "{err}");
         }
         Ok(bundle) => {
             let dry_err = evaluate_plasm_comp_dry(&s, &bundle)

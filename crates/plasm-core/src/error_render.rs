@@ -1147,17 +1147,41 @@ fn format_session_entity_symbol_summary(map: &SymbolMap) -> String {
 }
 
 /// Agent-facing correction when an entity root token is not in the **session** symbol table.
-fn correction_unknown_entity_symbolic_llm(map: &SymbolMap, bad: &str) -> String {
+fn correction_unknown_entity_symbolic_llm(
+    map: &SymbolMap,
+    bad: &str,
+    scalar_predicate_context: bool,
+) -> String {
     let summary = format_session_entity_symbol_summary(map);
     if looks_like_opaque_entity_symbol_token(bad) {
         format!(
             "`{bad}` is not in this session — copy an `e#` from your latest `plasm_context` tsv ({summary})."
         )
     } else {
-        format!(
+        let mut msg = format!(
             "`{bad}` is not a session entity token — use an `e#` from the teaching table ({summary})."
-        )
+        );
+        if scalar_predicate_context {
+            msg.push_str(&format!(
+                " For scalar predicate values use a quoted string (e.g. `p#=\"{bad}\"`)."
+            ));
+        }
+        msg
     }
+}
+
+fn unknown_entity_in_predicate_scalar_slot(
+    expr_line: &str,
+    span_opt: Option<&(usize, usize)>,
+) -> bool {
+    let Some((start, _)) = span_opt else {
+        return false;
+    };
+    let prefix = expr_line.get(..*start).unwrap_or(expr_line);
+    let Some(after_brace) = prefix.rsplit('{').next() else {
+        return false;
+    };
+    after_brace.contains('=')
 }
 
 fn correction_unknown_entity(
@@ -1169,7 +1193,11 @@ fn correction_unknown_entity(
 ) -> String {
     if let FeedbackStyle::SymbolicLlm { map } = style {
         if !map.exposed_entity_symbol_rows().is_empty() {
-            return correction_unknown_entity_symbolic_llm(map, bad);
+            return correction_unknown_entity_symbolic_llm(
+                map,
+                bad,
+                unknown_entity_in_predicate_scalar_slot(expr_line, span_opt),
+            );
         }
     }
     let (cands_canon, cands_disp) = entity_names_canonical_and_display(cgs, style);
@@ -2136,6 +2164,58 @@ mod tests {
     use crate::query_resolve::QueryCapabilityResolveError;
     use crate::step_semantics::StepErrorCategory;
     use crate::symbol_tuning::SymbolMap;
+
+    #[test]
+    fn unknown_entity_symbolic_llm_hints_quoted_scalar_for_bare_words() {
+        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = loader::load_schema_dir(dir).unwrap();
+        let map = SymbolMap::build(&cgs, &["Pet"]);
+        let err =
+            expr_parser::parse_session_line("e1{status=EVA}", &cgs, Some(std::sync::Arc::new(map)))
+                .unwrap_err();
+        let map = SymbolMap::build(&cgs, &["Pet"]);
+        let step = render_parse_error_with_feedback(
+            &err,
+            "e1{status=EVA}",
+            "e1{status=EVA}",
+            &cgs,
+            FeedbackStyle::SymbolicLlm { map: &map },
+        );
+        let s = step.correction;
+        assert!(
+            s.contains("quoted string") && s.contains("EVA"),
+            "expected scalar quote hint, correction={s}"
+        );
+    }
+
+    #[test]
+    fn unknown_entity_root_omits_scalar_quote_hint() {
+        let dir = std::path::Path::new("../../fixtures/schemas/petstore");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = loader::load_schema_dir(dir).unwrap();
+        let map = SymbolMap::build(&cgs, &["Pet"]);
+        let err =
+            expr_parser::parse_session_line("EVA(p5=1)", &cgs, Some(std::sync::Arc::new(map)))
+                .unwrap_err();
+        let map = SymbolMap::build(&cgs, &["Pet"]);
+        let step = render_parse_error_with_feedback(
+            &err,
+            "EVA(p5=1)",
+            "EVA(p5=1)",
+            &cgs,
+            FeedbackStyle::SymbolicLlm { map: &map },
+        );
+        let s = step.correction;
+        assert!(
+            !s.contains("quoted string"),
+            "entity-root unknown token must not suggest scalar quotes: {s}"
+        );
+    }
 
     #[test]
     fn unknown_entity_symbolic_llm_lists_session_symbols_not_catalog_dump() {

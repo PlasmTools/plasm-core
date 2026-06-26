@@ -173,8 +173,10 @@ pub fn analyze_read_boundedness(plan: &Plan<ValidatedPlanState>) -> ReadBoundedn
             if crate::plasm_plan_run::for_each_body_mutates_remote(
                 fe.effect_template.kind,
                 fe.effect_template.effect_class,
-            ) && !crate::plasm_plan::validated_source_is_static_singleton(plan, fe.source.as_str())
-            {
+            ) && !crate::plasm_plan::validated_source_is_static_singleton(
+                plan,
+                fe.source.as_str(),
+            ) {
                 out.has_foreach_fanout_risk = true;
             }
         }
