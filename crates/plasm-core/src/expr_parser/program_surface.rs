@@ -556,9 +556,7 @@ pub fn program_return_keyword_error() -> String {
 
 pub fn program_invalid_binding_label_error(label: &str) -> String {
     if looks_like_domain_symbol(label) {
-        format!(
-            "Binding names must be labels like `issue`, not teaching symbols (`{label}`)."
-        )
+        format!("Binding names must be labels like `issue`, not teaching symbols (`{label}`).")
     } else {
         format!("Binding names must be identifiers like `issue`, not `{label}`.")
     }
@@ -821,7 +819,10 @@ mod tests {
             "comments[p2,p14]".to_string(),
         ])
         .expect_err("must bind intermediate postfix");
-        assert!(err.contains("binding") || err.contains("Intermediate"), "{err}");
+        assert!(
+            err.contains("binding") || err.contains("Intermediate"),
+            "{err}"
+        );
     }
 
     #[test]

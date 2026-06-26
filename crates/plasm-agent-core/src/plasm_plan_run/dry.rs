@@ -328,6 +328,7 @@ pub(crate) fn graph_summary(
     let mut has_explicit_limit = false;
     let mut has_full_collection_compute = false;
     let mut relation_traversal_nodes = 0usize;
+    let mut singleton_foreach_writes = 0usize;
     for n in &plan.nodes {
         if node_dependencies(n).is_empty() {
             parallelizable_roots.push(n.id().as_str().to_string());
@@ -339,8 +340,17 @@ pub(crate) fn graph_summary(
             }
             EffectClass::ArtifactRead => derive_nodes.push(n.id().as_str().to_string()),
         }
-        if matches!(n, ValidatedPlanNode::ForEach(_)) {
+        if let ValidatedPlanNode::ForEach(fe) = n {
             template_nodes.push(n.id().as_str().to_string());
+            // D1: singleton source `=>` write is exactly one effect, not a fanout.
+            if crate::plasm_plan::validated_source_is_static_singleton(plan, fe.source.as_str())
+                && crate::plasm_plan_run::for_each_body_mutates_remote(
+                    fe.effect_template.kind,
+                    fe.effect_template.effect_class,
+                )
+            {
+                singleton_foreach_writes += 1;
+            }
         }
         if let Some(approval) = inferred_node_approval(n) {
             approval_gates.push(approval);
@@ -427,6 +437,17 @@ pub(crate) fn graph_summary(
             "Aggregates/group_by/sort run over the full logical row set before `.limit`; narrow reads (filters + projected fields) when counts are uncertain."
                 .to_string(),
         );
+    }
+    if singleton_foreach_writes > 0 {
+        boundedness_facts.push(format!(
+            "Singleton source `=>` write performs exactly {} write{} (no fanout).",
+            singleton_foreach_writes,
+            if singleton_foreach_writes == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ));
     }
     if has_foreach_fanout_risk {
         warnings.push(

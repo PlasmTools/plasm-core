@@ -493,7 +493,7 @@ async fn program_parse_error_is_bad_request() {
     let doc: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let detail = doc.get("detail").and_then(|d| d.as_str()).unwrap_or("");
     assert!(
-        detail.contains("parse") || detail.contains("Plasm program"),
+        detail.contains("Fix spelling"),
         "expected parse detail: {detail:?}"
     );
 }
@@ -829,7 +829,7 @@ async fn unknown_entity_parse_error_includes_session_bounds() {
         crate::plasm_compile::compile_plasm_expression(pipeline, Some(cross), &sess, "t", "e9()")
             .expect_err("out-of-range e#");
     assert!(
-        err.contains("unknown entity"),
+        err.contains("is not in this session"),
         "expected unknown entity in {err:?}"
     );
 }

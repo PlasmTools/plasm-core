@@ -2182,8 +2182,9 @@ mod tests {
         }
         let cgs = loader::load_schema_dir(dir).unwrap();
         let map = SymbolMap::build(&cgs, &["Pet"]);
-        let err = expr_parser::parse_session_line("e1{bogus=1}", &cgs, Some(std::sync::Arc::new(map)))
-            .unwrap_err();
+        let err =
+            expr_parser::parse_session_line("e1{bogus=1}", &cgs, Some(std::sync::Arc::new(map)))
+                .unwrap_err();
         let map = SymbolMap::build(&cgs, &["Pet"]);
         let step = render_parse_error_with_feedback(
             &err,
@@ -2209,8 +2210,9 @@ mod tests {
         }
         let cgs = loader::load_schema_dir(dir).unwrap();
         let map = SymbolMap::build(&cgs, &["Pet"]);
-        let err = expr_parser::parse_session_line("e1(id).bogus", &cgs, Some(std::sync::Arc::new(map)))
-            .unwrap_err();
+        let err =
+            expr_parser::parse_session_line("e1(id).bogus", &cgs, Some(std::sync::Arc::new(map)))
+                .unwrap_err();
         let map = SymbolMap::build(&cgs, &["Pet"]);
         let step = render_parse_error_with_feedback(
             &err,
@@ -2220,7 +2222,10 @@ mod tests {
             FeedbackStyle::SymbolicLlm { map: &map },
         );
         let s = step.correction;
-        assert!(s.contains("not navigable") || s.contains("not a field"), "{s}");
+        assert!(
+            s.contains("not navigable") || s.contains("not a field"),
+            "{s}"
+        );
         assert!(s.len() < 200, "correction should stay short: {s}");
         assert!(!s.contains("Valid entity symbols"), "{s}");
         assert!(!s.contains("catalog entry"), "{s}");

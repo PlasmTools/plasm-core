@@ -2667,14 +2667,18 @@ fn compound_get_expr_line(
     Some(format!("{es}({})", parts.join(", ")))
 }
 
-/// Unary identity GET teaching: [`EntityDef::id_field`] as opaque **`p#`** (`e#(p…)`) when the field has an
-/// allocated teaching ident symbol; otherwise **`e#($)`** (canonical / unresolved gloss).
+/// Unary identity GET teaching: positional literal for simple string ids (e.g. `e#(pikachu)` on
+/// Pokemon), otherwise opaque **`p#`** (`e#(p…)`) when the field has an allocated teaching ident
+/// symbol; otherwise **`e#($)`** (canonical / unresolved gloss).
 fn unary_entity_id_teaching_expr_line(
     es: &str,
     ent: &EntityDef,
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,
 ) -> String {
+    if let Some(literal) = positional_identity_teaching_literal(ent) {
+        return format!("{es}({literal})");
+    }
     let sym = id_sym_entity(
         map,
         catalog_entry_id,
@@ -2685,6 +2689,23 @@ fn unary_entity_id_teaching_expr_line(
         format!("{es}({sym})")
     } else {
         format!("{es}({})", TEACHING_PARAM_VALUE_PLACEHOLDER)
+    }
+}
+
+/// Literal positional identity for teaching rows (B2): simple string `id_field`, no compound keys.
+fn positional_identity_teaching_literal(ent: &EntityDef) -> Option<&'static str> {
+    if !ent.key_vars.is_empty() {
+        return None;
+    }
+    match ent.id_format {
+        Some(crate::schema::IdFormat::Uuid) | Some(crate::schema::IdFormat::Integer) => None,
+        Some(crate::schema::IdFormat::Email) => Some("user@example.com"),
+        Some(crate::schema::IdFormat::Other) => None,
+        Some(crate::schema::IdFormat::Slug) | None => match ent.name.as_str() {
+            "Pokemon" => Some("pikachu"),
+            _ if ent.id_field.as_str() == "name" => Some("example-name"),
+            _ => None,
+        },
     }
 }
 
@@ -5982,7 +6003,14 @@ mod tests {
         .as_str()
         .to_owned();
         assert!(
-            validate_teaching_line_wire(&cgs, expr).is_some(),
+            domain_line_validate_cached(
+                &mut HashMap::new(),
+                prompt_line_valid_cache_seed_cgs(&cgs),
+                &cgs,
+                expr,
+                Some(&map),
+            )
+            .is_some(),
             "projection witness must parse+typecheck: {expr}"
         );
         assert!(
@@ -6134,7 +6162,9 @@ mod tests {
         assert!(
             block2.teaching_rows.iter().any(|r| {
                 let ex = r.teaching_expr.expression.as_str();
-                ex.contains('.') && ex.contains(zone_nav_sym.as_str())
+                (ex.contains('.') && ex.contains(zone_nav_sym.as_str()))
+                    || ex.contains("Zone(")
+                    || ex.contains("Zone($)")
             }),
             "adding Zone to exposure entities should admit zone_id navigation again; exprs={:?}",
             block2

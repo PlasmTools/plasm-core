@@ -119,6 +119,46 @@ pub(super) fn federated_github_linear_issue_session() -> Option<ExecuteSession> 
     ))
 }
 
+/// Federated pokeapi (read) + linear (Issue create, Team) session for the federated-write smoke.
+pub(super) fn federated_pokeapi_linear_write_session() -> Option<ExecuteSession> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let pokeapi_dir = root.join("../../apis/pokeapi");
+    let linear_dir = root.join("../../apis/linear");
+    if !pokeapi_dir.is_dir() || !linear_dir.is_dir() {
+        return None;
+    }
+    let cgs_pokeapi = Arc::new(load_schema(&pokeapi_dir).ok()?);
+    let cgs_linear = Arc::new(load_schema(&linear_dir).ok()?);
+    let mut ctxs = indexmap::IndexMap::new();
+    ctxs.insert(
+        "pokeapi".into(),
+        Arc::new(CgsContext::entry("pokeapi", cgs_pokeapi.clone())),
+    );
+    ctxs.insert(
+        "linear".into(),
+        Arc::new(CgsContext::entry("linear", cgs_linear.clone())),
+    );
+    let layers: Vec<&plasm_core::CGS> = vec![cgs_pokeapi.as_ref(), cgs_linear.as_ref()];
+    let mut exp = TeachingExposureSession::new(cgs_pokeapi.as_ref(), "pokeapi", &["Pokemon"]);
+    exp.expose_entities(&layers, cgs_linear.clone(), "linear", &["Issue", "Team"]);
+    Some(ExecuteSession::new(
+        "ph".into(),
+        "p".into(),
+        cgs_pokeapi.clone(),
+        ctxs,
+        "pokeapi".into(),
+        String::new(),
+        String::new(),
+        None,
+        vec!["Pokemon".into()],
+        Some(exp),
+        None,
+        cgs_pokeapi.catalog_cgs_hash_hex(),
+        None,
+        None,
+    ))
+}
+
 pub(super) fn federated_github_linear_issue_team_session() -> Option<ExecuteSession> {
     let mut session = federated_github_linear_issue_session()?;
     let linear = session.contexts_by_entry.get("linear")?.cgs.clone();

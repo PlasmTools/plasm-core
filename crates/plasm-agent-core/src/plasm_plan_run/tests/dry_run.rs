@@ -239,6 +239,187 @@ fn federated_linear_issue_create_dry_run_preflight_compiles_p_sym_tokens() {
     evaluate_plasm_plan_dry(&session, &plan).expect("dry-run federated linear issue create p#");
 }
 
+/// A2: `provides` is the authoritative row schema for create/mutation outputs. Projecting a field
+/// inside `provides` (now including `description`) compiles; projecting one outside it must fail
+/// closed (compile error) rather than silently decode to null.
+#[test]
+fn issue_create_projection_honors_provides_fail_closed() {
+    let Some(session) = federated_github_linear_issue_team_session() else {
+        return;
+    };
+    let map = session
+        .teaching_exposure
+        .as_ref()
+        .expect("exposure")
+        .symbol_map_arc();
+    let e2 = map.entity_sym_for("linear", "Issue");
+    let e3 = map.entity_sym_for("linear", "Team");
+    let m_create = map.method_sym_for("linear", "Issue", "create");
+    let p_key = map.ident_sym_entity_field_for("linear", "Team", "key");
+    let p_desc = map.ident_sym_entity_field_for("linear", "Issue", "description");
+    let p_priority = map.ident_sym_entity_field_for("linear", "Issue", "priority");
+
+    let ok = format!("{e2}.{m_create}(team={e3}({p_key}=EVA), title=\"a\")[{p_desc}]");
+    crate::plasm_dag::compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "create-proj-desc",
+        &ok,
+    )
+    .expect("description is in issue_create.provides and must project");
+
+    let bad = format!("{e2}.{m_create}(team={e3}({p_key}=EVA), title=\"a\")[{p_priority}]");
+    let err = crate::plasm_dag::compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "create-proj-priority",
+        &bad,
+    )
+    .expect_err("priority is outside issue_create.provides and must fail closed");
+    assert!(err.contains("not a row field"), "{err}");
+}
+
+fn for_each_write_plan(source_node: serde_json::Value, source_id: &str) -> serde_json::Value {
+    serde_json::json!({
+        "version": 1,
+        "kind": "program",
+        "name": "for-each-write",
+        "nodes": [
+            source_node,
+            {
+                "id": "label",
+                "kind": "for_each",
+                "effect_class": "side_effect",
+                "result_shape": "side_effect_ack",
+                "source": source_id,
+                "item_binding": "product",
+                "depends_on": [source_id],
+                "uses_result": [{ "node": source_id, "as": "product" }],
+                "approval": "label_products",
+                "effect_template": {
+                    "kind": "action",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr_template": "Product(${product.id}).label(label=\"stale\")",
+                    "ir_template": {
+                        "expr": {
+                            "op": "invoke",
+                            "capability": "product_label",
+                            "target": { "entity_type": "Product", "key": { "__plasm_hole": { "kind": "binding", "binding": "product", "path": ["id"] } } },
+                            "input": { "label": "stale" }
+                        },
+                        "input_bindings": [{ "from": "product.id", "to": "id" }]
+                    },
+                    "effect_class": "side_effect",
+                    "result_shape": "side_effect_ack"
+                }
+            }
+        ],
+        "return": { "kind": "node", "node": "label" }
+    })
+}
+
+/// D1: singleton `get` source `=>` write is not fanout risk.
+#[test]
+fn for_each_write_over_singleton_source_is_not_fanout() {
+    let get = serde_json::json!({
+        "id": "product",
+        "kind": "get",
+        "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+        "expr": "Product(\"p1\")",
+        "ir": { "expr": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } } },
+        "effect_class": "read",
+        "result_shape": "single"
+    });
+    let plan = for_each_write_plan(get, "product");
+    let validated = crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate");
+    let b = crate::plan_prepare::analyze_read_boundedness(validated.artifact());
+    assert!(
+        !b.has_foreach_fanout_risk,
+        "singleton-source for_each write must not be fanout"
+    );
+}
+
+/// D1: plural query source keeps fanout semantics.
+#[test]
+fn for_each_write_over_plural_source_is_fanout() {
+    let query = serde_json::json!({
+        "id": "product",
+        "kind": "query",
+        "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+        "expr": "Product",
+        "ir": { "expr": { "op": "query", "entity": "Product" } },
+        "effect_class": "read",
+        "result_shape": "list"
+    });
+    let plan = for_each_write_plan(query, "product");
+    let validated = crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate");
+    let b = crate::plan_prepare::analyze_read_boundedness(validated.artifact());
+    assert!(
+        b.has_foreach_fanout_risk,
+        "plural-source for_each write must remain fanout risk"
+    );
+}
+
+/// B4 — federated write smoke: pokeapi single GET `=>` linear issue_create. Locks the coherent
+/// shape: exactly one pokeapi GET, one write effect, no relation fanout, a single (non-parallel)
+/// return root, and (D1) no fanout risk on the singleton source.
+#[test]
+fn federated_pokeapi_linear_write_plan_is_coherent() {
+    let Some(session) = federated_pokeapi_linear_write_session() else {
+        return;
+    };
+    let map = session
+        .teaching_exposure
+        .as_ref()
+        .expect("exposure")
+        .symbol_map_arc();
+    let e_mon = map.entity_sym_for("pokeapi", "Pokemon");
+    let e_issue = map.entity_sym_for("linear", "Issue");
+    let e_team = map.entity_sym_for("linear", "Team");
+    let m_create = map.method_sym_for("linear", "Issue", "create");
+    let p_team = map.ident_sym_cap_param_for("linear", "Issue", "issue_create", "team");
+    let p_title = map.ident_sym_cap_param_for("linear", "Issue", "issue_create", "title");
+
+    let program = format!(
+        "pika = {e_mon}(pikachu)\nticket = pika => {e_issue}.{m_create}({p_team}={e_team}(EVA), {p_title}=\"Pokedex #025 Pikachu\")\nticket"
+    );
+    let plan = crate::plasm_dag::compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "fed-poke-linear-write",
+        &program,
+    )
+    .expect("compile federated pokeapi -> linear write");
+
+    let nodes = plan["nodes"].as_array().expect("nodes array");
+    let poke_gets = nodes
+        .iter()
+        .filter(|n| n["kind"] == "get" && n["qualified_entity"]["entry_id"] == "pokeapi")
+        .count();
+    assert_eq!(poke_gets, 1, "exactly one pokeapi GET: {plan:#}");
+    let writes = nodes.iter().filter(|n| n["kind"] == "for_each").count();
+    assert_eq!(writes, 1, "exactly one write effect: {plan:#}");
+    let relations = nodes.iter().filter(|n| n["kind"] == "relation").count();
+    assert_eq!(relations, 0, "no relation fanout: {plan:#}");
+    assert_eq!(
+        plan["return"]["kind"], "node",
+        "single (non-parallel) return root: {plan:#}"
+    );
+
+    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run federated write");
+
+    let validated =
+        crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate federated write");
+    let bounded = crate::plan_prepare::analyze_read_boundedness(validated.artifact());
+    assert!(
+        !bounded.has_foreach_fanout_risk,
+        "singleton pokeapi GET `=>` write must not be fanout risk"
+    );
+}
+
 #[test]
 fn federated_ambiguous_entity_parse_includes_session_stamps() {
     let Some(session) = federated_github_linear_issue_session() else {
@@ -487,13 +668,16 @@ fn dry_run_compiled_search_projection_rejects_filter_input_param() {
 rows"#;
     match compile_plasm_expression(&pipeline, None, &s, "search-proj-input", source) {
         Err(err) => {
-            assert!(err.contains("is an input on langitem_search"), "{err}");
+            assert!(
+                err.contains("query/capability input"),
+                "{err}"
+            );
         }
         Ok(bundle) => {
             let dry_err = evaluate_plasm_comp_dry(&s, &bundle)
                 .expect_err("dry must reject search input projection");
             assert!(
-                dry_err.contains("is an input on langitem_search")
+                dry_err.contains("query/capability input")
                     || dry_err.contains("postfix projection"),
                 "{dry_err}"
             );

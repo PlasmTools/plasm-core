@@ -2232,6 +2232,13 @@ impl CGS {
             .as_ref()
     }
 
+    /// Tests only: re-serialize so [`Self::catalog_cgs_hash_hex`] recomputes after a post-load mutation.
+    #[doc(hidden)]
+    pub fn fresh_catalog_digest(self) -> Self {
+        serde_json::from_slice(&serde_json::to_vec(&self).expect("CGS JSON serialize"))
+            .expect("CGS JSON deserialize")
+    }
+
     /// Stable hex digest (SHA-256) of canonical JSON for this CGS, used for session pinning and plugin integrity.
     pub fn catalog_cgs_hash_hex(&self) -> String {
         self.catalog_hash_hex

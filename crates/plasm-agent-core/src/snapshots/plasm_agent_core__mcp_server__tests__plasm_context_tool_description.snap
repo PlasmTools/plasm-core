@@ -1,17 +1,18 @@
 ---
-source: crates/plasm-agent-core/src/mcp_server/tests.rs
+source: plasm-oss/crates/plasm-agent-core/src/mcp_server/tests.rs
 expression: context
 ---
 Tool order: optional `discover_capabilities` → `plasm_context` → `plasm` (dry-run) → `plasm_run` (live).
-     **Call before `plasm` / `plasm_run`.** **One goal → one stable `intent` → one `logical_session_ref`.** Stable = same `intent` string on every turn for that goal (not per message/API). Bad: `intent: "msg 3: sort moves"` each turn — breaks reuse and fragments `e#`/`p#`. Multi-API: one **`seeds`** array on the same intent.
-**Session:** one goal → one **`intent`** → one **`logical_session_ref`**; use **`e#`/`m#`/`p#`/`r#` from this session's teaching TSV only** (contract examples are shapes; substitute from your table).
+     **Call before `plasm` / `plasm_run`.** **One goal → one stable `intent` → one `logical_session_ref`** — same `intent` string every turn (not per message/API). Bad: `intent: "msg 3: sort moves"` each turn — fragments `e#`/`p#`. Use **`e#`/`m#`/`p#`/`r#` from this session's teaching TSV only**. Multi-API: one **`seeds`** array on the same intent.
 
-**Federated homonyms:** when multiple catalogs expose the same wire entity, method, relation, or field name, programs must use opaque **`e#` / `m#` / `r#` / `p#`** from this table — not bare wire names and not `entry_id:Entity` syntax. Each symbol is catalog-scoped; copying the wrong row's symbol is a compile error.
+**Federated homonyms:** when catalogs share a wire entity/method/relation/field name, use opaque **`e#`/`m#`/`r#`/`p#`** from this table — not bare wire names or `entry_id:Entity`. Symbols are catalog-scoped; the wrong row's symbol is a compile error.
 
 **Open or extend:** **`intent`** + **`seeds`** (`{api, entity}`).
 
 Returns **`logical_session_ref`** + fenced teaching TSV. TSV is the active symbol table: copy left cells into **`plasm.program`** (Plasm source, not JSON). Delta waves assign new **`e#`** monotonically.
 
 **Extend picks:** same **`intent`**, expanded **`seeds`** — delta TSV or reuse cheat sheet when already exposed.
+
+**Discover before id (writes):** resolve human ids (team key, issue id) from a live list/search, not catalog/eval samples; federated writes end in one created-row return.
 
 **`_meta.plasm`:** `logical_session_ref`, `continuity`, `domain_revision`, optional **`relations`**.

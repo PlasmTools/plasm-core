@@ -20,7 +20,11 @@ Symbol and fill rules:
 - `e#` entity; `m#` method; `p#` field/param/filter; `r#` relation nav; `v#` value-domain metadata only.
 - Relation hops: `.wire` or `.r#` on row producers — never bare `p#` after `.` (`p#` in `e#{…}` is filter/param).
 - Never write `v#` in code; use `p#` keys and read `v#` rows for allowed values.
-- `e#(p#)` identity rows: substitute real wire ids for `<id>`, `<value>`, `<receiver>`, `elem`.
+- **Session/plan handles** (`logical_session_ref`, `plan_commit_ref` / `pcN`): MCP tokens only — copy verbatim; not program syntax.
+- **Teaching placeholders** (`$`, `<id>`, `<val>` in examples): replace with real ids, filters, and search terms before output.
+- **Teaching exemplars** (rare TSV literals like `pikachu`, `example-name`, `user@example.com`): sample identities — substitute the real id from context; do not treat as wire constants.
+- EntityRef slots take **identity** syntax (`e#(id)`), not bare scalars.
+- Get-head model: **parens = identity** (`e#(value)`; positional preferred — e.g. `e_mon(pikachu)`), **braces = query/filter** (`e#{p#=…}`). Keyed `e#(p#=…)` only when that `p#` is the entity identity field.
 - Remove `..` ellipses or replace with real `p#=` assignments before output.
 - Optional keys (`opt:` in `Meaning`): add only as keyed assignments with real values.
 - Projection rows ending `[p#,…]` teach a valid field set. Reuse that suffix only on another expression returning the same entity or list type.
@@ -56,13 +60,22 @@ parent = e2(p_key=<val>)
 children = parent.rN
 limited = children.limit(5)
 limited[p_a,p_b]
+- Worked federated **write** (shape only — one read per catalog, single created-row return):
+team = e_team.limit(1)        # discover live anchor — never hardcode workspace ids
+src = e_mon(pikachu)          # 1 GET on a simple-id entity (positional identity)
+ticket = src => e_issue.mN(p_team=team, p_title=<val>, p_body=<<TAG
+…markdown…
+TAG)
+ticket[p_id,p_title,p_body]   # single return = the created row
 - `markdown`/`html`/`document`/`json_text`/`blob` values (per `Meaning`): `<<TAG` … `TAG` only; e.g. `e2.mN(..., p#=<<TXT` + newline body + `TXT` newline `)`.
 
 Common pitfalls:
 - `[fields]`/`.group_by`/`.sort`/`.dedupe`/row `.filter` use `rows:` fields only — not `inputs:`/`opt:` filter keys.
 - `e#{…}` filters at HTTP; `binding.filter{…}` filters materialized rows. Prefer `label = e#` then filter; bare `e#.filter{…}` list-alls first.
 - Primary group/agg: `group_by(p_key).aggregate(n=count)`; bare `group_by(p_key)` ≡ `group_by(p_key, count=count)`; multi-key comma sugar: `group_by(k1, k2, n=count)`.
-- `=>` only for derive `{ k: _.field }` or `for_each` updates — not relation reads (`labels = issues.r#`).
+- `=>` only for derive `{ k: _.field }` or `for_each`/write effects (`source => e#.m#(…)`) — not relation reads (`labels = issues.r#`). A provably-singleton source (`e#(value)`) `=>` runs the effect **once** (not a fanout).
+- Federated **write** discipline: end in a **single** created-row return — not `read_a, read_b` parallel roots; budget **one read per catalog** (avoid `.r#` fanout unless you need N rows); **discover** anchors live (`e_team.limit(1)`, search + `.limit(1)`) — never hardcode workspace ids.
+- Transient `session materialization changed during concurrent execute` is retryable — re-issue the same `plasm_run` once.
 - Homograph: relation fanout via `.r#`/wire; `labels = issues.p#` forgiven when binding name matches.
 - Never emit `$` from teaching rows; substitute real ids and `e#~"text"` search terms.
 - Search operand: `e#~$` or `e#~"text"` required — bare `e#~` is a parse error.

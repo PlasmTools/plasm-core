@@ -1276,9 +1276,10 @@ pub fn derive_intent_exposure_surface_batch(
                     continue;
                 }
                 let (score, _) = score_capability(&query_tokens, cgs, cap);
+                let target_is_seeded = seeded_entities.contains(target);
                 if !mutating_capability_admitted(
                     options.read_first_seeded,
-                    false,
+                    target_is_seeded,
                     score,
                     ranked_capability_names,
                     cap.name.as_str(),
@@ -1458,6 +1459,31 @@ mod tests {
             )),
             "expected recorded_matches when RecordedContent is an allowed relation endpoint"
         );
+    }
+
+    #[test]
+    fn mutating_capability_admitted_read_first_seeded_gate() {
+        assert!(!mutating_capability_admitted(
+            true,
+            true,
+            1,
+            None,
+            "langitem_create"
+        ));
+        assert!(mutating_capability_admitted(
+            true,
+            true,
+            2,
+            None,
+            "langitem_create"
+        ));
+        assert!(mutating_capability_admitted(
+            true,
+            false,
+            1,
+            None,
+            "langitem_create"
+        ));
     }
 
     #[test]

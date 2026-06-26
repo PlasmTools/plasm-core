@@ -40,11 +40,7 @@ impl McpTransportIdentity {
         }
     }
 
-    pub fn api_key(
-        incoming_tenant_id: String,
-        subject: String,
-        mcp_config_id: Uuid,
-    ) -> Self {
+    pub fn api_key(incoming_tenant_id: String, subject: String, mcp_config_id: Uuid) -> Self {
         Self {
             incoming_tenant_id,
             subject,
@@ -89,11 +85,7 @@ impl McpTransportIdentity {
             .filter(|s| !s.trim().is_empty())
             .map(str::to_string)?;
         let subject = info.user_id.clone().filter(|s| !s.trim().is_empty())?;
-        let method = if extra
-            .get(EXTRA_MCP_OAUTH)
-            .and_then(|v| v.as_bool())
-            == Some(true)
-        {
+        let method = if extra.get(EXTRA_MCP_OAUTH).and_then(|v| v.as_bool()) == Some(true) {
             IncomingAuthMethod::Jwt
         } else {
             IncomingAuthMethod::ApiKey
@@ -176,7 +168,10 @@ mod tests {
     use super::*;
     use serde_json::Map;
 
-    fn roundtrip(identity: McpTransportIdentity, extra: Map<String, Value>) -> McpTransportIdentity {
+    fn roundtrip(
+        identity: McpTransportIdentity,
+        extra: Map<String, Value>,
+    ) -> McpTransportIdentity {
         let info = identity.into_auth_info("tok".into(), None, None, extra);
         McpTransportIdentity::from_auth_info(&info).expect("roundtrip")
     }

@@ -835,7 +835,7 @@ issue_create:
     fields:
       - - query
         - type: const
-          value: 'mutation($input: IssueCreateInput!){ issueCreate(input: $input) { success issue { id identifier title state { id name } } } }'
+          value: 'mutation($input: IssueCreateInput!){ issueCreate(input: $input) { success issue { id identifier title description state { id name } } } }'
       - - variables
         - type: object
           fields:
@@ -893,7 +893,7 @@ issue_update:
     fields:
       - - query
         - type: const
-          value: 'mutation($id: String!, $input: IssueUpdateInput!){ issueUpdate(id: $id, input: $input) { success issue { id identifier title state { id name } } } }'
+          value: 'mutation($id: String!, $input: IssueUpdateInput!){ issueUpdate(id: $id, input: $input) { success issue { id identifier title description state { id name } } } }'
       - - variables
         - type: object
           fields:

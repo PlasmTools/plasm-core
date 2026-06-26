@@ -1432,32 +1432,35 @@ fn validated_node_from_raw(
                 },
             ))
         }
-        PlanNodeKind::ForEach => Ok(ValidatedPlanNode::ForEach(ValidatedForEachNode {
-            id,
-            effect_class: node.effect_class,
-            result_shape: node.result_shape,
-            source: node
+        PlanNodeKind::ForEach => {
+            let source = node
                 .source
                 .as_ref()
                 .ok_or_else(|| format!("plan.nodes[{node_index}].source is required"))
-                .and_then(|s| PlanNodeId::new(s.clone()))?,
-            item_binding: node
-                .item_binding
-                .as_ref()
-                .ok_or_else(|| format!("plan.nodes[{node_index}].item_binding is required"))
-                .and_then(|s| BindingName::new(s.clone()))?,
-            effect_template: validated_effect_template(
-                node.effect_template.as_ref().ok_or_else(|| {
-                    format!("plan.nodes[{node_index}].effect_template is required")
-                })?,
-                node_index,
-            )?,
-            projection: node.projection.clone(),
-            predicates: node.predicates.clone(),
-            depends_on,
-            uses_result,
-            approval: node.approval.clone(),
-        })),
+                .and_then(|s| PlanNodeId::new(s.clone()))?;
+            Ok(ValidatedPlanNode::ForEach(ValidatedForEachNode {
+                id,
+                effect_class: node.effect_class,
+                result_shape: node.result_shape,
+                source,
+                item_binding: node
+                    .item_binding
+                    .as_ref()
+                    .ok_or_else(|| format!("plan.nodes[{node_index}].item_binding is required"))
+                    .and_then(|s| BindingName::new(s.clone()))?,
+                effect_template: validated_effect_template(
+                    node.effect_template.as_ref().ok_or_else(|| {
+                        format!("plan.nodes[{node_index}].effect_template is required")
+                    })?,
+                    node_index,
+                )?,
+                projection: node.projection.clone(),
+                predicates: node.predicates.clone(),
+                depends_on,
+                uses_result,
+                approval: node.approval.clone(),
+            }))
+        }
     }
 }
 
@@ -1862,6 +1865,96 @@ fn analyze_static_cardinality(
                     },
                 )
                 .unwrap_or(CardinalityAnalysis::PluralOrUnknown),
+            _ => CardinalityAnalysis::PluralOrUnknown,
+        };
+        memo.insert(node_id.to_string(), singleton);
+        singleton
+    }
+    inner(plan, by_id, node_id, &mut HashMap::new())
+}
+
+/// Whether a validated plan node is provably a single row (D1 effect-cardinality typing).
+pub(crate) fn validated_source_is_static_singleton(
+    plan: &Plan<ValidatedPlanState>,
+    source_id: &str,
+) -> bool {
+    let by_id: HashMap<String, usize> = plan
+        .nodes
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.id().as_str().to_string(), i))
+        .collect();
+    validated_analyze_static_cardinality(plan, &by_id, source_id)
+        == CardinalityAnalysis::StaticSingleton
+}
+
+fn validated_analyze_static_cardinality(
+    plan: &Plan<ValidatedPlanState>,
+    by_id: &HashMap<String, usize>,
+    node_id: &str,
+) -> CardinalityAnalysis {
+    fn inner(
+        plan: &Plan<ValidatedPlanState>,
+        by_id: &HashMap<String, usize>,
+        node_id: &str,
+        memo: &mut HashMap<String, CardinalityAnalysis>,
+    ) -> CardinalityAnalysis {
+        if let Some(v) = memo.get(node_id) {
+            return *v;
+        }
+        let Some(index) = by_id.get(node_id).copied() else {
+            return CardinalityAnalysis::PluralOrUnknown;
+        };
+        let node = &plan.nodes[index];
+        let singleton = match node {
+            ValidatedPlanNode::Surface(s) if s.kind == PlanNodeKind::Get => {
+                CardinalityAnalysis::StaticSingleton
+            }
+            ValidatedPlanNode::Data(d) => match &d.data {
+                PlanValue::Array { items } if items.len() == 1 => {
+                    CardinalityAnalysis::StaticSingleton
+                }
+                PlanValue::Literal { value }
+                    if value.as_array().is_none_or(|items| items.len() == 1) =>
+                {
+                    CardinalityAnalysis::StaticSingleton
+                }
+                PlanValue::Array { .. } | PlanValue::Literal { .. } | PlanValue::EntityRefKey { .. } => {
+                    CardinalityAnalysis::PluralOrUnknown
+                }
+                _ => CardinalityAnalysis::StaticSingleton,
+            },
+            ValidatedPlanNode::Derive(d) => {
+                inner(plan, by_id, d.source.as_str(), memo)
+            }
+            ValidatedPlanNode::Compute(c) => match &c.compute.op {
+                ComputeOp::Aggregate { .. } | ComputeOp::Render { .. } => {
+                    CardinalityAnalysis::StaticSingleton
+                }
+                ComputeOp::Project { .. }
+                | ComputeOp::Filter { .. }
+                | ComputeOp::Sort { .. }
+                | ComputeOp::DedupeBy { .. } => inner(plan, by_id, c.compute.source.as_str(), memo),
+                ComputeOp::Limit { count } if *count <= 1 => CardinalityAnalysis::StaticSingleton,
+                ComputeOp::Limit { .. } | ComputeOp::GroupBy { .. } => {
+                    CardinalityAnalysis::PluralOrUnknown
+                }
+            },
+            ValidatedPlanNode::RelationTraversal(r) => match (
+                r.relation.cardinality,
+                r.relation.source_cardinality,
+            ) {
+                (RelationCardinality::One, RelationSourceCardinality::Single) => {
+                    inner(plan, by_id, r.relation.source.as_str(), memo)
+                }
+                (RelationCardinality::One, RelationSourceCardinality::RuntimeCheckedSingleton) => {
+                    CardinalityAnalysis::PluralOrUnknown
+                }
+                (RelationCardinality::Many, _)
+                | (RelationCardinality::One, RelationSourceCardinality::Many) => {
+                    CardinalityAnalysis::PluralOrUnknown
+                }
+            },
             _ => CardinalityAnalysis::PluralOrUnknown,
         };
         memo.insert(node_id.to_string(), singleton);

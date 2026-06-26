@@ -29,11 +29,11 @@ use sha2::{Digest, Sha256};
 use tokio::sync::OnceCell;
 use url::form_urlencoded;
 
-use crate::mcp_stream_identity::McpTransportIdentity;
 use crate::mcp_inbound_oauth::{
     mcp_resource_base_url, AuthorizeOutcome, McpInboundOAuthService, McpOAuthError,
     McpOAuthTokenRequest, OAUTH_SCOPE,
 };
+use crate::mcp_stream_identity::McpTransportIdentity;
 use crate::server_state::PlasmHostState;
 
 const OAUTH_AUTHORIZE_PATH: &str = "/oauth/authorize";
@@ -230,12 +230,14 @@ impl PlasmMcpApiKeyAuthProvider {
             .owner_subject
             .clone()
             .unwrap_or_else(|| cfg.id.to_string());
-        Ok(McpTransportIdentity::api_key(cfg.tenant_id.clone(), subject, cfg.id).into_auth_info(
-            format!("{:x}", Sha256::digest(raw.as_bytes())),
-            None,
-            Some(auth_expires_at(86400 * 365)),
-            extra,
-        ))
+        Ok(
+            McpTransportIdentity::api_key(cfg.tenant_id.clone(), subject, cfg.id).into_auth_info(
+                format!("{:x}", Sha256::digest(raw.as_bytes())),
+                None,
+                Some(auth_expires_at(86400 * 365)),
+                extra,
+            ),
+        )
     }
 
     async fn verify_oauth_bearer(&self, raw: &str) -> Result<AuthInfo, AuthenticationError> {

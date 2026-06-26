@@ -103,7 +103,10 @@ mod tests {
     #[test]
     fn rejects_domain_symbol_binding_labels() {
         let err = parse_program_shape("e1 = foo()\nbar").expect_err("domain symbol label");
-        assert!(err.contains("invalid Plasm program label"), "{err}");
+        assert!(
+            err.contains("Binding names must be labels") && err.contains("e1"),
+            "{err}"
+        );
     }
 
     #[test]

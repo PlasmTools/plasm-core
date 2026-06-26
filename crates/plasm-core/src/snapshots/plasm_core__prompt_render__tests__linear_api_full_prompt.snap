@@ -26,7 +26,6 @@ p4	v6 · endsAt
 e2{p33=$}[p6,p7,p8,p4]	→ [e2] · projection · A time-boxed iteration on a team
 e2{p33=$}[p6,p7,p8,p4]	→ [e2] · inputs: p33 · rows: p6,p7,p8,p4
 e2(p6)	→ e2
-e2{p33=$}.p6	relation e2 → e2
 e2{p33=$}.r2	relation e2 → e10
 p9	v2 · id
 p46	v6 · title

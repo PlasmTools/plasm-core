@@ -11,7 +11,7 @@ p1	v1 · id
 p3	v3 · url
 e1[p2,p1,p3]	→ e1 · projection · An elemental type
 e1	→ [e1]
-e1(p2)	→ e1
+e1(example-name)	→ e1
 e1.r1	relation e1 → Generation · Generation this type was introduced
 e1.r2	relation e1 → MoveDamageClass · Default damage class for this type
 e1.r3	relation e1 → [Move] · Moves of this elemental type

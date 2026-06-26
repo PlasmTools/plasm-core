@@ -78,6 +78,27 @@ plasm> Issue(ENG-42).comments
 
 **Pagination:** list/search capabilities paginate via `page(pg#)` in execute sessions after the first wave.
 
+## Federated write recipe (e.g. PokeAPI → Linear)
+
+Cross-catalog goals that end in a Linear write should be **one coherent pipeline**, not parallel reads from each catalog. Shape (substitute session `e#`/`m#`/`p#` from the teaching table):
+
+```text
+team = Team.limit(1)                       # discover a live anchor — never hardcode workspace ids
+src  = Pokemon(pikachu)                    # one upstream GET (simple-id entity, positional identity)
+ticket = src => Issue.create(team=Team(ENG), title=Pokedex #025, description=<<MD
+…markdown body…
+MD)
+ticket[identifier,title,description]        # single created-row return
+```
+
+Discipline:
+
+- **Single return** = the created row; do not return `read_a, read_b` parallel roots.
+- **Call budget:** one GET per catalog; avoid relation fanout unless you genuinely need N rows.
+- A provably-singleton source (`Pokemon(pikachu)`) `=>` runs the write **once** (not a fanout).
+- **Discover before id:** resolve the team key from `Team` / `Team.limit(1)` / search — eval ids like `ENG`/`ENG-42` are not your workspace.
+- `issue_create` now projects `description`, so `ticket[description]` confirms the markdown body was applied.
+
 ## Coverage
 
 See [COVERAGE.md](COVERAGE.md). Eval goals: [eval/cases.yaml](eval/cases.yaml).

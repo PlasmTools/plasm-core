@@ -77,10 +77,9 @@ pub use program_surface::{
     collect_program_statement_lines, expand_flattened_program_statements, is_valid_program_label,
     looks_like_domain_symbol, missing_program_roots_error, program_binding_after_return_error,
     program_duplicate_return_node_error, program_empty_error, program_invalid_binding_label_error,
-    program_return_keyword_error, scan_physical_line_stmt_state,
-    split_assignment_at_top_level, split_assignment_for_binding, split_flattened_program_line,
-    split_token_top_level, split_top_level, strip_line_comment, validate_program_label,
-    validate_program_statement_order,
+    program_return_keyword_error, scan_physical_line_stmt_state, split_assignment_at_top_level,
+    split_assignment_for_binding, split_flattened_program_line, split_token_top_level,
+    split_top_level, strip_line_comment, validate_program_label, validate_program_statement_order,
     FlattenedProgram, FlattenedProgramLine, PhysicalLineStmtState,
 };
 pub use value_expr::{RenderExpr, ValueExpr};
@@ -951,7 +950,16 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
         self.expect_char(')')?;
-        if key != ent.id_field.as_str() {
+        // Thread the session symbol map exactly like the top-level get sugar
+        // (`try_parse_simple_id_field_get_sugar`): a `p#` token that resolves to the entity's
+        // identity field is a legal keyed identity get. Comparing the raw `key` here rejected
+        // `Team(p76=key)` even though `p76` resolves to `key`.
+        let wire_key = self
+            .sym_map
+            .resolve_ident(key.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| key.clone());
+        if wire_key != ent.id_field.as_str() {
             return Err(self.err(ParseErrorKind::Other {
                 message: format!(
                     "entity `{entity_canon}` uses a simple id; `{key}=…` is only accepted when `{key}` is the identity field `{}` — otherwise use `{entity_canon}(value)`",

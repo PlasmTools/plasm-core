@@ -661,6 +661,7 @@ capabilities:
     provides:
     - identifier
     - title
+    - description
     - state
     parameters:
     - name: team
@@ -733,6 +734,7 @@ capabilities:
     provides:
     - identifier
     - title
+    - description
     - state
     parameters:
     - name: title

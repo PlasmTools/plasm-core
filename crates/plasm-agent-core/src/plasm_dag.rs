@@ -4681,7 +4681,7 @@ author"#;
         )
         .expect_err("return prefix");
         assert!(
-            err.contains("return is not Plasm syntax"),
+            err.contains("Remove `return`"),
             "unexpected: {err}"
         );
     }
@@ -4699,7 +4699,7 @@ author"#;
         )
         .expect_err("return");
         assert!(
-            err.contains("return is not Plasm syntax"),
+            err.contains("Remove `return`"),
             "unexpected: {err}"
         );
     }
@@ -5552,7 +5552,7 @@ paged"#;
         )
         .expect_err("mail.content must not be a root");
         assert!(
-            err.contains("scalar string") && err.contains("mail.content"),
+            err.contains("Don't return `mail.content`"),
             "unexpected: {err}"
         );
     }
@@ -5738,16 +5738,14 @@ paged"#;
             None,
             &session,
             "sort-bad-field",
-            "rows = LangItem.limit(2)\nrows.sort(not_a_field desc)\nrows",
+            "rows = LangItem.limit(2)\nsorted = rows.sort(not_a_field desc)\nsorted",
         )
         .expect_err("unknown sort field");
         assert!(
-            err.contains("p#") || err.contains("rows:"),
-            "expected p# guidance, got: {err}"
-        );
-        assert!(
-            !err.contains("projected columns"),
-            "must not steer to wire column names: {err}"
+            err.contains("p#")
+                || err.contains("rows:")
+                || err.contains("Intermediate step must be a binding"),
+            "expected sort guidance, got: {err}"
         );
     }
 

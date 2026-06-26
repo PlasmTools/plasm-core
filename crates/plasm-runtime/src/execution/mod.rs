@@ -1,4 +1,7 @@
-use crate::api_error_detail::{fibery_command_envelope_hint, graphql_errors_summary};
+use crate::api_error_detail::{
+    fibery_command_envelope_hint, graphql_errors_summary, graphql_mutation_envelope_failure,
+    response_path_step,
+};
 use crate::evm::{execute_evm_call, execute_evm_logs};
 use crate::http_resilience::{HttpResiliencePolicy, ResilientHttpTransport};
 use crate::http_transport::{HttpTransport, ReqwestHttpTransport};
@@ -2607,6 +2610,14 @@ fn preflight_command_envelope_for_single_entity_narrow(
         return Ok(());
     };
     preflight_fibery_command_envelope(response)?;
+    if let Some(path) = r.items_path.as_ref().filter(|p| !p.is_empty()) {
+        if let Some(msg) = graphql_mutation_envelope_failure(response, path) {
+            return Err(RuntimeError::RequestError {
+                message: msg,
+                attempts: 1,
+            });
+        }
+    }
     let Some(result) = response.get("result") else {
         return Ok(());
     };
@@ -2649,7 +2660,7 @@ fn extract_single_entity_payload_from_response(
             if let Some(ref path) = r.items_path {
                 if !path.is_empty() {
                     for key in path {
-                        cur = match single_response_path_step(cur, key) {
+                        cur = match response_path_step(cur, key) {
                             Some(v) => v,
                             None => {
                                 let mut msg =
@@ -2701,11 +2712,7 @@ fn single_response_path_step<'a>(
     cur: &'a serde_json::Value,
     key: &str,
 ) -> Option<&'a serde_json::Value> {
-    if let Ok(index) = key.parse::<usize>() {
-        cur.get(index)
-    } else {
-        cur.get(key)
-    }
+    response_path_step(cur, key)
 }
 
 /// Reddit-style `{ kind, data: { … } }` wrappers and `{ children: [ { kind, data } ] }` listings:
@@ -4691,6 +4698,68 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("no rows"), "{msg}");
         assert!(msg.contains("$my-id"), "{msg}");
+    }
+
+    #[test]
+    fn graphql_mutation_success_false_surfaces_actionable_error() {
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/linear");
+        let cgs = load_schema_dir(&dir).expect("load linear catalog");
+        let cap = cgs.get_capability("issue_create").expect("issue_create");
+        let capability_template =
+            parse_capability_template(&cap.mapping.template).expect("parse template");
+        let body = serde_json::json!({
+            "data": { "issueCreate": { "success": false, "issue": null } }
+        });
+        let err = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
+            .expect_err("success:false mutation must fail before items_path narrowing");
+        let msg = format!("{err}");
+        assert!(msg.contains("success: false"), "{msg}");
+        assert!(
+            !msg.contains("missing path segment"),
+            "must not leak items_path internals: {msg}"
+        );
+    }
+
+    #[test]
+    fn graphql_mutation_success_false_prefers_graphql_errors() {
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/linear");
+        let cgs = load_schema_dir(&dir).expect("load linear catalog");
+        let cap = cgs.get_capability("issue_create").expect("issue_create");
+        let capability_template =
+            parse_capability_template(&cap.mapping.template).expect("parse template");
+        let body = serde_json::json!({
+            "data": { "issueCreate": { "success": false, "issue": null } },
+            "errors": [{ "message": "Team not found: PLA" }]
+        });
+        let err = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
+            .expect_err("success:false mutation must fail");
+        let msg = format!("{err}");
+        assert!(msg.contains("Team not found: PLA"), "{msg}");
+        assert!(!msg.contains("missing path segment"), "{msg}");
+    }
+
+    #[test]
+    fn graphql_mutation_success_true_decodes_normally() {
+        use plasm_core::loader::load_schema_dir;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/linear");
+        let cgs = load_schema_dir(&dir).expect("load linear catalog");
+        let cap = cgs.get_capability("issue_create").expect("issue_create");
+        let capability_template =
+            parse_capability_template(&cap.mapping.template).expect("parse template");
+        let body = serde_json::json!({
+            "data": { "issueCreate": { "success": true, "issue": { "id": "abc", "identifier": "EVA-61", "title": "x" } } }
+        });
+        let narrowed = narrow_http_graphql_response_for_entity_decode(&capability_template, body)
+            .expect("success:true mutation decodes to the entity object");
+        assert_eq!(
+            narrowed.get("identifier").and_then(|v| v.as_str()),
+            Some("EVA-61")
+        );
     }
 
     #[test]

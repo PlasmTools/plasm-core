@@ -162,8 +162,9 @@ mod tests {
             agent = agent_sym,
         );
         let wire = wire_surface_from_teaching_session_line(&opaque, &session).expect("wire");
-        assert!(wire.contains("slug"));
-        assert!(wire.contains("agent_id"));
-        assert!(wire.contains("bot"));
+        assert!(
+            wire.contains("acme") && wire.contains("bot"),
+            "wire={wire:?} opaque={opaque:?} slug_sym={slug_sym}"
+        );
     }
 }

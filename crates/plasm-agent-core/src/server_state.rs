@@ -440,9 +440,8 @@ mod tests {
         let dir =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         let mut cgs = load_schema_dir(&dir).expect("overshow_tools");
-        if let Some(entity) = cgs.entities.get_mut("RecordedContent") {
-            entity.description.push_str(" (catalog reload test bump)");
-        }
+        cgs.http_backend.push_str("/catalog-reload-test");
+        let cgs = cgs.fresh_catalog_digest();
         InMemoryCgsRegistry::from_pairs(vec![(
             "overshow".into(),
             "Overshow".into(),

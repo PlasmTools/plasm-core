@@ -108,6 +108,77 @@ pub fn graphql_errors_summary(value: &Value) -> Option<String> {
     Some(cap_detail(&joined, MAX_API_ERROR_DETAIL_CHARS))
 }
 
+/// Descend one segment of a CML `items_path` (numeric index or object key).
+pub fn response_path_step<'a>(cur: &'a Value, key: &str) -> Option<&'a Value> {
+    if let Ok(index) = key.parse::<usize>() {
+        cur.get(index)
+    } else {
+        cur.get(key)
+    }
+}
+
+/// Parent object immediately before the terminal entity segment in `items_path`.
+pub fn response_items_path_prefix<'a>(value: &'a Value, items_path: &[String]) -> Option<&'a Value> {
+    if items_path.len() < 2 {
+        return None;
+    }
+    let mut cur = value;
+    for key in &items_path[..items_path.len() - 1] {
+        cur = response_path_step(cur, key)?;
+    }
+    Some(cur)
+}
+
+/// GraphQL **mutation** envelopes commonly wrap the entity in a status object, e.g.
+/// `{ data: { issueCreate: { success: false, issue: null } } }`. A `success: false` here is a
+/// business-level failure even though the HTTP round-trip and GraphQL parse both succeeded. Walk the
+/// `items_path` **prefix** (every segment except the trailing entity key) and, when the wrapper
+/// reports `success: false`, return an imperative error instead of letting `items_path` narrowing
+/// fail later with an opaque "missing path segment" once the entity is null.
+///
+/// Returns `None` when there is no such wrapper, when `success` is absent/non-bool, or when
+/// `success: true` — leaving the normal decode path untouched.
+pub fn graphql_mutation_envelope_failure(value: &Value, items_path: &[String]) -> Option<String> {
+    let obj = response_items_path_prefix(value, items_path)?.as_object()?;
+    if obj.get("success")?.as_bool()? {
+        // success: true (or non-bool handled by the `?` above) → not a failure envelope.
+        return None;
+    }
+    // Business-level failure. Prefer explicit GraphQL `errors`; then common nested error fields on
+    // the envelope; else a generic, actionable line. Never leak the items_path segment.
+    if let Some(gs) = graphql_errors_summary(value) {
+        return Some(cap_detail(
+            &format!("write rejected (success: false) — GraphQL: {gs}"),
+            MAX_API_ERROR_DETAIL_CHARS,
+        ));
+    }
+    for k in ["error", "message", "userError", "userErrors", "errors"] {
+        match obj.get(k) {
+            Some(Value::String(s)) if !s.trim().is_empty() => {
+                return Some(cap_detail(
+                    &format!("write rejected (success: false): {}", s.trim()),
+                    MAX_API_ERROR_DETAIL_CHARS,
+                ));
+            }
+            Some(v @ (Value::Array(_) | Value::Object(_))) => {
+                if let Ok(detail) = serde_json::to_string(v) {
+                    if detail != "[]" && detail != "{}" {
+                        return Some(cap_detail(
+                            &format!("write rejected (success: false): {detail}"),
+                            MAX_API_ERROR_DETAIL_CHARS,
+                        ));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(
+        "write rejected by the API (success: false) — check required inputs and permissions for this mutation"
+            .to_string(),
+    )
+}
+
 /// Fibery `/api/commands` envelope: when `success` is false, `result` is an error object (not an array).
 /// Helps explain "missing path segment `0`" when narrowing assumed a query row array.
 pub fn fibery_command_envelope_hint(value: &Value, missing_segment: &str) -> Option<String> {
@@ -196,6 +267,66 @@ mod tests {
     }
 
     #[test]
+    fn graphql_mutation_envelope_failure_on_success_false() {
+        let v = json!({ "data": { "issueCreate": { "success": false, "issue": null } } });
+        let path = vec![
+            "data".to_string(),
+            "issueCreate".to_string(),
+            "issue".to_string(),
+        ];
+        let msg = graphql_mutation_envelope_failure(&v, &path).expect("failure");
+        assert!(msg.contains("success: false"), "{msg}");
+        assert!(!msg.contains("missing path segment"), "{msg}");
+    }
+
+    #[test]
+    fn graphql_mutation_envelope_failure_prefers_top_level_errors() {
+        let v = json!({
+            "data": { "commentCreate": { "success": false, "comment": null } },
+            "errors": [{ "message": "Argument Validation Error" }]
+        });
+        let path = vec![
+            "data".to_string(),
+            "commentCreate".to_string(),
+            "comment".to_string(),
+        ];
+        let msg = graphql_mutation_envelope_failure(&v, &path).expect("failure");
+        assert!(msg.contains("Argument Validation Error"), "{msg}");
+    }
+
+    #[test]
+    fn graphql_mutation_envelope_failure_none_on_success_true() {
+        let v = json!({ "data": { "issueCreate": { "success": true, "issue": { "id": "x" } } } });
+        let path = vec![
+            "data".to_string(),
+            "issueCreate".to_string(),
+            "issue".to_string(),
+        ];
+        assert!(graphql_mutation_envelope_failure(&v, &path).is_none());
+    }
+
+    #[test]
+    fn graphql_mutation_envelope_failure_none_without_success_field() {
+        // Plain query narrowing (`[data, issue]`) must not be mistaken for a mutation envelope.
+        let v = json!({ "data": { "issue": null } });
+        let path = vec!["data".to_string(), "issue".to_string()];
+        assert!(graphql_mutation_envelope_failure(&v, &path).is_none());
+    }
+
+    #[test]
+    fn graphql_mutation_envelope_failure_none_on_array_prefix() {
+        // `[data, teams, nodes, "0"]` prefix lands on an array, not a status object.
+        let v = json!({ "data": { "teams": { "nodes": [] } } });
+        let path = vec![
+            "data".to_string(),
+            "teams".to_string(),
+            "nodes".to_string(),
+            "0".to_string(),
+        ];
+        assert!(graphql_mutation_envelope_failure(&v, &path).is_none());
+    }
+
+    #[test]
     fn github_style_message() {
         let v = json!({"message": "Not Found", "documentation_url": "https://docs.github.com"});
         assert_eq!(json_api_error_lines(&v), vec!["Not Found"]);
@@ -278,5 +409,18 @@ mod tests {
         let s = summarize_text_error_body(bytes, Some("text/html"));
         assert!(s.contains("oops") || s.contains("<!DOCTYPE"));
         assert!(s.len() <= MAX_API_ERROR_DETAIL_CHARS + 4);
+    }
+
+    #[test]
+    fn response_path_step_index_and_key() {
+        let v = json!({ "data": [{ "id": "x" }, { "id": "y" }] });
+        let row0 = response_path_step(&v, "data")
+            .and_then(|data| response_path_step(data, "0"))
+            .expect("index step");
+        assert_eq!(row0.get("id").and_then(|v| v.as_str()), Some("x"));
+        let row1 = response_path_step(&v, "data")
+            .and_then(|data| response_path_step(data, "1"))
+            .expect("index step");
+        assert_eq!(row1.get("id").and_then(|v| v.as_str()), Some("y"));
     }
 }
