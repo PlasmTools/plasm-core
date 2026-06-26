@@ -514,7 +514,15 @@ impl AgentEngine {
             return Err(anyhow!("no catalogs loaded — call loadCatalog first"));
         }
         let registry = InMemoryCgsRegistry::from_pairs(pairs);
-        let config = ExecutionConfig::default();
+        let base_url = self
+            .primary_entry_id()
+            .and_then(|id| self.catalogs.get(&id))
+            .map(|cgs| cgs.http_backend.clone())
+            .filter(|b| !b.trim().is_empty());
+        let config = ExecutionConfig {
+            base_url,
+            ..ExecutionConfig::default()
+        };
         let engine = ExecutionEngine::new_with_transport(config, transport, None);
         Ok(build_plasm_host_state(PlasmHostBootstrap {
             engine,
@@ -848,13 +856,17 @@ mod tests {
     impl plasm_runtime::http_transport::HttpTransport for MockProductListTransport {
         async fn send_compiled_http(
             &self,
-            _base_url: &str,
+            base_url: &str,
             request: &plasm_compile::CompiledRequest,
             _auth: Option<plasm_runtime::auth::ResolvedAuth>,
         ) -> std::result::Result<
             (serde_json::Value, Option<String>),
             plasm_runtime::error::RuntimeError,
         > {
+            assert!(
+                !base_url.contains("localhost:3000"),
+                "expected catalog http_backend, got {base_url}"
+            );
             let path = request.url_path();
             if path.contains("/products/") && path != "/products" && !path.contains("/search") {
                 return Ok((

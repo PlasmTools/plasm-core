@@ -1,6 +1,6 @@
 {
   "name": "@plasm_lang/engine",
-  "version": "0.3.64",
+  "version": "0.3.78",
   "description": "NAPI bindings for the Plasm catalog-native agent engine",
   "license": "GPL-3.0-or-later",
   "repository": {
@@ -32,5 +32,10 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "optionalDependencies": {
+    "@plasm_lang/engine-darwin-arm64": "0.3.78",
+    "@plasm_lang/engine-darwin-x64": "0.3.78",
+    "@plasm_lang/engine-linux-x64-gnu": "0.3.78"
   }
 }

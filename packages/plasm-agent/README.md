@@ -152,9 +152,16 @@ npm run smoke:stubs:matrix
 npm run agent -- "your prompt"   # requires AI_GATEWAY_API_KEY (Vercel AI Gateway)
 ```
 
-### Dev server (`npm run dev` / `plasm-agent dev`)
+### Dev server (`plasm-agent dev`)
 
-When stdin is a TTY, `plasm-agent dev` starts the server **and** opens an interactive terminal client (eve-style). Use `--no-tui` or `PLASM_DEV_NO_TUI=1` for headless mode. Attach later with `plasm-agent chat --url http://127.0.0.1:3000`.
+**Default:** Nitro dev server with **Vercel routing parity** (channels, cron, `/plasm/v1/info`) — same `vercelPlasmHandler` as deploy. Init scaffolds `nitro.config.ts` + `routes/[...path].ts` and adds `nitropack` as a devDependency.
+
+```bash
+plasm-agent dev                    # Nitro (default)
+plasm-agent dev --interactive      # in-process server + TUI when TTY
+plasm-agent dev --interactive --no-tui
+plasm-agent chat --url http://127.0.0.1:3000
+```
 
 Slash commands in the TUI: `/help`, `/info`, `/model`, `/channels`, `/catalogs`, `/new`, `/quit`.
 

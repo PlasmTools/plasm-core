@@ -9,7 +9,7 @@ export interface InitOptions {
   template?: string;
 }
 
-const SKIP_TEMPLATE_DIRS = new Set(["node_modules", ".plasm"]);
+const SKIP_TEMPLATE_DIRS = new Set(["node_modules", ".plasm", ".nitro", ".output", "server"]);
 const SKIP_TEMPLATE_FILES = new Set(["package-lock.json"]);
 
 function plasmAgentPackageRoot(): string {
@@ -55,6 +55,7 @@ async function patchBootstrapPackageJson(
     name?: string;
     scripts?: Record<string, string>;
     dependencies?: Record<string, string>;
+    devDependencies?: Record<string, string>;
   };
   pkg.name = path.basename(projectRoot);
   const engineRoot = path.resolve(packageRoot, "../plasm-engine");
@@ -72,11 +73,16 @@ async function patchBootstrapPackageJson(
     build: "plasm-agent build",
     "vercel-build": "plasm-agent build",
     dev: "plasm-agent dev",
+    "dev:interactive": "plasm-agent dev --interactive",
     info: "plasm-agent info",
     deploy: "vercel deploy",
     ...pkg.scripts,
     eval: `${nodeRunner} scripts/run-evals.ts`,
     "smoke:channel": `${nodeRunner} scripts/smoke-channel.ts`,
+  };
+  pkg.devDependencies = {
+    ...pkg.devDependencies,
+    nitropack: "^2.13.4",
   };
   await writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
 }
@@ -98,6 +104,7 @@ async function runTemplateInit(
   await copyTemplate(templateRoot, projectRoot);
   await patchBootstrapPackageJson(projectRoot, plasmAgentPackageRoot());
   await writeVercelScaffold(projectRoot, template);
+  await writeNitroScaffold(projectRoot);
   return { projectRoot, agentRoot };
 }
 
@@ -249,18 +256,72 @@ export default async function handler(
 }
 `;
 
+const NITRO_CONFIG_TS = `import { defineNitroConfig } from "nitropack/config";
+
+export default defineNitroConfig({
+  compatibilityDate: "2026-06-26",
+  srcDir: ".",
+  ignore: ["api/**"],
+  devServer: {
+    port: Number(process.env.PORT ?? 3000),
+    host: process.env.HOST ?? "127.0.0.1",
+  },
+  typescript: {
+    strict: false,
+  },
+  externals: {
+    inline: ["@plasm_lang/engine"],
+  },
+});
+`;
+
+const NITRO_CATCHALL_ROUTE_TS = `import path from "node:path";
+
+import { fromNodeMiddleware } from "h3";
+
+import agentDefinition from "../agent/agent.js";
+import { createPlasmApp, vercelPlasmHandler } from "@plasm_lang/vercel-agent";
+
+const agentRoot = path.join(process.cwd(), "agent");
+
+let appPromise: ReturnType<typeof createPlasmApp> | undefined;
+
+async function plasmApp() {
+  appPromise ??= createPlasmApp({
+    agentRoot,
+    definition: agentDefinition,
+    mode: "prod",
+    sessions: false,
+  });
+  return appPromise;
+}
+
+export default fromNodeMiddleware(async (req, res) => {
+  const app = await plasmApp();
+  await new Promise<void>((resolve, reject) => {
+    res.once("finish", () => resolve());
+    res.once("error", reject);
+    void vercelPlasmHandler(app)(req, res).catch(reject);
+  });
+});
+`;
+
 const PACKAGE_JSON_TEMPLATE = {
   name: "my-plasm-agent",
   private: true,
   type: "module",
   scripts: {
     dev: "plasm-agent dev",
+    "dev:interactive": "plasm-agent dev --interactive",
     build: "plasm-agent build",
     "vercel-build": "plasm-agent build",
     info: "plasm-agent info",
     deploy: "vercel deploy",
   },
   dependencies: {} as Record<string, string>,
+  devDependencies: {
+    nitropack: "^2.13.4",
+  },
 };
 
 async function writeVercelScaffold(
@@ -275,6 +336,16 @@ async function writeVercelScaffold(
   await writeFile(
     path.join(projectRoot, "api", "[[...path]].ts"),
     API_HANDLER_TS,
+    "utf8",
+  );
+}
+
+async function writeNitroScaffold(projectRoot: string): Promise<void> {
+  await mkdir(path.join(projectRoot, "routes"), { recursive: true });
+  await writeFile(path.join(projectRoot, "nitro.config.ts"), NITRO_CONFIG_TS, "utf8");
+  await writeFile(
+    path.join(projectRoot, "routes", "[...path].ts"),
+    NITRO_CATCHALL_ROUTE_TS,
     "utf8",
   );
 }
@@ -335,6 +406,7 @@ export async function runPlasmInit(
   }
 
   await writeVercelScaffold(projectRoot);
+  await writeNitroScaffold(projectRoot);
 
   return { projectRoot, agentRoot };
 }
@@ -353,7 +425,8 @@ export function formatInitSuccess(
       "  plasm-agent link          # pull AI_GATEWAY_API_KEY from Vercel",
       "  plasm-agent build",
       "  npm run smoke:channel",
-      "  plasm-agent dev           # local dev server + TUI",
+      "  plasm-agent dev           # Nitro dev server (Vercel routing parity)",
+      "  plasm-agent dev --interactive  # optional TUI + sessions + hot reload",
       "  vercel deploy             # production (channels + cron)",
     ].join("\n");
   }
@@ -366,7 +439,8 @@ export function formatInitSuccess(
     "  npm install",
     "  plasm-agent link      # pull AI_GATEWAY_API_KEY from Vercel",
     "  plasm-agent build     # generate CGS stubs + discovery manifest",
-    "  plasm-agent dev       # HTTP dev server (sessions + SSE)",
+    "  plasm-agent dev       # Nitro dev server (Vercel routing parity)",
+    "  plasm-agent dev --interactive  # optional TUI + sessions",
     "  vercel deploy         # production on Vercel",
   ].join("\n");
 }

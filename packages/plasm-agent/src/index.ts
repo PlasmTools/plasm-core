@@ -130,7 +130,7 @@ export type {
 export { StubPlasmEngine, NapiPlasmEngine, createEngine, isNativeEngineAvailable } from "./engine/napi-binding.js";
 export { createDefaultHostTransport } from "./engine/host-transport.js";
 export type { HostTransportOptions } from "./engine/host-transport.js";
-export { createProductionHostTransport } from "./engine/create-host-transport.js";
+export { createProductionHostTransport, createStubHostTransport } from "./engine/create-host-transport.js";
 export { loadAgentEnv } from "./load-env.js";
 export {
   connectorUidForEntry,

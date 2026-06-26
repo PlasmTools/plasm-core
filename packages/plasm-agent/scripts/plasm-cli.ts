@@ -9,6 +9,7 @@ import {
   installDevServerShutdown,
   startDevServerForProject,
 } from "../src/cli/dev.js";
+import { startNitroDevForProject } from "../src/cli/nitro-dev.js";
 import { runDevTui } from "../src/dev/client/repl.js";
 import { collectProjectInfo, formatPlasmInfoHuman } from "../src/cli/info.js";
 import { runPlasmInit, formatInitSuccess } from "../src/cli/init.js";
@@ -90,11 +91,15 @@ async function cmdBuild(): Promise<void> {
 
 async function cmdDev(): Promise<void> {
   const project = await requireAgentProject();
-  const handle = await startDevServerForProject({
-    project,
-    tui: flag("--no-tui") ? false : "auto",
-  });
-  installDevServerShutdown(handle);
+  if (flag("--interactive")) {
+    const handle = await startDevServerForProject({
+      project,
+      tui: flag("--no-tui") ? false : "auto",
+    });
+    installDevServerShutdown(handle);
+    return;
+  }
+  await startNitroDevForProject(project);
 }
 
 async function cmdChat(): Promise<void> {
@@ -112,7 +117,7 @@ Commands:
   info [--json] Project + catalog diagnostics
   link          vercel link + env pull (AI Gateway key)
   build         CGS stubs + .plasm/discovery/manifest.json
-  dev [--no-tui]  HTTP dev server (+ interactive TUI when TTY)
+  dev [--interactive] [--no-tui]  Nitro dev (Vercel routing parity; default). --interactive for TUI/sessions.
   chat [--url URL]  Terminal client for a running dev server
 `);
     return;

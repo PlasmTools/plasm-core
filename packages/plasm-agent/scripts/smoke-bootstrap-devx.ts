@@ -13,6 +13,7 @@ const packageRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const plasmNode = path.join(packageRoot, "scripts/plasm-node.mjs");
 const plasmCli = path.join(packageRoot, "scripts/plasm-cli.ts");
 const smokeVercelHandler = path.join(packageRoot, "scripts/smoke-vercel-handler.ts");
+const smokeHnPreflight = path.join(packageRoot, "scripts/smoke-hn-preflight.ts");
 
 const nodeArgs = ["--experimental-strip-types", "--experimental-transform-types", plasmNode];
 
@@ -55,6 +56,22 @@ async function runPlasm(plasmArgs: string[], cwd: string): Promise<string> {
   return stdout;
 }
 
+async function assertNitroScaffold(workDir: string): Promise<void> {
+  await access(path.join(workDir, "nitro.config.ts"));
+  await access(path.join(workDir, "routes", "[...path].ts"));
+
+  const pkg = JSON.parse(await readFile(path.join(workDir, "package.json"), "utf8")) as {
+    scripts?: Record<string, string>;
+    devDependencies?: Record<string, string>;
+  };
+  if (pkg.scripts?.dev !== "plasm-agent dev") {
+    throw new Error(`package.json dev script must be plasm-agent dev, got ${pkg.scripts?.dev}`);
+  }
+  if (!pkg.devDependencies?.nitropack) {
+    throw new Error("package.json missing devDependencies.nitropack");
+  }
+}
+
 async function assertVercelScaffold(workDir: string): Promise<void> {
   const vercelJsonPath = path.join(workDir, "vercel.json");
   const apiHandlerPath = path.join(workDir, "api", "[[...path]].ts");
@@ -81,6 +98,7 @@ async function main(): Promise<void> {
 
     await runPlasm(["init", "--template", "mcp-radar", workDir], packageRoot);
     await assertVercelScaffold(workDir);
+    await assertNitroScaffold(workDir);
 
     await run("npm", ["install", "--no-audit", "--no-fund"], workDir);
 
@@ -114,10 +132,12 @@ async function main(): Promise<void> {
 
     await run("npm", ["run", "smoke:channel"], workDir);
 
+    await run("node", [...nodeArgs, smokeHnPreflight, workDir], packageRoot);
+
     await run("node", [...nodeArgs, smokeVercelHandler, workDir], packageRoot);
 
     console.log(
-      "OK: bootstrap devx (init → vercel scaffold → install → build → info → smoke:channel → prod handler)",
+      "OK: bootstrap devx (init → vercel+nitro scaffold → install → build → info → smoke:channel → HN preflight → prod handler)",
     );
   } finally {
     await rm(workDir, { recursive: true, force: true });

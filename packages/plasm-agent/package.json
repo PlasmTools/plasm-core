@@ -1,6 +1,6 @@
 {
   "name": "@plasm_lang/vercel-agent",
-  "version": "0.3.64",
+  "version": "0.3.78",
   "description": "Catalog-native TypeScript agent framework (Plasm CGS/CML, Vercel AI SDK, Nitro-oriented)",
   "license": "GPL-3.0-or-later",
   "repository": {
@@ -26,6 +26,9 @@
     "src",
     "bin",
     "scripts/plasm-node.mjs",
+    "scripts/plasm-cli.ts",
+    "scripts/build-stubs.ts",
+    "scripts/register-plasm-loader.mjs",
     "scripts/resolve-ts-extension.mjs",
     "agent",
     "README.md"
@@ -54,7 +57,7 @@
   "dependencies": {
     "@ai-sdk/otel": "^1.0.0-beta.6",
     "@opentelemetry/api": "^1.9.0",
-    "@plasm_lang/engine": "^0.3.64",
+    "@plasm_lang/engine": "^0.3.78",
     "@vercel/blob": "^0.27.3",
     "@vercel/connect": "^0.2.6",
     "@vercel/kv": "^3.0.0",
@@ -63,7 +66,7 @@
     "js-yaml": "^4.1.0",
     "pg": "^8.22.0",
     "workflow": "^4.5.0",
-    "zod": "^3.24.0"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

@@ -1,5 +1,5 @@
 import type { HostTransportFn } from "../engine/napi-binding.js";
-import { createProductionHostTransport } from "../engine/create-host-transport.js";
+import { createStubHostTransport } from "../engine/create-host-transport.js";
 import {
   createEngine,
   type DryRunResult,
@@ -143,7 +143,7 @@ export async function executeRows<TRow>(
     options?.transport ??
     (process.env.PLASM_STUB_USE_MOCK_TRANSPORT === "1"
       ? createFixtureMockTransport()
-      : createProductionHostTransport());
+      : createStubHostTransport(builder.entryId));
 
   if (typeof bound.run !== "function") {
     throw new Error("executeRows: program builder missing run()");
