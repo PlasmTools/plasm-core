@@ -1,21 +1,20 @@
 #!/usr/bin/env node
 /**
- * Smoke: bootstrap devx — init --template mcp-radar → install → build → info → vercel scaffold → channel.
+ * Smoke: bootstrap devx — init --template mcp-radar → install → build → info → channel.
+ * Uses monorepo file: deps (default when plasm-engine sibling exists).
  */
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { access, readFile } from "node:fs/promises";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+const require = createRequire(import.meta.url);
 const packageRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const plasmNode = path.join(packageRoot, "scripts/plasm-node.mjs");
-const plasmCli = path.join(packageRoot, "scripts/plasm-cli.ts");
-const smokeVercelHandler = path.join(packageRoot, "scripts/smoke-vercel-handler.ts");
-const smokeHnPreflight = path.join(packageRoot, "scripts/smoke-hn-preflight.ts");
-
-const nodeArgs = ["--experimental-strip-types", "--experimental-transform-types", plasmNode];
+const runPlasmCli = path.join(packageRoot, "scripts", "run-plasm-cli.mjs");
+const tsxCli = require.resolve("tsx/cli");
 
 async function run(
   command: string,
@@ -52,8 +51,12 @@ async function run(
 }
 
 async function runPlasm(plasmArgs: string[], cwd: string): Promise<string> {
-  const { stdout } = await run("node", [...nodeArgs, plasmCli, ...plasmArgs], cwd);
+  const { stdout } = await run("node", [runPlasmCli, ...plasmArgs], cwd);
   return stdout;
+}
+
+async function runTsScript(script: string, args: string[], cwd: string): Promise<void> {
+  await run("node", [tsxCli, script, ...args], cwd);
 }
 
 async function assertNitroScaffold(workDir: string): Promise<void> {
@@ -70,24 +73,41 @@ async function assertNitroScaffold(workDir: string): Promise<void> {
   if (!pkg.devDependencies?.nitropack) {
     throw new Error("package.json missing devDependencies.nitropack");
   }
+  if (!pkg.devDependencies?.tsx) {
+    throw new Error("package.json missing devDependencies.tsx");
+  }
 }
 
 async function assertVercelScaffold(workDir: string): Promise<void> {
   const vercelJsonPath = path.join(workDir, "vercel.json");
   const apiHandlerPath = path.join(workDir, "api", "[[...path]].ts");
+  const publicIndex = path.join(workDir, "public", "index.html");
   await access(vercelJsonPath);
   await access(apiHandlerPath);
+  await access(publicIndex);
 
   const vercelJson = JSON.parse(await readFile(vercelJsonPath, "utf8")) as {
     crons?: Array<{ path: string; schedule: string }>;
     buildCommand?: string;
   };
-  if (!vercelJson.buildCommand?.includes("plasm-agent build")) {
-    throw new Error(`vercel.json missing buildCommand: ${JSON.stringify(vercelJson)}`);
+  if (vercelJson.buildCommand !== "plasm-agent build") {
+    throw new Error(`vercel.json buildCommand must be plasm-agent build: ${JSON.stringify(vercelJson)}`);
   }
   const cron = vercelJson.crons?.find((c) => c.path.includes("mcp-radar-scan"));
   if (!cron) {
     throw new Error(`vercel.json missing mcp-radar-scan cron: ${JSON.stringify(vercelJson.crons)}`);
+  }
+
+  const handlerSrc = await readFile(apiHandlerPath, "utf8");
+  if (!handlerSrc.includes("@plasm_lang/vercel-agent/server")) {
+    throw new Error("api handler must import @plasm_lang/vercel-agent/server");
+  }
+
+  const pkg = JSON.parse(await readFile(path.join(workDir, "package.json"), "utf8")) as {
+    scripts?: Record<string, string>;
+  };
+  if (pkg.scripts?.["vercel-build"]) {
+    throw new Error("package.json must not define vercel-build (use vercel.json buildCommand only)");
   }
 }
 
@@ -132,12 +152,12 @@ async function main(): Promise<void> {
 
     await run("npm", ["run", "smoke:channel"], workDir);
 
-    await run("node", [...nodeArgs, smokeHnPreflight, workDir], packageRoot);
-
-    await run("node", [...nodeArgs, smokeVercelHandler, workDir], packageRoot);
+    await runTsScript(path.join(packageRoot, "scripts/smoke-hn-preflight.ts"), [workDir], packageRoot);
+    await runTsScript(path.join(packageRoot, "scripts/smoke-vercel-build.ts"), [workDir], packageRoot);
+    await runTsScript(path.join(packageRoot, "scripts/smoke-vercel-handler.ts"), [workDir], packageRoot);
 
     console.log(
-      "OK: bootstrap devx (init → vercel+nitro scaffold → install → build → info → smoke:channel → HN preflight → prod handler)",
+      "OK: bootstrap devx (init → vercel+nitro scaffold → install → build → info → smoke:channel → HN → vercel-build → prod handler)",
     );
   } finally {
     await rm(workDir, { recursive: true, force: true });

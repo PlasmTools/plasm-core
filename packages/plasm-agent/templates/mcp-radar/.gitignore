@@ -1,0 +1,8 @@
+node_modules/
+.env
+.env.local
+agent/.plasm/
+.vercel
+.env*
+.nitro/
+.output/

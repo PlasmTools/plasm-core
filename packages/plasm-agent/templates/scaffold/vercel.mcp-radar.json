@@ -1,0 +1,15 @@
+{
+  "buildCommand": "plasm-agent build",
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/$1" }],
+  "crons": [
+    {
+      "path": "/internal/cron/mcp-radar-scan",
+      "schedule": "0 */6 * * *"
+    }
+  ],
+  "functions": {
+    "api/**": {
+      "maxDuration": 300
+    }
+  }
+}

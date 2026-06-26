@@ -3,6 +3,7 @@ import { access } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { nitroDevNodeOptions } from "./node-dev-imports.js";
 import type { ResolvedAgentProject } from "./project-root.js";
 
 function plasmAgentPackageRoot(): string {
@@ -32,12 +33,7 @@ function nitroBin(projectRoot: string): string {
 export async function startNitroDevForProject(project: ResolvedAgentProject): Promise<void> {
   await assertNitroScaffold(project.projectRoot);
 
-  const loader = path.join(plasmAgentPackageRoot(), "scripts", "register-plasm-loader.mjs");
-  const nodeOptions = [
-    "--experimental-strip-types",
-    "--experimental-transform-types",
-    `--import=${loader}`,
-  ].join(" ");
+  const nodeOptions = nitroDevNodeOptions(plasmAgentPackageRoot());
 
   const bin = nitroBin(project.projectRoot);
   try {

@@ -10,6 +10,7 @@ import { isNativeEngineAvailable } from "./engine/napi-binding.js";
 import { exportScheduleCronManifest } from "./authoring/schedule-manager.js";
 import { isGatewayConfigured } from "./gateway-model.js";
 import type { LoadedProjectSlots } from "./authoring/slot-loader.js";
+import { frameworkPackageVersion } from "./package-version.js";
 import { resolveCatalogLiveHash } from "./stubs/catalog-hash.js";
 import { stubFreshness } from "./stubs/generator.js";
 
@@ -21,7 +22,7 @@ export const PLASM_LANGUAGE_TOOLS = [
 ] as const;
 
 export const FRAMEWORK_NAME = "@plasm_lang/vercel-agent";
-export const FRAMEWORK_VERSION = "0.0.1";
+export const FRAMEWORK_VERSION = frameworkPackageVersion();
 
 export interface CatalogInfoEntry {
   name: string;

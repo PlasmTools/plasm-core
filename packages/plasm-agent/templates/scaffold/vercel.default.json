@@ -1,0 +1,4 @@
+{
+  "buildCommand": "plasm-agent build",
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/$1" }]
+}

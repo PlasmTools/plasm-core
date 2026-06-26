@@ -1,0 +1,14 @@
+{
+  "name": "mcp-radar-agent",
+  "private": true,
+  "type": "module",
+  "description": "Event-driven MCP innovation radar — Hacker News + Tavily proof log",
+  "scripts": {
+    "smoke:channel": "tsx scripts/smoke-channel.ts",
+    "eval": "tsx scripts/run-evals.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "tsx": "^4.19.4"
+  }
+}

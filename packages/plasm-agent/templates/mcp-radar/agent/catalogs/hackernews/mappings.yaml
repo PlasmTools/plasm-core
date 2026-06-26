@@ -1,0 +1,129 @@
+# Hacker News: Firebase v0 (https://github.com/HackerNews/API) plus the public
+# Algolia HN search API (https://hn.algolia.com/api) — two origins, one CGS. Firebase paths are
+# relative to http_backend; search uses a full https:// URL so plasm-runtime joins the absolute
+# request URL without double-prefixing the catalog origin (see `join_base_url_path`).
+
+item_search:
+  method: GET
+  path:
+  - type: literal
+    value: "https://hn.algolia.com/api/v1/search"
+  response:
+    items: hits
+  query:
+    type: object
+    fields:
+    - - query
+      - type: var
+        name: query
+    - - tags
+      - type: if
+        condition: { type: exists, var: tags }
+        then_expr: { type: var, name: tags }
+        else_expr: { type: const, value: "story" }
+    - - page
+      - type: if
+        condition: { type: exists, var: page }
+        then_expr: { type: var, name: page }
+        else_expr: { type: const, value: null }
+    - - hitsPerPage
+      - type: if
+        condition: { type: exists, var: per_page }
+        then_expr: { type: var, name: per_page }
+        else_expr: { type: const, value: null }
+
+item_search_by_date:
+  method: GET
+  path:
+  - type: literal
+    value: "https://hn.algolia.com/api/v1/search_by_date"
+  response:
+    items: hits
+  query:
+    type: object
+    fields:
+    - - query
+      - type: var
+        name: query
+    - - tags
+      - type: if
+        condition: { type: exists, var: tags }
+        then_expr: { type: var, name: tags }
+        else_expr: { type: const, value: "story" }
+    - - page
+      - type: if
+        condition: { type: exists, var: page }
+        then_expr: { type: var, name: page }
+        else_expr: { type: const, value: null }
+    - - hitsPerPage
+      - type: if
+        condition: { type: exists, var: per_page }
+        then_expr: { type: var, name: per_page }
+        else_expr: { type: const, value: null }
+
+item_feed_query:
+  method: GET
+  path:
+    - type: literal
+      value: v0
+    - type: var
+      name: feed
+      suffix: stories.json
+
+max_item_id_query:
+  method: GET
+  path:
+    - type: literal
+      value: v0
+    - type: literal
+      value: maxitem.json
+  response:
+    wrap_root_scalar: true
+
+recent_updated_item_query:
+  method: GET
+  path:
+    - type: literal
+      value: v0
+    - type: literal
+      value: updates.json
+  response:
+    items_path:
+    - items
+
+recent_updated_user_query:
+  method: GET
+  path:
+    - type: literal
+      value: v0
+    - type: literal
+      value: updates.json
+  response:
+    items_path:
+    - profiles
+
+item_get:
+  method: GET
+  response:
+    single: true
+  path:
+    - type: literal
+      value: v0
+    - type: literal
+      value: item
+    - type: var
+      name: id
+      suffix: .json
+
+user_get:
+  method: GET
+  response:
+    single: true
+  path:
+    - type: literal
+      value: v0
+    - type: literal
+      value: user
+    - type: var
+      name: id
+      suffix: .json

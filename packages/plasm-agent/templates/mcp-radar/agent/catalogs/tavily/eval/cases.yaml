@@ -1,0 +1,56 @@
+# Tavily — `SearchResult`, `ExtractResult`, `ResearchTask` (search, query, create, get).
+- id: tv-01
+  schema: tavily
+  goal: "Research briefing: what are the main risks of LLM prompt injection in 2025?"
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [SearchResult]
+
+- id: tv-02
+  schema: tavily
+  goal: "Extract readable text from these documentation URLs for offline notes"
+  tags: [extract]
+  covers: [query_filtered]
+  expect:
+    entities_any: [ExtractResult]
+
+- id: tv-03
+  schema: tavily
+  goal: "Crawl the product marketing site up to depth 2 for a competitive summary"
+  tags: [crawl]
+  covers: [query_filtered]
+  expect:
+    entities_any: [ExtractResult]
+
+- id: tv-04
+  schema: tavily
+  goal: "Start a deep research job on quantum error correction and save the request id"
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [ResearchTask]
+
+- id: tv-05
+  schema: tavily
+  goal: "Poll research task req_abc123 until the report body is ready"
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [ResearchTask]
+
+- id: tv-06
+  schema: tavily
+  goal: "Kick off async research on a topic, then fetch status when the user returns"
+  tags: [multi_step]
+  covers: [multi_step, create, get]
+  expect:
+    entities_any: [ResearchTask]
+
+- id: tv-07
+  schema: tavily
+  goal: "Web search for 'rust async' but return only titles and URLs in the result list"
+  tags: [search, projection]
+  covers: [search_text, projection]
+  expect:
+    entities_any: [SearchResult]

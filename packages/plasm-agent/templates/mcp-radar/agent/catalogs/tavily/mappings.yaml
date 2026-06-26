@@ -1,0 +1,171 @@
+# Tavily REST API — CML mappings. Domain model in domain.yaml.
+#
+# Base URL: Tavily HTTP API (set provider origin with --backend).
+# All endpoints use POST except research_get (GET).
+#
+# All search/extract/crawl/research parameters go in the JSON request body,
+# not the URL query string. The CML `body:` block is used throughout.
+#
+# Null-filtering: CML if/exists expressions emit null for absent optional
+# params; the runtime strips null fields from the body before sending.
+#
+# include_domains / exclude_domains are sent as JSON arrays in the body:
+#   "include_domains": ["reuters.com", "bbc.com"]
+# The `type: var` expression evaluates Value::Array which is serialised as
+# a JSON array in the body (unlike query params where Array → repeated key).
+#
+# research_create returns a single object (not a list), decoded as `single`.
+# research_get polls status — GET /research/{request_id}.
+
+# ── Search ────────────────────────────────────────────────────────────────────
+
+web_search:
+  method: POST
+  path:
+    - { type: literal, value: search }
+  response:
+    items: results
+  body:
+    type: object
+    fields:
+      - [query,               { type: var, name: query }]
+      - [search_depth,        { type: if, condition: { type: exists, var: search_depth },
+                                then_expr: { type: var, name: search_depth },
+                                else_expr: { type: const, value: null } }]
+      - [chunks_per_source,   { type: if, condition: { type: exists, var: chunks_per_source },
+                                then_expr: { type: var, name: chunks_per_source },
+                                else_expr: { type: const, value: null } }]
+      - [max_results,         { type: if, condition: { type: exists, var: max_results },
+                                then_expr: { type: var, name: max_results },
+                                else_expr: { type: const, value: null } }]
+      - [topic,               { type: if, condition: { type: exists, var: topic },
+                                then_expr: { type: var, name: topic },
+                                else_expr: { type: const, value: null } }]
+      - [time_range,          { type: if, condition: { type: exists, var: time_range },
+                                then_expr: { type: var, name: time_range },
+                                else_expr: { type: const, value: null } }]
+      - [start_date,          { type: if, condition: { type: exists, var: start_date },
+                                then_expr: { type: var, name: start_date },
+                                else_expr: { type: const, value: null } }]
+      - [end_date,            { type: if, condition: { type: exists, var: end_date },
+                                then_expr: { type: var, name: end_date },
+                                else_expr: { type: const, value: null } }]
+      - [include_answer,      { type: if, condition: { type: exists, var: include_answer },
+                                then_expr: { type: var, name: include_answer },
+                                else_expr: { type: const, value: null } }]
+      - [include_raw_content, { type: if, condition: { type: exists, var: include_raw_content },
+                                then_expr: { type: var, name: include_raw_content },
+                                else_expr: { type: const, value: null } }]
+      - [include_images,      { type: if, condition: { type: exists, var: include_images },
+                                then_expr: { type: var, name: include_images },
+                                else_expr: { type: const, value: null } }]
+      - [include_favicon,     { type: if, condition: { type: exists, var: include_favicon },
+                                then_expr: { type: var, name: include_favicon },
+                                else_expr: { type: const, value: null } }]
+      - [include_domains,     { type: if, condition: { type: exists, var: include_domains },
+                                then_expr: { type: var, name: include_domains },
+                                else_expr: { type: const, value: null } }]
+      - [exclude_domains,     { type: if, condition: { type: exists, var: exclude_domains },
+                                then_expr: { type: var, name: exclude_domains },
+                                else_expr: { type: const, value: null } }]
+      - [country,             { type: if, condition: { type: exists, var: country },
+                                then_expr: { type: var, name: country },
+                                else_expr: { type: const, value: null } }]
+      - [auto_parameters,     { type: if, condition: { type: exists, var: auto_parameters },
+                                then_expr: { type: var, name: auto_parameters },
+                                else_expr: { type: const, value: null } }]
+      - [exact_match,         { type: if, condition: { type: exists, var: exact_match },
+                                then_expr: { type: var, name: exact_match },
+                                else_expr: { type: const, value: null } }]
+
+# ── Extract ───────────────────────────────────────────────────────────────────
+
+url_extract:
+  method: POST
+  path:
+    - { type: literal, value: extract }
+  response:
+    items: results
+  body:
+    type: object
+    fields:
+      - [urls,               { type: var, name: urls }]
+      - [query,              { type: if, condition: { type: exists, var: query },
+                               then_expr: { type: var, name: query },
+                               else_expr: { type: const, value: null } }]
+      - [extract_depth,      { type: if, condition: { type: exists, var: extract_depth },
+                               then_expr: { type: var, name: extract_depth },
+                               else_expr: { type: const, value: null } }]
+      - [format,             { type: if, condition: { type: exists, var: format },
+                               then_expr: { type: var, name: format },
+                               else_expr: { type: const, value: null } }]
+      - [chunks_per_source,  { type: if, condition: { type: exists, var: chunks_per_source },
+                               then_expr: { type: var, name: chunks_per_source },
+                               else_expr: { type: const, value: null } }]
+      - [include_images,     { type: if, condition: { type: exists, var: include_images },
+                               then_expr: { type: var, name: include_images },
+                               else_expr: { type: const, value: null } }]
+      - [include_favicon,    { type: if, condition: { type: exists, var: include_favicon },
+                               then_expr: { type: var, name: include_favicon },
+                               else_expr: { type: const, value: null } }]
+
+# ── Crawl ─────────────────────────────────────────────────────────────────────
+
+site_crawl:
+  method: POST
+  path:
+    - { type: literal, value: crawl }
+  response:
+    items: results
+  body:
+    type: object
+    fields:
+      - [url,              { type: var, name: url }]
+      - [instructions,     { type: if, condition: { type: exists, var: instructions },
+                             then_expr: { type: var, name: instructions },
+                             else_expr: { type: const, value: null } }]
+      - [max_depth,        { type: if, condition: { type: exists, var: max_depth },
+                             then_expr: { type: var, name: max_depth },
+                             else_expr: { type: const, value: null } }]
+      - [max_breadth,      { type: if, condition: { type: exists, var: max_breadth },
+                             then_expr: { type: var, name: max_breadth },
+                             else_expr: { type: const, value: null } }]
+      - [limit,            { type: if, condition: { type: exists, var: limit },
+                             then_expr: { type: var, name: limit },
+                             else_expr: { type: const, value: null } }]
+      - [chunks_per_source, { type: if, condition: { type: exists, var: chunks_per_source },
+                              then_expr: { type: var, name: chunks_per_source },
+                              else_expr: { type: const, value: null } }]
+      - [include_images,   { type: if, condition: { type: exists, var: include_images },
+                             then_expr: { type: var, name: include_images },
+                             else_expr: { type: const, value: null } }]
+
+# ── Research ──────────────────────────────────────────────────────────────────
+
+research_create:
+  # POST /research — async, returns {request_id, created_at, status, input, model}
+  # Explicit object body (not body: {type: var, name: input}): execute_create splats each
+  # param key into env, overwriting env["input"] with the scalar question string.
+  method: POST
+  path:
+    - { type: literal, value: research }
+  response: single
+  body:
+    type: object
+    fields:
+      - [input,            { type: var, name: input }]
+      - [model,            { type: if, condition: { type: exists, var: model },
+                             then_expr: { type: var, name: model },
+                             else_expr: { type: const, value: null } }]
+      - [citation_format,  { type: if, condition: { type: exists, var: citation_format },
+                             then_expr: { type: var, name: citation_format },
+                             else_expr: { type: const, value: null } }]
+
+research_get:
+  # GET /research/{request_id} — poll for task status and results
+  # id = request_id value from the ResearchTask entity
+  method: GET
+  path:
+    - { type: literal, value: research }
+    - { type: var, name: id }
+  response: single

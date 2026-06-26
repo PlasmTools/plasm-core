@@ -1,0 +1,112 @@
+# Hacker News — NL→Plasm eval cases (schema: hackernews)
+- id: hn-01
+  schema: hackernews
+  goal: Top story id list from the front page feed
+  tags: [query, enum]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Item]
+    pred_fields_any: [feed]
+    pred_values_any: [top]
+
+- id: hn-02
+  schema: hackernews
+  goal: Newest story ids
+  tags: [query, enum]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Item]
+    pred_fields_any: [feed]
+    pred_values_any: [new]
+
+- id: hn-03
+  schema: hackernews
+  goal: Show HN category story ids
+  tags: [query, enum]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Item]
+    pred_fields_any: [feed]
+    pred_values_any: [show]
+
+- id: hn-04
+  schema: hackernews
+  goal: Fetch item 8863
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [Item]
+
+- id: hn-05
+  schema: hackernews
+  goal: Load user jl
+  tags: [get]
+  covers: [get]
+  expect:
+    entities_any: [User]
+
+- id: hn-06
+  schema: hackernews
+  goal: Item 1 and only its title field
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [Item]
+    projection_contains: [title]
+
+- id: hn-07
+  schema: hackernews
+  goal: Story 8863 and expand its direct replies
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [Item]
+    chain_selectors_any: [kids]
+
+- id: hn-08
+  schema: hackernews
+  goal: >-
+    Compare item 1 and user jl in one pass so both profiles are available for discussion.
+  tags: [multi_step]
+  covers: [multi_step]
+  expect:
+    entities_any: [Item, User]
+
+- id: hn-09
+  schema: hackernews
+  goal: >-
+    Snapshot the live max item id, the recent item id slice from updates, and the recent
+    username slice from updates in one analysis pass.
+  tags: [query_all]
+  covers: [query_all]
+  expect:
+    entities_any: [MaxItemId, RecentUpdatedItem, RecentUpdatedUser]
+
+- id: hn-10
+  schema: hackernews
+  goal: Poll item 126809 and list its poll option rows
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [Item]
+    chain_selectors_any: [poll_options]
+
+- id: hn-11
+  schema: hackernews
+  goal: Search HN stories for “rust memory safety” and list matching item ids
+  tags: [search]
+  covers: [search_text]
+  expect:
+    entities_any: [Item]
+    pred_fields_any: [query]
+
+- id: hn-12
+  schema: hackernews
+  goal: >-
+    Find HN stories mentioning “Show HN”, then load item 1 by id for the classic “Y Combinator”
+    post in one pass.
+  tags: [search, get, multi_step]
+  covers: [search_text, get, multi_step]
+  expect:
+    entities_any: [Item]
+    pred_fields_any: [query]

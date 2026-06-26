@@ -52,9 +52,10 @@ function initTargetDir(): string {
 
 async function cmdInit(): Promise<void> {
   const template = optionValue("--template");
+  const npm = flag("--npm");
   const target = initTargetDir();
-  const project = await runPlasmInit(target, { template });
-  console.log(formatInitSuccess(project, { template }));
+  const project = await runPlasmInit(target, { template, npm: npm || undefined });
+  console.log(formatInitSuccess(project, { template, npm: npm || undefined }));
 }
 
 async function cmdInfo(): Promise<void> {
@@ -113,7 +114,7 @@ async function main(): Promise<void> {
     console.log(`plasm-agent — @plasm_lang/vercel-agent CLI
 
 Commands:
-  init [dir] [--template NAME]  Scaffold agent project (templates: mcp-radar)
+  init [dir] [--template NAME] [--npm]  Scaffold agent project (templates: mcp-radar)
   info [--json] Project + catalog diagnostics
   link          vercel link + env pull (AI Gateway key)
   build         CGS stubs + .plasm/discovery/manifest.json
