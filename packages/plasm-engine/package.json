@@ -32,10 +32,5 @@
   },
   "engines": {
     "node": ">=20"
-  },
-  "optionalDependencies": {
-    "@plasm_lang/engine-darwin-arm64": "0.3.78",
-    "@plasm_lang/engine-darwin-x64": "0.3.78",
-    "@plasm_lang/engine-linux-x64-gnu": "0.3.78"
   }
 }
