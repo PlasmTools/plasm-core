@@ -1,13 +1,8 @@
 ---
 source: crates/plasm-agent-core/src/mcp_server/tests.rs
-expression: "super::mcp_server_initialize_instructions()"
+expression: "plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW"
 ---
-Plasm MCP tools (in order): **`plasm_context`** (session + teaching TSV), **`plasm`** (dry-run plan), **`plasm_run`** (live execute), **`discover_capabilities`** (when **`api`/`entity`** unknown).
-     **`discover_capabilities`**: one **`intent`** per goal; returns fenced **`tsv`** catalog picks (not a program). Merge rows into **`plasm_context`** **`seeds`**.
-     **`plasm_context`**: **`intent`** + **`seeds`** → ref + teaching TSV. Reuse ref for **`plasm`** / **`plasm_run`**; extend via same **`intent`**, more **`seeds`** (delta **`e#`**).
-     **One goal → one stable `intent` → one `logical_session_ref`.** Stable = same `intent` string on every turn for that goal (not per message/API). Bad: `intent: "msg 3: sort moves"` each turn — breaks reuse and fragments `e#`/`p#`. Multi-API: one **`seeds`** array on the same intent.
-**Session:** one goal → one **`intent`** → one **`logical_session_ref`**; use **`e#`/`m#`/`p#`/`r#` from this session's teaching TSV only** (contract examples are shapes; substitute from your table).
-
-     **`plasm`** is plan-only (no live HTTP). One `program` per call; bare comma-separated roots (no `return`). Pass returned **`plan_commit_ref`** (`pcN`) to **`plasm_run`** only — do not re-send the program on live execute.
-     **`plasm_run`**: **`logical_session_ref`** + **`plan_commit_ref`** only; live execute the stored reviewed plan. Returns **25 rows** inline (TSV) per return; continue with `page(l_<token>_pgN)` when more rows exist.
-     **Snapshots:** `(in artifact)` / **`resource_link`** / `_meta.plasm.steps` are supplemental; use in-band TSV + paging first. **`resources/read`** only when your MCP host exposes it.
+Plasm MCP tools (in order): **`plasm_context`** (session + teaching TSV) → **`plasm`** (dry-run plan) → **`plasm_run`** (live execute); **`discover_capabilities`** first only when `api`/`entity` is unknown.
+**One goal → one stable `intent` → one `logical_session_ref`.** Use the same `intent` string every turn — one **`intent`** per goal, not per message/API (`intent: "msg 3: sort moves"` each turn fragments `e#`/`p#`). Multi-API: one **`seeds`** array on that intent.
+**`plasm_context`** returns the teaching TSV; use its `e#`/`m#`/`p#`/`r#` only. Reuse ref for `plasm` / `plasm_run`; extend via the same `intent` with more `seeds`.
+**`plasm`** is plan-only — pass its returned **`plan_commit_ref`** (`pcN`) to **`plasm_run`**; don't re-send the program. `plasm_run` returns 25 rows inline; continue with `page(l_<token>_pgN)` when more exist.

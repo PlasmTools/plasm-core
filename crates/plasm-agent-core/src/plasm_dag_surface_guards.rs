@@ -3,7 +3,7 @@
 use crate::plasm_plan::PlanValue;
 use crate::program_binding::ContinuationCapability;
 
-const DERIVE_MAP_RELATION_HOP_MSG: &str = "Relation reads use `child = source.r#` (or `source.wire`), not `source => …`. `=>` is for per-row derive maps `{ … }` or write effects `source => e#.m#(…)`.";
+const DERIVE_MAP_RELATION_HOP_MSG: &str = "Relation reads use `child = source.r#` (the taught relation symbol from the active TSV), not `source => …`. `=>` is for per-row derive maps `{ … }` or write effects `source => e#.m#(…)`.";
 
 /// JSON/array/string/heredoc shapes that lower to [`DagNodeSource::Data`] when bound — not valid bare roots.
 pub(crate) fn looks_like_data_literal(rhs: &str) -> bool {

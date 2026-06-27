@@ -1051,7 +1051,7 @@ fn validate_compute_paths_for_entity(
         }
         let hint = single_segment_teaching_field_hint(session, symbol_map_cross_cache, qe, path);
         return Err(format!(
-            "Plasm program {op_label}: field path `{}` is not a row field of entity `{}` (catalog entry `{}`). Use wire field names or `p#` symbols from the active TSV teaching table for this entity — mixing another entity's symbols yields null columns.{hint}",
+            "Plasm program {op_label}: field path `{}` is not a row field of entity `{}` (catalog entry `{}`). Use `p#` (and taught `r#`) from the active TSV teaching table for this entity — mixing another entity's symbols yields null columns.{hint}",
             path.dotted(),
             qe.entity,
             qe.entry_id

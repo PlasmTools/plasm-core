@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.81] - 2026-06-27
+
+### Fixed
+
+- **Federated execute rehydrate:** `catalog_waves_from_pairing` now run-length-encodes entity/catalog
+  rows in pairing order (matches live federate waves). Cross-pod replay no longer regroups by catalog
+  and reassigns `e#`/`p#` on interleaved sessions (e.g. linear → github → linear).
+- **Symbol map LRU:** `SymbolMapCacheKey` fingerprints opaque assignment maps so the cross-request cache
+  cannot serve a differently-numbered `SymbolMap` under a colliding surface key.
+
+### Changed
+
+- **MCP prompts:** smaller `initialize_workflow` / `plasm_tool` cards; symbols-only projection and
+  row-filter diagnostics; `symbol_tuning` hash helper extracted to `opaque_symbol_hash.rs`.
+- **Tests:** shared `test_support/exposure_replay_fixtures` for federated replay / rehydrate parity.
+
 ## [0.3.80] - 2026-06-27
 
 ### Changed

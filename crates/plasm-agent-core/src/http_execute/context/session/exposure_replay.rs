@@ -1,9 +1,8 @@
 //! Canonical teaching-exposure wave replay (live federate + cross-pod rehydrate).
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexMap;
 use plasm_core::discovery::ExposureSurfaceOptions;
 use plasm_core::{CgsContext, TeachingExposureSession, CGS};
 
@@ -21,27 +20,32 @@ pub fn catalog_waves_from_pairing(
     entities: &[String],
     entity_catalog_entry_ids: &[String],
 ) -> Vec<ExposureCatalogWave> {
-    let mut catalog_order: IndexSet<String> = IndexSet::new();
-    let mut entities_by_catalog: HashMap<String, Vec<String>> = HashMap::new();
-    for (entity, entry_id) in entities.iter().zip(entity_catalog_entry_ids.iter()) {
-        catalog_order.insert(entry_id.clone());
-        entities_by_catalog
-            .entry(entry_id.clone())
-            .or_default()
-            .push(entity.clone());
+    if entities.is_empty() {
+        return Vec::new();
     }
-    catalog_order
-        .into_iter()
-        .enumerate()
-        .map(|(i, entry_id)| ExposureCatalogWave {
-            entities: entities_by_catalog
-                .get(&entry_id)
-                .cloned()
-                .unwrap_or_default(),
+    assert_eq!(
+        entities.len(),
+        entity_catalog_entry_ids.len(),
+        "entity/catalog pairing must be validated before wave derivation"
+    );
+    let mut waves = Vec::new();
+    let mut start = 0;
+    while start < entities.len() {
+        let entry_id = entity_catalog_entry_ids[start].clone();
+        let mut end = start + 1;
+        while end < entities.len() && entity_catalog_entry_ids[end] == entry_id {
+            end += 1;
+        }
+        waves.push(ExposureCatalogWave {
             entry_id,
-            read_first_seeded: i > 0,
-        })
-        .collect()
+            entities: entities[start..end].to_vec(),
+            // Match live federate: first wave is primary open (`read_first_seeded: false`);
+            // every subsequent wave (even same catalog re-entry) is incremental.
+            read_first_seeded: !waves.is_empty(),
+        });
+        start = end;
+    }
+    waves
 }
 
 pub fn build_initial_exposure_wave(
@@ -168,8 +172,52 @@ pub fn replay_teaching_exposure_waves(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::exposure_replay_fixtures::{
+        assert_github_langdetail_numbering_parity, interleaved_federated_matrix_fixture,
+    };
     use plasm_core::{load_schema_dir, PromptPipelineConfig};
     use std::sync::Arc;
+
+    #[test]
+    fn catalog_waves_from_pairing_preserves_interleaved_catalog_runs() {
+        let entities = vec![
+            "LangItem".to_string(),
+            "LangDetail".to_string(),
+            "LangTag".to_string(),
+        ];
+        let catalog_ids = vec![
+            "linear".to_string(),
+            "github".to_string(),
+            "linear".to_string(),
+        ];
+        let waves = catalog_waves_from_pairing(&entities, &catalog_ids);
+        assert_eq!(waves.len(), 3);
+        assert_eq!(waves[0].entry_id, "linear");
+        assert_eq!(waves[0].entities, vec!["LangItem"]);
+        assert!(!waves[0].read_first_seeded);
+        assert_eq!(waves[1].entry_id, "github");
+        assert_eq!(waves[1].entities, vec!["LangDetail"]);
+        assert!(waves[1].read_first_seeded);
+        assert_eq!(waves[2].entry_id, "linear");
+        assert_eq!(waves[2].entities, vec!["LangTag"]);
+        assert!(waves[2].read_first_seeded);
+    }
+
+    #[test]
+    fn interleaved_replay_matches_live_entity_numbering() {
+        let fixture = interleaved_federated_matrix_fixture();
+        let replay = replay_teaching_exposure_waves(
+            &fixture.contexts,
+            &fixture.pairing.entities,
+            &fixture.pairing.catalog_entry_ids,
+            None,
+            None,
+        );
+        assert_github_langdetail_numbering_parity(
+            &fixture.live.symbol_map_arc(),
+            &replay.symbol_map_arc(),
+        );
+    }
 
     #[test]
     fn expand_wave_teaches_berry_firmness_hop_via_exposure_replay() {

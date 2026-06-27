@@ -242,6 +242,9 @@ pub use context::{
     ExpandTeachingWaveResult, RankedCapabilitiesArg,
 };
 pub(crate) use context::{
+    apply_federate_exposure_wave, build_initial_exposure_wave, ExposureCatalogWave,
+};
+pub(crate) use context::{
     build_capability_exposure_plan, build_plasm_context_agent_markdown,
     build_plasm_context_tool_meta, cgs_entity_names_sample,
     normalize_context_intent_for_domain_filter,

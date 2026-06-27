@@ -46,7 +46,10 @@ pub fn parse_row_predicate_list(
 pub fn row_predicate_from_expr(expr: &Expr) -> Result<RowPredicate, String> {
     match expr {
         Expr::Query(q) => row_predicate_from_optional_predicate(q.predicate.as_ref()),
-        _ => Err("row filter body must be brace predicate comparisons".into()),
+        _ => Err(
+            "row filter body must be brace predicate comparisons (`{p#=…, p#>…}`). Row `.filter{…}` runs on a materialized list — bind `label = e#` then `label.filter{…}`; a GET-only or search-only entity has no list to filter (use scoped `e#{p#=…}` or `e#~\"text\"` instead)."
+                .into(),
+        ),
     }
 }
 

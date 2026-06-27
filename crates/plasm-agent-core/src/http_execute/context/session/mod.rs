@@ -9,8 +9,8 @@ mod seeds_apply;
 
 pub use expand::{expand_execute_teaching_session, ExpandTeachingWaveResult};
 pub(crate) use exposure_replay::{
-    apply_federate_exposure_wave, catalog_waves_from_pairing, replay_teaching_exposure_waves,
-    ExposureCatalogWave,
+    apply_federate_exposure_wave, build_initial_exposure_wave, catalog_waves_from_pairing,
+    replay_teaching_exposure_waves, ExposureCatalogWave,
 };
 pub use federate::federate_execute_session;
 pub use open::execute_session_create_response;

@@ -303,9 +303,15 @@ mod tests {
     use plasm_core::loader::load_schema_dir;
 
     use super::*;
+    use crate::execute_session::{ExecuteSession, SessionReuseKey};
     use crate::mcp_transport_store::execute_session_registry::{
         PersistedExecuteSessionDescriptor, PersistedSessionReuseKey,
     };
+    use crate::test_support::exposure_replay_fixtures::{
+        assert_github_langdetail_numbering_parity, interleaved_federated_matrix_fixture,
+        matrix_federated_host,
+    };
+    use indexmap::IndexMap;
 
     fn overshow_registry() -> InMemoryCgsRegistry {
         let dir =
@@ -600,5 +606,78 @@ mod tests {
             map.entry_id_for_entity_symbol("e2").as_deref(),
             Some("linear")
         );
+    }
+
+    #[tokio::test]
+    async fn rehydrate_replay_matches_live_numbering_end_to_end() {
+        let fixture = interleaved_federated_matrix_fixture();
+        let (host, reg) = matrix_federated_host(fixture.cgs.clone());
+
+        let session = ExecuteSession::new_with_bindings(
+            "ph".into(),
+            String::new(),
+            fixture.cgs.clone(),
+            fixture.contexts.clone(),
+            "linear".into(),
+            String::new(),
+            String::new(),
+            None,
+            fixture.live.entities.clone(),
+            Some(fixture.live.clone()),
+            None,
+            fixture.cgs.catalog_cgs_hash_hex(),
+            None,
+            None,
+            IndexMap::new(),
+        );
+
+        let reuse_key = SessionReuseKey {
+            tenant_scope: String::new(),
+            entry_id: "linear".into(),
+            catalog_cgs_hash: session.catalog_cgs_hash.clone(),
+            entities: session.entities.clone(),
+            context_intent: None,
+            ranked_capabilities: None,
+            principal: None,
+            logical_session_id: None,
+        };
+
+        let desc =
+            PersistedExecuteSessionDescriptor::from_session_and_reuse(&session, "sid", &reuse_key);
+        let mut desc = desc;
+        desc.expires_at_unix = u64::MAX;
+        desc.registry_catalog_hashes_by_entry = HashMap::from([
+            (
+                "linear".into(),
+                reg.load_context("linear")
+                    .expect("linear")
+                    .cgs
+                    .catalog_cgs_hash_hex(),
+            ),
+            (
+                "github".into(),
+                reg.load_context("github")
+                    .expect("github")
+                    .cgs
+                    .catalog_cgs_hash_hex(),
+            ),
+        ]);
+
+        let rehydrated = rehydrate_execute_session(&host, &desc)
+            .await
+            .expect("rehydrate");
+
+        let live_map = session
+            .teaching_exposure
+            .as_ref()
+            .expect("live exposure")
+            .symbol_map_arc();
+        let re_map = rehydrated
+            .teaching_exposure
+            .as_ref()
+            .expect("rehydrated exposure")
+            .symbol_map_arc();
+        assert_github_langdetail_numbering_parity(&live_map, &re_map);
+        assert_eq!(rehydrated.entities, session.entities);
     }
 }

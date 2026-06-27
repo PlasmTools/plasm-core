@@ -21,6 +21,8 @@
 //! `PLASM_SYMBOL_MAP_LRU_CAP`, default `64`, set `0` to disable) deduplicates identical [`SymbolMap`]
 //! snapshots when the catalog fingerprint and exposure rows match a recent session.
 
+mod opaque_symbol_hash;
+
 use crate::identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityName, RelationName,
 };
@@ -3639,17 +3641,7 @@ impl TeachingExposureSession {
 }
 
 fn hash_exposure_session_rows(exposure: &TeachingExposureSession) -> u64 {
-    let mut h = DefaultHasher::new();
-    for (e, row) in exposure
-        .entities
-        .iter()
-        .zip(&exposure.entity_catalog_entry_ids)
-    {
-        e.hash(&mut h);
-        row.hash(&mut h);
-    }
-    exposure.surface.fingerprint().hash(&mut h);
-    h.finish()
+    opaque_symbol_hash::hash_exposure_session_rows(exposure)
 }
 
 /// Fingerprint for [`SymbolMapCrossRequestCache`]: pinned catalogs + exposed entity rows.
@@ -4213,6 +4205,61 @@ mod tests {
             "federated extend must rebuild symbol map when exposure fingerprint advances"
         );
         assert_eq!(map_four.entity_sym_for("github", "LangDetail"), "e4");
+    }
+
+    /// Two exposures reaching the **same ordered entity rows + surface** via different wave
+    /// structure (one open vs incremental `expose_entities`) may assign different opaque numbering.
+    /// The cross-request [`SymbolMapCacheKey`] must encode that numbering: if it did not, the LRU
+    /// would serve one session a `SymbolMap` whose `p#`→wire map disagrees with the teaching TSV it
+    /// was shown (the `p21=title` rendered / `p21=height` resolved contamination).
+    #[test]
+    fn cache_key_distinguishes_wave_structure_numbering() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = Arc::new(load_schema_dir(dir).expect("matrix"));
+        let mut contexts = indexmap::IndexMap::new();
+        contexts.insert(
+            "linear".to_string(),
+            Arc::new(crate::CgsContext::entry("linear", cgs.clone())),
+        );
+        let layers: Vec<&CGS> = contexts.values().map(|c| c.cgs.as_ref()).collect();
+
+        // Path A: one wave exposing both entities together.
+        let exp_a = TeachingExposureSession::new(cgs.as_ref(), "linear", &["LangItem", "LangLine"]);
+        // Path B: same entities, same final order, but built in two waves.
+        let mut exp_b = TeachingExposureSession::new(cgs.as_ref(), "linear", &["LangItem"]);
+        exp_b.expose_entities(&layers, cgs.clone(), "linear", &["LangLine"]);
+
+        assert_eq!(
+            exp_a.entities, exp_b.entities,
+            "both exposures must reach the same ordered entity rows"
+        );
+
+        let key_a = symbol_map_cache_key_federated(&layers, &exp_a);
+        let key_b = symbol_map_cache_key_federated(&layers, &exp_b);
+
+        let map_a = exp_a.build_symbol_map_snapshot();
+        let map_b = exp_b.build_symbol_map_snapshot();
+        let numbering = |m: &SymbolMap| {
+            (
+                m.sym_to_ident.clone(),
+                m.sym_to_relation_wire.clone(),
+                m.sym_to_entity.clone(),
+                m.sym_to_method.clone(),
+            )
+        };
+        let same_numbering = numbering(&map_a) == numbering(&map_b);
+
+        // The cache key must agree with the actual numbering — never coarser. A coarser key (the bug)
+        // would leave `key_a == key_b` while `same_numbering == false`, letting the LRU cross-serve.
+        assert_eq!(
+            key_a == key_b,
+            same_numbering,
+            "SymbolMapCacheKey must encode opaque-symbol numbering so the cross-request LRU never \
+             serves a differently-numbered SymbolMap under a colliding key"
+        );
     }
 
     #[test]
