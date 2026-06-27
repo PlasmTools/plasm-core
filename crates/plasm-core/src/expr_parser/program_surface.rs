@@ -192,6 +192,9 @@ pub fn split_assignment_at_top_level(line: &str) -> Option<(&str, &str)> {
             '(' | '[' | '{' if quote.is_none() => depth += 1,
             ')' | ']' | '}' if quote.is_none() => depth -= 1,
             '=' if quote.is_none() && depth == 0 => {
+                if line[i..].starts_with("=>") {
+                    continue;
+                }
                 let left = line[..i].trim();
                 let right = line[i + 1..].trim();
                 if !left.is_empty() && !right.is_empty() {
@@ -683,6 +686,12 @@ mod tests {
             got2.map(|(a, b)| (a.trim(), b.trim())),
             Some(("(a=>b)", "c"))
         );
+    }
+
+    #[test]
+    fn split_assignment_skips_effect_arrow() {
+        assert!(split_assignment_at_top_level("pika => e2.r3").is_none());
+        assert!(split_assignment_for_binding("sync = items => e1.m1(p1=1)").is_some());
     }
 
     #[test]

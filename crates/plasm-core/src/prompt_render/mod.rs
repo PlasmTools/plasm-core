@@ -5206,7 +5206,8 @@ mod tests {
             "contract should teach TSV interpretation before catalog rows"
         );
         assert!(
-            contract.contains("substitute placeholders"),
+            contract.contains("Replace teaching placeholders")
+                || contract.contains("substitute placeholders"),
             "symbolic contract must teach placeholder substitution"
         );
         assert!(
@@ -6545,15 +6546,14 @@ mod tests {
     #[test]
     fn plasm_tool_description_includes_row_compute_worked_example() {
         let frontmatter = super::PLASM_TOOL_DESCRIPTION;
-        let threshold = ROW_COMPUTE_EXEMPLAR_THRESHOLD;
-        assert!(frontmatter.contains(&format!(">={threshold}")));
         assert!(frontmatter.contains(".filter{"));
         assert!(frontmatter.contains(".limit(10)"));
         assert!(frontmatter.contains("Core surface:"));
-        assert!(frontmatter.contains(".group_by(p#, specs)"));
-        assert!(frontmatter.contains("substitute"));
-        assert!(frontmatter.contains("inputs:"));
-        assert!(frontmatter.contains("rows:"));
+        assert!(frontmatter.contains("Worked shape"));
+        assert!(
+            frontmatter.contains("Replace teaching placeholders")
+                || frontmatter.contains("substitute")
+        );
         assert!(frontmatter.contains("e#~$"));
         assert!(
             !frontmatter.contains("Session and symbol discipline"),
@@ -6564,8 +6564,8 @@ mod tests {
             "full pseudo-EBNF block retired; canonical syntax is Core surface + worked examples"
         );
         assert!(
-            frontmatter.contains("prefer bind"),
-            "worked row-compute example must teach bind-before-filter preference"
+            frontmatter.contains("label = e#"),
+            "pitfalls must teach bind-before-filter preference"
         );
         assert!(
             !frontmatter.contains("e2(p10="),

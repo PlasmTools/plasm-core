@@ -398,6 +398,18 @@ pub fn format_session_symbolic_parse_error(
     err: &ParseError,
 ) -> String {
     let surface = source_line.trim();
+    if surface.contains("=>")
+        && matches!(
+            err.kind,
+            plasm_core::expr_parser::ParseErrorKind::ExpectedIdentifier
+                | plasm_core::expr_parser::ParseErrorKind::ExpectedOperator
+                | plasm_core::expr_parser::ParseErrorKind::ExpectedValue
+        )
+    {
+        if let Err(msg) = crate::plasm_dag_surface_guards::reject_relation_arrow_trap(surface) {
+            return msg;
+        }
+    }
     let sym_map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
     let step = render_parse_error_with_feedback(
         err,

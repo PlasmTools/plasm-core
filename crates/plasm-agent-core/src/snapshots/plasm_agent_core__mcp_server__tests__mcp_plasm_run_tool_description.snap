@@ -1,6 +1,6 @@
 ---
 source: crates/plasm-agent-core/src/mcp_server/tests.rs
-expression: "super::mcp_plasm_run_tool_description()"
+expression: "plasm_core::prompt_render::PLASM_RUN_TOOL_DESCRIPTION"
 ---
 **Run Plasm** (live): **`logical_session_ref`** + **`plan_commit_ref`** (`pcN`) from a prior **`plasm`** dry-run. Real HTTP/API; may return **`resource_link`** / `_meta.plasm` snapshots.
 
@@ -9,3 +9,5 @@ expression: "super::mcp_plasm_run_tool_description()"
 **Live execute:** server spawns one async operation and awaits terminal rows in the tool response. Progress uses standard `notifications/plasm/op` on the registered handle.
 
 **Live results:** `## {return_label} ({n} rows)` + capped TSV (25 rows inline); multi-return programs use `# Results` with `### {label} ({n} rows)` per root. When more rows exist, continue with `page(l_<token>_pgN)` from the tool result or `_meta.plasm.paging`. Snapshot URI lines point at full JSON via MCP **`resources/read`** when needed. Run Explorer is supplemental.
+
+**Retry:** transient `session materialization changed during concurrent execute` — re-issue the same `plasm_run` once.

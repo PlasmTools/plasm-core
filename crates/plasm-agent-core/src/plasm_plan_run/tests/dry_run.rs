@@ -446,6 +446,26 @@ fn federated_ambiguous_entity_parse_includes_session_stamps() {
 }
 
 #[test]
+fn relation_arrow_trap_does_not_mask_broken_write_parse_error() {
+    let Some(session) = federated_github_linear_issue_session() else {
+        return;
+    };
+    let line = "hits => e1.m1(p1=";
+    let err = parse_parsed_expr_for_session(&session, line).expect_err("broken write");
+    let msg = format_session_symbolic_parse_error(
+        &session,
+        None,
+        &PromptPipelineConfig::default(),
+        line,
+        &err,
+    );
+    assert!(
+        !msg.contains("Relation reads use"),
+        "write-effect parse errors must not be replaced by relation trap: {msg}"
+    );
+}
+
+#[test]
 fn plan_parses_product_query() {
     let s = test_session();
     let pe = parse_parsed_expr_for_session(&s, "Product").expect("parse");

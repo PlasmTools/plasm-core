@@ -3,7 +3,33 @@
 use crate::plasm_plan::PlanValue;
 use crate::program_binding::ContinuationCapability;
 
-const DERIVE_MAP_RELATION_HOP_MSG: &str = "Relation reads use `child = source.r#` (the taught relation symbol from the active TSV), not `source => …`. `=>` is for per-row derive maps `{ … }` or write effects `source => e#.m#(…)`.";
+pub(crate) const DERIVE_MAP_RELATION_HOP_MSG: &str = "Relation reads use `child = source.r#` (the taught relation symbol from the active TSV), not `source => …`. `=>` is for per-row derive maps `{ … }` or write effects `source => e#.m#(…)`.";
+
+/// Reject `source => rhs` when `rhs` looks like a relation hop (teaching `r#` or known wire), not derive/write.
+pub(crate) fn reject_relation_arrow_trap(fragment: &str) -> Result<(), String> {
+    let line = fragment.trim();
+    if !line.contains("=>") {
+        return Ok(());
+    }
+    let Ok(Some((_left, right))) = plasm_core::expr_parser::split_token_top_level(line, "=>")
+    else {
+        return Ok(());
+    };
+    let rhs = right.trim();
+    if rhs_text_looks_like_relation_hop_trap(rhs, &[]) {
+        Err(derive_map_invalid_rhs_err(Some(rhs)))
+    } else {
+        Ok(())
+    }
+}
+
+fn rhs_text_looks_like_relation_hop_trap(rhs: &str, source_relation_wires: &[String]) -> bool {
+    let t = rhs.trim();
+    if t.is_empty() || t.starts_with('{') || t.contains('(') {
+        return false;
+    }
+    dotted_tail_looks_like_relation_hop(t, source_relation_wires)
+}
 
 /// JSON/array/string/heredoc shapes that lower to [`DagNodeSource::Data`] when bound — not valid bare roots.
 pub(crate) fn looks_like_data_literal(rhs: &str) -> bool {
@@ -43,7 +69,7 @@ pub(crate) fn reject_derive_map_invalid_rhs(
             };
             let t = s.trim();
             if derive_rhs_literal_looks_like_surface_call(t)
-                || dotted_tail_looks_like_relation_hop(t, source_relation_wires)
+                || rhs_text_looks_like_relation_hop_trap(t, source_relation_wires)
             {
                 return Err(derive_map_invalid_rhs_err(Some(t)));
             }
@@ -60,7 +86,7 @@ pub(crate) fn reject_derive_map_invalid_rhs(
     Ok(())
 }
 
-fn derive_map_invalid_rhs_err(sample: Option<&str>) -> String {
+pub(crate) fn derive_map_invalid_rhs_err(sample: Option<&str>) -> String {
     match sample {
         Some(t) => format!("`=>` derive map does not accept `{t}`; {DERIVE_MAP_RELATION_HOP_MSG}"),
         None => derive_map_relation_hop_err(),
@@ -151,12 +177,28 @@ mod tests {
     use crate::plasm_plan::PlanValue;
 
     #[test]
+    fn reject_relation_arrow_trap_bare_teaching_r_hash() {
+        let err = reject_relation_arrow_trap("pika => e2.r3").unwrap_err();
+        assert!(err.contains("Relation reads use"), "{err}");
+    }
+
+    #[test]
+    fn reject_relation_arrow_trap_skips_non_relation_dotted_rhs() {
+        reject_relation_arrow_trap("src => binding.field").unwrap();
+    }
+
+    #[test]
+    fn reject_relation_arrow_trap_skips_write_effect_rhs() {
+        reject_relation_arrow_trap("items => e1.m1(p1=1)").unwrap();
+    }
+
+    #[test]
     fn rejects_teaching_relation_symbol_in_literal_rhs() {
         let wires: Vec<String> = Vec::new();
         let value = PlanValue::Literal {
             value: serde_json::json!("e2.r2"),
         };
-        let err = reject_derive_map_invalid_rhs(&value, &wires).expect_err("r# hop");
+        let err = reject_derive_map_invalid_rhs(&value, &wires).unwrap_err();
         assert!(err.contains(DERIVE_MAP_RELATION_HOP_MSG), "{err}");
     }
 
@@ -168,12 +210,12 @@ mod tests {
             alias: "hits".into(),
             path: vec!["lines".into()],
         };
-        reject_derive_map_invalid_rhs(&value, &wires).expect_err("wire relation hop");
+        reject_derive_map_invalid_rhs(&value, &wires).unwrap_err();
     }
 
     #[test]
     fn bare_json_root_is_literal_noop() {
         assert!(is_bare_literal_noop_root(r#"{"foo":"bar"}"#));
-        reject_bare_literal_noop_root(r#"{"foo":"bar"}"#).expect_err("noop");
+        reject_bare_literal_noop_root(r#"{"foo":"bar"}"#).unwrap_err();
     }
 }

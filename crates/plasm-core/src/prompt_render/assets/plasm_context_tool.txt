@@ -1,14 +1,11 @@
-Tool order: optional `discover_capabilities` → `plasm_context` → `plasm` (dry-run) → `plasm_run` (live).
-     **Call before `plasm` / `plasm_run`.** **One goal → one stable `intent` → one `logical_session_ref`** — same `intent` string every turn (not per message/API). Bad: `intent: "msg 3: sort moves"` each turn — fragments `e#`/`p#`. Multi-API: one **`seeds`** array on the same intent.
+**Call before `plasm` / `plasm_run`.** **One goal → one stable `intent` → one `logical_session_ref`** — same `intent` string every turn (not per message/API). Bad: `intent: "msg 3: sort moves"` each turn — fragments `e#`/`p#`. Multi-API: one **`seeds`** array on the same intent.
 
 **Programs = this table's symbols:** copy **`e#`/`m#`/`r#`/`p#`** from the left column into `plasm.program`. Catalog type names, method verbs, and API ids are not program syntax.
 
-**Open or extend:** **`intent`** + **`seeds`** (`{api, entity}`).
-
-Returns **`logical_session_ref`** + fenced teaching TSV. TSV is the active symbol table: copy left cells into **`plasm.program`** (Plasm source, not JSON). Delta waves assign new **`e#`** monotonically.
+**Open or extend:** **`intent`** + **`seeds`** (`{api, entity}`). Returns **`logical_session_ref`** + fenced teaching TSV (active symbol table). Delta waves assign new **`e#`** monotonically.
 
 **Extend picks:** same **`intent`**, expanded **`seeds`** — delta TSV or reuse cheat sheet when already exposed.
 
-**Discover before id (writes):** resolve human ids (team key, issue id) from a live list/search, not catalog/eval samples; federated writes end in one created-row return.
+**Discover before id (writes):** resolve human ids from a live list/search, not catalog/eval samples; federated writes end in one created-row return.
 
 **`_meta.plasm`:** `logical_session_ref`, `continuity`, `domain_revision`, optional **`relations`**.

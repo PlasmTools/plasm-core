@@ -167,10 +167,9 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("msg 3: sort moves"),
         "expected stable-intent anti-pattern in plasm_context description"
     );
-    assert!(plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION
-        .contains(plasm_core::prompt_render::MCP_TOOL_SEQUENCING_MARKER));
-    assert!(plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION
-        .contains(plasm_core::prompt_render::MCP_TOOL_SEQUENCING_MARKER));
+    assert!(
+        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
+    );
     assert!(
         plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.contains("Plasm is a source language")
     );

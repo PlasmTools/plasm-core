@@ -7,7 +7,7 @@
 use crate::execute_session::ExecuteSession;
 use crate::plasm_dag_surface_guards::{
     content_reference_error, looks_like_data_literal, reject_bare_literal_noop_root,
-    reject_derive_map_invalid_rhs, ContentReferenceSite,
+    reject_derive_map_invalid_rhs, reject_relation_arrow_trap, ContentReferenceSite,
 };
 use crate::plasm_plan::{
     AggregateFunction, ComputeOp, EffectClass, FieldPath, OutputName, PlanExprIr, PlanNodeKind,
@@ -1817,6 +1817,9 @@ fn compile_node_expr(
     rhs: &str,
 ) -> Result<Vec<DagNode>, String> {
     let rhs_display = rhs.trim();
+    if rhs_display.contains("=>") {
+        reject_relation_arrow_trap(rhs_display)?;
+    }
     let expanded = ExpandedProgramSurface::new(session, state.pipeline, rhs_display);
     let rhs = expanded.as_str();
 
@@ -4021,6 +4024,20 @@ bad"#,
         )
         .expect_err("entity ctor on => must not compile as derive literal");
         assert!(err.contains("derive map does not accept"), "{err}");
+    }
+
+    #[test]
+    fn derive_map_rejects_bare_relation_arrow_fragment() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "derive-reject-bare-relation-arrow",
+            "pika => e2.r3",
+        )
+        .expect_err("bare source => relation hop must not compile");
+        assert!(err.contains("Relation reads use"), "{err}");
     }
 
     #[test]
