@@ -133,6 +133,11 @@ export type { HostTransportOptions } from "./engine/host-transport.js";
 export { createProductionHostTransport, createStubHostTransport } from "./engine/create-host-transport.js";
 export { loadAgentEnv } from "./load-env.js";
 export {
+  isGatewayConfigured,
+  isVercelHosted,
+  resolveGatewayModel,
+} from "./gateway-model.js";
+export {
   connectorUidForEntry,
   connectAuthOptionsForEntry,
   resolveConnectBearer,

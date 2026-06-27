@@ -2376,7 +2376,8 @@ pub fn field_syms_in_expr(expr: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut i = 0;
     while i < expr.len() {
-        if expr.as_bytes().get(i) == Some(&b'p') && ident_boundary_left(expr, i) {
+        let b = *expr.as_bytes().get(i).unwrap_or(&0);
+        if (b == b'p' || b == b'r') && ident_boundary_left(expr, i) {
             let mut end = i + 1;
             while end < expr.len() {
                 let c = expr[end..].chars().next().unwrap();
@@ -4335,6 +4336,10 @@ mod tests {
         assert_eq!(
             field_syms_in_expr("e4{p61=e1(42)}"),
             vec!["p61".to_string()]
+        );
+        assert_eq!(
+            field_syms_in_expr("e1.r4[p5,p6]"),
+            vec!["r4".to_string(), "p5".to_string(), "p6".to_string()]
         );
         assert!(field_syms_in_expr("e1(42)").is_empty());
     }

@@ -37,11 +37,13 @@ p134	v89 · comment_count
 p163	v89 · stats_additions
 p164	v89 · stats_deletions
 p167	v89 · total_changes
+r2	author · GitHub user for the commit author, when the API provides one
+r3	committer · GitHub user for the committer, when the API provides one
 e2{p23=e17(p7=$, p22=$), p19=$, p223=$, p199=$, p200=$, p128=$, p131=$}[p7,p22,p19,p191,p20,p235,p118,p119,p134,p163,p164,p167]	→ [e2] · projection · A repository commit with message, times, and relations to author and committer users and to changed files
 e2(p7=$, p22=$, p19=$)	→ e2
 e2{p23=e17(p7=$, p22=$), p19=$, p223=$, p199=$, p200=$, p128=$, p131=$}[p7,p22,p19,p191,p20,p235,p118,p119,p134,p163,p164,p167]	→ [e2] · inputs: p23,p19,p223,p199,p200,p128,p131 · rows: p7,p22,p19,p191,p20,p235,p118,p119,p134,p163,p164,p167 · opt: p19, p223, p199, p200, p128, p131
-e2(p7=$, p22=$, p19=$).r2	relation e2 → e19 · GitHub user for the commit author, when the API provides one
-e2(p7=$, p22=$, p19=$).r3	relation e2 → e19 · GitHub user for the committer, when the API provides one
+e2(p7=$, p22=$, p19=$).r2	relation e2 → e19
+e2(p7=$, p22=$, p19=$).r3	relation e2 → e19
 v3	bool · Count anonymous contributions too
 p3	v3 · anon
 p5	v4 · login
@@ -56,6 +58,7 @@ p115	v87 · public
 p135	v89 · comments
 p15	v7 · created_at
 p24	v13 · updated_at
+r4	owner
 e4[p211,p189,p20,p115,p135,p15,p24]	→ e4 · projection · A user gist
 e4	→ [e4]
 e4(p211)	→ e4
@@ -106,6 +109,9 @@ p165	v89 · sub_issues_completed
 p47	v35 · sub_issues_percent_completed
 p109	v87 · locked
 p14	v6 · closed_at
+r8	labels
+r9	milestone
+r10	assignee · Filter by assignee login (omit for any assignee)
 e5{p23=e17(p7=$, p22=$), p180=$, p37=e19(p5), p214=$, p219=$, p38=$}[p141,p7,p22,p36,p233,p187,p175,p40,p143,p212,p179,p166,p165,p47,p109,p135,p15,p24,p14,p20]	→ [e5] · projection · A GitHub issue in a repository
 e5(p7=$, p22=$, p36=$)	→ e5
 e5(p7=$, p22=$, p36=$).m12()	→ () · Delete an issue
@@ -121,10 +127,11 @@ e5{p23=e17(p7=$, p22=$), p180=$, p37=e19(p5), p214=$, p219=$, p38=$}[p141,p187,p
 e5{p7=$, p22=$, p35=$}[p141,p187,p14,p135,p15,p20,p179,p143,p108,p212,p213,p109,p36,p7,p22,p226,p175,p40,p165,p47,p166,p233,p24]	→ [e5] · inputs: p7,p22,p35 · rows: p141,p187,p14,p135,p15,p20,p179,p143,p108,p212,p213,p109,p36,p7,p22,p226,p175,p40,p165,p47,p166,p233,p24
 e5~"text"[p141,p187,p14,p135,p15,p20,p179,p143,p108,p212,p213,p109,p36,p7,p22,p226,p175,p40,p165,p47,p166,p233,p24]	→ [e5] · rows: p141,p187,p14,p135,p15,p20,p179,p143,p108,p212,p213,p109,p36,p7,p22,p226,p175,p40,p165,p47,p166,p233,p24
 e5(p7=$, p22=$, p36=$).r10	relation e5 → e19
-e5(p7=$, p22=$, p36=$).r8	relation e5 → [e8] · Labels on the issue. List and GET issue responses embed a `labels` array on the wire; use those when present. For aut…
+e5(p7=$, p22=$, p36=$).r8	relation e5 → [e8]
 e5(p7=$, p22=$, p36=$).r9	relation e5 → e9
 v20	date · Only comments updated at or after this time
 p31	v20 · since
+r5	user
 e6{p23=e17(p7=$, p22=$), p35=$, p31=$}[p141,p187,p15,p20,p24]	→ [e6] · projection · A comment on a GitHub issue or pull request
 e6.m21(p23=e17(p7=$, p22=$), p35=$, p187=$)	→ e6 · [scope p23→e17, p35] · Post a comment on an issue or pull request thread
 e6(p141).m22(p23=e17(p7=$, p22=$))	→ () · [scope p23→e17] · Delete an issue or pull request timeline comment
@@ -200,6 +207,10 @@ p217	v101 · mergeable_state
 p84	v72 · number
 p103	v87 · draft
 p124	v88 · merged_at
+r15	milestone
+r16	changed_files
+r17	review_comments
+r19	assignee
 e12{p23=e17(p7=$, p22=$), p180=$, p209=$, p196=$}[p141,p7,p22,p84,p233,p187,p175,p109,p103,p124,p15,p24,p14,p20]	→ [e12] · projection · A pull request in a repository
 e12(p7=$, p22=$, p84=$)	→ e12
 e12(p7=$, p22=$, p84=$).m44()	→ () · opt: p203, p188, p67 · Merge a pull request
@@ -226,6 +237,8 @@ v74	select · APPROVED, CHANGES_REQUESTED, COMMENTED, DISMISSED, PENDING
 p87	v74 · state
 p202	v101 · commit_id
 p130	v88 · submitted_at
+r13	pull_request
+r14	user
 e14{p7=$, p22=$, p85=$}[p141,p7,p22,p85,p87,p187,p202,p130,p20]	→ [e14] · projection · A review on a pull request
 e14(p7=$, p22=$, p85=$, p141=$)	→ e14
 e14(p7=$, p22=$, p85=$, p141=$).m52()	→ () · Delete a pending pull request review
@@ -249,6 +262,7 @@ p182	v97 · side
 p162	v89 · start_line
 p183	v97 · start_side
 p86	v73 · subject_type
+r12	user
 e15{p7=$, p22=$, p85=$, p78=$}[p141,p7,p22,p187,p223,p190,p202,p85,p155,p144,p182,p162,p183,p86,p20,p15,p24]	→ [e15] · projection · Inline comment on a pull request review diff
 e15(p7=$, p22=$, p141=$)	→ e15
 e15.m56(p23=e17(p7=$, p22=$), p85=$, p187=$,..)	→ e15 · [scope p23→e17, p85] · opt: p70, p73, p72, p182, p75, p183, p86, p71 · Add or reply to an inline review comment
@@ -257,6 +271,7 @@ e15(p7=$, p22=$, p141=$).r12	relation e15 → e19
 p230	v101 · tag_name
 p112	v87 · prerelease
 p125	v88 · published_at
+r21	author
 e16{p23=e17(p7=$, p22=$)}[p141,p7,p22,p230,p220,p187,p103,p112,p15,p125,p20]	→ [e16] · projection · A GitHub release with assets and release notes
 e16(p7=$, p22=$, p141=$)	→ e16
 e16(p7=$, p22=$, p141=$).m60()	→ () · Delete a release in a repository
@@ -286,6 +301,10 @@ p12	v5 · default_branch
 p101	v87 · archived
 p97	v84 · visibility
 p126	v88 · pushed_at
+r22	branches
+r23	commits
+r24	contributors
+r25	repo_owner
 e17[p141,p7,p22,p21,p189,p113,p105,p215,p161,p140,p149,p12,p101,p97,p15,p24,p126,p20]	→ e17 · projection · A GitHub repository
 e17(p7=$, p22=$)	→ e17
 e17(p7=$, p22=$).m67(p23=e17(p7=$, p22=$), p223=$, p218=$, p19=$,..)	→ () · [scope p23→e17] · opt: p11 · Delete a file from a repository
@@ -322,6 +341,7 @@ v102	str · Branch, tag, or commit SHA to run the workflow on
 p237	v102 · ref
 p245	v110 · state
 p195	v101 · badge_url
+r34	runs
 e20{p7=$, p22=$}[p141,p7,p22,p221,p220,p223,p245,p15,p24,p20,p195]	→ [e20] · projection · A workflow in a repository
 e20(p7=$, p22=$, p141=$)	→ e20
 e20(p7=$, p22=$, p141=$).m79(p237=$)	→ () · Trigger a workflow dispatch event for a workflow
@@ -365,6 +385,10 @@ p13	v5 · head_branch
 p4	v4 · actor_login
 p8	v4 · triggering_actor_login
 p127	v88 · run_started_at
+r28	actor · User who triggered the run
+r29	triggering_actor
+r30	artifacts
+r31	jobs
 e23{p7=$, p22=$, p172=$, p11=$, p240=$, p241=$}[p141,p7,p22,p220,p184,p185,p207,p172,p159,p156,p205,p13,p18,p223,p4,p8,p20,p127,p15,p24]	→ [e23] · projection · One workflow run for a repository
 e23(p7=$, p22=$, p141=$)	→ e23
 e23(p7=$, p22=$, p141=$).m85()	→ () · Cancel an in-progress workflow run

@@ -59,9 +59,25 @@ async function runTsScript(script: string, args: string[], cwd: string): Promise
   await run("node", [tsxCli, script, ...args], cwd);
 }
 
-async function assertNitroScaffold(workDir: string): Promise<void> {
-  await access(path.join(workDir, "nitro.config.ts"));
-  await access(path.join(workDir, "routes", "[...path].ts"));
+async function assertDeployScaffold(workDir: string): Promise<void> {
+  const vercelJsonPath = path.join(workDir, "vercel.json");
+  const instrumentationPath = path.join(workDir, "agent", "instrumentation.ts");
+  const publicIndex = path.join(workDir, "public", "index.html");
+  await access(vercelJsonPath);
+  await access(instrumentationPath);
+  await access(publicIndex);
+
+  const vercelJson = JSON.parse(await readFile(vercelJsonPath, "utf8")) as {
+    buildCommand?: string;
+    rewrites?: unknown;
+    functions?: unknown;
+  };
+  if (vercelJson.buildCommand !== "plasm-agent build") {
+    throw new Error(`vercel.json buildCommand must be plasm-agent build: ${JSON.stringify(vercelJson)}`);
+  }
+  if (vercelJson.rewrites !== undefined || vercelJson.functions !== undefined) {
+    throw new Error("vercel.json must not define legacy rewrites/functions (Nitro emits .vercel/output)");
+  }
 
   const pkg = JSON.parse(await readFile(path.join(workDir, "package.json"), "utf8")) as {
     scripts?: Record<string, string>;
@@ -70,42 +86,12 @@ async function assertNitroScaffold(workDir: string): Promise<void> {
   if (pkg.scripts?.dev !== "plasm-agent dev") {
     throw new Error(`package.json dev script must be plasm-agent dev, got ${pkg.scripts?.dev}`);
   }
-  if (!pkg.devDependencies?.nitropack) {
-    throw new Error("package.json missing devDependencies.nitropack");
+  if (pkg.devDependencies?.nitropack) {
+    throw new Error("package.json must not depend on nitropack (plasm-agent bundles nitro v3)");
   }
   if (!pkg.devDependencies?.tsx) {
     throw new Error("package.json missing devDependencies.tsx");
   }
-}
-
-async function assertVercelScaffold(workDir: string): Promise<void> {
-  const vercelJsonPath = path.join(workDir, "vercel.json");
-  const apiHandlerPath = path.join(workDir, "api", "[[...path]].ts");
-  const publicIndex = path.join(workDir, "public", "index.html");
-  await access(vercelJsonPath);
-  await access(apiHandlerPath);
-  await access(publicIndex);
-
-  const vercelJson = JSON.parse(await readFile(vercelJsonPath, "utf8")) as {
-    crons?: Array<{ path: string; schedule: string }>;
-    buildCommand?: string;
-  };
-  if (vercelJson.buildCommand !== "plasm-agent build") {
-    throw new Error(`vercel.json buildCommand must be plasm-agent build: ${JSON.stringify(vercelJson)}`);
-  }
-  const cron = vercelJson.crons?.find((c) => c.path.includes("mcp-radar-scan"));
-  if (!cron) {
-    throw new Error(`vercel.json missing mcp-radar-scan cron: ${JSON.stringify(vercelJson.crons)}`);
-  }
-
-  const handlerSrc = await readFile(apiHandlerPath, "utf8");
-  if (!handlerSrc.includes("@plasm_lang/vercel-agent/server")) {
-    throw new Error("api handler must import @plasm_lang/vercel-agent/server");
-  }
-
-  const pkg = JSON.parse(await readFile(path.join(workDir, "package.json"), "utf8")) as {
-    scripts?: Record<string, string>;
-  };
   if (pkg.scripts?.["vercel-build"]) {
     throw new Error("package.json must not define vercel-build (use vercel.json buildCommand only)");
   }
@@ -117,8 +103,7 @@ async function main(): Promise<void> {
     console.log(`bootstrap temp: ${workDir}`);
 
     await runPlasm(["init", "--template", "mcp-radar", workDir], packageRoot);
-    await assertVercelScaffold(workDir);
-    await assertNitroScaffold(workDir);
+    await assertDeployScaffold(workDir);
 
     await run("npm", ["install", "--no-audit", "--no-fund"], workDir);
 

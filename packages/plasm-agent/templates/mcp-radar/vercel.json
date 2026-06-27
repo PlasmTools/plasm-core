@@ -1,15 +1,4 @@
 {
-  "buildCommand": "npx tsx scripts/vercel-build.ts",
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/$1" }],
-  "crons": [
-    {
-      "path": "/internal/cron/mcp-radar-scan",
-      "schedule": "0 */6 * * *"
-    }
-  ],
-  "functions": {
-    "api/**": {
-      "maxDuration": 300
-    }
-  }
+  "installCommand": "npm ci --omit=dev",
+  "buildCommand": "plasm-agent build"
 }

@@ -11,7 +11,7 @@ export interface InitOptions {
   npm?: boolean;
 }
 
-const SKIP_TEMPLATE_DIRS = new Set(["node_modules", ".plasm", ".nitro", ".output", "server"]);
+const SKIP_TEMPLATE_DIRS = new Set(["node_modules", ".plasm", ".nitro", ".output"]);
 const SKIP_TEMPLATE_FILES = new Set(["package-lock.json", "vercel-build.ts"]);
 
 function plasmAgentPackageRoot(): string {
@@ -65,9 +65,7 @@ export async function writeDeployScaffold(
 ): Promise<void> {
   const vercelJsonName =
     template === "mcp-radar" ? "vercel.mcp-radar.json" : "vercel.default.json";
-  await copyScaffoldFile("api/[[...path]].ts", projectRoot);
-  await copyScaffoldFile("routes/[...path].ts", projectRoot);
-  await copyScaffoldFile("nitro.config.ts", projectRoot);
+  await copyScaffoldFile("agent/instrumentation.ts", projectRoot);
   await copyScaffoldFile(".vercelignore", projectRoot);
   const publicIndex =
     template === "mcp-radar" ? "public/index.mcp-radar.html" : "public/index.html";
@@ -119,6 +117,7 @@ export async function patchProjectPackageJson(
       "@vercel/blob": "^0.27.3",
       "@vercel/functions": "^3.4.3",
       "@vercel/kv": "^3.0.0",
+      "@vercel/otel": "^1.5.0",
     };
   } else {
     pkg.dependencies = {
@@ -128,6 +127,7 @@ export async function patchProjectPackageJson(
       "@vercel/blob": "^0.27.3",
       "@vercel/functions": "^3.4.3",
       "@vercel/kv": "^3.0.0",
+      "@vercel/otel": "^1.5.0",
     };
   }
 
@@ -143,9 +143,9 @@ export async function patchProjectPackageJson(
 
   pkg.devDependencies = {
     ...pkg.devDependencies,
-    nitropack: "^2.13.4",
     tsx: "^4.19.4",
   };
+  delete pkg.devDependencies?.nitropack;
 
   await writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
 }
@@ -168,7 +168,6 @@ export function blankPackageJsonScaffold(): Record<string, unknown> {
       "@plasm_lang/engine": `^${version}`,
     },
     devDependencies: {
-      nitropack: "^2.13.4",
       tsx: "^4.19.4",
     },
   };

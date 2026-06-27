@@ -69,6 +69,53 @@ pub(crate) fn content_diverged<T: PartialEq + ?Sized>(
     branch_changed && session_changed && branch != session
 }
 
+fn ref_set(refs: Option<&[Ref]>) -> HashSet<Ref> {
+    refs.map(|v| v.iter().cloned().collect())
+        .unwrap_or_default()
+}
+
+/// Deterministic union of relation/query ref lists (order-insensitive).
+#[must_use]
+pub fn union_sorted_refs(a: &[Ref], b: &[Ref]) -> Vec<Ref> {
+    let mut set = ref_set(Some(a));
+    set.extend(b.iter().cloned());
+    let mut out: Vec<Ref> = set.into_iter().collect();
+    out.sort_by_key(|r| r.to_string());
+    out
+}
+
+/// CEP-15: relation/query ref-list materialization under concurrent reads.
+///
+/// Live execute often **replaces** a relation edge list with a fetched page. Two concurrent
+/// branches that share an ancestor (e.g. `Type(electric).pokemon[…]`) materialize **different
+/// overlapping pages** — union-mergeable, not a write conflict. Conflict only when fork-base
+/// refs are retained inconsistently across branch vs session.
+#[must_use]
+pub(crate) fn ref_list_materialization_diverged(
+    base: Option<&[Ref]>,
+    branch: Option<&[Ref]>,
+    session: Option<&[Ref]>,
+) -> bool {
+    if branch == session {
+        return false;
+    }
+    let base_s = ref_set(base);
+    let branch_s = ref_set(branch);
+    let session_s = ref_set(session);
+
+    if branch_s == base_s || session_s == base_s {
+        // One side unchanged since fork — the other side's materialization wins.
+        return false;
+    }
+
+    for r in base_s.iter() {
+        if branch_s.contains(r) != session_s.contains(r) {
+            return true;
+        }
+    }
+    false
+}
+
 /// True when branch and session diverged from base on any field, relation, or completeness.
 #[must_use]
 pub(crate) fn entity_three_way_conflict(
@@ -107,10 +154,10 @@ pub(crate) fn entity_three_way_conflict(
         .chain(session.relations.keys())
         .collect();
     for key in relation_keys {
-        if content_diverged(
-            base.relations.get(key),
-            branch.relations.get(key),
-            session.relations.get(key),
+        if ref_list_materialization_diverged(
+            base.relations.get(key).map(|v| v.as_slice()),
+            branch.relations.get(key).map(|v| v.as_slice()),
+            session.relations.get(key).map(|v| v.as_slice()),
         ) {
             return true;
         }
@@ -147,6 +194,51 @@ mod tests {
         assert!(!content_diverged(Some(&1), Some(&2), Some(&2)));
         assert!(!content_diverged(Some(&1), Some(&1), Some(&2)));
         assert!(content_diverged(Some(&1), Some(&2), Some(&3)));
+    }
+
+    #[test]
+    fn ref_list_materialization_allows_concurrent_relation_pages() {
+        let base = vec![Ref::new("Pokemon", "pikachu")];
+        let page_a = vec![
+            Ref::new("Pokemon", "1"),
+            Ref::new("Pokemon", "2"),
+        ];
+        let page_b = vec![
+            Ref::new("Pokemon", "1"),
+            Ref::new("Pokemon", "3"),
+        ];
+        assert!(!ref_list_materialization_diverged(
+            Some(base.as_slice()),
+            Some(page_a.as_slice()),
+            Some(page_b.as_slice()),
+        ));
+        assert!(!ref_list_materialization_diverged(
+            Some(base.as_slice()),
+            Some(page_a.as_slice()),
+            Some(base.as_slice()),
+        ));
+    }
+
+    #[test]
+    fn ref_list_materialization_rejects_inconsistent_base_retention() {
+        let base = vec![
+            Ref::new("Pokemon", "a"),
+            Ref::new("Pokemon", "b"),
+        ];
+        let branch = vec![
+            Ref::new("Pokemon", "a"),
+            Ref::new("Pokemon", "c"),
+        ];
+        let session = vec![
+            Ref::new("Pokemon", "a"),
+            Ref::new("Pokemon", "b"),
+            Ref::new("Pokemon", "d"),
+        ];
+        assert!(ref_list_materialization_diverged(
+            Some(base.as_slice()),
+            Some(branch.as_slice()),
+            Some(session.as_slice()),
+        ));
     }
 
     #[test]

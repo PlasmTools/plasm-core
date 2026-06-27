@@ -257,9 +257,16 @@ export function tavilyConfigured(): boolean {
 }
 
 export function gatewayConfigured(): boolean {
-  return Boolean(
+  if (
     process.env.AI_GATEWAY_API_KEY?.trim() ||
-      process.env.AI_API_GATEWAY_KEY?.trim() ||
-      process.env.AI_GATEWAY_KEY?.trim(),
+    process.env.AI_API_GATEWAY_KEY?.trim() ||
+    process.env.AI_GATEWAY_KEY?.trim()
+  ) {
+    return true;
+  }
+  return (
+    process.env.VERCEL === "1" ||
+    Boolean(process.env.VERCEL_DEPLOYMENT_ID?.trim()) ||
+    Boolean(process.env.VERCEL_ENV?.trim())
   );
 }

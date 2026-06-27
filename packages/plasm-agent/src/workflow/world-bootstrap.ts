@@ -19,7 +19,9 @@ export function resolveWorkflowWorldType(
 
 /**
  * Bootstrap Workflow SDK world from agent definition.
- * - `vercel`: platform-managed world on deploy (no-op here)
+ * - `vercel`: Vercel World is selected automatically by the Workflow SDK when
+ *   `VERCEL_DEPLOYMENT_ID` is set; durable session routes require `/.well-known/workflow/`
+ *   (eve emits these via Nitro + @workflow/nitro when sources contain `use workflow` / `use step`).
  * - `postgres`: `@workflow/world-postgres` long-lived worker
  * - `local`: `@workflow/world-local` for dev
  */
@@ -28,6 +30,15 @@ export async function bootstrapWorkflowWorld(
 ): Promise<WorkflowWorldType> {
   const worldType = resolveWorkflowWorldType(definition);
   if (worldType === "vercel") {
+    if (process.env.VERCEL_DEPLOYMENT_ID?.trim()) {
+      try {
+        const { getWorld } = await import("workflow/runtime");
+        await getWorld().start?.();
+      } catch (err) {
+        if (process.env.PLASM_WORKFLOW_STRICT === "1") throw err;
+        console.warn("[plasm:workflow] vercel world start skipped:", err);
+      }
+    }
     return worldType;
   }
 

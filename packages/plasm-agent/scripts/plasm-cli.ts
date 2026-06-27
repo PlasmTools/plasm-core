@@ -85,6 +85,12 @@ async function cmdBuild(): Promise<void> {
   const result = await runPlasmBuild(project);
   console.log(`Built ${result.stubs.length} stub(s)`);
   console.log(`manifest: ${result.manifestPath}`);
+  if (result.outputDir) {
+    console.log(`nitro output: ${result.outputDir}${result.vercelOutput ? " (vercel build output)" : ""}`);
+  }
+  if (result.agentSummaryPath) {
+    console.log(`agent summary: ${result.agentSummaryPath}`);
+  }
   for (const stub of result.stubs) {
     console.log(`  - ${stub.entryId} → ${path.relative(project.projectRoot, stub.outPath)}`);
   }

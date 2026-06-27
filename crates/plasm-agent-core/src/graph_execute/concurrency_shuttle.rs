@@ -500,6 +500,61 @@ async fn tokio_shared_ancestor_disjoint_relations_both_commit() {
     assert!(electric.relations.contains_key("moves"));
 }
 
+/// CEP-15: same relation key, different fetched ref pages — both commits succeed and union.
+#[tokio::test]
+async fn tokio_same_relation_key_concurrent_ref_pages_both_commit() {
+    use plasm_core::Ref;
+
+    let cgs = load_pokeapi_mini_cgs();
+    let sess = Arc::new(test_execute_session(cgs, "same_rel_pages"));
+
+    {
+        let mut guard = sess.lock_graph_cache().await;
+        guard
+            .insert(type_entity_with_relation(
+                "pokemon",
+                Ref::new("Pokemon", "pikachu"),
+            ))
+            .expect("seed electric");
+    }
+
+    let sess_a = Arc::clone(&sess);
+    let sess_b = Arc::clone(&sess);
+    let commit_a = tokio::spawn(async move {
+        let mut branch = GraphExecuteBranch::fork(&sess_a).await;
+        branch
+            .mat_mut()
+            .insert(type_entity_with_relation(
+                "pokemon",
+                Ref::new("Pokemon", "1"),
+            ))
+            .expect("page a");
+        branch.commit(&sess_a).await
+    });
+    let commit_b = tokio::spawn(async move {
+        let mut branch = GraphExecuteBranch::fork(&sess_b).await;
+        branch
+            .mat_mut()
+            .insert(type_entity_with_relation(
+                "pokemon",
+                Ref::new("Pokemon", "2"),
+            ))
+            .expect("page b");
+        branch.commit(&sess_b).await
+    });
+
+    commit_a.await.expect("task a").expect("commit a");
+    commit_b.await.expect("task b").expect("commit b");
+
+    let guard = sess.lock_graph_cache().await;
+    let electric = guard
+        .get(&Ref::new("PokemonType", "electric"))
+        .expect("electric");
+    let pokemon = electric.relations.get("pokemon").expect("pokemon edge");
+    assert!(pokemon.iter().any(|r| r.primary_slot_str() == "1"));
+    assert!(pokemon.iter().any(|r| r.primary_slot_str() == "2"));
+}
+
 fn empty_graph_result(count: usize) -> plasm_runtime::ExecutionResult {
     plasm_runtime::ExecutionResult {
         entities: Vec::new(),

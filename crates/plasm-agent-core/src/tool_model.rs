@@ -396,7 +396,7 @@ fn capability_about_from_cgs(cap: &CapabilitySchema, fallback: impl Into<String>
 
 /// Tool Explorer / operator copy: LLM execute uses opaque `page(pg#)` continuations, not CLI flags.
 fn append_llm_pagination_execute_note(about: String) -> String {
-    const NOTE: &str = " For MCP `plasm_run`, additional list pages use `page_handle` from the prior result's \"more pages\" line; HTTP execute uses plain `page(pg#)` in the POST body. Not raw API pagination parameters.";
+    const NOTE: &str = " For MCP `plasm_run`, additional list pages pass the prior result's page handle as `plan_commit_ref`; HTTP execute uses `page(pg#)` in the POST body (Plasm program syntax). Not raw API pagination parameters.";
     if about.is_empty() {
         NOTE.trim_start().to_string()
     } else {

@@ -332,12 +332,7 @@ impl CachedEntity {
                     changed = true;
                 }
             }
-            for (relation, refs) in &other.relations {
-                if self.relations.get(relation) != Some(refs) {
-                    self.relations.insert(relation.clone(), refs.clone());
-                    changed = true;
-                }
-            }
+            changed |= Self::merge_relation_maps(&mut self.relations, &other.relations);
             if changed {
                 self.last_updated = other.last_updated.max(self.last_updated);
                 self.version += 1;
@@ -365,12 +360,7 @@ impl CachedEntity {
                 }
             }
 
-            for (relation, refs) in &other.relations {
-                if self.relations.get(relation) != Some(refs) {
-                    self.relations.insert(relation.clone(), refs.clone());
-                    changed = true;
-                }
-            }
+            changed |= Self::merge_relation_maps(&mut self.relations, &other.relations);
 
             if changed {
                 self.version += 1;
@@ -381,6 +371,29 @@ impl CachedEntity {
         }
 
         Ok(changed)
+    }
+
+    fn merge_relation_maps(
+        into: &mut IndexMap<String, Vec<Ref>>,
+        other: &IndexMap<String, Vec<Ref>>,
+    ) -> bool {
+        let mut changed = false;
+        for (relation, refs) in other {
+            match into.get(relation) {
+                Some(existing) => {
+                    let merged = crate::materialization_conflict::union_sorted_refs(existing, refs);
+                    if existing.as_slice() != merged.as_slice() {
+                        into.insert(relation.clone(), merged);
+                        changed = true;
+                    }
+                }
+                None => {
+                    into.insert(relation.clone(), refs.clone());
+                    changed = true;
+                }
+            }
+        }
+        changed
     }
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "@plasm_lang/vercel-agent",
-  "version": "0.3.82",
+  "version": "0.3.83",
   "description": "Catalog-native TypeScript agent framework (Plasm CGS/CML, Vercel AI SDK, Nitro-oriented)",
   "license": "GPL-3.0-or-later",
   "repository": {
@@ -67,13 +67,17 @@
     "@vercel/blob": "^0.27.3",
     "@vercel/connect": "^0.2.6",
     "@vercel/kv": "^3.0.0",
+    "@vercel/otel": "^1.14.2",
+    "@workflow/nitro": "^4.1.1",
     "@workflow/world-postgres": "^4.2.0",
     "ai": "^6.0.0",
+    "esbuild": "^0.25.12",
     "js-yaml": "^4.1.0",
+    "nitro": "^3.0.260610-beta",
     "pg": "^8.22.0",
+    "tsx": "^4.19.4",
     "workflow": "^4.5.0",
-    "zod": "^3.25.76",
-    "tsx": "^4.19.4"
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

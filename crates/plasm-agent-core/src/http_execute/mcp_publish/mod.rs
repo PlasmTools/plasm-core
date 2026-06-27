@@ -180,7 +180,7 @@ mod tests {
         );
         assert!(
             out.markdown
-                .contains("page_handle: \"l_AAAAAAAAQACAAAAAAAAAAQ_pg1\""),
+                .contains("plan_commit_ref: \"l_AAAAAAAAQACAAAAAAAAAAQ_pg1\""),
             "expected paging continuation: {}",
             out.markdown
         );

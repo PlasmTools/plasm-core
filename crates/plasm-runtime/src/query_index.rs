@@ -68,6 +68,9 @@ impl QueryIndex {
     pub fn insert(&mut self, key: QueryCacheKey, refs: Vec<Ref>) {
         if refs.is_empty() {
             self.entries.remove(&key);
+        } else if let Some(existing) = self.entries.get(&key) {
+            let merged = crate::materialization_conflict::union_sorted_refs(existing, &refs);
+            self.entries.insert(key, merged);
         } else {
             self.entries.insert(key, refs);
         }
@@ -81,7 +84,14 @@ impl QueryIndex {
     }
 
     pub fn merge_from(&mut self, other: QueryIndex) {
-        self.entries.extend(other.entries);
+        for (key, refs) in other.entries {
+            if let Some(existing) = self.entries.get(&key) {
+                let merged = crate::materialization_conflict::union_sorted_refs(existing, &refs);
+                self.entries.insert(key, merged);
+            } else {
+                self.entries.insert(key, refs);
+            }
+        }
     }
 
     pub(crate) fn entries_snapshot(&self) -> HashMap<QueryCacheKey, Vec<Ref>> {
@@ -113,18 +123,17 @@ impl QueryIndex {
             .filter(|k| match base.get(*k) {
                 None => session.entries.contains_key(*k),
                 Some(base_v) => {
-                    let base_slice = Some(base_v.as_slice());
-                    let branch_slice = branch.entries.get(*k).map(|v| v.as_slice());
-                    let session_slice = session.entries.get(*k).map(|v| v.as_slice());
-                    content_diverged(base_slice, branch_slice, session_slice)
+                    crate::materialization_conflict::ref_list_materialization_diverged(
+                        Some(base_v.as_slice()),
+                        branch.entries.get(*k).map(|v| v.as_slice()),
+                        session.entries.get(*k).map(|v| v.as_slice()),
+                    )
                 }
             })
             .cloned()
             .collect()
     }
 }
-
-use crate::materialization_conflict::content_diverged;
 
 #[cfg(test)]
 impl QueryCacheKey {

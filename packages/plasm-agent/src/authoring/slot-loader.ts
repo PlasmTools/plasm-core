@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -45,6 +45,10 @@ export interface LoadedProjectSlots {
 export interface LoadAuthoredSlotsOptions {
   discovery: ProjectDiscovery;
   importCacheBust?: number;
+  agentRoot?: string;
+  projectRoot?: string;
+  /** agentRoot-relative source → projectRoot-relative compiled `.mjs` from build manifest. */
+  compiledSlots?: Record<string, string>;
 }
 
 type SlotName = "channels" | "schedules" | "hooks" | "skills";
@@ -58,8 +62,52 @@ function slotDiagnostic(
   return { level, slot, path: filePath, message };
 }
 
-async function importSlotModule(filePath: string, cacheBust: number): Promise<unknown> {
-  const url = `${pathToFileURL(filePath).href}?t=${cacheBust}`;
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function resolveSlotImportPath(
+  filePath: string,
+  options: LoadAuthoredSlotsOptions,
+): Promise<string> {
+  const agentRoot = path.resolve(options.agentRoot ?? options.discovery.agentRoot);
+  const relFromAgent = path.relative(agentRoot, filePath);
+  const fromManifest = options.compiledSlots?.[relFromAgent];
+  if (fromManifest && options.projectRoot) {
+    const compiled = path.join(options.projectRoot, fromManifest);
+    if (await pathExists(compiled)) return compiled;
+  }
+  const mirror = path.join(
+    agentRoot,
+    ".plasm",
+    "compiled",
+    relFromAgent.replace(/\.ts$/, ".mjs"),
+  );
+  if (await pathExists(mirror)) return mirror;
+  return filePath;
+}
+
+async function importSlotModule(
+  filePath: string,
+  cacheBust: number,
+  options: LoadAuthoredSlotsOptions,
+): Promise<unknown> {
+  const agentRoot = path.resolve(options.agentRoot ?? options.discovery.agentRoot);
+  const relFromAgent = path.relative(agentRoot, filePath);
+  const preloaded = (
+    globalThis as typeof globalThis & { __PLASM_PRELOADED_SLOTS?: Record<string, unknown> }
+  ).__PLASM_PRELOADED_SLOTS?.[relFromAgent];
+  if (preloaded !== undefined) {
+    return (preloaded as { default?: unknown }).default ?? preloaded;
+  }
+
+  const resolved = await resolveSlotImportPath(filePath, options);
+  const url = `${pathToFileURL(resolved).href}?t=${cacheBust}`;
   const mod = await import(url);
   return mod.default ?? mod;
 }
@@ -85,9 +133,10 @@ async function loadTypescriptSlot<T extends ChannelDefinition | ScheduleDefiniti
   slot: SlotName,
   expected: "channel" | "schedule" | "hook" | "skill",
   cacheBust: number,
+  options: LoadAuthoredSlotsOptions,
 ): Promise<{ definition: T } | { diagnostic: DiscoveryDiagnostic }> {
   try {
-    const exported = await importSlotModule(filePath, cacheBust);
+    const exported = await importSlotModule(filePath, cacheBust, options);
     const actual = classifySlotExport(exported);
     if (actual !== expected) {
       const helper =
@@ -147,6 +196,7 @@ export async function loadAuthoredSlots(
       "channels",
       EXPECTED_KIND.channels,
       cacheBust,
+      options,
     );
     if ("diagnostic" in result) {
       diagnostics.push(result.diagnostic);
@@ -163,6 +213,7 @@ export async function loadAuthoredSlots(
       "schedules",
       EXPECTED_KIND.schedules,
       cacheBust,
+      options,
     );
     if ("diagnostic" in result) {
       diagnostics.push(result.diagnostic);
@@ -179,6 +230,7 @@ export async function loadAuthoredSlots(
       "hooks",
       EXPECTED_KIND.hooks,
       cacheBust,
+      options,
     );
     if ("diagnostic" in result) {
       diagnostics.push(result.diagnostic);
@@ -198,6 +250,7 @@ export async function loadAuthoredSlots(
       "skills",
       "skill",
       cacheBust,
+      options,
     );
     if ("diagnostic" in result) {
       diagnostics.push(result.diagnostic);

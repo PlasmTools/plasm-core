@@ -154,7 +154,7 @@ npm run agent -- "your prompt"   # requires AI_GATEWAY_API_KEY (Vercel AI Gatewa
 
 ### Dev server (`plasm-agent dev`)
 
-**Default:** Nitro dev server with **Vercel routing parity** (channels, cron, `/plasm/v1/info`) — same `vercelPlasmHandler` as deploy. Init scaffolds `nitro.config.ts` + `routes/[...path].ts` and adds `nitropack` as a devDependency.
+**Default:** `plasm-agent dev` runs programmatic **Nitro v3** (same host as Vercel). `plasm-agent build` emits **`.vercel/output`** on Vercel (Build Output API) or **`.plasm/nitro-output`** locally, plus **`.plasm/agent-summary.json`** for Agent Observability.
 
 ```bash
 plasm-agent dev                    # Nitro (default)

@@ -10,6 +10,7 @@ p12	v11 · identifier
 p16	v13 · issue
 p3	v2 · id
 p36	v27 · body
+r1	issue · Issue anchor
 e1{p16=e5(p12)}[p3,p36]	→ [e1] · projection · A comment on an issue
 e1.m2(p16=e5(p12), p36=$)	→ e1 · Add a comment on an issue
 e1{p16=e5(p12)}[p3,p36]	→ [e1] · inputs: p16 · rows: p3,p36
@@ -23,6 +24,7 @@ p6	v4 · id
 p7	v5 · number
 p8	v6 · startsAt
 p4	v6 · endsAt
+r2	team
 e2{p33=$}[p6,p7,p8,p4]	→ [e2] · projection · A time-boxed iteration on a team
 e2{p33=$}[p6,p7,p8,p4]	→ [e2] · inputs: p33 · rows: p6,p7,p8,p4
 e2(p6)	→ e2
@@ -54,6 +56,10 @@ p14	v2 · id
 p15	v12 · priority
 p35	v5 · estimate
 p41	v6 · dueDate
+r3	comments
+r4	cycle
+r5	children
+r10	assignee
 e1{p16=e5(p12)}.r1[p14,p12,p46,p38,p15,p35,p41]	→ e5 · projection · A Linear work item
 e5(p12)	→ e5
 e5(p12).m12()	→ e5 · Move an issue to trash (recoverable)
@@ -79,6 +85,7 @@ e7(p23)	→ e7
 e7~"text"[p23,p43,p26]	→ [e7] · rows: p23,p43,p26
 p24	v2 · project
 p25	v2 · id
+r12	project
 e8{p24=$}[p25,p43]	→ [e8] · projection · A milestone on a project
 e8(p25).m24()	→ e8 · opt: p43, p38 · Update a project milestone
 e8.m22(p24=$, p43=$,..)	→ e8 · opt: p38 · Create a milestone on a project
@@ -87,6 +94,7 @@ e8{p24=$}.r12	relation e8 → e7
 v20	select · onTrack, atRisk, offTrack
 p28	v2 · id
 p27	v20 · health
+r13	project
 e9{p24=$}[p28,p36,p27]	→ [e9] · projection · A status update posted on a project
 e9.m25(p24=$, p36=$,..)	→ e9 · opt: p27 · Post a project status update
 e9{p24=$}[p28,p36,p27]	→ [e9] · inputs: p24 · rows: p28,p36,p27

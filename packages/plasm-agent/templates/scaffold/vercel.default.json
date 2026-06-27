@@ -1,4 +1,4 @@
 {
-  "buildCommand": "plasm-agent build",
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/$1" }]
+  "installCommand": "npm ci --omit=dev",
+  "buildCommand": "plasm-agent build"
 }

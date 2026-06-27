@@ -480,13 +480,7 @@ impl PlasmMcpHandler {
         plasm_run_props.insert(
             "plan_commit_ref".into(),
             json_schema_string_type(
-                "Executable plan token (`pcN`) from a prior `plasm` dry-run. Mutually exclusive with `page_handle`.",
-            ),
-        );
-        plasm_run_props.insert(
-            "page_handle".into(),
-            json_schema_string_type(
-                "Pagination token from a prior `plasm_run` result (`more pages — call plasm_run with page_handle: \"…\"`). Mutually exclusive with `plan_commit_ref`.",
+                "Token from the prior result: a `pcN` plan commit from `plasm`, or the page handle from a \"more pages\" line. (`page(...)` is HTTP-execute program syntax, not an MCP value.)",
             ),
         );
 

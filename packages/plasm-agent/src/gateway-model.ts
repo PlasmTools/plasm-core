@@ -11,10 +11,20 @@ function ensureGatewayApiKey(): void {
   }
 }
 
-/** Whether `resolveGatewayModel` can run (API key or mapped alias present). */
+/** Hosted Vercel Functions (OIDC gateway auth available without an API key). */
+export function isVercelHosted(): boolean {
+  return (
+    process.env.VERCEL === "1" ||
+    Boolean(process.env.VERCEL_DEPLOYMENT_ID?.trim()) ||
+    Boolean(process.env.VERCEL_ENV?.trim())
+  );
+}
+
+/** Whether `resolveGatewayModel` can run (API key, alias, or Vercel OIDC). */
 export function isGatewayConfigured(): boolean {
   ensureGatewayApiKey();
-  return Boolean(process.env.AI_GATEWAY_API_KEY?.trim());
+  if (Boolean(process.env.AI_GATEWAY_API_KEY?.trim())) return true;
+  return isVercelHosted();
 }
 
 /** Resolve a Gateway model slug (`provider/model`) to an AI SDK `LanguageModel`. */
@@ -29,15 +39,16 @@ export function resolveGatewayModel(
   }
 
   ensureGatewayApiKey();
-  if (!process.env.AI_GATEWAY_API_KEY?.trim()) {
+  if (!isGatewayConfigured()) {
     throw new Error(
       [
-        "Vercel AI Gateway requires AI_GATEWAY_API_KEY.",
-        "Create one in the Vercel dashboard (AI → Gateway → API Keys) and add it to plasm-oss/.env.",
-        "Local dev: `vercel env pull` from a linked project also works.",
+        "Vercel AI Gateway is not configured.",
+        "On Vercel: link the project — gateway model ids authenticate via OIDC (no API key).",
+        "Off Vercel: set AI_GATEWAY_API_KEY or run `plasm-agent link`.",
       ].join(" "),
     );
   }
 
+  // On Vercel without an explicit key, @ai-sdk/gateway uses @vercel/oidc automatically.
   return gateway(slug);
 }

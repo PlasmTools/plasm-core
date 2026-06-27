@@ -6,6 +6,7 @@ import {
   createAgentFromDefinition,
   resolveAgentDefinition,
 } from "../define-agent.js";
+import { readBuildManifest } from "../cli/build.js";
 import { createAuthoringContext, type AuthoringContext } from "../authoring/context.js";
 import { tryHandleChannelRoute } from "../authoring/channel-dispatch.js";
 import {
@@ -75,9 +76,24 @@ export function normalizePlasmPathname(url: string | undefined): string {
   return pathname;
 }
 
+/** Resolve request path on Vercel (rewrite-to-/api preserves public path in req.url). */
+function vercelIncomingUrl(req: IncomingMessage): string {
+  for (const key of [
+    "x-vercel-original-url",
+    "x-middleware-request-url",
+    "x-forwarded-uri",
+  ] as const) {
+    const raw = req.headers[key];
+    if (typeof raw === "string" && raw.length > 0) {
+      return raw.startsWith("/") ? raw : new URL(raw, "http://localhost").pathname;
+    }
+  }
+  return req.url ?? "/";
+}
+
 export function rewriteRequestPath(req: IncomingMessage): IncomingMessage {
-  const pathname = normalizePlasmPathname(req.url);
-  const original = req.url ?? "/";
+  const original = vercelIncomingUrl(req);
+  const pathname = normalizePlasmPathname(original);
   const query = original.includes("?") ? original.slice(original.indexOf("?")) : "";
   const proxy = Object.create(req) as IncomingMessage;
   Object.defineProperty(proxy, "url", {
@@ -235,9 +251,13 @@ export async function createPlasmApp(options: PlasmAppOptions): Promise<PlasmApp
 
   const refreshSlots = async (): Promise<LoadedProjectSlots> => {
     const currentDiscovery = discovery ?? (await refreshDiscovery());
+    const buildManifest = await readBuildManifest(agentRoot);
     loadedSlots = await loadAuthoredSlots({
       discovery: currentDiscovery,
       importCacheBust,
+      agentRoot,
+      projectRoot,
+      compiledSlots: buildManifest?.compiledSlots,
     });
     return loadedSlots;
   };

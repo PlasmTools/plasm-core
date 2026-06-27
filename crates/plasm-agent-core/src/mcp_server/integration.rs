@@ -1171,7 +1171,7 @@ async fn plasm_run_page_handle_through_handler() {
             &runtime,
             &json!({
                 "logical_session_ref": logical_session_ref,
-                "page_handle": page_handle.as_str()
+                "plan_commit_ref": page_handle.as_str()
             }),
             "plasm_run",
             false,

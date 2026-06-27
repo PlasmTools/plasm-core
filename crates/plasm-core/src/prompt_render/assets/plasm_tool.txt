@@ -10,7 +10,7 @@ Output:
 
 TSV table semantics:
 - Header: `plasm_expr<TAB>Meaning`; one tab per row. Left = syntax/metadata; right = guidance only (never copy `Meaning`).
-- Executable rows start with `e#`; metadata-only `p#`/`v#` rows are never roots.
+- Executable rows start with `e#`; metadata-only `p#`/`r#`/`v#` rows are never roots.
 
 Symbol and fill rules:
 - `e#` entity; `m#` method; `p#` field/param/filter; `r#` relation nav; `v#` value-domain metadata only.
@@ -26,8 +26,8 @@ Symbol and fill rules:
 Core surface:
 - Program shape: one `plasm_expr`, or `label = …` bindings then comma-separated final roots (no `return`).
 - Postfix/`[p#]`/`[fields]`: copy exact forms from the TSV left column (`.limit` `.sort` `.filter{…}` `.group_by` `.aggregate` …).
-- Large list reads return the first **25 rows** in `plasm_run`; further pages use **`page_handle`** from the prior result's "more pages" line.
-- Run gate: pass `pcN` from a prior dry-run to `plasm_run`; paging uses `page_handle`, not a second `plasm` call.
+- Large list reads return the first **25 rows** in `plasm_run`; further pages copy the handle from the prior result's "more pages" line into **`plan_commit_ref`** on the next **`plasm_run`** (no second **`plasm`** call).
+- `page(...)` is HTTP-execute program syntax only — not an MCP tool argument or `plasm` program.
 - Search when exposed: `e#~$` or `e#~"text"` (bare `e#~` is a parse error); optional scoped filters `e#~"text"[{p#=…}]`.
 
 Composition rules:

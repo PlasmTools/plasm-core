@@ -66,10 +66,11 @@ p40	v2 · limit
 p38	v2 · id
 p37	v7 · display_name
 p39	v39 · profile_type
+r1	recorded_matches · Content scoped to this profile
 e7[p38,p37,p39]	→ e7 · projection · A person, organisation, or project profile
 e7{p39=$, p40=$}[p38,p37,p39]	→ [e7] · inputs: p39,p40 · rows: p38,p37,p39 · opt: p39, p40
 e7(p38)	→ e7
-e7{p39=$, p40=$}.r1	relation e7 → [e9] · Content scoped to this profile
+e7{p39=$, p40=$}.r1	relation e7 → [e9]
 p46	v7 · slug
 e8.m11(p46=$,..)	→ () · Action prompt execution result · opt: p44, p45, p43, p47, p42 · prompt-run-create
 v58	ref:Profile · int

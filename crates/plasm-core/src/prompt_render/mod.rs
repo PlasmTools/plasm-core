@@ -20,7 +20,8 @@
 //! **teaching table** is **per-entity blocks** of **valid Plasm expressions only** (CGS-validated before emit).
 //! In the teaching TSV, the entity `description` is attached to the **first projection witness** for that
 //! entity when one exists, otherwise to the **identity** get row. Rows are phased per block: **`v#` gloss**
-//! (except the deferred synthetic union summary), **`p#` gloss**, **union constructor exemplars**
+//! (except the deferred synthetic union summary), **`p#` gloss**, **`r#` gloss** (relation alias → wire name),
+//! **union constructor exemplars**
 //! (`vN{p#=…}`), **union summary** (`union · v101 | …` on an allocator-chosen `v#`), then remaining
 //! teaching expressions (projection witnesses last). Value domain once per `v#`, then each distinct
 //! `v# · wire` teaching once per shared `p#`; point-of-use prose is omitted when it duplicates the shared
@@ -36,7 +37,8 @@
 //! Meaning uses
 //! `relation e#_src → [e#_tgt]` (many) or `relation e#_src → e#_tgt` (one) in **Meaning** only; executable nav is `<receiver>.r#` or wire in `plasm_expr`.
 //! For terminal relation chains, the example line already carries a **result gloss** (`relation …`);
-//! relation hops use the **`r#` pool** in exemplars (`.r#` / wire) — not standalone `p#` gloss rows.
+//! relation hops use the **`r#` pool** in exemplars (`.r#` in `plasm_expr`) with standalone **`r#` gloss rows**
+//! mapping alias → wire name (parallel to `p#` / `v# · wire`).
 //! Splitting relations out of the `p#` pool renumbers `p#` in snapshots but does **not** add duplicate
 //! teaching rows (GitHub full prompt stays ~flat; diff churn is mostly `p#` renumbering).
 //! For cardinality-many
@@ -1059,6 +1061,24 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
             }
         }
 
+        // Phase B.5: `r#` gloss — stable numeric order (alias → wire name on the Meaning cell).
+        let mut r_gloss: Vec<&TeachingFieldGloss> = field_gloss_rows
+            .iter()
+            .filter(|g| g.symbol.starts_with('r'))
+            .collect();
+        r_gloss.sort_by(|a, b| {
+            let ka = opaque_pv_symbol_sort_key(&a.symbol);
+            let kb = opaque_pv_symbol_sort_key(&b.symbol);
+            ka.cmp(&kb).then_with(|| a.symbol.cmp(&b.symbol))
+        });
+        let mut emitted_r_slot: HashSet<String> = HashSet::new();
+        for g in r_gloss {
+            if !emitted_r_slot.insert(g.symbol.clone()) {
+                continue;
+            }
+            write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
+        }
+
         // Phase C: union constructor exemplars (`v101{p#=…}`) — before deferred union summary gloss.
         for &row_idx in &union_ctor_row_idxs {
             let row = teaching_expr_rows[row_idx];
@@ -1466,10 +1486,17 @@ fn push_teaching_field_gloss_row(
     if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
         return;
     }
-    let field_name = symbol_map
-        .and_then(|m| m.resolve_ident(symbol.as_str()))
-        .unwrap_or(symbol.as_str())
-        .to_string();
+    let field_name = if first == 'r' {
+        symbol_map
+            .and_then(|m| m.resolve_relation_ident(symbol.as_str()))
+            .unwrap_or(symbol.as_str())
+            .to_string()
+    } else {
+        symbol_map
+            .and_then(|m| m.resolve_ident(symbol.as_str()))
+            .unwrap_or(symbol.as_str())
+            .to_string()
+    };
     // Leaf expand keys (e.g. `blocks`) collide with relation wire names — prefer full capability path.
     // `IdentMetaKey` is only `(catalog, entity, path)`; distinct capabilities can share the same path
     // (e.g. two different `operations` arrays). When CGS is present, resolve via the full `(cap, path)` quad.
@@ -1523,6 +1550,27 @@ fn push_teaching_field_gloss_row(
             field_type: String::new(),
             allowed_values: String::new(),
             description: legend.to_string(),
+            is_inline_union_summary,
+        });
+        return;
+    }
+    if first == 'r' {
+        let wire = if field_name == symbol {
+            legend.to_string()
+        } else {
+            field_name.clone()
+        };
+        let description = meta
+            .as_ref()
+            .map(|m| m.description().trim())
+            .filter(|d| !d.is_empty())
+            .map(crate::symbol_tuning::gloss_description_truncated)
+            .unwrap_or_default();
+        out.push(TeachingFieldGloss {
+            symbol,
+            field_type: wire,
+            allowed_values: String::new(),
+            description,
             is_inline_union_summary,
         });
         return;
@@ -2212,6 +2260,7 @@ pub(crate) fn render_relation_edge_delta_rows(
     const MAX_EDGE_DELTA_ROWS: usize = 8;
     let mut out = String::new();
     let mut seen_expr: HashSet<String> = HashSet::new();
+    let mut seen_r_gloss: HashSet<String> = HashSet::new();
     let mut slots: Vec<_> = new_relation_slots
         .iter()
         .filter(|slot| matches!(slot, crate::symbol_tuning::ExposureSlotKey::Relation { .. }))
@@ -2275,13 +2324,6 @@ pub(crate) fn render_relation_edge_delta_rows(
         if !seen_expr.insert(plasm_expr.clone()) {
             continue;
         }
-        let cardinality_many = rel_schema.cardinality == Cardinality::Many;
-        let target_gloss = crate::result_gloss::result_gloss_for_relation_nav(
-            rel_schema.target_resource.as_str(),
-            map,
-            cardinality_many,
-        );
-        let result_type = relation_nav_meaning_result_gloss(&plasm_expr, map, target_gloss);
         let description = {
             let d = rel_schema.description.as_str().trim();
             if d.is_empty() {
@@ -2290,13 +2332,34 @@ pub(crate) fn render_relation_edge_delta_rows(
                 truncate_inline_desc(d, 120)
             }
         };
+        if let Some(m) = map {
+            if let Some(wire) = m.resolve_relation_ident(r_sym.as_str()) {
+                if seen_r_gloss.insert(r_sym.clone()) {
+                    let gloss = TeachingFieldGloss {
+                        symbol: r_sym.clone(),
+                        field_type: wire.to_string(),
+                        allowed_values: String::new(),
+                        description: description.clone(),
+                        is_inline_union_summary: false,
+                    };
+                    write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(&gloss));
+                }
+            }
+        }
+        let cardinality_many = rel_schema.cardinality == Cardinality::Many;
+        let target_gloss = crate::result_gloss::result_gloss_for_relation_nav(
+            rel_schema.target_resource.as_str(),
+            map,
+            cardinality_many,
+        );
+        let result_type = relation_nav_meaning_result_gloss(&plasm_expr, map, target_gloss);
         let line = TeachingExprLine {
             expression: plasm_expr,
             result_type,
             scope: String::new(),
             optional_params: String::new(),
             compact_args: String::new(),
-            description,
+            description: String::new(),
             is_projection_teaching: false,
         };
         write_teaching_tsv_row(
@@ -4591,17 +4654,18 @@ fn collect_entity_teaching_block(
             continue;
         };
         let rel_expr = format!("{recv}{suffix}");
-        let rel_desc = if let Some(rel_schema) = ent.relations.get(rel.as_str()) {
-            rel_schema.description.as_str().trim()
-        } else if let Some(f) = ent.fields.get(rel.as_str()) {
-            f.description.as_str().trim()
-        } else {
-            ""
-        };
-        let rel_desc_opt = if rel_desc.is_empty() {
+        // Relation prose lives on the standalone `r#` gloss row; nav exemplars carry typing only.
+        let rel_desc_opt = if rel_for_meta.is_some() {
             None
+        } else if let Some(f) = ent.fields.get(rel.as_str()) {
+            let d = f.description.as_str().trim();
+            if d.is_empty() {
+                None
+            } else {
+                Some(truncate_inline_desc(d, 120))
+            }
         } else {
-            Some(truncate_inline_desc(rel_desc, 120))
+            None
         };
         let cardinality_many = ent
             .relations
@@ -4904,6 +4968,8 @@ fn is_field_gloss_line(trimmed: &str) -> bool {
         r
     } else if let Some(r) = t.strip_prefix('v') {
         r
+    } else if let Some(r) = t.strip_prefix('r') {
+        r
     } else {
         return false;
     };
@@ -4972,6 +5038,8 @@ fn is_tsv_expression_column_slot_def(expr_cell: &str) -> bool {
     let rest = if let Some(r) = s.strip_prefix('p') {
         r
     } else if let Some(r) = s.strip_prefix('v') {
+        r
+    } else if let Some(r) = s.strip_prefix('r') {
         r
     } else {
         return false;
@@ -5211,8 +5279,16 @@ mod tests {
             "symbolic contract must teach placeholder substitution"
         );
         assert!(
-            contract.contains("MCP `plasm_run` does not accept program continuations"),
-            "MCP contract must keep live continuations out of the agent-facing run surface"
+            contract.contains("plan_commit_ref"),
+            "MCP contract must teach paging via plan_commit_ref on plasm_run"
+        );
+        assert!(
+            !contract.contains("page_handle"),
+            "contract must not advertise removed page_handle param"
+        );
+        assert!(
+            !contract.contains("program continuations"),
+            "MCP contract must not advertise legacy program continuations on plasm_run"
         );
         assert!(
             !contract.contains("teaching table") && !contract.contains(";;") && !contract.contains("p#=v"),
@@ -5693,11 +5769,13 @@ mod tests {
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         assert!(
             tsv.lines().any(|l| {
-                l.contains("Content scoped to this profile")
+                l.contains("Content scoped to this profile") && l.starts_with('r')
+            }) && tsv.lines().any(|l| {
+                l.contains("e7")
                     && (l.contains(".r") || l.contains(".recorded_matches"))
-                    && l.contains("e7")
+                    && l.contains("relation e7")
             }),
-            "expected Profile → RecordedContent relation nav line; e7 lines:\n{}",
+            "expected Profile → RecordedContent r# gloss and relation nav; e7 lines:\n{}",
             tsv.lines()
                 .filter(|l| l.contains("e7"))
                 .collect::<Vec<_>>()

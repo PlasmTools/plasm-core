@@ -89,7 +89,9 @@ capabilities:
       path: /items
 `;
 
-const ENV_EXAMPLE = `# Vercel AI Gateway (run \`plasm-agent link\` to pull from a linked project)
+const ENV_EXAMPLE = `# Vercel AI Gateway
+# On Vercel: OIDC auth is automatic — no key required for gateway model slugs.
+# Local / self-host: run \`plasm-agent link\` or set AI_GATEWAY_API_KEY.
 AI_GATEWAY_API_KEY=
 
 # Vercel Cron auth (production)

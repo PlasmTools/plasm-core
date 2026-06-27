@@ -34,6 +34,8 @@ p21	v10 · markdown
 p34	v12 · title
 p15	v9 · links · SDK link bundle (state, ops, docs). Wire key _links
 p14	v9 · agent_auth · Auth hints from share JSON agent.auth (token source, header names)
+r1	blocks · Blocks from the latest snapshot—use for edits that need stable block ids
+r2	collaboration_events · Recent collaboration updates you have not acknowledged yet
 v211{p26=$}	→ comment_resolve — Resolve a thread; keep history
 v212{p26=$}	→ comment_unresolve — Unresolve a thread for more replies
 v101{p6=$,p18=$}	→ replace_block — Replace one block’s markdown
@@ -60,5 +62,5 @@ e1(p10).m12(p3=$, p11=$, p28=$,..)	→ e1 · opt: p31 · Tell the server how far
 e1(p10).m11(p23=$)	→ e1 · Report a bug and include this document as context
 e1(p10).m13(p3=$, p28=$, p13=$, p2=[v101{p6=$,p18=$},v103{p6=$,p12=$}],..)	→ e1 · opt: p35, p31 · Apply one batch of block edits. Use base_revision from your latest snapshot (…
 e1(p10).m16(p3=$,..)	→ e1 · opt: p30 · You MUST announce presence before you edit or comment—call this once per do…
-e1(p10).r1	relation e1 → [Block] · Blocks from the latest snapshot—use for edits that need stable block ids
-e1(p10).r2	relation e1 → [CollaborationEvent] · Recent collaboration updates you have not acknowledged yet
+e1(p10).r1	relation e1 → [Block]
+e1(p10).r2	relation e1 → [CollaborationEvent]

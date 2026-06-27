@@ -138,6 +138,49 @@ fn idempotent_shared_ref_no_conflict() {
 }
 
 #[test]
+fn concurrent_same_relation_key_ref_pages_no_conflict() {
+    let mut session = SessionMaterialization::new();
+    let electric = type_entity_with_relation("pokemon", Ref::new("Pokemon", "pikachu"));
+    session.insert(electric.clone()).expect("seed");
+
+    let (mut branch_a, base_a) = BranchMaterializationBase::fork_from(&session);
+    let (mut branch_b, base_b) = BranchMaterializationBase::fork_from(&session);
+
+    let mut page_a = electric.clone();
+    page_a.relations.insert(
+        "pokemon".into(),
+        vec![
+            Ref::new("Pokemon", "1"),
+            Ref::new("Pokemon", "2"),
+        ],
+    );
+    branch_a.insert(page_a).expect("branch a page");
+
+    let mut page_b = electric.clone();
+    page_b.relations.insert(
+        "pokemon".into(),
+        vec![
+            Ref::new("Pokemon", "1"),
+            Ref::new("Pokemon", "3"),
+        ],
+    );
+    branch_b.insert(page_b).expect("branch b page");
+
+    assert!(!detect_materialization_conflicts(&session, &base_a, &branch_a).has_any());
+    session.absorb_branch(branch_a).expect("absorb branch a");
+    assert!(!detect_materialization_conflicts(&session, &base_b, &branch_b).has_any());
+    session.absorb_branch(branch_b).expect("absorb branch b");
+
+    let live = session
+        .get(&Ref::new("PokemonType", "electric"))
+        .expect("electric");
+    let pokemon = live.relations.get("pokemon").expect("pokemon refs");
+    assert!(pokemon.iter().any(|r| r.primary_slot_str() == "1"));
+    assert!(pokemon.iter().any(|r| r.primary_slot_str() == "2"));
+    assert!(pokemon.iter().any(|r| r.primary_slot_str() == "3"));
+}
+
+#[test]
 fn additive_disjoint_relation_keys_no_conflict() {
     let mut session = SessionMaterialization::new();
     let electric = type_entity_with_relation("pokemon", Ref::new("Pokemon", "pikachu"));
@@ -171,6 +214,47 @@ fn additive_disjoint_relation_keys_no_conflict() {
         .expect("electric");
     assert!(live.relations.contains_key("pokemon"));
     assert!(live.relations.contains_key("moves"));
+}
+
+/// CEP-15: concurrent materialization of the same scoped query key with overlapping pages.
+#[test]
+fn query_index_concurrent_ref_pages_no_conflict() {
+    let mut session = QueryIndex::default();
+    let key = QueryCacheKey::test("Type\0pokemon_list\0name=electric");
+    session.insert(
+        key.clone(),
+        vec![Ref::new("Pokemon", "pikachu")],
+    );
+
+    let base = session.entries_snapshot();
+    let mut branch_a = session.clone();
+    branch_a.insert(
+        key.clone(),
+        vec![
+            Ref::new("Pokemon", "1"),
+            Ref::new("Pokemon", "2"),
+        ],
+    );
+    let mut branch_b = session.clone();
+    branch_b.insert(
+        key.clone(),
+        vec![
+            Ref::new("Pokemon", "1"),
+            Ref::new("Pokemon", "3"),
+        ],
+    );
+
+    let write_a = branch_a.branch_write_keys(&base);
+    let write_b = branch_b.branch_write_keys(&base);
+    assert!(QueryIndex::detect_write_conflicts(&session, &branch_a, &base, &write_a).is_empty());
+    session.merge_from(branch_a);
+    assert!(QueryIndex::detect_write_conflicts(&session, &branch_b, &base, &write_b).is_empty());
+    session.merge_from(branch_b);
+
+    let refs = session.get(&key).expect("indexed refs");
+    assert!(refs.iter().any(|r| r.primary_slot_str() == "1"));
+    assert!(refs.iter().any(|r| r.primary_slot_str() == "2"));
+    assert!(refs.iter().any(|r| r.primary_slot_str() == "3"));
 }
 
 #[test]

@@ -495,7 +495,7 @@ fn plasm_run_invocation_rejects_program_and_wait_arguments() {
 }
 
 #[test]
-fn plasm_run_invocation_accepts_plan_commit_ref_or_page_handle() {
+fn plasm_run_invocation_accepts_plan_commit_ref_pc_or_page_handle() {
     let commit = super::parse_mcp_plasm_invocation(
         "plasm_run",
         &serde_json::json!({
@@ -516,7 +516,7 @@ fn plasm_run_invocation_accepts_plan_commit_ref_or_page_handle() {
         "plasm_run",
         &serde_json::json!({
             "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
-            "page_handle": "l_AAAAAAAAQACAAAAAAAAAAQ_pg3"
+            "plan_commit_ref": "l_AAAAAAAAQACAAAAAAAAAAQ_pg3"
         }),
         false,
     )
@@ -529,36 +529,20 @@ fn plasm_run_invocation_accepts_plan_commit_ref_or_page_handle() {
 }
 
 #[test]
-fn plasm_run_rejects_paging_token_as_plan_commit_ref() {
+fn plasm_run_rejects_deprecated_page_handle_param() {
     let err = match super::parse_mcp_plasm_invocation(
         "plasm_run",
         &serde_json::json!({
             "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
-            "plan_commit_ref": "l_AAAAAAAAQACAAAAAAAAAAQ_pg1"
-        }),
-        false,
-    ) {
-        Ok(_) => panic!("paging token should not parse as plan_commit_ref"),
-        Err(err) => format!("{err:?}"),
-    };
-    assert!(err.contains("page_handle"), "unexpected error: {err}");
-}
-
-#[test]
-fn plasm_run_rejects_both_commit_and_page_handle() {
-    let err = match super::parse_mcp_plasm_invocation(
-        "plasm_run",
-        &serde_json::json!({
-            "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
-            "plan_commit_ref": "pc0",
             "page_handle": "l_AAAAAAAAQACAAAAAAAAAAQ_pg1"
         }),
         false,
     ) {
-        Ok(_) => panic!("both params should be rejected"),
+        Ok(_) => panic!("page_handle param should be rejected"),
         Err(err) => format!("{err:?}"),
     };
-    assert!(err.contains("exactly one"), "unexpected error: {err}");
+    assert!(err.contains("page_handle"), "unexpected error: {err}");
+    assert!(err.contains("plan_commit_ref"), "unexpected error: {err}");
 }
 
 #[test]
