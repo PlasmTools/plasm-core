@@ -13,8 +13,7 @@ You operate external APIs through **Plasm catalogs**, not ad-hoc REST tools.
 
 - **One user goal → one stable `intent` string → one `logical_session_ref`.**
 - Do not rotate `intent` per message (e.g. `"msg 3: sort moves"` breaks symbol reuse).
-- Copy symbols from the **left column** of teaching TSV into programs — never invent `e#` / `p#` values.
-- Federated catalogs: use opaque symbols from the table; never bare homonym wire names.
+- Copy symbols from the **left column** of teaching TSV into programs — never invent `e#` / `p#` values or catalog English names (`Issue`, `create`).
 
 ## Programs
 

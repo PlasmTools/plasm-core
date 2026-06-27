@@ -6796,10 +6796,10 @@ mod tests {
     }
 
     #[test]
-    fn federated_slice_static_grammar_includes_federation_pitfall() {
+    fn static_grammar_includes_symbols_only_rule() {
         assert!(
-            super::PLASM_TOOL_DESCRIPTION.contains("Federated sessions"),
-            "canonical static grammar must teach federation pitfall"
+            super::PLASM_TOOL_DESCRIPTION.contains("Symbols only"),
+            "canonical static grammar must teach TSV-only program tokens"
         );
     }
 

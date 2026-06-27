@@ -1,7 +1,7 @@
 Tool order: optional `discover_capabilities` → `plasm_context` → `plasm` (dry-run) → `plasm_run` (live).
-     **Call before `plasm` / `plasm_run`.** **One goal → one stable `intent` → one `logical_session_ref`** — same `intent` string every turn (not per message/API). Bad: `intent: "msg 3: sort moves"` each turn — fragments `e#`/`p#`. Use **`e#`/`m#`/`p#`/`r#` from this session's teaching TSV only**. Multi-API: one **`seeds`** array on the same intent.
+     **Call before `plasm` / `plasm_run`.** **One goal → one stable `intent` → one `logical_session_ref`** — same `intent` string every turn (not per message/API). Bad: `intent: "msg 3: sort moves"` each turn — fragments `e#`/`p#`. Multi-API: one **`seeds`** array on the same intent.
 
-**Federated homonyms:** when catalogs share a wire entity/method/relation/field name, use opaque **`e#`/`m#`/`r#`/`p#`** from this table — not bare wire names or `entry_id:Entity`. Symbols are catalog-scoped; the wrong row's symbol is a compile error.
+**Programs = this table's symbols:** copy **`e#`/`m#`/`r#`/`p#`** from the left column into `plasm.program`. Catalog type names, method verbs, and API ids are not program syntax.
 
 **Open or extend:** **`intent`** + **`seeds`** (`{api, entity}`).
 

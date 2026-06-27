@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.80] - 2026-06-27
+
+### Changed
+
+- **MCP tool prompts:** teach **symbols-only** programs (`e#`/`m#`/`r#`/`p#` from teaching TSV) — remove
+  federated homonym / bare wire-name framing that blocked agents before `plasm_context` returned symbols.
+- **plasm-agent devx:** in-package mcp-radar template, tsx CLI entry, Vercel build contract smokes.
+
 ## [0.3.79] - 2026-06-26
 
 ### Fixed
