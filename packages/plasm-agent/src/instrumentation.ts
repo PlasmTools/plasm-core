@@ -1,4 +1,4 @@
-import { OpenTelemetryIntegration } from "@ai-sdk/otel";
+import { LegacyOpenTelemetry } from "@ai-sdk/otel";
 import type { AttributeValue } from "@opentelemetry/api";
 import {
   registerTelemetryIntegration,
@@ -28,7 +28,7 @@ export interface AgentInstrumentationOptions {
 let registered = false;
 
 function otelIntegration(options: AgentInstrumentationOptions): TelemetryIntegration {
-  return new OpenTelemetryIntegration({ tracer: options.tracer }) as unknown as TelemetryIntegration;
+  return new LegacyOpenTelemetry({ tracer: options.tracer }) as unknown as TelemetryIntegration;
 }
 
 /** Register global AI SDK OTEL integration (eve-style auto-discovered instrumentation). */

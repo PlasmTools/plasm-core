@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.82] - 2026-06-27
+
+### Fixed
+
+- **@plasm_lang/vercel-agent:** use `LegacyOpenTelemetry` from `@ai-sdk/otel` (replaces removed
+  `OpenTelemetryIntegration` export) so `plasm-agent build` and agent runtime load on current AI SDK.
+- **@plasm_lang/vercel-agent:** bump `@ai-sdk/otel` to `^1.0.3` for the stable export surface.
+
 ## [0.3.81] - 2026-06-27
 
 ### Fixed
