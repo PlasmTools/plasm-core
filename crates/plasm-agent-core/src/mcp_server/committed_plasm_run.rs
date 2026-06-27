@@ -1,13 +1,15 @@
-//! Live MCP execute for a reviewed [`CommittedPlan`] (`plasm_run` + `pcN`).
+//! Live MCP `plasm_run` — reviewed commits (`pcN`) and paging continuations (`page_handle`).
 
 use std::sync::Arc;
 
-use plasm_core::PlanCommitRef;
+use plasm_core::{PagingHandle, PlanCommitRef, PromptPipelineConfig, SymbolMapCrossRequestCache};
 
 use crate::execute_session::ExecuteSession;
 use crate::plan_commit_store::{dry_for_committed_plasm_run, CommittedPlan};
+use crate::plan_dry_display::{build_plan_dry_compact_view, PlanDryVerdict};
 use crate::plasm_comp_bundle::PlasmCompBundle;
-use crate::plasm_plan_run::PlasmPlanRunResult;
+use crate::plasm_compile::compile_plasm_expression;
+use crate::plasm_plan_run::{evaluate_plasm_comp_dry, DryPlasmPlanEvaluation, PlasmPlanRunResult};
 use crate::run_artifacts::RunArtifactStore;
 use crate::run_delivery::{
     deliver_live_run_await, LiveRunAwaitContext, LiveRunError, LiveRunSpawnOpts,
@@ -31,7 +33,7 @@ pub struct McpExecuteWire {
     pub mcp_session_key: String,
 }
 
-/// Trace + artifact persistence inputs for a committed live run.
+/// Trace + artifact persistence inputs for a live MCP run.
 #[derive(Clone)]
 pub struct CommittedRunArtifacts {
     pub trace_hub: Arc<TraceHub>,
@@ -40,15 +42,83 @@ pub struct CommittedRunArtifacts {
     pub plan_call_index: u64,
 }
 
-/// Ingress for MCP `plasm_run` with a reviewed plan commit.
+/// Which live `plasm_run` path to execute.
 #[derive(Clone)]
-pub struct ExecuteCommittedMcpRun {
+pub enum McpLiveRunKind {
+    ReviewedCommit {
+        committed: Box<CommittedPlan>,
+        plan_commit_ref: PlanCommitRef,
+    },
+    /// Continuation of an already-reviewed list read — review gate skipped; evidence uses trace anchors only.
+    PageContinuation {
+        #[allow(dead_code)] // ingress marker: pairs continuation bundle with resolved handle
+        page_handle: PagingHandle,
+    },
+}
+
+/// Resolved bundle + live-run kind for MCP `plasm_run` (commit or paging continuation).
+pub struct ResolvedMcpLiveRunIngress {
+    pub bundle: PlasmCompBundle,
+    pub program_for_trace: String,
+    pub kind: McpLiveRunKind,
+}
+
+/// Resolve `plan_commit_ref` or `page_handle` into a compile bundle and [`McpLiveRunKind`].
+pub async fn resolve_mcp_live_run_ingress(
+    es: &ExecuteSession,
+    mcp_trace: &PlasmTraceContext,
+    page_handle: Option<&PagingHandle>,
+    plan_commit_ref: Option<&PlanCommitRef>,
+    pipeline: &PromptPipelineConfig,
+    symbol_map_cross_cache: &SymbolMapCrossRequestCache,
+    call_index: u64,
+) -> Result<ResolvedMcpLiveRunIngress, String> {
+    if let Some(handle) = page_handle {
+        crate::http_execute::resolve_paging_storage_handle(Some(mcp_trace), handle)
+            .map_err(crate::execute_pipeline::display_run_line_error)?;
+        let program = format!("page({handle})");
+        let plan_name = format!("plasm_page_call_{call_index}");
+        let bundle = compile_plasm_expression(
+            pipeline,
+            Some(symbol_map_cross_cache),
+            es,
+            &plan_name,
+            &program,
+        )?;
+        Ok(ResolvedMcpLiveRunIngress {
+            bundle,
+            program_for_trace: program,
+            kind: McpLiveRunKind::PageContinuation {
+                page_handle: handle.clone(),
+            },
+        })
+    } else {
+        let pc = plan_commit_ref
+            .ok_or_else(|| "missing `plan_commit_ref`: call `plasm` first".to_string())?;
+        let committed =
+            crate::mcp_plasm_run_phases::mcp_plasm_run_phase("resolve_commit", || async {
+                crate::plan_commit_store::resolve_committed_plan(es, pc).map_err(|e| e.detail())
+            })
+            .await?;
+        Ok(ResolvedMcpLiveRunIngress {
+            bundle: PlasmCompBundle::new(committed.artifact.clone())?,
+            program_for_trace: committed.program.clone(),
+            kind: McpLiveRunKind::ReviewedCommit {
+                committed: Box::new(committed),
+                plan_commit_ref: pc.clone(),
+            },
+        })
+    }
+}
+
+/// Ingress for MCP `plasm_run` live execute.
+#[derive(Clone)]
+pub struct ExecuteMcpLiveRun {
     pub es: Arc<ExecuteSession>,
     pub host: Arc<PlasmHostState>,
     pub wire: McpExecuteWire,
-    pub plan_commit_ref: Option<PlanCommitRef>,
-    pub committed: CommittedPlan,
     pub bundle: PlasmCompBundle,
+    pub kind: McpLiveRunKind,
     pub mcp_trace: PlasmTraceContext,
     pub artifacts: CommittedRunArtifacts,
     pub plan_trace: Option<crate::trace_hub::PlanRunTraceHooks>,
@@ -56,7 +126,7 @@ pub struct ExecuteCommittedMcpRun {
     pub wait_live: bool,
 }
 
-impl ExecuteCommittedMcpRun {
+impl ExecuteMcpLiveRun {
     fn code_plan_trace_input(&self, comp: Arc<TraceCompWire>) -> CodePlanTraceInput<'_> {
         CodePlanTraceInput {
             hub: self.artifacts.trace_hub.as_ref(),
@@ -72,17 +142,72 @@ impl ExecuteCommittedMcpRun {
             code_chars: self.artifacts.program_for_trace.chars().count() as u64,
         }
     }
+
+    fn plan_commit_ref_for_evidence(&self) -> Option<&PlanCommitRef> {
+        match &self.kind {
+            McpLiveRunKind::ReviewedCommit {
+                plan_commit_ref, ..
+            } => Some(plan_commit_ref),
+            McpLiveRunKind::PageContinuation { .. } => None,
+        }
+    }
 }
 
-pub async fn execute_committed_plasm_run(
-    run: ExecuteCommittedMcpRun,
-) -> Result<PlasmPlanRunResult, String> {
+struct LiveDryOutcome {
+    dry: DryPlasmPlanEvaluation,
+    verdict: PlanDryVerdict,
+    plan_commit_ref: Option<PlanCommitRef>,
+}
+
+fn prepare_live_dry(run: &ExecuteMcpLiveRun) -> Result<LiveDryOutcome, String> {
+    match &run.kind {
+        McpLiveRunKind::ReviewedCommit {
+            committed,
+            plan_commit_ref,
+        } => {
+            if crate::operation::plan_requires_review_gate(
+                committed.verdict,
+                run.force_run,
+                Some(plan_commit_ref),
+            ) {
+                return Err(
+                    "plan_requires_review: call `plasm` dry-run first, then pass the returned `plan_commit_ref` (`pcN`) to `plasm_run`"
+                        .to_string(),
+                );
+            }
+            let dry =
+                dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, committed.as_ref())?;
+            Ok(LiveDryOutcome {
+                dry,
+                verdict: committed.verdict,
+                plan_commit_ref: Some(plan_commit_ref.clone()),
+            })
+        }
+        McpLiveRunKind::PageContinuation { .. } => {
+            let dry = evaluate_plasm_comp_dry(run.es.as_ref(), &run.bundle)?;
+            let compact = build_plan_dry_compact_view(
+                dry.validated_plan(),
+                &dry.topological_order,
+                &dry.review,
+                &dry.graph_summary,
+                Some(run.es.as_ref()),
+            );
+            Ok(LiveDryOutcome {
+                dry,
+                verdict: compact.verdict,
+                plan_commit_ref: None,
+            })
+        }
+    }
+}
+
+pub async fn execute_mcp_live_run(run: ExecuteMcpLiveRun) -> Result<PlasmPlanRunResult, String> {
     crate::mcp_plasm_run_phases::mcp_plasm_run_phase("evidence_begin", || async {
         crate::evidence_chain::begin_plan_evidence_with_anchors(
             run.es.as_ref(),
             run.wire.session_id.as_str(),
             crate::evidence_chain::evidence_anchors(
-                run.plan_commit_ref.as_ref(),
+                run.plan_commit_ref_for_evidence(),
                 Some(run.mcp_trace.trace_id),
                 Some(run.artifacts.plan_call_index),
             ),
@@ -91,25 +216,14 @@ pub async fn execute_committed_plasm_run(
     })
     .await?;
 
-    if crate::operation::plan_requires_review_gate(
-        run.committed.verdict,
-        run.force_run,
-        run.plan_commit_ref.as_ref(),
-    ) {
-        return Err(
-            "plan_requires_review: call `plasm` dry-run first, then pass the returned `plan_commit_ref` (`pcN`) to `plasm_run`"
-                .to_string(),
-        );
-    }
-
     if !run.wait_live {
         return Err("plasm_run requires live execute".to_string());
     }
 
-    let dry = dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, &run.committed)?;
-    let comp_wire = Arc::new(crate::plasm_comp_wire::trace_comp_wire_from_dry(&dry));
+    let live = prepare_live_dry(&run)?;
+    let comp_wire = Arc::new(crate::plasm_comp_wire::trace_comp_wire_from_dry(&live.dry));
     let plan_ux_reflection = Some(crate::plan_ux_reflection::plan_ux_reflection_value(
-        &dry,
+        &live.dry,
         &crate::plan_ux_reflection::PlanUxBuildContext {
             session: Some(run.es.as_ref()),
             param_bindings: &[],
@@ -120,7 +234,8 @@ pub async fn execute_committed_plasm_run(
 
     let await_out =
         match crate::mcp_plasm_run_phases::mcp_plasm_run_phase("async_live_await", || async {
-            let accept_payload = build_run_explorer_accept_payload(&dry, Some(run.es.as_ref()));
+            let accept_payload =
+                build_run_explorer_accept_payload(&live.dry, Some(run.es.as_ref()));
             deliver_live_run_await(
                 LiveRunAwaitContext::for_mcp_plasm_run(
                     Arc::clone(&run.es),
@@ -131,10 +246,10 @@ pub async fn execute_committed_plasm_run(
                     run.wire.mcp_session_key.clone(),
                     run.bundle.clone(),
                     accept_payload,
-                    run.committed.verdict,
-                    run.plan_commit_ref.clone(),
+                    live.verdict,
+                    live.plan_commit_ref.clone(),
                     run.mcp_trace.clone(),
-                    dry,
+                    live.dry,
                 ),
                 LiveRunSpawnOpts {
                     plan_trace: run.plan_trace.clone(),

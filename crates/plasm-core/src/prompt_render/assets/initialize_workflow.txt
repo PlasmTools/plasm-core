@@ -1,4 +1,4 @@
 Plasm MCP tools (in order): **`plasm_context`** (session + teaching TSV) → **`plasm`** (dry-run plan) → **`plasm_run`** (live execute); **`discover_capabilities`** first only when `api`/`entity` is unknown.
 **One goal → one stable `intent` → one `logical_session_ref`.** Use the same `intent` string every turn — one **`intent`** per goal, not per message/API (`intent: "msg 3: sort moves"` each turn fragments `e#`/`p#`). Multi-API: one **`seeds`** array on that intent.
 **`plasm_context`** returns the teaching TSV; use its `e#`/`m#`/`p#`/`r#` only. Reuse ref for `plasm` / `plasm_run`; extend via the same `intent` with more `seeds`.
-**`plasm`** is plan-only — pass its returned **`plan_commit_ref`** (`pcN`) to **`plasm_run`**; don't re-send the program. `plasm_run` returns 25 rows inline; continue with `page(l_<token>_pgN)` when more exist.
+**`plasm`** is plan-only — pass its returned **`plan_commit_ref`** (`pcN`) to **`plasm_run`**; don't re-send the program. Further pages: **`plasm_run`** with **`page_handle`** from the prior result's "more pages" line.

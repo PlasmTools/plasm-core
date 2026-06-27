@@ -8,4 +8,6 @@
 
 **Discover before id (writes):** resolve human ids from a live list/search, not catalog/eval samples; federated writes end in one created-row return.
 
+**Relation seeds:** seed a type only when you need it as a program root; relation targets reached via `.r#` need not be separately seeded — `unused_seeds` on dry-run is advisory.
+
 **`_meta.plasm`:** `logical_session_ref`, `continuity`, `domain_revision`, optional **`relations`**.

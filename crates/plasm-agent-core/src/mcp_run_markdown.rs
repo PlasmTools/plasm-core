@@ -21,7 +21,7 @@ pub const MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS: usize = 4_000;
 
 /// Hard cap on entity rows rendered inline in MCP tool Markdown (TSV fence or ASCII table).
 /// Derived from the canonical host first-page size ([`crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE`])
-/// so the first host page fits one MCP tool response; continue with `page(l_<token>_pgN)`.
+/// so the first host page fits one MCP tool response; further pages use `page_handle` on `plasm_run`.
 pub const MCP_IN_BAND_ENTITY_ROW_CAP: usize = crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE;
 
 /// Above this row count, MCP may omit inline TSV and defer to snapshot-only preview (extreme results).

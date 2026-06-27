@@ -940,3 +940,248 @@ fn plasm_dry_run_continuation_error_blocks_wait_and_cancel_only() {
     assert!(crate::operation::plasm_dry_run_continuation_error("e1").is_none());
     assert!(crate::operation::plasm_dry_run_continuation_error("page(l_x_pg1)").is_none());
 }
+
+#[tokio::test]
+async fn execute_mcp_live_run_page_handle_synthetic_continuation() {
+    use super::committed_plasm_run::{
+        execute_mcp_live_run, CommittedRunArtifacts, ExecuteMcpLiveRun, McpExecuteWire,
+        McpLiveRunKind,
+    };
+    use crate::execute_session::SyntheticPageCursor;
+    use indexmap::IndexMap;
+    use plasm_core::{EntityKey, Ref, Value};
+    use plasm_runtime::{CachedEntity, EntityCompleteness};
+
+    const SESSION_REF: &str = "l_AAAAAAAAQACAAAAAAAAAAQ";
+    let st = Arc::new(matrix_federated_host());
+    let fx = MatrixPcNFixture::open(st, "page synth", "page_synth").await;
+
+    let mut rows = Vec::new();
+    for i in 0..40 {
+        let mut fields = IndexMap::new();
+        fields.insert("id".into(), Value::String(format!("item-{i}")));
+        fields.insert("title".into(), Value::String(format!("trace-{i}")));
+        rows.push(CachedEntity::from_decoded(
+            Ref {
+                entity_type: "LangItem".into(),
+                key: EntityKey::Simple(format!("item-{i}").into()),
+            },
+            fields,
+            IndexMap::new(),
+            0,
+            EntityCompleteness::Complete,
+        ));
+    }
+    let cursor = SyntheticPageCursor {
+        node_id: "items".into(),
+        entity_type: "LangItem".into(),
+        rows,
+        offset: 25,
+        page_size: 25,
+        request_fingerprints: vec![],
+    };
+    let handle = fx
+        .es
+        .register_synthetic_paging_continuation(cursor, Some(SESSION_REF));
+    let page_program = format!("page({handle})");
+    let page_bundle = compile_plasm_expression(
+        fx.st.engine.prompt_pipeline(),
+        Some(fx.st.sessions.symbol_map_cross_cache()),
+        &fx.es,
+        "page_second",
+        page_program.as_str(),
+    )
+    .expect("compile page");
+    let mcp_trace = PlasmTraceContext {
+        trace_id: Uuid::nil(),
+        call_index: Some(2),
+        mcp_session_id: Some("mcp".into()),
+        logical_session_id: None,
+        logical_session_ref: Some(SESSION_REF.into()),
+    };
+    let plan_trace = PlanRunTraceHooks {
+        trace: mcp_trace.clone(),
+        sink: McpPlasmTraceSink {
+            hub: Arc::clone(&fx.st.trace_hub),
+            mcp_key: "ls".to_string(),
+            call_index: 2,
+        },
+        meta_index: None,
+    };
+    let wire = McpExecuteWire {
+        prompt_hash: fx.out.prompt_hash.clone(),
+        session_id: fx.out.session_id.clone(),
+        session_ref: SESSION_REF.to_string(),
+        ls_key: "ls".to_string(),
+        mcp_session_key: "mcp".to_string(),
+    };
+    let artifacts = CommittedRunArtifacts {
+        trace_hub: Arc::clone(&fx.st.trace_hub),
+        run_artifacts: Arc::clone(&fx.st.run_artifacts),
+        program_for_trace: page_program,
+        plan_call_index: 2,
+    };
+    let second = execute_mcp_live_run(ExecuteMcpLiveRun {
+        es: Arc::clone(&fx.es),
+        host: Arc::clone(&fx.st),
+        wire,
+        bundle: page_bundle,
+        kind: McpLiveRunKind::PageContinuation {
+            page_handle: handle.clone(),
+        },
+        mcp_trace,
+        artifacts,
+        plan_trace: Some(plan_trace),
+        force_run: false,
+        wait_live: true,
+    })
+    .await
+    .expect("page continuation live run");
+    let second_md = second.run_markdown.as_ref().expect("second page markdown");
+    assert!(
+        second_md.contains("```tsv") && second_md.contains("item-"),
+        "expected synthetic page rows in markdown: {second_md}"
+    );
+}
+
+fn test_mcp_server_details() -> Arc<rust_mcp_sdk::schema::InitializeResult> {
+    use rust_mcp_sdk::schema::{
+        Implementation, InitializeResult, ProtocolVersion, ServerCapabilities,
+    };
+    Arc::new(InitializeResult {
+        protocol_version: ProtocolVersion::V2025_11_25.into(),
+        capabilities: ServerCapabilities::default(),
+        server_info: Implementation {
+            name: "test".into(),
+            version: "0".into(),
+            title: None,
+            description: None,
+            icons: vec![],
+            website_url: None,
+        },
+        instructions: None,
+        meta: None,
+    })
+}
+
+fn test_mcp_runtime(
+    handler: Arc<dyn rust_mcp_sdk::McpServerHandler>,
+    session_id: &str,
+) -> Arc<dyn rust_mcp_sdk::McpServer> {
+    use rust_mcp_sdk::mcp_server::server_runtime::create_server_instance;
+    create_server_instance(
+        test_mcp_server_details(),
+        handler,
+        session_id.into(),
+        None,
+        None,
+        None,
+        None,
+    )
+}
+
+fn call_tool_result_markdown(res: &rust_mcp_sdk::schema::CallToolResult) -> String {
+    use rust_mcp_sdk::schema::ContentBlock;
+    res.content
+        .iter()
+        .filter_map(|block| match block {
+            ContentBlock::TextContent(t) => Some(t.text.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+#[tokio::test]
+async fn plasm_run_page_handle_through_handler() {
+    use super::PlasmMcpHandler;
+    use crate::execute_session::SyntheticPageCursor;
+    use rust_mcp_sdk::ToMcpServerHandler;
+    use serde_json::json;
+
+    let st = Arc::new(matrix_federated_host());
+    let handler = PlasmMcpHandler::new(Arc::clone(&st));
+    let mcp_handler = PlasmMcpHandler::new(Arc::clone(&st)).to_mcp_server_handler();
+    let runtime = test_mcp_runtime(mcp_handler, "mcp-page-handle-e2e");
+    let mcp_key = "mcp-page-handle-e2e";
+
+    let context_res = handler
+        .handle_mcp_tool_plasm_context(
+            mcp_key,
+            &runtime,
+            &json!({
+                "intent": "page handler e2e",
+                "seeds": [{"api": "github", "entity": "LangItem"}]
+            }),
+        )
+        .await
+        .expect("plasm_context");
+    let logical_session_ref = context_res
+        .meta
+        .as_ref()
+        .and_then(|m| m.get("plasm"))
+        .and_then(|p| p.get("logical_session_ref"))
+        .and_then(|v| v.as_str())
+        .expect("logical_session_ref in plasm_context meta");
+
+    let logical_uuid = crate::mcp_logical_ref::parse_logical_session_wire_ref(logical_session_ref)
+        .expect("parse logical_session_ref")
+        .as_uuid();
+    let binding = handler
+        .resolve_binding_for_logical(mcp_key, logical_uuid)
+        .await
+        .expect("execute binding after plasm_context");
+    let es = st
+        .get_execute_session(&binding.prompt_hash, &binding.session_id)
+        .await
+        .expect("execute session");
+
+    let mut rows = Vec::new();
+    for i in 0..40 {
+        let mut fields = indexmap::IndexMap::new();
+        fields.insert("id".into(), plasm_core::Value::String(format!("item-{i}")));
+        fields.insert(
+            "title".into(),
+            plasm_core::Value::String(format!("trace-{i}")),
+        );
+        rows.push(plasm_runtime::CachedEntity::from_decoded(
+            plasm_core::Ref {
+                entity_type: "LangItem".into(),
+                key: plasm_core::EntityKey::Simple(format!("item-{i}").into()),
+            },
+            fields,
+            indexmap::IndexMap::new(),
+            0,
+            plasm_runtime::EntityCompleteness::Complete,
+        ));
+    }
+    let cursor = SyntheticPageCursor {
+        node_id: "items".into(),
+        entity_type: "LangItem".into(),
+        rows,
+        offset: 25,
+        page_size: 25,
+        request_fingerprints: vec![],
+    };
+    let page_handle = es.register_synthetic_paging_continuation(cursor, Some(logical_session_ref));
+
+    let run_res = handler
+        .handle_plasm_mcp_tool(
+            mcp_key,
+            &runtime,
+            &json!({
+                "logical_session_ref": logical_session_ref,
+                "page_handle": page_handle.as_str()
+            }),
+            "plasm_run",
+            false,
+            std::time::Instant::now(),
+        )
+        .await
+        .expect("plasm_run");
+    let markdown = call_tool_result_markdown(&run_res);
+    assert!(
+        markdown.contains("```tsv") && markdown.contains("item-"),
+        "expected page rows in handler markdown: {markdown}"
+    );
+}

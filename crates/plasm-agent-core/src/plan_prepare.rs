@@ -414,6 +414,7 @@ pub fn collect_plan_entity_names(plan: &Plan<ValidatedPlanState>) -> HashSet<Str
             }
         }
         if let ValidatedPlanNode::RelationTraversal(r) = n {
+            out.insert(r.relation.target.entity.clone());
             collect_entities_from_expr(&r.relation.ir.expr, &mut out);
         }
     }
@@ -713,6 +714,96 @@ mod tests {
         assert_eq!(
             effective_host_page_size(surface),
             Some(crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE)
+        );
+    }
+
+    #[test]
+    fn collect_plan_entity_names_includes_relation_target() {
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "relation-target",
+            "nodes": [
+                {
+                    "id": "product",
+                    "kind": "get",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr": "Product(\"p1\")",
+                    "ir": { "expr": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } } },
+                    "effect_class": "read",
+                    "result_shape": "single"
+                },
+                {
+                    "id": "category",
+                    "kind": "relation",
+                    "effect_class": "read",
+                    "result_shape": "single",
+                    "relation": {
+                        "source": "product",
+                        "relation": "category",
+                        "target": { "entry_id": "acme", "entity": "Category" },
+                        "cardinality": "one",
+                        "source_cardinality": "single",
+                        "expr": "Product(\"p1\").category",
+                        "ir": { "expr": { "op": "chain", "source": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } }, "selector": "category", "step": { "type": "auto_get" } } }
+                    },
+                    "depends_on": ["product"],
+                    "uses_result": [{ "node": "product", "as": "source" }]
+                }
+            ],
+            "return": { "kind": "node", "node": "category" }
+        });
+        let validated = crate::plasm_plan::parse_and_validate_plan_json(&plan).expect("validate");
+        let names = collect_plan_entity_names(validated.artifact());
+        assert!(names.contains("Product"));
+        assert!(names.contains("Category"));
+    }
+
+    #[test]
+    fn relation_target_not_unused_seed_when_only_traversed() {
+        let s = test_session(vec!["Product", "Category"]);
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "name": "relation-only",
+            "nodes": [
+                {
+                    "id": "product",
+                    "kind": "get",
+                    "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                    "expr": "Product(\"p1\")",
+                    "ir": { "expr": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } } },
+                    "effect_class": "read",
+                    "result_shape": "single"
+                },
+                {
+                    "id": "category",
+                    "kind": "relation",
+                    "effect_class": "read",
+                    "result_shape": "single",
+                    "relation": {
+                        "source": "product",
+                        "relation": "category",
+                        "target": { "entry_id": "acme", "entity": "Category" },
+                        "cardinality": "one",
+                        "source_cardinality": "single",
+                        "expr": "Product(\"p1\").category",
+                        "ir": { "expr": { "op": "chain", "source": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } }, "selector": "category", "step": { "type": "auto_get" } } }
+                    },
+                    "depends_on": ["product"],
+                    "uses_result": [{ "node": "product", "as": "source" }]
+                }
+            ],
+            "return": { "kind": "node", "node": "category" }
+        });
+        let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+        assert!(
+            !dry.review
+                .unused_seeds
+                .iter()
+                .any(|seed| seed.contains("Category")),
+            "relation target should count as used: {:?}",
+            dry.review.unused_seeds
         );
     }
 

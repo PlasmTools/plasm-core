@@ -179,7 +179,8 @@ mod tests {
             out.markdown
         );
         assert!(
-            out.markdown.contains("page(l_AAAAAAAAQACAAAAAAAAAAQ_pg1)"),
+            out.markdown
+                .contains("page_handle: \"l_AAAAAAAAQACAAAAAAAAAAQ_pg1\""),
             "expected paging continuation: {}",
             out.markdown
         );

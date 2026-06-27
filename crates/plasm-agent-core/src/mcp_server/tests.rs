@@ -495,8 +495,8 @@ fn plasm_run_invocation_rejects_program_and_wait_arguments() {
 }
 
 #[test]
-fn plasm_run_invocation_accepts_only_plan_commit_ref() {
-    let invocation = super::parse_mcp_plasm_invocation(
+fn plasm_run_invocation_accepts_plan_commit_ref_or_page_handle() {
+    let commit = super::parse_mcp_plasm_invocation(
         "plasm_run",
         &serde_json::json!({
             "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
@@ -504,12 +504,61 @@ fn plasm_run_invocation_accepts_only_plan_commit_ref() {
         }),
         false,
     )
-    .expect("token invocation");
-    let Some(pc) = invocation.plan_commit_ref() else {
-        panic!("expected run invocation");
+    .expect("commit invocation");
+    let Some(pc) = commit.plan_commit_ref() else {
+        panic!("expected commit invocation");
     };
     assert_eq!(pc.as_str(), "pc12");
-    assert!(invocation.program().is_none());
+    assert!(commit.page_handle().is_none());
+    assert!(commit.program().is_none());
+
+    let page = super::parse_mcp_plasm_invocation(
+        "plasm_run",
+        &serde_json::json!({
+            "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
+            "page_handle": "l_AAAAAAAAQACAAAAAAAAAAQ_pg3"
+        }),
+        false,
+    )
+    .expect("page invocation");
+    assert!(page.plan_commit_ref().is_none());
+    assert_eq!(
+        page.page_handle().expect("page handle").as_str(),
+        "l_AAAAAAAAQACAAAAAAAAAAQ_pg3"
+    );
+}
+
+#[test]
+fn plasm_run_rejects_paging_token_as_plan_commit_ref() {
+    let err = match super::parse_mcp_plasm_invocation(
+        "plasm_run",
+        &serde_json::json!({
+            "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
+            "plan_commit_ref": "l_AAAAAAAAQACAAAAAAAAAAQ_pg1"
+        }),
+        false,
+    ) {
+        Ok(_) => panic!("paging token should not parse as plan_commit_ref"),
+        Err(err) => format!("{err:?}"),
+    };
+    assert!(err.contains("page_handle"), "unexpected error: {err}");
+}
+
+#[test]
+fn plasm_run_rejects_both_commit_and_page_handle() {
+    let err = match super::parse_mcp_plasm_invocation(
+        "plasm_run",
+        &serde_json::json!({
+            "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
+            "plan_commit_ref": "pc0",
+            "page_handle": "l_AAAAAAAAQACAAAAAAAAAAQ_pg1"
+        }),
+        false,
+    ) {
+        Ok(_) => panic!("both params should be rejected"),
+        Err(err) => format!("{err:?}"),
+    };
+    assert!(err.contains("exactly one"), "unexpected error: {err}");
 }
 
 #[test]

@@ -185,7 +185,7 @@ pub struct ApplyCapabilitySeedsOutcome {
 
 /// Maps the parsed `page(...)` handle to the key stored in [`ExecuteSession::paging_resume_by_handle`].
 /// MCP (`logical_session_ref` set): namespaced `l_<token>_pgN` only. HTTP: plain `pgN` only.
-fn resolve_paging_storage_handle(
+pub(crate) fn resolve_paging_storage_handle(
     trace: Option<&PlasmTraceContext>,
     handle: &PagingHandle,
 ) -> Result<PagingHandle, crate::execute_pipeline::RunLineError> {

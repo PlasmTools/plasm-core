@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.82] - 2026-06-27
+## [0.3.83] - 2026-06-27
+
+### Added
+
+- **MCP `plasm_run` paging:** optional `page_handle` (mutually exclusive with `plan_commit_ref`) for
+  live continuation without a second `plasm(page(...))` dry-run; markdown footer hints `page_handle`
+  only.
+- **MCP ingress:** unified `execute_mcp_live_run` for reviewed commits and paging continuations;
+  `resolve_mcp_live_run_ingress` extracted from the handler.
+
+### Changed
+
+- **MCP prompts / tool cards:** `plasm_run` and workflow initialize text aligned with `page_handle`
+  workflow; insta snapshots updated.
+- **plan_prepare:** `collect_plan_entity_names` includes relation target entities (unused-seeds fix).
+
+### Fixed
+
+- **Compile:** `infer_surface_contract` skips catalog entity resolution for `ResultShape::Page`
+  (`page(handle)` programs).
+
 
 ### Fixed
 

@@ -94,7 +94,7 @@ pub(crate) fn build_inline_bodies(
                 next_page_handle: handle.clone(),
             });
             sections.push_str(&format!(
-                "\n\nmore pages available - use `page({})` for the next page.",
+                "\n\nmore pages — call `plasm_run` with `page_handle: \"{}\"`.",
                 handle.as_str()
             ));
         }

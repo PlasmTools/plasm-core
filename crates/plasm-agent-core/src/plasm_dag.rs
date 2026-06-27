@@ -3627,7 +3627,12 @@ fn infer_surface_contract(
     }
 
     let (mut kind, entity, effect, shape) = infer_surface_contract_from_expr(expr)?;
-    let qe = if let Some(qe) = expr.qualified_entity_key() {
+    let qe = if matches!(shape, crate::plasm_plan::ResultShape::Page) {
+        QualifiedEntityKey {
+            entry_id: session.entry_id.clone(),
+            entity: entity.clone(),
+        }
+    } else if let Some(qe) = expr.qualified_entity_key() {
         QualifiedEntityKey::from(qe)
     } else {
         let resolving_cgs =

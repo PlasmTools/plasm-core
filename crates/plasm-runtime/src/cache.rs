@@ -885,11 +885,7 @@ mod tests {
 
         let mut branch2 = cache.fork_for_branch();
         let mut updated = cache.get(&ref_a).expect("ref_a").clone();
-        updated.update_field(
-            "name".into(),
-            Value::String("changed".into()),
-            99,
-        );
+        updated.update_field("name".into(), Value::String("changed".into()), 99);
         branch2.insert(updated).expect("branch update");
         let write_a = branch2.branch_write_set();
         assert_eq!(write_a, vec![ref_a.clone()]);

@@ -18,7 +18,7 @@ Symbol and fill rules:
 - Never write `v#` in code; use `p#` keys and read `v#` rows for allowed values.
 - **Session/plan handles** (`logical_session_ref`, `plan_commit_ref` / `pcN`): MCP tokens only — copy verbatim; not program syntax.
 - Replace teaching placeholders (`$`, `<id>`, `<val>`) and exemplar ids (`pikachu`, `example-name`, …) with real values before output. Never emit `$` from a teaching row.
-- Get-head: **parens = identity** (`e#(value)`; positional preferred), **braces = query/filter** (`e#{p#=…}`). Keyed `e#(p#=<id>)` only when that `p#` is the identity field.
+- Get-head: **parens = identity** (`e_type(electric)`; bare word = string identity when the slot is a name/string field), **braces = query/filter** (`e#{p#=…}`). Keyed `e#(p#=<id>)` only when that `p#` is the identity field.
 - **Quote scalars only in `{…}` predicates** (`e#{p#="EVA"}`); identity ids in `e#(…)` need no quotes. EntityRef slots use `e#(id)`, not bare scalars.
 - Remove `..` ellipses; add `opt:` keys (from `Meaning`) only as keyed assignments with real values.
 - Projection `[p#,…]` suffixes: reuse only on expressions returning the same entity/list type.
@@ -26,8 +26,8 @@ Symbol and fill rules:
 Core surface:
 - Program shape: one `plasm_expr`, or `label = …` bindings then comma-separated final roots (no `return`).
 - Postfix/`[p#]`/`[fields]`: copy exact forms from the TSV left column (`.limit` `.sort` `.filter{…}` `.group_by` `.aggregate` …).
-- Large list reads return the first **25 rows** in `plasm_run`; continue with `page(l_<token>_pgN)` from the tool result — not `resources/read`.
-- Run gate: pass `pcN` from a prior dry-run to `plasm_run`; MCP `plasm_run` does not accept program continuations.
+- Large list reads return the first **25 rows** in `plasm_run`; further pages use **`page_handle`** from the prior result's "more pages" line.
+- Run gate: pass `pcN` from a prior dry-run to `plasm_run`; paging uses `page_handle`, not a second `plasm` call.
 - Search when exposed: `e#~$` or `e#~"text"` (bare `e#~` is a parse error); optional scoped filters `e#~"text"[{p#=…}]`.
 
 Composition rules:
