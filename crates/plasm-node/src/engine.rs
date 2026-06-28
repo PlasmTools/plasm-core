@@ -485,6 +485,7 @@ impl AgentEngine {
             None,
             None,
             Some(dry),
+            None,
         ))
         .await
         .map_err(|e| anyhow!("live execute failed: {e}"))?;

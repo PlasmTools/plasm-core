@@ -134,6 +134,7 @@ async fn matrix_limit_3_live_heap_budget() {
         None,
         None,
         Some(dry),
+        None,
     )
     .await
     .expect("live run");
