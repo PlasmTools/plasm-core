@@ -2278,6 +2278,7 @@ async fn matrix_live_run_row(
         None,
         None,
         None,
+        None,
     ))
     .await
     .unwrap_or_else(|e| panic!("row {} run_plasm_comp: {e}", row.id));

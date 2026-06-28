@@ -78,7 +78,7 @@ pub enum Surface {
 pub struct RunOpts {
     pub wait: bool,
     pub force: bool,
-    pub plan_commit_ref: Option<String>,
+    pub run_ref: Option<String>,
     pub plan_only: bool,
 }
 
@@ -87,7 +87,7 @@ impl Default for RunOpts {
         Self {
             wait: true,
             force: false,
-            plan_commit_ref: None,
+            run_ref: None,
             plan_only: false,
         }
     }
@@ -192,8 +192,8 @@ impl LongOpFixture {
                     "wait": opts.wait,
                     "force": opts.force,
                 });
-                if let Some(pc) = opts.plan_commit_ref {
-                    args["plan_commit_ref"] = json!(pc);
+                if let Some(pc) = opts.run_ref {
+                    args["run_ref"] = json!(pc);
                 }
                 Ok(mcp_tool_call(
                     &self.client,
@@ -301,7 +301,7 @@ pub async fn http_post_program(
     if opts.plan_only {
         q.push("mode=plan".into());
     }
-    if let Some(ref pc) = opts.plan_commit_ref {
+    if let Some(ref pc) = opts.run_ref {
         q.push(format!("plan_commit_ref={pc}"));
     }
     if !q.is_empty() {

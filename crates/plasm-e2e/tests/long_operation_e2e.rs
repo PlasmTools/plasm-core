@@ -16,7 +16,7 @@ use std::time::Duration;
 use long_operation::{
     assert_async_accept, assert_cancelled, assert_review_gate_error, assert_running_wait,
     assert_terminal_success, cancel_program, continuity_phase, dry_verdict,
-    operation_handle_from_accept, plan_commit_ref, wait_program, LongOpFixture, RunOpts, Surface,
+    operation_handle_from_accept, run_ref_from_meta, wait_program, LongOpFixture, RunOpts, Surface,
     BOUNDED_LANG_ITEM, SLOW_LANG_ITEM, UNBOUNDED_LANG_ITEM,
 };
 
@@ -263,7 +263,7 @@ async fn long_operation_dual_surface_e2e_async() {
             BOUNDED_LANG_ITEM,
             RunOpts {
                 wait: false,
-                plan_commit_ref: Some(pc),
+                run_ref: Some(pc),
                 ..Default::default()
             },
         )
@@ -280,7 +280,7 @@ async fn long_operation_dual_surface_e2e_async() {
                 surface,
                 UNBOUNDED_LANG_ITEM,
                 RunOpts {
-                    plan_commit_ref: Some(pc),
+                    run_ref: Some(pc),
                     ..Default::default()
                 },
             )
@@ -307,7 +307,7 @@ async fn long_operation_dual_surface_e2e_async() {
                 surface,
                 BOUNDED_LANG_ITEM,
                 RunOpts {
-                    plan_commit_ref: Some(pc),
+                    run_ref: Some(pc),
                     ..Default::default()
                 },
             )

@@ -122,7 +122,7 @@ line"#;
 
     evaluate_plasm_comp_dry(&es, &bundle).expect("dry plan must pass render preflight");
 
-    let live = run_plasm_comp(&es, &st, PH, SESS, &bundle, true, None, None, None)
+    let live = run_plasm_comp(&es, &st, PH, SESS, &bundle, true, None, None, None, None)
         .await
         .expect("live plan");
 
@@ -205,7 +205,7 @@ doc"#;
 
     evaluate_plasm_comp_dry(&es, &bundle).expect("dry plan must pass");
 
-    let live = run_plasm_comp(&es, &st, PH, SESS, &bundle, true, None, None, None)
+    let live = run_plasm_comp(&es, &st, PH, SESS, &bundle, true, None, None, None, None)
         .await
         .expect("live plan");
 

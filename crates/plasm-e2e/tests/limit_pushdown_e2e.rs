@@ -123,6 +123,7 @@ async fn limit_pushdown_bounds_paginated_berry_query_async() {
         None,
         None,
         None,
+        None,
     )
     .await
     .expect("live plan");

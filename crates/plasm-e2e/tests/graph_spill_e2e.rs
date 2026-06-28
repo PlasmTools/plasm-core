@@ -107,6 +107,7 @@ fn pokeapi_execute_session(cgs: Arc<CGS>) -> ExecuteSession {
         cgs.catalog_cgs_hash_hex(),
         None,
         None,
+        None,
     )
 }
 
@@ -248,6 +249,7 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
         None,
         None,
         None,
+        None,
     )
     .await
     .expect("live plan run");
@@ -286,6 +288,7 @@ async fn graph_spill_bounded_hot_and_plan_filter_rehydrate_async() {
         SESSION_ID,
         &bundle_many,
         true,
+        None,
         None,
         None,
         None,
