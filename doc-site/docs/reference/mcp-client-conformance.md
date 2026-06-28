@@ -19,6 +19,27 @@ Plasm advertises the same protocol version in MCP `initialize` responses.
 | MCP Apps | Yes (`ui://plasm/*`, AppBridge) | Limited | Cursor: App fetch fails when transport session dies |
 | Session reinit on 404/-32016 | Partial | Buggy ([#50450](https://github.com/anthropics/claude-code/issues/50450), [#60949](https://github.com/anthropics/claude-code/issues/60949)) | Shared Redis transport helps all clients |
 | Explicit state handles | Per-transport slot `s0`, … (legacy) | `l_<token>` wire ref | **Stateless `l_<token>`** from `plasm_context` |
+| Run snapshot read path | `resources/read` (MCP Apps + agent toolkit) | `plasm_read_run_artifact` tool fallback | Plasm detects wire `clientInfo.name`; override `PLASM_MCP_ARTIFACT_ACCESS=tool|resources` |
+
+## Artifact access detection (`clientInfo.name`)
+
+Plasm chooses **`resources/read`** vs **`plasm_read_run_artifact`** per MCP transport using `initialize.clientInfo.name` (case-insensitive exact match), legacy Anthropic connector substring heuristics, optional User-Agent, or `PLASM_MCP_ARTIFACT_ACCESS`.
+
+Wire names verified from [apify/mcp-client-capabilities](https://github.com/apify/mcp-client-capabilities), [TianqiZhang/mcp-client-registry](https://github.com/TianqiZhang/mcp-client-registry), and production logs ([anthropics/claude-ai-mcp#473](https://github.com/anthropics/claude-ai-mcp/issues/473)):
+
+| Wire `clientInfo.name` | Product | `ArtifactAccessMode` |
+|------------------------|---------|----------------------|
+| `claude-code` | Claude Code CLI | `ToolFallback` |
+| `claude-api-mcp-connector` | Claude API MCP connector | `ToolFallback` |
+| `Anthropic/API` | Anthropic API MCP path | `ToolFallback` |
+| `Anthropic/ClaudeAI` | Claude.ai web custom connector | `ToolFallback` |
+| `openai-mcp` | OpenAI/ChatGPT MCP connector | `ToolFallback` |
+| `cursor-vscode` | Cursor (not bare `cursor`) | `ResourcesRead` |
+| `claude-ai` | Claude Desktop | `ResourcesRead` |
+| `Cline` | Cline VS Code extension | `ResourcesRead` |
+| `Visual Studio Code` / `Visual-Studio-Code` | VS Code Copilot MCP | `ResourcesRead` |
+
+Server logs `client_info.name`, `client_info.version`, and resolved mode on first transport cache (`resolved MCP artifact access mode`).
 
 ## SEP-2567 alignment
 

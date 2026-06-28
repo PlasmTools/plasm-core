@@ -4,6 +4,16 @@ pub(crate) use crate::mcp_run_markdown::ArtifactAccessMode;
 
 use rust_mcp_sdk::schema::InitializeRequestParams;
 
+/// Verified `initialize.clientInfo.name` values where the agent toolkit cannot reliably invoke
+/// MCP `resources/read` (see docs/mcp-client-conformance.md).
+const TOOL_ONLY_WIRE_NAMES: &[&str] = &[
+    "claude-code",
+    "claude-api-mcp-connector",
+    "anthropic/api",
+    "anthropic/claudeai",
+    "openai-mcp",
+];
+
 /// Optional server override via `PLASM_MCP_ARTIFACT_ACCESS=tool|resources`.
 pub(crate) fn artifact_access_mode_from_env() -> Option<ArtifactAccessMode> {
     match std::env::var("PLASM_MCP_ARTIFACT_ACCESS")
@@ -57,6 +67,9 @@ pub(crate) fn detect_artifact_access_mode(
 }
 
 fn is_known_tool_only_mcp_host(name: &str, version: &str) -> bool {
+    if TOOL_ONLY_WIRE_NAMES.contains(&name) {
+        return true;
+    }
     let combined = format!("{name} {version}");
     if combined.contains("connector") && (name.contains("claude") || name.contains("anthropic")) {
         return true;
@@ -106,8 +119,62 @@ mod tests {
     }
 
     #[test]
-    fn generic_client_stays_resources_read() {
-        let params = client("cursor", "1.0");
+    fn claude_code_is_tool_fallback() {
+        let params = client("claude-code", "2.1.181");
+        assert_eq!(
+            detect_artifact_access_mode(Some(&params), None),
+            ArtifactAccessMode::ToolFallback
+        );
+    }
+
+    #[test]
+    fn anthropic_claudeai_is_tool_fallback() {
+        let params = client("Anthropic/ClaudeAI", "0.1.0");
+        assert_eq!(
+            detect_artifact_access_mode(Some(&params), None),
+            ArtifactAccessMode::ToolFallback
+        );
+    }
+
+    #[test]
+    fn anthropic_api_is_tool_fallback() {
+        let params = client("Anthropic/API", "1.0.0");
+        assert_eq!(
+            detect_artifact_access_mode(Some(&params), None),
+            ArtifactAccessMode::ToolFallback
+        );
+    }
+
+    #[test]
+    fn openai_mcp_is_tool_fallback() {
+        let params = client("openai-mcp", "1.0.0");
+        assert_eq!(
+            detect_artifact_access_mode(Some(&params), None),
+            ArtifactAccessMode::ToolFallback
+        );
+    }
+
+    #[test]
+    fn cursor_vscode_stays_resources_read() {
+        let params = client("cursor-vscode", "1.0");
+        assert_eq!(
+            detect_artifact_access_mode(Some(&params), None),
+            ArtifactAccessMode::ResourcesRead
+        );
+    }
+
+    #[test]
+    fn claude_ai_desktop_stays_resources_read() {
+        let params = client("claude-ai", "0.1.0");
+        assert_eq!(
+            detect_artifact_access_mode(Some(&params), None),
+            ArtifactAccessMode::ResourcesRead
+        );
+    }
+
+    #[test]
+    fn cline_stays_resources_read() {
+        let params = client("Cline", "1.0.0");
         assert_eq!(
             detect_artifact_access_mode(Some(&params), None),
             ArtifactAccessMode::ResourcesRead

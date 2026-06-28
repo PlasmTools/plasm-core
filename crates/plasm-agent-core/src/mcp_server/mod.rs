@@ -421,6 +421,11 @@ impl PlasmMcpHandler {
     ) -> crate::mcp_run_markdown::ArtifactAccessMode {
         let transport = self.session_state(transport_key).await;
         if let Some(mode) = artifact_access::artifact_access_mode_from_env() {
+            tracing::info!(
+                artifact_access_mode = ?mode,
+                source = "PLASM_MCP_ARTIFACT_ACCESS",
+                "resolved MCP artifact access mode"
+            );
             transport.lock().await.artifact_access_mode = Some(mode);
             return mode;
         }
@@ -431,10 +436,24 @@ impl PlasmMcpHandler {
             let g = transport.lock().await;
             g.client_user_agent.clone()
         };
+        let client_info = runtime.client_info();
         let mode = artifact_access::detect_artifact_access_mode(
-            runtime.client_info().as_ref(),
+            client_info.as_ref(),
             artifact_access::client_user_agent_hint(ua_from_transport.as_deref()).as_deref(),
         );
+        if let Some(params) = client_info.as_ref() {
+            tracing::info!(
+                client_info.name = %params.client_info.name,
+                client_info.version = %params.client_info.version,
+                artifact_access_mode = ?mode,
+                "resolved MCP artifact access mode"
+            );
+        } else {
+            tracing::info!(
+                artifact_access_mode = ?mode,
+                "resolved MCP artifact access mode (no client_info)"
+            );
+        }
         transport.lock().await.artifact_access_mode = Some(mode);
         mode
     }

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.85] - 2026-06-28
+
+### Changed
+
+- **MCP artifact access detection:** classify researched `initialize.clientInfo.name` wire
+  values (`claude-code`, `Anthropic/ClaudeAI`, `Anthropic/API`, `openai-mcp`, plus existing
+  connector heuristics) as `ToolFallback` so `plasm_read_run_artifact` is listed and markdown
+  matches agent toolkit; `cursor-vscode`, `claude-ai`, and `Cline` stay `ResourcesRead`.
+- **MCP observability:** log `client_info.name`, version, and resolved `ArtifactAccessMode` on
+  first transport cache.
+
 ## [0.3.84] - 2026-06-28
 
 ### Added
