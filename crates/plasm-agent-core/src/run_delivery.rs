@@ -158,6 +158,7 @@ pub struct LiveRunSpawn {
 #[derive(Clone, Default)]
 pub struct LiveRunSpawnOpts {
     pub plan_trace: Option<crate::trace_hub::PlanRunTraceHooks>,
+    pub mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
 }
 
 fn spawn_live_plan_run(
@@ -176,6 +177,9 @@ fn spawn_live_plan_run(
     .with_run_explorer(&spawn.accept_payload);
     if let Some(plan_trace) = opts.plan_trace {
         accept = accept.with_plan_trace(plan_trace);
+    }
+    if let Some(policy) = opts.mcp_result_policy {
+        accept = accept.with_mcp_result_policy(policy);
     }
     spawn_async_plan_run(
         Arc::clone(&spawn.es),

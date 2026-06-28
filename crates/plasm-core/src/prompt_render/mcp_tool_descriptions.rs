@@ -6,8 +6,22 @@
 /// Canonical `plasm` tool description: plan-only framing + full Plasm grammar contract.
 pub const PLASM_TOOL_DESCRIPTION: &str = include_str!("assets/plasm_tool.txt");
 
-/// Canonical `plasm_run` tool description.
-pub const PLASM_RUN_TOOL_DESCRIPTION: &str = include_str!("assets/plasm_run_tool.txt");
+/// Canonical `plasm_run` tool body (without transport-specific artifact-read suffix).
+pub const PLASM_RUN_TOOL_DESCRIPTION_BASE: &str = include_str!("assets/plasm_run_tool_base.txt");
+
+/// Artifact-read suffix when the host exposes MCP `resources/read`.
+pub const PLASM_RUN_TOOL_ARTIFACT_RESOURCES: &str =
+    include_str!("assets/plasm_run_tool_artifact_resources.txt");
+
+/// Artifact-read suffix for tool-only MCP hosts (`plasm_read_run_artifact`).
+pub const PLASM_RUN_TOOL_ARTIFACT_TOOL: &str =
+    include_str!("assets/plasm_run_tool_artifact_tool.txt");
+
+/// Default static `plasm_run` description (resource-capable hosts).
+pub const PLASM_RUN_TOOL_DESCRIPTION: &str = concat!(
+    include_str!("assets/plasm_run_tool_base.txt"),
+    include_str!("assets/plasm_run_tool_artifact_resources.txt"),
+);
 
 /// Canonical `plasm_context` tool description.
 pub const PLASM_CONTEXT_TOOL_DESCRIPTION: &str = include_str!("assets/plasm_context_tool.txt");

@@ -73,7 +73,7 @@ async fn long_operation_dual_surface_e2e_async() {
 
     for surface in [Surface::Http, Surface::Mcp] {
         let body = fixture.plan_dry(surface, UNBOUNDED_LANG_ITEM).await;
-        let pc = plan_commit_ref(&body).expect("plan_commit_ref minted");
+        let pc = run_ref_from_meta(&body).expect("run_ref minted");
         assert!(pc.starts_with("pc"), "expected pcN ref, got {pc}");
         assert_eq!(dry_verdict(&body), Some("review"));
     }
@@ -256,7 +256,7 @@ async fn long_operation_dual_surface_e2e_async() {
 
     for surface in [Surface::Http, Surface::Mcp] {
         let dry = fixture.plan_dry(surface, BOUNDED_LANG_ITEM).await;
-        let pc = plan_commit_ref(&dry).expect("pc from dry run");
+        let pc = run_ref_from_meta(&dry).expect("pc from dry run");
         let handle = accept_async(
             &fixture,
             surface,
@@ -274,7 +274,7 @@ async fn long_operation_dual_surface_e2e_async() {
 
     for surface in [Surface::Http, Surface::Mcp] {
         let dry = fixture.plan_dry(surface, UNBOUNDED_LANG_ITEM).await;
-        let pc = plan_commit_ref(&dry).expect("pc from dry run");
+        let pc = run_ref_from_meta(&dry).expect("pc from dry run");
         let body = fixture
             .run_program(
                 surface,
@@ -301,7 +301,7 @@ async fn long_operation_dual_surface_e2e_async() {
 
     for surface in [Surface::Http, Surface::Mcp] {
         let dry = fixture.plan_dry(surface, UNBOUNDED_LANG_ITEM).await;
-        let pc = plan_commit_ref(&dry).expect("pc from dry run");
+        let pc = run_ref_from_meta(&dry).expect("pc from dry run");
         let err = fixture
             .run_program(
                 surface,

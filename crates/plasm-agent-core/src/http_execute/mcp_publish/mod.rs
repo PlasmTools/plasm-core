@@ -67,15 +67,23 @@ pub(crate) fn publish_with_shared_meta_index(
     cgs: Option<&CGS>,
     meta_index: Option<Arc<Mutex<PlasmMetaIndex>>>,
     steps: &[PublishedResultStep],
+    policy: &McpResultTransportPolicy,
 ) -> Result<ExecuteRunToolOutput, String> {
     match meta_index {
         Some(arc) => {
             let mut guard = arc
                 .lock()
                 .map_err(|e| format!("meta_index lock poisoned: {e}"))?;
-            Ok(publish_plasm_result_steps(cgs, Some(&mut *guard), steps))
+            Ok(publish_plasm_result_steps_with_policy(
+                cgs,
+                Some(&mut *guard),
+                steps,
+                policy,
+            ))
         }
-        None => Ok(publish_plasm_result_steps(cgs, None, steps)),
+        None => Ok(publish_plasm_result_steps_with_policy(
+            cgs, None, steps, policy,
+        )),
     }
 }
 
@@ -180,7 +188,7 @@ mod tests {
         );
         assert!(
             out.markdown
-                .contains("plan_commit_ref: \"l_AAAAAAAAQACAAAAAAAAAAQ_pg1\""),
+                .contains("run_ref: \"l_AAAAAAAAQACAAAAAAAAAAQ_pg1\""),
             "expected paging continuation: {}",
             out.markdown
         );

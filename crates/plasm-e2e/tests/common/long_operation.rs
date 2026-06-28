@@ -551,9 +551,9 @@ pub fn operation_handle_from_accept(body: &Value) -> String {
         .expect("operation handle in accept response")
 }
 
-pub fn plan_commit_ref(body: &Value) -> Option<String> {
+pub fn run_ref_from_meta(body: &Value) -> Option<String> {
     plasm_meta(body)
-        .get("plan_commit_ref")
+        .get("run_ref")
         .and_then(|v| v.as_str())
         .map(str::to_string)
 }

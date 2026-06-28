@@ -21,7 +21,7 @@ pub const MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS: usize = 4_000;
 
 /// Hard cap on entity rows rendered inline in MCP tool Markdown (TSV fence or ASCII table).
 /// Derived from the canonical host first-page size ([`crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE`])
-/// so the first host page fits one MCP tool response; further pages use `page_handle` on `plasm_run`.
+/// so the first host page fits one MCP tool response; further pages use `run_ref` on `plasm_run`.
 pub const MCP_IN_BAND_ENTITY_ROW_CAP: usize = crate::plan_read_bounds::DEFAULT_HOST_PAGE_SIZE;
 
 /// Above this row count, MCP may omit inline TSV and defer to snapshot-only preview (extreme results).
@@ -32,6 +32,44 @@ pub const MCP_SNAPSHOT_ONLY_ROW_THRESHOLD: usize = 500;
 pub struct McpResultTransportPolicy {
     pub in_band_entity_rows: usize,
     pub markdown_preview_chars: usize,
+    pub artifact_access: ArtifactAccessMode,
+}
+
+/// How agents on this MCP transport should fetch run snapshot JSON.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ArtifactAccessMode {
+    /// Host exposes MCP `resources/read` to the model (default).
+    #[default]
+    ResourcesRead,
+    /// Tool-only host (e.g. Claude API MCP connector): expose `plasm_read_run_artifact`.
+    ToolFallback,
+}
+
+impl ArtifactAccessMode {
+    pub fn exposes_read_tool(self) -> bool {
+        matches!(self, Self::ToolFallback)
+    }
+
+    pub fn artifact_read_instruction(self) -> &'static str {
+        match self {
+            Self::ResourcesRead => "MCP `resources/read`",
+            Self::ToolFallback => "MCP `plasm_read_run_artifact`",
+        }
+    }
+
+    pub fn row_limit_note(self, shown: usize, total: usize) -> String {
+        format!(
+            "\n\n_Showing {shown} of {total} rows — use {} on the snapshot URI for the full result._\n",
+            self.artifact_read_instruction()
+        )
+    }
+
+    pub fn snapshot_line(self, uri: &str) -> String {
+        format!(
+            "\n\n_Snapshot ({}; not a Plasm expression):_ `{uri}`\n",
+            self.artifact_read_instruction()
+        )
+    }
 }
 
 impl Default for McpResultTransportPolicy {
@@ -39,6 +77,7 @@ impl Default for McpResultTransportPolicy {
         Self {
             in_band_entity_rows: MCP_IN_BAND_ENTITY_ROW_CAP,
             markdown_preview_chars: MCP_PLASM_MARKDOWN_PREVIEW_THRESHOLD_CHARS,
+            artifact_access: ArtifactAccessMode::default(),
         }
     }
 }
@@ -141,17 +180,28 @@ pub(crate) fn mcp_preview_markdown_needed(
     artifact_backed_over_cap || full_char_count > policy.markdown_preview_chars
 }
 
-pub(crate) fn mcp_in_band_row_limit_note(shown: usize, total: usize, has_snapshot: bool) -> String {
+pub(crate) fn mcp_in_band_row_limit_note(
+    shown: usize,
+    total: usize,
+    has_snapshot: bool,
+    artifact_access: ArtifactAccessMode,
+) -> String {
     if shown >= total {
         return String::new();
     }
     if has_snapshot {
-        format!(
-            "\n\n_Showing {shown} of {total} rows — use MCP `resources/read` on the snapshot URI for the full result._\n"
-        )
+        artifact_access.row_limit_note(shown, total)
     } else {
         format!("\n\n_Showing {shown} of {total} rows (no run snapshot stored)._\n")
     }
+}
+
+/// One-line Markdown after an in-band result when the run snapshot must be fetched separately.
+pub(crate) fn mcp_inline_run_snapshot_line(
+    handle: &RunArtifactHandle,
+    artifact_access: ArtifactAccessMode,
+) -> String {
+    artifact_access.snapshot_line(handle.plasm_uri.as_str())
 }
 
 /// Union of schema-tagged lossy columns and any field names recorded while formatting in-band cells
@@ -163,14 +213,6 @@ pub(crate) fn merge_snapshot_column_hints(
     let mut v: Vec<String> = schema_lossy.as_ref().to_vec();
     v.extend(in_band.field_names().cloned());
     LossySummaryFieldNames::from_vec_sorted_dedup(v)
-}
-
-/// One-line Markdown after an in-band result when the run snapshot must be fetched separately.
-pub(crate) fn mcp_inline_run_snapshot_line(handle: &RunArtifactHandle) -> String {
-    format!(
-        "\n\n_Snapshot (MCP `resources/read`, not a Plasm expression):_ `{}`\n",
-        handle.plasm_uri
-    )
 }
 
 /// MCP `plasm` tool: use fenced TSV when there are no reference-only omissions; otherwise ASCII table with `(in artifact)`.
@@ -245,6 +287,7 @@ pub(crate) fn mcp_compact_markdown_multi_line(
     omitted: &OmittedReferenceOnlyFields,
     lossy_summary_union: &LossySummaryFieldNames,
     truncated_step_uris: &[(usize, &RunArtifactHandle)],
+    artifact_access: ArtifactAccessMode,
 ) -> String {
     let mut out = String::from("# Results (preview)\n\n");
     out.push_str(MCP_MARKDOWN_PREVIEW_MULTI_LINE_PROLOGUE);
@@ -258,10 +301,8 @@ pub(crate) fn mcp_compact_markdown_multi_line(
         let step_no = i + 1;
         out.push_str(&slim_result_section_header("### ", label, *nrows));
         if let Some((_, h)) = truncated_step_uris.iter().find(|(s, _)| *s == step_no) {
-            out.push_str(&format!(
-                "   _Snapshot (MCP `resources/read`, not a Plasm expression):_ `{}`\n",
-                h.plasm_uri
-            ));
+            out.push_str(&artifact_access.snapshot_line(h.plasm_uri.as_str()));
+            out.push('\n');
         }
         out.push('\n');
     }
@@ -341,6 +382,7 @@ mod tests {
             &omitted,
             &LossySummaryFieldNames::default(),
             &[(1, &h)],
+            ArtifactAccessMode::ResourcesRead,
         );
         assert!(s.starts_with("# Results (preview)"));
         assert!(!s.contains("MUST"), "multi-line preview: {s}");
@@ -365,7 +407,7 @@ mod tests {
     #[test]
     fn mcp_inline_run_snapshot_line_labels_resources_read_not_plasm_expr() {
         let h = sample_handle();
-        let line = mcp_inline_run_snapshot_line(&h);
+        let line = mcp_inline_run_snapshot_line(&h, ArtifactAccessMode::ResourcesRead);
         assert!(
             line.contains("resources/read") && line.contains("not a Plasm expression"),
             "{line}"
@@ -396,7 +438,10 @@ mod tests {
         let omitted = OmittedReferenceOnlyFields::default();
         let out = mcp_prepend_artifact_followup_markdown("## Result\n".into(), true, &[], &omitted);
         assert_eq!(out, "## Result\n", "{out}");
-        let body = format!("## Result\n{}", mcp_inline_run_snapshot_line(&h));
+        let body = format!(
+            "## Result\n{}",
+            mcp_inline_run_snapshot_line(&h, ArtifactAccessMode::ResourcesRead)
+        );
         let out2 = mcp_prepend_artifact_followup_markdown(body.clone(), true, &[h], &omitted);
         assert_eq!(out2, body, "{out2}");
         assert!(!out2.contains("Optional full JSON"), "{out2}");

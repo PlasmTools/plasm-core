@@ -1,0 +1,1 @@
+ When only snapshot URIs are returned, call **`plasm_read_run_artifact`** with the same **`logical_session_ref`** plus `artifact_uri`, `resource_index`, or `run_id`.

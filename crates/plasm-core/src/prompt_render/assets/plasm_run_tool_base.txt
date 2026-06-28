@@ -1,7 +1,3 @@
----
-source: crates/plasm-agent-core/src/mcp_server/tests.rs
-expression: "plasm_core::prompt_render::PLASM_RUN_TOOL_DESCRIPTION"
----
 **Run Plasm** (live): **`logical_session_ref`** + **`run_ref`** — a `pcN` plan commit from **`plasm`**, or the page handle from a prior result's "more pages" line. Real HTTP/API; may return **`resource_link`** snapshots.
 
 **Review gate:** first live run executes the reviewed plan for the `pcN` **`run_ref`** from **`plasm`**. If the token is missing, expired, or from another plan, call **`plasm`** again.
@@ -13,5 +9,3 @@ expression: "plasm_core::prompt_render::PLASM_RUN_TOOL_DESCRIPTION"
 **Live results:** `## {return_label} ({n} rows)` + capped TSV when returned directly (up to 25 rows inline); multi-return programs use `# Results` with `### {label} ({n} rows)` per root. ≤25 rows → inline ` ```tsv ` when present in the tool body; 26–499 → capped TSV + snapshot URI; 500+ → preview + snapshot, no inline TSV — narrow the program or page.
 
 **Retry:** transient `session materialization changed during concurrent execute` — re-issue the same `plasm_run` once.
-
-When only snapshot URIs are returned, read full JSON via MCP **`resources/read`**.

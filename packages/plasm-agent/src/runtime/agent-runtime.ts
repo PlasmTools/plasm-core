@@ -21,6 +21,7 @@ import { createArchiveStore } from "../archive/resolve-backend.js";
 import type { ProdArchiveStore } from "../archive/prod-archive-store.js";
 import { computeRunId } from "../archive/run-id.js";
 import { activeTraceId, plasmSpans } from "../telemetry/plasm-spans.js";
+import { PlasmSpanAttributes } from "../instrumentation.js";
 import type { AuthoringContext } from "../authoring/context.js";
 import type { HookRunner } from "../authoring/hook-runner.js";
 import type { AgentWorkflowWorldDefinition } from "../define-agent.js";
@@ -61,7 +62,7 @@ export interface PlasmPlanInput {
 
 export interface PlasmRunInput {
   logicalSessionRef: string;
-  planCommitRef: string;
+  runRef: string;
   reasoning?: string;
 }
 
@@ -283,7 +284,7 @@ export class AgentRuntime {
         });
         await this.sessionManager.update(session);
 
-        span.setAttribute("plasm.plan_commit_ref", dry.planCommitRef);
+        span.setAttribute(PlasmSpanAttributes.RUN_REF, dry.planCommitRef);
         if (catalogCgsHash) {
           span.setAttribute("plasm.catalog_cgs_hash", catalogCgsHash);
         }
@@ -310,7 +311,7 @@ export class AgentRuntime {
         });
 
         await this.emitHook("plan:commit", {
-          planCommitRef: dry.planCommitRef,
+          runRef: dry.planCommitRef,
           program: input.program,
           logicalSessionRef: session.logicalSessionRef,
         });
@@ -325,14 +326,14 @@ export class AgentRuntime {
     void input.reasoning;
     const entryId = session.seeds[0]?.api;
     const catalogCgsHash = entryId ? this.catalogHashForEntry(entryId) : undefined;
-    const planCommit = session.planCommits.find((pc) => pc.ref === input.planCommitRef);
+    const planCommit = session.planCommits.find((pc) => pc.ref === input.runRef);
 
     return plasmSpans.liveRun(
       {
         intent: session.intent,
         logicalSessionRef: session.logicalSessionRef,
         sessionId: session.logicalSessionId,
-        planCommitRef: input.planCommitRef,
+        runRef: input.runRef,
         entryId,
         catalogCgsHash,
       },
@@ -340,8 +341,8 @@ export class AgentRuntime {
         const started = Date.now();
         const result =
           this.hostTransport && typeof this.engine.runPlanLive === "function"
-            ? await this.engine.runPlanLive(input.planCommitRef, this.hostTransport)
-            : await this.engine.runPlan(input.planCommitRef);
+            ? await this.engine.runPlanLive(input.runRef, this.hostTransport)
+            : await this.engine.runPlan(input.runRef);
         const program = planCommit?.program ?? "";
         const runMeta = parseRunMeta(result.metaJson);
         const requestFingerprints = collectRequestFingerprints(runMeta);
@@ -349,7 +350,7 @@ export class AgentRuntime {
           catalogCgsHash && program
             ? computeRunId({
                 catalogCgsHash,
-                planCommitRef: input.planCommitRef,
+                planCommitRef: input.runRef,
                 program,
                 entryId,
                 requestFingerprints,
@@ -357,7 +358,7 @@ export class AgentRuntime {
             : `pr${createHash("sha256").update(randomUUID()).digest("hex")}`;
 
         span.setAttribute("plasm.run_id", runId);
-        span.setAttribute("plasm.plan_commit_ref", input.planCommitRef);
+        span.setAttribute(PlasmSpanAttributes.RUN_REF, input.runRef);
         if (catalogCgsHash) {
           span.setAttribute("plasm.catalog_cgs_hash", catalogCgsHash);
         }
@@ -365,7 +366,7 @@ export class AgentRuntime {
         if (this.archive) {
           await this.archive.writeRunSnapshot({
             run_id: runId,
-            plan_commit_ref: input.planCommitRef,
+            plan_commit_ref: input.runRef,
             catalog_cgs_hash: catalogCgsHash ?? "unknown",
             entry_id: entryId,
             logical_session_ref: session.logicalSessionRef,
@@ -386,7 +387,7 @@ export class AgentRuntime {
         await this.recordToolTrace("plasm", "plasm.live_run", started, {
           intent: session.intent,
           logical_session_ref: session.logicalSessionRef,
-          plan_commit_ref: input.planCommitRef,
+          plan_commit_ref: input.runRef,
           run_id: runId,
           catalog_cgs_hash: catalogCgsHash,
           ok: result.ok,
@@ -394,7 +395,7 @@ export class AgentRuntime {
         });
 
         await this.emitHook("run:complete", {
-          planCommitRef: input.planCommitRef,
+          runRef: input.runRef,
           runId,
           ok: result.ok,
           logicalSessionRef: session.logicalSessionRef,

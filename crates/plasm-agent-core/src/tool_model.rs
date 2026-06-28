@@ -139,7 +139,7 @@ impl ToolModelExecuteContinuations {
             summary: "LLM execute uses host continuation expressions — not raw API pagination cursors or background job ids.".into(),
             pagination: append_llm_pagination_execute_note(String::new()),
             long_operations: "MCP live runs await server-side and return one terminal response; agents do not poll or cancel continuations. HTTP execute may still use operation continuations for explicit async operations.".into(),
-            review_gate: "When plan dry-run verdict is review, pass plan_commit_ref (pcN) from matching plan dry-run or force=true before live execute. Commit ids hash semantic plan DAG only.".into(),
+            review_gate: "When plan dry-run verdict is review, pass run_ref (pcN) from matching plan dry-run or force=true before live execute. Commit ids hash semantic plan DAG only.".into(),
         }
     }
 }
@@ -396,7 +396,7 @@ fn capability_about_from_cgs(cap: &CapabilitySchema, fallback: impl Into<String>
 
 /// Tool Explorer / operator copy: LLM execute uses opaque `page(pg#)` continuations, not CLI flags.
 fn append_llm_pagination_execute_note(about: String) -> String {
-    const NOTE: &str = " For MCP `plasm_run`, additional list pages pass the prior result's page handle as `plan_commit_ref`; HTTP execute uses `page(pg#)` in the POST body (Plasm program syntax). Not raw API pagination parameters.";
+    const NOTE: &str = " For MCP `plasm_run`, additional list pages pass the prior result's page handle as `run_ref`; HTTP execute uses `page(pg#)` in the POST body (Plasm program syntax). Not raw API pagination parameters.";
     if about.is_empty() {
         NOTE.trim_start().to_string()
     } else {
@@ -1576,7 +1576,7 @@ mod tests {
             .execute
             .long_operations
             .contains("agents do not poll or cancel"));
-        assert!(m.execute.review_gate.contains("plan_commit_ref"));
+        assert!(m.execute.review_gate.contains("run_ref"));
         assert_eq!(m.entities.len(), m.domain.model.entities.len());
         assert_eq!(m.focus.mode, "all");
         assert!(m.overview.verb_count > 0);

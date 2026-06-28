@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.84] - 2026-06-28
+
+### Added
+
+- **MCP artifact access gate:** per-transport `ArtifactAccessMode` (`resources/read` vs
+  `plasm_read_run_artifact` tool fallback) with `PLASM_MCP_ARTIFACT_ACCESS=tool|resources`,
+  initialize client detection, and optional `PLASM_MCP_CLIENT_USER_AGENT`.
+- **MCP `plasm_read_run_artifact`:** tool-only fallback for run snapshot JSON (parity with
+  `resources/read` via shared `artifact_resolve`).
+
+### Changed
+
+- **MCP `plasm_run`:** unified **`run_ref`** parameter replaces `plan_commit_ref` and `page_handle`
+  (commit `pcN` or paging handle). Dry-run `_meta.plasm` and markdown footers emit **`run_ref`**;
+  paging meta uses **`next_run_ref`**. HTTP execute retains query `plan_commit_ref=pcN` and program
+  `page(pgN)`.
+- **MCP `tools/list`:** gate-aware `plasm_run` description; `plasm_read_run_artifact` listed only on
+  tool-fallback transports.
+- **Live run publish:** `mcp_result_policy` threaded via `LiveRunSpawnOpts` / `OpAcceptContext`
+  (removed from `PlanRunTraceHooks`).
+
 ## [0.3.83] - 2026-06-27
 
 ### Added

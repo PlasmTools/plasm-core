@@ -102,6 +102,7 @@ pub(crate) struct PublishPlan {
     pub artifact_snapshot_preview: bool,
     pub total_entity_rows: usize,
     pub per_step_compact: Vec<(String, usize)>,
+    pub artifact_access: crate::mcp_run_markdown::ArtifactAccessMode,
 }
 
 impl PublishPlan {
@@ -123,6 +124,7 @@ impl PublishPlan {
             artifact_snapshot_preview,
             total_entity_rows,
             per_step_compact,
+            artifact_access: policy.artifact_access,
         }
     }
 

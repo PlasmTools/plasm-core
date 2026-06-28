@@ -39,6 +39,10 @@ impl Default for McpLogicalSessionState {
 pub(crate) struct McpTransportState {
     /// Logical session UUID string → per-agent state (execute binding, stats, `_meta.plasm` index).
     pub(crate) logical_by_id: HashMap<String, Arc<Mutex<McpLogicalSessionState>>>,
+    /// Cached artifact retrieval mode for this MCP transport (see [`crate::mcp_run_markdown::ArtifactAccessMode`]).
+    pub(crate) artifact_access_mode: Option<crate::mcp_run_markdown::ArtifactAccessMode>,
+    /// Optional HTTP User-Agent captured for artifact-access detection (`PLASM_MCP_CLIENT_USER_AGENT` fallback).
+    pub(crate) client_user_agent: Option<String>,
 }
 
 impl McpTransportState {
@@ -70,6 +74,8 @@ impl McpTransportState {
     ) -> Self {
         Self {
             logical_by_id: HashMap::new(),
+            artifact_access_mode: None,
+            client_user_agent: None,
         }
         .with_persisted_bindings(p.logical_bindings)
     }

@@ -13,8 +13,8 @@ export function formatPlasmContextMarkdown(
   return `\`${logicalSessionRef}\`\n\n\`\`\`tsv\n${delta}\n\`\`\`\n`;
 }
 
-export function formatPlasmDryRunMarkdown(summary: string, planCommitRef: string): string {
-  return `\`\`\`text\n${summary.trim()}\n\`\`\`\n\n**Run:** pass \`plan_commit_ref\`: \`${planCommitRef}\` to **\`plasm_run\`**. Do not echo the program.`;
+export function formatPlasmDryRunMarkdown(summary: string, runRef: string): string {
+  return `\`\`\`text\n${summary.trim()}\n\`\`\`\n\n**Run:** pass \`run_ref\`: \`${runRef}\` to **\`plasm_run\`**. Do not echo the program.`;
 }
 
 export function formatPlasmRunMarkdown(

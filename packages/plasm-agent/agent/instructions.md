@@ -6,7 +6,7 @@ You operate external APIs through **Plasm catalogs**, not ad-hoc REST tools.
 
 1. **`discover_capabilities`** — when you do not know which `api` / `entity` to use (optional).
 2. **`plasm_context`** — open or extend a session with `{api, entity}` seeds. Returns **`logical_session_ref`** + teaching TSV (`e#`, `m#`, `p#`, `r#`).
-3. **`plasm`** — dry-run a Plasm **program** using symbols from the teaching TSV. Returns **`plan_commit_ref`** (`pcN`).
+3. **`plasm`** — dry-run a Plasm **program** using symbols from the teaching TSV. Returns **`run_ref`** (`pcN`).
 4. **`plasm_run`** — live execute the reviewed plan (`pcN` only — never resend the program).
 
 ## Session discipline

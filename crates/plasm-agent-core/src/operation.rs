@@ -277,6 +277,7 @@ pub struct OpAcceptContext {
     pub plan_ux_reflection: Option<serde_json::Value>,
     pub step_order: Vec<String>,
     pub plan_trace: Option<crate::trace_hub::PlanRunTraceHooks>,
+    pub mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
 }
 
 /// Narrow poll snapshot for `wait(...)` — avoids cloning cancel signals and full operation state.
@@ -412,10 +413,19 @@ pub(crate) fn op_accept_context_from_executable(
         plan_ux_reflection: None,
         step_order: Vec::new(),
         plan_trace: None,
+        mcp_result_policy: None,
     }
 }
 
 impl OpAcceptContext {
+    pub fn with_mcp_result_policy(
+        mut self,
+        policy: crate::mcp_run_markdown::McpResultTransportPolicy,
+    ) -> Self {
+        self.mcp_result_policy = Some(policy);
+        self
+    }
+
     pub fn with_plan_trace(mut self, hooks: crate::trace_hub::PlanRunTraceHooks) -> Self {
         self.plan_trace = Some(hooks);
         self
@@ -570,7 +580,7 @@ pub fn plan_commit_meta(
         dry_review.insert("unused_seeds".into(), json!(review.unused_seeds));
     }
     let mut plasm = serde_json::Map::new();
-    plasm.insert("plan_commit_ref".into(), json!(commit_ref.as_str()));
+    plasm.insert("run_ref".into(), json!(commit_ref.as_str()));
     plasm.insert(
         "dry_verdict".into(),
         json!(match verdict {
@@ -625,7 +635,7 @@ pub fn is_operation_continuation_program(program: &str) -> bool {
 pub fn plasm_dry_run_continuation_error(program: &str) -> Option<&'static str> {
     if is_operation_continuation_program(program) {
         Some(
-            "plan-only `plasm` cannot run `wait(...)` or `cancel(...)`; MCP live runs await server-side via `plasm_run` with a `plan_commit_ref`",
+            "plan-only `plasm` cannot run `wait(...)` or `cancel(...)`; MCP live runs await server-side via `plasm_run` with `run_ref`",
         )
     } else {
         None
@@ -669,6 +679,7 @@ async fn run_plasm_comp_on_pool(
     bundle: crate::plasm_comp_bundle::PlasmCompBundle,
     scope: ExecutionScope,
     plan_hooks: Option<PlanRunTraceHooks>,
+    mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
     telemetry: Arc<plasm_runtime::LiveRunTelemetry>,
     dry: Option<DryPlasmPlanEvaluation>,
 ) -> Result<PlasmPlanRunResult, String> {
@@ -684,6 +695,7 @@ async fn run_plasm_comp_on_pool(
                 plan_hooks,
                 Some(&scope),
                 dry,
+                mcp_result_policy,
             )
             .await
         })
@@ -708,6 +720,7 @@ pub fn spawn_async_plan_run(
     let mut accept = accept;
     accept.host = Some(Arc::downgrade(&st));
     let plan_hooks = accept.plan_trace.clone();
+    let mcp_result_policy = accept.mcp_result_policy;
     es.bind_operation_wire(session_id.as_str());
     es.try_begin_async_operation(handle.clone(), cancel.clone(), accept)?;
     let scope = ExecutionScope::for_async_operation(Arc::clone(&es), handle.clone(), cancel);
@@ -738,6 +751,7 @@ pub fn spawn_async_plan_run(
             bundle,
             scope_for_run,
             plan_hooks,
+            mcp_result_policy,
             telemetry,
             dry,
         )

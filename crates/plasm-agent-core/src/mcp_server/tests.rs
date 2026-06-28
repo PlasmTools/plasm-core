@@ -1,4 +1,9 @@
 use super::*;
+use super::mcp_plasm_invoke::McpPlasmRunTarget;
+
+fn default_plasm_tools() -> Vec<rust_mcp_sdk::schema::Tool> {
+    super::tools::plasm_tools(crate::mcp_run_markdown::ArtifactAccessMode::ResourcesRead)
+}
 
 #[test]
 fn mcp_discover_maps_intent_to_capability_query() {
@@ -105,6 +110,21 @@ fn mcp_plasm_run_tool_description_snapshot() {
 }
 
 #[test]
+fn plasm_read_run_artifact_gated_on_tool_fallback_mode() {
+    use crate::mcp_run_markdown::ArtifactAccessMode;
+    let resources = super::tools::plasm_tools(ArtifactAccessMode::ResourcesRead);
+    assert!(
+        !resources.iter().any(|t| t.name == "plasm_read_run_artifact"),
+        "default tool list must not expose read tool"
+    );
+    let tool_only = super::tools::plasm_tools(ArtifactAccessMode::ToolFallback);
+    assert!(
+        tool_only.iter().any(|t| t.name == "plasm_read_run_artifact"),
+        "tool-only list must expose read tool"
+    );
+}
+
+#[test]
 fn mcp_server_initialize_instructions_snapshot() {
     with_insta_snapshots(|| {
         insta::assert_snapshot!(
@@ -130,7 +150,7 @@ fn mcp_server_initialize_workflow_uses_intent_not_query() {
     assert!(!text.contains("syntax guide in MCP initialize"));
     assert!(text.contains("Multi-API"));
     assert!(text.contains("Reuse ref"));
-    let discover = super::PlasmMcpHandler::plasm_tools()
+    let discover = default_plasm_tools()
         .into_iter()
         .find(|t| t.name == "discover_capabilities")
         .expect("discover_capabilities");
@@ -184,7 +204,7 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
         .contains("e3(p15=\"value\").r2[p4]"));
     assert!(!plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("MCP initialize"));
     assert!(!plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("MCP initialize"));
-    for tool in super::PlasmMcpHandler::plasm_tools() {
+    for tool in default_plasm_tools() {
         let desc = tool.description.as_deref().unwrap_or("");
         assert!(
             !desc.contains("MCP initialize"),
@@ -208,7 +228,7 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
         }
     }
     let tools_json =
-        serde_json::to_string(&super::PlasmMcpHandler::plasm_tools()).expect("serialize tools");
+        serde_json::to_string(&default_plasm_tools()).expect("serialize tools");
     assert!(!tools_json.contains("MCP initialize"));
 }
 
@@ -241,7 +261,7 @@ fn mcp_prompt_static_tool_descriptions() {
         "program param description too long: {} chars",
         plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION.len()
     );
-    let tools = super::PlasmMcpHandler::plasm_tools();
+    let tools = default_plasm_tools();
     let v = serde_json::to_value(
         tools
             .iter()
@@ -265,7 +285,7 @@ fn mcp_prompt_static_tool_descriptions() {
 
 #[test]
 fn mcp_tool_list_hides_internal_auth_and_registry_tools() {
-    let names: Vec<String> = super::PlasmMcpHandler::plasm_tools()
+    let names: Vec<String> = default_plasm_tools()
         .into_iter()
         .map(|t| t.name)
         .collect();
@@ -294,7 +314,7 @@ fn mcp_tool_list_hides_internal_auth_and_registry_tools() {
 #[test]
 fn plasm_context_tool_description_snapshot() {
     with_insta_snapshots(|| {
-        let tools = super::PlasmMcpHandler::plasm_tools();
+        let tools = default_plasm_tools();
         let context = tools
             .iter()
             .find(|t| t.name == "plasm_context")
@@ -307,7 +327,7 @@ fn plasm_context_tool_description_snapshot() {
 
 #[test]
 fn plasm_context_tool_description_contract_append_vs_refresh() {
-    let tools = super::PlasmMcpHandler::plasm_tools();
+    let tools = default_plasm_tools();
     let desc = tools
         .iter()
         .find(|t| t.name == "plasm_context")
@@ -330,7 +350,7 @@ fn plasm_context_tool_description_contract_append_vs_refresh() {
 
 #[test]
 fn discover_capabilities_input_schema() {
-    let tools = super::PlasmMcpHandler::plasm_tools();
+    let tools = default_plasm_tools();
     let discover = tools
         .iter()
         .find(|t| t.name == "discover_capabilities")
@@ -357,7 +377,7 @@ fn discover_capabilities_input_schema() {
 
 #[test]
 fn plasm_context_input_schema_requires_intent_and_seeds() {
-    let tools = super::PlasmMcpHandler::plasm_tools();
+    let tools = default_plasm_tools();
     let ctx = tools
         .iter()
         .find(|t| t.name == "plasm_context")
@@ -400,7 +420,7 @@ fn plasm_context_input_schema_requires_intent_and_seeds() {
 /// removed interface, not a compatibility path.
 #[test]
 fn discover_capabilities_input_schema_requires_single_intent_string() {
-    let tools = super::PlasmMcpHandler::plasm_tools();
+    let tools = default_plasm_tools();
     let discover = tools
         .iter()
         .find(|t| t.name == "discover_capabilities")
@@ -424,7 +444,7 @@ fn discover_capabilities_input_schema_requires_single_intent_string() {
 
 #[test]
 fn plasm_input_schema_advertises_single_program_string() {
-    let tools = super::PlasmMcpHandler::plasm_tools();
+    let tools = default_plasm_tools();
     let plasm = tools
         .iter()
         .find(|t| t.name == "plasm")
@@ -477,7 +497,7 @@ fn plasm_run_invocation_rejects_program_and_wait_arguments() {
     ] {
         let mut args = serde_json::json!({
             "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
-            "plan_commit_ref": "pc0"
+            "run_ref": "pc0"
         });
         args.as_object_mut()
             .expect("object args")
@@ -495,42 +515,42 @@ fn plasm_run_invocation_rejects_program_and_wait_arguments() {
 }
 
 #[test]
-fn plasm_run_invocation_accepts_plan_commit_ref_pc_or_page_handle() {
+fn plasm_run_invocation_accepts_run_ref_pc_or_page_handle() {
     let commit = super::parse_mcp_plasm_invocation(
         "plasm_run",
         &serde_json::json!({
             "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
-            "plan_commit_ref": "pc12"
+            "run_ref": "pc12"
         }),
         false,
     )
     .expect("commit invocation");
-    let Some(pc) = commit.plan_commit_ref() else {
+    let Some(McpPlasmRunTarget::Commit(pc)) = commit.run_target() else {
         panic!("expected commit invocation");
     };
     assert_eq!(pc.as_str(), "pc12");
-    assert!(commit.page_handle().is_none());
     assert!(commit.program().is_none());
 
     let page = super::parse_mcp_plasm_invocation(
         "plasm_run",
         &serde_json::json!({
             "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
-            "plan_commit_ref": "l_AAAAAAAAQACAAAAAAAAAAQ_pg3"
+            "run_ref": "l_AAAAAAAAQACAAAAAAAAAAQ_pg3"
         }),
         false,
     )
     .expect("page invocation");
-    assert!(page.plan_commit_ref().is_none());
-    assert_eq!(
-        page.page_handle().expect("page handle").as_str(),
-        "l_AAAAAAAAQACAAAAAAAAAAQ_pg3"
-    );
+    match page.run_target() {
+        Some(McpPlasmRunTarget::Page(h)) => {
+            assert_eq!(h.as_str(), "l_AAAAAAAAQACAAAAAAAAAAQ_pg3");
+        }
+        _ => panic!("expected page invocation"),
+    }
 }
 
 #[test]
-fn plasm_run_rejects_deprecated_page_handle_param() {
-    let err = match super::parse_mcp_plasm_invocation(
+fn plasm_run_rejects_deprecated_transitional_params() {
+    let page_err = match super::parse_mcp_plasm_invocation(
         "plasm_run",
         &serde_json::json!({
             "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
@@ -541,8 +561,22 @@ fn plasm_run_rejects_deprecated_page_handle_param() {
         Ok(_) => panic!("page_handle param should be rejected"),
         Err(err) => format!("{err:?}"),
     };
-    assert!(err.contains("page_handle"), "unexpected error: {err}");
-    assert!(err.contains("plan_commit_ref"), "unexpected error: {err}");
+    assert!(page_err.contains("page_handle"), "unexpected error: {page_err}");
+    assert!(page_err.contains("run_ref"), "unexpected error: {page_err}");
+
+    let pc_err = match super::parse_mcp_plasm_invocation(
+        "plasm_run",
+        &serde_json::json!({
+            "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
+            "plan_commit_ref": "pc0"
+        }),
+        false,
+    ) {
+        Ok(_) => panic!("plan_commit_ref param should be rejected"),
+        Err(err) => format!("{err:?}"),
+    };
+    assert!(pc_err.contains("plan_commit_ref"), "unexpected error: {pc_err}");
+    assert!(pc_err.contains("run_ref"), "unexpected error: {pc_err}");
 }
 
 #[test]

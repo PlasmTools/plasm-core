@@ -63,6 +63,7 @@ impl ExecutePipeline {
             mcp_tool_hooks,
             execution_scope,
             dry,
+            None,
         )
         .await
     }

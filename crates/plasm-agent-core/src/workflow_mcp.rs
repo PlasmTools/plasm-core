@@ -88,12 +88,10 @@ pub fn workflow_mcp_tools() -> Vec<Tool> {
         ),
     );
     run_props.insert(
-        "program".into(),
-        crate::mcp_server::json_schema_string_type("Concrete program from `dry_workflow`."),
-    );
-    run_props.insert(
-        "plan_commit_ref".into(),
-        crate::mcp_server::json_schema_string_type("Plan token (`pcN`) from `dry_workflow`."),
+        "run_ref".into(),
+        crate::mcp_server::json_schema_string_type(
+            "Run token (`pcN`) from `dry_workflow` — pass to `run_workflow` / `plasm_run`.",
+        ),
     );
 
     let ui_meta = json!({
@@ -156,14 +154,10 @@ pub fn workflow_mcp_tools() -> Vec<Tool> {
             name: "run_workflow".into(),
             title: Some("Execute approved workflow plan".into()),
             description: Some(
-                "MCP App: live execute after `dry_workflow` review (`plan_commit_ref` required when verdict is review).".into(),
+                "MCP App: live execute after `dry_workflow` review (`run_ref` required when verdict is review).".into(),
             ),
             input_schema: ToolInputSchema::new(
-                vec![
-                    "logical_session_ref".into(),
-                    "program".into(),
-                    "plan_commit_ref".into(),
-                ],
+                vec!["logical_session_ref".into(), "run_ref".into()],
                 Some(run_props),
                 None,
             ),

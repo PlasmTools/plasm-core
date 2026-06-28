@@ -24,6 +24,7 @@ pub async fn run_plasm_comp(
     mcp_tool_hooks: Option<PlanRunTraceHooks>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
     dry: Option<DryPlasmPlanEvaluation>,
+    mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
 ) -> Result<PlasmPlanRunResult, String> {
     let dry = match dry {
         Some(d) => d,
@@ -53,6 +54,7 @@ pub async fn run_plasm_comp(
         dry,
         mcp_tool_hooks,
         execution_scope,
+        mcp_result_policy,
     ))
     .await
 }
@@ -67,6 +69,7 @@ pub(crate) async fn run_plasm_comp_scoped(
     dry: DryPlasmPlanEvaluation,
     mcp_tool_hooks: Option<PlanRunTraceHooks>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
+    mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
 ) -> Result<PlasmPlanRunResult, String> {
     crate::operation::with_plan_execute_scope(execution_scope, async {
         Box::pin(run_executable_plan_phased(
@@ -78,6 +81,7 @@ pub(crate) async fn run_plasm_comp_scoped(
             dry,
             mcp_tool_hooks,
             execution_scope,
+            mcp_result_policy,
         ))
         .await
     })
@@ -152,6 +156,7 @@ pub(crate) async fn run_executable_plan_phased(
     mut dry: DryPlasmPlanEvaluation,
     mcp_tool_hooks: Option<PlanRunTraceHooks>,
     execution_scope: Option<&crate::operation::ExecutionScope>,
+    mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
 ) -> Result<PlasmPlanRunResult, String> {
     let node_results = dry.take_node_results_for_live();
     let plan_shared = Arc::new(
@@ -363,6 +368,9 @@ pub(crate) async fn run_executable_plan_phased(
         es.cgs.as_ref().into(),
         meta_index_for_publish,
         &steps,
+        mcp_result_policy
+            .as_ref()
+            .unwrap_or(&crate::mcp_run_markdown::McpResultTransportPolicy::default()),
     )?;
     let comp = crate::plasm_comp_wire::trace_comp_wire_from_dry(&dry);
     let mut code_plan_run_artifacts = Vec::new();

@@ -1,0 +1,2 @@
+
+When only snapshot URIs are returned, read full JSON via MCP **`resources/read`**.

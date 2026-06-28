@@ -154,8 +154,9 @@ pub use mcp_prompt_fragments::{
 pub use mcp_tool_descriptions::{
     DISCOVER_TOOL_DESCRIPTION, MCP_INITIALIZE_WORKFLOW, MCP_TOOL_SEQUENCING_MARKER,
     MCP_TOOL_SYNTAX_CONTRACT_MARKER, PLASM_CONTEXT_TOOL_DESCRIPTION,
-    PLASM_PROGRAM_PARAM_DESCRIPTION, PLASM_RUN_TOOL_DESCRIPTION, PLASM_TOOL_DESCRIPTION,
-    TEACHING_VALID_EXPR_MARKER,
+    PLASM_PROGRAM_PARAM_DESCRIPTION, PLASM_RUN_TOOL_ARTIFACT_RESOURCES,
+    PLASM_RUN_TOOL_ARTIFACT_TOOL, PLASM_RUN_TOOL_DESCRIPTION,
+    PLASM_RUN_TOOL_DESCRIPTION_BASE, PLASM_TOOL_DESCRIPTION, TEACHING_VALID_EXPR_MARKER,
 };
 #[cfg(test)]
 pub(crate) use stats::domain_expression_tool_count_resolved;
@@ -955,6 +956,43 @@ fn opaque_pv_symbol_sort_key(sym: &str) -> Option<(u32, u32)> {
     Some((prefix as u32, n))
 }
 
+fn teaching_relation_field_gloss(
+    map: &SymbolMap,
+    r_sym: &str,
+    description: &str,
+) -> Option<TeachingFieldGloss> {
+    let wire = map.resolve_relation_ident(r_sym)?;
+    Some(TeachingFieldGloss {
+        symbol: r_sym.to_string(),
+        field_type: wire.to_string(),
+        allowed_values: String::new(),
+        description: description.to_string(),
+        is_inline_union_summary: false,
+    })
+}
+
+fn write_sorted_symbol_prefix_gloss_rows(
+    out: &mut String,
+    field_gloss_rows: &[TeachingFieldGloss],
+    prefix: char,
+) {
+    let mut gloss: Vec<&TeachingFieldGloss> = field_gloss_rows
+        .iter()
+        .filter(|g| g.symbol.starts_with(prefix))
+        .collect();
+    gloss.sort_by(|a, b| {
+        let ka = opaque_pv_symbol_sort_key(&a.symbol);
+        let kb = opaque_pv_symbol_sort_key(&b.symbol);
+        ka.cmp(&kb).then_with(|| a.symbol.cmp(&b.symbol))
+    });
+    let mut emitted = HashSet::new();
+    for g in gloss {
+        if emitted.insert(g.symbol.clone()) {
+            write_teaching_tsv_row(out, DomainTsvRow::FieldGloss(g));
+        }
+    }
+}
+
 pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> String {
     let mut out = String::new();
     out.push_str(TSV_TEACHING_TABLE_HEADER);
@@ -1062,22 +1100,7 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
         }
 
         // Phase B.5: `r#` gloss — stable numeric order (alias → wire name on the Meaning cell).
-        let mut r_gloss: Vec<&TeachingFieldGloss> = field_gloss_rows
-            .iter()
-            .filter(|g| g.symbol.starts_with('r'))
-            .collect();
-        r_gloss.sort_by(|a, b| {
-            let ka = opaque_pv_symbol_sort_key(&a.symbol);
-            let kb = opaque_pv_symbol_sort_key(&b.symbol);
-            ka.cmp(&kb).then_with(|| a.symbol.cmp(&b.symbol))
-        });
-        let mut emitted_r_slot: HashSet<String> = HashSet::new();
-        for g in r_gloss {
-            if !emitted_r_slot.insert(g.symbol.clone()) {
-                continue;
-            }
-            write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
-        }
+        write_sorted_symbol_prefix_gloss_rows(&mut out, field_gloss_rows, 'r');
 
         // Phase C: union constructor exemplars (`v101{p#=…}`) — before deferred union summary gloss.
         for &row_idx in &union_ctor_row_idxs {
@@ -2333,15 +2356,8 @@ pub(crate) fn render_relation_edge_delta_rows(
             }
         };
         if let Some(m) = map {
-            if let Some(wire) = m.resolve_relation_ident(r_sym.as_str()) {
+            if let Some(gloss) = teaching_relation_field_gloss(m, r_sym.as_str(), &description) {
                 if seen_r_gloss.insert(r_sym.clone()) {
-                    let gloss = TeachingFieldGloss {
-                        symbol: r_sym.clone(),
-                        field_type: wire.to_string(),
-                        allowed_values: String::new(),
-                        description: description.clone(),
-                        is_inline_union_summary: false,
-                    };
                     write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(&gloss));
                 }
             }
@@ -5279,12 +5295,16 @@ mod tests {
             "symbolic contract must teach placeholder substitution"
         );
         assert!(
-            contract.contains("plan_commit_ref"),
-            "MCP contract must teach paging via plan_commit_ref on plasm_run"
+            contract.contains("run_ref"),
+            "MCP contract must teach paging via run_ref on plasm_run"
         );
         assert!(
             !contract.contains("page_handle"),
             "contract must not advertise removed page_handle param"
+        );
+        assert!(
+            !contract.contains("plan_commit_ref"),
+            "plasm tool contract must not advertise plan_commit_ref as plasm_run param"
         );
         assert!(
             !contract.contains("program continuations"),

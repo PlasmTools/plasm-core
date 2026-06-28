@@ -8,7 +8,7 @@ export interface PlasmSpanContext {
   logicalSessionRef?: string;
   catalogCgsHash?: string;
   entryId?: string;
-  planCommitRef?: string;
+  runRef?: string;
   runId?: string;
   toolName?: string;
   transportHost?: string;
@@ -26,8 +26,8 @@ function applyPlasmAttributes(span: Span, ctx: PlasmSpanContext): void {
   if (ctx.catalogCgsHash) {
     span.setAttribute(PlasmSpanAttributes.CATALOG_CGS_HASH, ctx.catalogCgsHash);
   }
-  if (ctx.planCommitRef) {
-    span.setAttribute(PlasmSpanAttributes.PLAN_COMMIT_REF, ctx.planCommitRef);
+  if (ctx.runRef) {
+    span.setAttribute(PlasmSpanAttributes.RUN_REF, ctx.runRef);
   }
   if (ctx.runId) span.setAttribute(PlasmSpanAttributes.RUN_ID, ctx.runId);
   if (ctx.entryId) span.setAttribute(PlasmSpanAttributes.ENTRY_ID, ctx.entryId);

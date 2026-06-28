@@ -17,7 +17,7 @@ pub enum PlasmPagingStepMeta {
         /// 1-based step within this run (always `1` for a single-line `plasm` call).
         run_step: usize,
         returned_count: usize,
-        next_page_handle: PagingHandle,
+        next_run_ref: PagingHandle,
     },
 }
 
@@ -28,13 +28,13 @@ pub(crate) fn plasm_paging_json_value(paging: &[PlasmPagingStepMeta]) -> Option<
             PlasmPagingStepMeta::Next {
                 run_step,
                 returned_count,
-                next_page_handle,
+                next_run_ref,
             } => {
                 json!({
                     "run_step": run_step,
                     "has_more": true,
                     "count": returned_count,
-                    "next_page_handle": next_page_handle.as_str(),
+                    "next_run_ref": next_run_ref.as_str(),
                 })
             }
         })
@@ -517,7 +517,7 @@ mod tests {
         let paging = [PlasmPagingStepMeta::Next {
             run_step: 1,
             returned_count: 20,
-            next_page_handle: PagingHandle::mint_namespaced("l_AAAAAAAAQACAAAAAAAAAAQ", 1),
+            next_run_ref: PagingHandle::mint_namespaced("l_AAAAAAAAQACAAAAAAAAAAQ", 1),
         }];
         let (plasm, _) = idx.build_plasm_meta(
             std::slice::from_ref(&h),
@@ -534,7 +534,7 @@ mod tests {
             .expect("paging");
         assert_eq!(arr.len(), 1);
         assert_eq!(
-            arr[0]["next_page_handle"],
+            arr[0]["next_run_ref"],
             json!("l_AAAAAAAAQACAAAAAAAAAAQ_pg1")
         );
         assert_eq!(arr[0]["count"], json!(20));

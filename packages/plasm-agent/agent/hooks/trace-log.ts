@@ -4,7 +4,7 @@ export default defineHook({
   name: "trace-log",
   on: ["run:complete", "plan:commit"],
   handler: (_ctx, detail) => {
-    const event = detail?.planCommitRef ? "plan:commit" : "run:complete";
+    const event = detail?.runRef ? "plan:commit" : "run:complete";
     console.log(`[plasm:hook:trace-log] ${event}`, detail ?? {});
   },
 });

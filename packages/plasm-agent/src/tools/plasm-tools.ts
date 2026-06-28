@@ -62,9 +62,9 @@ const plasmRunInputSchema = z.object({
   logical_session_ref: z
     .string()
     .describe("Same logical_session_ref returned by plasm_context"),
-  plan_commit_ref: z
+  run_ref: z
     .string()
-    .describe("Executable plan token (pcN) from a prior plasm dry-run"),
+    .describe("pcN from plasm dry-run, or page handle from a prior plasm_run more-pages line"),
   reasoning: z
     .string()
     .optional()
@@ -100,10 +100,10 @@ export function createPlasmTools(runtime: AgentRuntime): ToolSet {
     plasm_run: tool({
       description: PLASM_RUN_TOOL_DESCRIPTION,
       inputSchema: toolInput(plasmRunInputSchema),
-      execute: async ({ logical_session_ref, plan_commit_ref, reasoning }) =>
+      execute: async ({ logical_session_ref, run_ref, reasoning }) =>
         runtime.plasmRun({
           logicalSessionRef: logical_session_ref,
-          planCommitRef: plan_commit_ref,
+          runRef: run_ref,
           reasoning,
         }),
     }),

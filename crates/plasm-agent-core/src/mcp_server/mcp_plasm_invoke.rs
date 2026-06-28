@@ -23,19 +23,10 @@ impl McpPlasmInvocation {
         }
     }
 
-    pub(crate) fn plan_commit_ref(&self) -> Option<&PlanCommitRef> {
+    pub(crate) fn run_target(&self) -> Option<&McpPlasmRunTarget> {
         match self {
             Self::Dry { .. } => None,
-            Self::Run(McpPlasmRunTarget::Commit(pc)) => Some(pc),
-            Self::Run(McpPlasmRunTarget::Page(_)) => None,
-        }
-    }
-
-    pub(crate) fn page_handle(&self) -> Option<&PagingHandle> {
-        match self {
-            Self::Dry { .. } => None,
-            Self::Run(McpPlasmRunTarget::Commit(_)) => None,
-            Self::Run(McpPlasmRunTarget::Page(h)) => Some(h),
+            Self::Run(target) => Some(target),
         }
     }
 
@@ -48,19 +39,30 @@ impl McpPlasmInvocation {
     }
 }
 
-fn looks_like_paging_handle_token(raw: &str) -> bool {
+fn strip_page_program_wrapper(raw: &str) -> &str {
     let s = raw.trim();
-    s.contains("_pg") || s.starts_with("page(")
-}
-
-fn parse_mcp_page_handle_param(raw: &str) -> Result<PagingHandle, String> {
-    let s = raw.trim();
-    let inner = s
-        .strip_prefix("page(")
+    s.strip_prefix("page(")
         .and_then(|rest| rest.strip_suffix(')'))
         .map(str::trim)
-        .unwrap_or(s);
-    PagingHandle::parse(inner).map_err(|e| e.to_string())
+        .unwrap_or(s)
+}
+
+fn parse_mcp_run_ref(raw: &str) -> Result<McpPlasmRunTarget, String> {
+    let token = strip_page_program_wrapper(raw);
+    if let Ok(handle) = PagingHandle::parse(token) {
+        return Ok(McpPlasmRunTarget::Page(handle));
+    }
+    if let Some(pc) = PlanCommitRef::parse(token) {
+        return Ok(McpPlasmRunTarget::Commit(pc));
+    }
+    Err(format!(
+        "expected `pcN` from a prior `plasm` dry-run, or a page handle from a prior result's \"more pages\" line (got `{token}`)"
+    ))
+}
+
+fn program_looks_like_paging_continuation(program: &str) -> bool {
+    let t = strip_page_program_wrapper(program.trim());
+    PagingHandle::parse(t).is_ok()
 }
 
 pub(crate) fn parse_mcp_plasm_invocation(
@@ -78,7 +80,7 @@ pub(crate) fn parse_mcp_plasm_invocation(
     if dry_run_only && v.get("execute").is_some() {
         return Err(invalid(
             tool_name,
-            "remove `execute`: `plasm` is plan-only. Call `plasm_run` with the same `logical_session_ref` and returned `plan_commit_ref` for live execution after reviewing the dry-run plan.",
+            "remove `execute`: `plasm` is plan-only. Call `plasm_run` with the same `logical_session_ref` and returned `run_ref` for live execution after reviewing the dry-run plan.",
         ));
     }
 
@@ -101,49 +103,50 @@ pub(crate) fn parse_mcp_plasm_invocation(
         return Ok(McpPlasmInvocation::Dry { program });
     }
 
-    for removed_key in ["program", "wait", "cancel", "force", "execute", "page_handle"] {
+    for removed_key in [
+        "program",
+        "wait",
+        "cancel",
+        "force",
+        "execute",
+        "page_handle",
+        "plan_commit_ref",
+    ] {
         if v.get(removed_key).is_some() {
             let msg = match removed_key {
                 "program" => {
                     if v.get("program")
                         .and_then(|x| x.as_str())
-                        .is_some_and(looks_like_paging_handle_token)
+                        .is_some_and(program_looks_like_paging_continuation)
                     {
-                        "`plasm_run` does not accept `program`; pass the page handle from the prior result's \"more pages\" line as `plan_commit_ref` (not `page(...)` — that is HTTP-execute program syntax)."
+                        "`plasm_run` does not accept `program`; pass the page handle as `run_ref` (not `page(...)` — that is HTTP-execute program syntax)."
                     } else {
-                        "`plasm_run` no longer accepts `program`; call `plasm` first, then pass the returned `plan_commit_ref`, or the page handle from a prior result's \"more pages\" line."
+                        "`plasm_run` no longer accepts `program`; call `plasm` first, then pass the returned `run_ref`, or a page handle from a prior result's \"more pages\" line."
                     }
                 }
-                "page_handle" => "`page_handle` was removed; pass the page handle as `plan_commit_ref` on `plasm_run`.",
+                "page_handle" => "`page_handle` was removed; pass the token as `run_ref` on `plasm_run`.",
+                "plan_commit_ref" => "`plan_commit_ref` was removed; pass the token as `run_ref` on `plasm_run`.",
                 "wait" => "MCP `plasm_run` always awaits server-side and does not accept `wait`.",
                 "cancel" => "MCP `plasm_run` does not accept `cancel`; live runs await server-side and operation cancellation is not agent-accessible on MCP.",
-                "force" => "MCP `plasm_run` does not accept `force`; execute the reviewed `plan_commit_ref` returned by `plasm`.",
-                "execute" => "MCP `plasm_run` does not accept `execute`; pass `plan_commit_ref`.",
+                "force" => "MCP `plasm_run` does not accept `force`; execute the reviewed `run_ref` returned by `plasm`.",
+                "execute" => "MCP `plasm_run` does not accept `execute`; pass `run_ref`.",
                 _ => unreachable!("removed key list is exhaustive"),
             };
             return Err(invalid(tool_name, msg));
         }
     }
-    let plan_commit_raw = v
-        .get("plan_commit_ref")
+    let run_ref_raw = v
+        .get("run_ref")
         .and_then(|x| x.as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    match plan_commit_raw {
+    match run_ref_raw {
         None => Err(invalid(
             tool_name,
-            "missing `plan_commit_ref`: call `plasm` first for a new run, or pass the page handle from a prior result's \"more pages\" line",
+            "missing `run_ref`: call `plasm` first for a new run, or pass the page handle from a prior result's \"more pages\" line",
         )),
-        Some(raw) if looks_like_paging_handle_token(raw) => parse_mcp_page_handle_param(raw)
-            .map(|handle| McpPlasmInvocation::Run(McpPlasmRunTarget::Page(handle)))
-            .map_err(|e| invalid(tool_name, format!("invalid page handle in `plan_commit_ref`: {e}"))),
-        Some(raw) => PlanCommitRef::parse(raw)
-            .map(|pc| McpPlasmInvocation::Run(McpPlasmRunTarget::Commit(pc)))
-            .ok_or_else(|| {
-                invalid(
-                    tool_name,
-                    "invalid `plan_commit_ref`: expected `pcN` from a prior `plasm` dry-run, or a page handle from a prior result's \"more pages\" line",
-                )
-            }),
+        Some(raw) => parse_mcp_run_ref(raw)
+            .map(McpPlasmInvocation::Run)
+            .map_err(|e| invalid(tool_name, format!("invalid `run_ref`: {e}"))),
     }
 }

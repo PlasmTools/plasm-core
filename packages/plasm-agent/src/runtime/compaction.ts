@@ -66,7 +66,7 @@ export async function maybeCompactMessages(
   const summary = await generateText({
     model: summaryModel,
     system:
-      "Summarize the prior agent conversation for continuation. Preserve goals, catalog picks, logical_session_ref, plan_commit_ref, and unresolved tasks. Be concise.",
+      "Summarize the prior agent conversation for continuation. Preserve goals, catalog picks, logical_session_ref, run_ref, and unresolved tasks. Be concise.",
     prompt: transcript,
     temperature: 0,
   });

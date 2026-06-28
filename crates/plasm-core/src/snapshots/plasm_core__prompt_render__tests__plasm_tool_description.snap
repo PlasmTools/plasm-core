@@ -2,7 +2,7 @@
 source: crates/plasm-core/src/prompt_render/mod.rs
 expression: "super::PLASM_TOOL_DESCRIPTION"
 ---
-**Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and executable **`plan_commit_ref`** (`pcN`). Pass that token to **`plasm_run`**; do **not** echo the program.
+**Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and executable **`run_ref`** (`pcN`). Pass that token to **`plasm_run`**; do **not** echo the program.
 
 **`program` is Plasm source text, not JSON data.** Write one raw expression (e.g. `e3(p15="electric").r2[p4,p5]`) or multiline bindings with final roots. If a plan merely echoes an object/array/string literal, that is a literal no-op; rewrite as Plasm source.
 
@@ -20,7 +20,7 @@ Symbol and fill rules:
 - `e#` entity; `m#` method; `p#` field/param/filter; `r#` relation nav; `v#` value-domain metadata only.
 - Relation hops: `.r#` (or the relation wire) on row producers — never a bare filter `p#` after `.` (`p#` in `e#{…}` is filter/param).
 - Never write `v#` in code; use `p#` keys and read `v#` rows for allowed values.
-- **Session/plan handles** (`logical_session_ref`, `plan_commit_ref` / `pcN`): MCP tokens only — copy verbatim; not program syntax.
+- **Session handles** (`logical_session_ref`, `run_ref` / `pcN`): MCP tokens only — copy verbatim; not program syntax.
 - Replace teaching placeholders (`$`, `<id>`, `<val>`) and exemplar ids (`pikachu`, `example-name`, …) with real values before output. Never emit `$` from a teaching row.
 - Get-head: **parens = identity** (`e_type(electric)`; bare word = string identity when the slot is a name/string field), **braces = query/filter** (`e#{p#=…}`). Keyed `e#(p#=<id>)` only when that `p#` is the identity field.
 - **Quote scalars only in `{…}` predicates** (`e#{p#="EVA"}`); identity ids in `e#(…)` need no quotes. EntityRef slots use `e#(id)`, not bare scalars.
@@ -30,7 +30,7 @@ Symbol and fill rules:
 Core surface:
 - Program shape: one `plasm_expr`, or `label = …` bindings then comma-separated final roots (no `return`).
 - Postfix/`[p#]`/`[fields]`: copy exact forms from the TSV left column (`.limit` `.sort` `.filter{…}` `.group_by` `.aggregate` …).
-- Large list reads return the first **25 rows** in `plasm_run`; further pages copy the handle from the prior result's "more pages" line into **`plan_commit_ref`** on the next **`plasm_run`** (no second **`plasm`** call).
+- Large list reads return the first **25 rows** in `plasm_run`; further pages copy the handle from the prior result's "more pages" line into **`run_ref`** on the next **`plasm_run`** (no second **`plasm`** call).
 - `page(...)` is HTTP-execute program syntax only — not an MCP tool argument or `plasm` program.
 - Search when exposed: `e#~$` or `e#~"text"` (bare `e#~` is a parse error); optional scoped filters `e#~"text"[{p#=…}]`.
 

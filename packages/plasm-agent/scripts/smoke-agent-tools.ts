@@ -6,10 +6,10 @@ import { createPlasmAgent } from "../agent/agent.js";
 
 const INTENT = "list execute_tiny products";
 
-function extractPlanCommitRef(markdown: string): string {
+function extractRunRef(markdown: string): string {
   const match = markdown.match(/\b(pc\d+)\b/);
   if (!match) {
-    throw new Error(`plan_commit_ref not found in dry-run output:\n${markdown}`);
+    throw new Error(`run_ref not found in dry-run output:\n${markdown}`);
   }
   return match[1];
 }
@@ -38,13 +38,13 @@ async function main(): Promise<void> {
     logicalSessionRef,
     program: "e1",
   });
-  const planCommitRef = extractPlanCommitRef(dryMd);
+  const runRef = extractRunRef(dryMd);
   console.log("--- plasm (dry) ---");
   console.log(dryMd);
 
   const runMd = await agent.runtime.plasmRun({
     logicalSessionRef,
-    planCommitRef,
+    runRef,
   });
   console.log("--- plasm_run (live) ---");
   console.log(runMd);

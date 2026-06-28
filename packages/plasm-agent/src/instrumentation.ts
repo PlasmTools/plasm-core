@@ -12,7 +12,7 @@ export const PlasmSpanAttributes = {
   INTENT: "plasm.intent",
   LOGICAL_SESSION_REF: "plasm.logical_session_ref",
   CATALOG_CGS_HASH: "plasm.catalog_cgs_hash",
-  PLAN_COMMIT_REF: "plasm.plan_commit_ref",
+  RUN_REF: "plasm.run_ref",
   RUN_ID: "plasm.run_id",
   ENTRY_ID: "plasm.entry_id",
   TOOL_NAME: "plasm.tool.name",

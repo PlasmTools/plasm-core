@@ -118,9 +118,9 @@ async fn plan_dry_run_mints_plan_commit_ref() {
     let pc = doc
         .get("_meta")
         .and_then(|m| m.get("plasm"))
-        .and_then(|p| p.get("plan_commit_ref"))
+        .and_then(|p| p.get("run_ref"))
         .and_then(|v| v.as_str())
-        .expect("plan_commit_ref");
+        .expect("run_ref");
     assert!(pc.starts_with("pc"));
     assert_eq!(
         doc.get("_meta")
@@ -197,9 +197,9 @@ async fn review_plan_auto_async_without_wait_false() {
     let pc = plan_doc
         .get("_meta")
         .and_then(|m| m.get("plasm"))
-        .and_then(|p| p.get("plan_commit_ref"))
+        .and_then(|p| p.get("run_ref"))
         .and_then(|v| v.as_str())
-        .expect("plan_commit_ref");
+        .expect("run_ref");
     let live_uri = format!("/execute/{ph}/{sid}?plan_commit_ref={pc}");
     let live_req = Request::builder()
         .method("POST")

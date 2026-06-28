@@ -79,22 +79,23 @@ pub(crate) fn build_inline_bodies(
                     shown,
                     resolved.row_count,
                     resolved.artifact.is_some(),
+                    plan.artifact_access,
                 ));
             }
         }
         if let (Some(fmt), Some(handle)) = (&resolved.format, &resolved.artifact) {
             if resolved.requires_snapshot_read(fmt) {
-                sections.push_str(&mcp_inline_run_snapshot_line(handle));
+                sections.push_str(&mcp_inline_run_snapshot_line(handle, plan.artifact_access));
             }
         }
         if let Some(handle) = &step.result.paging_handle {
             paging.push(PlasmPagingStepMeta::Next {
                 run_step: i + 1,
                 returned_count: resolved.row_count,
-                next_page_handle: handle.clone(),
+                next_run_ref: handle.clone(),
             });
             sections.push_str(&format!(
-                "\n\nmore pages — call `plasm_run` with `plan_commit_ref: \"{}\"`.",
+                "\n\nmore pages — call `plasm_run` with `run_ref: \"{}\"`.",
                 handle.as_str()
             ));
         }
@@ -176,7 +177,7 @@ pub(crate) fn render_markdown(
             let mut md =
                 mcp_compact_markdown_single(label.as_str(), rows, omitted, &lossy_preview_union);
             if let Some((_, h)) = truncated_refs.first() {
-                md.push_str(&mcp_inline_run_snapshot_line(h));
+                md.push_str(&mcp_inline_run_snapshot_line(h, plan.artifact_access));
             }
             md
         } else {
@@ -187,6 +188,7 @@ pub(crate) fn render_markdown(
                 omitted,
                 &lossy_preview_union,
                 &truncated_refs,
+                plan.artifact_access,
             )
         }
     } else {

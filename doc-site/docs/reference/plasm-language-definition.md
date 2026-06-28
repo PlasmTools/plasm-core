@@ -200,13 +200,13 @@ These are **host-only** surface expressions — not CGS entity operations. The p
 | `wait(oN)` | `oM` (HTTP) | Poll in-flight async plan run |
 | `cancel(oN)` | `oM` (HTTP) | Cooperative cancel of that operation |
 
-**MCP:** `plasm_run` awaits server-side and does not accept operation continuations. Agents author programs only through `plasm`; `plasm_run` executes the reviewed `plan_commit_ref` (`pcN`). Legacy transport slots (`s0`, …) are rejected.
+**MCP:** `plasm_run` awaits server-side and does not accept operation continuations. Agents author programs only through `plasm`; `plasm_run` executes the reviewed **`run_ref`** (`pcN` or page handle). Legacy transport slots (`s0`, …) are rejected.
 
 **HTTP execute:** long-op and paging handles are plain **`oN`** / **`pgN`** on the same execute session row.
 
 **Async plan runs:** HTTP execute may start live work with `?wait=false`; the accept response includes `wait(…)` in Markdown and `_meta.plasm.operation`. Poll with `wait(…)`; cancel with `cancel(…)`. MCP `plasm_run` awaits internally and returns a terminal response.
 
-**Review gate:** MCP live execute requires the **`plan_commit_ref`** (`pcN`) from `plasm`. HTTP live execute may use a matching `plan_commit_ref` or `force=true`. Commit ids hash the **semantic plan DAG** (`version`, `nodes`, `edges`, `topological_order`, `returns`) — not session-local plan names or dry-run summary metadata. See [plasm-long-operations.md](plasm-long-operations.md).
+**Review gate:** MCP live execute requires **`run_ref`** (`pcN`) from `plasm`. HTTP live execute may use query `plan_commit_ref=pcN` or `force=true`. Commit ids hash the **semantic plan DAG** (`version`, `nodes`, `edges`, `topological_order`, `returns`) — not session-local plan names or dry-run summary metadata. See [plasm-long-operations.md](plasm-long-operations.md).
 
 IR types: [`PageExpr`](../plasm-oss/crates/plasm-core/src/expr.rs), [`WaitExpr`](../plasm-oss/crates/plasm-core/src/expr.rs), [`CancelExpr`](../plasm-oss/crates/plasm-core/src/expr.rs).
 

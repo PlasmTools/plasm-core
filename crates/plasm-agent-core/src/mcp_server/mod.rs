@@ -34,7 +34,7 @@
 //! bucket (`prompt` / `invocation` / `tool_response`). When the session leaves the SDK session store,
 //! an `INFO` line logs cumulative character totals and token estimates (`plasm_agent::mcp`).
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -60,8 +60,7 @@ use rust_mcp_sdk::schema::{
     InitializeResult, ListResourceTemplatesResult, ListResourcesResult, ListToolsResult,
     PaginatedRequestParams, ProtocolVersion, ReadResourceContent, ReadResourceRequestParams,
     ReadResourceResult, ResourceTemplate, RpcError, ServerCapabilities,
-    ServerCapabilitiesResources, ServerCapabilitiesTools, TextContent, TextResourceContents, Tool,
-    ToolAnnotations, ToolExecution, ToolExecutionTaskSupport, ToolInputSchema,
+    ServerCapabilitiesResources, ServerCapabilitiesTools, TextContent, TextResourceContents,
 };
 use rust_mcp_sdk::session_store::SessionStore;
 use rust_mcp_sdk::McpServer;
@@ -103,17 +102,20 @@ use crate::server_state::PlasmHostState;
 use crate::session_identity::{ClientSessionKey, LogicalSessionId};
 use crate::trace_sink_emit::PlasmTraceContext;
 use chrono::Utc;
-use plasm_trace::RunArtifactArchiveRef;
 use serde_json::json;
 use uuid::Uuid;
 
 /// Best-effort bound on concurrent MCP transport sessions holding an execute binding (see module doc).
+mod artifact_access;
+mod artifact_resolve;
 mod committed_plasm_run;
 mod discover;
 mod mcp_plasm_invoke;
+mod read_run_artifact;
 mod resource_read_trace;
 mod schema;
 mod tool_parse;
+mod tools;
 mod trace;
 mod transport;
 
@@ -127,14 +129,8 @@ pub(crate) use discover::{
     read_resource_result_for_payload,
 };
 pub(crate) use mcp_plasm_invoke::{parse_mcp_plasm_invocation, McpPlasmInvocation};
-use plasm_core::prompt_render::{
-    DISCOVER_TOOL_DESCRIPTION, MCP_INITIALIZE_WORKFLOW, PLASM_CONTEXT_TOOL_DESCRIPTION,
-    PLASM_PROGRAM_PARAM_DESCRIPTION, PLASM_RUN_TOOL_DESCRIPTION, PLASM_TOOL_DESCRIPTION,
-};
-pub(crate) use schema::{
-    args_value, json_schema_non_empty_object_array, json_schema_non_empty_string_type,
-    json_schema_string_type,
-};
+use plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW;
+pub(crate) use schema::{args_value, json_schema_non_empty_string_type, json_schema_string_type};
 pub(crate) use tool_parse::{
     comp_content_sha256_hex, parse_logical_session_ref_arg, parse_optional_principal,
     parse_plasm_context_ranked_capabilities, parse_tool_seeds, plan_display_name_from_comp,
@@ -388,6 +384,72 @@ impl PlasmMcpHandler {
         Ok(p)
     }
 
+    pub(crate) async fn resolved_artifact_access_mode(
+        &self,
+        transport_key: &str,
+        runtime: &Arc<dyn McpServer>,
+    ) -> crate::mcp_run_markdown::ArtifactAccessMode {
+        let transport = self.session_state(transport_key).await;
+        {
+            let g = transport.lock().await;
+            if let Some(mode) = g.artifact_access_mode {
+                return mode;
+            }
+        }
+        self.detect_and_cache_artifact_access_mode(transport_key, runtime).await
+    }
+
+    pub(crate) async fn artifact_access_mode_for_runtime(
+        &self,
+        runtime: &Arc<dyn McpServer>,
+    ) -> crate::mcp_run_markdown::ArtifactAccessMode {
+        if let Some(key) = runtime.session_id() {
+            return self.resolved_artifact_access_mode(&key, runtime).await;
+        }
+        runtime.wait_for_initialization().await;
+        artifact_access::detect_artifact_access_mode(
+            runtime.client_info().as_ref(),
+            artifact_access::client_user_agent_hint(None).as_deref(),
+        )
+    }
+
+    async fn detect_and_cache_artifact_access_mode(
+        &self,
+        transport_key: &str,
+        runtime: &Arc<dyn McpServer>,
+    ) -> crate::mcp_run_markdown::ArtifactAccessMode {
+        let transport = self.session_state(transport_key).await;
+        if let Some(mode) = artifact_access::artifact_access_mode_from_env() {
+            transport.lock().await.artifact_access_mode = Some(mode);
+            return mode;
+        }
+        if runtime.client_info().is_none() {
+            runtime.wait_for_initialization().await;
+        }
+        let ua_from_transport = {
+            let g = transport.lock().await;
+            g.client_user_agent.clone()
+        };
+        let mode = artifact_access::detect_artifact_access_mode(
+            runtime.client_info().as_ref(),
+            artifact_access::client_user_agent_hint(ua_from_transport.as_deref()).as_deref(),
+        );
+        transport.lock().await.artifact_access_mode = Some(mode);
+        mode
+    }
+
+    /// HTTP layer may call this when User-Agent is available on the transport request.
+    #[allow(dead_code)]
+    pub(crate) async fn record_client_user_agent(&self, transport_key: &str, user_agent: String) {
+        if user_agent.trim().is_empty() {
+            return;
+        }
+        let transport = self.session_state(transport_key).await;
+        let mut g = transport.lock().await;
+        g.client_user_agent = Some(user_agent);
+        g.artifact_access_mode = None;
+    }
+
     async fn trace_session_meta(
         &self,
         _mcp_key: &str,
@@ -427,187 +489,6 @@ impl PlasmMcpHandler {
             mcp_config,
         }
     }
-
-    fn plasm_tools() -> Vec<Tool> {
-        let mut init_props = BTreeMap::new();
-        init_props.insert(
-            "intent".into(),
-            json_schema_string_type(
-                "Stable string for one user goal or agent context (e.g. one id for the whole chat). Same intent + tenant reuses the same logical session—do not rotate a new value every user message.",
-            ),
-        );
-        let mut discover_props = BTreeMap::new();
-        discover_props.insert(
-            "intent".into(),
-            json_schema_non_empty_string_type(
-                "One plain-language task description for the whole user goal. Returns catalog `api`/`entity` picks — not program symbols. Reuse the same intent for the resulting `plasm_context` session.",
-            ),
-        );
-        let mut context_props = init_props;
-        context_props.insert(
-            "seeds".into(),
-            json_schema_non_empty_object_array(
-                "Non-empty array of `{api, entity}` capability picks (or `{entry_id, entity}`). The `plasm_context` response returns the active symbols for `plasm` programs.",
-                vec!["api", "entity"],
-            ),
-        );
-        context_props.insert(
-            "ranked_capabilities".into(),
-            serde_json::from_value(serde_json::json!({
-                "type": ["array", "null"],
-                "items": { "type": "string" },
-                "description": "Optional capability **wire names** (e.g. from `discover_capabilities`). When non-empty, **non-seeded** mutators must appear in this list and score against **`intent`**. Seeded entities always teach **query/search/get** (and `primary_read`); **create/update/delete/action** need intent overlap (read-first open defers weak matches). Omit on expand to keep the session list; send **`null`** or **`[]`** to clear."
-            }))
-            .expect("ranked_capabilities schema"),
-        );
-        let mut plasm_program_props = BTreeMap::new();
-        plasm_program_props.insert(
-            "logical_session_ref".into(),
-            json_schema_string_type(
-                "Same `logical_session_ref` returned by `plasm_context`. Reuse for follow-up `plasm` (plan) and `plasm_run` (execute) calls.",
-            ),
-        );
-        plasm_program_props.insert(
-            "program".into(),
-            json_schema_string_type(PLASM_PROGRAM_PARAM_DESCRIPTION),
-        );
-        plasm_program_props.insert(
-            "reasoning".into(),
-            json_schema_string_type("Optional short note explaining the intent of this call."),
-        );
-        let mut plasm_run_props = plasm_program_props.clone();
-        plasm_run_props.remove("program");
-        plasm_run_props.insert(
-            "plan_commit_ref".into(),
-            json_schema_string_type(
-                "Token from the prior result: a `pcN` plan commit from `plasm`, or the page handle from a \"more pages\" line. (`page(...)` is HTTP-execute program syntax, not an MCP value.)",
-            ),
-        );
-
-        let mut tools = vec![
-            Tool {
-                name: "plasm_context".into(),
-                title: Some("Open or extend Plasm context".into()),
-                description: Some(PLASM_CONTEXT_TOOL_DESCRIPTION.into()),
-                input_schema: ToolInputSchema::new(
-                    vec!["intent".into(), "seeds".into()],
-                    Some(context_props),
-                    None,
-                ),
-                annotations: Some(ToolAnnotations {
-                    read_only_hint: Some(false),
-                    open_world_hint: Some(true),
-                    ..Default::default()
-                }),
-                execution: Some(ToolExecution {
-                    task_support: Some(ToolExecutionTaskSupport::Forbidden),
-                }),
-                icons: vec![],
-                meta: None,
-                output_schema: None,
-            },
-            Tool {
-                name: "discover_capabilities".into(),
-                title: Some("Resolve intent to capabilities".into()),
-                description: Some(DISCOVER_TOOL_DESCRIPTION.into()),
-                input_schema: ToolInputSchema::new(
-                    vec!["intent".into()],
-                    Some(discover_props),
-                    None,
-                ),
-                annotations: Some(ToolAnnotations {
-                    read_only_hint: Some(true),
-                    open_world_hint: Some(true),
-                    ..Default::default()
-                }),
-                execution: Some(ToolExecution {
-                    task_support: Some(ToolExecutionTaskSupport::Forbidden),
-                }),
-                icons: vec![],
-                meta: None,
-                output_schema: None,
-            },
-        ];
-        tools.push(Tool {
-            name: "plasm".into(),
-            title: Some("Plan Plasm (dry-run)".into()),
-            description: Some(PLASM_TOOL_DESCRIPTION.into()),
-            input_schema: ToolInputSchema::new(
-                vec!["logical_session_ref".into(), "program".into()],
-                Some(plasm_program_props.clone()),
-                None,
-            ),
-            annotations: Some(ToolAnnotations {
-                read_only_hint: Some(true),
-                open_world_hint: Some(true),
-                ..Default::default()
-            }),
-            execution: Some(ToolExecution {
-                task_support: Some(ToolExecutionTaskSupport::Forbidden),
-            }),
-            icons: vec![],
-            meta: Some(crate::plan_ui_mcp::plan_review_ui_tool_meta()),
-            output_schema: None,
-        });
-        tools.push(Tool {
-            name: "plasm_run".into(),
-            title: Some("Run Plasm (execute)".into()),
-            description: Some(PLASM_RUN_TOOL_DESCRIPTION.into()),
-            input_schema: ToolInputSchema::new(
-                vec!["logical_session_ref".into()],
-                Some(plasm_run_props),
-                None,
-            ),
-            annotations: Some(ToolAnnotations {
-                read_only_hint: Some(false),
-                open_world_hint: Some(true),
-                ..Default::default()
-            }),
-            execution: Some(ToolExecution {
-                task_support: Some(ToolExecutionTaskSupport::Forbidden),
-            }),
-            icons: vec![],
-            meta: Some(crate::run_explorer_ui_mcp::run_explorer_ui_tool_meta()),
-            output_schema: None,
-        });
-        tools.push(Tool {
-            name: "plasm_ui_list_catalogs".into(),
-            title: Some("List tenant-enabled catalogs (MCP App)".into()),
-            description: Some(
-                "Returns registry `entry_id`s allowed by tenant MCP policy for MCP App bootstrap UIs."
-                    .into(),
-            ),
-            input_schema: ToolInputSchema::new(vec![], Some(BTreeMap::new()), None),
-            annotations: Some(ToolAnnotations {
-                read_only_hint: Some(true),
-                open_world_hint: Some(false),
-                ..Default::default()
-            }),
-            execution: Some(ToolExecution {
-                task_support: Some(ToolExecutionTaskSupport::Forbidden),
-            }),
-            icons: vec![],
-            meta: Some(
-                serde_json::json!({
-                    "ui": { "visibility": ["app"] }
-                })
-                .as_object()
-                .cloned()
-                .expect("plasm_ui_list_catalogs meta"),
-            ),
-            output_schema: None,
-        });
-        if workflow_mcp_tools_enabled() {
-            tools.extend(crate::workflow_mcp::workflow_mcp_tools());
-        }
-        tools
-    }
-}
-
-fn workflow_mcp_tools_enabled() -> bool {
-    std::env::var("PLASM_MCP_WORKFLOW_TOOLS")
-        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-        .unwrap_or(false)
 }
 
 impl PlasmMcpHandler {
@@ -675,8 +556,6 @@ impl PlasmMcpHandler {
             crate::spans::mcp_tool_plasm_run(false, 1, session_ref.as_str())
         };
         let run_live = matches!(invocation, McpPlasmInvocation::Run(_));
-        let plan_commit_ref = invocation.plan_commit_ref().cloned();
-        let page_handle = invocation.page_handle().cloned();
         let (binding, this_invocation_chars, meta_index) = {
             let g = state.lock().await;
             let binding = g.binding.clone();
@@ -765,6 +644,11 @@ impl PlasmMcpHandler {
             mcp_key: ls_key.clone(),
             call_index,
         };
+        let artifact_mode = self.resolved_artifact_access_mode(key, runtime).await;
+        let mcp_result_policy = crate::mcp_run_markdown::McpResultTransportPolicy {
+            artifact_access: artifact_mode,
+            ..Default::default()
+        };
         let plan_trace = PlanRunTraceHooks {
             trace: mcp_trace.clone(),
             sink,
@@ -793,11 +677,13 @@ impl PlasmMcpHandler {
                 }
             }
             if run_live {
+                let run_target = invocation
+                    .run_target()
+                    .ok_or_else(|| "missing `run_ref` on plasm_run invocation".to_string())?;
                 let ingress = committed_plasm_run::resolve_mcp_live_run_ingress(
                     &es,
                     &mcp_trace,
-                    page_handle.as_ref(),
-                    plan_commit_ref.as_ref(),
+                    run_target,
                     self.plasm.engine.prompt_pipeline(),
                     self.plasm.sessions.symbol_map_cross_cache(),
                     call_index,
@@ -825,6 +711,7 @@ impl PlasmMcpHandler {
                     mcp_trace: mcp_trace.clone(),
                     artifacts,
                     plan_trace: Some(plan_trace),
+                    mcp_result_policy: Some(mcp_result_policy),
                     force_run,
                     wait_live,
                 })
@@ -856,7 +743,7 @@ impl PlasmMcpHandler {
                         let commit_ref = es.mint_plan_commit_ref();
                         let mut markdown = format!("```text\n{dry_text}\n```");
                         markdown.push_str(&format!(
-                            "\n\n**Run:** pass `plan_commit_ref`: `{}` to **`plasm_run`**. Do not echo the program.",
+                            "\n\n**Run:** pass `run_ref`: `{}` to **`plasm_run`**. Do not echo the program.",
                             commit_ref.as_str()
                         ));
                         let commit_record = PlanCommitRecord {
@@ -1341,10 +1228,11 @@ impl ServerHandler for PlasmMcpHandler {
     async fn handle_list_tools_request(
         &self,
         _request: Option<PaginatedRequestParams>,
-        _runtime: Arc<dyn McpServer>,
+        runtime: Arc<dyn McpServer>,
     ) -> Result<ListToolsResult, RpcError> {
+        let mode = self.artifact_access_mode_for_runtime(&runtime).await;
         Ok(ListToolsResult {
-            tools: Self::plasm_tools(),
+            tools: tools::plasm_tools(mode),
             meta: None,
             next_cursor: None,
         })
@@ -1509,111 +1397,26 @@ impl ServerHandler for PlasmMcpHandler {
                     "no execute session for this logical session: call plasm_context with capability picks (`seeds`) first",
                 ));
             };
-            let live_sess = self
-                .plasm
-                .get_execute_session(b.prompt_hash.as_str(), b.session_id.as_str())
-                .await;
-            let live_art = if let Some(ref sess) = live_sess {
-                sess.core
-                    .get_run_artifact_by_resource_index(resource_index)
-                    .await
-            } else {
-                None
-            };
-            let live_payload = live_art.as_ref().map(|a| a.payload.clone());
-            if live_payload.is_some() {
-                crate::metrics::record_execute_artifact_resolve_layer("hot");
-            }
-            let persisted_payload = if live_payload.is_none() {
-                match self
-                    .plasm
-                    .run_artifacts
-                    .get_payload_result_by_resource_index(
-                        b.prompt_hash.as_str(),
-                        b.session_id.as_str(),
-                        resource_index,
-                    )
-                    .await
-                {
-                    Ok(v) => v,
-                    Err(e) => {
-                        crate::metrics::record_mcp_resource_read(
-                            "logical_short",
-                            "error",
-                            "decode_failed",
-                            started.elapsed(),
-                        );
-                        let rid = self
-                            .plasm
-                            .run_artifacts
-                            .resolve_run_id_for_resource_index(
-                                b.prompt_hash.as_str(),
-                                b.session_id.as_str(),
-                                resource_index,
-                            )
-                            .await;
-                        let arch = rid.map(|run_id| RunArtifactArchiveRef {
-                            prompt_hash: b.prompt_hash.clone(),
-                            session_id: b.session_id.clone(),
-                            run_id: run_id.to_wire(),
-                            resource_index: Some(resource_index),
-                        });
-                        resource_read_trace::McpResourceReadTrace::error(
-                            Some(&ls_key),
-                            read_source,
-                            started,
-                            uri,
-                            arch,
-                            "decode_failed",
-                        )
-                        .emit(&self.plasm)
-                        .await;
-                        return Err(RpcError::internal_error()
-                            .with_message(format!("run artifact decode failed: {e}")));
-                    }
+            let resolved = artifact_resolve::resolve_run_artifact_for_binding(
+                self.plasm.as_ref(),
+                &b,
+                artifact_resolve::RunArtifactLookup::ShortIndex { resource_index },
+                Some(ls_key.as_str()),
+                read_source,
+                started,
+                uri,
+            )
+            .await
+            .map_err(|e| match e {
+                artifact_resolve::RunArtifactResolveError::DecodeFailed(msg) => {
+                    RpcError::internal_error().with_message(format!("run artifact decode failed: {msg}"))
                 }
-            } else {
-                None
-            };
-            if live_payload.is_none() && persisted_payload.is_some() {
-                crate::metrics::record_execute_artifact_resolve_layer("archive");
-            }
-            let Some(payload) = live_payload.or(persisted_payload) else {
-                crate::metrics::record_mcp_resource_read(
-                    "logical_short",
-                    "error",
-                    "unknown_artifact",
-                    started.elapsed(),
-                );
-                resource_read_trace::McpResourceReadTrace::error(
-                    Some(&ls_key),
-                    read_source,
-                    started,
-                    uri,
-                    None,
-                    "unknown_artifact",
-                )
-                .emit(&self.plasm)
-                .await;
-                return Err(RpcError::invalid_params().with_message(format!(
-                    "unknown run artifact index {resource_index} for this session"
-                )));
-            };
-            let run_id = live_art.as_ref().map(|a| a.run_id).or(self
-                .plasm
-                .run_artifacts
-                .resolve_run_id_for_resource_index(
-                    b.prompt_hash.as_str(),
-                    b.session_id.as_str(),
-                    resource_index,
-                )
-                .await);
-            let archive = run_id.map(|run_id| RunArtifactArchiveRef {
-                prompt_hash: b.prompt_hash.clone(),
-                session_id: b.session_id.clone(),
-                run_id: run_id.to_wire(),
-                resource_index: Some(resource_index),
-            });
+                artifact_resolve::RunArtifactResolveError::UnknownIndex(idx) => {
+                    RpcError::invalid_params()
+                        .with_message(format!("unknown run artifact index {idx} for this session"))
+                }
+                other => RpcError::invalid_params().with_message(other.to_string()),
+            })?;
             crate::spans::mcp_resource_read().in_scope(|| {
                 tracing::info!(
                     target: "plasm_agent::mcp",
@@ -1622,27 +1425,17 @@ impl ServerHandler for PlasmMcpHandler {
                     prompt_hash = %b.prompt_hash,
                     session_id = %b.session_id,
                     resource_index,
-                    bytes = payload.bytes.len(),
+                    bytes = resolved.payload.bytes.len(),
                     "MCP resources/read"
                 );
             });
             crate::metrics::record_mcp_resource_read(
-                "logical_short",
+                resolved.metric_kind,
                 "success",
                 "none",
                 started.elapsed(),
             );
-            resource_read_trace::McpResourceReadTrace::success(
-                Some(&ls_key),
-                read_source,
-                started,
-                uri,
-                archive,
-                &payload,
-            )
-            .emit(&self.plasm)
-            .await;
-            return read_resource_result_for_payload(uri, payload);
+            return read_resource_result_for_payload(uri, resolved.payload);
         }
 
         let Some((prompt_hash, session_id, run_id)) = parse_plasm_execute_run_uri(uri) else {
@@ -1661,83 +1454,30 @@ impl ServerHandler for PlasmMcpHandler {
             .logical_session_id_for_execute_binding(prompt_hash.as_str(), session_id.as_str())
             .await
             .map(|u| u.to_string());
-        let canonical_archive = RunArtifactArchiveRef {
+        let binding = PlasmExecBinding {
             prompt_hash: prompt_hash.clone(),
             session_id: session_id.clone(),
-            run_id: run_id.to_wire(),
-            resource_index: None,
         };
-        let live_sess = self
-            .plasm
-            .get_execute_session(prompt_hash.as_str(), session_id.as_str())
-            .await;
-        let live_payload = if let Some(sess) = &live_sess {
-            sess.core
-                .get_run_artifact(run_id)
-                .await
-                .map(|a| a.payload.clone())
-        } else {
-            None
-        };
-        if live_payload.is_some() {
-            crate::metrics::record_execute_artifact_resolve_layer("hot");
-        }
-        let persisted_payload = if live_payload.is_none() {
-            match self
-                .plasm
-                .run_artifacts
-                .get_payload_result(&prompt_hash, &session_id, run_id)
-                .await
-            {
-                Ok(v) => v,
-                Err(e) => {
-                    crate::metrics::record_mcp_resource_read(
-                        "canonical",
-                        "error",
-                        "decode_failed",
-                        started.elapsed(),
-                    );
-                    resource_read_trace::McpResourceReadTrace::error(
-                        ls_key_opt.as_deref(),
-                        read_source,
-                        started,
-                        uri,
-                        Some(canonical_archive.clone()),
-                        "decode_failed",
-                    )
-                    .emit(&self.plasm)
-                    .await;
-                    return Err(RpcError::internal_error()
-                        .with_message(format!("run artifact decode failed: {e}")));
-                }
+        let resolved = artifact_resolve::resolve_run_artifact_for_binding(
+            self.plasm.as_ref(),
+            &binding,
+            artifact_resolve::RunArtifactLookup::CanonicalRun { run_id },
+            ls_key_opt.as_deref(),
+            read_source,
+            started,
+            uri,
+        )
+        .await
+        .map_err(|e| match e {
+            artifact_resolve::RunArtifactResolveError::DecodeFailed(msg) => {
+                RpcError::internal_error().with_message(format!("run artifact decode failed: {msg}"))
             }
-        } else {
-            None
-        };
-        if live_payload.is_none() && persisted_payload.is_some() {
-            crate::metrics::record_execute_artifact_resolve_layer("archive");
-        }
-        let Some(payload) = live_payload.or(persisted_payload) else {
-            crate::metrics::record_mcp_resource_read(
-                "canonical",
-                "error",
-                "unknown_artifact",
-                started.elapsed(),
-            );
-            resource_read_trace::McpResourceReadTrace::error(
-                ls_key_opt.as_deref(),
-                read_source,
-                started,
-                uri,
-                Some(canonical_archive.clone()),
-                "unknown_artifact",
-            )
-            .emit(&self.plasm)
-            .await;
-            return Err(RpcError::invalid_params().with_message(
-                "unknown run artifact (wrong run_id or not yet stored for this session)",
-            ));
-        };
+            artifact_resolve::RunArtifactResolveError::UnknownRunId => RpcError::invalid_params()
+                .with_message(
+                    "unknown run artifact (wrong run_id or not yet stored for this session)",
+                ),
+            other => RpcError::invalid_params().with_message(other.to_string()),
+        })?;
         crate::spans::mcp_resource_read().in_scope(|| {
             tracing::info!(
                 target: "plasm_agent::mcp",
@@ -1745,22 +1485,17 @@ impl ServerHandler for PlasmMcpHandler {
                 prompt_hash = %prompt_hash,
                 session_id = %session_id,
                 run_id = %run_id.to_wire(),
-                bytes = payload.bytes.len(),
+                bytes = resolved.payload.bytes.len(),
                 "MCP resources/read"
             );
         });
-        crate::metrics::record_mcp_resource_read("canonical", "success", "none", started.elapsed());
-        resource_read_trace::McpResourceReadTrace::success(
-            ls_key_opt.as_deref(),
-            read_source,
-            started,
-            uri,
-            Some(canonical_archive),
-            &payload,
-        )
-        .emit(&self.plasm)
-        .await;
-        read_resource_result_for_payload(uri, payload)
+        crate::metrics::record_mcp_resource_read(
+            resolved.metric_kind,
+            "success",
+            "none",
+            started.elapsed(),
+        );
+        read_resource_result_for_payload(uri, resolved.payload)
     }
 
     async fn handle_call_tool_request(
@@ -1905,6 +1640,30 @@ async fn dispatch_plasm_mcp_call_tool_request(
             handler
                 .handle_plasm_mcp_tool(&key, &runtime, &v, tool_name, dry_run_only, started)
                 .await
+        }
+        "plasm_read_run_artifact" => {
+            let started = Instant::now();
+            let res = handler
+                .handle_read_run_artifact(key.as_str(), &runtime, &v)
+                .await;
+            let elapsed = started.elapsed();
+            match &res {
+                Ok(_) => crate::metrics::record_mcp_tool(
+                    "plasm_read_run_artifact",
+                    None,
+                    "success",
+                    "none",
+                    elapsed,
+                ),
+                Err(e) => crate::metrics::record_mcp_tool(
+                    "plasm_read_run_artifact",
+                    None,
+                    "error",
+                    mcp_call_tool_error_class(e),
+                    elapsed,
+                ),
+            }
+            res
         }
         _ => {
             crate::metrics::record_mcp_tool(

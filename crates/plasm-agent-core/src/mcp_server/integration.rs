@@ -95,6 +95,34 @@ async fn spawn_matrix_langitem_mock() -> String {
     base
 }
 
+async fn spawn_matrix_langitem_mock_many() -> String {
+    use axum::{extract::Path, routing::get, Json, Router};
+
+    async fn list_items() -> Json<serde_json::Value> {
+        let items: Vec<serde_json::Value> = (0..30)
+            .map(|i| serde_json::json!({"id": format!("item-{i}"), "title": format!("trace-{i}")}))
+            .collect();
+        Json(serde_json::Value::Array(items))
+    }
+
+    async fn get_item(Path(id): Path<String>) -> Json<serde_json::Value> {
+        Json(serde_json::json!({"id": id, "title": "trace-test"}))
+    }
+
+    let app = Router::new()
+        .route("/language/v1/items", get(list_items))
+        .route("/language/v1/items/{id}", get(get_item));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind matrix mock");
+    let base = format!("http://{}", listener.local_addr().expect("local addr"));
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("matrix mock serve");
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    base
+}
+
 fn minimal_execute_session() -> ExecuteSession {
     let cgs = Arc::new(CGS::new());
     let mut ctxs = IndexMap::new();
@@ -845,6 +873,7 @@ async fn mcp_plan_trace_hooks_emit_plasm_line_and_network_totals() {
             ),
             LiveRunSpawnOpts {
                 plan_trace: Some(plan_trace),
+                ..Default::default()
             },
         ),
     )
@@ -1032,6 +1061,7 @@ async fn execute_mcp_live_run_page_handle_synthetic_continuation() {
         mcp_trace,
         artifacts,
         plan_trace: Some(plan_trace),
+        mcp_result_policy: None,
         force_run: false,
         wait_live: true,
     })
@@ -1171,7 +1201,7 @@ async fn plasm_run_page_handle_through_handler() {
             &runtime,
             &json!({
                 "logical_session_ref": logical_session_ref,
-                "plan_commit_ref": page_handle.as_str()
+                "run_ref": page_handle.as_str()
             }),
             "plasm_run",
             false,
@@ -1184,4 +1214,171 @@ async fn plasm_run_page_handle_through_handler() {
         markdown.contains("```tsv") && markdown.contains("item-"),
         "expected page rows in handler markdown: {markdown}"
     );
+}
+
+#[tokio::test]
+async fn plasm_read_run_artifact_matches_resources_read() {
+    let prior = std::env::var("PLASM_MCP_ARTIFACT_ACCESS").ok();
+    std::env::set_var("PLASM_MCP_ARTIFACT_ACCESS", "tool");
+
+    async {
+        use super::PlasmMcpHandler;
+        use rust_mcp_sdk::schema::ReadResourceRequestParams;
+        use rust_mcp_sdk::mcp_server::ServerHandler;
+        use rust_mcp_sdk::ToMcpServerHandler;
+        use serde_json::json;
+
+        let base_url = spawn_matrix_langitem_mock_many().await;
+        let st = Arc::new(matrix_federated_host_with_base(Some(base_url.as_str())));
+        let handler = PlasmMcpHandler::new(Arc::clone(&st));
+        let mcp_handler = PlasmMcpHandler::new(Arc::clone(&st)).to_mcp_server_handler();
+        let runtime = test_mcp_runtime(mcp_handler, "artifact-read-parity");
+        let mcp_key = "artifact-read-parity";
+
+        let context_res = handler
+            .handle_mcp_tool_plasm_context(
+                mcp_key,
+                &runtime,
+                &json!({
+                    "intent": "artifact read parity",
+                    "seeds": [{"api": "github", "entity": "LangItem"}]
+                }),
+            )
+            .await
+            .expect("plasm_context");
+        let logical_session_ref = context_res
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("plasm"))
+            .and_then(|p| p.get("logical_session_ref"))
+            .and_then(|v| v.as_str())
+            .expect("logical_session_ref in plasm_context meta");
+
+        let plan_res = handler
+            .handle_plasm_mcp_tool(
+                mcp_key,
+                &runtime,
+                &json!({
+                    "logical_session_ref": logical_session_ref,
+                    "program": "e1"
+                }),
+                "plasm",
+                true,
+                std::time::Instant::now(),
+            )
+            .await
+            .expect("plasm dry");
+        let run_ref = plan_res
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("plasm"))
+            .and_then(|p| p.get("run_ref"))
+            .and_then(|v| v.as_str())
+            .expect("run_ref in plasm meta");
+
+        let run_res = handler
+            .handle_plasm_mcp_tool(
+                mcp_key,
+                &runtime,
+                &json!({
+                    "logical_session_ref": logical_session_ref,
+                    "run_ref": run_ref
+                }),
+                "plasm_run",
+                false,
+                std::time::Instant::now(),
+            )
+            .await
+            .expect("plasm_run");
+
+        let logical_uuid = crate::mcp_logical_ref::parse_logical_session_wire_ref(logical_session_ref)
+            .expect("parse logical_session_ref")
+            .as_uuid();
+        let binding = handler
+            .resolve_binding_for_logical(mcp_key, logical_uuid)
+            .await
+            .expect("execute binding");
+
+        let plasm_meta = run_res
+            .meta
+            .as_ref()
+            .and_then(|m| m.get("plasm"))
+            .expect("plasm meta on plasm_run");
+
+        let first_step = plasm_meta
+            .get("steps")
+            .and_then(|s| s.as_array())
+            .and_then(|a| a.first())
+            .expect("steps in plasm_run meta");
+
+        let artifact_uri = first_step
+            .get("artifact_uri")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let run_id = first_step
+            .get("run_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+
+        let read_args = if let Some(ref uri) = artifact_uri {
+            json!({
+                "logical_session_ref": logical_session_ref,
+                "artifact_uri": uri,
+            })
+        } else if let Some(ref run_id) = run_id {
+            json!({
+                "logical_session_ref": logical_session_ref,
+                "run_id": run_id,
+            })
+        } else {
+            panic!("expected artifact_uri or run_id in plasm_run meta: {plasm_meta}");
+        };
+
+        let read_tool = handler
+            .handle_read_run_artifact(mcp_key, &runtime, &read_args)
+            .await
+            .expect("plasm_read_run_artifact");
+
+        let uri = artifact_uri.unwrap_or_else(|| {
+            format!(
+                "plasm://execute/{}/{}/run/{}",
+                binding.prompt_hash,
+                binding.session_id,
+                run_id.expect("run_id for canonical uri")
+            )
+        });
+        let read_resource = handler
+            .handle_read_resource_request(
+                ReadResourceRequestParams {
+                    uri,
+                    meta: None,
+                },
+                Arc::clone(&runtime),
+            )
+            .await
+            .expect("resources/read");
+
+        let tool_text = call_tool_result_markdown(&read_tool);
+        let resource_text = read_resource
+            .contents
+            .first()
+            .and_then(|c| match c {
+                rust_mcp_sdk::schema::ReadResourceContent::TextResourceContents(t) => Some(t.text.clone()),
+                _ => None,
+            })
+            .expect("text resource contents");
+
+        assert_eq!(tool_text, resource_text);
+        assert!(
+            tool_text.contains("item-"),
+            "expected snapshot JSON rows: {tool_text}"
+        );
+    }
+    .await;
+
+    if let Some(v) = prior {
+        std::env::set_var("PLASM_MCP_ARTIFACT_ACCESS", v);
+    } else {
+        std::env::remove_var("PLASM_MCP_ARTIFACT_ACCESS");
+    }
 }
