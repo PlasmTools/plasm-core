@@ -103,7 +103,9 @@ fn pokeapi_execute_session(cgs: Arc<CGS>) -> ExecuteSession {
         None,
         vec!["Berry".into()],
         None,
+        None,
         cgs.catalog_cgs_hash_hex(),
+        None,
         None,
     )
 }
