@@ -1,5 +1,5 @@
-use super::*;
 use super::mcp_plasm_invoke::McpPlasmRunTarget;
+use super::*;
 
 fn default_plasm_tools() -> Vec<rust_mcp_sdk::schema::Tool> {
     super::tools::plasm_tools(crate::mcp_run_markdown::ArtifactAccessMode::ResourcesRead)
@@ -114,12 +114,16 @@ fn plasm_read_run_artifact_gated_on_tool_fallback_mode() {
     use crate::mcp_run_markdown::ArtifactAccessMode;
     let resources = super::tools::plasm_tools(ArtifactAccessMode::ResourcesRead);
     assert!(
-        !resources.iter().any(|t| t.name == "plasm_read_run_artifact"),
+        !resources
+            .iter()
+            .any(|t| t.name == "plasm_read_run_artifact"),
         "default tool list must not expose read tool"
     );
     let tool_only = super::tools::plasm_tools(ArtifactAccessMode::ToolFallback);
     assert!(
-        tool_only.iter().any(|t| t.name == "plasm_read_run_artifact"),
+        tool_only
+            .iter()
+            .any(|t| t.name == "plasm_read_run_artifact"),
         "tool-only list must expose read tool"
     );
 }
@@ -227,8 +231,7 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
             );
         }
     }
-    let tools_json =
-        serde_json::to_string(&default_plasm_tools()).expect("serialize tools");
+    let tools_json = serde_json::to_string(&default_plasm_tools()).expect("serialize tools");
     assert!(!tools_json.contains("MCP initialize"));
 }
 
@@ -285,10 +288,7 @@ fn mcp_prompt_static_tool_descriptions() {
 
 #[test]
 fn mcp_tool_list_hides_internal_auth_and_registry_tools() {
-    let names: Vec<String> = default_plasm_tools()
-        .into_iter()
-        .map(|t| t.name)
-        .collect();
+    let names: Vec<String> = default_plasm_tools().into_iter().map(|t| t.name).collect();
     assert!(!names.iter().any(|n| n == "plasm_incoming_auth"));
     assert!(!names.iter().any(|n| n == "list_registry"));
     assert!(names.iter().any(|n| n == "plasm_context"));
@@ -561,7 +561,10 @@ fn plasm_run_rejects_deprecated_transitional_params() {
         Ok(_) => panic!("page_handle param should be rejected"),
         Err(err) => format!("{err:?}"),
     };
-    assert!(page_err.contains("page_handle"), "unexpected error: {page_err}");
+    assert!(
+        page_err.contains("page_handle"),
+        "unexpected error: {page_err}"
+    );
     assert!(page_err.contains("run_ref"), "unexpected error: {page_err}");
 
     let pc_err = match super::parse_mcp_plasm_invocation(
@@ -575,7 +578,10 @@ fn plasm_run_rejects_deprecated_transitional_params() {
         Ok(_) => panic!("plan_commit_ref param should be rejected"),
         Err(err) => format!("{err:?}"),
     };
-    assert!(pc_err.contains("plan_commit_ref"), "unexpected error: {pc_err}");
+    assert!(
+        pc_err.contains("plan_commit_ref"),
+        "unexpected error: {pc_err}"
+    );
     assert!(pc_err.contains("run_ref"), "unexpected error: {pc_err}");
 }
 

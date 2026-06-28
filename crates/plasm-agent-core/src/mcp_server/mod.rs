@@ -396,7 +396,8 @@ impl PlasmMcpHandler {
                 return mode;
             }
         }
-        self.detect_and_cache_artifact_access_mode(transport_key, runtime).await
+        self.detect_and_cache_artifact_access_mode(transport_key, runtime)
+            .await
     }
 
     pub(crate) async fn artifact_access_mode_for_runtime(
@@ -1409,7 +1410,8 @@ impl ServerHandler for PlasmMcpHandler {
             .await
             .map_err(|e| match e {
                 artifact_resolve::RunArtifactResolveError::DecodeFailed(msg) => {
-                    RpcError::internal_error().with_message(format!("run artifact decode failed: {msg}"))
+                    RpcError::internal_error()
+                        .with_message(format!("run artifact decode failed: {msg}"))
                 }
                 artifact_resolve::RunArtifactResolveError::UnknownIndex(idx) => {
                     RpcError::invalid_params()
@@ -1470,7 +1472,8 @@ impl ServerHandler for PlasmMcpHandler {
         .await
         .map_err(|e| match e {
             artifact_resolve::RunArtifactResolveError::DecodeFailed(msg) => {
-                RpcError::internal_error().with_message(format!("run artifact decode failed: {msg}"))
+                RpcError::internal_error()
+                    .with_message(format!("run artifact decode failed: {msg}"))
             }
             artifact_resolve::RunArtifactResolveError::UnknownRunId => RpcError::invalid_params()
                 .with_message(

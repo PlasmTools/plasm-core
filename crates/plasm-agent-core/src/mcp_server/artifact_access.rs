@@ -13,7 +13,9 @@ pub(crate) fn artifact_access_mode_from_env() -> Option<ArtifactAccessMode> {
         .as_str()
     {
         "tool" | "tool_fallback" | "tool-fallback" => Some(ArtifactAccessMode::ToolFallback),
-        "resources" | "resources_read" | "resources-read" => Some(ArtifactAccessMode::ResourcesRead),
+        "resources" | "resources_read" | "resources-read" => {
+            Some(ArtifactAccessMode::ResourcesRead)
+        }
         _ => None,
     }
 }
@@ -115,10 +117,7 @@ mod tests {
     #[test]
     fn anthropic_mcp_user_agent_is_tool_fallback() {
         assert_eq!(
-            detect_artifact_access_mode(
-                None,
-                Some("anthropic-mcp-connector/1.0"),
-            ),
+            detect_artifact_access_mode(None, Some("anthropic-mcp-connector/1.0"),),
             ArtifactAccessMode::ToolFallback
         );
     }

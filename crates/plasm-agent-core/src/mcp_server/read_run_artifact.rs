@@ -35,7 +35,9 @@ pub(crate) fn parse_read_run_artifact_lookup(
         if obj.contains_key(key) {
             return Err(CallToolError::invalid_arguments(
                 TOOL,
-                Some(format!("`{key}` is not accepted on plasm_read_run_artifact")),
+                Some(format!(
+                    "`{key}` is not accepted on plasm_read_run_artifact"
+                )),
             ));
         }
     }
@@ -50,9 +52,7 @@ pub(crate) fn parse_read_run_artifact_lookup(
     if count != 1 {
         return Err(CallToolError::invalid_arguments(
             TOOL,
-            Some(
-                "provide exactly one of `artifact_uri`, `resource_index`, or `run_id`".into(),
-            ),
+            Some("provide exactly one of `artifact_uri`, `resource_index`, or `run_id`".into()),
         ));
     }
     let lookup = if has_uri {
@@ -113,15 +113,17 @@ impl PlasmMcpHandler {
         v: &serde_json::Value,
     ) -> Result<CallToolResult, CallToolError> {
         let principal_incoming = self.ensure_mcp_principal(transport_key, runtime).await?;
-        let mode = self.resolved_artifact_access_mode(transport_key, runtime).await;
+        let mode = self
+            .resolved_artifact_access_mode(transport_key, runtime)
+            .await;
         if !mode.exposes_read_tool() {
             return Err(CallToolError::from_message(
                 "plasm_read_run_artifact is not available on this MCP transport (use MCP resources/read)",
             ));
         }
         let (session_ref, lookup_arg) = parse_read_run_artifact_lookup(v)?;
-        let logical_uuid = self
-            .resolve_logical_session_ref_to_uuid("plasm_read_run_artifact", &session_ref)?;
+        let logical_uuid =
+            self.resolve_logical_session_ref_to_uuid("plasm_read_run_artifact", &session_ref)?;
         let scope = tenant_scope(principal_incoming.as_ref());
         if !self
             .plasm
@@ -158,13 +160,8 @@ impl PlasmMcpHandler {
                 )
                 .map_err(map_resolve_err)?
             }
-            other => resolve_lookup_arg(
-                session_ref.as_str(),
-                &binding,
-                ls_key.as_str(),
-                other,
-            )
-            .map_err(map_resolve_err)?,
+            other => resolve_lookup_arg(session_ref.as_str(), &binding, ls_key.as_str(), other)
+                .map_err(map_resolve_err)?,
         };
         let resolved = resolve_run_artifact_for_binding(
             self.plasm.as_ref(),
@@ -218,7 +215,9 @@ fn map_resolve_err(e: RunArtifactResolveError) -> CallToolError {
         RunArtifactResolveError::DecodeFailed(msg) => {
             CallToolError::from_message(format!("run artifact decode failed: {msg}"))
         }
-        other => CallToolError::invalid_arguments("plasm_read_run_artifact", Some(other.to_string())),
+        other => {
+            CallToolError::invalid_arguments("plasm_read_run_artifact", Some(other.to_string()))
+        }
     }
 }
 

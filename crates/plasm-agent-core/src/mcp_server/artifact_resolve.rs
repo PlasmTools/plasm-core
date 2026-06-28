@@ -5,8 +5,8 @@ use std::time::Instant;
 use plasm_trace::RunArtifactArchiveRef;
 
 use crate::run_artifacts::{
-    logical_uuid_from_uri_segment, parse_plasm_execute_run_uri, parse_plasm_session_short_resource_uri,
-    ArtifactPayload, RunArtifactId,
+    logical_uuid_from_uri_segment, parse_plasm_execute_run_uri,
+    parse_plasm_session_short_resource_uri, ArtifactPayload, RunArtifactId,
 };
 use crate::server_state::PlasmHostState;
 
@@ -115,7 +115,9 @@ pub(crate) async fn resolve_run_artifact_for_binding(
     uri_for_trace: &str,
 ) -> Result<ResolvedRunArtifact, RunArtifactResolveError> {
     let (metric_kind, resource_index, run_id_hint) = match lookup {
-        RunArtifactLookup::ShortIndex { resource_index } => ("logical_short", Some(resource_index), None),
+        RunArtifactLookup::ShortIndex { resource_index } => {
+            ("logical_short", Some(resource_index), None)
+        }
         RunArtifactLookup::CanonicalRun { run_id } => ("canonical", None, Some(run_id)),
     };
 
@@ -150,9 +152,13 @@ pub(crate) async fn resolve_run_artifact_for_binding(
         }
         Err(e) => {
             let (reason, archive) = match &e {
-                RunArtifactResolveError::DecodeFailed(_) => ("decode_failed", archive_for_lookup(binding, &lookup)),
+                RunArtifactResolveError::DecodeFailed(_) => {
+                    ("decode_failed", archive_for_lookup(binding, &lookup))
+                }
                 RunArtifactResolveError::UnknownIndex(_) => ("unknown_artifact", None),
-                RunArtifactResolveError::UnknownRunId => ("unknown_artifact", archive_for_lookup(binding, &lookup)),
+                RunArtifactResolveError::UnknownRunId => {
+                    ("unknown_artifact", archive_for_lookup(binding, &lookup))
+                }
                 _ => ("unknown_artifact", None),
             };
             resource_read_trace::McpResourceReadTrace::error(
@@ -210,11 +216,7 @@ async fn fetch_run_artifact_payload(
             )
         } else if let Some(rid) = run_id {
             let art = sess.core.get_run_artifact(rid).await;
-            (
-                art.as_ref().map(|a| a.payload.clone()),
-                Some(rid),
-                None,
-            )
+            (art.as_ref().map(|a| a.payload.clone()), Some(rid), None)
         } else {
             (None, None, None)
         }
@@ -272,14 +274,16 @@ async fn fetch_run_artifact_payload(
     let resolved_run_id = match (live_run_id, run_id, resource_index) {
         (Some(rid), _, _) => Some(rid),
         (None, Some(rid), _) => Some(rid),
-        (None, None, Some(idx)) => plasm
-            .run_artifacts
-            .resolve_run_id_for_resource_index(
-                binding.prompt_hash.as_str(),
-                binding.session_id.as_str(),
-                idx,
-            )
-            .await,
+        (None, None, Some(idx)) => {
+            plasm
+                .run_artifacts
+                .resolve_run_id_for_resource_index(
+                    binding.prompt_hash.as_str(),
+                    binding.session_id.as_str(),
+                    idx,
+                )
+                .await
+        }
         (None, None, None) => None,
     };
 

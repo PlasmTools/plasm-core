@@ -122,13 +122,11 @@ impl QueryIndex {
             .iter()
             .filter(|k| match base.get(*k) {
                 None => session.entries.contains_key(*k),
-                Some(base_v) => {
-                    crate::materialization_conflict::ref_list_materialization_diverged(
-                        Some(base_v.as_slice()),
-                        branch.entries.get(*k).map(|v| v.as_slice()),
-                        session.entries.get(*k).map(|v| v.as_slice()),
-                    )
-                }
+                Some(base_v) => crate::materialization_conflict::ref_list_materialization_diverged(
+                    Some(base_v.as_slice()),
+                    branch.entries.get(*k).map(|v| v.as_slice()),
+                    session.entries.get(*k).map(|v| v.as_slice()),
+                ),
             })
             .cloned()
             .collect()

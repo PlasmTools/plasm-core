@@ -155,8 +155,8 @@ pub use mcp_tool_descriptions::{
     DISCOVER_TOOL_DESCRIPTION, MCP_INITIALIZE_WORKFLOW, MCP_TOOL_SEQUENCING_MARKER,
     MCP_TOOL_SYNTAX_CONTRACT_MARKER, PLASM_CONTEXT_TOOL_DESCRIPTION,
     PLASM_PROGRAM_PARAM_DESCRIPTION, PLASM_RUN_TOOL_ARTIFACT_RESOURCES,
-    PLASM_RUN_TOOL_ARTIFACT_TOOL, PLASM_RUN_TOOL_DESCRIPTION,
-    PLASM_RUN_TOOL_DESCRIPTION_BASE, PLASM_TOOL_DESCRIPTION, TEACHING_VALID_EXPR_MARKER,
+    PLASM_RUN_TOOL_ARTIFACT_TOOL, PLASM_RUN_TOOL_DESCRIPTION, PLASM_RUN_TOOL_DESCRIPTION_BASE,
+    PLASM_TOOL_DESCRIPTION, TEACHING_VALID_EXPR_MARKER,
 };
 #[cfg(test)]
 pub(crate) use stats::domain_expression_tool_count_resolved;
@@ -5788,13 +5788,13 @@ mod tests {
         let cgs = load_schema_dir(&dir).unwrap();
         let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
         assert!(
-            tsv.lines().any(|l| {
-                l.contains("Content scoped to this profile") && l.starts_with('r')
-            }) && tsv.lines().any(|l| {
-                l.contains("e7")
-                    && (l.contains(".r") || l.contains(".recorded_matches"))
-                    && l.contains("relation e7")
-            }),
+            tsv.lines()
+                .any(|l| { l.contains("Content scoped to this profile") && l.starts_with('r') })
+                && tsv.lines().any(|l| {
+                    l.contains("e7")
+                        && (l.contains(".r") || l.contains(".recorded_matches"))
+                        && l.contains("relation e7")
+                }),
             "expected Profile → RecordedContent r# gloss and relation nav; e7 lines:\n{}",
             tsv.lines()
                 .filter(|l| l.contains("e7"))

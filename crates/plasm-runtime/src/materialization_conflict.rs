@@ -199,14 +199,8 @@ mod tests {
     #[test]
     fn ref_list_materialization_allows_concurrent_relation_pages() {
         let base = vec![Ref::new("Pokemon", "pikachu")];
-        let page_a = vec![
-            Ref::new("Pokemon", "1"),
-            Ref::new("Pokemon", "2"),
-        ];
-        let page_b = vec![
-            Ref::new("Pokemon", "1"),
-            Ref::new("Pokemon", "3"),
-        ];
+        let page_a = vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "2")];
+        let page_b = vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "3")];
         assert!(!ref_list_materialization_diverged(
             Some(base.as_slice()),
             Some(page_a.as_slice()),
@@ -221,14 +215,8 @@ mod tests {
 
     #[test]
     fn ref_list_materialization_rejects_inconsistent_base_retention() {
-        let base = vec![
-            Ref::new("Pokemon", "a"),
-            Ref::new("Pokemon", "b"),
-        ];
-        let branch = vec![
-            Ref::new("Pokemon", "a"),
-            Ref::new("Pokemon", "c"),
-        ];
+        let base = vec![Ref::new("Pokemon", "a"), Ref::new("Pokemon", "b")];
+        let branch = vec![Ref::new("Pokemon", "a"), Ref::new("Pokemon", "c")];
         let session = vec![
             Ref::new("Pokemon", "a"),
             Ref::new("Pokemon", "b"),

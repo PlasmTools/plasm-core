@@ -1223,8 +1223,8 @@ async fn plasm_read_run_artifact_matches_resources_read() {
 
     async {
         use super::PlasmMcpHandler;
-        use rust_mcp_sdk::schema::ReadResourceRequestParams;
         use rust_mcp_sdk::mcp_server::ServerHandler;
+        use rust_mcp_sdk::schema::ReadResourceRequestParams;
         use rust_mcp_sdk::ToMcpServerHandler;
         use serde_json::json;
 
@@ -1291,9 +1291,10 @@ async fn plasm_read_run_artifact_matches_resources_read() {
             .await
             .expect("plasm_run");
 
-        let logical_uuid = crate::mcp_logical_ref::parse_logical_session_wire_ref(logical_session_ref)
-            .expect("parse logical_session_ref")
-            .as_uuid();
+        let logical_uuid =
+            crate::mcp_logical_ref::parse_logical_session_wire_ref(logical_session_ref)
+                .expect("parse logical_session_ref")
+                .as_uuid();
         let binding = handler
             .resolve_binding_for_logical(mcp_key, logical_uuid)
             .await
@@ -1349,10 +1350,7 @@ async fn plasm_read_run_artifact_matches_resources_read() {
         });
         let read_resource = handler
             .handle_read_resource_request(
-                ReadResourceRequestParams {
-                    uri,
-                    meta: None,
-                },
+                ReadResourceRequestParams { uri, meta: None },
                 Arc::clone(&runtime),
             )
             .await
@@ -1363,7 +1361,9 @@ async fn plasm_read_run_artifact_matches_resources_read() {
             .contents
             .first()
             .and_then(|c| match c {
-                rust_mcp_sdk::schema::ReadResourceContent::TextResourceContents(t) => Some(t.text.clone()),
+                rust_mcp_sdk::schema::ReadResourceContent::TextResourceContents(t) => {
+                    Some(t.text.clone())
+                }
                 _ => None,
             })
             .expect("text resource contents");

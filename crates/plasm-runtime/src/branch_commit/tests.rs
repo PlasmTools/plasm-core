@@ -149,20 +149,14 @@ fn concurrent_same_relation_key_ref_pages_no_conflict() {
     let mut page_a = electric.clone();
     page_a.relations.insert(
         "pokemon".into(),
-        vec![
-            Ref::new("Pokemon", "1"),
-            Ref::new("Pokemon", "2"),
-        ],
+        vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "2")],
     );
     branch_a.insert(page_a).expect("branch a page");
 
     let mut page_b = electric.clone();
     page_b.relations.insert(
         "pokemon".into(),
-        vec![
-            Ref::new("Pokemon", "1"),
-            Ref::new("Pokemon", "3"),
-        ],
+        vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "3")],
     );
     branch_b.insert(page_b).expect("branch b page");
 
@@ -221,27 +215,18 @@ fn additive_disjoint_relation_keys_no_conflict() {
 fn query_index_concurrent_ref_pages_no_conflict() {
     let mut session = QueryIndex::default();
     let key = QueryCacheKey::test("Type\0pokemon_list\0name=electric");
-    session.insert(
-        key.clone(),
-        vec![Ref::new("Pokemon", "pikachu")],
-    );
+    session.insert(key.clone(), vec![Ref::new("Pokemon", "pikachu")]);
 
     let base = session.entries_snapshot();
     let mut branch_a = session.clone();
     branch_a.insert(
         key.clone(),
-        vec![
-            Ref::new("Pokemon", "1"),
-            Ref::new("Pokemon", "2"),
-        ],
+        vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "2")],
     );
     let mut branch_b = session.clone();
     branch_b.insert(
         key.clone(),
-        vec![
-            Ref::new("Pokemon", "1"),
-            Ref::new("Pokemon", "3"),
-        ],
+        vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "3")],
     );
 
     let write_a = branch_a.branch_write_keys(&base);

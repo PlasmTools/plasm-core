@@ -259,7 +259,8 @@ pub(crate) fn emit_field_def_lines_before_example(
     let cid = catalog_entry_id.to_string();
     for sym in crate::symbol_tuning::field_syms_for_teaching_row(expr, result_gloss, cap_legend) {
         let field_name = if sym.starts_with('r') {
-            map.resolve_relation_ident(sym.as_str()).unwrap_or(sym.as_str())
+            map.resolve_relation_ident(sym.as_str())
+                .unwrap_or(sym.as_str())
         } else {
             map.resolve_ident(sym.as_str()).unwrap_or(sym.as_str())
         };
