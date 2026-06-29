@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.90] - 2026-06-29
+
+### Fixed
+
+- **Row-to-text templates:** preserve teaching `p#` aliases on `ComputeOp::Render` (`column_aliases`) through plan → comp wire → live execute; Minijinja `rows` expose both `r.pN` and wire field names.
+- **Invoke teaching legend:** unseeded `EntityRef` gloss on all capability invoke rows via centralized `capability_legend_with_session_gloss`.
+
+### Changed
+
+- **Compute IR unification:** agent plan compute types (`ComputeOp`, `ComputeTemplate`, `FieldPath`, `PlanPredicate`, …) re-export from `plasm_core`; step convert uses direct clone instead of JSON bridging (prevents silent wire-field drift).
+- **Render compile:** `RenderColumns` bundle + extracted `plasm_render_compile.rs`; strict alias validation at compile time.
+- **MCP smoke scripts:** `plasm_run` calls use `run_ref`; HTTP progress URLs unchanged (`plan_commit_ref=`).
+- **Teaching / tool contract:** row-to-text worked example in `plasm_tool.txt`; matrix views e2e asserts `column_aliases` on comp wire.
+
 ## [0.3.89] - 2026-06-29
 
 ### Fixed

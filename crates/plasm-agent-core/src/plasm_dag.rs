@@ -14,9 +14,14 @@ use crate::plasm_plan::{
     PlanRelationTraversal, PlanValue, QualifiedEntityKey, RelationCardinality,
     RelationSourceCardinality, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
 };
+use crate::plasm_plan_run::RenderColumns;
 use crate::plasm_plan_run::{
     format_session_symbolic_parse_error, parse_plasm_surface_line_program,
     symbol_map_for_plasm_surface_parse,
+};
+use crate::plasm_render_compile::{
+    infer_column_tokens_from_minijinja_template, parse_field_list_with_tokens,
+    resolve_inferred_render_columns,
 };
 use crate::program_binding::{
     BoundedSingletonKind, ContinuationAnchor, ContinuationCapability, ProgramBindingContract,
@@ -626,50 +631,6 @@ fn lookup_dag_node<'a>(
     id: &str,
 ) -> Option<&'a DagNode> {
     state.get(id).or_else(|| staged.iter().find(|n| n.id == id))
-}
-
-/// Infer `[p#,…]` columns from `{{ r.field }}` / `{{ field }}` references in a row template body.
-fn infer_columns_from_minijinja_template(template: &str) -> Option<Vec<OutputName>> {
-    let mut cols = Vec::new();
-    let mut rest = template;
-    while let Some(start) = rest.find("{{") {
-        let after = &rest[start + 2..];
-        let Some(end) = after.find("}}") else {
-            break;
-        };
-        let expr = after[..end].trim();
-        let field = expr
-            .strip_prefix("r.")
-            .or_else(|| expr.strip_prefix("rows[0]."))
-            .map(|f| f.split('|').next().unwrap_or(f).trim());
-        let Some(field) = field else {
-            rest = &after[end + 2..];
-            continue;
-        };
-        if field == "rows" || field.is_empty() {
-            rest = &after[end + 2..];
-            continue;
-        }
-        if field
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
-        {
-            if let Ok(name) = OutputName::new(field.to_string()) {
-                if !cols
-                    .iter()
-                    .any(|c: &OutputName| c.as_str() == name.as_str())
-                {
-                    cols.push(name);
-                }
-            }
-        }
-        rest = &after[end + 2..];
-    }
-    if cols.is_empty() {
-        None
-    } else {
-        Some(cols)
-    }
 }
 
 fn infer_render_columns_for_node(
@@ -1704,17 +1665,20 @@ fn compile_render_from_tail(
             let scratch = compile_state_with_nodes(state, &[]);
             let qe =
                 resolve_qualified_entity_for_dag_source(&scratch, &[], source.trim().to_string());
-            let columns = parse_field_list(session, state.cross_cache, qe.as_ref(), fields.trim())?
-                .into_iter()
-                .map(OutputName::new)
-                .collect::<Result<Vec<_>, _>>()?;
+            let field_pairs = parse_field_list_with_tokens(
+                session,
+                state.cross_cache,
+                qe.as_ref(),
+                fields.trim(),
+            )?;
+            let spec = RenderColumns::from_field_pairs(&field_pairs)?;
             compile_render_chain(
                 session,
                 state,
                 id,
                 rhs_display,
                 source.trim(),
-                Some(columns),
+                Some(spec),
                 template,
             )
         }
@@ -1730,7 +1694,7 @@ fn compile_render_chain(
     id: &str,
     rhs_display: &str,
     head: &str,
-    explicit_columns: Option<Vec<OutputName>>,
+    explicit_render: Option<RenderColumns>,
     template: String,
 ) -> Result<Vec<DagNode>, String> {
     let (head_core, suffixes) = decompose_row_suffix_stream(session, state, head)?;
@@ -1764,10 +1728,21 @@ fn compile_render_chain(
             .ok_or_else(|| format!("Plasm program `{id}`: empty render chain"))?
     };
 
-    let columns: Vec<OutputName> = if let Some(cols) = explicit_columns {
-        cols
-    } else if let Some(cols) = infer_columns_from_minijinja_template(&template) {
-        cols
+    let spec = if let Some(explicit) = explicit_render {
+        explicit
+    } else if let Some(raw_tokens) = infer_column_tokens_from_minijinja_template(&template) {
+        let scratch = compile_state_with_nodes(state, &prefix);
+        let qe = resolve_qualified_entity_for_dag_source(
+            &scratch,
+            &prefix,
+            chain_tail_id.clone(),
+        );
+        resolve_inferred_render_columns(
+            session,
+            state.cross_cache,
+            qe.as_ref(),
+            &raw_tokens,
+        )?
     } else {
         let tail_node =
             lookup_dag_node(state, &prefix, chain_tail_id.as_str()).ok_or_else(|| {
@@ -1775,11 +1750,12 @@ fn compile_render_chain(
                     "Plasm program `{id}`: template column inference failed for `{chain_tail_id}`"
                 )
             })?;
-        infer_render_columns_for_node(session, state, &prefix, tail_node)
-            .map_err(|e| format!("Plasm program `{id}`: cannot infer template columns: {e}"))?
+        let cols = infer_render_columns_for_node(session, state, &prefix, tail_node)
+            .map_err(|e| format!("Plasm program `{id}`: cannot infer template columns: {e}"))?;
+        RenderColumns::from_op_parts(cols, BTreeMap::new())
     };
 
-    if columns.is_empty() {
+    if spec.is_empty() {
         return Err(format!(
             "Plasm program `{id}`: row-to-text templates require at least one column; use `[field,...] <<TAG` after narrowing"
         ));
@@ -1799,7 +1775,14 @@ fn compile_render_chain(
         },
         source: DagNodeSource::Compute {
             source: chain_tail_id,
-            op: ComputeOp::Render { columns, template },
+            op: {
+                let (columns, column_aliases) = spec.into_op_parts();
+                ComputeOp::Render {
+                    columns,
+                    template,
+                    column_aliases,
+                }
+            },
             schema: plan_render_content_schema()?,
         },
     };
@@ -3296,28 +3279,8 @@ fn parse_field_list(
     qe: Option<&QualifiedEntityKey>,
     fields: &str,
 ) -> Result<Vec<String>, String> {
-    let out = split_top_level(fields, ',')?
-        .into_iter()
-        .map(|s| {
-            let t = s.trim();
-            plasm_core::expr_parser::normalize_nested_projection_field(t)
-        })
-        .collect::<Result<Vec<_>, _>>()?
-        .into_iter()
-        .map(|s| {
-            crate::plasm_plan_run::resolve_wire_field_token(
-                session,
-                symbol_map_cross_cache,
-                qe,
-                s.as_str(),
-            )
-        })
-        .filter(|s| !s.is_empty())
-        .collect::<Vec<_>>();
-    if out.is_empty() {
-        return Err("field list must be non-empty".to_string());
-    }
-    Ok(out)
+    parse_field_list_with_tokens(session, symbol_map_cross_cache, qe, fields)
+        .map(|pairs| pairs.into_iter().map(|(_, wire)| wire).collect())
 }
 
 /// Parses one comma-separated aggregate specification after `.aggregate(...)` / `group_by` tail.

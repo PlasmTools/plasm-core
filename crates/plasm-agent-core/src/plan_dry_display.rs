@@ -442,7 +442,7 @@ fn compact_op_from_compute(
         ComputeOp::DedupeBy { keys } => PlanDryOp::Dedupe {
             keys: keys.iter().map(|k| k.dotted()).collect(),
         },
-        ComputeOp::Render { columns, template } => PlanDryOp::Render {
+        ComputeOp::Render { columns, template, .. } => PlanDryOp::Render {
             columns: columns.iter().map(|c| c.as_str().to_string()).collect(),
             template_chars: template.chars().count(),
         },
@@ -565,7 +565,7 @@ fn primary_return_label(
 fn render_predicate_compact(predicate: &PlanPredicate) -> String {
     format!(
         "{}{}{}",
-        predicate.field_path.join("."),
+        predicate.field_path.dotted(),
         render_predicate_op(predicate.op),
         render_plan_value_compact(&predicate.value)
     )

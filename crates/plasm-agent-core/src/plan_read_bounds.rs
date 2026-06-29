@@ -360,7 +360,7 @@ pub fn plan_predicate_to_json(pred: &PlanPredicate) -> Result<JsonRowPredicate, 
         }
     };
     Ok(JsonRowPredicate {
-        field_path: pred.field_path.clone(),
+        field_path: pred.field_path.segments().to_vec(),
         op: match pred.op {
             crate::plasm_plan::PlanPredicateOp::Eq => JsonRowPredicateOp::Eq,
             crate::plasm_plan::PlanPredicateOp::Ne => JsonRowPredicateOp::Ne,
@@ -611,7 +611,7 @@ mod tests {
     #[test]
     fn lower_plan_predicates_rejects_non_literal() {
         let preds = vec![PlanPredicate {
-            field_path: vec!["x".into()],
+            field_path: FieldPath::from_dotted("x").expect("field path"),
             op: crate::plasm_plan::PlanPredicateOp::Eq,
             value: crate::plasm_plan::PlanValue::Helper {
                 name: "nope".into(),

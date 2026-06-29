@@ -69,11 +69,6 @@ plan_string_atom! {
 }
 
 plan_string_atom! {
-    /// Named Plan return or synthetic result field.
-    OutputName
-}
-
-plan_string_atom! {
     /// Alias under which a materialized dependency is available during derived evaluation.
     InputAlias
 }
@@ -83,31 +78,12 @@ plan_string_atom! {
     RelationName
 }
 
-/// Dotted field path after validation.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct FieldPath(Vec<String>);
-
-impl FieldPath {
-    pub fn new(segments: Vec<String>) -> Result<Self, String> {
-        if segments.is_empty() || segments.iter().any(|s| s.trim().is_empty()) {
-            return Err("FieldPath must contain non-empty segments".to_string());
-        }
-        Ok(Self(segments))
-    }
-
-    pub fn from_dotted(path: &str) -> Result<Self, String> {
-        Self::new(path.split('.').map(str::to_string).collect())
-    }
-
-    pub fn segments(&self) -> &[String] {
-        &self.0
-    }
-
-    pub fn dotted(&self) -> String {
-        self.0.join(".")
-    }
-}
+/// Canonical compute + predicate wire types (shared with [`plasm_core::PlasmComp`] steps).
+pub use plasm_core::{
+    AggregateFunction, AggregateSpec, ComputeOp, ComputeTemplate, FieldPath, OutputName,
+    PlanPredicate, PlanPredicateOp, PlasmDataValue as PlanValue, SyntheticFieldSchema,
+    SyntheticResultSchema, SyntheticValueKind,
+};
 
 /// Typed source reference used by validated compute and derive nodes.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -203,77 +179,6 @@ pub struct ValidatedPlanDataInput {
     pub(crate) node: PlanNodeId,
     pub(crate) alias: InputAlias,
     pub(crate) proof: InputCardinalityProof,
-}
-
-/// A structured predicate preserved alongside the rendered Plasm expression.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PlanPredicate {
-    /// Field or dotted path segments (`updated_at`, `owner.login`, ...).
-    pub field_path: Vec<String>,
-    pub op: PlanPredicateOp,
-    pub value: PlanValue,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PlanPredicateOp {
-    Eq,
-    Ne,
-    Lt,
-    Lte,
-    Gt,
-    Gte,
-    Contains,
-    In,
-    Exists,
-}
-
-/// Predicate/template values in the Plan DAG. `helper` preserves intent such as `daysAgo(30)`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum PlanValue {
-    Literal {
-        value: serde_json::Value,
-    },
-    Helper {
-        name: String,
-        #[serde(default)]
-        args: Vec<serde_json::Value>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        display: Option<String>,
-    },
-    BindingSymbol {
-        binding: String,
-        #[serde(default)]
-        path: Vec<String>,
-    },
-    NodeSymbol {
-        node: String,
-        alias: String,
-        #[serde(default)]
-        path: Vec<String>,
-    },
-    Symbol {
-        path: String,
-    },
-    Template {
-        template: String,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        input_bindings: Vec<PlanInputBinding>,
-    },
-    EntityRefKey {
-        api: String,
-        entity: String,
-        key: Box<PlanValue>,
-    },
-    Array {
-        #[serde(default)]
-        items: Vec<PlanValue>,
-    },
-    Object {
-        #[serde(default)]
-        fields: BTreeMap<String, PlanValue>,
-    },
 }
 
 /// Executable Plasm IR for a program-plan node. `display_expr` is inert provenance only.
@@ -820,98 +725,6 @@ pub struct DeriveTemplate {
 pub enum DeriveKind {
     Map,
     Data,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ComputeTemplate {
-    pub source: String,
-    pub op: ComputeOp,
-    pub schema: SyntheticResultSchema,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub page_size: Option<usize>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ComputeOp {
-    Project {
-        fields: BTreeMap<OutputName, FieldPath>,
-    },
-    Filter {
-        predicates: Vec<PlanPredicate>,
-    },
-    GroupBy {
-        #[serde(alias = "key", deserialize_with = "deserialize_group_by_keys")]
-        keys: Vec<FieldPath>,
-        aggregates: Vec<AggregateSpec>,
-    },
-    Aggregate {
-        aggregates: Vec<AggregateSpec>,
-    },
-    Sort {
-        key: FieldPath,
-        #[serde(default)]
-        descending: bool,
-    },
-    Limit {
-        count: usize,
-    },
-    DedupeBy {
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        keys: Vec<FieldPath>,
-    },
-    Render {
-        columns: Vec<OutputName>,
-        template: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AggregateSpec {
-    pub name: OutputName,
-    pub function: AggregateFunction,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub field: Option<FieldPath>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AggregateFunction {
-    Count,
-    Sum,
-    Avg,
-    Min,
-    Max,
-    First,
-    Last,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SyntheticResultSchema {
-    #[serde(default)]
-    pub entity: Option<String>,
-    pub fields: Vec<SyntheticFieldSchema>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SyntheticFieldSchema {
-    pub name: OutputName,
-    pub value_kind: SyntheticValueKind,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<FieldPath>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SyntheticValueKind {
-    Null,
-    Boolean,
-    Integer,
-    Number,
-    String,
-    Array,
-    Object,
-    Unknown,
 }
 
 pub const PLAN_RENDER_MAX_TEMPLATE_CHARS: usize = 64 * 1024;
@@ -2022,8 +1835,12 @@ fn validate_compute_template(
                 "plan.nodes[{node_index}].compute.limit.count must be greater than zero"
             ));
         }
-        ComputeOp::Render { columns, template } => {
-            validate_render_compute_template(t, columns, template, node_index)?;
+        ComputeOp::Render {
+            columns,
+            template,
+            column_aliases,
+        } => {
+            validate_render_compute_template(t, columns, template, column_aliases, node_index)?;
         }
         _ => {}
     }
@@ -2034,6 +1851,7 @@ fn validate_render_compute_template(
     t: &ComputeTemplate,
     columns: &[OutputName],
     template: &str,
+    column_aliases: &BTreeMap<String, OutputName>,
     node_index: usize,
 ) -> Result<(), String> {
     if columns.is_empty() {
@@ -2049,6 +1867,15 @@ fn validate_render_compute_template(
             return Err(format!(
                 "plan.nodes[{node_index}].compute.render.columns has duplicate {:?}",
                 column.as_str()
+            ));
+        }
+    }
+    for (alias, wire) in column_aliases {
+        OutputName::new(alias.clone())
+            .map_err(|e| format!("plan.nodes[{node_index}].compute.render.column_aliases: {e}"))?;
+        if !columns.iter().any(|c| c.as_str() == wire.as_str()) {
+            return Err(format!(
+                "plan.nodes[{node_index}].compute.render.column_aliases[{alias:?}] must map to a wire column"
             ));
         }
     }
@@ -2181,7 +2008,9 @@ fn validate_predicate(
     node_index: usize,
     pred_index: usize,
 ) -> Result<(), String> {
-    if p.field_path.is_empty() || p.field_path.iter().any(|s| s.trim().is_empty()) {
+    if p.field_path.segments().is_empty()
+        || p.field_path.segments().iter().any(|s| s.trim().is_empty())
+    {
         return Err(format!(
             "plan.nodes[{node_index}].predicates[{pred_index}].field_path must be non-empty"
         ));
@@ -2416,48 +2245,6 @@ fn validate_no_js_object_coercion(text: &str, node_index: usize, path: &str) -> 
 pub fn validate_plan_value(plan: &serde_json::Value) -> Result<(), String> {
     let plan = parse_plan_value(plan)?;
     validate_plan(&plan)
-}
-
-fn deserialize_group_by_keys<'de, D>(deserializer: D) -> Result<Vec<FieldPath>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    use serde::de::Error;
-    let v = serde_json::Value::deserialize(deserializer)?;
-    match v {
-        serde_json::Value::String(s) => FieldPath::from_dotted(s.as_str())
-            .map(|k| vec![k])
-            .map_err(D::Error::custom),
-        serde_json::Value::Array(items) => {
-            let mut keys = Vec::with_capacity(items.len());
-            for item in items {
-                match item {
-                    serde_json::Value::String(s) => {
-                        keys.push(FieldPath::from_dotted(s.as_str()).map_err(D::Error::custom)?);
-                    }
-                    serde_json::Value::Array(segs) => {
-                        let parts: Vec<String> = segs
-                            .iter()
-                            .filter_map(|x| x.as_str().map(str::to_string))
-                            .collect();
-                        keys.push(FieldPath::new(parts).map_err(D::Error::custom)?);
-                    }
-                    other => {
-                        return Err(D::Error::custom(format!(
-                            "group_by key entry must be string or path array, got {other}"
-                        )));
-                    }
-                }
-            }
-            if keys.is_empty() {
-                return Err(D::Error::custom("group_by requires at least one key"));
-            }
-            Ok(keys)
-        }
-        other => Err(D::Error::custom(format!(
-            "group_by keys must be a string or array, got {other}"
-        ))),
-    }
 }
 
 #[cfg(test)]

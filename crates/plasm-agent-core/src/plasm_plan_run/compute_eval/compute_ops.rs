@@ -1,5 +1,5 @@
 use super::super::*;
-use super::eval::{value_at_dotted, value_at_path};
+use super::eval::value_at_path;
 
 pub(crate) async fn eval_compute_with_row_source(
     compute: &ComputeTemplate,
@@ -125,7 +125,15 @@ pub(crate) fn eval_compute_from_rows(
         }
         ComputeOp::Limit { count } => Ok(rows.iter().take(*count).cloned().collect()),
         ComputeOp::DedupeBy { keys } => dedupe_rows(rows, keys),
-        ComputeOp::Render { columns, template } => render_compute(rows, columns, template),
+        ComputeOp::Render {
+            columns,
+            template,
+            column_aliases,
+        } => render_compute(
+            rows,
+            &RenderColumns::from_op_parts(columns.clone(), column_aliases.clone()),
+            template,
+        ),
     }
 }
 pub(crate) fn dedupe_rows(
@@ -270,7 +278,7 @@ pub(crate) fn aggregate_numbers(
 
 pub(crate) fn render_compute(
     rows: &[serde_json::Value],
-    columns: &[OutputName],
+    columns: &RenderColumns,
     template: &str,
 ) -> Result<Vec<serde_json::Value>, String> {
     if rows.len() > PLAN_RENDER_MAX_ROWS {
@@ -283,22 +291,9 @@ pub(crate) fn render_compute(
         .iter()
         .enumerate()
         .map(|(row_index, row)| {
-            let mut obj = serde_json::Map::new();
-            for column in columns {
-                obj.insert(
-                    column.as_str().to_string(),
-                    value_at_dotted(row, column.as_str())
-                        .cloned()
-                        .ok_or_else(|| {
-                            format!(
-                                "Plan.render column {:?} did not resolve in source row {}",
-                                column.as_str(),
-                                row_index
-                            )
-                        })?,
-                );
-            }
-            Ok(serde_json::Value::Object(obj))
+            columns
+                .project_row(row, row_index)
+                .map(serde_json::Value::Object)
         })
         .collect::<Result<Vec<_>, String>>()?;
 
@@ -312,7 +307,17 @@ pub(crate) fn render_compute(
         .map_err(|e| format!("Plan.render template load error: {e}"))?;
     let rendered = tmpl
         .render(minijinja::context!(rows => projected))
-        .map_err(|e| format!("Plan.render template render error: {e}"))?;
+        .map_err(|e| {
+            let msg = e.to_string();
+            if msg.contains("undefined") {
+                format!(
+                    "Plan.render template render error: {msg}. {}",
+                    columns.access_hint()
+                )
+            } else {
+                format!("Plan.render template render error: {msg}")
+            }
+        })?;
     if rendered.chars().count() > PLAN_RENDER_MAX_OUTPUT_CHARS {
         return Err(format!(
             "Plan.render output exceeds {PLAN_RENDER_MAX_OUTPUT_CHARS} characters"

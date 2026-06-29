@@ -1,4 +1,22 @@
+use std::collections::BTreeMap;
+
+use crate::plasm_plan::OutputName;
+
 use super::super::*;
+
+fn render_cols(wires: &[&str], aliases: BTreeMap<String, OutputName>) -> RenderColumns {
+    RenderColumns::from_op_parts(
+        wires
+            .iter()
+            .map(|w| OutputName::new(*w).expect("column"))
+            .collect(),
+        aliases,
+    )
+}
+
+fn empty_cols(wires: &[&str]) -> RenderColumns {
+    render_cols(wires, BTreeMap::new())
+}
 
 #[test]
 fn render_compute_emits_single_content_row() {
@@ -6,10 +24,10 @@ fn render_compute_emits_single_content_row() {
         serde_json::json!({ "name": "a" }),
         serde_json::json!({ "name": "b" }),
     ];
-    let columns = vec![OutputName::new("name").expect("column")];
+    let cols = empty_cols(&["name"]);
     let out = render_compute(
         &rows,
-        &columns,
+        &cols,
         "{% for r in rows %}- {{ r.name }}\n{% endfor %}",
     )
     .expect("render");
@@ -18,22 +36,61 @@ fn render_compute_emits_single_content_row() {
 }
 
 #[test]
-fn render_compute_propagates_minijinja_errors() {
-    let rows = vec![serde_json::json!({ "name": "a" })];
-    let columns = vec![OutputName::new("name").expect("column")];
-    let err =
-        render_compute(&rows, &columns, "{{ missing }}").expect_err("strict undefined is rejected");
+fn render_compute_p_symbol_alias_resolves_alongside_wire_name() {
+    let rows = vec![
+        serde_json::json!({ "name": "a", "id": 1 }),
+        serde_json::json!({ "name": "b", "id": 2 }),
+    ];
+    let mut aliases = BTreeMap::new();
+    aliases.insert("p23".into(), OutputName::new("name").expect("name"));
+    aliases.insert("p21".into(), OutputName::new("id").expect("id"));
+    let cols = render_cols(&["name", "id"], aliases);
+    let out = render_compute(
+        &rows,
+        &cols,
+        "{% for r in rows %}- {{ r.p23 }} (#{{ r.p21 }})\n{% endfor %}",
+    )
+    .expect("render p# aliases");
 
-    assert!(err.contains("Plan.render template render error"), "{err}");
+    assert_eq!(
+        out,
+        vec![serde_json::json!({ "content": "- a (#1)\n- b (#2)\n" })]
+    );
 }
 
 #[test]
-fn render_compute_rejects_missing_columns() {
+fn render_compute_mixed_p_and_wire_names() {
     let rows = vec![serde_json::json!({ "name": "a" })];
-    let columns = vec![OutputName::new("missing").expect("column")];
-    let err = render_compute(&rows, &columns, "{{ rows }}").expect_err("missing column rejected");
+    let mut aliases = BTreeMap::new();
+    aliases.insert("p23".into(), OutputName::new("name").expect("name"));
+    let cols = render_cols(&["name"], aliases);
+    let out = render_compute(
+        &rows,
+        &cols,
+        "{% for r in rows %}{{ r.p23 }} / {{ r.name }}{% endfor %}",
+    )
+    .expect("mixed");
+    assert_eq!(out, vec![serde_json::json!({ "content": "a / a" })]);
+}
+
+#[test]
+fn render_compute_propagates_minijinja_errors_with_field_hint() {
+    let rows = vec![serde_json::json!({ "name": "a" })];
+    let cols = empty_cols(&["name"]);
+    let err = render_compute(&rows, &cols, "{{ missing }}").expect_err("strict undefined is rejected");
+
+    assert!(err.contains("Plan.render template render error"), "{err}");
+    assert!(err.contains("Valid row fields: r.name"), "{err}");
+}
+
+#[test]
+fn render_compute_rejects_missing_columns_with_hint() {
+    let rows = vec![serde_json::json!({ "name": "a" })];
+    let cols = empty_cols(&["missing"]);
+    let err = render_compute(&rows, &cols, "{{ rows }}").expect_err("missing column rejected");
 
     assert!(err.contains("did not resolve in source row 0"), "{err}");
+    assert!(err.contains("Valid row fields:"), "{err}");
 }
 
 #[test]
@@ -42,13 +99,10 @@ fn render_compute_preserves_unicode_markdown() {
         "title": "Pokémon",
         "arrow": "→",
     })];
-    let columns = vec![
-        OutputName::new("title").expect("title"),
-        OutputName::new("arrow").expect("arrow"),
-    ];
+    let cols = empty_cols(&["title", "arrow"]);
     let rendered = render_compute(
         &rows,
-        &columns,
+        &cols,
         "# {{ rows[0].title }}\nstep {{ rows[0].arrow }} done",
     )
     .expect("render unicode");
@@ -63,10 +117,10 @@ fn render_compute_feeds_node_input_for_action_content() {
         serde_json::json!({ "name": "a" }),
         serde_json::json!({ "name": "b" }),
     ];
-    let columns = vec![OutputName::new("name").expect("column")];
+    let cols = empty_cols(&["name"]);
     let rendered = render_compute(
         &rows,
-        &columns,
+        &cols,
         "{% for r in rows %}- {{ r.name }}\n{% endfor %}",
     )
     .expect("render");

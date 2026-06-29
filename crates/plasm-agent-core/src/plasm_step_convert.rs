@@ -70,7 +70,7 @@ fn data_to_pure(node: &ValidatedDataNode) -> Result<PurePayload, String> {
 
 fn compute_to_map(node: &ValidatedComputeNode) -> Result<MapPayload, String> {
     Ok(MapPayload {
-        compute: convert_via_json(&node.compute)?,
+        compute: node.compute.clone(),
         effect_class: effect_class(node.effect_class),
         result_shape: result_shape(node.result_shape),
     })
@@ -213,13 +213,11 @@ fn plan_kind_to_surface(kind: PlanNodeKind) -> Result<SurfaceKind, String> {
 }
 
 fn plan_value_to_data(value: &PlanValue) -> Result<PlasmDataValue, String> {
-    convert_via_json(value)
+    Ok(value.clone())
 }
 
-fn convert_predicates(
-    predicates: &[crate::plasm_plan::PlanPredicate],
-) -> Result<Vec<PlanPredicate>, String> {
-    predicates.iter().map(convert_via_json).collect()
+fn convert_predicates(predicates: &[PlanPredicate]) -> Result<Vec<PlanPredicate>, String> {
+    Ok(predicates.to_vec())
 }
 
 fn relation_expr(ir: &ValidatedPlanExprIr) -> String {
@@ -284,7 +282,7 @@ pub(crate) fn step_payload_to_validated_node(
             id,
             effect_class: plan_effect_class(p.effect_class),
             result_shape: plan_result_shape(p.result_shape),
-            compute: convert_via_json(&p.compute)?,
+            compute: p.compute.clone(),
             depends_on,
             uses_result,
         })),
@@ -519,13 +517,11 @@ fn effect_template_to_plan(template: &CoreEffectTemplate) -> Result<EffectTempla
 }
 
 fn data_value_to_plan(value: &PlasmDataValue) -> Result<PlanValue, String> {
-    convert_via_json(value)
+    Ok(value.clone())
 }
 
-fn convert_predicates_back(
-    predicates: &[PlanPredicate],
-) -> Result<Vec<crate::plasm_plan::PlanPredicate>, String> {
-    predicates.iter().map(convert_via_json).collect()
+fn convert_predicates_back(predicates: &[PlanPredicate]) -> Result<Vec<PlanPredicate>, String> {
+    Ok(predicates.to_vec())
 }
 
 fn plan_effect_class(value: EffectClass) -> PlanEffectClass {
@@ -534,4 +530,94 @@ fn plan_effect_class(value: EffectClass) -> PlanEffectClass {
 
 fn plan_result_shape(value: ResultShape) -> PlanResultShape {
     convert_via_json(&value).expect("ResultShape wire shape aligns")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plasm_plan::{
+        ComputeOp, ComputeTemplate, EffectClass, OutputName, PlanNodeId, ResultShape,
+        SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind, ValidatedComputeNode,
+        ValidatedPlanNode,
+    };
+    use plasm_core::PlasmBindGraph;
+    use std::collections::{BTreeMap, BTreeSet};
+
+    fn sample_render_node() -> ValidatedPlanNode {
+        let mut column_aliases = BTreeMap::new();
+        column_aliases.insert("p23".into(), OutputName::new("name").expect("name"));
+        ValidatedPlanNode::Compute(ValidatedComputeNode {
+            id: PlanNodeId::new("render0").expect("id"),
+            effect_class: EffectClass::Read,
+            result_shape: ResultShape::Single,
+            compute: ComputeTemplate {
+                source: "items".into(),
+                op: ComputeOp::Render {
+                    columns: vec![OutputName::new("name").expect("name")],
+                    template: "{% for r in rows %}{{ r.p23 }}{% endfor %}".into(),
+                    column_aliases,
+                },
+                schema: SyntheticResultSchema {
+                    entity: Some("PlanRender".into()),
+                    fields: vec![SyntheticFieldSchema {
+                        name: OutputName::new("content").expect("content"),
+                        value_kind: SyntheticValueKind::String,
+                        source: None,
+                    }],
+                },
+                page_size: None,
+            },
+            depends_on: vec![PlanNodeId::new("items").expect("dep")],
+            uses_result: vec![],
+        })
+    }
+
+    #[test]
+    fn render_column_aliases_survive_core_wire_serde() {
+        let node = sample_render_node();
+        let ValidatedPlanNode::Compute(c) = &node else {
+            panic!("sample node");
+        };
+        let payload = validated_node_to_step_payload(&node).expect("to payload");
+        let PlasmStepPayload::Map(map) = payload else {
+            panic!("expected map payload");
+        };
+        match &map.compute.op {
+            ComputeOp::Render { column_aliases, .. } => {
+                assert_eq!(column_aliases.len(), 1);
+                assert!(column_aliases.contains_key("p23"));
+            }
+            other => panic!("expected render op, got {other:?}"),
+        }
+        assert_eq!(map.compute, c.compute);
+    }
+
+    #[test]
+    fn render_column_aliases_survive_step_payload_round_trip() {
+        let node = sample_render_node();
+        let payload = validated_node_to_step_payload(&node).expect("to payload");
+        let step_id = StepId::new("render0").expect("step id");
+        let items_id = StepId::new("items").expect("items id");
+        let mut deps = BTreeMap::new();
+        deps.insert(step_id.clone(), BTreeSet::from([items_id.clone()]));
+        let bind = PlasmBindGraph {
+            topo: vec![items_id, step_id.clone()],
+            deps,
+            ..Default::default()
+        };
+        let back = step_payload_to_validated_node(&step_id, &payload, &bind).expect("from payload");
+        let ValidatedPlanNode::Compute(c) = back else {
+            panic!("round-trip node");
+        };
+        match c.compute.op {
+            ComputeOp::Render { column_aliases, .. } => {
+                assert_eq!(column_aliases.len(), 1);
+                assert_eq!(
+                    column_aliases.get("p23").map(|c| c.as_str()),
+                    Some("name")
+                );
+            }
+            other => panic!("expected render op, got {other:?}"),
+        }
+    }
 }

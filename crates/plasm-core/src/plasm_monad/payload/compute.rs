@@ -43,6 +43,9 @@ pub enum ComputeOp {
     Render {
         columns: Vec<OutputName>,
         template: String,
+        /// Teaching-surface tokens (e.g. `p23`) aliased onto wire column keys in Minijinja `rows`.
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        column_aliases: std::collections::BTreeMap<String, OutputName>,
     },
 }
 

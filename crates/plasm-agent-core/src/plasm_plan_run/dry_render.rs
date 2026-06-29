@@ -173,7 +173,7 @@ pub(crate) fn render_compute_template(compute: &ComputeTemplate) -> String {
                 )
             }
         }
-        ComputeOp::Render { columns, template } => format!(
+        ComputeOp::Render { columns, template, .. } => format!(
             "render {} columns=[{}] template_chars={}",
             compute.source,
             columns
@@ -208,7 +208,7 @@ pub(crate) fn render_aggregates(aggregates: &[crate::plasm_plan::AggregateSpec])
 pub(crate) fn render_predicate(predicate: &crate::plasm_plan::PlanPredicate) -> String {
     format!(
         "{}{}{}",
-        predicate.field_path.join("."),
+        predicate.field_path.dotted(),
         render_predicate_op(predicate.op),
         render_plan_value(&predicate.value)
     )

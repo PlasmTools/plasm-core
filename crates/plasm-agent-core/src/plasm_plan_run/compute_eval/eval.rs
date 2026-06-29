@@ -739,7 +739,9 @@ pub(crate) fn dry_validate_render_nodes(
             continue;
         };
         let ComputeOp::Render {
-            columns, template, ..
+            columns,
+            template,
+            column_aliases,
         } = &c.compute.op
         else {
             continue;
@@ -758,7 +760,11 @@ pub(crate) fn dry_validate_render_nodes(
             ent.id_field.as_str().to_string(),
             serde_json::Value::String("dry-placeholder".into()),
         );
-        render_compute(&[serde_json::Value::Object(row)], columns, template)?;
+        render_compute(
+            &[serde_json::Value::Object(row)],
+            &RenderColumns::from_op_parts(columns.clone(), column_aliases.clone()),
+            template,
+        )?;
     }
     Ok(())
 }

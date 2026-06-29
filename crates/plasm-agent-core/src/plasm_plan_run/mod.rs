@@ -29,7 +29,7 @@ use crate::plan_dry_display;
 pub use crate::plan_dry_display::PlanDryReview;
 use crate::plasm_plan::{
     AggregateFunction, BindingName, ComputeOp, ComputeTemplate, EffectClass, FieldPath, InputAlias,
-    OutputName, Plan, PlanExprTemplate, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue,
+    Plan, PlanExprTemplate, PlanNodeId, PlanNodeKind, PlanResultUse, PlanValue,
     QualifiedEntityKey, RelationSourceCardinality, ValidatedForEachNode, ValidatedPlan,
     ValidatedPlanDataInput, ValidatedPlanExprTemplate, ValidatedPlanNode, ValidatedPlanState,
     ValidatedRelationTraversalNode, PLAN_RENDER_MAX_OUTPUT_CHARS, PLAN_RENDER_MAX_ROWS,
@@ -50,6 +50,7 @@ use plasm_trace::TraceCompWire;
 use std::collections::{BTreeMap, BTreeSet};
 
 mod compute_eval;
+mod render_columns;
 mod dry;
 pub mod evidence_plan;
 mod materialize;
@@ -68,6 +69,7 @@ mod step_materialize;
 mod alloc_bench_test;
 
 pub(crate) use compute_eval::*;
+pub(crate) use render_columns::RenderColumns;
 pub(crate) use materialize::*;
 pub(crate) use relation_hydrate::finalize_typed_relation_materialized_node;
 

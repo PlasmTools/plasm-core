@@ -123,6 +123,7 @@ pub use plasm_compile::{
 pub mod catalog_data;
 pub(crate) mod plasm_dag;
 mod plasm_dag_surface_guards;
+mod plasm_render_compile;
 /// Serializable effect [`Plan`](plasm_plan::Plan) contract and DAG validation (Plasm programs, archived plans).
 pub mod plasm_plan;
 pub mod plasm_plan_run;

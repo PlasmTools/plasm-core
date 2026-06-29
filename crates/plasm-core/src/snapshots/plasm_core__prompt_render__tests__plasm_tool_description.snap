@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm-core/src/prompt_render/mod.rs
+source: crates/plasm-core/src/prompt_render/mod.rs
 expression: "super::PLASM_TOOL_DESCRIPTION"
 ---
 **Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and executable **`run_ref`** (`pcN`). Pass that token to **`plasm_run`**; do **not** echo the program.
@@ -36,7 +36,7 @@ Core surface:
 
 Composition rules:
 - One binding per line; **one** return line last. Multiple roots belong on that line comma-separated — not stacked as separate bare-label lines. Single-line space-separated programs coerce default return to first binding.
-- Row text: `label = source <<TAG` … `TAG` (equals required); optional `label = source[p#,…] <<TAG`. Minijinja `{{ }}` / `{% %}` over `rows` only inside the heredoc body — not `${}`.
+- Row text: `label = source <<TAG` … `TAG` (equals required); optional `label = source[p#,…] <<TAG`. Minijinja `{{ }}` / `{% %}` over `rows` only inside the heredoc body — not `${}`. In the body, `p#` from the bracket list and wire names both resolve (`{{ r.p23 }}` and `{{ r.name }}`).
 - Pass `binding.content` to string params; compose with `${report.content}` in later heredocs/strings (`$$` escapes `$`). Do not use `report.content` as a final root or relation receiver.
 - Action/create roots: return the action row or follow with `e#(p#=…)` get — not `created.p#` as a program root.
 - Heredoc: `<<TAG` + newline; first trimmed `TAG` line closes; pick a tag absent from the body. `markdown`/`html`/`document`/`json_text`/`blob` values use `<<TAG` … `TAG` only.
@@ -45,6 +45,11 @@ items = e_source
 filtered = items.filter{p_field>=300}
 sorted = filtered.sort(p_field, desc).limit(10)
 sorted[p_a,p_field]
+- Worked row-to-text (same `p#` in bracket and Minijinja body; wire names also work):
+report = sorted[p_a,p_field] <<PLASM_RPT_TAG
+{% for r in rows %}- {{ r.p_a }} ({{ r.p_field }})
+{% endfor %}
+PLASM_RPT_TAG
 
 Common pitfalls:
 - Many rows of one entity type: one relation read (e.g. `moves = e4(electric).r3`) beats N separate gets plus parallel roots.

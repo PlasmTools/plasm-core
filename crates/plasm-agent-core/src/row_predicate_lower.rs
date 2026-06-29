@@ -1,7 +1,7 @@
 //! Lower [`plasm_core::RowPredicate`] to executable [`PlanPredicate`] IR.
 
 use crate::execute_session::ExecuteSession;
-use crate::plasm_plan::{PlanPredicate, PlanPredicateOp, PlanValue, QualifiedEntityKey};
+use crate::plasm_plan::{FieldPath, PlanPredicate, PlanPredicateOp, PlanValue, QualifiedEntityKey};
 use plasm_core::SymbolMapCrossRequestCache;
 use plasm_core::{CompOp, RowPredicate, TypedComparisonValue};
 
@@ -21,7 +21,7 @@ pub(crate) fn lower_row_predicate_to_plan(
                 c.field.as_str(),
             );
             Ok(PlanPredicate {
-                field_path: wire.split('.').map(str::to_string).collect(),
+                field_path: FieldPath::from_dotted(&wire)?,
                 op: comp_op_to_plan(c.op),
                 value: typed_comparison_to_plan_value(&c.value)?,
             })
