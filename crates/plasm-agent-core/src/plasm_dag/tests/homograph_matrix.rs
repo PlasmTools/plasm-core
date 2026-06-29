@@ -55,7 +55,11 @@ fn matrix_homograph_projection_resolves_entity_scoped_p_symbols() {
     if p_headline != p_caption {
         // Distinct symbols — still verify each entity resolves its own wire.
     }
-    let source_a = format!("rows_a = {row_a}\nrows_a[{p_headline}]", row_a = row_a, p_headline = p_headline);
+    let source_a = format!(
+        "rows_a = {row_a}\nrows_a[{p_headline}]",
+        row_a = row_a,
+        p_headline = p_headline
+    );
     let plan_a = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,
@@ -71,15 +75,18 @@ fn matrix_homograph_projection_resolves_entity_scoped_p_symbols() {
         .iter()
         .find(|n| n["id"] == return_a)
         .expect("return node");
-    assert_eq!(
+    assert!(
         node_a["compute"]["op"]["fields"]
             .as_object()
             .unwrap()
-            .contains_key("headline"),
-        true
+            .contains_key("headline")
     );
 
-    let source_b = format!("rows_b = {row_b}\nrows_b[{p_caption}]", row_b = row_b, p_caption = p_caption);
+    let source_b = format!(
+        "rows_b = {row_b}\nrows_b[{p_caption}]",
+        row_b = row_b,
+        p_caption = p_caption
+    );
     let plan_b = compile_plasm_dag_to_plan(
         &PromptPipelineConfig::default(),
         None,

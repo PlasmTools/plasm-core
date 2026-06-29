@@ -2022,13 +2022,7 @@ impl SymbolMap {
         if !Self::is_opaque_p_sym(token) {
             return None;
         }
-        let key = |eid: &str| {
-            (
-                eid.to_string(),
-                entity.to_string(),
-                token.to_string(),
-            )
-        };
+        let key = |eid: &str| (eid.to_string(), entity.to_string(), token.to_string());
         if !catalog_entry_id.is_empty() {
             if let Some(wire) = self.entity_p_sym_to_wire.get(&key(catalog_entry_id)) {
                 return Some(wire.clone());
@@ -2068,10 +2062,8 @@ impl SymbolMap {
             if !Self::is_opaque_p_sym(sym) {
                 continue;
             }
-            self.entity_p_sym_to_wire.insert(
-                (eid.clone(), ent.clone(), sym.clone()),
-                field.clone(),
-            );
+            self.entity_p_sym_to_wire
+                .insert((eid.clone(), ent.clone(), sym.clone()), field.clone());
             let global_key = (ent.clone(), sym.clone());
             match self.entity_p_sym_globally_unique.get(&global_key) {
                 None => {

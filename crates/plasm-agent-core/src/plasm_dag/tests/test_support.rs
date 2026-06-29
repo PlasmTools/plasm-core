@@ -3,7 +3,7 @@
 use super::super::*;
 use crate::plasm_plan_run::symbol_map_for_plasm_surface_parse;
 use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
-use plasm_core::{load_schema, CgsContext, TeachingExposureSession, CGS, ExposureEntityKey};
+use plasm_core::{load_schema, CgsContext, ExposureEntityKey, TeachingExposureSession, CGS};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -101,7 +101,11 @@ pub(super) fn github_cgs() -> Arc<CGS> {
     Arc::new(load_schema(&root.join("../../apis/github")).expect("load github"))
 }
 
-pub(super) fn compile_github_program(session: &ExecuteSession, name: &str, source: &str) -> serde_json::Value {
+pub(super) fn compile_github_program(
+    session: &ExecuteSession,
+    name: &str,
+    source: &str,
+) -> serde_json::Value {
     compile_plasm_dag_to_plan(
         &plasm_core::PromptPipelineConfig::default(),
         None,

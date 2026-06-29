@@ -44,7 +44,9 @@ labels[{p_name},{p_color},{p_desc}]"#,
         .as_object()
         .expect("project fields");
     assert!(
-        fields.contains_key("name") && fields.contains_key("color") && fields.contains_key("description"),
+        fields.contains_key("name")
+            && fields.contains_key("color")
+            && fields.contains_key("description"),
         "expected Label wire columns, got {fields:?}"
     );
     assert!(
@@ -164,14 +166,20 @@ fn repo_content_put_dry_run_resolves_cap_qualified_param_symbols() {
     );
     let map = github_symbol_map(&session);
     let repo_e = map.entity_sym_for("github", "Repository");
-    let cap = cgs.get_capability("repo_content_put").expect("repo_content_put");
+    let cap = cgs
+        .get_capability("repo_content_put")
+        .expect("repo_content_put");
     let method = plasm_core::capability_method_label_kebab(cap);
     let method_sym = map.method_sym("Repository", &method);
-    let p_repo = map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "repository");
+    let p_repo =
+        map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "repository");
     let p_path = map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "path");
-    let p_branch = map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "branch");
-    let p_content = map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "content");
-    let p_message = map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "message");
+    let p_branch =
+        map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "branch");
+    let p_content =
+        map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "content");
+    let p_message =
+        map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "message");
     let repo_owner = map.ident_sym_entity_field("Repository", "owner");
     let repo_name = map.ident_sym_entity_field("Repository", "repo");
     let source = format!(

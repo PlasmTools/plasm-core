@@ -368,13 +368,13 @@ pub async fn apply_capability_seeds(
                             .process_order
                             .iter()
                             .all(|eid| sess_arc.contexts_by_entry.contains_key(eid));
-                        if catalogs_ready && seeds_exposure_ready_for_reuse(exp, &seeds) {
-                            if !ranked_capabilities_need_exposure_replay(exp, &ranked_capabilities)
-                            {
-                                return Ok::<Option<plasm_core::TeachingExposureSession>, String>(
-                                    Some(exp.clone()),
-                                );
-                            }
+                        if catalogs_ready
+                            && seeds_exposure_ready_for_reuse(exp, &seeds)
+                            && !ranked_capabilities_need_exposure_replay(exp, &ranked_capabilities)
+                        {
+                            return Ok::<Option<plasm_core::TeachingExposureSession>, String>(
+                                Some(exp.clone()),
+                            );
                         }
                     }
                 }

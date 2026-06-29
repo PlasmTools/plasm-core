@@ -455,7 +455,10 @@ mod ranked_replay_tests {
             "matrix",
             weak_intent,
             &endpoints,
-            &entities.iter().map(|e| (*e).to_string()).collect::<Vec<_>>(),
+            &entities
+                .iter()
+                .map(|e| (*e).to_string())
+                .collect::<Vec<_>>(),
             None,
             ExposureSurfaceOptions {
                 read_first_seeded: true,
@@ -468,8 +471,7 @@ mod ranked_replay_tests {
             delta,
         );
         assert!(
-            !exp
-                .surface
+            !exp.surface
                 .capabilities
                 .iter()
                 .any(|c| c.capability.as_str() == mutator),
@@ -489,7 +491,10 @@ mod ranked_replay_tests {
             "matrix",
             weak_intent,
             &endpoints,
-            &entities.iter().map(|e| (*e).to_string()).collect::<Vec<_>>(),
+            &entities
+                .iter()
+                .map(|e| (*e).to_string())
+                .collect::<Vec<_>>(),
             Some(&ranked),
             ExposureSurfaceOptions {
                 read_first_seeded: true,

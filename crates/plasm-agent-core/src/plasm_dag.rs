@@ -5297,7 +5297,6 @@ labels"#;
         assert_eq!(wire, "labels");
     }
 
-
     #[test]
     fn multiline_explicit_return_position_not_first_binding() {
         let session = test_session();
