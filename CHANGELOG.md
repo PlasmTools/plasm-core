@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.92] - 2026-06-29
+
+### Fixed
+
+- **MCP GitHub symbol resolution:** entity-qualified `p#` reverse lookup for row projection (Label `[p#]` no longer resolves Issue homographs like `state` / `issue_type_color`).
+- **MCP mutator args:** capability-qualified `p#` in invoke object literals (`issue_create`, `repo_content_put`, …) — fields resolve against the cap parameter contract, not a generic input object.
+- **MCP ranked replay:** `plasm_context` session reuse with new `ranked_capabilities` replays exposure when ranked mutators are missing from the teaching surface instead of returning Unchanged-only.
+
+### Changed
+
+- **Symbol map indexes:** build-time reverse maps for entity/cap-qualified `p#` tokens (replaces O(n) scans in hot parse paths).
+- **Tests:** GitHub symbol regressions and matrix homograph fixture extracted to `plasm_dag/tests/`; ranked replay integration test on read-first defer path.
+
 ## [0.3.91] - 2026-06-29
 
 ### Fixed

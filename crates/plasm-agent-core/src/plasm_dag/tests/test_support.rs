@@ -1,0 +1,117 @@
+//! Shared GitHub execute-session builders for `plasm_dag` tests.
+
+use super::super::*;
+use crate::plasm_plan_run::symbol_map_for_plasm_surface_parse;
+use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+use plasm_core::{load_schema, CgsContext, TeachingExposureSession, CGS, ExposureEntityKey};
+use std::path::PathBuf;
+use std::sync::Arc;
+
+pub(super) fn github_issue_label_session() -> ExecuteSession {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let cgs = Arc::new(load_schema(&root.join("../../apis/github")).expect("load github"));
+    let mut ctxs = indexmap::IndexMap::new();
+    ctxs.insert(
+        "github".into(),
+        Arc::new(CgsContext::entry("github", cgs.clone())),
+    );
+    let exp =
+        TeachingExposureSession::new(cgs.as_ref(), "github", &["Repository", "Issue", "Label"]);
+    ExecuteSession::new(
+        "ph".into(),
+        "p".into(),
+        cgs.clone(),
+        ctxs,
+        "github".into(),
+        String::new(),
+        String::new(),
+        None,
+        vec!["Repository".into(), "Issue".into(), "Label".into()],
+        Some(exp),
+        None,
+        cgs.catalog_cgs_hash_hex(),
+        None,
+        None,
+    )
+}
+
+pub(super) fn github_ranked_mutator_session(
+    cgs: &Arc<CGS>,
+    entities: &[&str],
+    intent: &str,
+    ranked: &[&str],
+    mutator: &str,
+) -> ExecuteSession {
+    let endpoints = entities
+        .iter()
+        .map(|e| ExposureEntityKey {
+            entry_id: "github".into(),
+            entity: plasm_core::EntityName::from(*e),
+        })
+        .collect::<Vec<_>>();
+    let delta = derive_intent_exposure_surface_batch(
+        cgs.as_ref(),
+        "github",
+        intent,
+        &endpoints,
+        &entities
+            .iter()
+            .map(|e| (*e).to_string())
+            .collect::<Vec<_>>(),
+        Some(&ranked.iter().map(|s| (*s).to_string()).collect::<Vec<_>>()),
+        ExposureSurfaceOptions {
+            read_first_seeded: true,
+        },
+    );
+    assert!(
+        delta
+            .required
+            .capabilities
+            .iter()
+            .any(|c| c.capability.as_str() == mutator),
+        "{mutator} must appear on ranked exposure delta"
+    );
+    let exp =
+        TeachingExposureSession::new_with_intent_delta(cgs.as_ref(), "github", entities, delta);
+    let mut ctxs = indexmap::IndexMap::new();
+    ctxs.insert(
+        "github".into(),
+        Arc::new(CgsContext::entry("github", cgs.clone())),
+    );
+    ExecuteSession::new(
+        "ph".into(),
+        "p".into(),
+        cgs.clone(),
+        ctxs,
+        "github".into(),
+        String::new(),
+        String::new(),
+        None,
+        entities.iter().map(|e| (*e).to_string()).collect(),
+        Some(exp),
+        None,
+        cgs.catalog_cgs_hash_hex(),
+        None,
+        None,
+    )
+}
+
+pub(super) fn github_cgs() -> Arc<CGS> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    Arc::new(load_schema(&root.join("../../apis/github")).expect("load github"))
+}
+
+pub(super) fn compile_github_program(session: &ExecuteSession, name: &str, source: &str) -> serde_json::Value {
+    compile_plasm_dag_to_plan(
+        &plasm_core::PromptPipelineConfig::default(),
+        None,
+        session,
+        name,
+        source,
+    )
+    .expect("compile")
+}
+
+pub(super) fn github_symbol_map(session: &ExecuteSession) -> Arc<plasm_core::SymbolMap> {
+    symbol_map_for_plasm_surface_parse(session, None)
+}

@@ -210,3 +210,23 @@ langdetail_get:
     value: details
   - type: var
     name: id
+
+homographrowa_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: homograph-a
+
+homographrowb_query:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: homograph-b

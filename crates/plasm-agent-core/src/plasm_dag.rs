@@ -3833,6 +3833,13 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    mod test_support;
+    use test_support::github_issue_label_session;
+
+    mod github_symbol_resolution;
+
+    mod homograph_matrix;
+
     fn test_session() -> ExecuteSession {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let cgs = Arc::new(
@@ -5169,34 +5176,6 @@ commits"#;
         );
     }
 
-    fn github_issue_label_session() -> ExecuteSession {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let cgs = Arc::new(load_schema(&root.join("../../apis/github")).expect("load github"));
-        let mut ctxs = indexmap::IndexMap::new();
-        ctxs.insert(
-            "github".into(),
-            Arc::new(CgsContext::entry("github", cgs.clone())),
-        );
-        let exp =
-            TeachingExposureSession::new(cgs.as_ref(), "github", &["Repository", "Issue", "Label"]);
-        ExecuteSession::new(
-            "ph".into(),
-            "p".into(),
-            cgs.clone(),
-            ctxs,
-            "github".into(),
-            String::new(),
-            String::new(),
-            None,
-            vec!["Repository".into(), "Issue".into(), "Label".into()],
-            Some(exp),
-            None,
-            cgs.catalog_cgs_hash_hex(),
-            None,
-            None,
-        )
-    }
-
     #[test]
     fn relation_uses_result_includes_scope_binding_aliases() {
         let session = github_issue_label_session();
@@ -5317,6 +5296,7 @@ labels"#;
         .expect("LHS binding label selects relation wire");
         assert_eq!(wire, "labels");
     }
+
 
     #[test]
     fn multiline_explicit_return_position_not_first_binding() {

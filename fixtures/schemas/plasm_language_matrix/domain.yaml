@@ -47,6 +47,28 @@ entities:
         required: true
         value_ref: nv_lang_tag_label
     relations: {}
+  HomographRowA:
+    id_field: id
+    description: Matrix homograph left row (shared value-domain fingerprint, distinct wire).
+    fields:
+      id:
+        required: true
+        value_ref: nv_lang_item_id
+      headline:
+        required: true
+        value_ref: nv_homograph_shared_short
+    relations: {}
+  HomographRowB:
+    id_field: id
+    description: Matrix homograph right row (shared value-domain fingerprint, distinct wire).
+    fields:
+      id:
+        required: true
+        value_ref: nv_lang_item_id
+      caption:
+        required: true
+        value_ref: nv_homograph_shared_short
+    relations: {}
   LangLine:
     id_field: id
     description: Child line embedded under LangItem GET (from_parent_get).
@@ -244,6 +266,20 @@ capabilities:
     - id
     - item_id
     - label
+  homographrowa_query:
+    description: List HomographRowA rows (homograph projection regression)
+    kind: query
+    entity: HomographRowA
+    provides:
+    - id
+    - headline
+  homographrowb_query:
+    description: List HomographRowB rows (homograph projection regression)
+    kind: query
+    entity: HomographRowB
+    provides:
+    - id
+    - caption
   langtag_query:
     description: List tags scoped to one LangItem
     kind: query
@@ -377,6 +413,9 @@ values:
   nv_langitem_update_score:
     type: integer
   nv_langitem_update_owner:
+    type: string
+    string_semantics: short
+  nv_homograph_shared_short:
     type: string
     string_semantics: short
   nv_langtag_query_item_id:

@@ -1570,6 +1570,12 @@ pub struct SymbolMap {
     sym_to_relation_wire: IndexMap<String, String>,
     /// `(entry_id, domain_entity, capability_name, param)` → `p#` for capability inputs.
     cap_param_to_sym: HashMap<(String, String, String, String), String>,
+    /// `(entry_id, entity, p_sym)` → entity field wire (qualified reverse of [`Self::entity_field_to_sym`]).
+    entity_p_sym_to_wire: HashMap<(String, String, String), String>,
+    /// `(entity, p_sym)` → field wire when unique across catalogs (empty `entry_id` lookup).
+    entity_p_sym_globally_unique: HashMap<(String, String), String>,
+    /// `(entry_id, domain, capability, p_sym)` → param wire (qualified reverse of [`Self::cap_param_to_sym`]).
+    cap_p_sym_to_param: HashMap<(String, String, String, String), String>,
     /// `(catalog_entry_id|vr:value_ref)` → `v#` — one symbol per CGS `values:` row in this session.
     pub(crate) value_domain_fp_to_sym: IndexMap<String, String>,
     /// `v#` → value-domain fingerprint (reverse of [`Self::value_domain_fp_to_sym`]).
@@ -1998,6 +2004,95 @@ impl SymbolMap {
     /// Resolve `p#` → canonical field/param wire. Returns `None` if `sym` is not a known `p#` token.
     pub fn resolve_ident<'a>(&'a self, sym: &str) -> Option<&'a str> {
         self.sym_to_ident.get(sym).map(|s| s.as_str())
+    }
+
+    /// True when `sym` is an opaque session `p#` token (digits only after `p`).
+    #[inline]
+    pub fn is_opaque_p_sym(sym: &str) -> bool {
+        crate::teaching_term::Symbol::parse_index(sym, 'p').is_some()
+    }
+
+    /// Resolve opaque `p#` to an entity field wire when the binding entity is known.
+    pub fn resolve_wire_for_p_sym_entity(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        token: &str,
+    ) -> Option<String> {
+        if !Self::is_opaque_p_sym(token) {
+            return None;
+        }
+        let key = |eid: &str| {
+            (
+                eid.to_string(),
+                entity.to_string(),
+                token.to_string(),
+            )
+        };
+        if !catalog_entry_id.is_empty() {
+            if let Some(wire) = self.entity_p_sym_to_wire.get(&key(catalog_entry_id)) {
+                return Some(wire.clone());
+            }
+        }
+        self.entity_p_sym_globally_unique
+            .get(&(entity.to_string(), token.to_string()))
+            .cloned()
+    }
+
+    /// Resolve opaque `p#` to a capability input param wire for a specific mutator.
+    pub fn resolve_wire_for_p_sym_cap(
+        &self,
+        catalog_entry_id: &str,
+        domain: &str,
+        capability: &str,
+        token: &str,
+    ) -> Option<String> {
+        if !Self::is_opaque_p_sym(token) {
+            return None;
+        }
+        self.cap_p_sym_to_param
+            .get(&(
+                catalog_entry_id.to_string(),
+                domain.to_string(),
+                capability.to_string(),
+                token.to_string(),
+            ))
+            .cloned()
+    }
+
+    fn rebuild_qualified_p_sym_indexes(&mut self) {
+        self.entity_p_sym_to_wire.clear();
+        self.entity_p_sym_globally_unique.clear();
+        self.cap_p_sym_to_param.clear();
+        for ((eid, ent, field), sym) in &self.entity_field_to_sym {
+            if !Self::is_opaque_p_sym(sym) {
+                continue;
+            }
+            self.entity_p_sym_to_wire.insert(
+                (eid.clone(), ent.clone(), sym.clone()),
+                field.clone(),
+            );
+            let global_key = (ent.clone(), sym.clone());
+            match self.entity_p_sym_globally_unique.get(&global_key) {
+                None => {
+                    self.entity_p_sym_globally_unique
+                        .insert(global_key, field.clone());
+                }
+                Some(existing) if existing == field => {}
+                Some(_) => {
+                    self.entity_p_sym_globally_unique.remove(&global_key);
+                }
+            }
+        }
+        for ((eid, dom, cap, param), sym) in &self.cap_param_to_sym {
+            if !Self::is_opaque_p_sym(sym) {
+                continue;
+            }
+            self.cap_p_sym_to_param.insert(
+                (eid.clone(), dom.clone(), cap.clone(), sym.clone()),
+                param.clone(),
+            );
+        }
     }
 
     /// Resolve `r#` → declared relation wire. Returns `None` if `sym` is not a session relation token.
@@ -3205,6 +3300,9 @@ impl TeachingExposureSession {
             relation_to_sym: self.relation_to_sym.clone(),
             sym_to_relation_wire,
             cap_param_to_sym: self.cap_param_to_sym.clone(),
+            entity_p_sym_to_wire: HashMap::new(),
+            entity_p_sym_globally_unique: HashMap::new(),
+            cap_p_sym_to_param: HashMap::new(),
             value_domain_fp_to_sym,
             value_sym_to_fp,
             p_sym_to_value_sym,
@@ -3224,6 +3322,7 @@ impl TeachingExposureSession {
                 sm.value_sym_gloss.insert(vsym.clone(), g);
             }
         }
+        sm.rebuild_qualified_p_sym_indexes();
         sm
     }
 
@@ -5029,5 +5128,37 @@ mod tests {
             r_sym.starts_with('r'),
             "parser symbol map must assign r# for LangItem.summary after repair: {r_sym}"
         );
+    }
+
+    #[test]
+    fn wire_for_entity_p_sym_disambiguates_homograph_tokens() {
+        let dir = std::path::Path::new("../../apis/github");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).expect("github");
+        let exp = TeachingExposureSession::new(&cgs, "github", &["Issue", "Label"]);
+        let map = exp.symbol_map_arc();
+        let issue_title = map.ident_sym_entity_field("Issue", "title");
+        let label_name = map.ident_sym_entity_field("Label", "name");
+        if issue_title == "title" || label_name == "name" {
+            return;
+        }
+        assert_eq!(
+            map.resolve_wire_for_p_sym_entity("github", "Issue", issue_title.as_str()),
+            Some("title".to_string())
+        );
+        assert_eq!(
+            map.resolve_wire_for_p_sym_entity("github", "Label", label_name.as_str()),
+            Some("name".to_string())
+        );
+        if issue_title == label_name {
+            assert_ne!(
+                map.resolve_ident(issue_title.as_str()),
+                map.resolve_wire_for_p_sym_entity("github", "Label", label_name.as_str())
+                    .as_deref(),
+                "global sym_to_ident must not override entity-scoped Label resolution"
+            );
+        }
     }
 }

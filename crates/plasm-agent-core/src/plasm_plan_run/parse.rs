@@ -39,10 +39,12 @@ pub fn resolve_wire_field_token(
         return String::new();
     }
     let map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
-    if let Some(wire) = map.resolve_ident(t) {
-        return wire.to_string();
-    }
     if let Some(qe) = qe {
+        if let Some(wire) =
+            map.resolve_wire_for_p_sym_entity(qe.entry_id.as_str(), qe.entity.as_str(), t)
+        {
+            return wire;
+        }
         if let Ok(cgs) =
             crate::catalog_ownership::resolve_cgs_for_entity(session, qe.entity.as_str(), None)
         {
@@ -58,6 +60,9 @@ pub fn resolve_wire_field_token(
                 }
             }
         }
+    }
+    if let Some(wire) = map.resolve_ident(t) {
+        return wire.to_string();
     }
     t.to_string()
 }

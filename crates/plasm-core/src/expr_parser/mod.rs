@@ -641,6 +641,28 @@ impl<'a> Parser<'a> {
             .unwrap_or_else(|| raw.to_string())
     }
 
+    /// Resolve a dotted-call `key=` token for a specific capability (cap-qualified before global).
+    fn resolve_invoke_arg_key(&self, cap_entity: &str, cap_name: &str, raw: &str) -> String {
+        let entry_id = self
+            .pending_session_catalog_entry_id
+            .as_deref()
+            .or(self.active_entity_entry_id.as_deref())
+            .unwrap_or("");
+        if let Some(wire) = self
+            .sym_map
+            .resolve_wire_for_p_sym_cap(entry_id, cap_entity, cap_name, raw)
+        {
+            return wire;
+        }
+        if let Some(wire) = self
+            .sym_map
+            .resolve_wire_for_p_sym_entity(entry_id, cap_entity, raw)
+        {
+            return wire;
+        }
+        self.resolve_opaque_ident_token(raw)
+    }
+
     fn err(&self, kind: ParseErrorKind) -> ParseError {
         ParseError {
             kind,
@@ -1222,7 +1244,11 @@ impl<'a> Parser<'a> {
 
     /// Comma-separated `key=value` inside `(` … `)` for dotted-call create/update/invoke (see module `//!`).
     /// Optional-parameter teaching form: `(..)` or `(k=v,..)` — `..` adds no keys.
-    fn parse_paren_object_arg_list(&mut self) -> Result<IndexMap<String, Value>, ParseError> {
+    fn parse_paren_object_arg_list(
+        &mut self,
+        cap_entity: &str,
+        cap_name: &str,
+    ) -> Result<IndexMap<String, Value>, ParseError> {
         let mut map = IndexMap::new();
         loop {
             self.skip_ws();
@@ -1239,7 +1265,7 @@ impl<'a> Parser<'a> {
                 break;
             }
             let (key, _, _) = self.parse_ident_with_span()?;
-            let wire_key = self.resolve_opaque_ident_token(&key);
+            let wire_key = self.resolve_invoke_arg_key(cap_entity, cap_name, &key);
             self.skip_ws();
             if self.peek_char() != Some('=') {
                 return Err(self.err(ParseErrorKind::ExpectedChar {
@@ -1608,6 +1634,8 @@ impl<'a> Parser<'a> {
         let label_norm = self.normalize_method_symbol_label(&label);
         let cap =
             self.resolve_dotted_call_capability(&label_norm, Some(label.as_str()), &source)?;
+        let cap_entity = cap.domain.clone();
+        let cap_name = cap.name.clone();
         let root_union = cap
             .input_schema
             .as_ref()
@@ -1633,7 +1661,7 @@ impl<'a> Parser<'a> {
             return self.finish_dotted_call_with_payload_value(source, label, val);
         }
 
-        let map = self.parse_paren_object_arg_list()?;
+        let map = self.parse_paren_object_arg_list(&cap_entity, &cap_name)?;
         self.expect_char(')')?;
         self.finish_dotted_call_with_payload(source, label, map)
     }

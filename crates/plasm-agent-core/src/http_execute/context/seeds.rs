@@ -132,6 +132,25 @@ pub(super) fn seeds_exposure_ready_for_reuse(
     exp.pending_relation_slots_among(&relation_keys).is_empty()
 }
 
+/// True when explicit `ranked_capabilities` names mutators not yet on the exposure surface.
+pub(super) fn ranked_capabilities_need_exposure_replay(
+    exp: &plasm_core::TeachingExposureSession,
+    ranked_arg: &RankedCapabilitiesArg,
+) -> bool {
+    let RankedCapabilitiesArg::Set(Some(list)) = ranked_arg else {
+        return false;
+    };
+    let Some(normalized) = normalize_ranked_capabilities_for_gate(Some(list.clone())) else {
+        return false;
+    };
+    normalized.iter().any(|name| {
+        !exp.surface
+            .capabilities
+            .iter()
+            .any(|k| k.capability.as_str() == name.as_str())
+    })
+}
+
 pub(crate) fn group_seed_entities_by_entry(
     seeds: &[CapabilitySeed],
 ) -> IndexMap<String, Vec<String>> {
@@ -368,4 +387,135 @@ pub(super) fn wrap_teaching_markdown_literal_block(
     let t = body.trim_end();
     let fence = render_mode.markdown_fence_info_string();
     format!("```{fence}\n{t}\n```\n")
+}
+
+#[cfg(test)]
+mod ranked_replay_tests {
+    use super::*;
+    use plasm_core::{load_schema, TeachingExposureSession};
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    #[test]
+    fn ranked_capabilities_need_exposure_replay_when_mutator_missing_from_surface() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = load_schema(&root.join("../../apis/github")).expect("github");
+        let exp = TeachingExposureSession::new(&cgs, "github", &["Repository"]);
+        assert!(
+            ranked_capabilities_need_exposure_replay(
+                &exp,
+                &RankedCapabilitiesArg::Set(Some(vec!["zzzz_mutator_not_on_surface".into()])),
+            ),
+            "unknown ranked mutator must trigger replay"
+        );
+        let on_surface = exp
+            .surface
+            .capabilities
+            .first()
+            .expect("repository surface has capabilities")
+            .capability
+            .clone();
+        assert!(
+            !ranked_capabilities_need_exposure_replay(
+                &exp,
+                &RankedCapabilitiesArg::Set(Some(vec![on_surface.to_string()])),
+            ),
+            "ranked cap already on surface must not trigger replay"
+        );
+        assert!(
+            !ranked_capabilities_need_exposure_replay(&exp, &RankedCapabilitiesArg::Unspecified),
+            "unspecified ranked list must not force replay"
+        );
+    }
+
+    #[test]
+    fn ranked_replay_surfaces_deferred_mutator_after_read_first_open() {
+        use plasm_core::capability_method_label_kebab;
+        use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+        use plasm_core::loader::load_schema_dir;
+        use plasm_core::ExposureEntityKey;
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = Arc::new(
+            load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+                .expect("plasm_language_matrix"),
+        );
+        let entities = ["LangItem"];
+        let endpoints = entities
+            .iter()
+            .map(|e| ExposureEntityKey {
+                entry_id: "matrix".into(),
+                entity: plasm_core::EntityName::from(*e),
+            })
+            .collect::<Vec<_>>();
+        let weak_intent = "langitem browse inventory metadata";
+        let mutator = "langitem_create";
+        let delta = derive_intent_exposure_surface_batch(
+            cgs.as_ref(),
+            "matrix",
+            weak_intent,
+            &endpoints,
+            &entities.iter().map(|e| (*e).to_string()).collect::<Vec<_>>(),
+            None,
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        let mut exp = TeachingExposureSession::new_with_intent_delta(
+            cgs.as_ref(),
+            "matrix",
+            &entities,
+            delta,
+        );
+        assert!(
+            !exp
+                .surface
+                .capabilities
+                .iter()
+                .any(|c| c.capability.as_str() == mutator),
+            "read-first weak intent must defer seeded mutator"
+        );
+        assert!(
+            ranked_capabilities_need_exposure_replay(
+                &exp,
+                &RankedCapabilitiesArg::Set(Some(vec![mutator.into()])),
+            ),
+            "ranked replay gate must fire for deferred mutator"
+        );
+
+        let ranked = vec![mutator.to_string()];
+        let replay_delta = derive_intent_exposure_surface_batch(
+            cgs.as_ref(),
+            "matrix",
+            weak_intent,
+            &endpoints,
+            &entities.iter().map(|e| (*e).to_string()).collect::<Vec<_>>(),
+            Some(&ranked),
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        exp.expose_surface(
+            &[cgs.as_ref()],
+            cgs.clone(),
+            "matrix",
+            &entities,
+            replay_delta,
+        );
+        assert!(
+            exp.surface
+                .capabilities
+                .iter()
+                .any(|c| c.capability.as_str() == mutator),
+            "ranked replay must add deferred mutator to exposure surface"
+        );
+        let map = exp.symbol_map_arc();
+        let cap = cgs.get_capability(mutator).expect(mutator);
+        let method = capability_method_label_kebab(cap);
+        let method_sym = map.method_sym("LangItem", &method);
+        assert!(
+            method_sym.starts_with('m'),
+            "{mutator} method must appear on teaching surface after replay: {method_sym}"
+        );
+    }
 }

@@ -7,8 +7,9 @@ use super::super::seeds::{
     apply_ranked_capabilities_session_update, build_capability_exposure_plan,
     format_session_unchanged_reuse_markdown, group_seed_entities_by_entry,
     normalize_ranked_capabilities_for_gate, primary_entry_id_for_grouped,
-    seeds_exposure_ready_for_reuse, teaching_exposure_at, unchanged_expand_wave,
-    wrap_teaching_markdown_literal_block, RankedCapabilitiesArg, STALE_EXECUTE_BINDING_NOTICE,
+    ranked_capabilities_need_exposure_replay, seeds_exposure_ready_for_reuse, teaching_exposure_at,
+    unchanged_expand_wave, wrap_teaching_markdown_literal_block, RankedCapabilitiesArg,
+    STALE_EXECUTE_BINDING_NOTICE,
 };
 use super::expand::expand_execute_teaching_session;
 use super::federate::{commit_federate_wave, prepare_federate_wave, PreparedFederateWave};
@@ -368,9 +369,12 @@ pub async fn apply_capability_seeds(
                             .iter()
                             .all(|eid| sess_arc.contexts_by_entry.contains_key(eid));
                         if catalogs_ready && seeds_exposure_ready_for_reuse(exp, &seeds) {
-                            return Ok::<Option<plasm_core::TeachingExposureSession>, String>(
-                                Some(exp.clone()),
-                            );
+                            if !ranked_capabilities_need_exposure_replay(exp, &ranked_capabilities)
+                            {
+                                return Ok::<Option<plasm_core::TeachingExposureSession>, String>(
+                                    Some(exp.clone()),
+                                );
+                            }
                         }
                     }
                 }
