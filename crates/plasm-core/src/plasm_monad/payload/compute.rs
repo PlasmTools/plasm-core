@@ -9,6 +9,13 @@ pub struct ComputeTemplate {
     pub schema: SyntheticResultSchema,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub page_size: Option<usize>,
+    /// When set (row-to-text render), the projected list is also bound under this name in Minijinja.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "source_alias"
+    )]
+    pub collection_alias: Option<OutputName>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

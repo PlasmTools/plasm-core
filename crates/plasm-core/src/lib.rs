@@ -307,8 +307,9 @@ pub use template_interpolate::{
     interpolate_string_with_max, BindingScope, InterpolateError,
 };
 pub use template_ref::{
-    contains_dollar_interpolation, for_each_interpolation_path, interpolation_paths,
-    interpolation_roots, validate_interpolation_syntax, RefKind, TemplateRefContext,
+    contains_dollar_interpolation, find_dollar_interpolation_in_minijinja_body,
+    for_each_interpolation_path, interpolation_paths, interpolation_roots,
+    validate_interpolation_syntax, RefKind, TemplateRefContext,
 };
 pub use temporal::{normalize_temporal_value, temporal_wire_format_from_name, wire_temporal_value};
 pub use type_checker::{

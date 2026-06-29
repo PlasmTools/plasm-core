@@ -173,7 +173,9 @@ pub(crate) fn render_compute_template(compute: &ComputeTemplate) -> String {
                 )
             }
         }
-        ComputeOp::Render { columns, template, .. } => format!(
+        ComputeOp::Render {
+            columns, template, ..
+        } => format!(
             "render {} columns=[{}] template_chars={}",
             compute.source,
             columns

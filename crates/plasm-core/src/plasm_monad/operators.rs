@@ -128,6 +128,7 @@ pub fn map_step_payload(source: &str, op: ComputeOp, shape: ResultShape) -> Plas
                 fields: vec![],
             },
             page_size: None,
+            collection_alias: None,
         },
         effect_class: EffectClass::Read,
         result_shape: shape,

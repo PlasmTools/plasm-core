@@ -566,6 +566,7 @@ mod tests {
                     }],
                 },
                 page_size: None,
+                collection_alias: Some(OutputName::new("items").expect("items")),
             },
             depends_on: vec![PlanNodeId::new("items").expect("dep")],
             uses_result: vec![],
@@ -589,6 +590,10 @@ mod tests {
             }
             other => panic!("expected render op, got {other:?}"),
         }
+        assert_eq!(
+            map.compute.collection_alias.as_ref().map(|a| a.as_str()),
+            Some("items")
+        );
         assert_eq!(map.compute, c.compute);
     }
 
@@ -612,12 +617,13 @@ mod tests {
         match c.compute.op {
             ComputeOp::Render { column_aliases, .. } => {
                 assert_eq!(column_aliases.len(), 1);
-                assert_eq!(
-                    column_aliases.get("p23").map(|c| c.as_str()),
-                    Some("name")
-                );
+                assert_eq!(column_aliases.get("p23").map(|c| c.as_str()), Some("name"));
             }
             other => panic!("expected render op, got {other:?}"),
         }
+        assert_eq!(
+            c.compute.collection_alias.as_ref().map(|a| a.as_str()),
+            Some("items")
+        );
     }
 }

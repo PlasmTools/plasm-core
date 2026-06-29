@@ -764,6 +764,7 @@ pub(crate) fn dry_validate_render_nodes(
             &[serde_json::Value::Object(row)],
             &RenderColumns::from_op_parts(columns.clone(), column_aliases.clone()),
             template,
+            c.compute.collection_alias.as_ref(),
         )?;
     }
     Ok(())

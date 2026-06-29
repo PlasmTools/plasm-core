@@ -442,7 +442,9 @@ fn compact_op_from_compute(
         ComputeOp::DedupeBy { keys } => PlanDryOp::Dedupe {
             keys: keys.iter().map(|k| k.dotted()).collect(),
         },
-        ComputeOp::Render { columns, template, .. } => PlanDryOp::Render {
+        ComputeOp::Render {
+            columns, template, ..
+        } => PlanDryOp::Render {
             columns: columns.iter().map(|c| c.as_str().to_string()).collect(),
             template_chars: template.chars().count(),
         },
@@ -856,6 +858,7 @@ mod tests {
                     fields: Vec::new(),
                 },
                 page_size: None,
+                collection_alias: None,
             },
             &HashMap::new(),
         );

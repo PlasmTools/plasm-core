@@ -18,6 +18,15 @@ fn empty_cols(wires: &[&str]) -> RenderColumns {
     render_cols(wires, BTreeMap::new())
 }
 
+fn render(
+    rows: &[serde_json::Value],
+    cols: &RenderColumns,
+    template: &str,
+    collection_alias: Option<&OutputName>,
+) -> Result<Vec<serde_json::Value>, String> {
+    render_compute(rows, cols, template, collection_alias)
+}
+
 #[test]
 fn render_compute_emits_single_content_row() {
     let rows = vec![
@@ -25,12 +34,32 @@ fn render_compute_emits_single_content_row() {
         serde_json::json!({ "name": "b" }),
     ];
     let cols = empty_cols(&["name"]);
-    let out = render_compute(
+    let out = render(
         &rows,
         &cols,
         "{% for r in rows %}- {{ r.name }}\n{% endfor %}",
+        None,
     )
     .expect("render");
+
+    assert_eq!(out, vec![serde_json::json!({ "content": "- a\n- b\n" })]);
+}
+
+#[test]
+fn render_compute_source_alias_binds_collection_under_label() {
+    let rows = vec![
+        serde_json::json!({ "name": "a" }),
+        serde_json::json!({ "name": "b" }),
+    ];
+    let cols = empty_cols(&["name"]);
+    let alias = OutputName::new("items").expect("alias");
+    let out = render(
+        &rows,
+        &cols,
+        "{% for r in items %}- {{ r.name }}\n{% endfor %}",
+        Some(&alias),
+    )
+    .expect("render with source alias");
 
     assert_eq!(out, vec![serde_json::json!({ "content": "- a\n- b\n" })]);
 }
@@ -45,10 +74,11 @@ fn render_compute_p_symbol_alias_resolves_alongside_wire_name() {
     aliases.insert("p23".into(), OutputName::new("name").expect("name"));
     aliases.insert("p21".into(), OutputName::new("id").expect("id"));
     let cols = render_cols(&["name", "id"], aliases);
-    let out = render_compute(
+    let out = render(
         &rows,
         &cols,
         "{% for r in rows %}- {{ r.p23 }} (#{{ r.p21 }})\n{% endfor %}",
+        None,
     )
     .expect("render p# aliases");
 
@@ -64,30 +94,67 @@ fn render_compute_mixed_p_and_wire_names() {
     let mut aliases = BTreeMap::new();
     aliases.insert("p23".into(), OutputName::new("name").expect("name"));
     let cols = render_cols(&["name"], aliases);
-    let out = render_compute(
+    let out = render(
         &rows,
         &cols,
         "{% for r in rows %}{{ r.p23 }} / {{ r.name }}{% endfor %}",
+        None,
     )
     .expect("mixed");
     assert_eq!(out, vec![serde_json::json!({ "content": "a / a" })]);
 }
 
 #[test]
+fn render_compute_null_field_coalesces_with_or() {
+    let rows = vec![
+        serde_json::json!({ "name": "a", "score": null }),
+        serde_json::json!({ "name": "b", "score": 42 }),
+    ];
+    let cols = empty_cols(&["name", "score"]);
+    let out = render(
+        &rows,
+        &cols,
+        "{% for r in rows %}{{ r.name }}: {{ r.score or \"—\" }}\n{% endfor %}",
+        None,
+    )
+    .expect("null coalesce");
+    assert_eq!(
+        out,
+        vec![serde_json::json!({ "content": "a: —\nb: 42\n" })]
+    );
+}
+
+#[test]
+fn render_compute_null_renders_none_literal_without_coalesce() {
+    let rows = vec![serde_json::json!({ "name": "a", "score": null })];
+    let cols = empty_cols(&["name", "score"]);
+    let out = render(
+        &rows,
+        &cols,
+        "{% for r in rows %}{{ r.name }}:{{ r.score }}{% endfor %}",
+        None,
+    )
+    .expect("null bare");
+    assert_eq!(out, vec![serde_json::json!({ "content": "a:none" })]);
+}
+
+#[test]
 fn render_compute_propagates_minijinja_errors_with_field_hint() {
     let rows = vec![serde_json::json!({ "name": "a" })];
     let cols = empty_cols(&["name"]);
-    let err = render_compute(&rows, &cols, "{{ missing }}").expect_err("strict undefined is rejected");
+    let err = render(&rows, &cols, "{{ missing }}", None)
+        .expect_err("strict undefined is rejected");
 
     assert!(err.contains("Plan.render template render error"), "{err}");
     assert!(err.contains("Valid row fields: r.name"), "{err}");
+    assert!(err.contains("{% for r in rows %}"), "{err}");
 }
 
 #[test]
 fn render_compute_rejects_missing_columns_with_hint() {
     let rows = vec![serde_json::json!({ "name": "a" })];
     let cols = empty_cols(&["missing"]);
-    let err = render_compute(&rows, &cols, "{{ rows }}").expect_err("missing column rejected");
+    let err = render(&rows, &cols, "{{ rows }}", None).expect_err("missing column rejected");
 
     assert!(err.contains("did not resolve in source row 0"), "{err}");
     assert!(err.contains("Valid row fields:"), "{err}");
@@ -100,10 +167,11 @@ fn render_compute_preserves_unicode_markdown() {
         "arrow": "→",
     })];
     let cols = empty_cols(&["title", "arrow"]);
-    let rendered = render_compute(
+    let rendered = render(
         &rows,
         &cols,
         "# {{ rows[0].title }}\nstep {{ rows[0].arrow }} done",
+        None,
     )
     .expect("render unicode");
     let content = rendered[0]["content"].as_str().expect("content");
@@ -118,10 +186,11 @@ fn render_compute_feeds_node_input_for_action_content() {
         serde_json::json!({ "name": "b" }),
     ];
     let cols = empty_cols(&["name"]);
-    let rendered = render_compute(
+    let rendered = render(
         &rows,
         &cols,
         "{% for r in rows %}- {{ r.name }}\n{% endfor %}",
+        None,
     )
     .expect("render");
     let input = rendered.into_iter().next().expect("singleton row");

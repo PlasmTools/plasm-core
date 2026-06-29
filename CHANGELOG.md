@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.91] - 2026-06-29
+
+### Fixed
+
+- **Row-to-text templates:** bind the projected list under both `rows` and the source binding name (`collection_alias` on `ComputeTemplate`) so `{% for r in items %}` works without forcing the magic `rows` identifier.
+- **Row-to-text compile guard:** reject `${…}` in template bodies with actionable errors; canonical Minijinja-body scanner in `template_ref` (respects `{% raw %}` and `$$`).
+- **Row-to-text runtime errors:** classify Minijinja undefined values via `ErrorKind` and append iteration hints (`{% for r in rows %}` plus source alias when set).
+
+### Changed
+
+- **Render compile:** `resolve_render_collection_alias` and `render_context_hint` live in `plasm_render_compile.rs` (removed from `plasm_dag.rs` / `RenderColumns`).
+- **MCP dry-run transport:** compact agent `_meta.plasm` / `structuredContent.plasm`; full `comp` DAG and `plan_ux_reflection` under `_meta.ui.plasm` for MCP Apps.
+- **Teaching / docs:** row-to-text one-render-over-list semantics, source-name alias, and null-coalescing idioms in `plasm_tool.txt`, language definition, and AGENTS.
+
 ## [0.3.90] - 2026-06-29
 
 ### Fixed

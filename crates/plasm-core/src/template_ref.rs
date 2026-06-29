@@ -143,6 +143,36 @@ pub fn for_each_interpolation_path<F: FnMut(&str)>(s: &str, mut f: F) {
     }
 }
 
+/// First `${…}` span in a Minijinja row-template body, skipping `{% raw %}…{% endraw %}` and `$$`.
+pub fn find_dollar_interpolation_in_minijinja_body(s: &str) -> Option<String> {
+    let mut i = 0;
+    while i < s.len() {
+        if s[i..].starts_with("{% raw %}") {
+            if let Some(rel) = s[i..].find("{% endraw %}") {
+                i += rel + "{% endraw %}".len();
+                continue;
+            }
+        }
+        let Some(rest) = s.get(i..) else {
+            break;
+        };
+        if rest.starts_with("$$") {
+            i += 2;
+            continue;
+        }
+        if rest.starts_with("${") {
+            let start = i;
+            if let Some(rel) = rest.find('}') {
+                i += rel + 1;
+                return Some(s[start..i].to_string());
+            }
+            return Some(s[start..].to_string());
+        }
+        i += rest.chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+    }
+    None
+}
+
 /// Syntax-only validation: balanced `${…}`, non-empty paths.
 pub fn validate_interpolation_syntax(
     s: &str,
@@ -188,5 +218,16 @@ mod tests {
         let ctx = TemplateRefContext::for_row_scope("_");
         let roots = ctx.plan_node_roots_from_string("title ${_.id} body ${stats.content}");
         assert_eq!(roots, vec![("stats".to_string(), "stats".to_string())]);
+    }
+
+    #[test]
+    fn minijinja_body_dollar_scan_respects_raw_and_escape() {
+        assert_eq!(
+            find_dollar_interpolation_in_minijinja_body("${report.content}"),
+            Some("${report.content}".into())
+        );
+        assert!(find_dollar_interpolation_in_minijinja_body("{% raw %}${x}{% endraw %}").is_none());
+        assert!(find_dollar_interpolation_in_minijinja_body("$$ literal").is_none());
+        assert!(find_dollar_interpolation_in_minijinja_body("score: {{ r.p9 or \"—\" }}").is_none());
     }
 }

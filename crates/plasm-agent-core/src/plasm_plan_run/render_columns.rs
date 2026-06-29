@@ -30,10 +30,7 @@ impl RenderColumns {
         Ok(Self { wires, aliases })
     }
 
-    pub fn from_op_parts(
-        wires: Vec<OutputName>,
-        aliases: BTreeMap<String, OutputName>,
-    ) -> Self {
+    pub fn from_op_parts(wires: Vec<OutputName>, aliases: BTreeMap<String, OutputName>) -> Self {
         Self { wires, aliases }
     }
 
@@ -79,10 +76,7 @@ impl RenderColumns {
             parts.push(format!("r.{}", column.as_str()));
         }
         for (alias, wire) in &self.aliases {
-            parts.push(format!(
-                "r.{alias} (alias for r.{})",
-                wire.as_str()
-            ));
+            parts.push(format!("r.{alias} (alias for r.{})", wire.as_str()));
         }
         format!("Valid row fields: {}", parts.join(", "))
     }
@@ -94,10 +88,7 @@ mod tests {
 
     #[test]
     fn from_field_pairs_builds_aliases_and_rejects_invalid_wire() {
-        let pairs = vec![
-            ("p1".into(), "name".into()),
-            ("name".into(), "name".into()),
-        ];
+        let pairs = vec![("p1".into(), "name".into()), ("name".into(), "name".into())];
         let cols = RenderColumns::from_field_pairs(&pairs).expect("pairs");
         assert_eq!(cols.wires.len(), 2);
         assert_eq!(cols.aliases.len(), 1);
@@ -109,7 +100,8 @@ mod tests {
     fn project_row_applies_aliases() {
         let mut aliases = BTreeMap::new();
         aliases.insert("p23".into(), OutputName::new("name").expect("name"));
-        let cols = RenderColumns::from_op_parts(vec![OutputName::new("name").expect("name")], aliases);
+        let cols =
+            RenderColumns::from_op_parts(vec![OutputName::new("name").expect("name")], aliases);
         let row = serde_json::json!({ "name": "a" });
         let projected = cols.project_row(&row, 0).expect("project");
         assert_eq!(projected.get("name").and_then(|v| v.as_str()), Some("a"));

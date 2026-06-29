@@ -1,3 +1,8 @@
+use std::collections::BTreeMap;
+
+use crate::plasm_plan::OutputName;
+use crate::plasm_render_compile::render_context_hint;
+
 use super::super::*;
 use super::eval::value_at_path;
 
@@ -133,6 +138,7 @@ pub(crate) fn eval_compute_from_rows(
             rows,
             &RenderColumns::from_op_parts(columns.clone(), column_aliases.clone()),
             template,
+            compute.collection_alias.as_ref(),
         ),
     }
 }
@@ -280,6 +286,7 @@ pub(crate) fn render_compute(
     rows: &[serde_json::Value],
     columns: &RenderColumns,
     template: &str,
+    collection_alias: Option<&OutputName>,
 ) -> Result<Vec<serde_json::Value>, String> {
     if rows.len() > PLAN_RENDER_MAX_ROWS {
         return Err(format!(
@@ -305,19 +312,23 @@ pub(crate) fn render_compute(
     let tmpl = env
         .get_template("plan_render")
         .map_err(|e| format!("Plan.render template load error: {e}"))?;
-    let rendered = tmpl
-        .render(minijinja::context!(rows => projected))
-        .map_err(|e| {
-            let msg = e.to_string();
-            if msg.contains("undefined") {
-                format!(
-                    "Plan.render template render error: {msg}. {}",
-                    columns.access_hint()
-                )
-            } else {
-                format!("Plan.render template render error: {msg}")
-            }
-        })?;
+    let alias_name = collection_alias.map(|a| a.as_str());
+    let rows_val = minijinja::Value::from_serialize(&projected);
+    let ctx: BTreeMap<&str, minijinja::Value> = if let Some(alias) = alias_name {
+        BTreeMap::from([("rows", rows_val.clone()), (alias, rows_val)])
+    } else {
+        BTreeMap::from([("rows", rows_val)])
+    };
+    let rendered = tmpl.render(ctx).map_err(|e| {
+        if matches!(e.kind(), minijinja::ErrorKind::UndefinedError) {
+            format!(
+                "Plan.render template render error: {e}. {}",
+                render_context_hint(columns, alias_name)
+            )
+        } else {
+            format!("Plan.render template render error: {e}")
+        }
+    })?;
     if rendered.chars().count() > PLAN_RENDER_MAX_OUTPUT_CHARS {
         return Err(format!(
             "Plan.render output exceeds {PLAN_RENDER_MAX_OUTPUT_CHARS} characters"

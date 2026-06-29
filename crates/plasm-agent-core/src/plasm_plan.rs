@@ -1840,7 +1840,13 @@ fn validate_compute_template(
             template,
             column_aliases,
         } => {
-            validate_render_compute_template(t, columns, template, column_aliases, node_index)?;
+            validate_render_compute_template(
+                t,
+                columns,
+                template,
+                column_aliases,
+                node_index,
+            )?;
         }
         _ => {}
     }
@@ -1887,6 +1893,11 @@ fn validate_render_compute_template(
     if template.chars().count() > PLAN_RENDER_MAX_TEMPLATE_CHARS {
         return Err(format!(
             "plan.nodes[{node_index}].compute.render.template exceeds {PLAN_RENDER_MAX_TEMPLATE_CHARS} characters"
+        ));
+    }
+    if let Some(span) = plasm_core::find_dollar_interpolation_in_minijinja_body(template) {
+        return Err(format!(
+            "plan.nodes[{node_index}].compute.render.template uses `${{…}}` interpolation ({span}); row-to-text bodies use Minijinja `{{ … }}` over `rows` (also bound under the source label when applicable). `${{binding.content}}` resolves only in later string params / heredocs."
         ));
     }
     let mut env = minijinja::Environment::new();
@@ -3092,5 +3103,51 @@ mod tests {
         let plan = parse_plan_value(&v).expect("parse");
         let err = validate_plan_artifact(&plan).expect_err("undeclared alias rejected");
         assert!(err.contains("undeclared alias"), "{err}");
+    }
+
+    #[test]
+    fn render_template_rejects_dollar_interpolation_with_actionable_copy() {
+        let v = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [
+                {
+                    "id": "items",
+                    "kind": "data",
+                    "effect_class": "artifact_read",
+                    "result_shape": "artifact",
+                    "data": { "kind": "literal", "value": [{ "name": "a" }] },
+                    "depends_on": [],
+                    "uses_result": []
+                },
+                {
+                    "id": "report",
+                    "kind": "compute",
+                    "effect_class": "artifact_read",
+                    "result_shape": "single",
+                    "compute": {
+                        "source": "items",
+                        "op": {
+                            "kind": "render",
+                            "columns": ["name"],
+                            "template": "- ${items.name}\n",
+                            "column_aliases": {}
+                        },
+                        "schema": {
+                            "entity": "PlanRender",
+                            "fields": [{ "name": "content", "value_kind": "string" }]
+                        }
+                    },
+                    "depends_on": ["items"],
+                    "uses_result": [{ "node": "items", "as": "source" }]
+                }
+            ],
+            "return": { "kind": "node", "node": "report" }
+        });
+        let plan = parse_plan_value(&v).expect("parse");
+        let err = validate_plan_artifact(&plan).expect_err("dollar interpolation rejected");
+        assert!(err.contains("${…}` interpolation"), "{err}");
+        assert!(err.contains("Minijinja"), "{err}");
+        assert!(err.contains("later string params"), "{err}");
     }
 }

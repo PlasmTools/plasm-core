@@ -1,6 +1,7 @@
 //! MCP Streamable HTTP server (rust-mcp-sdk) over Plasm discovery + execute ([`crate::server_state::PlasmHostState`]).
-//! Tool results use Markdown [`TextContent`]; **`plasm`** sets `CallToolResult._meta.plasm` for **plan-only**
-//! dry-runs (`plan` + `guidance`); **`plasm_run`** performs live execution and may attach request fingerprints,
+//! Tool results use Markdown [`TextContent`]; **`plasm`** dry-runs put compact review tokens in
+//! `_meta.plasm` + `structuredContent.plasm` (`run_ref`, `dry_verdict`, …) and the full comp wire under
+//! `_meta.ui.plasm` for MCP App plan review only.
 //! artifact URIs, and optional `lossy_summary_fields` per truncated step in `_meta.plasm`.
 //! Run snapshot URIs in Markdown use logical-session short form `plasm://session/{logical_session_ref}/r/{n}`
 //! (canonical `l_<token>` wire ref; see [`crate::run_artifacts::plasm_session_short_resource_uri`]);
@@ -791,24 +792,21 @@ impl PlasmMcpHandler {
                         }
                         .emit_evaluate(Some(plan_ux_reflection.clone()))
                         .await;
-                        let mut plasm_obj = serde_json::Map::new();
-                        plasm_obj.insert("dry_run".into(), serde_json::json!(true));
-                        plasm_obj.insert(
+                        let mut agent_plasm = serde_json::Map::new();
+                        agent_plasm.insert("dry_run".into(), serde_json::json!(true));
+                        agent_plasm.insert(
                             "logical_session_ref".into(),
                             serde_json::json!(session_ref.as_str()),
                         );
-                        plasm_obj.insert("program".into(), serde_json::json!(program_for_trace));
-                        plasm_obj.insert("comp".into(), comp_wire.to_json_value());
-                        plasm_obj.extend(plan_commit_meta(
+                        agent_plasm.extend(plan_commit_meta(
                             &commit_ref,
                             &dry.review,
                             compact.verdict,
                         ));
-                        plasm_obj.insert(
+                        agent_plasm.insert(
                             "domain_revision".into(),
                             serde_json::json!(es.domain_revision),
                         );
-                        plasm_obj.insert("plan_ux_reflection".into(), plan_ux_reflection);
                         if dry
                             .graph_summary
                             .get("dry_review")
@@ -816,7 +814,7 @@ impl PlasmMcpHandler {
                             .and_then(|v| v.as_bool())
                             .unwrap_or(false)
                         {
-                            plasm_obj.insert("projection_warning".into(), serde_json::json!(true));
+                            agent_plasm.insert("projection_warning".into(), serde_json::json!(true));
                         }
                         if let Some(unused) = dry
                             .graph_summary
@@ -824,14 +822,21 @@ impl PlasmMcpHandler {
                             .and_then(|v| v.as_array())
                         {
                             if !unused.is_empty() {
-                                plasm_obj.insert(
+                                agent_plasm.insert(
                                     "session_notes".into(),
                                     serde_json::json!({ "unused_seeds": unused }),
                                 );
                             }
                         }
+                        let mut ui_plasm = serde_json::Map::new();
+                        ui_plasm.insert("comp".into(), comp_wire.to_json_value());
+                        ui_plasm.insert("plan_ux_reflection".into(), plan_ux_reflection);
                         let mut meta = serde_json::Map::new();
-                        meta.insert("plasm".into(), serde_json::Value::Object(plasm_obj));
+                        meta.insert("plasm".into(), serde_json::Value::Object(agent_plasm));
+                        meta.insert(
+                            "ui".into(),
+                            serde_json::json!({ "plasm": ui_plasm }),
+                        );
                         Ok(PlasmPlanRunResult {
                             version: dry.version,
                             node_results: dry.node_results,
@@ -892,9 +897,7 @@ impl PlasmMcpHandler {
                 ))];
                 let mut res = CallToolResult::from_content(blocks);
                 if let Some(m) = out.run_plasm_meta {
-                    if let Some(plasm_obj) = crate::mcp_ui_payload::plasm_obj_from_tool_meta(m) {
-                        res = crate::mcp_ui_payload::finalize_mcp_tool_result(res, plasm_obj);
-                    }
+                    res = crate::mcp_ui_payload::finalize_mcp_tool_result(res, m);
                 }
                 self.persist_transport_state(key).await;
                 Ok(res)

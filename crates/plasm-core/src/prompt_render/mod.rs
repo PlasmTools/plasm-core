@@ -3213,14 +3213,8 @@ fn capability_legend_with_session_gloss(
     ident_meta: Option<&HashMap<IdentMetaKey, IdentMetadata>>,
     catalog_entry_id: &str,
 ) -> Option<String> {
-    let mut leg = capability_legend_for_domain(
-        map,
-        cgs,
-        cap,
-        anchor_entity,
-        ident_meta,
-        catalog_entry_id,
-    )?;
+    let mut leg =
+        capability_legend_for_domain(map, cgs, cap, anchor_entity, ident_meta, catalog_entry_id)?;
     if let Some(hint) = unseeded_entity_ref_invocation_gloss(cap, cgs, map, catalog_entry_id) {
         if !leg.is_empty() {
             leg.push(' ');
@@ -4269,8 +4263,14 @@ fn collect_entity_teaching_block(
         let ms = met_sym(map, catalog_entry_id, ename, &label);
         let expr = format!("{es}.{ms}()");
         let result_gloss = crate::result_gloss::result_gloss_for_capability(cap, cgs, map);
-        let cap_leg =
-            capability_legend_with_session_gloss(map, cgs, cap, ename, ident_meta, catalog_entry_id);
+        let cap_leg = capability_legend_with_session_gloss(
+            map,
+            cgs,
+            cap,
+            ename,
+            ident_meta,
+            catalog_entry_id,
+        );
         try_push_teaching_example(
             gloss_emit,
             &mut teaching_rows,
@@ -4434,14 +4434,7 @@ fn collect_entity_teaching_block(
             );
         }
         let cap_leg = cap_ref.and_then(|c| {
-            capability_legend_with_session_gloss(
-                map,
-                cgs,
-                c,
-                ename,
-                ident_meta,
-                catalog_entry_id,
-            )
+            capability_legend_with_session_gloss(map, cgs, c, ename, ident_meta, catalog_entry_id)
         });
         let gloss =
             cap_ref.and_then(|c| crate::result_gloss::result_gloss_for_capability(c, cgs, map));
@@ -4471,15 +4464,14 @@ fn collect_entity_teaching_block(
                 break;
             }
             let qgloss = crate::result_gloss::result_gloss_for_capability(cap, cgs, map);
-            let cap_leg =
-                capability_legend_with_session_gloss(
-                    map,
-                    cgs,
-                    cap,
-                    ename,
-                    ident_meta,
-                    catalog_entry_id,
-                );
+            let cap_leg = capability_legend_with_session_gloss(
+                map,
+                cgs,
+                cap,
+                ename,
+                ident_meta,
+                catalog_entry_id,
+            );
             let mut added = false;
             if let Some(line) = query_expr_maximal(cap, &es, cgs, map, catalog_entry_id) {
                 let projection = row_producer_projection_for_query_line(cap, &es, &line);
@@ -4609,14 +4601,7 @@ fn collect_entity_teaching_block(
         let sg =
             scap.and_then(|cap| crate::result_gloss::result_gloss_for_capability(cap, cgs, map));
         let cap_leg = scap.and_then(|cap| {
-            capability_legend_with_session_gloss(
-                map,
-                cgs,
-                cap,
-                ename,
-                ident_meta,
-                catalog_entry_id,
-            )
+            capability_legend_with_session_gloss(map, cgs, cap, ename, ident_meta, catalog_entry_id)
         });
         let (search_line, search_gloss) = scap.map_or_else(
             || (line.clone(), sg.clone()),
@@ -6770,6 +6755,14 @@ mod tests {
         assert!(
             frontmatter.contains("wire names also work"),
             "row-to-text contract must note p# and wire names both resolve"
+        );
+        assert!(
+            frontmatter.contains("source binding name also works"),
+            "row-to-text contract must note source alias for collection iteration"
+        );
+        assert!(
+            frontmatter.contains("or \"—\""),
+            "row-to-text worked example must show nullable field coalescing"
         );
         assert!(
             !frontmatter.contains("e2(p10="),

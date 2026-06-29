@@ -21,7 +21,7 @@ use crate::plasm_plan_run::{
 };
 use crate::plasm_render_compile::{
     infer_column_tokens_from_minijinja_template, parse_field_list_with_tokens,
-    resolve_inferred_render_columns,
+    resolve_inferred_render_columns, resolve_render_collection_alias,
 };
 use crate::program_binding::{
     BoundedSingletonKind, ContinuationAnchor, ContinuationCapability, ProgramBindingContract,
@@ -120,6 +120,7 @@ enum DagNodeSource {
         source: String,
         op: ComputeOp,
         schema: SyntheticResultSchema,
+        collection_alias: Option<OutputName>,
     },
     Derive {
         source: String,
@@ -1144,6 +1145,7 @@ fn postfix_op_to_compute(
                 source: source.to_string(),
                 op,
                 schema,
+                collection_alias: None,
             },
         }
     };
@@ -1546,6 +1548,7 @@ fn lower_suffix_stream(
                         source: head_trim.to_string(),
                         op: ComputeOp::Limit { count: 1 },
                         schema,
+                        collection_alias: None,
                     },
                 }
             } else {
@@ -1560,6 +1563,7 @@ fn lower_suffix_stream(
                         source: head_trim.to_string(),
                         op: ComputeOp::Project { fields },
                         schema,
+                        collection_alias: None,
                     },
                 }
             };
@@ -1732,17 +1736,8 @@ fn compile_render_chain(
         explicit
     } else if let Some(raw_tokens) = infer_column_tokens_from_minijinja_template(&template) {
         let scratch = compile_state_with_nodes(state, &prefix);
-        let qe = resolve_qualified_entity_for_dag_source(
-            &scratch,
-            &prefix,
-            chain_tail_id.clone(),
-        );
-        resolve_inferred_render_columns(
-            session,
-            state.cross_cache,
-            qe.as_ref(),
-            &raw_tokens,
-        )?
+        let qe = resolve_qualified_entity_for_dag_source(&scratch, &prefix, chain_tail_id.clone());
+        resolve_inferred_render_columns(session, state.cross_cache, qe.as_ref(), &raw_tokens)?
     } else {
         let tail_node =
             lookup_dag_node(state, &prefix, chain_tail_id.as_str()).ok_or_else(|| {
@@ -1761,6 +1756,13 @@ fn compile_render_chain(
         ));
     }
 
+    let (columns, column_aliases) = spec.into_op_parts();
+    let collection_alias = resolve_render_collection_alias(
+        head_core.trim(),
+        &columns,
+        |label| state.contains(label),
+    );
+
     let mut render_node = DagNode {
         id: id.to_string(),
         expr: rhs_display.to_string(),
@@ -1775,15 +1777,13 @@ fn compile_render_chain(
         },
         source: DagNodeSource::Compute {
             source: chain_tail_id,
-            op: {
-                let (columns, column_aliases) = spec.into_op_parts();
-                ComputeOp::Render {
-                    columns,
-                    template,
-                    column_aliases,
-                }
+            op: ComputeOp::Render {
+                columns,
+                template,
+                column_aliases,
             },
             schema: plan_render_content_schema()?,
+            collection_alias,
         },
     };
     render_node.singleton |= tail_singleton;
@@ -2035,6 +2035,7 @@ fn binding_contract_inner(
             source,
             op: ComputeOp::Project { .. },
             schema,
+            ..
         } => {
             let parent = binding_contract(state, source)
                 .unwrap_or_else(|| synthetic_row_contract(source, schema));
@@ -2059,6 +2060,7 @@ fn binding_contract_inner(
             source,
             op: ComputeOp::Limit { count },
             schema,
+            ..
         } => {
             let parent = binding_contract(state, source)
                 .unwrap_or_else(|| synthetic_row_contract(source, schema));
@@ -3062,20 +3064,31 @@ fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
             "depends_on": [],
             "uses_result": [],
         })),
-        DagNodeSource::Compute { source, op, schema } => Ok(json!({
-            "id": node.id,
-            "kind": "compute",
-            "effect_class": "artifact_read",
-            "result_shape": if matches!(op, ComputeOp::Render { .. }) { "single" } else { "list" },
-            "compute": {
+        DagNodeSource::Compute {
+            source,
+            op,
+            schema,
+            collection_alias,
+        } => {
+            let mut compute = json!({
                 "source": source,
                 "op": op,
                 "schema": schema,
                 "page_size": node.page_size,
-            },
-            "depends_on": [source],
-            "uses_result": [{ "node": source, "as": "source" }],
-        })),
+            });
+            if let Some(alias) = collection_alias {
+                compute["collection_alias"] = json!(alias);
+            }
+            Ok(json!({
+                "id": node.id,
+                "kind": "compute",
+                "effect_class": "artifact_read",
+                "result_shape": if matches!(op, ComputeOp::Render { .. }) { "single" } else { "list" },
+                "compute": compute,
+                "depends_on": [source],
+                "uses_result": [{ "node": source, "as": "source" }],
+            }))
+        }
         DagNodeSource::Derive {
             source,
             value,

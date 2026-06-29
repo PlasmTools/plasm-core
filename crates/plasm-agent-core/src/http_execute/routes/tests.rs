@@ -150,9 +150,11 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
         "UI attach happens at MCP finalize, not in build_mcp_run_tool_meta"
     );
     let plasm_obj = plasm_obj_from_tool_meta(meta).expect("plasm obj");
+    let mut tool_meta = serde_json::Map::new();
+    tool_meta.insert("plasm".into(), serde_json::Value::Object(plasm_obj));
     let res = finalize_mcp_tool_result(
         CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]),
-        plasm_obj,
+        tool_meta,
     );
     assert_eq!(
         res.meta

@@ -135,11 +135,35 @@ fn plasm_is_live_operation_pending(plasm: &Map<String, serde_json::Value>) -> bo
     plasm.get("auto_async").and_then(|v| v.as_bool()) == Some(true)
 }
 
-/// Attach MCP App mount metadata from `_meta.plasm` comp-only wire (no legacy `plan`).
+fn plasm_ui_payload(meta: &Map<String, serde_json::Value>) -> Option<&Map<String, serde_json::Value>> {
+    meta.get("ui")
+        .and_then(|u| u.as_object())
+        .and_then(|u| u.get("plasm"))
+        .and_then(|p| p.as_object())
+}
+
+fn plasm_has_ui_comp(meta: &Map<String, serde_json::Value>) -> bool {
+    plasm_ui_payload(meta)
+        .and_then(|p| p.get("comp"))
+        .is_some()
+}
+
+/// Attach MCP App mount metadata from dry-run UI payload or live `steps`.
 pub fn attach_mcp_app_ui_on_tool_meta(meta: &mut Map<String, serde_json::Value>) {
     let Some(plasm) = plasm_object(meta) else {
         return;
     };
+    if plasm_dry_run(plasm) && plasm_has_ui_comp(meta) {
+        let mut ui = meta
+            .get("ui")
+            .and_then(|v| v.as_object())
+            .cloned()
+            .unwrap_or_default();
+        ui.entry("resourceUri")
+            .or_insert(serde_json::json!(PLAN_REVIEW.uri));
+        meta.insert("ui".into(), serde_json::Value::Object(ui));
+        return;
+    }
     if plasm_dry_run(plasm) && plasm_has_comp(plasm) {
         meta.insert(
             "ui".into(),
@@ -290,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn attach_mcp_app_ui_plan_review_on_dry_run_comp() {
+    fn attach_mcp_app_ui_plan_review_on_dry_run_ui_comp() {
         let mut meta = serde_json::Map::new();
         meta.insert(
             "plasm".into(),
@@ -299,6 +323,24 @@ mod tests {
         attach_mcp_app_ui_on_tool_meta(&mut meta);
         assert!(meta.get("ui").is_none());
 
+        meta.insert("plasm".into(), serde_json::json!({ "dry_run": true }));
+        meta.insert(
+            "ui".into(),
+            serde_json::json!({
+                "plasm": {
+                    "comp": { "steps": { "n1": {} }, "bind": { "topo": ["n1"] }, "return": { "kind": "step", "step": "n1" } }
+                }
+            }),
+        );
+        attach_mcp_app_ui_on_tool_meta(&mut meta);
+        assert_eq!(
+            meta.get("ui")
+                .and_then(|u| u.get("resourceUri"))
+                .and_then(|v| v.as_str()),
+            Some(PLAN_REVIEW.uri)
+        );
+
+        meta.remove("ui");
         meta.insert(
             "plasm".into(),
             serde_json::json!({

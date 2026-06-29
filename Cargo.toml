@@ -26,7 +26,7 @@ resolver = "2"
 
 # Single SemVer for the OSS workspace (see monorepo RELEASING.md on PlasmTools/plasm).
 [workspace.package]
-version = "0.3.90"
+version = "0.3.91"
 edition = "2021"
 
 [workspace.dependencies]
