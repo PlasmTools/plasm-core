@@ -570,6 +570,11 @@ pub fn program_binding_after_return_error() -> String {
         .to_string()
 }
 
+pub fn program_multiple_return_lines_error() -> String {
+    "Only one return line allowed — put every root on one comma-separated line (e.g. `a, b, c`), not one bare label per line."
+        .to_string()
+}
+
 pub fn program_intermediate_return_error(stmt: &str) -> String {
     let stmt = stmt.trim();
     format!(
@@ -609,6 +614,9 @@ pub fn validate_program_statement_order(statements: &[String]) -> Result<(), Str
             continue;
         }
         if saw_roots && !is_last {
+            if is_bare_binding_label(stmt, &bindings) {
+                return Err(program_multiple_return_lines_error());
+            }
             return Err(program_intermediate_return_error(stmt));
         }
         if !is_last && roots_line_is_postfix_on_binding(stmt, &bindings) {
@@ -617,6 +625,12 @@ pub fn validate_program_statement_order(statements: &[String]) -> Result<(), Str
         saw_roots = true;
     }
     Ok(())
+}
+
+fn is_bare_binding_label(stmt: &str, bindings: &BTreeSet<String>) -> bool {
+    let stmt = stmt.trim();
+    let head = leading_identifier(stmt);
+    !head.is_empty() && head.len() == stmt.len() && bindings.contains(head)
 }
 
 fn roots_line_is_postfix_on_binding(stmt: &str, bindings: &BTreeSet<String>) -> bool {
@@ -832,6 +846,19 @@ mod tests {
             err.contains("binding") || err.contains("Intermediate"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn validate_rejects_multiple_bare_root_lines() {
+        let err = validate_program_statement_order(&[
+            "a = e1".to_string(),
+            "b = e2".to_string(),
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+        ])
+        .expect_err("multiple return lines");
+        assert!(err.contains("comma-separated"), "{err}");
     }
 
     #[test]

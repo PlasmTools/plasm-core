@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.88] - 2026-06-29
+
+### Fixed
+
+- **MCP Claude Desktop artifact read:** classify wire `clientInfo.name` `claude-ai` as `ToolFallback` so
+  `plasm_read_run_artifact` is listed for model-callable snapshot reads (Desktop does not expose
+  `resources/read` to the agent toolkit like Cursor).
+
+### Changed
+
+- **Agent program teaching:** `plasm` tool contract and language docs now require **one** final return line
+  (comma-separated roots); clearer diagnostic when agents stack bare binding labels on separate lines.
+
 ## [0.3.87] - 2026-06-29
 
 ### Added

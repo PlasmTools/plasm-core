@@ -768,14 +768,12 @@ fn shuttle_brand_new_identical_ref_both_commit() {
                 let handle_a = future::spawn(async move {
                     future::yield_now().await;
                     let mut guard = lock_session(&session_a);
-                    commit_materialization(&mut guard, base_a, branch_a)
-                        .expect("commit a");
+                    commit_materialization(&mut guard, base_a, branch_a).expect("commit a");
                 });
                 let handle_b = future::spawn(async move {
                     future::yield_now().await;
                     let mut guard = lock_session(&session_b);
-                    commit_materialization(&mut guard, base_b, branch_b)
-                        .expect("commit b");
+                    commit_materialization(&mut guard, base_b, branch_b).expect("commit b");
                 });
                 handle_a.await.expect("task a");
                 handle_b.await.expect("task b");

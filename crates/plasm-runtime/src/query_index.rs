@@ -182,6 +182,9 @@ mod tests {
         );
         let write_set = branch.branch_write_keys(&base);
         let conflicts = QueryIndex::detect_write_conflicts(&session, &branch, &base, &write_set);
-        assert!(conflicts.is_empty(), "overlapping cold query pages converge");
+        assert!(
+            conflicts.is_empty(),
+            "overlapping cold query pages converge"
+        );
     }
 }

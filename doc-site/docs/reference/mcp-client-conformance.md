@@ -10,16 +10,16 @@ Plasm advertises the same protocol version in MCP `initialize` responses.
 
 ## Client behavior (observed)
 
-| Capability | Cursor (desktop) | Claude Code | Notes |
-|------------|------------------|-------------|-------|
-| Transport | Streamable HTTP | Streamable HTTP | Migrated off deprecated HTTP+SSE split endpoint |
-| `MCP-Session-Id` | Yes | Yes | Required for stateful 2025-11-25 servers |
-| GET SSE | Yes | Yes | Used for server→client notifications |
-| OAuth (MCP transport) | Yes (`platform.plasm.tools/plasm/mcp`) | Yes | Bearer refresh must not affect routing |
-| MCP Apps | Yes (`ui://plasm/*`, AppBridge) | Limited | Cursor: App fetch fails when transport session dies |
-| Session reinit on 404/-32016 | Partial | Buggy ([#50450](https://github.com/anthropics/claude-code/issues/50450), [#60949](https://github.com/anthropics/claude-code/issues/60949)) | Shared Redis transport helps all clients |
-| Explicit state handles | Per-transport slot `s0`, … (legacy) | `l_<token>` wire ref | **Stateless `l_<token>`** from `plasm_context` |
-| Run snapshot read path | `resources/read` (MCP Apps + agent toolkit) | `plasm_read_run_artifact` tool fallback | Plasm detects wire `clientInfo.name`; override `PLASM_MCP_ARTIFACT_ACCESS=tool|resources` |
+| Capability | Cursor (desktop) | Claude Desktop | Claude Code | Notes |
+|------------|------------------|----------------|-------------|-------|
+| Transport | Streamable HTTP | Streamable HTTP | Streamable HTTP | Migrated off deprecated HTTP+SSE split endpoint |
+| `MCP-Session-Id` | Yes | Yes | Yes | Required for stateful 2025-11-25 servers |
+| GET SSE | Yes | Yes | Yes | Used for server→client notifications |
+| OAuth (MCP transport) | Yes (`platform.plasm.tools/plasm/mcp`) | Yes | Yes | Bearer refresh must not affect routing |
+| MCP Apps | Yes (`ui://plasm/*`, AppBridge) | Yes (`clientInfo.name`: `claude-ai`) | Limited | Cursor: App fetch fails when transport session dies |
+| Session reinit on 404/-32016 | Partial | Partial | Buggy ([#50450](https://github.com/anthropics/claude-code/issues/50450), [#60949](https://github.com/anthropics/claude-code/issues/60949)) | Shared Redis transport helps all clients |
+| Explicit state handles | Per-transport slot `s0`, … (legacy) | `l_<token>` wire ref | `l_<token>` wire ref | **Stateless `l_<token>`** from `plasm_context` |
+| Run snapshot read path | `resources/read` | `plasm_read_run_artifact` tool fallback | `plasm_read_run_artifact` tool fallback | Plasm detects wire `clientInfo.name`; override `PLASM_MCP_ARTIFACT_ACCESS=tool|resources` |
 
 ## Artifact access detection (`clientInfo.name`)
 
@@ -33,8 +33,8 @@ Wire names verified from [apify/mcp-client-capabilities](https://github.com/apif
 | `claude-api-mcp-connector` | Claude API MCP connector | `ToolFallback` |
 | `Anthropic/API` | Anthropic API MCP path | `ToolFallback` |
 | `Anthropic/ClaudeAI` | Claude.ai web custom connector | `ToolFallback` |
+| `claude-ai` | Claude Desktop | `ToolFallback` |
 | `cursor-vscode` | Cursor (not bare `cursor`) | `ResourcesRead` |
-| `claude-ai` | Claude Desktop | `ResourcesRead` |
 | `Cline` | Cline VS Code extension | `ResourcesRead` |
 | `Visual Studio Code` / `Visual-Studio-Code` | VS Code Copilot MCP | `ResourcesRead` |
 

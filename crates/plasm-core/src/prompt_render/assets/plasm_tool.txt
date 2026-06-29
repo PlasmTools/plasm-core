@@ -5,8 +5,8 @@
 Grammar below; symbols from `plasm_context` TSV. Reply with one valid plasm_program:
 
 Output:
-- Emit only code: one `plasm_expr`, or bindings then final roots. No prose, JSON, `return`, fences, or table rows.
-- Prefer bind → narrow/project/transform → few final roots.
+- Emit only code: one `plasm_expr`, or bindings then **one** final return line. No prose, JSON, `return`, fences, or table rows.
+- Prefer bind → narrow/project/transform → one return line (comma-separated if several roots).
 
 TSV table semantics:
 - Header: `plasm_expr<TAB>Meaning`; one tab per row. Left = syntax/metadata; right = guidance only (never copy `Meaning`).
@@ -24,14 +24,14 @@ Symbol and fill rules:
 - Projection `[p#,…]` suffixes: reuse only on expressions returning the same entity/list type.
 
 Core surface:
-- Program shape: one `plasm_expr`, or `label = …` bindings then comma-separated final roots (no `return`).
+- Program shape: one `plasm_expr`, or `label = …` bindings then **one** final return line — comma-separated roots on that line only (e.g. `a, b`), never one bare label per line (no `return` keyword).
 - Postfix/`[p#]`/`[fields]`: copy exact forms from the TSV left column (`.limit` `.sort` `.filter{…}` `.group_by` `.aggregate` …).
 - Large list reads return the first **25 rows** in `plasm_run`; further pages copy the handle from the prior result's "more pages" line into **`run_ref`** on the next **`plasm_run`** (no second **`plasm`** call).
 - `page(...)` is HTTP-execute program syntax only — not an MCP tool argument or `plasm` program.
 - Search when exposed: `e#~$` or `e#~"text"` (bare `e#~` is a parse error); optional scoped filters `e#~"text"[{p#=…}]`.
 
 Composition rules:
-- One binding per line; final roots last (preferred). Single-line bindings coerced; default return is first binding.
+- One binding per line; **one** return line last. Multiple roots belong on that line comma-separated — not stacked as separate bare-label lines. Single-line space-separated programs coerce default return to first binding.
 - Row text: `label = source <<TAG` … `TAG` (equals required); optional `label = source[p#,…] <<TAG`. Minijinja `{{ }}` / `{% %}` over `rows` only inside the heredoc body — not `${}`.
 - Pass `binding.content` to string params; compose with `${report.content}` in later heredocs/strings (`$$` escapes `$`). Do not use `report.content` as a final root or relation receiver.
 - Action/create roots: return the action row or follow with `e#(p#=…)` get — not `created.p#` as a program root.
@@ -43,6 +43,7 @@ sorted = filtered.sort(p_field, desc).limit(10)
 sorted[p_a,p_field]
 
 Common pitfalls:
+- Many rows of one entity type: one relation read (e.g. `moves = e4(electric).r3`) beats N separate gets plus parallel roots.
 - Prefer `label = e#` then `label.filter{…}`; bare `e#.filter{…}` list-alls first. Row `.filter{…}` needs a materialized list.
 - `=>` only for derive `{ k: _.field }` or write effects (`source => e#.m#(…)`) — not relation reads (use `child = source.r#`).
 - Federated writes: one created-row return; discover anchors live — never hardcode workspace ids.

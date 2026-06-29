@@ -447,7 +447,7 @@ async fn scoped_query_second_run_reuses_session_response_store() {
 /// CEP-14 brand-new live path: concurrent identical cold reads converge without materialization conflict.
 #[tokio::test]
 async fn concurrent_cold_identical_reads_no_materialization_conflict() {
-    use plasm_runtime::{BranchMaterializationBase, detect_materialization_conflicts};
+    use plasm_runtime::{detect_materialization_conflicts, BranchMaterializationBase};
     use std::sync::Arc;
     use tokio::sync::Mutex;
 

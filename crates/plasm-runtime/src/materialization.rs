@@ -511,7 +511,10 @@ mod tests {
         let write_set = branch.branch_write_fingerprints(&base);
         let conflicts =
             SessionResponseStore::detect_write_conflicts(&session, &branch, &base, &write_set);
-        assert!(conflicts.is_empty(), "identical brand-new fingerprint is not a conflict");
+        assert!(
+            conflicts.is_empty(),
+            "identical brand-new fingerprint is not a conflict"
+        );
     }
 
     #[test]

@@ -7,6 +7,7 @@ use rust_mcp_sdk::schema::InitializeRequestParams;
 /// Verified `initialize.clientInfo.name` values where the agent toolkit cannot reliably invoke
 /// MCP `resources/read` (see docs/mcp-client-conformance.md).
 pub(crate) const TOOL_ONLY_WIRE_NAMES: &[&str] = &[
+    "claude-ai",
     "claude-code",
     "claude-api-mcp-connector",
     "anthropic/api",
@@ -78,7 +79,7 @@ mod tests {
     use super::*;
     use rust_mcp_sdk::schema::{ClientCapabilities, Implementation, LATEST_PROTOCOL_VERSION};
 
-    const RESOURCES_READ_WIRE_NAMES: &[&str] = &["cursor-vscode", "claude-ai", "cline"];
+    const RESOURCES_READ_WIRE_NAMES: &[&str] = &["cursor-vscode", "cline"];
 
     fn client(name: &str, version: &str) -> InitializeRequestParams {
         InitializeRequestParams {
@@ -119,6 +120,15 @@ mod tests {
                 "wire name {wire}"
             );
         }
+    }
+
+    #[test]
+    fn claude_desktop_is_tool_fallback() {
+        let params = client("claude-ai", "0.1.0");
+        assert_eq!(
+            detect_artifact_access_mode(Some(&params), None),
+            ArtifactAccessMode::ToolFallback
+        );
     }
 
     #[test]
