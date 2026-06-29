@@ -44,6 +44,42 @@ async function publicDirExists(projectRoot: string): Promise<boolean> {
   }
 }
 
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function plasmNitroHandlers(
+  projectRoot: string,
+  workflowEnabled: boolean,
+): Promise<NonNullable<NitroConfig["handlers"]>> {
+  const catchAllHandler = path.join(plasmNitroRoutesDir(projectRoot), "[[path]].ts");
+  const handlers: NonNullable<NitroConfig["handlers"]> = [];
+
+  if (workflowEnabled) {
+    const dispatchHandler = path.join(
+      plasmNitroRoutesDir(projectRoot),
+      "internal",
+      "workflow",
+      "dispatch.post.ts",
+    );
+    if (await pathExists(dispatchHandler)) {
+      handlers.push({
+        route: "/internal/workflow/dispatch",
+        handler: dispatchHandler,
+        method: "post",
+      });
+    }
+  }
+
+  handlers.push({ route: "/**", handler: catchAllHandler });
+  return handlers;
+}
+
 export async function createPlasmNitro(
   host: PreparedPlasmHost,
   dev: boolean,
@@ -58,8 +94,6 @@ export async function createPlasmNitro(
   }
 
   const traceDeps = [...new Set([...SERVER_TRACE_DEPS, ...host.externalDeps])];
-
-  const catchAllHandler = path.join(plasmNitroRoutesDir(host.projectRoot), "[[path]].ts");
 
   const publicAssets = (await publicDirExists(host.projectRoot))
     ? [
@@ -80,7 +114,7 @@ export async function createPlasmNitro(
     dev,
     serverDir: false,
     ignore: ["api/**", "server/**", "routes/**", "nitro.config.ts"],
-    handlers: [{ route: "/**", handler: catchAllHandler }],
+    handlers: await plasmNitroHandlers(host.projectRoot, host.workflowEnabled),
     publicAssets,
     modules,
     experimental: {

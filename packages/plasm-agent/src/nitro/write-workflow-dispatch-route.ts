@@ -11,7 +11,7 @@ export async function writeWorkflowDispatchRoute(projectRoot: string): Promise<s
   const source = `import path from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-import agentDefinition from "../../../../agent/agent.js";
+import agentDefinition from "../../../../../agent/agent.js";
 import { createPlasmApp } from "@plasm_lang/vercel-agent/server";
 
 const agentRoot = path.join(process.cwd(), "agent");
@@ -53,7 +53,7 @@ export default async (event: NitroNodeEvent) => {
     mode: "prod",
     sessions: false,
   });
-  const { runRadar } = await import("../../../../lib/run-radar.js");
+  const { runRadar } = await import("../../../../../lib/run-radar.js");
   const result = await runRadar(app.getAuthoringContext(), { force });
 
   res.statusCode = 200;
