@@ -71,6 +71,17 @@ export async function compileAuthoredSlots(
           "workflow",
           "workflow/api",
         ],
+        plugins: [
+          {
+            name: "external-workflows",
+            setup(build) {
+              build.onResolve({ filter: /\/workflows\// }, (args) => ({
+                path: args.path,
+                external: true,
+              }));
+            },
+          },
+        ],
         logLevel: "silent",
       });
 
