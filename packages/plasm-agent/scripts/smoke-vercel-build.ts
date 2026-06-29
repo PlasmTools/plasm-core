@@ -42,6 +42,13 @@ async function main(): Promise<void> {
 
   for (const stub of result.stubs) {
     await access(stub.outPath);
+    const mjsPath = stub.outPath.replace(/\.ts$/, ".mjs");
+    await access(mjsPath);
+  }
+
+  const manifestCompiledStubs = (manifest as { compiledStubs?: Record<string, string> }).compiledStubs;
+  if (!manifestCompiledStubs || Object.keys(manifestCompiledStubs).length < result.stubs.length) {
+    throw new Error("manifest missing compiledStubs entries");
   }
 
   if (!result.outputDir) {

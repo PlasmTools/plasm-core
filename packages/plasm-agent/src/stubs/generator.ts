@@ -59,6 +59,23 @@ export function computeCatalogCgsHash(domainYaml: string, mappingsYaml: string):
   return createHash("sha256").update(domainYaml).update("\n").update(mappingsYaml).digest("hex");
 }
 
+/** Dev-time shim beside generated stubs; prod uses `_stub-runtime.mjs` from compile. */
+export async function writeStubRuntimeShim(outDir: string): Promise<void> {
+  await mkdir(outDir, { recursive: true });
+  const source = `/** @generated plasm-agent stub runtime shim (dev only) */
+export {
+  buildDottedArgs,
+  createCatalogClient,
+  executeRows,
+  plasmBoolean,
+  plasmLiteral,
+  plasmNumber,
+  type StubInvokeOptions,
+} from "@plasm_lang/vercel-agent/stub-runtime";
+`;
+  await writeFile(path.join(outDir, "_stub-runtime.ts"), source, "utf8");
+}
+
 /** Legacy parser — delegates to {@link parseCgsDomain}. */
 export function parseDomainYaml(raw: string, fallbackEntryId: string): ParsedDomain {
   return toLegacyParsedDomain(parseCgsDomain(raw, fallbackEntryId));
@@ -154,7 +171,7 @@ export function renderStubModule(
   bindings?: Map<string, CapabilityBinding>,
 ): string {
   const exportName = toExportName(catalog.entry_id);
-  const clientImport = "@plasm_lang/vercel-agent";
+  const clientImport = "./_stub-runtime.js";
 
   const entityTypes = new Set<string>();
   const inputTypes = new Set<string>();
@@ -287,6 +304,8 @@ export async function generateAllStubs(
   const catalogsDir = path.join(agentRoot, "catalogs");
   const outDir = path.join(agentRoot, ".plasm", "stubs");
   const { access, readdir, stat } = await import("node:fs/promises");
+
+  await writeStubRuntimeShim(outDir);
 
   const engine = options?.engine ?? createEngine();
 

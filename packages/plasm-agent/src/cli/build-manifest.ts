@@ -3,6 +3,7 @@ import path from "node:path";
 
 export interface PlasmBuildManifest {
   compiledSlots?: Record<string, string>;
+  compiledStubs?: Record<string, string>;
   projectRoot?: string;
 }
 

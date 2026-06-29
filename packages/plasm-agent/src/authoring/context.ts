@@ -14,6 +14,8 @@ export interface CreateAuthoringContextOptions {
   agentRoot: string;
   getAgent: () => Promise<PlasmAgent>;
   importCacheBust?: number;
+  /** Generated stub extension — `.mjs` on Vercel (bundled at build); `.ts` in dev. */
+  stubImportExt?: "ts" | "mjs";
 }
 
 export function createAuthoringContext(
@@ -21,12 +23,13 @@ export function createAuthoringContext(
 ): AuthoringContext {
   const agentRoot = path.resolve(options.agentRoot);
   const bust = options.importCacheBust ?? Date.now();
+  const stubExt = options.stubImportExt ?? "ts";
 
   return {
     agentRoot,
     getAgent: options.getAgent,
     importStub: async (entryId: string) => {
-      const stubPath = path.join(agentRoot, ".plasm", "stubs", `${entryId}.ts`);
+      const stubPath = path.join(agentRoot, ".plasm", "stubs", `${entryId}.${stubExt}`);
       const url = `${pathToFileURL(stubPath).href}?t=${bust}`;
       return import(url);
     },

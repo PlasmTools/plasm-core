@@ -19,6 +19,7 @@
     "./server": "./src/server/plasm-handler.ts",
     "./instrumentation": "./src/instrumentation.ts",
     "./operator": "./src/operator/routes.ts",
+    "./stub-runtime": "./src/stubs/stub-runtime.ts",
     "./agent": "./agent/agent.ts"
   },
   "bin": {

@@ -229,6 +229,7 @@ export async function createPlasmApp(options: PlasmAppOptions): Promise<PlasmApp
       agentRoot,
       getAgent: async () => agent ?? bootstrap(),
       importCacheBust,
+      stubImportExt: mode === "prod" ? "mjs" : "ts",
     });
 
   const bootstrap = async (): Promise<PlasmAgent> => {

@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { readBuildManifest } from "./build-manifest.js";
+import { compileGeneratedStubs } from "./compile-generated-stubs.js";
 import { compileAuthoredSlots } from "./compile-authored-slots.js";
 import type { ResolvedAgentProject } from "./project-root.js";
 import { isNativeEngineAvailable } from "../engine/napi-binding.js";
@@ -15,6 +16,7 @@ export interface PlasmBuildResult {
   discoveryDir: string;
   manifestPath: string;
   stubs: Array<{ entryId: string; catalogCgsHash: string; outPath: string }>;
+  compiledStubs: Record<string, string>;
   outputDir?: string;
   agentSummaryPath?: string;
   vercelOutput?: boolean;
@@ -22,6 +24,11 @@ export interface PlasmBuildResult {
 
 export async function runPlasmBuild(project: ResolvedAgentProject): Promise<PlasmBuildResult> {
   const stubs = await generateAllStubs(project.agentRoot);
+  const { compiledStubs } = await compileGeneratedStubs(
+    project.projectRoot,
+    project.agentRoot,
+    stubs,
+  );
   const discovery = await walkAgentProject(project.agentRoot);
   const { compiledSlots } = await compileAuthoredSlots(
     project.projectRoot,
@@ -38,6 +45,7 @@ export async function runPlasmBuild(project: ResolvedAgentProject): Promise<Plas
     projectRoot: project.projectRoot,
     agentRoot: project.agentRoot,
     compiledSlots,
+    compiledStubs,
     stubs: stubs.map((s) => ({
       entryId: s.entryId,
       catalogCgsHash: s.catalogCgsHash,
@@ -74,6 +82,7 @@ export async function runPlasmBuild(project: ResolvedAgentProject): Promise<Plas
     discoveryDir,
     manifestPath,
     stubs,
+    compiledStubs,
     outputDir: appBuild.outputDir,
     agentSummaryPath: appBuild.agentSummaryPath,
     vercelOutput: appBuild.vercelOutput,
