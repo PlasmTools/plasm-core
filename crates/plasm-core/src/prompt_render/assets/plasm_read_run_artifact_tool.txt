@@ -1,0 +1,1 @@
+Fetch full run snapshot JSON when the MCP host does not expose `resources/read` to the model (tool-only hosts: `claude-code`, Claude API MCP connector, `Anthropic/ClaudeAI`, `Anthropic/API`). Requires `logical_session_ref` plus exactly one of `artifact_uri`, `resource_index`, or `run_id`. Returns the same bytes as MCP `resources/read`.

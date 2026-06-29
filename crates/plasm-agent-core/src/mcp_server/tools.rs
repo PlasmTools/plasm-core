@@ -9,8 +9,8 @@ use rust_mcp_sdk::schema::{
 use crate::mcp_run_markdown::ArtifactAccessMode;
 use plasm_core::prompt_render::{
     DISCOVER_TOOL_DESCRIPTION, PLASM_CONTEXT_TOOL_DESCRIPTION, PLASM_PROGRAM_PARAM_DESCRIPTION,
-    PLASM_RUN_TOOL_ARTIFACT_RESOURCES, PLASM_RUN_TOOL_ARTIFACT_TOOL,
-    PLASM_RUN_TOOL_DESCRIPTION_BASE, PLASM_TOOL_DESCRIPTION,
+    PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION, PLASM_RUN_TOOL_ARTIFACT_RESOURCES,
+    PLASM_RUN_TOOL_ARTIFACT_TOOL, PLASM_RUN_TOOL_DESCRIPTION_BASE, PLASM_TOOL_DESCRIPTION,
 };
 
 use super::schema::{
@@ -232,10 +232,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
         tools.push(Tool {
                 name: "plasm_read_run_artifact".into(),
                 title: Some("Read Plasm run snapshot".into()),
-                description: Some(
-                    "Fetch full run snapshot JSON when the MCP host does not expose `resources/read` to the model (tool-only hosts such as the Claude API MCP connector). Requires `logical_session_ref` plus exactly one of `artifact_uri`, `resource_index`, or `run_id`. Returns the same bytes as MCP `resources/read`."
-                        .into(),
-                ),
+                description: Some(PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION.into()),
                 input_schema: ToolInputSchema::new(
                     vec!["logical_session_ref".into()],
                     Some(read_props),

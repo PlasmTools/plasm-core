@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.86] - 2026-06-28
+
+### Changed
+
+- **MCP artifact access:** collapse client detection to researched wire-name exact match plus
+  one undocumented Anthropic connector heuristic; remove presumptive `openai-mcp` entry.
+- **MCP HTTP:** capture `User-Agent` on Streamable MCP requests (unified listener) keyed by
+  `mcp-session-id` for artifact-access detection.
+- **MCP `resources/read`:** extract handler to `resource_read.rs`; canonical
+  `plasm_read_run_artifact` tool description in prompt assets.
+
 ## [0.3.85] - 2026-06-28
 
 ### Changed

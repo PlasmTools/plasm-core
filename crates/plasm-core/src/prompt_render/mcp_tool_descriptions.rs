@@ -17,6 +17,10 @@ pub const PLASM_RUN_TOOL_ARTIFACT_RESOURCES: &str =
 pub const PLASM_RUN_TOOL_ARTIFACT_TOOL: &str =
     include_str!("assets/plasm_run_tool_artifact_tool.txt");
 
+/// Canonical `plasm_read_run_artifact` tool description (tool-only MCP hosts).
+pub const PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION: &str =
+    include_str!("assets/plasm_read_run_artifact_tool.txt");
+
 /// Default static `plasm_run` description (resource-capable hosts).
 pub const PLASM_RUN_TOOL_DESCRIPTION: &str = concat!(
     include_str!("assets/plasm_run_tool_base.txt"),

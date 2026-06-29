@@ -30,6 +30,7 @@ use crate::trace_hub::{TraceHub, TraceHubConfig};
 use crate::trace_sink_emit::TraceIngestClient;
 use auth_framework::storage::AuthStorage;
 use auth_framework::AuthFramework;
+use dashmap::DashMap;
 use plasm_discovery::embedding_store::CatalogEmbeddingStore;
 use plasm_discovery::CatalogIndexCache;
 use plasm_runtime::{EnvSecretProvider, ExecutionEngine, ExecutionMode, SecretProvider};
@@ -102,6 +103,8 @@ pub struct PlasmOssHostState {
     pub live_plan_pool: Arc<crate::live_plan_run_worker::LivePlanRunPool>,
     /// CEP-13: single-flight logical open + serialized teaching exposure commits per execute row.
     pub session_coordination: Arc<SessionCoordination>,
+    /// HTTP `User-Agent` per MCP transport session id (`mcp-session-id` header).
+    pub mcp_http_user_agents: Arc<DashMap<String, String>>,
 }
 
 /// Hosted / control-plane state: same process as [`PlasmOssHostState`], but injected after OSS bootstrap.
@@ -197,6 +200,23 @@ impl PlasmHostState {
     /// Dedicated large-stack pool for live plan execution (see [`crate::live_plan_run_worker`]).
     pub fn live_plan_pool(&self) -> Arc<crate::live_plan_run_worker::LivePlanRunPool> {
         Arc::clone(&self.oss.live_plan_pool)
+    }
+
+    /// Stash HTTP User-Agent for an MCP transport session (`mcp-session-id`).
+    pub fn record_mcp_http_user_agent(&self, transport_key: &str, user_agent: String) {
+        if user_agent.trim().is_empty() {
+            return;
+        }
+        self.oss
+            .mcp_http_user_agents
+            .insert(transport_key.to_string(), user_agent);
+    }
+
+    pub fn mcp_http_user_agent(&self, transport_key: &str) -> Option<String> {
+        self.oss
+            .mcp_http_user_agents
+            .get(transport_key)
+            .map(|entry| entry.value().clone())
     }
 
     /// Outbound HTTP credentials: [`PlasmOssHostState::outbound_secret_provider`] when wired; otherwise [`EnvSecretProvider`].

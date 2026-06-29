@@ -11,6 +11,7 @@
 use axum::extract::Extension;
 use axum::routing::get;
 use axum::Router;
+use dashmap::DashMap;
 #[cfg(feature = "local-embeddings")]
 use fastembed;
 use plasm_core::discovery::InMemoryCgsRegistry;
@@ -148,6 +149,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             redis_backend: None,
             live_plan_pool,
             session_coordination: Arc::new(crate::session_coordination::SessionCoordination::new()),
+            mcp_http_user_agents: Arc::new(DashMap::new()),
         },
         saas: None,
     }
@@ -314,7 +316,7 @@ pub async fn serve_discovery_execute_and_mcp_unified(
         crate::mcp_server::build_mcp_hyper_server_for_merge(std::sync::Arc::clone(&plasm_arc))
             .await
             .map_err(|e| format!("MCP server bootstrap failed: {e}"))?;
-    let mcp_router = mcp.into_router();
+    let mcp_router = crate::mcp_server::mcp_hyper_router(mcp, plasm_arc);
     let app = Router::new()
         .merge(discovery_execute_router(state))
         .merge(mcp_router);

@@ -93,10 +93,8 @@ use crate::plasm_plan_run::{
     evaluate_plasm_comp_dry, render_plasm_plan_dry_text_for_session, PlasmPlanRunResult,
 };
 use crate::run_artifacts::{
-    code_plan_handle, code_plan_http_path, logical_uuid_from_uri_segment,
-    parse_plasm_execute_run_uri, parse_plasm_session_short_resource_uri,
-    plasm_code_plan_resource_uri, plasm_session_short_plan_uri, strip_plasm_resource_read_source,
-    ArtifactPayload, CodePlanArchiveDocument,
+    code_plan_handle, code_plan_http_path, plasm_code_plan_resource_uri,
+    plasm_session_short_plan_uri, ArtifactPayload, CodePlanArchiveDocument,
 };
 use crate::server_state::PlasmHostState;
 use crate::session_identity::{ClientSessionKey, LogicalSessionId};
@@ -110,8 +108,10 @@ mod artifact_access;
 mod artifact_resolve;
 mod committed_plasm_run;
 mod discover;
+mod mcp_http_user_agent;
 mod mcp_plasm_invoke;
 mod read_run_artifact;
+mod resource_read;
 mod resource_read_trace;
 mod schema;
 mod tool_parse;
@@ -126,7 +126,6 @@ mod tests;
 
 pub(crate) use discover::{
     discovery_mcp_error, mcp_call_tool_error_class, mcp_discover_query_from_arguments, mcp_key,
-    read_resource_result_for_payload,
 };
 pub(crate) use mcp_plasm_invoke::{parse_mcp_plasm_invocation, McpPlasmInvocation};
 use plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW;
@@ -432,14 +431,11 @@ impl PlasmMcpHandler {
         if runtime.client_info().is_none() {
             runtime.wait_for_initialization().await;
         }
-        let ua_from_transport = {
-            let g = transport.lock().await;
-            g.client_user_agent.clone()
-        };
+        let http_ua = self.plasm.mcp_http_user_agent(transport_key);
         let client_info = runtime.client_info();
         let mode = artifact_access::detect_artifact_access_mode(
             client_info.as_ref(),
-            artifact_access::client_user_agent_hint(ua_from_transport.as_deref()).as_deref(),
+            artifact_access::client_user_agent_hint(http_ua.as_deref()).as_deref(),
         );
         if let Some(params) = client_info.as_ref() {
             tracing::info!(
@@ -456,18 +452,6 @@ impl PlasmMcpHandler {
         }
         transport.lock().await.artifact_access_mode = Some(mode);
         mode
-    }
-
-    /// HTTP layer may call this when User-Agent is available on the transport request.
-    #[allow(dead_code)]
-    pub(crate) async fn record_client_user_agent(&self, transport_key: &str, user_agent: String) {
-        if user_agent.trim().is_empty() {
-            return;
-        }
-        let transport = self.session_state(transport_key).await;
-        let mut g = transport.lock().await;
-        g.client_user_agent = Some(user_agent);
-        g.artifact_access_mode = None;
     }
 
     async fn trace_session_meta(
@@ -1345,179 +1329,12 @@ impl ServerHandler for PlasmMcpHandler {
         })
     }
 
-    #[tracing::instrument(
-        skip(self, runtime),
-        name = "plasm_agent.mcp.resources.read_request",
-        level = "trace"
-    )]
     async fn handle_read_resource_request(
         &self,
         params: ReadResourceRequestParams,
         runtime: Arc<dyn McpServer>,
     ) -> Result<ReadResourceResult, RpcError> {
-        let started = Instant::now();
-        let raw_uri = params.uri.trim();
-        let (uri_owned, read_source) = strip_plasm_resource_read_source(raw_uri);
-        let uri = uri_owned.as_str();
-        let read_source = read_source.as_deref();
-        if let Some(bundle) = crate::mcp_app::bundle_for_uri(uri) {
-            let Some((content, result_meta)) = crate::mcp_app::read_resource_text(uri) else {
-                return Err(
-                    RpcError::invalid_params().with_message(format!("unknown ui resource: {uri}"))
-                );
-            };
-            crate::metrics::record_mcp_resource_read(
-                bundle.resource_metric,
-                "success",
-                "none",
-                started.elapsed(),
-            );
-            return Ok(ReadResourceResult {
-                contents: vec![ReadResourceContent::TextResourceContents(content)],
-                meta: Some(result_meta),
-            });
-        }
-        if let Some((segment, resource_index)) = parse_plasm_session_short_resource_uri(uri) {
-            let Some(logical_uuid) = logical_uuid_from_uri_segment(&segment) else {
-                crate::metrics::record_mcp_resource_read(
-                    "logical_short",
-                    "error",
-                    "invalid_session_ref",
-                    started.elapsed(),
-                );
-                return Err(RpcError::invalid_params().with_message(
-                    "invalid logical session in URI: use `plasm://session/l_<token>/r/...` from `plasm_context`",
-                ));
-            };
-            let ls_key = logical_uuid.to_string();
-            let transport_key = runtime.session_id();
-            let binding = if let Some(ref tk) = transport_key {
-                self.resolve_binding_for_logical(tk, logical_uuid).await
-            } else {
-                self.resolve_binding_stateless(logical_uuid).await
-            };
-            let Some(b) = binding else {
-                crate::metrics::record_mcp_resource_read(
-                    "logical_short",
-                    "error",
-                    "no_binding",
-                    started.elapsed(),
-                );
-                resource_read_trace::McpResourceReadTrace::error(
-                    Some(&ls_key),
-                    read_source,
-                    started,
-                    uri,
-                    None,
-                    "no_binding",
-                )
-                .emit(&self.plasm)
-                .await;
-                return Err(RpcError::invalid_params().with_message(
-                    "no execute session for this logical session: call plasm_context with capability picks (`seeds`) first",
-                ));
-            };
-            let resolved = artifact_resolve::resolve_run_artifact_for_binding(
-                self.plasm.as_ref(),
-                &b,
-                artifact_resolve::RunArtifactLookup::ShortIndex { resource_index },
-                Some(ls_key.as_str()),
-                read_source,
-                started,
-                uri,
-            )
-            .await
-            .map_err(|e| match e {
-                artifact_resolve::RunArtifactResolveError::DecodeFailed(msg) => {
-                    RpcError::internal_error()
-                        .with_message(format!("run artifact decode failed: {msg}"))
-                }
-                artifact_resolve::RunArtifactResolveError::UnknownIndex(idx) => {
-                    RpcError::invalid_params()
-                        .with_message(format!("unknown run artifact index {idx} for this session"))
-                }
-                other => RpcError::invalid_params().with_message(other.to_string()),
-            })?;
-            crate::spans::mcp_resource_read().in_scope(|| {
-                tracing::info!(
-                    target: "plasm_agent::mcp",
-                    uri = %uri,
-                    logical_session_id = %logical_uuid,
-                    prompt_hash = %b.prompt_hash,
-                    session_id = %b.session_id,
-                    resource_index,
-                    bytes = resolved.payload.bytes.len(),
-                    "MCP resources/read"
-                );
-            });
-            crate::metrics::record_mcp_resource_read(
-                resolved.metric_kind,
-                "success",
-                "none",
-                started.elapsed(),
-            );
-            return read_resource_result_for_payload(uri, resolved.payload);
-        }
-
-        let Some((prompt_hash, session_id, run_id)) = parse_plasm_execute_run_uri(uri) else {
-            crate::metrics::record_mcp_resource_read(
-                "unsupported",
-                "error",
-                "unsupported_uri",
-                started.elapsed(),
-            );
-            return Err(
-                RpcError::invalid_params().with_message(format!("unsupported resource URI: {uri}"))
-            );
-        };
-        let ls_key_opt = self
-            .plasm
-            .logical_session_id_for_execute_binding(prompt_hash.as_str(), session_id.as_str())
-            .await
-            .map(|u| u.to_string());
-        let binding = PlasmExecBinding {
-            prompt_hash: prompt_hash.clone(),
-            session_id: session_id.clone(),
-        };
-        let resolved = artifact_resolve::resolve_run_artifact_for_binding(
-            self.plasm.as_ref(),
-            &binding,
-            artifact_resolve::RunArtifactLookup::CanonicalRun { run_id },
-            ls_key_opt.as_deref(),
-            read_source,
-            started,
-            uri,
-        )
-        .await
-        .map_err(|e| match e {
-            artifact_resolve::RunArtifactResolveError::DecodeFailed(msg) => {
-                RpcError::internal_error()
-                    .with_message(format!("run artifact decode failed: {msg}"))
-            }
-            artifact_resolve::RunArtifactResolveError::UnknownRunId => RpcError::invalid_params()
-                .with_message(
-                    "unknown run artifact (wrong run_id or not yet stored for this session)",
-                ),
-            other => RpcError::invalid_params().with_message(other.to_string()),
-        })?;
-        crate::spans::mcp_resource_read().in_scope(|| {
-            tracing::info!(
-                target: "plasm_agent::mcp",
-                uri = %uri,
-                prompt_hash = %prompt_hash,
-                session_id = %session_id,
-                run_id = %run_id.to_wire(),
-                bytes = resolved.payload.bytes.len(),
-                "MCP resources/read"
-            );
-        });
-        crate::metrics::record_mcp_resource_read(
-            resolved.metric_kind,
-            "success",
-            "none",
-            started.elapsed(),
-        );
-        read_resource_result_for_payload(uri, resolved.payload)
+        resource_read::handle_read_resource_request(self, params, runtime).await
     }
 
     async fn handle_call_tool_request(
@@ -1867,6 +1684,17 @@ pub async fn build_mcp_hyper_server_for_merge(
     plasm: Arc<PlasmHostState>,
 ) -> SdkResult<HyperServer> {
     build_mcp_hyper_server(plasm, "0.0.0.0", 0).await
+}
+
+/// MCP HTTP routes with User-Agent capture for artifact-access detection.
+pub fn mcp_hyper_router(server: HyperServer, plasm: Arc<PlasmHostState>) -> axum::Router<()> {
+    use axum::middleware;
+    server
+        .into_router()
+        .layer(middleware::from_fn_with_state(
+            plasm,
+            mcp_http_user_agent::capture_mcp_http_user_agent,
+        ))
 }
 
 async fn build_mcp_hyper_server(

@@ -25,7 +25,7 @@ Plasm advertises the same protocol version in MCP `initialize` responses.
 
 Plasm chooses **`resources/read`** vs **`plasm_read_run_artifact`** per MCP transport using `initialize.clientInfo.name` (case-insensitive exact match), legacy Anthropic connector substring heuristics, optional User-Agent, or `PLASM_MCP_ARTIFACT_ACCESS`.
 
-Wire names verified from [apify/mcp-client-capabilities](https://github.com/apify/mcp-client-capabilities), [TianqiZhang/mcp-client-registry](https://github.com/TianqiZhang/mcp-client-registry), and production logs ([anthropics/claude-ai-mcp#473](https://github.com/anthropics/claude-ai-mcp/issues/473)):
+Wire names verified from [apify/mcp-client-capabilities](https://github.com/apify/mcp-client-capabilities), [TianqiZhang/mcp-client-registry](https://github.com/TianqiZhang/mcp-client-registry), and production logs ([anthropics/claude-ai-mcp#473](https://github.com/anthropics/claude-ai-mcp/issues/473)). HTTP `User-Agent` is captured on Streamable MCP requests (unified HTTP+MCP listener) keyed by `mcp-session-id`; `PLASM_MCP_CLIENT_USER_AGENT` remains a manual override.
 
 | Wire `clientInfo.name` | Product | `ArtifactAccessMode` |
 |------------------------|---------|----------------------|
@@ -33,7 +33,6 @@ Wire names verified from [apify/mcp-client-capabilities](https://github.com/apif
 | `claude-api-mcp-connector` | Claude API MCP connector | `ToolFallback` |
 | `Anthropic/API` | Anthropic API MCP path | `ToolFallback` |
 | `Anthropic/ClaudeAI` | Claude.ai web custom connector | `ToolFallback` |
-| `openai-mcp` | OpenAI/ChatGPT MCP connector | `ToolFallback` |
 | `cursor-vscode` | Cursor (not bare `cursor`) | `ResourcesRead` |
 | `claude-ai` | Claude Desktop | `ResourcesRead` |
 | `Cline` | Cline VS Code extension | `ResourcesRead` |
