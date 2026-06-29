@@ -2,10 +2,10 @@
 
 **Review gate:** first live run executes the reviewed plan for the `pcN` **`run_ref`** from **`plasm`**. If the token is missing, expired, or from another plan, call **`plasm`** again.
 
-**Paging:** when a result says `more pages — call plasm_run with run_ref: "…"`, copy that handle into **`run_ref`** on the next **`plasm_run`** (same **`logical_session_ref`**; no second **`plasm`** call). `page(...)` is HTTP-execute program syntax only — not an MCP tool argument.
+**Paging:** when a result says `more pages — call plasm_run with run_ref: "…"`, copy that handle into **`run_ref`** on the next **`plasm_run`** (same **`logical_session_ref`**; no second **`plasm`** call). Use paging only when **no** run snapshot was stored for that step. When a snapshot URI is present, read it first — the snapshot holds the complete materialized batch; paging is not a substitute for artifact read. `page(...)` is HTTP-execute program syntax only — not an MCP tool argument.
 
 **Live execute:** server spawns one async operation and awaits terminal rows in the tool response. Progress uses standard `notifications/plasm/op` on the registered handle.
 
-**Live results:** `## {return_label} ({n} rows)` + capped TSV when returned directly (up to 25 rows inline); multi-return programs use `# Results` with `### {label} ({n} rows)` per root. ≤25 rows → inline ` ```tsv ` when present in the tool body; 26–499 → capped TSV + snapshot URI; 500+ → preview + snapshot, no inline TSV — narrow the program or page.
+**Live results:** `## {return_label} ({n} rows)` header always. **Small results (≤25 rows, no snapshot):** inline ` ```tsv ` in the tool body — use directly. **Snapshot URI present:** no inline TSV is sent; fetch JSON via the artifact read path (see suffix below). Multi-return programs use `# Results` with `### {label} ({n} rows)` per root.
 
 **Retry:** transient `session materialization changed during concurrent execute` — re-issue the same `plasm_run` once.

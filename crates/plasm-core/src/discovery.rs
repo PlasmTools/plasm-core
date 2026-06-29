@@ -8,6 +8,7 @@ use crate::symbol_tuning::{
     build_focus_set_union, ExposureCapabilityKey, ExposureEntityKey, ExposureSlotKey,
     ExposureSurface, ExposureSurfaceDelta,
 };
+use crate::discovery_presentation::CatalogRoute;
 use indexmap::IndexMap;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -189,6 +190,9 @@ pub struct DiscoveryResult {
     /// Short entity descriptions for every name in `schema_neighborhoods[].focused_entities` (deduped, sorted by name).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entity_summaries: Vec<EntitySummary>,
+    /// Catalog `entry_id`s matched by intent catalog routing (empty when routing scanned all catalogs).
+    #[serde(default, skip_serializing_if = "CatalogRoute::is_empty")]
+    pub catalog_route: crate::discovery_presentation::CatalogRoute,
 }
 
 #[derive(Error, Debug)]
@@ -533,6 +537,7 @@ fn entry_matches_catalog_route(
     entry_id: &str,
     label: &str,
     tags: &[String],
+    aliases: &[String],
     probe_lower: &str,
     route_tokens: &HashSet<String>,
 ) -> bool {
@@ -590,6 +595,13 @@ fn entry_matches_catalog_route(
         }
     }
 
+    for alias in aliases {
+        let a = alias.trim().to_ascii_lowercase();
+        if a.len() >= 4 && (route_tokens.contains(&a) || probe_word_hit(probe_lower, &a)) {
+            return true;
+        }
+    }
+
     false
 }
 
@@ -607,7 +619,14 @@ fn catalog_routes_for_query(
     }
     let mut matched = HashSet::new();
     for (eid, row) in entries {
-        if entry_matches_catalog_route(eid, &row.label, &row.tags, &probe_lower, &route_tokens) {
+        if entry_matches_catalog_route(
+            eid,
+            &row.label,
+            &row.tags,
+            &row.aliases,
+            &probe_lower,
+            &route_tokens,
+        ) {
             matched.insert(eid.clone());
         }
     }
@@ -947,6 +966,15 @@ impl CgsDiscovery for InMemoryCgsRegistry {
             "cgs discovery completed"
         );
 
+        let catalog_route = catalog_route
+            .as_ref()
+            .map(|set| {
+                let mut v: Vec<String> = set.iter().cloned().collect();
+                v.sort();
+                CatalogRoute::from(v)
+            })
+            .unwrap_or_default();
+
         Ok(DiscoveryResult {
             contexts,
             candidates,
@@ -955,6 +983,7 @@ impl CgsDiscovery for InMemoryCgsRegistry {
             closure_stats: Some(closure_stats),
             schema_neighborhoods,
             entity_summaries,
+            catalog_route,
         })
     }
 }
@@ -2036,6 +2065,51 @@ mod tests {
         assert_eq!(
             reg.resolve_entry_id("pokemon", None).expect("resolve"),
             "pokeapi"
+        );
+    }
+
+    #[test]
+    fn discover_compound_pokemon_proof_intent_routes_both_catalogs() {
+        let poke_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/pokeapi");
+        let proof_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
+        if !poke_dir.is_dir() || !proof_dir.is_dir() {
+            return;
+        }
+        let mut poke_cgs = load_schema_dir(&poke_dir).expect("pokeapi");
+        poke_cgs.entry_id = Some("pokeapi".into());
+        let mut proof_cgs = load_schema_dir(&proof_dir).expect("proof");
+        proof_cgs.entry_id = Some("proof".into());
+        let reg = InMemoryCgsRegistry::from_pairs(vec![
+            (
+                "pokeapi".into(),
+                "PokeAPI".into(),
+                vec![],
+                Arc::new(poke_cgs),
+            ),
+            (
+                "proof".into(),
+                "Proof".into(),
+                vec![],
+                Arc::new(proof_cgs),
+            ),
+        ]);
+        let intent = "research electric type pokemon capabilities and write a proof document with evidenced findings";
+        let q = CapabilityQuery {
+            tokens: vec![intent.into()],
+            ..Default::default()
+        };
+        let r = reg.discover(&q).expect("discover");
+        assert!(
+            r.catalog_route.iter().any(|id| id == "pokeapi")
+                && r.catalog_route.iter().any(|id| id == "proof"),
+            "expected routed pokeapi+proof; got {:?}",
+            r.catalog_route
+        );
+        let eids: HashSet<_> = r.candidates.iter().map(|c| c.entry_id.as_str()).collect();
+        assert!(
+            eids.contains("pokeapi") && eids.contains("proof"),
+            "expected candidates from both catalogs; got {:?}",
+            eids
         );
     }
 }

@@ -10,7 +10,7 @@ use crate::mcp_run_markdown::{
 use crate::output::LossySummaryFieldNames;
 use crate::run_artifacts::RunArtifactHandle;
 
-use super::policy::{PublishPlan, StepFormatOutcome, StepInBandMode};
+use super::policy::{PublishPlan, ResolvedStepPublish, StepFormatOutcome, StepInBandMode};
 use super::PublishedResultStep;
 
 pub(crate) struct InlinePublishBodies {
@@ -27,7 +27,7 @@ pub(crate) fn format_resolved_steps(
 ) {
     for (i, step) in steps.iter().enumerate() {
         let resolved = &mut plan.resolved[i];
-        if resolved.mode.defers_inline_table() {
+        if resolved.mode.skips_inline_format() {
             continue;
         }
         let formatted = mcp_format_execute_result_table_or_tsv(
@@ -42,6 +42,80 @@ pub(crate) fn format_resolved_steps(
             formatted,
         });
     }
+}
+
+fn step_section_header(
+    i: usize,
+    total_steps: usize,
+    label: &str,
+    row_count: usize,
+) -> String {
+    if total_steps <= 1 {
+        slim_result_section_header("## ", label, row_count)
+    } else if i == 0 {
+        format!(
+            "# Results\n\n{}",
+            slim_result_section_header("### ", label, row_count)
+        )
+    } else {
+        slim_result_section_header("### ", label, row_count)
+    }
+}
+
+fn append_paging_if_needed(
+    sections: &mut String,
+    paging: &mut Vec<PlasmPagingStepMeta>,
+    step: &PublishedResultStep,
+    resolved: &ResolvedStepPublish,
+    step_index: usize,
+) {
+    if resolved.artifact.is_some() {
+        return;
+    }
+    let Some(handle) = &step.result.paging_handle else {
+        return;
+    };
+    paging.push(PlasmPagingStepMeta::Next {
+        run_step: step_index + 1,
+        returned_count: resolved.row_count,
+        next_run_ref: handle.clone(),
+    });
+    sections.push_str(&format!(
+        "\n\nmore pages — call `plasm_run` with `run_ref: \"{}\"`.",
+        handle.as_str()
+    ));
+}
+
+fn build_step_section(
+    sections: &mut String,
+    paging: &mut Vec<PlasmPagingStepMeta>,
+    i: usize,
+    step: &PublishedResultStep,
+    resolved: &ResolvedStepPublish,
+    plan: &PublishPlan,
+    _total_steps: usize,
+) {
+    if let Some(fmt) = &resolved.format {
+        sections.push_str(&fmt.formatted.block.clone().into_mcp_result_markdown());
+        if let StepInBandMode::CappedInline { shown } = resolved.mode {
+            sections.push_str(&mcp_in_band_row_limit_note(
+                shown,
+                resolved.row_count,
+                resolved.artifact.is_some(),
+                plan.artifact_access,
+            ));
+        }
+        if let Some(handle) = &resolved.artifact {
+            if resolved.requires_snapshot_read(fmt) {
+                sections.push_str(&mcp_inline_run_snapshot_line(handle, plan.artifact_access));
+            }
+        }
+    } else if resolved.mode.skips_inline_format() {
+        if let Some(handle) = &resolved.artifact {
+            sections.push_str(&plan.artifact_access.artifact_only_body(handle.plasm_uri.as_str()));
+        }
+    }
+    append_paging_if_needed(sections, paging, step, resolved, i);
 }
 
 pub(crate) fn build_inline_bodies(
@@ -61,44 +135,13 @@ pub(crate) fn build_inline_bodies(
         if i > 0 {
             sections.push_str("\n\n");
         }
-        let header = if total_steps <= 1 {
-            slim_result_section_header("## ", &resolved.label, resolved.row_count)
-        } else if i == 0 {
-            format!(
-                "# Results\n\n{}",
-                slim_result_section_header("### ", &resolved.label, resolved.row_count)
-            )
-        } else {
-            slim_result_section_header("### ", &resolved.label, resolved.row_count)
-        };
-        sections.push_str(&header);
-        if let Some(fmt) = &resolved.format {
-            sections.push_str(&fmt.formatted.block.clone().into_mcp_result_markdown());
-            if let StepInBandMode::CappedInline { shown } = resolved.mode {
-                sections.push_str(&mcp_in_band_row_limit_note(
-                    shown,
-                    resolved.row_count,
-                    resolved.artifact.is_some(),
-                    plan.artifact_access,
-                ));
-            }
-        }
-        if let (Some(fmt), Some(handle)) = (&resolved.format, &resolved.artifact) {
-            if resolved.requires_snapshot_read(fmt) {
-                sections.push_str(&mcp_inline_run_snapshot_line(handle, plan.artifact_access));
-            }
-        }
-        if let Some(handle) = &step.result.paging_handle {
-            paging.push(PlasmPagingStepMeta::Next {
-                run_step: i + 1,
-                returned_count: resolved.row_count,
-                next_run_ref: handle.clone(),
-            });
-            sections.push_str(&format!(
-                "\n\nmore pages — call `plasm_run` with `run_ref: \"{}\"`.",
-                handle.as_str()
-            ));
-        }
+        sections.push_str(&step_section_header(
+            i,
+            total_steps,
+            &resolved.label,
+            resolved.row_count,
+        ));
+        build_step_section(&mut sections, &mut paging, i, step, resolved, plan, total_steps);
     }
 
     let char_count = sections.chars().count();
@@ -113,12 +156,7 @@ pub(crate) fn build_inline_bodies(
 pub(crate) fn truncated_flags(plan: &PublishPlan, preview_needed: bool) -> Vec<bool> {
     plan.resolved
         .iter()
-        .map(|resolved| {
-            let Some(fmt) = &resolved.format else {
-                return preview_needed && resolved.artifact.is_some();
-            };
-            resolved.requires_snapshot_read(fmt) || preview_needed
-        })
+        .map(|resolved| resolved.is_truncated_for_transport(preview_needed))
         .collect()
 }
 
@@ -130,11 +168,9 @@ pub(crate) fn snapshot_handles_for_meta(
         .iter()
         .filter_map(|resolved| {
             let handle = resolved.artifact.as_ref()?;
-            let truncated = match &resolved.format {
-                Some(fmt) => resolved.requires_snapshot_read(fmt) || preview_needed,
-                None => preview_needed || resolved.mode.defers_inline_table(),
-            };
-            truncated.then(|| handle.clone())
+            resolved
+                .is_truncated_for_transport(preview_needed)
+                .then(|| handle.clone())
         })
         .collect()
 }
@@ -148,11 +184,9 @@ pub(crate) fn truncated_step_refs(
         .enumerate()
         .filter_map(|(i, resolved)| {
             let handle = resolved.artifact.as_ref()?;
-            let truncated = match &resolved.format {
-                Some(fmt) => resolved.requires_snapshot_read(fmt) || preview_needed,
-                None => preview_needed || resolved.mode.defers_inline_table(),
-            };
-            truncated.then_some((i + 1, handle))
+            resolved
+                .is_truncated_for_transport(preview_needed)
+                .then_some((i + 1, handle))
         })
         .collect()
 }

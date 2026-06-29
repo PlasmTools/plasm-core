@@ -1188,6 +1188,7 @@ impl PlasmMcpHandler {
         meta.insert(
             "plasm".into(),
             serde_json::Value::Object(crate::discovery_human_format::discovery_plasm_tool_meta(
+                &r,
                 &formatted.omission,
             )),
         );

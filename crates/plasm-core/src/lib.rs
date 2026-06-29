@@ -89,6 +89,7 @@ pub mod connect_profile;
 pub mod cross_entity;
 pub mod discovery;
 pub mod discovery_adversarial_intents;
+pub mod discovery_presentation;
 pub mod domain_lexicon;
 pub mod entity_ref_value;
 pub mod error;
@@ -162,6 +163,7 @@ pub use discovery::{
     DiscoveryContextJson, DiscoveryError, DiscoveryResult, DiscoverySchemaNeighborhood,
     EntitySummary, InMemoryCgsRegistry, RankedCandidate, RegistryEntryPair,
 };
+pub use discovery_presentation::{CatalogRoute, DiscoveryDecision};
 pub use discovery_adversarial_intents::{
     adversarial_case_count, iter_all_cases, DiscoveryAdversarialCase,
     DiscoveryAdversarialFailureKind, CROSS_CUTTING, PER_CATALOG_SELECTION,

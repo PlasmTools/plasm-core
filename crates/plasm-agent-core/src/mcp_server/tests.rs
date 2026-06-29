@@ -619,6 +619,7 @@ fn discover_markdown_emits_tsv_snapshot() {
             name: "Widget".into(),
             description: " A contrived \t widget \n line ".into(),
         }],
+        catalog_route: plasm_core::CatalogRoute::default(),
     };
     with_insta_snapshots(|| {
         insta::assert_snapshot!(

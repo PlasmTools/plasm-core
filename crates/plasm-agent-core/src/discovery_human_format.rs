@@ -6,6 +6,7 @@ use std::collections::{BTreeSet, HashMap};
 use indexmap::IndexMap;
 use plasm_core::cgs_context::Prefix;
 use plasm_core::discovery::{Ambiguity, DiscoveryResult, EntitySummary, RankedCandidate};
+use plasm_core::DiscoveryDecision;
 
 /// MCP entity `description` column: max chars (Unicode scalars).
 pub const MCP_DISCOVERY_ENTITY_SUMMARY_MAX: usize = 200;
@@ -45,35 +46,6 @@ impl Default for DiscoveryTablePolicy {
     }
 }
 
-/// Structured discovery branch encoded in TSV `# decision:` lines and `_meta.plasm.discovery`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DiscoveryDecision {
-    #[default]
-    Match,
-    Clarify,
-    NoMatch,
-}
-
-impl DiscoveryDecision {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Match => plasm_core::prompt_render::DISCOVER_DECISION_MATCH,
-            Self::Clarify => plasm_core::prompt_render::DISCOVER_DECISION_CLARIFY,
-            Self::NoMatch => plasm_core::prompt_render::DISCOVER_DECISION_NO_MATCH,
-        }
-    }
-
-    pub fn from_result(result: &DiscoveryResult, shown_rows: usize) -> Self {
-        if shown_rows == 0 {
-            Self::NoMatch
-        } else if !result.ambiguities.is_empty() {
-            Self::Clarify
-        } else {
-            Self::Match
-        }
-    }
-}
-
 /// Omission stats and decision branch for `_meta.plasm.discovery` on MCP responses.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DiscoveryOmissionMeta {
@@ -82,6 +54,25 @@ pub struct DiscoveryOmissionMeta {
     pub omitted: usize,
     pub top_omitted: Vec<(String, String)>,
     pub decision: DiscoveryDecision,
+}
+
+/// Row-cap selection outcome before presentation decision is applied.
+#[derive(Debug, Clone)]
+struct DiscoveryRowCapOutcome {
+    shown: Vec<(String, String)>,
+    omitted: Vec<(String, String)>,
+}
+
+impl DiscoveryRowCapOutcome {
+    fn omission_meta(&self, decision: DiscoveryDecision) -> DiscoveryOmissionMeta {
+        DiscoveryOmissionMeta {
+            truncated: !self.omitted.is_empty(),
+            shown: self.shown.len(),
+            omitted: self.omitted.len(),
+            top_omitted: self.omitted.iter().take(5).cloned().collect(),
+            decision,
+        }
+    }
 }
 
 /// MCP discovery markdown plus omission metadata.
@@ -131,9 +122,12 @@ fn ranked_deduped_entity_rows(candidates: &[RankedCandidate]) -> Vec<(String, St
 fn apply_discovery_table_policy(
     rows: Vec<(String, String)>,
     policy: &DiscoveryTablePolicy,
-) -> (Vec<(String, String)>, DiscoveryOmissionMeta) {
+) -> DiscoveryRowCapOutcome {
     if rows.is_empty() {
-        return (Vec::new(), DiscoveryOmissionMeta::default());
+        return DiscoveryRowCapOutcome {
+            shown: Vec::new(),
+            omitted: Vec::new(),
+        };
     }
 
     match policy.mode {
@@ -145,7 +139,7 @@ fn apply_discovery_table_policy(
 fn apply_global_top_n_policy(
     rows: Vec<(String, String)>,
     policy: &DiscoveryTablePolicy,
-) -> (Vec<(String, String)>, DiscoveryOmissionMeta) {
+) -> DiscoveryRowCapOutcome {
     let mut per_entry: HashMap<String, usize> = HashMap::new();
     let mut shown = Vec::new();
     let mut omitted = Vec::new();
@@ -164,20 +158,13 @@ fn apply_global_top_n_policy(
         }
         shown.push(row);
     }
-    let omission = DiscoveryOmissionMeta {
-        truncated: !omitted.is_empty(),
-        shown: shown.len(),
-        omitted: omitted.len(),
-        top_omitted: omitted.into_iter().take(5).collect(),
-        decision: DiscoveryDecision::default(),
-    };
-    (shown, omission)
+    DiscoveryRowCapOutcome { shown, omitted }
 }
 
 fn apply_per_entry_fair_share_policy(
     rows: Vec<(String, String)>,
     policy: &DiscoveryTablePolicy,
-) -> (Vec<(String, String)>, DiscoveryOmissionMeta) {
+) -> DiscoveryRowCapOutcome {
     let mut groups: IndexMap<String, Vec<(String, String)>> = IndexMap::new();
     for row in rows {
         groups.entry(row.0.clone()).or_default().push(row);
@@ -224,14 +211,7 @@ fn apply_per_entry_fair_share_policy(
         }
     }
 
-    let omission = DiscoveryOmissionMeta {
-        truncated: !omitted.is_empty(),
-        shown: shown.len(),
-        omitted: omitted.len(),
-        top_omitted: omitted.into_iter().take(5).collect(),
-        decision: DiscoveryDecision::default(),
-    };
-    (shown, omission)
+    DiscoveryRowCapOutcome { shown, omitted }
 }
 
 /// TSV: `api`, `entity`, `description` — dedupe `(entry_id, entity)` from ranked `candidates`.
@@ -264,9 +244,17 @@ fn discovery_cgs_for_entry<'a>(
     })
 }
 
-fn discovery_tsv_preamble(decision: DiscoveryDecision) -> String {
+fn discovery_tsv_preamble(
+    decision: DiscoveryDecision,
+    catalog_route: Option<&plasm_core::CatalogRoute>,
+) -> String {
     let mut lines = vec![plasm_core::prompt_render::DISCOVER_TSV_LANGUAGE_PREAMBLE.to_string()];
     lines.push(format!("# decision: {}", decision.as_str()));
+    if let Some(route) = catalog_route {
+        if !route.is_empty() {
+            lines.push(format!("# routed: {}", route.join_display()));
+        }
+    }
     match decision {
         DiscoveryDecision::Clarify => lines.push(
             "# choose the api/entity rows that match the user goal, then call plasm_context once with all seeds"
@@ -287,7 +275,8 @@ fn discovery_capability_tsv_for_rows(
     result: Option<&DiscoveryResult>,
     decision: DiscoveryDecision,
 ) -> String {
-    let mut lines = vec![discovery_tsv_preamble(decision)];
+    let catalog_route = result.map(|r| &r.catalog_route);
+    let mut lines = vec![discovery_tsv_preamble(decision, catalog_route)];
     lines.push("api\tentity\tdescription\toutgoing_relations".to_string());
     for (eid, entity) in rows {
         let description = entity_summary_description(entity_summaries, eid, entity)
@@ -319,7 +308,7 @@ fn discovery_capability_tsv_for_rows(
 #[allow(dead_code)]
 pub fn discovery_capability_tsv(result: &DiscoveryResult) -> String {
     let ranked = ranked_deduped_entity_rows(&result.candidates);
-    let decision = DiscoveryDecision::from_result(result, ranked.len());
+    let decision = DiscoveryDecision::for_presentation(result, &ranked);
     discovery_capability_tsv_for_rows(&ranked, &result.entity_summaries, Some(result), decision)
 }
 
@@ -391,10 +380,11 @@ pub fn format_discovery_markdown_for_mcp(
     policy: &DiscoveryTablePolicy,
 ) -> FormattedDiscovery {
     let ranked = ranked_deduped_entity_rows(&result.candidates);
-    let (shown, mut omission) = apply_discovery_table_policy(ranked, policy);
-    omission.decision = DiscoveryDecision::from_result(result, shown.len());
+    let cap = apply_discovery_table_policy(ranked, policy);
+    let decision = DiscoveryDecision::for_presentation(result, &cap.shown);
+    let omission = cap.omission_meta(decision);
     let tsv = discovery_capability_tsv_for_rows(
-        &shown,
+        &cap.shown,
         &result.entity_summaries,
         Some(result),
         omission.decision,
@@ -405,6 +395,7 @@ pub fn format_discovery_markdown_for_mcp(
 
 /// `_meta.plasm` payload for MCP `discover_capabilities` tool results.
 pub fn discovery_plasm_tool_meta(
+    result: &DiscoveryResult,
     omission: &DiscoveryOmissionMeta,
 ) -> serde_json::Map<String, serde_json::Value> {
     let mut discovery = serde_json::Map::new();
@@ -423,6 +414,12 @@ pub fn discovery_plasm_tool_meta(
             .collect();
         discovery.insert("top_omitted".into(), serde_json::Value::Array(top));
     }
+    if !result.catalog_route.is_empty() {
+        discovery.insert(
+            "catalog_route".into(),
+            serde_json::json!(result.catalog_route.as_slice()),
+        );
+    }
     let mut plasm = serde_json::Map::new();
     plasm.insert("discovery".into(), serde_json::Value::Object(discovery));
     plasm
@@ -432,6 +429,7 @@ pub fn discovery_plasm_tool_meta(
 mod tests {
     use super::*;
     use plasm_core::discovery::CapabilityQuery;
+    use plasm_core::CatalogRoute;
 
     fn sample_result(candidates: Vec<RankedCandidate>) -> DiscoveryResult {
         DiscoveryResult {
@@ -458,6 +456,7 @@ mod tests {
                     description: "Gizmo summary.".into(),
                 },
             ],
+            catalog_route: plasm_core::CatalogRoute::default(),
         }
     }
 
@@ -493,6 +492,35 @@ mod tests {
         assert!(md.contains("# Plasm is a source language"));
         assert!(md.contains("demo\tWidget\tWidget summary."));
         assert!(!md.contains("typed:"));
+    }
+
+    #[test]
+    fn discovery_decision_clarify_when_routed_multi_api_shown_single() {
+        let r = DiscoveryResult {
+            contexts: vec![],
+            candidates: vec![RankedCandidate {
+                entry_id: "proof".into(),
+                entity: "Document".into(),
+                capability_name: "document_get".into(),
+                score: 10,
+                reason_codes: vec![],
+                capability_description: String::new(),
+            }],
+            ambiguities: vec![],
+            applied_query_echo: CapabilityQuery::default(),
+            closure_stats: None,
+            schema_neighborhoods: vec![],
+            entity_summaries: vec![EntitySummary {
+                entry_id: "proof".into(),
+                name: "Document".into(),
+                description: "Proof doc".into(),
+            }],
+            catalog_route: CatalogRoute::from(vec!["pokeapi".into(), "proof".into()]),
+        };
+        let formatted = format_discovery_markdown_for_mcp(&r, &DiscoveryTablePolicy::default());
+        assert!(formatted.markdown.contains("# decision: clarify"));
+        assert!(formatted.markdown.contains("# routed: pokeapi, proof"));
+        assert_eq!(formatted.omission.decision, DiscoveryDecision::Clarify);
     }
 
     #[test]

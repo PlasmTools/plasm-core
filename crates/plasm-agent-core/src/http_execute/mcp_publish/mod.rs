@@ -146,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn publish_over_cap_with_snapshot_renders_capped_tsv_paging_and_snapshot_uri() {
+    fn publish_over_cap_with_snapshot_uses_artifact_only_without_paging() {
         let run_id = RunArtifactId::from_wire(&format!("pr{}", "a".repeat(64))).expect("wire");
         let handle = RunArtifactHandle {
             run_id,
@@ -162,18 +162,13 @@ mod tests {
             synthetic_published_result_step_with_paging(49, Some(handle.clone()), Some(paging));
         let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
         assert!(
-            out.markdown.contains("```tsv"),
-            "expected capped inline TSV: {}",
+            !out.markdown.contains("```tsv"),
+            "must not duplicate inline TSV when snapshot stored: {}",
             out.markdown
         );
         assert!(
-            out.markdown.contains("move-24") && !out.markdown.contains("move-30"),
-            "expected at most 25 rows inline: {}",
-            out.markdown
-        );
-        assert!(
-            out.markdown.contains("Showing 25 of 49 rows"),
-            "expected row-limit note: {}",
+            !out.markdown.contains("Showing 25 of 49 rows"),
+            "must not emit row-limit note when artifact-only: {}",
             out.markdown
         );
         assert!(
@@ -182,14 +177,18 @@ mod tests {
             out.markdown
         );
         assert!(
+            out.markdown.contains("Required:"),
+            "expected imperative artifact read instruction: {}",
+            out.markdown
+        );
+        assert!(
             out.markdown.contains(&handle.plasm_uri),
             "expected inline snapshot URI: {}",
             out.markdown
         );
         assert!(
-            out.markdown
-                .contains("run_ref: \"l_AAAAAAAAQACAAAAAAAAAAQ_pg1\""),
-            "expected paging continuation: {}",
+            !out.markdown.contains("run_ref: \"l_AAAAAAAAQACAAAAAAAAAAQ_pg1\""),
+            "must not surface paging when snapshot holds the batch: {}",
             out.markdown
         );
         assert!(
@@ -197,18 +196,26 @@ mod tests {
             "must not use metadata-only preview for moderate over-cap: {}",
             out.markdown
         );
-        let preview = out
+        let paging_meta = out
+            .tool_meta
+            .as_ref()
+            .and_then(|m| m.get("plasm"))
+            .and_then(|p| p.get("paging"));
+        assert!(
+            paging_meta.is_none(),
+            "paging meta should be omitted when artifact is complete: {:?}",
+            out.tool_meta
+        );
+        let artifact_complete = out
             .tool_meta
             .as_ref()
             .and_then(|m| m.get("plasm"))
             .and_then(|p| p.get("steps"))
             .and_then(|s| s.as_array())
             .and_then(|a| a.first())
-            .and_then(|s| s.get("preview_entities"));
-        assert!(
-            preview.is_none(),
-            "preview_entities should be omitted when markdown carries TSV"
-        );
+            .and_then(|s| s.get("artifact_complete"))
+            .and_then(|v| v.as_bool());
+        assert_eq!(artifact_complete, Some(true));
     }
 
     #[test]

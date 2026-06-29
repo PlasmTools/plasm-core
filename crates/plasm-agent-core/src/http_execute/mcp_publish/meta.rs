@@ -130,6 +130,7 @@ fn plasm_run_ui_meta_object(
                             "request_fingerprints".into(),
                             serde_json::json!(h.request_fingerprints),
                         );
+                        obj.insert("artifact_complete".into(), serde_json::json!(true));
                     }
                 }
                 step

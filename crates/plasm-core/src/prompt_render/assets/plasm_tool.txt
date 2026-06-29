@@ -26,7 +26,7 @@ Symbol and fill rules:
 Core surface:
 - Program shape: one `plasm_expr`, or `label = …` bindings then **one** final return line — comma-separated roots on that line only (e.g. `a, b`), never one bare label per line (no `return` keyword).
 - Postfix/`[p#]`/`[fields]`: copy exact forms from the TSV left column (`.limit` `.sort` `.filter{…}` `.group_by` `.aggregate` …).
-- Large list reads return the first **25 rows** in `plasm_run`; further pages copy the handle from the prior result's "more pages" line into **`run_ref`** on the next **`plasm_run`** (no second **`plasm`** call).
+- Large list reads return inline TSV only when ≤25 rows and no run snapshot is stored. When a snapshot URI is present, fetch JSON via **`resources/read`** or **`plasm_read_run_artifact`** — no inline TSV is sent. Use **`next_run_ref`** on **`plasm_run`** only when no snapshot was stored for that step (no second **`plasm`** call).
 - `page(...)` is HTTP-execute program syntax only — not an MCP tool argument or `plasm` program.
 - Search when exposed: `e#~$` or `e#~"text"` (bare `e#~` is a parse error); optional scoped filters `e#~"text"[{p#=…}]`.
 

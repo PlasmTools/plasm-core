@@ -17,6 +17,21 @@ pub(crate) enum StepInBandMode {
 }
 
 impl StepInBandMode {
+    pub(crate) fn resolve(step: &PublishedResultStep, policy: &McpResultTransportPolicy) -> Self {
+        let row_count = step.result.count;
+        if step.artifact.is_some()
+            && (row_count > MCP_SNAPSHOT_ONLY_ROW_THRESHOLD || policy.exceeds_in_band(row_count))
+        {
+            Self::SnapshotOnly
+        } else if policy.exceeds_in_band(row_count) {
+            Self::CappedInline {
+                shown: policy.in_band_entity_rows,
+            }
+        } else {
+            Self::Full
+        }
+    }
+
     pub(crate) fn max_entity_rows(self) -> Option<usize> {
         match self {
             StepInBandMode::Full => None,
@@ -25,7 +40,7 @@ impl StepInBandMode {
         }
     }
 
-    pub(crate) fn defers_inline_table(self) -> bool {
+    pub(crate) fn skips_inline_format(self) -> bool {
         matches!(self, StepInBandMode::SnapshotOnly)
     }
 }
@@ -49,24 +64,13 @@ pub(crate) struct ResolvedStepPublish {
 
 impl ResolvedStepPublish {
     pub(crate) fn resolve(step: &PublishedResultStep, policy: &McpResultTransportPolicy) -> Self {
-        let label = crate::mcp_run_markdown::return_label_for_step(
-            step.name.as_deref(),
-            step.node_id.as_deref(),
-        );
-        let row_count = step.result.count;
-        let mode = if row_count > MCP_SNAPSHOT_ONLY_ROW_THRESHOLD && step.artifact.is_some() {
-            StepInBandMode::SnapshotOnly
-        } else if crate::mcp_run_markdown::mcp_step_exceeds_in_band_row_cap(row_count, policy) {
-            StepInBandMode::CappedInline {
-                shown: policy.in_band_entity_rows,
-            }
-        } else {
-            StepInBandMode::Full
-        };
         Self {
-            label,
-            row_count,
-            mode,
+            label: crate::mcp_run_markdown::return_label_for_step(
+                step.name.as_deref(),
+                step.node_id.as_deref(),
+            ),
+            row_count: step.result.count,
+            mode: StepInBandMode::resolve(step, policy),
             artifact: step.artifact.clone(),
             format: None,
         }
@@ -74,11 +78,17 @@ impl ResolvedStepPublish {
 
     pub(crate) fn requires_snapshot_read(&self, fmt: &StepFormatOutcome) -> bool {
         self.artifact.is_some()
-            && (self.mode.defers_inline_table()
-                || matches!(self.mode, StepInBandMode::CappedInline { .. })
+            && (self.mode.skips_inline_format()
                 || !fmt.omitted.is_empty()
                 || !fmt.lossy.is_empty()
                 || fmt.in_band.any_loss())
+    }
+
+    pub(crate) fn is_truncated_for_transport(&self, preview_needed: bool) -> bool {
+        match &self.format {
+            Some(fmt) => self.requires_snapshot_read(fmt) || preview_needed,
+            None => preview_needed || self.mode.skips_inline_format(),
+        }
     }
 
     /// Whether to attach `_meta` preview entity rows for this step. We skip them when an inline
@@ -90,7 +100,7 @@ impl ResolvedStepPublish {
         truncated: bool,
         policy: &McpResultTransportPolicy,
     ) -> bool {
-        if self.format.is_some() && !self.mode.defers_inline_table() {
+        if self.format.is_some() && !self.mode.skips_inline_format() {
             return false;
         }
         !truncated || self.row_count <= policy.in_band_entity_rows
@@ -111,9 +121,9 @@ impl PublishPlan {
             .iter()
             .map(|step| ResolvedStepPublish::resolve(step, policy))
             .collect();
-        let artifact_snapshot_preview = resolved
-            .iter()
-            .any(|r| matches!(r.mode, StepInBandMode::SnapshotOnly));
+        let artifact_snapshot_preview = resolved.iter().any(|r| {
+            r.row_count > MCP_SNAPSHOT_ONLY_ROW_THRESHOLD && r.artifact.is_some()
+        });
         let total_entity_rows = resolved.iter().map(|r| r.row_count).sum();
         let per_step_compact = resolved
             .iter()

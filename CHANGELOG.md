@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.89] - 2026-06-29
+
+### Fixed
+
+- **Discovery catalog routing:** honor `registry_aliases` when matching intent tokens (e.g. `pokemon` → `pokeapi`); compound intents route multiple catalogs instead of homograph-filtering to a single `entry_id`.
+- **Discovery presentation:** emit `# decision: clarify` when multi-catalog routing yields rows from only one API; surface `# routed:` and `_meta.plasm.discovery.catalog_route`.
+- **MCP `plasm_run` transport:** when a run snapshot exists and rows exceed the in-band cap, omit duplicate inline TSV — artifact URI plus required read instruction only; suppress paging/`has_more` when the snapshot holds the full batch (`artifact_complete` in `_meta`).
+
+### Changed
+
+- **Discovery contract:** `CatalogRoute` newtype and `DiscoveryDecision::for_presentation()` live in `plasm-core`; MCP publish transport uses `StepInBandMode::resolve`, `ResolvedStepPublish::is_truncated_for_transport`, and `McpResultTransportPolicy::exceeds_in_band`.
+- **MCP tool copy:** imperative snapshot-read guidance in `plasm_run` / initialize workflow assets; docs for artifact-only policy and stale MCP `tools/list` cache refresh.
+
 ## [0.3.88] - 2026-06-29
 
 ### Fixed

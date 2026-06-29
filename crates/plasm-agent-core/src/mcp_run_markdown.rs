@@ -70,6 +70,23 @@ impl ArtifactAccessMode {
             self.artifact_read_instruction()
         )
     }
+
+    pub fn artifact_only_read_instruction(self) -> String {
+        format!(
+            "\n\n**Required:** fetch this step's rows via {} on the snapshot URI above — no inline TSV is sent when a snapshot is stored.\n",
+            self.artifact_read_instruction()
+        )
+    }
+
+    pub fn artifact_only_body(self, uri: &str) -> String {
+        format!("{}{}", self.snapshot_line(uri), self.artifact_only_read_instruction())
+    }
+}
+
+impl McpResultTransportPolicy {
+    pub fn exceeds_in_band(&self, row_count: usize) -> bool {
+        row_count > self.in_band_entity_rows
+    }
 }
 
 impl Default for McpResultTransportPolicy {
@@ -164,12 +181,6 @@ pub(crate) fn execute_expression_preview(expr: &str) -> String {
     format!("{truncated}… (truncated, total {n} chars)")
 }
 
-pub(crate) fn mcp_step_exceeds_in_band_row_cap(
-    row_count: usize,
-    policy: &McpResultTransportPolicy,
-) -> bool {
-    row_count > policy.in_band_entity_rows
-}
 
 /// Compact preview when a stored snapshot backs an over-cap return, or the full body is huge.
 pub(crate) fn mcp_preview_markdown_needed(
