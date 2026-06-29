@@ -6,7 +6,7 @@ import {
   createAgentFromDefinition,
   resolveAgentDefinition,
 } from "../define-agent.js";
-import { readBuildManifest } from "../cli/build.js";
+import { readBuildManifest } from "../cli/build-manifest.js";
 import { createAuthoringContext, type AuthoringContext } from "../authoring/context.js";
 import { tryHandleChannelRoute } from "../authoring/channel-dispatch.js";
 import {
@@ -20,8 +20,8 @@ import {
   type SubagentRegistry,
 } from "../authoring/subagent-loader.js";
 import {
+  tryHandleScheduleDevDispatch,
   startScheduleTimers,
-  tryHandleScheduleCronRoute,
   type ScheduleHandle,
 } from "../authoring/schedule-manager.js";
 import { walkAgentProject, type ProjectDiscovery } from "../discovery/project-walker.js";
@@ -143,13 +143,13 @@ export async function handlePlasmRequest(
 
   const loadedSlots = await app.getLoadedSlots();
   if (loadedSlots?.schedules.length) {
-    const handledCron = tryHandleScheduleCronRoute(
+    const handledSchedule = tryHandleScheduleDevDispatch(
       req,
       res,
       loadedSlots.schedules,
       app.getAuthoringContext(),
     );
-    if (handledCron) return;
+    if (handledSchedule) return;
   }
 
   if (loadedSlots?.channels.length) {

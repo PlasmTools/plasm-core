@@ -65,6 +65,7 @@ export interface ArchivePaths {
 export interface BlobArchiveAdapter {
   put(key: string, body: string | Uint8Array): Promise<void>;
   get(key: string): Promise<Uint8Array | null>;
+  list(prefix: string): Promise<string[]>;
 }
 
 /** Production KV / Postgres index adapter for archive listings. */

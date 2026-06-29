@@ -1,6 +1,7 @@
-import { mkdir, writeFile, readFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import { readBuildManifest } from "./build-manifest.js";
 import { compileAuthoredSlots } from "./compile-authored-slots.js";
 import type { ResolvedAgentProject } from "./project-root.js";
 import { isNativeEngineAvailable } from "../engine/napi-binding.js";
@@ -79,15 +80,5 @@ export async function runPlasmBuild(project: ResolvedAgentProject): Promise<Plas
   };
 }
 
-export async function readBuildManifest(agentRoot: string): Promise<{
-  compiledSlots?: Record<string, string>;
-  projectRoot?: string;
-} | null> {
-  const manifestPath = path.join(agentRoot, ".plasm", "discovery", "manifest.json");
-  try {
-    const raw = await readFile(manifestPath, "utf8");
-    return JSON.parse(raw) as { compiledSlots?: Record<string, string>; projectRoot?: string };
-  } catch {
-    return null;
-  }
-}
+export { readBuildManifest } from "./build-manifest.js";
+export type { PlasmBuildManifest } from "./build-manifest.js";

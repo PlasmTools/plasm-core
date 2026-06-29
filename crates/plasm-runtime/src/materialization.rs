@@ -154,7 +154,14 @@ impl SessionResponseStore {
         write_set
             .iter()
             .filter(|fp| match base.get(*fp) {
-                None => session.entries.contains_key(*fp),
+                None => match (
+                    session.entries.get(*fp).map(|a| &a.response),
+                    branch.entries.get(*fp).map(|a| &a.response),
+                ) {
+                    (None, _) => false,
+                    (Some(session_val), Some(branch_val)) => session_val != branch_val,
+                    (Some(_), None) => false,
+                },
                 Some(base_arc) => {
                     let base_val = Some(&base_arc.response);
                     let branch_val = branch.entries.get(*fp).map(|a| &a.response);
@@ -483,5 +490,49 @@ mod tests {
         assert_eq!(stats.cache.rows_materialized, 9);
         assert_eq!(stats.cache_misses, 1);
         assert_ne!(stats.cache_misses, stats.cache.rows_materialized);
+    }
+
+    #[test]
+    fn response_store_brand_new_idempotent_no_conflict() {
+        let mut session = SessionResponseStore::default();
+        let fp = RequestFingerprint::from_hex(&format!("{:064x}", 42u64)).expect("fp");
+        let base = session.entries_snapshot();
+        let mut branch = session.clone();
+        branch.store(
+            fp.clone(),
+            serde_json::json!({"rows": [1, 2]}),
+            ExecutionSource::Live,
+        );
+        session.store(
+            fp.clone(),
+            serde_json::json!({"rows": [1, 2]}),
+            ExecutionSource::Live,
+        );
+        let write_set = branch.branch_write_fingerprints(&base);
+        let conflicts =
+            SessionResponseStore::detect_write_conflicts(&session, &branch, &base, &write_set);
+        assert!(conflicts.is_empty(), "identical brand-new fingerprint is not a conflict");
+    }
+
+    #[test]
+    fn response_store_brand_new_divergent_conflict() {
+        let mut session = SessionResponseStore::default();
+        let fp = RequestFingerprint::from_hex(&format!("{:064x}", 43u64)).expect("fp");
+        let base = session.entries_snapshot();
+        let mut branch = session.clone();
+        branch.store(
+            fp.clone(),
+            serde_json::json!({"rows": [1]}),
+            ExecutionSource::Live,
+        );
+        session.store(
+            fp.clone(),
+            serde_json::json!({"rows": [2]}),
+            ExecutionSource::Live,
+        );
+        let write_set = branch.branch_write_fingerprints(&base);
+        let conflicts =
+            SessionResponseStore::detect_write_conflicts(&session, &branch, &base, &write_set);
+        assert_eq!(conflicts, vec![fp]);
     }
 }

@@ -52,10 +52,11 @@ export type {
 export { tryHandleChannelRoute, listChannelRoutes } from "./authoring/channel-dispatch.js";
 export {
   exportScheduleCronManifest,
+  exportScheduleTaskManifest,
   startScheduleTimers,
-  tryHandleScheduleCronRoute,
+  tryHandleScheduleDevDispatch,
 } from "./authoring/schedule-manager.js";
-export type { ScheduleCronManifest, ScheduleHandle } from "./authoring/schedule-manager.js";
+export type { ScheduleCronManifest, ScheduleHandle, ScheduleTaskManifest } from "./authoring/schedule-manager.js";
 export {
   createSubagentRegistry,
   loadSubagents,

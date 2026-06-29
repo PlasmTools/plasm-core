@@ -230,26 +230,26 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
             .expect("run_id schema"),
         );
         tools.push(Tool {
-                name: "plasm_read_run_artifact".into(),
-                title: Some("Read Plasm run snapshot".into()),
-                description: Some(PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION.into()),
-                input_schema: ToolInputSchema::new(
-                    vec!["logical_session_ref".into()],
-                    Some(read_props),
-                    None,
-                ),
-                annotations: Some(ToolAnnotations {
-                    read_only_hint: Some(true),
-                    open_world_hint: Some(false),
-                    ..Default::default()
-                }),
-                execution: Some(ToolExecution {
-                    task_support: Some(ToolExecutionTaskSupport::Forbidden),
-                }),
-                icons: vec![],
-                meta: None,
-                output_schema: None,
-            });
+            name: "plasm_read_run_artifact".into(),
+            title: Some("Read Plasm run snapshot".into()),
+            description: Some(PLASM_READ_RUN_ARTIFACT_TOOL_DESCRIPTION.into()),
+            input_schema: ToolInputSchema::new(
+                vec!["logical_session_ref".into()],
+                Some(read_props),
+                None,
+            ),
+            annotations: Some(ToolAnnotations {
+                read_only_hint: Some(true),
+                open_world_hint: Some(false),
+                ..Default::default()
+            }),
+            execution: Some(ToolExecution {
+                task_support: Some(ToolExecutionTaskSupport::Forbidden),
+            }),
+            icons: vec![],
+            meta: None,
+            output_schema: None,
+        });
     }
     if workflow_mcp_tools_enabled() {
         tools.extend(crate::workflow_mcp::workflow_mcp_tools());

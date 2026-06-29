@@ -94,15 +94,11 @@ const ENV_EXAMPLE = `# Vercel AI Gateway
 # Local / self-host: run \`plasm-agent link\` or set AI_GATEWAY_API_KEY.
 AI_GATEWAY_API_KEY=
 
-# Vercel Cron auth (production)
+# Optional: manual cron trigger auth (Vercel Cron uses x-vercel-cron by default)
 CRON_SECRET=
 
-# Durable state on Vercel (optional locally)
-KV_REST_API_URL=
-KV_REST_API_TOKEN=
+# Optional local overrides (Vercel Blob OIDC is automatic when a store is linked)
 BLOB_READ_WRITE_TOKEN=
-PLASM_STATE_BACKEND=kv
-PLASM_ARCHIVE_BACKEND=vercel
 
 # Optional overrides
 PLASM_AGENT_MODEL=anthropic/claude-sonnet-4.6

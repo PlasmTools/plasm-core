@@ -8,7 +8,7 @@ import {
 } from "../session-state.js";
 import type { AgentStateStore, StateBackend } from "./define-state.js";
 
-function intentKey(intent: string): string {
+export function intentKey(intent: string): string {
   return Buffer.from(intent, "utf8").toString("base64url");
 }
 

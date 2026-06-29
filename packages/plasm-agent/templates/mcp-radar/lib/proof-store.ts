@@ -1,6 +1,20 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+function isVercelHosted(): boolean {
+  return (
+    process.env.VERCEL === "1" ||
+    Boolean(process.env.VERCEL_DEPLOYMENT_ID?.trim()) ||
+    Boolean(process.env.VERCEL_ENV?.trim())
+  );
+}
+
+function hasLinkedBlobStore(): boolean {
+  return Boolean(
+    process.env.BLOB_READ_WRITE_TOKEN?.trim() || process.env.BLOB_STORE_ID?.trim(),
+  );
+}
+
 export interface SeenState {
   itemIds: string[];
   lastRunAt?: string;
@@ -28,9 +42,9 @@ export interface ProofStore {
   saveLastRun(meta: LastRunMeta): Promise<void>;
 }
 
-const SEEN_KV_KEY = "plasm:mcp-radar:seen";
-const LAST_RUN_KV_KEY = "plasm:mcp-radar:last-run";
 const PROOF_BLOB_KEY = "research/mcp-innovations-proof.md";
+const SEEN_BLOB_KEY = "research/seen-hn-items.json";
+const LAST_RUN_BLOB_KEY = "research/last-run.json";
 const PROOF_HEADER = "# MCP Innovations Proof Log\n\n";
 
 function researchDir(agentRoot: string): string {
@@ -52,22 +66,8 @@ function lastRunPath(agentRoot: string): string {
 export function resolveProofStoreBackend(): ProofStoreBackend {
   const explicit = process.env.PLASM_PROOF_STORE_BACKEND?.trim().toLowerCase();
   if (explicit === "fs" || explicit === "vercel") return explicit;
-  const hasKv =
-    Boolean(process.env.KV_REST_API_URL?.trim()) ||
-    Boolean(process.env.PLASM_KV_REST_API_URL?.trim());
-  const hasBlob = Boolean(process.env.BLOB_READ_WRITE_TOKEN?.trim());
-  if (hasKv && hasBlob) return "vercel";
+  if (isVercelHosted() || hasLinkedBlobStore()) return "vercel";
   return "fs";
-}
-
-type KvClient = {
-  get<T>(key: string): Promise<T | null>;
-  set(key: string, value: unknown): Promise<unknown>;
-};
-
-async function loadKv(): Promise<KvClient> {
-  const mod = await import("@vercel/kv");
-  return mod.kv as KvClient;
 }
 
 async function blobGetText(key: string): Promise<string | null> {
@@ -82,6 +82,26 @@ async function blobGetText(key: string): Promise<string | null> {
 async function blobPutText(key: string, body: string): Promise<void> {
   const { put } = await import("@vercel/blob");
   await put(key, body, { access: "public", addRandomSuffix: false });
+}
+
+async function blobGetJson<T>(key: string): Promise<T | null> {
+  const text = await blobGetText(key);
+  if (!text) return null;
+  return JSON.parse(text) as T;
+}
+
+async function blobPutJson(key: string, value: unknown): Promise<void> {
+  await blobPutText(key, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function parseSeenState(parsed: SeenState | null): SeenState {
+  if (!parsed) return { itemIds: [] };
+  return {
+    itemIds: Array.isArray(parsed.itemIds) ? parsed.itemIds.map(String) : [],
+    lastRunAt: parsed.lastRunAt,
+    lastRunStatus: parsed.lastRunStatus,
+    lastNewCount: parsed.lastNewCount,
+  };
 }
 
 class FsProofStore implements ProofStore {
@@ -110,13 +130,7 @@ class FsProofStore implements ProofStore {
   async loadSeenState(): Promise<SeenState> {
     try {
       const raw = await readFile(seenPath(this.agentRoot), "utf8");
-      const parsed = JSON.parse(raw) as SeenState;
-      return {
-        itemIds: Array.isArray(parsed.itemIds) ? parsed.itemIds.map(String) : [],
-        lastRunAt: parsed.lastRunAt,
-        lastRunStatus: parsed.lastRunStatus,
-        lastNewCount: parsed.lastNewCount,
-      };
+      return parseSeenState(JSON.parse(raw) as SeenState);
     } catch {
       return { itemIds: [] };
     }
@@ -171,20 +185,11 @@ class VercelProofStore implements ProofStore {
   }
 
   async loadSeenState(): Promise<SeenState> {
-    const kv = await loadKv();
-    const parsed = await kv.get<SeenState>(SEEN_KV_KEY);
-    if (!parsed) return { itemIds: [] };
-    return {
-      itemIds: Array.isArray(parsed.itemIds) ? parsed.itemIds.map(String) : [],
-      lastRunAt: parsed.lastRunAt,
-      lastRunStatus: parsed.lastRunStatus,
-      lastNewCount: parsed.lastNewCount,
-    };
+    return parseSeenState(await blobGetJson<SeenState>(SEEN_BLOB_KEY));
   }
 
   async saveSeenState(state: SeenState): Promise<void> {
-    const kv = await loadKv();
-    await kv.set(SEEN_KV_KEY, state);
+    await blobPutJson(SEEN_BLOB_KEY, state);
   }
 
   async addSeenIds(ids: string[]): Promise<SeenState> {
@@ -197,13 +202,11 @@ class VercelProofStore implements ProofStore {
   }
 
   async loadLastRun(): Promise<LastRunMeta | null> {
-    const kv = await loadKv();
-    return kv.get<LastRunMeta>(LAST_RUN_KV_KEY);
+    return blobGetJson<LastRunMeta>(LAST_RUN_BLOB_KEY);
   }
 
   async saveLastRun(meta: LastRunMeta): Promise<void> {
-    const kv = await loadKv();
-    await kv.set(LAST_RUN_KV_KEY, meta);
+    await blobPutJson(LAST_RUN_BLOB_KEY, meta);
   }
 }
 
@@ -264,9 +267,5 @@ export function gatewayConfigured(): boolean {
   ) {
     return true;
   }
-  return (
-    process.env.VERCEL === "1" ||
-    Boolean(process.env.VERCEL_DEPLOYMENT_ID?.trim()) ||
-    Boolean(process.env.VERCEL_ENV?.trim())
-  );
+  return isVercelHosted();
 }

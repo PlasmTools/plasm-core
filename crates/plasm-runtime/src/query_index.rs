@@ -121,7 +121,11 @@ impl QueryIndex {
         write_set
             .iter()
             .filter(|k| match base.get(*k) {
-                None => session.entries.contains_key(*k),
+                None => crate::materialization_conflict::ref_list_materialization_diverged(
+                    None,
+                    branch.entries.get(*k).map(|v| v.as_slice()),
+                    session.entries.get(*k).map(|v| v.as_slice()),
+                ),
                 Some(base_v) => crate::materialization_conflict::ref_list_materialization_diverged(
                     Some(base_v.as_slice()),
                     branch.entries.get(*k).map(|v| v.as_slice()),
@@ -160,5 +164,24 @@ mod tests {
         let r = Ref::new("Label", "1");
         idx.insert(key.clone(), vec![r.clone()]);
         assert_eq!(idx.get(&key), Some([r].as_slice()));
+    }
+
+    #[test]
+    fn query_index_brand_new_overlapping_pages_no_conflict() {
+        let mut session = QueryIndex::default();
+        let key = QueryCacheKey::test("Type\0pokemon\0name=electric");
+        let base = session.entries_snapshot();
+        let mut branch = session.clone();
+        branch.insert(
+            key.clone(),
+            vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "2")],
+        );
+        session.insert(
+            key.clone(),
+            vec![Ref::new("Pokemon", "1"), Ref::new("Pokemon", "3")],
+        );
+        let write_set = branch.branch_write_keys(&base);
+        let conflicts = QueryIndex::detect_write_conflicts(&session, &branch, &base, &write_set);
+        assert!(conflicts.is_empty(), "overlapping cold query pages converge");
     }
 }

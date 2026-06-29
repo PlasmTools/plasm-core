@@ -29,9 +29,6 @@ export async function patchVercelOutputConfig(
   config.framework = {
     version: frameworkPackageVersion(),
   };
-  if (host.scheduleCrons.length > 0) {
-    config.crons = host.scheduleCrons;
-  }
 
   await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }

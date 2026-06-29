@@ -24,6 +24,16 @@ impl EntityBaseContent {
         }
     }
 
+    /// Fork base for a `Ref` absent at fork (CEP-14 brand-new insert race): empty content,
+    /// so three-way divergence reduces to "branch and session populated this key differently".
+    pub(crate) fn absent_at_fork() -> Self {
+        Self {
+            fields: IndexMap::new(),
+            relations: IndexMap::new(),
+            completeness: EntityCompleteness::Summary,
+        }
+    }
+
     pub(crate) fn content_equals(&self, entity: &CachedEntity) -> bool {
         self.fields == entity.fields
             && self.relations == entity.relations
@@ -166,6 +176,14 @@ pub(crate) fn entity_three_way_conflict(
     false
 }
 
+/// CEP-14 brand-new ref: a `Ref` absent at fork conflicts only when branch and session
+/// populated it with **divergent** content. Identical concurrent population (cold reads,
+/// idempotent fan-out) converges; divergent same-key writes stay single-winner (CEP-3).
+#[must_use]
+pub(crate) fn brand_new_entity_diverged(branch: &CachedEntity, session: &CachedEntity) -> bool {
+    entity_three_way_conflict(&EntityBaseContent::absent_at_fork(), branch, session)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,6 +245,19 @@ mod tests {
             Some(branch.as_slice()),
             Some(session.as_slice()),
         ));
+    }
+
+    #[test]
+    fn brand_new_entity_idempotent_no_conflict() {
+        let a = berry("x", "cheri");
+        let b = berry("x", "cheri");
+        assert!(!brand_new_entity_diverged(&a, &b));
+        let mut divergent = berry("x", "pecha");
+        divergent.fields.insert(
+            "name".to_string(),
+            TypedFieldValue::from(Value::String("pecha".to_string())),
+        );
+        assert!(brand_new_entity_diverged(&a, &divergent));
     }
 
     #[test]

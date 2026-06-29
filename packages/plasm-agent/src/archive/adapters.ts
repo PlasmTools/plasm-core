@@ -9,6 +9,10 @@ export class UnimplementedBlobArchiveAdapter implements BlobArchiveAdapter {
   async get(): Promise<Uint8Array | null> {
     throw new Error("BlobArchiveAdapter not configured — set PLASM_RUN_ARTIFACTS_URL in prod");
   }
+
+  async list(): Promise<string[]> {
+    throw new Error("BlobArchiveAdapter not configured — set PLASM_RUN_ARTIFACTS_URL in prod");
+  }
 }
 
 /** Stub KV index adapter for production archive listings. */

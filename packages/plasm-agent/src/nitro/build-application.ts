@@ -11,6 +11,9 @@ import { copyVercelFunctionAssets } from "./copy-vercel-function-assets.js";
 import { isVercelBuildEnvironment, vercelOutputDir } from "./paths.js";
 import { preparePlasmHost } from "./prepare-host.js";
 import { writePlasmNitroCatchAllRoute } from "./write-nitro-entry.js";
+import { ensureWorkflowBuilderDirs } from "./ensure-workflow-builder-dirs.js";
+import { writeNitroScheduleTasks } from "./write-nitro-schedule-tasks.js";
+import { writeWorkflowDispatchRoute } from "./write-workflow-dispatch-route.js";
 
 export interface PlasmApplicationBuildResult {
   outputDir: string;
@@ -35,6 +38,26 @@ export async function buildPlasmApplication(options: {
   });
 
   await writePlasmNitroCatchAllRoute(projectRoot, compiledSlots);
+
+  const loadedSlotsForTasks = await loadAuthoredSlots({
+    discovery,
+    agentRoot,
+    projectRoot,
+    compiledSlots,
+  });
+  if (loadedSlotsForTasks.schedules.length > 0) {
+    await writeNitroScheduleTasks({
+      projectRoot,
+      agentRoot,
+      schedules: loadedSlotsForTasks.schedules,
+      compiledSlots,
+    });
+  }
+
+  if (host.workflowEnabled) {
+    await ensureWorkflowBuilderDirs(projectRoot);
+    await writeWorkflowDispatchRoute(projectRoot);
+  }
 
   const nitro = await createPlasmNitro(host, false);
   try {
@@ -85,6 +108,26 @@ export async function startPlasmNitroDev(options: {
 
   const host = await preparePlasmHost(options);
   await writePlasmNitroCatchAllRoute(options.projectRoot, options.compiledSlots);
+
+  const loadedSlotsForTasks = await loadAuthoredSlots({
+    discovery: options.discovery,
+    agentRoot: options.agentRoot,
+    projectRoot: options.projectRoot,
+    compiledSlots: options.compiledSlots,
+  });
+  if (loadedSlotsForTasks.schedules.length > 0) {
+    await writeNitroScheduleTasks({
+      projectRoot: options.projectRoot,
+      agentRoot: options.agentRoot,
+      schedules: loadedSlotsForTasks.schedules,
+      compiledSlots: options.compiledSlots,
+    });
+  }
+
+  if (host.workflowEnabled) {
+    await ensureWorkflowBuilderDirs(options.projectRoot);
+    await writeWorkflowDispatchRoute(options.projectRoot);
+  }
 
   const nitro = await createPlasmNitro(host, true);
   const server = createDevServer(nitro);

@@ -200,23 +200,23 @@ export function createOperatorRoutes(ctx: OperatorRouteContext): OperatorHandler
     },
 
     async listTraces() {
-      const { LocalArchiveStore } = await import("../archive/index.js");
-      const archive = LocalArchiveStore.fromAgentRoot(ctx.agentRoot);
+      const { createArchiveStore } = await import("../archive/resolve-backend.js");
+      const archive = createArchiveStore(ctx.agentRoot);
       const tenantScope = ctx.tenantScope ?? "local";
       const traces = await archive.listTraces(tenantScope);
       return { traces };
     },
 
     async listArchives() {
-      const { LocalArchiveStore } = await import("../archive/index.js");
-      const archive = LocalArchiveStore.fromAgentRoot(ctx.agentRoot);
+      const { createArchiveStore } = await import("../archive/resolve-backend.js");
+      const archive = createArchiveStore(ctx.agentRoot);
       const { plans, runs, paths } = await archive.listArchives();
       return { plans, runs, paths };
     },
 
     async listRuns() {
-      const { LocalArchiveStore } = await import("../archive/index.js");
-      const archive = LocalArchiveStore.fromAgentRoot(ctx.agentRoot);
+      const { createArchiveStore } = await import("../archive/resolve-backend.js");
+      const archive = createArchiveStore(ctx.agentRoot);
       const runs = await archive.listRuns();
       return { runs };
     },

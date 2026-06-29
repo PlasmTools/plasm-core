@@ -243,6 +243,38 @@ fn query_index_concurrent_ref_pages_no_conflict() {
 }
 
 #[test]
+fn brand_new_identical_ref_both_commit() {
+    use plasm_core::{TypedFieldValue, Value};
+
+    let mut session = SessionMaterialization::new();
+    let (mut branch_a, base_a) = BranchMaterializationBase::fork_from(&session);
+    let (mut branch_b, base_b) = BranchMaterializationBase::fork_from(&session);
+
+    let reference = Ref::new("Pokemon", "pikachu");
+    let mut fields = indexmap::IndexMap::new();
+    fields.insert(
+        "name".into(),
+        TypedFieldValue::from(Value::String("pikachu".into())),
+    );
+    let entity = crate::CachedEntity {
+        reference: reference.clone(),
+        fields,
+        relations: indexmap::IndexMap::new(),
+        last_updated: 1,
+        version: 1,
+        completeness: crate::EntityCompleteness::Complete,
+    };
+    branch_a.insert(entity.clone()).expect("branch a");
+    branch_b.insert(entity).expect("branch b");
+
+    assert!(!detect_materialization_conflicts(&session, &base_a, &branch_a).has_any());
+    session.absorb_branch(branch_a).expect("absorb a");
+    assert!(!detect_materialization_conflicts(&session, &base_b, &branch_b).has_any());
+    session.absorb_branch(branch_b).expect("absorb b");
+    assert!(session.contains(&reference));
+}
+
+#[test]
 fn divergent_field_same_ref_is_conflict() {
     use plasm_core::{TypedFieldValue, Value};
 
@@ -375,5 +407,44 @@ proptest::proptest! {
         proptest::prop_assert!(!detect_materialization_conflicts(&session, &base_a, &branch_a).has_any());
         session.absorb_branch(branch_a).expect("absorb a");
         proptest::prop_assert!(!detect_materialization_conflicts(&session, &base_b, &branch_b).has_any());
+    }
+
+    /// CEP-14 (brand-new): two branches inserting an identical brand-new ref (absent at fork)
+    /// must converge regardless of key/content — no value diverges, so neither commit conflicts.
+    #[test]
+    fn proptest_brand_new_identical_inserts_never_conflict(
+        type_id in "[a-z]{3,8}",
+        name in "[a-z]{1,12}",
+    ) {
+        use plasm_core::{TypedFieldValue, Value};
+
+        let type_id: String = type_id;
+        let name: String = name;
+        let mut session = SessionMaterialization::new();
+        let (mut branch_a, base_a) = BranchMaterializationBase::fork_from(&session);
+        let (mut branch_b, base_b) = BranchMaterializationBase::fork_from(&session);
+
+        let reference = Ref::new("PokemonType", type_id.as_str());
+        let mut fields = indexmap::IndexMap::new();
+        fields.insert(
+            "name".into(),
+            TypedFieldValue::from(Value::String(name)),
+        );
+        let entity = crate::CachedEntity {
+            reference: reference.clone(),
+            fields,
+            relations: indexmap::IndexMap::new(),
+            last_updated: 1,
+            version: 1,
+            completeness: crate::EntityCompleteness::Complete,
+        };
+        branch_a.insert(entity.clone()).expect("branch a");
+        branch_b.insert(entity).expect("branch b");
+
+        proptest::prop_assert!(!detect_materialization_conflicts(&session, &base_a, &branch_a).has_any());
+        session.absorb_branch(branch_a).expect("absorb a");
+        proptest::prop_assert!(!detect_materialization_conflicts(&session, &base_b, &branch_b).has_any());
+        session.absorb_branch(branch_b).expect("absorb b");
+        proptest::prop_assert!(session.contains(&reference));
     }
 }

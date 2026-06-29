@@ -134,7 +134,7 @@ export async function runRadar(
       reason: "ai_gateway_missing",
       candidates,
       newCandidates,
-      error: "AI_GATEWAY_API_KEY is required for agent synthesis",
+      error: "AI Gateway is not configured (link project on Vercel or set AI_GATEWAY_API_KEY locally)",
     };
     await saveLastRun(ctx.agentRoot, {
       at: new Date().toISOString(),

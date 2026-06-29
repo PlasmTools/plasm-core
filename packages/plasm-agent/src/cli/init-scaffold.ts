@@ -114,20 +114,24 @@ export async function patchProjectPackageJson(
       ...pkg.dependencies,
       "@plasm_lang/vercel-agent": `^${version}`,
       "@plasm_lang/engine": `^${version}`,
+      "@ai-sdk/otel": "^1.0.3",
       "@vercel/blob": "^0.27.3",
       "@vercel/functions": "^3.4.3",
-      "@vercel/kv": "^3.0.0",
       "@vercel/otel": "^1.5.0",
+      ai: "^6.0.0",
+      workflow: "^4.5.0",
     };
   } else {
     pkg.dependencies = {
       ...pkg.dependencies,
       "@plasm_lang/vercel-agent": `file:${path.resolve(packageRoot)}`,
       "@plasm_lang/engine": `file:${monorepoEngineRoot(packageRoot)}`,
+      "@ai-sdk/otel": "^1.0.3",
       "@vercel/blob": "^0.27.3",
       "@vercel/functions": "^3.4.3",
-      "@vercel/kv": "^3.0.0",
       "@vercel/otel": "^1.5.0",
+      ai: "^6.0.0",
+      workflow: "^4.5.0",
     };
   }
 

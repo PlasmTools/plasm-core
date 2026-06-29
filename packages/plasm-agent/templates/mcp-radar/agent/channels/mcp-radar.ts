@@ -4,7 +4,8 @@ import { waitUntil } from "@vercel/functions";
 import { defineChannel } from "@plasm_lang/vercel-agent";
 
 import { readProofMarkdown } from "../../lib/proof-store.js";
-import { radarStatus, runRadar } from "../../lib/run-radar.js";
+import { radarStatus } from "../../lib/run-radar.js";
+import { startMcpRadarRun } from "../../lib/start-mcp-radar.js";
 
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -45,17 +46,16 @@ export default defineChannel({
 
         if (process.env.VERCEL === "1") {
           waitUntil(
-            runRadar(ctx, options).catch((err: unknown) => {
-              console.error("[mcp-radar] background run failed:", err);
+            startMcpRadarRun(ctx, options).catch((err: unknown) => {
+              console.error("[mcp-radar] workflow start failed:", err);
             }),
           );
-          sendJson(res, 202, { accepted: true, async: true });
+          sendJson(res, 202, { accepted: true, workflow: true });
           return;
         }
 
-        const result = await runRadar(ctx, options);
-        const status = result.ok ? 200 : 500;
-        sendJson(res, status, result);
+        const run = await startMcpRadarRun(ctx, options);
+        sendJson(res, 200, { accepted: true, workflow: true, run });
       },
     },
     {

@@ -741,7 +741,9 @@ impl GraphCache {
         branch: &GraphCache,
         write_set: &[Ref],
     ) -> Vec<Ref> {
-        use crate::materialization_conflict::entity_three_way_conflict;
+        use crate::materialization_conflict::{
+            brand_new_entity_diverged, entity_three_way_conflict,
+        };
 
         let Some(tracker) = branch.branch_fork.as_ref() else {
             return Vec::new();
@@ -750,7 +752,13 @@ impl GraphCache {
             .iter()
             .filter(|reference| {
                 if !tracker.initial_refs.contains(*reference) {
-                    return session.contains(reference);
+                    let Some(branch_entity) = branch.get(reference) else {
+                        return false;
+                    };
+                    let Some(session_entity) = session.get(reference) else {
+                        return false;
+                    };
+                    return brand_new_entity_diverged(branch_entity, session_entity);
                 }
                 let Some(base) = tracker.lazy_base.get(*reference) else {
                     return false;

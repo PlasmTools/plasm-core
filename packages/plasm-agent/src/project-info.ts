@@ -7,7 +7,7 @@ import type { AgentDefinition } from "./define-agent.js";
 import type { ProjectDiscovery } from "./discovery/project-walker.js";
 import { walkAgentProject } from "./discovery/project-walker.js";
 import { isNativeEngineAvailable } from "./engine/napi-binding.js";
-import { exportScheduleCronManifest } from "./authoring/schedule-manager.js";
+import { exportScheduleTaskManifest } from "./authoring/schedule-manager.js";
 import { isGatewayConfigured } from "./gateway-model.js";
 import type { LoadedProjectSlots } from "./authoring/slot-loader.js";
 import { frameworkPackageVersion } from "./package-version.js";
@@ -38,7 +38,8 @@ export interface ProjectInfoRoutes {
   sessionContinue: string;
   sessionStream: string;
   channels: Array<{ method: string; path: string }>;
-  scheduleCrons: string[];
+  scheduledTasks: string[];
+  scheduleDevDispatch: string[];
   operator: string;
 }
 
@@ -75,7 +76,7 @@ export interface ProjectInfoPayload {
     modelOptions: AgentDefinition["modelOptions"] | null;
     build: AgentDefinition["build"] | null;
     experimental: AgentDefinition["experimental"] | null;
-    scheduleCrons: ReturnType<typeof exportScheduleCronManifest> | null;
+    scheduledTasks: ReturnType<typeof exportScheduleTaskManifest> | null;
     sessions: { active: number };
     routes: ProjectInfoRoutes;
   };
@@ -176,14 +177,14 @@ export async function collectProjectInfo(
   };
 
   if (dev) {
-    const scheduleCrons = exportScheduleCronManifest(loadedSlots.schedules);
+    const scheduledTasks = exportScheduleTaskManifest(loadedSlots.schedules);
     payload.dev = {
       model: dev.definition.model,
       compaction: dev.definition.compaction ?? null,
       modelOptions: dev.definition.modelOptions ?? null,
       build: dev.definition.build ?? null,
       experimental: dev.definition.experimental ?? null,
-      scheduleCrons,
+      scheduledTasks,
       sessions: { active: dev.sessionCount },
       routes: {
         health: "GET /plasm/v1/health",
@@ -192,7 +193,10 @@ export async function collectProjectInfo(
         sessionContinue: "POST /plasm/v1/session/:sessionId",
         sessionStream: "GET /plasm/v1/session/:id/stream",
         channels: listChannelRoutes(loadedSlots.channels),
-        scheduleCrons: scheduleCrons.crons.map((c) => `GET ${c.path}`),
+        scheduledTasks: scheduledTasks.tasks.map((t) => `nitro:task/${t.name}`),
+        scheduleDevDispatch: scheduledTasks.tasks.map(
+          (t) => `POST /internal/schedule/${t.name}`,
+        ),
         operator: "GET /operator",
       },
     };

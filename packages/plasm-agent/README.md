@@ -95,10 +95,10 @@ cd ../plasm-agent && npm install
 
 ## Storage (`defineState` + archives)
 
-| Concern | Dev (`fs`) | Prod |
-|---------|------------|------|
-| Sessions / symbols | `agent/.plasm/` | `PLASM_STATE_BACKEND=kv` or `postgres` |
-| Run/trace archives | local dirs | `BLOB_READ_WRITE_TOKEN` + `KV_REST_API_*` |
+| Concern | Dev (`fs`) | Prod (Vercel) |
+|---------|------------|----------------|
+| Sessions / symbols | `agent/.plasm/` | Vercel Blob (`PLASM_STATE_BACKEND=blob`, default on Vercel) |
+| Run/trace archives | local dirs | Vercel Blob (`vercel blob create-store` — OIDC, no manual token) |
 
 See **Connect / state / archive env** below.
 
@@ -180,7 +180,7 @@ Hot reload watches `catalogs/`, `skills/`, `channels/`, `schedules/`, `hooks/`, 
 |------|--------|-------|
 | `skills/` | markdown or `defineSkill()` | Progressive index + `read_skill` tool (`experimental.skills: "inline"` for full inject) |
 | `channels/` | `defineChannel()` | HTTP ingress; call stubs, not `plasm_context` |
-| `schedules/` | `defineSchedule()` | Dev: `*/N * * * *` timers; prod: `GET /internal/cron/:name` + Vercel Cron manifest in `/plasm/v1/info` |
+| `schedules/` | `defineSchedule()` | Dev: `*/N * * * *` timers; prod: Nitro scheduled tasks + Vercel Cron (zero config) |
 | `hooks/` | `defineHook()` | `agent:start`, `plan:commit`, `run:complete`, … |
 | `subagents/` | `defineAgent()` in `subagents/<name>/agent.ts` | `delegate_subagent` harness tool |
 
@@ -222,11 +222,9 @@ export PLASM_CONNECT_SUBJECT_TYPE=app                  # or user + PLASM_CONNECT
 ### Production state + Workflow
 
 ```bash
-export PLASM_STATE_BACKEND=kv|postgres|fs
-export PLASM_ARCHIVE_BACKEND=vercel|postgres|local
-export BLOB_READ_WRITE_TOKEN=...
-export KV_REST_API_URL=...
-export KV_REST_API_TOKEN=...
+# On Vercel: Blob + Gateway OIDC automatic after `vercel blob create-store` + `plasm-agent link`
+export PLASM_STATE_BACKEND=blob|postgres|fs|kv   # blob default on Vercel
+export PLASM_ARCHIVE_BACKEND=vercel|local
 
 # Workflow (agent.ts experimental.workflow.world.type)
 export PLASM_WORKFLOW_WORLD=postgres

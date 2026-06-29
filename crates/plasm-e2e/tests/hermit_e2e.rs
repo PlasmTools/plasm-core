@@ -443,3 +443,63 @@ async fn scoped_query_second_run_reuses_session_response_store() {
         "expected response-store or legacy cache hit telemetry on second run"
     );
 }
+
+/// CEP-14 brand-new live path: concurrent identical cold reads converge without materialization conflict.
+#[tokio::test]
+async fn concurrent_cold_identical_reads_no_materialization_conflict() {
+    use plasm_runtime::{BranchMaterializationBase, detect_materialization_conflicts};
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+
+    let cgs = Arc::new(load_pokeapi_mini_cgs());
+    let url = pokeapi_hermit_base_url().await.clone();
+    let session = Arc::new(Mutex::new(SessionMaterialization::new()));
+    let query = QueryExpr::all("Berry");
+    let expr = Arc::new(Expr::Query(query));
+
+    let n = 6usize;
+    let mut handles = Vec::with_capacity(n);
+    for _ in 0..n {
+        let session_bg = Arc::clone(&session);
+        let url_bg = url.clone();
+        let cgs_bg = Arc::clone(&cgs);
+        let expr_bg = Arc::clone(&expr);
+        handles.push(tokio::spawn(async move {
+            let engine = make_engine(&url_bg);
+            let (mut branch, base) = {
+                let guard = session_bg.lock().await;
+                BranchMaterializationBase::fork_from(&guard)
+            };
+            let result = engine
+                .execute(
+                    expr_bg.as_ref(),
+                    cgs_bg.as_ref(),
+                    &mut branch,
+                    Some(ExecutionMode::Live),
+                    StreamConsumeOpts {
+                        fetch_all: true,
+                        ..Default::default()
+                    },
+                    ExecuteOptions::default(),
+                )
+                .await
+                .expect("live berry query on branch");
+            assert!(result.count >= 1, "expected berries from Hermit");
+            let mut guard = session_bg.lock().await;
+            let conflicts = detect_materialization_conflicts(&guard, &base, &branch);
+            assert!(
+                !conflicts.has_any(),
+                "identical concurrent cold reads must not conflict: {conflicts:?}"
+            );
+            guard.absorb_branch(branch).expect("absorb branch");
+        }));
+    }
+    for handle in handles {
+        handle.await.expect("concurrent read task");
+    }
+    let guard = session.lock().await;
+    assert!(
+        guard.stats().total_entities >= 1,
+        "session graph populated after concurrent reads"
+    );
+}

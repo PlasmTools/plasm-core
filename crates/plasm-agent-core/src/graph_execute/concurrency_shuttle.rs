@@ -75,11 +75,29 @@ fn shuttle_stale_commit_never_writes_branch_entities() {
                     fork_materialization(&guard)
                 };
                 future::yield_now().await;
-                insert_on(&mut branch, berry_entity("stale_berry"));
+                {
+                    use plasm_core::Value;
+
+                    let mut branch_entity = berry_entity("stale_berry");
+                    branch_entity.update_field(
+                        "name".into(),
+                        Value::String("branch_version".into()),
+                        2,
+                    );
+                    insert_on(&mut branch, branch_entity);
+                }
                 future::yield_now().await;
                 {
+                    use plasm_core::Value;
+
                     let mut guard = lock_session(&session);
-                    insert_on(&mut guard, berry_entity("stale_berry"));
+                    let mut session_entity = berry_entity("stale_berry");
+                    session_entity.update_field(
+                        "name".into(),
+                        Value::String("session_version".into()),
+                        3,
+                    );
+                    insert_on(&mut guard, session_entity);
                 }
                 future::yield_now().await;
                 let mut guard = lock_session(&session);
@@ -568,8 +586,7 @@ fn empty_graph_result(count: usize) -> plasm_runtime::ExecutionResult {
     }
 }
 
-/// CEP-3: N branches writing the same `Ref`, each committed in its **own** task — exactly
-/// one wins the per-Ref optimistic validation.
+/// CEP-14 (brand-new): N branches writing the same brand-new `Ref` with identical content — all commit.
 #[test]
 fn shuttle_parallel_fanout_commits() {
     shuttle::check_pct(
@@ -611,12 +628,12 @@ fn shuttle_parallel_fanout_commits() {
                 let guard = lock_session(&session);
                 let commit_wins = wins.load(std::sync::atomic::Ordering::SeqCst);
                 assert_eq!(
-                    commit_wins, 1,
-                    "exactly one parallel fan-out commit may win (CEP-1..3)"
+                    commit_wins, 4,
+                    "identical brand-new parallel fan-out commits converge (CEP-14)"
                 );
                 assert!(
                     has_ref(&guard, "fanout_win"),
-                    "winning branch entity present"
+                    "converged branch entity present"
                 );
             });
         },
@@ -724,4 +741,138 @@ fn shuttle_branch_retry_loop_commits_under_bounded_contention() {
         PCT_DEPTH,
         PCT_ITERATIONS,
     );
+}
+
+/// CEP-14 (brand-new): two branches insert the same brand-new ref with identical content — both commit.
+#[test]
+fn shuttle_brand_new_identical_ref_both_commit() {
+    shuttle::check_pct(
+        || {
+            future::block_on(async {
+                let session = shuttle_session();
+                let (mut branch_a, base_a) = {
+                    let guard = lock_session(&session);
+                    fork_materialization(&guard)
+                };
+                future::yield_now().await;
+                let (mut branch_b, base_b) = {
+                    let guard = lock_session(&session);
+                    fork_materialization(&guard)
+                };
+                assert_eq!(base_a, base_b);
+                insert_on(&mut branch_a, berry_entity("cold_read"));
+                insert_on(&mut branch_b, berry_entity("cold_read"));
+
+                let session_a = ShuttleArc::clone(&session);
+                let session_b = ShuttleArc::clone(&session);
+                let handle_a = future::spawn(async move {
+                    future::yield_now().await;
+                    let mut guard = lock_session(&session_a);
+                    commit_materialization(&mut guard, base_a, branch_a)
+                        .expect("commit a");
+                });
+                let handle_b = future::spawn(async move {
+                    future::yield_now().await;
+                    let mut guard = lock_session(&session_b);
+                    commit_materialization(&mut guard, base_b, branch_b)
+                        .expect("commit b");
+                });
+                handle_a.await.expect("task a");
+                handle_b.await.expect("task b");
+
+                assert!(has_ref(&lock_session(&session), "cold_read"));
+            });
+        },
+        PCT_DEPTH,
+        PCT_ITERATIONS,
+    );
+}
+
+/// CEP-3: brand-new same ref with divergent field values — at most one branch commits.
+#[test]
+fn shuttle_brand_new_divergent_ref_serializes() {
+    shuttle::check_pct(
+        || {
+            future::block_on(async {
+                use plasm_core::Value;
+
+                let session = shuttle_session();
+                let (mut branch_a, base_a) = {
+                    let guard = lock_session(&session);
+                    fork_materialization(&guard)
+                };
+                future::yield_now().await;
+                let (mut branch_b, base_b) = {
+                    let guard = lock_session(&session);
+                    fork_materialization(&guard)
+                };
+                assert_eq!(base_a, base_b);
+
+                let mut entity_a = berry_entity("contended_new");
+                entity_a.update_field("name".into(), Value::String("branch_a".into()), 2);
+                let mut entity_b = berry_entity("contended_new");
+                entity_b.update_field("name".into(), Value::String("branch_b".into()), 3);
+                insert_on(&mut branch_a, entity_a);
+                insert_on(&mut branch_b, entity_b);
+
+                let session_a = ShuttleArc::clone(&session);
+                let session_b = ShuttleArc::clone(&session);
+                let wins = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let wins_a = std::sync::Arc::clone(&wins);
+                let wins_b = std::sync::Arc::clone(&wins);
+                let handle_a = future::spawn(async move {
+                    future::yield_now().await;
+                    let mut guard = lock_session(&session_a);
+                    if commit_materialization(&mut guard, base_a, branch_a).is_ok() {
+                        wins_a.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                });
+                let handle_b = future::spawn(async move {
+                    future::yield_now().await;
+                    let mut guard = lock_session(&session_b);
+                    if commit_materialization(&mut guard, base_b, branch_b).is_ok() {
+                        wins_b.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                });
+                handle_a.await.expect("task a");
+                handle_b.await.expect("task b");
+
+                let guard = lock_session(&session);
+                assert_eq!(
+                    wins.load(std::sync::atomic::Ordering::SeqCst),
+                    1,
+                    "exactly one brand-new divergent branch may commit"
+                );
+                assert!(has_ref(&guard, "contended_new"));
+            });
+        },
+        PCT_DEPTH,
+        PCT_ITERATIONS,
+    );
+}
+
+#[tokio::test]
+async fn tokio_concurrent_cold_identical_brand_new_commits_all_succeed() {
+    let session = Arc::new(tokio::sync::Mutex::new(SessionMaterialization::new()));
+    let n = 8usize;
+    let mut handles = Vec::with_capacity(n);
+    for _ in 0..n {
+        let session_bg = Arc::clone(&session);
+        handles.push(tokio::spawn(async move {
+            let (mut branch, base) = {
+                let guard = session_bg.lock().await;
+                fork_materialization(&guard)
+            };
+            branch
+                .insert(berry_entity("cold_fanout"))
+                .expect("branch insert");
+            let mut guard = session_bg.lock().await;
+            commit_materialization(&mut guard, base, branch).expect("commit");
+        }));
+    }
+    for handle in handles {
+        handle.await.expect("task");
+    }
+    let guard = session.lock().await;
+    assert!(guard.get(&Ref::new("Berry", "cold_fanout")).is_some());
 }

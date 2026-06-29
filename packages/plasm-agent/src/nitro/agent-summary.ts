@@ -3,7 +3,7 @@ import path from "node:path";
 
 import type { LoadedProjectSlots } from "../authoring/slot-loader.js";
 import { listChannelRoutes } from "../authoring/channel-dispatch.js";
-import { exportScheduleCronManifest } from "../authoring/schedule-manager.js";
+import { exportScheduleTaskManifest } from "../authoring/schedule-manager.js";
 import type { AgentDefinition } from "../define-agent.js";
 import type { ProjectDiscovery } from "../discovery/project-walker.js";
 import { frameworkPackageVersion } from "../package-version.js";
@@ -78,7 +78,7 @@ export function buildPlasmAgentSummary(options: {
     })),
   );
 
-  const scheduleManifest = exportScheduleCronManifest(loadedSlots.schedules);
+  const scheduleManifest = exportScheduleTaskManifest(loadedSlots.schedules);
 
   const diagnostics = [...loadedSlots.diagnostics, ...discovery.diagnostics];
 
@@ -92,12 +92,12 @@ export function buildPlasmAgentSummary(options: {
       modelId: definition.model,
     },
     instructions,
-    schedules: scheduleManifest.crons.map((cron) => ({
-      name: cron.name,
-      cron: cron.schedule,
+    schedules: scheduleManifest.tasks.map((task) => ({
+      name: task.name,
+      cron: task.cron,
       logicalPath: rel(
-        loadedSlots.schedules.find((s) => s.definition.name === cron.name)?.sourcePath ??
-          path.join(agentRoot, "schedules", `${cron.name}.ts`),
+        loadedSlots.schedules.find((s) => s.definition.name === task.name)?.sourcePath ??
+          path.join(agentRoot, "schedules", `${task.name}.ts`),
       ),
     })),
     tools: [],

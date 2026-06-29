@@ -9,6 +9,7 @@ import type { PreparedPlasmHost } from "./prepare-host.js";
 import {
   isVercelBuildEnvironment,
   plasmNitroBuildDir,
+  PLASM_NITRO_BUILD_DIR,
   plasmNitroOutputDir,
   plasmNitroRoutesDir,
   vercelOutputDir,
@@ -16,12 +17,16 @@ import {
 import { createPlasmVercelOptions } from "./vercel-build-output-config.js";
 
 const SERVER_TRACE_DEPS = [
+  "@ai-sdk/otel",
+  "@opentelemetry/api",
   "@plasm_lang/engine",
   "@plasm_lang/vercel-agent",
   "@vercel/functions",
   "@vercel/blob",
-  "@vercel/kv",
   "@vercel/otel",
+  "ai",
+  "workflow",
+  "workflow/api",
 ];
 
 function resolveNitroPreset(dev: boolean): NitroConfig["preset"] {
@@ -70,6 +75,7 @@ export async function createPlasmNitro(
   const config: NitroConfig = {
     rootDir: host.projectRoot,
     buildDir: plasmNitroBuildDir(host.projectRoot),
+    scanDirs: [path.join(host.projectRoot, PLASM_NITRO_BUILD_DIR)],
     preset,
     dev,
     serverDir: false,
@@ -77,6 +83,15 @@ export async function createPlasmNitro(
     handlers: [{ route: "/**", handler: catchAllHandler }],
     publicAssets,
     modules,
+    experimental: {
+      tasks: Object.keys(host.scheduledTasks).length > 0,
+    },
+    scheduledTasks: host.scheduledTasks,
+    workflow: host.workflowEnabled
+      ? {
+          dirs: ["workflows"],
+        }
+      : undefined,
     traceDeps: [
       ...traceDeps,
       "./agent/**",
@@ -96,7 +111,6 @@ export async function createPlasmNitro(
           },
           config: {
             ...vercelConfig,
-            crons: host.scheduleCrons,
           },
         }
       : undefined,

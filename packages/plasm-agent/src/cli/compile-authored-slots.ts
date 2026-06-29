@@ -62,6 +62,15 @@ export async function compileAuthoredSlots(
         format: "esm",
         outfile: outFile,
         banner: { js: ESBUILD_BANNER },
+        external: [
+          "@plasm_lang/vercel-agent",
+          "@plasm_lang/vercel-agent/*",
+          "@plasm_lang/engine",
+          "@vercel/functions",
+          "@vercel/blob",
+          "workflow",
+          "workflow/api",
+        ],
         logLevel: "silent",
       });
 

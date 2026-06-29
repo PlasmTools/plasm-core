@@ -1,7 +1,6 @@
 import { LocalArchiveStore } from "./index.js";
 import type {
   BlobArchiveAdapter,
-  KvArchiveIndexAdapter,
   PlanArchiveSnapshot,
   RunSnapshot,
   TraceDetail,
@@ -13,18 +12,17 @@ function blobKey(kind: "plan" | "run" | "trace", id: string): string {
   return `plasm/archives/${kind}/${id}.json`;
 }
 
-function indexKey(kind: "plan" | "run" | "trace", id: string): string {
-  return `plasm:index:${kind}:${id}`;
+function archivePrefix(kind: "plan" | "run" | "trace"): string {
+  return `plasm/archives/${kind}/`;
 }
 
-/** Durable archive store: local FS cache + Blob bodies + KV/Postgres index. */
+/** Durable archive store: local FS cache + Blob bodies (Eve-aligned, no KV index). */
 export class ProdArchiveStore {
   readonly local: LocalArchiveStore;
 
   constructor(
     agentRoot: string,
     private readonly blob: BlobArchiveAdapter,
-    private readonly index: KvArchiveIndexAdapter,
   ) {
     this.local = LocalArchiveStore.fromAgentRoot(agentRoot);
   }
@@ -47,6 +45,17 @@ export class ProdArchiveStore {
     return JSON.parse(Buffer.from(bytes).toString("utf8")) as T;
   }
 
+  private async listJson<T>(kind: "plan" | "run" | "trace"): Promise<T[]> {
+    const paths = await this.blob.list(archivePrefix(kind));
+    const items: T[] = [];
+    for (const key of paths) {
+      if (!key.endsWith(".json")) continue;
+      const item = await this.getJson<T>(key);
+      if (item) items.push(item);
+    }
+    return items;
+  }
+
   async recordToolEvent(
     tenantId: string,
     traceId: string,
@@ -59,59 +68,40 @@ export class ProdArchiveStore {
 
   async finalizeTrace(detail: TraceDetail): Promise<void> {
     await this.local.finalizeTrace(detail);
-    const key = blobKey("trace", detail.summary.trace_id);
-    await this.putJson(key, detail);
-    await this.index.set(indexKey("trace", detail.summary.trace_id), key);
+    await this.putJson(blobKey("trace", detail.summary.trace_id), detail);
   }
 
   async writePlanArchive(snapshot: PlanArchiveSnapshot): Promise<void> {
     await this.local.writePlanArchive(snapshot);
-    const key = blobKey("plan", snapshot.plan_commit_ref);
-    await this.putJson(key, snapshot);
-    await this.index.set(indexKey("plan", snapshot.plan_commit_ref), key);
+    await this.putJson(blobKey("plan", snapshot.plan_commit_ref), snapshot);
   }
 
   async writeRunSnapshot(snapshot: RunSnapshot): Promise<void> {
     await this.local.writeRunSnapshot(snapshot);
-    const key = blobKey("run", snapshot.run_id);
-    await this.putJson(key, snapshot);
-    await this.index.set(indexKey("run", snapshot.run_id), key);
+    await this.putJson(blobKey("run", snapshot.run_id), snapshot);
   }
 
   async listTraces(tenantId: string, limit = 50): Promise<TraceSummary[]> {
-    const keys = await this.index.list("plasm:index:trace:");
-    const items: TraceSummary[] = [];
-    for (const idx of keys) {
-      const blobRef = await this.index.get(idx);
-      if (!blobRef) continue;
-      const detail = await this.getJson<TraceDetail>(blobRef);
-      if (detail?.summary) items.push(detail.summary);
-    }
+    const items = await this.listJson<TraceDetail>("trace");
     if (items.length) {
-      items.sort((a, b) => b.started_at_ms - a.started_at_ms);
-      return items.slice(0, limit);
+      const summaries = items
+        .map((detail) => detail.summary)
+        .filter((summary) => summary.tenant_id === tenantId);
+      summaries.sort((a, b) => b.started_at_ms - a.started_at_ms);
+      return summaries.slice(0, limit);
     }
     return this.local.listTraces(tenantId, limit);
   }
 
   async getTrace(tenantId: string, traceId: string): Promise<TraceDetail | null> {
-    const blobRef = await this.index.get(indexKey("trace", traceId));
-    if (blobRef) {
-      const detail = await this.getJson<TraceDetail>(blobRef);
-      if (detail) return detail;
-    }
+    void tenantId;
+    const detail = await this.getJson<TraceDetail>(blobKey("trace", traceId));
+    if (detail) return detail;
     return this.local.getTrace(tenantId, traceId);
   }
 
   async listPlans(limit = 50): Promise<PlanArchiveSnapshot[]> {
-    const keys = await this.index.list("plasm:index:plan:");
-    const items: PlanArchiveSnapshot[] = [];
-    for (const idx of keys) {
-      const blobRef = await this.index.get(idx);
-      if (!blobRef) continue;
-      const plan = await this.getJson<PlanArchiveSnapshot>(blobRef);
-      if (plan) items.push(plan);
-    }
+    const items = await this.listJson<PlanArchiveSnapshot>("plan");
     if (items.length) {
       items.sort((a, b) => b.archived_at.localeCompare(a.archived_at));
       return items.slice(0, limit);
@@ -120,14 +110,7 @@ export class ProdArchiveStore {
   }
 
   async listRuns(limit = 50): Promise<RunSnapshot[]> {
-    const keys = await this.index.list("plasm:index:run:");
-    const items: RunSnapshot[] = [];
-    for (const idx of keys) {
-      const blobRef = await this.index.get(idx);
-      if (!blobRef) continue;
-      const run = await this.getJson<RunSnapshot>(blobRef);
-      if (run) items.push(run);
-    }
+    const items = await this.listJson<RunSnapshot>("run");
     if (items.length) {
       items.sort((a, b) => b.archived_at.localeCompare(a.archived_at));
       return items.slice(0, limit);

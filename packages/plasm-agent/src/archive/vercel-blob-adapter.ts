@@ -1,4 +1,5 @@
 import type { BlobArchiveAdapter } from "./types.js";
+import { blobList } from "../storage/vercel-blob.js";
 
 export class VercelBlobArchiveAdapter implements BlobArchiveAdapter {
   async put(key: string, body: string | Uint8Array): Promise<void> {
@@ -17,5 +18,9 @@ export class VercelBlobArchiveAdapter implements BlobArchiveAdapter {
     const response = await fetch(meta.url);
     if (!response.ok) return null;
     return new Uint8Array(await response.arrayBuffer());
+  }
+
+  async list(prefix: string): Promise<string[]> {
+    return blobList(prefix);
   }
 }

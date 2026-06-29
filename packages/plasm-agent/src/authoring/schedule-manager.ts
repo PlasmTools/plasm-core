@@ -10,28 +10,48 @@ export interface ScheduleHandle {
   stop(): void;
 }
 
+export interface ScheduleTaskManifest {
+  scheduledTasks: Record<string, string | string[]>;
+  tasks: Array<{ name: string; cron: string }>;
+}
+
 export interface ScheduleCronManifest {
   crons: Array<{ path: string; schedule: string; name: string }>;
 }
 
-export function exportScheduleCronManifest(schedules: LoadedSchedule[]): ScheduleCronManifest {
+export function exportScheduleTaskManifest(schedules: LoadedSchedule[]): ScheduleTaskManifest {
+  const scheduledTasks: Record<string, string | string[]> = {};
+  const tasks: Array<{ name: string; cron: string }> = [];
+
+  for (const schedule of schedules) {
+    const { name, cron } = schedule.definition;
+    tasks.push({ name, cron });
+    const existing = scheduledTasks[cron];
+    if (!existing) {
+      scheduledTasks[cron] = name;
+    } else if (Array.isArray(existing)) {
+      existing.push(name);
+    } else {
+      scheduledTasks[cron] = [existing, name];
+    }
+  }
+
+  return { scheduledTasks, tasks };
+}
+
+/** @deprecated Use Nitro scheduled tasks in production. */
+export function exportScheduleCronManifest(schedules: LoadedSchedule[]) {
   return {
     crons: schedules.map((schedule) => ({
       name: schedule.definition.name,
-      path: `/internal/cron/${schedule.definition.name}`,
+      path: `/internal/schedule/${schedule.definition.name}`,
       schedule: schedule.definition.cron,
     })),
   };
 }
 
-function authorizeCronRequest(req: IncomingMessage): boolean {
-  const secret = process.env.CRON_SECRET?.trim();
-  if (!secret) return process.env.NODE_ENV !== "production";
-  const auth = req.headers.authorization ?? "";
-  return auth === `Bearer ${secret}`;
-}
-
-export function tryHandleScheduleCronRoute(
+/** Eve-style dev dispatch — manually trigger a schedule by name. */
+export function tryHandleScheduleDevDispatch(
   req: IncomingMessage,
   res: ServerResponse,
   schedules: LoadedSchedule[],
@@ -39,14 +59,8 @@ export function tryHandleScheduleCronRoute(
 ): boolean {
   const method = (req.method ?? "GET").toUpperCase();
   const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
-  const match = pathname.match(/^\/internal\/cron\/([^/]+)$/);
-  if (method !== "GET" || !match) return false;
-
-  if (!authorizeCronRequest(req)) {
-    res.statusCode = 401;
-    res.end("Unauthorized");
-    return true;
-  }
+  const match = pathname.match(/^\/internal\/schedule\/([^/]+)$/);
+  if (method !== "POST" || !match) return false;
 
   const name = match[1]!;
   const schedule = schedules.find((s) => s.definition.name === name);
@@ -61,7 +75,7 @@ export function tryHandleScheduleCronRoute(
     .then(() => {
       res.statusCode = 200;
       res.setHeader("content-type", "application/json; charset=utf-8");
-      res.end(JSON.stringify({ ok: true, schedule: name }));
+      res.end(JSON.stringify({ ok: true, schedule: name, mode: "dev_dispatch" }));
     })
     .catch((err: unknown) => {
       res.statusCode = 500;
@@ -79,10 +93,10 @@ export function startScheduleTimers(
 ): ScheduleHandle {
   const world = resolveWorkflowWorldType(workflow);
   if (world !== "local") {
-    const manifest = exportScheduleCronManifest(schedules);
+    const manifest = exportScheduleTaskManifest(schedules);
     console.log(
-      `[plasm:schedule] prod world=${world} — register Vercel Cron routes:`,
-      JSON.stringify(manifest.crons, null, 2),
+      `[plasm:schedule] prod world=${world} — Nitro scheduled tasks:`,
+      JSON.stringify(manifest.scheduledTasks, null, 2),
     );
     return { stop: () => {} };
   }

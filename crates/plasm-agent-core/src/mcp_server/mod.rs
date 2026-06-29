@@ -1689,12 +1689,10 @@ pub async fn build_mcp_hyper_server_for_merge(
 /// MCP HTTP routes with User-Agent capture for artifact-access detection.
 pub fn mcp_hyper_router(server: HyperServer, plasm: Arc<PlasmHostState>) -> axum::Router<()> {
     use axum::middleware;
-    server
-        .into_router()
-        .layer(middleware::from_fn_with_state(
-            plasm,
-            mcp_http_user_agent::capture_mcp_http_user_agent,
-        ))
+    server.into_router().layer(middleware::from_fn_with_state(
+        plasm,
+        mcp_http_user_agent::capture_mcp_http_user_agent,
+    ))
 }
 
 async fn build_mcp_hyper_server(

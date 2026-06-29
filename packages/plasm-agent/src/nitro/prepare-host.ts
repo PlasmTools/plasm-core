@@ -5,7 +5,7 @@ import type { CompiledSlotMap } from "../cli/compile-authored-slots.js";
 import { loadAuthoredSlots } from "../authoring/slot-loader.js";
 import type { AgentDefinition } from "../define-agent.js";
 import { walkAgentProject, type ProjectDiscovery } from "../discovery/project-walker.js";
-import { exportScheduleCronManifest } from "../authoring/schedule-manager.js";
+import { exportScheduleTaskManifest } from "../authoring/schedule-manager.js";
 import { projectUsesWorkflowDirectives } from "./workflow-directives.js";
 
 export interface PreparedPlasmHost {
@@ -15,6 +15,7 @@ export interface PreparedPlasmHost {
   discovery: ProjectDiscovery;
   compiledSlots: CompiledSlotMap;
   scheduleCrons: Array<{ path: string; schedule: string }>;
+  scheduledTasks: Record<string, string | string[]>;
   externalDeps: string[];
   workflowEnabled: boolean;
 }
@@ -46,10 +47,7 @@ export async function preparePlasmHost(options: {
     compiledSlots,
   });
 
-  const scheduleCrons = exportScheduleCronManifest(loadedSlots.schedules).crons.map((c) => ({
-    path: c.path,
-    schedule: c.schedule,
-  }));
+  const taskManifest = exportScheduleTaskManifest(loadedSlots.schedules);
 
   const externalDeps = definition.build?.externalDependencies ?? [];
   const workflowConfigured = definition.experimental?.workflow !== undefined;
@@ -62,7 +60,8 @@ export async function preparePlasmHost(options: {
     definition,
     discovery,
     compiledSlots,
-    scheduleCrons,
+    scheduleCrons: [],
+    scheduledTasks: taskManifest.scheduledTasks,
     externalDeps,
     workflowEnabled,
   };

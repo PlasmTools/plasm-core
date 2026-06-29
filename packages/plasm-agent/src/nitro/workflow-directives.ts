@@ -28,6 +28,7 @@ async function walkTsFiles(dir: string): Promise<string[]> {
 /** True when authored sources contain Workflow SDK directives (needs @workflow/nitro). */
 export async function projectUsesWorkflowDirectives(projectRoot: string): Promise<boolean> {
   const roots = [
+    path.join(projectRoot, "workflows"),
     path.join(projectRoot, "agent"),
     path.join(projectRoot, "lib"),
   ];

@@ -26,24 +26,25 @@ The canonical template source is this directory (`examples/mcp-radar-agent/`).
 
 ## Deploy to Vercel
 
-Low-friction production path (eve-aligned): `vercel.json` + catch-all `api/[[...path]].ts` mounts the same routes as local dev (channels, cron, `/plasm/v1/info`).
+Eve-aligned production path: link Blob once, deploy — **no manual env vars on Vercel** for Gateway, Blob, or cron auth.
 
 ```bash
-cd examples/mcp-radar-agent   # or your bootstrapped project
+cd examples/mcp-radar-agent
 plasm-agent link
+node scripts/provision-vercel-storage.mjs   # vercel blob create-store → project OIDC
 plasm-agent build
-vercel env pull .env.local    # AI_GATEWAY_API_KEY, CRON_SECRET, KV, Blob
-vercel deploy
+vercel deploy --prod
 curl -s "$DEPLOY_URL/channel/mcp-radar/status" | jq .
 ```
 
-| Variable | Deploy |
-|----------|--------|
-| `AI_GATEWAY_API_KEY` | Required for agent synthesis |
-| `CRON_SECRET` | Required — Vercel Cron hits `/internal/cron/mcp-radar-scan` |
-| `KV_REST_API_URL` + `KV_REST_API_TOKEN` | Durable seen-items + last-run state |
-| `BLOB_READ_WRITE_TOKEN` | Durable proof markdown log |
-| `TAVILY_API_TOKEN` | Optional corroboration |
+| Concern | On Vercel |
+|---------|-----------|
+| AI Gateway | OIDC via linked project — no API key |
+| Proof log + dedupe state | `@vercel/blob` only (markdown + JSON objects) |
+| Cron | Platform `x-vercel-cron` — no `CRON_SECRET` required |
+| Local dev | `vercel env pull .env.local` + optional `AI_GATEWAY_API_KEY` |
+
+`vercel blob create-store` wires Blob to the project; runtime auth is OIDC (same model as [eve content agent](https://github.com/vercel-labs/eve-content-agent-template)).
 
 On Vercel, `POST /channel/mcp-radar/run` returns `202` and continues in the background via `waitUntil`. Locally it runs synchronously for smoke tests.
 
@@ -59,7 +60,7 @@ cp .env.example .env.local
 
 | Variable | Required | Role |
 |----------|----------|------|
-| `AI_GATEWAY_API_KEY` | Yes (live runs) | Agent model turns |
+| `AI_GATEWAY_API_KEY` | Local only | Agent model turns off-Vercel |
 | `TAVILY_API_TOKEN` | Optional | Tavily corroboration; HN-only when unset |
 
 Build CGS stubs (symlinked catalogs):
@@ -82,7 +83,7 @@ Slash commands in the interactive TUI: `/info`, `/catalogs`, `/new`, `/quit`.
 
 ## Channel API
 
-Start headless dev server (`npm run dev:headless`), then:
+Start headless dev server (`npm run dev`), then:
 
 ```bash
 BASE=http://127.0.0.1:3000
@@ -102,16 +103,18 @@ curl -s -X POST "$BASE/channel/mcp-radar/run" -H 'content-type: application/json
 
 Proof artifact (local fs): [`agent/research/mcp-innovations-proof.md`](./agent/research/mcp-innovations-proof.md)
 
-Dedupe state (local fs): `agent/.plasm/research/seen-hn-items.json` (gitignored). On Vercel deploy, proof + dedupe use Blob + KV when env vars are set.
+Dedupe state (local fs): `agent/.plasm/research/seen-hn-items.json` (gitignored). On Vercel, proof + dedupe + last-run use Blob paths under `research/`.
 
 ## Schedule
 
-`agent/schedules/mcp-radar-scan.ts` runs every **6 hours** (`0 */6 * * *`). Vercel Cron calls `/internal/cron/mcp-radar-scan` with `Authorization: Bearer $CRON_SECRET`.
+`agent/schedules/mcp-radar-scan.ts` runs every **6 hours** (`0 */6 * * *`) as a **Nitro scheduled task** (Vercel Cron auto-wired at deploy). Durable execution uses **Vercel Workflows** (`workflow/api` `start()`).
+
+Manual dev trigger: `POST /internal/schedule/mcp-radar-scan`
 
 ## Evals
 
 ```bash
-npm run eval    # requires AI_GATEWAY_API_KEY
+npm run eval    # requires AI_GATEWAY_API_KEY locally
 ```
 
 Live eval: `evals/mcp-radar-discover.eval.ts`
