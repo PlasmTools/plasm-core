@@ -1,6 +1,6 @@
 {
   "name": "@plasm_lang/engine",
-  "version": "0.3.78",
+  "version": "0.3.87",
   "description": "NAPI bindings for the Plasm catalog-native agent engine",
   "license": "GPL-3.0-or-later",
   "repository": {

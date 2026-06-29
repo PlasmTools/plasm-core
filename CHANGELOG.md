@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.87] - 2026-06-29
+
+### Added
+
+- **@plasm_lang/vercel-agent 0.3.87:** Eve-aligned Vercel deploy — Blob-only state/archives,
+  Nitro scheduled tasks, Workflow dispatch routes, optional `x-vercel-cron` auth.
+- **mcp-radar template:** Vercel Workflows scan path, blob proof store, storage provision script.
+
+### Changed
+
+- **Vercel serverless bundle:** split `readBuildManifest` from build CLI so prod handlers no longer
+  trace `@workflow/nitro` / `@swc/core` at runtime.
+- **CEP-14:** unify brand-new ref convergence (identical concurrent cold reads commit on both
+  branches; divergent same-key writes remain single-winner).
+
 ## [0.3.86] - 2026-06-28
 
 ### Changed
