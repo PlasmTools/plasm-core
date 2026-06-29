@@ -79,7 +79,11 @@ impl ArtifactAccessMode {
     }
 
     pub fn artifact_only_body(self, uri: &str) -> String {
-        format!("{}{}", self.snapshot_line(uri), self.artifact_only_read_instruction())
+        format!(
+            "{}{}",
+            self.snapshot_line(uri),
+            self.artifact_only_read_instruction()
+        )
     }
 }
 
@@ -180,7 +184,6 @@ pub(crate) fn execute_expression_preview(expr: &str) -> String {
     let truncated: String = t.chars().take(MAX_CHARS).collect();
     format!("{truncated}… (truncated, total {n} chars)")
 }
-
 
 /// Compact preview when a stored snapshot backs an over-cap return, or the full body is huge.
 pub(crate) fn mcp_preview_markdown_needed(

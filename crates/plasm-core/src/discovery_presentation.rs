@@ -70,10 +70,7 @@ impl DiscoveryDecision {
     }
 
     /// Agent-facing decision from discovery result plus the rows shown in the TSV.
-    pub fn for_presentation(
-        result: &DiscoveryResult,
-        shown_rows: &[(String, String)],
-    ) -> Self {
+    pub fn for_presentation(result: &DiscoveryResult, shown_rows: &[(String, String)]) -> Self {
         if shown_rows.is_empty() {
             Self::NoMatch
         } else if !result.ambiguities.is_empty() {

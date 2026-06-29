@@ -44,12 +44,7 @@ pub(crate) fn format_resolved_steps(
     }
 }
 
-fn step_section_header(
-    i: usize,
-    total_steps: usize,
-    label: &str,
-    row_count: usize,
-) -> String {
+fn step_section_header(i: usize, total_steps: usize, label: &str, row_count: usize) -> String {
     if total_steps <= 1 {
         slim_result_section_header("## ", label, row_count)
     } else if i == 0 {
@@ -112,7 +107,11 @@ fn build_step_section(
         }
     } else if resolved.mode.skips_inline_format() {
         if let Some(handle) = &resolved.artifact {
-            sections.push_str(&plan.artifact_access.artifact_only_body(handle.plasm_uri.as_str()));
+            sections.push_str(
+                &plan
+                    .artifact_access
+                    .artifact_only_body(handle.plasm_uri.as_str()),
+            );
         }
     }
     append_paging_if_needed(sections, paging, step, resolved, i);
@@ -141,7 +140,15 @@ pub(crate) fn build_inline_bodies(
             &resolved.label,
             resolved.row_count,
         ));
-        build_step_section(&mut sections, &mut paging, i, step, resolved, plan, total_steps);
+        build_step_section(
+            &mut sections,
+            &mut paging,
+            i,
+            step,
+            resolved,
+            plan,
+            total_steps,
+        );
     }
 
     let char_count = sections.chars().count();

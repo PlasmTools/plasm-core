@@ -163,11 +163,11 @@ pub use discovery::{
     DiscoveryContextJson, DiscoveryError, DiscoveryResult, DiscoverySchemaNeighborhood,
     EntitySummary, InMemoryCgsRegistry, RankedCandidate, RegistryEntryPair,
 };
-pub use discovery_presentation::{CatalogRoute, DiscoveryDecision};
 pub use discovery_adversarial_intents::{
     adversarial_case_count, iter_all_cases, DiscoveryAdversarialCase,
     DiscoveryAdversarialFailureKind, CROSS_CUTTING, PER_CATALOG_SELECTION,
 };
+pub use discovery_presentation::{CatalogRoute, DiscoveryDecision};
 pub use entity_ref_value::{
     normalize_entity_ref_value_for_target, try_narrow_entity_row_to_entity_ref_value,
     EntityRefAtom, EntityRefPayload, EntityRefValueError, ScopeEntityRefNormalizeError,

@@ -121,9 +121,9 @@ impl PublishPlan {
             .iter()
             .map(|step| ResolvedStepPublish::resolve(step, policy))
             .collect();
-        let artifact_snapshot_preview = resolved.iter().any(|r| {
-            r.row_count > MCP_SNAPSHOT_ONLY_ROW_THRESHOLD && r.artifact.is_some()
-        });
+        let artifact_snapshot_preview = resolved
+            .iter()
+            .any(|r| r.row_count > MCP_SNAPSHOT_ONLY_ROW_THRESHOLD && r.artifact.is_some());
         let total_entity_rows = resolved.iter().map(|r| r.row_count).sum();
         let per_step_compact = resolved
             .iter()

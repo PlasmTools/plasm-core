@@ -187,7 +187,8 @@ mod tests {
             out.markdown
         );
         assert!(
-            !out.markdown.contains("run_ref: \"l_AAAAAAAAQACAAAAAAAAAAQ_pg1\""),
+            !out.markdown
+                .contains("run_ref: \"l_AAAAAAAAQACAAAAAAAAAAQ_pg1\""),
             "must not surface paging when snapshot holds the batch: {}",
             out.markdown
         );

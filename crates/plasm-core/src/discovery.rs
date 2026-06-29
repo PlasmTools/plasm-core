@@ -1,6 +1,7 @@
 //! Multi-entry CGS catalog and deterministic capability discovery.
 
 use crate::cgs_context::{CgsContext, Prefix};
+use crate::discovery_presentation::CatalogRoute;
 use crate::domain_lexicon;
 use crate::identity::{CapabilityParamName, EntityFieldName, EntityName};
 use crate::schema::{CapabilityKind, CapabilitySchema, EntityDef, InputType, RelationSchema, CGS};
@@ -8,7 +9,6 @@ use crate::symbol_tuning::{
     build_focus_set_union, ExposureCapabilityKey, ExposureEntityKey, ExposureSlotKey,
     ExposureSurface, ExposureSurfaceDelta,
 };
-use crate::discovery_presentation::CatalogRoute;
 use indexmap::IndexMap;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -2086,12 +2086,7 @@ mod tests {
                 vec![],
                 Arc::new(poke_cgs),
             ),
-            (
-                "proof".into(),
-                "Proof".into(),
-                vec![],
-                Arc::new(proof_cgs),
-            ),
+            ("proof".into(), "Proof".into(), vec![], Arc::new(proof_cgs)),
         ]);
         let intent = "research electric type pokemon capabilities and write a proof document with evidenced findings";
         let q = CapabilityQuery {
