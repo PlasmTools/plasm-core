@@ -228,6 +228,8 @@ mod tests {
         );
         assert!(find_dollar_interpolation_in_minijinja_body("{% raw %}${x}{% endraw %}").is_none());
         assert!(find_dollar_interpolation_in_minijinja_body("$$ literal").is_none());
-        assert!(find_dollar_interpolation_in_minijinja_body("score: {{ r.p9 or \"—\" }}").is_none());
+        assert!(
+            find_dollar_interpolation_in_minijinja_body("score: {{ r.p9 or \"—\" }}").is_none()
+        );
     }
 }

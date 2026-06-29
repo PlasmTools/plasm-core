@@ -118,10 +118,7 @@ fn render_compute_null_field_coalesces_with_or() {
         None,
     )
     .expect("null coalesce");
-    assert_eq!(
-        out,
-        vec![serde_json::json!({ "content": "a: —\nb: 42\n" })]
-    );
+    assert_eq!(out, vec![serde_json::json!({ "content": "a: —\nb: 42\n" })]);
 }
 
 #[test]
@@ -142,8 +139,8 @@ fn render_compute_null_renders_none_literal_without_coalesce() {
 fn render_compute_propagates_minijinja_errors_with_field_hint() {
     let rows = vec![serde_json::json!({ "name": "a" })];
     let cols = empty_cols(&["name"]);
-    let err = render(&rows, &cols, "{{ missing }}", None)
-        .expect_err("strict undefined is rejected");
+    let err =
+        render(&rows, &cols, "{{ missing }}", None).expect_err("strict undefined is rejected");
 
     assert!(err.contains("Plan.render template render error"), "{err}");
     assert!(err.contains("Valid row fields: r.name"), "{err}");

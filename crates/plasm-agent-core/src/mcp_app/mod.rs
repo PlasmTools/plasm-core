@@ -135,7 +135,9 @@ fn plasm_is_live_operation_pending(plasm: &Map<String, serde_json::Value>) -> bo
     plasm.get("auto_async").and_then(|v| v.as_bool()) == Some(true)
 }
 
-fn plasm_ui_payload(meta: &Map<String, serde_json::Value>) -> Option<&Map<String, serde_json::Value>> {
+fn plasm_ui_payload(
+    meta: &Map<String, serde_json::Value>,
+) -> Option<&Map<String, serde_json::Value>> {
     meta.get("ui")
         .and_then(|u| u.as_object())
         .and_then(|u| u.get("plasm"))
@@ -143,9 +145,7 @@ fn plasm_ui_payload(meta: &Map<String, serde_json::Value>) -> Option<&Map<String
 }
 
 fn plasm_has_ui_comp(meta: &Map<String, serde_json::Value>) -> bool {
-    plasm_ui_payload(meta)
-        .and_then(|p| p.get("comp"))
-        .is_some()
+    plasm_ui_payload(meta).and_then(|p| p.get("comp")).is_some()
 }
 
 /// Attach MCP App mount metadata from dry-run UI payload or live `steps`.

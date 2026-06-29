@@ -1840,13 +1840,7 @@ fn validate_compute_template(
             template,
             column_aliases,
         } => {
-            validate_render_compute_template(
-                t,
-                columns,
-                template,
-                column_aliases,
-                node_index,
-            )?;
+            validate_render_compute_template(t, columns, template, column_aliases, node_index)?;
         }
         _ => {}
     }

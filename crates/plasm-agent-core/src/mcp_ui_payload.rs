@@ -24,10 +24,7 @@ pub fn mirror_plasm_structured_content(res: CallToolResult) -> CallToolResult {
         return res;
     };
     let mut structured = Map::new();
-    structured.insert(
-        "plasm".to_string(),
-        agent_structured_plasm_mirror(plasm),
-    );
+    structured.insert("plasm".to_string(), agent_structured_plasm_mirror(plasm));
     res.with_structured_content(structured)
 }
 

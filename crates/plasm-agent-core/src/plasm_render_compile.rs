@@ -3,7 +3,9 @@
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{OutputName, QualifiedEntityKey};
 use crate::plasm_plan_run::RenderColumns;
-use plasm_core::expr_parser::{normalize_nested_projection_field, split_top_level, validate_program_label};
+use plasm_core::expr_parser::{
+    normalize_nested_projection_field, split_top_level, validate_program_label,
+};
 use plasm_core::SymbolMapCrossRequestCache;
 
 /// Infer raw column tokens from `{{ r.field }}` / `{{ field }}` references in a row template body.
@@ -141,22 +143,25 @@ mod tests {
 
     #[test]
     fn resolve_render_collection_alias_accepts_in_scope_label() {
-        let cols = RenderColumns::from_field_pairs(&[("name".into(), "name".into())]).expect("cols");
-        let alias = resolve_render_collection_alias("items", &cols.wires, |l| l == "items")
-            .expect("alias");
+        let cols =
+            RenderColumns::from_field_pairs(&[("name".into(), "name".into())]).expect("cols");
+        let alias =
+            resolve_render_collection_alias("items", &cols.wires, |l| l == "items").expect("alias");
         assert_eq!(alias.as_str(), "items");
     }
 
     #[test]
     fn resolve_render_collection_alias_rejects_dotted_head_and_column_collision() {
-        let cols = RenderColumns::from_field_pairs(&[("items".into(), "items".into())]).expect("cols");
+        let cols =
+            RenderColumns::from_field_pairs(&[("items".into(), "items".into())]).expect("cols");
         assert!(resolve_render_collection_alias("repo.items", &cols.wires, |_| true).is_none());
         assert!(resolve_render_collection_alias("items", &cols.wires, |_| true).is_none());
     }
 
     #[test]
     fn render_context_hint_mentions_rows_and_collection_alias() {
-        let cols = RenderColumns::from_field_pairs(&[("name".into(), "name".into())]).expect("cols");
+        let cols =
+            RenderColumns::from_field_pairs(&[("name".into(), "name".into())]).expect("cols");
         let hint = render_context_hint(&cols, Some("items"));
         assert!(hint.contains("{% for r in rows %}"), "{hint}");
         assert!(hint.contains("{% for r in items %}"), "{hint}");

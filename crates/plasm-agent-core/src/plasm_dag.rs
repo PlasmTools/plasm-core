@@ -1757,11 +1757,8 @@ fn compile_render_chain(
     }
 
     let (columns, column_aliases) = spec.into_op_parts();
-    let collection_alias = resolve_render_collection_alias(
-        head_core.trim(),
-        &columns,
-        |label| state.contains(label),
-    );
+    let collection_alias =
+        resolve_render_collection_alias(head_core.trim(), &columns, |label| state.contains(label));
 
     let mut render_node = DagNode {
         id: id.to_string(),
