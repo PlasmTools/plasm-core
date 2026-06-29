@@ -1,6 +1,8 @@
 function workflowDispatchUrl(): string {
   const explicit = process.env.PLASM_WORKFLOW_DISPATCH_URL?.trim();
   if (explicit) return explicit;
+  const production = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
+  if (production) return `https://${production}/internal/workflow/dispatch`;
   const vercelUrl = process.env.VERCEL_URL?.trim();
   if (vercelUrl) return `https://${vercelUrl}/internal/workflow/dispatch`;
   const port = process.env.PORT ?? "3000";
