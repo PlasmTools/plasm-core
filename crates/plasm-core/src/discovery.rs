@@ -1548,7 +1548,10 @@ mod tests {
             zero_tokens.insert(tok);
         }
         let (zero_score, _) = score_capability(&zero_tokens, &cgs, cap);
-        assert_eq!(zero_score, 0, "fixture intent must score zero for langitem_create");
+        assert_eq!(
+            zero_score, 0,
+            "fixture intent must score zero for langitem_create"
+        );
         let endpoints = relation_keys("matrix", &["LangItem"]);
         let delta_ranked = derive_intent_exposure_surface_batch(
             &cgs,

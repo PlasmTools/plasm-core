@@ -124,6 +124,7 @@ impl PromptRenderMode {
 /// trailing newline, matching [`render_prompt_tsv_from_bundle`].
 pub const TSV_TEACHING_TABLE_HEADER: &str = "plasm_expr\tMeaning\n";
 
+mod capability_delta;
 mod contract;
 mod gloss_dedup;
 mod line_validate;
@@ -142,6 +143,10 @@ use line_validate::{
 };
 use row_producer::RowProducerProjection;
 
+pub use capability_delta::{
+    render_teaching_new_capabilities_delta_tsv,
+    render_teaching_new_capabilities_delta_tsv_federated,
+};
 pub use contract::{
     markdown_fence_body_inner, split_tsv_teaching_contract_and_table,
     teaching_tsv_agent_body_from_wrapped_prompt, teaching_tsv_from_wrapped_prompt,

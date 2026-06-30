@@ -122,11 +122,13 @@ async fn commit_expand_wave(
         &session_id_p,
         sess,
         exp,
-        &slots_before,
-        &caps_before,
-        n0,
-        &relation_keys,
-        ranked_slice,
+        super::commit::ExposureWaveSnapshot {
+            slots_before,
+            caps_before,
+            entity_count_before: n0,
+            relation_keys,
+            ranked_capability_names: ranked_names,
+        },
     )
     .await;
     Ok(ExpandTeachingWaveResult {

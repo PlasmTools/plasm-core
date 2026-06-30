@@ -21,7 +21,14 @@
 //! `PLASM_SYMBOL_MAP_LRU_CAP`, default `64`, set `0` to disable) deduplicates identical [`SymbolMap`]
 //! snapshots when the catalog fingerprint and exposure rows match a recent session.
 
+mod capability_surface_params;
 mod opaque_symbol_hash;
+
+pub use capability_surface_params::{
+    capability_exposure_param_pairs, capability_optional_legend_param_pairs,
+    exposed_mutator_capability_keys, loaded_catalog_entry_ids, resolve_ranked_wire_candidates,
+    seeded_ranked_wire_candidates, CapabilityParamSurfaceFilter,
+};
 
 use crate::identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityName, RelationName,
@@ -540,7 +547,7 @@ pub(crate) fn ident_metadata_for_capability_input_path(
 
 /// Same 2-hop focus neighbourhood as prompt rendering: `Some(set)` when focus is set.
 #[inline]
-fn field_is_filter_like_gloss(f: &InputFieldSchema) -> bool {
+pub(crate) fn field_is_filter_like_gloss(f: &InputFieldSchema) -> bool {
     !matches!(
         f.role,
         Some(ParameterRole::Search)
@@ -2351,59 +2358,17 @@ impl SymbolMap {
         cap: &CapabilitySchema,
     ) -> String {
         const MAX_SIG: usize = 96;
-        let Some(is) = &cap.input_schema else {
+        if cap.input_schema.is_none() {
             return String::new();
         };
         let mut scope_s = self.capability_scope_legend_gloss(cgs, cap);
         let entry_id = cgs.entry_id.as_deref().unwrap_or("");
-        let mut optional_parts: Vec<String> = Vec::new();
         let domain = cap.domain.as_str();
-        let cap_name = cap.name.as_str();
-        match &is.input_type {
-            InputType::Object { fields, .. } => {
-                for f in fields {
-                    if matches!(f.role, Some(ParameterRole::Scope)) {
-                        continue;
-                    }
-                    if !field_is_filter_like_gloss(f) {
-                        continue;
-                    }
-                    let sym =
-                        self.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str());
-                    if f.required {
-                        continue;
-                    }
-                    optional_parts.push(format!("{}={sym}", f.name.as_str()));
-                }
-            }
-            InputType::Union { variants } => {
-                let mut seen: BTreeSet<String> = BTreeSet::new();
-                for v in variants {
-                    for f in &v.fields {
-                        if matches!(f.role, Some(ParameterRole::Scope)) {
-                            continue;
-                        }
-                        if !field_is_filter_like_gloss(f) {
-                            continue;
-                        }
-                        if f.required {
-                            continue;
-                        }
-                        if seen.insert(f.name.clone()) {
-                            let sym = self.ident_sym_cap_param_for(
-                                entry_id,
-                                domain,
-                                cap_name,
-                                f.name.as_str(),
-                            );
-                            optional_parts.push(format!("{}={sym}", f.name.as_str()));
-                        }
-                    }
-                }
-                optional_parts.sort();
-            }
-            _ => {}
-        }
+        let optional_parts: Vec<String> =
+            capability_optional_legend_param_pairs(self, entry_id, domain, cap)
+                .into_iter()
+                .map(|(wire, sym)| format!("{wire}={sym}"))
+                .collect();
         if !optional_parts.is_empty() {
             if !scope_s.is_empty() {
                 scope_s.push(' ');
@@ -5207,11 +5172,8 @@ mod tests {
             return;
         }
         let cgs = crate::loader::load_schema(&dir).expect("github");
-        let exp = TeachingExposureSession::new(
-            &cgs,
-            "github",
-            &["Repository", "Issue", "PullRequest"],
-        );
+        let exp =
+            TeachingExposureSession::new(&cgs, "github", &["Repository", "Issue", "PullRequest"]);
         let map = exp.symbol_map_arc();
         for (cap_name, param) in [
             ("issue_create", "labels"),

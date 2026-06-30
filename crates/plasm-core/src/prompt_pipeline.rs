@@ -13,8 +13,9 @@ use crate::prompt_render::{
 };
 use crate::schema::CGS;
 use crate::symbol_tuning::{
-    wire_surface_for_parse, wire_surface_for_teaching_session, ExposureEntityKey, ExposureSlotKey,
-    FocusSpec, SymbolMap, SymbolMapCrossRequestCache, TeachingExposureSession,
+    wire_surface_for_parse, wire_surface_for_teaching_session, ExposureCapabilityKey,
+    ExposureEntityKey, ExposureSlotKey, FocusSpec, SymbolMap, SymbolMapCrossRequestCache,
+    TeachingExposureSession,
 };
 use indexmap::IndexMap;
 use std::sync::Arc;
@@ -259,6 +260,40 @@ impl PromptPipelineConfig {
             new_relation_slots,
             self.session_symbol_map(exposure).as_deref(),
             entity_delta,
+        )
+    }
+
+    /// Compact teaching TSV when ranked replay adds mutators without new entities.
+    pub fn render_teaching_new_capabilities_delta(
+        &self,
+        cgs: &CGS,
+        exposure: &TeachingExposureSession,
+        new_caps: &std::collections::BTreeSet<ExposureCapabilityKey>,
+        symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    ) -> String {
+        let cfg = RenderConfig {
+            symbol_map_cross_cache,
+            ..self.render_config_for_focus(FocusSpec::All)
+        };
+        crate::prompt_render::render_teaching_new_capabilities_delta_tsv(
+            cgs, cfg, exposure, new_caps,
+        )
+    }
+
+    /// Federated variant of [`Self::render_teaching_new_capabilities_delta`].
+    pub fn render_teaching_new_capabilities_delta_federated<'b>(
+        &self,
+        by_entry: &'b IndexMap<String, &'b CGS>,
+        exposure: &TeachingExposureSession,
+        new_caps: &std::collections::BTreeSet<ExposureCapabilityKey>,
+        symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    ) -> String {
+        let cfg = RenderConfig {
+            symbol_map_cross_cache,
+            ..self.render_config_for_focus(FocusSpec::All)
+        };
+        crate::prompt_render::render_teaching_new_capabilities_delta_tsv_federated(
+            by_entry, cfg, exposure, new_caps,
         )
     }
 

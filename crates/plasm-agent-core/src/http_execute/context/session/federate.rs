@@ -163,21 +163,24 @@ async fn commit_federate_wave_inner(
         &session_id_p,
         sess,
         exp,
-        &slots_before,
-        &caps_before,
-        n0,
-        &relation_keys,
-        ranked_slice,
+        super::commit::ExposureWaveSnapshot {
+            slots_before,
+            caps_before,
+            entity_count_before: n0,
+            relation_keys,
+            ranked_capability_names: ranked_names,
+        },
     )
     .await;
 
     let teaching_prompt_chars_added = committed.markdown.chars().count() as u64;
+    let reused_session = committed.surface_unchanged && committed.markdown.trim().is_empty();
     Ok(CapabilityWaveOutcome {
         mode: "federate".to_string(),
         entry_id: new_entry_id,
         entities: names,
         markdown_delta: committed.markdown,
-        reused_session: committed.reused,
+        reused_session,
         teaching_prompt_chars_added,
         relations_delta: committed.relations_delta,
     })

@@ -400,14 +400,17 @@ pub(super) fn wrap_teaching_markdown_literal_block(
 #[cfg(test)]
 mod ranked_replay_tests {
     use super::*;
-    use plasm_core::{load_schema, TeachingExposureSession};
-    use std::path::PathBuf;
-    use std::sync::Arc;
+    use crate::http_execute::ApplyCapabilitySeedsOutcome;
+    use plasm_core::TeachingExposureSession;
+
+    use crate::http_execute::context::ranked_replay_fixtures::{
+        github_issue_repo_endpoints, load_github_cgs, load_matrix_cgs, matrix_cgs_arc,
+        matrix_exp_with_intent, matrix_langitem_endpoints,
+    };
 
     #[test]
     fn ranked_capabilities_need_exposure_replay_when_mutator_missing_from_surface() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let cgs = load_schema(&root.join("../../apis/github")).expect("github");
+        let cgs = load_github_cgs();
         let exp = TeachingExposureSession::new(&cgs, "github", &["Repository"]);
         assert!(
             ranked_capabilities_need_exposure_replay(
@@ -440,22 +443,10 @@ mod ranked_replay_tests {
     fn ranked_replay_surfaces_deferred_mutator_after_read_first_open() {
         use plasm_core::capability_method_label_kebab;
         use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
-        use plasm_core::loader::load_schema_dir;
-        use plasm_core::ExposureEntityKey;
 
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let cgs = Arc::new(
-            load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
-                .expect("plasm_language_matrix"),
-        );
+        let cgs = matrix_cgs_arc();
         let entities = ["LangItem"];
-        let endpoints = entities
-            .iter()
-            .map(|e| ExposureEntityKey {
-                entry_id: "matrix".into(),
-                entity: plasm_core::EntityName::from(*e),
-            })
-            .collect::<Vec<_>>();
+        let endpoints = matrix_langitem_endpoints();
         let weak_intent = "langitem browse inventory metadata";
         let mutator = "langitem_create";
         let delta = derive_intent_exposure_surface_batch(
@@ -535,48 +526,21 @@ mod ranked_replay_tests {
     #[test]
     fn reuse_markdown_includes_active_mutator_recap() {
         use plasm_core::capability_method_label_kebab;
-        use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
-        use plasm_core::loader::load_schema_dir;
-        use plasm_core::ExposureEntityKey;
 
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
-            .expect("plasm_language_matrix");
-        let entities = ["LangItem"];
-        let endpoints = entities
-            .iter()
-            .map(|e| ExposureEntityKey {
-                entry_id: "matrix".into(),
-                entity: plasm_core::EntityName::from(*e),
-            })
-            .collect::<Vec<_>>();
-        let intent = "langitem browse inventory metadata";
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "matrix",
-            intent,
-            &endpoints,
-            &entities
-                .iter()
-                .map(|e| (*e).to_string())
-                .collect::<Vec<_>>(),
+        let cgs = load_matrix_cgs();
+        let exp = matrix_exp_with_intent(
+            "langitem browse inventory metadata",
             Some(&["langitem_create".to_string()]),
-            ExposureSurfaceOptions {
-                read_first_seeded: true,
-            },
-        );
-        let exp = TeachingExposureSession::new_with_intent_delta(
-            &cgs,
-            "matrix",
-            &entities,
-            delta,
+            true,
         );
         let md = format_session_unchanged_reuse_markdown(Some(&exp));
         assert!(
             md.contains("Active mutators"),
             "reuse markdown must recap mutators: {md}"
         );
-        let cap = cgs.get_capability("langitem_create").expect("langitem_create");
+        let cap = cgs
+            .get_capability("langitem_create")
+            .expect("langitem_create");
         let method = capability_method_label_kebab(cap);
         let method_sym = exp.symbol_map_arc().method_sym("LangItem", &method);
         assert!(
@@ -587,52 +551,23 @@ mod ranked_replay_tests {
 
     #[test]
     fn ranked_replay_diagnostics_when_already_exposed() {
-        use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
-        use plasm_core::loader::load_schema_dir;
-        use plasm_core::ExposureEntityKey;
         use plasm_core::prompt_render::format_ranked_replay_diagnostics;
 
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
-            .expect("plasm_language_matrix");
-        let entities = ["LangItem"];
-        let endpoints = entities
-            .iter()
-            .map(|e| ExposureEntityKey {
-                entry_id: "matrix".into(),
-                entity: plasm_core::EntityName::from(*e),
-            })
-            .collect::<Vec<_>>();
-        let intent = "create new langitem title";
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "matrix",
-            intent,
-            &endpoints,
-            &entities
-                .iter()
-                .map(|e| (*e).to_string())
-                .collect::<Vec<_>>(),
+        let exp = matrix_exp_with_intent(
+            "create new langitem title",
             Some(&["langitem_create".to_string()]),
-            ExposureSurfaceOptions {
-                read_first_seeded: true,
-            },
-        );
-        let exp = TeachingExposureSession::new_with_intent_delta(
-            &cgs,
-            "matrix",
-            &entities,
-            delta,
+            true,
         );
         let caps_before = exp.surface.capabilities.clone();
-        let diag = format_ranked_replay_diagnostics(
-            &exp,
-            &["langitem_create".to_string()],
-            &caps_before,
-        );
+        let diag =
+            format_ranked_replay_diagnostics(&exp, &["langitem_create".to_string()], &caps_before);
         assert!(
             diag.contains("already exposed"),
             "expected already-exposed diagnostic: {diag}"
+        );
+        assert!(
+            diag.contains("matrix:LangItem.langitem_create"),
+            "diagnostics must use qualified capability keys: {diag}"
         );
     }
 
@@ -640,19 +575,11 @@ mod ranked_replay_tests {
     fn mcp_conformance_ranked_write_symbols_authorable_from_recap() {
         use plasm_core::capability_method_label_kebab;
         use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
-        use plasm_core::loader::load_schema;
         use plasm_core::ExposureEntityKey;
 
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let cgs = load_schema(&root.join("../../apis/github")).expect("github");
+        let cgs = load_github_cgs();
         let entities = vec!["Repository".to_string(), "Issue".to_string()];
-        let endpoints = entities
-            .iter()
-            .map(|e| ExposureEntityKey {
-                entry_id: "github".into(),
-                entity: plasm_core::EntityName::from(e.as_str()),
-            })
-            .collect::<Vec<_>>();
+        let endpoints = github_issue_repo_endpoints();
         let weak_intent = "browse repository metadata inventory";
         let delta = derive_intent_exposure_surface_batch(
             &cgs,
@@ -693,5 +620,86 @@ mod ranked_replay_tests {
             reuse.contains(&format!("labels={labels_sym}")),
             "reuse recap must name labels param: {reuse}"
         );
+    }
+
+    #[test]
+    fn ranked_replay_admits_pr_create_at_zero_score_on_seeded_pull_request() {
+        use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+        use plasm_core::ExposureEntityKey;
+
+        let cgs = load_github_cgs();
+        let entities = vec![
+            "Repository".to_string(),
+            "PullRequest".to_string(),
+            "Issue".to_string(),
+        ];
+        let endpoints = ["Repository", "PullRequest", "Issue"]
+            .iter()
+            .map(|e| ExposureEntityKey {
+                entry_id: "github".into(),
+                entity: plasm_core::EntityName::from(*e),
+            })
+            .collect::<Vec<_>>();
+        let zero_intent = "xyzzy qwerty plugh unrelated metadata browse";
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "github",
+            zero_intent,
+            &endpoints,
+            &entities,
+            Some(&["pr_create".to_string()]),
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        assert!(
+            delta
+                .required
+                .capabilities
+                .iter()
+                .any(|c| c.capability.as_str() == "pr_create"),
+            "ranked pr_create must appear on seeded PullRequest at score zero: {:?}",
+            delta.required.capabilities
+        );
+    }
+
+    #[test]
+    fn plasm_context_meta_surfaces_stale_symbol_space_recovery() {
+        let out = ApplyCapabilitySeedsOutcome {
+            prompt_hash: "ph_new".into(),
+            session_id: "sid_new".into(),
+            primary_entry_id: "github".into(),
+            principal: None,
+            waves: vec![],
+            binding_updated: true,
+            new_symbol_space: true,
+            stale_execute_binding_recovered: true,
+            stale_binding_previous: Some(("ph_old".into(), "sid_old".into())),
+        };
+        let meta = build_plasm_context_tool_meta("lsref", &out, Some(1), None, None);
+        let continuity = meta
+            .get("continuity")
+            .expect("continuity")
+            .as_object()
+            .unwrap();
+        assert_eq!(
+            continuity.get("stale_binding_recovered"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(
+            continuity.get("new_symbol_space"),
+            Some(&serde_json::json!(true))
+        );
+        assert_eq!(
+            continuity.get("discard_cached_plasm_symbols"),
+            Some(&serde_json::json!(true))
+        );
+        let prev = continuity
+            .get("previous_execute")
+            .expect("previous_execute")
+            .as_object()
+            .unwrap();
+        assert_eq!(prev.get("prompt_hash"), Some(&serde_json::json!("ph_old")));
+        assert_eq!(prev.get("session_id"), Some(&serde_json::json!("sid_old")));
     }
 }

@@ -6,6 +6,9 @@ mod backend;
 mod seeds;
 mod session;
 
+#[cfg(test)]
+mod ranked_replay_fixtures;
+
 pub(crate) use backend::cgs_entity_names_sample;
 pub(crate) use backend::{
     patch_cgs_context_outbound_hosted, patch_cgs_context_resolved_http_backend,
