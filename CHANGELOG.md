@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.95] - 2026-06-30
+
+### Fixed
+
+- **MCP Plan Review (Cursor):** dry-run `plasm` responses mirror `_meta.ui.plasm` (`comp`, `plan_ux_reflection`) into `structuredContent.plasm` so in-chat Plan Review renders when the host forwards structured content but strips `_meta.ui`.
+
 ## [0.3.94] - 2026-06-30
 
 ### Fixed

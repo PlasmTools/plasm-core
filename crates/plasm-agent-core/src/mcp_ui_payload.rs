@@ -13,9 +13,11 @@ pub fn finalize_mcp_tool_result(
     mirror_plasm_structured_content(res)
 }
 
-/// Copy compact agent `_meta.plasm` into `structuredContent.plasm` for hosts that strip `_meta`.
+/// Copy agent `_meta.plasm` into `structuredContent.plasm`, plus UI DAG fields when present.
 ///
-/// Dry-run responses omit `comp` / `plan_ux_reflection` (those live under `_meta.ui.plasm` for MCP Apps).
+/// Cursor and other MCP App hosts often forward `structuredContent` but strip nested `_meta.ui`;
+/// mirror `_meta.ui.plasm` (`comp`, `plan_ux_reflection`) into `structuredContent.plasm` so Plan
+/// Review can render without relying on host `_meta.ui` forwarding.
 pub fn mirror_plasm_structured_content(res: CallToolResult) -> CallToolResult {
     let Some(meta) = res.meta.as_ref() else {
         return res;
@@ -23,9 +25,29 @@ pub fn mirror_plasm_structured_content(res: CallToolResult) -> CallToolResult {
     let Some(plasm) = meta.get("plasm") else {
         return res;
     };
+    let mut structured_plasm = agent_structured_plasm_mirror(plasm);
+    mirror_ui_plasm_into_structured(meta, &mut structured_plasm);
     let mut structured = Map::new();
-    structured.insert("plasm".to_string(), agent_structured_plasm_mirror(plasm));
+    structured.insert("plasm".to_string(), structured_plasm);
     res.with_structured_content(structured)
+}
+
+fn mirror_ui_plasm_into_structured(meta: &Map<String, Value>, structured_plasm: &mut Value) {
+    let Some(ui_plasm) = meta
+        .get("ui")
+        .and_then(|u| u.get("plasm"))
+        .and_then(|p| p.as_object())
+    else {
+        return;
+    };
+    let Some(out) = structured_plasm.as_object_mut() else {
+        return;
+    };
+    for key in ["comp", "plan_ux_reflection"] {
+        if let Some(v) = ui_plasm.get(key) {
+            out.insert(key.to_string(), v.clone());
+        }
+    }
 }
 
 fn agent_structured_plasm_mirror(plasm: &Value) -> Value {
@@ -95,7 +117,7 @@ mod tests {
     }
 
     #[test]
-    fn finalize_dry_run_structured_content_is_agent_compact() {
+    fn finalize_dry_run_structured_content_mirrors_ui_plan_for_cursor_hosts() {
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
         let out = finalize_mcp_tool_result(res, sample_dry_tool_meta());
         let wire = serde_json::to_value(&out).expect("serialize CallToolResult");
@@ -104,11 +126,18 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("pc0")
         );
-        assert!(wire.pointer("/structuredContent/plasm/comp").is_none());
+        assert_eq!(
+            wire.pointer("/structuredContent/plasm/comp/bind/topo")
+                .and_then(|v| v.as_array())
+                .map(|a| a.len()),
+            Some(1),
+            "Cursor-style hosts need comp in structuredContent when _meta.ui is stripped"
+        );
+        assert!(
+            wire.pointer("/structuredContent/plasm/plan_ux_reflection/schema_version")
+                .is_some()
+        );
         assert!(wire.pointer("/structuredContent/plasm/program").is_none());
-        assert!(wire
-            .pointer("/structuredContent/plasm/plan_ux_reflection")
-            .is_none());
         assert_eq!(
             wire.pointer("/_meta/ui/plasm/comp/bind/topo")
                 .and_then(|v| v.as_array())
@@ -120,6 +149,7 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some(crate::plan_ui_mcp::PLAN_REVIEW_UI_URI)
         );
+        assert!(wire.pointer("/_meta/plasm/comp").is_none());
     }
 
     #[test]
@@ -170,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn mirror_dry_run_strips_comp_from_structured_content() {
+    fn mirror_dry_run_strips_agent_comp_but_keeps_ui_comp_in_structured() {
         let mut meta = Map::new();
         meta.insert(
             "plasm".to_string(),
@@ -181,6 +211,19 @@ mod tests {
                     "steps": { "n1": {} },
                     "bind": { "topo": ["n1"] },
                     "return": { "kind": "step", "step": "n1" }
+                }
+            }),
+        );
+        meta.insert(
+            "ui".into(),
+            json!({
+                "plasm": {
+                    "comp": {
+                        "steps": { "n1": { "kind": "invoke" } },
+                        "bind": { "topo": ["n1"] },
+                        "return": { "kind": "step", "step": "n1" }
+                    },
+                    "plan_ux_reflection": { "schema_version": 2, "steps": [] }
                 }
             }),
         );
@@ -195,12 +238,18 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("pc0")
         );
-        assert!(out
-            .structured_content
-            .as_ref()
-            .and_then(|m| m.get("plasm"))
-            .and_then(|p| p.get("comp"))
-            .is_none());
+        assert_eq!(
+            out.structured_content
+                .as_ref()
+                .and_then(|m| m.get("plasm"))
+                .and_then(|p| p.get("comp"))
+                .and_then(|c| c.get("steps"))
+                .and_then(|s| s.get("n1"))
+                .and_then(|n| n.get("kind"))
+                .and_then(|v| v.as_str()),
+            Some("invoke"),
+            "UI comp must mirror into structuredContent for lossy hosts"
+        );
     }
 
     #[test]

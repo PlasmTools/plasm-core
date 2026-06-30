@@ -442,8 +442,13 @@ async fn workflow_apps_e2e_async() {
         "plasm dry-run must attach comp under _meta.ui.plasm: {dry_mcp}"
     );
     assert!(
-        dry_structured_plasm.and_then(|p| p.get("comp")).is_none(),
-        "structuredContent.plasm must omit comp (UI channel only): {dry_mcp}"
+        dry_structured_plasm
+            .and_then(|p| p.get("comp"))
+            .and_then(|c| c.get("bind"))
+            .and_then(|b| b.get("topo"))
+            .and_then(|v| v.as_array())
+            .is_some_and(|a| !a.is_empty()),
+        "structuredContent.plasm must mirror UI comp for Cursor-style hosts: {dry_mcp}"
     );
     assert!(
         dry_mcp.pointer("/_meta/plasm/comp").is_none(),
