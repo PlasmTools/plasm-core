@@ -1,4 +1,4 @@
-version: 26
+version: 28
 http_backend: https://api.github.com
 entities:
   Repository:
@@ -6,7 +6,7 @@ entities:
     key_vars:
     - owner
     - repo
-    description: A GitHub repository (bare list reads use repos visible to the authenticated token, not all of GitHub).
+    description: A project repository that anchors code, issues, pull requests, workflows, releases, and labels.
     fields:
       id:
         required: true
@@ -116,7 +116,7 @@ entities:
     - owner
     - repo
     - number
-    description: A GitHub issue in a repository.
+    description: A tracker item for planned work, defects, questions, and triage decisions.
     fields:
       repository_url:
         required: false
@@ -225,10 +225,6 @@ entities:
       labels:
         target: Label
         cardinality: many
-        description: >-
-          Labels on the issue. List and GET issue responses embed a `labels` array on the wire;
-          use those when present. For authoritative or post-mutation label sets, traverse via
-          `issue_label_query` (scoped per issue) when list embed is absent or incomplete.
         materialize:
           kind: prefer_from_parent_get
           on_embed_miss: fallback_scoped
@@ -242,6 +238,16 @@ entities:
               owner: owner
               repo: repo
               issue_number: number
+      comments:
+        target: IssueComment
+        cardinality: many
+        materialize:
+          kind: query_scoped_bindings
+          capability: issue_comment_query
+          bindings:
+            owner: owner
+            repo: repo
+            issue_number: number
       sub_issues:
         target: Issue
         cardinality: many
@@ -258,7 +264,7 @@ entities:
     - owner
     - repo
     - number
-    description: A pull request in a repository.
+    description: A proposed code change with review, diff, merge, and branch state.
     fields:
       repository_url:
         required: false
@@ -387,7 +393,7 @@ entities:
     - owner
     - repo
     - sha
-    description: A repository commit with message, times, and relations to author and committer users and to changed files.
+    description: A versioned code snapshot used for history, blame, release, and branch decisions.
     fields:
       owner:
         required: true
@@ -436,7 +442,7 @@ entities:
       files:
         target: CommitFile
         cardinality: many
-        description: Files changed in this commit.
+        description: Files touched by this commit.
         materialize:
           kind: from_parent_get
           path:
@@ -445,7 +451,7 @@ entities:
       author:
         target: User
         cardinality: one
-        description: GitHub user for the commit author, when the API provides one.
+        description: Account credited as the commit author.
         materialize:
           kind: from_parent_get
           path:
@@ -453,7 +459,7 @@ entities:
       committer:
         target: User
         cardinality: one
-        description: GitHub user for the committer, when the API provides one.
+        description: Account that committed the change.
         materialize:
           kind: from_parent_get
           path:
@@ -499,13 +505,27 @@ entities:
     - owner
     - repo
     - name
-    description: Git branch ref (owner/repo + branch name, e.g. feature/my-branch).
+    description: A named line of development pointing at a commit.
     fields:
       owner:
         required: true
+        path: commit.url
+        derive:
+          type: segments_after_prefix
+          prefix: https://api.github.com/repos/
+          alternate_prefixes:
+          - http://api.github.com/repos/
+          part_index: 0
         value_ref: nv_github_account_login
       repo:
         required: true
+        path: commit.url
+        derive:
+          type: segments_after_prefix
+          prefix: https://api.github.com/repos/
+          alternate_prefixes:
+          - http://api.github.com/repos/
+          part_index: 1
         value_ref: nv_github_repository_name
       name:
         required: true
@@ -1312,9 +1332,168 @@ entities:
         required: false
         path: billable.WINDOWS.jobs
         value_ref: nv_wire_int
+  IssueTriageContext:
+    key_vars:
+    - owner
+    - repo
+    - number
+    id_field: number
+    description: A compact triage snapshot for one issue, including discussion and label signals.
+    fields:
+      owner:
+        required: true
+        value_ref: nv_github_account_login
+      repo:
+        required: true
+        value_ref: nv_github_repository_name
+      number:
+        required: true
+        value_ref: nv_issue_number
+      title:
+        required: false
+        value_ref: nv_wire_str_short
+      state:
+        required: false
+        value_ref: nv_wire_sel_668f8e38fed376e3
+      locked:
+        required: false
+        value_ref: nv_wire_bool
+      fetched_label_count:
+        required: false
+        value_ref: nv_wire_int
+      fetched_comment_count:
+        required: false
+        value_ref: nv_wire_int
+      fetched_sub_issue_count:
+        required: false
+        value_ref: nv_wire_int
+      html_url:
+        required: false
+        value_ref: nv_github_html_url
+    relations:
+      issue:
+        target: Issue
+        cardinality: one
+      labels:
+        target: Label
+        cardinality: many
+      comments:
+        target: IssueComment
+        cardinality: many
+      sub_issues:
+        target: Issue
+        cardinality: many
+  PullRequestContext:
+    key_vars:
+    - owner
+    - repo
+    - number
+    id_field: number
+    description: A review snapshot for one pull request, including diff, review, and discussion signals.
+    fields:
+      owner:
+        required: true
+        value_ref: nv_github_account_login
+      repo:
+        required: true
+        value_ref: nv_github_repository_name
+      number:
+        required: true
+        value_ref: nv_pull_request_number
+      title:
+        required: false
+        value_ref: nv_wire_str_short
+      state:
+        required: false
+        value_ref: nv_wire_sel_c5a1665707ce30ae
+      draft:
+        required: false
+        value_ref: nv_wire_bool
+      fetched_changed_file_count:
+        required: false
+        value_ref: nv_wire_int
+      fetched_review_count:
+        required: false
+        value_ref: nv_wire_int
+      fetched_review_comment_count:
+        required: false
+        value_ref: nv_wire_int
+      html_url:
+        required: false
+        value_ref: nv_github_html_url
+    relations:
+      pull_request:
+        target: PullRequest
+        cardinality: one
+      changed_files:
+        target: PullRequestFile
+        cardinality: many
+      reviews:
+        target: PullRequestReview
+        cardinality: many
+      review_comments:
+        target: PullRequestReviewComment
+        cardinality: many
+  WorkflowRunContext:
+    key_vars:
+    - owner
+    - repo
+    - run_id
+    id_field: run_id
+    description: A CI run snapshot with job, artifact, and billable usage signals.
+    fields:
+      owner:
+        required: true
+        value_ref: nv_github_account_login
+      repo:
+        required: true
+        value_ref: nv_github_repository_name
+      run_id:
+        required: true
+        value_ref: nv_wire_int
+      name:
+        required: false
+        value_ref: nv_wire_str_short
+      status:
+        required: false
+        value_ref: nv_wire_sel_ecdb4e0a7d7f72ae
+      conclusion:
+        required: false
+        value_ref: nv_wire_sel_f9da2eb819f6e623
+      head_branch:
+        required: false
+        value_ref: nv_github_branch_name
+      head_sha:
+        required: false
+        value_ref: nv_github_git_sha
+      fetched_job_count:
+        required: false
+        value_ref: nv_wire_int
+      fetched_artifact_count:
+        required: false
+        value_ref: nv_wire_int
+      run_duration_ms:
+        required: false
+        value_ref: nv_wire_int
+      html_url:
+        required: false
+        value_ref: nv_github_html_url
+    relations:
+      workflow_run:
+        target: WorkflowRun
+        cardinality: one
+      jobs:
+        target: WorkflowJob
+        cardinality: many
+      artifacts:
+        target: WorkflowArtifact
+        cardinality: many
+      usage:
+        target: WorkflowRunUsage
+        cardinality: one
   Notification:
     id_field: id
-    description: A notification.
+    description: An inbox item that points to repository activity needing attention.
     fields:
       id:
         required: true
@@ -1341,7 +1520,7 @@ capabilities:
   repo_search:
     kind: search
     entity: Repository
-    description: Search GitHub repositories using GitHub repository-search query syntax.
+    description: Find repositories by free-text and repository qualifiers.
     parameters:
     - name: q
       value_ref: nv_repo_search_q
@@ -1397,7 +1576,7 @@ capabilities:
   repo_get:
     kind: get
     entity: Repository
-    description: Get a repository by owner and repo slug.
+    description: Resolve one repository for follow-up work.
     provides:
     - id
     - owner
@@ -1447,7 +1626,7 @@ capabilities:
   issue_get:
     kind: get
     entity: Issue
-    description: Get an issue by owner, repo, and number.
+    description: Read one issue for triage or follow-up.
     provides:
     - id
     - owner
@@ -1469,10 +1648,23 @@ capabilities:
     - updated_at
     - closed_at
     - html_url
+    parameters:
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+      role: scope
+    - name: repo
+      value_ref: nv_github_repository_name
+      required: true
+      role: scope
+    - name: number
+      value_ref: nv_issue_number
+      required: true
+      role: scope
   issue_query:
     kind: query
     entity: Issue
-    description: List issues and pull requests in a repository.
+    description: Find issue-tracker items in a repository; pull request surfaces cover code-review work.
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
@@ -1523,7 +1715,7 @@ capabilities:
   issue_search:
     kind: search
     entity: Issue
-    description: Global issue/PR search.
+    description: Search issue and pull request conversations across GitHub.
     parameters:
     - name: q
       value_ref: nv_wire_str_short
@@ -1540,7 +1732,7 @@ capabilities:
   pr_get:
     kind: get
     entity: PullRequest
-    description: Get a pull request by owner, repo, and number.
+    description: Read one pull request for review or merge decisions.
     provides:
     - id
     - owner
@@ -1556,10 +1748,23 @@ capabilities:
     - updated_at
     - closed_at
     - html_url
+    parameters:
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+      role: scope
+    - name: repo
+      value_ref: nv_github_repository_name
+      required: true
+      role: scope
+    - name: number
+      value_ref: nv_pull_request_number
+      required: true
+      role: scope
   pr_query:
     kind: query
     entity: PullRequest
-    description: List pull requests in a repository.
+    description: Find pull requests in a repository by state or branch.
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
@@ -1586,7 +1791,7 @@ capabilities:
   pr_search:
     kind: search
     entity: PullRequest
-    description: Search pull requests globally.
+    description: Search pull request conversations across GitHub.
     parameters:
     - name: q
       value_ref: nv_wire_str_short
@@ -1667,7 +1872,7 @@ capabilities:
   commit_get:
     kind: get
     entity: Commit
-    description: 'Fetch commit: owner, repo, revision (SHA, branch, or tag).'
+    description: Resolve one commit for history, release, or branch decisions.
     provides:
     - owner
     - repo
@@ -1738,10 +1943,27 @@ capabilities:
     - name: since
       value_ref: nv_pr_review_comment_query_since
       required: false
+  pr_context_query:
+    kind: query
+    entity: PullRequestContext
+    description: Summarize one pull request with diff and review activity for code review.
+    parameters:
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+      role: scope
+    - name: repo
+      value_ref: nv_github_repository_name
+      required: true
+      role: scope
+    - name: number
+      value_ref: nv_pull_request_number
+      required: true
+      role: scope
   pr_review_get:
     kind: get
     entity: PullRequestReview
-    description: Get a pull request review.
+    description: Read one pull request review.
     provides:
     - id
     - owner
@@ -1755,7 +1977,7 @@ capabilities:
   pr_review_comment_get:
     kind: get
     entity: PullRequestReviewComment
-    description: Get a pull request review comment.
+    description: Read one inline pull request review comment.
     provides:
     - id
     - owner
@@ -1824,7 +2046,7 @@ capabilities:
   pr_review_delete:
     kind: delete
     entity: PullRequestReview
-    description: Delete a pending pull request review.
+    description: Remove a pending pull request review.
   pr_review_comment_create:
     kind: create
     entity: PullRequestReviewComment
@@ -1897,7 +2119,7 @@ capabilities:
   branch_get:
     kind: get
     entity: Branch
-    description: Get a branch by owner, repository, and name.
+    description: Resolve one branch and its head commit.
     provides:
     - owner
     - repo
@@ -1945,7 +2167,7 @@ capabilities:
   workflow_get:
     kind: get
     entity: Workflow
-    description: Get a workflow by numeric id or file name.
+    description: Resolve one workflow for inspection or manual runs.
     provides:
     - id
     - owner
@@ -1961,14 +2183,14 @@ capabilities:
   workflow_dispatch:
     kind: action
     entity: Workflow
-    description: Trigger a workflow dispatch event for a workflow.
+    description: Start a manual workflow run on a selected ref.
     parameters:
     - name: ref
       value_ref: nv_workflow_dispatch_ref
       required: true
     output:
       type: side_effect
-      description: Dispatch workflow for selected ref.
+      description: Start workflow on the selected ref.
   workflow_run_query:
     kind: query
     entity: WorkflowRun
@@ -2001,7 +2223,7 @@ capabilities:
   workflow_run_get:
     kind: get
     entity: WorkflowRun
-    description: Get a workflow run by numeric run id.
+    description: Read one workflow run for CI status and provenance.
     provides:
     - id
     - owner
@@ -2023,6 +2245,19 @@ capabilities:
     - run_started_at
     - created_at
     - updated_at
+    parameters:
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+      role: scope
+    - name: repo
+      value_ref: nv_github_repository_name
+      required: true
+      role: scope
+    - name: id
+      value_ref: nv_wire_int
+      required: true
+      role: scope
   workflow_run_by_workflow_query:
     kind: query
     entity: WorkflowRun
@@ -2074,10 +2309,10 @@ capabilities:
   workflow_run_logs_delete:
     kind: action
     entity: WorkflowRun
-    description: Delete stored logs for a workflow run.
+    description: Remove stored logs for a workflow run.
     output:
       type: side_effect
-      description: Delete GitHub's stored logs for the workflow run.
+      description: Remove stored logs for the workflow run.
   workflow_job_query:
     kind: query
     entity: WorkflowJob
@@ -2132,10 +2367,40 @@ capabilities:
     - macos_jobs
     - windows_total_ms
     - windows_jobs
+    parameters:
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+      role: scope
+    - name: repo
+      value_ref: nv_github_repository_name
+      required: true
+      role: scope
+    - name: run_id
+      value_ref: nv_wire_int
+      required: true
+      role: scope
+  workflow_run_context_query:
+    kind: query
+    entity: WorkflowRunContext
+    description: Summarize one workflow run with jobs, artifacts, and billable timing for CI review.
+    parameters:
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+      role: scope
+    - name: repo
+      value_ref: nv_github_repository_name
+      required: true
+      role: scope
+    - name: run_id
+      value_ref: nv_wire_int
+      required: true
+      role: scope
   user_get:
     kind: get
     entity: User
-    description: Get a public user profile by login.
+    description: Resolve one public user profile.
     provides:
     - login
     - id
@@ -2155,7 +2420,7 @@ capabilities:
   user_get_me:
     kind: singleton
     entity: User
-    description: Get the authenticated user.
+    description: Resolve the authenticated account.
   user_search:
     kind: search
     entity: User
@@ -2176,7 +2441,7 @@ capabilities:
   org_get:
     kind: get
     entity: Organization
-    description: Get a public organization by login.
+    description: Resolve one public organization.
     provides:
     - login
     - id
@@ -2263,7 +2528,7 @@ capabilities:
   gist_get:
     kind: get
     entity: Gist
-    description: Get a gist.
+    description: Resolve one gist.
     provides:
     - id
     - description
@@ -2292,7 +2557,7 @@ capabilities:
   notification_get:
     kind: get
     entity: Notification
-    description: Get a notification thread.
+    description: Read one notification thread.
     provides:
     - id
     - unread
@@ -2321,7 +2586,7 @@ capabilities:
   label_get:
     kind: get
     entity: Label
-    description: Get a label in a repository by name.
+    description: Resolve one repository label by name.
     provides:
     - name
     - owner
@@ -2372,7 +2637,7 @@ capabilities:
   milestone_get:
     kind: get
     entity: Milestone
-    description: Get a milestone by owner, repo, and number.
+    description: Resolve one milestone.
     provides:
     - number
     - owner
@@ -2460,7 +2725,7 @@ capabilities:
   milestone_delete:
     kind: delete
     entity: Milestone
-    description: Delete a milestone from a repository.
+    description: Remove a milestone from a repository.
   release_query:
     kind: query
     entity: Release
@@ -2474,7 +2739,7 @@ capabilities:
   release_get:
     kind: get
     entity: Release
-    description: Get a release in a repository.
+    description: Resolve one release.
     provides:
     - id
     - owner
@@ -2568,15 +2833,19 @@ capabilities:
   release_delete:
     kind: delete
     entity: Release
-    description: Delete a release in a repository.
+    description: Remove a release from a repository.
   issue_comment_query:
     kind: query
     entity: IssueComment
-    description: List comments on an issue.
+    description: Read the discussion comments under one issue or pull request thread.
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
-    - name: repository
-      value_ref: nv_github_scope_repository
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+      role: scope
+    - name: repo
+      value_ref: nv_github_repository_name
       required: true
       role: scope
     - name: issue_number
@@ -2586,6 +2855,23 @@ capabilities:
     - name: since
       value_ref: nv_issue_comment_query_since
       required: false
+  issue_triage_context_query:
+    kind: query
+    entity: IssueTriageContext
+    description: Summarize one issue with label, comment, and sub-issue counts for triage.
+    parameters:
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+      role: scope
+    - name: repo
+      value_ref: nv_github_repository_name
+      required: true
+      role: scope
+    - name: number
+      value_ref: nv_issue_number
+      required: true
+      role: scope
   repo_comment_query:
     kind: query
     entity: IssueComment
@@ -2610,7 +2896,7 @@ capabilities:
   issue_create:
     kind: create
     entity: Issue
-    description: Open a new issue in a repository; use labels to tag the issue (e.g. documentation, bug).
+    description: Create an issue with optional initial labels.
     provides:
     - id
     - owner
@@ -2706,7 +2992,7 @@ capabilities:
   issue_delete:
     kind: delete
     entity: Issue
-    description: Delete an issue.
+    description: Remove an issue.
   issue_sub_issue_add:
     kind: action
     entity: Issue
@@ -2797,7 +3083,7 @@ capabilities:
   issue_comment_create:
     kind: create
     entity: IssueComment
-    description: Post a comment on an issue or pull request thread.
+    description: Add a timeline comment to an issue or pull request thread.
     provides:
     - id
     - body
@@ -2839,7 +3125,7 @@ capabilities:
   issue_comment_delete:
     kind: delete
     entity: IssueComment
-    description: Delete an issue or pull request timeline comment.
+    description: Remove an issue or pull request timeline comment.
     parameters:
     - name: repository
       value_ref: nv_github_scope_repository
@@ -2908,7 +3194,7 @@ capabilities:
   pr_create:
     kind: create
     entity: PullRequest
-    description: Open a pull request (head branch into base branch; use owner:branch for forks).
+    description: Create a pull request from a head branch into a base branch.
     provides:
     - id
     - owner
@@ -3004,7 +3290,7 @@ capabilities:
   label_delete:
     kind: delete
     entity: Label
-    description: Delete a label from a repository.
+    description: Remove a label from a repository.
   repo_content_put:
     kind: action
     entity: Repository
@@ -3033,10 +3319,29 @@ capabilities:
     output:
       type: side_effect
       description: Write the file at the path.
+  repo_branch_create:
+    kind: action
+    entity: Repository
+    description: Create a branch ref in a repository from an existing commit SHA.
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
+      role: scope
+    - name: name
+      value_ref: nv_github_branch_name
+      required: true
+    - name: sha
+      value_ref: nv_github_git_sha
+      required: true
+    output:
+      type: side_effect
+      description: Create the branch ref at the requested commit.
   repo_content_delete:
     kind: action
     entity: Repository
-    description: Delete a file from a repository.
+    description: Remove a file from a repository.
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
@@ -3265,6 +3570,10 @@ oauth:
         any_of:
         - repo
         - public_repo
+      issue_triage_context_query:
+        any_of:
+        - repo
+        - public_repo
       issue_comment_update:
         any_of:
         - repo
@@ -3412,6 +3721,10 @@ oauth:
         any_of:
         - repo
         - public_repo
+      pr_context_query:
+        any_of:
+        - repo
+        - public_repo
       pr_review_get:
         any_of:
         - repo
@@ -3469,6 +3782,10 @@ oauth:
         - repo
         - public_repo
       repo_content_put:
+        any_of:
+        - repo
+        - public_repo
+      repo_branch_create:
         any_of:
         - repo
         - public_repo
@@ -3563,6 +3880,10 @@ oauth:
         - repo
         - workflow
       workflow_run_usage_get:
+        any_of:
+        - repo
+        - public_repo
+      workflow_run_context_query:
         any_of:
         - repo
         - public_repo
@@ -3683,6 +4004,210 @@ oauth:
         any_of:
         - repo
         - public_repo
+views:
+  issue_triage_context:
+    description: Issue triage snapshot with labels, comments, and sub-issue signals.
+    capability: issue_triage_context_query
+    entity: IssueTriageContext
+    scope:
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+    - name: repo
+      value_ref: nv_github_repository_name
+      required: true
+    - name: number
+      value_ref: nv_issue_number
+      required: true
+    nodes:
+    - id: issue
+      capability: issue_get
+      bind:
+        owner: { kind: scope, param: owner }
+        repo: { kind: scope, param: repo }
+        number: { kind: scope, param: number }
+    - id: labels
+      capability: issue_label_query
+      bind:
+        owner: { kind: scope, param: owner }
+        repo: { kind: scope, param: repo }
+        issue_number: { kind: scope, param: number }
+    - id: comments
+      capability: issue_comment_query
+      bind:
+        owner: { kind: scope, param: owner }
+        repo: { kind: scope, param: repo }
+        issue_number: { kind: scope, param: number }
+    - id: sub_issues
+      capability: issue_sub_issue_query
+      bind:
+        owner: { kind: scope, param: owner }
+        repo: { kind: scope, param: repo }
+        issue_number: { kind: scope, param: number }
+    output:
+      owner: { kind: scope, param: owner }
+      repo: { kind: scope, param: repo }
+      number: { kind: scope, param: number }
+      title: { kind: node_field, node: issue, field: title }
+      state: { kind: node_field, node: issue, field: state }
+      locked: { kind: node_field, node: issue, field: locked }
+      fetched_label_count: { kind: node_row_count, node: labels }
+      fetched_comment_count: { kind: node_row_count, node: comments }
+      fetched_sub_issue_count: { kind: node_row_count, node: sub_issues }
+      html_url: { kind: node_field, node: issue, field: html_url }
+    relation_outputs:
+    - relation: issue
+      target: Issue
+      cardinality: one
+      binding: { kind: node_single_row, node: issue }
+    - relation: labels
+      target: Label
+      cardinality: many
+      binding: { kind: node_all_rows, node: labels }
+    - relation: comments
+      target: IssueComment
+      cardinality: many
+      binding: { kind: node_all_rows, node: comments }
+    - relation: sub_issues
+      target: Issue
+      cardinality: many
+      binding: { kind: node_all_rows, node: sub_issues }
+  pr_context:
+    description: Pull request review snapshot with changed files, reviews, and inline discussion.
+    capability: pr_context_query
+    entity: PullRequestContext
+    scope:
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+    - name: repo
+      value_ref: nv_github_repository_name
+      required: true
+    - name: number
+      value_ref: nv_pull_request_number
+      required: true
+    nodes:
+    - id: pull_request
+      capability: pr_get
+      bind:
+        owner: { kind: scope, param: owner }
+        repo: { kind: scope, param: repo }
+        number: { kind: scope, param: number }
+    - id: changed_files
+      capability: pr_file_query
+      bind:
+        owner: { kind: scope, param: owner }
+        repo: { kind: scope, param: repo }
+        pull_number: { kind: scope, param: number }
+    - id: reviews
+      capability: pr_review_query
+      bind:
+        owner: { kind: scope, param: owner }
+        repo: { kind: scope, param: repo }
+        pull_number: { kind: scope, param: number }
+    - id: review_comments
+      capability: pr_review_comment_query
+      bind:
+        owner: { kind: scope, param: owner }
+        repo: { kind: scope, param: repo }
+        pull_number: { kind: scope, param: number }
+    output:
+      owner: { kind: scope, param: owner }
+      repo: { kind: scope, param: repo }
+      number: { kind: scope, param: number }
+      title: { kind: node_field, node: pull_request, field: title }
+      state: { kind: node_field, node: pull_request, field: state }
+      draft: { kind: node_field, node: pull_request, field: draft }
+      fetched_changed_file_count: { kind: node_row_count, node: changed_files }
+      fetched_review_count: { kind: node_row_count, node: reviews }
+      fetched_review_comment_count: { kind: node_row_count, node: review_comments }
+      html_url: { kind: node_field, node: pull_request, field: html_url }
+    relation_outputs:
+    - relation: pull_request
+      target: PullRequest
+      cardinality: one
+      binding: { kind: node_single_row, node: pull_request }
+    - relation: changed_files
+      target: PullRequestFile
+      cardinality: many
+      binding: { kind: node_all_rows, node: changed_files }
+    - relation: reviews
+      target: PullRequestReview
+      cardinality: many
+      binding: { kind: node_all_rows, node: reviews }
+    - relation: review_comments
+      target: PullRequestReviewComment
+      cardinality: many
+      binding: { kind: node_all_rows, node: review_comments }
+  workflow_run_context:
+    description: Workflow run snapshot with jobs, artifacts, and timing for CI review.
+    capability: workflow_run_context_query
+    entity: WorkflowRunContext
+    scope:
+    - name: owner
+      value_ref: nv_github_account_login
+      required: true
+    - name: repo
+      value_ref: nv_github_repository_name
+      required: true
+    - name: run_id
+      value_ref: nv_wire_int
+      required: true
+    nodes:
+    - id: run
+      capability: workflow_run_get
+      bind:
+        owner: { kind: scope, param: owner }
+        repo: { kind: scope, param: repo }
+        id: { kind: scope, param: run_id }
+    - id: jobs
+      capability: workflow_job_query
+      bind:
+        owner: { kind: scope, param: owner }
+        repo: { kind: scope, param: repo }
+        run_id: { kind: scope, param: run_id }
+    - id: artifacts
+      capability: workflow_artifact_query
+      bind:
+        owner: { kind: scope, param: owner }
+        repo: { kind: scope, param: repo }
+        run_id: { kind: scope, param: run_id }
+    - id: usage
+      capability: workflow_run_usage_get
+      bind:
+        owner: { kind: scope, param: owner }
+        repo: { kind: scope, param: repo }
+        run_id: { kind: scope, param: run_id }
+    output:
+      owner: { kind: scope, param: owner }
+      repo: { kind: scope, param: repo }
+      run_id: { kind: scope, param: run_id }
+      name: { kind: node_field, node: run, field: name }
+      status: { kind: node_field, node: run, field: status }
+      conclusion: { kind: node_field, node: run, field: conclusion }
+      head_branch: { kind: node_field, node: run, field: head_branch }
+      head_sha: { kind: node_field, node: run, field: head_sha }
+      fetched_job_count: { kind: node_row_count, node: jobs }
+      fetched_artifact_count: { kind: node_row_count, node: artifacts }
+      run_duration_ms: { kind: node_field, node: usage, field: run_duration_ms }
+      html_url: { kind: node_field, node: run, field: html_url }
+    relation_outputs:
+    - relation: workflow_run
+      target: WorkflowRun
+      cardinality: one
+      binding: { kind: node_single_row, node: run }
+    - relation: jobs
+      target: WorkflowJob
+      cardinality: many
+      binding: { kind: node_all_rows, node: jobs }
+    - relation: artifacts
+      target: WorkflowArtifact
+      cardinality: many
+      binding: { kind: node_all_rows, node: artifacts }
+    - relation: usage
+      target: WorkflowRunUsage
+      cardinality: one
+      binding: { kind: node_single_row, node: usage }
 auth:
   scheme: bearer_token
   env: GITHUB_TOKEN

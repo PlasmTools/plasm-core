@@ -1154,6 +1154,18 @@ notification_mark_read:
     - { type: var, name: id }
   response: single
 
+issue_triage_context_query:
+  transport: view
+  view: issue_triage_context
+
+pr_context_query:
+  transport: view
+  view: pr_context
+
+workflow_run_context_query:
+  transport: view
+  view: workflow_run_context
+
 # ── Writes (issues, PRs, labels, contents) ───────────────────────────────────
 
 issue_create:
@@ -1644,6 +1656,23 @@ repo_content_put:
       - [sha, { type: if, condition: { type: exists, var: sha },
                 then_expr: { type: var, name: sha },
                 else_expr: { type: const, value: null } }]
+  response: single
+
+repo_branch_create:
+  method: POST
+  path:
+    - { type: literal, value: repos }
+    - { type: var, name: owner }
+    - { type: var, name: repo }
+    - { type: literal, value: git }
+    - { type: literal, value: refs }
+  body:
+    type: object
+    fields:
+      - [ref, { type: format, template: "refs/heads/{name}", vars: {
+              name: { type: var, name: name }
+            } }]
+      - [sha, { type: var, name: sha }]
   response: single
 
 repo_content_delete:

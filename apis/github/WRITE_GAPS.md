@@ -36,6 +36,7 @@ Each row has a matching key in `mappings.yaml` with the same method and path tem
 | `release_update`         | update          | `PATCH`  | `/repos/{owner}/{repo}/releases/{release_id}`          | Release      |
 | `release_delete`         | delete          | `DELETE` | `/repos/{owner}/{repo}/releases/{release_id}`          | Release      |
 | `repo_content_put`       | action          | `PUT`    | `/repos/{owner}/{repo}/contents/{path}`                | Repository   |
+| `repo_branch_create`     | action          | `POST`   | `/repos/{owner}/{repo}/git/refs`                       | Repository   |
 | `repo_content_delete`    | action          | `DELETE` | `/repos/{owner}/{repo}/contents/{path}`                | Repository   |
 
 
@@ -59,6 +60,7 @@ Run `plasm schema validate apis/github` for the current capability count (`requi
 | `milestone_`*                                    | **Partial**                | Create/update send `title`, `description`, `state`, `due_on`.                                                                       |
 | `release_`*                                      | **Partial**                | Create includes `generate_release_notes`; omit unsupported preview-only fields unless needed.                                       |
 | `repo_content_put` / `repo_content_delete`       | **Partial**                | No `author`/`committer` overrides on Contents API. `repo_content_delete` uses JSON body on `DELETE` (supported by the HTTP client). |
+| `repo_branch_create`                             | **Complete** (minimal)     | Creates `refs/heads/{name}` from an existing commit SHA. Low-level blob/tree/commit object creation is still not modeled.           |
 | `notification_mark_read`                         | **Complete** (side-effect) | Often **205** empty body — see README.                                                                                              |
 
 
@@ -84,7 +86,8 @@ Status: **mapped** or **missing** (still not in CGS).
 | REST                                                                    | Status      |
 | ----------------------------------------------------------------------- | ----------- |
 | Create / patch / merge PR                                               | **Mapped**  |
-| `requested_reviewers`, review submit/dismiss, `POST .../pulls/comments` | **Missing** |
+| `requested_reviewers`, review dismiss                              | **Missing** |
+| Review submit, `POST .../pulls/comments` inline comments           | **Mapped**  |
 
 
 ### Repository & git
@@ -93,7 +96,8 @@ Status: **mapped** or **missing** (still not in CGS).
 | REST                                       | Status      |
 | ------------------------------------------ | ----------- |
 | Contents put/delete                        | **Mapped**  |
-| `POST .../git/refs`, low-level git objects | **Missing** |
+| `POST .../git/refs` branch creation        | **Mapped**  |
+| Low-level git blobs/trees/commits          | **Missing** |
 | Repo create/delete, forks POST             | **Missing** |
 
 
@@ -102,7 +106,7 @@ Status: **mapped** or **missing** (still not in CGS).
 
 | REST                                 | Status      |
 | ------------------------------------ | ----------- |
-| Workflow dispatch, rerun             | **Missing** |
+| Workflow dispatch, rerun             | **Mapped**  |
 | Collaborators, hooks                 | **Missing** |
 | Gist create/update                   | **Missing** |
 | `PUT /notifications` (mark all read) | **Missing** |
@@ -116,8 +120,8 @@ Status: **mapped** or **missing** (still not in CGS).
 | Tier   | Theme                           | Examples                                                        |
 | ------ | ------------------------------- | --------------------------------------------------------------- |
 | **P0** | Reactions, review requests      | `POST .../reactions`, `POST .../pulls/{id}/requested_reviewers` |
-| **P1** | Inline review comments, Actions | `POST .../pulls/comments`, workflow dispatch / rerun            |
-| **P2** | Repo admin, git plumbing        | Branch protection, `git/refs`, repo create/delete               |
+| **P1** | Remaining review + Actions      | review requests/dismiss, workflow run approval, workflow cancel gaps |
+| **P2** | Repo admin, git plumbing        | Branch protection, low-level git objects, repo create/delete     |
 
 
 ---

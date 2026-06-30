@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.96] - 2026-06-30
+
+### Added
+
+- **GitHub catalog views:** `IssueTriageContext`, `PullRequestContext`, and `WorkflowRunContext` provide first-class composed read surfaces for issue triage, PR review, and CI run review.
+- **GitHub branch creation:** `repo_branch_create` maps branch ref creation through `POST /repos/{owner}/{repo}/git/refs`.
+
+### Changed
+
+- **GitHub catalog ergonomics:** teaching-facing descriptions are more domain-oriented; `Issue.comments` is a direct relation; view count fields are explicitly `fetched_*` to avoid implying total counts over paginated data.
+- **GitHub eval coverage:** added branch creation and view-shaped workflow cases with reference expressions.
+
 ## [0.3.95] - 2026-06-30
 
 ### Fixed

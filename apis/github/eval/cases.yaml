@@ -625,3 +625,46 @@
   covers: [invoke]
   expect:
     entities_any: [Workflow, Repository]
+
+- id: gh-73
+  schema: github
+  goal: "Create branch feature/label-guide in plasm/plasm from commit SHA abc123def456 so a docs pull request can be opened"
+  tags: [action, write, branch]
+  covers: [invoke]
+  reference_expr: |-
+    Repository(owner="plasm",repo="plasm").repo-branch-create(name="feature/label-guide",sha="abc123def456")
+  expect:
+    entities_any: [Repository]
+
+- id: gh-74
+  schema: github
+  goal: "Build a triage context for plasm/plasm#42 with issue title, labels, comments, and fetched sub-issue counts"
+  tags: [query, view, triage]
+  covers: [query_filtered, chain]
+  reference_expr: |-
+    IssueTriageContext(owner="plasm",repo="plasm",number=42)[title,state,fetched_label_count,fetched_comment_count,fetched_sub_issue_count]
+  expect:
+    entities_any: [IssueTriageContext, Issue, Label, IssueComment]
+    projection_contains: [title, fetched_label_count, fetched_comment_count, fetched_sub_issue_count]
+
+- id: gh-75
+  schema: github
+  goal: "Summarize pull request plasm/plasm#20 for review, including fetched changed file, review, and inline comment counts"
+  tags: [query, view, pull_request]
+  covers: [query_filtered, chain]
+  reference_expr: |-
+    PullRequestContext(owner="plasm",repo="plasm",number=20)[title,state,draft,fetched_changed_file_count,fetched_review_count,fetched_review_comment_count]
+  expect:
+    entities_any: [PullRequestContext, PullRequest, PullRequestFile, PullRequestReview, PullRequestReviewComment]
+    projection_contains: [title, fetched_changed_file_count, fetched_review_count, fetched_review_comment_count]
+
+- id: gh-76
+  schema: github
+  goal: "Create a CI run context for workflow run 12345 in plasm/plasm with jobs, artifacts, and billable timing"
+  tags: [query, view, actions]
+  covers: [query_filtered, chain]
+  reference_expr: |-
+    WorkflowRunContext(owner="plasm",repo="plasm",run_id=12345)[status,conclusion,fetched_job_count,fetched_artifact_count,run_duration_ms]
+  expect:
+    entities_any: [WorkflowRunContext, WorkflowRun, WorkflowJob, WorkflowArtifact, WorkflowRunUsage]
+    projection_contains: [status, fetched_job_count, fetched_artifact_count, run_duration_ms]
