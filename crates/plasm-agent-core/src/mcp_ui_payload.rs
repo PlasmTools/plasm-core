@@ -133,10 +133,9 @@ mod tests {
             Some(1),
             "Cursor-style hosts need comp in structuredContent when _meta.ui is stripped"
         );
-        assert!(
-            wire.pointer("/structuredContent/plasm/plan_ux_reflection/schema_version")
-                .is_some()
-        );
+        assert!(wire
+            .pointer("/structuredContent/plasm/plan_ux_reflection/schema_version")
+            .is_some());
         assert!(wire.pointer("/structuredContent/plasm/program").is_none());
         assert_eq!(
             wire.pointer("/_meta/ui/plasm/comp/bind/topo")

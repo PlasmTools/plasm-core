@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **GitHub catalog ergonomics:** teaching-facing descriptions are more domain-oriented; `Issue.comments` is a direct relation; view count fields are explicitly `fetched_*` to avoid implying total counts over paginated data.
 - **GitHub eval coverage:** added branch creation and view-shaped workflow cases with reference expressions.
+- **Run Explorer MCP app:** content-only `plasm_run` forwards render the server message instead of host-blame fallback; embedded run UI bundle refreshed.
 
 ## [0.3.95] - 2026-06-30
 
