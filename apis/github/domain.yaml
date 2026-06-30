@@ -1,4 +1,4 @@
-version: 25
+version: 26
 http_backend: https://api.github.com
 entities:
   Repository:
@@ -2848,7 +2848,7 @@ capabilities:
   pr_update:
     kind: update
     entity: PullRequest
-    description: Update a pull request (title, body, state, or base branch).
+    description: Update an open pull request — change title, body, state, or base branch.
     provides:
     - id
     - owner
