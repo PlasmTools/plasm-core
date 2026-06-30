@@ -307,7 +307,7 @@ pub use symbol_tuning::{
     symbol_map_cache_key_single_catalog, symbol_map_for_prompt, wire_surface_for_parse,
     wire_surface_for_teaching_session, ExposedEntitySymbolRow, ExposedRelationSymbolRow,
     ExposureEntityKey, FocusSpec, SymbolMap, SymbolMapCacheKey, SymbolMapCrossRequestCache,
-    TeachingExposureSession,
+    SymbolResolveError, TeachingExposureSession,
 };
 pub use template_interpolate::{
     dollar_interpolation_roots, interpolate_string, interpolate_string_map,

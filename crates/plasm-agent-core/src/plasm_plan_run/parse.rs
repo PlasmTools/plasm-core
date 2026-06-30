@@ -27,44 +27,44 @@ pub(crate) fn session_layer_catalog_entry_ids(session: &ExecuteSession) -> Vec<O
     }
 }
 
-/// Resolve a teaching `p#` teaching symbol (or pass through an already-canonical wire name).
+fn agent_program_error(head: impl AsRef<str>, help: Option<impl AsRef<str>>) -> String {
+    if let Some(h) = help {
+        format!("{}\nhelp: {}", head.as_ref(), h.as_ref())
+    } else {
+        head.as_ref().to_string()
+    }
+}
+
+/// Resolve a teaching `p#` token (or pass through a wire name) for a known row entity.
 pub fn resolve_wire_field_token(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     qe: Option<&QualifiedEntityKey>,
     token: &str,
-) -> String {
+) -> Result<String, String> {
     let t = token.trim();
     if t.is_empty() {
-        return String::new();
+        return Ok(String::new());
     }
     let map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
     if let Some(qe) = qe {
-        if let Some(wire) =
-            map.resolve_wire_for_p_sym_entity(qe.entry_id.as_str(), qe.entity.as_str(), t)
-        {
-            return wire;
-        }
-        if let Ok(cgs) =
+        let cgs =
             crate::catalog_ownership::resolve_cgs_for_entity(session, qe.entity.as_str(), None)
-        {
-            if let Some(ent) = cgs.get_entity(qe.entity.as_str()) {
-                if ent.fields.contains_key(t) || ent.relations.contains_key(t) {
-                    return t.to_string();
-                }
-                let sym = map.ident_sym_entity_field(qe.entity.as_str(), t);
-                if sym != t {
-                    if let Some(wire) = map.resolve_ident(&sym) {
-                        return wire.to_string();
-                    }
-                }
-            }
-        }
+                .map_err(|e| agent_program_error(e, None::<&str>))?;
+        let ent = cgs.get_entity(qe.entity.as_str()).ok_or_else(|| {
+            agent_program_error(
+                format!(
+                    "entity `{}` is not defined in catalog `{}`",
+                    qe.entity, qe.entry_id
+                ),
+                None::<&str>,
+            )
+        })?;
+        return map
+            .resolve_entity_field(qe.entry_id.as_str(), qe.entity.as_str(), ent, t)
+            .map_err(|e| e.to_agent_program_error());
     }
-    if let Some(wire) = map.resolve_ident(t) {
-        return wire.to_string();
-    }
-    t.to_string()
+    Ok(t.to_string())
 }
 
 /// Resolve optional projection / postfix field list tokens to wire names.
@@ -73,7 +73,7 @@ pub fn resolve_wire_field_list(
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
     qe: Option<&QualifiedEntityKey>,
     fields: &[String],
-) -> Vec<String> {
+) -> Result<Vec<String>, String> {
     fields
         .iter()
         .map(|f| resolve_wire_field_token(session, symbol_map_cross_cache, qe, f))

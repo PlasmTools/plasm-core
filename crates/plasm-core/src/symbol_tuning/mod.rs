@@ -23,12 +23,14 @@
 
 mod capability_surface_params;
 mod opaque_symbol_hash;
+mod symbol_resolve;
 
 pub use capability_surface_params::{
     capability_exposure_param_pairs, capability_optional_legend_param_pairs,
     exposed_mutator_capability_keys, loaded_catalog_entry_ids, resolve_ranked_wire_candidates,
     seeded_ranked_wire_candidates, CapabilityParamSurfaceFilter,
 };
+pub use symbol_resolve::SymbolResolveError;
 
 use crate::identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityName, RelationName,
@@ -2011,7 +2013,7 @@ impl SymbolMap {
     }
 
     /// Resolve `p#` → canonical field/param wire. Returns `None` if `sym` is not a known `p#` token.
-    pub fn resolve_ident<'a>(&'a self, sym: &str) -> Option<&'a str> {
+    pub(crate) fn resolve_ident<'a>(&'a self, sym: &str) -> Option<&'a str> {
         self.sym_to_ident.get(sym).map(|s| s.as_str())
     }
 
@@ -2022,7 +2024,7 @@ impl SymbolMap {
     }
 
     /// Resolve opaque `p#` to an entity field wire when the binding entity is known.
-    pub fn resolve_wire_for_p_sym_entity(
+    pub(crate) fn resolve_wire_for_p_sym_entity(
         &self,
         catalog_entry_id: &str,
         entity: &str,

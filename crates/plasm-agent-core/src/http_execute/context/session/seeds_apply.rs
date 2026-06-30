@@ -179,11 +179,7 @@ pub async fn apply_capability_seeds(
     plasm_context_intent: &str,
     ranked_capabilities: RankedCapabilitiesArg,
 ) -> Result<ApplyCapabilitySeedsOutcome, String> {
-    let seeds = normalize_capability_seeds(seeds);
-    if seeds.is_empty() {
-        return Err("`seeds` must be non-empty".into());
-    }
-    let seeds = resolve_capability_seeds(seeds, &st.catalog.snapshot(), None)?;
+    let mut seeds = normalize_capability_seeds(seeds);
 
     let ResolvedExecuteBinding {
         binding,
@@ -192,6 +188,28 @@ pub async fn apply_capability_seeds(
         stale_execute_binding_recovered,
         stale_binding_previous,
     } = resolve_execute_binding(st, binding, logical_session_id).await;
+
+    if seeds.is_empty() {
+        if matches!(
+            &ranked_capabilities,
+            RankedCapabilitiesArg::Set(Some(list)) if !list.is_empty()
+        ) {
+            if let Some((ph, sid)) = &binding {
+                if let Some(sess_arc) = st.get_execute_session(ph, sid).await {
+                    seeds = super::super::seeds::capability_seeds_from_session(sess_arc.as_ref());
+                }
+            }
+        }
+        if seeds.is_empty() {
+            return Err(
+                "`seeds` must be non-empty when opening a new symbol space. To surface write \
+                 capabilities via `ranked_capabilities`, reuse the same logical session binding \
+                 from a prior `plasm_context` call (same seeds) or pass `seeds` again."
+                    .into(),
+            );
+        }
+    }
+    let seeds = resolve_capability_seeds(seeds, &st.catalog.snapshot(), None)?;
 
     let plan = build_capability_exposure_plan(&seeds)
         .ok_or_else(|| "internal error: empty capability exposure plan".to_string())?;
@@ -327,6 +345,32 @@ pub async fn apply_capability_seeds(
                 }
             } else {
                 open_md.push_str(&created.prompt);
+            }
+            if let Some(exp) =
+                teaching_exposure_at(st, created.prompt_hash.as_str(), created.session.as_str())
+                    .await
+            {
+                if let Ok(ctx) = st.catalog.snapshot().load_context(&primary_entry_id) {
+                    let entities = plan
+                        .seeds_by_entry
+                        .get(&primary_entry_id)
+                        .cloned()
+                        .unwrap_or_default();
+                    if let Some(hint) = super::super::seeds::read_first_deferred_mutator_hint(
+                        ctx.cgs.as_ref(),
+                        primary_entry_id.as_str(),
+                        plasm_context_intent,
+                        &exp.all_qualified_entities(),
+                        &entities,
+                        &exp,
+                        match &ranked_capabilities {
+                            RankedCapabilitiesArg::Set(opt) => opt.as_deref(),
+                            RankedCapabilitiesArg::Unspecified => None,
+                        },
+                    ) {
+                        open_md.push_str(&hint);
+                    }
+                }
             }
         }
         let teaching_prompt_chars_added = if created.reused {

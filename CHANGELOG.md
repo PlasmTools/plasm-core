@@ -7,7 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.96] - 2026-06-30
+## [0.3.97] - 2026-06-30
+
+### Added
+
+- **Symbol resolution module:** role-scoped `SymbolMap` reverse lookup (`resolve_entity_field`, `resolve_compound_key`, `resolve_cap_param`, `resolve_query_filter_field`) with typed `SymbolResolveError` and centralized agent hints.
+- **CML `base64` transform:** encode string payloads at mapping time (GitHub `repo_content_put` content field).
+- **GitHub `RepositoryTag`:** compound `key_vars`, `repo_tag_get` capability + mapping for teaching-block synthesis.
+- **Discovery defer hint:** `read_first_deferred_mutator_hint` surfaces withheld mutators in open-wave markdown; `ranked_capabilities` reuses live execute seeds when omitted.
+
+### Changed
+
+- **Parse / DAG / compile paths:** route row projection, compound keys, predicates, and cap invoke args through role-scoped symbol resolution (no global homograph fallback).
+- **Query filter `{…}` LHS:** opaque `p#` resolves to row fields or query/search scope params (`label_query.repository`, etc.).
+- **Expression-surface validation:** compositional Get↔Query coverage inference and query-only entity coverage when teaching lines omit `source_capability`.
+
+### Fixed
+
+- **GitHub catalog validation:** empty `RepositoryTag` teaching blocks and capability coverage gaps from compound-get dedupe before query lines attach `source_capability`.
+
 
 ### Added
 

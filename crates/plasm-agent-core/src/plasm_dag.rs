@@ -758,7 +758,7 @@ fn validate_compute_paths_for_schema(
                 symbol_map_cross_cache,
                 qe,
                 path.segments()[0].as_str(),
-            )
+            )?
         } else {
             path.dotted()
         };
@@ -948,7 +948,7 @@ fn validate_compute_paths_for_allowed_set(
                 symbol_map_cross_cache,
                 Some(qe),
                 segs[0].as_str(),
-            );
+            )?;
             segs[0] = wire.clone();
             if allowed.contains(&segs) {
                 continue;
@@ -1005,7 +1005,7 @@ fn validate_compute_paths_for_entity(
                 symbol_map_cross_cache,
                 Some(qe),
                 segs[0].as_str(),
-            );
+            )?;
             segs[0] = wire;
         }
         if allowed.contains(&segs) {
@@ -1037,7 +1037,7 @@ fn resolve_compute_field_path(
         symbol_map_cross_cache,
         qe,
         segs[0].as_str(),
-    );
+    )?;
     FieldPath::from_dotted(&wire)
 }
 

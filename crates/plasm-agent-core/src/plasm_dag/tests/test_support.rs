@@ -10,13 +10,13 @@ use std::sync::Arc;
 pub(super) fn github_issue_label_session() -> ExecuteSession {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let cgs = Arc::new(load_schema(&root.join("../../apis/github")).expect("load github"));
+    let entities = ["Repository", "Issue", "Label"];
+    let exp = TeachingExposureSession::new(cgs.as_ref(), "github", &entities);
     let mut ctxs = indexmap::IndexMap::new();
     ctxs.insert(
         "github".into(),
         Arc::new(CgsContext::entry("github", cgs.clone())),
     );
-    let exp =
-        TeachingExposureSession::new(cgs.as_ref(), "github", &["Repository", "Issue", "Label"]);
     ExecuteSession::new(
         "ph".into(),
         "p".into(),

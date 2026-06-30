@@ -19,7 +19,7 @@ pub(crate) fn lower_row_predicate_to_plan(
                 cross_cache,
                 Some(qe),
                 c.field.as_str(),
-            );
+            )?;
             Ok(PlanPredicate {
                 field_path: FieldPath::from_dotted(&wire)?,
                 op: comp_op_to_plan(c.op),

@@ -66,11 +66,14 @@ pub(crate) fn parse_field_list_with_tokens(
                 symbol_map_cross_cache,
                 qe,
                 raw.as_str(),
-            );
-            (raw, wire)
+            )?;
+            Ok::<(String, String), String>((raw, wire))
         })
+        .collect::<Result<Vec<_>, _>>()?;
+    let out: Vec<(String, String)> = out
+        .into_iter()
         .filter(|(_, wire)| !wire.is_empty())
-        .collect::<Vec<_>>();
+        .collect();
     if out.is_empty() {
         return Err("field list must be non-empty".to_string());
     }
@@ -130,10 +133,10 @@ pub(crate) fn resolve_inferred_render_columns(
                 symbol_map_cross_cache,
                 qe,
                 raw.as_str(),
-            );
-            (raw.clone(), wire)
+            )?;
+            Ok::<(String, String), String>((raw.clone(), wire))
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
     RenderColumns::from_field_pairs(&pairs)
 }
 

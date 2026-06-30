@@ -151,37 +151,22 @@ impl<'a> Parser<'a> {
         entity_canon: &str,
         ent: &EntityDef,
         raw_key: &str,
-    ) -> String {
-        if ent.key_vars.iter().any(|k| k.as_str() == raw_key) {
-            return raw_key.to_string();
-        }
-        if let Some(wire) = self.sym_map.resolve_ident(raw_key) {
-            if ent.key_vars.iter().any(|k| k.as_str() == wire) {
-                return wire.to_string();
-            }
-        }
-        for kv in &ent.key_vars {
-            if self
-                .sym_map
-                .ident_sym_entity_field(entity_canon, kv.as_str())
-                == raw_key
-            {
-                return kv.to_string();
-            }
-        }
-        raw_key.to_string()
+    ) -> Result<String, ParseError> {
+        let entry_id = self.active_entity_entry_id.as_deref().unwrap_or("");
+        self.sym_map
+            .resolve_compound_key(entry_id, entity_canon, &ent.key_vars, raw_key)
+            .map_err(|e| {
+                self.err(ParseErrorKind::Other {
+                    message: e.to_agent_program_error(),
+                })
+            })
     }
 
-    /// Normalize binding field-path segments: opaque `p#` → wire when known in session map.
+    /// Normalize binding field-path segments: opaque `p#` → wire when unambiguous in session map.
     pub(super) fn normalize_binding_field_path(&self, segments: &[String]) -> Vec<String> {
         segments
             .iter()
-            .map(|s| {
-                self.sym_map
-                    .resolve_ident(s.as_str())
-                    .map(|w| w.to_string())
-                    .unwrap_or_else(|| s.clone())
-            })
+            .map(|s| self.sym_map.resolve_binding_field_segment(s.as_str()))
             .collect()
     }
 

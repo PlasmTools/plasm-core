@@ -4,7 +4,41 @@ use super::test_support::{
     compile_github_program, github_cgs, github_issue_label_session, github_ranked_mutator_session,
     github_symbol_map,
 };
+use crate::plasm_dag::compile_plasm_dag_to_plan;
 use crate::plasm_plan_run::evaluate_plasm_plan_dry;
+
+/// Unknown `p#` on Label projection surfaces an honest error (no Issue `body` phantom).
+#[test]
+fn label_projection_unknown_p_sym_is_typed_error_not_phantom_body() {
+    let session = github_issue_label_session();
+    let map = github_symbol_map(&session);
+    let label_e = map.entity_sym_for("github", "Label");
+    let issue_p_body = map.ident_sym_entity_field("Issue", "body");
+    let source = format!(
+        r#"repo = Repository(owner="o", repo="r")
+labels = {label_e}{{repository=repo.full_name}}
+labels[{issue_p_body}]"#,
+        label_e = label_e,
+        issue_p_body = issue_p_body,
+    );
+    let err = compile_plasm_dag_to_plan(
+        &plasm_core::PromptPipelineConfig::default(),
+        None,
+        &session,
+        "label-bad-p",
+        &source,
+    )
+    .expect_err("Issue body p# must not project Label rows");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("not a row symbol") || msg.contains("not a row field"),
+        "expected typed symbol error, got {msg}"
+    );
+    assert!(
+        !msg.contains("body") || msg.contains("not a row"),
+        "must not treat Issue body as Label row field: {msg}"
+    );
+}
 
 /// Label query `[p#,…]` projection must resolve tokens against the Label row contract, not
 /// globally homographed Issue field wires (`state`, `issue_type_color`, …).

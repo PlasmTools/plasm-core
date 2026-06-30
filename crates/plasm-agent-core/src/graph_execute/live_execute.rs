@@ -148,7 +148,8 @@ async fn execute_on_branch(
                 Some(st.sessions.symbol_map_cross_cache()),
                 qe.as_ref(),
                 fields,
-            );
+            )
+            .map_err(RunLineError::Parse)?;
             match st
                 .engine
                 .auto_resolve_projection(

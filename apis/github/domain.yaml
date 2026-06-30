@@ -998,13 +998,31 @@ entities:
         cardinality: one
   RepositoryTag:
     id_field: name
+    key_vars:
+    - owner
+    - repo
+    - name
     description: Git tag in a repository (not a GitHub Release).
     fields:
       owner:
         required: true
+        path: commit.url
+        derive:
+          type: segments_after_prefix
+          prefix: https://api.github.com/repos/
+          alternate_prefixes:
+          - http://api.github.com/repos/
+          part_index: 0
         value_ref: nv_github_account_login
       repo:
         required: true
+        path: commit.url
+        derive:
+          type: segments_after_prefix
+          prefix: https://api.github.com/repos/
+          alternate_prefixes:
+          - http://api.github.com/repos/
+          part_index: 1
         value_ref: nv_github_repository_name
       name:
         required: true
@@ -2137,6 +2155,17 @@ capabilities:
       value_ref: nv_github_scope_repository
       required: true
       role: scope
+  repo_tag_get:
+    kind: get
+    entity: RepositoryTag
+    description: Resolve one git tag and its commit.
+    provides:
+    - owner
+    - repo
+    - name
+    - commit_sha
+    - zipball_url
+    - tarball_url
   contributor_query:
     kind: query
     entity: Contributor
@@ -3806,6 +3835,10 @@ oauth:
         - repo
         - public_repo
       repo_tags_query:
+        any_of:
+        - repo
+        - public_repo
+      repo_tag_get:
         any_of:
         - repo
         - public_repo

@@ -79,6 +79,9 @@ pub enum CmlExpr {
     /// required; optional `to`, `subject` override reply defaults.
     #[serde(rename = "gmail_rfc5322_reply_send_body")]
     GmailRfc5322ReplySendBody {},
+    /// STANDARD Base64-encode the evaluated inner string (GitHub blob `content`, etc.).
+    #[serde(rename = "base64")]
+    Base64 { value: Box<CmlExpr> },
 }
 
 /// CML Condition for if expressions
@@ -751,6 +754,17 @@ pub fn eval_cml(expr: &CmlExpr, env: &CmlEnv) -> Result<Value, CmlError> {
         CmlExpr::GmailRfc5322ReplySendBody {} => {
             crate::gmail_send_body::eval_gmail_rfc5322_reply_send_body(env)
         }
+        CmlExpr::Base64 { value } => {
+            let inner = eval_cml(value, env)?;
+            let text = match inner {
+                Value::String(s) => s,
+                other => value_to_string(&other),
+            };
+            use base64::Engine;
+            Ok(Value::String(
+                base64::engine::general_purpose::STANDARD.encode(text.as_bytes()),
+            ))
+        }
     }
 }
 
@@ -1238,6 +1252,17 @@ mod tests {
             result,
             Value::String("List(urn%3Ali%3Aperson%3A8675309)".to_string())
         );
+    }
+
+    #[test]
+    fn test_eval_base64_encodes_inner_string() {
+        let mut env = CmlEnv::new();
+        env.insert("content".to_string(), Value::String("hello".to_string()));
+        let expr = CmlExpr::Base64 {
+            value: Box::new(CmlExpr::var("content")),
+        };
+        let result = eval_cml(&expr, &env).unwrap();
+        assert_eq!(result, Value::String("aGVsbG8=".to_string()));
     }
 
     #[test]

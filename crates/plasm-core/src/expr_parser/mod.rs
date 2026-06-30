@@ -697,17 +697,15 @@ impl<'a> Parser<'a> {
                 raw_key
             } else if crate::symbol_tuning::SymbolMap::is_opaque_p_sym(&raw_key) {
                 self.sym_map
-                    .resolve_wire_for_p_sym_cap(
+                    .resolve_cap_param(
                         entry_id.as_str(),
                         cap.domain.as_str(),
                         cap.name.as_str(),
                         &raw_key,
                     )
-                    .ok_or_else(|| {
+                    .map_err(|e| {
                         self.err(ParseErrorKind::Other {
-                            message: format!(
-                                "capability parameter `{raw_key}` not found on `{cap_label}`{hint}"
-                            ),
+                            message: format!("{e} on `{cap_label}`{hint}"),
                         })
                     })?
             } else {
@@ -840,7 +838,7 @@ impl<'a> Parser<'a> {
                 break;
             }
             let (raw_key, _, _) = self.parse_ident_with_span()?;
-            let key = self.normalize_compound_ctor_key(display_entity, ent, &raw_key);
+            let key = self.normalize_compound_ctor_key(display_entity, ent, &raw_key)?;
             if parts.contains_key(&key) {
                 return Err(self.err(ParseErrorKind::Other {
                     message: format!(
@@ -925,11 +923,11 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
         self.expect_char(')')?;
+        let entry_id = self.active_entity_entry_id.as_deref().unwrap_or("");
         let wire_key = self
             .sym_map
-            .resolve_ident(key.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| key.clone());
+            .resolve_entity_field(entry_id, entity, ent, key.as_str())
+            .unwrap_or_else(|_| key.clone());
         if wire_key != ent.id_field.as_str() {
             return Err(self.err(ParseErrorKind::Other {
                 message: format!(
@@ -986,10 +984,10 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
         self.expect_char(')')?;
+        let entry_id = self.active_entity_entry_id.as_deref().unwrap_or("");
         let wire_field = self
             .sym_map
-            .resolve_ident(field.as_str())
-            .map(|s| s.to_string())
+            .resolve_entity_field(entry_id, entity, ent, field.as_str())
             .unwrap_or(field);
         if wire_field != ent.id_field.as_str() {
             self.pos = save;
@@ -1041,11 +1039,11 @@ impl<'a> Parser<'a> {
         // (`try_parse_simple_id_field_get_sugar`): a `p#` token that resolves to the entity's
         // identity field is a legal keyed identity get. Comparing the raw `key` here rejected
         // `Team(p76=key)` even though `p76` resolves to `key`.
+        let entry_id = self.active_entity_entry_id.as_deref().unwrap_or("");
         let wire_key = self
             .sym_map
-            .resolve_ident(key.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| key.clone());
+            .resolve_entity_field(entry_id, entity_canon, ent, key.as_str())
+            .unwrap_or_else(|_| key.clone());
         if wire_key != ent.id_field.as_str() {
             return Err(self.err(ParseErrorKind::Other {
                 message: format!(
@@ -1775,6 +1773,63 @@ impl<'a> Parser<'a> {
         Err(self.err(ParseErrorKind::ExpectedOperator))
     }
 
+    /// Ensure a query/search `{…}` predicate LHS resolves to an entity row field or a query/search cap param.
+    fn validate_query_predicate_wire(
+        &self,
+        cgs: &CGS,
+        entity_name: &str,
+        pred_wire: &str,
+        pred_field: &str,
+        span_start: usize,
+        span_end: usize,
+    ) -> Result<(), ParseError> {
+        let Some(ent) = cgs.get_entity(entity_name) else {
+            return Ok(());
+        };
+        if ent.fields.contains_key(pred_wire) {
+            return Ok(());
+        }
+        let is_query_or_search_param = [CapabilityKind::Query, CapabilityKind::Search]
+            .into_iter()
+            .flat_map(|kind| cgs.find_capabilities(entity_name, kind))
+            .any(|cap| {
+                cap.object_params()
+                    .is_some_and(|fields| fields.iter().any(|f| f.name == pred_wire))
+            });
+        if is_query_or_search_param {
+            return Ok(());
+        }
+        let create_only = cgs
+            .find_capabilities(entity_name, CapabilityKind::Create)
+            .iter()
+            .any(|cap| {
+                cap.object_params()
+                    .is_some_and(|fields| fields.iter().any(|f| f.name == pred_wire))
+            });
+        if create_only {
+            return Err(ParseError {
+                kind: ParseErrorKind::PredicateFieldNotFound {
+                    field: pred_field.to_string(),
+                    entity: format!(
+                        "{entity_name} (field `{pred_wire}` is a Create-capability param; in search filters `e#~\"…\"{{…}}` use the Search-capability param wire, not a Create-only homograph)"
+                    ),
+                    span_start,
+                    span_end,
+                },
+                offset: span_start,
+            });
+        }
+        Err(ParseError {
+            kind: ParseErrorKind::PredicateFieldNotFound {
+                field: pred_field.to_string(),
+                entity: entity_name.to_string(),
+                span_start,
+                span_end,
+            },
+            offset: span_start,
+        })
+    }
+
     /// Parse a single predicate: `field op value` or `foreign.field op value`.
     fn parse_pred(&mut self, entity_name: &str) -> Result<Predicate, ParseError> {
         let (first, span_start, span_end) = self.parse_ident_with_span()?;
@@ -1804,79 +1859,33 @@ impl<'a> Parser<'a> {
         } else {
             first
         };
-        let pred_wire = self
-            .sym_map
-            .resolve_ident(pred_field.as_str())
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| pred_field.clone());
-
-        // Validate field exists on entity OR as a query capability input parameter.
-        // Scope and filter params (e.g. `team_id`, `space_id`) live in the capability
-        // input schema, not on the entity definition itself.
         let ec = self.cgs_for_entity_required(entity_name)?;
-        if let Some(ent) = ec.get_entity(entity_name) {
-            if !ent.fields.contains_key(pred_wire.as_str()) {
-                let is_cap_param = ec
-                    .find_capabilities(entity_name, CapabilityKind::Query)
-                    .iter()
-                    .chain(
-                        ec.find_capabilities(entity_name, CapabilityKind::Search)
-                            .iter(),
-                    )
-                    .any(|cap| {
-                        cap.input_schema
-                            .as_ref()
-                            .and_then(|is| {
-                                if let crate::InputType::Object { fields, .. } = &is.input_type {
-                                    Some(fields.iter().any(|f| f.name == pred_wire))
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or(false)
-                    });
-                if !is_cap_param {
-                    let create_only = ec
-                        .find_capabilities(entity_name, CapabilityKind::Create)
-                        .iter()
-                        .any(|cap| {
-                            cap.input_schema
-                                .as_ref()
-                                .and_then(|is| {
-                                    if let crate::InputType::Object { fields, .. } = &is.input_type
-                                    {
-                                        Some(fields.iter().any(|f| f.name == pred_wire))
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .unwrap_or(false)
-                        });
-                    if create_only {
-                        return Err(ParseError {
-                            kind: ParseErrorKind::PredicateFieldNotFound {
-                                field: pred_field.clone(),
-                                entity: format!(
-                                    "{entity_name} (field `{pred_wire}` is a Create-capability param; in search filters `e#~\"…\"{{…}}` use the Search-capability param wire, not a Create-only homograph)"
-                                ),
-                                span_start,
-                                span_end,
-                            },
-                            offset: span_start,
-                        });
-                    }
-                    return Err(ParseError {
-                        kind: ParseErrorKind::PredicateFieldNotFound {
-                            field: pred_field.clone(),
-                            entity: entity_name.to_string(),
-                            span_start,
-                            span_end,
-                        },
-                        offset: span_start,
-                    });
-                }
-            }
-        }
+        let entry_id = self.active_entity_entry_id.as_deref().unwrap_or("");
+        let pred_wire = if crate::symbol_tuning::SymbolMap::is_opaque_p_sym(pred_field.as_str()) {
+            let ent = ec.get_entity(entity_name).ok_or_else(|| {
+                self.err(ParseErrorKind::Other {
+                    message: format!("entity `{entity_name}` is not defined in catalog"),
+                })
+            })?;
+            self.sym_map
+                .resolve_query_filter_field(entry_id, entity_name, ent, ec, pred_field.as_str())
+                .map_err(|e| {
+                    self.err(ParseErrorKind::Other {
+                        message: e.to_agent_program_error(),
+                    })
+                })?
+        } else {
+            pred_field.clone()
+        };
+
+        self.validate_query_predicate_wire(
+            ec,
+            entity_name,
+            pred_wire.as_str(),
+            pred_field.as_str(),
+            span_start,
+            span_end,
+        )?;
 
         let op = self.parse_op()?;
         let mut val = self.parse_predicate_rhs_after_op()?;

@@ -1,6 +1,99 @@
 //! Capability seeds, exposure planning, plasm_context MCP surface.
 
 use super::super::*;
+use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+use plasm_core::{CapabilityKind, ExposureEntityKey, TeachingExposureSession};
+use std::collections::{BTreeSet, HashSet};
+
+pub(crate) fn capability_seeds_from_session(sess: &ExecuteSession) -> Vec<CapabilitySeed> {
+    if let Some(exp) = sess.teaching_exposure.as_ref() {
+        return exp
+            .surface
+            .entities
+            .iter()
+            .map(|k| CapabilitySeed {
+                entry_id: k.entry_id.clone(),
+                entity: k.entity.to_string(),
+            })
+            .collect();
+    }
+    sess.entities
+        .iter()
+        .map(|e| CapabilitySeed {
+            entry_id: sess.entry_id.clone(),
+            entity: e.clone(),
+        })
+        .collect()
+}
+
+/// Mutating capabilities that match intent but read-first exposure withheld from the teaching surface.
+pub(crate) fn read_first_deferred_mutator_hint(
+    cgs: &CGS,
+    entry_id: &str,
+    intent: &str,
+    relation_keys: &[ExposureEntityKey],
+    seeded_entities: &[String],
+    exp: &TeachingExposureSession,
+    ranked: Option<&[String]>,
+) -> Option<String> {
+    let relaxed = derive_intent_exposure_surface_batch(
+        cgs,
+        entry_id,
+        intent,
+        relation_keys,
+        seeded_entities,
+        ranked,
+        ExposureSurfaceOptions {
+            read_first_seeded: false,
+        },
+    );
+    let on_surface: HashSet<(String, String, String)> = exp
+        .surface
+        .capabilities
+        .iter()
+        .map(|k| {
+            (
+                k.entry_id.clone(),
+                k.domain.to_string(),
+                k.capability.to_string(),
+            )
+        })
+        .collect();
+    let seeded: HashSet<String> = seeded_entities.iter().cloned().collect();
+    let mut deferred = BTreeSet::new();
+    for cap in relaxed.required.capabilities {
+        let trip = (
+            cap.entry_id.clone(),
+            cap.domain.to_string(),
+            cap.capability.to_string(),
+        );
+        if on_surface.contains(&trip) || !seeded.contains(cap.domain.as_str()) {
+            continue;
+        }
+        let Some(schema) = cgs.get_capability(cap.capability.as_str()) else {
+            continue;
+        };
+        if schema.domain.as_str() != cap.domain.as_str() {
+            continue;
+        }
+        if matches!(
+            schema.kind,
+            CapabilityKind::Create
+                | CapabilityKind::Update
+                | CapabilityKind::Delete
+                | CapabilityKind::Action
+        ) {
+            deferred.insert(cap.capability.to_string());
+        }
+    }
+    if deferred.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "\n\n**Deferred write capabilities** (read-first exposure): `{}`. Restate intent toward mutation or pass `ranked_capabilities` with the needed mutator wire name(s).\n",
+        deferred.into_iter().collect::<Vec<_>>().join("`, `")
+    ))
+}
 
 pub(super) fn normalize_execute_entity_names(mut names: Vec<String>) -> Vec<String> {
     names.sort();

@@ -121,12 +121,16 @@ fn covered_capabilities_from_model(cgs: &CGS, model: &TeachingPromptModel) -> Ha
             }
         }
     }
-    // `Get`/`Query`/`Search` expressions are capability-agnostic on the surface:
-    // - Get: `Entity(id)` / `Entity(k=v,...)`
-    // - Query: `Entity{...}` / `Entity`
-    // - Search: `Entity~text`
-    // If one capability of that kind is taught for an entity, that expression family is present.
-    let mut covered_domains_by_kind: HashSet<(String, CapabilityKind)> = covered
+    expand_expression_family_coverage(cgs, &mut covered);
+    expand_query_get_domain_symmetry(cgs, &mut covered);
+    expand_query_only_entity_coverage(cgs, model, &mut covered);
+    covered
+}
+
+/// `Get`/`Query`/`Search` surface forms are capability-agnostic per domain — one taught cap of a
+/// kind implies every cap of that kind on the same entity row type is covered.
+fn expand_expression_family_coverage(cgs: &CGS, covered: &mut HashSet<String>) {
+    let domains_by_kind: HashSet<(String, CapabilityKind)> = covered
         .iter()
         .filter_map(|cap_name| cgs.get_capability(cap_name))
         .filter(|cap| {
@@ -137,27 +141,74 @@ fn covered_capabilities_from_model(cgs: &CGS, model: &TeachingPromptModel) -> Ha
         })
         .map(|cap| (cap.domain.to_string(), cap.kind))
         .collect();
-    for (entity, kind) in covered_domains_by_kind.drain() {
-        for cap in cgs.find_capabilities(entity.as_str(), kind) {
+    for (domain, kind) in domains_by_kind {
+        for cap in cgs.find_capabilities(domain.as_str(), kind) {
             covered.insert(cap.name.to_string());
         }
     }
-    // When any `Query` for an entity appears in the teaching bundle, treat every `Get` on that entity as
-    // covered too — fetch-by-id is compositional on the same row type (no unary `e#($)` required).
-    let mut domains_with_query: HashSet<String> = HashSet::new();
-    for cap_name in &covered {
-        if let Some(cap) = cgs.get_capability(cap_name) {
-            if cap.kind == CapabilityKind::Query {
-                domains_with_query.insert(cap.domain.to_string());
-            }
+}
+
+/// Fetch-by-id and scoped list queries are compositional on the same row type — cover `Get` when
+/// any `Query` is taught (and symmetrically cover `Query` when any `Get` witness is present).
+fn expand_query_get_domain_symmetry(cgs: &CGS, covered: &mut HashSet<String>) {
+    let domains_with_query = domains_for_covered_kind(cgs, covered, CapabilityKind::Query);
+    let domains_with_get = domains_for_covered_kind(cgs, covered, CapabilityKind::Get);
+    insert_all_capabilities_on_domains(cgs, covered, domains_with_query, CapabilityKind::Get);
+    insert_all_capabilities_on_domains(cgs, covered, domains_with_get, CapabilityKind::Query);
+}
+
+/// Query-only entities: teaching lines without a `Get` witness still imply scoped list-query coverage.
+fn expand_query_only_entity_coverage(
+    cgs: &CGS,
+    model: &TeachingPromptModel,
+    covered: &mut HashSet<String>,
+) {
+    for ep in &model.entities {
+        if ep.lines.is_empty() {
+            continue;
         }
-    }
-    for domain in domains_with_query {
-        for cap in cgs.find_capabilities(domain.as_str(), CapabilityKind::Get) {
-            covered.insert(cap.name.to_string());
+        let domain_has_get_witness = ep.lines.iter().any(|line| {
+            line.source_capability
+                .as_ref()
+                .and_then(|name| cgs.get_capability(name.as_str()))
+                .is_some_and(|cap| cap.kind == CapabilityKind::Get)
+        });
+        if domain_has_get_witness {
+            continue;
         }
+        insert_all_capabilities_on_domains(
+            cgs,
+            covered,
+            HashSet::from([ep.entity.to_string()]),
+            CapabilityKind::Query,
+        );
     }
+}
+
+fn domains_for_covered_kind(
+    cgs: &CGS,
+    covered: &HashSet<String>,
+    kind: CapabilityKind,
+) -> HashSet<String> {
     covered
+        .iter()
+        .filter_map(|cap_name| cgs.get_capability(cap_name))
+        .filter(|cap| cap.kind == kind)
+        .map(|cap| cap.domain.to_string())
+        .collect()
+}
+
+fn insert_all_capabilities_on_domains(
+    cgs: &CGS,
+    covered: &mut HashSet<String>,
+    domains: HashSet<String>,
+    kind: CapabilityKind,
+) {
+    for domain in domains {
+        for cap in cgs.find_capabilities(domain.as_str(), kind) {
+            covered.insert(cap.name.to_string());
+        }
+    }
 }
 
 fn collect_uncovered_capabilities_with_model(
@@ -205,6 +256,7 @@ mod tests {
         for (cap, ent) in &missing {
             eprintln!("  uncovered: {cap} on {ent}");
         }
+        assert!(missing.is_empty(), "uncovered capabilities: {missing:?}");
     }
 
     #[test]

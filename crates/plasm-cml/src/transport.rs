@@ -255,6 +255,7 @@ pub(crate) fn collect_expr_vars(expr: &CmlExpr, vars: &mut IndexSet<String>) {
                 vars.insert(key.to_string());
             }
         }
+        CmlExpr::Base64 { value } => collect_expr_vars(value, vars),
     }
 }
 

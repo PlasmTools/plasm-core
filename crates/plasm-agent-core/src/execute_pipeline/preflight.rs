@@ -64,7 +64,11 @@ impl PlasmPreflight {
             return Ok(PreflightToken::VERIFIED);
         }
         for field in fields {
-            let name = crate::plasm_plan_run::resolve_wire_field_token(session, None, None, field);
+            let entity = parsed.expr.primary_entity();
+            let qe =
+                crate::catalog_ownership::resolve_qualified_entity_key(session, entity, None).ok();
+            let name =
+                crate::plasm_plan_run::resolve_wire_field_token(session, None, qe.as_ref(), field)?;
             let entity = parsed.expr.primary_entity();
             let cgs = crate::catalog_ownership::resolve_cgs_for_entity(session, entity, None)?;
             let Some(ent) = cgs.get_entity(entity) else {

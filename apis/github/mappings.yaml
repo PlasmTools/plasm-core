@@ -450,6 +450,18 @@ repo_tags_query:
       page:     {counter: 1}
       per_page: {fixed: 30 }
 
+repo_tag_get:
+  method: GET
+  path:
+    - { type: literal, value: repos }
+    - { type: var, name: owner }
+    - { type: var, name: repo }
+    - { type: literal, value: git }
+    - { type: literal, value: refs }
+    - { type: literal, value: tags }
+    - { type: var, name: name }
+  response: single
+
 contributor_query:
   method: GET
   path:
@@ -1649,7 +1661,7 @@ repo_content_put:
     type: object
     fields:
       - [message, { type: var, name: message }]
-      - [content, { type: var, name: content }]
+      - [content, { type: base64, value: { type: var, name: content } }]
       - [branch, { type: if, condition: { type: exists, var: branch },
                   then_expr: { type: var, name: branch },
                   else_expr: { type: const, value: null } }]
