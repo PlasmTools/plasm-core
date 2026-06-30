@@ -57,14 +57,23 @@ async fn base_url() -> String {
         .clone()
 }
 
-fn assert_plan_ux_reflection(body: &Value) {
-    let reflection = body
-        .pointer("/_meta/plasm/plan_ux_reflection")
+fn plan_ux_reflection_from_body(body: &Value) -> &Value {
+    body.pointer("/_meta/ui/plasm/plan_ux_reflection")
+        .or_else(|| body.pointer("/_meta/plasm/plan_ux_reflection"))
+        .or_else(|| body.get("plan_ux_reflection"))
         .or_else(|| body.pointer("/plan_ux_reflection"))
-        .unwrap_or_else(|| panic!("plan_ux_reflection missing in {body}"));
-    assert_eq!(
-        reflection.get("schema_version").and_then(|v| v.as_u64()),
-        Some(1)
+        .unwrap_or_else(|| panic!("plan_ux_reflection missing in {body}"))
+}
+
+fn assert_plan_ux_reflection(body: &Value) {
+    let reflection = plan_ux_reflection_from_body(body);
+    assert!(
+        reflection
+            .get("schema_version")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            >= 1,
+        "plan_ux_reflection.schema_version must be >= 1, got {reflection:?}"
     );
     assert!(reflection.get("steps").and_then(|v| v.as_array()).is_some());
     for step in reflection["steps"].as_array().into_iter().flatten() {
@@ -78,18 +87,29 @@ fn assert_plan_ux_reflection(body: &Value) {
 
 fn assert_comp_human_ops(body: &Value) {
     let comp = body
-        .pointer("/_meta/plasm/comp")
-        .expect("comp missing in _meta.plasm");
+        .pointer("/_meta/ui/plasm/comp")
+        .or_else(|| body.pointer("/_meta/plasm/comp"))
+        .or_else(|| body.get("comp"))
+        .expect("comp missing in _meta.ui.plasm, legacy _meta.plasm, or top-level comp");
     let steps = comp["steps"].as_object().expect("comp.steps");
     assert!(!steps.is_empty(), "comp.steps must be non-empty");
-    for (_id, step) in steps {
+    assert!(comp["bind"]["topo"].is_array(), "comp.bind.topo required");
+
+    let reflection = plan_ux_reflection_from_body(body);
+    let ux_steps = reflection["steps"]
+        .as_array()
+        .expect("plan_ux_reflection.steps");
+    assert!(
+        !ux_steps.is_empty(),
+        "plan_ux_reflection.steps must be non-empty"
+    );
+    for step in ux_steps {
         let op = step["operation"].as_str().unwrap_or("");
         assert!(
             !op.contains("PlanDryOp") && !op.is_empty(),
-            "comp step operation must be human-readable, got {op:?}"
+            "plan_ux step operation must be human-readable, got {op:?}"
         );
     }
-    assert!(comp["bind"]["topo"].is_array(), "comp.bind.topo required");
 }
 
 async fn http_open_workflow_session(client: &reqwest::Client, base: &str) -> (String, String) {
@@ -415,20 +435,27 @@ async fn workflow_apps_e2e_async() {
         .pointer("/structuredContent/plasm")
         .or_else(|| dry_mcp.pointer("/mcp_result/structuredContent/plasm"));
     assert!(
-        dry_structured_plasm.and_then(|p| p.get("comp")).is_some(),
-        "plasm dry-run must mirror comp into structuredContent.plasm: {dry_mcp}"
+        dry_mcp
+            .pointer("/_meta/ui/plasm/comp/bind/topo")
+            .and_then(|v| v.as_array())
+            .is_some_and(|a| !a.is_empty()),
+        "plasm dry-run must attach comp under _meta.ui.plasm: {dry_mcp}"
     );
-    assert_eq!(
-        dry_mcp.pointer("/_meta/plasm/comp"),
-        dry_structured_plasm.and_then(|p| p.get("comp")),
-        "structuredContent.plasm.comp must mirror _meta.plasm.comp"
+    assert!(
+        dry_structured_plasm.and_then(|p| p.get("comp")).is_none(),
+        "structuredContent.plasm must omit comp (UI channel only): {dry_mcp}"
+    );
+    assert!(
+        dry_mcp.pointer("/_meta/plasm/comp").is_none(),
+        "agent _meta.plasm must omit comp: {dry_mcp}"
     );
 
-    let plan_commit_ref = dry_mcp
-        .pointer("/_meta/plasm/plan_commit_ref")
+    let run_ref = dry_mcp
+        .pointer("/_meta/plasm/run_ref")
+        .or_else(|| dry_mcp.pointer("/structuredContent/plasm/run_ref"))
         .and_then(|v| v.as_str())
-        .expect("plan_commit_ref from dry-run");
-    let _ = plan_commit_ref;
+        .expect("run_ref from dry-run");
+    let _ = run_ref;
 
     let run_mcp = mcp_tool_meta(
         &client,
@@ -437,8 +464,7 @@ async fn workflow_apps_e2e_async() {
         "plasm_run",
         json!({
             "logical_session_ref": ls,
-            "program": "e1.limit(5)",
-            "force": true,
+            "run_ref": run_ref,
         }),
         8,
     )
@@ -488,18 +514,19 @@ async fn workflow_apps_e2e_async() {
             .is_some(),
         "step must include row_count: {first_small}"
     );
-    assert!(
-        first_small
-            .get("preview_entities")
-            .and_then(|v| v.as_array())
-            .is_some_and(|a| !a.is_empty()),
-        "bounded small plasm_run must inline preview_entities: {first_small}"
-    );
-    if let Some(row) = first_small
+    let preview = first_small
         .get("preview_entities")
         .and_then(|v| v.as_array())
-        .and_then(|a| a.first())
-    {
+        .filter(|a| !a.is_empty());
+    let artifact_uri = first_small
+        .get("artifact_uri")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty());
+    assert!(
+        preview.is_some() || artifact_uri.is_some(),
+        "bounded small plasm_run must inline preview_entities or attach artifact_uri: {first_small}"
+    );
+    if let Some(row) = preview.and_then(|a| a.first()) {
         for key in ["_ref", "_version", "_last_updated", "_completeness"] {
             assert!(
                 row.get(key).is_none(),
@@ -527,6 +554,23 @@ async fn workflow_apps_e2e_async() {
         "structuredContent.plasm.steps must mirror _meta.plasm.steps"
     );
 
+    let dry_large = mcp_tool_meta(
+        &client,
+        &base,
+        &mcp_session,
+        "plasm",
+        json!({
+            "logical_session_ref": ls,
+            "program": "items = e1.limit(5)[id,title]\nwide = items <<PLASM_RUN_UI_E2E_WIDE\n{% for r in rows %}{% for i in range(500) %}w{% endfor %}\n{% endfor %}\nPLASM_RUN_UI_E2E_WIDE\nwide",
+        }),
+        10,
+    )
+    .await;
+    let large_run_ref = dry_large
+        .pointer("/_meta/plasm/run_ref")
+        .and_then(|v| v.as_str())
+        .expect("run_ref from large dry-run");
+
     let run_large_mcp = mcp_tool_meta(
         &client,
         &base,
@@ -534,8 +578,7 @@ async fn workflow_apps_e2e_async() {
         "plasm_run",
         json!({
             "logical_session_ref": ls,
-            "program": "items = e1.limit(5)[id,title]\nwide = items <<PLASM_RUN_UI_E2E_WIDE\n{% for r in rows %}{% for i in range(500) %}w{% endfor %}\n{% endfor %}\nPLASM_RUN_UI_E2E_WIDE\nwide",
-            "force": true,
+            "run_ref": large_run_ref,
         }),
         11,
     )

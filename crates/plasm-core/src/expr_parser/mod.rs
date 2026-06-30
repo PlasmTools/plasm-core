@@ -632,35 +632,100 @@ impl<'a> Parser<'a> {
             .unwrap_or_else(|| label.to_string())
     }
 
-    /// Resolve opaque `p#` / `r#` (or pass through wire names) at the grammar position where the
-    /// token occurs — symbols are semantic identities, not a pre-parse string rewrite.
-    fn resolve_opaque_ident_token(&self, raw: &str) -> String {
-        self.sym_map
-            .resolve_ident(raw)
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| raw.to_string())
+    fn invoke_arg_catalog_entry_id(
+        &self,
+        source: &Expr,
+        raw_method_label: Option<&str>,
+    ) -> Result<String, ParseError> {
+        crate::catalog_ownership::catalog_entry_id_for_invoke(
+            source,
+            raw_method_label,
+            &self.sym_map,
+            crate::catalog_ownership::InvokeCatalogResolutionContext {
+                pending_session_catalog_entry_id: self.pending_session_catalog_entry_id.as_deref(),
+                active_entity_entry_id: self.active_entity_entry_id.as_deref(),
+            },
+        )
+        .map_err(|e| {
+            self.err(ParseErrorKind::Other {
+                message: e.to_string(),
+            })
+        })
     }
 
-    /// Resolve a dotted-call `key=` token for a specific capability (cap-qualified before global).
-    fn resolve_invoke_arg_key(&self, cap_entity: &str, cap_name: &str, raw: &str) -> String {
-        let entry_id = self
-            .pending_session_catalog_entry_id
-            .as_deref()
-            .or(self.active_entity_entry_id.as_deref())
-            .unwrap_or("");
-        if let Some(wire) = self
-            .sym_map
-            .resolve_wire_for_p_sym_cap(entry_id, cap_entity, cap_name, raw)
-        {
-            return wire;
+    /// Resolve invoke `key=value` map keys at capability materialization (cap-qualified only).
+    fn normalize_invoke_arg_keys_for_cap(
+        &self,
+        cap: &crate::CapabilitySchema,
+        source: &Expr,
+        raw_method_label: Option<&str>,
+        raw_map: IndexMap<String, Value>,
+    ) -> Result<IndexMap<String, Value>, ParseError> {
+        let Some(is) = &cap.input_schema else {
+            return Ok(raw_map);
+        };
+        let InputType::Object { fields, .. } = &is.input_type else {
+            return Ok(raw_map);
+        };
+        self.normalize_invoke_arg_keys_for_fields(
+            cap,
+            source,
+            raw_method_label,
+            fields.as_slice(),
+            raw_map,
+        )
+    }
+
+    fn normalize_invoke_arg_keys_for_fields(
+        &self,
+        cap: &crate::CapabilitySchema,
+        source: &Expr,
+        raw_method_label: Option<&str>,
+        fields: &[crate::InputFieldSchema],
+        raw_map: IndexMap<String, Value>,
+    ) -> Result<IndexMap<String, Value>, ParseError> {
+        let entry_id = self.invoke_arg_catalog_entry_id(source, raw_method_label)?;
+        let cap_label = format!("{}/{}.{}", entry_id, cap.domain, cap.name);
+        let hint = self.sym_map.cap_param_syms_hint(
+            entry_id.as_str(),
+            cap.domain.as_str(),
+            cap.name.as_str(),
+        );
+        let mut out = IndexMap::new();
+        for (raw_key, val) in raw_map {
+            let resolved = if fields.iter().any(|f| f.name == raw_key) {
+                raw_key
+            } else if crate::symbol_tuning::SymbolMap::is_opaque_p_sym(&raw_key) {
+                self.sym_map
+                    .resolve_wire_for_p_sym_cap(
+                        entry_id.as_str(),
+                        cap.domain.as_str(),
+                        cap.name.as_str(),
+                        &raw_key,
+                    )
+                    .ok_or_else(|| {
+                        self.err(ParseErrorKind::Other {
+                            message: format!(
+                                "capability parameter `{raw_key}` not found on `{cap_label}`{hint}"
+                            ),
+                        })
+                    })?
+            } else {
+                return Err(self.err(ParseErrorKind::Other {
+                    message: format!(
+                        "unknown argument `{raw_key}` for capability `{cap_label}`{hint}"
+                    ),
+                }));
+            };
+            if out.insert(resolved.clone(), val).is_some() {
+                return Err(self.err(ParseErrorKind::Other {
+                    message: format!(
+                        "duplicate invoke argument `{resolved}` on capability `{cap_label}`"
+                    ),
+                }));
+            }
         }
-        if let Some(wire) = self
-            .sym_map
-            .resolve_wire_for_p_sym_entity(entry_id, cap_entity, raw)
-        {
-            return wire;
-        }
-        self.resolve_opaque_ident_token(raw)
+        Ok(out)
     }
 
     fn err(&self, kind: ParseErrorKind) -> ParseError {
@@ -1244,11 +1309,7 @@ impl<'a> Parser<'a> {
 
     /// Comma-separated `key=value` inside `(` … `)` for dotted-call create/update/invoke (see module `//!`).
     /// Optional-parameter teaching form: `(..)` or `(k=v,..)` — `..` adds no keys.
-    fn parse_paren_object_arg_list(
-        &mut self,
-        cap_entity: &str,
-        cap_name: &str,
-    ) -> Result<IndexMap<String, Value>, ParseError> {
+    fn parse_paren_object_arg_list(&mut self) -> Result<IndexMap<String, Value>, ParseError> {
         let mut map = IndexMap::new();
         loop {
             self.skip_ws();
@@ -1265,7 +1326,6 @@ impl<'a> Parser<'a> {
                 break;
             }
             let (key, _, _) = self.parse_ident_with_span()?;
-            let wire_key = self.resolve_invoke_arg_key(cap_entity, cap_name, &key);
             self.skip_ws();
             if self.peek_char() != Some('=') {
                 return Err(self.err(ParseErrorKind::ExpectedChar {
@@ -1275,7 +1335,7 @@ impl<'a> Parser<'a> {
             }
             self.pos += 1;
             let val = self.parse_dotted_call_arg_value_rhs()?;
-            map.insert(wire_key, val);
+            map.insert(key, val);
             self.skip_ws();
             if self.peek_char() == Some(')') {
                 break;
@@ -1408,13 +1468,16 @@ impl<'a> Parser<'a> {
         raw_label: Option<&str>,
     ) -> Vec<&'a CGS> {
         let primary = source.primary_entity();
-        let entry_id = raw_label
-            .and_then(|raw| self.sym_map.resolve_method_symbol_triple(raw))
-            .filter(|(_, domain, _)| *domain == primary)
-            .map(|(entry_id, _, _)| entry_id)
-            .or_else(|| source.session_catalog_entry_id());
-        if let Some(eid) = entry_id {
-            if let Some(cgs) = self.cgs_for_catalog_entry_id(eid, primary) {
+        if let Ok(eid) = crate::catalog_ownership::catalog_entry_id_for_invoke(
+            source,
+            raw_label,
+            &self.sym_map,
+            crate::catalog_ownership::InvokeCatalogResolutionContext {
+                pending_session_catalog_entry_id: self.pending_session_catalog_entry_id.as_deref(),
+                active_entity_entry_id: self.active_entity_entry_id.as_deref(),
+            },
+        ) {
+            if let Some(cgs) = self.cgs_for_catalog_entry_id(eid.as_str(), primary) {
                 return vec![cgs];
             }
         }
@@ -1516,6 +1579,8 @@ impl<'a> Parser<'a> {
     ) -> Result<Expr, ParseError> {
         let label = self.normalize_method_symbol_label(&field_raw);
         let cap = self.resolve_dotted_call_capability(&label, Some(field_raw.as_str()), &source)?;
+        map =
+            self.normalize_invoke_arg_keys_for_cap(cap, &source, Some(field_raw.as_str()), map)?;
         self.inject_path_vars_from_get(cap, &source, &mut map);
         self.coerce_object_input_for_cap(cap, &mut map)?;
         let input = Value::Object(map);
@@ -1548,8 +1613,27 @@ impl<'a> Parser<'a> {
                     .into(),
             }));
         }
-        if let Value::UnionCtor { ctor_fields, .. } = &mut value {
+        if let Value::UnionCtor {
+            ctor_label,
+            ctor_fields,
+            ..
+        } = &mut value
+        {
             self.inject_path_vars_from_get(cap, &source, ctor_fields);
+            if let Some(is) = &cap.input_schema {
+                if let InputType::Union { variants } = &is.input_type {
+                    if let Some(variant) = variants.iter().find(|v| v.name == *ctor_label) {
+                        let normalized = self.normalize_invoke_arg_keys_for_fields(
+                            cap,
+                            &source,
+                            Some(field_raw.as_str()),
+                            variant.fields.as_slice(),
+                            std::mem::take(ctor_fields),
+                        )?;
+                        *ctor_fields = normalized;
+                    }
+                }
+            }
         } else {
             return Err(self.err(ParseErrorKind::Other {
                 message: "expected `v#{{…}}` union constructor for this invoke".into(),
@@ -1634,8 +1718,6 @@ impl<'a> Parser<'a> {
         let label_norm = self.normalize_method_symbol_label(&label);
         let cap =
             self.resolve_dotted_call_capability(&label_norm, Some(label.as_str()), &source)?;
-        let cap_entity = cap.domain.clone();
-        let cap_name = cap.name.clone();
         let root_union = cap
             .input_schema
             .as_ref()
@@ -1661,7 +1743,7 @@ impl<'a> Parser<'a> {
             return self.finish_dotted_call_with_payload_value(source, label, val);
         }
 
-        let map = self.parse_paren_object_arg_list(&cap_entity, &cap_name)?;
+        let map = self.parse_paren_object_arg_list()?;
         self.expect_char(')')?;
         self.finish_dotted_call_with_payload(source, label, map)
     }

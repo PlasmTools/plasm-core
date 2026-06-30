@@ -70,7 +70,6 @@ use crate::{
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::Entry;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write;
 use std::sync::Arc;
@@ -126,12 +125,13 @@ impl PromptRenderMode {
 pub const TSV_TEACHING_TABLE_HEADER: &str = "plasm_expr\tMeaning\n";
 
 mod contract;
+mod gloss_dedup;
 mod line_validate;
-mod mcp_frontmatter;
 mod mcp_prompt_fragments;
 mod mcp_tool_descriptions;
 mod row_producer;
 mod stats;
+mod teaching_gloss_emit;
 
 #[cfg(test)]
 mod query_teaching_tests;
@@ -169,7 +169,8 @@ pub use stats::{
 pub(crate) use contract::enforce_teaching_tsv_teaching_invariant;
 #[cfg(test)]
 pub(crate) use contract::validate_teaching_tsv_teaching_table;
-pub(crate) use mcp_frontmatter::*;
+pub(crate) use gloss_dedup::*;
+pub(crate) use teaching_gloss_emit::*;
 
 #[derive(Clone, Copy, Debug)]
 pub struct RenderConfig<'a> {

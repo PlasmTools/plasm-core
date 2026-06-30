@@ -8,7 +8,7 @@ mod scope;
 pub(crate) use dispatch::preflight_line_compile_dispatch;
 
 pub use plasm_core::PreflightToken;
-pub use preflight::{PlasmPreflight, PreflightReport, SimulationBundle};
+pub use preflight::{PlasmPreflight, PreflightNormalized, PreflightReport};
 pub use run_line_error::{
     display_run_line_error, graph_write_conflict_user_message, RunLineError,
     GRAPH_WRITE_CONFLICT_USER_MESSAGE,

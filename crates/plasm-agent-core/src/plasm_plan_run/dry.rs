@@ -30,7 +30,6 @@ pub fn evaluate_executable_comp_dry(
     }
     let version = serde_json::json!(comp.version);
     let mut out = Vec::new();
-    let mut parallel_root_surfaces_only = true;
     let mut staged_nodes = Vec::new();
     let execution_unsupported = Vec::new();
     for (step_idx, (step_id, payload)) in executable.steps_topo.iter().enumerate() {
@@ -46,71 +45,93 @@ pub fn evaluate_executable_comp_dry(
             ensure_relation_expr_matches_plan(es, relation, &pe, step_idx)?;
         }
         let inferred_approval = inferred_node_approval(&n);
-        if n.depends_on().is_empty() && n.uses_result().is_empty() {
-            let Some(surface) = n.as_surface() else {
-                parallel_root_surfaces_only = false;
-                staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
-                out.push(dry_stage_result(step_idx, &n));
-                continue;
-            };
-            let ir = surface
-                .ir
-                .as_ref()
-                .ok_or_else(|| format!("plan.nodes[{step_idx}] requires staged IR execution"))?;
-            let scoped_es = entry_scoped_execute_session(es, surface.qualified_entity.as_ref())?;
-            let pe = ParsedExpr {
-                expr: ir.expr.clone(),
-                projection: ir.projection.clone(),
-            };
-            let normalized =
-                crate::execute_pipeline::PlasmPreflight::preflight_node_compile_dispatch(
-                    es, &scoped_es, surface, &pe, step_idx,
-                )?;
-            let (intent, il, bindings) = dry_run_simulation_for_session(&scoped_es, &normalized);
-            let expr = ir
-                .display_expr
-                .as_deref()
-                .or(surface.display_expr.as_deref())
-                .unwrap_or("<ir>");
-            out.push(serde_json::json!({
-                "index": step_idx,
-                "ok": true,
-                "id": n.id().as_str(),
-                "kind": n.kind(),
-                "operation": render_node_operation(&n),
-                "qualified_entity": surface.qualified_entity,
-                "effect_class": n.effect_class(),
-                "result_shape": n.result_shape(),
-                "projection": surface.projection,
-                "predicates": surface.predicates,
-                "approval_gate": inferred_approval,
-                "ir": {
-                    "expr": normalized.expr,
-                    "projection": normalized.projection
-                },
-                "execution_contract": {
-                    "entry_id": surface.qualified_entity.as_ref().map(|q| q.entry_id.as_str()).unwrap_or(es.entry_id.as_str()),
-                    "entity": surface.qualified_entity.as_ref().map(|q| q.entity.as_str()),
-                    "display_expr": expr,
-                    "ir": normalized.expr,
-                    "projection": normalized.projection
-                },
-                "type_check": "ok",
-                "simulation": {
-                    "intent": intent,
-                    "il": il,
-                    "bindings": bindings
+        if let Some(surface) = n.as_surface() {
+            match surface_parsed_expr(surface, step_idx) {
+                Ok(Some(pe)) => {
+                    let scoped_es =
+                        entry_scoped_execute_session(es, surface.qualified_entity.as_ref())?;
+                    let normalized = if surface.ir.is_some() {
+                        crate::execute_pipeline::PlasmPreflight::preflight_node_compile_dispatch(
+                            es, &scoped_es, surface, &pe, step_idx,
+                        )?
+                    } else {
+                        crate::execute_pipeline::PlasmPreflight::preflight_template_surface(
+                            es, &scoped_es, &pe, step_idx,
+                        )?
+                    };
+                    let parsed = normalized.parsed();
+                    let simulation = if normalized.is_simulatable() {
+                        let (intent, il, bindings) =
+                            dry_run_simulation_for_session(&scoped_es, parsed);
+                        serde_json::json!({
+                            "intent": intent,
+                            "il": il,
+                            "bindings": bindings
+                        })
+                    } else {
+                        serde_json::json!({
+                            "kind": "template_stage",
+                            "execution": "typechecked only; row holes prevent CML compile at dry time"
+                        })
+                    };
+                    let expr = surface
+                        .ir
+                        .as_ref()
+                        .and_then(|ir| ir.display_expr.as_deref())
+                        .or_else(|| {
+                            surface
+                                .ir_template
+                                .as_ref()
+                                .and_then(|t| t.display_expr.as_deref())
+                        })
+                        .or(surface.display_expr.as_deref())
+                        .unwrap_or("<ir>");
+                    out.push(serde_json::json!({
+                        "index": step_idx,
+                        "ok": true,
+                        "id": n.id().as_str(),
+                        "kind": n.kind(),
+                        "operation": render_node_operation(&n),
+                        "qualified_entity": surface.qualified_entity,
+                        "effect_class": n.effect_class(),
+                        "result_shape": n.result_shape(),
+                        "projection": surface.projection,
+                        "predicates": surface.predicates,
+                        "approval_gate": inferred_approval,
+                        "ir": {
+                            "expr": parsed.expr,
+                            "projection": parsed.projection
+                        },
+                        "execution_contract": {
+                            "entry_id": surface.qualified_entity.as_ref().map(|q| q.entry_id.as_str()).unwrap_or(es.entry_id.as_str()),
+                            "entity": surface.qualified_entity.as_ref().map(|q| q.entity.as_str()),
+                            "display_expr": expr,
+                            "ir": parsed.expr,
+                            "projection": parsed.projection
+                        },
+                        "type_check": "ok",
+                        "simulation": simulation
+                    }));
+                    continue;
                 }
-            }));
-            continue;
+                Ok(None) => {
+                    if n.depends_on().is_empty() && n.uses_result().is_empty() {
+                        return Err(format!(
+                            "plan.nodes[{step_idx}] requires ir or ir_template for executable surface"
+                        ));
+                    }
+                }
+                Err(e) => return Err(e),
+            }
         }
 
-        parallel_root_surfaces_only = false;
         staged_nodes.push(format!("{} ({:?})", n.id(), n.kind()));
         out.push(dry_stage_result(step_idx, &n));
     }
     let prepared = crate::plan_prepare::prepare_executable_plan_for_session(es, comp, executable)?;
     dry_validate_render_nodes(es, prepared.validated.artifact())?;
+    let parallel_root_surfaces_only =
+        compute_parallel_root_surfaces_only(prepared.validated.artifact());
     Ok(DryPlasmPlanEvaluation {
         version,
         name: comp.name.clone(),
@@ -677,17 +698,22 @@ pub(crate) fn ensure_relation_expr_matches_plan(
     }
     let root_entity = chain.source.primary_entity();
     let federated = es.contexts_by_entry.len() > 1;
-    let owning_cgs = chain
-        .source
-        .session_catalog_entry_id()
-        .and_then(|eid| es.contexts_by_entry.get(eid))
-        .map(|ctx| ctx.cgs.as_ref());
-    let source_cgs = if let Some(cgs) = owning_cgs {
-        cgs
-    } else if federated {
-        return Err(format!(
-            "plan.nodes[{index}].relation requires catalog ownership on the chain source (missing catalog_entry_id on federated relation hop; use e# / binding continuation, not bare wire entity names)"
-        ));
+    let row_qe = plasm_core::catalog_ownership::require_relation_source_qualified_entity(
+        &chain.source,
+        federated,
+        None,
+    )
+    .map_err(|e| e.to_string())?;
+    let source_cgs = if let Some(qe) = row_qe.as_ref() {
+        es.contexts_by_entry
+            .get(qe.catalog_entry_id.as_str())
+            .map(|ctx| ctx.cgs.as_ref())
+            .ok_or_else(|| {
+                format!(
+                    "plan.nodes[{index}].relation unknown catalog entity `{}` for entry `{}`",
+                    qe.entity, qe.catalog_entry_id
+                )
+            })?
     } else {
         crate::catalog_ownership::resolve_cgs_for_entity(es, root_entity, None)?
     };
@@ -699,13 +725,6 @@ pub(crate) fn ensure_relation_expr_matches_plan(
                 "plan.nodes[{index}].relation could not resolve navigation entity for chain root {root_entity:?}"
             )
         })?;
-    let source_cgs = if owning_cgs.is_some() || !federated {
-        source_cgs
-    } else {
-        return Err(format!(
-            "plan.nodes[{index}].relation could not resolve source catalog for entity {source_entity:?} in federated session"
-        ));
-    };
     let Some(source_def) = source_cgs.get_entity(source_entity.as_str()) else {
         return Err(format!(
             "plan.nodes[{index}].relation source entity {source_entity:?} is not present"
@@ -738,6 +757,38 @@ pub(crate) fn ensure_relation_expr_matches_plan(
         ));
     }
     Ok(())
+}
+
+/// True when every validated node is an independent root surface (parallel-safe).
+fn compute_parallel_root_surfaces_only(plan: &Plan<ValidatedPlanState>) -> bool {
+    !plan.nodes.is_empty()
+        && plan.nodes.iter().all(|n| {
+            matches!(n, ValidatedPlanNode::Surface(_))
+                && n.depends_on().is_empty()
+                && n.uses_result().is_empty()
+        })
+}
+
+fn surface_parsed_expr(
+    surface: &crate::plasm_plan::ValidatedSurfaceNode,
+    step_idx: usize,
+) -> Result<Option<ParsedExpr>, String> {
+    if let Some(ir) = &surface.ir {
+        return Ok(Some(ParsedExpr {
+            expr: ir.expr.clone(),
+            projection: ir.projection.clone(),
+        }));
+    }
+    if let Some(template) = &surface.ir_template {
+        let expr: Expr = serde_json::from_value(template.expr.clone()).map_err(|e| {
+            format!("plan.nodes[{step_idx}].ir_template.expr must deserialize to Plasm IR: {e}")
+        })?;
+        return Ok(Some(ParsedExpr {
+            expr,
+            projection: template.projection.clone(),
+        }));
+    }
+    Ok(None)
 }
 
 pub(crate) fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_json::Value {

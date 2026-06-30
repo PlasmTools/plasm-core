@@ -82,6 +82,7 @@
 
 pub mod bind_wire_validate;
 pub mod catalog_il;
+pub mod catalog_ownership;
 pub mod cgs_context;
 pub mod cgs_expression_validate;
 pub mod cgs_federation;
@@ -149,6 +150,12 @@ pub use catalog_il::{
     catalog_artifact_stem, catalog_il_body_name, cgs_to_catalog_il_bytes, is_catalog_manifest_path,
     load_catalog_artifact, load_catalog_il_bytes, load_catalog_il_verified, read_catalog_manifest,
     CatalogManifest, CATALOG_IL_BODY_SUFFIX, PLASM_CATALOG_FORMAT_VERSION,
+};
+pub use catalog_ownership::{
+    catalog_entry_id_for_invoke, infer_qualified_entity_from_stamped_source,
+    require_relation_source_qualified_entity, resolve_cgs_for_stamped_catalog,
+    CatalogOwnershipContext, CatalogOwnershipError, InvokeCatalogResolutionContext,
+    FEDERATED_RELATION_MISSING_OWNERSHIP,
 };
 pub use cgs_context::{CgsContext, Prefix};
 pub use cgs_federation::{

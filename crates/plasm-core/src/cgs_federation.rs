@@ -23,6 +23,11 @@ impl QualifiedEntityKey {
             entity: entity.into(),
         }
     }
+
+    /// Registry row id (same wire name as agent plan `QualifiedEntityKey::entry_id`).
+    pub fn entry_id(&self) -> &str {
+        self.catalog_entry_id.as_str()
+    }
 }
 
 /// Federated catalog resolution failure (fail closed; no blind primary fallback).

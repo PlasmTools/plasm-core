@@ -1576,6 +1576,8 @@ pub struct SymbolMap {
     entity_p_sym_globally_unique: HashMap<(String, String), String>,
     /// `(entry_id, domain, capability, p_sym)` → param wire (qualified reverse of [`Self::cap_param_to_sym`]).
     cap_p_sym_to_param: HashMap<(String, String, String, String), String>,
+    /// `(entry_id, domain, capability)` → sorted opaque `p#` taught for invoke error hints.
+    cap_taught_p_syms: HashMap<(String, String, String), Vec<String>>,
     /// `(catalog_entry_id|vr:value_ref)` → `v#` — one symbol per CGS `values:` row in this session.
     pub(crate) value_domain_fp_to_sym: IndexMap<String, String>,
     /// `v#` → value-domain fingerprint (reverse of [`Self::value_domain_fp_to_sym`]).
@@ -2054,10 +2056,43 @@ impl SymbolMap {
             .cloned()
     }
 
+    /// Opaque `p#` tokens taught for a capability's input parameters (deterministic error hints).
+    pub fn cap_param_syms_for(
+        &self,
+        catalog_entry_id: &str,
+        domain: &str,
+        capability: &str,
+    ) -> Vec<String> {
+        self.cap_taught_p_syms
+            .get(&(
+                catalog_entry_id.to_string(),
+                domain.to_string(),
+                capability.to_string(),
+            ))
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// `(taught: p1, p2, …)` suffix for capability invoke arg errors; empty when none taught.
+    pub fn cap_param_syms_hint(
+        &self,
+        catalog_entry_id: &str,
+        domain: &str,
+        capability: &str,
+    ) -> String {
+        let taught = self.cap_param_syms_for(catalog_entry_id, domain, capability);
+        if taught.is_empty() {
+            String::new()
+        } else {
+            format!(" (taught: {})", taught.join(", "))
+        }
+    }
+
     fn rebuild_qualified_p_sym_indexes(&mut self) {
         self.entity_p_sym_to_wire.clear();
         self.entity_p_sym_globally_unique.clear();
         self.cap_p_sym_to_param.clear();
+        self.cap_taught_p_syms.clear();
         for ((eid, ent, field), sym) in &self.entity_field_to_sym {
             if !Self::is_opaque_p_sym(sym) {
                 continue;
@@ -2084,6 +2119,14 @@ impl SymbolMap {
                 (eid.clone(), dom.clone(), cap.clone(), sym.clone()),
                 param.clone(),
             );
+            self.cap_taught_p_syms
+                .entry((eid.clone(), dom.clone(), cap.clone()))
+                .or_default()
+                .push(sym.clone());
+        }
+        for syms in self.cap_taught_p_syms.values_mut() {
+            syms.sort();
+            syms.dedup();
         }
     }
 
@@ -3295,6 +3338,7 @@ impl TeachingExposureSession {
             entity_p_sym_to_wire: HashMap::new(),
             entity_p_sym_globally_unique: HashMap::new(),
             cap_p_sym_to_param: HashMap::new(),
+            cap_taught_p_syms: HashMap::new(),
             value_domain_fp_to_sym,
             value_sym_to_fp,
             p_sym_to_value_sym,

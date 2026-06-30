@@ -278,21 +278,10 @@ fn resolve_cgs_for_catalog_entity<'a>(
     fed: &'a FederationDispatch,
     fallback: &'a CGS,
 ) -> Result<&'a CGS, TypeError> {
-    if let Some(eid) = catalog_entry_id {
-        return fed
-            .by_entry
-            .get(eid)
-            .filter(|ctx| ctx.cgs.entities.contains_key(entity))
-            .map(|ctx| ctx.cgs.as_ref())
-            .ok_or_else(|| TypeError::EntityNotFound {
-                entity: format!(
-                    "entity `{entity}` is not defined in catalog `{eid}` (use the session `e#` from the teaching table)"
-                ),
-            });
-    }
-    fed.resolve_entity(
+    crate::catalog_ownership::resolve_cgs_for_stamped_catalog(
+        catalog_entry_id,
         entity,
-        crate::row_composition::ResolutionHint::default(),
+        fed,
         fallback,
     )
     .map_err(federation_resolve_type_error)

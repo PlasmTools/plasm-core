@@ -75,12 +75,10 @@ fn matrix_homograph_projection_resolves_entity_scoped_p_symbols() {
         .iter()
         .find(|n| n["id"] == return_a)
         .expect("return node");
-    assert!(
-        node_a["compute"]["op"]["fields"]
-            .as_object()
-            .unwrap()
-            .contains_key("headline")
-    );
+    assert!(node_a["compute"]["op"]["fields"]
+        .as_object()
+        .unwrap()
+        .contains_key("headline"));
 
     let source_b = format!(
         "rows_b = {row_b}\nrows_b[{p_caption}]",

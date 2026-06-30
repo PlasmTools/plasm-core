@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 /**
  * Smoke: shape-driven stub programs dry-run against plasm_language_matrix + capability_with_input.
+ *
+ * Dry-run + substring checks here are secondary evidence only. Authoritative invoke IO conformance
+ * lives in `plasm-e2e/tests/plasm_language_matrix_invoke.rs` and `plasm_language_matrix` live runs.
  */
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";

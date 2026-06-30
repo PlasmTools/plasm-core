@@ -2718,29 +2718,24 @@ fn lookup_relation_chain_meta(
     chain: &plasm_core::ChainExpr,
     source_row_qe: Option<&QualifiedEntityKey>,
 ) -> Result<(QualifiedEntityKey, RelationCardinality), String> {
-    let inferred_row_qe;
-    let row_qe = if let Some(qe) = source_row_qe {
-        Some(qe)
-    } else if let Some(entry_id) = chain.source.session_catalog_entry_id() {
-        inferred_row_qe = QualifiedEntityKey {
-            entry_id: entry_id.to_string(),
-            entity: chain.source.primary_entity().to_string(),
+    let federated = session.contexts_by_entry.len() > 1;
+    let explicit_qe = source_row_qe
+        .map(|qe| plasm_core::QualifiedEntityKey::new(qe.entry_id.clone(), qe.entity.clone()));
+    let row_qe = plasm_core::catalog_ownership::require_relation_source_qualified_entity(
+        &chain.source,
+        federated,
+        explicit_qe.as_ref(),
+    )
+    .map_err(|e| e.to_string())?;
+    let cgs = if let Some(row_qe) = row_qe.as_ref() {
+        let agent_qe = QualifiedEntityKey {
+            entry_id: row_qe.catalog_entry_id.clone(),
+            entity: row_qe.entity.clone(),
         };
-        Some(&inferred_row_qe)
-    } else {
-        None
-    };
-    if session.contexts_by_entry.len() > 1 && row_qe.is_none() {
-        return Err(
-            "federated relation continuation requires catalog ownership from the source row (use session e# / binding continuation, not bare wire entity names)"
-                .to_string(),
-        );
-    }
-    let cgs = if let Some(row_qe) = row_qe {
-        resolve_cgs_for_qualified_entity(session, row_qe).ok_or_else(|| {
+        resolve_cgs_for_qualified_entity(session, &agent_qe).ok_or_else(|| {
             format!(
                 "unknown catalog entity `{}` for entry `{}`",
-                row_qe.entity, row_qe.entry_id
+                agent_qe.entity, agent_qe.entry_id
             )
         })?
     } else {
@@ -2762,8 +2757,12 @@ fn lookup_relation_chain_meta(
     })?;
     let rel = ent.relations.get(chain.selector.as_str()).ok_or_else(|| {
         let map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
-        let sym = row_qe.map(|qe| {
-            map.ident_sym_relation_for(qe.entry_id.as_str(), source_entity, chain.selector.as_str())
+        let sym = row_qe.as_ref().map(|qe| {
+            map.ident_sym_relation_for(
+                qe.catalog_entry_id.as_str(),
+                source_entity,
+                chain.selector.as_str(),
+            )
         }).unwrap_or_else(|| {
             map.ident_sym_relation(source_entity, chain.selector.as_str())
         });
@@ -2786,7 +2785,7 @@ fn lookup_relation_chain_meta(
     }
     let qe = if let Some(row_qe) = row_qe {
         QualifiedEntityKey {
-            entry_id: row_qe.entry_id.clone(),
+            entry_id: row_qe.catalog_entry_id.clone(),
             entity: target_ent.to_string(),
         }
     } else {

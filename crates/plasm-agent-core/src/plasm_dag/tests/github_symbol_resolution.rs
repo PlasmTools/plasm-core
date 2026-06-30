@@ -110,6 +110,72 @@ created"#,
 }
 
 #[test]
+fn issue_create_ir_input_uses_logical_param_names_not_opaque_p_symbols() {
+    let cgs = github_cgs();
+    let session = github_ranked_mutator_session(
+        &cgs,
+        &["Repository", "Issue"],
+        "create a new issue with title and body in the repository",
+        &["issue_create"],
+        "issue_create",
+    );
+    let map = github_symbol_map(&session);
+    let issue_e = map.entity_sym_for("github", "Issue");
+    let cap = cgs.get_capability("issue_create").expect("issue_create");
+    let method = plasm_core::capability_method_label_kebab(cap);
+    let method_sym = map.method_sym("Issue", &method);
+    let p_repo = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "repository");
+    let p_title = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "title");
+    let p_body = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "body");
+    let p_labels = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "labels");
+    let repo_owner = map.ident_sym_entity_field("Repository", "owner");
+    let repo_name = map.ident_sym_entity_field("Repository", "repo");
+    let source = format!(
+        r#"repo = Repository({repo_owner}="ryan-s-roberts", {repo_name}="tool-test")
+created = {issue_e}.{method_sym}({p_repo}=repo.full_name, {p_title}="Document labels", {p_body}="guide body", {p_labels}=["bug", "docs"])
+created"#,
+    );
+    let plan = compile_github_program(&session, "github-issue-create-p-syms", &source);
+    let created = plan["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .find(|n| n["id"] == "created")
+        .expect("created node");
+    let ir_blob = created
+        .get("ir")
+        .filter(|v| !v.is_null())
+        .or_else(|| created.get("ir_template"))
+        .expect("plan IR or ir_template");
+    let expr_json = ir_blob
+        .pointer("/expr")
+        .or_else(|| ir_blob.get("expr"))
+        .expect("template expr");
+    let expr: plasm_core::Expr =
+        serde_json::from_value(expr_json.clone()).expect("deserialize create IR");
+    let plasm_core::Expr::Create(create) = expr else {
+        panic!("expected Create IR, got {expr:?}");
+    };
+    let plasm_core::Value::Object(input) = create.input.to_value() else {
+        panic!("expected object invoke input, got {:?}", create.input);
+    };
+    for key in ["title", "body", "labels"] {
+        assert!(
+            input.contains_key(key),
+            "invoke input must use logical param `{key}`, got keys {:?}",
+            input.keys().collect::<Vec<_>>()
+        );
+    }
+    assert!(
+        !input
+            .keys()
+            .any(|k| plasm_core::symbol_tuning::SymbolMap::is_opaque_p_sym(k)),
+        "invoke input must not retain opaque p# keys: {input:?}"
+    );
+    evaluate_plasm_plan_dry(&session, &plan).expect("staged issue_create dry-run preflight");
+}
+
+#[test]
 fn pr_create_dry_run_resolves_cap_qualified_param_symbols() {
     let cgs = github_cgs();
     let session = github_ranked_mutator_session(

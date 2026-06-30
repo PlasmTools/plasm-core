@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.93] - 2026-06-30
+
+### Fixed
+
+- **Invoke arg materialization:** cap-qualified `p#` → wire resolution only at materialization (no entity homograph / fuzzy cap lookup); logical param names preserved in plan IR.
+- **Teaching gloss dedup:** cap-parameter `p#` no longer aliases entity-field `p#` when compact meaning matches (`gloss_dedup` + typed slot identity).
+- **Dry-run ≡ live preflight:** every staged surface typechecks; concrete `ir` compiles to CML; `ir_template` is typechecked-only (no bogus CML simulation).
+- **MCP plan UI contract:** full comp DAG under `_meta.ui.plasm`; compact `_meta.plasm` / `structuredContent` for agents.
+
+### Changed
+
+- **`catalog_ownership`:** canonical `catalog_entry_id_for_invoke`, federated relation ownership, and stamped-catalog CGS resolution (parser, typecheck, dry, DAG).
+- **`PreflightNormalized`:** `Simulatable` vs `TypecheckedOnly` — template dry nodes emit `template_stage` simulation metadata.
+- **Symbol map:** O(1) `cap_taught_p_syms` index for invoke error hints.
+- **Teaching gloss modules:** `gloss_dedup.rs` + `teaching_gloss_emit.rs` (renamed from MCP-coupled frontmatter).
+
+### Added
+
+- **Tests:** GitHub `issue_create` label JSON smoke, matrix Hermit invoke materialization, `workflow_apps_e2e` UI wire contract, `github_symbol_resolution` logical-param IR asserts.
+
 ## [0.3.92] - 2026-06-29
 
 ### Fixed

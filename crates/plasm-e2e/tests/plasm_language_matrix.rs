@@ -2380,6 +2380,43 @@ fn plasm_language_matrix_live_runs_sync(base: String) {
     );
 }
 
+/// Every matrix row must declare live Hermit expectations (no dry-only conformance).
+#[test]
+fn matrix_coverage_contract_all_rows_require_live_execution() {
+    const RUNTIME_PROGRAM_ROW_IDS: &[&str] = &[
+        "lang_relation_opaque_r_symbol",
+        "lang_flattened_single_liner_coercion",
+        "lang_flattened_surface_line_compile",
+        "lang_relation_one_opaque_r",
+        "lang_homograph_lhs_coercion",
+        "lang_federated_duplicate_entity_relation_r",
+        "lang_federated_duplicate_entity_mutator_m",
+        "lang_bind_template_inline_on_e1",
+    ];
+    for row in MATRIX_ROWS {
+        assert!(
+            row.min_node_results >= 1,
+            "row {} must declare min_node_results for live execute",
+            row.id
+        );
+        assert!(
+            !row.program.trim().is_empty() || RUNTIME_PROGRAM_ROW_IDS.contains(&row.id),
+            "row {} must include a program (or runtime synthesis in matrix_program_for_row)",
+            row.id
+        );
+        assert!(
+            !row.expect_markdown_substrings.is_empty()
+                || row.features.contains(&"host_wait_cancel"),
+            "row {} must declare live markdown/IO expectations",
+            row.id
+        );
+    }
+    assert!(
+        MATRIX_ROWS.len() >= 40,
+        "matrix fixture unexpectedly shrunk — audit coverage manifest"
+    );
+}
+
 /// Host-only `wait` / `cancel` continuations (parse smoke; no Hermit live execute).
 #[test]
 fn lang_wait_cancel_operation_parse() {

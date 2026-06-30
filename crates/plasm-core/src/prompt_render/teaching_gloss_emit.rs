@@ -1,48 +1,7 @@
-//! Teaching-table TSV row synthesis helpers (per-catalog dynamic prompts).
+//! Teaching-table TSV row synthesis (per-catalog dynamic prompts).
 
+use super::gloss_dedup::*;
 use super::*;
-
-/// Returns [`None`] when `sym` is a synonym for an earlier opaque symbol with the same `meaning`:
-/// caller skips emitting a duplicate gloss row. Otherwise returns the canonical symbol for this meaning.
-pub(crate) fn meaning_canonical_sym_for_emit(
-    meaning: &str,
-    sym: &str,
-    meaning_to_canonical: &mut HashMap<String, String>,
-    sym_alias: &mut HashMap<String, String>,
-) -> Option<String> {
-    match meaning_to_canonical.entry(meaning.to_string()) {
-        Entry::Occupied(e) => {
-            let canonical = e.get().clone();
-            if canonical == sym {
-                Some(canonical)
-            } else {
-                sym_alias.insert(sym.to_string(), canonical);
-                None
-            }
-        }
-        Entry::Vacant(v) => {
-            v.insert(sym.to_string());
-            Some(sym.to_string())
-        }
-    }
-}
-
-pub(crate) fn merge_opaque_alias_maps(
-    p: &HashMap<String, String>,
-    v: &HashMap<String, String>,
-) -> HashMap<String, String> {
-    let mut rep = p.clone();
-    for (k, val) in v {
-        if let Some(existing) = rep.get(k) {
-            debug_assert_eq!(
-                existing, val,
-                "opaque alias collision for key {k:?}: p-map vs v-map disagree"
-            );
-        }
-        rep.insert(k.clone(), val.clone());
-    }
-    rep
-}
 
 pub(crate) fn teaching_expr_line_fingerprint(row: &TeachingExprLine) -> String {
     format!(
@@ -334,17 +293,9 @@ pub(crate) fn emit_field_def_lines_before_example(
                         &compact_raw,
                         &state.registry_v_sym_alias,
                     );
-                    let path_key = map
-                        .capability_param_quad_for_p_sym(sym.as_str())
-                        .map(|(_, _, _, path)| path)
-                        .unwrap_or_else(|| m.wire_name().to_string());
-                    let p_meaning_key = format!(
-                        "{}\x1f{}\x1f{}\x1f{}",
-                        compact,
-                        m.catalog_entry_id(),
-                        m.entity().as_str(),
-                        path_key
-                    );
+                    let slot = gloss_slot_identity_for_p_sym(map, sym.as_str(), m);
+                    let p_meaning_key =
+                        gloss_p_slot_meaning_key(&compact, m.catalog_entry_id(), &slot);
                     if meaning_canonical_sym_for_emit(
                         &p_meaning_key,
                         sym.as_str(),
