@@ -117,7 +117,9 @@ pub fn method_ref_for_domain_segment(cgs: &CGS, domain: &str, kebab: &str) -> Op
 
 /// Resolve [`MethodRef`] from CGS given domain + capability wire name.
 pub fn method_ref_for_capability(cgs: &CGS, domain: &str, capability: &str) -> Option<MethodRef> {
-    let cap = cgs.get_capability(capability).filter(|c| c.domain.as_str() == domain)?;
+    let cap = cgs
+        .get_capability(capability)
+        .filter(|c| c.domain.as_str() == domain)?;
     Some(MethodRef {
         domain: cap.domain.clone(),
         capability: cap.name.clone(),

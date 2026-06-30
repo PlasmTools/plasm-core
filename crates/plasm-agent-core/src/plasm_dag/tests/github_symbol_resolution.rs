@@ -412,14 +412,24 @@ fn github_six_seed_tsv_verbatim_program_compiles() {
     let issue_comment_m = map.method_sym_for("github", "IssueComment", "issue_comment_create");
     let p_issue_create_repo =
         map.ident_sym_cap_param_for("github", "Issue", "issue_create", "repository");
-    let p_issue_create_title = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "title");
-    let p_issue_create_body = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "body");
+    let p_issue_create_title =
+        map.ident_sym_cap_param_for("github", "Issue", "issue_create", "title");
+    let p_issue_create_body =
+        map.ident_sym_cap_param_for("github", "Issue", "issue_create", "body");
     let p_issue_update_labels =
         map.ident_sym_cap_param_for("github", "Issue", "issue_update", "labels");
-    let p_comment_repo =
-        map.ident_sym_cap_param_for("github", "IssueComment", "issue_comment_create", "repository");
-    let p_comment_issue =
-        map.ident_sym_cap_param_for("github", "IssueComment", "issue_comment_create", "issue_number");
+    let p_comment_repo = map.ident_sym_cap_param_for(
+        "github",
+        "IssueComment",
+        "issue_comment_create",
+        "repository",
+    );
+    let p_comment_issue = map.ident_sym_cap_param_for(
+        "github",
+        "IssueComment",
+        "issue_comment_create",
+        "issue_number",
+    );
     let p_comment_body =
         map.ident_sym_cap_param_for("github", "IssueComment", "issue_comment_create", "body");
     let p_issue_title = map.ident_sym_entity_field("Issue", "title");

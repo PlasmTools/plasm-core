@@ -1879,7 +1879,12 @@ fn id_sym_rel(m: Option<&SymbolMap>, catalog_entry_id: &str, entity: &str, rel: 
 }
 
 #[inline]
-fn met_sym(m: Option<&SymbolMap>, catalog_entry_id: &str, entity: &str, capability: &str) -> String {
+fn met_sym(
+    m: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    entity: &str,
+    capability: &str,
+) -> String {
     m.map(|x| x.method_sym_for(catalog_entry_id, entity, capability))
         .unwrap_or_else(|| capability.to_string())
 }
@@ -3913,7 +3918,12 @@ fn format_dotted_call_line(
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
 ) -> Option<String> {
     let args = build_dotted_call_paren_args(anchor_entity, cap, cgs, map, catalog_entry_id)?;
-    let ms = met_sym(map, catalog_entry_id, cap.domain.as_str(), cap.name.as_str());
+    let ms = met_sym(
+        map,
+        catalog_entry_id,
+        cap.domain.as_str(),
+        cap.name.as_str(),
+    );
     let suffix = format!(".{ms}({args})");
     let recv = receiver_for_dotted_suffix(
         es,

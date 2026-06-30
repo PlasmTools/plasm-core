@@ -1,9 +1,9 @@
 //! All forward rows are written during [`TeachingExposureSession`] symbol assignment
 //! (`expose_entities`, method waves, [`assign_new_slot_symbols`]) — not recomputed at snapshot time.
 
-use crate::schema::{CapabilitySchema, CGS, InputType, ParameterRole};
+use crate::schema::{CapabilitySchema, InputType, ParameterRole, CGS};
 
-use super::{IdentMetadata, IdentRole, SymbolMap, TeachingExposureSession, slot_meta_is_relation};
+use super::{slot_meta_is_relation, IdentMetadata, IdentRole, SymbolMap, TeachingExposureSession};
 
 /// Owning catalog + entity for a session `e#` token.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,11 +77,7 @@ impl SlotBinding {
                 capability,
                 param_wire,
                 ..
-            } => Some((
-                domain.as_str(),
-                capability.as_str(),
-                param_wire.as_str(),
-            )),
+            } => Some((domain.as_str(), capability.as_str(), param_wire.as_str())),
             _ => None,
         }
     }
@@ -108,10 +104,7 @@ impl SlotBinding {
     }
 }
 
-fn param_role_for_cap_wire(
-    cap: &CapabilitySchema,
-    param_wire: &str,
-) -> Option<ParameterRole> {
+fn param_role_for_cap_wire(cap: &CapabilitySchema, param_wire: &str) -> Option<ParameterRole> {
     let is = cap.input_schema.as_ref()?;
     let fields = match &is.input_type {
         InputType::Object { fields, .. } => fields,
@@ -123,7 +116,10 @@ fn param_role_for_cap_wire(
         .and_then(|f| f.role)
 }
 
-pub(crate) fn slot_binding_from_meta(meta: &IdentMetadata, cgs: Option<&CGS>) -> Option<SlotBinding> {
+pub(crate) fn slot_binding_from_meta(
+    meta: &IdentMetadata,
+    cgs: Option<&CGS>,
+) -> Option<SlotBinding> {
     let entry_id = meta.catalog_entry_id().to_string();
     match meta.allocation_ident_role() {
         IdentRole::EntityField => Some(SlotBinding {
@@ -295,41 +291,25 @@ mod tests {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
-        let exp = TeachingExposureSession::new(
-            &cgs,
-            "langmatrix",
-            &["HomographRowA", "HomographRowB"],
-        );
+        let exp =
+            TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA", "HomographRowB"]);
         let map = exp.symbol_map_arc();
         let e_a = map
-            .resolve_session_entity(
-                map.entity_sym_for("langmatrix", "HomographRowA")
-                    .as_str(),
-            )
+            .resolve_session_entity(map.entity_sym_for("langmatrix", "HomographRowA").as_str())
             .expect("e# for HomographRowA");
         assert_eq!(e_a.entity, "HomographRowA");
         let p_headline = map.ident_sym_entity_field("HomographRowA", "headline");
         let slot = map
             .resolve_session_slot(p_headline.as_str())
             .expect("p# headline");
-        assert_eq!(
-            slot.entity_field(),
-            Some(("HomographRowA", "headline"))
-        );
+        assert_eq!(slot.entity_field(), Some(("HomographRowA", "headline")));
         let source = format!(
             "{e_sym}[{p_sym}]",
             e_sym = map.entity_sym_for("langmatrix", "HomographRowA"),
             p_sym = p_headline,
         );
-        parse_with_cgs_layers_program(
-            &source,
-            &[&cgs],
-            map,
-            None,
-            false,
-            None,
-        )
-        .expect("verbatim e#/p# program must parse via forward session tables");
+        parse_with_cgs_layers_program(&source, &[&cgs], map, None, false, None)
+            .expect("verbatim e#/p# program must parse via forward session tables");
     }
 
     #[test]

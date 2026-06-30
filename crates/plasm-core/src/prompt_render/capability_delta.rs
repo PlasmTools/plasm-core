@@ -25,7 +25,10 @@ fn method_syms_for_new_capabilities(
 ) -> HashSet<String> {
     let mut out = HashSet::new();
     for cap_key in new_caps {
-        if exp.catalog_cgs_for_entry(cap_key.entry_id.as_str()).is_none() {
+        if exp
+            .catalog_cgs_for_entry(cap_key.entry_id.as_str())
+            .is_none()
+        {
             continue;
         };
         out.insert(map.method_sym_for(

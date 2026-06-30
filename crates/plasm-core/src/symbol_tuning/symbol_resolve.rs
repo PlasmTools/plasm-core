@@ -5,12 +5,12 @@
 
 use std::collections::BTreeSet;
 
+use crate::schema::resolve_capability_input_param_field;
 use crate::CapabilityKind;
 use crate::CapabilitySchema;
-use crate::CGS;
 use crate::EntityDef;
 use crate::EntityFieldName;
-use crate::schema::resolve_capability_input_param_field;
+use crate::CGS;
 
 use super::{EntityBinding, MethodBinding, RelationBinding, SlotBinding, SymbolMap};
 
@@ -449,9 +449,9 @@ impl SymbolMap {
 
     fn cap_declares_param_wire(cap: &CapabilitySchema, param_wire: &str) -> bool {
         resolve_capability_input_param_field(cap, param_wire).is_some()
-            || cap.object_params().is_some_and(|fields| {
-                fields.iter().any(|f| f.name.as_str() == param_wire)
-            })
+            || cap
+                .object_params()
+                .is_some_and(|fields| fields.iter().any(|f| f.name.as_str() == param_wire))
     }
 
     /// Lookup a session `m#` token against federated CGS layers with invoke-anchor validation.

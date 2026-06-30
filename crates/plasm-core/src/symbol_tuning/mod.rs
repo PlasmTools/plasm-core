@@ -26,9 +26,7 @@ mod opaque_symbol_hash;
 mod session_bindings;
 mod symbol_resolve;
 
-pub use session_bindings::{
-    EntityBinding, MethodBinding, RelationBinding, SlotBinding, SlotKind,
-};
+pub use session_bindings::{EntityBinding, MethodBinding, RelationBinding, SlotBinding, SlotKind};
 
 pub use capability_surface_params::{
     capability_exposure_param_pairs, capability_optional_legend_param_pairs,
@@ -2189,12 +2187,7 @@ impl SymbolMap {
 
     /// Opaque `m#` for one `(registry entry_id, domain entity, capability wire name)` triple.
     #[inline]
-    pub fn method_sym_for(
-        &self,
-        catalog_entry_id: &str,
-        entity: &str,
-        capability: &str,
-    ) -> String {
+    pub fn method_sym_for(&self, catalog_entry_id: &str, entity: &str, capability: &str) -> String {
         self.method_to_sym
             .get(&(
                 catalog_entry_id.to_string(),
@@ -2990,11 +2983,7 @@ impl TeachingExposureSession {
                 continue;
             };
             let cap_name = cap_key.capability.as_str().to_string();
-            let triple = (
-                cap_key.entry_id.clone(),
-                cap.domain.to_string(),
-                cap_name,
-            );
+            let triple = (cap_key.entry_id.clone(), cap.domain.to_string(), cap_name);
             if !self.method_to_sym.contains_key(&triple) {
                 new_triples.push(triple);
             }
@@ -5109,7 +5098,8 @@ mod tests {
         let Ok(cgs) = load_schema_dir(dir) else {
             return;
         };
-        let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA", "HomographRowB"]);
+        let exp =
+            TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA", "HomographRowB"]);
         let map = exp.symbol_map_arc();
         let issue_title = map.ident_sym_entity_field("HomographRowA", "headline");
         let label_name = map.ident_sym_entity_field("HomographRowB", "caption");

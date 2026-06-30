@@ -58,9 +58,9 @@
 //! ```
 
 mod entity_ref_parse;
-pub(crate) mod program_surface;
 pub(crate) mod heredoc_surface;
 pub(crate) mod predicate_surface;
+pub(crate) mod program_surface;
 mod value;
 
 pub mod postfix;

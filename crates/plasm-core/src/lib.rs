@@ -249,8 +249,7 @@ pub use row_predicate::{
 };
 pub use teaching_term::{
     method_ref_for_capability, method_ref_for_domain_segment, resolve_parameter_slot, EntityRef,
-    MethodRef, ParameterSlot,
-    Symbol, TeachingTerm,
+    MethodRef, ParameterSlot, Symbol, TeachingTerm,
 };
 pub use wire_coercion::{
     binding_value_as_plasm_value, coerce_json_value_for_field_type, coerce_value_for_field_type,
