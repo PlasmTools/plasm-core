@@ -12,11 +12,9 @@ use super::{ParseError, ParseErrorKind};
 use crate::schema::EntityDef;
 use crate::value::{PlasmInputRef, Value};
 
-/// Surface token before `(` — opaque `e#`, wire entity name, or legacy alias.
+/// Resolved canonical CGS entity for constructor head `surface`.
 pub(super) struct EntityCtorHead {
-    pub surface: String,
     pub canonical: String,
-    pub from_session_sym: bool,
 }
 
 /// How to parse scalar slots inside an entity constructor body.
@@ -37,9 +35,7 @@ impl<'a> Parser<'a> {
                     .any(|c| c.get_entity(&canonical).is_some())
             {
                 return Some(EntityCtorHead {
-                    surface: surface.to_string(),
                     canonical,
-                    from_session_sym: true,
                 });
             }
         }
@@ -51,9 +47,7 @@ impl<'a> Parser<'a> {
                 .any(|c| c.get_entity(&canon).is_some())
         {
             return Some(EntityCtorHead {
-                surface: surface.to_string(),
                 canonical: canon,
-                from_session_sym: false,
             });
         }
         None
@@ -74,13 +68,8 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         self.pos += 1;
-        let prev_entry = self.active_entity_entry_id.clone();
-        if head.from_session_sym {
-            self.active_entity_entry_id = self.sym_map.entry_id_for_entity_symbol(&head.surface);
-        }
-        let result = self.parse_entity_ref_value_after_open_paren(&head.canonical, mode);
-        self.active_entity_entry_id = prev_entry;
-        result.map(Some)
+        self.parse_entity_ref_value_after_open_paren(&head.canonical, mode)
+            .map(Some)
     }
 
     /// Parse `Entity(<body>)` after `(` was consumed (head already resolved).
@@ -152,9 +141,8 @@ impl<'a> Parser<'a> {
         ent: &EntityDef,
         raw_key: &str,
     ) -> Result<String, ParseError> {
-        let entry_id = self.active_entity_entry_id.as_deref().unwrap_or("");
         self.sym_map
-            .resolve_compound_key(entry_id, entity_canon, &ent.key_vars, raw_key)
+            .resolve_compound_key("", entity_canon, &ent.key_vars, raw_key)
             .map_err(|e| {
                 self.err(ParseErrorKind::Other {
                     message: e.to_agent_program_error(),

@@ -71,6 +71,27 @@ pub fn scan_physical_line_stmt_state(line: &str) -> Result<PhysicalLineStmtState
     Ok(PhysicalLineStmtState::Complete)
 }
 
+/// Sugar: program-level `label <<TAG` → `label = <<TAG` (same heredoc close rules).
+fn normalize_program_binding_heredoc_sugar(line: &str) -> String {
+    let trimmed = line.trim_start();
+    if trimmed.contains('=') {
+        return line.to_string();
+    }
+    let mut parts = trimmed.split_whitespace();
+    let Some(label) = parts.next() else {
+        return line.to_string();
+    };
+    if !is_valid_program_label(label) {
+        return line.to_string();
+    }
+    let rest = trimmed[label.len()..].trim_start();
+    if !rest.starts_with("<<") {
+        return line.to_string();
+    }
+    let leading_len = line.len().saturating_sub(trimmed.len());
+    format!("{}{label} = {rest}", &line[..leading_len])
+}
+
 /// Join physical lines into logical statements, respecting tagged heredocs that span lines.
 pub fn collect_program_statement_lines(src: &str) -> Result<Vec<String>, String> {
     let mut out = Vec::new();
@@ -80,7 +101,12 @@ pub fn collect_program_statement_lines(src: &str) -> Result<Vec<String>, String>
     let mut heredoc_seen_in_cur = false;
 
     for raw in src.lines() {
-        let w = strip_line_comment(raw);
+        let w = if pending_tag.is_some() || pending_delimiters {
+            strip_line_comment(raw).to_string()
+        } else {
+            normalize_program_binding_heredoc_sugar(strip_line_comment(raw))
+        };
+        let w = w.as_str();
         if pending_tag.is_some() || pending_delimiters {
             if !cur.is_empty() {
                 cur.push('\n');
@@ -662,6 +688,17 @@ mod tests {
         assert_eq!(parts.len(), 2);
         assert!(parts[0].contains("a,b,c"));
         assert_eq!(parts[1].trim(), "bar");
+    }
+
+    #[test]
+    fn collect_program_binding_heredoc_sugar_without_equals() {
+        let src = "body <<PLASM_LABEL_ISSUE_V1\n## Problem\nline two\nPLASM_LABEL_ISSUE_V1\ncreated = x()\nbody, created";
+        let stmts = collect_program_statement_lines(src).expect("parse");
+        assert_eq!(stmts.len(), 3);
+        assert!(stmts[0].starts_with("body = <<PLASM_LABEL_ISSUE_V1"));
+        assert!(stmts[0].contains("## Problem"));
+        assert_eq!(stmts[1], "created = x()");
+        assert_eq!(stmts[2], "body, created");
     }
 
     #[test]

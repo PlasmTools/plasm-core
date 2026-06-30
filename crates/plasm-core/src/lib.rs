@@ -248,7 +248,8 @@ pub use row_predicate::{
     type_check_row_predicate, RowComparison, RowPredicate, RowPredicateTypeCtx,
 };
 pub use teaching_term::{
-    method_ref_for_domain_segment, resolve_parameter_slot, EntityRef, MethodRef, ParameterSlot,
+    method_ref_for_capability, method_ref_for_domain_segment, resolve_parameter_slot, EntityRef,
+    MethodRef, ParameterSlot,
     Symbol, TeachingTerm,
 };
 pub use wire_coercion::{

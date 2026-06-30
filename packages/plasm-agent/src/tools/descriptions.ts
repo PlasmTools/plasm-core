@@ -51,7 +51,7 @@ Core surface:
 
 Composition rules:
 - One binding per line; final roots last (preferred). Single-line bindings coerced; default return is first binding.
-- Row text: \`label = source <<TAG\` … \`TAG\` (equals required); optional \`label = source[p#,…] <<TAG\`. Minijinja \`{{ }}\` / \`{% %}\` over \`rows\` only inside the heredoc body — not \`\${}\`.
+- Row text: \`label = source <<TAG\` … \`TAG\`; optional \`label = source[p#,…] <<TAG\`. Program-level static bindings also accept \`label <<TAG\` (sugar for \`label = <<TAG\`). Minijinja \`{{ }}\` / \`{% %}\` over \`rows\` only inside the heredoc body — not \`\${}\`.
 - Pass \`binding.content\` to string params; compose with \`\${report.content}\` in later heredocs/strings (\`$$\` escapes \`$\`). Do not use \`report.content\` as a final root or relation receiver.
 - Action/create roots: return the action row or follow with \`e#(p#=…)\` get — not \`created.p#\` as a program root.
 - Heredoc: \`<<TAG\` + newline; first trimmed \`TAG\` line closes; pick a tag absent from the body. \`markdown\`/\`html\`/\`document\`/\`json_text\`/\`blob\` values use \`<<TAG\` … \`TAG\` only.

@@ -15,7 +15,6 @@ const INVOKE_MISSING_OWNERSHIP_SUFFIX: &str =
 #[derive(Debug, Clone, Copy)]
 pub struct InvokeCatalogResolutionContext<'a> {
     pub pending_session_catalog_entry_id: Option<&'a str>,
-    pub active_entity_entry_id: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,16 +57,19 @@ pub fn catalog_entry_id_for_invoke(
         return Ok(eid.to_string());
     }
     if let Some(raw) = raw_method_label {
-        if let Some((entry_id, domain, _)) = sym_map.resolve_method_symbol_triple(raw) {
+        if SymbolMap::is_opaque_m_sym(raw) {
+            if let Ok(binding) = sym_map.resolve_session_method(raw) {
+                if binding.domain == source.primary_entity() {
+                    return Ok(binding.entry_id);
+                }
+            }
+        } else if let Some((entry_id, domain, _)) = sym_map.resolve_method_symbol_triple(raw) {
             if domain == source.primary_entity() {
                 return Ok(entry_id.to_string());
             }
         }
     }
-    if let Some(eid) = ctx
-        .pending_session_catalog_entry_id
-        .or(ctx.active_entity_entry_id)
-    {
+    if let Some(eid) = ctx.pending_session_catalog_entry_id {
         return Ok(eid.to_string());
     }
     Err(CatalogOwnershipError {
@@ -159,7 +161,6 @@ mod tests {
             &map,
             InvokeCatalogResolutionContext {
                 pending_session_catalog_entry_id: None,
-                active_entity_entry_id: None,
             },
         )
         .expect("stamped");
@@ -176,7 +177,6 @@ mod tests {
             &map,
             InvokeCatalogResolutionContext {
                 pending_session_catalog_entry_id: Some("default"),
-                active_entity_entry_id: None,
             },
         )
         .expect("pending");

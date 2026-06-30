@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.98] - 2026-06-30
+
+### Changed
+
+- **Session symbol table cutover:** opaque `e#` / `m#` / `p#` / `r#` resolve through session-resident forward dictionaries (`sym_to_entity_binding`, `sym_to_method`, `sym_to_slot`, `sym_to_relation_binding`) populated at assignment time — not qualified reverse maps or parser dynamic catalog scope.
+- **Homograph-aware resolution:** compound constructor keys, query/search filters, and invoke arguments accept taught `p#` tokens when the wire name matches the syntactic role on the target entity/capability, even when the binding row was assigned from a shared fingerprint on another cap/entity.
+- **Parser cutover:** removed `active_entity_entry_id`; opaque `m#` resolves via `MethodBinding`; relations via `resolve_session_relation`.
+
+### Added
+
+- **`session_bindings.rs`:** forward binding types and assignment hooks on `TeachingExposureSession`.
+- **GitHub symbol regressions:** TSV-verbatim `e#`/`p#`/`m#` programs (including six-seed gh-77-shaped chain); grep guard against reintroducing deleted reverse-map fields.
+- **Eval case `gh-77`:** multi-step GitHub label documentation workflow in `apis/github/eval/cases.yaml`.
+- **Heredoc binding sugar:** `label <<TAG` desugars to `label = <<TAG` in program surface parsing.
+
+### Fixed
+
+- **Query filter `p#` on query caps** with `parameters` (not only `input_schema`) now resolve for GitHub `label_query` and similar catalogs.
+
 ## [0.3.97] - 2026-06-30
 
 ### Added

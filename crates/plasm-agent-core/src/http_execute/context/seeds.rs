@@ -608,8 +608,7 @@ mod ranked_replay_tests {
         );
         let map = exp.symbol_map_arc();
         let cap = cgs.get_capability(mutator).expect(mutator);
-        let method = capability_method_label_kebab(cap);
-        let method_sym = map.method_sym("LangItem", &method);
+        let method_sym = map.method_sym("LangItem", cap.name.as_str());
         assert!(
             method_sym.starts_with('m'),
             "{mutator} method must appear on teaching surface after replay: {method_sym}"
@@ -634,8 +633,9 @@ mod ranked_replay_tests {
         let cap = cgs
             .get_capability("langitem_create")
             .expect("langitem_create");
-        let method = capability_method_label_kebab(cap);
-        let method_sym = exp.symbol_map_arc().method_sym("LangItem", &method);
+        let method_sym = exp
+            .symbol_map_arc()
+            .method_sym("LangItem", cap.name.as_str());
         assert!(
             md.contains(&method_sym),
             "reuse recap must include {method_sym}: {md}"
@@ -701,9 +701,8 @@ mod ranked_replay_tests {
         );
         let reuse = format_session_unchanged_reuse_markdown(Some(&exp));
         let cap = cgs.get_capability("issue_create").expect("issue_create");
-        let method = capability_method_label_kebab(cap);
         let map = exp.symbol_map_arc();
-        let method_sym = map.method_sym("Issue", &method);
+        let method_sym = map.method_sym("Issue", cap.name.as_str());
         let labels_sym = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "labels");
         assert!(
             reuse.contains(&method_sym),

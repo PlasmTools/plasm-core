@@ -668,3 +668,19 @@
   expect:
     entities_any: [WorkflowRunContext, WorkflowRun, WorkflowJob, WorkflowArtifact, WorkflowRunUsage]
     projection_contains: [status, fetched_job_count, fetched_artifact_count, run_duration_ms]
+
+- id: gh-77
+  schema: github
+  goal: "Document all repository labels in owner/repo: list labels with colors, open a demonstration issue, apply every label, and comment with the outcome"
+  tags: [query, write, labels, multi_step]
+  covers: [query_filtered, invoke, chain]
+  reference_expr: |-
+    repo = Repository(owner="owner",repo="repo")
+    labels = Label{repository=repo.full_name}[name,description,color,default]
+    created = Issue.issue-create(repository=repo.full_name, title="Label guide", body="Demonstration issue")
+    updated = Issue(owner="owner",repo="repo",number=created.number).issue-update(labels=labels.name)
+    IssueComment.issue-comment-create(repository=repo.full_name, issue_number=created.number, body="Applied all labels")
+    labels, created[number,title]
+  expect:
+    entities_any: [Repository, Label, Issue, IssueComment]
+    projection_contains: [name, color, number, title]

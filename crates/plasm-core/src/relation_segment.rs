@@ -1,4 +1,4 @@
-//! Unified relation-segment resolution for navigation (`.wire`, `r#`, LHS-gated `p#` coercion).
+//! Unified relation-segment resolution for navigation (`.wire`, `r#`, homograph `p#`).
 
 use crate::identity::RelationName;
 use crate::schema::RelationSchema;
@@ -46,7 +46,7 @@ pub fn relation_segment_wrong_role_message(sym: &str, wire: &str, entity: &str) 
     )
 }
 
-/// Resolve a relation continuation segment: wire → `r#` → optional LHS gate → homograph check.
+/// Resolve a relation continuation segment: wire → session `r#` → optional LHS gate → homograph check.
 pub fn resolve_relation_segment(
     ctx: &RelationSegmentContext<'_>,
     segment: &str,
@@ -54,9 +54,13 @@ pub fn resolve_relation_segment(
     if ctx.relations.contains_key(segment) {
         return RelationSegmentOutcome::Wire(segment.to_string());
     }
-    if let Some(wire) = ctx.map.resolve_relation_ident(segment) {
-        if ctx.relations.contains_key(wire) {
-            return RelationSegmentOutcome::Wire(wire.to_string());
+    if SymbolMap::is_opaque_r_sym(segment) {
+        if let Ok(binding) = ctx.map.resolve_session_relation(segment) {
+            if binding.source_entity == ctx.entity
+                && ctx.relations.contains_key(binding.relation_wire.as_str())
+            {
+                return RelationSegmentOutcome::Wire(binding.relation_wire);
+            }
         }
     }
     if ctx.allow_lhs_coercion {
@@ -66,12 +70,24 @@ pub fn resolve_relation_segment(
             }
         }
     }
-    if let Some(wire) = ctx.map.resolve_ident(segment) {
-        if ctx.relations.contains_key(wire) {
-            return RelationSegmentOutcome::WrongRole {
-                sym: segment.to_string(),
-                wire: wire.to_string(),
-            };
+    if SymbolMap::is_opaque_p_sym(segment) {
+        if let Ok(binding) = ctx.map.resolve_session_slot(segment) {
+            if let Some((entity, field_wire)) = binding.entity_field() {
+                if entity == ctx.entity && ctx.relations.contains_key(field_wire) {
+                    return RelationSegmentOutcome::WrongRole {
+                        sym: segment.to_string(),
+                        wire: field_wire.to_string(),
+                    };
+                }
+            }
+            if let Some((domain, _cap, param_wire)) = binding.cap_param() {
+                if domain == ctx.entity && ctx.relations.contains_key(param_wire) {
+                    return RelationSegmentOutcome::WrongRole {
+                        sym: segment.to_string(),
+                        wire: param_wire.to_string(),
+                    };
+                }
+            }
         }
     }
     RelationSegmentOutcome::NotFound
@@ -101,7 +117,6 @@ mod tests {
             Arc::new(load_schema_dir(&root.join("../../apis/github")).expect("github apis/github"));
         let exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["Issue"]);
         let map = exp.symbol_map_arc();
-        // SymbolMap snapshot is Arc — clone inner via rebuild for owned test ctx
         let owned = (*map).clone();
         (cgs, owned)
     }

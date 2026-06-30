@@ -58,9 +58,9 @@
 //! ```
 
 mod entity_ref_parse;
+pub(crate) mod program_surface;
 pub(crate) mod heredoc_surface;
 pub(crate) mod predicate_surface;
-pub(crate) mod program_surface;
 mod value;
 
 pub mod postfix;
@@ -93,7 +93,7 @@ use crate::{
     coerce_value_for_field_type, ArrayItemsSchema, CapabilityKind, CapabilityName, ChainExpr,
     CompOp, CreateExpr, DeleteExpr, EntityDef, EntityKey, EntityName, Expr, FieldType, GetExpr,
     InputType, InvokeExpr, InvokeInputPayload, PageExpr, ParameterRole, Predicate, QueryExpr, Ref,
-    Value, ValueWireFormat, CGS,
+    SymbolResolveError, Value, ValueWireFormat, CGS,
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -505,9 +505,7 @@ pub(super) struct Parser<'a> {
     pub(super) program_nodes: Option<&'a BTreeSet<String>>,
     /// Enables `_.path` row references (for `source => …` templates).
     pub(super) for_each_row_context: bool,
-    /// When the surface entity token was an opaque `e#`, owning catalog for disambiguation.
-    pub(super) active_entity_entry_id: Option<String>,
-    /// Copied onto surface [`Expr`] nodes built from that opaque `e#` head (federated sessions).
+    /// When the surface entity token was an opaque `e#`, owning catalog stamped on built [`Expr`].
     pending_session_catalog_entry_id: Option<String>,
     /// Registry `entry_id` per federated layer when [`CGS::entry_id`] is unset (parallel to `layers`).
     layer_catalog_entry_ids: Option<&'a [Option<&'a str>]>,
@@ -534,7 +532,6 @@ impl<'a> Parser<'a> {
             sym_map,
             program_nodes: None,
             for_each_row_context: false,
-            active_entity_entry_id: None,
             pending_session_catalog_entry_id: None,
             layer_catalog_entry_ids,
         };
@@ -568,11 +565,6 @@ impl<'a> Parser<'a> {
     }
 
     fn cgs_for_entity(&self, entity: &str) -> Option<&CGS> {
-        if let Some(ref eid) = self.active_entity_entry_id {
-            if let Some(cgs) = self.cgs_for_catalog_entry_id(eid, entity) {
-                return Some(cgs);
-            }
-        }
         let matches: Vec<_> = self
             .layers_slice()
             .iter()
@@ -625,11 +617,172 @@ impl<'a> Parser<'a> {
             .unwrap_or_else(|| raw.to_string())
     }
 
+    /// Resolve a method label for kebab / wire-name lookup. Opaque session `m#` passes through
+    /// unchanged; invoke resolution must use [`Self::try_resolve_opaque_invoke_capability`] first.
     fn normalize_method_symbol_label(&self, label: &str) -> String {
+        if crate::symbol_tuning::SymbolMap::is_opaque_m_sym(label) {
+            return label.to_string();
+        }
         self.sym_map
             .resolve_method_symbol_token(label)
             .map(str::to_string)
             .unwrap_or_else(|| label.to_string())
+    }
+
+    /// Single entry for session `m#` → catalog capability (invoke-anchor validated).
+    fn try_resolve_opaque_invoke_capability<'b>(
+        &'b self,
+        source: &Expr,
+        raw: &str,
+    ) -> Option<Result<&'b crate::CapabilitySchema, ParseError>> {
+        if !crate::symbol_tuning::SymbolMap::is_opaque_m_sym(raw) {
+            return None;
+        }
+        Some(
+            self.sym_map
+                .resolve_opaque_session_method_capability(
+                    self.layers_slice(),
+                    raw,
+                    source.primary_entity(),
+                )
+                .map_err(|e: SymbolResolveError| {
+                    self.err(ParseErrorKind::Other {
+                        message: e.to_agent_program_error(),
+                    })
+                }),
+        )
+    }
+
+    fn scoped_query_bridge_matches_anchor(
+        cap: &crate::CapabilitySchema,
+        cgs: &CGS,
+        anchor_entity: &str,
+    ) -> bool {
+        if cap.kind != CapabilityKind::Query {
+            return false;
+        }
+        let Some(is) = cap.input_schema.as_ref() else {
+            return false;
+        };
+        let InputType::Object { fields, .. } = &is.input_type else {
+            return false;
+        };
+        let scope_fields: Vec<_> = fields
+            .iter()
+            .filter(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)))
+            .collect();
+        if scope_fields.len() != 1 {
+            return false;
+        }
+        let sf = scope_fields[0];
+        let Ok(nv) = sf.named_value(cgs) else {
+            return false;
+        };
+        let FieldType::EntityRef { target } = &nv.field_type else {
+            return false;
+        };
+        target.as_str() == anchor_entity
+    }
+
+    fn finish_zero_arity_invoke_from_cap(
+        &self,
+        source: &Expr,
+        raw: &str,
+        cap: &crate::CapabilitySchema,
+    ) -> Result<Expr, ParseError> {
+        let entity = source.primary_entity().to_string();
+        self.validate_entity(&entity)?;
+        let cap_name = cap.name.clone();
+        if cap.kind == CapabilityKind::Create {
+            return Ok(Expr::Create(CreateExpr::new(
+                cap_name,
+                entity,
+                Value::Object(Default::default()),
+            )));
+        }
+        let needs_anchor_id = template_invoke_requires_explicit_anchor_id(&cap.mapping.template.0);
+
+        if cap.kind == CapabilityKind::Delete {
+            if let Expr::Get(g) = source {
+                return Ok(Expr::Delete(DeleteExpr::with_target_path_vars(
+                    cap_name,
+                    g.reference.clone(),
+                    g.path_vars.clone(),
+                )));
+            }
+            if !needs_anchor_id {
+                return Ok(Expr::Delete(DeleteExpr::new(cap_name, entity, "0")));
+            }
+            return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
+                entity: entity.clone(),
+                label: raw.to_string(),
+            }));
+        }
+        if cap.kind == CapabilityKind::Get {
+            let invoke_id = if !needs_anchor_id {
+                "0".to_string()
+            } else {
+                match source {
+                    Expr::Get(g) => g.reference.primary_slot_str(),
+                    _ => {
+                        return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
+                            entity: entity.clone(),
+                            label: raw.to_string(),
+                        }));
+                    }
+                }
+            };
+            return Ok(Expr::Get(GetExpr::new(entity, invoke_id)));
+        }
+
+        if !needs_anchor_id {
+            if let Expr::Get(g) = source {
+                return Ok(Expr::Invoke(InvokeExpr::with_target_path_vars(
+                    cap_name,
+                    g.reference.clone(),
+                    None,
+                    g.path_vars.clone(),
+                )));
+            }
+            return Ok(Expr::Invoke(InvokeExpr::new(cap_name, entity, "0", None)));
+        }
+        let Expr::Get(g) = source else {
+            return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
+                entity: entity.clone(),
+                label: raw.to_string(),
+            }));
+        };
+        Ok(Expr::Invoke(InvokeExpr::with_target_path_vars(
+            cap_name,
+            g.reference.clone(),
+            None,
+            g.path_vars.clone(),
+        )))
+    }
+
+    fn parse_zero_arity_invoke(&mut self, source: Expr, label: String) -> Result<Expr, ParseError> {
+        let raw = label.clone();
+        if let Some(res) = self.try_resolve_opaque_invoke_capability(&source, &raw) {
+            return self.finish_zero_arity_invoke_from_cap(&source, &raw, res?);
+        }
+        let label = self.normalize_method_symbol_label(&label);
+        if let Some(expr) =
+            self.try_scoped_query_bridge_from_get(&source, &label, Some(raw.as_str()))?
+        {
+            return Ok(expr);
+        }
+        let entity = source.primary_entity().to_string();
+        self.validate_entity(&entity)?;
+        let resolved_name = self.resolve_zero_arity_pipeline_cap(&entity, &label)?;
+        let cap = self
+            .cgs_for_entity_required(&entity)?
+            .get_capability(&resolved_name)
+            .ok_or_else(|| {
+                self.err(ParseErrorKind::CapabilityMissingInternal {
+                    name: resolved_name.clone(),
+                })
+            })?;
+        self.finish_zero_arity_invoke_from_cap(&source, &raw, cap)
     }
 
     fn invoke_arg_catalog_entry_id(
@@ -643,7 +796,6 @@ impl<'a> Parser<'a> {
             &self.sym_map,
             crate::catalog_ownership::InvokeCatalogResolutionContext {
                 pending_session_catalog_entry_id: self.pending_session_catalog_entry_id.as_deref(),
-                active_entity_entry_id: self.active_entity_entry_id.as_deref(),
             },
         )
         .map_err(|e| {
@@ -702,6 +854,7 @@ impl<'a> Parser<'a> {
                         cap.domain.as_str(),
                         cap.name.as_str(),
                         &raw_key,
+                        cap,
                     )
                     .map_err(|e| {
                         self.err(ParseErrorKind::Other {
@@ -923,10 +1076,9 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
         self.expect_char(')')?;
-        let entry_id = self.active_entity_entry_id.as_deref().unwrap_or("");
         let wire_key = self
             .sym_map
-            .resolve_entity_field(entry_id, entity, ent, key.as_str())
+            .resolve_entity_field("", entity, ent, key.as_str())
             .unwrap_or_else(|_| key.clone());
         if wire_key != ent.id_field.as_str() {
             return Err(self.err(ParseErrorKind::Other {
@@ -984,10 +1136,9 @@ impl<'a> Parser<'a> {
             return Ok(None);
         }
         self.expect_char(')')?;
-        let entry_id = self.active_entity_entry_id.as_deref().unwrap_or("");
         let wire_field = self
             .sym_map
-            .resolve_entity_field(entry_id, entity, ent, field.as_str())
+            .resolve_entity_field("", entity, ent, field.as_str())
             .unwrap_or(field);
         if wire_field != ent.id_field.as_str() {
             self.pos = save;
@@ -1039,10 +1190,9 @@ impl<'a> Parser<'a> {
         // (`try_parse_simple_id_field_get_sugar`): a `p#` token that resolves to the entity's
         // identity field is a legal keyed identity get. Comparing the raw `key` here rejected
         // `Team(p76=key)` even though `p76` resolves to `key`.
-        let entry_id = self.active_entity_entry_id.as_deref().unwrap_or("");
         let wire_key = self
             .sym_map
-            .resolve_entity_field(entry_id, entity_canon, ent, key.as_str())
+            .resolve_entity_field("", entity_canon, ent, key.as_str())
             .unwrap_or_else(|_| key.clone());
         if wire_key != ent.id_field.as_str() {
             return Err(self.err(ParseErrorKind::Other {
@@ -1218,93 +1368,6 @@ impl<'a> Parser<'a> {
         None
     }
 
-    fn parse_zero_arity_invoke(&mut self, source: Expr, label: String) -> Result<Expr, ParseError> {
-        let raw = label.clone();
-        let label = self.normalize_method_symbol_label(&label);
-        if let Some(expr) =
-            self.try_scoped_query_bridge_from_get(&source, &label, Some(raw.as_str()))?
-        {
-            return Ok(expr);
-        }
-        let entity = source.primary_entity().to_string();
-        self.validate_entity(&entity)?;
-        let cap_name = self.resolve_zero_arity_pipeline_cap(&entity, &label)?;
-        let cap = self
-            .cgs_for_entity_required(&entity)?
-            .get_capability(&cap_name)
-            .ok_or_else(|| {
-                self.err(ParseErrorKind::CapabilityMissingInternal {
-                    name: cap_name.clone(),
-                })
-            })?;
-        if cap.kind == CapabilityKind::Create {
-            return Ok(Expr::Create(CreateExpr::new(
-                cap_name,
-                entity,
-                Value::Object(Default::default()),
-            )));
-        }
-        let needs_anchor_id = template_invoke_requires_explicit_anchor_id(&cap.mapping.template.0);
-
-        if cap.kind == CapabilityKind::Delete {
-            if let Expr::Get(g) = &source {
-                return Ok(Expr::Delete(DeleteExpr::with_target_path_vars(
-                    cap_name,
-                    g.reference.clone(),
-                    g.path_vars.clone(),
-                )));
-            }
-            if !needs_anchor_id {
-                return Ok(Expr::Delete(DeleteExpr::new(cap_name, entity, "0")));
-            }
-            return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
-                entity: entity.clone(),
-                label: label.clone(),
-            }));
-        }
-        if cap.kind == CapabilityKind::Get {
-            let invoke_id = if !needs_anchor_id {
-                "0".to_string()
-            } else {
-                match &source {
-                    Expr::Get(g) => g.reference.primary_slot_str(),
-                    _ => {
-                        return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
-                            entity: entity.clone(),
-                            label: label.clone(),
-                        }));
-                    }
-                }
-            };
-            return Ok(Expr::Get(GetExpr::new(entity, invoke_id)));
-        }
-
-        // Update / Action / other invoke kinds: preserve compound [`Ref`] from `Entity(id).method()`.
-        if !needs_anchor_id {
-            if let Expr::Get(g) = &source {
-                return Ok(Expr::Invoke(InvokeExpr::with_target_path_vars(
-                    cap_name,
-                    g.reference.clone(),
-                    None,
-                    g.path_vars.clone(),
-                )));
-            }
-            return Ok(Expr::Invoke(InvokeExpr::new(cap_name, entity, "0", None)));
-        }
-        let Expr::Get(g) = &source else {
-            return Err(self.err(ParseErrorKind::InvokeRequiresTargetId {
-                entity: entity.clone(),
-                label: label.clone(),
-            }));
-        };
-        Ok(Expr::Invoke(InvokeExpr::with_target_path_vars(
-            cap_name,
-            g.reference.clone(),
-            None,
-            g.path_vars.clone(),
-        )))
-    }
-
     /// Comma-separated `key=value` inside `(` … `)` for dotted-call create/update/invoke (see module `//!`).
     /// Optional-parameter teaching form: `(..)` or `(k=v,..)` — `..` adds no keys.
     fn parse_paren_object_arg_list(&mut self) -> Result<IndexMap<String, Value>, ParseError> {
@@ -1472,7 +1535,6 @@ impl<'a> Parser<'a> {
             &self.sym_map,
             crate::catalog_ownership::InvokeCatalogResolutionContext {
                 pending_session_catalog_entry_id: self.pending_session_catalog_entry_id.as_deref(),
-                active_entity_entry_id: self.active_entity_entry_id.as_deref(),
             },
         ) {
             if let Some(cgs) = self.cgs_for_catalog_entry_id(eid.as_str(), primary) {
@@ -1493,6 +1555,11 @@ impl<'a> Parser<'a> {
         raw_label: Option<&str>,
         source: &Expr,
     ) -> Result<&crate::CapabilitySchema, ParseError> {
+        if let Some(raw) = raw_label {
+            if let Some(res) = self.try_resolve_opaque_invoke_capability(source, raw) {
+                return res;
+            }
+        }
         let primary = source.primary_entity();
         let scoped_layers = self.layers_for_dotted_call_source(source, raw_label);
         let same_domain: Vec<_> = scoped_layers
@@ -1860,7 +1927,6 @@ impl<'a> Parser<'a> {
             first
         };
         let ec = self.cgs_for_entity_required(entity_name)?;
-        let entry_id = self.active_entity_entry_id.as_deref().unwrap_or("");
         let pred_wire = if crate::symbol_tuning::SymbolMap::is_opaque_p_sym(pred_field.as_str()) {
             let ent = ec.get_entity(entity_name).ok_or_else(|| {
                 self.err(ParseErrorKind::Other {
@@ -1868,7 +1934,7 @@ impl<'a> Parser<'a> {
                 })
             })?;
             self.sym_map
-                .resolve_query_filter_field(entry_id, entity_name, ent, ec, pred_field.as_str())
+                .resolve_query_filter_field("", entity_name, ent, ec, pred_field.as_str())
                 .map_err(|e| {
                     self.err(ParseErrorKind::Other {
                         message: e.to_agent_program_error(),
@@ -2065,8 +2131,7 @@ impl<'a> Parser<'a> {
     /// `Get(Anchor, id).<query-kebab>` when the query capability lives on another domain but scopes
     /// with a single `EntityRef` to `Anchor` (e.g. `Team(42).space-query` → query `Space` with `team_id`).
     ///
-    /// When `raw_label` is `m#`, use the SYMBOL MAP `(domain, kebab)` pair so duplicate kebabs
-    /// (`space_query` and `task_query` both `query`) do not collide.
+    /// When `raw_label` is session `m#`, resolve the catalog capability directly from the symbol map.
     fn try_scoped_query_bridge_from_get(
         &self,
         source: &Expr,
@@ -2081,39 +2146,13 @@ impl<'a> Parser<'a> {
 
         let mut matches: Vec<&crate::CapabilitySchema> = Vec::new();
         if let Some(raw) = raw_label {
-            if let Some((domain, kebab)) = self.sym_map.resolve_method_symbol_pair(raw) {
+            if let Some(Ok(cap)) = self.try_resolve_opaque_invoke_capability(source, raw) {
                 for c in self.layers_slice() {
-                    for cap in c.capabilities.values() {
-                        if cap.kind != CapabilityKind::Query {
-                            continue;
-                        }
-                        if cap.domain.as_str() != domain {
-                            continue;
-                        }
-                        if capability_path_method_segment(cap).as_str() != kebab {
-                            continue;
-                        }
-                        let Some(is) = cap.input_schema.as_ref() else {
-                            continue;
-                        };
-                        let InputType::Object { fields, .. } = &is.input_type else {
-                            continue;
-                        };
-                        let scope_fields: Vec<_> = fields
-                            .iter()
-                            .filter(|f| f.required && matches!(f.role, Some(ParameterRole::Scope)))
-                            .collect();
-                        if scope_fields.len() != 1 {
-                            continue;
-                        }
-                        let sf = scope_fields[0];
-                        if let Ok(nv) = sf.named_value(c) {
-                            if let FieldType::EntityRef { target } = &nv.field_type {
-                                if target.as_str() == anchor_entity {
-                                    matches.push(cap);
-                                }
-                            }
-                        }
+                    if c.get_capability(cap.name.as_str()).is_some()
+                        && Self::scoped_query_bridge_matches_anchor(cap, c, anchor_entity)
+                    {
+                        matches.push(cap);
+                        break;
                     }
                 }
             }
@@ -2361,8 +2400,11 @@ impl<'a> Parser<'a> {
         };
         self.pending_session_catalog_entry_id = None;
         if let Some(sym) = entity_from_sym.as_deref() {
-            self.active_entity_entry_id = self.sym_map.entry_id_for_entity_symbol(sym);
-            self.pending_session_catalog_entry_id = self.active_entity_entry_id.clone();
+            self.pending_session_catalog_entry_id = self
+                .sym_map
+                .resolve_session_entity(sym)
+                .ok()
+                .map(|b| b.entry_id);
         }
         let ent = self
             .cgs_for_entity_required(&entity)?
@@ -3826,7 +3868,7 @@ mod tests {
         assert_eq!(r.expr.primary_entity(), "Team");
     }
 
-    /// Opaque `m#` without prior `expand_path_symbols` — parser resolves to kebab and scoped query bridge.
+    /// Opaque session `m#` resolves to catalog capability for scoped query bridge.
     #[test]
     fn parse_clickup_team_get_space_query_via_method_symbol() {
         let dir = std::path::Path::new("../../apis/clickup");
@@ -3835,11 +3877,10 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         let cap = cgs.get_capability("space_query").expect("space_query");
-        let kebab = capability_method_label_kebab(cap);
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let map = SymbolMap::build(&cgs, &full);
-        let sym = map.method_sym("Space", &kebab);
-        if sym == kebab {
+        let sym = map.method_sym("Space", cap.name.as_str());
+        if sym == cap.name.as_str() {
             return;
         }
         let line = format!("Team(42).{sym}");
@@ -5151,8 +5192,7 @@ mod tests {
         let cap = cgs
             .get_capability("issue_comment_create")
             .expect("issue_comment_create");
-        let method = capability_method_label_kebab(cap);
-        let method_sym = sym_map.method_sym("IssueComment", &method);
+        let method_sym = sym_map.method_sym("IssueComment", cap.name.as_str());
         let owner = sym_map.ident_sym_entity_field("Repository", "owner");
         let repo = sym_map.ident_sym_entity_field("Repository", "repo");
         let repo_param =

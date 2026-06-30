@@ -4,7 +4,6 @@ use std::collections::{BTreeSet, HashSet};
 
 use indexmap::IndexMap;
 
-use crate::schema::capability_method_label_kebab;
 use crate::symbol_tuning::{
     capability_exposure_param_pairs, field_syms_for_teaching_row, gloss_description_truncated,
     registry_backed_compact_wire_label, CapabilityParamSurfaceFilter, ExposureCapabilityKey,
@@ -26,14 +25,14 @@ fn method_syms_for_new_capabilities(
 ) -> HashSet<String> {
     let mut out = HashSet::new();
     for cap_key in new_caps {
-        let Some(cgs) = exp.catalog_cgs_for_entry(cap_key.entry_id.as_str()) else {
+        if exp.catalog_cgs_for_entry(cap_key.entry_id.as_str()).is_none() {
             continue;
         };
-        let Some(cap) = cgs.capabilities.get(cap_key.capability.as_str()) else {
-            continue;
-        };
-        let kebab = capability_method_label_kebab(cap);
-        out.insert(map.method_sym_for(cap_key.entry_id.as_str(), cap_key.domain.as_str(), &kebab));
+        out.insert(map.method_sym_for(
+            cap_key.entry_id.as_str(),
+            cap_key.domain.as_str(),
+            cap_key.capability.as_str(),
+        ));
     }
     out
 }
@@ -357,8 +356,11 @@ pub(crate) fn render_mutator_recap_lines_for_caps(
         let Some(e_sym) = exp.qualified_entity_symbol(cap_key.entry_id.as_str(), entity) else {
             continue;
         };
-        let kebab = capability_method_label_kebab(cap);
-        let m_sym = map.method_sym_for(cap_key.entry_id.as_str(), entity, &kebab);
+        let m_sym = map.method_sym_for(
+            cap_key.entry_id.as_str(),
+            entity,
+            cap_key.capability.as_str(),
+        );
         let pairs = capability_exposure_param_pairs(
             exp,
             map.as_ref(),

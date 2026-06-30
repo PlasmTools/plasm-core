@@ -5,9 +5,25 @@ use crate::plasm_plan_run::symbol_map_for_plasm_surface_parse;
 use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
 use plasm_core::{load_schema, CgsContext, ExposureEntityKey, TeachingExposureSession, CGS};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
+
+static GITHUB_FAST_LOAD: Once = Once::new();
+
+fn enable_github_fast_load_for_tests() {
+    GITHUB_FAST_LOAD.call_once(|| {
+        // View-backed entities (IssueTriageContext, …) may lack teaching rows; structural load is enough for symbol resolution tests.
+        std::env::set_var("PLASM_CGS_FAST_LOAD", "1");
+    });
+}
+
+pub(super) fn github_cgs() -> Arc<CGS> {
+    enable_github_fast_load_for_tests();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    Arc::new(load_schema(&root.join("../../apis/github")).expect("load github"))
+}
 
 pub(super) fn github_issue_label_session() -> ExecuteSession {
+    enable_github_fast_load_for_tests();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let cgs = Arc::new(load_schema(&root.join("../../apis/github")).expect("load github"));
     let entities = ["Repository", "Issue", "Label"];
@@ -42,6 +58,7 @@ pub(super) fn github_ranked_mutator_session(
     ranked: &[&str],
     mutator: &str,
 ) -> ExecuteSession {
+    enable_github_fast_load_for_tests();
     let endpoints = entities
         .iter()
         .map(|e| ExposureEntityKey {
@@ -94,11 +111,6 @@ pub(super) fn github_ranked_mutator_session(
         None,
         None,
     )
-}
-
-pub(super) fn github_cgs() -> Arc<CGS> {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    Arc::new(load_schema(&root.join("../../apis/github")).expect("load github"))
 }
 
 pub(super) fn compile_github_program(

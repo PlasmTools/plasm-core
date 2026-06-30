@@ -23,7 +23,12 @@
 
 mod capability_surface_params;
 mod opaque_symbol_hash;
+mod session_bindings;
 mod symbol_resolve;
+
+pub use session_bindings::{
+    EntityBinding, MethodBinding, RelationBinding, SlotBinding, SlotKind,
+};
 
 pub use capability_surface_params::{
     capability_exposure_param_pairs, capability_optional_legend_param_pairs,
@@ -36,12 +41,12 @@ use crate::identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityName, RelationName,
 };
 use crate::schema::{
-    capability_method_label_kebab, input_variant_body_type, resolve_capability_input_param_field,
+    input_variant_body_type, resolve_capability_input_param_field,
     union_variant_constructor_symbol, ArrayItemsSchema, CapabilitySchema, InputFieldSchema,
     InputFieldWire, InputType, ParameterRole, StringSemantics, ValueDomainKey, CGS,
 };
 use crate::teaching_term::{
-    method_ref_for_domain_segment, resolve_parameter_slot, EntityRef, ParameterSlot, Symbol,
+    method_ref_for_capability, resolve_parameter_slot, EntityRef, ParameterSlot, Symbol,
     TeachingTerm,
 };
 use crate::CapabilityKind;
@@ -1564,9 +1569,9 @@ pub struct SymbolMap {
     sym_to_entity: IndexMap<String, String>,
     /// `(registry entry_id, CGS entity name)` → opaque `e#`. Duplicate entity names across catalogs are distinct rows.
     qualified_entity_to_sym: IndexMap<(String, String), String>,
-    /// method symbol -> (catalog entry_id, domain entity, kebab label)
-    sym_to_method: IndexMap<String, (String, String, String)>,
-    /// (registry entry_id or `""`, domain entity, kebab method label)
+    /// method symbol -> catalog-qualified method binding
+    sym_to_method: IndexMap<String, MethodBinding>,
+    /// (registry entry_id or `""`, domain entity, capability wire name)
     method_to_sym: IndexMap<(String, String, String), String>,
     sym_to_ident: IndexMap<String, String>,
     /// Wire name → first-assigned `p#` when multiple slots share a label (feedback collapse / legacy).
@@ -1579,14 +1584,6 @@ pub struct SymbolMap {
     sym_to_relation_wire: IndexMap<String, String>,
     /// `(entry_id, domain_entity, capability_name, param)` → `p#` for capability inputs.
     cap_param_to_sym: HashMap<(String, String, String, String), String>,
-    /// `(entry_id, entity, p_sym)` → entity field wire (qualified reverse of [`Self::entity_field_to_sym`]).
-    entity_p_sym_to_wire: HashMap<(String, String, String), String>,
-    /// `(entity, p_sym)` → field wire when unique across catalogs (empty `entry_id` lookup).
-    entity_p_sym_globally_unique: HashMap<(String, String), String>,
-    /// `(entry_id, domain, capability, p_sym)` → param wire (qualified reverse of [`Self::cap_param_to_sym`]).
-    cap_p_sym_to_param: HashMap<(String, String, String, String), String>,
-    /// `(entry_id, domain, capability)` → sorted opaque `p#` taught for invoke error hints.
-    cap_taught_p_syms: HashMap<(String, String, String), Vec<String>>,
     /// `(catalog_entry_id|vr:value_ref)` → `v#` — one symbol per CGS `values:` row in this session.
     pub(crate) value_domain_fp_to_sym: IndexMap<String, String>,
     /// `v#` → value-domain fingerprint (reverse of [`Self::value_domain_fp_to_sym`]).
@@ -1595,6 +1592,12 @@ pub struct SymbolMap {
     pub(crate) p_sym_to_value_sym: HashMap<String, String>,
     /// Pre-rendered `v#  ;;  …` gloss bodies (teaching table teaching only).
     value_sym_gloss: IndexMap<String, String>,
+    /// Session forward table: opaque `e#` → catalog-qualified entity binding.
+    pub(crate) sym_to_entity_binding: IndexMap<String, EntityBinding>,
+    /// Session forward table: opaque `p#` → fully qualified slot binding.
+    pub(crate) sym_to_slot: IndexMap<String, SlotBinding>,
+    /// Session forward table: opaque `r#` → declared relation binding.
+    pub(crate) sym_to_relation_binding: IndexMap<String, RelationBinding>,
 }
 
 #[inline]
@@ -1764,20 +1767,26 @@ impl SymbolMap {
         &self,
         cgs: &CGS,
         entity: &str,
-        kebab: &str,
+        capability: &str,
     ) -> Option<TeachingTerm> {
         let entry_key = cgs.entry_id.as_deref().unwrap_or("");
         let sym_str = self
             .method_to_sym
-            .get(&(entry_key.to_string(), entity.to_string(), kebab.to_string()))
+            .get(&(
+                entry_key.to_string(),
+                entity.to_string(),
+                capability.to_string(),
+            ))
             .or_else(|| {
-                self.method_to_sym.iter().find_map(|((eid, e, k), s)| {
-                    (e == entity && k == kebab && (eid.is_empty() || eid.as_str() == entry_key))
+                self.method_to_sym.iter().find_map(|((eid, e, cap), s)| {
+                    (e == entity
+                        && cap == capability
+                        && (eid.is_empty() || eid.as_str() == entry_key))
                         .then_some(s)
                 })
             })?;
         let idx = Symbol::parse_index(sym_str, 'm')?;
-        let mref = method_ref_for_domain_segment(cgs, entity, kebab)?;
+        let mref = method_ref_for_capability(cgs, entity, capability)?;
         Some(TeachingTerm::Method(mref, idx))
     }
 
@@ -2023,46 +2032,22 @@ impl SymbolMap {
         crate::teaching_term::Symbol::parse_index(sym, 'p').is_some()
     }
 
-    /// Resolve opaque `p#` to an entity field wire when the binding entity is known.
-    pub(crate) fn resolve_wire_for_p_sym_entity(
-        &self,
-        catalog_entry_id: &str,
-        entity: &str,
-        token: &str,
-    ) -> Option<String> {
-        if !Self::is_opaque_p_sym(token) {
-            return None;
-        }
-        let key = |eid: &str| (eid.to_string(), entity.to_string(), token.to_string());
-        if !catalog_entry_id.is_empty() {
-            if let Some(wire) = self.entity_p_sym_to_wire.get(&key(catalog_entry_id)) {
-                return Some(wire.clone());
-            }
-        }
-        self.entity_p_sym_globally_unique
-            .get(&(entity.to_string(), token.to_string()))
-            .cloned()
+    /// True when `sym` is an opaque session `m#` token (digits only after `m`).
+    #[inline]
+    pub fn is_opaque_m_sym(sym: &str) -> bool {
+        crate::teaching_term::Symbol::parse_index(sym, 'm').is_some()
     }
 
-    /// Resolve opaque `p#` to a capability input param wire for a specific mutator.
-    pub fn resolve_wire_for_p_sym_cap(
-        &self,
-        catalog_entry_id: &str,
-        domain: &str,
-        capability: &str,
-        token: &str,
-    ) -> Option<String> {
-        if !Self::is_opaque_p_sym(token) {
-            return None;
-        }
-        self.cap_p_sym_to_param
-            .get(&(
-                catalog_entry_id.to_string(),
-                domain.to_string(),
-                capability.to_string(),
-                token.to_string(),
-            ))
-            .cloned()
+    /// True when `sym` is an opaque session `e#` token (digits only after `e`).
+    #[inline]
+    pub fn is_opaque_e_sym(sym: &str) -> bool {
+        crate::teaching_term::Symbol::parse_index(sym, 'e').is_some()
+    }
+
+    /// True when `sym` is an opaque session `r#` token (digits only after `r`).
+    #[inline]
+    pub fn is_opaque_r_sym(sym: &str) -> bool {
+        crate::teaching_term::Symbol::parse_index(sym, 'r').is_some()
     }
 
     /// Opaque `p#` tokens taught for a capability's input parameters (deterministic error hints).
@@ -2072,14 +2057,7 @@ impl SymbolMap {
         domain: &str,
         capability: &str,
     ) -> Vec<String> {
-        self.cap_taught_p_syms
-            .get(&(
-                catalog_entry_id.to_string(),
-                domain.to_string(),
-                capability.to_string(),
-            ))
-            .cloned()
-            .unwrap_or_default()
+        self.cap_param_syms_from_forward_table(catalog_entry_id, domain, capability)
     }
 
     /// `(taught: p1, p2, …)` suffix for capability invoke arg errors; empty when none taught.
@@ -2097,50 +2075,11 @@ impl SymbolMap {
         }
     }
 
-    fn rebuild_qualified_p_sym_indexes(&mut self) {
-        self.entity_p_sym_to_wire.clear();
-        self.entity_p_sym_globally_unique.clear();
-        self.cap_p_sym_to_param.clear();
-        self.cap_taught_p_syms.clear();
-        for ((eid, ent, field), sym) in &self.entity_field_to_sym {
-            if !Self::is_opaque_p_sym(sym) {
-                continue;
-            }
-            self.entity_p_sym_to_wire
-                .insert((eid.clone(), ent.clone(), sym.clone()), field.clone());
-            let global_key = (ent.clone(), sym.clone());
-            match self.entity_p_sym_globally_unique.get(&global_key) {
-                None => {
-                    self.entity_p_sym_globally_unique
-                        .insert(global_key, field.clone());
-                }
-                Some(existing) if existing == field => {}
-                Some(_) => {
-                    self.entity_p_sym_globally_unique.remove(&global_key);
-                }
-            }
-        }
-        for ((eid, dom, cap, param), sym) in &self.cap_param_to_sym {
-            if !Self::is_opaque_p_sym(sym) {
-                continue;
-            }
-            self.cap_p_sym_to_param.insert(
-                (eid.clone(), dom.clone(), cap.clone(), sym.clone()),
-                param.clone(),
-            );
-            self.cap_taught_p_syms
-                .entry((eid.clone(), dom.clone(), cap.clone()))
-                .or_default()
-                .push(sym.clone());
-        }
-        for syms in self.cap_taught_p_syms.values_mut() {
-            syms.sort();
-            syms.dedup();
-        }
-    }
-
     /// Resolve `r#` → declared relation wire. Returns `None` if `sym` is not a session relation token.
     pub fn resolve_relation_ident<'a>(&'a self, sym: &str) -> Option<&'a str> {
+        if let Some(binding) = self.sym_to_relation_binding.get(sym) {
+            return Some(binding.relation_wire.as_str());
+        }
         self.sym_to_relation_wire.get(sym).map(|s| s.as_str())
     }
 
@@ -2248,59 +2187,67 @@ impl SymbolMap {
         s
     }
 
-    /// Opaque `m#` for one `(registry entry_id, domain entity, kebab)` triple.
+    /// Opaque `m#` for one `(registry entry_id, domain entity, capability wire name)` triple.
     #[inline]
-    pub fn method_sym_for(&self, catalog_entry_id: &str, entity: &str, kebab: &str) -> String {
+    pub fn method_sym_for(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        capability: &str,
+    ) -> String {
         self.method_to_sym
             .get(&(
                 catalog_entry_id.to_string(),
                 entity.to_string(),
-                kebab.to_string(),
+                capability.to_string(),
             ))
             .cloned()
-            .unwrap_or_else(|| kebab.to_string())
+            .unwrap_or_else(|| capability.to_string())
     }
 
     /// Opaque `m#` string — unambiguous match only; prefer [`Self::method_sym_for`] under federation.
     #[inline]
-    pub fn method_sym(&self, entity: &str, kebab: &str) -> String {
+    pub fn method_sym(&self, entity: &str, capability: &str) -> String {
         let v: Vec<_> = self
             .method_to_sym
             .iter()
-            .filter(|((_, e, k), _)| e == entity && k == kebab)
+            .filter(|((_, e, cap), _)| e == entity && cap == capability)
             .collect();
         if v.len() != 1 {
-            return kebab.to_string();
+            return capability.to_string();
         }
         v.first()
             .map(|(_, s)| (*s).clone())
-            .unwrap_or_else(|| kebab.to_string())
+            .unwrap_or_else(|| capability.to_string())
     }
 
-    /// If `label` is an opaque method token `m#` (digits), return the kebab method label for parse.
+    /// If `label` is an opaque method token `m#`, return the capability wire name for parse.
     #[inline]
     pub fn resolve_method_symbol_token(&self, label: &str) -> Option<&str> {
-        self.resolve_method_symbol_pair(label)
-            .map(|(_, kebab)| kebab)
+        self.resolve_method_symbol_triple(label)
+            .map(|(_, _, cap)| cap)
     }
 
-    /// `m#` → `(registry entry_id, domain entity name, kebab label)`.
+    /// `m#` → `(registry entry_id, domain entity name, capability wire name)`.
     #[inline]
     pub fn resolve_method_symbol_triple(&self, label: &str) -> Option<(&str, &str, &str)> {
-        let rest = label.strip_prefix('m')?;
-        if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
+        if !Self::is_opaque_m_sym(label) {
             return None;
         }
-        self.sym_to_method
-            .get(label)
-            .map(|(eid, d, k)| (eid.as_str(), d.as_str(), k.as_str()))
+        self.sym_to_method.get(label).map(|b| {
+            (
+                b.entry_id.as_str(),
+                b.domain.as_str(),
+                b.capability.as_str(),
+            )
+        })
     }
 
-    /// `m#` → `(domain entity name, kebab label)` — disambiguates duplicate kebabs (e.g. `space_query` vs `task_query` both `query`).
+    /// `m#` → `(domain entity name, capability wire name)`.
     #[inline]
     pub fn resolve_method_symbol_pair(&self, label: &str) -> Option<(&str, &str)> {
         self.resolve_method_symbol_triple(label)
-            .map(|(_, d, k)| (d, k))
+            .map(|(_, d, cap)| (d, cap))
     }
 
     /// `[scope …]` fragment for teaching table `;;` legends only (no `optional params:` list).
@@ -2794,7 +2741,13 @@ pub struct TeachingExposureSession {
     /// `(registry entry_id, CGS entity name)` → opaque `e#`.
     qualified_entity_to_sym: IndexMap<(String, String), String>,
     method_to_sym: IndexMap<(String, String, String), String>,
-    sym_to_method: IndexMap<String, (String, String, String)>,
+    sym_to_method: IndexMap<String, MethodBinding>,
+    /// Session forward: opaque `e#` → entity binding (written at expose time).
+    sym_to_entity_binding: IndexMap<String, EntityBinding>,
+    /// Session forward: opaque `p#` → slot binding (written in [`Self::assign_new_slot_symbols`]).
+    sym_to_slot: IndexMap<String, SlotBinding>,
+    /// Session forward: opaque `r#` → relation binding (written in [`Self::assign_new_slot_symbols`]).
+    sym_to_relation_binding: IndexMap<String, RelationBinding>,
     ident_to_sym: IndexMap<String, String>,
     sym_to_ident: IndexMap<String, String>,
     /// Share fingerprint → opaque `p#` (append-only; never renumbered). Registry-backed slots key on
@@ -2831,6 +2784,9 @@ impl Clone for TeachingExposureSession {
             qualified_entity_to_sym: self.qualified_entity_to_sym.clone(),
             method_to_sym: self.method_to_sym.clone(),
             sym_to_method: self.sym_to_method.clone(),
+            sym_to_entity_binding: self.sym_to_entity_binding.clone(),
+            sym_to_slot: self.sym_to_slot.clone(),
+            sym_to_relation_binding: self.sym_to_relation_binding.clone(),
             ident_to_sym: self.ident_to_sym.clone(),
             sym_to_ident: self.sym_to_ident.clone(),
             slot_fingerprint_to_sym: self.slot_fingerprint_to_sym.clone(),
@@ -2866,6 +2822,9 @@ impl TeachingExposureSession {
             qualified_entity_to_sym: IndexMap::new(),
             method_to_sym: IndexMap::new(),
             sym_to_method: IndexMap::new(),
+            sym_to_entity_binding: IndexMap::new(),
+            sym_to_slot: IndexMap::new(),
+            sym_to_relation_binding: IndexMap::new(),
             ident_to_sym: IndexMap::new(),
             sym_to_ident: IndexMap::new(),
             slot_fingerprint_to_sym: IndexMap::new(),
@@ -2900,6 +2859,9 @@ impl TeachingExposureSession {
             qualified_entity_to_sym: IndexMap::new(),
             method_to_sym: IndexMap::new(),
             sym_to_method: IndexMap::new(),
+            sym_to_entity_binding: IndexMap::new(),
+            sym_to_slot: IndexMap::new(),
+            sym_to_relation_binding: IndexMap::new(),
             ident_to_sym: IndexMap::new(),
             sym_to_ident: IndexMap::new(),
             slot_fingerprint_to_sym: IndexMap::new(),
@@ -2954,7 +2916,8 @@ impl TeachingExposureSession {
             self.entity_catalog_entry_ids
                 .push(catalog_entry_id.to_string());
             self.qualified_entity_to_sym.insert(qkey, sym.clone());
-            self.sym_to_entity.insert(sym, (*n).to_string());
+            self.sym_to_entity.insert(sym.clone(), (*n).to_string());
+            self.record_entity_binding(&sym, catalog_entry_id, n);
         }
         self.union_legacy_surface_for_entities(catalog_entry_id, names);
         self.assign_new_methods_and_idents(cgs_layers);
@@ -3009,7 +2972,8 @@ impl TeachingExposureSession {
             self.entity_catalog_entry_ids
                 .push(catalog_entry_id.to_string());
             self.qualified_entity_to_sym.insert(qkey, sym.clone());
-            self.sym_to_entity.insert(sym, (*n).to_string());
+            self.sym_to_entity.insert(sym.clone(), (*n).to_string());
+            self.record_entity_binding(&sym, catalog_entry_id, n);
         }
         self.assign_new_methods_and_idents(cgs_layers);
         ExposureAppendReport { entities_added }
@@ -3025,11 +2989,11 @@ impl TeachingExposureSession {
             let Some(cap) = cgs.capabilities.get(&cap_key.capability) else {
                 continue;
             };
-            let kebab = capability_method_label_kebab(cap);
+            let cap_name = cap_key.capability.as_str().to_string();
             let triple = (
                 cap_key.entry_id.clone(),
                 cap.domain.to_string(),
-                kebab.clone(),
+                cap_name,
             );
             if !self.method_to_sym.contains_key(&triple) {
                 new_triples.push(triple);
@@ -3039,7 +3003,7 @@ impl TeachingExposureSession {
         for (next_m, triple) in (self.sym_to_method.len() + 1..).zip(new_triples) {
             let sym = format!("m{next_m}");
             self.method_to_sym.insert(triple.clone(), sym.clone());
-            self.sym_to_method.insert(sym, triple);
+            self.record_method_binding(&sym, triple.0, triple.1, triple.2);
         }
 
         self.assign_new_slot_symbols();
@@ -3102,7 +3066,8 @@ impl TeachingExposureSession {
         new_p_fps.sort();
         for (next_p, fp) in (self.slot_fingerprint_to_sym.len() + 1..).zip(new_p_fps) {
             let sym = format!("p{next_p}");
-            self.slot_fingerprint_to_sym.insert(fp, sym);
+            self.slot_fingerprint_to_sym.insert(fp.clone(), sym);
+            self.record_slot_binding_for_fp(&fp);
         }
 
         let mut new_r_fps: Vec<String> = by_fp
@@ -3118,7 +3083,8 @@ impl TeachingExposureSession {
         new_r_fps.sort();
         for (next_r, fp) in (self.relation_fingerprint_to_sym.len() + 1..).zip(new_r_fps) {
             let sym = format!("r{next_r}");
-            self.relation_fingerprint_to_sym.insert(fp, sym);
+            self.relation_fingerprint_to_sym.insert(fp.clone(), sym);
+            self.record_relation_binding_for_fp(&fp);
         }
         self.rebuild_parameter_symbol_maps();
         self.rebuild_ident_meta_by_entity();
@@ -3303,14 +3269,13 @@ impl TeachingExposureSession {
             relation_to_sym: self.relation_to_sym.clone(),
             sym_to_relation_wire,
             cap_param_to_sym: self.cap_param_to_sym.clone(),
-            entity_p_sym_to_wire: HashMap::new(),
-            entity_p_sym_globally_unique: HashMap::new(),
-            cap_p_sym_to_param: HashMap::new(),
-            cap_taught_p_syms: HashMap::new(),
             value_domain_fp_to_sym,
             value_sym_to_fp,
             p_sym_to_value_sym,
             value_sym_gloss: IndexMap::new(),
+            sym_to_entity_binding: self.sym_to_entity_binding.clone(),
+            sym_to_slot: self.sym_to_slot.clone(),
+            sym_to_relation_binding: self.sym_to_relation_binding.clone(),
         };
 
         for (fp, vsym) in &sm.value_domain_fp_to_sym {
@@ -3326,7 +3291,6 @@ impl TeachingExposureSession {
                 sm.value_sym_gloss.insert(vsym.clone(), g);
             }
         }
-        sm.rebuild_qualified_p_sym_indexes();
         sm
     }
 
@@ -3958,7 +3922,7 @@ mod tests {
         let m_sym = session
             .sym_to_method
             .iter()
-            .find(|(_, (_, _, kebab))| kebab.contains("annotation") && kebab.contains("insert"))
+            .find(|(_, b)| b.capability == "annotation_suggestion_insert")
             .map(|(k, _)| k.clone())
             .expect("annotation insert m#");
         let slug_sym = session
@@ -4204,14 +4168,14 @@ mod tests {
         let mut s = TeachingExposureSession::new(&cgs, "", &["Profile"]);
         let map0 = s.to_symbol_map();
         let display_p = map0.ident_sym_entity_field("Profile", "display_name");
-        let get_m = map0.method_sym("Profile", "get");
+        let get_m = map0.method_sym("Profile", "profile_get");
         s.expose_entities(&[&cgs], Arc::new(cgs.clone()), "", &["RecordedContent"]);
         let map1 = s.to_symbol_map();
         assert_eq!(
             map1.ident_sym_entity_field("Profile", "display_name"),
             display_p
         );
-        assert_eq!(map1.method_sym("Profile", "get"), get_m);
+        assert_eq!(map1.method_sym("Profile", "profile_get"), get_m);
     }
 
     #[test]
@@ -4395,8 +4359,10 @@ mod tests {
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let map = SymbolMap::build(&cgs, &full);
         let pet = map.entity_sym("Pet");
-        let m = map.method_sym("Pet", "upload-image");
-        if m == "upload-image" {
+        let cap_ref = crate::method_ref_for_domain_segment(&cgs, "Pet", "upload-image")
+            .expect("upload-image capability on Pet");
+        let m = map.method_sym("Pet", cap_ref.capability.as_str());
+        if m == cap_ref.capability.as_str() {
             return;
         }
         let opaque = format!("{}(1).{}()", pet, m);
@@ -4934,12 +4900,15 @@ mod tests {
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let map = SymbolMap::build(&cgs, &full);
         let kebab = "upload-image";
-        let m_str = map.method_sym("Pet", kebab);
-        if m_str == kebab {
+        let cap_ref = crate::method_ref_for_domain_segment(&cgs, "Pet", kebab)
+            .expect("upload-image capability on Pet");
+        let cap_name = cap_ref.capability.as_str();
+        let m_str = map.method_sym("Pet", cap_name);
+        if m_str == cap_name {
             return;
         }
         let dt = map
-            .try_method_teaching_term(&cgs, "Pet", kebab)
+            .try_method_teaching_term(&cgs, "Pet", cap_name)
             .expect("method domain term");
         assert_eq!(dt.to_string(), m_str);
         assert!(matches!(dt, crate::TeachingTerm::Method(_, _)));
@@ -5135,35 +5104,30 @@ mod tests {
     }
 
     #[test]
-    fn wire_for_entity_p_sym_disambiguates_homograph_tokens() {
-        let dir = std::path::Path::new("../../apis/github");
-        if !dir.is_dir() {
+    fn entity_p_sym_resolves_via_forward_table() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        let Ok(cgs) = load_schema_dir(dir) else {
             return;
-        }
-        let cgs = load_schema_dir(dir).expect("github");
-        let exp = TeachingExposureSession::new(&cgs, "github", &["Issue", "Label"]);
+        };
+        let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA", "HomographRowB"]);
         let map = exp.symbol_map_arc();
-        let issue_title = map.ident_sym_entity_field("Issue", "title");
-        let label_name = map.ident_sym_entity_field("Label", "name");
-        if issue_title == "title" || label_name == "name" {
+        let issue_title = map.ident_sym_entity_field("HomographRowA", "headline");
+        let label_name = map.ident_sym_entity_field("HomographRowB", "caption");
+        if !SymbolMap::is_opaque_p_sym(issue_title.as_str()) {
             return;
         }
+        let ent_a = cgs.get_entity("HomographRowA").expect("HomographRowA");
         assert_eq!(
-            map.resolve_wire_for_p_sym_entity("github", "Issue", issue_title.as_str()),
-            Some("title".to_string())
+            map.resolve_entity_field("", "HomographRowA", ent_a, issue_title.as_str())
+                .expect("HomographRowA p#"),
+            "headline"
         );
+        let ent_b = cgs.get_entity("HomographRowB").expect("HomographRowB");
         assert_eq!(
-            map.resolve_wire_for_p_sym_entity("github", "Label", label_name.as_str()),
-            Some("name".to_string())
+            map.resolve_entity_field("", "HomographRowB", ent_b, label_name.as_str())
+                .expect("HomographRowB p#"),
+            "caption"
         );
-        if issue_title == label_name {
-            assert_ne!(
-                map.resolve_ident(issue_title.as_str()),
-                map.resolve_wire_for_p_sym_entity("github", "Label", label_name.as_str())
-                    .as_deref(),
-                "global sym_to_ident must not override entity-scoped Label resolution"
-            );
-        }
     }
 
     #[test]

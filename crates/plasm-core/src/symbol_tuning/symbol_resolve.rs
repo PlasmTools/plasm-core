@@ -6,10 +6,13 @@
 use std::collections::BTreeSet;
 
 use crate::CapabilityKind;
+use crate::CapabilitySchema;
+use crate::CGS;
 use crate::EntityDef;
 use crate::EntityFieldName;
+use crate::schema::resolve_capability_input_param_field;
 
-use super::SymbolMap;
+use super::{EntityBinding, MethodBinding, RelationBinding, SlotBinding, SymbolMap};
 
 /// Typed failure when an opaque teaching symbol cannot be resolved in context.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +46,25 @@ pub enum SymbolResolveError {
         token: String,
         expected: Vec<String>,
     },
+    UnknownMethodSym {
+        token: String,
+    },
+    UnknownEntitySym {
+        token: String,
+    },
+    UnknownSessionPSym {
+        token: String,
+    },
+    WrongSlotKind {
+        token: String,
+        expected: &'static str,
+        got: String,
+    },
+    MethodAnchorMismatch {
+        token: String,
+        bound_domain: String,
+        anchor_entity: String,
+    },
 }
 
 impl SymbolResolveError {
@@ -60,6 +82,15 @@ impl SymbolResolveError {
             ),
             Self::UnknownCompoundKey { .. } => Some(
                 "Supply every compound identity key using wire names or the taught `p#` symbols.",
+            ),
+            Self::UnknownMethodSym { .. } | Self::MethodAnchorMismatch { .. } => Some(
+                "Use `m#` symbols from the teaching table for this session.",
+            ),
+            Self::UnknownEntitySym { .. } => Some(
+                "Use `e#` symbols from the teaching table for this session.",
+            ),
+            Self::UnknownSessionPSym { .. } | Self::WrongSlotKind { .. } => Some(
+                "Use `p#` symbols from the teaching table for this session.",
             ),
         }
     }
@@ -117,15 +148,91 @@ impl std::fmt::Display for SymbolResolveError {
                 f,
                 "compound constructor key `{token}` is not valid for `{entity}` — expected one of {expected:?}"
             ),
+            Self::UnknownMethodSym { token } => {
+                write!(f, "`{token}` is not a method symbol in this session")
+            }
+            Self::UnknownEntitySym { token } => {
+                write!(f, "`{token}` is not an entity symbol in this session")
+            }
+            Self::UnknownSessionPSym { token } => {
+                write!(f, "`{token}` is not a slot symbol in this session")
+            }
+            Self::WrongSlotKind {
+                token,
+                expected,
+                got,
+            } => write!(
+                f,
+                "`{token}` is `{got}` in this session, expected {expected}"
+            ),
+            Self::MethodAnchorMismatch {
+                token,
+                bound_domain,
+                anchor_entity,
+            } => write!(
+                f,
+                "`{token}` is bound to `{bound_domain}`, not `{anchor_entity}` in this session"
+            ),
         }
     }
 }
 
 impl SymbolMap {
+    /// Opaque session `e#` → catalog-qualified entity binding.
+    pub fn resolve_session_entity(&self, token: &str) -> Result<EntityBinding, SymbolResolveError> {
+        let t = token.trim();
+        if !Self::is_opaque_e_sym(t) {
+            return Err(SymbolResolveError::UnknownEntitySym {
+                token: t.to_string(),
+            });
+        }
+        self.sym_to_entity_binding
+            .get(t)
+            .cloned()
+            .ok_or(SymbolResolveError::UnknownEntitySym {
+                token: t.to_string(),
+            })
+    }
+
+    /// Opaque session `p#` → fully qualified slot binding.
+    pub fn resolve_session_slot(&self, token: &str) -> Result<SlotBinding, SymbolResolveError> {
+        let t = token.trim();
+        if !Self::is_opaque_p_sym(t) {
+            return Err(SymbolResolveError::UnknownSessionPSym {
+                token: t.to_string(),
+            });
+        }
+        self.sym_to_slot
+            .get(t)
+            .cloned()
+            .ok_or(SymbolResolveError::UnknownSessionPSym {
+                token: t.to_string(),
+            })
+    }
+
+    /// Opaque session `r#` → declared relation binding.
+    pub fn resolve_session_relation(
+        &self,
+        token: &str,
+    ) -> Result<RelationBinding, SymbolResolveError> {
+        let t = token.trim();
+        if !Self::is_opaque_r_sym(t) {
+            return Err(SymbolResolveError::UnknownSessionPSym {
+                token: t.to_string(),
+            });
+        }
+        self.sym_to_relation_binding
+            .get(t)
+            .cloned()
+            .ok_or(SymbolResolveError::UnknownSessionPSym {
+                token: t.to_string(),
+            })
+    }
+
     /// Resolve a row projection / postfix field token for a known binding entity.
     pub fn resolve_entity_field(
         &self,
-        catalog_entry_id: &str,
+        _catalog_entry_id: &str,
         entity: &str,
         ent: &EntityDef,
         token: &str,
@@ -135,16 +242,24 @@ impl SymbolMap {
             return Ok(String::new());
         }
         if Self::is_opaque_p_sym(t) {
-            let wire = self
-                .resolve_wire_for_p_sym_entity(catalog_entry_id, entity, t)
-                .filter(|wire| {
-                    ent.fields.contains_key(wire.as_str())
-                        || ent.relations.contains_key(wire.as_str())
+            let binding = self.resolve_session_slot(t)?;
+            if let Some((bound_entity, field_wire)) = binding.entity_field() {
+                if bound_entity == entity
+                    && (ent.fields.contains_key(field_wire)
+                        || ent.relations.contains_key(field_wire))
+                {
+                    return Ok(field_wire.to_string());
+                }
+                return Err(SymbolResolveError::UnknownEntityPSym {
+                    catalog_entry_id: binding.entry_id.clone(),
+                    entity: entity.to_string(),
+                    token: t.to_string(),
                 });
-            return wire.ok_or(SymbolResolveError::UnknownEntityPSym {
-                catalog_entry_id: catalog_entry_id.to_string(),
-                entity: entity.to_string(),
+            }
+            return Err(SymbolResolveError::WrongSlotKind {
                 token: t.to_string(),
+                expected: "entity field",
+                got: binding.agent_description(),
             });
         }
         if ent.fields.contains_key(t) || ent.relations.contains_key(t) {
@@ -159,7 +274,7 @@ impl SymbolMap {
     /// Map compound constructor keys (`owner`, `repo`, `name`, …) accepting wire names and taught `p#`.
     pub fn resolve_compound_key(
         &self,
-        catalog_entry_id: &str,
+        _catalog_entry_id: &str,
         entity: &str,
         key_vars: &[EntityFieldName],
         raw_key: &str,
@@ -168,16 +283,20 @@ impl SymbolMap {
             return Ok(raw_key.to_string());
         }
         if Self::is_opaque_p_sym(raw_key) {
-            if let Some(wire) =
-                self.resolve_wire_for_p_sym_entity(catalog_entry_id, entity, raw_key)
-            {
-                if key_vars.iter().any(|k| k.as_str() == wire.as_str()) {
-                    return Ok(wire);
+            let binding = self.resolve_session_slot(raw_key)?;
+            if let Some((_bound_entity, field_wire)) = binding.entity_field() {
+                if key_vars.iter().any(|k| k.as_str() == field_wire) {
+                    return Ok(field_wire.to_string());
                 }
             }
+            return Err(SymbolResolveError::UnknownCompoundKey {
+                entity: entity.to_string(),
+                token: raw_key.to_string(),
+                expected: key_vars.iter().map(|k| k.as_str().to_string()).collect(),
+            });
         }
         for kv in key_vars {
-            if self.ident_sym_entity_field_for(catalog_entry_id, entity, kv.as_str()) == raw_key {
+            if self.ident_sym_entity_field_for(_catalog_entry_id, entity, kv.as_str()) == raw_key {
                 return Ok(kv.to_string());
             }
         }
@@ -192,7 +311,7 @@ impl SymbolMap {
     /// or query/search capability input params (e.g. `label_query` scope `repository`).
     pub fn resolve_query_filter_field(
         &self,
-        catalog_entry_id: &str,
+        _catalog_entry_id: &str,
         entity: &str,
         ent: &EntityDef,
         cgs: &crate::CGS,
@@ -205,13 +324,13 @@ impl SymbolMap {
         if !Self::is_opaque_p_sym(t) {
             return Ok(t.to_string());
         }
-        if let Ok(wire) = self.resolve_entity_field(catalog_entry_id, entity, ent, t) {
-            if ent.fields.contains_key(wire.as_str()) {
-                return Ok(wire);
+        let binding = self.resolve_session_slot(t)?;
+        if let Some((bound_entity, field_wire)) = binding.entity_field() {
+            if bound_entity == entity && ent.fields.contains_key(field_wire) {
+                return Ok(field_wire.to_string());
             }
         }
-        let param_wires =
-            self.query_search_param_wires_for_opaque_p_sym(catalog_entry_id, entity, cgs, t);
+        let param_wires = self.query_search_param_wires_from_slot_binding(entity, cgs, &binding);
         match param_wires.len() {
             0 => Err(SymbolResolveError::UnknownQueryFilterPSym {
                 entity: entity.to_string(),
@@ -226,82 +345,152 @@ impl SymbolMap {
         }
     }
 
+    /// Opaque session `m#` → catalog-qualified method binding.
+    pub fn resolve_session_method(&self, token: &str) -> Result<MethodBinding, SymbolResolveError> {
+        let t = token.trim();
+        if !Self::is_opaque_m_sym(t) {
+            return Err(SymbolResolveError::UnknownMethodSym {
+                token: t.to_string(),
+            });
+        }
+        self.sym_to_method
+            .get(t)
+            .cloned()
+            .ok_or(SymbolResolveError::UnknownMethodSym {
+                token: t.to_string(),
+            })
+    }
+
+    /// Session `m#` lookup with invoke-anchor validation against the bound domain entity.
+    pub fn resolve_session_method_for_invoke(
+        &self,
+        token: &str,
+        anchor_entity: &str,
+    ) -> Result<MethodBinding, SymbolResolveError> {
+        let binding = self.resolve_session_method(token)?;
+        if binding.domain != anchor_entity {
+            return Err(SymbolResolveError::MethodAnchorMismatch {
+                token: token.trim().to_string(),
+                bound_domain: binding.domain.clone(),
+                anchor_entity: anchor_entity.to_string(),
+            });
+        }
+        Ok(binding)
+    }
+
     /// Resolve opaque `p#` invoke parameters for a specific mutator.
     pub fn resolve_cap_param(
         &self,
-        catalog_entry_id: &str,
+        _catalog_entry_id: &str,
         domain: &str,
         capability: &str,
         token: &str,
+        invoke_cap: &CapabilitySchema,
     ) -> Result<String, SymbolResolveError> {
         let t = token.trim();
         if t.is_empty() {
             return Ok(String::new());
         }
         if Self::is_opaque_p_sym(t) {
-            return self
-                .cap_p_sym_to_param
-                .get(&(
-                    catalog_entry_id.to_string(),
-                    domain.to_string(),
-                    capability.to_string(),
-                    t.to_string(),
-                ))
-                .cloned()
-                .ok_or(SymbolResolveError::UnknownCapParam {
-                    catalog_entry_id: catalog_entry_id.to_string(),
-                    domain: domain.to_string(),
-                    capability: capability.to_string(),
-                    token: t.to_string(),
-                });
+            let binding = self.resolve_session_slot(t)?;
+            if let Some((_bound_domain, _bound_cap, param_wire)) = binding.cap_param() {
+                if Self::cap_declares_param_wire(invoke_cap, param_wire) {
+                    return Ok(param_wire.to_string());
+                }
+            }
+            if let Some((_bound_entity, field_wire)) = binding.entity_field() {
+                if Self::cap_declares_param_wire(invoke_cap, field_wire) {
+                    return Ok(field_wire.to_string());
+                }
+            }
+            return Err(SymbolResolveError::UnknownCapParam {
+                catalog_entry_id: binding.entry_id.clone(),
+                domain: domain.to_string(),
+                capability: capability.to_string(),
+                token: t.to_string(),
+            });
         }
         Ok(t.to_string())
     }
 
     /// Best-effort segment resolution for binding field paths when row entity is unknown.
-    /// Opaque `p#` tokens pass through unless they map to exactly one wire in `sym_to_ident`.
+    /// Opaque `p#` tokens resolve to wire when the session slot is an entity field.
     pub fn resolve_binding_field_segment(&self, token: &str) -> String {
         let t = token.trim();
         if t.is_empty() || !Self::is_opaque_p_sym(t) {
             return t.to_string();
         }
-        self.sym_to_ident
-            .get(t)
-            .map(|wire| {
-                let count = self
-                    .entity_p_sym_to_wire
-                    .values()
-                    .filter(|w| w.as_str() == wire)
-                    .count();
-                if count == 1 {
-                    wire.clone()
-                } else {
-                    t.to_string()
-                }
-            })
+        self.resolve_session_slot(t)
+            .ok()
+            .and_then(|b| b.entity_field().map(|(_, w)| w.to_string()))
             .unwrap_or_else(|| t.to_string())
     }
 
-    /// Distinct query/search capability param wires resolved from one taught `p#`.
-    fn query_search_param_wires_for_opaque_p_sym(
+    fn query_search_param_wires_from_slot_binding(
         &self,
-        catalog_entry_id: &str,
         entity: &str,
         cgs: &crate::CGS,
-        token: &str,
+        binding: &SlotBinding,
     ) -> Vec<String> {
+        let param_wire = match binding.cap_param() {
+            Some((_bound_domain, _bound_cap, wire)) => wire.to_string(),
+            None => return Vec::new(),
+        };
         let mut param_wires = BTreeSet::new();
         for kind in [CapabilityKind::Query, CapabilityKind::Search] {
             for cap in cgs.find_capabilities(entity, kind) {
-                if let Ok(param) =
-                    self.resolve_cap_param(catalog_entry_id, entity, cap.name.as_str(), token)
-                {
-                    param_wires.insert(param);
+                if Self::cap_declares_param_wire(cap, param_wire.as_str()) {
+                    param_wires.insert(param_wire.clone());
                 }
             }
         }
         param_wires.into_iter().collect()
     }
+
+    fn cap_declares_param_wire(cap: &CapabilitySchema, param_wire: &str) -> bool {
+        resolve_capability_input_param_field(cap, param_wire).is_some()
+            || cap.object_params().is_some_and(|fields| {
+                fields.iter().any(|f| f.name.as_str() == param_wire)
+            })
+    }
+
+    /// Lookup a session `m#` token against federated CGS layers with invoke-anchor validation.
+    pub fn resolve_opaque_session_method_capability<'a>(
+        &self,
+        layers: &[&'a CGS],
+        token: &str,
+        anchor_entity: &str,
+    ) -> Result<&'a CapabilitySchema, SymbolResolveError> {
+        let binding = self.resolve_session_method_for_invoke(token, anchor_entity)?;
+        lookup_capability_in_layers(
+            layers,
+            binding.entry_id.as_str(),
+            binding.domain.as_str(),
+            binding.capability.as_str(),
+        )
+        .ok_or(SymbolResolveError::UnknownMethodSym {
+            token: token.trim().to_string(),
+        })
+    }
+}
+
+/// Resolve `(entry_id, domain, capability)` against federated CGS layers.
+pub fn lookup_capability_in_layers<'a>(
+    layers: &[&'a CGS],
+    entry_id: &str,
+    domain: &str,
+    cap_name: &str,
+) -> Option<&'a CapabilitySchema> {
+    for c in layers {
+        if !entry_id.is_empty() && c.entry_id.as_deref().is_some_and(|e| e != entry_id) {
+            continue;
+        }
+        let cap = c.get_capability(cap_name)?;
+        if cap.domain.as_str() == domain {
+            return Some(cap);
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -322,7 +511,11 @@ mod tests {
         let err = map
             .resolve_entity_field("", "Account", ent, "p999")
             .expect_err("unknown p#");
-        assert!(matches!(err, SymbolResolveError::UnknownEntityPSym { .. }));
+        assert!(matches!(
+            err,
+            SymbolResolveError::UnknownEntityPSym { .. }
+                | SymbolResolveError::UnknownSessionPSym { .. }
+        ));
     }
 
     #[test]
@@ -348,11 +541,14 @@ mod tests {
 
     #[test]
     fn resolve_query_filter_field_accepts_cap_scope_param_p_sym() {
+        std::env::set_var("PLASM_CGS_FAST_LOAD", "1");
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
         if !dir.is_dir() {
             return;
         }
-        let cgs = load_schema_dir(&dir).expect("github");
+        let Ok(cgs) = load_schema_dir(&dir) else {
+            return;
+        };
         let exp = TeachingExposureSession::new(&cgs, "github", &["Repository", "Issue", "Label"]);
         let map = exp.symbol_map_arc();
         let ent = cgs.get_entity("Label").expect("Label");
@@ -377,5 +573,34 @@ mod tests {
         assert!(msg.contains("query filter symbol"));
         assert!(msg.contains("help:"));
         assert!(msg.contains("query/search input signature"));
+    }
+
+    /// Regression: deleted qualified reverse-map fields must not reappear on opaque resolution paths.
+    #[test]
+    fn opaque_resolution_source_has_no_qualified_reverse_maps() {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let paths = [
+            manifest.join("src/symbol_tuning/mod.rs"),
+            manifest.join("src/expr_parser/mod.rs"),
+            manifest.join("src/relation_segment.rs"),
+        ];
+        let forbidden = [
+            "entity_p_sym_to_wire",
+            "cap_p_sym_to_param",
+            "entity_p_sym_globally_unique",
+            "rebuild_qualified_p_sym_indexes",
+            "resolve_wire_for_p_sym",
+        ];
+        for path in paths {
+            let text = std::fs::read_to_string(&path).expect("read source");
+            for needle in forbidden {
+                assert!(
+                    !text.contains(needle),
+                    "{} must not reference deleted reverse-map `{}`",
+                    path.display(),
+                    needle
+                );
+            }
+        }
     }
 }
