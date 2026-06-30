@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.94] - 2026-06-30
+
+### Fixed
+
+- **MCP ranked replay:** exact ranked capability wire names admit seeded mutators at lexicon score zero (`mutating_capability_admitted`); ranked replay diagnostics use qualified `entry:Entity.cap` keys.
+- **Capability-only expand waves:** federated sessions render compact mutator/param TSV deltas (not full entity re-render); optional deferred params synthesize `p#` gloss rows from ident metadata when absent from the filtered bundle.
+- **Reuse recap:** duplicate `plasm_context` responses include fenced TSV active mutator/param recap; stale binding recovery surfaces `discard_cached_plasm_symbols` in `_meta.plasm.continuity`.
+
+### Changed
+
+- **Exposure wave commit:** `ExposureWaveChanges` + `ExposureWaveSnapshot` replace branching commit tail; `CommittedWaveDelta.surface_unchanged` replaces ambiguous reuse flag.
+- **Canonical param helpers:** `capability_surface_params.rs` shared by optional legends, reuse recap, and ranked compact deltas; named optional params use `wire=p#` in capability input signature gloss.
+- **GitHub catalog v25:** `pr_patch` → `pr_update`; eval cases gh-68…gh-72 for ranked replay and label authoring.
+
+### Added
+
+- **Tests:** ranked replay fixtures, `commit_exposure_wave_delta` integration, `pr_create` ranked-at-score-zero, stale symbol-space metadata, qualified diagnostics, compact delta gloss synthesis.
+
 ## [0.3.93] - 2026-06-30
 
 ### Fixed
