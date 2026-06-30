@@ -24,7 +24,7 @@ Each row has a matching key in `mappings.yaml` with the same method and path tem
 | `issue_comment_update`   | update          | `PATCH`  | `/repos/{owner}/{repo}/issues/comments/{comment_id}`   | IssueComment |
 | `issue_comment_delete`   | delete          | `DELETE` | `/repos/{owner}/{repo}/issues/comments/{comment_id}`   | IssueComment |
 | `pr_create`              | create          | `POST`   | `/repos/{owner}/{repo}/pulls`                          | PullRequest  |
-| `pr_patch`               | update          | `PATCH`  | `/repos/{owner}/{repo}/pulls/{pull_number}`            | PullRequest  |
+| `pr_update`               | update          | `PATCH`  | `/repos/{owner}/{repo}/pulls/{pull_number}`            | PullRequest  |
 | `pr_merge`               | action          | `PUT`    | `/repos/{owner}/{repo}/pulls/{pull_number}/merge`      | PullRequest  |
 | `label_create`           | create          | `POST`   | `/repos/{owner}/{repo}/labels`                         | Label        |
 | `label_update`           | update          | `PATCH`  | `/repos/{owner}/{repo}/labels/{name}`                  | Label        |
@@ -53,7 +53,7 @@ Run `plasm schema validate apis/github` for the current capability count (`requi
 | `issue_delete`                                   | **Complete** (minimal)     | `DELETE` with no JSON body.                                                                                                         |
 | `issue_comment_delete`                           | **Complete** (minimal)     | `DELETE` timeline comment.                                                                                                          |
 | `pr_create`                                      | **Partial**                | `title`, `head`, `base`, `body`, `draft`, `maintainer_can_modify`, `issue`. Further GitHub fields may exist.                        |
-| `pr_patch`                                       | **Partial**                | `title`, `body`, `state`, `base`. Optional: `draft`, `maintainer_can_modify`, etc.                                                  |
+| `pr_update`                                       | **Partial**                | `title`, `body`, `state`, `base`. Optional: `draft`, `maintainer_can_modify`, etc.                                                  |
 | `pr_merge`                                       | **Partial**                | `commit_title`, `commit_message`, `merge_method`.                                                                                   |
 | `label_create` / `label_update` / `label_delete` | **Complete** (minimal)     | Standard label CRUD.                                                                                                                |
 | `milestone_`*                                    | **Partial**                | Create/update send `title`, `description`, `state`, `due_on`.                                                                       |

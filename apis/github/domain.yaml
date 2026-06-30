@@ -1,4 +1,4 @@
-version: 24
+version: 25
 http_backend: https://api.github.com
 entities:
   Repository:
@@ -499,7 +499,7 @@ entities:
     - owner
     - repo
     - name
-    description: Git branch (owner, repo, branch name).
+    description: Git branch ref (owner/repo + branch name, e.g. feature/my-branch).
     fields:
       owner:
         required: true
@@ -2610,7 +2610,7 @@ capabilities:
   issue_create:
     kind: create
     entity: Issue
-    description: Open a new issue in a repository.
+    description: Open a new issue in a repository; use labels to tag the issue (e.g. documentation, bug).
     provides:
     - id
     - owner
@@ -2656,7 +2656,7 @@ capabilities:
   issue_update:
     kind: update
     entity: Issue
-    description: Update an issue.
+    description: Update an issue; pass labels for a full replacement list of label names.
     provides:
     - id
     - owner
@@ -2845,10 +2845,10 @@ capabilities:
       value_ref: nv_github_scope_repository
       required: true
       role: scope
-  pr_patch:
+  pr_update:
     kind: update
     entity: PullRequest
-    description: Update a pull request.
+    description: Update a pull request (title, body, state, or base branch).
     provides:
     - id
     - owner
@@ -2875,7 +2875,7 @@ capabilities:
       value_ref: nv_wire_sel_668f8e38fed376e3
       required: false
     - name: base
-      value_ref: nv_pr_patch_base
+      value_ref: nv_pr_update_base
       required: false
   pr_merge:
     kind: action
@@ -2908,7 +2908,7 @@ capabilities:
   pr_create:
     kind: create
     entity: PullRequest
-    description: Open a PR (head into base).
+    description: Open a pull request (head branch into base branch; use owner:branch for forks).
     provides:
     - id
     - owner
@@ -3008,7 +3008,7 @@ capabilities:
   repo_content_put:
     kind: action
     entity: Repository
-    description: Create or update a file in a repository.
+    description: Create or update a file at a repository path; set branch to write on a non-default branch.
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
@@ -3388,7 +3388,7 @@ oauth:
         any_of:
         - repo
         - public_repo
-      pr_patch:
+      pr_update:
         any_of:
         - repo
         - public_repo
@@ -3708,7 +3708,7 @@ values:
   nv_github_branch_name:
     type: string
     string_semantics: short
-    description: Git branch name or branch ref within a repository.
+    description: Git branch name or ref to read or write (e.g. main, feature/docs).
   nv_github_closed_at:
     type: date
     value_format: rfc3339
@@ -3887,11 +3887,11 @@ values:
   nv_pr_create_base:
     type: string
     string_semantics: short
-    description: Branch you want to merge into.
+    description: Base branch to merge into (target branch, usually main or master).
   nv_pr_create_head:
     type: string
     string_semantics: short
-    description: Head branch, or user:branch for a fork.
+    description: Head branch for the PR (same-repo branch name or owner:branch for a fork).
   nv_pr_create_issue:
     type: integer
     description: Issue to turn into this pull request (optional).
@@ -3904,10 +3904,10 @@ values:
     - merge
     - squash
     - rebase
-  nv_pr_patch_base:
+  nv_pr_update_base:
     type: string
     string_semantics: short
-    description: Base branch name to target (if changing).
+    description: Base branch to retarget the pull request onto.
   nv_pr_query_sort:
     type: select
     allowed_values:
@@ -4150,7 +4150,7 @@ values:
   nv_workflow_dispatch_ref:
     type: string
     string_semantics: short
-    description: Branch, tag, or commit SHA to run the workflow on.
+    description: Branch, tag, or commit SHA ref to run the workflow on (e.g. main, v1.0.0).
   nv_workflow_job_query_filter:
     type: select
     allowed_values:
@@ -4267,12 +4267,12 @@ values:
     type: array
     items:
       value_ref: nv_wire_str_short
-    description: Label names to apply.
+    description: Label names to apply when creating the issue (repository must already define them).
   nv_issue_update_labels:
     type: array
     items:
       value_ref: nv_wire_str_short
-    description: Full label-name list; omit to leave labels unchanged.
+    description: Full replacement list of label names; omit to leave labels unchanged.
   nv_workflow_job_labels:
     type: array
     items:

@@ -2373,7 +2373,7 @@ impl SymbolMap {
                     if f.required {
                         continue;
                     }
-                    optional_parts.push(sym);
+                    optional_parts.push(format!("{}={sym}", f.name.as_str()));
                 }
             }
             InputType::Union { variants } => {
@@ -2390,12 +2390,13 @@ impl SymbolMap {
                             continue;
                         }
                         if seen.insert(f.name.clone()) {
-                            optional_parts.push(self.ident_sym_cap_param_for(
+                            let sym = self.ident_sym_cap_param_for(
                                 entry_id,
                                 domain,
                                 cap_name,
                                 f.name.as_str(),
-                            ));
+                            );
+                            optional_parts.push(format!("{}={sym}", f.name.as_str()));
                         }
                     }
                 }
@@ -4485,7 +4486,7 @@ mod tests {
             field_syms_for_teaching_row(
                 r#"e1(42).m22(p37=$,..)"#,
                 None,
-                Some(r#"optional params: p18, p17 — Create a goal"#),
+                Some(r#"optional params: labels=p18, body=p17 — Create a goal"#),
             ),
             vec!["p37".to_string(), "p18".to_string(), "p17".to_string(),]
         );
@@ -5194,6 +5195,35 @@ mod tests {
                 map.resolve_wire_for_p_sym_entity("github", "Label", label_name.as_str())
                     .as_deref(),
                 "global sym_to_ident must not override entity-scoped Label resolution"
+            );
+        }
+    }
+
+    #[test]
+    fn github_create_capabilities_use_named_optional_param_legends() {
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let dir = root.join("../../apis/github");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = crate::loader::load_schema(&dir).expect("github");
+        let exp = TeachingExposureSession::new(
+            &cgs,
+            "github",
+            &["Repository", "Issue", "PullRequest"],
+        );
+        let map = exp.symbol_map_arc();
+        for (cap_name, param) in [
+            ("issue_create", "labels"),
+            ("issue_update", "labels"),
+            ("pr_create", "body"),
+            ("repo_content_put", "branch"),
+        ] {
+            let cap = cgs.get_capability(cap_name).expect(cap_name);
+            let sig = map.capability_input_signature_gloss(&cgs, cap);
+            assert!(
+                sig.contains(&format!("{param}=")),
+                "expected named optional `{param}` in `{sig}` for {cap_name}"
             );
         }
     }

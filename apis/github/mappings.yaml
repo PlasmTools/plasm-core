@@ -1385,7 +1385,7 @@ issue_comment_delete:
     - { type: var, name: id }
   response: single
 
-pr_patch:
+pr_update:
   method: PATCH
   path:
     - { type: literal, value: repos }

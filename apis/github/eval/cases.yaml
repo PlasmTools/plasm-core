@@ -585,3 +585,43 @@
   covers: [invoke]
   expect:
     entities_any: [Issue]
+
+- id: gh-68
+  schema: github
+  goal: "Create a documentation issue in plasm/plasm titled 'Label guide' with labels documentation and bug"
+  tags: [write, issue, labels]
+  covers: [invoke]
+  expect:
+    entities_any: [Issue, Repository]
+
+- id: gh-69
+  schema: github
+  goal: "Open a pull request in plasm/plasm from branch feature/docs into main with title 'Docs update'"
+  tags: [write, pull_request]
+  covers: [invoke]
+  expect:
+    entities_any: [PullRequest, Repository]
+
+- id: gh-70
+  schema: github
+  goal: "Create or update README.md on branch feature/docs in plasm/plasm with commit message 'Add docs'"
+  tags: [write, file, branch]
+  covers: [invoke]
+  expect:
+    entities_any: [Repository]
+
+- id: gh-71
+  schema: github
+  goal: "Update labels on plasm/plasm#42 to documentation and enhancement only"
+  tags: [write, issue, labels]
+  covers: [invoke]
+  expect:
+    entities_any: [Issue]
+
+- id: gh-72
+  schema: github
+  goal: "Dispatch the CI workflow in plasm/plasm on ref main for a manual test run"
+  tags: [action, workflow]
+  covers: [invoke]
+  expect:
+    entities_any: [Workflow, Repository]

@@ -204,7 +204,7 @@ CLI: `user get-me` (no positional ID required). Internally dispatched as a param
 | `issue_sub_issue_reprioritize` | action | `issue --owner O --repo R N issue-sub-issue-reprioritize …` | `PATCH /repos/{owner}/{repo}/issues/{number}/sub_issues/priority` |
 | `issue_comment_create` | create | `issuecomment issue-comment-create …` | `POST /repos/{owner}/{repo}/issues/{issue_number}/comments` |
 | `issue_comment_update` | update | `issuecomment <id> issue-comment-update --owner O --repo R …` | `PATCH /repos/{owner}/{repo}/issues/comments/{id}` |
-| `pr_patch` | update | `pullrequest --owner O --repo R N pr-patch …` | `PATCH /repos/{owner}/{repo}/pulls/{number}` |
+| `pr_update` | update | `pullrequest --owner O --repo R N pr-update …` | `PATCH /repos/{owner}/{repo}/pulls/{number}` |
 | `pr_merge` | action | `pullrequest --owner O --repo R N pr-merge …` | `PUT /repos/{owner}/{repo}/pulls/{number}/merge` |
 | `pr_update_branch` | action | `pullrequest --owner O --repo R N pr-update-branch …` | `PUT /repos/{owner}/{repo}/pulls/{number}/update-branch` |
 | `pr_review_create` | create | `pullrequestreview pr-review-create --owner O --repo R --pull_number N …` | `POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews` |

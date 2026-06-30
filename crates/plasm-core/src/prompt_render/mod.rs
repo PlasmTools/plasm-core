@@ -148,6 +148,7 @@ pub use contract::{
     teaching_tsv_table_from_wrapped_prompt, TeachingFenceSlice, ROW_COMPUTE_EXEMPLAR_THRESHOLD,
 };
 pub use mcp_prompt_fragments::{
+    format_ranked_replay_diagnostics, render_active_mutator_surface_recap,
     render_compact_exposure_symbol_map, DISCOVER_DECISION_CLARIFY, DISCOVER_DECISION_MATCH,
     DISCOVER_DECISION_NO_MATCH, DISCOVER_TSV_LANGUAGE_PREAMBLE,
 };

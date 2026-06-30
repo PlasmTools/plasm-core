@@ -115,7 +115,8 @@ async fn commit_federate_wave_inner(
     };
     let mut sess = (*sess_arc).clone();
     let scope_intent = sess.context_intent.clone();
-    let ranked_slice = sess.ranked_capabilities.as_deref();
+    let ranked_names = sess.ranked_capabilities.clone();
+    let ranked_slice = ranked_names.as_deref();
 
     if sess.contexts_by_entry.contains_key(&new_entry_id) {
         return Err(format!(
@@ -136,6 +137,7 @@ async fn commit_federate_wave_inner(
     };
 
     let slots_before = exp.surface.slots.clone();
+    let caps_before = exp.surface.capabilities.clone();
 
     let n0 = exp.entities.len();
     apply_federate_exposure_wave(
@@ -162,8 +164,10 @@ async fn commit_federate_wave_inner(
         sess,
         exp,
         &slots_before,
+        &caps_before,
         n0,
         &relation_keys,
+        ranked_slice,
     )
     .await;
 

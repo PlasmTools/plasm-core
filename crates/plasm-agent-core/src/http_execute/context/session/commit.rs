@@ -19,6 +19,37 @@ pub(crate) struct CommittedWaveDelta {
     pub reused: bool,
 }
 
+fn entity_names_for_new_capabilities(
+    new_caps: &std::collections::BTreeSet<plasm_core::symbol_tuning::ExposureCapabilityKey>,
+) -> Vec<String> {
+    let mut names: Vec<String> = new_caps
+        .iter()
+        .map(|k| k.domain.to_string())
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+fn append_ranked_replay_diagnostics(
+    markdown: &mut String,
+    exp: &plasm_core::TeachingExposureSession,
+    ranked_names: Option<&[String]>,
+    caps_before: &std::collections::BTreeSet<plasm_core::symbol_tuning::ExposureCapabilityKey>,
+) {
+    let Some(names) = ranked_names.filter(|n| !n.is_empty()) else {
+        return;
+    };
+    let diag = plasm_core::prompt_render::format_ranked_replay_diagnostics(exp, names, caps_before);
+    if markdown.trim().is_empty() {
+        *markdown = format!("{diag}\n");
+    } else {
+        markdown.push_str("\n\n");
+        markdown.push_str(&diag);
+        markdown.push('\n');
+    }
+}
+
 /// Admit new relation slots, render + append the teaching delta, and persist the session.
 ///
 /// `exp` must already have the wave's entities exposed; `slots_before` is the slot set captured
@@ -32,8 +63,10 @@ pub(crate) async fn commit_exposure_wave_delta(
     mut sess: crate::execute_session::ExecuteSession,
     mut exp: plasm_core::TeachingExposureSession,
     slots_before: &std::collections::BTreeSet<plasm_core::symbol_tuning::ExposureSlotKey>,
+    caps_before: &std::collections::BTreeSet<plasm_core::symbol_tuning::ExposureCapabilityKey>,
     n0: usize,
     relation_keys: &[plasm_core::ExposureEntityKey],
+    ranked_capability_names: Option<&[String]>,
 ) -> CommittedWaveDelta {
     let added_qualified = exp.qualified_entities_since(n0);
     let new_relation_slots =
@@ -48,48 +81,85 @@ pub(crate) async fn commit_exposure_wave_delta(
     }
     let relations_delta = exp.relations_delta_rows_for_slots(&new_relation_slots);
 
-    if added_qualified.is_empty() && new_relation_slots.is_empty() {
+    let new_caps: std::collections::BTreeSet<_> = exp
+        .surface
+        .capabilities
+        .difference(caps_before)
+        .cloned()
+        .collect();
+
+    if added_qualified.is_empty() && new_relation_slots.is_empty() && new_caps.is_empty() {
+        let mut markdown = String::new();
+        append_ranked_replay_diagnostics(
+            &mut markdown,
+            &exp,
+            ranked_capability_names,
+            caps_before,
+        );
         sess.entities = exp.entities.clone();
         sess.teaching_exposure = Some(exp);
         st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
             .await;
+        let reused = markdown.trim().is_empty();
         return CommittedWaveDelta {
-            markdown: String::new(),
+            markdown,
             relations_delta: Vec::new(),
-            reused: true,
+            reused,
         };
     }
 
     let sym_cross = st.sessions.symbol_map_cross_cache();
-    let delta = if sess.contexts_by_entry.len() > 1 {
-        let by_entry: IndexMap<String, &CGS> = sess
-            .contexts_by_entry
-            .iter()
-            .map(|(k, v)| (k.clone(), v.cgs.as_ref()))
-            .collect();
-        st.engine
-            .prompt_pipeline()
-            .render_teaching_exposure_delta_federated_with_edges(
-                &by_entry,
-                &exp,
-                &added_qualified,
-                &new_relation_slots,
-                Some(sym_cross),
-            )
+    let delta = if !added_qualified.is_empty() || !new_relation_slots.is_empty() {
+        if sess.contexts_by_entry.len() > 1 {
+            let by_entry: IndexMap<String, &CGS> = sess
+                .contexts_by_entry
+                .iter()
+                .map(|(k, v)| (k.clone(), v.cgs.as_ref()))
+                .collect();
+            st.engine
+                .prompt_pipeline()
+                .render_teaching_exposure_delta_federated_with_edges(
+                    &by_entry,
+                    &exp,
+                    &added_qualified,
+                    &new_relation_slots,
+                    Some(sym_cross),
+                )
+        } else {
+            let added: Vec<&str> = added_qualified.iter().map(|k| k.entity.as_str()).collect();
+            st.engine
+                .prompt_pipeline()
+                .render_teaching_exposure_delta_with_edges(
+                    sess.cgs.as_ref(),
+                    &exp,
+                    &added,
+                    &new_relation_slots,
+                    Some(sym_cross),
+                )
+        }
     } else {
-        let added: Vec<&str> = added_qualified.iter().map(|k| k.entity.as_str()).collect();
+        let entity_names = entity_names_for_new_capabilities(&new_caps);
+        let refs: Vec<&str> = entity_names.iter().map(|s| s.as_str()).collect();
         st.engine
             .prompt_pipeline()
             .render_teaching_exposure_delta_with_edges(
                 sess.cgs.as_ref(),
                 &exp,
-                &added,
-                &new_relation_slots,
+                &refs,
+                &[],
                 Some(sym_cross),
             )
     };
-    let wave =
+    let mut wave =
         wrap_teaching_markdown_literal_block(&delta, st.engine.prompt_pipeline().render_mode);
+    if ranked_capability_names.is_some_and(|n| !n.is_empty()) && new_caps.is_empty() {
+        append_ranked_replay_diagnostics(
+            &mut wave,
+            &exp,
+            ranked_capability_names,
+            caps_before,
+        );
+    }
     sess.prompt_text.push_str("\n\n");
     sess.prompt_text.push_str(&wave);
     sess.entities = exp.entities.clone();

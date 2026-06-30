@@ -59,7 +59,15 @@ pub(crate) fn format_session_unchanged_reuse_markdown(
 ) -> String {
     if let Some(exp) = exp.filter(|e| !e.entities.is_empty()) {
         let map = plasm_core::prompt_render::render_compact_exposure_symbol_map(exp);
-        format!("Unchanged — {map}. Next: `plasm` / `plasm_run`.\n")
+        let active = plasm_core::prompt_render::render_active_mutator_surface_recap(exp);
+        let mut out = format!("Unchanged — {map}.");
+        if !active.is_empty() {
+            out.push_str("\n\nActive mutators (reuse):\n```tsv\nplasm_expr\tMeaning\n");
+            out.push_str(&active);
+            out.push_str("\n```\n");
+        }
+        out.push_str("Next: `plasm` / `plasm_run`.\n");
+        out
     } else {
         "Unchanged — no exposed entities yet. Next: `plasm` / `plasm_run`.\n".to_string()
     }
@@ -521,6 +529,169 @@ mod ranked_replay_tests {
         assert!(
             method_sym.starts_with('m'),
             "{mutator} method must appear on teaching surface after replay: {method_sym}"
+        );
+    }
+
+    #[test]
+    fn reuse_markdown_includes_active_mutator_recap() {
+        use plasm_core::capability_method_label_kebab;
+        use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+        use plasm_core::loader::load_schema_dir;
+        use plasm_core::ExposureEntityKey;
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+            .expect("plasm_language_matrix");
+        let entities = ["LangItem"];
+        let endpoints = entities
+            .iter()
+            .map(|e| ExposureEntityKey {
+                entry_id: "matrix".into(),
+                entity: plasm_core::EntityName::from(*e),
+            })
+            .collect::<Vec<_>>();
+        let intent = "langitem browse inventory metadata";
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "matrix",
+            intent,
+            &endpoints,
+            &entities
+                .iter()
+                .map(|e| (*e).to_string())
+                .collect::<Vec<_>>(),
+            Some(&["langitem_create".to_string()]),
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        let exp = TeachingExposureSession::new_with_intent_delta(
+            &cgs,
+            "matrix",
+            &entities,
+            delta,
+        );
+        let md = format_session_unchanged_reuse_markdown(Some(&exp));
+        assert!(
+            md.contains("Active mutators"),
+            "reuse markdown must recap mutators: {md}"
+        );
+        let cap = cgs.get_capability("langitem_create").expect("langitem_create");
+        let method = capability_method_label_kebab(cap);
+        let method_sym = exp.symbol_map_arc().method_sym("LangItem", &method);
+        assert!(
+            md.contains(&method_sym),
+            "reuse recap must include {method_sym}: {md}"
+        );
+    }
+
+    #[test]
+    fn ranked_replay_diagnostics_when_already_exposed() {
+        use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+        use plasm_core::loader::load_schema_dir;
+        use plasm_core::ExposureEntityKey;
+        use plasm_core::prompt_render::format_ranked_replay_diagnostics;
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+            .expect("plasm_language_matrix");
+        let entities = ["LangItem"];
+        let endpoints = entities
+            .iter()
+            .map(|e| ExposureEntityKey {
+                entry_id: "matrix".into(),
+                entity: plasm_core::EntityName::from(*e),
+            })
+            .collect::<Vec<_>>();
+        let intent = "create new langitem title";
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "matrix",
+            intent,
+            &endpoints,
+            &entities
+                .iter()
+                .map(|e| (*e).to_string())
+                .collect::<Vec<_>>(),
+            Some(&["langitem_create".to_string()]),
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        let exp = TeachingExposureSession::new_with_intent_delta(
+            &cgs,
+            "matrix",
+            &entities,
+            delta,
+        );
+        let caps_before = exp.surface.capabilities.clone();
+        let diag = format_ranked_replay_diagnostics(
+            &exp,
+            &["langitem_create".to_string()],
+            &caps_before,
+        );
+        assert!(
+            diag.contains("already exposed"),
+            "expected already-exposed diagnostic: {diag}"
+        );
+    }
+
+    #[test]
+    fn mcp_conformance_ranked_write_symbols_authorable_from_recap() {
+        use plasm_core::capability_method_label_kebab;
+        use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+        use plasm_core::loader::load_schema;
+        use plasm_core::ExposureEntityKey;
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = load_schema(&root.join("../../apis/github")).expect("github");
+        let entities = vec!["Repository".to_string(), "Issue".to_string()];
+        let endpoints = entities
+            .iter()
+            .map(|e| ExposureEntityKey {
+                entry_id: "github".into(),
+                entity: plasm_core::EntityName::from(e.as_str()),
+            })
+            .collect::<Vec<_>>();
+        let weak_intent = "browse repository metadata inventory";
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "github",
+            weak_intent,
+            &endpoints,
+            &entities,
+            Some(&["issue_create".to_string()]),
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        assert!(
+            delta
+                .required
+                .capabilities
+                .iter()
+                .any(|c| c.capability.as_str() == "issue_create"),
+            "ranked issue_create must appear on seeded Issue"
+        );
+        let exp = TeachingExposureSession::new_with_intent_delta(
+            &cgs,
+            "github",
+            &["Repository", "Issue"],
+            delta,
+        );
+        let reuse = format_session_unchanged_reuse_markdown(Some(&exp));
+        let cap = cgs.get_capability("issue_create").expect("issue_create");
+        let method = capability_method_label_kebab(cap);
+        let map = exp.symbol_map_arc();
+        let method_sym = map.method_sym("Issue", &method);
+        let labels_sym = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "labels");
+        assert!(
+            reuse.contains(&method_sym),
+            "reuse recap must expose issue_create method sym: {reuse}"
+        );
+        assert!(
+            reuse.contains(&format!("labels={labels_sym}")),
+            "reuse recap must name labels param: {reuse}"
         );
     }
 }

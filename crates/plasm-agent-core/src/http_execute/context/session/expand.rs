@@ -35,12 +35,14 @@ async fn commit_expand_wave(
         return Err("forbidden: execute session tenant does not match caller".into());
     }
     let scope_intent = sess.context_intent.clone();
-    let ranked_slice = sess.ranked_capabilities.as_deref();
+    let ranked_names = sess.ranked_capabilities.clone();
+    let ranked_slice = ranked_names.as_deref();
     let Some(mut exp) = sess.teaching_exposure.take() else {
         return Err("session has no incremental exposure state".into());
     };
 
     let slots_before = exp.surface.slots.clone();
+    let caps_before = exp.surface.capabilities.clone();
 
     let layers: Vec<&CGS> = sess
         .contexts_by_entry
@@ -121,8 +123,10 @@ async fn commit_expand_wave(
         sess,
         exp,
         &slots_before,
+        &caps_before,
         n0,
         &relation_keys,
+        ranked_slice,
     )
     .await;
     Ok(ExpandTeachingWaveResult {

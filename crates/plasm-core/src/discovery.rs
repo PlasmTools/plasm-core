@@ -1055,21 +1055,25 @@ fn mutating_capability_admitted(
     ranked_capability_names: Option<&[String]>,
     cap_name: &str,
 ) -> bool {
-    if score == 0 {
-        return false;
-    }
     if read_first_seeded && entity_is_seeded {
         #[cfg(feature = "ranked_capability_gate")]
         {
-            if ranked_gate_allows_mutation(ranked_capability_names, cap_name)
-                && ranked_capability_names.is_some_and(|n| !n.is_empty())
+            if ranked_capability_names.is_some_and(|n| !n.is_empty())
+                && ranked_gate_allows_mutation(ranked_capability_names, cap_name)
             {
+                // Exact ranked wire names force-teach seeded mutators even at lexicon score zero.
                 return true;
             }
         }
         #[cfg(not(feature = "ranked_capability_gate"))]
         let _ = (ranked_capability_names, cap_name);
+        if score == 0 {
+            return false;
+        }
         return score >= READ_FIRST_SEEDED_MUTATOR_MIN_SCORE;
+    }
+    if score == 0 {
+        return false;
     }
     #[cfg(feature = "ranked_capability_gate")]
     {
@@ -1495,6 +1499,20 @@ mod tests {
         assert!(!mutating_capability_admitted(
             true,
             true,
+            0,
+            None,
+            "langitem_create"
+        ));
+        assert!(mutating_capability_admitted(
+            true,
+            true,
+            0,
+            Some(&["langitem_create".to_string()]),
+            "langitem_create"
+        ));
+        assert!(!mutating_capability_admitted(
+            true,
+            true,
             1,
             None,
             "langitem_create"
@@ -1513,6 +1531,44 @@ mod tests {
             None,
             "langitem_create"
         ));
+    }
+
+    #[test]
+    fn intent_surface_ranked_admits_seeded_mutator_at_zero_score() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
+        let cap = cgs
+            .capabilities
+            .get("langitem_create")
+            .expect("langitem_create");
+        let zero_intent = "xyzzy qwerty plugh unrelated";
+        let mut zero_tokens = HashSet::new();
+        for tok in domain_lexicon::tokens(zero_intent) {
+            zero_tokens.insert(tok);
+        }
+        let (zero_score, _) = score_capability(&zero_tokens, &cgs, cap);
+        assert_eq!(zero_score, 0, "fixture intent must score zero for langitem_create");
+        let endpoints = relation_keys("matrix", &["LangItem"]);
+        let delta_ranked = derive_intent_exposure_surface_batch(
+            &cgs,
+            "matrix",
+            zero_intent,
+            &endpoints,
+            &["LangItem".to_string()],
+            Some(&["langitem_create".to_string()]),
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        assert!(
+            delta_ranked
+                .required
+                .capabilities
+                .iter()
+                .any(|c| { c.capability.as_str() == "langitem_create" }),
+            "ranked wire name must admit seeded mutator at score zero"
+        );
     }
 
     #[test]
