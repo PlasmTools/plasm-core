@@ -49,6 +49,7 @@ pub fn load_language_matrix_cgs() -> Arc<plasm_core::CGS> {
     )
 }
 
+#[allow(dead_code)] // shared helper; not every matrix e2e binary uses the default wave session
 pub fn matrix_execute_session(cgs: Arc<plasm_core::CGS>) -> ExecuteSession {
     let mut ctxs = IndexMap::new();
     ctxs.insert(
