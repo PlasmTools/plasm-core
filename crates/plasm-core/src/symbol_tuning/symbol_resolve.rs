@@ -330,7 +330,11 @@ impl SymbolMap {
                 return Ok(field_wire.to_string());
             }
         }
-        let param_wires = self.query_search_param_wires_from_slot_binding(entity, cgs, &binding);
+        let mut param_wires = self.query_search_param_wires_from_slot_binding(entity, cgs, &binding);
+        if param_wires.is_empty() {
+            param_wires =
+                self.query_filter_wires_from_cap_param_table(_catalog_entry_id, entity, cgs, t);
+        }
         match param_wires.len() {
             0 => Err(SymbolResolveError::UnknownQueryFilterPSym {
                 entity: entity.to_string(),
@@ -442,6 +446,40 @@ impl SymbolMap {
                 if Self::cap_declares_param_wire(cap, param_wire.as_str()) {
                     param_wires.insert(param_wire.clone());
                 }
+            }
+        }
+        param_wires.into_iter().collect()
+    }
+
+    /// Homograph fallback: shared `p#` fingerprints may store an entity-field row in `sym_to_slot`
+    /// while `cap_param_to_sym` still maps the same token for query/search scope params on this entity.
+    fn query_filter_wires_from_cap_param_table(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        cgs: &CGS,
+        token: &str,
+    ) -> Vec<String> {
+        let mut param_wires = BTreeSet::new();
+        for ((entry_id, domain, cap_name, param_wire), sym) in &self.cap_param_to_sym {
+            if sym.as_str() != token || domain.as_str() != entity {
+                continue;
+            }
+            if !catalog_entry_id.is_empty() && !entry_id.is_empty() && entry_id != catalog_entry_id
+            {
+                continue;
+            }
+            let Some(cap) = cgs.get_capability(cap_name.as_str()) else {
+                continue;
+            };
+            if !matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search) {
+                continue;
+            }
+            if cap.domain.as_str() != entity {
+                continue;
+            }
+            if Self::cap_declares_param_wire(cap, param_wire.as_str()) {
+                param_wires.insert(param_wire.clone());
             }
         }
         param_wires.into_iter().collect()

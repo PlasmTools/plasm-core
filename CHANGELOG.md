@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.99] - 2026-06-30
+
+### Fixed
+
+- **Linear `WorkflowState` expression completeness:** homograph opaque `p#` tokens for scoped query filters (e.g. `team_key` on `workflow_state_query`) resolve via `cap_param_to_sym` when slot binding is an entity field on a shared fingerprint — restores teaching-line synthesis and `plasm-pack-catalogs` validation for query-only entities.
+
+### Added
+
+- **`all_apis_validate_expression_surface` test:** CI gate that runs expression-surface validation across every `apis/<name>/` catalog (not only the bundled github/petstore/clickup subset).
+- **`linear_workflow_state_scoped_query_teaching_line_validates_with_opaque_p_sym` regression** for opaque scoped-query teaching lines.
+
 ## [0.3.98] - 2026-06-30
 
 ### Changed

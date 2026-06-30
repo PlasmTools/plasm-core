@@ -172,3 +172,38 @@ fn seeded_pokemon_identity_row_uses_positional_literal() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn linear_workflow_state_scoped_query_teaching_line_validates_with_opaque_p_sym() {
+    use super::domain_example_line_count;
+    use crate::loader::load_schema_dir_unvalidated;
+    use crate::prompt_render::line_validate::{
+        domain_line_validate_cached, prompt_line_valid_cache_seed_cgs,
+    };
+    use crate::symbol_tuning::{symbol_map_for_prompt, FocusSpec, SymbolMap};
+
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/linear");
+    if !dir.is_dir() {
+        return;
+    }
+    let cgs = load_schema_dir_unvalidated(&dir).expect("linear");
+    let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("map");
+    let es = map.entity_sym_for("", "WorkflowState");
+    let p_team =
+        map.ident_sym_cap_param_for("", "WorkflowState", "workflow_state_query", "team_key");
+    assert!(
+        SymbolMap::is_opaque_p_sym(p_team.as_str()),
+        "team_key scope param must be opaque in full linear exposure"
+    );
+    let expr = format!("{es}{{{p_team}=$}}");
+    let mut cache = std::collections::HashMap::new();
+    let seed = prompt_line_valid_cache_seed_cgs(&cgs);
+    assert!(
+        domain_line_validate_cached(&mut cache, seed, &cgs, &expr, Some(&map)).is_some(),
+        "WorkflowState scoped query must validate with homograph p#: {expr}"
+    );
+    assert!(
+        domain_example_line_count(&cgs, "WorkflowState", Some(map.as_ref())) > 0,
+        "WorkflowState must synthesize teaching lines"
+    );
+}

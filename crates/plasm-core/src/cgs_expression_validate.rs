@@ -243,7 +243,64 @@ mod tests {
     use super::*;
     use crate::loader::load_schema_dir;
     use crate::SchemaError;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
+
+    fn iter_api_catalog_dirs(root: &Path) -> Vec<PathBuf> {
+        let mut dirs = Vec::new();
+        let Ok(entries) = std::fs::read_dir(root) else {
+            return dirs;
+        };
+        for ent in entries.flatten() {
+            let path = ent.path();
+            if !path.is_dir() {
+                continue;
+            }
+            if path.join("domain.yaml").is_file() && path.join("mappings.yaml").is_file() {
+                dirs.push(path);
+            }
+        }
+        dirs.sort();
+        dirs
+    }
+
+    #[test]
+    fn all_apis_validate_expression_surface() {
+        let apis_root = Path::new("../../apis");
+        if !apis_root.is_dir() {
+            return;
+        }
+        let dirs = iter_api_catalog_dirs(apis_root);
+        assert!(
+            !dirs.is_empty(),
+            "expected at least one API catalog under {}",
+            apis_root.display()
+        );
+        let mut failures = Vec::new();
+        for p in &dirs {
+            let name = p
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("?");
+            match load_schema_dir(p) {
+                Ok(cgs) => {
+                    if let Err(e) = validate_cgs_expression_surface(&cgs) {
+                        failures.push(format!("{name}: {e}"));
+                    }
+                }
+                Err(e) => failures.push(format!("{name}: load: {e}")),
+            }
+        }
+        if !failures.is_empty() {
+            for f in &failures {
+                eprintln!("FAIL {f}");
+            }
+            panic!(
+                "{} of {} API catalog(s) failed expression-surface validation",
+                failures.len(),
+                dirs.len()
+            );
+        }
+    }
 
     #[test]
     fn bundled_github_capability_coverage_report() {
