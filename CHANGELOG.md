@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.101] - 2026-07-01
+
+### Added
+
+- **Teaching mutator recap:** compact type markers (`[]` array, `!` required) on invoke param gloss; matrix homograph regression for scalar vs array `p#`.
+- **`ArrayFieldCoercionPolicy`:** unified query-filter vs invoke-arg array coercion/type-check (rejects scalar strings on invoke; accepts column projections and bracket arrays).
+- **Inline multiline heredoc** inside method-call argument lists (`collect_program_statement_lines` / `PhysicalLineStatementScanner`).
+
+### Changed
+
+- **GitHub catalog:** split `repo_content_put` into `repo_content_create` (no sha) and `repo_content_update` (sha required); sharpened `label_query` vs `issue_label_query` task descriptions.
+- **Canonical teaching synthesis:** wire method segments use kebab labels (fixes create-only entities like `PromptRun` in tool-model render).
+
+### Fixed
+
+- Invoke/create/action args no longer silently wrap scalars into one-element arrays; honest compile-time `expected array [...]` errors at dry-run.
+
 ## [0.3.100] - 2026-07-01
 
 ### Changed
