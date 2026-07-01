@@ -40,9 +40,11 @@ pub use session_bindings::{EntityBinding, MethodBinding, RelationBinding, SlotBi
 pub use symbol_traits::{SymbolAllocate, SymbolRender, SymbolResolve, SymbolSession};
 
 pub use capability_surface_params::{
-    capability_exposure_param_pairs, capability_optional_legend_param_pairs,
-    exposed_mutator_capability_keys, loaded_catalog_entry_ids, optional_legend_param_syms,
-    resolve_ranked_wire_candidates, seeded_ranked_wire_candidates, CapabilityParamSurfaceFilter,
+    capability_exposure_param_pairs, capability_exposure_param_triples,
+    capability_optional_legend_param_pairs, compact_mutator_param_marker,
+    exposed_mutator_capability_keys, input_field_is_array, loaded_catalog_entry_ids,
+    optional_legend_param_syms, resolve_ranked_wire_candidates, seeded_ranked_wire_candidates,
+    CapabilityParamSurfaceFilter,
 };
 pub use symbol_resolve::SymbolResolveError;
 
@@ -4753,7 +4755,8 @@ mod tests {
             ("issue_create", "labels"),
             ("issue_update", "labels"),
             ("pr_create", "body"),
-            ("repo_content_put", "branch"),
+            ("repo_content_create", "branch"),
+            ("repo_content_update", "sha"),
         ] {
             let cap = cgs.get_capability(cap_name).expect(cap_name);
             let sig = map.capability_input_signature_gloss(&cgs, cap);

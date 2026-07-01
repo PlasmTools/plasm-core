@@ -212,7 +212,8 @@ CLI: `user get-me` (no positional ID required). Internally dispatched as a param
 | `pr_review_delete` | delete | `pullrequestreview --owner O --repo R --pull_number N <review_id> pr-review-delete` | `DELETE /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{id}` |
 | `pr_review_comment_create` | create | `pullrequestreviewcomment pr-review-comment-create --owner O --repo R --pull_number N …` | `POST /repos/{owner}/{repo}/pulls/{pull_number}/comments` |
 | `label_create` | create | `label --owner O --repo R create …` | `POST /repos/{owner}/{repo}/labels` |
-| `repo_content_put` | action | `repository --owner O --repo R repo-content-put …` | `PUT /repos/{owner}/{repo}/contents/{path}` |
+| `repo_content_create` | action | `repository --owner O --repo R repo-content-create …` | `PUT /repos/{owner}/{repo}/contents/{path}` (new file; no sha) |
+| `repo_content_update` | action | `repository --owner O --repo R repo-content-update …` | `PUT /repos/{owner}/{repo}/contents/{path}` (existing file; sha required) |
 | `pr_review_get` | get | `pullrequestreview --owner O --repo R --pull_number N <review_id>` | `GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{id}` |
 | `pr_review_comment_get` | get | `pullrequestreviewcomment --owner O --repo R <id>` | `GET /repos/{owner}/{repo}/pulls/comments/{id}` |
 

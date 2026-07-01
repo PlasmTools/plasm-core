@@ -1649,7 +1649,7 @@ label_delete:
     - { type: var, name: name }
   response: single
 
-repo_content_put:
+repo_content_create:
   method: PUT
   path:
     - { type: literal, value: repos }
@@ -1665,9 +1665,25 @@ repo_content_put:
       - [branch, { type: if, condition: { type: exists, var: branch },
                   then_expr: { type: var, name: branch },
                   else_expr: { type: const, value: null } }]
-      - [sha, { type: if, condition: { type: exists, var: sha },
-                then_expr: { type: var, name: sha },
-                else_expr: { type: const, value: null } }]
+  response: single
+
+repo_content_update:
+  method: PUT
+  path:
+    - { type: literal, value: repos }
+    - { type: var, name: owner }
+    - { type: var, name: repo }
+    - { type: literal, value: contents }
+    - { type: var, name: path }
+  body:
+    type: object
+    fields:
+      - [message, { type: var, name: message }]
+      - [content, { type: base64, value: { type: var, name: content } }]
+      - [branch, { type: if, condition: { type: exists, var: branch },
+                  then_expr: { type: var, name: branch },
+                  else_expr: { type: const, value: null } }]
+      - [sha, { type: var, name: sha }]
   response: single
 
 repo_branch_create:

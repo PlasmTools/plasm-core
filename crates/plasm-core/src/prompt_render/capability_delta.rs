@@ -5,9 +5,10 @@ use std::collections::{BTreeSet, HashSet};
 use indexmap::IndexMap;
 
 use crate::symbol_tuning::{
-    capability_exposure_param_pairs, field_syms_for_teaching_row, gloss_description_truncated,
-    optional_legend_param_syms, registry_backed_compact_wire_label, CapabilityParamSurfaceFilter,
-    ExposureCapabilityKey, ExposureEntityKey, SymbolMap, TeachingExposureSession,
+    capability_exposure_param_pairs, capability_exposure_param_triples,
+    field_syms_for_teaching_row, gloss_description_truncated, optional_legend_param_syms,
+    registry_backed_compact_wire_label, CapabilityParamSurfaceFilter, ExposureCapabilityKey,
+    ExposureEntityKey, SymbolMap, TeachingExposureSession,
 };
 use crate::{CapabilityKind, CGS};
 
@@ -359,16 +360,17 @@ pub(crate) fn render_mutator_recap_lines_for_caps(
             entity,
             cap_key.capability.as_str(),
         );
-        let pairs = capability_exposure_param_pairs(
+        let triples = capability_exposure_param_triples(
             exp,
             map.as_ref(),
             cap_key,
             cap,
             CapabilityParamSurfaceFilter::AllOnSurface,
+            cgs,
         );
-        let param_s = pairs
+        let param_s = triples
             .into_iter()
-            .map(|(wire, sym)| format!("{wire}={sym}"))
+            .map(|(wire, sym, marker)| format!("{wire}={sym}{marker}"))
             .collect::<Vec<_>>()
             .join(", ");
         let cap_wire = cap_key.capability.as_str();
@@ -386,6 +388,7 @@ mod tests {
     use super::*;
     use crate::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
     use crate::loader::load_schema_dir;
+    use crate::symbol_tuning::exposed_mutator_capability_keys;
     use std::path::PathBuf;
 
     #[test]
@@ -448,6 +451,85 @@ mod tests {
         assert!(
             tsv.contains("labels=") || tsv.contains("label"),
             "invoke row must name labels param: {tsv}"
+        );
+    }
+
+    #[test]
+    fn mutator_recap_marks_array_invoke_params() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = load_schema_dir(&root.join("../../apis/github")).expect("github");
+        let entities = vec!["Repository".to_string(), "Issue".to_string()];
+        let endpoints = entities
+            .iter()
+            .map(|e| ExposureEntityKey {
+                entry_id: "github".into(),
+                entity: crate::EntityName::from(e.as_str()),
+            })
+            .collect::<Vec<_>>();
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "github",
+            "create issue with labels",
+            &endpoints,
+            &entities,
+            Some(&["issue_create".to_string(), "issue_update".to_string()]),
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        let exp = TeachingExposureSession::new_with_intent_delta(
+            &cgs,
+            "github",
+            &["Repository", "Issue"],
+            delta,
+        );
+        let recap =
+            render_mutator_recap_lines_for_caps(&exp, &exposed_mutator_capability_keys(&exp));
+        assert!(
+            recap.contains("labels=p") && recap.contains("[]"),
+            "array labels param must carry [] marker in mutator recap: {recap}"
+        );
+    }
+
+    #[test]
+    fn mutator_recap_homograph_tags_scalar_vs_array_on_matrix() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+            .expect("matrix");
+        let entities = vec!["LangItem".to_string()];
+        let endpoints = entities
+            .iter()
+            .map(|e| ExposureEntityKey {
+                entry_id: "langmatrix".into(),
+                entity: crate::EntityName::from(e.as_str()),
+            })
+            .collect::<Vec<_>>();
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "langmatrix",
+            "create and query lang items with tags filter",
+            &endpoints,
+            &entities,
+            Some(&["langitem_create".to_string(), "langitem_query".to_string()]),
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        let exp = TeachingExposureSession::new_with_intent_delta(
+            &cgs,
+            "langmatrix",
+            &["LangItem"],
+            delta,
+        );
+        let recap =
+            render_mutator_recap_lines_for_caps(&exp, &exposed_mutator_capability_keys(&exp));
+        assert!(
+            recap.contains("tags=p") && recap.contains("[]"),
+            "create tags array param must show [] in recap: {recap}"
+        );
+        assert!(
+            !recap.contains("langitem_query"),
+            "query caps must not appear in mutator recap: {recap}"
         );
     }
 

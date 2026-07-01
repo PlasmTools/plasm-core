@@ -2605,7 +2605,7 @@ capabilities:
   label_query:
     kind: query
     entity: Label
-    description: List labels for a repository.
+    description: List labels defined in the repository (repo-wide catalog of label definitions).
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
@@ -2627,7 +2627,7 @@ capabilities:
   issue_label_query:
     kind: query
     entity: Label
-    description: List labels on an issue.
+    description: List labels currently applied to issue #N (on-issue label set, not repo-wide definitions).
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: owner
@@ -3320,10 +3320,35 @@ capabilities:
     kind: delete
     entity: Label
     description: Remove a label from a repository.
-  repo_content_put:
+  repo_content_create:
     kind: action
     entity: Repository
-    description: Create or update a file at a repository path; set branch to write on a non-default branch.
+    description: Create a new file at a repository path on the given branch (no blob sha).
+    scope_aggregate_key_policy: omit_when_redundant
+    parameters:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
+      role: scope
+    - name: path
+      value_ref: nv_wire_str_short
+      required: true
+    - name: message
+      value_ref: nv_wire_str_short
+      required: true
+    - name: content
+      value_ref: nv_repo_content_put_content
+      required: true
+    - name: branch
+      value_ref: nv_github_branch_name
+      required: false
+    output:
+      type: side_effect
+      description: Create the file at the path.
+  repo_content_update:
+    kind: action
+    entity: Repository
+    description: Update an existing file at a repository path; requires the current blob sha.
     scope_aggregate_key_policy: omit_when_redundant
     parameters:
     - name: repository
@@ -3344,10 +3369,10 @@ capabilities:
       required: false
     - name: sha
       value_ref: nv_github_git_sha
-      required: false
+      required: true
     output:
       type: side_effect
-      description: Write the file at the path.
+      description: Replace the file at the path.
   repo_branch_create:
     kind: action
     entity: Repository
@@ -3810,7 +3835,11 @@ oauth:
         any_of:
         - repo
         - public_repo
-      repo_content_put:
+      repo_content_create:
+        any_of:
+        - repo
+        - public_repo
+      repo_content_update:
         any_of:
         - repo
         - public_repo

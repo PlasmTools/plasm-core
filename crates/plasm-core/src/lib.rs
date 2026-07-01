@@ -259,9 +259,10 @@ pub use teaching_term::{
 };
 pub use wire_coercion::{
     binding_value_as_plasm_value, coerce_json_value_for_field_type, coerce_value_for_field_type,
-    collect_relation_binding_proofs, field_type_assignable_for_relation_binding,
-    identity_slot_to_json, json_value_to_plasm_value, parent_entity_field_type,
-    plasm_value_to_json, relation_binding_assignable, RelationBindingProof,
+    coerce_value_for_field_type_with_options, collect_relation_binding_proofs,
+    field_type_assignable_for_relation_binding, identity_slot_to_json, json_value_to_plasm_value,
+    parent_entity_field_type, plasm_value_to_json, relation_binding_assignable, CoerceFieldOptions,
+    RelationBindingProof,
 };
 pub mod relation_materialize;
 pub use expr_surface_render::{

@@ -94,10 +94,11 @@ use crate::symbol_tuning::{
     entity_slices_for_render, CatalogScope, FocusSpec, SymbolMap, SymbolSession,
 };
 use crate::{
-    catalog_id::CatalogEntryStamp, coerce_value_for_field_type, ArrayItemsSchema, CapabilityKind,
-    CapabilityName, ChainExpr, CompOp, CreateExpr, DeleteExpr, EntityDef, EntityKey, EntityName,
-    Expr, FieldType, GetExpr, InputType, InvokeExpr, InvokeInputPayload, PageExpr, ParameterRole,
-    Predicate, QueryExpr, Ref, SymbolResolveError, Value, ValueWireFormat, CGS,
+    catalog_id::CatalogEntryStamp, coerce_value_for_field_type,
+    coerce_value_for_field_type_with_options, ArrayItemsSchema, CapabilityKind, CapabilityName,
+    ChainExpr, CoerceFieldOptions, CompOp, CreateExpr, DeleteExpr, EntityDef, EntityKey,
+    EntityName, Expr, FieldType, GetExpr, InputType, InvokeExpr, InvokeInputPayload, PageExpr,
+    ParameterRole, Predicate, QueryExpr, Ref, SymbolResolveError, Value, ValueWireFormat, CGS,
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -1918,8 +1919,22 @@ impl<'a> Parser<'a> {
                     })
                 })?;
                 let array_ref = nv.array_items.as_ref();
-                *v = coerce_value_for_field_type(&nv.field_type, nv.value_format, array_ref, old)
-                    .map_err(|m| self.err(ParseErrorKind::InvalidTemporalValue { message: m }))?;
+                *v = coerce_value_for_field_type_with_options(
+                    &nv.field_type,
+                    nv.value_format,
+                    array_ref,
+                    old,
+                    CoerceFieldOptions {
+                        allow_scalar_to_array: false,
+                    },
+                )
+                .map_err(|m| {
+                    if matches!(nv.field_type, FieldType::Date) {
+                        self.err(ParseErrorKind::InvalidTemporalValue { message: m })
+                    } else {
+                        self.err(ParseErrorKind::Other { message: m })
+                    }
+                })?;
             }
         }
         Ok(())

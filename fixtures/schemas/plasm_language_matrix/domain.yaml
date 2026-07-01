@@ -223,6 +223,9 @@ capabilities:
     - name: owner
       value_ref: nv_langitem_create_owner
       required: false
+    - name: tags
+      value_ref: nv_langitem_create_tags
+      required: false
     provides:
     - id
     - title
@@ -407,6 +410,14 @@ values:
   nv_langitem_create_owner:
     type: string
     string_semantics: short
+  nv_langitem_create_tags_item:
+    type: string
+    string_semantics: short
+  nv_langitem_create_tags:
+    type: array
+    items:
+      value_ref: nv_langitem_create_tags_item
+    description: Tag names to apply when creating a LangItem (array invoke param homograph regression).
   nv_langitem_update_title:
     type: string
     string_semantics: short

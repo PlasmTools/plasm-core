@@ -76,6 +76,9 @@ langitem_create:
     - ["title", { type: var, name: title }]
     - ["score", { type: var, name: score }]
     - ["owner", { type: var, name: owner }]
+    - [tags, { type: if, condition: { type: exists, var: tags },
+               then_expr: { type: var, name: tags },
+               else_expr: { type: const, value: null } }]
 
 langitem_update:
   method: PATCH

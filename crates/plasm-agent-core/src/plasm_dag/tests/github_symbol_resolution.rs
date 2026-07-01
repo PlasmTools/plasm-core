@@ -226,6 +226,97 @@ created"#,
 }
 
 #[test]
+fn issue_create_rejects_scalar_for_array_labels_param() {
+    let cgs = github_cgs();
+    let session = github_ranked_mutator_session(
+        &cgs,
+        &["Repository", "Issue"],
+        "create a new issue with title and labels in the repository",
+        &["issue_create"],
+        "issue_create",
+    );
+    let map = github_symbol_map(&session);
+    let issue_e = map.entity_sym_for("github", "Issue");
+    let cap = cgs.get_capability("issue_create").expect("issue_create");
+    let method_sym = map.method_sym_for("github", "Issue", cap.name.as_str());
+    let p_repo = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "repository");
+    let p_title = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "title");
+    let p_body = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "body");
+    let p_labels = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "labels");
+    let repo_e = map.entity_sym_for("github", "Repository");
+    let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
+    let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
+    let source = format!(
+        r#"repo = {repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test")
+created = {issue_e}.{method_sym}({p_repo}=repo.full_name, {p_title}="Document labels", {p_body}="guide body", {p_labels}="enhancement,documentation")
+created"#,
+        repo_e = repo_e,
+        repo_owner = repo_owner,
+        repo_name = repo_name,
+        issue_e = issue_e,
+        method_sym = method_sym,
+        p_repo = p_repo,
+        p_title = p_title,
+        p_body = p_body,
+        p_labels = p_labels,
+    );
+    let err = compile_plasm_dag_to_plan(
+        &plasm_core::PromptPipelineConfig::default(),
+        None,
+        &session,
+        "github-issue-create-scalar-labels",
+        &source,
+    )
+    .expect_err("scalar labels must not coerce to array");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("expected array") || msg.contains("array"),
+        "expected array type error, got: {msg}"
+    );
+}
+
+#[test]
+fn issue_update_rejects_scalar_for_array_labels_param() {
+    let cgs = github_cgs();
+    let session = github_ranked_mutator_session(
+        &cgs,
+        &["Repository", "Issue"],
+        "update issue labels in repository",
+        &["issue_update"],
+        "issue_update",
+    );
+    let map = github_symbol_map(&session);
+    let issue_e = map.entity_sym_for("github", "Issue");
+    let update_m = map.method_sym_for("github", "Issue", "issue_update");
+    let p_labels = map.ident_sym_cap_param_for("github", "Issue", "issue_update", "labels");
+    let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
+    let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
+    let issue_number = map.ident_sym_entity_field_for("github", "Issue", "number");
+    let source = format!(
+        r#"{issue_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test", {issue_number}=5).{update_m}({p_labels}="enhancement,documentation")"#,
+        issue_e = issue_e,
+        repo_owner = repo_owner,
+        repo_name = repo_name,
+        issue_number = issue_number,
+        update_m = update_m,
+        p_labels = p_labels,
+    );
+    let err = compile_plasm_dag_to_plan(
+        &plasm_core::PromptPipelineConfig::default(),
+        None,
+        &session,
+        "github-issue-update-scalar-labels",
+        &source,
+    )
+    .expect_err("scalar labels must not coerce to array");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("expected array") || msg.contains("array"),
+        "expected array type error, got: {msg}"
+    );
+}
+
+#[test]
 fn pr_create_dry_run_resolves_cap_qualified_param_symbols() {
     let cgs = github_cgs();
     let session = github_ranked_mutator_session(
@@ -272,30 +363,30 @@ opened"#,
 }
 
 #[test]
-fn repo_content_put_dry_run_resolves_cap_qualified_param_symbols() {
+fn repo_content_create_dry_run_resolves_cap_qualified_param_symbols() {
     let cgs = github_cgs();
     let session = github_ranked_mutator_session(
         &cgs,
         &["Repository"],
-        "update repository file content on a branch",
-        &["repo_content_put"],
-        "repo_content_put",
+        "create a new repository file on a branch",
+        &["repo_content_create"],
+        "repo_content_create",
     );
     let map = github_symbol_map(&session);
     let repo_e = map.entity_sym_for("github", "Repository");
     let cap = cgs
-        .get_capability("repo_content_put")
-        .expect("repo_content_put");
+        .get_capability("repo_content_create")
+        .expect("repo_content_create");
     let method_sym = map.method_sym_for("github", "Repository", cap.name.as_str());
     let p_repo =
-        map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "repository");
-    let p_path = map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "path");
+        map.ident_sym_cap_param_for("github", "Repository", "repo_content_create", "repository");
+    let p_path = map.ident_sym_cap_param_for("github", "Repository", "repo_content_create", "path");
     let p_branch =
-        map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "branch");
+        map.ident_sym_cap_param_for("github", "Repository", "repo_content_create", "branch");
     let p_content =
-        map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "content");
+        map.ident_sym_cap_param_for("github", "Repository", "repo_content_create", "content");
     let p_message =
-        map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "message");
+        map.ident_sym_cap_param_for("github", "Repository", "repo_content_create", "message");
     let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
     let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
     let source = format!(
@@ -311,7 +402,7 @@ written"#,
         p_content = p_content,
         p_message = p_message,
     );
-    let plan = compile_github_program(&session, "github-repo-content-put", &source);
+    let plan = compile_github_program(&session, "github-repo-content-create", &source);
     let written = plan["nodes"]
         .as_array()
         .expect("nodes")
@@ -319,7 +410,60 @@ written"#,
         .find(|n| n["id"] == "written")
         .expect("written node");
     assert_eq!(written["kind"], "action");
-    evaluate_plasm_plan_dry(&session, &plan).expect("repo_content_put dry-run");
+    evaluate_plasm_plan_dry(&session, &plan).expect("repo_content_create dry-run");
+}
+
+#[test]
+fn repo_content_update_dry_run_resolves_cap_qualified_param_symbols() {
+    let cgs = github_cgs();
+    let session = github_ranked_mutator_session(
+        &cgs,
+        &["Repository"],
+        "update repository file content on a branch",
+        &["repo_content_update"],
+        "repo_content_update",
+    );
+    let map = github_symbol_map(&session);
+    let repo_e = map.entity_sym_for("github", "Repository");
+    let cap = cgs
+        .get_capability("repo_content_update")
+        .expect("repo_content_update");
+    let method_sym = map.method_sym_for("github", "Repository", cap.name.as_str());
+    let p_repo =
+        map.ident_sym_cap_param_for("github", "Repository", "repo_content_update", "repository");
+    let p_path = map.ident_sym_cap_param_for("github", "Repository", "repo_content_update", "path");
+    let p_branch =
+        map.ident_sym_cap_param_for("github", "Repository", "repo_content_update", "branch");
+    let p_content =
+        map.ident_sym_cap_param_for("github", "Repository", "repo_content_update", "content");
+    let p_message =
+        map.ident_sym_cap_param_for("github", "Repository", "repo_content_update", "message");
+    let p_sha = map.ident_sym_cap_param_for("github", "Repository", "repo_content_update", "sha");
+    let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
+    let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
+    let source = format!(
+        r#"written = {repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test").{method_sym}({p_repo}={repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test"), {p_path}="docs/LABEL_COLORS.md", {p_branch}="feat/label-color-guide", {p_content}="ZHVtbXk=", {p_message}="Update label color guide", {p_sha}="abc123")
+written"#,
+        repo_e = repo_e,
+        repo_owner = repo_owner,
+        repo_name = repo_name,
+        method_sym = method_sym,
+        p_repo = p_repo,
+        p_path = p_path,
+        p_branch = p_branch,
+        p_content = p_content,
+        p_message = p_message,
+        p_sha = p_sha,
+    );
+    let plan = compile_github_program(&session, "github-repo-content-update", &source);
+    let written = plan["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .find(|n| n["id"] == "written")
+        .expect("written node");
+    assert_eq!(written["kind"], "action");
+    evaluate_plasm_plan_dry(&session, &plan).expect("repo_content_update dry-run");
 }
 
 /// Six-seed GitHub exposure: taught `issue_create` entity-ref scope form compiles after full open.
@@ -341,7 +485,8 @@ fn cross_wave_github_six_entity_issue_create_taught_form_compiles() {
             "issue_create",
             "issue_update",
             "repo_branch_create",
-            "repo_content_put",
+            "repo_content_create",
+            "repo_content_update",
             "pr_create",
             "issue_comment_create",
             "label_create",
@@ -472,7 +617,8 @@ fn cross_wave_github_incremental_exposure_symbol_stability() {
         "issue_create",
         "issue_update",
         "repo_branch_create",
-        "repo_content_put",
+        "repo_content_create",
+        "repo_content_update",
         "pr_create",
         "issue_comment_create",
     ]

@@ -137,6 +137,9 @@ fn validate_typed_array_value(
     path: &str,
     cgs: &CGS,
 ) -> Result<(), TypeError> {
+    if matches!(value, Value::PlasmInputRef(_)) {
+        return Ok(());
+    }
     let Some(arr) = value.as_array() else {
         return Err(TypeError::IncompatibleValue {
             field: path.to_string(),

@@ -2,7 +2,8 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use crate::schema::{CapabilitySchema, InputFieldSchema, InputType, ParameterRole};
+use crate::schema::{CapabilitySchema, InputFieldSchema, InputFieldWire, InputType, ParameterRole};
+use crate::{FieldType, CGS};
 
 use super::{
     field_is_filter_like_gloss, ExposureCapabilityKey, ExposureSlotKey, SymbolMap,
@@ -115,6 +116,52 @@ pub fn capability_exposure_param_pairs(
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
+}
+
+/// Whether a capability input field is typed as an array (registry or inline schema).
+pub fn input_field_is_array(f: &InputFieldSchema, cgs: &CGS) -> bool {
+    match &f.wire {
+        InputFieldWire::Inline(ty) => matches!(ty.as_ref(), InputType::Array { .. }),
+        InputFieldWire::Registry(_) => f
+            .named_value(cgs)
+            .map(|nv| matches!(nv.field_type, FieldType::Array))
+            .unwrap_or(false),
+    }
+}
+
+/// Compact type/role suffix for mutator recap rows (`[]` array, `!` required).
+pub fn compact_mutator_param_marker(f: &InputFieldSchema, cgs: &CGS) -> String {
+    let mut marker = String::new();
+    if input_field_is_array(f, cgs) {
+        marker.push_str("[]");
+    }
+    if f.required {
+        marker.push('!');
+    }
+    marker
+}
+
+/// `(wire_name, opaque p#, type/role marker)` for mutator recap / ranked replay.
+pub fn capability_exposure_param_triples(
+    exp: &TeachingExposureSession,
+    map: &SymbolMap,
+    cap_key: &ExposureCapabilityKey,
+    cap: &CapabilitySchema,
+    filter: CapabilityParamSurfaceFilter,
+    cgs: &CGS,
+) -> Vec<(String, String, String)> {
+    capability_exposure_param_pairs(exp, map, cap_key, cap, filter)
+        .into_iter()
+        .map(|(wire, sym)| {
+            let field = iter_cap_input_fields(cap)
+                .into_iter()
+                .find(|f| f.name.as_str() == wire.as_str());
+            let marker = field
+                .map(|f| compact_mutator_param_marker(f, cgs))
+                .unwrap_or_default();
+            (wire, sym, marker)
+        })
+        .collect()
 }
 
 /// Mutating capabilities on the exposure surface (stable sort).

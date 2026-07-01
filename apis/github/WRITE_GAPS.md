@@ -35,7 +35,7 @@ Each row has a matching key in `mappings.yaml` with the same method and path tem
 | `release_create`         | create          | `POST`   | `/repos/{owner}/{repo}/releases`                       | Release      |
 | `release_update`         | update          | `PATCH`  | `/repos/{owner}/{repo}/releases/{release_id}`          | Release      |
 | `release_delete`         | delete          | `DELETE` | `/repos/{owner}/{repo}/releases/{release_id}`          | Release      |
-| `repo_content_put`       | action          | `PUT`    | `/repos/{owner}/{repo}/contents/{path}`                | Repository   |
+| `repo_content_create` / `repo_content_update` | action          | `PUT`    | `/repos/{owner}/{repo}/contents/{path}`                | Repository   |
 | `repo_branch_create`     | action          | `POST`   | `/repos/{owner}/{repo}/git/refs`                       | Repository   |
 | `repo_content_delete`    | action          | `DELETE` | `/repos/{owner}/{repo}/contents/{path}`                | Repository   |
 
@@ -59,7 +59,7 @@ Run `plasm schema validate apis/github` for the current capability count (`requi
 | `label_create` / `label_update` / `label_delete` | **Complete** (minimal)     | Standard label CRUD.                                                                                                                |
 | `milestone_`*                                    | **Partial**                | Create/update send `title`, `description`, `state`, `due_on`.                                                                       |
 | `release_`*                                      | **Partial**                | Create includes `generate_release_notes`; omit unsupported preview-only fields unless needed.                                       |
-| `repo_content_put` / `repo_content_delete`       | **Partial**                | No `author`/`committer` overrides on Contents API. `repo_content_delete` uses JSON body on `DELETE` (supported by the HTTP client). |
+| `repo_content_create` / `repo_content_update` / `repo_content_delete` | **Partial**                | No `author`/`committer` overrides on Contents API. `repo_content_delete` uses JSON body on `DELETE` (supported by the HTTP client). |
 | `repo_branch_create`                             | **Complete** (minimal)     | Creates `refs/heads/{name}` from an existing commit SHA. Low-level blob/tree/commit object creation is still not modeled.           |
 | `notification_mark_read`                         | **Complete** (side-effect) | Often **205** empty body — see README.                                                                                              |
 

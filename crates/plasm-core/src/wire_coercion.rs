@@ -146,11 +146,40 @@ fn parent_scalar_field_supplies_entity_ref_scope(
 }
 
 /// Coerce a parsed predicate / env token for typecheck and downstream HTTP binding.
+///
+/// When `allow_scalar_to_array` is false (invoke/create/update/action args), a scalar passed
+/// to an array-typed field is rejected instead of silently wrapped as a one-element array.
 pub fn coerce_value_for_field_type(
     ft: &FieldType,
     value_format: Option<ValueWireFormat>,
     array_items: Option<&ArrayItemsSchema>,
     val: Value,
+) -> Result<Value, String> {
+    coerce_value_for_field_type_with_options(
+        ft,
+        value_format,
+        array_items,
+        val,
+        CoerceFieldOptions {
+            allow_scalar_to_array: true,
+        },
+    )
+}
+
+/// Options controlling catalog wire coercion for a single field assignment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CoerceFieldOptions {
+    /// When true, a scalar assigned to an array field becomes a one-element array (query filters).
+    pub allow_scalar_to_array: bool,
+}
+
+/// Coerce with explicit options (invoke args set `allow_scalar_to_array: false`).
+pub fn coerce_value_for_field_type_with_options(
+    ft: &FieldType,
+    value_format: Option<ValueWireFormat>,
+    array_items: Option<&ArrayItemsSchema>,
+    val: Value,
+    options: CoerceFieldOptions,
 ) -> Result<Value, String> {
     match ft {
         FieldType::Array => {
@@ -170,7 +199,14 @@ pub fn coerce_value_for_field_type(
                     }
                     Ok(Value::Array(out))
                 }
-                other => Ok(Value::Array(vec![coerce_elem(other)?])),
+                Value::PlasmInputRef(_) => Ok(val),
+                other if options.allow_scalar_to_array => {
+                    Ok(Value::Array(vec![coerce_elem(other)?]))
+                }
+                other => Err(format!(
+                    "expected array `[...]` or a list column projection, got {}",
+                    other.type_name()
+                )),
             }
         }
         FieldType::Date => match value_format {
@@ -344,6 +380,8 @@ pub fn parent_entity_field_type(
 mod tests {
     use super::*;
     use crate::EntityFieldName;
+    use crate::FieldValueKind;
+    use crate::ValueDomainKey;
     use indexmap::IndexMap;
 
     #[test]
@@ -446,5 +484,67 @@ mod tests {
             serde_json::json!("42"),
         );
         assert_eq!(out, serde_json::json!(42));
+    }
+
+    #[test]
+    fn array_field_rejects_scalar_when_invoke_coercion_disabled() {
+        let err = coerce_value_for_field_type_with_options(
+            &FieldType::Array,
+            None,
+            Some(&ArrayItemsSchema {
+                kind: FieldValueKind::Registry(ValueDomainKey::new("nv_test").expect("key")),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+            }),
+            Value::String("a,b".into()),
+            CoerceFieldOptions {
+                allow_scalar_to_array: false,
+            },
+        )
+        .expect_err("scalar must not auto-wrap for invoke args");
+        assert!(err.contains("expected array"), "unexpected error: {err}");
+    }
+
+    #[test]
+    fn array_field_passes_plasm_input_ref_for_invoke_args() {
+        use crate::PlasmInputRef;
+        let out = coerce_value_for_field_type_with_options(
+            &FieldType::Array,
+            None,
+            Some(&ArrayItemsSchema {
+                kind: FieldValueKind::Registry(ValueDomainKey::new("nv_test").expect("key")),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+            }),
+            Value::PlasmInputRef(PlasmInputRef::node_output("labels", vec!["name".into()])),
+            CoerceFieldOptions {
+                allow_scalar_to_array: false,
+            },
+        )
+        .expect("column projection ref must pass through");
+        assert!(matches!(out, Value::PlasmInputRef(_)));
+    }
+
+    #[test]
+    fn array_field_wraps_scalar_for_query_predicate_coercion() {
+        let out = coerce_value_for_field_type(
+            &FieldType::Array,
+            None,
+            Some(&ArrayItemsSchema {
+                kind: FieldValueKind::Registry(ValueDomainKey::new("nv_test").expect("key")),
+                field_type: FieldType::String,
+                value_format: None,
+                allowed_values: None,
+            }),
+            Value::String("tag".into()),
+        )
+        .expect("query filter scalar wrap");
+        assert_eq!(
+            out,
+            Value::Array(vec![Value::String("tag".into())]),
+            "predicate coercion may still wrap single scalar"
+        );
     }
 }

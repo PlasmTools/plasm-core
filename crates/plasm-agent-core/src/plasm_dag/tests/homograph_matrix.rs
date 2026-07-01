@@ -211,3 +211,101 @@ created"#,
         "must not resolve query cap for create m#: {ir}"
     );
 }
+
+/// Invoke args must reject scalar strings for array-typed params (no comma-split coercion).
+#[test]
+fn matrix_create_rejects_scalar_for_array_tags_param() {
+    let session = langitem_create_query_session();
+    let map = github_symbol_map(&session);
+    let item_e = map.entity_sym_for("langmatrix", "LangItem");
+    let create_m = map.method_sym_for("langmatrix", "LangItem", "langitem_create");
+    let p_title = map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "title");
+    let p_tags = map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "tags");
+    let source = format!(
+        r#"created = {item_e}.{create_m}({p_title}="hello", {p_tags}="alpha,beta")
+created"#,
+        item_e = item_e,
+        create_m = create_m,
+        p_title = p_title,
+        p_tags = p_tags,
+    );
+    let err = compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "matrix-create-scalar-tags",
+        &source,
+    )
+    .expect_err("scalar tags must not coerce to array");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("expected array") || msg.contains("array"),
+        "expected array type error, got: {msg}"
+    );
+}
+
+#[test]
+fn matrix_create_accepts_bracket_array_for_tags_param() {
+    let session = langitem_create_query_session();
+    let map = github_symbol_map(&session);
+    let item_e = map.entity_sym_for("langmatrix", "LangItem");
+    let create_m = map.method_sym_for("langmatrix", "LangItem", "langitem_create");
+    let p_title = map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "title");
+    let p_score = map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "score");
+    let p_owner = map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "owner");
+    let p_tags = map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "tags");
+    let source = format!(
+        r#"created = {item_e}.{create_m}({p_title}="hello", {p_score}=1, {p_owner}="bot", {p_tags}=["alpha", "beta"])
+created"#,
+        item_e = item_e,
+        create_m = create_m,
+        p_title = p_title,
+        p_score = p_score,
+        p_owner = p_owner,
+        p_tags = p_tags,
+    );
+    let plan = compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "matrix-create-bracket-tags",
+        &source,
+    )
+    .expect("bracket array tags must compile");
+    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run preflight");
+}
+
+/// Multiline heredoc inside a method-call argument list must parse as one statement.
+#[test]
+fn matrix_inline_heredoc_in_create_invoke_compiles() {
+    let session = langitem_create_query_session();
+    let map = github_symbol_map(&session);
+    let item_e = map.entity_sym_for("langmatrix", "LangItem");
+    let create_m = map.method_sym_for("langmatrix", "LangItem", "langitem_create");
+    let p_title = map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "title");
+    let p_score = map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "score");
+    let p_owner = map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "owner");
+    let source = format!(
+        r#"created = {item_e}.{create_m}({p_title}=<<PLASM_MATRIX_INLINE
+line one
+line two
+PLASM_MATRIX_INLINE,
+  {p_score}=1,
+  {p_owner}="bot")
+created"#,
+        item_e = item_e,
+        create_m = create_m,
+        p_title = p_title,
+        p_score = p_score,
+        p_owner = p_owner,
+    );
+    let plan = compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "matrix-inline-heredoc-create",
+        &source,
+    )
+    .expect("inline heredoc in invoke must compile");
+    evaluate_plasm_plan_dry(&session, &plan).expect("dry-run preflight");
+}

@@ -98,7 +98,6 @@ pub fn collect_program_statement_lines(src: &str) -> Result<Vec<String>, String>
     let mut cur = String::new();
     let mut pending_tag: Option<String> = None;
     let mut pending_delimiters = false;
-    let mut heredoc_seen_in_cur = false;
 
     for raw in src.lines() {
         let w = if pending_tag.is_some() || pending_delimiters {
@@ -118,27 +117,19 @@ pub fn collect_program_statement_lines(src: &str) -> Result<Vec<String>, String>
                     continue;
                 }
                 pending_tag = None;
-                heredoc_seen_in_cur = true;
             }
             match scan_physical_line_stmt_state(&cur)? {
                 PhysicalLineStmtState::Complete => {
                     out.push(cur.trim_end().to_string());
                     cur.clear();
                     pending_delimiters = false;
-                    heredoc_seen_in_cur = false;
                 }
                 PhysicalLineStmtState::AwaitingHeredocClose { tag } => {
                     pending_tag = Some(tag);
                     pending_delimiters = false;
-                    heredoc_seen_in_cur = true;
-                }
-                PhysicalLineStmtState::AwaitingDelimiterClose if heredoc_seen_in_cur => {
-                    pending_delimiters = true;
                 }
                 PhysicalLineStmtState::AwaitingDelimiterClose => {
-                    return Err(format!(
-                        "unbalanced delimiters in Plasm program line `{cur}`"
-                    ));
+                    pending_delimiters = true;
                 }
             }
         } else {
@@ -154,12 +145,9 @@ pub fn collect_program_statement_lines(src: &str) -> Result<Vec<String>, String>
                 }
                 PhysicalLineStmtState::AwaitingHeredocClose { tag } => {
                     pending_tag = Some(tag);
-                    heredoc_seen_in_cur = true;
                 }
                 PhysicalLineStmtState::AwaitingDelimiterClose => {
-                    return Err(format!(
-                        "unbalanced delimiters in Plasm program line `{cur}`"
-                    ));
+                    pending_delimiters = true;
                 }
             }
         }
@@ -723,6 +711,17 @@ mod tests {
         let src = "x = m(v111{content=<<H\none\nH\n})\nx";
         let stmts = collect_program_statement_lines(src).expect("parse");
         assert_eq!(stmts, vec!["x = m(v111{content=<<H\none\nH\n})", "x"]);
+    }
+
+    #[test]
+    fn collect_program_statement_lines_inline_heredoc_in_call() {
+        let src = "created = e1.m1(p86=\"title\",\n  p73=<<PLASM_INLINE\n## Problem\nline\nPLASM_INLINE\n)\ncreated";
+        let stmts = collect_program_statement_lines(src).expect("parse");
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].contains("e1.m1("));
+        assert!(stmts[0].contains("<<PLASM_INLINE"));
+        assert!(stmts[0].contains("## Problem"));
+        assert_eq!(stmts[1], "created");
     }
 
     #[test]
