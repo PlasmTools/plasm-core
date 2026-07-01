@@ -21,11 +21,11 @@
 //! `PLASM_SYMBOL_MAP_LRU_CAP`, default `64`, set `0` to disable) deduplicates identical [`SymbolMap`]
 //! snapshots when the catalog fingerprint and exposure rows match a recent session.
 
-mod persisted_ident_metadata;
-mod persisted_ledger;
 mod capability_surface_params;
 mod keys;
 mod opaque_symbol_hash;
+mod persisted_ident_metadata;
+mod persisted_ledger;
 mod session_bindings;
 mod symbol_allocate;
 mod symbol_resolve;
@@ -41,17 +41,17 @@ pub use tables::{SymbolLedger, SymbolTables, SymbolValueLayer};
 pub use session_bindings::{EntityBinding, MethodBinding, RelationBinding, SlotBinding, SlotKind};
 pub use symbol_traits::{SymbolAllocate, SymbolRender, SymbolResolve, SymbolSession};
 
-pub use persisted_ledger::{
-    catalog_cgs_hashes_from_session, catalog_pins_match, PersistedSymbolLedger,
-    PersistedSymbolLedgerDecodeError, PersistedSymbolLedgerEncodeError, PersistedSymbolLedgerState,
-    PersistedSymbolTables, PERSISTED_SYMBOL_LEDGER_VERSION,
-};
 pub use capability_surface_params::{
     capability_exposure_param_pairs, capability_exposure_param_triples,
     capability_optional_legend_param_pairs, compact_mutator_param_marker,
     exposed_mutator_capability_keys, input_field_is_array, loaded_catalog_entry_ids,
     optional_legend_param_syms, resolve_ranked_wire_candidates, seeded_ranked_wire_candidates,
     CapabilityParamSurfaceFilter,
+};
+pub use persisted_ledger::{
+    catalog_cgs_hashes_from_session, catalog_pins_match, PersistedSymbolLedger,
+    PersistedSymbolLedgerDecodeError, PersistedSymbolLedgerEncodeError, PersistedSymbolLedgerState,
+    PersistedSymbolTables, PERSISTED_SYMBOL_LEDGER_VERSION,
 };
 pub use symbol_resolve::SymbolResolveError;
 

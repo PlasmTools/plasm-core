@@ -6,12 +6,13 @@ use super::super::backend::tenant_outbound_hosted_kv_for_entries;
 use super::super::seeds::{
     apply_ranked_capabilities_session_update, build_capability_exposure_plan,
     dedup_preserve_arrival_order, normalize_ranked_capabilities_for_gate,
-    sorted_entity_set_for_reuse_key, process_order_for_expand_group, relation_endpoint_keys_for_wave,
-    seeds_fully_exposed, wrap_teaching_markdown_literal_block, RankedCapabilitiesArg,
+    process_order_for_expand_group, relation_endpoint_keys_for_wave, seeds_fully_exposed,
+    sorted_entity_set_for_reuse_key, wrap_teaching_markdown_literal_block, RankedCapabilitiesArg,
     STALE_EXECUTE_BINDING_NOTICE,
 };
 use super::symbol_ledger::persist_from_execute_row;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_session_create_response_inner(
     st: &PlasmHostState,
     principal: Option<&crate::incoming_auth::TenantPrincipal>,
@@ -121,50 +122,53 @@ pub(crate) async fn execute_session_create_response_inner(
     contexts_by_entry.insert(body.entry_id.clone(), ctx_arc.clone());
 
     let cgs: Arc<CGS> = effective_cgs;
-    let (session_entity_names, teaching_exposure) = if let Some(restored) = restored_teaching_exposure {
-        for e in &restored.entities {
-            if cgs.get_entity(e).is_none() {
-                crate::metrics::record_execute_session_outcome("error", "unknown_entity");
-                return Err(format!("unknown entity `{e}` in restored symbol ledger"));
+    let (session_entity_names, teaching_exposure) =
+        if let Some(restored) = restored_teaching_exposure {
+            for e in &restored.entities {
+                if cgs.get_entity(e).is_none() {
+                    crate::metrics::record_execute_session_outcome("error", "unknown_entity");
+                    return Err(format!("unknown entity `{e}` in restored symbol ledger"));
+                }
             }
-        }
-        (restored.entities.clone(), restored)
-    } else {
-        for e in &names {
-            if cgs.get_entity(e).is_none() {
-                crate::metrics::record_execute_session_outcome("error", "unknown_entity");
-                return Err(format!("unknown entity `{e}` in this schema"));
+            (restored.entities.clone(), restored)
+        } else {
+            for e in &names {
+                if cgs.get_entity(e).is_none() {
+                    crate::metrics::record_execute_session_outcome("error", "unknown_entity");
+                    return Err(format!("unknown entity `{e}` in this schema"));
+                }
             }
-        }
-        let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-        let built = match &domain_filter_intent {
-            Some(intent_s) => {
-                let relation_keys =
-                    plasm_core::relation_endpoint_keys(body.entry_id.as_str(), &names);
-                let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
-                    cgs.as_ref(),
-                    body.entry_id.as_str(),
-                    intent_s.as_str(),
-                    &relation_keys,
-                    &names,
-                    ranked_for_domain.as_deref(),
-                    plasm_core::discovery::ExposureSurfaceOptions {
-                        read_first_seeded: body.read_first_seeded_exposure,
-                    },
-                );
-                plasm_core::TeachingExposureSession::new_with_intent_delta(
+            let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+            let built = match &domain_filter_intent {
+                Some(intent_s) => {
+                    let relation_keys =
+                        plasm_core::relation_endpoint_keys(body.entry_id.as_str(), &names);
+                    let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
+                        cgs.as_ref(),
+                        body.entry_id.as_str(),
+                        intent_s.as_str(),
+                        &relation_keys,
+                        &names,
+                        ranked_for_domain.as_deref(),
+                        plasm_core::discovery::ExposureSurfaceOptions {
+                            read_first_seeded: body.read_first_seeded_exposure,
+                        },
+                    );
+                    plasm_core::TeachingExposureSession::new_with_intent_delta(
+                        cgs.as_ref(),
+                        body.entry_id.as_str(),
+                        &refs,
+                        delta,
+                    )
+                }
+                None => plasm_core::TeachingExposureSession::new(
                     cgs.as_ref(),
                     body.entry_id.as_str(),
                     &refs,
-                    delta,
-                )
-            }
-            None => {
-                plasm_core::TeachingExposureSession::new(cgs.as_ref(), body.entry_id.as_str(), &refs)
-            }
+                ),
+            };
+            (names.clone(), built)
         };
-        (names.clone(), built)
-    };
     let sym_cross = st.sessions.symbol_map_cross_cache();
     let teaching_prompt = st
         .engine

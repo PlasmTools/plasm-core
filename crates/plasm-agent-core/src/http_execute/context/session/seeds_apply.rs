@@ -276,13 +276,8 @@ pub async fn apply_capability_seeds(
             read_first_seeded_exposure: true,
         };
         let primary_entities = open_body.entities.clone();
-        let (restored_exposure, ledger_reset) = resolve_restore_for_open(
-            st,
-            logical_session_id,
-            outbound_ref,
-            bindings_ref,
-        )
-        .await;
+        let (restored_exposure, ledger_reset) =
+            resolve_restore_for_open(st, logical_session_id, outbound_ref, bindings_ref).await;
         symbol_space_reset = ledger_reset;
         let had_restored_ledger = restored_exposure.is_some();
 
@@ -494,8 +489,13 @@ pub async fn apply_capability_seeds(
         )];
     }
 
-    persist_from_execute_row(st, logical_session_id, prompt_hash.as_str(), session_id.as_str())
-        .await;
+    persist_from_execute_row(
+        st,
+        logical_session_id,
+        prompt_hash.as_str(),
+        session_id.as_str(),
+    )
+    .await;
 
     Ok(ApplyCapabilitySeedsOutcome {
         prompt_hash,

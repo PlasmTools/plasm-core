@@ -2,11 +2,11 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::IdentRegistryRole;
 use crate::identity::{CapabilityName, EntityName};
 use crate::schema::{ArrayItemsSchema, FieldValueKind, StringSemantics, ValueDomainKey};
-use crate::ValueWireFormat;
-use super::IdentRegistryRole;
 use crate::FieldType;
+use crate::ValueWireFormat;
 
 use super::IdentMetadata;
 
@@ -112,7 +112,9 @@ impl From<&IdentMetadata> for PersistedIdentMetadata {
                 value_registry_key: value_registry_key.as_str().to_string(),
                 field_type: field_type.clone(),
                 string_semantics: *string_semantics,
-                array_items: array_items.as_ref().map(PersistedArrayItemsSchema::from_schema),
+                array_items: array_items
+                    .as_ref()
+                    .map(PersistedArrayItemsSchema::from_schema),
                 allowed_values: allowed_values.clone(),
                 wire_name: wire_name.clone(),
                 description: description.clone(),

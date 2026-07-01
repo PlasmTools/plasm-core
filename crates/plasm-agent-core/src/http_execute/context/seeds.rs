@@ -104,7 +104,7 @@ pub(crate) fn dedup_preserve_arrival_order(mut names: Vec<String>) -> Vec<String
 
 /// Sorted deduped entity set for [`crate::execute_session::SessionReuseKey`] set-equality only.
 pub(super) fn sorted_entity_set_for_reuse_key(names: &[String]) -> Vec<String> {
-    let mut v: Vec<String> = names.iter().cloned().collect();
+    let mut v = names.to_vec();
     v.sort();
     v.dedup();
     v

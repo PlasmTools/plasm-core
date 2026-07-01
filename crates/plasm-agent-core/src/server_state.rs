@@ -17,7 +17,9 @@ use crate::incoming_auth_device::IncomingAuthDeviceStore;
 use crate::local_trace_archive::LocalTraceArchive;
 use crate::mcp_config_repository::McpConfigRepository;
 use crate::mcp_transport_auth::McpTransportAuth;
-use crate::mcp_transport_store::{ExecuteSessionRegistry, LogicalExecuteBindingRegistry, LogicalSymbolLedgerRegistry};
+use crate::mcp_transport_store::{
+    ExecuteSessionRegistry, LogicalExecuteBindingRegistry, LogicalSymbolLedgerRegistry,
+};
 use crate::oauth_link_catalog::OauthLinkCatalog;
 use crate::operation_persist::OperationPersistScheduler;
 use crate::operation_progress::OperationProgressHub;

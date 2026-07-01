@@ -31,7 +31,7 @@ pub struct LogicalSymbolLedgerEntry {
 /// Result of loading a durable blob (Redis → archive), without hydrating live exposure.
 #[derive(Debug)]
 pub enum DurableSymbolLedgerLoad {
-    Found(PersistedSymbolLedger),
+    Found(Box<PersistedSymbolLedger>),
     NotFound,
     UnsupportedVersion(u8),
     Decode(PersistedSymbolLedgerDecodeError),
@@ -41,7 +41,9 @@ fn ledger_key(uuid: &Uuid) -> String {
     format!("{LEDGER_KEY_PREFIX}{uuid}")
 }
 
-fn decode_durable_bytes(bytes: &[u8]) -> Result<PersistedSymbolLedger, PersistedSymbolLedgerDecodeError> {
+fn decode_durable_bytes(
+    bytes: &[u8],
+) -> Result<PersistedSymbolLedger, PersistedSymbolLedgerDecodeError> {
     PersistedSymbolLedger::decode(bytes)
 }
 
@@ -111,7 +113,7 @@ impl LogicalSymbolLedgerRegistry {
         if let Some(redis) = self.redis().await.as_ref() {
             if let Some(bytes) = redis.get_bytes(&ledger_key(logical_id)).await {
                 return match decode_durable_bytes(&bytes) {
-                    Ok(snap) => DurableSymbolLedgerLoad::Found(snap),
+                    Ok(snap) => DurableSymbolLedgerLoad::Found(Box::new(snap)),
                     Err(err) => {
                         warn!(?err, %logical_id, "invalid symbol ledger redis blob");
                         classify_decode_error(err)
@@ -124,14 +126,11 @@ impl LogicalSymbolLedgerRegistry {
                 return match decode_durable_bytes(&bytes) {
                     Ok(snap) => {
                         if let Some(redis) = self.redis().await.as_ref() {
-                            if !redis
-                                .set_bytes(&ledger_key(logical_id), &bytes)
-                                .await
-                            {
+                            if !redis.set_bytes(&ledger_key(logical_id), &bytes).await {
                                 warn!(%logical_id, "failed to warm redis from archive symbol ledger");
                             }
                         }
-                        DurableSymbolLedgerLoad::Found(snap)
+                        DurableSymbolLedgerLoad::Found(Box::new(snap))
                     }
                     Err(err) => {
                         warn!(?err, %logical_id, "invalid symbol ledger archive blob");
@@ -174,7 +173,7 @@ impl LogicalSymbolLedgerRegistry {
         let catalog_cgs = catalog_cgs?;
         match self.load_durable(logical_id).await {
             DurableSymbolLedgerLoad::Found(snap) => self
-                .hydrate_and_cache(*logical_id, snap, catalog_cgs)
+                .hydrate_and_cache(*logical_id, *snap, catalog_cgs)
                 .await
                 .ok(),
             _ => None,
@@ -195,10 +194,7 @@ impl LogicalSymbolLedgerRegistry {
         };
         self.cache_local(logical_id, entry).await;
         if let Some(redis) = self.redis().await.as_ref() {
-            if !redis
-                .set_bytes(&ledger_key(&logical_id), &bytes)
-                .await
-            {
+            if !redis.set_bytes(&ledger_key(&logical_id), &bytes).await {
                 self.remove_local(&logical_id).await;
                 return Err(SymbolLedgerUpsertError::RedisWriteFailed { logical_id });
             }
@@ -301,7 +297,10 @@ mod tests {
         let registry = LogicalSymbolLedgerRegistry::new_in_memory();
         registry.attach_archive(file_archive(&dir)).await;
         let id = Uuid::new_v4();
-        registry.upsert(id, hashes.clone(), exp).await.expect("upsert");
+        registry
+            .upsert(id, hashes.clone(), exp)
+            .await
+            .expect("upsert");
         registry.clear_local_for_test().await;
         let catalog_cgs = matrix_catalog_cgs();
         let entry = registry
@@ -356,7 +355,7 @@ mod tests {
         registry.upsert(id, hashes, exp).await.expect("upsert");
         registry.clear_local_for_test().await;
         let snap = match registry.load_durable(&id).await {
-            DurableSymbolLedgerLoad::Found(s) => s,
+            DurableSymbolLedgerLoad::Found(s) => *s,
             other => panic!("expected durable snapshot: {other:?}"),
         };
         registry.delete_archive_for_test(&id).await;
@@ -402,7 +401,10 @@ mod tests {
         let hashes = plasm_core::catalog_cgs_hashes_from_session(&exp);
         let registry = LogicalSymbolLedgerRegistry::new_in_memory();
         let id = Uuid::new_v4();
-        registry.upsert(id, hashes, exp.clone()).await.expect("upsert");
+        registry
+            .upsert(id, hashes, exp.clone())
+            .await
+            .expect("upsert");
         let entry = registry.get_local(&id).await.expect("local");
         assert_eq!(
             exp.qualified_entity_symbol("langmatrix", "HomographRowA"),

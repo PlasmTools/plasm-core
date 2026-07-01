@@ -311,12 +311,12 @@ pub use summary_render::{
     render_intent_with_projection, render_intent_with_projection_federated, render_outcome,
 };
 pub use symbol_tuning::{
-    catalog_cgs_hashes_from_session, catalog_pins_match, entity_slices_for_render, relation_endpoint_keys,
-    resolve_prompt_surface_entities, strip_prompt_expression_annotations,
+    catalog_cgs_hashes_from_session, catalog_pins_match, entity_slices_for_render,
+    relation_endpoint_keys, resolve_prompt_surface_entities, strip_prompt_expression_annotations,
     symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog, symbol_map_for_prompt,
-    wire_surface_for_parse, wire_surface_for_teaching_session, CatalogScope, ExposedEntitySymbolRow,
-    ExposedRelationSymbolRow, ExposureEntityKey, FocusSpec, PersistedSymbolLedger,
-    PersistedSymbolLedgerDecodeError, PersistedSymbolLedgerEncodeError,
+    wire_surface_for_parse, wire_surface_for_teaching_session, CatalogScope,
+    ExposedEntitySymbolRow, ExposedRelationSymbolRow, ExposureEntityKey, FocusSpec,
+    PersistedSymbolLedger, PersistedSymbolLedgerDecodeError, PersistedSymbolLedgerEncodeError,
     PersistedSymbolLedgerState, SymbolAllocate, SymbolMap, SymbolMapCacheKey,
     SymbolMapCrossRequestCache, SymbolRender, SymbolResolve, SymbolResolveError, SymbolSession,
     TeachingExposureSession, PERSISTED_SYMBOL_LEDGER_VERSION,

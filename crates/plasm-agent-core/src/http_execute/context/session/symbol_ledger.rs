@@ -26,9 +26,7 @@ async fn materialize_catalog_cgs_for_hashes(
             entry_bindings,
         )
         .await?;
-        let live_hash = materialized
-            .effective_cgs
-            .effective_catalog_cgs_hash_hex();
+        let live_hash = materialized.effective_cgs.effective_catalog_cgs_hash_hex();
         if &live_hash != pinned {
             return Ok((catalog_cgs, true));
         }
@@ -95,7 +93,7 @@ pub(crate) async fn resolve_restore_for_open(
                     Ok((catalog_cgs, false)) => {
                         match st
                             .logical_symbol_ledgers
-                            .hydrate_and_cache(uuid, snap, &catalog_cgs)
+                            .hydrate_and_cache(uuid, *snap, &catalog_cgs)
                             .await
                         {
                             Ok(entry) => (Some((*entry.exposure).clone()), false),
@@ -132,11 +130,7 @@ pub(crate) async fn persist_from_execute_row(
         return;
     };
     let hashes = catalog_cgs_hashes_from_session(&exp);
-    if let Err(err) = st
-        .logical_symbol_ledgers
-        .upsert(uuid, hashes, exp)
-        .await
-    {
+    if let Err(err) = st.logical_symbol_ledgers.upsert(uuid, hashes, exp).await {
         tracing::warn!(?err, %uuid, "symbol ledger persist failed");
     }
 }

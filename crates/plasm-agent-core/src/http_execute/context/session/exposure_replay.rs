@@ -322,7 +322,10 @@ mod tests {
         let label_before = exp
             .qualified_entity_symbol("github", "Label")
             .expect("Label exposed");
-        assert_eq!(label_before, "e3", "Label should be e3 after first expand wave");
+        assert_eq!(
+            label_before, "e3",
+            "Label should be e3 after first expand wave"
+        );
         apply_federate_exposure_wave(
             &mut exp,
             &layers,
@@ -400,7 +403,8 @@ mod tests {
             None,
         );
         let hashes = plasm_core::catalog_cgs_hashes_from_session(&exp);
-        let snap = plasm_core::PersistedSymbolLedger::from_session(&exp, hashes).expect("from_session");
+        let snap =
+            plasm_core::PersistedSymbolLedger::from_session(&exp, hashes).expect("from_session");
         let bytes = snap.encode().expect("encode");
         let decoded = plasm_core::PersistedSymbolLedger::decode(&bytes).expect("decode");
         let mut catalog_cgs = IndexMap::new();

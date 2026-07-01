@@ -9,8 +9,8 @@ use crate::schema::CGS;
 
 use super::capability_surface_params::loaded_catalog_entry_ids;
 use super::persisted_ident_metadata::PersistedIdentMetadata;
-use super::tables::{SymbolLedger, SymbolTables};
 use super::session_bindings::{EntityBinding, MethodBinding, RelationBinding, SlotBinding};
+use super::tables::{SymbolLedger, SymbolTables};
 use super::{
     CapParamKey, EntityFieldKey, ExposureSurface, IdentMetadata, MethodKey, MethodSegmentKey,
     OpaqueESym, OpaqueMSym, OpaquePSym, OpaqueRSym, QualifiedEntityKey, RelationKey,
@@ -353,7 +353,8 @@ mod tests {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("matrix");
-        let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA", "HomographRowB"]);
+        let exp =
+            TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA", "HomographRowB"]);
         let restored = round_trip(&exp);
         assert_eq!(
             exp.qualified_entity_symbol("langmatrix", "HomographRowA"),
@@ -405,10 +406,7 @@ mod tests {
         let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA"]);
         let pinned = catalog_cgs_hashes_from_session(&exp);
         let mut live = IndexMap::new();
-        live.insert(
-            "langmatrix".to_string(),
-            Arc::new(cgs.clone()),
-        );
+        live.insert("langmatrix".to_string(), Arc::new(cgs.clone()));
         assert!(catalog_pins_match(&pinned, &live));
         let mut wrong = pinned.clone();
         wrong.insert("langmatrix".to_string(), "deadbeef".into());
@@ -420,7 +418,8 @@ mod tests {
         let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("matrix");
-        let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA", "HomographRowB"]);
+        let exp =
+            TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA", "HomographRowB"]);
         let hashes = catalog_cgs_hashes_from_session(&exp);
         let snap = PersistedSymbolLedger::from_session(&exp, hashes).expect("from_session");
         let postcard_len = snap.encode().expect("encode").len();

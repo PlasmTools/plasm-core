@@ -2,7 +2,9 @@
 
 use super::super::super::*;
 
-use super::super::seeds::{dedup_preserve_arrival_order, normalize_capability_seeds, process_order_for_expand_group};
+use super::super::seeds::{
+    dedup_preserve_arrival_order, normalize_capability_seeds, process_order_for_expand_group,
+};
 use crate::session_coordination::ExecuteCoordKey;
 
 /// Markdown delta plus relation-hop metadata from one expand wave.
