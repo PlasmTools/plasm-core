@@ -11,6 +11,7 @@ ranked_capability_gate = []
 
 [dependencies]
 serde = { workspace = true }
+postcard = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 thiserror = { workspace = true }

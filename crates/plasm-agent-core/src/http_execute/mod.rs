@@ -181,6 +181,8 @@ pub struct ApplyCapabilitySeedsOutcome {
     pub new_symbol_space: bool,
     pub stale_execute_binding_recovered: bool,
     pub stale_binding_previous: Option<(String, String)>,
+    /// Pinned catalog digest changed; prior `e#`/`p#` are void.
+    pub symbol_space_reset: bool,
 }
 
 /// Maps the parsed `page(...)` handle to the key stored in [`ExecuteSession::paging_resume_by_handle`].

@@ -33,7 +33,9 @@ use crate::incoming_auth::incoming_auth_http_middleware;
 use crate::incoming_auth::IncomingAuthVerifier;
 use crate::incoming_auth_device::incoming_auth_device_public_routes;
 use crate::local_trace_archive::LocalTraceArchive;
-use crate::mcp_transport_store::{ExecuteSessionRegistry, LogicalExecuteBindingRegistry};
+use crate::mcp_transport_store::{
+    ExecuteSessionRegistry, LogicalExecuteBindingRegistry, LogicalSymbolLedgerRegistry,
+};
 use crate::operation_persist::OperationPersistScheduler;
 use crate::operation_progress::OperationProgressHub;
 use crate::run_artifacts::RunArtifactStore;
@@ -118,6 +120,7 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             sessions,
             logical_sessions: Arc::new(LogicalSessionRegistry::new()),
             logical_execute_bindings: LogicalExecuteBindingRegistry::new_in_memory(),
+            logical_symbol_ledgers: LogicalSymbolLedgerRegistry::new_in_memory(),
             execute_session_registry: ExecuteSessionRegistry::new_in_memory(),
             run_artifacts,
             session_graph_persistence,

@@ -9,12 +9,13 @@ use crate::schema::{
 };
 use crate::CapabilityKind;
 use crate::FieldType;
+use serde::{Deserialize, Serialize};
 
 use super::keys::{OpaqueESym, OpaqueMSym};
 use super::{slot_meta_is_relation, IdentMetadata, IdentRole, SymbolMap, TeachingExposureSession};
 
 /// Owning catalog + entity for a session `e#` token.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityBinding {
     pub entry_id: RegistryEntryId,
     pub entity: EntityName,
@@ -31,7 +32,7 @@ impl EntityBinding {
 }
 
 /// Owning catalog + domain + capability wire for a session `m#` token.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MethodBinding {
     pub entry_id: RegistryEntryId,
     pub domain: EntityName,
@@ -54,7 +55,7 @@ impl MethodBinding {
 }
 
 /// Declared relation hop for a session `r#` token.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RelationBinding {
     pub entry_id: RegistryEntryId,
     pub source_entity: EntityName,
@@ -69,7 +70,7 @@ impl RelationBinding {
 }
 
 /// Semantic role of a session `p#` slot.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SlotKind {
     EntityField {
         entity: EntityName,
@@ -95,7 +96,7 @@ impl SlotKind {
 }
 
 /// Fully qualified binding for one opaque `p#` token in this session.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SlotBinding {
     pub entry_id: RegistryEntryId,
     pub kind: SlotKind,

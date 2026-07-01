@@ -2,7 +2,7 @@
 
 use super::super::super::*;
 
-use super::super::seeds::{normalize_execute_entity_names, process_order_for_expand_group};
+use super::super::seeds::{dedup_preserve_arrival_order, normalize_capability_seeds, process_order_for_expand_group};
 use crate::session_coordination::ExecuteCoordKey;
 
 /// Markdown delta plus relation-hop metadata from one expand wave.
@@ -97,7 +97,7 @@ async fn commit_expand_wave(
             .get(&eid)
             .ok_or_else(|| format!("internal error: missing seed group for `{eid}`"))?
             .clone();
-        let normalized = normalize_execute_entity_names(group);
+        let normalized = dedup_preserve_arrival_order(group);
         let refs: Vec<&str> = normalized.iter().map(|s| s.as_str()).collect();
         if let Some(ref intent_s) = scope_intent {
             let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(

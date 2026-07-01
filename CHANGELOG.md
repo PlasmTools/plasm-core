@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.102] - 2026-07-01
+
+### Added
+
+- **Durable logical-session symbol ledger:** versioned `PersistedSymbolLedger` wire format (`b"PLSL" + u8 version + postcard(...)`) with Redis hot cache (`mcp:execute:symbol_ledger:{uuid}`) and optional object-store archive (`symbol_ledgers/{uuid}.psl` via `PLASM_SYMBOL_LEDGER_URL` or `PLASM_RUN_ARTIFACTS_URL`).
+- **Postcard-native `PersistedIdentMetadata`:** fingerprint meta maps serialize without JSON-in-postcard; cold pods **hydrate** pinned tables instead of replaying exposure waves.
+- **`LogicalSymbolLedgerRegistry` restore API:** single durable decode path (`load_durable` → `hydrate_and_cache`); unsupported wire version or catalog pin mismatch ⇒ symbol reset.
+
+### Changed
+
+- **Catalog hash pins:** logical ledger pins `effective_catalog_cgs_hash_hex()` (overlay-safe); upsert rolls back local cache when Redis write fails.
+
 ## [0.3.101] - 2026-07-01
 
 ### Added

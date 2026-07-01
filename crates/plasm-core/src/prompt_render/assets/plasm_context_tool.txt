@@ -1,13 +1,13 @@
-**Call before `plasm` / `plasm_run`.** **One goal → one stable `intent` → one `logical_session_ref`** — same `intent` string every turn (not per message/API). Bad: `intent: "msg 3: sort moves"` each turn — fragments `e#`/`p#`. Multi-API: one **`seeds`** array on the same intent.
+**Call before `plasm` / `plasm_run`.** **One goal → one stable `intent` → one `logical_session_ref`** — same `intent` string every turn (not per message/API). Bad: `intent: "msg 3: sort moves"` each turn. Multi-API: one **`seeds`** array on that intent.
 
-**Programs = this table's symbols:** copy **`e#`/`m#`/`r#`/`p#`** from the left column into `plasm.program`. Catalog type names, method verbs, and API ids are not program syntax.
+**Programs = this table's symbols:** copy **`e#`/`m#`/`r#`/`p#`** from the left column into `plasm.program`. Catalog type names and API ids are not program syntax.
 
-**Open or extend:** **`intent`** + **`seeds`** (`{api, entity}`). Returns **`logical_session_ref`** + fenced teaching TSV (active symbol table). Delta waves assign new **`e#`** monotonically.
+**Open or extend:** **`intent`** + **`seeds`** (`{api, entity}`). Returns **`logical_session_ref`** + fenced teaching TSV (active symbol table). Logical-session ledger: symbols append in **arrival order** — existing **`e#`/`p#`** never shift. **SYMBOL SPACE RESET** banner = pinned catalog digest changed; discard cached symbols.
 
 **Extend picks:** same **`intent`**, expanded **`seeds`** — delta TSV or reuse cheat sheet when already exposed.
 
-**Discover before id (writes):** resolve human ids from a live list/search, not catalog/eval samples; federated writes end in one created-row return.
+**Discover before id (writes):** resolve human ids from live list/search, not catalog/eval samples.
 
-**Relation seeds:** seed a type only when you need it as a program root; relation targets reached via `.r#` need not be separately seeded — `unused_seeds` on dry-run is advisory.
+**Relation seeds:** seed program roots only; `.r#` targets need not be seeded — `unused_seeds` is advisory.
 
 **`_meta.plasm`:** `logical_session_ref`, `continuity`, `domain_revision`, optional **`relations`**.

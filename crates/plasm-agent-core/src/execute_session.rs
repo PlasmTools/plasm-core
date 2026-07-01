@@ -241,14 +241,21 @@ impl RunArtifactHotCache {
     }
 }
 
-/// Key for deduplicating execute sessions: same registry `entry_id`, same entity seed set, and
-/// (in delegated auth mode) the same [`ExecuteSession::principal`].
+/// Key for deduplicating execute session transport rows: same registry `entry_id`, same entity seed
+/// set, and (in delegated auth mode) the same [`ExecuteSession::principal`].
 ///
 /// When set, [`Self::logical_session_id`] scopes reuse to one MCP agent logical session (distinct
 /// from MCP transport `MCP-Session-Id`).
 ///
+/// **Symbol numbering** (`e#` / `m#` / `p#` / `r#`) is **not** governed by this key. Append-only
+/// symbols live on the logical session ledger ([`crate::mcp_transport_store::LogicalSymbolLedgerRegistry`]).
+/// This key selects whether an existing `(prompt_hash, session_id)` transport row may be reused.
+///
+/// [`Self::entities`] is a **sorted set** for stable equality (order-insensitive). Exposure waves
+/// use arrival order via [`dedup_preserve_arrival_order`](crate::http_execute::context::seeds::dedup_preserve_arrival_order).
+///
 /// [`Self::context_intent`] participates in reuse when set (MCP `plasm_context`): distinct intents
-/// must not share an execute row whose teaching symbols were filtered for a different wording.
+/// must not share an execute row whose teaching surface was filtered for a different wording.
 ///
 /// When [`Self::context_intent`] is set, [`Self::ranked_capabilities`] participates in reuse: distinct
 /// ranked gate lists must not share a session row filtered for different mutation picks.
@@ -259,7 +266,7 @@ pub struct SessionReuseKey {
     pub entry_id: String,
     /// Canonical digest of the pinned CGS (see [`plasm_core::schema::CGS::catalog_cgs_hash_hex`]).
     pub catalog_cgs_hash: String,
-    /// Sorted, deduplicated entity names (same convention as HTTP/MCP bodies).
+    /// Sorted, deduplicated entity names for set-equality reuse matching (not symbol numbering order).
     pub entities: Vec<String>,
     /// Normalized first-open `plasm_context` intent when capability-scoped teaching table is active.
     pub context_intent: Option<String>,

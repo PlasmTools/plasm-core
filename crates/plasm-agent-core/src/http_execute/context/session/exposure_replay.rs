@@ -175,7 +175,7 @@ mod tests {
     use crate::test_support::exposure_replay_fixtures::{
         assert_github_langdetail_numbering_parity, interleaved_federated_matrix_fixture,
     };
-    use plasm_core::{load_schema_dir, PromptPipelineConfig};
+    use plasm_core::{load_schema_dir, CgsContext, PromptPipelineConfig, CGS};
     use std::sync::Arc;
 
     #[test]
@@ -276,6 +276,143 @@ mod tests {
         assert!(
             delta.contains(".r"),
             "delta should include r# symbol: {delta}"
+        );
+    }
+
+    #[test]
+    fn append_only_preserves_label_e4_when_issue_comment_arrives_late() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = Arc::new(load_schema_dir(&dir).expect("github"));
+        let mut contexts = IndexMap::new();
+        contexts.insert(
+            "github".to_string(),
+            Arc::new(CgsContext::entry("github", cgs.clone())),
+        );
+        let layers: Vec<&CGS> = contexts.values().map(|c| c.cgs.as_ref()).collect();
+        let mut exp = build_initial_exposure_wave(
+            &contexts,
+            &ExposureCatalogWave {
+                entry_id: "github".to_string(),
+                entities: vec!["Repository".into()],
+                read_first_seeded: false,
+            },
+            Some("label documentation workflow"),
+            None,
+        );
+        apply_federate_exposure_wave(
+            &mut exp,
+            &layers,
+            &contexts,
+            &ExposureCatalogWave {
+                entry_id: "github".to_string(),
+                entities: vec![
+                    "Issue".into(),
+                    "Label".into(),
+                    "PullRequest".into(),
+                    "Branch".into(),
+                ],
+                read_first_seeded: true,
+            },
+            Some("label documentation workflow"),
+            None,
+        );
+        let label_before = exp
+            .qualified_entity_symbol("github", "Label")
+            .expect("Label exposed");
+        assert_eq!(label_before, "e3", "Label should be e3 after first expand wave");
+        apply_federate_exposure_wave(
+            &mut exp,
+            &layers,
+            &contexts,
+            &ExposureCatalogWave {
+                entry_id: "github".to_string(),
+                entities: vec!["IssueComment".into()],
+                read_first_seeded: true,
+            },
+            Some("label documentation workflow"),
+            None,
+        );
+        assert_eq!(
+            exp.qualified_entity_symbol("github", "Label"),
+            Some(label_before.to_string()),
+            "Label e# must not shift when IssueComment appends"
+        );
+        assert_eq!(
+            exp.qualified_entity_symbol("github", "IssueComment"),
+            Some("e6".into()),
+            "IssueComment should append as next index"
+        );
+    }
+
+    #[test]
+    fn persisted_ledger_hydrate_preserves_append_only_github_symbols() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = Arc::new(load_schema_dir(&dir).expect("github"));
+        let mut contexts = IndexMap::new();
+        contexts.insert(
+            "github".to_string(),
+            Arc::new(CgsContext::entry("github", cgs.clone())),
+        );
+        let layers: Vec<&CGS> = contexts.values().map(|c| c.cgs.as_ref()).collect();
+        let mut exp = build_initial_exposure_wave(
+            &contexts,
+            &ExposureCatalogWave {
+                entry_id: "github".to_string(),
+                entities: vec!["Repository".into()],
+                read_first_seeded: false,
+            },
+            Some("label documentation workflow"),
+            None,
+        );
+        apply_federate_exposure_wave(
+            &mut exp,
+            &layers,
+            &contexts,
+            &ExposureCatalogWave {
+                entry_id: "github".to_string(),
+                entities: vec![
+                    "Issue".into(),
+                    "Label".into(),
+                    "PullRequest".into(),
+                    "Branch".into(),
+                ],
+                read_first_seeded: true,
+            },
+            Some("label documentation workflow"),
+            None,
+        );
+        apply_federate_exposure_wave(
+            &mut exp,
+            &layers,
+            &contexts,
+            &ExposureCatalogWave {
+                entry_id: "github".to_string(),
+                entities: vec!["IssueComment".into()],
+                read_first_seeded: true,
+            },
+            Some("label documentation workflow"),
+            None,
+        );
+        let hashes = plasm_core::catalog_cgs_hashes_from_session(&exp);
+        let snap = plasm_core::PersistedSymbolLedger::from_session(&exp, hashes).expect("from_session");
+        let bytes = snap.encode().expect("encode");
+        let decoded = plasm_core::PersistedSymbolLedger::decode(&bytes).expect("decode");
+        let mut catalog_cgs = IndexMap::new();
+        catalog_cgs.insert("github".to_string(), cgs);
+        let restored = decoded.hydrate(&catalog_cgs).expect("hydrate");
+        assert_eq!(
+            exp.qualified_entity_symbol("github", "Label"),
+            restored.qualified_entity_symbol("github", "Label")
+        );
+        assert_eq!(
+            exp.qualified_entity_symbol("github", "IssueComment"),
+            restored.qualified_entity_symbol("github", "IssueComment")
         );
     }
 

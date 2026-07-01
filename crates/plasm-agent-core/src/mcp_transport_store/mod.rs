@@ -2,6 +2,8 @@ mod config;
 pub mod execute_session_registry;
 pub mod host_wiring;
 pub mod logical_execute_bindings;
+pub mod logical_symbol_ledger;
+mod symbol_ledger_archive;
 pub mod persisted_operations;
 pub(crate) mod plasm_transport_redis;
 pub mod redis_backend;
@@ -12,6 +14,8 @@ pub use config::{McpTransportStoreConfig, DEFAULT_TRANSPORT_TTL_SECS};
 pub use execute_session_registry::ExecuteSessionRegistry;
 pub use host_wiring::{connect_redis_backend, prepare_host_for_serve, wire_host_redis};
 pub use logical_execute_bindings::LogicalExecuteBindingRegistry;
+pub use logical_symbol_ledger::{LogicalSymbolLedgerEntry, LogicalSymbolLedgerRegistry};
+pub use symbol_ledger_archive::SymbolLedgerArchive;
 pub use persisted_operations::{
     descriptor_from_operation_state, max_operation_seq, merge_operation_patch,
     operation_seq_from_wire, prune_terminal_operations, OperationPersistPatch,

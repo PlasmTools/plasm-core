@@ -236,7 +236,7 @@ fn agent_markdown_minimal_open_shape() {
         teaching_prompt_chars_added: 10,
         relations_delta: Vec::new(),
     }];
-    let md = build_plasm_context_agent_markdown("l_AAAAAAAAQACAAAAAAAAAAQ", &waves);
+    let md = build_plasm_context_agent_markdown("l_AAAAAAAAQACAAAAAAAAAAQ", &waves, false);
     assert!(md.starts_with("`l_AAAAAAAAQACAAAAAAAAAAQ`\n\n"));
     assert!(md.contains("```tsv"));
     assert!(md.contains("plasm_expr\tMeaning"));
@@ -256,6 +256,7 @@ fn tool_meta_keeps_slim_agent_keys() {
         new_symbol_space: true,
         stale_execute_binding_recovered: false,
         stale_binding_previous: None,
+        symbol_space_reset: false,
     };
     let meta = build_plasm_context_tool_meta("l_AAAAAAAAQACAAAAAAAAAAQ", &out, Some(2), None, None);
     assert!(meta.contains_key("logical_session_ref"));

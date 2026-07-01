@@ -21,6 +21,8 @@
 //! `PLASM_SYMBOL_MAP_LRU_CAP`, default `64`, set `0` to disable) deduplicates identical [`SymbolMap`]
 //! snapshots when the catalog fingerprint and exposure rows match a recent session.
 
+mod persisted_ident_metadata;
+mod persisted_ledger;
 mod capability_surface_params;
 mod keys;
 mod opaque_symbol_hash;
@@ -39,6 +41,11 @@ pub use tables::{SymbolLedger, SymbolTables, SymbolValueLayer};
 pub use session_bindings::{EntityBinding, MethodBinding, RelationBinding, SlotBinding, SlotKind};
 pub use symbol_traits::{SymbolAllocate, SymbolRender, SymbolResolve, SymbolSession};
 
+pub use persisted_ledger::{
+    catalog_cgs_hashes_from_session, catalog_pins_match, PersistedSymbolLedger,
+    PersistedSymbolLedgerDecodeError, PersistedSymbolLedgerEncodeError, PersistedSymbolLedgerState,
+    PersistedSymbolTables, PERSISTED_SYMBOL_LEDGER_VERSION,
+};
 pub use capability_surface_params::{
     capability_exposure_param_pairs, capability_exposure_param_triples,
     capability_optional_legend_param_pairs, compact_mutator_param_marker,
@@ -63,6 +70,7 @@ use crate::teaching_term::{
 use crate::CapabilityKind;
 use crate::FieldType;
 use indexmap::IndexMap;
+use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -158,20 +166,20 @@ pub type IdentMetaKey = (String, EntityName, String);
 use std::fmt::Write;
 
 /// Catalog-qualified entity identity for incremental teaching exposure filtering.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ExposureEntityKey {
     pub entry_id: String,
     pub entity: EntityName,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ExposureCapabilityKey {
     pub entry_id: String,
     pub domain: EntityName,
     pub capability: CapabilityName,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum ExposureSlotKey {
     EntityField {
         entity: ExposureEntityKey,
@@ -1890,6 +1898,20 @@ impl SymbolMap {
             .unwrap_or_else(|| field.to_string())
     }
 
+    /// Assigned entity-field `p#`, if exposed on the ledger.
+    #[inline]
+    pub fn lookup_entity_field_sym(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        field: &str,
+    ) -> Option<OpaquePSym> {
+        self.tables
+            .entity_field_to_sym
+            .get(&EntityFieldKey::new(catalog_entry_id, entity, field))
+            .copied()
+    }
+
     /// Opaque `r#` for a **relation** on a qualified entity row.
     #[inline]
     pub fn ident_sym_relation_for(
@@ -2651,8 +2673,8 @@ pub fn teaching_exposure_session_from_focus(
                 return teaching_exposure_session_from_focus(cgs, FocusSpec::All);
             }
             let mut v: Vec<&str> = seeds.to_vec();
-            v.sort();
-            v.dedup();
+            let mut seen = std::collections::HashSet::new();
+            v.retain(|s| seen.insert(*s));
             TeachingExposureSession::new(cgs, catalog_key, &v)
         }
     }
@@ -4756,7 +4778,7 @@ mod tests {
             ("issue_update", "labels"),
             ("pr_create", "body"),
             ("repo_content_create", "branch"),
-            ("repo_content_update", "sha"),
+            ("repo_content_update", "branch"),
         ] {
             let cap = cgs.get_capability(cap_name).expect(cap_name);
             let sig = map.capability_input_signature_gloss(&cgs, cap);

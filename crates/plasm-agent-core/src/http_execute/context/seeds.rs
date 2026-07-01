@@ -95,11 +95,27 @@ pub(crate) fn read_first_deferred_mutator_hint(
     ))
 }
 
-pub(super) fn normalize_execute_entity_names(mut names: Vec<String>) -> Vec<String> {
-    names.sort();
-    names.dedup();
+/// Dedupe while preserving first-seen order (symbol numbering / exposure waves).
+pub(crate) fn dedup_preserve_arrival_order(mut names: Vec<String>) -> Vec<String> {
+    let mut seen = std::collections::HashSet::<String>::new();
+    names.retain(|n| seen.insert(n.clone()));
     names
 }
+
+/// Sorted deduped entity set for [`crate::execute_session::SessionReuseKey`] set-equality only.
+pub(super) fn sorted_entity_set_for_reuse_key(names: &[String]) -> Vec<String> {
+    let mut v: Vec<String> = names.iter().cloned().collect();
+    v.sort();
+    v.dedup();
+    v
+}
+
+/// Legacy name: arrival-order dedup (do **not** sort — sorting shifts `e#` on expand/reopen).
+pub(super) fn normalize_execute_entity_names(names: Vec<String>) -> Vec<String> {
+    dedup_preserve_arrival_order(names)
+}
+
+pub(crate) const SYMBOL_SPACE_RESET_NOTICE: &str = "**SYMBOL SPACE RESET — discard cached `e#` / `m#` / `p#` / `r#`.** The pinned catalog digest changed; re-read the teaching table from this response only.\n\n";
 
 pub fn normalize_capability_seeds(mut seeds: Vec<CapabilitySeed>) -> Vec<CapabilitySeed> {
     for s in &mut seeds {
@@ -263,7 +279,7 @@ pub(crate) fn group_seed_entities_by_entry(
             .push(seed.entity.clone());
     }
     for entities in groups.values_mut() {
-        *entities = normalize_execute_entity_names(std::mem::take(entities));
+        *entities = dedup_preserve_arrival_order(std::mem::take(entities));
     }
     groups
 }
@@ -408,8 +424,12 @@ pub(crate) const STALE_EXECUTE_BINDING_NOTICE: &str = "**Prior Plasm symbol tabl
 pub(crate) fn build_plasm_context_agent_markdown(
     logical_session_ref: &str,
     waves: &[CapabilityWaveOutcome],
+    symbol_space_reset: bool,
 ) -> String {
     let mut body = String::new();
+    if symbol_space_reset {
+        body.push_str(SYMBOL_SPACE_RESET_NOTICE);
+    }
     for wave in waves {
         let delta = wave.markdown_delta.trim();
         if delta.is_empty() {
@@ -767,6 +787,7 @@ mod ranked_replay_tests {
             new_symbol_space: true,
             stale_execute_binding_recovered: true,
             stale_binding_previous: Some(("ph_old".into(), "sid_old".into())),
+            symbol_space_reset: false,
         };
         let meta = build_plasm_context_tool_meta("lsref", &out, Some(1), None, None);
         let continuity = meta

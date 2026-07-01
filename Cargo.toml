@@ -26,12 +26,13 @@ resolver = "2"
 
 # Single SemVer for the OSS workspace (see monorepo RELEASING.md on PlasmTools/plasm).
 [workspace.package]
-version = "0.3.101"
+version = "0.3.102"
 edition = "2021"
 
 [workspace.dependencies]
 # Core serialization and typing
 serde = { version = "1.0", features = ["derive"] }
+postcard = { version = "1.1", features = ["alloc"] }
 serde_json = "1.0"
 serde_yaml = "0.9"
 serde_urlencoded = "0.7"

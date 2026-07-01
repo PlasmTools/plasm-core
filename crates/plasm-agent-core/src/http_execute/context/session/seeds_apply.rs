@@ -14,6 +14,7 @@ use super::super::seeds::{
 use super::expand::expand_execute_teaching_session;
 use super::federate::{commit_federate_wave, prepare_federate_wave, PreparedFederateWave};
 use super::open::execute_session_create_response_inner;
+use super::symbol_ledger::{persist_from_execute_row, resolve_restore_for_open};
 use crate::session_coordination::ExecuteCoordKey;
 
 /// Live execute binding resolved for a `plasm_context` / seeds application.
@@ -82,7 +83,6 @@ async fn resolve_execute_binding(
     }
 }
 
-/// Federate or expand each catalog wave onto an existing execute session, returning the per-wave
 /// outcomes to append. Two passes preserve the lock-light design: all federate network I/O
 /// ([`prepare_federate_wave`]) runs first (no coordination gate held), then per-row commits
 /// ([`commit_federate_wave`]) and `expand` waves apply under their per-execute-row exposure-commit
@@ -255,6 +255,7 @@ pub async fn apply_capability_seeds(
 
     let mut waves = Vec::new();
     let mut new_symbol_space = false;
+    let mut symbol_space_reset = false;
     let (prompt_hash, session_id, binding_updated) = if let Some((ph, sid)) = &binding {
         (ph.clone(), sid.clone(), false)
     } else {
@@ -275,6 +276,15 @@ pub async fn apply_capability_seeds(
             read_first_seeded_exposure: true,
         };
         let primary_entities = open_body.entities.clone();
+        let (restored_exposure, ledger_reset) = resolve_restore_for_open(
+            st,
+            logical_session_id,
+            outbound_ref,
+            bindings_ref,
+        )
+        .await;
+        symbol_space_reset = ledger_reset;
+        let had_restored_ledger = restored_exposure.is_some();
 
         let created = if let Some(uuid) = logical_session_id {
             st.session_coordination
@@ -301,11 +311,20 @@ pub async fn apply_capability_seeds(
                         plan.seeds_by_entry.len() <= 1,
                         outbound_ref,
                         bindings_ref,
+                        restored_exposure,
+                        symbol_space_reset,
                     )
                     .await?;
                     st.logical_execute_bindings
                         .insert(uuid, created.prompt_hash.clone(), created.session.clone())
                         .await;
+                    persist_from_execute_row(
+                        st,
+                        Some(uuid),
+                        created.prompt_hash.as_str(),
+                        created.session.as_str(),
+                    )
+                    .await;
                     Ok(created)
                 })
                 .await?
@@ -317,11 +336,16 @@ pub async fn apply_capability_seeds(
                 plan.seeds_by_entry.len() <= 1,
                 outbound_ref,
                 bindings_ref,
+                restored_exposure,
+                symbol_space_reset,
             )
             .await?
         };
 
-        new_symbol_space = !created.reused;
+        new_symbol_space = !created.reused && !had_restored_ledger;
+        if symbol_space_reset {
+            new_symbol_space = true;
+        }
         let mut open_md = String::new();
         if stale_execute_binding_recovered {
             open_md.push_str(STALE_EXECUTE_BINDING_NOTICE);
@@ -436,6 +460,7 @@ pub async fn apply_capability_seeds(
                 new_symbol_space: false,
                 stale_execute_binding_recovered,
                 stale_binding_previous,
+                symbol_space_reset: false,
             });
         }
     }
@@ -469,6 +494,9 @@ pub async fn apply_capability_seeds(
         )];
     }
 
+    persist_from_execute_row(st, logical_session_id, prompt_hash.as_str(), session_id.as_str())
+        .await;
+
     Ok(ApplyCapabilitySeedsOutcome {
         prompt_hash,
         session_id,
@@ -479,5 +507,6 @@ pub async fn apply_capability_seeds(
         new_symbol_space,
         stale_execute_binding_recovered,
         stale_binding_previous,
+        symbol_space_reset,
     })
 }

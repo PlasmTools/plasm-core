@@ -6,6 +6,7 @@ mod exposure_replay;
 mod federate;
 mod open;
 mod seeds_apply;
+mod symbol_ledger;
 
 pub use expand::{expand_execute_teaching_session, ExpandTeachingWaveResult};
 pub(crate) use exposure_replay::{

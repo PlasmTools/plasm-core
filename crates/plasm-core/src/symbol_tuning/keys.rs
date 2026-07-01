@@ -126,7 +126,7 @@ impl QualifiedEntityKey {
 }
 
 /// `(registry entry_id, domain entity, capability wire)` — opaque `m#` forward key.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MethodKey {
     pub entry_id: RegistryEntryId,
     pub domain: EntityName,
@@ -148,7 +148,7 @@ impl MethodKey {
 }
 
 /// Path segment index for `method_sym_for(..., "create")` without scanning.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct MethodSegmentKey {
     pub entry_id: RegistryEntryId,
     pub domain: EntityName,
@@ -156,7 +156,7 @@ pub struct MethodSegmentKey {
 }
 
 /// `(registry entry_id, entity, field wire)` — opaque `p#` forward key for entity fields.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EntityFieldKey {
     pub entry_id: RegistryEntryId,
     pub entity: EntityName,
@@ -178,7 +178,7 @@ impl EntityFieldKey {
 }
 
 /// `(registry entry_id, domain, capability, param wire)` — opaque `p#` forward key for cap inputs.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct CapParamKey {
     pub entry_id: RegistryEntryId,
     pub domain: EntityName,
@@ -203,7 +203,7 @@ impl CapParamKey {
 }
 
 /// `(registry entry_id, entity, relation wire)` — opaque `r#` forward key.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct RelationKey {
     pub entry_id: RegistryEntryId,
     pub entity: EntityName,

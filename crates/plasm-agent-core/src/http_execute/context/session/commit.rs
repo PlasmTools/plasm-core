@@ -3,6 +3,7 @@
 use super::super::super::*;
 
 use super::super::seeds::wrap_teaching_markdown_literal_block;
+use super::symbol_ledger::persist_after_wave_commit;
 
 /// Snapshot captured before an exposure wave mutates [`plasm_core::TeachingExposureSession`].
 pub(crate) struct ExposureWaveSnapshot {
@@ -202,6 +203,7 @@ pub(crate) async fn commit_exposure_wave_delta(
     sess.teaching_exposure = Some(exp);
     st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
         .await;
+    persist_after_wave_commit(st, prompt_hash_p.as_str(), session_id_p.as_str()).await;
 
     CommittedWaveDelta {
         markdown: wave,

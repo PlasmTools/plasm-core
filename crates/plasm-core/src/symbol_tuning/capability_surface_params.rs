@@ -152,7 +152,12 @@ pub fn capability_exposure_param_triples(
                 continue;
             }
         }
-        let sym = map.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str());
+        let sym = map
+            .lookup_entity_field_sym(entry_id, domain, f.name.as_str())
+            .map(|psym| psym.as_wire())
+            .unwrap_or_else(|| {
+                map.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str())
+            });
         let marker = compact_mutator_param_marker(f, cgs);
         out.push((f.name.clone(), sym, marker));
     }

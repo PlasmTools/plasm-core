@@ -104,4 +104,24 @@ impl RedisBackend {
             debug!(?err, key, "redis TTL refresh failed");
         }
     }
+
+    pub async fn get_bytes(&self, key: &str) -> Option<Vec<u8>> {
+        let mut conn = self.conn.clone();
+        conn.get(key).await.unwrap_or_else(|err| {
+            warn!(?err, key, "redis get bytes failed");
+            None
+        })
+    }
+
+    pub async fn set_bytes(&self, key: &str, value: &[u8]) -> bool {
+        let mut conn = self.conn.clone();
+        let ttl_secs = self.ttl.as_secs().max(60);
+        conn.set_ex::<_, _, ()>(key, value, ttl_secs)
+            .await
+            .map(|()| true)
+            .unwrap_or_else(|err| {
+                warn!(?err, key, "redis set bytes failed");
+                false
+            })
+    }
 }

@@ -34,6 +34,10 @@ pub async fn wire_host_redis(
         .await
         .map_err(|e| format!("Redis ping failed: {e}"))?;
     plasm
+        .logical_symbol_ledgers
+        .attach_redis(Arc::clone(&backend))
+        .await;
+    plasm
         .logical_execute_bindings
         .attach_redis(Arc::clone(&backend))
         .await;
@@ -52,6 +56,13 @@ pub async fn wire_host_redis(
 
 /// Connect Redis (when configured) and wire all host stores before serve/MCP bootstrap.
 pub async fn prepare_host_for_serve(mut state: PlasmHostState) -> Result<PlasmHostState, String> {
+    if let Some(archive) = super::symbol_ledger_archive::SymbolLedgerArchive::from_env()? {
+        state
+            .logical_symbol_ledgers
+            .attach_archive(Arc::new(archive))
+            .await;
+        tracing::info!("symbol ledger archive: object store backend enabled");
+    }
     if let Some(backend) = connect_redis_backend().await? {
         wire_host_redis(&mut state, backend).await?;
     }

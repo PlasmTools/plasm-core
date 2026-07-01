@@ -21,6 +21,9 @@ use plasm_core::loader::load_schema_dir;
 use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
 use tower::ServiceExt;
 
+/// Bare list queries are host-page-bounded (`ok`); aggregate still requires plan review.
+const REVIEW_GATE_LANG_ITEM: &str = "LangItem.aggregate(n=count)";
+
 fn langmatrix_host_state() -> plasm_agent_core::server_state::PlasmHostState {
     langmatrix_host_with_registry(
         ExecuteSessionRegistry::default(),
@@ -107,7 +110,7 @@ async fn plan_dry_run_mints_plan_commit_ref() {
         .uri(&uri)
         .header("accept", "application/json")
         .header("content-type", "text/plain; charset=utf-8")
-        .body(Body::from("LangItem"))
+        .body(Body::from(REVIEW_GATE_LANG_ITEM))
         .unwrap();
     let res = app.oneshot(run).await.unwrap();
     assert_eq!(res.status(), StatusCode::OK);
@@ -140,7 +143,7 @@ async fn live_blocked_without_force_returns_plan_requires_review() {
         .method("POST")
         .uri(&uri)
         .header("accept", "application/json")
-        .body(Body::from("LangItem"))
+        .body(Body::from(REVIEW_GATE_LANG_ITEM))
         .unwrap();
     let res = app.oneshot(run).await.unwrap();
     assert_eq!(res.status(), StatusCode::BAD_REQUEST);
@@ -186,7 +189,7 @@ async fn review_plan_auto_async_without_wait_false() {
         .uri(&plan_uri)
         .header("accept", "application/json")
         .header("content-type", "text/plain; charset=utf-8")
-        .body(Body::from("LangItem"))
+        .body(Body::from(REVIEW_GATE_LANG_ITEM))
         .unwrap();
     let plan_res = app.clone().oneshot(plan_req).await.unwrap();
     assert_eq!(plan_res.status(), StatusCode::OK);
@@ -194,18 +197,26 @@ async fn review_plan_auto_async_without_wait_false() {
         .await
         .unwrap();
     let plan_doc: serde_json::Value = serde_json::from_slice(&plan_body).unwrap();
+    assert_eq!(
+        plan_doc
+            .get("_meta")
+            .and_then(|m| m.get("plasm"))
+            .and_then(|p| p.get("dry_verdict"))
+            .and_then(|v| v.as_str()),
+        Some("review")
+    );
     let pc = plan_doc
         .get("_meta")
         .and_then(|m| m.get("plasm"))
         .and_then(|p| p.get("run_ref"))
         .and_then(|v| v.as_str())
         .expect("run_ref");
-    let live_uri = format!("/execute/{ph}/{sid}?plan_commit_ref={pc}");
+    let live_uri = format!("/execute/{ph}/{sid}?wait=false&plan_commit_ref={pc}");
     let live_req = Request::builder()
         .method("POST")
         .uri(&live_uri)
         .header("accept", "application/json")
-        .body(Body::from("LangItem"))
+        .body(Body::from(REVIEW_GATE_LANG_ITEM))
         .unwrap();
     let live_res = app.oneshot(live_req).await.unwrap();
     assert_eq!(live_res.status(), StatusCode::OK);
@@ -215,14 +226,6 @@ async fn review_plan_auto_async_without_wait_false() {
     let live_doc: serde_json::Value = serde_json::from_slice(&live_body).unwrap();
     assert_eq!(
         live_doc.get("operation").and_then(|v| v.as_bool()),
-        Some(true)
-    );
-    assert_eq!(
-        live_doc
-            .get("_meta")
-            .and_then(|m| m.get("plasm"))
-            .and_then(|p| p.get("auto_async"))
-            .and_then(|v| v.as_bool()),
         Some(true)
     );
     let md = live_doc

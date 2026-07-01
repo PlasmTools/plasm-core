@@ -5,10 +5,12 @@ use super::super::super::*;
 use super::super::backend::tenant_outbound_hosted_kv_for_entries;
 use super::super::seeds::{
     apply_ranked_capabilities_session_update, build_capability_exposure_plan,
-    normalize_execute_entity_names, normalize_ranked_capabilities_for_gate,
-    process_order_for_expand_group, relation_endpoint_keys_for_wave, seeds_fully_exposed,
-    wrap_teaching_markdown_literal_block, RankedCapabilitiesArg, STALE_EXECUTE_BINDING_NOTICE,
+    dedup_preserve_arrival_order, normalize_ranked_capabilities_for_gate,
+    sorted_entity_set_for_reuse_key, process_order_for_expand_group, relation_endpoint_keys_for_wave,
+    seeds_fully_exposed, wrap_teaching_markdown_literal_block, RankedCapabilitiesArg,
+    STALE_EXECUTE_BINDING_NOTICE,
 };
+use super::symbol_ledger::persist_from_execute_row;
 
 pub(crate) async fn execute_session_create_response_inner(
     st: &PlasmHostState,
@@ -17,6 +19,8 @@ pub(crate) async fn execute_session_create_response_inner(
     allow_reuse: bool,
     outbound_hosted_kv_by_entry: Option<&HashMap<String, String>>,
     bindings_by_entry: Option<&HashMap<String, crate::binding_slots::SessionBindingMap>>,
+    restored_teaching_exposure: Option<plasm_core::TeachingExposureSession>,
+    symbol_space_reset: bool,
 ) -> Result<CreateExecuteSessionResponse, String> {
     if body.entities.is_empty() {
         crate::metrics::record_execute_session_outcome("error", "empty_entities");
@@ -32,7 +36,8 @@ pub(crate) async fn execute_session_create_response_inner(
         AuthResolutionMode::Delegated => body.principal.as_ref().map(|s| s.trim().to_string()),
     };
 
-    let names = normalize_execute_entity_names(body.entities);
+    let names = dedup_preserve_arrival_order(body.entities);
+    let reuse_key_entities = sorted_entity_set_for_reuse_key(&names);
 
     let reg = st.catalog.snapshot();
     let registry_catalog_hashes =
@@ -73,7 +78,7 @@ pub(crate) async fn execute_session_create_response_inner(
         tenant_scope: scope.clone(),
         entry_id: body.entry_id.clone(),
         catalog_cgs_hash: catalog_cgs_hash.clone(),
-        entities: names.clone(),
+        entities: reuse_key_entities.clone(),
         context_intent: domain_filter_intent.clone(),
         ranked_capabilities: ranked_for_domain.clone(),
         principal: principal_stored.clone(),
@@ -116,48 +121,66 @@ pub(crate) async fn execute_session_create_response_inner(
     contexts_by_entry.insert(body.entry_id.clone(), ctx_arc.clone());
 
     let cgs: Arc<CGS> = effective_cgs;
-    for e in &names {
-        if cgs.get_entity(e).is_none() {
-            crate::metrics::record_execute_session_outcome("error", "unknown_entity");
-            return Err(format!("unknown entity `{e}` in this schema"));
+    let (session_entity_names, teaching_exposure) = if let Some(restored) = restored_teaching_exposure {
+        for e in &restored.entities {
+            if cgs.get_entity(e).is_none() {
+                crate::metrics::record_execute_session_outcome("error", "unknown_entity");
+                return Err(format!("unknown entity `{e}` in restored symbol ledger"));
+            }
         }
-    }
-
-    let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-    let teaching_exposure = match &domain_filter_intent {
-        Some(intent_s) => {
-            let relation_keys = plasm_core::relation_endpoint_keys(body.entry_id.as_str(), &names);
-            let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
-                cgs.as_ref(),
-                body.entry_id.as_str(),
-                intent_s.as_str(),
-                &relation_keys,
-                &names,
-                ranked_for_domain.as_deref(),
-                plasm_core::discovery::ExposureSurfaceOptions {
-                    read_first_seeded: body.read_first_seeded_exposure,
-                },
-            );
-            plasm_core::TeachingExposureSession::new_with_intent_delta(
-                cgs.as_ref(),
-                body.entry_id.as_str(),
-                &refs,
-                delta,
-            )
+        (restored.entities.clone(), restored)
+    } else {
+        for e in &names {
+            if cgs.get_entity(e).is_none() {
+                crate::metrics::record_execute_session_outcome("error", "unknown_entity");
+                return Err(format!("unknown entity `{e}` in this schema"));
+            }
         }
-        None => {
-            plasm_core::TeachingExposureSession::new(cgs.as_ref(), body.entry_id.as_str(), &refs)
-        }
+        let refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+        let built = match &domain_filter_intent {
+            Some(intent_s) => {
+                let relation_keys =
+                    plasm_core::relation_endpoint_keys(body.entry_id.as_str(), &names);
+                let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
+                    cgs.as_ref(),
+                    body.entry_id.as_str(),
+                    intent_s.as_str(),
+                    &relation_keys,
+                    &names,
+                    ranked_for_domain.as_deref(),
+                    plasm_core::discovery::ExposureSurfaceOptions {
+                        read_first_seeded: body.read_first_seeded_exposure,
+                    },
+                );
+                plasm_core::TeachingExposureSession::new_with_intent_delta(
+                    cgs.as_ref(),
+                    body.entry_id.as_str(),
+                    &refs,
+                    delta,
+                )
+            }
+            None => {
+                plasm_core::TeachingExposureSession::new(cgs.as_ref(), body.entry_id.as_str(), &refs)
+            }
+        };
+        (names.clone(), built)
     };
     let sym_cross = st.sessions.symbol_map_cross_cache();
     let teaching_prompt = st
         .engine
         .prompt_pipeline()
         .render_teaching_first_wave_for_session(cgs.as_ref(), &teaching_exposure, Some(sym_cross));
-    let prompt = wrap_teaching_markdown_literal_block(
+    let mut prompt = wrap_teaching_markdown_literal_block(
         &teaching_prompt,
         st.engine.prompt_pipeline().render_mode,
     );
+    if symbol_space_reset {
+        prompt = format!(
+            "{}{}",
+            super::super::seeds::SYMBOL_SPACE_RESET_NOTICE,
+            prompt
+        );
+    }
     let prompt_hash = PromptHashHex::from_prompt_sha256(&prompt);
     let session_id = ExecuteSessionId::new_random();
     let prompt_hash_str = prompt_hash.to_string();
@@ -187,7 +210,7 @@ pub(crate) async fn execute_session_create_response_inner(
         scope,
         subj,
         Some(http_backend.as_str().to_string()),
-        names.clone(),
+        session_entity_names.clone(),
         Some(teaching_exposure),
         principal_stored.clone(),
         catalog_cgs_hash,
@@ -205,13 +228,23 @@ pub(crate) async fn execute_session_create_response_inner(
     .instrument(create_span)
     .await;
 
+    if let Some(uuid) = body.logical_session_id {
+        persist_from_execute_row(
+            st,
+            Some(uuid),
+            prompt_hash_str.as_str(),
+            session_id_str.as_str(),
+        )
+        .await;
+    }
+
     crate::metrics::record_execute_session_outcome("create", "");
     Ok(CreateExecuteSessionResponse {
         prompt_hash: prompt_hash_str,
         session: session_id_str,
         prompt,
         entry_id: body.entry_id,
-        entities: names,
+        entities: session_entity_names,
         reused: false,
         principal: principal_stored,
     })
@@ -222,5 +255,5 @@ pub async fn execute_session_create_response(
     principal: Option<&crate::incoming_auth::TenantPrincipal>,
     body: CreateExecuteSessionBody,
 ) -> Result<CreateExecuteSessionResponse, String> {
-    execute_session_create_response_inner(st, principal, body, true, None, None).await
+    execute_session_create_response_inner(st, principal, body, true, None, None, None, false).await
 }

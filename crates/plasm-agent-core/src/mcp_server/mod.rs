@@ -1085,7 +1085,11 @@ impl PlasmMcpHandler {
             wave_count = out.waves.len(),
             "MCP plasm_context response telemetry"
         );
-        let text = build_plasm_context_agent_markdown(logical_session_ref.as_str(), &out.waves);
+        let text = build_plasm_context_agent_markdown(
+            logical_session_ref.as_str(),
+            &out.waves,
+            out.symbol_space_reset,
+        );
         for wave in &out.waves {
             if wave.teaching_prompt_chars_added > 0 {
                 let ls = self.logical_mutex(key, &ls_key).await;

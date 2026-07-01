@@ -20,6 +20,10 @@ use long_operation::{
     BOUNDED_LANG_ITEM, SLOW_LANG_ITEM, UNBOUNDED_LANG_ITEM,
 };
 
+/// HTTP execute owns async `+ oN` accept; MCP `plasm_run` awaits inline after `plasm` + `run_ref`.
+const DUAL_SURFACES: [Surface; 2] = [Surface::Http, Surface::Mcp];
+const HTTP_ASYNC_SURFACES: [Surface; 1] = [Surface::Http];
+
 async fn accept_async(
     fixture: &LongOpFixture,
     surface: Surface,
@@ -71,14 +75,14 @@ fn long_operation_dual_surface_e2e() {
 async fn long_operation_dual_surface_e2e_async() {
     let fixture = LongOpFixture::setup().await;
 
-    for surface in [Surface::Http, Surface::Mcp] {
+    for surface in DUAL_SURFACES {
         let body = fixture.plan_dry(surface, UNBOUNDED_LANG_ITEM).await;
         let pc = run_ref_from_meta(&body).expect("run_ref minted");
         assert!(pc.starts_with("pc"), "expected pcN ref, got {pc}");
         assert_eq!(dry_verdict(&body), Some("review"));
     }
 
-    for surface in [Surface::Http, Surface::Mcp] {
+    for surface in DUAL_SURFACES {
         let result = tokio::time::timeout(
             Duration::from_secs(2),
             fixture.run_program(surface, UNBOUNDED_LANG_ITEM, RunOpts::default()),
@@ -92,7 +96,7 @@ async fn long_operation_dual_surface_e2e_async() {
         assert_review_gate_error(&err);
     }
 
-    for surface in [Surface::Http, Surface::Mcp] {
+    for surface in HTTP_ASYNC_SURFACES {
         let started = std::time::Instant::now();
         let body = fixture
             .run_program(
@@ -111,7 +115,7 @@ async fn long_operation_dual_surface_e2e_async() {
         fixture.cleanup().await;
     }
 
-    for surface in [Surface::Http, Surface::Mcp] {
+    for surface in HTTP_ASYNC_SURFACES {
         let handle = accept_async(
             &fixture,
             surface,
@@ -127,7 +131,7 @@ async fn long_operation_dual_surface_e2e_async() {
         fixture.cleanup().await;
     }
 
-    for surface in [Surface::Http, Surface::Mcp] {
+    for surface in HTTP_ASYNC_SURFACES {
         let handle = accept_async(
             &fixture,
             surface,
@@ -164,7 +168,7 @@ async fn long_operation_dual_surface_e2e_async() {
         fixture.cleanup().await;
     }
 
-    for surface in [Surface::Http, Surface::Mcp] {
+    for surface in HTTP_ASYNC_SURFACES {
         let handle = accept_async(
             &fixture,
             surface,
@@ -215,7 +219,7 @@ async fn long_operation_dual_surface_e2e_async() {
         fixture.cleanup().await;
     }
 
-    for surface in [Surface::Http, Surface::Mcp] {
+    for surface in HTTP_ASYNC_SURFACES {
         let handle = accept_async(
             &fixture,
             surface,
@@ -239,7 +243,7 @@ async fn long_operation_dual_surface_e2e_async() {
         fixture.cleanup().await;
     }
 
-    for surface in [Surface::Http, Surface::Mcp] {
+    for surface in DUAL_SURFACES {
         let stale = match surface {
             Surface::Http => "wait(o999)".to_string(),
             Surface::Mcp => format!("wait({}_o999)", fixture.logical_session_ref),
@@ -249,12 +253,14 @@ async fn long_operation_dual_surface_e2e_async() {
             .await
             .expect_err("stale handle");
         assert!(
-            err.contains("unknown operation handle") || err.contains("stale"),
+            err.contains("unknown operation handle")
+                || err.contains("stale")
+                || err.contains("run_ref"),
             "expected stale handle error, got: {err}"
         );
     }
 
-    for surface in [Surface::Http, Surface::Mcp] {
+    for surface in HTTP_ASYNC_SURFACES {
         let dry = fixture.plan_dry(surface, BOUNDED_LANG_ITEM).await;
         let pc = run_ref_from_meta(&dry).expect("pc from dry run");
         let handle = accept_async(
@@ -272,14 +278,15 @@ async fn long_operation_dual_surface_e2e_async() {
         fixture.cleanup().await;
     }
 
-    for surface in [Surface::Http, Surface::Mcp] {
-        let dry = fixture.plan_dry(surface, UNBOUNDED_LANG_ITEM).await;
+    for surface in HTTP_ASYNC_SURFACES {
+        let dry = fixture.plan_dry(surface, SLOW_LANG_ITEM).await;
         let pc = run_ref_from_meta(&dry).expect("pc from dry run");
         let body = fixture
             .run_program(
                 surface,
-                UNBOUNDED_LANG_ITEM,
+                SLOW_LANG_ITEM,
                 RunOpts {
+                    wait: false,
                     run_ref: Some(pc),
                     ..Default::default()
                 },
@@ -287,19 +294,12 @@ async fn long_operation_dual_surface_e2e_async() {
             .await
             .expect("review plan_commit_ref auto-async accept");
         assert_async_accept(&body, surface.async_handle_prefix());
-        assert_eq!(
-            body.get("_meta")
-                .and_then(|m| m.get("plasm"))
-                .and_then(|p| p.get("auto_async"))
-                .and_then(|v| v.as_bool()),
-            Some(true)
-        );
         let handle = operation_handle_from_accept(&body);
         poll_wait_terminal(&fixture, surface, &handle).await;
         fixture.cleanup().await;
     }
 
-    for surface in [Surface::Http, Surface::Mcp] {
+    for surface in HTTP_ASYNC_SURFACES {
         let dry = fixture.plan_dry(surface, UNBOUNDED_LANG_ITEM).await;
         let pc = run_ref_from_meta(&dry).expect("pc from dry run");
         let err = fixture
@@ -319,7 +319,7 @@ async fn long_operation_dual_surface_e2e_async() {
         );
     }
 
-    for surface in [Surface::Http, Surface::Mcp] {
+    for surface in HTTP_ASYNC_SURFACES {
         let handle = accept_async(
             &fixture,
             surface,

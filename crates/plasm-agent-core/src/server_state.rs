@@ -17,7 +17,7 @@ use crate::incoming_auth_device::IncomingAuthDeviceStore;
 use crate::local_trace_archive::LocalTraceArchive;
 use crate::mcp_config_repository::McpConfigRepository;
 use crate::mcp_transport_auth::McpTransportAuth;
-use crate::mcp_transport_store::{ExecuteSessionRegistry, LogicalExecuteBindingRegistry};
+use crate::mcp_transport_store::{ExecuteSessionRegistry, LogicalExecuteBindingRegistry, LogicalSymbolLedgerRegistry};
 use crate::oauth_link_catalog::OauthLinkCatalog;
 use crate::operation_persist::OperationPersistScheduler;
 use crate::operation_progress::OperationProgressHub;
@@ -56,6 +56,8 @@ pub struct PlasmOssHostState {
     /// Latest execute binding per logical session: `logical_session_id` → `(prompt_hash, execute_session_id)`.
     /// Used for MCP `resources/read` on `plasm://session/{uuid}/r/{n}` without relying on transport state.
     pub logical_execute_bindings: LogicalExecuteBindingRegistry,
+    /// Append-only `e#`/`m#`/`p#`/`r#` ledger per logical session (survives transport row churn).
+    pub logical_symbol_ledgers: LogicalSymbolLedgerRegistry,
     /// Durable execute-session descriptors for cross-pod rehydration (`PLASM_MCP_TRANSPORT_REDIS_URL`).
     pub execute_session_registry: ExecuteSessionRegistry,
     /// Stored execute run snapshots (`GET .../artifacts/:run_id`, MCP `resources/read`). See [`crate::run_artifacts`].
@@ -322,7 +324,8 @@ impl PlasmHostState {
         self.sessions.purge_all().await;
         let session_keys = self.execute_session_registry.purge_redis().await;
         let logical_keys = self.logical_execute_bindings.purge_redis_and_local().await;
-        (session_keys, logical_keys)
+        let ledger_keys = self.logical_symbol_ledgers.purge_durable_layers().await;
+        (session_keys, logical_keys.saturating_add(ledger_keys))
     }
 
     /// Insert a new execute session and mirror descriptor to Redis when configured.
@@ -488,6 +491,8 @@ mod tests {
             true,
             None,
             None,
+            None,
+            false,
         )
         .await
         .expect("open session");
@@ -531,6 +536,8 @@ mod tests {
             false,
             Some(&hosted),
             None,
+            None,
+            false,
         )
         .await
         .expect("open session with tenant hosted_kv patch");
@@ -597,6 +604,8 @@ mod tests {
             false,
             None,
             Some(&bindings),
+            None,
+            false,
         )
         .await
         .expect("open fibery session with resolved backend");
@@ -647,6 +656,8 @@ mod tests {
             false,
             Some(&hosted),
             None,
+            None,
+            false,
         )
         .await
         .expect("open session");
@@ -690,6 +701,8 @@ mod tests {
             false,
             Some(&hosted),
             None,
+            None,
+            false,
         )
         .await
         .expect("open on host A");

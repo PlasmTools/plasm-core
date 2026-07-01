@@ -15,7 +15,9 @@ use super::hermit_lang_matrix;
 use super::language_matrix::{self, MATRIX_ENTRY_ID};
 
 const MCP_PROTOCOL: &str = "2025-11-25";
-pub const UNBOUNDED_LANG_ITEM: &str = "LangItem";
+/// Bare list queries are host-page-bounded (`ok`); aggregate still requires plan review.
+pub const REVIEW_GATE_LANG_ITEM: &str = "LangItem.aggregate(n=count)";
+pub const UNBOUNDED_LANG_ITEM: &str = REVIEW_GATE_LANG_ITEM;
 pub const BOUNDED_LANG_ITEM: &str = "LangItem.limit(2)";
 /// Paginated list — slow enough to observe Running/cancel without unbounded review fanout.
 pub const SLOW_LANG_ITEM: &str = "LangItem.page_size(1).limit(10)";
@@ -186,22 +188,77 @@ impl LongOpFixture {
                 .await
             }
             Surface::Mcp => {
-                let mut args = json!({
-                    "logical_session_ref": self.logical_session_ref,
-                    "program": program,
-                    "wait": opts.wait,
-                    "force": opts.force,
-                });
-                if let Some(pc) = opts.run_ref {
-                    args["run_ref"] = json!(pc);
+                if program.starts_with("wait(") || program.starts_with("cancel(") {
+                    return Ok(mcp_tool_call(
+                        &self.client,
+                        &self.base_url,
+                        &self.mcp_transport_id,
+                        self.next_rpc_id(),
+                        "plasm",
+                        json!({
+                            "logical_session_ref": self.logical_session_ref,
+                            "program": program,
+                        }),
+                    )
+                    .await)
+                    .and_then(|body| {
+                        if let Some(err) = body.get("_run_error").and_then(|v| v.as_str()) {
+                            Err(err.to_string())
+                        } else {
+                            Ok(body)
+                        }
+                    });
                 }
+                let run_ref = if let Some(pc) = opts.run_ref {
+                    pc
+                } else if opts.force {
+                    let dry = mcp_tool_call(
+                        &self.client,
+                        &self.base_url,
+                        &self.mcp_transport_id,
+                        self.next_rpc_id(),
+                        "plasm",
+                        json!({
+                            "logical_session_ref": self.logical_session_ref,
+                            "program": program,
+                        }),
+                    )
+                    .await;
+                    if let Some(err) = dry.get("_run_error").and_then(|v| v.as_str()) {
+                        return Err(err.to_string());
+                    }
+                    run_ref_from_meta(&dry)
+                        .ok_or_else(|| "missing run_ref from MCP plasm dry-run".to_string())?
+                } else {
+                    return Ok(mcp_tool_call(
+                        &self.client,
+                        &self.base_url,
+                        &self.mcp_transport_id,
+                        self.next_rpc_id(),
+                        "plasm_run",
+                        json!({
+                            "logical_session_ref": self.logical_session_ref,
+                        }),
+                    )
+                    .await)
+                    .and_then(|body| {
+                        if let Some(err) = body.get("_run_error").and_then(|v| v.as_str()) {
+                            Err(err.to_string())
+                        } else {
+                            Ok(body)
+                        }
+                    });
+                };
                 Ok(mcp_tool_call(
                     &self.client,
                     &self.base_url,
                     &self.mcp_transport_id,
                     self.next_rpc_id(),
                     "plasm_run",
-                    args,
+                    json!({
+                        "logical_session_ref": self.logical_session_ref,
+                        "run_ref": run_ref,
+                    }),
                 )
                 .await)
                 .and_then(|body| {
@@ -818,7 +875,9 @@ pub fn assert_cancelled(body: &Value) {
 
 pub fn assert_review_gate_error(err: &str) {
     assert!(
-        err.contains("plan_requires_review"),
-        "expected plan_requires_review error, got: {err}"
+        err.contains("plan_requires_review")
+            || err.contains("run_ref")
+            || err.contains("call `plasm` first"),
+        "expected plan review gate error, got: {err}"
     );
 }
