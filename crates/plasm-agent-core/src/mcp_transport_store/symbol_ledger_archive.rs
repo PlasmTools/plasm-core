@@ -17,7 +17,7 @@ pub struct SymbolLedgerArchive {
 
 impl SymbolLedgerArchive {
     fn object_key(prefix: &StorePath, logical_id: &Uuid) -> StorePath {
-        prefix.join(format!("{logical_id}{OBJECT_SUFFIX}"))
+        prefix.clone().join(format!("{logical_id}{OBJECT_SUFFIX}"))
     }
 
     /// `PLASM_SYMBOL_LEDGER_URL` when set; otherwise reuse `PLASM_RUN_ARTIFACTS_URL` bucket/prefix.
