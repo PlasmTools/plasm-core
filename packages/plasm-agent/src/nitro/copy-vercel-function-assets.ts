@@ -1,6 +1,7 @@
 import { access, cp } from "node:fs/promises";
 import path from "node:path";
 
+import { copyNativeEnginePackages } from "./copy-native-engine-packages.js";
 import { vercelOutputDir } from "./paths.js";
 
 async function pathExists(p: string): Promise<boolean> {
@@ -23,6 +24,8 @@ export async function copyVercelFunctionAssets(options: {
   }
 
   await cp(options.agentRoot, path.join(funcDir, "agent"), { recursive: true });
+
+  await copyNativeEnginePackages(options.projectRoot, funcDir);
 
   const libDir = path.join(options.projectRoot, "lib");
   if (await pathExists(libDir)) {
