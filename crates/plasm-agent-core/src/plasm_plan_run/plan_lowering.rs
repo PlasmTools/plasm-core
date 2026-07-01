@@ -64,7 +64,7 @@ pub fn lowered_ir_digest_from_validated_plan(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::LoweredIrDigest;
     use plasm_core::{EntityKey, GetExpr, Ref};
     use std::collections::BTreeMap;
 

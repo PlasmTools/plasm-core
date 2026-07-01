@@ -410,7 +410,10 @@ impl ParseRemainder {
 }
 
 /// Like [`parse`], but also returns how the unconsumed tail is classified.
-pub fn parse_with_remainder(input: &str, cgs: &CGS) -> Result<(ParsedExpr, ParseRemainder), ParseError> {
+pub fn parse_with_remainder(
+    input: &str,
+    cgs: &CGS,
+) -> Result<(ParsedExpr, ParseRemainder), ParseError> {
     let mut p = Parser::new(input, cgs);
     let mut parsed = p.parse_expr()?;
     parsed.expr = crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, cgs);
@@ -3436,10 +3439,7 @@ impl<'a> Parser<'a> {
         }
         let head = tail.chars().next().unwrap_or(' ');
         if matches!(head, '{' | '.' | '[' | '(' | '~' | '=' | ')' | ',') {
-            ParseRemainder::Syntax {
-                at: self.pos,
-                head,
-            }
+            ParseRemainder::Syntax { at: self.pos, head }
         } else {
             ParseRemainder::Prose(tail.to_string())
         }

@@ -43,7 +43,7 @@ use indexmap::IndexMap;
 use plasm_compile::DecodedRelation;
 use plasm_core::{EntityName, Ref, TypedFieldValue, Value};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
 /// Whether cached fields came from a list/query response or from a single-resource GET.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -421,14 +421,6 @@ impl CacheStore for GraphCache {
 
     fn remove(&mut self, reference: &Ref) -> Option<CachedEntity> {
         GraphCache::remove(self, reference)
-    }
-}
-
-fn slot_needed(existing: Option<&serde_json::Value>) -> bool {
-    match existing {
-        None | Some(serde_json::Value::Null) => true,
-        Some(serde_json::Value::String(s)) => s.is_empty(),
-        _ => false,
     }
 }
 

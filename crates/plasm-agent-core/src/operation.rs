@@ -313,11 +313,10 @@ pub struct PlanCommitDryCache {
 
 impl PlanCommitDryCache {
     pub fn from_dry(dry: &crate::plasm_plan_run::DryPlasmPlanEvaluation) -> Self {
-        let lowered_ir_digest = crate::plasm_plan_run::lowered_ir_digest_from_validated_plan(
-            dry.validated_plan(),
-        )
-        .as_str()
-        .to_string();
+        let lowered_ir_digest =
+            crate::plasm_plan_run::lowered_ir_digest_from_validated_plan(dry.validated_plan())
+                .as_str()
+                .to_string();
         Self {
             version: dry.version.clone(),
             name: dry.name.clone(),

@@ -260,11 +260,11 @@ pub use teaching_term::{
     MethodRef, ParameterSlot, Symbol, TeachingTerm,
 };
 pub use wire_coercion::{
-    binding_value_as_plasm_value, coerce_json_value_for_field_type, coerce_value_for_field_type,
-    coerce_value_for_field_type_with_policy, collect_relation_binding_proofs,
-    field_type_assignable_for_relation_binding, apply_identity_slots_to_row,
-    identity_slot_to_json, json_value_to_plasm_value, restore_id_field_from_compound_ref,
-    parent_entity_field_type, plasm_value_to_json, relation_binding_assignable,
+    apply_identity_slots_to_row, binding_value_as_plasm_value, coerce_json_value_for_field_type,
+    coerce_value_for_field_type, coerce_value_for_field_type_with_policy,
+    collect_relation_binding_proofs, field_type_assignable_for_relation_binding,
+    identity_slot_to_json, json_value_to_plasm_value, parent_entity_field_type,
+    plasm_value_to_json, relation_binding_assignable, restore_id_field_from_compound_ref,
     RelationBindingProof,
 };
 pub mod relation_materialize;

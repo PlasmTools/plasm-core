@@ -119,7 +119,9 @@ pub fn apply_identity_slots_to_row(
                     continue;
                 }
                 let json = match (cgs, ent) {
-                    (Some(cgs), Some(ent)) => identity_slot_to_json(cgs, ent, k.as_str(), val.as_str()),
+                    (Some(cgs), Some(ent)) => {
+                        identity_slot_to_json(cgs, ent, k.as_str(), val.as_str())
+                    }
                     _ => serde_json::Value::String(val.clone()),
                 };
                 obj.insert(k.clone(), json);

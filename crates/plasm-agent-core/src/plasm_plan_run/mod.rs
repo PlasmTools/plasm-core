@@ -171,11 +171,9 @@ impl DryPlasmPlanEvaluation {
     /// True when every dry-run node passed preflight (probe-IO gate before `run_ref`).
     #[must_use]
     pub fn probe_preflight_passed(&self) -> bool {
-        self.node_results.iter().all(|node| {
-            node.get("ok")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false)
-        })
+        self.node_results
+            .iter()
+            .all(|node| node.get("ok").and_then(|v| v.as_bool()).unwrap_or(false))
     }
 
     /// Rehydrate dry evaluation from a reviewed plan commit (skips simulation when cache is populated).

@@ -154,9 +154,8 @@ pub fn verify_committed_plan_bundle(
             commit_ref: committed.commit_ref.as_str().to_string(),
             detail: e,
         })?;
-        let live = crate::plasm_plan_run::lowered_ir_digest_from_validated_plan(
-            prepared.artifact(),
-        );
+        let live =
+            crate::plasm_plan_run::lowered_ir_digest_from_validated_plan(prepared.artifact());
         if live.as_str() != committed.lowered_ir_digest() {
             return Err(PlanCommitVerifyError::Evidence {
                 commit_ref: committed.commit_ref.as_str().to_string(),

@@ -89,7 +89,7 @@ pub(crate) fn push_prefer_hydrate_get_jobs(
     row_index: usize,
     base_display: &str,
     target: &crate::plasm_plan::QualifiedEntityKey,
-    target_entity: &str,
+    _target_entity: &str,
     get_capability: &CapabilityName,
     refs: impl IntoIterator<Item = Ref>,
 ) -> Result<(), String> {

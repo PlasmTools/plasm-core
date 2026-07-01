@@ -84,8 +84,7 @@ use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_identity::McpTransportIdentity;
 use crate::operation::{
-    compute_plan_commit_id_from_dry, plan_commit_meta, PlanCommitDryCache, PlanCommitRecord,
-    PLAN_COMMIT_TTL,
+    compute_plan_commit_id_from_dry, plan_commit_meta, PlanCommitRecord, PLAN_COMMIT_TTL,
 };
 use crate::plan_dry_display::build_plan_dry_compact_view;
 use crate::plasm_comp_wire::trace_comp_wire_from_dry;
