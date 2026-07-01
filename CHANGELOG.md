@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.100] - 2026-07-01
+
+### Changed
+
+- **Teaching TSV optional legend:** compact `optional` token in Meaning (replaces verbose `opt: wire=p#`); typed [`CapabilityInputLegend`](crates/plasm-core/src/prompt_render/input_legend.rs) on [`TeachingExprLine`](crates/plasm-core/src/prompt_render/input_legend.rs).
+- **`prompt_render` decomposition:** TSV wire encoding extracted to [`tsv_emit.rs`](crates/plasm-core/src/prompt_render/tsv_emit.rs); integration tests moved to [`tests.rs`](crates/plasm-core/src/prompt_render/tests.rs); flattened test module (single insta snapshot path).
+- **`capability_delta`:** capability witness matching uses method symbols + `source_capability` only (no substring false positives).
+
+### Removed
+
+- Full-catalog insta snapshots for GitHub / Linear / PokeAPI teaching prompts; matrix (`plasm_prompt_matrix`) + `apis/proof` regressions cover optional-legend and teaching-table invariants.
+
 ## [0.3.99] - 2026-06-30
 
 ### Fixed

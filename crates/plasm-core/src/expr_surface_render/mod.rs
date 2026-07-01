@@ -6,7 +6,7 @@ mod predicates;
 mod render;
 mod values;
 
-use crate::cgs_federation::FederationDispatch;
+use crate::cgs_federation::{CgsLayer, FederationDispatch};
 use crate::expr::Expr;
 use crate::schema::CGS;
 use crate::symbol_tuning::{
@@ -37,8 +37,16 @@ pub fn wire_surface_from_teaching_line(
     map: Arc<SymbolMap>,
 ) -> Option<String> {
     let stripped = strip_prompt_expression_annotations(line);
-    let layers = [cgs];
-    let parsed = match crate::expr_parser::parse_with_cgs_layers(&stripped, &layers, map) {
+    let entry_id = cgs
+        .entry_id
+        .as_deref()
+        .unwrap_or("");
+    let layer = CgsLayer::new(entry_id, cgs);
+    let parsed = match crate::expr_parser::parse_with_cgs_layers(
+        &stripped,
+        std::slice::from_ref(&layer),
+        map,
+    ) {
         Ok(p) => p,
         Err(_) => return None,
     };
@@ -52,26 +60,33 @@ pub fn wire_surface_from_teaching_session_line(
 ) -> Option<String> {
     let stripped = strip_prompt_expression_annotations(line.trim());
     let map = session.symbol_map_arc();
-    let layers = session_cgs_layers(session);
-    if layers.is_empty() {
+    let stack = session_cgs_layer_stack(session);
+    if stack.is_empty() {
         return None;
     }
-    match crate::expr_parser::parse_with_cgs_layers(&stripped, &layers, map) {
-        Ok(parsed) => Some(render_expr_wire(&parsed.expr, layers[0], None, layers[0])),
+    match crate::expr_parser::parse_with_cgs_layers(&stripped, &stack, map) {
+        Ok(parsed) => Some(render_expr_wire(
+            &parsed.expr,
+            stack[0].cgs(),
+            None,
+            stack[0].cgs(),
+        )),
         Err(_) => None,
     }
 }
 
-pub(crate) fn session_cgs_layers(session: &TeachingExposureSession) -> Vec<&CGS> {
+pub(crate) fn session_cgs_layer_stack(session: &TeachingExposureSession) -> Vec<CgsLayer<'_>> {
     use std::collections::HashSet;
-    let mut out: Vec<&CGS> = Vec::new();
+    let mut out: Vec<CgsLayer<'_>> = Vec::new();
     let mut seen = HashSet::new();
     for eid in &session.entity_catalog_entry_ids {
-        if seen.insert(eid.as_str()) {
-            if let Some(cgs) = session.catalog_cgs_for_entry(eid) {
-                out.push(cgs);
-            }
+        if !seen.insert(eid.clone()) {
+            continue;
         }
+        let Some(cgs) = session.catalog_cgs_for_entry(eid) else {
+            continue;
+        };
+        out.push(CgsLayer::new(eid.as_str(), cgs));
     }
     out
 }
@@ -107,7 +122,7 @@ mod tests {
         let cgs = load_schema_dir(dir).unwrap();
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let map = SymbolMap::build(&cgs, &full);
-        let pet = map.entity_sym("Pet");
+        let pet = map.entity_sym_for("", "Pet");
         let opaque = format!("{pet}(42)", pet = pet);
         let wire = wire_surface_from_teaching_line(&opaque, &cgs, Arc::new(map)).expect("wire");
         assert_eq!(wire, "Pet(42)");

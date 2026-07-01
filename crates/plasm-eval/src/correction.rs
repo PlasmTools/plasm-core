@@ -290,7 +290,14 @@ pub fn validate_plan_steps_with_lexicon_detailed(
         };
         let t = text.trim();
         let contract_violation = output_contract_violation(t);
-        let parsed = parse_session_line_with_rewrite_recovery(t, cgs, lexicon, symbol_map.clone());
+        let parsed = parse_session_line_with_rewrite_recovery(
+            t,
+            cgs,
+            lexicon,
+            symbol_map
+                .clone()
+                .map(|m| m as std::sync::Arc<dyn plasm_core::SymbolSession>),
+        );
         match parsed {
             Ok((mut p, resolved)) => {
                 if let Some(res) = resolved {

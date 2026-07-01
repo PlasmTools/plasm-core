@@ -3,7 +3,7 @@
 use crate::cgs_federation::{FederationDispatch, FederationResolveError, QualifiedEntityKey};
 use crate::expr::Expr;
 use crate::schema::CGS;
-use crate::symbol_tuning::SymbolMap;
+use crate::symbol_tuning::{SymbolMap, SymbolSession};
 
 pub const FEDERATED_RELATION_MISSING_OWNERSHIP: &str =
     "federated relation continuation requires catalog ownership from the source row (use session e# / binding continuation, not bare wire entity names)";
@@ -50,7 +50,7 @@ impl std::error::Error for CatalogOwnershipError {}
 pub fn catalog_entry_id_for_invoke(
     source: &Expr,
     raw_method_label: Option<&str>,
-    sym_map: &SymbolMap,
+    sym_map: &dyn SymbolSession,
     ctx: InvokeCatalogResolutionContext<'_>,
 ) -> Result<String, CatalogOwnershipError> {
     if let Some(eid) = source.session_catalog_entry_id() {
@@ -59,8 +59,8 @@ pub fn catalog_entry_id_for_invoke(
     if let Some(raw) = raw_method_label {
         if SymbolMap::is_opaque_m_sym(raw) {
             if let Ok(binding) = sym_map.resolve_session_method(raw) {
-                if binding.domain == source.primary_entity() {
-                    return Ok(binding.entry_id);
+                if binding.domain.as_str() == source.primary_entity() {
+                    return Ok(binding.entry_id.to_string());
                 }
             }
         } else if let Some((entry_id, domain, _)) = sym_map.resolve_method_symbol_triple(raw) {
@@ -72,6 +72,12 @@ pub fn catalog_entry_id_for_invoke(
     if let Some(eid) = ctx.pending_session_catalog_entry_id {
         return Ok(eid.to_string());
     }
+    if let Some(eid) = sym_map.sole_registry_entry_id() {
+        return Ok(eid.to_string());
+    }
+    if sym_map.is_unset_single_graph_session() {
+        return Ok(String::new());
+    }
     Err(CatalogOwnershipError {
         entity: source.primary_entity().to_string(),
         context: CatalogOwnershipContext::Invoke,
@@ -82,8 +88,8 @@ pub fn catalog_entry_id_for_invoke(
 pub fn infer_qualified_entity_from_stamped_source(source: &Expr) -> Option<QualifiedEntityKey> {
     let entry_id = source.session_catalog_entry_id()?;
     Some(QualifiedEntityKey::new(
-        entry_id.to_string(),
-        source.primary_entity().to_string(),
+        entry_id.clone(),
+        source.primary_entity(),
     ))
 }
 
@@ -154,7 +160,7 @@ mod tests {
     fn catalog_entry_id_for_invoke_prefers_session_stamp() {
         let map = matrix_sym_map();
         let expr = Expr::Query(crate::QueryExpr::all("LangItem"))
-            .with_session_catalog_entry_id(Some("default".into()));
+            .with_session_catalog_entry_id(Some("default"));
         let eid = catalog_entry_id_for_invoke(
             &expr,
             None,

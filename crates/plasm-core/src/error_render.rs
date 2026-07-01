@@ -8,7 +8,7 @@ use crate::schema::{
     CapabilityKind, StringSemantics, CGS,
 };
 use crate::step_semantics::{append_correction_lines, StepError};
-use crate::symbol_tuning::SymbolMap;
+use crate::symbol_tuning::SymbolSession;
 use crate::teaching_term::{resolve_parameter_slot, ParameterSlot, Symbol};
 use crate::FieldType;
 use crate::TypeError;
@@ -23,18 +23,18 @@ pub enum FeedbackStyle<'a> {
     /// Developer-oriented copy (entity names, path method segment spellings).
     CanonicalDev,
     /// LLM symbolic mode: `e#` / `m#` / `p#` aligned with prompt examples — no “zero-arity” / “kebab-case” sermons.
-    SymbolicLlm { map: &'a SymbolMap },
+    SymbolicLlm { map: &'a dyn SymbolSession },
 }
 
 #[inline]
-fn feedback_ident_symbol(map: &SymbolMap, ident: &str) -> String {
+fn feedback_ident_symbol(map: &impl SymbolSession, ident: &str) -> String {
     map.ident_sym_unambiguous(ident)
         .unwrap_or_else(|| ident.to_string())
 }
 
 fn feedback_predicate_ident_symbol(
     cgs: &CGS,
-    map: &SymbolMap,
+    map: &impl SymbolSession,
     entity: &str,
     ident: &str,
 ) -> String {
@@ -43,7 +43,7 @@ fn feedback_predicate_ident_symbol(
         .get_entity(entity)
         .is_some_and(|ent| ent.fields.contains_key(ident))
     {
-        resolved = Some(map.ident_sym_entity_field(entity, ident));
+        resolved = Some(map.ident_sym_entity_field_for("", entity, ident));
     }
     for kind in [CapabilityKind::Query, CapabilityKind::Search] {
         for cap in cgs.find_capabilities(entity, kind) {
@@ -52,7 +52,7 @@ fn feedback_predicate_ident_symbol(
                     if f.name != ident {
                         continue;
                     }
-                    let sym = map.ident_sym_cap_param(entity, cap.name.as_str(), ident);
+                    let sym = map.ident_sym_cap_param_for("", entity, cap.name.as_str(), ident);
                     match &resolved {
                         None => resolved = Some(sym),
                         Some(prev) if prev == &sym => {}
@@ -104,12 +104,12 @@ fn format_one_recovery_hint(h: &RecoveryHint, style: &FeedbackStyle<'_>) -> Stri
             },
             FeedbackStyle::SymbolicLlm { map },
         ) => {
-            let es = map.entity_sym(entity);
+            let es = map.entity_sym_for("", entity);
             let opts: Vec<String> = scope_options
                 .iter()
                 .map(|(f, t)| {
                     let ps = feedback_ident_symbol(map, f);
-                    let ts = map.entity_sym(t);
+                    let ts = map.entity_sym_for("", t);
                     format!("{es}{{{ps}={ts}(id)}}")
                 })
                 .collect();
@@ -117,7 +117,7 @@ fn format_one_recovery_hint(h: &RecoveryHint, style: &FeedbackStyle<'_>) -> Stri
                 .iter()
                 .map(|(f, t)| {
                     let ps = feedback_ident_symbol(map, f);
-                    let ts = map.entity_sym(t);
+                    let ts = map.entity_sym_for("", t);
                     format!("`{ps}` → `{ts}`")
                 })
                 .collect::<Vec<_>>()
@@ -164,17 +164,17 @@ pub fn render_query_resolve_error_for_feedback(
                     capability: _,
                     entity,
                 } => {
-                    let es = map.entity_sym(entity);
+                    let es = map.entity_sym_for("", entity);
                     format!("named query capability not found for entity {es} (check the query example lines in the prompt for `{es}`).")
                 }
                 QueryCapabilityResolveError::Ambiguous { entity, names: _ } => {
-                    let es = map.entity_sym(entity);
+                    let es = map.entity_sym_for("", entity);
                     format!(
                         "ambiguous query for entity {es}: predicate matches more than one capability; narrow filters or scope per the `;;` lines in the prompt."
                     )
                 }
                 QueryCapabilityResolveError::NoMatchingCapability { entity, message } => {
-                    let es = map.entity_sym(entity);
+                    let es = map.entity_sym_for("", entity);
                     // Avoid listing raw capability keys (`list_query`, …) in LLM-facing text; examples teach shape.
                     let msg = message
                         .split("Available:")
@@ -239,7 +239,7 @@ fn looks_like_p_sym_token(name: &str) -> bool {
 fn resolve_wire_param_name_for_feedback(name: &str, style: &FeedbackStyle<'_>) -> String {
     match style {
         FeedbackStyle::SymbolicLlm { map } if looks_like_p_sym_token(name) => {
-            map.resolve_ident(name).unwrap_or(name).to_string()
+            map.resolve_binding_field_segment(name)
         }
         _ => name.to_string(),
     }
@@ -293,7 +293,7 @@ fn string_semantics_for_wire_param(
                 c.domain.as_str() == domain.as_str() && c.name.as_str() == capability.as_str()
             })?;
             let fields = cap.object_params()?;
-            let f = fields.iter().find(|p| p.name == param)?;
+            let f = fields.iter().find(|p| p.name.as_str() == param.as_str())?;
             let nv = f.named_value(cgs).ok()?;
             if matches!(nv.field_type, FieldType::Blob) {
                 Some(crate::StringSemantics::Blob)
@@ -616,7 +616,7 @@ Check spelling, `=`, commas, and closing `)`."
                             ));
                         }
                         FeedbackStyle::SymbolicLlm { map } => {
-                            let es = map.entity_sym(ent);
+                            let es = map.entity_sym_for("", ent);
                             s.push_str(&format!(
                                 " Update-style operations listed in the prompt for `{es}` include `{joined}`."
                             ));
@@ -715,7 +715,7 @@ To point at a row, use `e#(id)` as in the examples."
                             ));
                         }
                         FeedbackStyle::SymbolicLlm { map } => {
-                            let es = map.entity_sym(ent);
+                            let es = map.entity_sym_for("", ent);
                             s.push_str(&format!(
                                 " Changing `{es}` fields is not spelled as `rename(...)` here; the prompt lists update operations such as `{joined}`."
                             ));
@@ -753,7 +753,7 @@ Use `e#(id).m#()` when the prompt shows no required parameters, or `e#(id).m#(ke
                             ));
                         }
                         FeedbackStyle::SymbolicLlm { map } => {
-                            let es = map.entity_sym(ent);
+                            let es = map.entity_sym_for("", ent);
                             s.push_str(&format!(
                                 " Field updates for `{es}` use the update operations the prompt shows (`{joined}`), not `.update(...)` as a path segment."
                             ));
@@ -798,7 +798,7 @@ fn update_invoke_method_labels_for_feedback(
         .map(|c| capability_path_method_segment(c))
         .map(|seg| match style {
             FeedbackStyle::CanonicalDev => seg.to_string(),
-            FeedbackStyle::SymbolicLlm { map } => map.method_sym(entity, seg.as_str()),
+            FeedbackStyle::SymbolicLlm { map } => map.method_sym_for("", entity, seg.as_str()),
         })
         .collect();
     v.sort();
@@ -859,13 +859,13 @@ fn correction_empty_get_parens(cgs: &CGS, entity: &str, style: &FeedbackStyle<'_
             }
         }
         FeedbackStyle::SymbolicLlm { map } => {
-            let es = map.entity_sym(entity);
+            let es = map.entity_sym_for("", entity);
             if !singletons.is_empty() {
                 let methods: Vec<String> = singletons
                     .iter()
                     .map(|c| {
                         let lab = capability_method_label_kebab(c);
-                        let ms = map.method_sym(entity, lab.as_str());
+                        let ms = map.method_sym_for("", entity, lab.as_str());
                         format!("{es}.{ms}()")
                     })
                     .collect();
@@ -895,8 +895,8 @@ fn correction_ambiguous_zero_arity_method(
             )
         }
         FeedbackStyle::SymbolicLlm { map } => {
-            let es = map.entity_sym(entity);
-            let ms = map.method_sym(entity, label);
+            let es = map.entity_sym_for("", entity);
+            let ms = map.method_sym_for("", entity, label);
             format!(
                 "ambiguous `{ms}` on `{es}` — multiple capabilities share this `m#`; use the `;;` line that matches your intent."
             )
@@ -917,8 +917,8 @@ fn correction_dotted_call_no_match(
             )
         }
         FeedbackStyle::SymbolicLlm { map } => {
-            let es = map.entity_sym(anchor_entity);
-            let ms = map.method_sym(anchor_entity, label);
+            let es = map.entity_sym_for("", anchor_entity);
+            let ms = map.method_sym_for("", anchor_entity, label);
             format!(
                 "no `{ms}(…)` create/update/delete/action matches this expression after `{es}` (check the `;;` lines in the prompt for parameters and capability shape)."
             )
@@ -937,8 +937,8 @@ fn correction_dotted_call_ambiguous(
             format!("ambiguous capability label `{label}` for entity `{anchor_entity}`")
         }
         FeedbackStyle::SymbolicLlm { map } => {
-            let es = map.entity_sym(anchor_entity);
-            let ms = map.method_sym(anchor_entity, label);
+            let es = map.entity_sym_for("", anchor_entity);
+            let ms = map.method_sym_for("", anchor_entity, label);
             format!(
                 "ambiguous `{ms}` on `{es}` — multiple operations match; use `;;` to disambiguate."
             )
@@ -957,8 +957,8 @@ fn correction_dotted_create_ambiguous(
             format!("ambiguous create label `{label}`")
         }
         FeedbackStyle::SymbolicLlm { map } => {
-            let es = map.entity_sym(anchor_entity);
-            let ms = map.method_sym(anchor_entity, label);
+            let es = map.entity_sym_for("", anchor_entity);
+            let ms = map.method_sym_for("", anchor_entity, label);
             format!(
                 "ambiguous create `{ms}` after `{es}` — multiple create lines in the prompt match; check `;;` and required scopes."
             )
@@ -984,12 +984,12 @@ fn correction_no_zero_arity_method(
 
 fn correction_no_zero_arity_method_symbolic(
     cgs: &CGS,
-    map: &SymbolMap,
+    map: &impl SymbolSession,
     entity: &str,
     label: &str,
 ) -> String {
-    let es = map.entity_sym(entity);
-    let attempt = map.method_sym(entity, label);
+    let es = map.entity_sym_for("", entity);
+    let attempt = map.method_sym_for("", entity, label);
     if let Some(ent) = cgs.get_entity(entity) {
         if ent.relations.contains_key(label) {
             let rel = feedback_ident_symbol(map, label);
@@ -1007,7 +1007,7 @@ fn correction_no_zero_arity_method_symbolic(
         for cap in cgs.find_capabilities(entity, kind) {
             if capability_is_zero_arity_invoke(cap) {
                 let seg = capability_path_method_segment(cap);
-                pipeline.push(map.method_sym(entity, seg.as_str()));
+                pipeline.push(map.method_sym_for("", entity, seg.as_str()));
             }
         }
     }
@@ -1024,7 +1024,7 @@ fn correction_no_zero_arity_method_symbolic(
         if !ups.is_empty() {
             let kb: Vec<String> = ups
                 .iter()
-                .map(|c| map.method_sym(entity, capability_path_method_segment(c).as_str()))
+                .map(|c| map.method_sym_for("", entity, capability_path_method_segment(c).as_str()))
                 .collect();
             let listed = kb.join("`, `");
             return format!(
@@ -1111,7 +1111,7 @@ fn looks_like_opaque_entity_symbol_token(token: &str) -> bool {
 
 const SESSION_ENTITY_SYMBOL_SUMMARY_CAP: usize = 6;
 
-fn format_session_entity_symbol_summary(map: &SymbolMap) -> String {
+fn format_session_entity_symbol_summary(map: &impl SymbolSession) -> String {
     let mut rows = map.exposed_entity_symbol_rows();
     rows.sort_by(|a, b| {
         let ia = Symbol::parse_index(&a.symbol, 'e')
@@ -1148,7 +1148,7 @@ fn format_session_entity_symbol_summary(map: &SymbolMap) -> String {
 
 /// Agent-facing correction when an entity root token is not in the **session** symbol table.
 fn correction_unknown_entity_symbolic_llm(
-    map: &SymbolMap,
+    map: &impl SymbolSession,
     bad: &str,
     scalar_predicate_context: bool,
 ) -> String {
@@ -1401,7 +1401,7 @@ fn correction_no_entity_ref_bridge(
                     FeedbackStyle::CanonicalDev => format!("{fname} (→ {})", t),
                     FeedbackStyle::SymbolicLlm { map } => {
                         let ps = feedback_ident_symbol(map, fname);
-                        let ts = map.entity_sym(t.as_str());
+                        let ts = map.entity_sym_for("", t.as_str());
                         format!("{ps} (→ {ts})")
                     }
                 });
@@ -1420,7 +1420,7 @@ fn correction_no_entity_ref_bridge(
                             }
                             FeedbackStyle::SymbolicLlm { map } => {
                                 let ps = feedback_ident_symbol(map, f.name.as_str());
-                                let ts = map.entity_sym(t.as_str());
+                                let ts = map.entity_sym_for("", t.as_str());
                                 format!("{ps} (→ {ts})")
                             }
                         });
@@ -1435,7 +1435,7 @@ fn correction_no_entity_ref_bridge(
                 }
                 FeedbackStyle::SymbolicLlm { map } => {
                     let rs = feedback_ident_symbol(map, rname.as_str());
-                    let ts = map.entity_sym(rel.target_resource.as_str());
+                    let ts = map.entity_sym_for("", rel.target_resource.as_str());
                     format!("{rs} (→ {ts})")
                 }
             });
@@ -1507,7 +1507,7 @@ fn levenshtein_replace_phrase_with_display(
 fn entity_label_for_feedback(entity: &str, style: &FeedbackStyle<'_>) -> String {
     match style {
         FeedbackStyle::CanonicalDev => entity.to_string(),
-        FeedbackStyle::SymbolicLlm { map } => map.entity_sym(entity),
+        FeedbackStyle::SymbolicLlm { map } => map.entity_sym_for("", entity),
     }
 }
 
@@ -1689,7 +1689,7 @@ fn display_nav_segment(
         FeedbackStyle::CanonicalDev => canonical_seg.to_string(),
         FeedbackStyle::SymbolicLlm { map } => {
             if is_zero_arity_pipeline_method_label(cgs, entity, canonical_seg) {
-                map.method_sym(entity, canonical_seg)
+                map.method_sym_for("", entity, canonical_seg)
             } else {
                 feedback_ident_symbol(map, canonical_seg)
             }
@@ -1768,7 +1768,7 @@ fn entity_names_canonical_and_display(
         .iter()
         .map(|n| match style {
             FeedbackStyle::CanonicalDev => n.clone(),
-            FeedbackStyle::SymbolicLlm { map } => map.entity_sym(n),
+            FeedbackStyle::SymbolicLlm { map } => map.entity_sym_for("", n),
         })
         .collect();
     (canon, disp)
@@ -2045,7 +2045,7 @@ pub fn render_type_error_with_feedback(
                 FeedbackStyle::CanonicalDev => names.join(", "),
                 FeedbackStyle::SymbolicLlm { map } => names
                     .iter()
-                    .map(|name| map.entity_sym(name))
+                    .map(|name| map.entity_sym_for("", name))
                     .collect::<Vec<_>>()
                     .join(", "),
             };
@@ -2158,6 +2158,7 @@ For example: `{te}(<id>)` when you already know the id, instead of relying on `{
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cgs_federation::cgs_layer_stack;
     use crate::expr_correction::RecoveryHint;
     use crate::expr_parser;
     use crate::loader;
@@ -2387,7 +2388,7 @@ mod tests {
         );
         assert_eq!(
             feedback_ident_symbol(&map, "workers"),
-            map.ident_sym_entity_field("PipelineSnapshot", "workers")
+            map.ident_sym_entity_field_for("", "PipelineSnapshot", "workers")
         );
         assert_eq!(feedback_ident_symbol(&map, "id"), "id");
     }
@@ -2771,6 +2772,7 @@ mod tests {
         }
         let cgs = loader::load_schema_dir(&root).expect("plasm_language_matrix");
         let layers = [&cgs, &cgs];
+        let stack = cgs_layer_stack(&["github", "linear"], &layers);
         let mut exp = crate::TeachingExposureSession::new(&cgs, "github", &["LangItem"]);
         exp.expose_entities(
             &layers,
@@ -2781,11 +2783,10 @@ mod tests {
         let map = exp.symbol_map_arc();
         let err = expr_parser::parse_with_cgs_layers_program(
             "LangItem",
-            &layers,
+            &stack,
             map.clone(),
             None,
             false,
-            None,
         )
         .expect_err("homonym should fail closed");
         let se = render_parse_error_with_feedback(

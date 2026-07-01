@@ -1,5 +1,5 @@
 ---
-source: crates/plasm-core/src/prompt_render/mod.rs
+source: crates/plasm-core/src/prompt_render/tests.rs
 expression: tsv
 ---
 plasm_expr	Meaning
@@ -47,20 +47,20 @@ v14	union · v210 | v211 | v212
 v15	union · v101 | v102 | v103 | v104 | v105 | v106 | v107
 e1(p10)[p10,p21,p34,p15,p14]	→ e1 · projection · Read or edit a shared Proof document
 e1(p10)	→ e1
-e1(p10).m17()	→ e1 · opt: p32, p31 · Bind this session to a share URL or token for this slug. Later calls reuse st…
-e1(p10).m1(p3=$, p28=$, p22=$, p24=$,..)	→ e1 · opt: p4, p31 · Start a comment thread on quoted text from the document
-e1(p10).m2(p3=$, p28=$, p1=[$],..)	→ e1 · opt: p31, p4 · Apply several comment updates in one request
-e1(p10).m3(p3=$, p28=$, p29=$, p24=$,..)	→ e1 · opt: p9, p4, p31 · Reply in a thread; optionally mark it resolved in the same step
-e1(p10).m4(p3=$, p28=$, p29=$,..)	→ e1 · opt: p4, p31 · Mark a thread resolved; history stays visible
-e1(p10).m5(p3=$, p28=$, p29=$,..)	→ e1 · opt: p4, p31 · Open a resolved thread for more discussion
-e1(p10).m6(p3=$, p28=$, p29=$,..)	→ e1 · opt: p4, p31 · Accept a pending suggestion and apply it to the document
-e1(p10).m7(p3=$, p28=$, p22=$,..)	→ e1 · opt: p4, p35, p31, p33 · Propose deleting a quoted passage for a human to accept or reject
-e1(p10).m8(p3=$, p28=$, p22=$, p20=$,..)	→ e1 · opt: p4, p35, p31, p33 · Propose inserting text after a quoted passage for a human to accept or reject
-e1(p10).m9(p3=$, p28=$, p29=$,..)	→ e1 · opt: p4, p31 · Reject a pending suggestion without changing the document body
-e1(p10).m10(p3=$, p28=$, p22=$, p20=$,..)	→ e1 · opt: p4, p35, p31, p33 · Propose replacing a quoted passage with new content for a human to accept or …
-e1(p10).m12(p3=$, p11=$, p28=$,..)	→ e1 · opt: p31 · Tell the server how far you read the collaboration event stream
-e1(p10).m11(p23=$)	→ e1 · Report a bug and include this document as context
-e1(p10).m13(p3=$, p28=$, p13=$, p2=[v101{p6=$,p18=$},v103{p6=$,p12=$}],..)	→ e1 · opt: p35, p31 · Apply one batch of block edits. Use base_revision from your latest snapshot (…
-e1(p10).m16(p3=$,..)	→ e1 · opt: p30 · You MUST announce presence before you edit or comment—call this once per do…
+e1(p10).m16()	→ e1 · optional · Bind this session to a share URL or token for this slug. Later calls reuse st…
+e1(p10).m1(p3=$, p28=$, p22=$, p24=$,..)	→ e1 · optional · Start a comment thread on quoted text from the document
+e1(p10).m2(p3=$, p28=$, p1=[$],..)	→ e1 · optional · Apply several comment updates in one request
+e1(p10).m3(p3=$, p28=$, p29=$, p24=$,..)	→ e1 · optional · Reply in a thread; optionally mark it resolved in the same step
+e1(p10).m4(p3=$, p28=$, p29=$,..)	→ e1 · optional · Mark a thread resolved; history stays visible
+e1(p10).m5(p3=$, p28=$, p29=$,..)	→ e1 · optional · Open a resolved thread for more discussion
+e1(p10).m6(p3=$, p28=$, p29=$,..)	→ e1 · optional · Accept a pending suggestion and apply it to the document
+e1(p10).m7(p3=$, p28=$, p22=$,..)	→ e1 · optional · Propose deleting a quoted passage for a human to accept or reject
+e1(p10).m8(p3=$, p28=$, p22=$, p20=$,..)	→ e1 · optional · Propose inserting text after a quoted passage for a human to accept or reject
+e1(p10).m9(p3=$, p28=$, p29=$,..)	→ e1 · optional · Reject a pending suggestion without changing the document body
+e1(p10).m10(p3=$, p28=$, p22=$, p20=$,..)	→ e1 · optional · Propose replacing a quoted passage with new content for a human to accept or …
+e1(p10).m11(p3=$, p11=$, p28=$,..)	→ e1 · optional · Tell the server how far you read the collaboration event stream
+e1(p10).m12(p23=$)	→ e1 · Report a bug and include this document as context
+e1(p10).m13(p3=$, p28=$, p13=$, p2=[v101{p6=$,p18=$},v103{p6=$,p12=$}],..)	→ e1 · optional · Apply one batch of block edits. Use base_revision from your latest snapshot (…
+e1(p10).m17(p3=$,..)	→ e1 · optional · You MUST announce presence before you edit or comment—call this once per do…
 e1(p10).r1	relation e1 → [Block]
 e1(p10).r2	relation e1 → [CollaborationEvent]

@@ -9,8 +9,8 @@ expression: "plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION"
 Grammar below; symbols from `plasm_context` TSV. Reply with one valid plasm_program:
 
 Output:
-- Emit only code: one `plasm_expr`, or bindings then final roots. No prose, JSON, `return`, fences, or table rows.
-- Prefer bind → narrow/project/transform → few final roots.
+- Emit only code: one `plasm_expr`, or bindings then **one** final return line. No prose, JSON, `return`, fences, or table rows.
+- Prefer bind → narrow/project/transform → one return line (comma-separated if several roots).
 
 TSV table semantics:
 - Header: `plasm_expr<TAB>Meaning`; one tab per row. Left = syntax/metadata; right = guidance only (never copy `Meaning`).
@@ -24,19 +24,19 @@ Symbol and fill rules:
 - Replace teaching placeholders (`$`, `<id>`, `<val>`) and exemplar ids (`pikachu`, `example-name`, …) with real values before output. Never emit `$` from a teaching row.
 - Get-head: **parens = identity** (`e_type(electric)`; bare word = string identity when the slot is a name/string field), **braces = query/filter** (`e#{p#=…}`). Keyed `e#(p#=<id>)` only when that `p#` is the identity field.
 - **Quote scalars only in `{…}` predicates** (`e#{p#="EVA"}`); identity ids in `e#(…)` need no quotes. EntityRef slots use `e#(id)`, not bare scalars.
-- Remove `..` ellipses; add `opt:` keys (from `Meaning`) only as keyed assignments with real values.
+- Remove `..` ellipses; when Meaning includes `optional` (a legend token, not program syntax), add optional slots as keyed assignments with real values (see taught `p#` rows). Exemplars with `,..` in the expr column imply optional slots.
 - Projection `[p#,…]` suffixes: reuse only on expressions returning the same entity/list type.
 
 Core surface:
-- Program shape: one `plasm_expr`, or `label = …` bindings then comma-separated final roots (no `return`).
+- Program shape: one `plasm_expr`, or `label = …` bindings then **one** final return line — comma-separated roots on that line only (e.g. `a, b`), never one bare label per line (no `return` keyword).
 - Postfix/`[p#]`/`[fields]`: copy exact forms from the TSV left column (`.limit` `.sort` `.filter{…}` `.group_by` `.aggregate` …).
-- Large list reads return the first **25 rows** in `plasm_run`; further pages copy the handle from the prior result's "more pages" line into **`run_ref`** on the next **`plasm_run`** (no second **`plasm`** call).
+- Large list reads return inline TSV only when ≤25 rows and no run snapshot is stored. When a snapshot URI is present, fetch JSON via **`resources/read`** or **`plasm_read_run_artifact`** — no inline TSV is sent. Use **`next_run_ref`** on **`plasm_run`** only when no snapshot was stored for that step (no second **`plasm`** call).
 - `page(...)` is HTTP-execute program syntax only — not an MCP tool argument or `plasm` program.
 - Search when exposed: `e#~$` or `e#~"text"` (bare `e#~` is a parse error); optional scoped filters `e#~"text"[{p#=…}]`.
 
 Composition rules:
-- One binding per line; final roots last (preferred). Single-line bindings coerced; default return is first binding.
-- Row text: `label = source <<TAG` … `TAG` (equals required); optional `label = source[p#,…] <<TAG`. Minijinja `{{ }}` / `{% %}` over `rows` only inside the heredoc body — not `${}`.
+- One binding per line; **one** return line last. Multiple roots belong on that line comma-separated — not stacked as separate bare-label lines. Single-line space-separated programs coerce default return to first binding.
+- Row text: `label = source <<TAG` … `TAG` (equals required); optional `label = source[p#,…] <<TAG`. Minijinja `{{ }}` / `{% %}` over the projected list inside the heredoc body — not `${}`. `rows` is the whole list (one render, not per-row); the source binding name also works (`{% for r in sorted %}`). In the body, `p#` from the bracket list and wire names both resolve (`{{ r.p23 }}` and `{{ r.name }}`); nullable fields: `{{ r.p_field or "—" }}`.
 - Pass `binding.content` to string params; compose with `${report.content}` in later heredocs/strings (`$$` escapes `$`). Do not use `report.content` as a final root or relation receiver.
 - Action/create roots: return the action row or follow with `e#(p#=…)` get — not `created.p#` as a program root.
 - Heredoc: `<<TAG` + newline; first trimmed `TAG` line closes; pick a tag absent from the body. `markdown`/`html`/`document`/`json_text`/`blob` values use `<<TAG` … `TAG` only.
@@ -45,8 +45,14 @@ items = e_source
 filtered = items.filter{p_field>=300}
 sorted = filtered.sort(p_field, desc).limit(10)
 sorted[p_a,p_field]
+- Worked row-to-text (same `p#` in bracket and Minijinja body; wire names also work):
+report = sorted[p_a,p_field] <<PLASM_RPT_TAG
+{% for r in rows %}- {{ r.p_a }} ({{ r.p_field or "—" }})
+{% endfor %}
+PLASM_RPT_TAG
 
 Common pitfalls:
+- Many rows of one entity type: one relation read (e.g. `moves = e4(electric).r3`) beats N separate gets plus parallel roots.
 - Prefer `label = e#` then `label.filter{…}`; bare `e#.filter{…}` list-alls first. Row `.filter{…}` needs a materialized list.
 - `=>` only for derive `{ k: _.field }` or write effects (`source => e#.m#(…)`) — not relation reads (use `child = source.r#`).
 - Federated writes: one created-row return; discover anchors live — never hardcode workspace ids.

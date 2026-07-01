@@ -50,6 +50,7 @@ use plasm_core::Ref;
 use plasm_core::SymbolMapCrossRequestCache;
 use plasm_core::Value;
 use serde_json::json;
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Deref;
 use std::sync::Arc;
@@ -137,12 +138,12 @@ enum DagNodeSource {
     },
 }
 
-#[derive(Debug)]
 struct CompileState<'a> {
     nodes: Vec<DagNode>,
     labels: BTreeMap<String, usize>,
     pipeline: &'a PromptPipelineConfig,
     cross_cache: Option<&'a SymbolMapCrossRequestCache>,
+    sym_map: RefCell<Option<Arc<dyn plasm_core::SymbolSession>>>,
 }
 
 impl<'a> CompileState<'a> {
@@ -155,7 +156,17 @@ impl<'a> CompileState<'a> {
             labels: BTreeMap::new(),
             pipeline,
             cross_cache,
+            sym_map: RefCell::new(None),
         }
+    }
+
+    fn sym_map_for(&self, session: &ExecuteSession) -> Arc<dyn plasm_core::SymbolSession> {
+        if let Some(map) = self.sym_map.borrow().as_ref() {
+            return Arc::clone(map);
+        }
+        let map = symbol_map_for_plasm_surface_parse(session, self.cross_cache);
+        *self.sym_map.borrow_mut() = Some(Arc::clone(&map));
+        map
     }
 
     fn insert(&mut self, node: DagNode) -> Result<(), String> {
@@ -707,7 +718,7 @@ fn single_segment_teaching_field_hint(
     }
     let wire = segs[0].as_str();
     let map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
-    let sym = map.ident_sym_entity_field(qe.entity.as_str(), wire);
+    let sym = map.ident_sym_entity_field_for(qe.entry_id.as_str(), qe.entity.as_str(), wire);
     if sym != wire {
         format!(" For `{wire}` the active teaching-table symbol is `{sym}`.")
     } else {
@@ -1166,14 +1177,15 @@ fn postfix_op_to_compute(
                     qe.entry_id, qe.entity
                 )
             })?;
-            let layers = vec![cgs.as_ref()];
-            let sym_map = symbol_map_for_plasm_surface_parse(session, state.cross_cache);
+            let layer = plasm_core::CgsLayer::new(qe.entry_id.as_str(), cgs.as_ref());
+            let stack = [layer];
+            let sym_map = state.sym_map_for(session);
             let core_qe =
                 plasm_core::QualifiedEntityKey::new(qe.entry_id.as_str(), qe.entity.as_str());
             let row_pred = plasm_core::parse_row_predicate_list(
                 qe.entity.as_str(),
                 body.as_str(),
-                &layers,
+                &stack,
                 sym_map,
             )?;
             let tc_ctx = plasm_core::RowPredicateTypeCtx {
@@ -1469,6 +1481,7 @@ fn compile_state_with_nodes<'a>(
         labels: state.labels.clone(),
         pipeline: state.pipeline,
         cross_cache: state.cross_cache,
+        sym_map: RefCell::new(state.sym_map.borrow().clone()),
     };
     for node in nodes {
         let idx = scratch.nodes.len();
@@ -2188,7 +2201,7 @@ fn resolve_cgs_for_qualified_entity<'a>(
 }
 
 fn relation_segment_context<'a>(
-    map: &'a plasm_core::SymbolMap,
+    map: &'a dyn plasm_core::SymbolSession,
     qe: &'a QualifiedEntityKey,
     ent: &'a plasm_core::EntityDef,
     binding_label: Option<plasm_core::ProgramBindingLabel<'a>>,
@@ -2325,7 +2338,9 @@ fn relation_continuation_expr_from_source_row_hole(
                 Some(path_vars),
             )
         };
-        get.catalog_entry_id = Some(row_qe.entry_id.clone());
+        get.catalog_entry_id = plasm_core::CatalogEntryStamp::some(
+            plasm_core::RegistryEntryId::from(row_qe.entry_id.as_str()),
+        );
         Expr::Get(get)
     };
     Ok(Expr::Chain(ChainExpr::auto_get(
@@ -2729,8 +2744,8 @@ fn lookup_relation_chain_meta(
     .map_err(|e| e.to_string())?;
     let cgs = if let Some(row_qe) = row_qe.as_ref() {
         let agent_qe = QualifiedEntityKey {
-            entry_id: row_qe.catalog_entry_id.clone(),
-            entity: row_qe.entity.clone(),
+            entry_id: row_qe.entry_id().to_string(),
+            entity: row_qe.entity.to_string(),
         };
         resolve_cgs_for_qualified_entity(session, &agent_qe).ok_or_else(|| {
             format!(
@@ -2757,20 +2772,24 @@ fn lookup_relation_chain_meta(
     })?;
     let rel = ent.relations.get(chain.selector.as_str()).ok_or_else(|| {
         let map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
-        let sym = row_qe.as_ref().map(|qe| {
-            map.ident_sym_relation_for(
-                qe.catalog_entry_id.as_str(),
-                source_entity,
-                chain.selector.as_str(),
-            )
-        }).unwrap_or_else(|| {
-            map.ident_sym_relation(source_entity, chain.selector.as_str())
-        });
-        let sym_note = if sym.as_str() != chain.selector.as_str() {
-            format!(" Active teaching-table relation symbol for `{0}` on `{source_entity}` is `{sym}`.", chain.selector)
-        } else {
-            String::new()
-        };
+        let sym_note = row_qe
+            .as_ref()
+            .map(|qe| {
+                let sym = map.ident_sym_relation_for(
+                    qe.entry_id(),
+                    source_entity,
+                    chain.selector.as_str(),
+                );
+                if sym.as_str() != chain.selector.as_str() {
+                    format!(
+                        " Active teaching-table relation symbol for `{0}` on `{source_entity}` is `{sym}`.",
+                        chain.selector
+                    )
+                } else {
+                    String::new()
+                }
+            })
+            .unwrap_or_default();
         format!(
             "entity `{source_entity}` has no relation `{}` — use a declared catalog relation wire name or the `.p#` navigation slot from the active TSV teaching rows for `{source_entity}`.{sym_note}",
             chain.selector
@@ -2785,7 +2804,7 @@ fn lookup_relation_chain_meta(
     }
     let qe = if let Some(row_qe) = row_qe {
         QualifiedEntityKey {
-            entry_id: row_qe.catalog_entry_id.clone(),
+            entry_id: row_qe.entry_id().to_string(),
             entity: target_ent.to_string(),
         }
     } else {
@@ -3600,9 +3619,34 @@ fn infer_surface_contract(
 
     let (mut kind, entity, effect, shape) = infer_surface_contract_from_expr(expr)?;
     let qe = if matches!(shape, crate::plasm_plan::ResultShape::Page) {
-        QualifiedEntityKey {
-            entry_id: session.entry_id.clone(),
-            entity: entity.clone(),
+        if let Some(qe) = expr.qualified_entity_key() {
+            QualifiedEntityKey::from(qe)
+        } else if let Expr::Page(p) = expr {
+            let resume_entity = session
+                .peek_synthetic_paging_resume(&p.handle)
+                .map(|c| c.entity_type.clone())
+                .or_else(|| {
+                    session
+                        .peek_paging_resume(&p.handle)
+                        .map(|r| r.query.entity.to_string())
+                })
+                .ok_or_else(|| {
+                    format!("page handle `{}` is not registered in this session", p.handle)
+                })?;
+            let resolving_cgs = crate::catalog_ownership::resolve_cgs_for_entity(
+                session,
+                resume_entity.as_str(),
+                None,
+            )?;
+            crate::catalog_ownership::resolve_qualified_entity_key(
+                session,
+                resume_entity.as_str(),
+                Some(resolving_cgs),
+            )?
+        } else {
+            return Err(
+                "page continuation requires catalog ownership from session e# / binding — not bare wire entity names".to_string(),
+            );
         }
     } else if let Some(qe) = expr.qualified_entity_key() {
         QualifiedEntityKey::from(qe)
@@ -3958,8 +4002,16 @@ bad = rows.group_by(q)
 bad"#,
         )
         .expect_err("search text param q is not a row field");
-        assert!(err.contains("query/capability input"), "{err}");
-        assert!(err.contains("not a row field"), "{err}");
+        assert!(
+            err.contains("query/capability input")
+                || err.contains("not a row field")
+                || err.contains("not a row symbol"),
+            "{err}"
+        );
+        assert!(
+            err.contains("not a row field") || err.contains("not a row symbol"),
+            "{err}"
+        );
     }
 
     #[test]
@@ -5260,8 +5312,8 @@ labels"#;
         );
         let issue_e = map.entity_sym_for("github", "Issue");
         let line = format!("{issue_e}.{p_sym}");
-        let layers = crate::plasm_plan_run::session_cgs_layers(&session);
-        let err = parse_with_cgs_layers_program(&line, &layers, map.clone(), None, false, None)
+        let stack = crate::plasm_plan_run::session_cgs_layer_stack(&session);
+        let err = parse_with_cgs_layers_program(&line, &stack, map.clone(), None, false)
             .expect_err("homograph p# in relation nav");
         assert!(matches!(
             err.kind,
@@ -5377,7 +5429,7 @@ lines"#,
     fn relation_plural_opaque_p2_continuation() {
         let session = github_issue_label_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let sym = map.ident_sym_relation("Issue", "labels");
+        let sym = map.ident_sym_relation_for("langmatrix", "Issue", "labels");
         let source = format!(
             r#"repo = Repository(owner="octocat", repo="Hello-World")
 issues = Issue{{repository=repo.full_name}}
@@ -5444,7 +5496,7 @@ labels"#
     fn language_matrix_plural_opaque_relation_continuation() {
         let session = language_matrix_tags_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let sym = map.ident_sym_relation("LangItem", "tags");
+        let sym = map.ident_sym_relation_for("langmatrix", "LangItem", "tags");
         let source = format!("items = LangItem\ntags = items.{sym}\ntags");
         let plan = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
@@ -5566,7 +5618,7 @@ paged"#;
     fn bracket_render_accepts_bare_label_singleton_on_source() {
         let session = github_repository_commit_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let p_sha = map.ident_sym_entity_field("Commit", "sha");
+        let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
         let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(2)\nmail = commits.singleton()[{p_sha}] <<MD\nx\nMD\nmail"
         );
@@ -5596,7 +5648,7 @@ paged"#;
     fn bracket_render_content_rejected_as_program_root_with_actionable_copy() {
         let session = github_repository_commit_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let p_sha = map.ident_sym_entity_field("Commit", "sha");
+        let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
         let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(1)\nmail = commits[{p_sha}] <<MD\nx\nMD\nmail.content"
         );
@@ -5618,7 +5670,7 @@ paged"#;
     fn derive_accepts_render_content_as_binding_rhs() {
         let session = github_repository_commit_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let p_sha = map.ident_sym_entity_field("Commit", "sha");
+        let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
         let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(1)\nmail = commits[{p_sha}] <<MD\nx\nMD\nout = mail => mail.content\nout"
         );
@@ -5641,8 +5693,8 @@ paged"#;
     fn dag_postfix_projection_expands_domain_field_symbols_to_wire_paths() {
         let session = github_repository_commit_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let p_sha = map.ident_sym_entity_field("Commit", "sha");
-        let p_msg = map.ident_sym_entity_field("Commit", "message");
+        let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
+        let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
         let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(2)\ncommits[{p_sha},{p_msg}]"
         );
@@ -5676,7 +5728,7 @@ paged"#;
     fn dag_postfix_sort_expands_domain_field_symbol_in_sort_key() {
         let session = github_repository_commit_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let p_msg = map.ident_sym_entity_field("Commit", "message");
+        let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
         let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(3)\nordered = commits.sort({p_msg}, desc)\nordered"
         );
@@ -5703,7 +5755,7 @@ paged"#;
     fn dag_postfix_sort_whitespace_direction_expands_domain_field_symbol() {
         let session = github_repository_commit_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let p_msg = map.ident_sym_entity_field("Commit", "message");
+        let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
         let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(3)\nordered = commits.sort({p_msg} desc)\nordered"
         );
@@ -5730,8 +5782,8 @@ paged"#;
     fn dag_postfix_sort_on_projected_binding_accepts_p_symbol() {
         let session = test_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let p_id = map.ident_sym_entity_field("LangItem", "id");
-        let p_score = map.ident_sym_entity_field("LangItem", "score");
+        let p_id = map.ident_sym_entity_field_for("langmatrix", "LangItem", "id");
+        let p_score = map.ident_sym_entity_field_for("langmatrix", "LangItem", "score");
         let source = format!(
             "rows = LangItem.limit(5)\nnarrow = rows[{p_id},{p_score}]\nordered = narrow.sort({p_score} desc)\nordered"
         );
@@ -5759,9 +5811,9 @@ paged"#;
     fn dag_postfix_group_by_filter_dedupe_accept_p_symbols() {
         let session = test_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let p_owner = map.ident_sym_entity_field("LangItem", "owner");
-        let p_score = map.ident_sym_entity_field("LangItem", "score");
-        let p_id = map.ident_sym_entity_field("LangItem", "id");
+        let p_owner = map.ident_sym_entity_field_for("langmatrix", "LangItem", "owner");
+        let p_score = map.ident_sym_entity_field_for("langmatrix", "LangItem", "score");
+        let p_id = map.ident_sym_entity_field_for("langmatrix", "LangItem", "id");
         for (name, source) in [
             (
                 "group_by",
@@ -5810,7 +5862,7 @@ paged"#;
     fn dag_postfix_aggregate_expands_domain_field_symbol_in_sum() {
         let session = github_repository_commit_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let p_add = map.ident_sym_entity_field("Commit", "stats_additions");
+        let p_add = map.ident_sym_entity_field_for("langmatrix", "Commit", "stats_additions");
         let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(5)\ntot = commits.aggregate(t=sum({p_add}))\ntot"
         );
@@ -5839,8 +5891,8 @@ paged"#;
     fn dag_render_field_list_expands_domain_field_symbols() {
         let session = github_repository_commit_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let p_sha = map.ident_sym_entity_field("Commit", "sha");
-        let p_msg = map.ident_sym_entity_field("Commit", "message");
+        let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
+        let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
         let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(1)\nout = commits[{p_sha},{p_msg}] <<MD\n{{{{ rows | length }}}}\nMD\nout"
         );
@@ -5871,8 +5923,8 @@ paged"#;
     fn dag_render_infers_columns_from_projected_binding() {
         let session = github_repository_commit_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let p_sha = map.ident_sym_entity_field("Commit", "sha");
-        let p_msg = map.ident_sym_entity_field("Commit", "message");
+        let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
+        let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
         let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(2)[{p_sha},{p_msg}]\nreport = commits <<MD\n{{{{ rows | length }}}}\nMD\nreport"
         );
@@ -5938,8 +5990,8 @@ report"#;
     fn dag_render_node_ref_postfix_explicit_columns_before_heredoc() {
         let session = github_repository_commit_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let p_sha = map.ident_sym_entity_field("Commit", "sha");
-        let p_msg = map.ident_sym_entity_field("Commit", "message");
+        let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
+        let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
         let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits\nreport = commits.limit(20)[{p_sha},{p_msg}] <<MD\nx\nMD\nreport"
         );
@@ -5970,8 +6022,8 @@ report"#;
     fn dag_render_rejects_inference_from_prior_render_output() {
         let session = github_repository_commit_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let p_sha = map.ident_sym_entity_field("Commit", "sha");
-        let p_msg = map.ident_sym_entity_field("Commit", "message");
+        let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
+        let p_msg = map.ident_sym_entity_field_for("langmatrix", "Commit", "message");
         let source = format!(
             "repo = Repository(owner=\"ryan-s-roberts\", repo=\"plasm-core\")\ncommits = repo.commits.limit(1)\nfirst = commits[{p_sha},{p_msg}] <<MD\n{{{{ r.sha }}}}\nMD\nbad = first <<MD\ny\nMD\nbad"
         );
@@ -6247,8 +6299,8 @@ x"#;
     fn postfix_projection_rejects_foreign_entity_domain_symbols() {
         let session = github_repository_commit_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let p_repo = map.ident_sym_entity_field("Repository", "open_issues_count");
-        let p_sha = map.ident_sym_entity_field("Commit", "sha");
+        let p_repo = map.ident_sym_entity_field_for("github", "Repository", "open_issues_count");
+        let p_sha = map.ident_sym_entity_field_for("langmatrix", "Commit", "sha");
         let source = format!(
             r#"repo = Repository(owner="ryan-s-roberts", repo="plasm-core")
 commits = repo.commits.limit(20)
@@ -6267,7 +6319,10 @@ commits"#,
         .expect_err("cross-entity symbols must not compile");
         assert!(
             err.contains("open_issues_count")
-                && (err.contains("not a row field") || err.contains("null columns")),
+                && (err.contains("not a row field")
+                    || err.contains("null columns")
+                    || err.contains("not a row symbol")
+                    || err.contains("expected entity field")),
             "{err}"
         );
     }

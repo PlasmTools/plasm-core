@@ -76,7 +76,7 @@ async fn langitem_create_p_symbols_execute_and_materialize_post_body() {
     let cap = cgs
         .get_capability("langitem_create")
         .expect("langitem_create");
-    let method_sym = map.method_sym("LangItem", cap.name.as_str());
+    let method_sym = map.method_sym_for("langmatrix", "LangItem", cap.name.as_str());
     let p_title = map.ident_sym_cap_param_for(
         language_matrix::MATRIX_ENTRY_ID,
         "LangItem",

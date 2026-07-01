@@ -199,7 +199,7 @@ pub async fn run_repl(
                     line.trim(),
                     cgs.as_ref(),
                     &lexicon,
-                    symbol_map,
+                    symbol_map.map(|m| m as std::sync::Arc<dyn plasm_core::SymbolSession>),
                 ) {
                     Err((e, work, extra_hints)) => {
                         let sym_map = pipeline.with_focus_spec(prompt_focus.as_deref(), |focus| {

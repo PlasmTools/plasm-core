@@ -91,8 +91,8 @@ pub struct PlanQualifiedEntityKey {
 impl From<crate::QualifiedEntityKey> for PlanQualifiedEntityKey {
     fn from(q: crate::QualifiedEntityKey) -> Self {
         Self {
-            entry_id: q.catalog_entry_id,
-            entity: q.entity,
+            entry_id: q.entry_id.into(),
+            entity: q.entity.into(),
         }
     }
 }

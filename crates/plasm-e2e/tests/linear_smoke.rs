@@ -12,6 +12,7 @@ use plasm_core::Expr;
 use plasm_core::FocusSpec;
 use plasm_core::Predicate;
 use plasm_core::QueryExpr;
+use plasm_core::CgsLayer;
 use plasm_core::SymbolMap;
 
 fn linear_cgs() -> plasm_core::CGS {
@@ -32,11 +33,11 @@ fn linear_issue_search_and_views_parse() {
     let cgs = linear_cgs();
     let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
     let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
-    let layers = [&cgs];
+    let stack = [CgsLayer::new("linear", &cgs)];
 
     let search = parse_with_cgs_layers(
         r#"Issue.search(q="bug", team_key="ENG")"#,
-        &layers,
+        &stack,
         sym_map.clone(),
     )
     .expect("Issue.search");
@@ -45,10 +46,10 @@ fn linear_issue_search_and_views_parse() {
     };
     assert_eq!(q.capability_name.as_deref(), Some("issue_search"));
 
-    parse_with_cgs_layers("IssueContext(ENG-42)", &layers, sym_map.clone())
+    parse_with_cgs_layers("IssueContext(ENG-42)", &stack, sym_map.clone())
         .expect("IssueContext get");
-    parse_with_cgs_layers("MyWorkSnapshot", &layers, sym_map.clone()).expect("MyWorkSnapshot view");
-    parse_with_cgs_layers("Team(ENG)", &layers, sym_map).expect("Team get");
+    parse_with_cgs_layers("MyWorkSnapshot", &stack, sym_map.clone()).expect("MyWorkSnapshot view");
+    parse_with_cgs_layers("Team(ENG)", &stack, sym_map).expect("Team get");
 }
 
 #[test]

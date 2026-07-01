@@ -651,7 +651,7 @@ pub(crate) fn try_parse_operation_continuation(
         return None;
     }
     let trimmed = program.trim();
-    let layers = crate::plasm_plan_run::session_cgs_layers(es);
+    let stack = crate::plasm_plan_run::session_cgs_layer_stack(es);
     let map = crate::symbol_map_resolve::resolve_session_symbol_map(
         &crate::symbol_map_resolve::SessionSymbolMapContext {
             session: es,
@@ -659,7 +659,7 @@ pub(crate) fn try_parse_operation_continuation(
         },
     );
     let parsed = plasm_core::expr_parser::parse_with_cgs_layers_program(
-        trimmed, &layers, map, None, false, None,
+        trimmed, &stack, map, None, false,
     )
     .ok()?;
     match parsed.expr {

@@ -80,6 +80,7 @@
 //!
 #![allow(clippy::result_large_err)]
 
+pub mod catalog_id;
 pub mod bind_wire_validate;
 pub mod catalog_il;
 pub mod catalog_ownership;
@@ -159,7 +160,8 @@ pub use catalog_ownership::{
 };
 pub use cgs_context::{CgsContext, Prefix};
 pub use cgs_federation::{
-    CatalogResolver, FederationDispatch, FederationResolveError, QualifiedEntityKey,
+    cgs_layer_stack, cgs_layer_stack_from_contexts, lookup_capability_in_layer_stack,
+    CatalogResolver, CgsLayer, FederationDispatch, FederationResolveError, QualifiedEntityKey,
 };
 pub use comp_canonical::plasm_comp_commit_canonical;
 pub use connect_profile::{
@@ -186,6 +188,10 @@ pub use expr::{
     OPERATION_EXPR_PRIMARY_ENTITY, PAGE_EXPR_PRIMARY_ENTITY,
 };
 pub use expr_sugar::rewrite_id_field_brace_query_to_get;
+pub use catalog_id::{
+    cgs_session_catalog_id, cgs_symbol_map_entry_key, deserialize_catalog_stamp,
+    serialize_catalog_stamp, CatalogEntryStamp, EmptyRegistryEntryId, SessionCatalogEntryId,
+};
 pub use identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityId, EntityName, PathMethodSegment,
     RegistryEntryId, RelationName,
@@ -306,8 +312,9 @@ pub use symbol_tuning::{
     strip_prompt_expression_annotations, symbol_map_cache_key_federated,
     symbol_map_cache_key_single_catalog, symbol_map_for_prompt, wire_surface_for_parse,
     wire_surface_for_teaching_session, ExposedEntitySymbolRow, ExposedRelationSymbolRow,
-    ExposureEntityKey, FocusSpec, SymbolMap, SymbolMapCacheKey, SymbolMapCrossRequestCache,
-    SymbolResolveError, TeachingExposureSession,
+    ExposureEntityKey, FocusSpec, CatalogScope, SymbolAllocate, SymbolMap, SymbolMapCacheKey,
+    SymbolMapCrossRequestCache, SymbolRender, SymbolResolve, SymbolResolveError, SymbolSession,
+    TeachingExposureSession,
 };
 pub use template_interpolate::{
     dollar_interpolation_roots, interpolate_string, interpolate_string_map,

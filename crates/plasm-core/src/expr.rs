@@ -1,3 +1,4 @@
+use crate::catalog_id::CatalogEntryStamp;
 use crate::cgs_federation::QualifiedEntityKey;
 use crate::identity::{CapabilityName, EntityId, EntityName};
 use crate::operation_handle::OperationHandle;
@@ -124,8 +125,12 @@ pub struct QueryExpr {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability_name: Option<CapabilityName>,
     /// Owning registry `entry_id` when the surface head was a session `e#` symbol (federated disambiguation).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub catalog_entry_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "CatalogEntryStamp::is_none",
+        with = "crate::catalog_id::catalog_entry_stamp"
+    )]
+    pub catalog_entry_id: CatalogEntryStamp,
 }
 
 /// Get expression: fetch a specific resource by reference.
@@ -136,8 +141,12 @@ pub struct GetExpr {
     /// Optional CML path bindings overriding [`Ref::key`] for the same names.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path_vars: Option<IndexMap<String, Value>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub catalog_entry_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "CatalogEntryStamp::is_none",
+        with = "crate::catalog_id::catalog_entry_stamp"
+    )]
+    pub catalog_entry_id: CatalogEntryStamp,
     /// When set, dispatches to this GET capability instead of the entity default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability_name: Option<CapabilityName>,
@@ -149,11 +158,30 @@ pub struct CreateExpr {
     pub capability: CapabilityName,
     pub entity: EntityName,
     pub input: InvokeInputPayload,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub catalog_entry_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "CatalogEntryStamp::is_none",
+        with = "crate::catalog_id::catalog_entry_stamp"
+    )]
+    pub catalog_entry_id: CatalogEntryStamp,
     /// Surface receiver for dotted-call create (`Team(1).team-create-space(…)`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dotted_receiver: Option<Box<Expr>>,
+}
+
+impl CreateExpr {
+    /// Materialize catalog stamp from dotted receiver when missing (parse boundary).
+    pub fn materialize_catalog_from_receiver(&mut self) {
+        if self.catalog_entry_id.is_none() {
+            if let Some(id) = self
+                .dotted_receiver
+                .as_ref()
+                .and_then(|r| r.session_catalog_entry_id())
+            {
+                self.catalog_entry_id = CatalogEntryStamp::some(id.clone());
+            }
+        }
+    }
 }
 
 /// Delete expression: remove a resource by ID.
@@ -163,8 +191,12 @@ pub struct DeleteExpr {
     pub target: Ref,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path_vars: Option<IndexMap<String, Value>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub catalog_entry_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "CatalogEntryStamp::is_none",
+        with = "crate::catalog_id::catalog_entry_stamp"
+    )]
+    pub catalog_entry_id: CatalogEntryStamp,
 }
 
 /// Invoke expression: call a capability on a resource.
@@ -176,8 +208,12 @@ pub struct InvokeExpr {
     pub input: Option<InvokeInputPayload>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path_vars: Option<IndexMap<String, Value>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub catalog_entry_id: Option<String>,
+    #[serde(
+        default,
+        skip_serializing_if = "CatalogEntryStamp::is_none",
+        with = "crate::catalog_id::catalog_entry_stamp"
+    )]
+    pub catalog_entry_id: CatalogEntryStamp,
 }
 
 /// Chain expression: Kleisli composition via EntityRef field navigation.
@@ -194,6 +230,13 @@ pub struct ChainExpr {
     pub source: Box<Expr>,
     /// Name of the EntityRef field on the source entity to follow.
     pub selector: String,
+    /// Owning registry row when stamped at parse (avoids re-walking `source`).
+    #[serde(
+        default,
+        skip_serializing_if = "CatalogEntryStamp::is_none",
+        with = "crate::catalog_id::catalog_entry_stamp"
+    )]
+    pub catalog_entry_id: CatalogEntryStamp,
     /// What to do with the resolved Ref — auto-GET or explicit continuation.
     #[serde(default)]
     pub step: ChainStep,
@@ -218,6 +261,7 @@ impl ChainExpr {
         Self {
             source: Box::new(source),
             selector: selector.into(),
+            catalog_entry_id: CatalogEntryStamp::none(),
             step: ChainStep::AutoGet,
         }
     }
@@ -252,7 +296,7 @@ impl QueryExpr {
             pagination: None,
             hydrate: None,
             capability_name: None,
-            catalog_entry_id: None,
+            catalog_entry_id: CatalogEntryStamp::none(),
         }
     }
 
@@ -265,7 +309,7 @@ impl QueryExpr {
             pagination: None,
             hydrate: None,
             capability_name: None,
-            catalog_entry_id: None,
+            catalog_entry_id: CatalogEntryStamp::none(),
         }
     }
 
@@ -282,7 +326,7 @@ impl QueryExpr {
             pagination: None,
             hydrate: None,
             capability_name: None,
-            catalog_entry_id: None,
+            catalog_entry_id: CatalogEntryStamp::none(),
         }
     }
 
@@ -317,7 +361,7 @@ impl GetExpr {
         Self {
             reference: Ref::new(entity_type, id),
             path_vars: None,
-            catalog_entry_id: None,
+            catalog_entry_id: CatalogEntryStamp::none(),
             capability_name: None,
         }
     }
@@ -333,7 +377,7 @@ impl GetExpr {
         Self {
             reference,
             path_vars: None,
-            catalog_entry_id: None,
+            catalog_entry_id: CatalogEntryStamp::none(),
             capability_name: None,
         }
     }
@@ -346,7 +390,7 @@ impl GetExpr {
         Self {
             reference,
             path_vars,
-            catalog_entry_id: None,
+            catalog_entry_id: CatalogEntryStamp::none(),
             capability_name: None,
         }
     }
@@ -362,7 +406,7 @@ impl CreateExpr {
             capability: capability.into(),
             entity: entity.into(),
             input: input.into(),
-            catalog_entry_id: None,
+            catalog_entry_id: CatalogEntryStamp::none(),
             dotted_receiver: None,
         }
     }
@@ -378,7 +422,7 @@ impl DeleteExpr {
             capability: capability.into(),
             target: Ref::new(entity_type, id),
             path_vars: None,
-            catalog_entry_id: None,
+            catalog_entry_id: CatalogEntryStamp::none(),
         }
     }
 
@@ -388,7 +432,7 @@ impl DeleteExpr {
             capability: capability.into(),
             target,
             path_vars: None,
-            catalog_entry_id: None,
+            catalog_entry_id: CatalogEntryStamp::none(),
         }
     }
 
@@ -402,7 +446,7 @@ impl DeleteExpr {
             capability: capability.into(),
             target,
             path_vars,
-            catalog_entry_id: None,
+            catalog_entry_id: CatalogEntryStamp::none(),
         }
     }
 }
@@ -420,7 +464,7 @@ impl InvokeExpr {
             target: Ref::new(entity_type, id),
             input: input.map(InvokeInputPayload::from),
             path_vars: None,
-            catalog_entry_id: None,
+            catalog_entry_id: CatalogEntryStamp::none(),
         }
     }
 
@@ -435,7 +479,7 @@ impl InvokeExpr {
             target,
             input: input.map(InvokeInputPayload::from),
             path_vars: None,
-            catalog_entry_id: None,
+            catalog_entry_id: CatalogEntryStamp::none(),
         }
     }
 
@@ -451,7 +495,7 @@ impl InvokeExpr {
             target,
             input: input.map(InvokeInputPayload::from),
             path_vars,
-            catalog_entry_id: None,
+            catalog_entry_id: CatalogEntryStamp::none(),
         }
     }
 }
@@ -562,14 +606,17 @@ impl Expr {
     }
 
     /// Registry `entry_id` when the surface entity token was a session `e#` symbol.
-    pub fn session_catalog_entry_id(&self) -> Option<&str> {
+    pub fn session_catalog_entry_id(&self) -> Option<&crate::identity::RegistryEntryId> {
         match self {
-            Expr::Query(q) => q.catalog_entry_id.as_deref(),
-            Expr::Get(g) => g.catalog_entry_id.as_deref(),
-            Expr::Create(c) => c.catalog_entry_id.as_deref(),
-            Expr::Delete(d) => d.catalog_entry_id.as_deref(),
-            Expr::Invoke(i) => i.catalog_entry_id.as_deref(),
-            Expr::Chain(c) => c.source.session_catalog_entry_id(),
+            Expr::Query(q) => q.catalog_entry_id.as_ref(),
+            Expr::Get(g) => g.catalog_entry_id.as_ref(),
+            Expr::Create(c) => c.catalog_entry_id.as_ref(),
+            Expr::Delete(d) => d.catalog_entry_id.as_ref(),
+            Expr::Invoke(i) => i.catalog_entry_id.as_ref(),
+            Expr::Chain(c) => c
+                .catalog_entry_id
+                .as_ref()
+                .or_else(|| c.source.session_catalog_entry_id()),
             Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => None,
         }
     }
@@ -578,24 +625,27 @@ impl Expr {
     pub fn qualified_entity_key(&self) -> Option<QualifiedEntityKey> {
         let entry_id = self.session_catalog_entry_id()?;
         Some(QualifiedEntityKey::new(
-            entry_id.to_string(),
-            self.primary_entity().to_string(),
+            entry_id.clone(),
+            self.primary_entity(),
         ))
     }
 
     /// Attach session catalog ownership from a parsed opaque `e#` head.
-    pub fn with_session_catalog_entry_id(mut self, catalog_entry_id: Option<String>) -> Self {
+    pub fn with_session_catalog_entry_id(
+        mut self,
+        catalog_entry_id: Option<impl AsRef<str>>,
+    ) -> Self {
+        let stamp = CatalogEntryStamp::from_opt_str(catalog_entry_id);
         match &mut self {
-            Expr::Query(q) => q.catalog_entry_id = catalog_entry_id,
-            Expr::Get(g) => g.catalog_entry_id = catalog_entry_id,
-            Expr::Create(c) => c.catalog_entry_id = catalog_entry_id,
-            Expr::Delete(d) => d.catalog_entry_id = catalog_entry_id,
-            Expr::Invoke(i) => i.catalog_entry_id = catalog_entry_id,
+            Expr::Query(q) => q.catalog_entry_id = stamp,
+            Expr::Get(g) => g.catalog_entry_id = stamp,
+            Expr::Create(c) => c.catalog_entry_id = stamp,
+            Expr::Delete(d) => d.catalog_entry_id = stamp,
+            Expr::Invoke(i) => i.catalog_entry_id = stamp,
             Expr::Chain(c) => {
-                *c.source = c
-                    .source
-                    .clone()
-                    .with_session_catalog_entry_id(catalog_entry_id);
+                if c.catalog_entry_id.is_none() {
+                    c.catalog_entry_id = stamp;
+                }
             }
             Expr::Page(_) | Expr::Wait(_) | Expr::Cancel(_) | Expr::TeachingValue { .. } => {}
         }

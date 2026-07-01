@@ -706,12 +706,12 @@ pub(crate) fn ensure_relation_expr_matches_plan(
     .map_err(|e| e.to_string())?;
     let source_cgs = if let Some(qe) = row_qe.as_ref() {
         es.contexts_by_entry
-            .get(qe.catalog_entry_id.as_str())
+            .get(qe.entry_id())
             .map(|ctx| ctx.cgs.as_ref())
             .ok_or_else(|| {
                 format!(
                     "plan.nodes[{index}].relation unknown catalog entity `{}` for entry `{}`",
-                    qe.entity, qe.catalog_entry_id
+                    qe.entity, qe.entry_id()
                 )
             })?
     } else {

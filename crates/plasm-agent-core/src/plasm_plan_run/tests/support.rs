@@ -1,6 +1,7 @@
 use super::super::*;
 use plasm_core::load_schema;
 use plasm_core::CgsContext;
+use plasm_core::TeachingExposureSession;
 use std::path::PathBuf;
 
 pub(super) fn test_session() -> ExecuteSession {

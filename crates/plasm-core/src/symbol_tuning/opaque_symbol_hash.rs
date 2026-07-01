@@ -17,28 +17,28 @@ pub(crate) fn hash_exposure_session_rows(exposure: &TeachingExposureSession) -> 
         row.hash(&mut h);
     }
     exposure.surface.fingerprint().hash(&mut h);
-    for ((entry, entity), sym) in &exposure.qualified_entity_to_sym {
-        entry.hash(&mut h);
-        entity.hash(&mut h);
-        sym.hash(&mut h);
+    for (key, sym) in &exposure.tables.qualified_entity_to_sym {
+        key.entry_id.as_str().hash(&mut h);
+        key.entity.as_str().hash(&mut h);
+        sym.as_wire().hash(&mut h);
     }
-    for ((entry, entity, method), sym) in &exposure.method_to_sym {
-        entry.hash(&mut h);
-        entity.hash(&mut h);
-        method.hash(&mut h);
-        sym.hash(&mut h);
+    for (key, sym) in &exposure.tables.method_to_sym {
+        key.entry_id.as_str().hash(&mut h);
+        key.domain.as_str().hash(&mut h);
+        key.capability.as_str().hash(&mut h);
+        sym.as_wire().hash(&mut h);
     }
-    for (fp, sym) in &exposure.slot_fingerprint_to_sym {
+    for (fp, sym) in &exposure.ledger.slot_fingerprint_to_sym {
         fp.hash(&mut h);
-        sym.hash(&mut h);
+        sym.as_wire().hash(&mut h);
     }
-    for (fp, sym) in &exposure.relation_fingerprint_to_sym {
+    for (fp, sym) in &exposure.ledger.relation_fingerprint_to_sym {
         fp.hash(&mut h);
-        sym.hash(&mut h);
+        sym.as_wire().hash(&mut h);
     }
-    for (fp, sym) in &exposure.value_domain_fp_to_sym {
+    for (fp, sym) in &exposure.ledger.value_domain_fp_to_sym {
         fp.hash(&mut h);
-        sym.hash(&mut h);
+        sym.as_wire().hash(&mut h);
     }
     h.finish()
 }

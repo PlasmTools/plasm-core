@@ -24,6 +24,7 @@ pub fn rewrite_id_field_brace_query_to_get(expr: Expr, cgs: &CGS) -> Expr {
             Expr::Chain(crate::expr::ChainExpr {
                 source: Box::new(source),
                 selector: ch.selector,
+                catalog_entry_id: ch.catalog_entry_id,
                 step: ch.step,
             })
         }

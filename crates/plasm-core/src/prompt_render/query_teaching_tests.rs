@@ -5,7 +5,29 @@ use std::collections::HashMap;
 use crate::loader::load_schema_dir;
 use crate::symbol_tuning::{symbol_map_for_prompt, FocusSpec};
 
-use super::{collect_entity_teaching_block, prompt_line_valid_cache_seed_cgs};
+use super::{
+    collect_entity_teaching_block, parse_trailing_projection_bracket, prompt_line_valid_cache_seed_cgs,
+    RenderConfig, TSV_TEACHING_TABLE_HEADER, TEACHING_VALID_EXPR_MARKER,
+};
+
+fn matrix_fixture_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_prompt_matrix")
+}
+
+fn meaning_cells(tsv: &str) -> impl Iterator<Item = &str> {
+    tsv.lines()
+        .skip(1)
+        .filter_map(|line| line.split_once('\t').map(|(_, m)| m))
+}
+
+fn assert_meaning_cells_no_legacy_opt_prefix(tsv: &str) {
+    for meaning in meaning_cells(tsv) {
+        assert!(
+            !meaning.contains("opt:"),
+            "Meaning column must use compact `optional` token, not `opt:` lists: {meaning:?}"
+        );
+    }
+}
 
 /// B5 — teaching round-trip guard. The teaching TSV *is* the language surface; a synthesized
 /// exemplar that does not parse under the live parser is a generated-surface defect of the same
@@ -16,8 +38,7 @@ fn teaching_tsv_exemplars_round_trip_parser() {
     use crate::expr_parser::parse_with_cgs_layers_program;
     use crate::PromptPipelineConfig;
 
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../fixtures/schemas/plasm_prompt_matrix");
+    let dir = matrix_fixture_dir();
     let cgs = load_schema_dir(&dir).expect("load plasm_prompt_matrix");
     // Use the same teaching-exposure symbol map the renderer uses so `e#`/`p#` numbering matches.
     let sym_map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
@@ -32,9 +53,9 @@ fn teaching_tsv_exemplars_round_trip_parser() {
         if expr.is_empty() || expr == "plasm_expr" {
             continue;
         }
-        // Metadata-only rows (`p#` / `v#` gloss, union summary) are never executable exemplars.
+        // Metadata-only rows (`p#` / `v#` / `r#` gloss) are never executable exemplars.
         if expr
-            .strip_prefix(['p', 'v'])
+            .strip_prefix(['p', 'v', 'r'])
             .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
         {
             continue;
@@ -43,7 +64,8 @@ fn teaching_tsv_exemplars_round_trip_parser() {
         if expr.contains('<') || expr.contains("..") || expr.contains('$') {
             continue;
         }
-        parse_with_cgs_layers_program(expr, &[&cgs], sym_map.clone(), None, false, None)
+        let stack = [crate::CgsLayer::unset(&cgs)];
+        parse_with_cgs_layers_program(expr, &stack, sym_map.clone(), None, false)
             .unwrap_or_else(|e| {
                 panic!("teaching exemplar must round-trip the parser: `{expr}` -> {e:?}")
             });
@@ -52,6 +74,150 @@ fn teaching_tsv_exemplars_round_trip_parser() {
     assert!(
         checked > 0,
         "expected at least one concrete teaching exemplar to round-trip"
+    );
+}
+
+/// Teaching TSV uses the compact `optional` legend (not `opt: wire=p#` lists).
+#[test]
+fn prompt_matrix_tsv_optional_legend_is_compact() {
+    let dir = matrix_fixture_dir();
+    let cgs = load_schema_dir(&dir).expect("load plasm_prompt_matrix");
+    let tsv = crate::PromptPipelineConfig::default().render_prompt_tsv(&cgs, None);
+    assert_meaning_cells_no_legacy_opt_prefix(&tsv);
+    assert!(
+        tsv.contains("optional"),
+        "matrix teaching TSV should mark optional invoke/query slots with `optional`"
+    );
+    for line in tsv.lines().skip(1) {
+        let Some((expr, meaning)) = line.split_once('\t') else {
+            continue;
+        };
+        if expr.contains(",..") || expr.ends_with("..)") {
+            assert!(
+                meaning.contains("optional"),
+                "optional-tail exemplar should carry compact optional legend: expr={expr:?} meaning={meaning:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn proof_document_teaching_optional_legend_is_compact() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
+    if !dir.is_dir() {
+        return;
+    }
+    let cgs = load_schema_dir(&dir).expect("proof");
+    let tsv = super::render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(Some("Document")));
+    assert_meaning_cells_no_legacy_opt_prefix(&tsv);
+    assert!(
+        tsv.contains("optional"),
+        "proof invoke rows with optional tails should mark optionality in Meaning"
+    );
+}
+
+#[test]
+fn prompt_matrix_tsv_teaching_surface_invariants() {
+    use super::truncate_inline_desc;
+
+    let dir = matrix_fixture_dir();
+    let cgs = load_schema_dir(&dir).unwrap();
+    let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
+    let ruleset_es = map.entity_sym_for("", "Ruleset");
+    let ruleset_banner = cgs
+        .get_entity("Ruleset")
+        .and_then(|e| {
+            let d = e.description.trim();
+            (!d.is_empty()).then(|| truncate_inline_desc(d, 200))
+        })
+        .expect("Ruleset banner");
+    let tsv = super::render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+    let mut lines = tsv.lines();
+    let first = lines.next().expect("tsv header");
+    assert_eq!(
+        first,
+        TSV_TEACHING_TABLE_HEADER.trim_end(),
+        "TSV output should begin with plasm_expr/Meaning header"
+    );
+    assert!(
+        !tsv.contains(TEACHING_VALID_EXPR_MARKER),
+        "teaching TSV must not embed grammar contract"
+    );
+    assert_meaning_cells_no_legacy_opt_prefix(&tsv);
+    let ruleset_projection_row = tsv.lines().find(|l| {
+        let c: Vec<&str> = l.split('\t').collect();
+        if c.len() != 2 {
+            return false;
+        }
+        let expr = c[0].trim();
+        expr.starts_with(&ruleset_es)
+            && c[1].contains("· projection")
+            && parse_trailing_projection_bracket(expr).is_some()
+    });
+    let ruleset_projection_row =
+        ruleset_projection_row.expect("expected Ruleset projection witness TSV row");
+    assert!(
+        ruleset_projection_row.contains(&ruleset_banner),
+        "projection witness Meaning should carry Ruleset entity prose once: {ruleset_projection_row:?}"
+    );
+    let body = tsv
+        .lines()
+        .skip_while(|line| *line != TSV_TEACHING_TABLE_HEADER.trim_end())
+        .skip(1)
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !body.contains(";;"),
+        "2-column TSV surface should remove compact `;;` gloss separators"
+    );
+    let zone_es = map.entity_sym_for("", "Zone");
+    let zone_query = tsv.lines().find(|l| {
+        let cols: Vec<&str> = l.split('\t').collect();
+        cols.len() == 2
+            && cols[0].starts_with(&format!("{zone_es}{{"))
+            && (cols[1].contains("inputs:") || cols[1].contains("rows:"))
+    });
+    assert!(
+        zone_query.is_some(),
+        "Zone query exemplar should carry inputs/rows contract in Meaning"
+    );
+    let ruleset_query = tsv.lines().find(|l| {
+        let cols: Vec<&str> = l.split('\t').collect();
+        cols.len() == 2
+            && cols[0].starts_with(&format!("{ruleset_es}{{"))
+            && parse_trailing_projection_bracket(cols[0].trim()).is_some()
+    });
+    assert!(
+        ruleset_query.is_some(),
+        "Ruleset scoped query should carry canonical projection suffix"
+    );
+    assert!(
+        tsv.lines().any(|l| {
+            let c: Vec<&str> = l.split('\t').collect();
+            c.len() == 2
+                && ((c[0].starts_with('v') && c[1].contains(" · "))
+                    || (c[0].starts_with('p') && c[1].starts_with('v') && c[1].contains(" · ")))
+        }),
+        "expected at least one value-domain gloss row in matrix teaching TSV"
+    );
+}
+
+/// Prompt-size guard replacing the deleted full `apis/github` insta snapshot.
+#[test]
+fn prompt_matrix_full_tsv_size_within_baseline() {
+    let dir = matrix_fixture_dir();
+    let cgs = load_schema_dir(&dir).expect("plasm_prompt_matrix");
+    let tsv = super::render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+    const BASELINE_BYTES: usize = 48_000;
+    assert!(
+        tsv.len() <= BASELINE_BYTES,
+        "plasm_prompt_matrix full TSV grew past baseline (got {} bytes, cap {BASELINE_BYTES})",
+        tsv.len()
+    );
+    assert!(
+        tsv.len() > 2_500,
+        "plasm_prompt_matrix teaching TSV unexpectedly tiny ({} bytes)",
+        tsv.len()
     );
 }
 
@@ -87,7 +253,7 @@ fn seeded_pokemon_teaching_includes_bare_query_row() {
     );
     let map =
         symbol_map_for_prompt(&cgs, FocusSpec::SeedsExact(&["Pokemon"]), true).expect("symbol map");
-    let pokemon_es = map.entity_sym("Pokemon");
+    let pokemon_es = map.entity_sym_for("", "Pokemon");
     let mut line_valid_cache = HashMap::new();
     let mut gloss_emit_none = None;
     let block = collect_entity_teaching_block(
@@ -142,7 +308,7 @@ fn seeded_pokemon_identity_row_uses_positional_literal() {
     );
     let map =
         symbol_map_for_prompt(&cgs, FocusSpec::SeedsExact(&["Pokemon"]), true).expect("symbol map");
-    let pokemon_es = map.entity_sym("Pokemon");
+    let pokemon_es = map.entity_sym_for("", "Pokemon");
     let mut line_valid_cache = HashMap::new();
     let mut gloss_emit_none = None;
     let block = collect_entity_teaching_block(
@@ -174,8 +340,7 @@ fn seeded_pokemon_identity_row_uses_positional_literal() {
 }
 
 #[test]
-fn linear_workflow_state_scoped_query_teaching_line_validates_with_opaque_p_sym() {
-    use super::domain_example_line_count;
+fn linear_workflow_state_scoped_query_validates_with_homograph_p() {
     use crate::loader::load_schema_dir_unvalidated;
     use crate::prompt_render::line_validate::{
         domain_line_validate_cached, prompt_line_valid_cache_seed_cgs,
@@ -203,7 +368,7 @@ fn linear_workflow_state_scoped_query_teaching_line_validates_with_opaque_p_sym(
         "WorkflowState scoped query must validate with homograph p#: {expr}"
     );
     assert!(
-        domain_example_line_count(&cgs, "WorkflowState", Some(map.as_ref())) > 0,
+        super::domain_example_line_count(&cgs, "WorkflowState", Some(map.as_ref())) > 0,
         "WorkflowState must synthesize teaching lines"
     );
 }

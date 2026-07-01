@@ -8,10 +8,10 @@ pub(crate) fn teaching_expr_line_fingerprint(row: &TeachingExprLine) -> String {
         "{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}",
         row.expression,
         row.result_type,
-        row.scope,
-        row.optional_params,
-        row.compact_args,
-        row.description,
+        row.legend.scope,
+        row.legend.optional.is_present() as u8,
+        row.legend.compact_args,
+        row.legend.description,
         row.is_projection_teaching as u8,
     )
 }
@@ -35,11 +35,15 @@ pub(crate) fn rewrite_teaching_expr_line_opaque_tokens(
 ) {
     row.expression = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.expression, rep);
     row.result_type = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.result_type, rep);
-    row.scope = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.scope, rep);
-    row.optional_params =
-        crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.optional_params, rep);
-    row.compact_args = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.compact_args, rep);
-    row.description = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.description, rep);
+    row.legend.scope =
+        crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.legend.scope, rep);
+    if row.legend.optional.is_present() {
+        row.legend.optional = OptionalLegend::Present;
+    }
+    row.legend.compact_args =
+        crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.legend.compact_args, rep);
+    row.legend.description =
+        crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.legend.description, rep);
 }
 
 pub(crate) fn rewrite_field_gloss_opaque_tokens(
@@ -185,12 +189,14 @@ impl GlossScratch<'_> {
         expr: &str,
         cap_legend: Option<&str>,
         result_gloss: Option<&str>,
+        optional_param_syms: &[String],
     ) {
         emit_field_def_lines_before_example(
             self.field_gloss,
             expr,
             cap_legend,
             result_gloss,
+            optional_param_syms,
             self.map,
             self.entity,
             self.catalog_entry_id,
@@ -207,6 +213,7 @@ pub(crate) fn emit_field_def_lines_before_example(
     expr: &str,
     cap_legend: Option<&str>,
     result_gloss: Option<&str>,
+    optional_param_syms: &[String],
     map: &SymbolMap,
     entity: &str,
     catalog_entry_id: &str,
@@ -216,12 +223,18 @@ pub(crate) fn emit_field_def_lines_before_example(
 ) {
     let en = EntityName::from(entity.to_string());
     let cid = catalog_entry_id.to_string();
-    for sym in crate::symbol_tuning::field_syms_for_teaching_row(expr, result_gloss, cap_legend) {
+    for sym in crate::symbol_tuning::field_syms_for_teaching_row(
+        expr,
+        result_gloss,
+        cap_legend,
+        optional_param_syms,
+    ) {
+        let wire_owned = map.wire_for_opaque_p_sym(sym.as_str());
         let field_name = if sym.starts_with('r') {
             map.resolve_relation_ident(sym.as_str())
                 .unwrap_or(sym.as_str())
         } else {
-            map.resolve_ident(sym.as_str()).unwrap_or(sym.as_str())
+            wire_owned.as_deref().unwrap_or(sym.as_str())
         };
         // Capability `p#` maps to a leaf expand key (e.g. `blocks`) that may equal a relation wire
         // name on the same entity — resolve metadata from the full param path + CGS, not relation gloss.
@@ -256,10 +269,10 @@ pub(crate) fn emit_field_def_lines_before_example(
         // Rewrite embedded `v#` in compact strings using [`registry_v_sym_alias`] before `p#` dedupe.
         if let (Some(m), Some(vs)) = (&meta, map.value_sym_for_p_sym(sym.as_str())) {
             if let IdentMetadata::RegistryBacked { .. } = m {
-                if let Some(vg) = map.value_domain_gloss_for_v_sym(vs) {
+                if let Some(vg) = map.value_domain_gloss_for_v_sym(&vs) {
                     if let Some(v_canon) = meaning_canonical_sym_for_emit(
                         vg,
-                        vs,
+                        &vs,
                         &mut state.registry_value_gloss_canonical_v,
                         &mut state.registry_v_sym_alias,
                     ) {

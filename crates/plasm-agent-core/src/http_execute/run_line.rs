@@ -82,7 +82,7 @@ pub(crate) fn parse_plasm_line_for_session(
             &e,
             line,
             sess.cgs.as_ref(),
-            &sym_map,
+            sym_map.as_ref(),
         ))
     })?;
     if let Some(ref fed) = sess.federation_dispatch() {

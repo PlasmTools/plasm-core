@@ -14,9 +14,9 @@ fn label_projection_unknown_p_sym_is_typed_error_not_phantom_body() {
     let map = github_symbol_map(&session);
     let label_e = map.entity_sym_for("github", "Label");
     let repo_e = map.entity_sym_for("github", "Repository");
-    let repo_owner = map.ident_sym_entity_field("Repository", "owner");
-    let repo_name = map.ident_sym_entity_field("Repository", "repo");
-    let issue_p_body = map.ident_sym_entity_field("Issue", "body");
+    let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
+    let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
+    let issue_p_body = map.ident_sym_entity_field_for("github", "Issue", "body");
     let source = format!(
         r#"repo = {repo_e}({repo_owner}="o", {repo_name}="r")
 labels = {label_e}{{{p_repository}=repo.full_name}}
@@ -38,12 +38,15 @@ labels[{issue_p_body}]"#,
     .expect_err("Issue body p# must not project Label rows");
     let msg = err.to_string();
     assert!(
-        msg.contains("not a row symbol") || msg.contains("not a row field"),
+        msg.contains("not a row symbol")
+            || msg.contains("not a row field")
+            || msg.contains("expected entity field"),
         "expected typed symbol error, got {msg}"
     );
     assert!(
-        !msg.contains("body") || msg.contains("not a row"),
-        "must not treat Issue body as Label row field: {msg}"
+        (msg.contains("Issue") && msg.contains("expected entity field"))
+            || (msg.contains("Label") && msg.contains("not a row symbol")),
+        "must reject Issue cap-param homograph on Label projection: {msg}"
     );
 }
 
@@ -53,13 +56,13 @@ labels[{issue_p_body}]"#,
 fn label_query_projection_resolves_entity_scoped_p_symbols() {
     let session = github_issue_label_session();
     let map = github_symbol_map(&session);
-    let p_name = map.ident_sym_entity_field("Label", "name");
-    let p_color = map.ident_sym_entity_field("Label", "color");
-    let p_desc = map.ident_sym_entity_field("Label", "description");
+    let p_name = map.ident_sym_entity_field_for("github", "Label", "name");
+    let p_color = map.ident_sym_entity_field_for("github", "Label", "color");
+    let p_desc = map.ident_sym_entity_field_for("github", "Label", "description");
     let label_e = map.entity_sym_for("github", "Label");
     let repo_e = map.entity_sym_for("github", "Repository");
-    let repo_owner = map.ident_sym_entity_field("Repository", "owner");
-    let repo_name = map.ident_sym_entity_field("Repository", "repo");
+    let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
+    let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
     let p_repository = map.ident_sym_cap_param_for("github", "Label", "label_query", "repository");
     let source = format!(
         r#"repo = {repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test")
@@ -113,13 +116,13 @@ fn issue_create_dry_run_resolves_cap_qualified_param_symbols() {
     let map = github_symbol_map(&session);
     let issue_e = map.entity_sym_for("github", "Issue");
     let cap = cgs.get_capability("issue_create").expect("issue_create");
-    let method_sym = map.method_sym("Issue", cap.name.as_str());
+    let method_sym = map.method_sym_for("github", "Issue", cap.name.as_str());
     let p_repo = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "repository");
     let p_title = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "title");
     let p_body = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "body");
     let repo_e = map.entity_sym_for("github", "Repository");
-    let repo_owner = map.ident_sym_entity_field("Repository", "owner");
-    let repo_name = map.ident_sym_entity_field("Repository", "repo");
+    let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
+    let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
     let source = format!(
         r#"repo = {repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test")
 created = {issue_e}.{method_sym}({p_repo}=repo.full_name, {p_title}="Document labels", {p_body}="guide body")
@@ -166,14 +169,14 @@ fn issue_create_ir_input_uses_logical_param_names_not_opaque_p_symbols() {
     let map = github_symbol_map(&session);
     let issue_e = map.entity_sym_for("github", "Issue");
     let cap = cgs.get_capability("issue_create").expect("issue_create");
-    let method_sym = map.method_sym("Issue", cap.name.as_str());
+    let method_sym = map.method_sym_for("github", "Issue", cap.name.as_str());
     let p_repo = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "repository");
     let p_title = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "title");
     let p_body = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "body");
     let p_labels = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "labels");
     let repo_e = map.entity_sym_for("github", "Repository");
-    let repo_owner = map.ident_sym_entity_field("Repository", "owner");
-    let repo_name = map.ident_sym_entity_field("Repository", "repo");
+    let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
+    let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
     let source = format!(
         r#"repo = {repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test")
 created = {issue_e}.{method_sym}({p_repo}=repo.full_name, {p_title}="Document labels", {p_body}="guide body", {p_labels}=["bug", "docs"])
@@ -235,14 +238,14 @@ fn pr_create_dry_run_resolves_cap_qualified_param_symbols() {
     let map = github_symbol_map(&session);
     let pr_e = map.entity_sym_for("github", "PullRequest");
     let cap = cgs.get_capability("pr_create").expect("pr_create");
-    let method_sym = map.method_sym("PullRequest", cap.name.as_str());
+    let method_sym = map.method_sym_for("github", "PullRequest", cap.name.as_str());
     let p_repo = map.ident_sym_cap_param_for("github", "PullRequest", "pr_create", "repository");
     let p_title = map.ident_sym_cap_param_for("github", "PullRequest", "pr_create", "title");
     let p_head = map.ident_sym_cap_param_for("github", "PullRequest", "pr_create", "head");
     let p_base = map.ident_sym_cap_param_for("github", "PullRequest", "pr_create", "base");
     let repo_e = map.entity_sym_for("github", "Repository");
-    let repo_owner = map.ident_sym_entity_field("Repository", "owner");
-    let repo_name = map.ident_sym_entity_field("Repository", "repo");
+    let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
+    let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
     let source = format!(
         r#"repo = {repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test")
 opened = {pr_e}.{method_sym}({p_repo}=repo.full_name, {p_title}="Label guide", {p_head}="feat/label-color-guide", {p_base}="main")
@@ -283,7 +286,7 @@ fn repo_content_put_dry_run_resolves_cap_qualified_param_symbols() {
     let cap = cgs
         .get_capability("repo_content_put")
         .expect("repo_content_put");
-    let method_sym = map.method_sym("Repository", cap.name.as_str());
+    let method_sym = map.method_sym_for("github", "Repository", cap.name.as_str());
     let p_repo =
         map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "repository");
     let p_path = map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "path");
@@ -293,8 +296,8 @@ fn repo_content_put_dry_run_resolves_cap_qualified_param_symbols() {
         map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "content");
     let p_message =
         map.ident_sym_cap_param_for("github", "Repository", "repo_content_put", "message");
-    let repo_owner = map.ident_sym_entity_field("Repository", "owner");
-    let repo_name = map.ident_sym_entity_field("Repository", "repo");
+    let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
+    let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
     let source = format!(
         r#"written = {repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test").{method_sym}({p_repo}={repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test"), {p_path}="docs/LABEL_COLORS.md", {p_branch}="feat/label-color-guide", {p_content}="ZHVtbXk=", {p_message}="Add label color guide")
 written"#,
@@ -319,6 +322,241 @@ written"#,
     evaluate_plasm_plan_dry(&session, &plan).expect("repo_content_put dry-run");
 }
 
+/// Six-seed GitHub exposure: taught `issue_create` entity-ref scope form compiles after full open.
+#[test]
+fn cross_wave_github_six_entity_issue_create_taught_form_compiles() {
+    let cgs = github_cgs();
+    let session = github_ranked_mutator_session(
+        &cgs,
+        &[
+            "Issue",
+            "Repository",
+            "Label",
+            "IssueComment",
+            "PullRequest",
+            "Branch",
+        ],
+        "document all repository labels: open an issue, apply labels, branch, PR, comment",
+        &[
+            "issue_create",
+            "issue_update",
+            "repo_branch_create",
+            "repo_content_put",
+            "pr_create",
+            "issue_comment_create",
+            "label_create",
+        ],
+        "issue_create",
+    );
+    let map = github_symbol_map(&session);
+    let issue_e = map.entity_sym_for("github", "Issue");
+    let issue_create_m = map.method_sym_for("github", "Issue", "issue_create");
+    let p_repo = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "repository");
+    let p_title = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "title");
+    let p_body = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "body");
+    let p_labels = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "labels");
+    let repo_e = map.entity_sym_for("github", "Repository");
+    let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
+    let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
+
+    let taught = format!(
+        r#"repo = {repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test")
+created = {issue_e}.{issue_create_m}({p_repo}=repo, {p_title}="Document label organization", {p_body}="body", {p_labels}=["enhancement","documentation"])
+created"#,
+    );
+    let taught_res = compile_plasm_dag_to_plan(
+        &plasm_core::PromptPipelineConfig::default(),
+        None,
+        &session,
+        "github-six-seed-taught-entityref",
+        &taught,
+    );
+
+    let stringy = format!(
+        r#"repo = {repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test")
+created = {issue_e}.{issue_create_m}({p_repo}=repo.full_name, {p_title}="Document label organization", {p_body}="body")
+created"#,
+    );
+    let stringy_res = compile_plasm_dag_to_plan(
+        &plasm_core::PromptPipelineConfig::default(),
+        None,
+        &session,
+        "github-six-seed-string-scope",
+        &stringy,
+    );
+
+    assert!(
+        stringy_res.is_ok(),
+        "string-scope create must compile in 6-entity session: {stringy_res:?}"
+    );
+    assert!(
+        taught_res.is_ok(),
+        "TAUGHT entity-ref create form must compile in 6-entity session: {taught_res:?}"
+    );
+}
+
+/// Open with [Repository, Issue] then expand — wave-1 `m#`/`p#` stay stable and taught create still compiles.
+#[test]
+fn cross_wave_github_incremental_exposure_symbol_stability() {
+    use crate::plasm_dag::ExecuteSession;
+    use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+    use plasm_core::{CgsContext, ExposureEntityKey, TeachingExposureSession};
+    use std::sync::Arc;
+
+    let cgs = github_cgs();
+    let intent = "document all repository labels: open an issue, apply labels, branch, PR, comment";
+    let layers: Vec<&plasm_core::CGS> = vec![cgs.as_ref()];
+
+    let mk_delta = |entities: &[&str], ranked: &[&str]| {
+        let endpoints = entities
+            .iter()
+            .map(|e| ExposureEntityKey {
+                entry_id: "github".into(),
+                entity: plasm_core::EntityName::from(*e),
+            })
+            .collect::<Vec<_>>();
+        derive_intent_exposure_surface_batch(
+            cgs.as_ref(),
+            "github",
+            intent,
+            &endpoints,
+            &entities.iter().map(|e| (*e).to_string()).collect::<Vec<_>>(),
+            Some(&ranked.iter().map(|s| (*s).to_string()).collect::<Vec<_>>()),
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        )
+    };
+
+    // Wave 1: open with Repository + Issue, ranked toward issue_create.
+    let w1 = mk_delta(&["Repository", "Issue"], &["issue_create", "issue_update"]);
+    let mut exp =
+        TeachingExposureSession::new_with_intent_delta(cgs.as_ref(), "github", &["Repository", "Issue"], w1);
+    let m_create_w1 = exp
+        .symbol_map_arc()
+        .method_sym_for("github", "Issue", "issue_create");
+    let p_repo_w1 =
+        exp.symbol_map_arc()
+            .ident_sym_cap_param_for("github", "Issue", "issue_create", "repository");
+    let repo_field_p = exp.symbol_map_arc().ident_sym_entity_field_for("github", "Repository", "repo");
+
+    // Wave 2: expand exactly as commit_expand_wave does — relation_keys = ALL prior + new entities,
+    // ranked = the session's (re-ranked) list including the Issue mutators, normalized new seeds.
+    let all_endpoints: Vec<ExposureEntityKey> = [
+        "Repository",
+        "Issue",
+        "Branch",
+        "IssueComment",
+        "Label",
+        "PullRequest",
+    ]
+    .iter()
+    .map(|e| ExposureEntityKey {
+        entry_id: "github".into(),
+        entity: plasm_core::EntityName::from(*e),
+    })
+    .collect();
+    let session_ranked = [
+        "issue_create",
+        "issue_update",
+        "repo_branch_create",
+        "repo_content_put",
+        "pr_create",
+        "issue_comment_create",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect::<Vec<_>>();
+    let new_seeds = ["Branch", "IssueComment", "Label", "PullRequest"];
+    let w2 = derive_intent_exposure_surface_batch(
+        cgs.as_ref(),
+        "github",
+        intent,
+        &all_endpoints,
+        &new_seeds.iter().map(|e| e.to_string()).collect::<Vec<_>>(),
+        Some(&session_ranked),
+        ExposureSurfaceOptions {
+            read_first_seeded: true,
+        },
+    );
+    exp.expose_surface(&layers, cgs.clone(), "github", &new_seeds, w2);
+
+    let map = exp.symbol_map_arc();
+    let m_create_w2 = map.method_sym_for("github", "Issue", "issue_create");
+    let p_repo_w2 = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "repository");
+    let _repo_field_w2 = map.ident_sym_entity_field_for("github", "Repository", "repo");
+    assert_eq!(
+        map.ident_sym_entity_field_for("github", "Repository", "repo"),
+        repo_field_p,
+        "Repository.repo p# must stay stable across expand wave"
+    );
+
+    // Build an ExecuteSession over the post-wave-2 exposure and compile the taught create form.
+    let mut ctxs = indexmap::IndexMap::new();
+    ctxs.insert(
+        "github".into(),
+        Arc::new(CgsContext::entry("github", cgs.clone())),
+    );
+    let session = ExecuteSession::new(
+        "ph".into(),
+        "p".into(),
+        cgs.clone(),
+        ctxs,
+        "github".into(),
+        String::new(),
+        String::new(),
+        None,
+        vec![
+            "Repository".into(),
+            "Issue".into(),
+            "Label".into(),
+            "IssueComment".into(),
+            "PullRequest".into(),
+            "Branch".into(),
+        ],
+        Some(exp),
+        None,
+        cgs.catalog_cgs_hash_hex(),
+        None,
+        None,
+    );
+
+    let smap = github_symbol_map(&session);
+    let issue_e = smap.entity_sym_for("github", "Issue");
+    let issue_create_m = smap.method_sym_for("github", "Issue", "issue_create");
+    let p_repo = smap.ident_sym_cap_param_for("github", "Issue", "issue_create", "repository");
+    let p_title = smap.ident_sym_cap_param_for("github", "Issue", "issue_create", "title");
+    let repo_e = smap.entity_sym_for("github", "Repository");
+    let repo_owner = smap.ident_sym_entity_field_for("github", "Repository", "owner");
+    let repo_name = smap.ident_sym_entity_field_for("github", "Repository", "repo");
+
+    let taught = format!(
+        r#"repo = {repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test")
+created = {issue_e}.{issue_create_m}({p_repo}=repo, {p_title}="Document label organization")
+created"#,
+    );
+    let taught_res = compile_plasm_dag_to_plan(
+        &plasm_core::PromptPipelineConfig::default(),
+        None,
+        &session,
+        "github-incremental-taught",
+        &taught,
+    );
+
+    assert_eq!(
+        m_create_w1, m_create_w2,
+        "issue_create m# must be stable across waves"
+    );
+    assert_eq!(
+        p_repo_w1, p_repo_w2,
+        "issue_create repository p# must be stable across waves"
+    );
+    assert!(
+        taught_res.is_ok(),
+        "taught create form must compile after incremental expansion: {taught_res:?}"
+    );
+}
+
 /// Session `m#` must resolve to the catalog capability from `sym_to_method`, never via kebab scan.
 #[test]
 fn issue_create_opaque_m_resolves_from_session_map() {
@@ -340,8 +578,8 @@ fn issue_create_opaque_m_resolves_from_session_map() {
     let p_repo = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "repository");
     let p_title = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "title");
     let repo_e = map.entity_sym_for("github", "Repository");
-    let repo_owner = map.ident_sym_entity_field("Repository", "owner");
-    let repo_name = map.ident_sym_entity_field("Repository", "repo");
+    let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
+    let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
     let source = format!(
         r#"repo = {repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test")
 created = {issue_e}.{issue_create_m}({p_repo}=repo.full_name, {p_title}="Label guide")
@@ -401,12 +639,12 @@ fn github_six_seed_tsv_verbatim_program_compiles() {
     let issue_e = map.entity_sym_for("github", "Issue");
     let label_e = map.entity_sym_for("github", "Label");
     let comment_e = map.entity_sym_for("github", "IssueComment");
-    let repo_owner = map.ident_sym_entity_field("Repository", "owner");
-    let repo_name = map.ident_sym_entity_field("Repository", "repo");
-    let repo_full = map.ident_sym_entity_field("Repository", "full_name");
-    let issue_number = map.ident_sym_entity_field("Issue", "number");
+    let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
+    let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
+    let repo_full = map.ident_sym_entity_field_for("github", "Repository", "full_name");
+    let issue_number = map.ident_sym_entity_field_for("github", "Issue", "number");
     let p_label_repo = map.ident_sym_cap_param_for("github", "Label", "label_query", "repository");
-    let p_label_name = map.ident_sym_entity_field("Label", "name");
+    let p_label_name = map.ident_sym_entity_field_for("github", "Label", "name");
     let issue_create_m = map.method_sym_for("github", "Issue", "issue_create");
     let issue_update_m = map.method_sym_for("github", "Issue", "issue_update");
     let issue_comment_m = map.method_sym_for("github", "IssueComment", "issue_comment_create");
@@ -432,7 +670,7 @@ fn github_six_seed_tsv_verbatim_program_compiles() {
     );
     let p_comment_body =
         map.ident_sym_cap_param_for("github", "IssueComment", "issue_comment_create", "body");
-    let p_issue_title = map.ident_sym_entity_field("Issue", "title");
+    let p_issue_title = map.ident_sym_entity_field_for("github", "Issue", "title");
     let source = format!(
         r#"repo = {repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test")
 labels = {label_e}{{{p_label_repo}=repo.{repo_full}}}[{p_label_name}]

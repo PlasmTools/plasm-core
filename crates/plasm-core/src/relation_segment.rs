@@ -2,7 +2,7 @@
 
 use crate::identity::RelationName;
 use crate::schema::RelationSchema;
-use crate::symbol_tuning::SymbolMap;
+use crate::symbol_tuning::{SymbolMap, SymbolSession};
 use indexmap::IndexMap;
 use std::fmt;
 
@@ -19,7 +19,7 @@ impl<'a> ProgramBindingLabel<'a> {
 
 /// Inputs for [`resolve_relation_segment`].
 pub struct RelationSegmentContext<'a> {
-    pub map: &'a SymbolMap,
+    pub map: &'a dyn SymbolSession,
     pub entity: &'a str,
     pub relations: &'a IndexMap<RelationName, RelationSchema>,
     pub binding_label: Option<ProgramBindingLabel<'a>>,
@@ -56,10 +56,10 @@ pub fn resolve_relation_segment(
     }
     if SymbolMap::is_opaque_r_sym(segment) {
         if let Ok(binding) = ctx.map.resolve_session_relation(segment) {
-            if binding.source_entity == ctx.entity
+            if binding.source_entity.as_str() == ctx.entity
                 && ctx.relations.contains_key(binding.relation_wire.as_str())
             {
-                return RelationSegmentOutcome::Wire(binding.relation_wire);
+                return RelationSegmentOutcome::Wire(binding.relation_wire.to_string());
             }
         }
     }

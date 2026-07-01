@@ -818,7 +818,7 @@ mod tests {
                 ),
             },
             path_vars: None,
-            catalog_entry_id: None,
+            catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
             capability_name: None,
         });
         let mut used = HashSet::new();

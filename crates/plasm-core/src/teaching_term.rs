@@ -3,8 +3,9 @@
 //! Carry [`TeachingTerm`] in the parser and prompt pipeline; format to `e1` / `m2` / `p3` / `r4` only at
 //! serialization boundaries via [`Display`] (or explicit [`std::fmt::Write`]).
 
-use crate::identity::{CapabilityName, EntityName, PathMethodSegment};
+use crate::identity::{CapabilityName, CapabilityParamName, EntityFieldName, EntityName, PathMethodSegment, RelationName};
 use crate::schema::{capability_path_method_segment, CapabilitySchema, CGS};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 /// Session-local index into the corresponding `e` / `m` / `p` table for this [`SymbolMap`] build.
@@ -12,7 +13,7 @@ use std::fmt;
 /// not by this value.
 ///
 /// [`Display`] on `Symbol` is **digits only** (1-based index). For full `e1` / `m2` / `p3` text, use [`Display`] on [`TeachingTerm`].
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct Symbol(pub u32);
 
 impl Symbol {
@@ -58,16 +59,16 @@ pub struct MethodRef {
 pub enum ParameterSlot {
     EntityField {
         entity: EntityName,
-        field: String,
+        field: EntityFieldName,
     },
     Relation {
         entity: EntityName,
-        name: String,
+        name: RelationName,
     },
     CapabilityInput {
         domain: EntityName,
         capability: CapabilityName,
-        param: String,
+        param: CapabilityParamName,
     },
 }
 
@@ -152,7 +153,7 @@ pub fn resolve_parameter_slot(
                 return Some(ParameterSlot::CapabilityInput {
                     domain: cap.domain.clone(),
                     capability: cap.name.clone(),
-                    param: name.to_string(),
+                    param: CapabilityParamName::from(name),
                 });
             }
         }
@@ -163,7 +164,7 @@ pub fn resolve_parameter_slot(
         if ent.fields.contains_key(name) {
             return Some(ParameterSlot::EntityField {
                 entity: EntityName::new(*e),
-                field: name.to_string(),
+                field: EntityFieldName::from(name),
             });
         }
     }
@@ -173,7 +174,7 @@ pub fn resolve_parameter_slot(
         if ent.relations.contains_key(name) {
             return Some(ParameterSlot::Relation {
                 entity: EntityName::new(*e),
-                name: name.to_string(),
+                name: RelationName::from(name),
             });
         }
     }

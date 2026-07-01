@@ -76,7 +76,9 @@ fn run_artifact_doc(
                 pagination: None,
                 hydrate: None,
                 capability_name: None,
-                catalog_entry_id: Some("overshow".into()),
+                catalog_entry_id: plasm_core::CatalogEntryStamp::some(
+                    plasm_core::RegistryEntryId::from("overshow"),
+                ),
             }),
             projection: None,
         },

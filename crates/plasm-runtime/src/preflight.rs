@@ -204,7 +204,7 @@ async fn hydrate_invoke_target(
     let get = GetExpr {
         reference: invoke.target.clone(),
         path_vars: None,
-        catalog_entry_id: None,
+        catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
         capability_name: None,
     };
     let (cached, _source) = engine
@@ -250,7 +250,7 @@ async fn hydrate_entity_ref_param(
     let get = GetExpr {
         reference,
         path_vars: None,
-        catalog_entry_id: None,
+        catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
         capability_name: None,
     };
     let (cached, _source) = engine

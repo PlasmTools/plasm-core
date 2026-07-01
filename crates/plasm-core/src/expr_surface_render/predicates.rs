@@ -109,12 +109,12 @@ fn field_token_wire(
             if let (Some(eid), Some(cap)) = (entry_id, capability) {
                 return m.ident_sym_cap_param_for(eid, entity, cap, field);
             }
-            return m.ident_sym_cap_param(entity, capability.unwrap_or(""), field);
+            return m.ident_sym_cap_param_for("", entity, capability.unwrap_or(""), field);
         }
         if let Some(eid) = entry_id {
             return m.ident_sym_entity_field_for(eid, entity, field);
         }
-        return m.ident_sym_entity_field(entity, field);
+        return m.ident_sym_entity_field_for("", entity, field);
     }
     field.to_string()
 }
@@ -129,7 +129,7 @@ fn relation_token_wire(
         if let Some(eid) = entry_id {
             return m.ident_sym_relation_for(eid, entity, relation);
         }
-        return m.ident_sym_relation(entity, relation);
+        return m.ident_sym_relation_for("", entity, relation);
     }
     relation.to_string()
 }

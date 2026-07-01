@@ -370,6 +370,17 @@ pub async fn deliver_live_run_await(
     ctx: LiveRunAwaitContext,
     spawn_opts: LiveRunSpawnOpts,
 ) -> Result<PlasmPlanRunResult, LiveRunError> {
+    crate::evidence_chain::begin_plan_evidence_with_anchors(
+        ctx.es.as_ref(),
+        ctx.session_id.as_str(),
+        crate::evidence_chain::evidence_anchors(
+            ctx.plan_commit_ref.as_ref(),
+            Some(ctx.trace.trace_id),
+            ctx.trace.call_index.map(|i| i as u64),
+        ),
+    )
+    .map_err(|e| LiveRunError::Failed(format!("evidence begin: {e}")))?;
+
     let handle = spawn_live_plan_run(
         LiveRunSpawn {
             es: Arc::clone(&ctx.es),

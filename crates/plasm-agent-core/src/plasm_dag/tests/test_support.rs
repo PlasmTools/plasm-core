@@ -128,6 +128,6 @@ pub(super) fn compile_github_program(
     .expect("compile")
 }
 
-pub(super) fn github_symbol_map(session: &ExecuteSession) -> Arc<plasm_core::SymbolMap> {
+pub(super) fn github_symbol_map(session: &ExecuteSession) -> Arc<dyn plasm_core::SymbolSession> {
     symbol_map_for_plasm_surface_parse(session, None)
 }

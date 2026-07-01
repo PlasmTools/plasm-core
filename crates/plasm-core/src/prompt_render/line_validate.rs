@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::symbol_tuning::{
-    strip_prompt_expression_annotations, SymbolMap, TeachingExposureSession,
+    strip_prompt_expression_annotations, SymbolMap, SymbolSession, TeachingExposureSession,
 };
 use crate::CGS;
 
@@ -14,7 +14,7 @@ pub(crate) type DomainLineValidCacheKey = u64;
 pub(crate) enum DomainLineValidEntry {
     Invalid,
     Valid {
-        parsed: Box<crate::expr_parser::ParsedExpr>,
+        parsed: Arc<crate::expr_parser::ParsedExpr>,
         wire: String,
     },
 }
@@ -72,7 +72,9 @@ fn validate_teaching_line_uncached(
     map_arc: Option<&Arc<SymbolMap>>,
 ) -> Option<(crate::expr_parser::ParsedExpr, String)> {
     let mut parsed = if let Some(arc) = map_arc {
-        crate::expr_parser::parse_session_line(stripped, cgs, Some(Arc::clone(arc))).ok()?
+        let cloned = Arc::clone(arc);
+        let sym: Arc<dyn SymbolSession> = cloned;
+        crate::expr_parser::parse_session_line(stripped, cgs, Some(sym)).ok()?
     } else {
         crate::expr_parser::parse(stripped, cgs).ok()?
     };
@@ -119,7 +121,7 @@ pub(crate) fn domain_line_validate_cached(
     }
     let entry = match validate_teaching_line_uncached(cgs, &stripped, map_arc) {
         Some((parsed, wire)) => DomainLineValidEntry::Valid {
-            parsed: Box::new(parsed),
+            parsed: Arc::new(parsed),
             wire,
         },
         None => DomainLineValidEntry::Invalid,
@@ -155,6 +157,21 @@ mod tests {
     use super::*;
     use crate::loader::load_schema_dir_unvalidated;
     use crate::symbol_tuning::{teaching_exposure_session_from_focus, FocusSpec};
+
+    #[test]
+    fn proof_document_edit_v2_dotted_call_line_validates() {
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
+        if !p.is_dir() {
+            return;
+        }
+        let mut cgs = load_schema_dir_unvalidated(&p).expect("proof");
+        cgs.entry_id = Some("proof".to_string());
+        let missing = crate::cgs_expression_validate::uncovered_capabilities(&cgs);
+        assert!(
+            !missing.iter().any(|(c, d)| c == "document_edit_v2" && d == "Document"),
+            "document_edit_v2 should be covered; missing={missing:?}"
+        );
+    }
 
     #[test]
     fn invalid_teaching_line_probe_is_not_memoized() {

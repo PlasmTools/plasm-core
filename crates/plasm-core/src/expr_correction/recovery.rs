@@ -1,5 +1,6 @@
 use crate::domain_lexicon::DomainLexicon;
 use crate::expr_parser;
+use crate::symbol_tuning::SymbolSession;
 use crate::CGS;
 
 use super::auto_correct::{try_auto_correct, CorrectionOutcome};
@@ -68,7 +69,7 @@ pub fn parse_session_line_with_rewrite_recovery(
     original: &str,
     cgs: &CGS,
     lexicon: &DomainLexicon,
-    sym_map: Option<std::sync::Arc<crate::symbol_tuning::SymbolMap>>,
+    sym_map: Option<std::sync::Arc<dyn SymbolSession>>,
 ) -> Result<
     (expr_parser::ParsedExpr, Option<String>),
     (expr_parser::ParseError, String, Vec<RecoveryHint>),

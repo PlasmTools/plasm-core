@@ -42,6 +42,22 @@ impl CgsContext {
             cgs,
         }
     }
+
+    /// Registry row id for this context — [`Prefix::Entry`] id or stamped [`CGS::entry_id`].
+    pub fn registry_entry_id(&self) -> Option<&str> {
+        match &self.prefix {
+            Prefix::Entry { id } => Some(id.as_str()),
+            Prefix::None => self.cgs.entry_id.as_deref(),
+        }
+    }
+
+    /// [`CgsLayer`] view; fails when neither prefix nor CGS carries an `entry_id`.
+    pub fn as_layer(&self) -> Option<crate::cgs_federation::CgsLayer<'_>> {
+        Some(crate::cgs_federation::CgsLayer::new(
+            self.registry_entry_id()?,
+            self.cgs.as_ref(),
+        ))
+    }
 }
 
 impl std::ops::Deref for CgsContext {

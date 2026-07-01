@@ -606,7 +606,8 @@ mod tests {
             Predicate::eq("owner", "alice"),
         ));
         if let crate::Expr::Query(q) = &mut expr {
-            q.catalog_entry_id = Some("github".into());
+            q.catalog_entry_id =
+                crate::CatalogEntryStamp::some(crate::RegistryEntryId::from("github"));
         }
         normalize_expr_query_capabilities_federated(&mut expr, &fed, &cgs_github).unwrap();
         match &expr {

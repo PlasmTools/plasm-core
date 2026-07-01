@@ -122,8 +122,8 @@ pub struct QualifiedEntityKey {
 impl From<plasm_core::QualifiedEntityKey> for QualifiedEntityKey {
     fn from(q: plasm_core::QualifiedEntityKey) -> Self {
         Self {
-            entry_id: q.catalog_entry_id,
-            entity: q.entity,
+            entry_id: q.entry_id.into(),
+            entity: q.entity.into(),
         }
     }
 }

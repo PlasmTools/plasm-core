@@ -9,26 +9,7 @@ use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Stable key for which catalog + CGS entity an `e#` row refers to (session-scoped).
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
-pub struct QualifiedEntityKey {
-    pub catalog_entry_id: String,
-    pub entity: String,
-}
-
-impl QualifiedEntityKey {
-    pub fn new(catalog_entry_id: impl Into<String>, entity: impl Into<String>) -> Self {
-        Self {
-            catalog_entry_id: catalog_entry_id.into(),
-            entity: entity.into(),
-        }
-    }
-
-    /// Registry row id (same wire name as agent plan `QualifiedEntityKey::entry_id`).
-    pub fn entry_id(&self) -> &str {
-        self.catalog_entry_id.as_str()
-    }
-}
+pub use crate::symbol_tuning::QualifiedEntityKey;
 
 /// Federated catalog resolution failure (fail closed; no blind primary fallback).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +40,121 @@ impl std::fmt::Display for FederationResolveError {
 }
 
 impl std::error::Error for FederationResolveError {}
+
+/// One catalog row in a federated parse / execute stack.
+///
+/// [`Self::unset`] is for YAML fixtures / pre-exposure single CGS (session reverse maps only).
+/// [`Self::qualified`] requires a non-empty registry `entry_id`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CgsLayer<'a> {
+    entry_id: Option<&'a str>,
+    cgs: &'a CGS,
+}
+
+impl<'a> CgsLayer<'a> {
+    /// Single-graph fixture / session-reverse parse layer (no registry row).
+    #[inline]
+    pub fn unset(cgs: &'a CGS) -> Self {
+        Self {
+            entry_id: None,
+            cgs,
+        }
+    }
+
+    /// Federated or pinned registry row.
+    #[inline]
+    pub fn qualified(entry_id: &'a str, cgs: &'a CGS) -> Self {
+        debug_assert!(
+            !entry_id.is_empty(),
+            "CgsLayer::qualified requires non-empty entry_id"
+        );
+        Self {
+            entry_id: Some(entry_id),
+            cgs,
+        }
+    }
+
+    #[inline]
+    pub fn new(entry_id: &'a str, cgs: &'a CGS) -> Self {
+        if entry_id.is_empty() {
+            Self::unset(cgs)
+        } else {
+            Self::qualified(entry_id, cgs)
+        }
+    }
+
+    #[inline]
+    pub fn entry_id(&self) -> Option<&'a str> {
+        self.entry_id.filter(|id| !id.is_empty())
+    }
+
+    /// Forward-map / exposure key (`""` when [`Self::unset`] — matches symbol table assignment).
+    #[inline]
+    pub fn forward_map_entry_id(&self) -> &str {
+        self.entry_id.filter(|id| !id.is_empty()).unwrap_or("")
+    }
+
+    #[inline]
+    pub fn catalog_scope(&self) -> crate::symbol_tuning::CatalogScope<'a> {
+        match self.entry_id() {
+            Some(id) => crate::symbol_tuning::CatalogScope::qualified(id),
+            None => crate::symbol_tuning::CatalogScope::SessionReverse,
+        }
+    }
+
+    #[inline]
+    pub fn matches_forward_entry_id(&self, entry_id: &str) -> bool {
+        self.forward_map_entry_id() == entry_id
+    }
+
+    #[inline]
+    pub fn cgs(&self) -> &'a CGS {
+        self.cgs
+    }
+}
+
+/// Build a layer stack from loaded [`CgsContext`] rows (keys are registry `entry_id`s).
+pub fn cgs_layer_stack_from_contexts(
+    by_entry: &IndexMap<String, Arc<CgsContext>>,
+) -> Vec<CgsLayer<'_>> {
+    by_entry
+        .iter()
+        .map(|(entry_id, ctx)| CgsLayer::new(entry_id.as_str(), ctx.cgs.as_ref()))
+        .collect()
+}
+
+/// Resolve `(entry_id, domain, capability)` against a typed layer stack.
+pub fn lookup_capability_in_layer_stack<'a>(
+    layers: &[CgsLayer<'a>],
+    entry_id: &str,
+    domain: &str,
+    cap_name: &str,
+) -> Option<&'a crate::CapabilitySchema> {
+    for layer in layers {
+        if !layer.matches_forward_entry_id(entry_id) {
+            continue;
+        }
+        let cap = layer.cgs().get_capability(cap_name)?;
+        if cap.domain.as_str() == domain {
+            return Some(cap);
+        }
+    }
+    None
+}
+
+/// Zip parallel registry ids and CGS graphs into a typed layer stack.
+pub fn cgs_layer_stack<'a>(entry_ids: &[&'a str], cgs_layers: &[&'a CGS]) -> Vec<CgsLayer<'a>> {
+    assert_eq!(
+        entry_ids.len(),
+        cgs_layers.len(),
+        "cgs_layer_stack: entry_ids and cgs_layers length mismatch"
+    );
+    entry_ids
+        .iter()
+        .zip(cgs_layers)
+        .map(|(entry_id, cgs)| CgsLayer::new(entry_id, cgs))
+        .collect()
+}
 
 /// Maps exposed entity names to their owning registry row and [`CgsContext`] (HTTP backend, auth).
 #[derive(Clone, Debug)]
@@ -145,7 +241,7 @@ impl FederationDispatch {
     ) -> Result<&'a CGS, FederationResolveError> {
         if let Some(qe) = hint.plan_qe {
             if qe.entity == entity {
-                if let Some(ctx) = self.by_entry.get(qe.catalog_entry_id.as_str()) {
+                if let Some(ctx) = self.by_entry.get(qe.entry_id()) {
                     if ctx.cgs.entities.contains_key(entity) {
                         return Ok(ctx.cgs.as_ref());
                     }

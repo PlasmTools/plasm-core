@@ -21,7 +21,7 @@ fn entity_type_for_doc(doc: &RunArtifactDocument) -> Option<String> {
     doc.parsed_preimage
         .expr
         .qualified_entity_key()
-        .map(|qe| qe.entity)
+        .map(|qe| qe.entity.to_string())
 }
 
 fn execution_result_from_artifact_doc(
@@ -170,7 +170,9 @@ mod tests {
                     pagination: None,
                     hydrate: None,
                     capability_name: None,
-                    catalog_entry_id: Some("default".into()),
+                    catalog_entry_id: plasm_core::CatalogEntryStamp::some(
+                        plasm_core::RegistryEntryId::from("default"),
+                    ),
                 }),
                 projection: None,
             },

@@ -3,28 +3,26 @@
 use super::*;
 use plasm_core::error_render::{render_parse_error_with_feedback, FeedbackStyle};
 
-pub fn session_cgs_layers(session: &ExecuteSession) -> Vec<&CGS> {
+use plasm_core::cgs_federation::{cgs_layer_stack_from_contexts, CgsLayer};
+use plasm_core::symbol_tuning::CatalogScope;
+
+pub fn session_cgs_layer_stack(session: &ExecuteSession) -> Vec<CgsLayer<'_>> {
     if session.contexts_by_entry.is_empty() {
-        vec![session.cgs.as_ref()]
+        vec![CgsLayer::new(
+            session.entry_id.as_str(),
+            session.cgs.as_ref(),
+        )]
     } else {
-        session
-            .contexts_by_entry
-            .values()
-            .map(|c| c.cgs.as_ref())
-            .collect()
+        cgs_layer_stack_from_contexts(&session.contexts_by_entry)
     }
 }
 
-pub(crate) fn session_layer_catalog_entry_ids(session: &ExecuteSession) -> Vec<Option<&str>> {
-    if session.contexts_by_entry.is_empty() {
-        vec![None]
-    } else {
-        session
-            .contexts_by_entry
-            .keys()
-            .map(|k| Some(k.as_str()))
-            .collect()
-    }
+/// Legacy slice of inner [`CGS`] graphs — prefer [`session_cgs_layer_stack`].
+pub fn session_cgs_layers(session: &ExecuteSession) -> Vec<&CGS> {
+    session_cgs_layer_stack(session)
+        .iter()
+        .map(CgsLayer::cgs)
+        .collect()
 }
 
 fn agent_program_error(head: impl AsRef<str>, help: Option<impl AsRef<str>>) -> String {
@@ -48,9 +46,12 @@ pub fn resolve_wire_field_token(
     }
     let map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
     if let Some(qe) = qe {
-        let cgs =
-            crate::catalog_ownership::resolve_cgs_for_entity(session, qe.entity.as_str(), None)
-                .map_err(|e| agent_program_error(e, None::<&str>))?;
+        let cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
+            session,
+            qe.entry_id.as_str(),
+            qe.entity.as_str(),
+        )
+        .map_err(|e| agent_program_error(e, None::<&str>))?;
         let ent = cgs.get_entity(qe.entity.as_str()).ok_or_else(|| {
             agent_program_error(
                 format!(
@@ -61,8 +62,20 @@ pub fn resolve_wire_field_token(
             )
         })?;
         return map
-            .resolve_entity_field(qe.entry_id.as_str(), qe.entity.as_str(), ent, t)
+            .resolve_entity_field(
+                CatalogScope::qualified(qe.entry_id.as_str()),
+                qe.entity.as_str(),
+                ent,
+                t,
+            )
             .map_err(|e| e.to_agent_program_error());
+    }
+    if plasm_core::symbol_tuning::SymbolMap::is_opaque_p_sym(t) {
+        if let Ok(binding) = map.resolve_session_slot(t) {
+            if let Some((_entity, field_wire)) = binding.entity_field() {
+                return Ok(field_wire.to_string());
+            }
+        }
     }
     Ok(t.to_string())
 }
@@ -84,7 +97,7 @@ pub fn resolve_wire_field_list(
 pub fn symbol_map_for_plasm_surface_parse(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
-) -> Arc<SymbolMap> {
+) -> Arc<dyn SymbolSession> {
     crate::symbol_map_resolve::resolve_session_symbol_map(
         &crate::symbol_map_resolve::SessionSymbolMapContext {
             session,
@@ -138,16 +151,14 @@ pub fn parse_plasm_surface_line_program(
     for_each_row_context: bool,
 ) -> Result<ParsedExpr, ParseError> {
     let surface = line.trim();
-    let layers = session_cgs_layers(session);
-    let layer_entry_ids = session_layer_catalog_entry_ids(session);
+    let stack = session_cgs_layer_stack(session);
     let sym_map = symbol_map_for_plasm_surface_parse(session, symbol_map_cross_cache);
     let mut parsed = parse_with_cgs_layers_program(
         surface,
-        &layers,
+        &stack,
         sym_map,
         program_nodes,
         for_each_row_context,
-        Some(&layer_entry_ids),
     )?;
     normalize_query_capabilities_for_session(session, &mut parsed.expr).map_err(|message| {
         ParseError {
@@ -215,18 +226,8 @@ pub(crate) fn entry_scoped_execute_session(
     scoped.contexts_by_entry = IndexMap::from([(q.entry_id.clone(), ctx.clone())]);
     scoped.entry_id = q.entry_id.clone();
     scoped.http_backend = Some(ctx.cgs.http_backend.clone());
-    scoped.entities = ctx
-        .cgs
-        .entities
-        .keys()
-        .map(|name| name.as_str().to_string())
-        .collect();
-    let focus = [q.entity.as_str()];
-    scoped.teaching_exposure = Some(TeachingExposureSession::new(
-        ctx.cgs.as_ref(),
-        q.entry_id.as_str(),
-        &focus,
-    ));
+    // Preserve the parent session symbol table — never mint fresh numbering for federated scoping.
+    scoped.entities = session.entities.clone();
     Ok(scoped)
 }
 
@@ -263,15 +264,14 @@ pub(crate) fn row_identities_from_entities(
                 e.reference.entity_type.as_str(),
                 None,
             )
-            .or_else(|_| crate::catalog_ownership::resolve_qualified_entity_key(es, entity, None));
+            .or_else(|_| {
+                crate::catalog_ownership::resolve_qualified_entity_key(es, entity, None)
+            });
             let core_qe = match plan_qe {
                 Ok(qe) => {
                     plasm_core::QualifiedEntityKey::new(qe.entry_id.clone(), qe.entity.clone())
                 }
-                Err(_) => plasm_core::QualifiedEntityKey::new(
-                    es.entry_id.clone(),
-                    e.reference.entity_type.to_string(),
-                ),
+                Err(_) => return None,
             };
             let cgs = crate::catalog_ownership::resolve_cgs_for_entity(
                 es,

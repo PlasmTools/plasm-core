@@ -10,9 +10,8 @@ use plasm_core::render_intent_with_projection_federated;
 use plasm_core::type_check_expr;
 use plasm_core::type_check_expr_federated;
 use plasm_core::PromptPipelineConfig;
-use plasm_core::SymbolMap;
 use plasm_core::SymbolMapCrossRequestCache;
-use plasm_core::TeachingExposureSession;
+use plasm_core::SymbolSession;
 use plasm_core::TypeError;
 use plasm_core::CGS;
 
@@ -82,7 +81,7 @@ pub use parse::{
     dry_run_simulation_for_session, expand_program_surface_for_session_lower,
     format_session_symbolic_parse_error, parse_parsed_expr_for_session,
     parse_plasm_line_for_session, parse_plasm_surface_line, parse_plasm_surface_line_program,
-    resolve_wire_field_list, resolve_wire_field_token, session_cgs_layers,
+    resolve_wire_field_list, resolve_wire_field_token, session_cgs_layer_stack, session_cgs_layers,
     symbol_map_for_plasm_surface_parse, typecheck_parsed_for_session,
 };
 

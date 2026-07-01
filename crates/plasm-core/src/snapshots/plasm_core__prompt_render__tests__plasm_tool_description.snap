@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm-core/src/prompt_render/mod.rs
+source: crates/plasm-core/src/prompt_render/mod.rs
 expression: "super::PLASM_TOOL_DESCRIPTION"
 ---
 **Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and executable **`run_ref`** (`pcN`). Pass that token to **`plasm_run`**; do **not** echo the program.
@@ -24,7 +24,7 @@ Symbol and fill rules:
 - Replace teaching placeholders (`$`, `<id>`, `<val>`) and exemplar ids (`pikachu`, `example-name`, …) with real values before output. Never emit `$` from a teaching row.
 - Get-head: **parens = identity** (`e_type(electric)`; bare word = string identity when the slot is a name/string field), **braces = query/filter** (`e#{p#=…}`). Keyed `e#(p#=<id>)` only when that `p#` is the identity field.
 - **Quote scalars only in `{…}` predicates** (`e#{p#="EVA"}`); identity ids in `e#(…)` need no quotes. EntityRef slots use `e#(id)`, not bare scalars.
-- Remove `..` ellipses; add `opt:` keys (from `Meaning`) only as keyed assignments with real values.
+- Remove `..` ellipses; when Meaning includes `optional` (a legend token, not program syntax), add optional slots as keyed assignments with real values (see taught `p#` rows). Exemplars with `,..` in the expr column imply optional slots.
 - Projection `[p#,…]` suffixes: reuse only on expressions returning the same entity/list type.
 
 Core surface:

@@ -119,7 +119,7 @@ mod tests {
             pagination: None,
             hydrate: None,
             capability_name: None,
-            catalog_entry_id: None,
+            catalog_entry_id: plasm_core::CatalogEntryStamp::none(),
         })
     }
 

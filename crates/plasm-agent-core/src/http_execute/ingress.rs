@@ -1,5 +1,7 @@
 //! Program body parsing and session plugin execute options.
 
+use plasm_core::SymbolSession;
+
 use super::*;
 
 pub(crate) fn parse_execute_program_body(
@@ -61,7 +63,7 @@ pub(crate) fn execute_session_parse_error_message(
     err: &expr_parser::ParseError,
     line: &str,
     cgs: &CGS,
-    sym_map: &SymbolMap,
+    sym_map: &dyn SymbolSession,
 ) -> String {
     let step = render_parse_error_with_feedback(
         err,

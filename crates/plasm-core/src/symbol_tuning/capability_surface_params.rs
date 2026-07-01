@@ -53,6 +53,18 @@ fn field_matches_filter(f: &InputFieldSchema, filter: CapabilityParamSurfaceFilt
     }
 }
 
+pub fn optional_legend_param_syms(
+    map: &SymbolMap,
+    entry_id: &str,
+    domain: &str,
+    cap: &CapabilitySchema,
+) -> Vec<String> {
+    capability_optional_legend_param_pairs(map, entry_id, domain, cap)
+        .into_iter()
+        .map(|(_, sym)| sym)
+        .collect()
+}
+
 /// Wire→`p#` pairs for teaching-table `;;` optional legends (no exposure surface gate).
 pub fn capability_optional_legend_param_pairs(
     map: &SymbolMap,

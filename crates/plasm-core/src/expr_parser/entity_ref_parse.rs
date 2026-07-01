@@ -30,8 +30,7 @@ impl<'a> Parser<'a> {
         if let Some(canonical) = self.sym_map.resolve_session_entity_symbol(surface) {
             if self.cgs_for_entity(&canonical).is_some()
                 || self
-                    .layers_slice()
-                    .iter()
+                    .cgs_layers()
                     .any(|c| c.get_entity(&canonical).is_some())
             {
                 return Some(EntityCtorHead { canonical });
@@ -40,8 +39,7 @@ impl<'a> Parser<'a> {
         let canon = self.canonical_entity_name_in_layers(surface);
         if self.cgs_for_entity(&canon).is_some()
             || self
-                .layers_slice()
-                .iter()
+                .cgs_layers()
                 .any(|c| c.get_entity(&canon).is_some())
         {
             return Some(EntityCtorHead { canonical: canon });
@@ -137,8 +135,14 @@ impl<'a> Parser<'a> {
         ent: &EntityDef,
         raw_key: &str,
     ) -> Result<String, ParseError> {
+        let catalog = match self.catalog_entry_id_for_entity(entity_canon)? {
+            Some(entry_id) if !entry_id.is_empty() => {
+                crate::symbol_tuning::CatalogScope::qualified(entry_id)
+            }
+            _ => crate::symbol_tuning::CatalogScope::SessionReverse,
+        };
         self.sym_map
-            .resolve_compound_key("", entity_canon, &ent.key_vars, raw_key)
+            .resolve_compound_key(catalog, entity_canon, &ent.key_vars, raw_key)
             .map_err(|e| {
                 self.err(ParseErrorKind::Other {
                     message: e.to_agent_program_error(),

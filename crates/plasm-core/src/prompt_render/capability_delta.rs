@@ -6,8 +6,9 @@ use indexmap::IndexMap;
 
 use crate::symbol_tuning::{
     capability_exposure_param_pairs, field_syms_for_teaching_row, gloss_description_truncated,
-    registry_backed_compact_wire_label, CapabilityParamSurfaceFilter, ExposureCapabilityKey,
-    ExposureEntityKey, SymbolMap, TeachingExposureSession,
+    optional_legend_param_syms, registry_backed_compact_wire_label,
+    CapabilityParamSurfaceFilter, ExposureCapabilityKey, ExposureEntityKey, SymbolMap,
+    TeachingExposureSession,
 };
 use crate::{CapabilityKind, CGS};
 
@@ -124,37 +125,35 @@ fn gloss_rows_for_filtered_block(
 ) -> Vec<TeachingFieldGloss> {
     let mut needed: HashSet<String> = HashSet::new();
     for row in kept_rows {
-        let legend = {
-            let mut parts = Vec::new();
-            if !row.teaching_expr.scope.is_empty() {
-                parts.push(row.teaching_expr.scope.as_str());
-            }
-            if !row.teaching_expr.optional_params.is_empty() {
-                parts.push(row.teaching_expr.optional_params.as_str());
-            }
-            let tail = row.teaching_expr.description.as_str();
-            if parts.is_empty() {
-                if tail.is_empty() {
-                    None
-                } else {
-                    Some(tail.to_string())
-                }
-            } else {
-                Some(format!("{} — {tail}", parts.join(" ")))
-            }
-        };
         for sym in field_syms_for_teaching_row(
             row.teaching_expr.expression.as_str(),
             None,
-            legend.as_deref(),
+            None,
+            &[],
         ) {
             needed.insert(sym);
         }
-        if !row.teaching_expr.optional_params.is_empty() {
-            for sym in
-                field_syms_for_teaching_row(row.teaching_expr.optional_params.as_str(), None, None)
-            {
-                needed.insert(sym);
+        if row.teaching_expr.legend.optional.is_present() {
+            if let Some(cap_wire) = row.meta.source_capability.as_deref() {
+                for cap_key in new_caps {
+                    if cap_key.capability.as_str() != cap_wire {
+                        continue;
+                    }
+                    let Some(cgs) = exp.catalog_cgs_for_entry(cap_key.entry_id.as_str()) else {
+                        continue;
+                    };
+                    let Some(cap) = cgs.capabilities.get(cap_wire) else {
+                        continue;
+                    };
+                    for sym in optional_legend_param_syms(
+                        map,
+                        cap_key.entry_id.as_str(),
+                        cap_key.domain.as_str(),
+                        cap,
+                    ) {
+                        needed.insert(sym);
+                    }
+                }
             }
         }
         if let Some(cap_wire) = row.meta.source_capability.as_deref() {

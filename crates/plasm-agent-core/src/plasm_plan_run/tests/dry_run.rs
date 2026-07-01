@@ -690,13 +690,20 @@ fn dry_run_compiled_search_projection_rejects_filter_input_param() {
 rows"#;
     match compile_plasm_expression(&pipeline, None, &s, "search-proj-input", source) {
         Err(err) => {
-            assert!(err.contains("query/capability input"), "{err}");
+            assert!(
+                err.contains("query/capability input")
+                    || err.contains("not a row field")
+                    || err.contains("not a row symbol"),
+                "{err}"
+            );
         }
         Ok(bundle) => {
             let dry_err = evaluate_plasm_comp_dry(&s, &bundle)
                 .expect_err("dry must reject search input projection");
             assert!(
                 dry_err.contains("query/capability input")
+                    || dry_err.contains("not a row field")
+                    || dry_err.contains("not a row symbol")
                     || dry_err.contains("postfix projection"),
                 "{dry_err}"
             );

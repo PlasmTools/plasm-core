@@ -84,12 +84,15 @@ pub use program_surface::{
 };
 pub use value_expr::{RenderExpr, ValueExpr};
 
+use crate::cgs_federation::CgsLayer;
 use crate::schema::{
     capability_is_zero_arity_invoke, capability_path_method_segment,
-    path_var_names_from_mapping_json, template_invoke_requires_explicit_anchor_id,
+    path_var_names_from_mapping_json, resolve_capability_input_param_field,
+    template_invoke_requires_explicit_anchor_id,
 };
-use crate::symbol_tuning::{entity_slices_for_render, FocusSpec, SymbolMap};
+use crate::symbol_tuning::{entity_slices_for_render, CatalogScope, FocusSpec, SymbolMap, SymbolSession};
 use crate::{
+    catalog_id::CatalogEntryStamp,
     coerce_value_for_field_type, ArrayItemsSchema, CapabilityKind, CapabilityName, ChainExpr,
     CompOp, CreateExpr, DeleteExpr, EntityDef, EntityKey, EntityName, Expr, FieldType, GetExpr,
     InputType, InvokeExpr, InvokeInputPayload, PageExpr, ParameterRole, Predicate, QueryExpr, Ref,
@@ -408,20 +411,33 @@ pub fn parse(input: &str, cgs: &CGS) -> Result<ParsedExpr, ParseError> {
 /// [`crate::symbol_tuning::SymbolMap`] behind [`Arc`] (e.g. [`TeachingExposureSession::symbol_map_arc`](crate::symbol_tuning::TeachingExposureSession::symbol_map_arc)).
 pub fn parse_with_cgs_layers(
     input: &str,
-    layers: &[&CGS],
-    sym_map: Arc<SymbolMap>,
+    layers: &[CgsLayer<'_>],
+    sym_map: Arc<dyn SymbolSession>,
 ) -> Result<ParsedExpr, ParseError> {
-    parse_with_cgs_layers_program(input, layers, sym_map, None, false, None)
+    parse_with_cgs_layers_program(input, layers, sym_map, None, false)
 }
 
-/// Parse one Plasm line against `cgs`, using in-grammar [`SymbolMap`] resolution when `sym_map` is set.
+/// Parse one Plasm line against `cgs`, using in-grammar session symbol resolution when `sym_map` is set.
 pub fn parse_session_line(
     input: &str,
     cgs: &CGS,
-    sym_map: Option<Arc<SymbolMap>>,
+    sym_map: Option<Arc<dyn SymbolSession>>,
 ) -> Result<ParsedExpr, ParseError> {
     match sym_map {
-        Some(map) => parse_with_cgs_layers(input, &[cgs], map),
+        Some(map) => {
+            let sole_entry = map.sole_registry_entry_id().map(str::to_string);
+            let layer = match (
+                cgs.entry_id.as_deref().filter(|id| !id.is_empty()),
+                sole_entry.as_deref(),
+            ) {
+                (Some(entry_id), _) => CgsLayer::qualified(entry_id, cgs),
+                (None, Some(entry_id)) if !entry_id.is_empty() => {
+                    CgsLayer::qualified(entry_id, cgs)
+                }
+                (None, Some(_)) | (None, None) => CgsLayer::unset(cgs),
+            };
+            parse_with_cgs_layers(input, std::slice::from_ref(&layer), map)
+        }
         None => parse(input, cgs),
     }
 }
@@ -430,14 +446,12 @@ pub fn parse_session_line(
 /// in-scope program node ids so `method(p=report)` and `report.field` lower to
 /// [`crate::value::PlasmInputRef`] instead of string literals. `for_each_row_context` enables
 /// `_.field` row holes on the right-hand side of `=>`.
-/// `layer_catalog_entry_ids` parallels `layers` with registry `entry_id` per row when [`CGS::entry_id`] is unset.
 pub fn parse_with_cgs_layers_program(
     input: &str,
-    layers: &[&CGS],
-    sym_map: Arc<SymbolMap>,
+    layers: &[CgsLayer<'_>],
+    sym_map: Arc<dyn SymbolSession>,
     program_nodes: Option<&BTreeSet<String>>,
     for_each_row_context: bool,
-    layer_catalog_entry_ids: Option<&[Option<&str>]>,
 ) -> Result<ParsedExpr, ParseError> {
     if layers.is_empty() {
         return Err(ParseError {
@@ -447,49 +461,35 @@ pub fn parse_with_cgs_layers_program(
             offset: 0,
         });
     }
-    if let Some(ids) = layer_catalog_entry_ids {
-        if ids.len() != layers.len() {
-            return Err(ParseError {
-                kind: ParseErrorKind::Other {
-                    message: format!(
-                        "parse_with_cgs_layers: layer_catalog_entry_ids length {} != layers length {}",
-                        ids.len(),
-                        layers.len()
-                    ),
-                },
-                offset: 0,
-            });
-        }
-    }
-    let mut p = Parser::new_with_sym_map(
-        input,
-        ParserLayers::Many(layers),
-        sym_map,
-        layer_catalog_entry_ids,
-    );
+    let mut p = Parser::new_with_sym_map(input, LayerStack::borrowed(layers), sym_map);
     p.program_nodes = program_nodes;
     p.for_each_row_context = for_each_row_context;
     let mut parsed = p.parse_expr()?;
-    if let Some(cgs) = layers.first() {
-        parsed.expr = crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, cgs);
-    }
+    parsed.expr =
+        crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, layers[0].cgs());
     Ok(parsed)
 }
 
 // ── Internal parser ────────────────────────────────────────────────────────
 
-enum ParserLayers<'a> {
-    /// Single-schema parse (`parse` / REPL).
-    Single([&'a CGS; 1]),
-    /// Federated: borrowed slice from caller (`parse_with_cgs_layers`).
-    Many(&'a [&'a CGS]),
+pub(super) enum LayerStack<'a> {
+    Borrowed(&'a [CgsLayer<'a>]),
+    Single(CgsLayer<'a>),
 }
 
-impl<'a> ParserLayers<'a> {
-    fn as_slice(&self) -> &[&'a CGS] {
+impl<'a> LayerStack<'a> {
+    fn borrowed(layers: &'a [CgsLayer<'a>]) -> Self {
+        Self::Borrowed(layers)
+    }
+
+    fn single(layer: CgsLayer<'a>) -> Self {
+        Self::Single(layer)
+    }
+
+    fn as_slice(&self) -> &[CgsLayer<'a>] {
         match self {
-            ParserLayers::Single(a) => a.as_slice(),
-            ParserLayers::Many(s) => s,
+            Self::Borrowed(layers) => layers,
+            Self::Single(layer) => std::slice::from_ref(layer),
         }
     }
 }
@@ -497,9 +497,9 @@ impl<'a> ParserLayers<'a> {
 pub(super) struct Parser<'a> {
     pub(super) input: &'a str,
     pub(super) pos: usize,
-    layers: ParserLayers<'a>,
+    stack: LayerStack<'a>,
     /// Same `m#` → kebab table as the SYMBOL MAP bundle (forgiving when expansion did not run).
-    sym_map: Arc<SymbolMap>,
+    sym_map: Arc<dyn SymbolSession>,
     /// When set, bare `id` / `id.path` in dotted-call args, predicates, and array literals refer
     /// to program nodes with those ids (typed [`crate::value::PlasmInputRef`]).
     pub(super) program_nodes: Option<&'a BTreeSet<String>>,
@@ -507,58 +507,138 @@ pub(super) struct Parser<'a> {
     pub(super) for_each_row_context: bool,
     /// When the surface entity token was an opaque `e#`, owning catalog stamped on built [`Expr`].
     pending_session_catalog_entry_id: Option<String>,
-    /// Registry `entry_id` per federated layer when [`CGS::entry_id`] is unset (parallel to `layers`).
-    layer_catalog_entry_ids: Option<&'a [Option<&'a str>]>,
 }
 
 impl<'a> Parser<'a> {
     fn new(input: &'a str, cgs: &'a CGS) -> Self {
         let (full, _) = entity_slices_for_render(cgs, FocusSpec::All);
-        let sym_map = Arc::new(SymbolMap::build(cgs, &full));
-        Self::new_with_sym_map(input, ParserLayers::Single([cgs]), sym_map, None)
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(cgs, &full));
+        let layer = match cgs.entry_id.as_deref().filter(|id| !id.is_empty()) {
+            Some(entry_id) => CgsLayer::qualified(entry_id, cgs),
+            None => CgsLayer::unset(cgs),
+        };
+        Self::new_with_sym_map(
+            input,
+            LayerStack::single(layer),
+            sym_map,
+        )
     }
 
     fn new_with_sym_map(
         input: &'a str,
-        layers: ParserLayers<'a>,
-        sym_map: Arc<SymbolMap>,
-        layer_catalog_entry_ids: Option<&'a [Option<&'a str>]>,
+        stack: LayerStack<'a>,
+        sym_map: Arc<dyn SymbolSession>,
     ) -> Self {
-        assert!(!layers.as_slice().is_empty());
         let mut p = Self {
             input,
             pos: 0,
-            layers,
+            stack,
             sym_map,
             program_nodes: None,
             for_each_row_context: false,
             pending_session_catalog_entry_id: None,
-            layer_catalog_entry_ids,
         };
         p.skip_ws();
         p
     }
 
     fn ok_stamped(&self, expr: Expr) -> Result<Expr, ParseError> {
-        Ok(expr.with_session_catalog_entry_id(self.pending_session_catalog_entry_id.clone()))
+        Ok(expr.with_session_catalog_entry_id(self.active_catalog_entry_id(None)))
     }
 
-    fn layers_slice(&self) -> &[&'a CGS] {
-        self.layers.as_slice()
+    fn layers_stack(&self) -> &[CgsLayer<'a>] {
+        self.stack.as_slice()
+    }
+
+    fn cgs_layers(&self) -> impl Iterator<Item = &'a CGS> + '_ {
+        self.layers_stack().iter().map(CgsLayer::cgs)
     }
 
     fn primary_cgs(&self) -> &CGS {
-        self.layers_slice()[0]
+        self.layers_stack()[0].cgs()
+    }
+
+    fn sole_layer_catalog_entry_id(&self) -> Option<&str> {
+        let stack = self.layers_stack();
+        if stack.len() == 1 {
+            stack[0].entry_id()
+        } else {
+            None
+        }
+    }
+
+    fn catalog_entry_id_for_entity(&self, entity: &str) -> Result<Option<&str>, ParseError> {
+        if let Some(eid) = self
+            .pending_session_catalog_entry_id
+            .as_deref()
+            .or_else(|| self.sole_layer_catalog_entry_id())
+        {
+            for layer in self.layers_stack() {
+                if layer.matches_forward_entry_id(eid) && layer.cgs().get_entity(entity).is_some() {
+                    return Ok(Some(layer.forward_map_entry_id()));
+                }
+            }
+        }
+        let hits: Vec<_> = self
+            .layers_stack()
+            .iter()
+            .filter(|layer| layer.cgs().get_entity(entity).is_some())
+            .collect();
+        match hits.len() {
+            0 => Err(self.err(ParseErrorKind::UnknownEntity {
+                name: entity.to_string(),
+                span_opt: None,
+            })),
+            1 => Ok(Some(hits[0].forward_map_entry_id())),
+            _ => Err(self.err(ParseErrorKind::AmbiguousEntityCatalog {
+                entity: entity.to_string(),
+            })),
+        }
+    }
+
+    fn catalog_scope_for_entity(&self, entity: &str) -> Result<CatalogScope<'_>, ParseError> {
+        if let Some(eid) = self
+            .pending_session_catalog_entry_id
+            .as_deref()
+            .or_else(|| self.sole_layer_catalog_entry_id())
+        {
+            if self.cgs_for_catalog_entry_id(eid, entity).is_some() {
+                return Ok(CatalogScope::qualified(eid));
+            }
+        }
+        let hits: Vec<_> = self
+            .layers_stack()
+            .iter()
+            .filter(|layer| layer.cgs().get_entity(entity).is_some())
+            .collect();
+        match hits.len() {
+            0 => Err(self.err(ParseErrorKind::UnknownEntity {
+                name: entity.to_string(),
+                span_opt: None,
+            })),
+            1 => Ok(hits[0].catalog_scope()),
+            _ => Err(self.err(ParseErrorKind::AmbiguousEntityCatalog {
+                entity: entity.to_string(),
+            })),
+        }
+    }
+
+    fn active_catalog_entry_id(&self, source: Option<&Expr>) -> Option<String> {
+        source
+            .and_then(|e| {
+                e.session_catalog_entry_id()
+                    .map(|id| id.as_str().to_string())
+            })
+            .or_else(|| self.pending_session_catalog_entry_id.clone())
+            .or_else(|| self.sole_layer_catalog_entry_id().map(str::to_string))
     }
 
     fn cgs_for_catalog_entry_id(&self, entry_id: &str, entity: &str) -> Option<&'a CGS> {
-        for (i, c) in self.layers_slice().iter().enumerate() {
-            let layer_eid = c.entry_id.as_deref().or_else(|| {
-                self.layer_catalog_entry_ids
-                    .and_then(|ids| ids.get(i).and_then(|o| *o))
-            });
-            if layer_eid == Some(entry_id) && c.get_entity(entity).is_some() {
-                return Some(c);
+        for layer in self.layers_stack() {
+            if layer.matches_forward_entry_id(entry_id)
+                && layer.cgs().get_entity(entity).is_some()
+            {
+                return Some(layer.cgs());
             }
         }
         None
@@ -566,9 +646,9 @@ impl<'a> Parser<'a> {
 
     fn cgs_for_entity(&self, entity: &str) -> Option<&CGS> {
         let matches: Vec<_> = self
-            .layers_slice()
+            .layers_stack()
             .iter()
-            .copied()
+            .map(CgsLayer::cgs)
             .filter(|c| c.get_entity(entity).is_some())
             .collect();
         if matches.len() == 1 {
@@ -578,9 +658,14 @@ impl<'a> Parser<'a> {
     }
 
     fn cgs_for_entity_required(&self, entity: &str) -> Result<&CGS, ParseError> {
+        if let Some(eid) = self.active_catalog_entry_id(None) {
+            if let Some(cgs) = self.cgs_for_catalog_entry_id(eid.as_str(), entity) {
+                return Ok(cgs);
+            }
+        }
         match self.cgs_for_entity(entity) {
             Some(cgs) => Ok(cgs),
-            None if self.layers_slice().len() > 1 => {
+            None if self.layers_stack().len() > 1 => {
                 Err(self.err(ParseErrorKind::AmbiguousEntityCatalog {
                     entity: entity.to_string(),
                 }))
@@ -589,9 +674,12 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn cgs_for_expr_source(&self, source: &Expr) -> Result<&CGS, ParseError> {
-        let entity = source.primary_entity();
-        if let Some(eid) = source.session_catalog_entry_id() {
+    fn cgs_for_entity_with_preferred_catalog(
+        &self,
+        entity: &str,
+        preferred_entry_id: Option<&str>,
+    ) -> Result<&CGS, ParseError> {
+        if let Some(eid) = preferred_entry_id {
             if let Some(cgs) = self.cgs_for_catalog_entry_id(eid, entity) {
                 return Ok(cgs);
             }
@@ -599,15 +687,25 @@ impl<'a> Parser<'a> {
         self.cgs_for_entity_required(entity)
     }
 
+    fn cgs_for_expr_source(&self, source: &Expr) -> Result<&CGS, ParseError> {
+        let entity = source.primary_entity();
+        if let Some(eid) = source.session_catalog_entry_id() {
+            if let Some(cgs) = self.cgs_for_catalog_entry_id(eid.as_str(), entity) {
+                return Ok(cgs);
+            }
+        }
+        self.cgs_for_entity_required(entity)
+    }
+
     fn canonical_entity_name_in_layers(&self, raw: &str) -> String {
-        for c in self.layers_slice() {
+        for c in self.cgs_layers() {
             if let Some(can) = c.canonical_entity_name(raw) {
                 if c.get_entity(&can).is_some() {
                     return can;
                 }
             }
         }
-        for c in self.layers_slice() {
+        for c in self.cgs_layers() {
             if c.get_entity(raw).is_some() {
                 return raw.to_string();
             }
@@ -638,19 +736,53 @@ impl<'a> Parser<'a> {
         if !crate::symbol_tuning::SymbolMap::is_opaque_m_sym(raw) {
             return None;
         }
-        Some(
-            self.sym_map
-                .resolve_opaque_session_method_capability(
-                    self.layers_slice(),
-                    raw,
-                    source.primary_entity(),
-                )
-                .map_err(|e: SymbolResolveError| {
-                    self.err(ParseErrorKind::Other {
-                        message: e.to_agent_program_error(),
-                    })
-                }),
-        )
+        Some(match self.sym_map.resolve_opaque_session_method_capability(
+            self.layers_stack(),
+            raw,
+            source.primary_entity(),
+        ) {
+            Ok(cap) => Ok(cap),
+            Err(SymbolResolveError::MethodAnchorMismatch { .. }) => {
+                let binding = match self.sym_map.resolve_session_method(raw) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        return Some(Err(self.err(ParseErrorKind::Other {
+                            message: e.to_agent_program_error(),
+                        })));
+                    }
+                };
+                let anchor = source.primary_entity();
+                for layer in self.layers_stack() {
+                    if !layer.matches_forward_entry_id(binding.entry_id.as_str()) {
+                        continue;
+                    }
+                    let cgs = layer.cgs();
+                    let Some(cap) = cgs.capabilities.get(binding.capability.as_str()) else {
+                        continue;
+                    };
+                    if cap.domain.as_str() != binding.domain.as_str() {
+                        continue;
+                    }
+                    if Self::scoped_query_bridge_matches_anchor(cap, cgs, anchor)
+                        || (cap.kind == CapabilityKind::Create
+                            && self.can_bind_create_path_vars(cap, source))
+                    {
+                        return Some(Ok(cap));
+                    }
+                }
+                Err(self.err(ParseErrorKind::Other {
+                    message: SymbolResolveError::MethodAnchorMismatch {
+                        token: raw.trim().to_string(),
+                        bound_domain: binding.domain.to_string(),
+                        anchor_entity: anchor.to_string(),
+                    }
+                    .to_agent_program_error(),
+                }))
+            }
+            Err(e) => Err(self.err(ParseErrorKind::Other {
+                message: e.to_agent_program_error(),
+            })),
+        })
     }
 
     fn scoped_query_bridge_matches_anchor(
@@ -793,7 +925,7 @@ impl<'a> Parser<'a> {
         crate::catalog_ownership::catalog_entry_id_for_invoke(
             source,
             raw_method_label,
-            &self.sym_map,
+            self.sym_map.as_ref(),
             crate::catalog_ownership::InvokeCatalogResolutionContext {
                 pending_session_catalog_entry_id: self.pending_session_catalog_entry_id.as_deref(),
             },
@@ -845,12 +977,16 @@ impl<'a> Parser<'a> {
         );
         let mut out = IndexMap::new();
         for (raw_key, val) in raw_map {
-            let resolved = if fields.iter().any(|f| f.name == raw_key) {
+            let resolved = if fields.iter().any(|f| f.name == raw_key)
+                || resolve_capability_input_param_field(cap, raw_key.as_str()).is_some()
+                || cap.object_params()
+                    .is_some_and(|fs| fs.iter().any(|f| f.name.as_str() == raw_key.as_str()))
+            {
                 raw_key
             } else if crate::symbol_tuning::SymbolMap::is_opaque_p_sym(&raw_key) {
                 self.sym_map
                     .resolve_cap_param(
-                        entry_id.as_str(),
+                        CatalogScope::qualified(entry_id.as_str()),
                         cap.domain.as_str(),
                         cap.name.as_str(),
                         &raw_key,
@@ -873,6 +1009,262 @@ impl<'a> Parser<'a> {
                     message: format!(
                         "duplicate invoke argument `{resolved}` on capability `{cap_label}`"
                     ),
+                }));
+            }
+        }
+        Ok(out)
+    }
+
+    fn union_ctor_leaf_field_key(
+        resolved: &str,
+        variant: &crate::schema::InputVariantSchema,
+        parent_path: &str,
+    ) -> String {
+        if variant
+            .fields
+            .iter()
+            .any(|f| f.name.as_str() == resolved)
+        {
+            return resolved.to_string();
+        }
+        if !parent_path.is_empty() {
+            let prefix = format!("{parent_path}.");
+            if let Some(rest) = resolved.strip_prefix(&prefix) {
+                if variant.fields.iter().any(|f| f.name.as_str() == rest) {
+                    return rest.to_string();
+                }
+            }
+        }
+        resolved
+            .rsplit('.')
+            .next()
+            .unwrap_or(resolved)
+            .to_string()
+    }
+
+    fn normalize_invoke_ctor_fields_for_variant(
+        &self,
+        cap: &crate::CapabilitySchema,
+        source: &Expr,
+        raw_method_label: Option<&str>,
+        parent_path: &str,
+        variant: &crate::schema::InputVariantSchema,
+        raw_map: indexmap::IndexMap<String, Value>,
+    ) -> Result<indexmap::IndexMap<String, Value>, ParseError> {
+        let resolved_map = self.normalize_invoke_arg_keys_for_fields(
+            cap,
+            source,
+            raw_method_label,
+            variant.fields.as_slice(),
+            raw_map,
+        )?;
+        let mut out = indexmap::IndexMap::new();
+        for (k, v) in resolved_map {
+            let leaf = Self::union_ctor_leaf_field_key(k.as_str(), variant, parent_path);
+            if out.insert(leaf.clone(), v).is_some() {
+                return Err(self.err(ParseErrorKind::Other {
+                    message: format!("duplicate union constructor field `{leaf}` under `{parent_path}`"),
+                }));
+            }
+        }
+        Ok(out)
+    }
+
+    fn normalize_invoke_union_ctor_element(
+        &self,
+        cap: &crate::CapabilitySchema,
+        source: &Expr,
+        raw_method_label: Option<&str>,
+        array_field: &str,
+        variants: &[crate::schema::InputVariantSchema],
+        el: Value,
+    ) -> Result<Value, ParseError> {
+        let Value::UnionCtor {
+            ctor_label,
+            ctor_fields,
+        } = el
+        else {
+            return Ok(el);
+        };
+        let Some(variant) = variants.iter().find(|v| {
+            crate::schema::union_variant_constructor_symbol(v) == Some(ctor_label.as_str())
+        }) else {
+            return Ok(Value::UnionCtor {
+                ctor_label,
+                ctor_fields,
+            });
+        };
+        let parent_path = format!("{array_field}.{}", variant.name);
+        let normalized = self.normalize_invoke_ctor_fields_for_variant(
+            cap,
+            source,
+            raw_method_label,
+            parent_path.as_str(),
+            variant,
+            ctor_fields,
+        )?;
+        Ok(Value::UnionCtor {
+            ctor_label,
+            ctor_fields: normalized,
+        })
+    }
+
+    fn normalize_invoke_nested_input_value(
+        &self,
+        cap: &crate::CapabilitySchema,
+        source: &Expr,
+        raw_method_label: Option<&str>,
+        f: &crate::InputFieldSchema,
+        val: Value,
+    ) -> Result<Value, ParseError> {
+        let crate::InputFieldWire::Inline(ty) = &f.wire else {
+            return Ok(val);
+        };
+        match ty.as_ref() {
+            crate::InputType::Array { element_type, .. } => {
+                let Value::Array(items) = val else {
+                    return Ok(val);
+                };
+                let crate::InputType::Union { variants } = element_type.as_ref() else {
+                    return Ok(Value::Array(items));
+                };
+                let mut out = Vec::with_capacity(items.len());
+                for el in items {
+                    out.push(self.normalize_invoke_union_ctor_element(
+                        cap,
+                        source,
+                        raw_method_label,
+                        f.name.as_str(),
+                        variants,
+                        el,
+                    )?);
+                }
+                Ok(Value::Array(out))
+            }
+            _ => Ok(val),
+        }
+    }
+
+    fn normalize_invoke_union_ctor_args_in_object(
+        &self,
+        cap: &crate::CapabilitySchema,
+        source: &Expr,
+        raw_method_label: Option<&str>,
+        mut map: indexmap::IndexMap<String, Value>,
+    ) -> Result<indexmap::IndexMap<String, Value>, ParseError> {
+        let Some(is) = cap.input_schema.as_ref() else {
+            return Ok(map);
+        };
+        let crate::InputType::Object { fields, .. } = &is.input_type else {
+            return Ok(map);
+        };
+        for f in fields {
+            if let Some(v) = map.get_mut(&f.name) {
+                let taken = std::mem::replace(v, Value::Null);
+                *v = self.normalize_invoke_nested_input_value(
+                    cap,
+                    source,
+                    raw_method_label,
+                    f,
+                    taken,
+                )?;
+            }
+        }
+        Ok(map)
+    }
+
+    fn find_union_variant_for_ctor_label(
+        &self,
+        ctor_label: &str,
+    ) -> Option<(&crate::CapabilitySchema, &crate::schema::InputVariantSchema)> {
+        for cgs in self.cgs_layers() {
+            for cap in cgs.capabilities.values() {
+                let Some(is) = &cap.input_schema else {
+                    continue;
+                };
+                let variants = match &is.input_type {
+                    crate::InputType::Union { variants } => variants,
+                    crate::InputType::Object { fields, .. } => {
+                        let mut found = None;
+                        for f in fields {
+                            let crate::InputFieldWire::Inline(ty) = &f.wire else {
+                                continue;
+                            };
+                            if let crate::InputType::Array { element_type, .. } = ty.as_ref() {
+                                if let crate::InputType::Union { variants } = element_type.as_ref() {
+                                    if let Some(v) = variants.iter().find(|v| {
+                                        crate::schema::union_variant_constructor_symbol(v)
+                                            == Some(ctor_label)
+                                    }) {
+                                        found = Some(v);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        match found {
+                            Some(v) => {
+                                return Some((cap, v));
+                            }
+                            None => continue,
+                        }
+                    }
+                    _ => continue,
+                };
+                if let Some(v) = variants.iter().find(|v| {
+                    crate::schema::union_variant_constructor_symbol(v) == Some(ctor_label)
+                }) {
+                    return Some((cap, v));
+                }
+            }
+        }
+        None
+    }
+
+    fn normalize_standalone_union_ctor_fields(
+        &self,
+        ctor_label: &str,
+        raw_map: indexmap::IndexMap<String, Value>,
+    ) -> Result<indexmap::IndexMap<String, Value>, ParseError> {
+        let Some((cap, variant)) = self.find_union_variant_for_ctor_label(ctor_label) else {
+            return Ok(raw_map);
+        };
+        let entry_id = self
+            .pending_session_catalog_entry_id
+            .as_deref()
+            .unwrap_or("");
+        let cap_label = format!("{entry_id}/{}.{}", cap.domain, cap.name);
+        let hint = self.sym_map.cap_param_syms_hint(
+            entry_id,
+            cap.domain.as_str(),
+            cap.name.as_str(),
+        );
+        let mut out = indexmap::IndexMap::new();
+        for (raw_key, val) in raw_map {
+            let resolved = if variant.fields.iter().any(|f| f.name == raw_key) {
+                raw_key
+            } else if crate::symbol_tuning::SymbolMap::is_opaque_p_sym(&raw_key) {
+                self.sym_map
+                    .resolve_cap_param(
+                        CatalogScope::qualified(entry_id),
+                        cap.domain.as_str(),
+                        cap.name.as_str(),
+                        &raw_key,
+                        cap,
+                    )
+                    .map_err(|e| {
+                        self.err(ParseErrorKind::Other {
+                            message: format!("{e} on `{cap_label}`{hint}"),
+                        })
+                    })?
+            } else {
+                raw_key
+            };
+            let leaf =
+                Self::union_ctor_leaf_field_key(resolved.as_str(), variant, variant.name.as_str());
+            if out.insert(leaf.clone(), val).is_some() {
+                return Err(self.err(ParseErrorKind::Other {
+                    message: format!("duplicate union constructor field `{leaf}` in `{ctor_label}`"),
                 }));
             }
         }
@@ -1078,7 +1470,12 @@ impl<'a> Parser<'a> {
         self.expect_char(')')?;
         let wire_key = self
             .sym_map
-            .resolve_entity_field("", entity, ent, key.as_str())
+            .resolve_entity_field(
+                self.catalog_scope_for_entity(entity)?,
+                entity,
+                ent,
+                key.as_str(),
+            )
             .unwrap_or_else(|_| key.clone());
         if wire_key != ent.id_field.as_str() {
             return Err(self.err(ParseErrorKind::Other {
@@ -1138,7 +1535,12 @@ impl<'a> Parser<'a> {
         self.expect_char(')')?;
         let wire_field = self
             .sym_map
-            .resolve_entity_field("", entity, ent, field.as_str())
+            .resolve_entity_field(
+                self.catalog_scope_for_entity(entity)?,
+                entity,
+                ent,
+                field.as_str(),
+            )
             .unwrap_or(field);
         if wire_field != ent.id_field.as_str() {
             self.pos = save;
@@ -1192,7 +1594,12 @@ impl<'a> Parser<'a> {
         // `Team(p76=key)` even though `p76` resolves to `key`.
         let wire_key = self
             .sym_map
-            .resolve_entity_field("", entity_canon, ent, key.as_str())
+            .resolve_entity_field(
+                self.catalog_scope_for_entity(entity_canon)?,
+                entity_canon,
+                ent,
+                key.as_str(),
+            )
             .unwrap_or_else(|_| key.clone());
         if wire_key != ent.id_field.as_str() {
             return Err(self.err(ParseErrorKind::Other {
@@ -1333,7 +1740,7 @@ impl<'a> Parser<'a> {
         field: &str,
     ) -> Option<(FieldType, Option<ValueWireFormat>, Option<ArrayItemsSchema>)> {
         let ec = self.cgs_for_entity(entity_name).or_else(|| {
-            if self.layers_slice().len() == 1 {
+            if self.layers_stack().len() == 1 {
                 Some(self.primary_cgs())
             } else {
                 None
@@ -1495,6 +1902,7 @@ impl<'a> Parser<'a> {
         &self,
         cap: &crate::CapabilitySchema,
         map: &mut IndexMap<String, Value>,
+        catalog_entry_id: Option<&str>,
     ) -> Result<(), ParseError> {
         let Some(is) = &cap.input_schema else {
             return Ok(());
@@ -1502,7 +1910,10 @@ impl<'a> Parser<'a> {
         let InputType::Object { fields, .. } = &is.input_type else {
             return Ok(());
         };
-        let ec = self.cgs_for_entity_required(cap.domain.as_str())?;
+        let ec = self.cgs_for_entity_with_preferred_catalog(
+            cap.domain.as_str(),
+            catalog_entry_id,
+        )?;
         for f in fields {
             if let Some(v) = map.get_mut(&f.name) {
                 if matches!(&f.wire, crate::InputFieldWire::Inline(_)) {
@@ -1532,7 +1943,7 @@ impl<'a> Parser<'a> {
         if let Ok(eid) = crate::catalog_ownership::catalog_entry_id_for_invoke(
             source,
             raw_label,
-            &self.sym_map,
+            self.sym_map.as_ref(),
             crate::catalog_ownership::InvokeCatalogResolutionContext {
                 pending_session_catalog_entry_id: self.pending_session_catalog_entry_id.as_deref(),
             },
@@ -1541,14 +1952,29 @@ impl<'a> Parser<'a> {
                 return vec![cgs];
             }
         }
-        self.layers_slice().to_vec()
+        self.cgs_layers().collect::<Vec<_>>()
     }
 
     fn stamp_session_catalog_from_source(source: &Expr, expr: Expr) -> Expr {
-        expr.with_session_catalog_entry_id(source.session_catalog_entry_id().map(str::to_string))
+        let stamped = expr.with_session_catalog_entry_id(
+            source
+                .session_catalog_entry_id()
+                .map(|id| id.as_str()),
+        );
+        if let Expr::Create(mut c) = stamped {
+            if c.catalog_entry_id.is_none() {
+                if let Some(id) = source.session_catalog_entry_id() {
+                    c.catalog_entry_id = CatalogEntryStamp::some(id.clone());
+                }
+            }
+            Expr::Create(c)
+        } else {
+            stamped
+        }
     }
 
-    /// Resolve Create / Update / Action / Delete with object input; same-domain first, then cross-domain Create.
+    /// Resolve Create / Update / Action / Delete with object input.
+    /// Opaque session `m#` resolves only via the forward method binding table — no CGS scan fallback.
     fn resolve_dotted_call_capability(
         &self,
         label: &str,
@@ -1556,6 +1982,11 @@ impl<'a> Parser<'a> {
         source: &Expr,
     ) -> Result<&crate::CapabilitySchema, ParseError> {
         if let Some(raw) = raw_label {
+            if crate::symbol_tuning::SymbolMap::is_opaque_m_sym(raw) {
+                return self
+                    .try_resolve_opaque_invoke_capability(source, raw)
+                    .expect("opaque m# always attempts session binding");
+            }
             if let Some(res) = self.try_resolve_opaque_invoke_capability(source, raw) {
                 return res;
             }
@@ -1646,8 +2077,18 @@ impl<'a> Parser<'a> {
         let cap = self.resolve_dotted_call_capability(&label, Some(field_raw.as_str()), &source)?;
         map =
             self.normalize_invoke_arg_keys_for_cap(cap, &source, Some(field_raw.as_str()), map)?;
+        map = self.normalize_invoke_union_ctor_args_in_object(
+            cap,
+            &source,
+            Some(field_raw.as_str()),
+            map,
+        )?;
         self.inject_path_vars_from_get(cap, &source, &mut map);
-        self.coerce_object_input_for_cap(cap, &mut map)?;
+        self.coerce_object_input_for_cap(
+            cap,
+            &mut map,
+            self.active_catalog_entry_id(Some(&source)).as_deref(),
+        )?;
         let input = Value::Object(map);
         self.finish_dotted_call_with_payload_value_inner(
             source,
@@ -1687,12 +2128,16 @@ impl<'a> Parser<'a> {
             self.inject_path_vars_from_get(cap, &source, ctor_fields);
             if let Some(is) = &cap.input_schema {
                 if let InputType::Union { variants } = &is.input_type {
-                    if let Some(variant) = variants.iter().find(|v| v.name == *ctor_label) {
-                        let normalized = self.normalize_invoke_arg_keys_for_fields(
+                    if let Some(variant) = variants.iter().find(|v| {
+                        crate::schema::union_variant_constructor_symbol(v)
+                            == Some(ctor_label.as_str())
+                    }) {
+                        let normalized = self.normalize_invoke_ctor_fields_for_variant(
                             cap,
                             &source,
                             Some(field_raw.as_str()),
-                            variant.fields.as_slice(),
+                            variant.name.as_str(),
+                            variant,
                             std::mem::take(ctor_fields),
                         )?;
                         *ctor_fields = normalized;
@@ -1728,7 +2173,7 @@ impl<'a> Parser<'a> {
                     capability: cap_name,
                     entity: cap_domain,
                     input: InvokeInputPayload::from(input),
-                    catalog_entry_id: None,
+                    catalog_entry_id: CatalogEntryStamp::none(),
                     dotted_receiver: Some(Box::new(source.clone())),
                 }),
             )),
@@ -1934,7 +2379,13 @@ impl<'a> Parser<'a> {
                 })
             })?;
             self.sym_map
-                .resolve_query_filter_field("", entity_name, ent, ec, pred_field.as_str())
+                .resolve_query_filter_field(
+                    self.catalog_scope_for_entity(entity_name)?,
+                    entity_name,
+                    ent,
+                    ec,
+                    pred_field.as_str(),
+                )
                 .map_err(|e| {
                     self.err(ParseErrorKind::Other {
                         message: e.to_agent_program_error(),
@@ -2147,7 +2598,7 @@ impl<'a> Parser<'a> {
         let mut matches: Vec<&crate::CapabilitySchema> = Vec::new();
         if let Some(raw) = raw_label {
             if let Some(Ok(cap)) = self.try_resolve_opaque_invoke_capability(source, raw) {
-                for c in self.layers_slice() {
+                for c in self.cgs_layers() {
                     if c.get_capability(cap.name.as_str()).is_some()
                         && Self::scoped_query_bridge_matches_anchor(cap, c, anchor_entity)
                     {
@@ -2158,7 +2609,7 @@ impl<'a> Parser<'a> {
             }
         }
         if matches.is_empty() {
-            for c in self.layers_slice() {
+            for c in self.cgs_layers() {
                 for cap in c.capabilities.values() {
                     if cap.kind != CapabilityKind::Query {
                         continue;
@@ -2348,6 +2799,7 @@ impl<'a> Parser<'a> {
             self.pos += 1;
             let obj = self.parse_brace_kv_object_map()?;
             self.expect_char('}')?;
+            let obj = self.normalize_standalone_union_ctor_fields(raw.as_str(), obj)?;
             return Ok(Expr::TeachingValue {
                 value: Value::UnionCtor {
                     ctor_label: raw,
@@ -2358,7 +2810,7 @@ impl<'a> Parser<'a> {
         let mut entity: Option<String> = self.sym_map.resolve_session_entity_symbol(&raw);
         let entity_from_sym = entity.is_some().then(|| raw.clone());
         if entity.is_none() {
-            for c in self.layers_slice() {
+            for c in self.cgs_layers() {
                 let e = c.canonical_entity_name(&raw).unwrap_or_else(|| raw.clone());
                 if c.get_entity(&e).is_some() {
                     entity = Some(e);
@@ -2367,7 +2819,7 @@ impl<'a> Parser<'a> {
             }
         }
         if entity.is_none() {
-            for c in self.layers_slice() {
+            for c in self.cgs_layers() {
                 if c.get_entity(&raw).is_some() {
                     entity = Some(raw.clone());
                     break;
@@ -2404,10 +2856,13 @@ impl<'a> Parser<'a> {
                 .sym_map
                 .resolve_session_entity(sym)
                 .ok()
-                .map(|b| b.entry_id);
+                .map(|b| b.entry_id.to_string());
         }
         let ent = self
-            .cgs_for_entity_required(&entity)?
+            .cgs_for_entity_with_preferred_catalog(
+                &entity,
+                self.pending_session_catalog_entry_id.as_deref(),
+            )?
             .get_entity(&entity)
             .ok_or_else(|| ParseError {
                 kind: ParseErrorKind::UnknownEntity {
@@ -2683,7 +3138,7 @@ impl<'a> Parser<'a> {
             let cgs_src = self.cgs_for_expr_source(&source)?;
             if let Some(ent) = cgs_src.get_entity(&source_entity).cloned() {
                 let seg_ctx = crate::relation_segment::RelationSegmentContext {
-                    map: &self.sym_map,
+                    map: self.sym_map.as_ref(),
                     entity: source_entity.as_str(),
                     relations: &ent.relations,
                     binding_label: None,
@@ -2834,7 +3289,7 @@ impl<'a> Parser<'a> {
         source_entity: &str,
     ) -> Result<String, ParseError> {
         // First: check query capability parameters
-        for c in self.layers_slice() {
+        for c in self.cgs_layers() {
             for cap in c.find_capabilities(target_entity, CapabilityKind::Query) {
                 if let Some(fields) = cap.object_params() {
                     for f in fields {
@@ -2941,6 +3396,7 @@ mod tests {
     //! means X” end-to-end should have a counterpart row in `plasm-e2e` `plasm_language_matrix`
     //! — cite the matrix row id on semantic parallels (e.g. `lang_query_all`).
     use super::*;
+    use crate::cgs_federation::cgs_layer_stack;
     use crate::schema::capability_method_label_kebab;
     use crate::schema::registry_test_util;
     use crate::schema::NamedValueSchema;
@@ -2954,6 +3410,10 @@ mod tests {
     use indexmap::IndexMap;
     use std::collections::BTreeMap;
     use std::collections::BTreeSet;
+
+    fn test_layer<'a>(cgs: &'a CGS) -> [CgsLayer<'a>; 1] {
+        [CgsLayer::unset(cgs)]
+    }
 
     fn seed_fx_str(cgs: &mut CGS) {
         cgs.values.insert(
@@ -3451,6 +3911,29 @@ mod tests {
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
+            name: "document_get".into(),
+            description: String::new(),
+            kind: CapabilityKind::Get,
+            domain: "Document".into(),
+            mapping: CapabilityMapping {
+                template: serde_json::json!({
+                    "method": "GET",
+                    "path": [
+                        {"type": "literal", "value": "documents"},
+                        {"type": "var", "name": "slug"}
+                    ]
+                })
+                .into(),
+            },
+            input_schema: None,
+            output_schema: None,
+            provides: vec!["slug".into()],
+            scope_aggregate_key_policy: Default::default(),
+            preflight: None,
+            discovery: None,
+        })
+        .unwrap();
+        cgs.add_capability(CapabilitySchema {
             name: "document_suggest".into(),
             description: String::new(),
             kind: CapabilityKind::Action,
@@ -3508,7 +3991,6 @@ mod tests {
             discovery: None,
         })
         .unwrap();
-        cgs.validate().unwrap();
         cgs
     }
 
@@ -3545,10 +4027,15 @@ mod tests {
         let map = exposure.symbol_map_arc();
         let cap = cgs.get_capability("document_suggest").unwrap();
         let label = capability_method_label_kebab(cap);
-        let content_sym = map.ident_sym("content");
+        let content_sym = map.ident_sym_cap_param_for(
+            "",
+            cap.domain.as_str(),
+            cap.name.as_str(),
+            "content",
+        );
         let parsed = parse_with_cgs_layers(
             &format!("Document(doc).{label}(v111{{{content_sym}=$}})"),
-            &[&cgs],
+            &test_layer(&cgs),
             map,
         )
         .expect("parse");
@@ -3879,7 +4366,7 @@ mod tests {
         let cap = cgs.get_capability("space_query").expect("space_query");
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let map = SymbolMap::build(&cgs, &full);
-        let sym = map.method_sym("Space", cap.name.as_str());
+        let sym = map.method_sym_for("", "Space", cap.name.as_str());
         if sym == cap.name.as_str() {
             return;
         }
@@ -4676,17 +5163,16 @@ mod tests {
     fn program_parse_compound_get_maps_binding_slot_to_path_vars() {
         let cgs = compound_get_fixture_cgs();
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
-        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
-        let layers = [&cgs];
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
         let mut refs = BTreeSet::new();
         refs.insert("zone".into());
         let r = parse_with_cgs_layers_program(
             "Ticket(owner=zone,repo=r,n=9)",
-            &layers,
+            &stack,
             sym_map,
             Some(&refs),
             false,
-            None,
         )
         .expect("compound get with program binding");
         let Expr::Get(g) = &r.expr else {
@@ -4971,17 +5457,16 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
-        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
-        let layers = [&cgs];
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
         let mut refs = std::collections::BTreeSet::new();
         refs.insert("report".into());
         let r = parse_with_cgs_layers_program(
             "Issue{state=report}",
-            &layers,
+            &stack,
             sym_map,
             Some(&refs),
             false,
-            None,
         )
         .expect("parse program predicate");
         let Expr::Query(q) = &r.expr else {
@@ -5011,17 +5496,16 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
-        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
-        let layers = [&cgs];
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
         let mut refs = std::collections::BTreeSet::new();
         refs.insert("not_report".into());
         let r = parse_with_cgs_layers_program(
             "Issue{state=report}",
-            &layers,
+            &stack,
             sym_map,
             Some(&refs),
             false,
-            None,
         )
         .expect("parse");
         let Expr::Query(q) = &r.expr else {
@@ -5044,9 +5528,9 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
-        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
-        let layers = [&cgs];
-        let r = parse_with_cgs_layers(r#"Issue.search(q="bug", team_key="ENG")"#, &layers, sym_map)
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+        let r = parse_with_cgs_layers(r#"Issue.search(q="bug", team_key="ENG")"#, &stack, sym_map)
             .expect("parse");
         let Expr::Query(q) = &r.expr else {
             panic!("expected query");
@@ -5071,6 +5555,7 @@ mod tests {
         let mut cgs_linear = load_schema_dir(&linear_dir).expect("linear");
         cgs_linear.entry_id = Some("linear".into());
         let layers = [&cgs_github, &cgs_linear];
+        let stack = cgs_layer_stack(&["github", "linear"], &layers);
         let mut exp = TeachingExposureSession::new(&cgs_github, "github", &["Issue"]);
         exp.expose_entities(&layers, Arc::new(cgs_linear.clone()), "linear", &["Issue"]);
         let map = exp.symbol_map_arc();
@@ -5083,9 +5568,9 @@ mod tests {
             Some("linear")
         );
         let linear_e = "e2";
-        let team_key = map.ident_sym_cap_param("Issue", "issue_search", "team_key");
+        let team_key = map.ident_sym_cap_param_for("", "Issue", "issue_search", "team_key");
         let expr = format!(r#"{linear_e}~"plasm"{{{team_key}="ENG"}}"#);
-        let r = parse_with_cgs_layers(&expr, &layers, map).expect("parse linear Issue search");
+        let r = parse_with_cgs_layers(&expr, &stack, map).expect("parse linear Issue search");
         let Expr::Query(q) = &r.expr else {
             panic!("expected query, got {:?}", r.expr);
         };
@@ -5105,15 +5590,15 @@ mod tests {
 
         let cgs = book_library_entity_ref_fixture_cgs();
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
-        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
-        let layers = [&cgs];
-        let lib_sym = sym_map.entity_sym("Library");
-        let book_sym = sym_map.entity_sym("Book");
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+        let lib_sym = sym_map.entity_sym_for("", "Library");
+        let book_sym = sym_map.entity_sym_for("", "Book");
         if lib_sym == "Library" || book_sym == "Book" {
             return;
         }
         let expr = format!("{book_sym}{{library={lib_sym}(region=us-west, code=shared-shelf)}}");
-        let r = parse_with_cgs_layers(&expr, &layers, sym_map).expect("symbolic nested ctor");
+        let r = parse_with_cgs_layers(&expr, &stack, sym_map).expect("symbolic nested ctor");
         let Expr::Query(q) = &r.expr else {
             panic!("expected query");
         };
@@ -5146,21 +5631,21 @@ mod tests {
             return;
         };
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
-        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
-        let layers = [&cgs];
-        let issue_sym = sym_map.entity_sym("Issue");
-        let repo_sym = sym_map.entity_sym("Repository");
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+        let issue_sym = sym_map.entity_sym_for("", "Issue");
+        let repo_sym = sym_map.entity_sym_for("", "Repository");
         if issue_sym == "Issue" || repo_sym == "Repository" {
             return;
         }
-        let repo_region = sym_map.ident_sym_entity_field("Repository", "owner");
-        let repo_name = sym_map.ident_sym_entity_field("Repository", "repo");
-        let repo_field = sym_map.ident_sym_entity_field("Issue", "repository");
-        let state_field = sym_map.ident_sym_cap_param("Issue", "issue_query", "state");
+        let repo_region = sym_map.ident_sym_entity_field_for("", "Repository", "owner");
+        let repo_name = sym_map.ident_sym_entity_field_for("", "Repository", "repo");
+        let repo_field = sym_map.ident_sym_entity_field_for("", "Issue", "repository");
+        let state_field = sym_map.ident_sym_cap_param_for("", "Issue", "issue_query", "state");
         let expr = format!(
             r#"{issue_sym}{{{repo_field}={repo_sym}({repo_region}=octocat, {repo_name}=Hello-World), {state_field}=open}}"#
         );
-        let r = parse_with_cgs_layers(&expr, &layers, sym_map).expect("github symbolic predicate");
+        let r = parse_with_cgs_layers(&expr, &stack, sym_map).expect("github symbolic predicate");
         let Expr::Query(q) = &r.expr else {
             panic!("expected query");
         };
@@ -5182,33 +5667,33 @@ mod tests {
             return;
         };
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
-        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
-        let layers = [&cgs];
-        let repo_sym = sym_map.entity_sym("Repository");
-        let comment_ent = sym_map.entity_sym("IssueComment");
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+        let repo_sym = sym_map.entity_sym_for("", "Repository");
+        let comment_ent = sym_map.entity_sym_for("", "IssueComment");
         if repo_sym == "Repository" || comment_ent == "IssueComment" {
             return;
         }
         let cap = cgs
             .get_capability("issue_comment_create")
             .expect("issue_comment_create");
-        let method_sym = sym_map.method_sym("IssueComment", cap.name.as_str());
-        let owner = sym_map.ident_sym_entity_field("Repository", "owner");
-        let repo = sym_map.ident_sym_entity_field("Repository", "repo");
+        let method_sym = sym_map.method_sym_for("", "IssueComment", cap.name.as_str());
+        let owner = sym_map.ident_sym_entity_field_for("", "Repository", "owner");
+        let repo = sym_map.ident_sym_entity_field_for("", "Repository", "repo");
         let repo_param =
-            sym_map.ident_sym_cap_param("IssueComment", "issue_comment_create", "repository");
+            sym_map.ident_sym_cap_param_for("", "IssueComment", "issue_comment_create", "repository");
         let issue_num_param =
-            sym_map.ident_sym_cap_param("IssueComment", "issue_comment_create", "issue_number");
-        let issue_id_field = sym_map.ident_sym_entity_field("Issue", "number");
+            sym_map.ident_sym_cap_param_for("", "IssueComment", "issue_comment_create", "issue_number");
+        let issue_id_field = sym_map.ident_sym_entity_field_for("", "Issue", "number");
         let body_param =
-            sym_map.ident_sym_cap_param("IssueComment", "issue_comment_create", "body");
+            sym_map.ident_sym_cap_param_for("", "IssueComment", "issue_comment_create", "body");
         let mut refs = BTreeSet::new();
         refs.insert("issue".into());
         refs.insert("body".into());
         let expr = format!(
             r#"{comment_ent}.{method_sym}({repo_param}={repo_sym}({owner}="octocat", {repo}="Hello-World"), {issue_num_param}=issue.{issue_id_field}, {body_param}=body.content)"#
         );
-        let r = parse_with_cgs_layers_program(&expr, &layers, sym_map, Some(&refs), false, None)
+        let r = parse_with_cgs_layers_program(&expr, &stack, sym_map, Some(&refs), false)
             .expect("method args with nested e# ctor + issue.p# + body.content");
         let _ = crate::type_checker::type_check_expr(&r.expr, &cgs);
         fn find_input_refs(v: &Value) -> Vec<PlasmInputRef> {
@@ -5294,15 +5779,14 @@ mod tests {
 
         let cgs = simple_name_id_get_fixture_cgs();
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
-        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
-        let layers = [&cgs];
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
         let r = parse_with_cgs_layers_program(
             r#"Pet(name == "pikachu")"#,
-            &layers,
+            &stack,
             sym_map,
             None,
             false,
-            None,
         )
         .expect("parse");
         let Expr::Get(g) = r.expr else {
@@ -5317,15 +5801,14 @@ mod tests {
 
         let cgs = simple_name_id_get_fixture_cgs();
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
-        let sym_map = Arc::new(SymbolMap::build(&cgs, &full));
-        let layers = [&cgs];
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
         let r = parse_with_cgs_layers_program(
             r#"Pet(name=pikachu)"#,
-            &layers,
+            &stack,
             sym_map,
             None,
             false,
-            None,
         )
         .expect("parse");
         let Expr::Get(g) = r.expr else {

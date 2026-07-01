@@ -277,10 +277,7 @@ mod tests {
         );
         let mut failures = Vec::new();
         for p in &dirs {
-            let name = p
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or("?");
+            let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("?");
             match load_schema_dir(p) {
                 Ok(cgs) => {
                     if let Err(e) = validate_cgs_expression_surface(&cgs) {

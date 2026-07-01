@@ -3,10 +3,10 @@
 //! Parsed from `.filter{…}` / `.filter(…)` bodies via the same surface grammar as entity
 //! brace queries, but restricted to comparisons only (no `ExistsRelation`, OR/NOT).
 
-use crate::cgs_federation::QualifiedEntityKey;
+use crate::cgs_federation::{CgsLayer, QualifiedEntityKey};
 use crate::predicate::Predicate;
 use crate::schema::{EntityDef, CGS};
-use crate::symbol_tuning::SymbolMap;
+use crate::symbol_tuning::SymbolSession;
 use crate::type_checker::type_check_predicate;
 use crate::{CompOp, Expr, TypeError, TypedComparisonValue};
 use std::sync::Arc;
@@ -27,15 +27,15 @@ pub struct RowPredicate(pub Vec<RowComparison>);
 pub struct RowPredicateTypeCtx<'a> {
     pub qe: &'a QualifiedEntityKey,
     pub cgs: &'a CGS,
-    pub symbol_map: Option<&'a SymbolMap>,
+    pub symbol_map: Option<&'a dyn SymbolSession>,
 }
 
 /// Parse a comma-separated predicate body by reusing the path parser on `Entity{body}`.
 pub fn parse_row_predicate_list(
     entity: &str,
     body: &str,
-    layers: &[&CGS],
-    sym_map: Arc<SymbolMap>,
+    layers: &[CgsLayer<'_>],
+    sym_map: Arc<dyn SymbolSession>,
 ) -> Result<RowPredicate, String> {
     let input = format!("{entity}{{{}}}", body.trim());
     let parsed = crate::expr_parser::parse_with_cgs_layers(&input, layers, sym_map)
@@ -95,7 +95,7 @@ pub fn type_check_row_predicate(
         ctx.cgs
             .get_entity(ctx.qe.entity.as_str())
             .ok_or_else(|| TypeError::EntityNotFound {
-                entity: ctx.qe.entity.clone(),
+                entity: ctx.qe.entity.to_string(),
             })?;
     for clause in &pred.0 {
         let p = Predicate::comparison(clause.field.as_str(), clause.op, clause.value.clone());
@@ -111,7 +111,7 @@ pub fn entity_def_for_row_predicate<'a>(
     ctx.cgs
         .get_entity(ctx.qe.entity.as_str())
         .ok_or_else(|| TypeError::EntityNotFound {
-            entity: ctx.qe.entity.clone(),
+            entity: ctx.qe.entity.to_string(),
         })
 }
 
@@ -132,11 +132,11 @@ mod tests {
 
     #[test]
     fn parse_row_filter_flat_and() {
-        let (cgs, layers_arc) = matrix_layers();
-        let layers: Vec<&CGS> = layers_arc.iter().map(|c| c.as_ref()).collect();
+        let (cgs, _layers_arc) = matrix_layers();
+        let stack = vec![CgsLayer::unset(cgs.as_ref())];
         let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
         let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
-        let pred = parse_row_predicate_list("LangItem", r#"owner="a", score>1"#, &layers, sym_map)
+        let pred = parse_row_predicate_list("LangItem", r#"owner="a", score>1"#, &stack, sym_map)
             .expect("parse");
         assert_eq!(pred.0.len(), 2);
         assert_eq!(pred.0[0].field, "owner");
@@ -145,12 +145,12 @@ mod tests {
 
     #[test]
     fn parse_row_filter_rejects_or() {
-        let (cgs, layers_arc) = matrix_layers();
-        let layers: Vec<&CGS> = layers_arc.iter().map(|c| c.as_ref()).collect();
+        let (cgs, _layers_arc) = matrix_layers();
+        let stack = vec![CgsLayer::unset(cgs.as_ref())];
         let (full, _) = entity_slices_for_render(cgs.as_ref(), FocusSpec::All);
         let sym_map = Arc::new(SymbolMap::build(cgs.as_ref(), &full));
         let err =
-            parse_row_predicate_list("LangItem", "owner=\"a\" or owner=\"b\"", &layers, sym_map)
+            parse_row_predicate_list("LangItem", "owner=\"a\" or owner=\"b\"", &stack, sym_map)
                 .unwrap_err();
         assert!(err.contains("OR") || err.contains("parse"), "{err}");
     }

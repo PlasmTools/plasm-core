@@ -494,7 +494,7 @@ fn type_check_chain_federated(
 
     let source_entity_wire = chain.source.primary_entity();
     let cgs_src = resolve_cgs_for_catalog_entity(
-        chain.source.session_catalog_entry_id(),
+        chain.source.session_catalog_entry_id().map(|id| id.as_str()),
         source_entity_wire,
         fed,
         fallback,
@@ -2672,7 +2672,7 @@ mod tests {
 
     #[test]
     fn federated_duplicate_entity_name_requires_session_catalog_stamp() {
-        use crate::{Expr, QueryExpr};
+        use crate::{CatalogEntryStamp, Expr, QueryExpr, RegistryEntryId};
 
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
@@ -2696,7 +2696,7 @@ mod tests {
         let fed = FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
 
         let mut stamped = QueryExpr::all("LangItem");
-        stamped.catalog_entry_id = Some("linear".into());
+        stamped.catalog_entry_id = CatalogEntryStamp::some(RegistryEntryId::from("linear"));
         type_check_expr_federated(&Expr::Query(stamped), &fed, cgs.as_ref())
             .expect("catalog stamp disambiguates");
 
@@ -2716,7 +2716,7 @@ mod tests {
     /// Real `apis/github` + `apis/linear`: `Issue.children` exists only on linear; chain TC must use source catalog stamp.
     #[test]
     fn federated_chain_linear_children_resolves_in_source_catalog() {
-        use crate::{ChainExpr, Expr, GetExpr};
+        use crate::{CatalogEntryStamp, ChainExpr, Expr, GetExpr, RegistryEntryId};
 
         let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let github_dir = root.join("../../apis/github");
@@ -2749,7 +2749,7 @@ mod tests {
         let fed = FederationDispatch::from_contexts_and_exposure(by_entry, &exp);
 
         let mut get = GetExpr::new("Issue", "issue-id");
-        get.catalog_entry_id = Some("linear".into());
+        get.catalog_entry_id = CatalogEntryStamp::some(RegistryEntryId::from("linear"));
         let chain = Expr::Chain(ChainExpr::auto_get(Expr::Get(get), "children".to_string()));
         type_check_expr_federated(&chain, &fed, cgs_github.as_ref())
             .expect("linear Issue.children chain typechecks in source catalog");

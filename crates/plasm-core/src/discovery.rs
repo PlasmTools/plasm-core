@@ -2028,7 +2028,7 @@ mod tests {
             delta,
         );
         let map = session.to_symbol_map();
-        let m = map.method_sym("ShareLink", "share_link_create");
+        let m = map.method_sym_for("proof", "ShareLink", "share_link_create");
         assert!(
             m.starts_with('m') && m.len() > 1,
             "seeded share_link_create must receive an m# (got {m:?}) for federated lab plasm programs"
