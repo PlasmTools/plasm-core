@@ -1,6 +1,7 @@
 //! Matrix-backed homograph `p#` projection regression (no `apis/github` coupling).
 
 use super::super::*;
+use super::test_support::assert_compile_rejects_scalar_array_param;
 use super::test_support::github_symbol_map;
 use crate::plasm_plan_run::evaluate_plasm_plan_dry;
 use plasm_core::{CgsContext, PromptPipelineConfig, TeachingExposureSession};
@@ -229,19 +230,7 @@ created"#,
         p_title = p_title,
         p_tags = p_tags,
     );
-    let err = compile_plasm_dag_to_plan(
-        &PromptPipelineConfig::default(),
-        None,
-        &session,
-        "matrix-create-scalar-tags",
-        &source,
-    )
-    .expect_err("scalar tags must not coerce to array");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("expected array") || msg.contains("array"),
-        "expected array type error, got: {msg}"
-    );
+    assert_compile_rejects_scalar_array_param(&session, "matrix-create-scalar-tags", &source);
 }
 
 #[test]

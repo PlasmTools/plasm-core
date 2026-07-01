@@ -3387,12 +3387,7 @@ fn format_dotted_call_line(
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
 ) -> Option<String> {
     let args = build_dotted_call_paren_args(anchor_entity, cap, cgs, map, catalog_entry_id)?;
-    let ms = met_sym(
-        map,
-        catalog_entry_id,
-        cap.domain.as_str(),
-        cap,
-    );
+    let ms = met_sym(map, catalog_entry_id, cap.domain.as_str(), cap);
     let suffix = format!(".{ms}({args})");
     let recv = receiver_for_dotted_suffix(
         es,

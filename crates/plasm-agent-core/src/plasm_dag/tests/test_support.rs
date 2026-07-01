@@ -128,6 +128,26 @@ pub(super) fn compile_github_program(
     .expect("compile")
 }
 
+pub(super) fn assert_compile_rejects_scalar_array_param(
+    session: &ExecuteSession,
+    plan_id: &str,
+    source: &str,
+) {
+    let err = compile_plasm_dag_to_plan(
+        &plasm_core::PromptPipelineConfig::default(),
+        None,
+        session,
+        plan_id,
+        source,
+    )
+    .expect_err("scalar must not coerce to array");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("expected array") || msg.contains("array"),
+        "expected array type error, got: {msg}"
+    );
+}
+
 pub(super) fn github_symbol_map(session: &ExecuteSession) -> Arc<dyn plasm_core::SymbolSession> {
     symbol_map_for_plasm_surface_parse(session, None)
 }

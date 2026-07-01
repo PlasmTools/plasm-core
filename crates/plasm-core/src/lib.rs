@@ -80,6 +80,7 @@
 //!
 #![allow(clippy::result_large_err)]
 
+pub mod array_field_policy;
 pub mod bind_wire_validate;
 pub mod catalog_id;
 pub mod catalog_il;
@@ -147,6 +148,7 @@ mod wire_coercion;
 /// Local `o200k_base` BPE length (OpenAI `o200k_base` via riptoken).
 pub use o200k_token_count::o200k_token_count;
 
+pub use array_field_policy::{invoke_array_scalar_error, ArrayFieldCoercionPolicy};
 pub use catalog_id::{
     cgs_session_catalog_id, cgs_symbol_map_entry_key, deserialize_catalog_stamp,
     serialize_catalog_stamp, CatalogEntryStamp, EmptyRegistryEntryId, SessionCatalogEntryId,
@@ -259,9 +261,9 @@ pub use teaching_term::{
 };
 pub use wire_coercion::{
     binding_value_as_plasm_value, coerce_json_value_for_field_type, coerce_value_for_field_type,
-    coerce_value_for_field_type_with_options, collect_relation_binding_proofs,
+    coerce_value_for_field_type_with_policy, collect_relation_binding_proofs,
     field_type_assignable_for_relation_binding, identity_slot_to_json, json_value_to_plasm_value,
-    parent_entity_field_type, plasm_value_to_json, relation_binding_assignable, CoerceFieldOptions,
+    parent_entity_field_type, plasm_value_to_json, relation_binding_assignable,
     RelationBindingProof,
 };
 pub mod relation_materialize;

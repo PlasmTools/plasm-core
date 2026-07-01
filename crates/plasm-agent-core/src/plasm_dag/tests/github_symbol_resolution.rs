@@ -1,8 +1,8 @@
 //! GitHub symbol-resolution regressions (projection + cap-qualified mutator args).
 
 use super::test_support::{
-    compile_github_program, github_cgs, github_issue_label_session, github_ranked_mutator_session,
-    github_symbol_map,
+    assert_compile_rejects_scalar_array_param, compile_github_program, github_cgs,
+    github_issue_label_session, github_ranked_mutator_session, github_symbol_map,
 };
 use crate::plasm_dag::compile_plasm_dag_to_plan;
 use crate::plasm_plan_run::evaluate_plasm_plan_dry;
@@ -237,8 +237,7 @@ fn issue_create_rejects_scalar_for_array_labels_param() {
     );
     let map = github_symbol_map(&session);
     let issue_e = map.entity_sym_for("github", "Issue");
-    let cap = cgs.get_capability("issue_create").expect("issue_create");
-    let method_sym = map.method_sym_for("github", "Issue", cap.name.as_str());
+    let method_sym = map.method_sym_for("github", "Issue", "issue_create");
     let p_repo = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "repository");
     let p_title = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "title");
     let p_body = map.ident_sym_cap_param_for("github", "Issue", "issue_create", "body");
@@ -260,18 +259,10 @@ created"#,
         p_body = p_body,
         p_labels = p_labels,
     );
-    let err = compile_plasm_dag_to_plan(
-        &plasm_core::PromptPipelineConfig::default(),
-        None,
+    assert_compile_rejects_scalar_array_param(
         &session,
         "github-issue-create-scalar-labels",
         &source,
-    )
-    .expect_err("scalar labels must not coerce to array");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("expected array") || msg.contains("array"),
-        "expected array type error, got: {msg}"
     );
 }
 
@@ -301,18 +292,10 @@ fn issue_update_rejects_scalar_for_array_labels_param() {
         update_m = update_m,
         p_labels = p_labels,
     );
-    let err = compile_plasm_dag_to_plan(
-        &plasm_core::PromptPipelineConfig::default(),
-        None,
+    assert_compile_rejects_scalar_array_param(
         &session,
         "github-issue-update-scalar-labels",
         &source,
-    )
-    .expect_err("scalar labels must not coerce to array");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("expected array") || msg.contains("array"),
-        "expected array type error, got: {msg}"
     );
 }
 

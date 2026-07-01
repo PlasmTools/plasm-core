@@ -93,81 +93,105 @@ fn normalize_program_binding_heredoc_sugar(line: &str) -> String {
 }
 
 /// Join physical lines into logical statements, respecting tagged heredocs that span lines.
-pub fn collect_program_statement_lines(src: &str) -> Result<Vec<String>, String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let mut pending_tag: Option<String> = None;
-    let mut pending_delimiters = false;
+struct PhysicalLineStatementScanner {
+    out: Vec<String>,
+    cur: String,
+    pending_tag: Option<String>,
+    pending_delimiters: bool,
+}
 
-    for raw in src.lines() {
-        let w = if pending_tag.is_some() || pending_delimiters {
+impl PhysicalLineStatementScanner {
+    fn new() -> Self {
+        Self {
+            out: Vec::new(),
+            cur: String::new(),
+            pending_tag: None,
+            pending_delimiters: false,
+        }
+    }
+
+    fn normalize_line(&self, raw: &str) -> String {
+        if self.pending_tag.is_some() || self.pending_delimiters {
             strip_line_comment(raw).to_string()
         } else {
             normalize_program_binding_heredoc_sugar(strip_line_comment(raw))
-        };
-        let w = w.as_str();
-        if pending_tag.is_some() || pending_delimiters {
-            if !cur.is_empty() {
-                cur.push('\n');
+        }
+    }
+
+    fn apply_stmt_state(&mut self, state: PhysicalLineStmtState) -> Result<(), String> {
+        match state {
+            PhysicalLineStmtState::Complete => {
+                self.out.push(self.cur.trim_end().to_string());
+                self.cur.clear();
+                self.pending_delimiters = false;
+                Ok(())
             }
-            cur.push_str(w);
-            if let Some(tag) = pending_tag.as_deref() {
-                let last = cur.lines().last().unwrap_or("");
-                if tagged_heredoc_close_kind(last, tag).is_none() {
-                    continue;
-                }
-                pending_tag = None;
+            PhysicalLineStmtState::AwaitingHeredocClose { tag } => {
+                self.pending_tag = Some(tag);
+                self.pending_delimiters = false;
+                Ok(())
             }
-            match scan_physical_line_stmt_state(&cur)? {
-                PhysicalLineStmtState::Complete => {
-                    out.push(cur.trim_end().to_string());
-                    cur.clear();
-                    pending_delimiters = false;
-                }
-                PhysicalLineStmtState::AwaitingHeredocClose { tag } => {
-                    pending_tag = Some(tag);
-                    pending_delimiters = false;
-                }
-                PhysicalLineStmtState::AwaitingDelimiterClose => {
-                    pending_delimiters = true;
-                }
-            }
-        } else {
-            if w.trim().is_empty() {
-                continue;
-            }
-            cur.clear();
-            cur.push_str(w);
-            match scan_physical_line_stmt_state(&cur)? {
-                PhysicalLineStmtState::Complete => {
-                    out.push(cur.trim_end().to_string());
-                    cur.clear();
-                }
-                PhysicalLineStmtState::AwaitingHeredocClose { tag } => {
-                    pending_tag = Some(tag);
-                }
-                PhysicalLineStmtState::AwaitingDelimiterClose => {
-                    pending_delimiters = true;
-                }
+            PhysicalLineStmtState::AwaitingDelimiterClose => {
+                self.pending_delimiters = true;
+                Ok(())
             }
         }
     }
 
-    if pending_tag.is_some() {
-        return Err(
-            "unterminated tagged heredoc (missing closing `TAG` line, or missing newline after `<<TAG` on the opener line)".into(),
-        );
+    fn push_line(&mut self, raw: &str) -> Result<(), String> {
+        let w = self.normalize_line(raw);
+        if self.pending_tag.is_some() || self.pending_delimiters {
+            if !self.cur.is_empty() {
+                self.cur.push('\n');
+            }
+            self.cur.push_str(&w);
+            if let Some(tag) = self.pending_tag.as_deref() {
+                let last = self.cur.lines().last().unwrap_or("");
+                if tagged_heredoc_close_kind(last, tag).is_none() {
+                    return Ok(());
+                }
+                self.pending_tag = None;
+            }
+            self.apply_stmt_state(scan_physical_line_stmt_state(&self.cur)?)?;
+            return Ok(());
+        }
+
+        if w.trim().is_empty() {
+            return Ok(());
+        }
+        self.cur.clear();
+        self.cur.push_str(&w);
+        self.apply_stmt_state(scan_physical_line_stmt_state(&self.cur)?)?;
+        Ok(())
     }
-    if pending_delimiters {
-        return Err(
-            "unterminated Plasm program statement (unbalanced delimiters after heredoc close)"
-                .into(),
-        );
+
+    fn finish(self) -> Result<Vec<String>, String> {
+        if self.pending_tag.is_some() {
+            return Err(
+                "unterminated tagged heredoc (missing closing `TAG` line, or missing newline after `<<TAG` on the opener line)".into(),
+            );
+        }
+        if self.pending_delimiters {
+            return Err(
+                "unterminated Plasm program statement (unbalanced delimiters after heredoc close)"
+                    .into(),
+            );
+        }
+        if !self.cur.is_empty() {
+            return Err(
+                "unterminated Plasm program statement (unexpected trailing fragment)".into(),
+            );
+        }
+        Ok(self.out)
     }
-    if !cur.is_empty() {
-        return Err("unterminated Plasm program statement (unexpected trailing fragment)".into());
+}
+
+pub fn collect_program_statement_lines(src: &str) -> Result<Vec<String>, String> {
+    let mut scanner = PhysicalLineStatementScanner::new();
+    for raw in src.lines() {
+        scanner.push_line(raw)?;
     }
-    Ok(out)
+    scanner.finish()
 }
 
 pub fn looks_like_domain_symbol(label: &str) -> bool {

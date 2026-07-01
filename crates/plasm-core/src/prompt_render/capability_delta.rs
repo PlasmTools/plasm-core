@@ -455,43 +455,6 @@ mod tests {
     }
 
     #[test]
-    fn mutator_recap_marks_array_invoke_params() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let cgs = load_schema_dir(&root.join("../../apis/github")).expect("github");
-        let entities = vec!["Repository".to_string(), "Issue".to_string()];
-        let endpoints = entities
-            .iter()
-            .map(|e| ExposureEntityKey {
-                entry_id: "github".into(),
-                entity: crate::EntityName::from(e.as_str()),
-            })
-            .collect::<Vec<_>>();
-        let delta = derive_intent_exposure_surface_batch(
-            &cgs,
-            "github",
-            "create issue with labels",
-            &endpoints,
-            &entities,
-            Some(&["issue_create".to_string(), "issue_update".to_string()]),
-            ExposureSurfaceOptions {
-                read_first_seeded: true,
-            },
-        );
-        let exp = TeachingExposureSession::new_with_intent_delta(
-            &cgs,
-            "github",
-            &["Repository", "Issue"],
-            delta,
-        );
-        let recap =
-            render_mutator_recap_lines_for_caps(&exp, &exposed_mutator_capability_keys(&exp));
-        assert!(
-            recap.contains("labels=p") && recap.contains("[]"),
-            "array labels param must carry [] marker in mutator recap: {recap}"
-        );
-    }
-
-    #[test]
     fn mutator_recap_homograph_tags_scalar_vs_array_on_matrix() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
@@ -526,6 +489,10 @@ mod tests {
         assert!(
             recap.contains("tags=p") && recap.contains("[]"),
             "create tags array param must show [] in recap: {recap}"
+        );
+        assert!(
+            recap.contains("title=p") && recap.contains('!'),
+            "required title param must show ! in recap: {recap}"
         );
         assert!(
             !recap.contains("langitem_query"),
