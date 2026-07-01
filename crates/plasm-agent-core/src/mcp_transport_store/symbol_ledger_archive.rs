@@ -17,7 +17,7 @@ pub struct SymbolLedgerArchive {
 
 impl SymbolLedgerArchive {
     fn object_key(prefix: &StorePath, logical_id: &Uuid) -> StorePath {
-        prefix.child(format!("{logical_id}{OBJECT_SUFFIX}"))
+        prefix.join(format!("{logical_id}{OBJECT_SUFFIX}"))
     }
 
     /// `PLASM_SYMBOL_LEDGER_URL` when set; otherwise reuse `PLASM_RUN_ARTIFACTS_URL` bucket/prefix.
@@ -41,7 +41,7 @@ impl SymbolLedgerArchive {
         let (boxed, mut prefix) = object_store::parse_url_opts(&url, std::env::vars())
             .map_err(|e| format!("symbol ledger object store open failed: {e}"))?;
         if let Some(sub) = subprefix {
-            prefix = prefix.child(sub);
+            prefix = prefix.join(sub);
         }
         Ok(Some(Self {
             store: Arc::from(boxed),

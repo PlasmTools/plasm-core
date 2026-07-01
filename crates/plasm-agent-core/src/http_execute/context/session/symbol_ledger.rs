@@ -88,7 +88,7 @@ pub(crate) async fn resolve_restore_for_open(
                 )
                 .await
                 {
-                    Ok((catalog_cgs, true)) => {
+                    Ok((_, true)) => {
                         reset_ledger(st, uuid).await;
                         (None, true)
                     }
