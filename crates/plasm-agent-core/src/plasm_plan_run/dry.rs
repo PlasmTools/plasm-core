@@ -711,7 +711,8 @@ pub(crate) fn ensure_relation_expr_matches_plan(
             .ok_or_else(|| {
                 format!(
                     "plan.nodes[{index}].relation unknown catalog entity `{}` for entry `{}`",
-                    qe.entity, qe.entry_id()
+                    qe.entity,
+                    qe.entry_id()
                 )
             })?
     } else {

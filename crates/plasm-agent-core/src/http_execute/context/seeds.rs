@@ -633,9 +633,9 @@ mod ranked_replay_tests {
         let cap = cgs
             .get_capability("langitem_create")
             .expect("langitem_create");
-        let method_sym = exp
-            .symbol_map_arc()
-            .method_sym_for("matrix", "LangItem", cap.name.as_str());
+        let method_sym =
+            exp.symbol_map_arc()
+                .method_sym_for("matrix", "LangItem", cap.name.as_str());
         assert!(
             md.contains(&method_sym),
             "reuse recap must include {method_sym}: {md}"

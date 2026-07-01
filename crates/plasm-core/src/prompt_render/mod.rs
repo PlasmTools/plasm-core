@@ -183,15 +183,15 @@ pub use stats::{
 pub(crate) use contract::validate_teaching_tsv_teaching_table;
 pub(crate) use gloss_dedup::*;
 pub(crate) use teaching_gloss_emit::*;
-pub(crate) use tsv_emit::{
-    parse_trailing_projection_bracket, relation_sym_shown_in_query_teaching_rows,
-    render_prompt_tsv_from_bundle, teaching_relation_field_gloss, write_teaching_tsv_row,
-    DomainTsvRow,
-};
 #[cfg(test)]
 pub(crate) use tsv_emit::{
     is_union_ctor_teaching_surface_line, projection_bracket_from_teaching_rows,
     teaching_row_meaning_text,
+};
+pub(crate) use tsv_emit::{
+    parse_trailing_projection_bracket, relation_sym_shown_in_query_teaching_rows,
+    render_prompt_tsv_from_bundle, teaching_relation_field_gloss, write_teaching_tsv_row,
+    DomainTsvRow,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -891,7 +891,6 @@ fn teaching_expr_line_from_layers(
     apply_compact_legend_remainder(&mut row, cap.unwrap_or(""));
     row
 }
-
 
 fn values_row_description_trimmed_for_ident(meta: &IdentMetadata, cgs: &CGS) -> String {
     match meta {
@@ -2500,25 +2499,20 @@ fn try_push_teaching_example(
 ) -> bool {
     if let Some(gs) = gloss_emit.as_mut() {
         let optional_syms: Vec<String> = match (map_arc, source_capability) {
-            (Some(map), Some(cap_name)) => cgs.get_capability(cap_name.as_str()).map_or_else(
-                Vec::new,
-                |cap| {
-                    crate::symbol_tuning::optional_legend_param_syms(
-                        map.as_ref(),
-                        cgs.entry_id.as_deref().unwrap_or(""),
-                        cap.domain.as_str(),
-                        cap,
-                    )
-                },
-            ),
+            (Some(map), Some(cap_name)) => {
+                cgs.get_capability(cap_name.as_str())
+                    .map_or_else(Vec::new, |cap| {
+                        crate::symbol_tuning::optional_legend_param_syms(
+                            map.as_ref(),
+                            cgs.entry_id.as_deref().unwrap_or(""),
+                            cap.domain.as_str(),
+                            cap,
+                        )
+                    })
+            }
             _ => Vec::new(),
         };
-        gs.emit_before_teaching_example(
-            expr,
-            cap_leg.as_deref(),
-            gloss.as_deref(),
-            &optional_syms,
-        );
+        gs.emit_before_teaching_example(expr, cap_leg.as_deref(), gloss.as_deref(), &optional_syms);
     }
     let mut teaching_line =
         teaching_expr_line_from_layers(expr, gloss.as_deref(), cap_leg.as_deref());
@@ -2810,12 +2804,7 @@ fn format_inline_structural_example_symbolic_required_only(
                 );
                 let lhs = map
                     .map(|m| {
-                        m.ident_sym_cap_param_for(
-                            catalog_entry_id,
-                            domain,
-                            cap_name,
-                            seg.as_str(),
-                        )
+                        m.ident_sym_cap_param_for(catalog_entry_id, domain, cap_name, seg.as_str())
                     })
                     .unwrap_or_else(|| sf.name.clone());
                 parts.push(format!("{lhs}={rhs}"));
@@ -2823,12 +2812,7 @@ fn format_inline_structural_example_symbolic_required_only(
             crate::InputFieldWire::Registry(_) => {
                 let lhs = map
                     .map(|m| {
-                        m.ident_sym_cap_param_for(
-                            catalog_entry_id,
-                            domain,
-                            cap_name,
-                            seg.as_str(),
-                        )
+                        m.ident_sym_cap_param_for(catalog_entry_id, domain, cap_name, seg.as_str())
                     })
                     .unwrap_or_else(|| sf.name.clone());
                 parts.push(format!("{lhs}={}", TEACHING_PARAM_VALUE_PLACEHOLDER));
@@ -2881,7 +2865,13 @@ fn format_root_union_constructor_invoke_example(
         "{}{}",
         ctor,
         format_inline_structural_example_symbolic_required_only(
-            map, catalog_entry_id, domain, cap_name, "", &body_ty, cgs
+            map,
+            catalog_entry_id,
+            domain,
+            cap_name,
+            "",
+            &body_ty,
+            cgs
         )
     ))
 }

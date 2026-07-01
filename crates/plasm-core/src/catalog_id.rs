@@ -131,7 +131,9 @@ pub fn cgs_symbol_map_entry_key(cgs: &crate::CGS) -> &str {
     cgs_session_catalog_id(cgs).as_str().unwrap_or("")
 }
 pub mod catalog_entry_stamp {
-    pub use super::{deserialize_catalog_stamp as deserialize, serialize_catalog_stamp as serialize};
+    pub use super::{
+        deserialize_catalog_stamp as deserialize, serialize_catalog_stamp as serialize,
+    };
 }
 
 impl Default for CatalogEntryStamp {

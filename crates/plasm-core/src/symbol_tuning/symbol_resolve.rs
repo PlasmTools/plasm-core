@@ -3,16 +3,14 @@
 //! All reverse lookup (`p#` → wire) for parse, DAG validation, and compound keys lives here
 //! so teaching-table assignment and runtime resolution cannot diverge via ad hoc fallbacks.
 
+use crate::cgs_federation::{lookup_capability_in_layer_stack, CgsLayer};
 use crate::schema::resolve_capability_input_param_field;
 use crate::CapabilityKind;
 use crate::CapabilitySchema;
 use crate::EntityDef;
 use crate::EntityFieldName;
-use crate::cgs_federation::{lookup_capability_in_layer_stack, CgsLayer};
 
-use super::keys::{
-    CatalogScope, EntityFieldKey, OpaqueESym, OpaqueMSym, OpaquePSym, OpaqueRSym,
-};
+use super::keys::{CatalogScope, EntityFieldKey, OpaqueESym, OpaqueMSym, OpaquePSym, OpaqueRSym};
 use super::{EntityBinding, MethodBinding, RelationBinding, SlotBinding, SlotKind, SymbolMap};
 
 /// Typed failure when an opaque teaching symbol cannot be resolved in context.
@@ -179,11 +177,7 @@ impl std::fmt::Display for SymbolResolveError {
 }
 
 impl SymbolMap {
-    fn lookup_entity_field_by_opaque_psym(
-        &self,
-        entity: &str,
-        psym: OpaquePSym,
-    ) -> Option<String> {
+    fn lookup_entity_field_by_opaque_psym(&self, entity: &str, psym: OpaquePSym) -> Option<String> {
         self.tables
             .entity_field_to_sym
             .iter()
@@ -276,9 +270,11 @@ impl SymbolMap {
         }
         self.tables
             .sym_to_entity_binding
-            .get(&OpaqueESym::parse(t).ok_or(SymbolResolveError::UnknownEntitySym {
-                token: t.to_string(),
-            })?)
+            .get(
+                &OpaqueESym::parse(t).ok_or(SymbolResolveError::UnknownEntitySym {
+                    token: t.to_string(),
+                })?,
+            )
             .cloned()
             .ok_or(SymbolResolveError::UnknownEntitySym {
                 token: t.to_string(),
@@ -592,15 +588,13 @@ impl SymbolMap {
             binding.domain.as_str(),
             binding.capability.as_str(),
         )
-        .ok_or_else(|| {
-            SymbolResolveError::UnknownMethodSym {
-                token: format!(
-                    "{} (cap `{}` on `{}` not in loaded catalogs)",
-                    token.trim(),
-                    binding.capability,
-                    binding.entry_id
-                ),
-            }
+        .ok_or_else(|| SymbolResolveError::UnknownMethodSym {
+            token: format!(
+                "{} (cap `{}` on `{}` not in loaded catalogs)",
+                token.trim(),
+                binding.capability,
+                binding.entry_id
+            ),
         })
     }
 }
@@ -642,12 +636,7 @@ mod tests {
         let map = exp.symbol_map_arc();
         let ent = cgs.get_entity("Account").expect("Account");
         let err = map
-            .resolve_entity_field(
-                CatalogScope::SessionReverse,
-                "Account",
-                ent,
-                "p999",
-            )
+            .resolve_entity_field(CatalogScope::SessionReverse, "Account", ent, "p999")
             .expect_err("unknown p#");
         assert!(matches!(
             err,
@@ -658,8 +647,8 @@ mod tests {
 
     #[test]
     fn resolve_cap_param_accepts_session_reverse_opaque_p_on_unset_fixture() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../fixtures/schemas/overshow_tools");
+        let dir =
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/overshow_tools");
         if !dir.is_dir() {
             return;
         }

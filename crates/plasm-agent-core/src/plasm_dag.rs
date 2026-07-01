@@ -3631,7 +3631,10 @@ fn infer_surface_contract(
                         .map(|r| r.query.entity.to_string())
                 })
                 .ok_or_else(|| {
-                    format!("page handle `{}` is not registered in this session", p.handle)
+                    format!(
+                        "page handle `{}` is not registered in this session",
+                        p.handle
+                    )
                 })?;
             let resolving_cgs = crate::catalog_ownership::resolve_cgs_for_entity(
                 session,

@@ -494,7 +494,10 @@ fn type_check_chain_federated(
 
     let source_entity_wire = chain.source.primary_entity();
     let cgs_src = resolve_cgs_for_catalog_entity(
-        chain.source.session_catalog_entry_id().map(|id| id.as_str()),
+        chain
+            .source
+            .session_catalog_entry_id()
+            .map(|id| id.as_str()),
         source_entity_wire,
         fed,
         fallback,

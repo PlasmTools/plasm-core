@@ -35,8 +35,7 @@ pub(crate) fn rewrite_teaching_expr_line_opaque_tokens(
 ) {
     row.expression = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.expression, rep);
     row.result_type = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.result_type, rep);
-    row.legend.scope =
-        crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.legend.scope, rep);
+    row.legend.scope = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.legend.scope, rep);
     if row.legend.optional.is_present() {
         row.legend.optional = OptionalLegend::Present;
     }

@@ -1,8 +1,6 @@
 //! Prompt render integration tests (matrix/proof fixtures; no full-catalog snapshots).
 
-use std::collections::{BTreeSet, HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::collections::HashMap;
 
 use crate::loader::load_schema_dir;
 use crate::prompt_pipeline::PromptPipelineConfig;
@@ -41,8 +39,6 @@ mod lazy_field_gloss_tests {
         assert!(rel.contains("r8"));
     }
 }
-
-/// Count of synthesized teaching example lines for an entity (same pipeline as emission).
 
 /// Raw teaching lines for an entity (for per-capability witness checks).
 #[cfg(test)]
@@ -474,9 +470,8 @@ fn with_insta_snapshots<R>(f: impl FnOnce() -> R) -> R {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let mut settings = insta::Settings::clone_current();
-    settings.set_snapshot_path(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/snapshots"),
-    );
+    settings
+        .set_snapshot_path(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/snapshots"));
     settings.bind(f)
 }
 
@@ -567,8 +562,7 @@ fn github_issue_domain_emits_single_full_projection_exemplar() {
         return;
     }
     let cgs = load_schema_dir(&dir).unwrap();
-    let exposure =
-        crate::symbol_tuning::teaching_exposure_session_from_focus(&cgs, FocusSpec::All);
+    let exposure = crate::symbol_tuning::teaching_exposure_session_from_focus(&cgs, FocusSpec::All);
     let surface = Some(&exposure.surface);
     let Some(ent) = cgs.get_entity("Issue") else {
         panic!("missing Issue entity");
@@ -648,8 +642,7 @@ fn linear_issue_heading_projection_despite_method_style_get() {
         return;
     }
     let cgs = load_schema_dir(&dir).unwrap();
-    let exposure =
-        crate::symbol_tuning::teaching_exposure_session_from_focus(&cgs, FocusSpec::All);
+    let exposure = crate::symbol_tuning::teaching_exposure_session_from_focus(&cgs, FocusSpec::All);
     let surface = Some(&exposure.surface);
     let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true);
     let cfg = RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact);
@@ -687,8 +680,7 @@ fn heading_projection_symbols_are_declared_before_heading_use() {
         return;
     }
     let cgs = load_schema_dir(&dir).unwrap();
-    let exposure =
-        crate::symbol_tuning::teaching_exposure_session_from_focus(&cgs, FocusSpec::All);
+    let exposure = crate::symbol_tuning::teaching_exposure_session_from_focus(&cgs, FocusSpec::All);
     let cfg = RenderConfig::for_eval(None).with_render_mode(PromptRenderMode::Compact);
     let br = domain_projection_bracket_from_final_bundle(&cgs, &exposure, cfg, "Issue")
         .expect("Issue should carry a projection list");
@@ -868,8 +860,7 @@ fn rendered_teaching_tsv_teaching_rows_single_tab_separator() {
     let cgs = load_schema_dir(&dir).unwrap();
     let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
     let (_, body) = split_tsv_teaching_contract_and_table(&tsv);
-    validate_teaching_tsv_teaching_table(&body)
-        .expect("every teaching row must be expr\\tMeaning");
+    validate_teaching_tsv_teaching_table(&body).expect("every teaching row must be expr\\tMeaning");
 }
 
 /// Regression guard: full symbolic TSV prompt synthesis for [`fixtures/schemas/plasm_prompt_matrix`]
@@ -1158,8 +1149,7 @@ fn tsv_prompt_uses_plasm_expr_and_meaning_columns() {
         })
         .expect("IssueComment invoke teaching table row");
     assert!(
-        issue_comment_create_row.contains("[scope")
-            || issue_comment_create_row.contains("scope"),
+        issue_comment_create_row.contains("[scope") || issue_comment_create_row.contains("scope"),
         "invoke row should reference scoping, got {issue_comment_create_row:?}"
     );
     let contrib_ent = map.entity_sym_for("", "Contributor");
@@ -1411,8 +1401,8 @@ fn exposure_surface_omits_entity_ref_nav_when_target_entity_not_exposed() {
             .any(|e| e.entity.as_str() == "Zone"),
         "narrow wave should not list Zone as an exposed entity"
     );
-    let map = symbol_map_for_prompt(&cgs, FocusSpec::SeedsExact(&["Ruleset"]), true)
-        .expect("symbol map");
+    let map =
+        symbol_map_for_prompt(&cgs, FocusSpec::SeedsExact(&["Ruleset"]), true).expect("symbol map");
     let zone_nav_sym = map.ident_sym_entity_field_for("", "Ruleset", "zone_id");
     let mut line_valid_cache = HashMap::new();
     let mut gloss_emit_none = None;
@@ -1713,9 +1703,7 @@ fn prompt_matrix_waf_package_query_projection_witness_row() {
     }
     let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
     let line = prompt.lines().find(|l| {
-        !l.starts_with('#')
-            && !l.is_empty()
-            && l.split_once('\t').is_some_and(|(e, _)| e == expr)
+        !l.starts_with('#') && !l.is_empty() && l.split_once('\t').is_some_and(|(e, _)| e == expr)
     });
     let Some(line) = line else {
         panic!("TSV row for WafPackage projection witness not found: {expr:?}");
@@ -1828,8 +1816,7 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
     assert!(frontmatter.contains("Core surface:"));
     assert!(frontmatter.contains("Worked shape"));
     assert!(
-        frontmatter.contains("Replace teaching placeholders")
-            || frontmatter.contains("substitute")
+        frontmatter.contains("Replace teaching placeholders") || frontmatter.contains("substitute")
     );
     assert!(frontmatter.contains("e#~$"));
     assert!(
@@ -2046,8 +2033,6 @@ fn row_producer_teaching_includes_inputs_and_rows_contract() {
     );
 }
 
-
-
 #[test]
 fn static_grammar_includes_symbols_only_rule() {
     assert!(
@@ -2152,8 +2137,7 @@ fn focus_subsetting_shows_full_and_dim() {
         return;
     }
     let cgs = load_schema_dir(&dir).unwrap();
-    let output =
-        render_prompt_with_config(&cgs, RenderConfig::for_eval_canonical(Some("Order")));
+    let output = render_prompt_with_config(&cgs, RenderConfig::for_eval_canonical(Some("Order")));
     assert!(output.contains("Order"));
     assert!(output.contains("User") || output.contains("Pet"));
 }
@@ -2198,9 +2182,7 @@ fn clickup_domain_includes_materialized_team_spaces_nav() {
     assert!(
         sym.contains(&format!(".{spaces_rel}"))
             || sym.contains(&format!("{team_sym}($).{spaces_rel}"))
-            || sym.contains(&format!(
-                "{team_sym}({p_team_identity}).{spaces_rel}"
-            ))
+            || sym.contains(&format!("{team_sym}({p_team_identity}).{spaces_rel}"))
             || sym.contains(&format!("{team_sym}{{")),
         "expected symbol-tuned Team→spaces relation (`.{spaces_rel}` on a `{team_sym}` receiver)"
     );
@@ -2402,8 +2384,7 @@ fn prompt_stats_fixture_cgs() -> CGS {
         discovery: None,
     })
     .unwrap();
-    let tmpl =
-        serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "x"}]});
+    let tmpl = serde_json::json!({"method": "GET", "path": [{"type": "literal", "value": "x"}]});
     for (name, domain) in [("book_query", "Book"), ("shelf_query", "Shelf")] {
         cgs.add_capability(CapabilitySchema {
             name: name.into(),

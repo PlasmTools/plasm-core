@@ -8,11 +8,11 @@ use plasm_core::expr_parser::parse_with_cgs_layers;
 use plasm_core::loader::load_schema_dir;
 use plasm_core::normalize_expr_query_capabilities;
 use plasm_core::resolve_query_capability;
+use plasm_core::CgsLayer;
 use plasm_core::Expr;
 use plasm_core::FocusSpec;
 use plasm_core::Predicate;
 use plasm_core::QueryExpr;
-use plasm_core::CgsLayer;
 use plasm_core::SymbolMap;
 
 fn linear_cgs() -> plasm_core::CGS {

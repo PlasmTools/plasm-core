@@ -80,8 +80,8 @@
 //!
 #![allow(clippy::result_large_err)]
 
-pub mod catalog_id;
 pub mod bind_wire_validate;
+pub mod catalog_id;
 pub mod catalog_il;
 pub mod catalog_ownership;
 pub mod cgs_context;
@@ -147,6 +147,10 @@ mod wire_coercion;
 /// Local `o200k_base` BPE length (OpenAI `o200k_base` via riptoken).
 pub use o200k_token_count::o200k_token_count;
 
+pub use catalog_id::{
+    cgs_session_catalog_id, cgs_symbol_map_entry_key, deserialize_catalog_stamp,
+    serialize_catalog_stamp, CatalogEntryStamp, EmptyRegistryEntryId, SessionCatalogEntryId,
+};
 pub use catalog_il::{
     catalog_artifact_stem, catalog_il_body_name, cgs_to_catalog_il_bytes, is_catalog_manifest_path,
     load_catalog_artifact, load_catalog_il_bytes, load_catalog_il_verified, read_catalog_manifest,
@@ -188,10 +192,6 @@ pub use expr::{
     OPERATION_EXPR_PRIMARY_ENTITY, PAGE_EXPR_PRIMARY_ENTITY,
 };
 pub use expr_sugar::rewrite_id_field_brace_query_to_get;
-pub use catalog_id::{
-    cgs_session_catalog_id, cgs_symbol_map_entry_key, deserialize_catalog_stamp,
-    serialize_catalog_stamp, CatalogEntryStamp, EmptyRegistryEntryId, SessionCatalogEntryId,
-};
 pub use identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityId, EntityName, PathMethodSegment,
     RegistryEntryId, RelationName,
@@ -311,10 +311,10 @@ pub use symbol_tuning::{
     entity_slices_for_render, relation_endpoint_keys, resolve_prompt_surface_entities,
     strip_prompt_expression_annotations, symbol_map_cache_key_federated,
     symbol_map_cache_key_single_catalog, symbol_map_for_prompt, wire_surface_for_parse,
-    wire_surface_for_teaching_session, ExposedEntitySymbolRow, ExposedRelationSymbolRow,
-    ExposureEntityKey, FocusSpec, CatalogScope, SymbolAllocate, SymbolMap, SymbolMapCacheKey,
-    SymbolMapCrossRequestCache, SymbolRender, SymbolResolve, SymbolResolveError, SymbolSession,
-    TeachingExposureSession,
+    wire_surface_for_teaching_session, CatalogScope, ExposedEntitySymbolRow,
+    ExposedRelationSymbolRow, ExposureEntityKey, FocusSpec, SymbolAllocate, SymbolMap,
+    SymbolMapCacheKey, SymbolMapCrossRequestCache, SymbolRender, SymbolResolve, SymbolResolveError,
+    SymbolSession, TeachingExposureSession,
 };
 pub use template_interpolate::{
     dollar_interpolation_roots, interpolate_string, interpolate_string_map,

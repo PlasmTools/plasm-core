@@ -6,9 +6,8 @@ use indexmap::IndexMap;
 
 use crate::symbol_tuning::{
     capability_exposure_param_pairs, field_syms_for_teaching_row, gloss_description_truncated,
-    optional_legend_param_syms, registry_backed_compact_wire_label,
-    CapabilityParamSurfaceFilter, ExposureCapabilityKey, ExposureEntityKey, SymbolMap,
-    TeachingExposureSession,
+    optional_legend_param_syms, registry_backed_compact_wire_label, CapabilityParamSurfaceFilter,
+    ExposureCapabilityKey, ExposureEntityKey, SymbolMap, TeachingExposureSession,
 };
 use crate::{CapabilityKind, CGS};
 
@@ -125,12 +124,9 @@ fn gloss_rows_for_filtered_block(
 ) -> Vec<TeachingFieldGloss> {
     let mut needed: HashSet<String> = HashSet::new();
     for row in kept_rows {
-        for sym in field_syms_for_teaching_row(
-            row.teaching_expr.expression.as_str(),
-            None,
-            None,
-            &[],
-        ) {
+        for sym in
+            field_syms_for_teaching_row(row.teaching_expr.expression.as_str(), None, None, &[])
+        {
             needed.insert(sym);
         }
         if row.teaching_expr.legend.optional.is_present() {

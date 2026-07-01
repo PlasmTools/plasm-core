@@ -2,14 +2,13 @@
 //! (`expose_entities`, method waves, [`assign_new_slot_symbols`]) — not recomputed at snapshot time.
 
 use crate::identity::{
-    CapabilityName, CapabilityParamName, EntityFieldName, EntityName, RegistryEntryId,
-    RelationName,
+    CapabilityName, CapabilityParamName, EntityFieldName, EntityName, RegistryEntryId, RelationName,
 };
 use crate::schema::{
     resolve_capability_input_param_field, CapabilitySchema, InputType, ParameterRole, CGS,
 };
-use crate::FieldType;
 use crate::CapabilityKind;
+use crate::FieldType;
 
 use super::keys::{OpaqueESym, OpaqueMSym};
 use super::{slot_meta_is_relation, IdentMetadata, IdentRole, SymbolMap, TeachingExposureSession};
@@ -241,12 +240,7 @@ pub(crate) fn relation_binding_from_meta(meta: &IdentMetadata) -> Option<Relatio
 }
 
 impl TeachingExposureSession {
-    pub(crate) fn record_entity_binding(
-        &mut self,
-        sym: OpaqueESym,
-        entry_id: &str,
-        entity: &str,
-    ) {
+    pub(crate) fn record_entity_binding(&mut self, sym: OpaqueESym, entry_id: &str, entity: &str) {
         self.tables.sym_to_entity_binding.insert(
             sym,
             EntityBinding {
@@ -321,9 +315,7 @@ impl SymbolMap {
             .cap_param_to_sym
             .iter()
             .filter(|(key, _)| {
-                key.entry_id == entry
-                    && key.domain == domain
-                    && key.capability == capability
+                key.entry_id == entry && key.domain == domain && key.capability == capability
             })
             .map(|(_, sym)| sym.as_wire())
             .collect();
@@ -342,7 +334,8 @@ mod tests {
 
     #[test]
     fn sym_to_slot_populated_at_assignment_for_github_label_query_repository() {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_language_matrix");
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("matrix");
         let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA"]);
         let map = exp.symbol_map_arc();

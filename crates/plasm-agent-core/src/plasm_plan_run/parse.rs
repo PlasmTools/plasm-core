@@ -264,9 +264,7 @@ pub(crate) fn row_identities_from_entities(
                 e.reference.entity_type.as_str(),
                 None,
             )
-            .or_else(|_| {
-                crate::catalog_ownership::resolve_qualified_entity_key(es, entity, None)
-            });
+            .or_else(|_| crate::catalog_ownership::resolve_qualified_entity_key(es, entity, None));
             let core_qe = match plan_qe {
                 Ok(qe) => {
                     plasm_core::QualifiedEntityKey::new(qe.entry_id.clone(), qe.entity.clone())

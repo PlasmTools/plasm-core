@@ -170,7 +170,10 @@ fn matrix_create_m_never_validates_against_query_cap() {
     let item_e = map.entity_sym_for("langmatrix", "LangItem");
     let create_m = map.method_sym_for("langmatrix", "LangItem", "langitem_create");
     let query_m = map.method_sym_for("langmatrix", "LangItem", "langitem_query");
-    assert_ne!(create_m, query_m, "create and query must have distinct m# tokens");
+    assert_ne!(
+        create_m, query_m,
+        "create and query must have distinct m# tokens"
+    );
     let p_title = map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "title");
     let source = format!(
         r#"created = {item_e}.{create_m}({p_title}="hello")

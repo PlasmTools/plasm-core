@@ -6,12 +6,14 @@ use crate::loader::load_schema_dir;
 use crate::symbol_tuning::{symbol_map_for_prompt, FocusSpec};
 
 use super::{
-    collect_entity_teaching_block, parse_trailing_projection_bracket, prompt_line_valid_cache_seed_cgs,
-    RenderConfig, TSV_TEACHING_TABLE_HEADER, TEACHING_VALID_EXPR_MARKER,
+    collect_entity_teaching_block, parse_trailing_projection_bracket,
+    prompt_line_valid_cache_seed_cgs, RenderConfig, TEACHING_VALID_EXPR_MARKER,
+    TSV_TEACHING_TABLE_HEADER,
 };
 
 fn matrix_fixture_dir() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/schemas/plasm_prompt_matrix")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_prompt_matrix")
 }
 
 fn meaning_cells(tsv: &str) -> impl Iterator<Item = &str> {
@@ -65,10 +67,9 @@ fn teaching_tsv_exemplars_round_trip_parser() {
             continue;
         }
         let stack = [crate::CgsLayer::unset(&cgs)];
-        parse_with_cgs_layers_program(expr, &stack, sym_map.clone(), None, false)
-            .unwrap_or_else(|e| {
-                panic!("teaching exemplar must round-trip the parser: `{expr}` -> {e:?}")
-            });
+        parse_with_cgs_layers_program(expr, &stack, sym_map.clone(), None, false).unwrap_or_else(
+            |e| panic!("teaching exemplar must round-trip the parser: `{expr}` -> {e:?}"),
+        );
         checked += 1;
     }
     assert!(

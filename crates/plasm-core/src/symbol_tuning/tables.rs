@@ -10,9 +10,7 @@ use super::keys::{
     CapParamKey, EntityFieldKey, MethodKey, MethodSegmentKey, OpaqueESym, OpaqueMSym, OpaquePSym,
     OpaqueRSym, OpaqueVSym, QualifiedEntityKey, RelationKey,
 };
-use super::session_bindings::{
-    EntityBinding, MethodBinding, RelationBinding, SlotBinding,
-};
+use super::session_bindings::{EntityBinding, MethodBinding, RelationBinding, SlotBinding};
 use super::{IdentMetadata, SymbolMap};
 
 /// Parse-time reverse tables + teaching forward tables (cloned into [`SymbolMap`] snapshots).

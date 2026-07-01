@@ -38,9 +38,7 @@ impl<'a> Parser<'a> {
         }
         let canon = self.canonical_entity_name_in_layers(surface);
         if self.cgs_for_entity(&canon).is_some()
-            || self
-                .cgs_layers()
-                .any(|c| c.get_entity(&canon).is_some())
+            || self.cgs_layers().any(|c| c.get_entity(&canon).is_some())
         {
             return Some(EntityCtorHead { canonical: canon });
         }

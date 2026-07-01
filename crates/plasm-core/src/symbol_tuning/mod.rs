@@ -41,9 +41,8 @@ pub use symbol_traits::{SymbolAllocate, SymbolRender, SymbolResolve, SymbolSessi
 
 pub use capability_surface_params::{
     capability_exposure_param_pairs, capability_optional_legend_param_pairs,
-    optional_legend_param_syms,
-    exposed_mutator_capability_keys, loaded_catalog_entry_ids, resolve_ranked_wire_candidates,
-    seeded_ranked_wire_candidates, CapabilityParamSurfaceFilter,
+    exposed_mutator_capability_keys, loaded_catalog_entry_ids, optional_legend_param_syms,
+    resolve_ranked_wire_candidates, seeded_ranked_wire_candidates, CapabilityParamSurfaceFilter,
 };
 pub use symbol_resolve::SymbolResolveError;
 
@@ -1737,10 +1736,10 @@ impl SymbolMap {
         catalog_entry_id: &str,
         canonical: &str,
     ) -> Option<TeachingTerm> {
-        let sym = self.tables.qualified_entity_to_sym.get(&QualifiedEntityKey::new(
-            catalog_entry_id,
-            canonical,
-        ))?;
+        let sym = self
+            .tables
+            .qualified_entity_to_sym
+            .get(&QualifiedEntityKey::new(catalog_entry_id, canonical))?;
         Some(TeachingTerm::Entity(
             EntityRef {
                 name: EntityName::new(canonical),
@@ -1783,19 +1782,14 @@ impl SymbolMap {
     ) -> Option<TeachingTerm> {
         let entry_key = cgs.entry_id.as_deref().unwrap_or("");
         let key = MethodKey::new(entry_key, entity, capability);
-        let sym = self
-            .tables
-            .method_to_sym
-            .get(&key)
-            .copied()
-            .or_else(|| {
-                self.tables.method_to_sym.iter().find_map(|(k, s)| {
-                    (k.domain.as_str() == entity
-                        && k.capability.as_str() == capability
-                        && (k.entry_id.as_str().is_empty() || k.entry_id.as_str() == entry_key))
-                        .then_some(*s)
-                })
-            })?;
+        let sym = self.tables.method_to_sym.get(&key).copied().or_else(|| {
+            self.tables.method_to_sym.iter().find_map(|(k, s)| {
+                (k.domain.as_str() == entity
+                    && k.capability.as_str() == capability
+                    && (k.entry_id.as_str().is_empty() || k.entry_id.as_str() == entry_key))
+                    .then_some(*s)
+            })
+        })?;
         let mref = method_ref_for_capability(cgs, entity, capability)?;
         Some(TeachingTerm::Method(mref, sym.index()))
     }
@@ -1859,7 +1853,10 @@ impl SymbolMap {
     /// Opaque `e#` for one exposed `(registry entry_id, entity)` pair.
     #[inline]
     pub fn entity_sym_for(&self, catalog_entry_id: &str, canonical: &str) -> String {
-        self.entity_sym_for_scope(CatalogScope::from_forward_map_key(catalog_entry_id), canonical)
+        self.entity_sym_for_scope(
+            CatalogScope::from_forward_map_key(catalog_entry_id),
+            canonical,
+        )
     }
 
     /// Federated homonym hints: `(entry_id, e#)` rows whose wire entity name equals `wire`.
@@ -2076,8 +2073,7 @@ impl SymbolMap {
     /// True when `sym` is a session `r#` relation token.
     #[inline]
     pub fn is_relation_symbol(&self, sym: &str) -> bool {
-        OpaqueRSym::parse(sym)
-            .is_some_and(|s| self.tables.sym_to_relation_binding.contains_key(&s))
+        OpaqueRSym::parse(sym).is_some_and(|s| self.tables.sym_to_relation_binding.contains_key(&s))
     }
 
     /// teaching table term for one relation `r#` on a qualified entity row.
@@ -2122,10 +2118,7 @@ impl SymbolMap {
     #[inline]
     pub fn value_domain_fp_for_v_sym(&self, v_sym: &str) -> Option<&str> {
         let vsym = OpaqueVSym::parse(v_sym)?;
-        self.values
-            .value_sym_to_fp
-            .get(&vsym)
-            .map(|s| s.as_str())
+        self.values.value_sym_to_fp.get(&vsym).map(|s| s.as_str())
     }
 
     /// If `sym` maps a capability input parameter, return
@@ -2154,7 +2147,11 @@ impl SymbolMap {
 
     /// Opaque `m#` for one capability row — wire name lookup, then path-segment fallback.
     #[inline]
-    pub fn method_sym_for_cap(&self, catalog_entry_id: &str, cap: &crate::CapabilitySchema) -> String {
+    pub fn method_sym_for_cap(
+        &self,
+        catalog_entry_id: &str,
+        cap: &crate::CapabilitySchema,
+    ) -> String {
         let wire = cap.name.as_str();
         let sym = self.method_sym_for(catalog_entry_id, cap.domain.as_str(), wire);
         if sym != wire {
@@ -2281,8 +2278,8 @@ impl SymbolMap {
         let mut scope_s = self.capability_scope_legend_gloss(cgs, cap);
         let entry_id = cgs.entry_id.as_deref().unwrap_or("");
         let domain = cap.domain.as_str();
-        let has_optional = !capability_optional_legend_param_pairs(self, entry_id, domain, cap)
-            .is_empty();
+        let has_optional =
+            !capability_optional_legend_param_pairs(self, entry_id, domain, cap).is_empty();
         if has_optional {
             if !scope_s.is_empty() {
                 scope_s.push(' ');
@@ -3559,9 +3556,8 @@ mod tests {
             .get_capability("annotation_suggestion_insert")
             .expect("annotation_suggestion_insert");
         let _label = crate::capability_method_label_kebab(cap);
-        let opaque_parsed =
-            crate::expr_parser::parse_with_cgs_layers(&opaque, &stack, map.clone())
-                .expect("opaque surface parses in-grammar");
+        let opaque_parsed = crate::expr_parser::parse_with_cgs_layers(&opaque, &stack, map.clone())
+            .expect("opaque surface parses in-grammar");
         let Expr::Invoke(opaque_inv) = &opaque_parsed.expr else {
             panic!("expected Invoke, got {:?}", opaque_parsed.expr);
         };
@@ -3734,7 +3730,10 @@ mod tests {
         }
         let cgs = load_schema_dir(dir).unwrap();
         let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
-        assert_eq!(map.ident_sym_entity_field_for("", "PipelineSnapshot", "workers"), map.ident_sym_entity_field_for("", "PipelineSnapshot", "workers"));
+        assert_eq!(
+            map.ident_sym_entity_field_for("", "PipelineSnapshot", "workers"),
+            map.ident_sym_entity_field_for("", "PipelineSnapshot", "workers")
+        );
         assert_eq!(
             map.wire_for_opaque_p_sym("id"),
             None,
@@ -4717,14 +4716,24 @@ mod tests {
         }
         let ent_a = cgs.get_entity("HomographRowA").expect("HomographRowA");
         assert_eq!(
-            map.resolve_entity_field(CatalogScope::qualified("langmatrix"), "HomographRowA", ent_a, issue_title.as_str())
-                .expect("HomographRowA p#"),
+            map.resolve_entity_field(
+                CatalogScope::qualified("langmatrix"),
+                "HomographRowA",
+                ent_a,
+                issue_title.as_str()
+            )
+            .expect("HomographRowA p#"),
             "headline"
         );
         let ent_b = cgs.get_entity("HomographRowB").expect("HomographRowB");
         assert_eq!(
-            map.resolve_entity_field(CatalogScope::qualified("langmatrix"), "HomographRowB", ent_b, label_name.as_str())
-                .expect("HomographRowB p#"),
+            map.resolve_entity_field(
+                CatalogScope::qualified("langmatrix"),
+                "HomographRowB",
+                ent_b,
+                label_name.as_str()
+            )
+            .expect("HomographRowB p#"),
             "caption"
         );
     }

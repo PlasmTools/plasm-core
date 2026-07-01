@@ -37,10 +37,7 @@ pub fn wire_surface_from_teaching_line(
     map: Arc<SymbolMap>,
 ) -> Option<String> {
     let stripped = strip_prompt_expression_annotations(line);
-    let entry_id = cgs
-        .entry_id
-        .as_deref()
-        .unwrap_or("");
+    let entry_id = cgs.entry_id.as_deref().unwrap_or("");
     let layer = CgsLayer::new(entry_id, cgs);
     let parsed = match crate::expr_parser::parse_with_cgs_layers(
         &stripped,

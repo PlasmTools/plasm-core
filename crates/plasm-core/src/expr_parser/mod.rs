@@ -90,13 +90,14 @@ use crate::schema::{
     path_var_names_from_mapping_json, resolve_capability_input_param_field,
     template_invoke_requires_explicit_anchor_id,
 };
-use crate::symbol_tuning::{entity_slices_for_render, CatalogScope, FocusSpec, SymbolMap, SymbolSession};
+use crate::symbol_tuning::{
+    entity_slices_for_render, CatalogScope, FocusSpec, SymbolMap, SymbolSession,
+};
 use crate::{
-    catalog_id::CatalogEntryStamp,
-    coerce_value_for_field_type, ArrayItemsSchema, CapabilityKind, CapabilityName, ChainExpr,
-    CompOp, CreateExpr, DeleteExpr, EntityDef, EntityKey, EntityName, Expr, FieldType, GetExpr,
-    InputType, InvokeExpr, InvokeInputPayload, PageExpr, ParameterRole, Predicate, QueryExpr, Ref,
-    SymbolResolveError, Value, ValueWireFormat, CGS,
+    catalog_id::CatalogEntryStamp, coerce_value_for_field_type, ArrayItemsSchema, CapabilityKind,
+    CapabilityName, ChainExpr, CompOp, CreateExpr, DeleteExpr, EntityDef, EntityKey, EntityName,
+    Expr, FieldType, GetExpr, InputType, InvokeExpr, InvokeInputPayload, PageExpr, ParameterRole,
+    Predicate, QueryExpr, Ref, SymbolResolveError, Value, ValueWireFormat, CGS,
 };
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -517,11 +518,7 @@ impl<'a> Parser<'a> {
             Some(entry_id) => CgsLayer::qualified(entry_id, cgs),
             None => CgsLayer::unset(cgs),
         };
-        Self::new_with_sym_map(
-            input,
-            LayerStack::single(layer),
-            sym_map,
-        )
+        Self::new_with_sym_map(input, LayerStack::single(layer), sym_map)
     }
 
     fn new_with_sym_map(
@@ -635,8 +632,7 @@ impl<'a> Parser<'a> {
 
     fn cgs_for_catalog_entry_id(&self, entry_id: &str, entity: &str) -> Option<&'a CGS> {
         for layer in self.layers_stack() {
-            if layer.matches_forward_entry_id(entry_id)
-                && layer.cgs().get_entity(entity).is_some()
+            if layer.matches_forward_entry_id(entry_id) && layer.cgs().get_entity(entity).is_some()
             {
                 return Some(layer.cgs());
             }
@@ -736,53 +732,55 @@ impl<'a> Parser<'a> {
         if !crate::symbol_tuning::SymbolMap::is_opaque_m_sym(raw) {
             return None;
         }
-        Some(match self.sym_map.resolve_opaque_session_method_capability(
-            self.layers_stack(),
-            raw,
-            source.primary_entity(),
-        ) {
-            Ok(cap) => Ok(cap),
-            Err(SymbolResolveError::MethodAnchorMismatch { .. }) => {
-                let binding = match self.sym_map.resolve_session_method(raw) {
-                    Ok(b) => b,
-                    Err(e) => {
-                        return Some(Err(self.err(ParseErrorKind::Other {
-                            message: e.to_agent_program_error(),
-                        })));
-                    }
-                };
-                let anchor = source.primary_entity();
-                for layer in self.layers_stack() {
-                    if !layer.matches_forward_entry_id(binding.entry_id.as_str()) {
-                        continue;
-                    }
-                    let cgs = layer.cgs();
-                    let Some(cap) = cgs.capabilities.get(binding.capability.as_str()) else {
-                        continue;
+        Some(
+            match self.sym_map.resolve_opaque_session_method_capability(
+                self.layers_stack(),
+                raw,
+                source.primary_entity(),
+            ) {
+                Ok(cap) => Ok(cap),
+                Err(SymbolResolveError::MethodAnchorMismatch { .. }) => {
+                    let binding = match self.sym_map.resolve_session_method(raw) {
+                        Ok(b) => b,
+                        Err(e) => {
+                            return Some(Err(self.err(ParseErrorKind::Other {
+                                message: e.to_agent_program_error(),
+                            })));
+                        }
                     };
-                    if cap.domain.as_str() != binding.domain.as_str() {
-                        continue;
+                    let anchor = source.primary_entity();
+                    for layer in self.layers_stack() {
+                        if !layer.matches_forward_entry_id(binding.entry_id.as_str()) {
+                            continue;
+                        }
+                        let cgs = layer.cgs();
+                        let Some(cap) = cgs.capabilities.get(binding.capability.as_str()) else {
+                            continue;
+                        };
+                        if cap.domain.as_str() != binding.domain.as_str() {
+                            continue;
+                        }
+                        if Self::scoped_query_bridge_matches_anchor(cap, cgs, anchor)
+                            || (cap.kind == CapabilityKind::Create
+                                && self.can_bind_create_path_vars(cap, source))
+                        {
+                            return Some(Ok(cap));
+                        }
                     }
-                    if Self::scoped_query_bridge_matches_anchor(cap, cgs, anchor)
-                        || (cap.kind == CapabilityKind::Create
-                            && self.can_bind_create_path_vars(cap, source))
-                    {
-                        return Some(Ok(cap));
-                    }
+                    Err(self.err(ParseErrorKind::Other {
+                        message: SymbolResolveError::MethodAnchorMismatch {
+                            token: raw.trim().to_string(),
+                            bound_domain: binding.domain.to_string(),
+                            anchor_entity: anchor.to_string(),
+                        }
+                        .to_agent_program_error(),
+                    }))
                 }
-                Err(self.err(ParseErrorKind::Other {
-                    message: SymbolResolveError::MethodAnchorMismatch {
-                        token: raw.trim().to_string(),
-                        bound_domain: binding.domain.to_string(),
-                        anchor_entity: anchor.to_string(),
-                    }
-                    .to_agent_program_error(),
-                }))
-            }
-            Err(e) => Err(self.err(ParseErrorKind::Other {
-                message: e.to_agent_program_error(),
-            })),
-        })
+                Err(e) => Err(self.err(ParseErrorKind::Other {
+                    message: e.to_agent_program_error(),
+                })),
+            },
+        )
     }
 
     fn scoped_query_bridge_matches_anchor(
@@ -979,7 +977,8 @@ impl<'a> Parser<'a> {
         for (raw_key, val) in raw_map {
             let resolved = if fields.iter().any(|f| f.name == raw_key)
                 || resolve_capability_input_param_field(cap, raw_key.as_str()).is_some()
-                || cap.object_params()
+                || cap
+                    .object_params()
                     .is_some_and(|fs| fs.iter().any(|f| f.name.as_str() == raw_key.as_str()))
             {
                 raw_key
@@ -1020,11 +1019,7 @@ impl<'a> Parser<'a> {
         variant: &crate::schema::InputVariantSchema,
         parent_path: &str,
     ) -> String {
-        if variant
-            .fields
-            .iter()
-            .any(|f| f.name.as_str() == resolved)
-        {
+        if variant.fields.iter().any(|f| f.name.as_str() == resolved) {
             return resolved.to_string();
         }
         if !parent_path.is_empty() {
@@ -1035,11 +1030,7 @@ impl<'a> Parser<'a> {
                 }
             }
         }
-        resolved
-            .rsplit('.')
-            .next()
-            .unwrap_or(resolved)
-            .to_string()
+        resolved.rsplit('.').next().unwrap_or(resolved).to_string()
     }
 
     fn normalize_invoke_ctor_fields_for_variant(
@@ -1063,7 +1054,9 @@ impl<'a> Parser<'a> {
             let leaf = Self::union_ctor_leaf_field_key(k.as_str(), variant, parent_path);
             if out.insert(leaf.clone(), v).is_some() {
                 return Err(self.err(ParseErrorKind::Other {
-                    message: format!("duplicate union constructor field `{leaf}` under `{parent_path}`"),
+                    message: format!(
+                        "duplicate union constructor field `{leaf}` under `{parent_path}`"
+                    ),
                 }));
             }
         }
@@ -1191,7 +1184,8 @@ impl<'a> Parser<'a> {
                                 continue;
                             };
                             if let crate::InputType::Array { element_type, .. } = ty.as_ref() {
-                                if let crate::InputType::Union { variants } = element_type.as_ref() {
+                                if let crate::InputType::Union { variants } = element_type.as_ref()
+                                {
                                     if let Some(v) = variants.iter().find(|v| {
                                         crate::schema::union_variant_constructor_symbol(v)
                                             == Some(ctor_label)
@@ -1234,11 +1228,9 @@ impl<'a> Parser<'a> {
             .as_deref()
             .unwrap_or("");
         let cap_label = format!("{entry_id}/{}.{}", cap.domain, cap.name);
-        let hint = self.sym_map.cap_param_syms_hint(
-            entry_id,
-            cap.domain.as_str(),
-            cap.name.as_str(),
-        );
+        let hint =
+            self.sym_map
+                .cap_param_syms_hint(entry_id, cap.domain.as_str(), cap.name.as_str());
         let mut out = indexmap::IndexMap::new();
         for (raw_key, val) in raw_map {
             let resolved = if variant.fields.iter().any(|f| f.name == raw_key) {
@@ -1264,7 +1256,9 @@ impl<'a> Parser<'a> {
                 Self::union_ctor_leaf_field_key(resolved.as_str(), variant, variant.name.as_str());
             if out.insert(leaf.clone(), val).is_some() {
                 return Err(self.err(ParseErrorKind::Other {
-                    message: format!("duplicate union constructor field `{leaf}` in `{ctor_label}`"),
+                    message: format!(
+                        "duplicate union constructor field `{leaf}` in `{ctor_label}`"
+                    ),
                 }));
             }
         }
@@ -1910,10 +1904,8 @@ impl<'a> Parser<'a> {
         let InputType::Object { fields, .. } = &is.input_type else {
             return Ok(());
         };
-        let ec = self.cgs_for_entity_with_preferred_catalog(
-            cap.domain.as_str(),
-            catalog_entry_id,
-        )?;
+        let ec =
+            self.cgs_for_entity_with_preferred_catalog(cap.domain.as_str(), catalog_entry_id)?;
         for f in fields {
             if let Some(v) = map.get_mut(&f.name) {
                 if matches!(&f.wire, crate::InputFieldWire::Inline(_)) {
@@ -1956,11 +1948,8 @@ impl<'a> Parser<'a> {
     }
 
     fn stamp_session_catalog_from_source(source: &Expr, expr: Expr) -> Expr {
-        let stamped = expr.with_session_catalog_entry_id(
-            source
-                .session_catalog_entry_id()
-                .map(|id| id.as_str()),
-        );
+        let stamped = expr
+            .with_session_catalog_entry_id(source.session_catalog_entry_id().map(|id| id.as_str()));
         if let Expr::Create(mut c) = stamped {
             if c.catalog_entry_id.is_none() {
                 if let Some(id) = source.session_catalog_entry_id() {
@@ -4027,12 +4016,8 @@ mod tests {
         let map = exposure.symbol_map_arc();
         let cap = cgs.get_capability("document_suggest").unwrap();
         let label = capability_method_label_kebab(cap);
-        let content_sym = map.ident_sym_cap_param_for(
-            "",
-            cap.domain.as_str(),
-            cap.name.as_str(),
-            "content",
-        );
+        let content_sym =
+            map.ident_sym_cap_param_for("", cap.domain.as_str(), cap.name.as_str(), "content");
         let parsed = parse_with_cgs_layers(
             &format!("Document(doc).{label}(v111{{{content_sym}=$}})"),
             &test_layer(&cgs),
@@ -5680,10 +5665,18 @@ mod tests {
         let method_sym = sym_map.method_sym_for("", "IssueComment", cap.name.as_str());
         let owner = sym_map.ident_sym_entity_field_for("", "Repository", "owner");
         let repo = sym_map.ident_sym_entity_field_for("", "Repository", "repo");
-        let repo_param =
-            sym_map.ident_sym_cap_param_for("", "IssueComment", "issue_comment_create", "repository");
-        let issue_num_param =
-            sym_map.ident_sym_cap_param_for("", "IssueComment", "issue_comment_create", "issue_number");
+        let repo_param = sym_map.ident_sym_cap_param_for(
+            "",
+            "IssueComment",
+            "issue_comment_create",
+            "repository",
+        );
+        let issue_num_param = sym_map.ident_sym_cap_param_for(
+            "",
+            "IssueComment",
+            "issue_comment_create",
+            "issue_number",
+        );
         let issue_id_field = sym_map.ident_sym_entity_field_for("", "Issue", "number");
         let body_param =
             sym_map.ident_sym_cap_param_for("", "IssueComment", "issue_comment_create", "body");
@@ -5803,14 +5796,8 @@ mod tests {
         let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
         let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
         let stack = test_layer(&cgs);
-        let r = parse_with_cgs_layers_program(
-            r#"Pet(name=pikachu)"#,
-            &stack,
-            sym_map,
-            None,
-            false,
-        )
-        .expect("parse");
+        let r = parse_with_cgs_layers_program(r#"Pet(name=pikachu)"#, &stack, sym_map, None, false)
+            .expect("parse");
         let Expr::Get(g) = r.expr else {
             panic!("expected Get, got {:?}", r.expr);
         };

@@ -168,7 +168,9 @@ mod tests {
         cgs.entry_id = Some("proof".to_string());
         let missing = crate::cgs_expression_validate::uncovered_capabilities(&cgs);
         assert!(
-            !missing.iter().any(|(c, d)| c == "document_edit_v2" && d == "Document"),
+            !missing
+                .iter()
+                .any(|(c, d)| c == "document_edit_v2" && d == "Document"),
             "document_edit_v2 should be covered; missing={missing:?}"
         );
     }

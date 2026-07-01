@@ -70,10 +70,9 @@ async fn fetch_entity_get_by_ref(
     if let Some(cap) = get_capability {
         get_expr = get_expr.with_capability(cap);
     }
-    get_expr.catalog_entry_id =
-        plasm_core::CatalogEntryStamp::some(plasm_core::RegistryEntryId::from(
-            target.entry_id.as_str(),
-        ));
+    get_expr.catalog_entry_id = plasm_core::CatalogEntryStamp::some(
+        plasm_core::RegistryEntryId::from(target.entry_id.as_str()),
+    );
     let parsed = ParsedExpr {
         expr: Expr::Get(get_expr),
         projection: None,

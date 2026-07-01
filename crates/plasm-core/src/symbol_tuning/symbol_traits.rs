@@ -88,12 +88,8 @@ pub trait SymbolRender: Send + Sync {
         capability: &str,
         param: &str,
     ) -> String;
-    fn cap_param_syms_hint(
-        &self,
-        catalog_entry_id: &str,
-        domain: &str,
-        capability: &str,
-    ) -> String;
+    fn cap_param_syms_hint(&self, catalog_entry_id: &str, domain: &str, capability: &str)
+        -> String;
 
     fn ident_sym_relation_for(
         &self,
@@ -189,14 +185,7 @@ impl SymbolResolve for SymbolMap {
         token: &str,
         invoke_cap: &CapabilitySchema,
     ) -> Result<String, SymbolResolveError> {
-        SymbolMap::resolve_cap_param(
-            self,
-            catalog,
-            domain,
-            capability,
-            token,
-            invoke_cap,
-        )
+        SymbolMap::resolve_cap_param(self, catalog, domain, capability, token, invoke_cap)
     }
     fn resolve_opaque_session_method_capability<'a>(
         &self,
@@ -292,10 +281,7 @@ macro_rules! delegate_symbol_resolve_deref {
             ) -> Result<EntityBinding, SymbolResolveError> {
                 SymbolResolve::resolve_session_entity(*self, token)
             }
-            fn resolve_session_slot(
-                &self,
-                token: &str,
-            ) -> Result<SlotBinding, SymbolResolveError> {
+            fn resolve_session_slot(&self, token: &str) -> Result<SlotBinding, SymbolResolveError> {
                 SymbolResolve::resolve_session_slot(*self, token)
             }
             fn resolve_session_method(
@@ -354,12 +340,7 @@ macro_rules! delegate_symbol_resolve_deref {
                 invoke_cap: &CapabilitySchema,
             ) -> Result<String, SymbolResolveError> {
                 SymbolResolve::resolve_cap_param(
-                    *self,
-                    catalog,
-                    domain,
-                    capability,
-                    token,
-                    invoke_cap,
+                    *self, catalog, domain, capability, token, invoke_cap,
                 )
             }
             fn resolve_opaque_session_method_capability<'a>(
@@ -383,10 +364,7 @@ macro_rules! delegate_symbol_resolve_deref {
             ) -> Result<EntityBinding, SymbolResolveError> {
                 SymbolResolve::resolve_session_entity(self.as_ref(), token)
             }
-            fn resolve_session_slot(
-                &self,
-                token: &str,
-            ) -> Result<SlotBinding, SymbolResolveError> {
+            fn resolve_session_slot(&self, token: &str) -> Result<SlotBinding, SymbolResolveError> {
                 SymbolResolve::resolve_session_slot(self.as_ref(), token)
             }
             fn resolve_session_method(
@@ -400,7 +378,11 @@ macro_rules! delegate_symbol_resolve_deref {
                 token: &str,
                 anchor_entity: &str,
             ) -> Result<MethodBinding, SymbolResolveError> {
-                SymbolResolve::resolve_session_method_for_invoke(self.as_ref(), token, anchor_entity)
+                SymbolResolve::resolve_session_method_for_invoke(
+                    self.as_ref(),
+                    token,
+                    anchor_entity,
+                )
             }
             fn resolve_session_relation(
                 &self,
@@ -424,7 +406,13 @@ macro_rules! delegate_symbol_resolve_deref {
                 key_vars: &[EntityFieldName],
                 raw_key: &str,
             ) -> Result<String, SymbolResolveError> {
-                SymbolResolve::resolve_compound_key(self.as_ref(), catalog, entity, key_vars, raw_key)
+                SymbolResolve::resolve_compound_key(
+                    self.as_ref(),
+                    catalog,
+                    entity,
+                    key_vars,
+                    raw_key,
+                )
             }
             fn resolve_query_filter_field(
                 &self,
@@ -587,7 +575,12 @@ macro_rules! delegate_symbol_render_deref {
                 entity: &str,
                 field: &str,
             ) -> String {
-                SymbolRender::ident_sym_entity_field_for(self.as_ref(), catalog_entry_id, entity, field)
+                SymbolRender::ident_sym_entity_field_for(
+                    self.as_ref(),
+                    catalog_entry_id,
+                    entity,
+                    field,
+                )
             }
             fn ident_sym_cap_param_for(
                 &self,
@@ -610,7 +603,12 @@ macro_rules! delegate_symbol_render_deref {
                 domain: &str,
                 capability: &str,
             ) -> String {
-                SymbolRender::cap_param_syms_hint(self.as_ref(), catalog_entry_id, domain, capability)
+                SymbolRender::cap_param_syms_hint(
+                    self.as_ref(),
+                    catalog_entry_id,
+                    domain,
+                    capability,
+                )
             }
             fn ident_sym_relation_for(
                 &self,

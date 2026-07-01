@@ -6,8 +6,8 @@ use crate::symbol_tuning::SymbolMap;
 
 use super::contract::enforce_teaching_tsv_teaching_invariant;
 use super::{
-    DomainLineKind, EntityTeachingExprRow, TeachingExprLine, TeachingFieldGloss,
-    TeachingHeading, TeachingPromptBundle, TSV_TEACHING_TABLE_HEADER, TEACHING_OPTIONAL_LEGEND_MARK,
+    DomainLineKind, EntityTeachingExprRow, TeachingExprLine, TeachingFieldGloss, TeachingHeading,
+    TeachingPromptBundle, TEACHING_OPTIONAL_LEGEND_MARK, TSV_TEACHING_TABLE_HEADER,
 };
 
 fn tsv_expr_has_symbolic_method_call(expr: &str) -> bool {

@@ -2,9 +2,7 @@
 
 use indexmap::IndexMap;
 
-use crate::identity::{
-    CapabilityParamName, EntityFieldName, RegistryEntryId, RelationName,
-};
+use crate::identity::{CapabilityParamName, EntityFieldName, RegistryEntryId, RelationName};
 use crate::schema::{capability_path_method_segment, CGS};
 use crate::CapabilityKind;
 
@@ -138,9 +136,7 @@ impl TeachingExposureSession {
         let base_v = self.ledger.value_domain_fp_to_sym.len();
         for (i, fp) in new_v_fps.iter().enumerate() {
             let sym = OpaqueVSym::from_zero_based((base_v + i) as u32);
-            self.ledger
-                .value_domain_fp_to_sym
-                .insert(fp.clone(), sym);
+            self.ledger.value_domain_fp_to_sym.insert(fp.clone(), sym);
             self.ledger
                 .value_domain_fp_to_repr_meta
                 .entry(fp.clone())
@@ -173,16 +169,13 @@ impl TeachingExposureSession {
                     .fingerprint_meta
                     .get(*fp)
                     .is_some_and(slot_meta_is_relation)
-                    && !self
-                        .ledger
-                        .relation_fingerprint_to_sym
-                        .contains_key(*fp)
+                    && !self.ledger.relation_fingerprint_to_sym.contains_key(*fp)
             })
             .cloned()
             .collect();
         new_r_fps.sort();
-        for (next_r, fp) in (self.ledger.relation_fingerprint_to_sym.len() + 1..)
-            .zip(new_r_fps.iter())
+        for (next_r, fp) in
+            (self.ledger.relation_fingerprint_to_sym.len() + 1..).zip(new_r_fps.iter())
         {
             let sym = OpaqueRSym::from_zero_based((next_r - 1) as u32);
             self.ledger

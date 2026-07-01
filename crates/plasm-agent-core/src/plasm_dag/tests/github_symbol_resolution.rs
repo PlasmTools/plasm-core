@@ -420,7 +420,10 @@ fn cross_wave_github_incremental_exposure_symbol_stability() {
             "github",
             intent,
             &endpoints,
-            &entities.iter().map(|e| (*e).to_string()).collect::<Vec<_>>(),
+            &entities
+                .iter()
+                .map(|e| (*e).to_string())
+                .collect::<Vec<_>>(),
             Some(&ranked.iter().map(|s| (*s).to_string()).collect::<Vec<_>>()),
             ExposureSurfaceOptions {
                 read_first_seeded: true,
@@ -430,15 +433,24 @@ fn cross_wave_github_incremental_exposure_symbol_stability() {
 
     // Wave 1: open with Repository + Issue, ranked toward issue_create.
     let w1 = mk_delta(&["Repository", "Issue"], &["issue_create", "issue_update"]);
-    let mut exp =
-        TeachingExposureSession::new_with_intent_delta(cgs.as_ref(), "github", &["Repository", "Issue"], w1);
+    let mut exp = TeachingExposureSession::new_with_intent_delta(
+        cgs.as_ref(),
+        "github",
+        &["Repository", "Issue"],
+        w1,
+    );
     let m_create_w1 = exp
         .symbol_map_arc()
         .method_sym_for("github", "Issue", "issue_create");
-    let p_repo_w1 =
+    let p_repo_w1 = exp.symbol_map_arc().ident_sym_cap_param_for(
+        "github",
+        "Issue",
+        "issue_create",
+        "repository",
+    );
+    let repo_field_p =
         exp.symbol_map_arc()
-            .ident_sym_cap_param_for("github", "Issue", "issue_create", "repository");
-    let repo_field_p = exp.symbol_map_arc().ident_sym_entity_field_for("github", "Repository", "repo");
+            .ident_sym_entity_field_for("github", "Repository", "repo");
 
     // Wave 2: expand exactly as commit_expand_wave does — relation_keys = ALL prior + new entities,
     // ranked = the session's (re-ranked) list including the Issue mutators, normalized new seeds.

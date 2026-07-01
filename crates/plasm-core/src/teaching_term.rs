@@ -3,7 +3,10 @@
 //! Carry [`TeachingTerm`] in the parser and prompt pipeline; format to `e1` / `m2` / `p3` / `r4` only at
 //! serialization boundaries via [`Display`] (or explicit [`std::fmt::Write`]).
 
-use crate::identity::{CapabilityName, CapabilityParamName, EntityFieldName, EntityName, PathMethodSegment, RelationName};
+use crate::identity::{
+    CapabilityName, CapabilityParamName, EntityFieldName, EntityName, PathMethodSegment,
+    RelationName,
+};
 use crate::schema::{capability_path_method_segment, CapabilitySchema, CGS};
 use serde::{Deserialize, Serialize};
 use std::fmt;

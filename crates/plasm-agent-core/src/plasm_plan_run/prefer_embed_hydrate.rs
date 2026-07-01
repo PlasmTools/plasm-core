@@ -100,10 +100,9 @@ pub(crate) fn push_prefer_hydrate_get_jobs(
         }
         let mut get_expr = GetExpr::new(EntityName::new(target_entity.to_string()), slot)
             .with_capability(get_capability.clone());
-        get_expr.catalog_entry_id =
-            plasm_core::CatalogEntryStamp::some(plasm_core::RegistryEntryId::from(
-                target.entry_id.as_str(),
-            ));
+        get_expr.catalog_entry_id = plasm_core::CatalogEntryStamp::some(
+            plasm_core::RegistryEntryId::from(target.entry_id.as_str()),
+        );
         let parsed = ParsedExpr {
             expr: Expr::Get(get_expr),
             projection: None,
