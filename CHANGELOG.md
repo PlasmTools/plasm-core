@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.103] - 2026-07-01
+
+### Added
+
+- **Plan⇒run parity witness:** `LoweredIrDigest` on `PlanCommitDryCache`; `plasm_run` rejects lowered GET IR drift via unified `verify_committed_plan_bundle`.
+- **Chained `{…}{…}` predicate groups:** adjacent brace groups AND-conjoin; spaced second groups are syntax errors (no silent drop).
+- **Compound-key GET lowering:** hydrate paths use `GetExpr::from_ref` so multi-part keys survive plan fanout.
+- **Structural `_ref` wire encoding** for compound entity keys (cache round-trip without scalarizing `id_field`).
+- **Language matrix `CompoundBranch`** entity + relation fixture for conformance coverage.
+
+### Changed
+
+- **Plan commit registration:** single `PlanCommitRecord::from_dry_review()` construction site; digest computed only in dry cache.
+- **Dry-run probe gate:** `DryPlasmPlanEvaluation::probe_preflight_passed()` required before minting `run_ref`.
+- **Identity slots:** canonical `apply_identity_slots_to_row` / `restore_id_field_from_compound_ref` in `plasm-core` (removed local cache duplicate).
+
+### Fixed
+
+- **Homograph coherence:** receiver-scoped opaque `p#` without receiver hard-errors; session reverse ident fallback for compound keys.
+- **Graph rehydrate / cache:** structural `_ref` dedup and compound-key conflict handling.
+
 ## [0.3.102] - 2026-07-01
 
 ### Added

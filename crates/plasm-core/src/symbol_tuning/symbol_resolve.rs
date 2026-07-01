@@ -336,11 +336,10 @@ impl SymbolMap {
             {
                 return Ok(field_wire);
             }
-            let binding = self.resolve_session_slot(t)?;
-            return Err(SymbolResolveError::WrongSlotKind {
+            return Err(SymbolResolveError::UnknownEntityPSym {
+                catalog_entry_id: catalog.entry_id().unwrap_or("").to_string(),
+                entity: entity.to_string(),
                 token: t.to_string(),
-                expected: "entity field",
-                got: binding.agent_description(),
             });
         }
         if ent.fields.contains_key(t) || ent.relations.contains_key(t) {
@@ -378,6 +377,12 @@ impl SymbolMap {
         if let CatalogScope::Qualified(entry_id) = catalog {
             for kv in key_vars {
                 if self.ident_sym_entity_field_for(entry_id, entity, kv.as_str()) == raw_key {
+                    return Ok(kv.to_string());
+                }
+            }
+        } else {
+            for kv in key_vars {
+                if self.ident_sym_entity_field_for("", entity, kv.as_str()) == raw_key {
                     return Ok(kv.to_string());
                 }
             }

@@ -82,6 +82,76 @@ pub fn identity_slot_to_json(
     }
 }
 
+fn identity_slot_needed(existing: Option<&serde_json::Value>) -> bool {
+    match existing {
+        None | Some(serde_json::Value::Null) => true,
+        Some(serde_json::Value::String(s)) => s.is_empty(),
+        _ => false,
+    }
+}
+
+/// Merge CGS identity slots into agent row JSON — compound keys never flatten into `id_field`.
+pub fn apply_identity_slots_to_row(
+    obj: &mut serde_json::Map<String, serde_json::Value>,
+    reference: &crate::Ref,
+    cgs: Option<&CGS>,
+) {
+    match &reference.key {
+        crate::EntityKey::Simple(id) => {
+            if id.is_empty() {
+                return;
+            }
+            let id_field = cgs
+                .and_then(|c| c.get_entity(reference.entity_type.as_str()))
+                .map(|e| e.id_field.as_str().to_string())
+                .unwrap_or_else(|| "id".to_string());
+            if identity_slot_needed(obj.get(&id_field)) {
+                obj.insert(id_field, serde_json::Value::String(id.to_string()));
+            }
+        }
+        crate::EntityKey::Compound(parts) => {
+            if parts.values().all(|v| v.is_empty()) {
+                return;
+            }
+            let ent = cgs.and_then(|c| c.get_entity(reference.entity_type.as_str()));
+            for (k, val) in parts {
+                if val.is_empty() || !identity_slot_needed(obj.get(k.as_str())) {
+                    continue;
+                }
+                let json = match (cgs, ent) {
+                    (Some(cgs), Some(ent)) => identity_slot_to_json(cgs, ent, k.as_str(), val.as_str()),
+                    _ => serde_json::Value::String(val.clone()),
+                };
+                obj.insert(k.clone(), json);
+            }
+        }
+    }
+}
+
+/// Restore `id_field` from compound `_ref` after row JSON omitted it during reload.
+pub fn restore_id_field_from_compound_ref(
+    fields: &mut indexmap::IndexMap<String, crate::TypedFieldValue>,
+    reference: &crate::Ref,
+    entity_def: Option<&EntityDef>,
+    cgs: &CGS,
+) {
+    let crate::EntityKey::Compound(parts) = &reference.key else {
+        return;
+    };
+    let Some(ent) = entity_def else {
+        return;
+    };
+    let id_name = ent.id_field.as_str();
+    let Some(val) = parts.get(id_name) else {
+        return;
+    };
+    fields.entry(id_name.to_string()).or_insert_with(|| {
+        let json = identity_slot_to_json(cgs, ent, id_name, val);
+        serde_json::from_value(json)
+            .unwrap_or_else(|_| crate::TypedFieldValue::from(crate::Value::String(val.clone())))
+    });
+}
+
 /// Whether a parent entity field can supply a scoped-query capability parameter after wire coercion.
 pub fn field_type_assignable_for_relation_binding(parent: &FieldType, param: &FieldType) -> bool {
     use FieldType::*;

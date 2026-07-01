@@ -43,7 +43,7 @@ use indexmap::IndexMap;
 use plasm_compile::DecodedRelation;
 use plasm_core::{EntityName, Ref, TypedFieldValue, Value};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Whether cached fields came from a list/query response or from a single-resource GET.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -209,8 +209,8 @@ impl CachedEntity {
         let obj = row.as_object().ok_or_else(|| RuntimeError::CacheError {
             message: "row must be a JSON object".into(),
         })?;
-        let reference = if let Some(r) = obj.get("_ref").and_then(|v| v.as_str()) {
-            Ref::from_string(r).ok_or_else(|| RuntimeError::CacheError {
+        let reference = if let Some(r) = obj.get("_ref") {
+            plasm_core::RefWire::parse_json(r).ok_or_else(|| RuntimeError::CacheError {
                 message: format!("invalid _ref `{r}`"),
             })?
         } else {
@@ -249,6 +249,7 @@ impl CachedEntity {
                 fields.insert(k.clone(), tf);
             }
         }
+        plasm_core::restore_id_field_from_compound_ref(&mut fields, &reference, entity_def, cgs);
         let completeness = obj
             .get("_completeness")
             .and_then(|v| v.as_str())
@@ -489,7 +490,8 @@ pub fn entity_to_row_json(
     };
     obj.insert(
         "_ref".to_string(),
-        serde_json::Value::String(entity.reference.to_string()),
+        serde_json::to_value(plasm_core::RefWire::from_ref(&entity.reference))
+            .unwrap_or_else(|_| serde_json::Value::String(entity.reference.to_string())),
     );
     obj.insert(
         "_version".to_string(),
@@ -517,40 +519,7 @@ fn apply_identity_slots_to_row(
     entity: &CachedEntity,
     cgs: Option<&plasm_core::CGS>,
 ) {
-    let slot = entity.reference.primary_slot_str();
-    if slot.is_empty() {
-        return;
-    }
-    let Some(cgs) = cgs else {
-        obj.entry("id".to_string())
-            .or_insert_with(|| serde_json::Value::String(slot));
-        return;
-    };
-    match &entity.reference.key {
-        plasm_core::EntityKey::Simple(_) => {
-            let id_name = cgs
-                .get_entity(entity.reference.entity_type.as_str())
-                .map(|e| e.id_field.as_str().to_string())
-                .unwrap_or_else(|| "id".to_string());
-            if slot_needed(obj.get(&id_name)) {
-                obj.insert(id_name, serde_json::Value::String(slot));
-            }
-        }
-        plasm_core::EntityKey::Compound(parts) => {
-            let ent = cgs.get_entity(entity.reference.entity_type.as_str());
-            for (k, val) in parts {
-                if val.is_empty() {
-                    continue;
-                }
-                if slot_needed(obj.get(k.as_str())) {
-                    let json = ent
-                        .map(|e| plasm_core::identity_slot_to_json(cgs, e, k.as_str(), val))
-                        .unwrap_or_else(|| serde_json::Value::String(val.clone()));
-                    obj.insert(k.clone(), json);
-                }
-            }
-        }
-    }
+    plasm_core::apply_identity_slots_to_row(obj, &entity.reference, cgs);
 }
 
 impl GraphCache {
@@ -901,6 +870,9 @@ mod tests {
         assert!(GraphCache::detect_branch_write_conflicts(&cache, &branch, &write_set).is_empty());
 
         cache.insert(create_test_entity("b", "Berry")).unwrap();
+        let mut divergent = create_test_entity("b", "Berry");
+        divergent.update_field("name".into(), Value::String("session b".into()), 100);
+        cache.insert(divergent).unwrap();
         let conflicts = GraphCache::detect_branch_write_conflicts(&cache, &branch, &write_set);
         assert_eq!(conflicts, vec![ref_b]);
 
@@ -1282,5 +1254,59 @@ mod tests {
         assert_eq!(cache.stats().total_entities, 3);
         assert!(!cache.contains(&Ref::new("TestEntity", "e0")));
         assert!(cache.contains(&Ref::new("TestEntity", "e4")));
+    }
+
+    #[test]
+    fn compound_ref_wire_roundtrip_preserves_id_field() {
+        use plasm_core::loader::load_schema_dir;
+        use std::collections::BTreeMap;
+        use std::path::PathBuf;
+
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas/plasm_language_matrix");
+        let cgs = load_schema_dir(&dir).expect("matrix");
+        let mut parts = BTreeMap::new();
+        parts.insert("owner".to_string(), "bot".to_string());
+        parts.insert("item_id".to_string(), "i1".to_string());
+        parts.insert("name".to_string(), "release".to_string());
+        let reference = Ref::compound("CompoundBranch", parts);
+        let mut fields = IndexMap::new();
+        fields.insert(
+            "name".to_string(),
+            TypedFieldValue::from(Value::String("release".into())),
+        );
+        fields.insert(
+            "owner".to_string(),
+            TypedFieldValue::from(Value::String("bot".into())),
+        );
+        fields.insert(
+            "item_id".to_string(),
+            TypedFieldValue::from(Value::String("i1".into())),
+        );
+        let entity = CachedEntity {
+            reference,
+            fields,
+            relations: IndexMap::new(),
+            last_updated: 1,
+            version: 1,
+            completeness: EntityCompleteness::Complete,
+        };
+        let row = entity_to_row_json(&entity, Some(&cgs));
+        let restored =
+            CachedEntity::from_row_json("CompoundBranch", &row, &cgs).expect("roundtrip");
+        assert!(matches!(
+            restored.reference.key,
+            plasm_core::EntityKey::Compound(_)
+        ));
+        assert_eq!(
+            restored
+                .get_field("name")
+                .map(TypedFieldValue::to_value)
+                .and_then(|v| match v {
+                    Value::String(s) => Some(s),
+                    _ => None,
+                }),
+            Some("release".to_string())
+        );
     }
 }

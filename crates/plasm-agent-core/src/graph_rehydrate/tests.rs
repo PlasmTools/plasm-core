@@ -118,7 +118,13 @@ async fn stream_entity_rows_dedupes_hot_and_overlapping_spill_pages() {
 
     let unique_refs: BTreeSet<String> = streamed
         .iter()
-        .filter_map(|r| r.get("_ref").and_then(|v| v.as_str()).map(str::to_string))
+        .filter_map(|r| {
+            r.get("_ref").map(|v| {
+                v.as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| serde_json::to_string(v).unwrap_or_default())
+            })
+        })
         .collect();
     assert_eq!(
         streamed.len(),

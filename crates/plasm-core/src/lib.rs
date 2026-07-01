@@ -190,8 +190,8 @@ pub use entity_ref_value::{
 pub use error::{NormalizationError, SchemaError, TypeError};
 pub use expr::{
     lift_invoke_payloads_in_expr, CancelExpr, ChainExpr, ChainStep, CreateExpr, DeleteExpr,
-    EntityKey, Expr, GetExpr, InvokeExpr, PageExpr, QueryExpr, QueryPagination, Ref, WaitExpr,
-    OPERATION_EXPR_PRIMARY_ENTITY, PAGE_EXPR_PRIMARY_ENTITY,
+    EntityKey, Expr, GetExpr, InvokeExpr, PageExpr, QueryExpr, QueryPagination, Ref, RefWire,
+    WaitExpr, OPERATION_EXPR_PRIMARY_ENTITY, PAGE_EXPR_PRIMARY_ENTITY,
 };
 pub use expr_sugar::rewrite_id_field_brace_query_to_get;
 pub use identity::{
@@ -262,7 +262,8 @@ pub use teaching_term::{
 pub use wire_coercion::{
     binding_value_as_plasm_value, coerce_json_value_for_field_type, coerce_value_for_field_type,
     coerce_value_for_field_type_with_policy, collect_relation_binding_proofs,
-    field_type_assignable_for_relation_binding, identity_slot_to_json, json_value_to_plasm_value,
+    field_type_assignable_for_relation_binding, apply_identity_slots_to_row,
+    identity_slot_to_json, json_value_to_plasm_value, restore_id_field_from_compound_ref,
     parent_entity_field_type, plasm_value_to_json, relation_binding_assignable,
     RelationBindingProof,
 };

@@ -9,7 +9,7 @@ use plasm_agent_core::http_execute::{
     apply_capability_seeds, CapabilitySeed, RankedCapabilitiesArg,
 };
 use plasm_agent_core::operation::{
-    compute_plan_commit_id_from_dry, PlanCommitDryCache, PlanCommitRecord, PLAN_COMMIT_TTL,
+    compute_plan_commit_id_from_dry, PlanCommitRecord, PLAN_COMMIT_TTL,
 };
 use plasm_agent_core::plan_commit_store::{
     register_plan_commit_and_persist, verify_plan_commit_id,
@@ -179,17 +179,15 @@ async fn concurrent_mcp_plasm_dry_two_commits() {
             Arc::clone(&es),
             out.prompt_hash.as_str(),
             out.session_id.as_str(),
-            PlanCommitRecord {
-                commit_ref: pc.clone(),
-                commit_id: compute_plan_commit_id_from_dry(&dry),
-                domain_revision: es.domain_revision,
-                artifact: bundle.artifact().clone(),
-                program: sym.into(),
-                dry_review: dry.review.clone(),
-                verdict: PlanDryVerdict::Ok,
-                expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
-                dry_cache: PlanCommitDryCache::from_dry(&dry),
-            },
+            PlanCommitRecord::from_dry_review(
+                pc.clone(),
+                compute_plan_commit_id_from_dry(&dry),
+                es.domain_revision,
+                &dry,
+                sym.into(),
+                PlanDryVerdict::Ok,
+                std::time::Instant::now() + PLAN_COMMIT_TTL,
+            ),
         )
         .await
         .expect("persist plan commit");

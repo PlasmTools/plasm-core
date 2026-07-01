@@ -153,17 +153,15 @@ pub(crate) async fn post_run_execute_session(
             Arc::clone(&sess),
             prompt_hash.as_str(),
             session_id.as_str(),
-            crate::operation::PlanCommitRecord {
-                commit_ref: commit_ref.clone(),
-                commit_id: crate::operation::compute_plan_commit_id_from_dry(&dry),
-                domain_revision: sess.domain_revision,
-                artifact: dry.artifact().clone(),
-                program: program.clone(),
-                dry_review: dry.review.clone(),
-                verdict: compact.verdict,
-                expires_at: std::time::Instant::now() + crate::operation::PLAN_COMMIT_TTL,
-                dry_cache: crate::operation::PlanCommitDryCache::from_dry(&dry),
-            },
+            crate::operation::PlanCommitRecord::from_dry_review(
+                commit_ref.clone(),
+                crate::operation::compute_plan_commit_id_from_dry(&dry),
+                sess.domain_revision,
+                &dry,
+                program.clone(),
+                compact.verdict,
+                std::time::Instant::now() + crate::operation::PLAN_COMMIT_TTL,
+            ),
         )
         .await
         {

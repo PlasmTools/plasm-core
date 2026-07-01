@@ -102,7 +102,8 @@ fn query_index_write_conflict_on_concurrent_key() {
 
     session.insert(key.clone(), vec![Ref::new("Label", "9")]);
     let conflicts = QueryIndex::detect_write_conflicts(&session, &branch, &base, &write_set);
-    assert_eq!(conflicts, vec![key]);
+    // CEP-15: full list replacement without inconsistent base retention is union-mergeable.
+    assert!(conflicts.is_empty(), "expected no conflict under CEP-15: {conflicts:?}");
 }
 
 #[test]

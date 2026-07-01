@@ -573,6 +573,55 @@ impl std::fmt::Display for Ref {
     }
 }
 
+/// Structural wire form for `_ref` round-trip (preserves compound keys).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RefWire {
+    Simple {
+        entity: String,
+        id: String,
+    },
+    Compound {
+        entity: String,
+        parts: BTreeMap<String, String>,
+    },
+}
+
+impl RefWire {
+    #[must_use]
+    pub fn from_ref(reference: &Ref) -> Self {
+        match &reference.key {
+            EntityKey::Simple(id) => Self::Simple {
+                entity: reference.entity_type.to_string(),
+                id: id.to_string(),
+            },
+            EntityKey::Compound(parts) => Self::Compound {
+                entity: reference.entity_type.to_string(),
+                parts: parts.clone(),
+            },
+        }
+    }
+
+    #[must_use]
+    pub fn into_ref(self) -> Ref {
+        match self {
+            Self::Simple { entity, id } => Ref::new(entity, id),
+            Self::Compound { entity, parts } => Ref::compound(entity, parts),
+        }
+    }
+
+    /// Parse `_ref` JSON — structural form first, legacy `Entity:simpleId` string fallback.
+    pub fn parse_json(value: &serde_json::Value) -> Option<Ref> {
+        if let Ok(wire) = serde_json::from_value::<Self>(value.clone()) {
+            return Some(wire.into_ref());
+        }
+        value
+            .as_str()
+            .and_then(Ref::from_string)
+            .filter(|r| matches!(r.key, EntityKey::Simple(_)))
+    }
+}
+
 impl Expr {
     pub fn query(query: QueryExpr) -> Self {
         Expr::Query(query)

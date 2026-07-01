@@ -6321,7 +6321,7 @@ commits"#,
         )
         .expect_err("cross-entity symbols must not compile");
         assert!(
-            err.contains("open_issues_count")
+            (err.contains("open_issues_count") || err.contains("not a row symbol"))
                 && (err.contains("not a row field")
                     || err.contains("null columns")
                     || err.contains("not a row symbol")

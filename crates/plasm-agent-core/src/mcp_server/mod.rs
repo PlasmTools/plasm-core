@@ -731,7 +731,10 @@ impl PlasmMcpHandler {
                 let bundle =
                     compile_plasm_expression(pipeline, Some(cross), &es, &plan_name, program)?;
                 let program_for_trace = program.to_string();
-                let dry = evaluate_plasm_comp_dry(&es, &bundle)?;
+                        let dry = evaluate_plasm_comp_dry(&es, &bundle)?;
+                        if !dry.probe_preflight_passed() {
+                            return Err("plan dry-run preflight failed — fix errors before run_ref".into());
+                        }
                         let dry_text = render_plasm_plan_dry_text_for_session(
                             &dry,
                             None,
@@ -751,17 +754,15 @@ impl PlasmMcpHandler {
                             "\n\n**Run:** pass `run_ref`: `{}` to **`plasm_run`**. Do not echo the program.",
                             commit_ref.as_str()
                         ));
-                        let commit_record = PlanCommitRecord {
-                            commit_ref: commit_ref.clone(),
-                            commit_id: compute_plan_commit_id_from_dry(&dry),
-                            domain_revision: es.domain_revision,
-                            artifact: dry.artifact().clone(),
-                            program: program_for_trace.clone(),
-                            dry_review: dry.review.clone(),
-                            verdict: compact.verdict,
-                            expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
-                            dry_cache: PlanCommitDryCache::from_dry(&dry),
-                        };
+                        let commit_record = PlanCommitRecord::from_dry_review(
+                            commit_ref.clone(),
+                            compute_plan_commit_id_from_dry(&dry),
+                            es.domain_revision,
+                            &dry,
+                            program_for_trace.clone(),
+                            compact.verdict,
+                            std::time::Instant::now() + PLAN_COMMIT_TTL,
+                        );
                         crate::plan_commit_store::register_plan_commit_and_persist(
                             self.plasm.as_ref(),
                             Arc::clone(&es),

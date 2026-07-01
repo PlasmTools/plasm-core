@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use plasm_core::expr_parser::ParsedExpr;
-use plasm_core::{EntityName, Expr, GetExpr, Ref, CGS};
+use plasm_core::{Expr, GetExpr, Ref, CGS};
 use plasm_runtime::{entity_to_agent_row_json, CachedEntity, ExecutionResult};
 
 use crate::execute_session::ExecuteSession;
@@ -56,17 +56,13 @@ async fn fetch_entity_get_by_ref(
     plan_shared: Option<&PlanLineExecuteShared>,
 ) -> Result<CachedEntity, String> {
     let scoped = entry_scoped_execute_session(es, Some(target))?;
-    let slot = reference.primary_slot_str();
-    if slot.is_empty() {
+    if reference.primary_slot_str().is_empty() {
         return Err(format!(
             "relation hydrate GET: empty identity for `{}`",
             reference
         ));
     }
-    let mut get_expr = GetExpr::new(
-        EntityName::new(reference.entity_type.as_str().to_string()),
-        slot,
-    );
+    let mut get_expr = GetExpr::from_ref(reference.clone());
     if let Some(cap) = get_capability {
         get_expr = get_expr.with_capability(cap);
     }

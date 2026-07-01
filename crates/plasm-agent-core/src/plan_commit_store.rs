@@ -124,8 +124,15 @@ pub struct CommittedPlan {
     pub dry_cache: PlanCommitDryCache,
 }
 
-/// Prove live bundle semantic commit matches the reviewed [`CommittedPlan`].
-pub fn verify_bundle_matches_committed_plan(
+impl CommittedPlan {
+    #[must_use]
+    pub fn lowered_ir_digest(&self) -> &str {
+        self.dry_cache.lowered_ir_digest.as_str()
+    }
+}
+
+/// Prove live bundle matches the reviewed [`CommittedPlan`] (semantic commit id + lowered IR digest).
+pub fn verify_committed_plan_bundle(
     bundle: &PlasmCompBundle,
     committed: &CommittedPlan,
 ) -> Result<(), PlanCommitVerifyError> {
@@ -138,6 +145,25 @@ pub fn verify_bundle_matches_committed_plan(
             commit_ref: committed.commit_ref.as_str().to_string(),
         });
     }
+    if !committed.lowered_ir_digest().is_empty() {
+        let prepared = crate::plan_prepare::build_prepared_validated_plan(
+            &bundle.artifact().comp,
+            bundle.executable(),
+        )
+        .map_err(|e| PlanCommitVerifyError::Evidence {
+            commit_ref: committed.commit_ref.as_str().to_string(),
+            detail: e,
+        })?;
+        let live = crate::plasm_plan_run::lowered_ir_digest_from_validated_plan(
+            prepared.artifact(),
+        );
+        if live.as_str() != committed.lowered_ir_digest() {
+            return Err(PlanCommitVerifyError::Evidence {
+                commit_ref: committed.commit_ref.as_str().to_string(),
+                detail: "lowered GET IR digest mismatch — call `plasm` dry-run again".into(),
+            });
+        }
+    }
     Ok(())
 }
 
@@ -147,7 +173,7 @@ pub fn dry_for_committed_plasm_run(
     bundle: &PlasmCompBundle,
     committed: &CommittedPlan,
 ) -> Result<DryPlasmPlanEvaluation, String> {
-    verify_bundle_matches_committed_plan(bundle, committed).map_err(|e| e.detail())?;
+    verify_committed_plan_bundle(bundle, committed).map_err(|e| e.detail())?;
     if committed.dry_cache.is_populated() {
         DryPlasmPlanEvaluation::from_plan_commit_cache(
             bundle,
@@ -538,6 +564,6 @@ mod tests {
         let dry = dry_for_committed_plasm_run(&es, &bundle, &committed).expect("hydrated dry");
         assert_eq!(dry.topological_order, cache.topological_order);
         assert_eq!(dry.node_results.len(), 1);
-        verify_bundle_matches_committed_plan(&bundle, &committed).expect("bundle matches");
+        verify_committed_plan_bundle(&bundle, &committed).expect("bundle matches");
     }
 }

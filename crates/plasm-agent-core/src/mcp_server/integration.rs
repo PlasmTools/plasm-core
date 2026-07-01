@@ -219,7 +219,7 @@ impl MatrixPcNFixture {
 
     async fn persist_plan_commit(&self) {
         use crate::operation::{
-            compute_plan_commit_id_from_dry, PlanCommitDryCache, PlanCommitRecord, PLAN_COMMIT_TTL,
+            compute_plan_commit_id_from_dry, PlanCommitRecord, PLAN_COMMIT_TTL,
         };
         use crate::plan_commit_store::register_plan_commit_and_persist;
 
@@ -228,17 +228,15 @@ impl MatrixPcNFixture {
             Arc::clone(&self.es),
             self.out.prompt_hash.as_str(),
             self.out.session_id.as_str(),
-            PlanCommitRecord {
-                commit_ref: self.pc.clone(),
-                commit_id: compute_plan_commit_id_from_dry(&self.dry),
-                domain_revision: self.es.domain_revision,
-                artifact: self.dry.artifact().clone(),
-                program: self.program.clone(),
-                dry_review: self.dry.review.clone(),
-                verdict: self.compact.verdict,
-                expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
-                dry_cache: PlanCommitDryCache::from_dry(&self.dry),
-            },
+            PlanCommitRecord::from_dry_review(
+                self.pc.clone(),
+                compute_plan_commit_id_from_dry(&self.dry),
+                self.es.domain_revision,
+                &self.dry,
+                self.program.clone(),
+                self.compact.verdict,
+                std::time::Instant::now() + PLAN_COMMIT_TTL,
+            ),
         )
         .await
         .expect("persist pcN");

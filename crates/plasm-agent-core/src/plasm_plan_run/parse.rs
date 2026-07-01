@@ -71,11 +71,10 @@ pub fn resolve_wire_field_token(
             .map_err(|e| e.to_agent_program_error());
     }
     if plasm_core::symbol_tuning::SymbolMap::is_opaque_p_sym(t) {
-        if let Ok(binding) = map.resolve_session_slot(t) {
-            if let Some((_entity, field_wire)) = binding.entity_field() {
-                return Ok(field_wire.to_string());
-            }
-        }
+        return Err(agent_program_error(
+            format!("`{t}` requires a row binding context for field resolution"),
+            Some("Use `p#` on a bound entity row or postfix chain with a known receiver."),
+        ));
     }
     Ok(t.to_string())
 }

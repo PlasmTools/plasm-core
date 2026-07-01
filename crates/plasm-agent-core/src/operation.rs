@@ -307,10 +307,17 @@ pub struct PlanCommitDryCache {
     pub staged_nodes: Vec<String>,
     #[serde(default)]
     pub execution_unsupported: Vec<String>,
+    #[serde(default)]
+    pub lowered_ir_digest: String,
 }
 
 impl PlanCommitDryCache {
     pub fn from_dry(dry: &crate::plasm_plan_run::DryPlasmPlanEvaluation) -> Self {
+        let lowered_ir_digest = crate::plasm_plan_run::lowered_ir_digest_from_validated_plan(
+            dry.validated_plan(),
+        )
+        .as_str()
+        .to_string();
         Self {
             version: dry.version.clone(),
             name: dry.name.clone(),
@@ -320,6 +327,7 @@ impl PlanCommitDryCache {
             parallel_root_surfaces_only: dry.parallel_root_surfaces_only,
             staged_nodes: dry.staged_nodes.clone(),
             execution_unsupported: dry.execution_unsupported.clone(),
+            lowered_ir_digest,
         }
     }
 
@@ -346,6 +354,29 @@ pub struct PlanCommitRecord {
 impl PlanCommitRecord {
     pub fn is_expired(&self) -> bool {
         Instant::now() >= self.expires_at
+    }
+
+    /// Register a reviewed dry-run as a durable plan commit (single construction site).
+    pub fn from_dry_review(
+        commit_ref: PlanCommitRef,
+        commit_id: PlanCommitId,
+        domain_revision: u32,
+        dry: &DryPlasmPlanEvaluation,
+        program: String,
+        verdict: PlanDryVerdict,
+        expires_at: Instant,
+    ) -> Self {
+        Self {
+            commit_ref,
+            commit_id,
+            domain_revision,
+            artifact: dry.artifact().clone(),
+            program,
+            dry_review: dry.review.clone(),
+            verdict,
+            expires_at,
+            dry_cache: PlanCommitDryCache::from_dry(dry),
+        }
     }
 }
 

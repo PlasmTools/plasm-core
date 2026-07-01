@@ -151,7 +151,7 @@ pub fn row_identity_from_parts(
         }
     }
     let primary = reference.primary_slot_str();
-    if !primary.is_empty() {
+    if !primary.is_empty() && compound_key_vars.is_empty() {
         ambient
             .entry(id_field.to_string())
             .or_insert_with(|| primary.clone());

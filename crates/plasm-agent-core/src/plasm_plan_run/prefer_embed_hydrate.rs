@@ -2,7 +2,7 @@
 
 use plasm_core::expr_parser::ParsedExpr;
 use plasm_core::{
-    prefer_hydrate_embed_path, CapabilityName, Cardinality, EntityName, Expr, GetExpr, Ref,
+    prefer_hydrate_embed_path, CapabilityName, Cardinality, Expr, GetExpr, Ref,
     RelationScopedFallback, CGS,
 };
 use plasm_runtime::CachedEntity;
@@ -94,12 +94,11 @@ pub(crate) fn push_prefer_hydrate_get_jobs(
     refs: impl IntoIterator<Item = Ref>,
 ) -> Result<(), String> {
     for (sub_index, reference) in refs.into_iter().enumerate() {
-        let slot = reference.primary_slot_str();
-        if slot.is_empty() {
+        if reference.primary_slot_str().is_empty() {
             continue;
         }
-        let mut get_expr = GetExpr::new(EntityName::new(target_entity.to_string()), slot)
-            .with_capability(get_capability.clone());
+        let mut get_expr =
+            GetExpr::from_ref(reference.clone()).with_capability(get_capability.clone());
         get_expr.catalog_entry_id = plasm_core::CatalogEntryStamp::some(
             plasm_core::RegistryEntryId::from(target.entry_id.as_str()),
         );

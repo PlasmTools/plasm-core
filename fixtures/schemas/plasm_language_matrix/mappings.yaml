@@ -178,6 +178,22 @@ langtag_get:
   - type: var
     name: id
 
+langcompoundbranch_get:
+  method: GET
+  path:
+  - type: literal
+    value: language
+  - type: literal
+    value: v1
+  - type: literal
+    value: compound-branches
+  query:
+    type: object
+    fields:
+    - ["owner", { type: var, name: owner }]
+    - ["item_id", { type: var, name: item_id }]
+    - ["name", { type: var, name: name }]
+
 langline_get:
   method: GET
   path:

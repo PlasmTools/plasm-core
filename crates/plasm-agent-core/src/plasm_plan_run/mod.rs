@@ -57,6 +57,7 @@ mod orchestrator;
 mod parse;
 mod plan_bounded_parallel;
 mod plan_fanout_parallel;
+mod plan_lowering;
 mod plan_schedule;
 mod prefer_embed_hydrate;
 mod relation_hydrate;
@@ -102,6 +103,7 @@ pub(crate) use row_json::{cached_entity_row_json, predicate_matches, value_at_se
 use crate::plasm_plan::{parse_plan_value, validate_plan_artifact};
 
 pub use crate::trace_hub::PlanRunTraceHooks;
+pub use plan_lowering::{lowered_ir_digest_from_validated_plan, LoweredIrDigest};
 
 /// Outcome of [`ExecutePipeline::run_program`]: the same `node_results` / optional run payload shape as an MCP
 /// live `plasm_run` response (fenced JSON), without Markdown framing.
@@ -164,6 +166,16 @@ impl DryPlasmPlanEvaluation {
 
     pub(crate) fn artifact(&self) -> &plasm_core::PlasmCompArtifact {
         &self.artifact
+    }
+
+    /// True when every dry-run node passed preflight (probe-IO gate before `run_ref`).
+    #[must_use]
+    pub fn probe_preflight_passed(&self) -> bool {
+        self.node_results.iter().all(|node| {
+            node.get("ok")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+        })
     }
 
     /// Rehydrate dry evaluation from a reviewed plan commit (skips simulation when cache is populated).

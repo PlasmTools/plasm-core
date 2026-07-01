@@ -394,6 +394,29 @@ fn normalize_numeric_id_float(f: f64) -> String {
     }
 }
 
+/// Classification of unparsed input tail after a prefix parse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ParseRemainder {
+    Empty,
+    Prose(String),
+    Syntax { at: usize, head: char },
+}
+
+impl ParseRemainder {
+    #[must_use]
+    pub fn acceptable_for_program_line(&self) -> bool {
+        matches!(self, Self::Empty | Self::Prose(_))
+    }
+}
+
+/// Like [`parse`], but also returns how the unconsumed tail is classified.
+pub fn parse_with_remainder(input: &str, cgs: &CGS) -> Result<(ParsedExpr, ParseRemainder), ParseError> {
+    let mut p = Parser::new(input, cgs);
+    let mut parsed = p.parse_expr()?;
+    parsed.expr = crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, cgs);
+    Ok((parsed, p.classify_remainder()))
+}
+
 /// Parse a Plasm path expression string against a CGS for validation.
 ///
 /// Returns a [`ParsedExpr`] containing the resolved [`Expr`] tree and optional
@@ -470,6 +493,24 @@ pub fn parse_with_cgs_layers_program(
     let mut parsed = p.parse_expr()?;
     parsed.expr =
         crate::expr_sugar::rewrite_id_field_brace_query_to_get(parsed.expr, layers[0].cgs());
+    let remainder = p.classify_remainder();
+    if !remainder.acceptable_for_program_line() {
+        return Err(ParseError {
+            kind: ParseErrorKind::Other {
+                message: format!(
+                    "unexpected trailing syntax starting with `{}`",
+                    match &remainder {
+                        ParseRemainder::Syntax { head, .. } => *head,
+                        _ => ' ',
+                    }
+                ),
+            },
+            offset: match remainder {
+                ParseRemainder::Syntax { at, .. } => at,
+                _ => p.pos,
+            },
+        });
+    }
     Ok(parsed)
 }
 
@@ -2960,10 +3001,15 @@ impl<'a> Parser<'a> {
                 }
             }
             Some('{') => {
-                // Query with predicates
+                // Query with predicates (chained `{…}{…}` groups are AND-conjoined)
                 self.pos += 1;
-                let preds = self.parse_preds(&entity)?;
+                let mut preds = self.parse_preds(&entity)?;
                 self.expect_char('}')?;
+                while self.peek_char() == Some('{') {
+                    self.pos += 1;
+                    preds.extend(self.parse_preds(&entity)?);
+                    self.expect_char('}')?;
+                }
                 Ok(Expr::Query(Self::preds_to_query(&entity, preds)))
             }
             Some('~') => {
@@ -3381,6 +3427,22 @@ impl<'a> Parser<'a> {
         self.skip_ws();
 
         Ok(ParsedExpr { expr, projection })
+    }
+
+    fn classify_remainder(&self) -> ParseRemainder {
+        let tail = self.remaining().trim();
+        if tail.is_empty() {
+            return ParseRemainder::Empty;
+        }
+        let head = tail.chars().next().unwrap_or(' ');
+        if matches!(head, '{' | '.' | '[' | '(' | '~' | '=' | ')' | ',') {
+            ParseRemainder::Syntax {
+                at: self.pos,
+                head,
+            }
+        } else {
+            ParseRemainder::Prose(tail.to_string())
+        }
     }
 }
 
@@ -5818,3 +5880,6 @@ mod tests {
         assert_eq!(g.reference.primary_slot_str(), "pikachu");
     }
 }
+
+#[cfg(test)]
+mod chained_groups_tests;

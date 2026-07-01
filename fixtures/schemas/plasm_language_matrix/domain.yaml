@@ -47,6 +47,27 @@ entities:
         required: true
         value_ref: nv_lang_tag_label
     relations: {}
+  CompoundBranch:
+    id_field: name
+    description: Compound-key matrix entity (plan/run hydrate + id_field projection regression).
+    key_vars:
+    - owner
+    - item_id
+    - name
+    fields:
+      owner:
+        required: true
+        value_ref: nv_compound_branch_owner
+      item_id:
+        required: true
+        value_ref: nv_lang_tag_item_id
+      name:
+        required: true
+        value_ref: nv_compound_branch_name
+      color:
+        required: false
+        value_ref: nv_compound_branch_color
+    relations: {}
   HomographRowA:
     id_field: id
     description: Matrix homograph left row (shared value-domain fingerprint, distinct wire).
@@ -143,6 +164,19 @@ entities:
           capability: langtag_by_score_query
           bindings:
             seq: score
+      compound_branches:
+        description: Compound-key branches via prefer embed with GET hydrate fallback
+        target: CompoundBranch
+        cardinality: many
+        materialize:
+          kind: prefer_from_parent_get
+          on_embed_miss: fallback_scoped
+          path:
+          - key: compound_branches
+          - wildcard: true
+          fallback:
+            kind: hydrate_from_embed_path
+            get_capability: langcompoundbranch_get
       children:
         description: Child LangItems on parent GET (homonymous relation target for federation tests)
         target: LangItem
@@ -269,6 +303,15 @@ capabilities:
     - id
     - item_id
     - label
+  langcompoundbranch_get:
+    description: Get CompoundBranch by compound identity (hydrate fallback)
+    kind: get
+    entity: CompoundBranch
+    provides:
+    - owner
+    - item_id
+    - name
+    - color
   homographrowa_query:
     description: List HomographRowA rows (homograph projection regression)
     kind: query
@@ -434,6 +477,15 @@ values:
     target: LangItem
   nv_langtag_by_score_query_seq:
     type: integer
+  nv_compound_branch_owner:
+    type: string
+    string_semantics: short
+  nv_compound_branch_name:
+    type: string
+    string_semantics: short
+  nv_compound_branch_color:
+    type: string
+    string_semantics: short
   nv_langline_query_item_id:
     type: entity_ref
     target: LangItem
