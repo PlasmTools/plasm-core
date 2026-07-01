@@ -906,7 +906,44 @@ fn prompt_matrix_full_tsv_synthesis_benchmark() {
     );
 }
 
-/// Regression: TSV `p#` gloss rows must use [`IdentMetadata`] for the entity owning the teaching table
+/// Canonical tool-model render must synthesize at least one teaching row for create-only entities
+/// (e.g. `PromptRun.prompt-run-create(slug=$)` — wire method segment is kebab, not raw cap id).
+#[test]
+fn overshow_prompt_run_has_canonical_teaching_witness() {
+    let dir = fixtures_schemas_dir("overshow_tools");
+    if !dir.exists() {
+        return;
+    }
+    let cgs = load_schema_dir(&dir).unwrap();
+    let bundle = render_teaching_prompt_bundle(
+        &cgs,
+        RenderConfig {
+            focus: FocusSpec::All,
+            render_mode: PromptRenderMode::Canonical,
+            include_domain_execution_model: true,
+            symbol_map_cross_cache: None,
+        },
+    );
+    let prompt_run = bundle
+        .model
+        .entities
+        .iter()
+        .find(|e| e.entity == "PromptRun")
+        .expect("PromptRun in teaching model");
+    assert!(
+        !prompt_run.lines.is_empty(),
+        "create-only PromptRun must have a canonical teaching witness"
+    );
+    assert!(
+        prompt_run
+            .lines
+            .iter()
+            .any(|l| l.source_capability.as_deref() == Some("prompt_run_create")),
+        "expected prompt_run_create witness, got {:?}",
+        prompt_run.lines
+    );
+}
+
 /// block, not `full_entities[idx]` by YAML insertion order (symbolic bundle uses sorted
 /// [`TeachingExposureSession::entities`]). Overshow has `RecordedContent.id` (string) and
 /// `CaptureItem.id` (integer); mis-alignment produced `str · id` for CaptureItem's block.

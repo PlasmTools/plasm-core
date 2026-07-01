@@ -1293,10 +1293,10 @@ fn met_sym(
     m: Option<&SymbolMap>,
     catalog_entry_id: &str,
     entity: &str,
-    capability: &str,
+    cap: &crate::CapabilitySchema,
 ) -> String {
-    m.map(|x| x.method_sym_for(catalog_entry_id, entity, capability))
-        .unwrap_or_else(|| capability.to_string())
+    m.map(|x| x.method_sym_for(catalog_entry_id, entity, cap.name.as_str()))
+        .unwrap_or_else(|| capability_method_label_kebab(cap))
 }
 
 /// Human capability / list gloss after `[scope …]` / `optional params:` (emit parity with
@@ -3391,7 +3391,7 @@ fn format_dotted_call_line(
         map,
         catalog_entry_id,
         cap.domain.as_str(),
-        cap.name.as_str(),
+        cap,
     );
     let suffix = format!(".{ms}({args})");
     let recv = receiver_for_dotted_suffix(
@@ -3604,7 +3604,7 @@ fn collect_multi_arity_method_lines(
         if !seen.insert(cap.name.to_string()) {
             continue;
         }
-        let ms = met_sym(map, catalog_entry_id, ename, cap.name.as_str());
+        let ms = met_sym(map, catalog_entry_id, ename, cap);
         let line = match build_standalone_create_paren_args(ename, cap, cgs, map, catalog_entry_id)
         {
             Some(args) => format!("{es}.{ms}({args})"),
@@ -3743,7 +3743,7 @@ fn collect_entity_teaching_block(
         if !seen_singleton_cap.insert(cap.name.to_string()) {
             continue;
         }
-        let ms = met_sym(map, catalog_entry_id, ename, cap.name.as_str());
+        let ms = met_sym(map, catalog_entry_id, ename, cap);
         let expr = format!("{es}.{ms}()");
         let result_gloss = crate::result_gloss::result_gloss_for_capability(cap, cgs, map);
         let cap_leg = capability_legend_with_session_gloss(
@@ -3839,7 +3839,7 @@ fn collect_entity_teaching_block(
             continue;
         }
         for cap in group.iter() {
-            let ms = met_sym(map, catalog_entry_id, ename, cap.name.as_str());
+            let ms = met_sym(map, catalog_entry_id, ename, cap);
             let expr = if path_vars_empty(cap) {
                 format!("{es}.{ms}()")
             } else {

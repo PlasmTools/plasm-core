@@ -94,28 +94,13 @@ pub fn capability_exposure_param_pairs(
     cap: &CapabilitySchema,
     filter: CapabilityParamSurfaceFilter,
 ) -> Vec<(String, String)> {
-    let entry_id = cap_key.entry_id.as_str();
-    let domain = cap_key.domain.as_str();
-    let cap_name = cap_key.capability.as_str();
-    let mut out = Vec::new();
-    for f in iter_cap_input_fields(cap) {
-        if !field_matches_filter(f, filter) {
-            continue;
-        }
-        if filter != CapabilityParamSurfaceFilter::OptionalLegend {
-            let slot = ExposureSlotKey::CapabilityParam {
-                capability: cap_key.clone(),
-                param: crate::CapabilityParamName::new(f.name.clone()),
-            };
-            if !exp.surface.slots.contains(&slot) {
-                continue;
-            }
-        }
-        let sym = map.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str());
-        out.push((f.name.clone(), sym));
-    }
-    out.sort_by(|a, b| a.0.cmp(&b.0));
-    out
+    let Some(cgs) = exp.catalog_cgs_for_entry(cap_key.entry_id.as_str()) else {
+        return Vec::new();
+    };
+    capability_exposure_param_triples(exp, map, cap_key, cap, filter, cgs)
+        .into_iter()
+        .map(|(wire, sym, _)| (wire, sym))
+        .collect()
 }
 
 /// Whether a capability input field is typed as an array (registry or inline schema).
@@ -150,18 +135,29 @@ pub fn capability_exposure_param_triples(
     filter: CapabilityParamSurfaceFilter,
     cgs: &CGS,
 ) -> Vec<(String, String, String)> {
-    capability_exposure_param_pairs(exp, map, cap_key, cap, filter)
-        .into_iter()
-        .map(|(wire, sym)| {
-            let field = iter_cap_input_fields(cap)
-                .into_iter()
-                .find(|f| f.name.as_str() == wire.as_str());
-            let marker = field
-                .map(|f| compact_mutator_param_marker(f, cgs))
-                .unwrap_or_default();
-            (wire, sym, marker)
-        })
-        .collect()
+    let entry_id = cap_key.entry_id.as_str();
+    let domain = cap_key.domain.as_str();
+    let cap_name = cap_key.capability.as_str();
+    let mut out = Vec::new();
+    for f in iter_cap_input_fields(cap) {
+        if !field_matches_filter(f, filter) {
+            continue;
+        }
+        if filter != CapabilityParamSurfaceFilter::OptionalLegend {
+            let slot = ExposureSlotKey::CapabilityParam {
+                capability: cap_key.clone(),
+                param: crate::CapabilityParamName::new(f.name.clone()),
+            };
+            if !exp.surface.slots.contains(&slot) {
+                continue;
+            }
+        }
+        let sym = map.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str());
+        let marker = compact_mutator_param_marker(f, cgs);
+        out.push((f.name.clone(), sym, marker));
+    }
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
 }
 
 /// Mutating capabilities on the exposure surface (stable sort).
