@@ -9,7 +9,7 @@ use plasm_agent_core::execute_session::ExecuteSession;
 use plasm_agent_core::http::{build_plasm_host_state, PlasmHostBootstrap};
 use plasm_agent_core::http_execute::CapabilitySeed;
 use plasm_agent_core::operation::{
-    compute_plan_commit_id_from_dry, PlanCommitDryCache, PlanCommitRecord, PLAN_COMMIT_TTL,
+    compute_plan_commit_id_from_dry, PlanCommitRecord, PLAN_COMMIT_TTL,
 };
 use plasm_agent_core::plan_commit_store::{dry_for_committed_plasm_run, resolve_committed_plan};
 use plasm_agent_core::plasm_compile::compile_plasm_expression;
@@ -408,17 +408,22 @@ impl AgentEngine {
         let summary = render_plasm_plan_dry_text_for_session(&dry, None, Some(&es));
         let compact = plan_dry_compact_view(&dry, Some(&es));
         let commit_ref = es.mint_plan_commit_ref();
-        let record = PlanCommitRecord {
-            commit_ref: commit_ref.clone(),
-            commit_id: compute_plan_commit_id_from_dry(&dry),
-            domain_revision: es.domain_revision,
-            artifact: bundle.artifact().clone(),
-            program: trimmed.to_string(),
-            dry_review: dry.review.clone(),
-            verdict: compact.verdict,
-            expires_at: Instant::now() + PLAN_COMMIT_TTL,
-            dry_cache: PlanCommitDryCache::from_dry(&dry),
-        };
+        let record = PlanCommitRecord::from_dry_review(
+            commit_ref.clone(),
+            compute_plan_commit_id_from_dry(&dry),
+            es.domain_revision,
+            &dry,
+            trimmed.to_string(),
+            compact.verdict,
+            Instant::now() + PLAN_COMMIT_TTL,
+        )
+        .map_err(|denial| {
+            anyhow!(
+                "plan commit blocked by flow policy ({:?}): {} violation(s)",
+                denial.verdict,
+                denial.violations.len()
+            )
+        })?;
         es.register_plan_commit(record);
         self.execute_session = Some(es);
         Ok(DryRunResult {
