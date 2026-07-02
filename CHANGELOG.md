@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.108] - 2026-07-02
+
+### Fixed
+
+- **`plasm-node` npm build:** `dry_run()` uses `PlanCommitRecord::from_dry_review()` instead of a struct literal after `flow` became a private field on `PlanCommitRecord`.
+
 ## [0.3.107] - 2026-07-02
 
 ### Added
