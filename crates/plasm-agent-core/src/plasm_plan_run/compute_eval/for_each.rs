@@ -61,7 +61,8 @@ pub(crate) async fn materialize_for_each_node(
     plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
 ) -> Result<MaterializedNode, String> {
     let source_rows = materialized_rows(es, st, session_id, materialized, &for_each.source).await?;
-    let input_rows = materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each), None)?;
+    let input_rows =
+        materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each), None)?;
     let mut parsed_steps = Vec::with_capacity(source_rows.len());
     let mut expressions = Vec::with_capacity(source_rows.len());
     for row in &source_rows {

@@ -259,11 +259,10 @@ fn materialized_result_use_allows_plural_rows_for_column_node_input_holes() {
         scope: EvalScope::Root {
             row: &serde_json::Value::Null,
         },
-        inputs: InputEnv {
-            rows: &input_rows,
-        },
+        inputs: InputEnv { rows: &input_rows },
         wire_coercion: None,
     };
-    let out = instantiate_expr_template_value(&template.expr, &env).expect("instantiate column array");
+    let out =
+        instantiate_expr_template_value(&template.expr, &env).expect("instantiate column array");
     assert_eq!(out, serde_json::json!(["bug", "docs"]));
 }

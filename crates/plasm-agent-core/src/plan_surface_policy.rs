@@ -1,6 +1,6 @@
 //! Shared policy for plan surface qualified-entity requirements (dry-run, stub materialization, render).
 
-use crate::plasm_plan::{ResultShape, ValidatedSurfaceNode, QualifiedEntityKey};
+use crate::plasm_plan::{QualifiedEntityKey, ResultShape, ValidatedSurfaceNode};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SurfaceQualifiedEntityPolicy {
@@ -33,7 +33,6 @@ pub(crate) fn surface_qualified_entity_policy_err(
     surface: &ValidatedSurfaceNode,
     federated_session: bool,
 ) -> Result<SurfaceQualifiedEntityPolicy, String> {
-    surface_qualified_entity_policy(surface, federated_session).map_err(|reason| {
-        format!("plan surface `{node_id}` has no qualified entity: {reason}")
-    })
+    surface_qualified_entity_policy(surface, federated_session)
+        .map_err(|reason| format!("plan surface `{node_id}` has no qualified entity: {reason}"))
 }

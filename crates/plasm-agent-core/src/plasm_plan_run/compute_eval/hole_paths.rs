@@ -20,9 +20,7 @@ impl NodeInputHoleIndex {
     }
 }
 
-fn collect_node_input_hole_paths(
-    value: &serde_json::Value,
-) -> BTreeMap<String, Vec<Vec<String>>> {
+fn collect_node_input_hole_paths(value: &serde_json::Value) -> BTreeMap<String, Vec<Vec<String>>> {
     let mut out = BTreeMap::new();
     collect_node_input_hole_paths_rec(value, &mut out);
     out

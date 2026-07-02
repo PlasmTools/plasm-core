@@ -1,7 +1,7 @@
 //! Staged plan input row materialization and cardinality gates.
 
-use super::hole_paths::NodeInputHoleIndex;
 use super::super::*;
+use super::hole_paths::NodeInputHoleIndex;
 use std::collections::BTreeMap;
 
 pub(crate) fn materialized_input_row_from_mat(
@@ -25,9 +25,9 @@ pub(crate) fn materialized_input_row_from_mat(
     let mut row_identities = Vec::with_capacity(inline.len());
     for (idx, row) in inline.iter().enumerate() {
         let ident = mat.row_identities.get(idx).cloned().flatten();
-        rows.push(crate::plasm_plan_run::row_json::augment_row_json_with_identity(
-            row, ident.as_ref(),
-        ));
+        rows.push(
+            crate::plasm_plan_run::row_json::augment_row_json_with_identity(row, ident.as_ref()),
+        );
         row_identities.push(ident);
     }
     Ok(MaterializedInputRow {

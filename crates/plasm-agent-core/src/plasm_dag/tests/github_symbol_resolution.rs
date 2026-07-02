@@ -865,8 +865,7 @@ fn issue_update_invoke_rejects_unqualified_label_name_homograph_p() {
     let issue_e = map.entity_sym_for("github", "Issue");
     let update_m = map.method_sym_for("github", "Issue", "issue_update");
     let p_label_name = map.ident_sym_entity_field_for("github", "Label", "name");
-    let p_update_labels =
-        map.ident_sym_cap_param_for("github", "Issue", "issue_update", "labels");
+    let p_update_labels = map.ident_sym_cap_param_for("github", "Issue", "issue_update", "labels");
     if !plasm_core::symbol_tuning::SymbolMap::is_opaque_p_sym(p_label_name.as_str()) {
         return;
     }

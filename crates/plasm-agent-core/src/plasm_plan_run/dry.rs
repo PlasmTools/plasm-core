@@ -658,7 +658,9 @@ pub(crate) fn ensure_node_dispatchable(
     ) {
         Ok(crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::PageWithoutEntity)
         | Ok(crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::EntityOptional) => Ok(()),
-        Ok(crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::RequiresQualifiedEntity(q)) => {
+        Ok(crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::RequiresQualifiedEntity(
+            q,
+        )) => {
             let Some(ctx) = es.contexts_by_entry.get(&q.entry_id) else {
                 return Err(format!(
                     "plan.nodes[{index}].qualified_entity.entry_id {:?} is not loaded in this session",

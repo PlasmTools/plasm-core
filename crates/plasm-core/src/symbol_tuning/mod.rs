@@ -2194,7 +2194,9 @@ impl SymbolMap {
         &self,
         sym: &str,
     ) -> Option<(String, EntityName, CapabilityName, String)> {
-        self.capability_param_quads_for_p_sym(sym).into_iter().next()
+        self.capability_param_quads_for_p_sym(sym)
+            .into_iter()
+            .next()
     }
 
     /// If `sym` maps a capability input parameter, return the `(capability domain entity, param path)`.

@@ -1,9 +1,9 @@
 //! Role-scoped opaque `p#` resolution sites (site + required catalog context in one type).
 
 use crate::CapabilitySchema;
-use crate::CGS;
 use crate::EntityDef;
 use crate::EntityFieldName;
+use crate::CGS;
 
 /// Parse-time role for opaque `p#` → wire resolution.
 ///

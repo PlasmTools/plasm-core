@@ -1,9 +1,9 @@
 //! Dry-run stub materialization and staged IR template preflight.
 
-use super::input_rows::materialized_result_use_inputs;
 use super::super::*;
 use super::compute_ops::render_compute;
 use super::eval::{instantiate_expr_template, EvalScope, InputEnv, PlanEvalEnv};
+use super::input_rows::materialized_result_use_inputs;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -303,7 +303,10 @@ pub(crate) fn dry_validate_staged_surfaces(
             let dep_id = dep.clone();
             if !materialized.contains_key(&dep_id) {
                 let dep_node = node_by_id.get(dep.as_str()).ok_or_else(|| {
-                    format!("dry staging: unknown dependency `{dep}` on `{}`", n.id().as_str())
+                    format!(
+                        "dry staging: unknown dependency `{dep}` on `{}`",
+                        n.id().as_str()
+                    )
                 })?;
                 dry_stub_materialize_node(es, dep_node, &mut materialized)?;
             }
@@ -318,11 +321,8 @@ pub(crate) fn dry_validate_staged_surfaces(
         if surface.uses_result.is_empty() {
             continue;
         }
-        let input_rows = materialized_result_use_inputs(
-            &materialized,
-            &surface.uses_result,
-            Some(template),
-        )?;
+        let input_rows =
+            materialized_result_use_inputs(&materialized, &surface.uses_result, Some(template))?;
         let scope = EvalScope::Root {
             row: &serde_json::Value::Null,
         };

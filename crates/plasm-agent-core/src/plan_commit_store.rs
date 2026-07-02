@@ -324,33 +324,35 @@ mod tests {
             .expect_err("unknown");
         assert!(matches!(err, PlanCommitVerifyError::Unknown { .. }));
 
-        let record = PlanCommitRecord {
-            commit_ref: pc.clone(),
-            commit_id: PlanCommitId::from_canonical_bytes([1u8; 32]),
-            domain_revision: 0,
-            artifact: minimal_artifact(),
-            program: "test".into(),
-            dry_review: Default::default(),
-            verdict: PlanDryVerdict::Ok,
-            expires_at: std::time::Instant::now() - PLAN_COMMIT_TTL,
-            dry_cache: PlanCommitDryCache::default(),
-        };
+        let record = PlanCommitRecord::rehydrated_from_persisted(
+            pc.clone(),
+            PlanCommitId::from_canonical_bytes([1u8; 32]),
+            0,
+            es.flow_policy.revision_or_default(),
+            minimal_artifact(),
+            "test".into(),
+            Default::default(),
+            PlanDryVerdict::Ok,
+            std::time::Instant::now() - PLAN_COMMIT_TTL,
+            PlanCommitDryCache::default(),
+        );
         es.register_plan_commit(record);
         let err = verify_plan_commit_id(&es, &pc, PlanCommitId::from_canonical_bytes([1u8; 32]))
             .expect_err("expired");
         assert!(matches!(err, PlanCommitVerifyError::Expired { .. }));
 
-        es.register_plan_commit(PlanCommitRecord {
-            commit_ref: pc.clone(),
-            commit_id: PlanCommitId::from_canonical_bytes([2u8; 32]),
-            domain_revision: 0,
-            artifact: minimal_artifact(),
-            program: "test".into(),
-            dry_review: Default::default(),
-            verdict: PlanDryVerdict::Ok,
-            expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
-            dry_cache: PlanCommitDryCache::default(),
-        });
+        es.register_plan_commit(PlanCommitRecord::rehydrated_from_persisted(
+            pc.clone(),
+            PlanCommitId::from_canonical_bytes([2u8; 32]),
+            0,
+            es.flow_policy.revision_or_default(),
+            minimal_artifact(),
+            "test".into(),
+            Default::default(),
+            PlanDryVerdict::Ok,
+            std::time::Instant::now() + PLAN_COMMIT_TTL,
+            PlanCommitDryCache::default(),
+        ));
         let err = verify_plan_commit_id(&es, &pc, PlanCommitId::from_canonical_bytes([9u8; 32]))
             .expect_err("mismatch");
         assert!(matches!(err, PlanCommitVerifyError::Mismatch { .. }));
@@ -361,17 +363,18 @@ mod tests {
         let mut es = minimal_session();
         let pc = es.mint_plan_commit_ref();
         let commit_id = PlanCommitId::from_canonical_bytes([4u8; 32]);
-        es.register_plan_commit(PlanCommitRecord {
-            commit_ref: pc.clone(),
-            commit_id: commit_id.clone(),
-            domain_revision: 0,
-            artifact: minimal_artifact(),
-            program: "test".into(),
-            dry_review: Default::default(),
-            verdict: PlanDryVerdict::Ok,
-            expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
-            dry_cache: PlanCommitDryCache::default(),
-        });
+        es.register_plan_commit(PlanCommitRecord::rehydrated_from_persisted(
+            pc.clone(),
+            commit_id.clone(),
+            0,
+            es.flow_policy.revision_or_default(),
+            minimal_artifact(),
+            "test".into(),
+            Default::default(),
+            PlanDryVerdict::Ok,
+            std::time::Instant::now() + PLAN_COMMIT_TTL,
+            PlanCommitDryCache::default(),
+        ));
         es.domain_revision = 1;
         let err = verify_plan_commit_id(&es, &pc, commit_id).expect_err("stale domain");
         assert!(matches!(err, PlanCommitVerifyError::StaleDomain { .. }));
@@ -382,17 +385,18 @@ mod tests {
         let es = minimal_session();
         let pc = es.mint_plan_commit_ref();
         let commit_id = PlanCommitId::from_canonical_bytes([7u8; 32]);
-        es.register_plan_commit(PlanCommitRecord {
-            commit_ref: pc.clone(),
-            commit_id: commit_id.clone(),
-            domain_revision: 0,
-            artifact: minimal_artifact(),
-            program: "test".into(),
-            dry_review: Default::default(),
-            verdict: PlanDryVerdict::Ok,
-            expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
-            dry_cache: PlanCommitDryCache::default(),
-        });
+        es.register_plan_commit(PlanCommitRecord::rehydrated_from_persisted(
+            pc.clone(),
+            commit_id.clone(),
+            0,
+            es.flow_policy.revision_or_default(),
+            minimal_artifact(),
+            "test".into(),
+            Default::default(),
+            PlanDryVerdict::Ok,
+            std::time::Instant::now() + PLAN_COMMIT_TTL,
+            PlanCommitDryCache::default(),
+        ));
         verify_plan_commit_id(&es, &pc, commit_id).expect("roundtrip");
     }
 
@@ -409,17 +413,18 @@ mod tests {
             has_unbounded_read_root: true,
             ..Default::default()
         };
-        es.register_plan_commit(PlanCommitRecord {
-            commit_ref: pc.clone(),
+        es.register_plan_commit(PlanCommitRecord::rehydrated_from_persisted(
+            pc.clone(),
             commit_id,
-            domain_revision: es.domain_revision,
+            es.domain_revision,
+            es.flow_policy.revision_or_default(),
             artifact,
-            program: "e1.limit(3)".into(),
-            dry_review: review.clone(),
-            verdict: PlanDryVerdict::Review,
-            expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
-            dry_cache: PlanCommitDryCache::default(),
-        });
+            "e1.limit(3)".into(),
+            review.clone(),
+            PlanDryVerdict::Review,
+            std::time::Instant::now() + PLAN_COMMIT_TTL,
+            PlanCommitDryCache::default(),
+        ));
 
         let accepted = accept_plan_commit_for_bundle(
             &es,
@@ -504,17 +509,18 @@ mod tests {
             es.clone(),
             created.prompt_hash.as_str(),
             created.session.as_str(),
-            PlanCommitRecord {
-                commit_ref: pc.clone(),
-                commit_id: commit_id.clone(),
-                domain_revision: es.domain_revision,
-                artifact: artifact.clone(),
-                program: "test".into(),
-                dry_review: Default::default(),
-                verdict: PlanDryVerdict::Ok,
-                expires_at: std::time::Instant::now() + PLAN_COMMIT_TTL,
-                dry_cache: PlanCommitDryCache::default(),
-            },
+            PlanCommitRecord::rehydrated_from_persisted(
+                pc.clone(),
+                commit_id.clone(),
+                es.domain_revision,
+                es.flow_policy.revision_or_default(),
+                artifact.clone(),
+                "test".into(),
+                Default::default(),
+                PlanDryVerdict::Ok,
+                std::time::Instant::now() + PLAN_COMMIT_TTL,
+                PlanCommitDryCache::default(),
+            ),
         )
         .await
         .expect("persist plan commit");
