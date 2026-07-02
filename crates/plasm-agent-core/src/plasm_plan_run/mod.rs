@@ -97,7 +97,10 @@ pub(crate) use orchestrator::{
 pub(crate) use parse::{
     entry_scoped_execute_session, propagate_row_identities, row_identities_from_entities,
 };
-pub(crate) use row_json::{cached_entity_row_json, predicate_matches, value_at_segments};
+pub(crate) use row_json::{
+    cached_entity_row_json, predicate_matches, value_at_dotted, value_at_field_path,
+    value_at_segments,
+};
 
 #[cfg(test)]
 use crate::plasm_plan::{parse_plan_value, validate_plan_artifact};

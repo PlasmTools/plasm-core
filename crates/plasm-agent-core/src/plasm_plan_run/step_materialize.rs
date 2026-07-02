@@ -77,8 +77,11 @@ pub(crate) async fn materialize_executable_plan_step(
                 };
                 instantiate_parsed_expr_plan_inputs(pe, &surface.uses_result, materialized)?
             } else if let Some(template) = &surface.ir_template {
-                let input_rows =
-                    materialized_result_use_inputs(materialized, &surface.uses_result)?;
+                let input_rows = materialized_result_use_inputs(
+                    materialized,
+                    &surface.uses_result,
+                    surface.ir_template.as_ref(),
+                )?;
                 let scope = EvalScope::Root {
                     row: &serde_json::Value::Null,
                 };

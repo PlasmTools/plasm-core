@@ -130,6 +130,7 @@ pub fn evaluate_executable_comp_dry(
     }
     let prepared = crate::plan_prepare::prepare_executable_plan_for_session(es, comp, executable)?;
     dry_validate_render_nodes(es, prepared.validated.artifact())?;
+    dry_validate_staged_surfaces(es, prepared.validated.artifact())?;
     let parallel_root_surfaces_only =
         compute_parallel_root_surfaces_only(prepared.validated.artifact());
     Ok(DryPlasmPlanEvaluation {
@@ -651,31 +652,29 @@ pub(crate) fn ensure_node_dispatchable(
     let ValidatedPlanNode::Surface(surface) = node else {
         return Ok(());
     };
-    if surface.result_shape == crate::plasm_plan::ResultShape::Page {
-        return Ok(());
-    }
-    let Some(q) = surface.qualified_entity.as_ref() else {
-        return if es.contexts_by_entry.len() > 1 {
-            Err(format!(
-                "plan.nodes[{index}] is missing qualified_entity in a federated session"
-            ))
-        } else {
+    match crate::plan_surface_policy::surface_qualified_entity_policy(
+        surface,
+        es.contexts_by_entry.len() > 1,
+    ) {
+        Ok(crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::PageWithoutEntity)
+        | Ok(crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::EntityOptional) => Ok(()),
+        Ok(crate::plan_surface_policy::SurfaceQualifiedEntityPolicy::RequiresQualifiedEntity(q)) => {
+            let Some(ctx) = es.contexts_by_entry.get(&q.entry_id) else {
+                return Err(format!(
+                    "plan.nodes[{index}].qualified_entity.entry_id {:?} is not loaded in this session",
+                    q.entry_id
+                ));
+            };
+            if !ctx.cgs.entities.contains_key(q.entity.as_str()) {
+                return Err(format!(
+                    "plan.nodes[{index}].qualified_entity entity {:?} is not present under entry_id {:?}",
+                    q.entity, q.entry_id
+                ));
+            }
             Ok(())
-        };
-    };
-    let Some(ctx) = es.contexts_by_entry.get(&q.entry_id) else {
-        return Err(format!(
-            "plan.nodes[{index}].qualified_entity.entry_id {:?} is not loaded in this session",
-            q.entry_id
-        ));
-    };
-    if !ctx.cgs.entities.contains_key(q.entity.as_str()) {
-        return Err(format!(
-            "plan.nodes[{index}].qualified_entity entity {:?} is not present under entry_id {:?}",
-            q.entity, q.entry_id
-        ));
+        }
+        Err(reason) => Err(format!("plan.nodes[{index}] {reason}")),
     }
-    Ok(())
 }
 
 pub(crate) fn ensure_relation_expr_matches_plan(

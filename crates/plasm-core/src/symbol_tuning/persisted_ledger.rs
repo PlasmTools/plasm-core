@@ -17,7 +17,7 @@ use super::{
     TeachingExposureSession,
 };
 
-pub const PERSISTED_SYMBOL_LEDGER_VERSION: u8 = 1;
+pub const PERSISTED_SYMBOL_LEDGER_VERSION: u8 = 2;
 
 const MAGIC: &[u8; 4] = b"PLSL";
 
@@ -60,7 +60,6 @@ pub struct PersistedSymbolTables {
     pub sym_to_slot: IndexMap<OpaquePSym, SlotBinding>,
     pub entity_field_to_sym: IndexMap<EntityFieldKey, OpaquePSym>,
     pub cap_param_to_sym: IndexMap<CapParamKey, OpaquePSym>,
-    pub sym_to_cap_param_key: IndexMap<OpaquePSym, CapParamKey>,
     pub relation_to_sym: IndexMap<RelationKey, OpaqueRSym>,
     pub sym_to_relation_binding: IndexMap<OpaqueRSym, RelationBinding>,
 }
@@ -76,7 +75,6 @@ impl From<&SymbolTables> for PersistedSymbolTables {
             sym_to_slot: tables.sym_to_slot.clone(),
             entity_field_to_sym: tables.entity_field_to_sym.clone().into_iter().collect(),
             cap_param_to_sym: tables.cap_param_to_sym.clone().into_iter().collect(),
-            sym_to_cap_param_key: tables.sym_to_cap_param_key.clone().into_iter().collect(),
             relation_to_sym: tables.relation_to_sym.clone().into_iter().collect(),
             sym_to_relation_binding: tables.sym_to_relation_binding.clone(),
         }
@@ -94,7 +92,6 @@ impl From<PersistedSymbolTables> for SymbolTables {
             sym_to_slot: tables.sym_to_slot,
             entity_field_to_sym: tables.entity_field_to_sym.into_iter().collect(),
             cap_param_to_sym: tables.cap_param_to_sym.into_iter().collect(),
-            sym_to_cap_param_key: tables.sym_to_cap_param_key.into_iter().collect(),
             relation_to_sym: tables.relation_to_sym.into_iter().collect(),
             sym_to_relation_binding: tables.sym_to_relation_binding,
         }

@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use crate::plasm_plan::OutputName;
 
-use super::compute_eval::value_at_dotted;
+use super::value_at_dotted;
 
 /// Wire columns plus optional teaching-surface aliases (`p#` → wire) for template bodies.
 #[derive(Debug, Clone, PartialEq, Eq)]

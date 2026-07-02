@@ -168,7 +168,9 @@ fn for_each_plan_eval_env_interpolates_row_and_cross_binding_strings() {
             node: PlanNodeId::new("report").expect("node"),
             proof: crate::plasm_plan::InputCardinalityProof::StaticSingleton,
             row: serde_json::json!({"content": "STATS"}),
+            rows: vec![serde_json::json!({"content": "STATS"})],
             row_identity: None,
+            row_identities: vec![None],
         },
     );
     let binding = BindingName::new("_".to_string()).expect("binding");

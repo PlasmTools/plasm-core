@@ -40,6 +40,7 @@ fn materialized_result_use_preserves_scalar_data_binding_value() {
             node: node.as_str().to_string(),
             r#as: "workspace_id".to_string(),
         }],
+        None,
     )
     .expect("inputs");
     let alias = InputAlias::new("workspace_id".to_string()).expect("alias");
@@ -74,7 +75,9 @@ fn scoped_node_symbols_evaluate_against_singleton_inputs() {
             node: PlanNodeId::new("moveFacts".to_string()).expect("node id"),
             proof: crate::plasm_plan::InputCardinalityProof::StaticSingleton,
             row: serde_json::json!({ "move": "thunderbolt", "power": 90 }),
+            rows: vec![serde_json::json!({ "move": "thunderbolt", "power": 90 })],
             row_identity: None,
+            row_identities: vec![None],
         },
     )]);
     let binding = BindingName::new("p".to_string()).expect("binding");
@@ -187,8 +190,9 @@ fn for_each_cross_uses_materialization_wires_upstream_singleton() {
             projection: None,
         },
     );
-    let input_rows = materialized_result_use_inputs(&materialized, &for_each_cross_uses(for_each))
-        .expect("input rows");
+    let input_rows =
+        materialized_result_use_inputs(&materialized, &for_each_cross_uses(for_each), None)
+            .expect("input rows");
     assert_eq!(input_rows.len(), 1);
     let row = serde_json::json!({"id": "p1", "title": "Bolt"});
     let env = for_each_plan_eval_env(for_each, &row, &input_rows);
@@ -196,4 +200,70 @@ fn for_each_cross_uses_materialization_wires_upstream_singleton() {
         instantiate_expr_template_value(&serde_json::json!("${_.title} ${report.content}"), &env)
             .expect("interpolate");
     assert_eq!(out, serde_json::json!("Bolt STATS"));
+}
+
+#[test]
+fn materialized_result_use_allows_plural_rows_for_column_node_input_holes() {
+    let node = PlanNodeId::new("labels".to_string()).expect("node id");
+    let rows = vec![
+        serde_json::json!({"name": "bug"}),
+        serde_json::json!({"name": "docs"}),
+    ];
+    let mut materialized = BTreeMap::new();
+    materialized.insert(
+        node.clone(),
+        MaterializedNode {
+            entry_id: "github".to_string(),
+            entity: "Label".to_string(),
+            result: Arc::new(ExecutionResult {
+                count: rows.len(),
+                entities: Vec::new(),
+                has_more: false,
+                pagination_resume: None,
+                paging_handle: None,
+                source: ExecutionSource::Cache,
+                stats: ExecutionStats::default(),
+                request_fingerprints: vec![],
+            }),
+            row_source: MaterializedRowSource::Inline(rows.clone()),
+            row_identities: vec![None; rows.len()],
+            artifact: None,
+            display: String::new(),
+            projection: Some(vec!["name".into()]),
+        },
+    );
+    let template = ValidatedPlanExprTemplate {
+        expr: serde_json::json!({
+            "__plasm_hole": {
+                "kind": "node_input",
+                "alias": "labels",
+                "path": ["name"]
+            }
+        }),
+        projection: None,
+        display_expr: None,
+        input_bindings: vec![],
+    };
+    let input_rows = materialized_result_use_inputs(
+        &materialized,
+        &[PlanResultUse {
+            node: node.as_str().to_string(),
+            r#as: "labels".to_string(),
+        }],
+        Some(&template),
+    )
+    .expect("plural column projection inputs");
+    let alias = InputAlias::new("labels".to_string()).expect("alias");
+    assert_eq!(input_rows.get(&alias).expect("labels").rows.len(), 2);
+    let env = PlanEvalEnv {
+        scope: EvalScope::Root {
+            row: &serde_json::Value::Null,
+        },
+        inputs: InputEnv {
+            rows: &input_rows,
+        },
+        wire_coercion: None,
+    };
+    let out = instantiate_expr_template_value(&template.expr, &env).expect("instantiate column array");
+    assert_eq!(out, serde_json::json!(["bug", "docs"]));
 }

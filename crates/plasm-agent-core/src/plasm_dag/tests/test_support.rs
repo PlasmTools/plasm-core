@@ -148,6 +148,20 @@ pub(super) fn assert_compile_rejects_scalar_array_param(
     );
 }
 
+pub(super) fn assert_compile_rejects_unknown_cap_param(err: &str) {
+    assert!(
+        err.contains("is not an input parameter"),
+        "expected invoke cap-param rejection ({err:?})"
+    );
+}
+
+pub(super) fn assert_compile_rejects_query_filter_psym(err: &str) {
+    assert!(
+        err.contains("query filter") || err.contains("not a query filter symbol"),
+        "expected query-filter rejection ({err:?})"
+    );
+}
+
 pub(super) fn github_symbol_map(session: &ExecuteSession) -> Arc<dyn plasm_core::SymbolSession> {
     symbol_map_for_plasm_surface_parse(session, None)
 }

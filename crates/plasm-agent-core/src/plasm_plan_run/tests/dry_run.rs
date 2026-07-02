@@ -60,7 +60,9 @@ fn plan_sort_compute_orders_integer_scores_numerically() {
         serde_json::json!({"id": "n87", "score": 87}),
         serde_json::json!({"id": "n100", "score": 100}),
     ];
-    rows.sort_by(|a, b| cmp_json_sort_values(value_at_path(a, &key), value_at_path(b, &key)));
+    rows.sort_by(|a, b| {
+        cmp_json_sort_values(value_at_field_path(a, &key), value_at_field_path(b, &key))
+    });
     assert_eq!(rows[0]["id"], "n87");
     assert_eq!(rows[1]["id"], "n100");
     assert_eq!(rows[2]["id"], "n300");

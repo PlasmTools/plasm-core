@@ -206,8 +206,10 @@ fn render_compute_feeds_node_input_for_action_content() {
         MaterializedInputRow {
             node: PlanNodeId::new("doc".to_string()).expect("node id"),
             proof: crate::plasm_plan::InputCardinalityProof::StaticSingleton,
-            row: input,
+            row: input.clone(),
+            rows: vec![input],
             row_identity: None,
+            row_identities: vec![None],
         },
     )]);
     let scope = EvalScope::Root {

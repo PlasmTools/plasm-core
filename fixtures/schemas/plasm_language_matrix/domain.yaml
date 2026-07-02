@@ -279,6 +279,9 @@ capabilities:
     - name: owner
       value_ref: nv_langitem_update_owner
       required: false
+    - name: tags
+      value_ref: nv_langitem_create_tags
+      required: false
     provides:
     - id
     - title

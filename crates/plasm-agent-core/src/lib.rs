@@ -125,6 +125,7 @@ pub(crate) mod plasm_dag;
 mod plasm_dag_surface_guards;
 /// Serializable effect [`Plan`](plasm_plan::Plan) contract and DAG validation (Plasm programs, archived plans).
 pub mod plasm_plan;
+mod plan_surface_policy;
 pub mod plasm_plan_run;
 mod plasm_render_compile;
 mod program_binding;

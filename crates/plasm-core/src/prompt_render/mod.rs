@@ -967,7 +967,11 @@ fn push_teaching_field_gloss_row(
     // (e.g. two different `operations` arrays). When CGS is present, resolve via the full `(cap, path)` quad.
     let meta = match (symbol_map, cgs) {
         (Some(sym_m), Some(cgs_ref)) => sym_m
-            .capability_param_quad_for_p_sym(symbol.as_str())
+            .capability_param_quad_for_p_sym_on_entity(
+                symbol.as_str(),
+                catalog_entry_id,
+                canonical_entity,
+            )
             .and_then(|(eid, dom, cap, path)| {
                 if !eid.is_empty() && eid.as_str() != catalog_entry_id {
                     return None;
@@ -983,7 +987,11 @@ fn push_teaching_field_gloss_row(
     }
     .or_else(|| match (symbol_map, ident_meta) {
         (Some(sym_m), Some(im)) => sym_m
-            .capability_param_quad_for_p_sym(symbol.as_str())
+            .capability_param_quad_for_p_sym_on_entity(
+                symbol.as_str(),
+                catalog_entry_id,
+                canonical_entity,
+            )
             .and_then(|(eid, dom, _cap, path)| {
                 if !eid.is_empty() && eid.as_str() != catalog_entry_id {
                     return None;

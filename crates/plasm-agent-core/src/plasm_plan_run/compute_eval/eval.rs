@@ -1,172 +1,7 @@
 use super::super::*;
-use super::compute_ops::render_compute;
-
-pub(crate) fn materialized_singleton_inputs(
-    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-    inputs: &[ValidatedPlanDataInput],
-) -> Result<BTreeMap<InputAlias, MaterializedInputRow>, String> {
-    let mut out = BTreeMap::new();
-    for input in inputs {
-        let mat = materialized.get(&input.node).ok_or_else(|| {
-            format!(
-                "input node {:?} for alias {:?} has not been materialized",
-                input.node.as_str(),
-                input.alias.as_str()
-            )
-        })?;
-        if mat.inline_row_count() != 1 {
-            return Err(singleton_input_row_count_error(
-                input.node.as_str(),
-                input.alias.as_str(),
-                mat.inline_row_count(),
-                format!("{:?} broadcast", input.proof).as_str(),
-            ));
-        }
-        let row = mat.first_inline_row().cloned().ok_or_else(|| {
-            format!(
-                "Plan input {:?} for alias {:?} expected one row but was empty",
-                input.node.as_str(),
-                input.alias.as_str()
-            )
-        })?;
-        out.insert(
-            input.alias.clone(),
-            MaterializedInputRow {
-                node: input.node.clone(),
-                proof: input.proof,
-                row: augment_row_json_with_identity(
-                    &row,
-                    mat.row_identities.first().and_then(|i| i.as_ref()),
-                ),
-                row_identity: mat.row_identities.first().cloned().flatten(),
-            },
-        );
-    }
-    Ok(out)
-}
-
-pub(crate) fn materialized_result_use_inputs(
-    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-    uses_result: &[PlanResultUse],
-) -> Result<BTreeMap<InputAlias, MaterializedInputRow>, String> {
-    let mut out = BTreeMap::new();
-    for use_result in uses_result {
-        let node = PlanNodeId::new(use_result.node.clone())?;
-        let alias = InputAlias::new(use_result.r#as.clone())?;
-        let mat = materialized.get(&node).ok_or_else(|| {
-            format!(
-                "input node {:?} for alias {:?} has not been materialized",
-                node.as_str(),
-                alias.as_str()
-            )
-        })?;
-        if mat.inline_row_count() != 1 {
-            return Err(singleton_input_row_count_error(
-                node.as_str(),
-                alias.as_str(),
-                mat.inline_row_count(),
-                "staged expression rendering",
-            ));
-        }
-        let row = mat.first_inline_row().cloned().ok_or_else(|| {
-            format!(
-                "Plan input {:?} for alias {:?} expected one row but was empty",
-                node.as_str(),
-                alias.as_str()
-            )
-        })?;
-        out.insert(
-            alias,
-            MaterializedInputRow {
-                node,
-                proof: crate::plasm_plan::InputCardinalityProof::RuntimeCheckedSingleton,
-                row: augment_row_json_with_identity(
-                    &row,
-                    mat.row_identities.first().and_then(|i| i.as_ref()),
-                ),
-                row_identity: mat.row_identities.first().cloned().flatten(),
-            },
-        );
-    }
-    Ok(out)
-}
-
-pub(crate) fn singleton_input_row_count_error(
-    node: &str,
-    alias: &str,
-    row_count: usize,
-    context: &str,
-) -> String {
-    if row_count == 0 {
-        format!(
-            "Plan input {node:?} for alias {alias:?} expected exactly one row for {context}, but the source produced zero rows. This is a data-empty result, not a Plasm syntax error: run or inspect {node:?}, loosen filters if it should match, branch around empty results, or use `.singleton()` only when exactly one row is guaranteed."
-        )
-    } else {
-        format!(
-            "Plan input {node:?} for alias {alias:?} expected exactly one row for {context}, but the source produced {row_count} rows. Add filters/projection to make the source unique, aggregate intentionally, or use `.singleton()` only when exactly one row is guaranteed."
-        )
-    }
-}
-
-pub(crate) fn materialized_result_use_inputs_with_source_row(
-    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
-    uses_result: &[PlanResultUse],
-    source_node: &PlanNodeId,
-    source_row: &serde_json::Value,
-    source_row_identity: Option<plasm_core::RowIdentity>,
-) -> Result<BTreeMap<InputAlias, MaterializedInputRow>, String> {
-    let mut out = BTreeMap::new();
-    for use_result in uses_result {
-        let node = PlanNodeId::new(use_result.node.clone())?;
-        let alias = InputAlias::new(use_result.r#as.clone())?;
-        let mat = materialized.get(&node).ok_or_else(|| {
-            format!(
-                "input node {:?} for alias {:?} has not been materialized",
-                node.as_str(),
-                alias.as_str()
-            )
-        })?;
-        let (row, row_identity) = if node == *source_node {
-            (
-                augment_row_json_with_identity(source_row, source_row_identity.as_ref()),
-                source_row_identity.clone(),
-            )
-        } else {
-            if mat.inline_row_count() != 1 {
-                return Err(singleton_input_row_count_error(
-                    node.as_str(),
-                    alias.as_str(),
-                    mat.inline_row_count(),
-                    "staged expression rendering",
-                ));
-            }
-            let row = mat.first_inline_row().cloned().ok_or_else(|| {
-                format!(
-                    "Plan input {:?} for alias {:?} expected one row but was empty",
-                    node.as_str(),
-                    alias.as_str()
-                )
-            })?;
-            (
-                augment_row_json_with_identity(
-                    &row,
-                    mat.row_identities.first().and_then(|i| i.as_ref()),
-                ),
-                mat.row_identities.first().cloned().flatten(),
-            )
-        };
-        out.insert(
-            alias,
-            MaterializedInputRow {
-                node,
-                proof: crate::plasm_plan::InputCardinalityProof::RuntimeCheckedSingleton,
-                row,
-                row_identity,
-            },
-        );
-    }
-    Ok(out)
-}
+use super::super::{value_at_dotted, value_at_segments};
+use super::input_rows::materialized_result_use_inputs;
+use std::collections::BTreeMap;
 
 pub(crate) fn instantiate_parsed_expr_plan_inputs_with_rows(
     parsed: ParsedExpr,
@@ -207,7 +42,7 @@ pub(crate) fn instantiate_parsed_expr_plan_inputs(
     if uses_result.is_empty() {
         return Ok(parsed);
     }
-    let input_rows = materialized_result_use_inputs(materialized, uses_result)?;
+    let input_rows = materialized_result_use_inputs(materialized, uses_result, None)?;
     instantiate_parsed_expr_plan_inputs_with_rows(parsed, &input_rows, None)
 }
 
@@ -318,37 +153,6 @@ pub(crate) fn json_row_to_plasm_value(row: &serde_json::Value) -> plasm_core::Va
             plasm_core::Value::Object(out)
         }
     }
-}
-
-pub(crate) fn augment_row_json_with_identity(
-    row: &serde_json::Value,
-    identity: Option<&plasm_core::RowIdentity>,
-) -> serde_json::Value {
-    let Some(identity) = identity else {
-        return row.clone();
-    };
-    let mut obj = match row {
-        serde_json::Value::Object(map) => map.clone(),
-        other => {
-            let mut m = serde_json::Map::new();
-            m.insert("value".to_string(), other.clone());
-            m
-        }
-    };
-    let primary = identity.reference.primary_slot_str();
-    obj.entry("id".to_string())
-        .or_insert_with(|| serde_json::Value::String(primary.clone()));
-    for (k, v) in &identity.ambient {
-        obj.entry(k.clone())
-            .or_insert_with(|| serde_json::Value::String(v.clone()));
-    }
-    if let plasm_core::EntityKey::Compound(parts) = &identity.reference.key {
-        for (k, v) in parts {
-            obj.entry(k.clone())
-                .or_insert_with(|| serde_json::Value::String(v.clone()));
-        }
-    }
-    serde_json::Value::Object(obj)
 }
 
 pub(crate) fn coerce_node_input_json(
@@ -477,6 +281,30 @@ pub(crate) fn instantiate_ir_hole(
             let input = env.inputs.rows.get(&alias).ok_or_else(|| {
                 format!("node_input IR hole references unavailable alias {alias:?}")
             })?;
+            if !path.is_empty() && input.rows.len() > 1 {
+                let mut values = Vec::with_capacity(input.rows.len());
+                for (row, ident) in input.rows.iter().zip(input.row_identities.iter()) {
+                    let cell = value_at_segments(row, &path)
+                        .cloned()
+                        .or_else(|| {
+                            node_input_hole_from_identity(
+                                env.wire_coercion.as_ref(),
+                                ident,
+                                &path,
+                                row,
+                            )
+                        })
+                        .unwrap_or(serde_json::Value::Null);
+                    if !cell.is_null() {
+                        values.push(coerce_node_input_json(
+                            env.wire_coercion.as_ref(),
+                            &path,
+                            cell,
+                        ));
+                    }
+                }
+                return Ok(serde_json::Value::Array(values));
+            }
             let from_row = value_at_segments(&input.row, &path).cloned();
             let from_row_usable = from_row
                 .as_ref()
@@ -696,108 +524,6 @@ pub(crate) fn resolve_template_path<'a>(
         .rows
         .get(&alias)
         .and_then(|input| value_at_dotted(&input.row, rest))
-}
-
-pub(crate) fn value_at_path<'a>(
-    row: &'a serde_json::Value,
-    path: &FieldPath,
-) -> Option<&'a serde_json::Value> {
-    let mut cur = row;
-    for segment in path.segments() {
-        cur = cur.get(segment)?;
-    }
-    Some(cur)
-}
-
-pub(crate) fn value_at_dotted<'a>(
-    row: &'a serde_json::Value,
-    path: &str,
-) -> Option<&'a serde_json::Value> {
-    if path.is_empty() {
-        return Some(row);
-    }
-    let mut cur = row;
-    for segment in path.split('.').filter(|s| !s.is_empty()) {
-        cur = cur.get(segment)?;
-    }
-    Some(cur)
-}
-pub(crate) fn dry_validate_render_nodes(
-    es: &ExecuteSession,
-    plan: &crate::plasm_plan::Plan<crate::plasm_plan::ValidatedPlanState>,
-) -> Result<(), String> {
-    use crate::plasm_plan::{ComputeOp, ValidatedPlanNode};
-    use std::collections::HashMap;
-
-    let nodes: HashMap<String, &ValidatedPlanNode> = plan
-        .nodes
-        .iter()
-        .map(|n| (n.id().as_str().to_string(), n))
-        .collect();
-    for n in &plan.nodes {
-        let ValidatedPlanNode::Compute(c) = n else {
-            continue;
-        };
-        let ComputeOp::Render {
-            columns,
-            template,
-            column_aliases,
-        } = &c.compute.op
-        else {
-            continue;
-        };
-        let qe = dry_render_source_qualified_entity(&nodes, c.compute.source.clone())?;
-        let scoped = entry_scoped_execute_session(es, Some(&qe))?;
-        let ent = scoped
-            .cgs
-            .get_entity(qe.entity.as_str())
-            .ok_or_else(|| format!("dry render: unknown entity `{}`", qe.entity))?;
-        let mut row = serde_json::Map::new();
-        for field in ent.fields.keys() {
-            row.insert(field.as_str().to_string(), serde_json::Value::Null);
-        }
-        row.insert(
-            ent.id_field.as_str().to_string(),
-            serde_json::Value::String("dry-placeholder".into()),
-        );
-        render_compute(
-            &[serde_json::Value::Object(row)],
-            &RenderColumns::from_op_parts(columns.clone(), column_aliases.clone()),
-            template,
-            c.compute.collection_alias.as_ref(),
-        )?;
-    }
-    Ok(())
-}
-
-fn dry_render_source_qualified_entity(
-    nodes: &std::collections::HashMap<String, &ValidatedPlanNode>,
-    mut source: String,
-) -> Result<QualifiedEntityKey, String> {
-    use crate::plasm_plan::ValidatedPlanNode;
-
-    loop {
-        let Some(n) = nodes.get(source.as_str()) else {
-            return Err(format!("dry render: unknown source node `{source}`"));
-        };
-        match n {
-            ValidatedPlanNode::Surface(s) => {
-                return s.qualified_entity.clone().ok_or_else(|| {
-                    format!("dry render: surface `{source}` has no qualified entity")
-                });
-            }
-            ValidatedPlanNode::RelationTraversal(r) => return Ok(r.relation.target.clone()),
-            ValidatedPlanNode::Compute(c) => {
-                source = c.compute.source.clone();
-            }
-            other => {
-                return Err(format!(
-                    "dry render: source `{source}` is {:?}, expected surface/relation/compute chain",
-                    other.kind()
-                ));
-            }
-        }
-    }
 }
 
 pub(crate) fn json_to_plasm_value(v: &serde_json::Value) -> Value {

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.105] - 2026-07-02
+
+### Added
+
+- **Site-scoped opaque `p#` resolution:** `PSymResolution` enum + `resolve_opaque_p()` — invoke, query-filter, entity-row, and compound-key roles are explicit in the type system.
+- **Dry staging gate:** stub materialization + IR template preflight before `run_ref` (`dry_validate_staged_surfaces`).
+- **Column→array invoke lowering:** plural `node_input` paths aggregate to JSON arrays for mutator args (e.g. `labels.p105`).
+- **Language matrix homograph rows:** `langitem_update.tags`, compound-key + cross-role rejection coverage.
+
+### Changed
+
+- **`symbol_resolve/` module split:** `error.rs`, `site.rs`, `mod.rs`, `tests.rs` (under 1k lines each).
+- **Centralized surface entity policy:** `plan_surface_policy.rs` shared by dry-run dispatch and dry staging.
+- **Cap-param gloss homographs:** `capability_param_quad_for_p_sym_on_entity` + `capability_param_quads_for_p_sym`; teaching render uses entity-scoped lookup.
+- **Path accessors unified** in `row_json.rs` (`value_at_segments`, `value_at_dotted`, `value_at_field_path`).
+- **Persisted symbol ledger v2:** removed lossy `sym_to_cap_param_key` reverse map; invoke resolution scans `cap_param_to_sym` forward with site filter.
+
+### Fixed
+
+- **Homograph `p#` binding:** query-scope params rejected on mutator invoke; mutator params rejected in query filters; compound keys scoped to target entity `key_vars`.
+- **Page continuation dry staging:** `return_*` Page surfaces without `qualified_entity` no longer fail stub materialization.
+
 ## [0.3.103] - 2026-07-01
 
 ### Added

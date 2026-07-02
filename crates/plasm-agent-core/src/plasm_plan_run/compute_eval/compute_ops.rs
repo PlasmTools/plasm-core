@@ -4,7 +4,7 @@ use crate::plasm_plan::OutputName;
 use crate::plasm_render_compile::render_context_hint;
 
 use super::super::*;
-use super::eval::value_at_path;
+use super::super::value_at_field_path as value_at_path;
 
 pub(crate) async fn eval_compute_with_row_source(
     compute: &ComputeTemplate,

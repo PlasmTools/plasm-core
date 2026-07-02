@@ -106,10 +106,6 @@ impl MaterializedNode {
         self.row_source.inline_rows().map_or(0, |rows| rows.len())
     }
 
-    pub(crate) fn first_inline_row(&self) -> Option<&serde_json::Value> {
-        self.row_source.inline_rows()?.first()
-    }
-
     /// **CEP-5:** parent entities for relation materialize when the source is GraphBacked.
     pub(crate) async fn resolve_materialized_source_parents(
         &self,
@@ -143,7 +139,10 @@ pub(crate) struct MaterializedInputRow {
     pub(crate) node: PlanNodeId,
     pub(crate) proof: crate::plasm_plan::InputCardinalityProof,
     pub(crate) row: serde_json::Value,
+    /// All materialized rows for this alias (column refs aggregate across `rows`).
+    pub(crate) rows: Vec<serde_json::Value>,
     pub(crate) row_identity: Option<plasm_core::RowIdentity>,
+    pub(crate) row_identities: Vec<Option<plasm_core::RowIdentity>>,
 }
 
 #[allow(clippy::too_many_arguments)]

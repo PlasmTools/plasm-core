@@ -278,8 +278,7 @@ impl TeachingExposureSession {
                     capability.clone(),
                     CapabilityParamName::from(meta.wire_name()),
                 );
-                self.tables.cap_param_to_sym.insert(key.clone(), sym);
-                self.tables.sym_to_cap_param_key.insert(sym, key);
+                self.tables.cap_param_to_sym.insert(key, sym);
             }
         }
     }

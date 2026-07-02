@@ -2,9 +2,11 @@
 
 use super::super::*;
 use super::test_support::assert_compile_rejects_scalar_array_param;
+use super::test_support::assert_compile_rejects_query_filter_psym;
+use super::test_support::assert_compile_rejects_unknown_cap_param;
 use super::test_support::github_symbol_map;
 use crate::plasm_plan_run::evaluate_plasm_plan_dry;
-use plasm_core::{CgsContext, PromptPipelineConfig, TeachingExposureSession};
+use plasm_core::{CgsContext, PromptPipelineConfig, SymbolMap, TeachingExposureSession};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -297,4 +299,322 @@ created"#,
     )
     .expect("inline heredoc in invoke must compile");
     evaluate_plasm_plan_dry(&session, &plan).expect("dry-run preflight");
+}
+
+fn compound_branch_mutator_session() -> ExecuteSession {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let cgs = Arc::new(
+        plasm_core::loader::load_schema_dir(
+            &root.join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .expect("load plasm_language_matrix"),
+    );
+    let endpoints = ["LangItem", "CompoundBranch", "LangTag"]
+        .iter()
+        .map(|e| plasm_core::ExposureEntityKey {
+            entry_id: "langmatrix".into(),
+            entity: plasm_core::EntityName::from(*e),
+        })
+        .collect::<Vec<_>>();
+    let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
+        cgs.as_ref(),
+        "langmatrix",
+        "patch lang item tags and resolve compound branch identity",
+        &endpoints,
+        &[
+            "LangItem".to_string(),
+            "CompoundBranch".to_string(),
+            "LangTag".to_string(),
+        ],
+        Some(&[
+            "langitem_create".to_string(),
+            "langitem_update".to_string(),
+            "langtag_query".to_string(),
+            "langcompoundbranch_get".to_string(),
+        ]),
+        plasm_core::discovery::ExposureSurfaceOptions {
+            read_first_seeded: true,
+        },
+    );
+    let exp = TeachingExposureSession::new_with_intent_delta(
+        cgs.as_ref(),
+        "langmatrix",
+        &["LangItem", "CompoundBranch", "LangTag"],
+        delta,
+    );
+    let mut ctxs = indexmap::IndexMap::new();
+    ctxs.insert(
+        "langmatrix".into(),
+        Arc::new(CgsContext::entry("langmatrix", cgs.clone())),
+    );
+    ExecuteSession::new(
+        "ph".into(),
+        "p".into(),
+        cgs.clone(),
+        ctxs,
+        "langmatrix".into(),
+        String::new(),
+        String::new(),
+        None,
+        vec![
+            "LangItem".into(),
+            "CompoundBranch".into(),
+            "LangTag".into(),
+        ],
+        Some(exp),
+        None,
+        cgs.catalog_cgs_hash_hex(),
+        None,
+        None,
+    )
+}
+
+/// Compound GET keys must resolve against CompoundBranch `key_vars`, not ambient homograph slots.
+#[test]
+fn matrix_compound_get_accepts_opaque_key_symbols_with_mutators_exposed() {
+    let session = compound_branch_mutator_session();
+    let map = github_symbol_map(&session);
+    let item_e = map.entity_sym_for("langmatrix", "LangItem");
+    let branch_e = map.entity_sym_for("langmatrix", "CompoundBranch");
+    let create_m = map.method_sym_for("langmatrix", "LangItem", "langitem_create");
+    let p_create_title =
+        map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "title");
+    let p_create_score =
+        map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "score");
+    let p_create_owner =
+        map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "owner");
+    let p_branch_owner = map.ident_sym_entity_field_for("langmatrix", "CompoundBranch", "owner");
+    let p_branch_item_id =
+        map.ident_sym_entity_field_for("langmatrix", "CompoundBranch", "item_id");
+    let p_branch_name = map.ident_sym_entity_field_for("langmatrix", "CompoundBranch", "name");
+    let p_item_owner = map.ident_sym_entity_field_for("langmatrix", "LangItem", "owner");
+    let p_item_id = map.ident_sym_entity_field_for("langmatrix", "LangItem", "id");
+    let p_tag_item_id = map.ident_sym_entity_field_for("langmatrix", "LangTag", "item_id");
+    assert_eq!(
+        p_branch_item_id, p_tag_item_id,
+        "matrix fixture shares item_id value_ref across LangTag + CompoundBranch"
+    );
+    let source = format!(
+        r#"created = {item_e}.{create_m}({p_create_title}="matrix item", {p_create_score}=1, {p_create_owner}="bot")
+branch = {branch_e}({p_branch_owner}=created.{p_item_owner}, {p_branch_item_id}=created.{p_item_id}, {p_branch_name}="main")
+branch"#,
+        item_e = item_e,
+        create_m = create_m,
+        p_create_title = p_create_title,
+        p_create_score = p_create_score,
+        p_create_owner = p_create_owner,
+        branch_e = branch_e,
+        p_branch_owner = p_branch_owner,
+        p_branch_item_id = p_branch_item_id,
+        p_branch_name = p_branch_name,
+        p_item_owner = p_item_owner,
+        p_item_id = p_item_id,
+    );
+    let plan = compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "matrix-compound-get-homograph-keys",
+        &source,
+    )
+    .expect("compound GET with homograph p# keys must compile");
+    let branch = plan["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .find(|n| n["id"] == "branch")
+        .expect("branch node");
+    assert_eq!(branch["kind"], "get");
+    evaluate_plasm_plan_dry(&session, &plan).expect("compound homograph dry-run");
+}
+
+/// Plural tag rows projected to a column must lower to an array invoke arg at dry + live staging.
+#[test]
+fn matrix_update_accepts_column_projection_array_from_plural_tags() {
+    let session = compound_branch_mutator_session();
+    let map = github_symbol_map(&session);
+    let item_e = map.entity_sym_for("langmatrix", "LangItem");
+    let tag_e = map.entity_sym_for("langmatrix", "LangTag");
+    let create_m = map.method_sym_for("langmatrix", "LangItem", "langitem_create");
+    let update_m = map.method_sym_for("langmatrix", "LangItem", "langitem_update");
+    let p_create_title =
+        map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "title");
+    let p_create_score =
+        map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "score");
+    let p_create_owner =
+        map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "owner");
+    let p_tag_item =
+        map.ident_sym_cap_param_for("langmatrix", "LangTag", "langtag_query", "item_id");
+    let p_tag_label = map.ident_sym_entity_field_for("langmatrix", "LangTag", "label");
+    let p_update_tags =
+        map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_update", "tags");
+    let p_item_id = map.ident_sym_entity_field_for("langmatrix", "LangItem", "id");
+    let source = format!(
+        r#"created = {item_e}.{create_m}({p_create_title}="matrix item", {p_create_score}=1, {p_create_owner}="bot")
+tags = {tag_e}{{{p_tag_item}=created.{p_item_id}}}[{p_tag_label}]
+updated = {item_e}({p_item_id}=created.{p_item_id}).{update_m}({p_update_tags}=tags.{p_tag_label})
+updated"#,
+        item_e = item_e,
+        create_m = create_m,
+        p_create_title = p_create_title,
+        p_create_score = p_create_score,
+        p_create_owner = p_create_owner,
+        tag_e = tag_e,
+        p_tag_item = p_tag_item,
+        p_item_id = p_item_id,
+        p_tag_label = p_tag_label,
+        update_m = update_m,
+        p_update_tags = p_update_tags,
+    );
+    let plan = compile_plasm_dag_to_plan(
+        &PromptPipelineConfig::default(),
+        None,
+        &session,
+        "matrix-update-column-tags-array",
+        &source,
+    )
+    .expect("column projection tags invoke must compile");
+    let updated = plan["nodes"]
+        .as_array()
+        .expect("nodes")
+        .iter()
+        .find(|n| n["id"] == "updated")
+        .expect("updated node");
+    let ir_blob = updated
+        .get("ir")
+        .filter(|v| !v.is_null())
+        .or_else(|| updated.get("ir_template"))
+        .expect("updated plan IR");
+    assert!(
+        ir_blob.to_string().contains("langitem_update"),
+        "updated node must dispatch langitem_update: {ir_blob}"
+    );
+    evaluate_plasm_plan_dry(&session, &plan).expect("column tags array dry staging");
+}
+
+fn langitem_query_update_tags_session() -> ExecuteSession {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let cgs = Arc::new(
+        plasm_core::loader::load_schema_dir(
+            &root.join("../../fixtures/schemas/plasm_language_matrix"),
+        )
+        .expect("load plasm_language_matrix"),
+    );
+    let endpoints = ["LangItem"]
+        .iter()
+        .map(|e| plasm_core::ExposureEntityKey {
+            entry_id: "langmatrix".into(),
+            entity: plasm_core::EntityName::from(*e),
+        })
+        .collect::<Vec<_>>();
+    let delta = plasm_core::discovery::derive_intent_exposure_surface_batch(
+        cgs.as_ref(),
+        "langmatrix",
+        "query and patch lang item tags",
+        &endpoints,
+        &["LangItem".to_string()],
+        Some(&[
+            "langitem_create".to_string(),
+            "langitem_query".to_string(),
+            "langitem_update".to_string(),
+        ]),
+        plasm_core::discovery::ExposureSurfaceOptions {
+            read_first_seeded: true,
+        },
+    );
+    let exp = TeachingExposureSession::new_with_intent_delta(
+        cgs.as_ref(),
+        "langmatrix",
+        &["LangItem"],
+        delta,
+    );
+    let mut ctxs = indexmap::IndexMap::new();
+    ctxs.insert(
+        "langmatrix".into(),
+        Arc::new(CgsContext::entry("langmatrix", cgs.clone())),
+    );
+    ExecuteSession::new(
+        "ph".into(),
+        "p".into(),
+        cgs.clone(),
+        ctxs,
+        "langmatrix".into(),
+        String::new(),
+        String::new(),
+        None,
+        vec!["LangItem".into()],
+        Some(exp),
+        None,
+        cgs.catalog_cgs_hash_hex(),
+        None,
+        None,
+    )
+}
+
+/// Site-scoped homograph rejections: query `p#` on invoke and mutator `p#` in query filters.
+#[test]
+fn matrix_homograph_rejects_cross_role_p_sym_bindings() {
+    let session = langitem_query_update_tags_session();
+    let map = github_symbol_map(&session);
+    let item_e = map.entity_sym_for("langmatrix", "LangItem");
+    let create_m = map.method_sym_for("langmatrix", "LangItem", "langitem_create");
+    let update_m = map.method_sym_for("langmatrix", "LangItem", "langitem_update");
+    let p_create_title =
+        map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "title");
+    let p_create_score =
+        map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "score");
+    let p_create_owner =
+        map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "owner");
+    let p_query_team =
+        map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_query", "team_key");
+    let p_update_tags =
+        map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_update", "tags");
+    let p_item_id = map.ident_sym_entity_field_for("langmatrix", "LangItem", "id");
+
+    if !SymbolMap::is_opaque_p_sym(p_query_team.as_str())
+        || !SymbolMap::is_opaque_p_sym(p_update_tags.as_str())
+    {
+        return;
+    }
+
+    let cases: [(&str, String, fn(&str)); 2] = [
+        (
+            "matrix-update-query-p-reject",
+            format!(
+                r#"created = {item_e}.{create_m}({p_create_title}="matrix item", {p_create_score}=1, {p_create_owner}="bot")
+updated = {item_e}({p_item_id}=created.{p_item_id}).{update_m}({p_query_team}=["alpha"])
+updated"#,
+                item_e = item_e,
+                create_m = create_m,
+                update_m = update_m,
+                p_create_title = p_create_title,
+                p_create_score = p_create_score,
+                p_create_owner = p_create_owner,
+                p_query_team = p_query_team,
+                p_item_id = p_item_id,
+            ),
+            assert_compile_rejects_unknown_cap_param,
+        ),
+        (
+            "matrix-query-update-p-reject",
+            format!(
+                r#"items = {item_e}{{{p_update_tags}=["alpha"]}}"#,
+                item_e = item_e,
+                p_update_tags = p_update_tags,
+            ),
+            assert_compile_rejects_query_filter_psym,
+        ),
+    ];
+
+    for (name, source, assert_err) in cases {
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            name,
+            &source,
+        )
+        .expect_err(name);
+        assert_err(&err.to_string());
+    }
 }

@@ -1,5 +1,6 @@
 use super::super::*;
-use super::eval::{instantiate_raw_expr_template, materialized_result_use_inputs};
+use super::eval::instantiate_raw_expr_template;
+use super::materialized_result_use_inputs;
 
 pub(crate) fn for_each_cross_uses(for_each: &ValidatedForEachNode) -> Vec<PlanResultUse> {
     for_each
@@ -34,7 +35,7 @@ pub(crate) fn render_for_each_expressions(
     materialized: Option<&BTreeMap<PlanNodeId, MaterializedNode>>,
 ) -> Result<Vec<String>, String> {
     let input_rows = if let Some(materialized) = materialized {
-        materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each))?
+        materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each), None)?
     } else {
         BTreeMap::new()
     };
@@ -60,7 +61,7 @@ pub(crate) async fn materialize_for_each_node(
     plan_shared: Option<Arc<crate::plan_execute_shared::PlanLineExecuteShared>>,
 ) -> Result<MaterializedNode, String> {
     let source_rows = materialized_rows(es, st, session_id, materialized, &for_each.source).await?;
-    let input_rows = materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each))?;
+    let input_rows = materialized_result_use_inputs(materialized, &for_each_cross_uses(for_each), None)?;
     let mut parsed_steps = Vec::with_capacity(source_rows.len());
     let mut expressions = Vec::with_capacity(source_rows.len());
     for row in &source_rows {

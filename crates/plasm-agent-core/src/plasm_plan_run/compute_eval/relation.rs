@@ -6,9 +6,9 @@ use super::super::*;
 use super::compute_ops::compute_fingerprint;
 use super::eval::{
     instantiate_parsed_expr_plan_inputs, instantiate_parsed_expr_plan_inputs_with_rows,
-    json_to_plasm_value, materialized_result_use_inputs_with_source_row,
-    wire_coercion_ctx_for_source_entity,
+    json_to_plasm_value, wire_coercion_ctx_for_source_entity,
 };
+use super::materialized_result_use_inputs_with_source_row;
 
 pub(crate) async fn materialize_relation_singleton_chain(
     st: &PlasmHostState,

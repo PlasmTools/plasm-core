@@ -24,7 +24,6 @@ pub struct SymbolTables {
     pub sym_to_slot: IndexMap<OpaquePSym, SlotBinding>,
     pub entity_field_to_sym: HashMap<EntityFieldKey, OpaquePSym>,
     pub cap_param_to_sym: HashMap<CapParamKey, OpaquePSym>,
-    pub sym_to_cap_param_key: HashMap<OpaquePSym, CapParamKey>,
     pub relation_to_sym: HashMap<RelationKey, OpaqueRSym>,
     pub sym_to_relation_binding: IndexMap<OpaqueRSym, RelationBinding>,
 }

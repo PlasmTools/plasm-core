@@ -1,8 +1,9 @@
 //! GitHub symbol-resolution regressions (projection + cap-qualified mutator args).
 
 use super::test_support::{
-    assert_compile_rejects_scalar_array_param, compile_github_program, github_cgs,
-    github_issue_label_session, github_ranked_mutator_session, github_symbol_map,
+    assert_compile_rejects_scalar_array_param, assert_compile_rejects_unknown_cap_param,
+    compile_github_program, github_cgs, github_issue_label_session, github_ranked_mutator_session,
+    github_symbol_map,
 };
 use crate::plasm_dag::compile_plasm_dag_to_plan;
 use crate::plasm_plan_run::evaluate_plasm_plan_dry;
@@ -847,4 +848,62 @@ labels, created[{issue_number}, {p_issue_title}]"#,
         "gh-77-shaped TSV verbatim program must compile: {plan:?}"
     );
     evaluate_plasm_plan_dry(&session, &plan).expect("gh-77 TSV verbatim dry-run");
+}
+
+/// `issue_update.labels` must resolve only via cap-qualified invoke context, not Label row-field homographs.
+#[test]
+fn issue_update_invoke_rejects_unqualified_label_name_homograph_p() {
+    let cgs = github_cgs();
+    let session = github_ranked_mutator_session(
+        &cgs,
+        &["Repository", "Issue", "Label"],
+        "update issue labels in repository",
+        &["issue_update"],
+        "issue_update",
+    );
+    let map = github_symbol_map(&session);
+    let issue_e = map.entity_sym_for("github", "Issue");
+    let update_m = map.method_sym_for("github", "Issue", "issue_update");
+    let p_label_name = map.ident_sym_entity_field_for("github", "Label", "name");
+    let p_update_labels =
+        map.ident_sym_cap_param_for("github", "Issue", "issue_update", "labels");
+    if !plasm_core::symbol_tuning::SymbolMap::is_opaque_p_sym(p_label_name.as_str()) {
+        return;
+    }
+    let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
+    let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
+    let issue_number = map.ident_sym_entity_field_for("github", "Issue", "number");
+    let bad_source = format!(
+        r#"{issue_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test", {issue_number}=1).{update_m}({p_label_name}=["bug"])"#,
+        issue_e = issue_e,
+        repo_owner = repo_owner,
+        repo_name = repo_name,
+        issue_number = issue_number,
+        update_m = update_m,
+        p_label_name = p_label_name,
+    );
+    let err = compile_plasm_dag_to_plan(
+        &plasm_core::PromptPipelineConfig::default(),
+        None,
+        &session,
+        "github-issue-update-label-name-homograph",
+        &bad_source,
+    )
+    .expect_err("Label.name p# must not bind issue_update.labels");
+    assert_compile_rejects_unknown_cap_param(&err.to_string());
+    let good_source = format!(
+        r#"{issue_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test", {issue_number}=1).{update_m}({p_update_labels}=["bug"])"#,
+        issue_e = issue_e,
+        repo_owner = repo_owner,
+        repo_name = repo_name,
+        issue_number = issue_number,
+        update_m = update_m,
+        p_update_labels = p_update_labels,
+    );
+    let plan = compile_github_program(
+        &session,
+        "github-issue-update-cap-qualified-labels",
+        &good_source,
+    );
+    evaluate_plasm_plan_dry(&session, &plan).expect("cap-qualified labels invoke dry-run");
 }

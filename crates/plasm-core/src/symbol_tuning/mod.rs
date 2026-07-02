@@ -53,7 +53,7 @@ pub use persisted_ledger::{
     PersistedSymbolLedgerDecodeError, PersistedSymbolLedgerEncodeError, PersistedSymbolLedgerState,
     PersistedSymbolTables, PERSISTED_SYMBOL_LEDGER_VERSION,
 };
-pub use symbol_resolve::SymbolResolveError;
+pub use symbol_resolve::{PSymResolution, SymbolResolveError};
 
 use crate::identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityName, PathMethodSegment,
@@ -2145,20 +2145,56 @@ impl SymbolMap {
         self.values.value_sym_to_fp.get(&vsym).map(|s| s.as_str())
     }
 
+    /// All capability input bindings for one taught `p#` (homographs may yield multiple).
+    pub fn capability_param_quads_for_p_sym(
+        &self,
+        sym: &str,
+    ) -> Vec<(String, EntityName, CapabilityName, String)> {
+        let Some(psym) = OpaquePSym::parse(sym) else {
+            return Vec::new();
+        };
+        self.tables
+            .cap_param_to_sym
+            .iter()
+            .filter(|(_, s)| **s == psym)
+            .map(|(key, _)| {
+                (
+                    key.entry_id.to_string(),
+                    key.domain.clone(),
+                    key.capability.clone(),
+                    key.param.to_string(),
+                )
+            })
+            .collect()
+    }
+
+    /// Scoped cap-param quad when gloss context knows catalog + domain entity.
+    ///
+    /// Required for homographed `p#` symbols shared across capabilities on the same entity.
+    pub fn capability_param_quad_for_p_sym_on_entity(
+        &self,
+        sym: &str,
+        catalog_entry_id: &str,
+        domain_entity: &str,
+    ) -> Option<(String, EntityName, CapabilityName, String)> {
+        self.capability_param_quads_for_p_sym(sym)
+            .into_iter()
+            .find(|(entry_id, domain, _, _)| {
+                entry_id.as_str() == catalog_entry_id && domain.as_str() == domain_entity
+            })
+    }
+
     /// If `sym` maps a capability input parameter, return
     /// `(catalog entry id, domain entity, capability name, full param path)`.
+    ///
+    /// **Homograph note:** value-domain fingerprinting may bind one `p#` to multiple capabilities.
+    /// This returns the first match only — use [`Self::capability_param_quad_for_p_sym_on_entity`]
+    /// or [`Self::capability_param_quads_for_p_sym`] when gloss context is entity- or cap-scoped.
     pub fn capability_param_quad_for_p_sym(
         &self,
         sym: &str,
     ) -> Option<(String, EntityName, CapabilityName, String)> {
-        let psym = OpaquePSym::parse(sym)?;
-        let key = self.tables.sym_to_cap_param_key.get(&psym)?;
-        Some((
-            key.entry_id.to_string(),
-            key.domain.clone(),
-            key.capability.clone(),
-            key.param.to_string(),
-        ))
+        self.capability_param_quads_for_p_sym(sym).into_iter().next()
     }
 
     /// If `sym` maps a capability input parameter, return the `(capability domain entity, param path)`.
