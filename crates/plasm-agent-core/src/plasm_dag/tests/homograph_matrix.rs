@@ -1,8 +1,8 @@
 //! Matrix-backed homograph `p#` projection regression (no `apis/github` coupling).
 
 use super::super::*;
-use super::test_support::assert_compile_rejects_scalar_array_param;
 use super::test_support::assert_compile_rejects_query_filter_psym;
+use super::test_support::assert_compile_rejects_scalar_array_param;
 use super::test_support::assert_compile_rejects_unknown_cap_param;
 use super::test_support::github_symbol_map;
 use crate::plasm_plan_run::evaluate_plasm_plan_dry;
@@ -356,11 +356,7 @@ fn compound_branch_mutator_session() -> ExecuteSession {
         String::new(),
         String::new(),
         None,
-        vec![
-            "LangItem".into(),
-            "CompoundBranch".into(),
-            "LangTag".into(),
-        ],
+        vec!["LangItem".into(), "CompoundBranch".into(), "LangTag".into()],
         Some(exp),
         None,
         cgs.catalog_cgs_hash_hex(),
@@ -577,36 +573,29 @@ fn matrix_homograph_rejects_cross_role_p_sym_bindings() {
         return;
     }
 
-    let cases: [(&str, String, fn(&str)); 2] = [
-        (
-            "matrix-update-query-p-reject",
-            format!(
-                r#"created = {item_e}.{create_m}({p_create_title}="matrix item", {p_create_score}=1, {p_create_owner}="bot")
+    let invoke_reject_source = format!(
+        r#"created = {item_e}.{create_m}({p_create_title}="matrix item", {p_create_score}=1, {p_create_owner}="bot")
 updated = {item_e}({p_item_id}=created.{p_item_id}).{update_m}({p_query_team}=["alpha"])
 updated"#,
-                item_e = item_e,
-                create_m = create_m,
-                update_m = update_m,
-                p_create_title = p_create_title,
-                p_create_score = p_create_score,
-                p_create_owner = p_create_owner,
-                p_query_team = p_query_team,
-                p_item_id = p_item_id,
-            ),
-            assert_compile_rejects_unknown_cap_param,
-        ),
-        (
-            "matrix-query-update-p-reject",
-            format!(
-                r#"items = {item_e}{{{p_update_tags}=["alpha"]}}"#,
-                item_e = item_e,
-                p_update_tags = p_update_tags,
-            ),
-            assert_compile_rejects_query_filter_psym,
-        ),
-    ];
+        item_e = item_e,
+        create_m = create_m,
+        update_m = update_m,
+        p_create_title = p_create_title,
+        p_create_score = p_create_score,
+        p_create_owner = p_create_owner,
+        p_query_team = p_query_team,
+        p_item_id = p_item_id,
+    );
+    let query_reject_source = format!(
+        r#"items = {item_e}{{{p_update_tags}=["alpha"]}}"#,
+        item_e = item_e,
+        p_update_tags = p_update_tags,
+    );
 
-    for (name, source, assert_err) in cases {
+    for (name, source) in [
+        ("matrix-update-query-p-reject", invoke_reject_source),
+        ("matrix-query-update-p-reject", query_reject_source),
+    ] {
         let err = compile_plasm_dag_to_plan(
             &PromptPipelineConfig::default(),
             None,
@@ -615,6 +604,11 @@ updated"#,
             &source,
         )
         .expect_err(name);
-        assert_err(&err.to_string());
+        let msg = err.to_string();
+        if name.contains("update-query") {
+            assert_compile_rejects_unknown_cap_param(&msg);
+        } else {
+            assert_compile_rejects_query_filter_psym(&msg);
+        }
     }
 }
