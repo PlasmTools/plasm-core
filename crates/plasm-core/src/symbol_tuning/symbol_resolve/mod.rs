@@ -18,7 +18,9 @@ use crate::CapabilitySchema;
 use crate::EntityDef;
 use crate::EntityFieldName;
 
-use super::keys::{CapParamKey, CatalogScope, EntityFieldKey, OpaqueESym, OpaqueMSym, OpaquePSym, OpaqueRSym};
+use super::keys::{
+    CapParamKey, CatalogScope, EntityFieldKey, OpaqueESym, OpaqueMSym, OpaquePSym, OpaqueRSym,
+};
 use super::{EntityBinding, MethodBinding, RelationBinding, SlotBinding, SlotKind, SymbolMap};
 
 impl SymbolMap {
@@ -36,10 +38,7 @@ impl SymbolMap {
         cgs.get_capability(key.capability.as_str())
             .is_some_and(|cap| {
                 key.domain.as_str() == cap.domain.as_str()
-                    && matches!(
-                        cap.kind,
-                        CapabilityKind::Query | CapabilityKind::Search
-                    )
+                    && matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search)
             })
     }
 
@@ -193,22 +192,22 @@ impl SymbolMap {
                 if invoke_keys.len() == 1 {
                     return Ok(invoke_keys[0].param.to_string());
                 }
-                if invoke_keys.is_empty() {
-                    if let Ok(binding) = self.resolve_session_slot(t) {
-                        if let SlotKind::CapParam {
-                            domain: bound_domain,
-                            capability: bound_cap,
-                            param_wire,
-                            ..
-                        } = &binding.kind
+                if let Ok(binding) = self.resolve_session_slot(t) {
+                    if let SlotKind::CapParam {
+                        domain: bound_domain,
+                        capability: bound_cap,
+                        param_wire,
+                        ..
+                    } = &binding.kind
+                    {
+                        if bound_domain.as_str() == domain
+                            && bound_cap.as_str() == capability
+                            && Self::cap_declares_param_wire(cap, param_wire.as_str())
                         {
-                            if bound_domain.as_str() == domain
-                                && bound_cap.as_str() == capability
-                                && Self::cap_declares_param_wire(cap, param_wire.as_str())
-                            {
-                                return Ok(param_wire.to_string());
-                            }
+                            return Ok(param_wire.to_string());
                         }
+                    }
+                    if invoke_keys.is_empty() {
                         return Err(SymbolResolveError::UnknownCapParam {
                             catalog_entry_id: binding.entry_id.to_string(),
                             domain: domain.to_string(),
@@ -216,6 +215,7 @@ impl SymbolMap {
                             token: t.to_string(),
                         });
                     }
+                } else if invoke_keys.is_empty() {
                     return Err(SymbolResolveError::UnknownCapParam {
                         catalog_entry_id: catalog.entry_id().unwrap_or("").to_string(),
                         domain: domain.to_string(),
@@ -223,22 +223,15 @@ impl SymbolMap {
                         token: t.to_string(),
                     });
                 }
+                // Homographed union-variant leaves share one `p#` but retain distinct occurrence
+                // paths in `cap_param_to_sym`; pick a stable representative for invoke reverse lookup.
                 let mut wires: Vec<String> = invoke_keys
                     .iter()
                     .map(|key| key.param.to_string())
                     .collect();
                 wires.sort();
                 wires.dedup();
-                if wires.len() == 1 {
-                    Ok(wires[0].clone())
-                } else {
-                    Err(SymbolResolveError::UnknownCapParam {
-                        catalog_entry_id: catalog.entry_id().unwrap_or("").to_string(),
-                        domain: domain.to_string(),
-                        capability: capability.to_string(),
-                        token: t.to_string(),
-                    })
-                }
+                Ok(wires.into_iter().next().expect("invoke_keys non-empty"))
             }
         }
     }

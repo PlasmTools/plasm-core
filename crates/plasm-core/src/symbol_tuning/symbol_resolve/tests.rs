@@ -75,8 +75,7 @@ fn resolve_entity_field_rejects_cross_entity_homograph() {
     let Ok(cgs) = load_schema_dir(&dir) else {
         return;
     };
-    let exp =
-        TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA", "HomographRowB"]);
+    let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA", "HomographRowB"]);
     let map = exp.symbol_map_arc();
     let row_a = map.ident_sym_entity_field_for("", "HomographRowA", "headline");
     let ent_b = cgs.get_entity("HomographRowB").expect("HomographRowB");
@@ -118,17 +117,16 @@ fn resolve_cap_param_rejects_query_scope_p_on_mutator_invoke() {
                 entity: EntityName::from("LangItem"),
             }],
             &["LangItem".to_string()],
-            Some(&[
-                "langitem_query".to_string(),
-                "langitem_update".to_string(),
-            ]),
+            Some(&["langitem_query".to_string(), "langitem_update".to_string()]),
             discovery::ExposureSurfaceOptions {
                 read_first_seeded: true,
             },
         ),
     );
     let map = exp.symbol_map_arc();
-    let update_cap = cgs.get_capability("langitem_update").expect("langitem_update");
+    let update_cap = cgs
+        .get_capability("langitem_update")
+        .expect("langitem_update");
     let p_query_team =
         map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_query", "team_key");
     if !SymbolMap::is_opaque_p_sym(p_query_team.as_str()) {
@@ -191,8 +189,7 @@ fn resolve_query_filter_field_accepts_cap_scope_param_p_sym() {
     let exp = TeachingExposureSession::new(&cgs, "github", &["Repository", "Issue", "Label"]);
     let map = exp.symbol_map_arc();
     let ent = cgs.get_entity("Label").expect("Label");
-    let p_repository =
-        map.ident_sym_cap_param_for("github", "Label", "label_query", "repository");
+    let p_repository = map.ident_sym_cap_param_for("github", "Label", "label_query", "repository");
     if !SymbolMap::is_opaque_p_sym(p_repository.as_str()) {
         return;
     }
@@ -218,6 +215,55 @@ fn agent_program_error_includes_query_filter_hint() {
     assert!(msg.contains("query filter symbol"));
     assert!(msg.contains("help:"));
     assert!(msg.contains("query/search input signature"));
+}
+
+#[test]
+fn resolve_cap_param_homographed_union_variant_ref_paths() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/proof");
+    if !dir.is_dir() {
+        return;
+    }
+    let Ok(cgs) = load_schema_dir(&dir) else {
+        return;
+    };
+    let exp = TeachingExposureSession::new(&cgs, "proof", &["Document"]);
+    let map = exp.symbol_map_arc();
+    let cap = cgs
+        .capabilities
+        .get("document_edit_v2")
+        .expect("document_edit_v2");
+    let replace_ref = map.ident_sym_cap_param_for(
+        "proof",
+        "Document",
+        "document_edit_v2",
+        "operations.replace_block.ref",
+    );
+    let insert_ref = map.ident_sym_cap_param_for(
+        "proof",
+        "Document",
+        "document_edit_v2",
+        "operations.insert_before.ref",
+    );
+    assert_eq!(
+        replace_ref, insert_ref,
+        "union-variant ref anchors share one homographed p#"
+    );
+    if !SymbolMap::is_opaque_p_sym(replace_ref.as_str()) {
+        return;
+    }
+    let wire = map
+        .resolve_cap_param(
+            CatalogScope::qualified("proof"),
+            "Document",
+            "document_edit_v2",
+            replace_ref.as_str(),
+            cap,
+        )
+        .expect("homographed ref p# must resolve on document_edit_v2 invoke");
+    assert!(
+        wire.ends_with(".ref"),
+        "expected a declared ref param path, got {wire}"
+    );
 }
 
 /// Regression: deleted qualified reverse-map fields must not reappear on opaque resolution paths.
