@@ -4,9 +4,9 @@ use crate::execute_session::ExecuteSession;
 use crate::operation_progress::{
     op_plasm_meta_short, render_op_wire_line, render_op_wire_markdown, OpWireSig,
 };
+use crate::plan_dry_display::{PlanDryReview, PlanDryVerdict};
 use crate::plan_flow::{FlowAdmission, FlowDenial};
 use crate::plan_flow_policy::PolicyRevision;
-use crate::plan_dry_display::{PlanDryReview, PlanDryVerdict};
 use crate::plasm_plan_run::{DryPlasmPlanEvaluation, PlanRunTraceHooks, PlasmPlanRunResult};
 use crate::server_state::PlasmHostState;
 use plasm_core::{OperationHandle, PlanCommitId, PlanCommitRef};
@@ -419,11 +419,9 @@ impl PlanCommitRecord {
         let bundle = crate::plasm_comp_bundle::PlasmCompBundle::new(artifact.clone())
             .map_err(|e| format!("invalid rehydrated comp: {e}"))?;
         let executable = bundle.executable();
-        let prepared = crate::plan_prepare::build_prepared_validated_plan(
-            &artifact.comp,
-            executable,
-        )
-        .map_err(|e| format!("rehydrated plan validation failed: {e}"))?;
+        let prepared =
+            crate::plan_prepare::build_prepared_validated_plan(&artifact.comp, executable)
+                .map_err(|e| format!("rehydrated plan validation failed: {e}"))?;
         let topological_order = if dry_cache.topological_order.is_empty() {
             executable
                 .steps_topo

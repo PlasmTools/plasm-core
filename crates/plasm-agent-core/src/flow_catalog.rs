@@ -1,7 +1,7 @@
 //! Typed CGS → flow-catalog projection (no JSON round-trip).
 
 use crate::plan_flow::{QualifiedCapabilityKey, SinkParamRef};
-use plasm_core::{CGS, CapabilitySchema, DataClassName};
+use plasm_core::{CapabilitySchema, DataClassName, CGS};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -116,9 +116,10 @@ mod tests {
         let view = FlowCatalogView::from_cgs("flow", &cgs);
         let send_key = QualifiedCapabilityKey::from_parts("flow", "Message", "send");
         assert!(
-            view.sink_params_for(&send_key)
-                .iter()
-                .any(|p| p.sink_class.as_ref().is_some_and(|s| s.as_str() == "outbound_body")),
+            view.sink_params_for(&send_key).iter().any(|p| p
+                .sink_class
+                .as_ref()
+                .is_some_and(|s| s.as_str() == "outbound_body")),
             "send capability should expose outbound_body sink param"
         );
     }

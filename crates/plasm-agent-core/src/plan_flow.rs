@@ -388,14 +388,16 @@ impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, 
         self.sink_proofs.insert(id, SinkProof::StaticClean);
     }
 
-    fn transfer_mutation_surface(&mut self, node: &ValidatedPlanNode, surface: &ValidatedSurfaceNode) {
+    fn transfer_mutation_surface(
+        &mut self,
+        node: &ValidatedPlanNode,
+        surface: &ValidatedSurfaceNode,
+    ) {
         let id = surface.id.as_str().to_string();
         let template_expr = surface.ir_template.as_ref().map(|t| &t.expr);
         let Some(q) = surface.qualified_entity.as_ref() else {
-            self.node_dispositions.insert(
-                id.clone(),
-                policy_disposition_for_node(self.policy, node),
-            );
+            self.node_dispositions
+                .insert(id.clone(), policy_disposition_for_node(self.policy, node));
             self.sink_proofs.insert(id, SinkProof::StaticClean);
             return;
         };
@@ -440,9 +442,7 @@ impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, 
             ctx.capability_name,
             ctx.expr_template,
         );
-        let mut disposition = self
-            .policy
-            .disposition_for_event(&event, ctx.author_label);
+        let mut disposition = self.policy.disposition_for_event(&event, ctx.author_label);
         for forbidden in self.policy.forbidden_rules() {
             if !incoming.labels.contains(&forbidden.from_label) {
                 continue;
@@ -467,8 +467,7 @@ impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, 
         }
         self.node_dispositions
             .insert(ctx.node_id.clone(), disposition);
-        self.sink_proofs
-            .insert(ctx.node_id, SinkProof::StaticClean);
+        self.sink_proofs.insert(ctx.node_id, SinkProof::StaticClean);
     }
 
     fn incoming_facts_from_template(
@@ -504,8 +503,10 @@ impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, 
                         .iter()
                         .map(|s| s.as_str().to_string())
                         .collect();
-                    out.columns
-                        .insert(vec![out_name.as_str().to_string()], source_facts.at_path(&path));
+                    out.columns.insert(
+                        vec![out_name.as_str().to_string()],
+                        source_facts.at_path(&path),
+                    );
                 }
             }
             ComputeOp::Filter { .. }
@@ -592,11 +593,7 @@ fn capability_name_from_expr(expr: &serde_json::Value) -> Option<String> {
     expr.get("capability")
         .and_then(|v| v.as_str())
         .map(str::to_string)
-        .or_else(|| {
-            expr.get("op")
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-        })
+        .or_else(|| expr.get("op").and_then(|v| v.as_str()).map(str::to_string))
 }
 
 fn surface_capability_key(surface: &ValidatedSurfaceNode) -> Option<QualifiedCapabilityKey> {
@@ -626,10 +623,7 @@ fn capability_from_plasm_expr(expr: &Expr) -> Option<String> {
             .as_ref()
             .map(|c| c.as_str().to_string())
             .or_else(|| Some(format!("{}_query", q.entity.as_str()))),
-        Expr::Get(g) => g
-            .capability_name
-            .as_ref()
-            .map(|c| c.as_str().to_string()),
+        Expr::Get(g) => g.capability_name.as_ref().map(|c| c.as_str().to_string()),
         Expr::Invoke(i) => Some(i.capability.as_str().to_string()),
         Expr::Create(c) => Some(c.capability.as_str().to_string()),
         Expr::Delete(d) => Some(d.capability.as_str().to_string()),
@@ -688,8 +682,7 @@ mod tests {
     #[test]
     fn forbidden_untrusted_to_outbound_sink_denies_mutation() {
         let mut catalog = FlowCatalogView::default();
-        let read_key =
-            QualifiedCapabilityKey::from_parts("flow", "Message", "Message_query");
+        let read_key = QualifiedCapabilityKey::from_parts("flow", "Message", "Message_query");
         let send_key = QualifiedCapabilityKey::from_parts("flow", "Message", "send");
         catalog.capability_output_labels.insert(
             read_key,

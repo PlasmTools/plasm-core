@@ -306,9 +306,6 @@ mod tests {
             operation: "create".into(),
         };
         let disposition = policy.disposition_for_event(&event, None);
-        assert!(matches!(
-            disposition,
-            NodeDisposition::Approve { .. }
-        ));
+        assert!(matches!(disposition, NodeDisposition::Approve { .. }));
     }
 }

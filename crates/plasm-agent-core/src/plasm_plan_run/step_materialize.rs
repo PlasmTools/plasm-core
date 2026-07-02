@@ -112,7 +112,8 @@ pub(crate) async fn materialize_executable_plan_step(
                 .and_then(|ir| ir.display_expr.as_deref())
                 .or(surface.display_expr.as_deref())
                 .unwrap_or("<ir>");
-            let scoped_es = entry_scoped_execute_session(ctx.es, surface.qualified_entity.as_ref())?;
+            let scoped_es =
+                entry_scoped_execute_session(ctx.es, surface.qualified_entity.as_ref())?;
             let host_page = crate::plan_read_bounds::effective_host_page_size(&surface);
             let (parsed, mut result, artifact) = execute_plasm_parsed_expr(
                 ctx.st,

@@ -262,8 +262,9 @@ mod tests {
     use plasm_core::{CgsContext, CGS};
 
     use super::{
-        accept_plan_commit_for_bundle, dry_for_committed_plasm_run, register_plan_commit_and_persist,
-        verify_committed_plan_bundle, verify_plan_commit_id, CommittedPlan, PlanCommitVerifyError,
+        accept_plan_commit_for_bundle, dry_for_committed_plasm_run,
+        register_plan_commit_and_persist, verify_committed_plan_bundle, verify_plan_commit_id,
+        CommittedPlan, PlanCommitVerifyError,
     };
     use crate::execute_session::ExecuteSession;
     use crate::operation::{
@@ -394,8 +395,8 @@ mod tests {
         assert!(matches!(err, PlanCommitVerifyError::Expired { .. }));
 
         es.register_plan_commit(rehydrate_record(
-                &es,
-                pc.clone(),
+            &es,
+            pc.clone(),
             PlanCommitId::from_canonical_bytes([2u8; 32]),
             0,
             es.flow_policy.revision_or_default(),
@@ -417,8 +418,8 @@ mod tests {
         let pc = es.mint_plan_commit_ref();
         let commit_id = PlanCommitId::from_canonical_bytes([4u8; 32]);
         es.register_plan_commit(rehydrate_record(
-                &es,
-                pc.clone(),
+            &es,
+            pc.clone(),
             commit_id.clone(),
             0,
             es.flow_policy.revision_or_default(),
@@ -440,8 +441,8 @@ mod tests {
         let pc = es.mint_plan_commit_ref();
         let commit_id = PlanCommitId::from_canonical_bytes([6u8; 32]);
         es.register_plan_commit(rehydrate_record(
-                &es,
-                pc.clone(),
+            &es,
+            pc.clone(),
             commit_id.clone(),
             0,
             es.flow_policy.revision_or_default(),
@@ -466,8 +467,8 @@ mod tests {
         let pc = es.mint_plan_commit_ref();
         let commit_id = PlanCommitId::from_canonical_bytes([7u8; 32]);
         es.register_plan_commit(rehydrate_record(
-                &es,
-                pc.clone(),
+            &es,
+            pc.clone(),
             commit_id.clone(),
             0,
             es.flow_policy.revision_or_default(),
@@ -495,8 +496,8 @@ mod tests {
             ..Default::default()
         };
         es.register_plan_commit(rehydrate_record(
-                &es,
-                pc.clone(),
+            &es,
+            pc.clone(),
             commit_id,
             es.domain_revision,
             es.flow_policy.revision_or_default(),

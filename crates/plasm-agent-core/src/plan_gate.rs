@@ -100,9 +100,6 @@ pub fn plan_gate(gate: &EvaluatedPlanGate, ctx: PlanGateContext<'_>) -> PlanGate
 }
 
 #[must_use]
-pub fn plan_requires_review_gate(
-    gate: &EvaluatedPlanGate,
-    ctx: PlanGateContext<'_>,
-) -> bool {
+pub fn plan_requires_review_gate(gate: &EvaluatedPlanGate, ctx: PlanGateContext<'_>) -> bool {
     matches!(plan_gate(gate, ctx), PlanGateDecision::NeedsReview)
 }

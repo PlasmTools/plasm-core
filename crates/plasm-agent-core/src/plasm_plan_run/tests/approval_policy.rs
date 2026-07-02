@@ -119,8 +119,8 @@ fn mutating_for_each_infers_approval_without_agent_label() {
 fn mutating_surface_gate_declares_default_auto_approval() {
     use crate::flow_catalog::FlowCatalogView;
     use crate::plan_flow::verify_plan_flow;
-    use crate::FlowPolicySnapshot;
     use crate::plasm_plan::parse_and_validate_plan_json;
+    use crate::FlowPolicySnapshot;
 
     let plan = serde_json::json!({
         "version": 1,

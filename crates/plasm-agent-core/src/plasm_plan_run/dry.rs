@@ -589,10 +589,7 @@ pub(crate) fn attach_flow_approval_gates(
     analysis: &crate::plan_flow::PlanFlowAnalysis,
 ) {
     for node in node_results {
-        let id = node
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
+        let id = node.get("id").and_then(|v| v.as_str()).map(str::to_string);
         let Some(id) = id else {
             continue;
         };

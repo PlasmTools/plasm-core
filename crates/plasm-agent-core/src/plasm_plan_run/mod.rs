@@ -68,8 +68,8 @@ mod step_materialize;
 #[cfg(all(test, feature = "alloc-bench"))]
 mod alloc_bench_test;
 
-pub(crate) use compute_eval::*;
 pub(crate) use compute_eval::NodeInputHoleIndex;
+pub(crate) use compute_eval::*;
 pub(crate) use materialize::*;
 pub(crate) use relation_hydrate::finalize_typed_relation_materialized_node;
 pub(crate) use render_columns::RenderColumns;

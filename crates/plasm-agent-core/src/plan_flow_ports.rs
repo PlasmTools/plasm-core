@@ -1,8 +1,8 @@
 //! Seams for flow verify: catalog projection and policy evaluation.
 
 use crate::flow_catalog::FlowCatalogView;
-use crate::plan_flow::{QualifiedCapabilityKey, SinkParamRef};
 use crate::plan_flow::NodeDisposition;
+use crate::plan_flow::{QualifiedCapabilityKey, SinkParamRef};
 use crate::plan_flow_policy::{
     EffectEvent, FlowPolicy, FlowPolicySnapshot, ForbiddenFlowRule, PolicyRevision,
 };

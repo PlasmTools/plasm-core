@@ -27,9 +27,7 @@ pub fn approval_gate_from_disposition(
     disposition: &NodeDisposition,
 ) -> Option<serde_json::Value> {
     match disposition {
-        NodeDisposition::Approve { requirement } => {
-            Some(approval_gate_json(requirement, node_id))
-        }
+        NodeDisposition::Approve { requirement } => Some(approval_gate_json(requirement, node_id)),
         _ => None,
     }
 }
@@ -64,7 +62,12 @@ pub fn effect_operation_label(
 }
 
 pub fn policy_key_for(q: &QualifiedEntityKey, operation: &str) -> String {
-    format!("{}.{}.{}", q.entry_id.as_str(), q.entity.as_str(), operation)
+    format!(
+        "{}.{}.{}",
+        q.entry_id.as_str(),
+        q.entity.as_str(),
+        operation
+    )
 }
 
 pub fn operation_name_for_kind(kind: PlanNodeKind) -> &'static str {

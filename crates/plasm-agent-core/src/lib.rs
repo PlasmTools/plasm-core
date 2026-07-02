@@ -98,21 +98,21 @@ pub mod output;
 pub mod plan_commit_store;
 mod plan_dry_display;
 pub use plan_dry_display::PlanDryVerdict;
+mod approval_gate;
+mod flow_catalog;
+mod plan_execute_shared;
 mod plan_flow;
 mod plan_flow_policy;
 mod plan_flow_ports;
-mod flow_catalog;
-mod approval_gate;
 mod plan_gate;
-mod plan_execute_shared;
 mod run_progress_resolve;
+pub use flow_catalog::FlowCatalogView;
 pub use plan_execute_shared::PlanLineExecuteShared;
 pub use plan_flow::{
     verify_plan_flow, ApprovalRequirement, FlowAdmission, FlowCheckedPlan, FlowDenial, FlowFacts,
     FlowVerdict, NodeDisposition, NodeFlowFacts, PlanFlowAnalysis, QualifiedCapabilityKey,
     SinkParamRef, SinkProof,
 };
-pub use flow_catalog::FlowCatalogView;
 pub use plan_flow_policy::{
     ApprovalHostPolicy, EffectEvent, EffectEventPattern, EffectRule, FlowEnforcement, FlowPolicy,
     FlowPolicySnapshot, ForbiddenFlowRule, PolicyRevision, SanitizerRecognition,
@@ -121,9 +121,9 @@ pub use plan_gate::{
     evaluate_plan_gate, merged_gate_verdict, plan_dry_verdict_from_flow, plan_gate,
     plan_requires_review_gate, EvaluatedPlanGate, PlanGateContext, PlanGateDecision,
 };
+pub mod plan_flow_reflection;
 pub mod plan_prepare;
 pub mod plan_read_bounds;
-pub mod plan_flow_reflection;
 pub mod plan_ux_reflection;
 mod plasm_comp_bundle;
 pub mod plasm_comp_display;

@@ -155,8 +155,7 @@ pub(crate) async fn post_run_execute_session(
                 force: false,
                 plan_commit_ref: None,
             },
-        )
-        {
+        ) {
             return problem_response(
                 Problem::custom(
                     ProblemStatus::BAD_REQUEST,
