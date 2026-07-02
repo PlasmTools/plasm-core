@@ -58,6 +58,55 @@ pub fn emit_contracts_ts() -> String {
             read_count: number;
         }
 
+        export type PlanUxFlowVerdict = "clean" | "needs_review" | "denied";
+
+        export type PlanUxFlowDisposition = "allow" | "approve" | "review" | "deny";
+
+        export interface PlanUxFlowCounts {
+            allow: number;
+            approve: number;
+            review: number;
+            deny: number;
+        }
+
+        export interface PlanUxFlowSink {
+            param: string;
+            sink_class?: string;
+        }
+
+        export interface PlanUxFlowViolation {
+            node_id: string;
+            headline?: string;
+            reason: string;
+            labels: string[];
+            sink?: PlanUxFlowSink;
+        }
+
+        export interface PlanUxFlowApproval {
+            operation: string;
+            policy_key: string;
+            reason?: string;
+        }
+
+        export interface PlanUxFlowStep {
+            id: string;
+            ordinal: number;
+            disposition: PlanUxFlowDisposition;
+            labels_in: string[];
+            labels_out: string[];
+            sink?: PlanUxFlowSink;
+            approval?: PlanUxFlowApproval;
+        }
+
+        export interface PlanUxFlowReflection {
+            schema_version: number;
+            verdict: PlanUxFlowVerdict;
+            policy_revision?: number;
+            counts: PlanUxFlowCounts;
+            violations: PlanUxFlowViolation[];
+            trace: PlanUxFlowStep[];
+        }
+
         export interface PlanUxReflection {
             schema_version: number;
             layout: PlanUxLayout;
@@ -72,6 +121,7 @@ pub fn emit_contracts_ts() -> String {
                 running_step_id?: string;
                 completed_step_ids?: string[];
             };
+            flow: PlanUxFlowReflection;
         }
 
         export interface WorkflowSeed {
@@ -123,5 +173,14 @@ mod tests {
         assert!(out.contains("ready: boolean"));
         assert!(out.contains("headline?: string"));
         assert!(out.contains("blocking_errors"));
+    }
+
+    #[test]
+    fn contracts_ts_contains_plan_ux_flow_reflection() {
+        let out = emit_contracts_ts();
+        assert!(out.contains("PlanUxFlowReflection"));
+        assert!(out.contains("PlanUxFlowVerdict"));
+        assert!(out.contains("PlanUxFlowDisposition"));
+        assert!(out.contains("flow: PlanUxFlowReflection;"));
     }
 }

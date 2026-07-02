@@ -184,6 +184,7 @@ mod tests {
             }),
             output_schema: None,
             provides: vec![],
+            sanitizes: vec![],
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
@@ -202,6 +203,7 @@ mod tests {
             input_schema: None,
             output_schema: None,
             provides: vec![],
+            sanitizes: vec![],
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
@@ -244,6 +246,7 @@ mod tests {
             description: None,
             default: None,
             role: None,
+            sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
         }]);
@@ -272,6 +275,7 @@ mod tests {
             description: None,
             default: None,
             role: None,
+            sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
         }]);
@@ -294,6 +298,7 @@ mod tests {
             description: None,
             default: None,
             role: None,
+            sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
         }]);
@@ -315,6 +320,7 @@ mod tests {
                 description: None,
                 default: None,
                 role: None,
+                sink_class: None,
                 wire_json_path: None,
                 wire_array_element_key: None,
             },
@@ -327,6 +333,7 @@ mod tests {
                 description: None,
                 default: None,
                 role: None,
+                sink_class: None,
                 wire_json_path: None,
                 wire_array_element_key: None,
             },
@@ -346,6 +353,7 @@ mod tests {
             description: None,
             default: None,
             role: None,
+            sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
         }]);
@@ -363,6 +371,7 @@ mod tests {
             description: None,
             default: None,
             role: None,
+            sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
         }]);
@@ -387,6 +396,7 @@ mod tests {
             description: None,
             default: None,
             role: None,
+            sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
         }]);
@@ -411,6 +421,7 @@ mod tests {
             description: None,
             default: None,
             role: None,
+            sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
         }]);

@@ -13,6 +13,44 @@ use std::sync::Mutex;
 
 static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
 
+struct EnvGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    keys: Vec<&'static str>,
+    prior: Vec<(String, Option<String>)>,
+}
+
+impl EnvGuard {
+    fn new(keys: &[&'static str]) -> Self {
+        let lock = env_test_guard();
+        let prior = keys
+            .iter()
+            .map(|k| ((*k).to_string(), std::env::var(k).ok()))
+            .collect();
+        for k in keys {
+            std::env::remove_var(k);
+        }
+        Self {
+            _lock: lock,
+            keys: keys.to_vec(),
+            prior,
+        }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        for k in &self.keys {
+            std::env::remove_var(k);
+        }
+        for (k, v) in self.prior.drain(..) {
+            match v {
+                Some(val) => std::env::set_var(&k, val),
+                None => std::env::remove_var(&k),
+            }
+        }
+    }
+}
+
 fn env_test_guard() -> std::sync::MutexGuard<'static, ()> {
     ENV_TEST_LOCK
         .lock()
@@ -21,8 +59,7 @@ fn env_test_guard() -> std::sync::MutexGuard<'static, ()> {
 
 #[test]
 fn session_slot_unallocated_when_disabled() {
-    let _guard = env_test_guard();
-    std::env::remove_var(ENV_PLASM_EVIDENCE_CHAIN);
+    let _guard = EnvGuard::new(&[ENV_PLASM_EVIDENCE_CHAIN, ENV_PLASM_EVIDENCE_SIGNING_KEY]);
     let chain = EvidenceChainSession::new();
     chain
         .record_step_executed(
@@ -44,7 +81,7 @@ fn session_slot_unallocated_when_disabled() {
 
 #[test]
 fn execute_session_chain_slot_lazy() {
-    let _guard = env_test_guard();
+    let _guard = EnvGuard::new(&[ENV_PLASM_EVIDENCE_CHAIN, ENV_PLASM_EVIDENCE_SIGNING_KEY]);
     std::env::set_var(ENV_PLASM_EVIDENCE_CHAIN, "1");
     let es = minimal_execute_session();
     assert!(es.evidence_chain.lock().unwrap().is_none());
@@ -54,7 +91,7 @@ fn execute_session_chain_slot_lazy() {
 
 #[test]
 fn record_step_executed_accepts_synthetic_fingerprint() {
-    let _guard = env_test_guard();
+    let _guard = EnvGuard::new(&[ENV_PLASM_EVIDENCE_CHAIN, ENV_PLASM_EVIDENCE_SIGNING_KEY]);
     std::env::set_var(ENV_PLASM_EVIDENCE_CHAIN, "1");
     let chain = EvidenceChainSession::new();
     chain
@@ -85,7 +122,7 @@ fn record_step_executed_accepts_synthetic_fingerprint() {
 
 #[test]
 fn batch_record_steps_single_lock() {
-    let _guard = env_test_guard();
+    let _guard = EnvGuard::new(&[ENV_PLASM_EVIDENCE_CHAIN, ENV_PLASM_EVIDENCE_SIGNING_KEY]);
     std::env::set_var(ENV_PLASM_EVIDENCE_CHAIN, "1");
     let chain = EvidenceChainSession::new();
     chain
@@ -130,7 +167,7 @@ fn batch_record_steps_single_lock() {
 
 #[test]
 fn record_run_sealed_rejects_run_id_wire_mismatch() {
-    let _guard = env_test_guard();
+    let _guard = EnvGuard::new(&[ENV_PLASM_EVIDENCE_CHAIN, ENV_PLASM_EVIDENCE_SIGNING_KEY]);
     std::env::set_var(ENV_PLASM_EVIDENCE_CHAIN, "1");
     let chain = EvidenceChainSession::new();
     chain
@@ -164,7 +201,7 @@ fn record_run_sealed_rejects_run_id_wire_mismatch() {
 
 #[test]
 fn finish_bundle_rejects_invalid_signing_key() {
-    let _guard = env_test_guard();
+    let _guard = EnvGuard::new(&[ENV_PLASM_EVIDENCE_CHAIN, ENV_PLASM_EVIDENCE_SIGNING_KEY]);
     std::env::set_var(ENV_PLASM_EVIDENCE_CHAIN, "1");
     std::env::set_var(ENV_PLASM_EVIDENCE_SIGNING_KEY, "not-a-valid-seed");
     let chain = EvidenceChainSession::new();
@@ -180,7 +217,33 @@ fn finish_bundle_rejects_invalid_signing_key() {
     chain.record_comp_committed(&minimal_comp()).expect("comp");
     let err = chain.finish_bundle().expect_err("invalid key");
     assert!(matches!(err, EvidenceEmitError::SigningKeyInvalid(_)));
-    std::env::remove_var(ENV_PLASM_EVIDENCE_SIGNING_KEY);
+}
+
+#[test]
+fn concurrent_run_chains_do_not_reset_each_other() {
+    let _guard = EnvGuard::new(&[ENV_PLASM_EVIDENCE_CHAIN, ENV_PLASM_EVIDENCE_SIGNING_KEY]);
+    std::env::set_var(ENV_PLASM_EVIDENCE_CHAIN, "1");
+    let es = minimal_execute_session();
+    let a = super::plan::start_run_evidence_chain(
+        &es,
+        "sess-a",
+        plasm_evidence::EvidenceAnchors::default(),
+    )
+    .expect("chain a")
+    .expect("enabled");
+    let b = super::plan::start_run_evidence_chain(
+        &es,
+        "sess-b",
+        plasm_evidence::EvidenceAnchors::default(),
+    )
+    .expect("chain b")
+    .expect("enabled");
+    a.record_comp_committed(&minimal_comp()).expect("comp a");
+    b.record_comp_committed(&minimal_comp()).expect("comp b");
+    let bundle_a = a.finish_bundle().expect("finish a").expect("bundle a");
+    let bundle_b = b.finish_bundle().expect("finish b").expect("bundle b");
+    assert_eq!(bundle_a.chain.segments.len(), 1);
+    assert_eq!(bundle_b.chain.segments.len(), 1);
 }
 
 fn minimal_execute_session() -> ExecuteSession {

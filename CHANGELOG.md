@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.107] - 2026-07-02
+
+### Added
+
+- **Plan MCP UI Flow tab:** `plan_flow_reflection.rs` projects `PlanFlowAnalysis` into a UI-ready data-flow trace (verdict strip, sink violations, per-step label provenance) — independent of execution, auto-selected when the flow verdict is `denied`. `PlanUxReflection.flow` is now a mandatory field (`PLAN_UX_REFLECTION_SCHEMA_VERSION` bumped to 3).
+- **`plasm-workflow-codegen`** now emits `contracts.ts` to both `apps/workflow-mcp-app` and `apps/plan-ui`, kept identical; `ensure-workflow-ts-codegen.sh` validates both copies.
+
+### Fixed
+
+- **Evidence chain concurrency (CEP-13):** per-run evidence chains on `ExecutionScope` instead of resetting the shared session chain on each live `plasm_run`; `record_comp_committed` always runs at live execute start (covers cached dry commits).
+- **MCP SSE reconnect:** streamable HTTP GET reconnect supersedes the prior standalone SSE listener instead of returning HTTP 409 (`rust-mcp-sdk`).
+- **Release version/tag mismatch:** `v0.3.106` was tagged before its workspace version bump was committed, tripping `verify-release-tag` (no artifacts shipped under that tag). This release corrects the bump-then-tag ordering.
+
 ## [0.3.106] - 2026-07-02
 
 ### Fixed

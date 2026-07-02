@@ -2379,6 +2379,7 @@ fn prompt_stats_fixture_cgs() -> CGS {
         attachment_media: None,
         wire_path: None,
         derive: None,
+        data_class: None,
     };
     cgs.add_resource(ResourceSchema {
         name: "Book".into(),
@@ -2437,6 +2438,7 @@ fn prompt_stats_fixture_cgs() -> CGS {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         })
         .unwrap();
     }
@@ -2502,6 +2504,7 @@ fn string_id_field(description: &str) -> FieldSchema {
         attachment_media: None,
         wire_path: None,
         derive: None,
+        data_class: None,
     }
 }
 
@@ -2560,6 +2563,7 @@ fn p_slot_redefinition_fixture_cgs(id_desc_a: &str, id_desc_b: &str) -> CGS {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         })
         .unwrap();
     }

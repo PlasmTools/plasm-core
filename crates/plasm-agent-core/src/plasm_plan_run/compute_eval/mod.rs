@@ -12,5 +12,6 @@ pub(crate) use compute_ops::*;
 pub(crate) use dry_staging::*;
 pub(crate) use eval::*;
 pub(crate) use for_each::*;
+pub(crate) use hole_paths::NodeInputHoleIndex;
 pub(crate) use input_rows::*;
 pub(crate) use relation::*;

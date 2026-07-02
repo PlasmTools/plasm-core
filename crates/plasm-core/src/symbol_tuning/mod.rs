@@ -4364,6 +4364,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    data_class: None,
                 },
                 FieldSchema {
                     name: "foo".into(),
@@ -4375,6 +4376,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    data_class: None,
                 },
                 FieldSchema {
                     name: "bar".into(),
@@ -4386,6 +4388,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    data_class: None,
                 },
             ],
             relations: vec![],
@@ -4412,6 +4415,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         })
         .unwrap();
         cgs.validate().expect("fixture CGS");

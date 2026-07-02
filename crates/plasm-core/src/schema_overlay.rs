@@ -523,6 +523,7 @@ fn field_from_value_ref(
         required: false,
         agent_presentation: None,
         mime_type_hint: None,
+        data_class: None,
         attachment_media: None,
         wire_path,
         derive,

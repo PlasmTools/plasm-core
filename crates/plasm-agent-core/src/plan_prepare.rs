@@ -975,6 +975,7 @@ mod tests {
             &dry.review,
             &dry.graph_summary,
             Some(&s),
+            None,
         );
         assert_eq!(
             compact.verdict,
@@ -1020,6 +1021,7 @@ mod tests {
             &dry.review,
             &dry.graph_summary,
             Some(&s),
+            None,
         );
         assert_eq!(compact.verdict, PlanDryVerdict::Ok);
         assert!(

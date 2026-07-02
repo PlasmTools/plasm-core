@@ -63,6 +63,7 @@ fn ticket_query_fixture_cgs() -> CGS {
         scope_aggregate_key_policy: Default::default(),
         preflight: None,
         discovery: None,
+        sanitizes: vec![],
     })
     .unwrap();
     cgs.validate().unwrap();

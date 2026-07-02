@@ -3,23 +3,32 @@
 use std::env;
 use std::path::PathBuf;
 
-fn default_out_path() -> PathBuf {
+fn default_out_paths() -> Vec<PathBuf> {
     let root = env!("CARGO_MANIFEST_DIR");
-    PathBuf::from(root)
-        .join("../../..")
-        .join("apps/workflow-mcp-app/src/generated/contracts.ts")
+    let base = PathBuf::from(root).join("../../..");
+    vec![
+        base.join("apps/workflow-mcp-app/src/generated/contracts.ts"),
+        base.join("apps/plan-ui/src/generated/contracts.ts"),
+    ]
 }
 
 fn main() {
-    let out = env::args()
+    let explicit: Vec<PathBuf> = env::args()
         .skip(1)
-        .find(|a| !a.starts_with('-'))
+        .filter(|a| !a.starts_with('-'))
         .map(PathBuf::from)
-        .unwrap_or_else(default_out_path);
-    if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent).expect("create generated dir");
-    }
+        .collect();
+    let outs = if explicit.is_empty() {
+        default_out_paths()
+    } else {
+        explicit
+    };
     let ts = plasm_workflow_codegen::emit_contracts_ts();
-    std::fs::write(&out, ts).expect("write contracts.ts");
-    eprintln!("wrote {}", out.display());
+    for out in outs {
+        if let Some(parent) = out.parent() {
+            std::fs::create_dir_all(parent).expect("create generated dir");
+        }
+        std::fs::write(&out, &ts).expect("write contracts.ts");
+        eprintln!("wrote {}", out.display());
+    }
 }

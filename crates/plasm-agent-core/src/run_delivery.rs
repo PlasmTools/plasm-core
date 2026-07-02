@@ -152,6 +152,7 @@ pub struct LiveRunSpawn {
     pub auto_async: bool,
     pub accept_payload: RunExplorerAcceptPayload,
     pub dry: Option<DryPlasmPlanEvaluation>,
+    pub evidence_anchors: plasm_evidence::EvidenceAnchors,
 }
 
 /// Optional spawn-time hooks not carried on [`LiveRunAwaitContext`].
@@ -181,6 +182,7 @@ fn spawn_live_plan_run(
     if let Some(policy) = opts.mcp_result_policy {
         accept = accept.with_mcp_result_policy(policy);
     }
+    accept = accept.with_evidence_anchors(spawn.evidence_anchors.clone());
     spawn_async_plan_run(
         Arc::clone(&spawn.es),
         Arc::clone(&spawn.st),
@@ -316,6 +318,11 @@ pub async fn deliver_http_live_run(
                     auto_async,
                     accept_payload: accept_payload.clone(),
                     dry: Some(req.dry),
+                    evidence_anchors: crate::evidence_chain::evidence_anchors(
+                        req.plan_commit_ref.as_ref(),
+                        None,
+                        None,
+                    ),
                 },
                 LiveRunSpawnOpts::default(),
             )?;
@@ -370,16 +377,11 @@ pub async fn deliver_live_run_await(
     ctx: LiveRunAwaitContext,
     spawn_opts: LiveRunSpawnOpts,
 ) -> Result<PlasmPlanRunResult, LiveRunError> {
-    crate::evidence_chain::begin_plan_evidence_with_anchors(
-        ctx.es.as_ref(),
-        ctx.session_id.as_str(),
-        crate::evidence_chain::evidence_anchors(
-            ctx.plan_commit_ref.as_ref(),
-            Some(ctx.trace.trace_id),
-            ctx.trace.call_index.map(|i| i as u64),
-        ),
-    )
-    .map_err(|e| LiveRunError::Failed(format!("evidence begin: {e}")))?;
+    let evidence_anchors = crate::evidence_chain::evidence_anchors(
+        ctx.plan_commit_ref.as_ref(),
+        Some(ctx.trace.trace_id),
+        ctx.trace.call_index.map(|i| i as u64),
+    );
 
     let handle = spawn_live_plan_run(
         LiveRunSpawn {
@@ -394,6 +396,7 @@ pub async fn deliver_live_run_await(
             auto_async: false,
             accept_payload: ctx.accept_payload,
             dry: ctx.dry,
+            evidence_anchors,
         },
         spawn_opts,
     )?;

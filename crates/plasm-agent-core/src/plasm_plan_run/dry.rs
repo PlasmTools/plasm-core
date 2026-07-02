@@ -44,7 +44,6 @@ pub fn evaluate_executable_comp_dry(
                 .map_err(|e| format!("type check in plan.nodes[{step_idx}].relation.expr: {e}"))?;
             ensure_relation_expr_matches_plan(es, relation, &pe, step_idx)?;
         }
-        let inferred_approval = inferred_node_approval(&n);
         if let Some(surface) = n.as_surface() {
             match surface_parsed_expr(surface, step_idx) {
                 Ok(Some(pe)) => {
@@ -97,7 +96,6 @@ pub fn evaluate_executable_comp_dry(
                         "result_shape": n.result_shape(),
                         "projection": surface.projection,
                         "predicates": surface.predicates,
-                        "approval_gate": inferred_approval,
                         "ir": {
                             "expr": parsed.expr,
                             "projection": parsed.projection
@@ -131,6 +129,22 @@ pub fn evaluate_executable_comp_dry(
     let prepared = crate::plan_prepare::prepare_executable_plan_for_session(es, comp, executable)?;
     dry_validate_render_nodes(es, prepared.validated.artifact())?;
     dry_validate_staged_surfaces(es, prepared.validated.artifact())?;
+    let flow_catalog = es.build_flow_catalog_view();
+    let topological_order: Vec<String> = executable
+        .steps_topo
+        .iter()
+        .map(|(id, _)| id.as_str().to_string())
+        .collect();
+    let flow_checked = crate::plan_flow::verify_plan_flow(
+        prepared.validated.artifact(),
+        &topological_order,
+        &flow_catalog,
+        &es.flow_policy,
+    );
+    let flow_analysis = flow_checked.analysis;
+    attach_flow_approval_gates(&mut out, &flow_analysis);
+    let mut graph_summary = prepared.graph_summary;
+    enrich_graph_summary_flow(&mut graph_summary, &flow_analysis);
     let parallel_root_surfaces_only =
         compute_parallel_root_surfaces_only(prepared.validated.artifact());
     Ok(DryPlasmPlanEvaluation {
@@ -139,17 +153,14 @@ pub fn evaluate_executable_comp_dry(
         artifact: artifact.clone(),
         executable: executable.clone(),
         cached_validated: std::cell::OnceCell::from(prepared.validated),
-        topological_order: executable
-            .steps_topo
-            .iter()
-            .map(|(id, _)| id.as_str().to_string())
-            .collect(),
+        topological_order,
         node_results: out,
         parallel_root_surfaces_only,
         staged_nodes,
         execution_unsupported,
-        graph_summary: prepared.graph_summary,
+        graph_summary,
         review: prepared.review,
+        flow: flow_analysis,
     })
 }
 
@@ -228,6 +239,51 @@ pub(crate) fn enrich_graph_summary_auth_scoped_reads(
     }
 }
 
+pub(crate) fn enrich_graph_summary_flow(
+    summary: &mut serde_json::Value,
+    analysis: &crate::plan_flow::PlanFlowAnalysis,
+) {
+    let verdict = match analysis.verdict {
+        crate::plan_flow::FlowVerdict::Clean => "clean",
+        crate::plan_flow::FlowVerdict::NeedsReview => "needs_review",
+        crate::plan_flow::FlowVerdict::Denied => "denied",
+    };
+    let mut allow = 0usize;
+    let mut approve = 0usize;
+    let mut review = 0usize;
+    let mut deny = 0usize;
+    for disposition in analysis.node_dispositions.values() {
+        match disposition {
+            crate::plan_flow::NodeDisposition::Allow => allow += 1,
+            crate::plan_flow::NodeDisposition::Approve { .. } => approve += 1,
+            crate::plan_flow::NodeDisposition::Review => review += 1,
+            crate::plan_flow::NodeDisposition::Deny => deny += 1,
+        }
+    }
+    let Some(obj) = summary.as_object_mut() else {
+        return;
+    };
+    obj.insert("security_verdict".into(), serde_json::json!(verdict));
+    obj.insert(
+        "flow_summary".into(),
+        serde_json::json!({
+            "verdict": verdict,
+            "violation_count": analysis.violations.len(),
+            "node_count": analysis.node_dispositions.len(),
+            "dispositions": {
+                "allow": allow,
+                "approve": approve,
+                "review": review,
+                "deny": deny,
+            },
+        }),
+    );
+    obj.insert(
+        "approval_gates".into(),
+        serde_json::Value::Array(analysis.approval_gates_json()),
+    );
+}
+
 /// Render the compact agent-facing dry-run plan text.
 pub fn render_plasm_plan_dry_text(
     dry: &DryPlasmPlanEvaluation,
@@ -251,12 +307,14 @@ pub fn plan_dry_compact_view(
     dry: &DryPlasmPlanEvaluation,
     es: Option<&ExecuteSession>,
 ) -> plan_dry_display::PlanDryCompactView {
+    let flow_override = Some(crate::plan_gate::plan_dry_verdict_from_flow(&dry.flow));
     plan_dry_display::build_plan_dry_compact_view(
         dry.validated_plan(),
         &dry.topological_order,
         &dry.review,
         &dry.graph_summary,
         es,
+        flow_override,
     )
 }
 
@@ -340,7 +398,6 @@ pub(crate) fn graph_summary(
     let mut write_or_side_effect_nodes = Vec::new();
     let mut derive_nodes = Vec::new();
     let mut template_nodes = Vec::new();
-    let mut approval_gates = Vec::new();
     let mut parallelizable_roots = Vec::new();
     let mut warnings = Vec::new();
     let mut boundedness_facts = Vec::new();
@@ -373,9 +430,6 @@ pub(crate) fn graph_summary(
             {
                 singleton_foreach_writes += 1;
             }
-        }
-        if let Some(approval) = inferred_node_approval(n) {
-            approval_gates.push(approval);
         }
         if matches!(n.result_shape(), crate::plasm_plan::ResultShape::List)
             && n.effect_class() == EffectClass::Read
@@ -515,7 +569,6 @@ pub(crate) fn graph_summary(
             "write_or_side_effect_nodes": write_or_side_effect_nodes,
             "derive_nodes": derive_nodes,
             "template_nodes": template_nodes,
-            "approval_gates": approval_gates,
             "parallelizable_roots": parallelizable_roots,
             "warnings": warnings,
             "boundedness_facts": boundedness_facts,
@@ -531,39 +584,27 @@ pub(crate) fn graph_summary(
     )
 }
 
-pub(crate) fn inferred_node_approval(node: &ValidatedPlanNode) -> Option<serde_json::Value> {
-    match node {
-        ValidatedPlanNode::ForEach(n) => inferred_template_approval(n),
-        ValidatedPlanNode::Surface(n) if node_requires_approval(n.kind, n.effect_class) => {
-            let q = n.qualified_entity.as_ref()?;
-            Some(approval_gate_json(
-                n.id.as_str(),
-                q,
-                n.kind,
-                None,
-                n.approval.as_deref(),
-            ))
+pub(crate) fn attach_flow_approval_gates(
+    node_results: &mut [serde_json::Value],
+    analysis: &crate::plan_flow::PlanFlowAnalysis,
+) {
+    for node in node_results {
+        let id = node
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string);
+        let Some(id) = id else {
+            continue;
+        };
+        let Some(obj) = node.as_object_mut() else {
+            continue;
+        };
+        if let Some(gate) = analysis.approval_gate_for_node(id.as_str()) {
+            obj.insert("approval_gate".into(), gate);
+        } else {
+            obj.remove("approval_gate");
         }
-        _ => None,
     }
-}
-
-pub(crate) fn inferred_template_approval(node: &ValidatedForEachNode) -> Option<serde_json::Value> {
-    if !node_requires_approval(node.effect_template.kind, node.effect_template.effect_class) {
-        return None;
-    }
-    let action_name = if node.effect_template.kind == PlanNodeKind::Action {
-        action_name_from_template(node.effect_template.expr_template.as_str())
-    } else {
-        None
-    };
-    Some(approval_gate_json(
-        node.id.as_str(),
-        &node.effect_template.qualified_entity,
-        node.effect_template.kind,
-        action_name.as_deref(),
-        node.approval.as_deref(),
-    ))
 }
 
 pub(crate) fn remote_mutation_effect(kind: PlanNodeKind, effect_class: EffectClass) -> bool {
@@ -573,58 +614,9 @@ pub(crate) fn remote_mutation_effect(kind: PlanNodeKind, effect_class: EffectCla
     ) || matches!(effect_class, EffectClass::Write | EffectClass::SideEffect)
 }
 
-pub(crate) fn node_requires_approval(kind: PlanNodeKind, effect_class: EffectClass) -> bool {
-    remote_mutation_effect(kind, effect_class)
-}
-
 /// Remote mutation inside a `for_each` body (fan-out / multi-write risk). Read-only bodies excluded.
 pub(crate) fn for_each_body_mutates_remote(kind: PlanNodeKind, effect_class: EffectClass) -> bool {
     remote_mutation_effect(kind, effect_class)
-}
-
-pub(crate) fn approval_gate_json(
-    node_id: &str,
-    q: &QualifiedEntityKey,
-    kind: PlanNodeKind,
-    action_name: Option<&str>,
-    author_label: Option<&str>,
-) -> serde_json::Value {
-    let operation = action_name.unwrap_or(match kind {
-        PlanNodeKind::Create => "create",
-        PlanNodeKind::Update => "update",
-        PlanNodeKind::Delete => "delete",
-        PlanNodeKind::Action => "action",
-        PlanNodeKind::Data => "data",
-        PlanNodeKind::Query => "query",
-        PlanNodeKind::Search => "search",
-        PlanNodeKind::Get => "get",
-        PlanNodeKind::Derive => "derive",
-        PlanNodeKind::Compute => "compute",
-        PlanNodeKind::ForEach => "for_each",
-        PlanNodeKind::Relation => "relation",
-    });
-    serde_json::json!({
-        "node": node_id,
-        "required": true,
-        "host_policy": "host.auto_approve",
-        "default_decision": "approved",
-        "policy_key": format!("{}.{}.{}", q.entry_id, q.entity, operation),
-        "entry_id": q.entry_id,
-        "entity": q.entity,
-        "operation": operation,
-        "author_label": author_label,
-        "reason": format!("mutating capability {:?} on {}.{}", kind, q.entry_id, q.entity),
-    })
-}
-
-pub(crate) fn action_name_from_template(expr_template: &str) -> Option<String> {
-    let after_ref = expr_template.split(").").nth(1)?;
-    let name = after_ref
-        .split(|c: char| c == '(' || c.is_whitespace())
-        .next()
-        .unwrap_or_default()
-        .trim();
-    (!name.is_empty()).then(|| name.to_string())
 }
 
 pub(crate) fn ensure_node_dispatchable(
@@ -810,7 +802,6 @@ pub(crate) fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_jso
             "source": for_each.source.as_str(),
             "item_binding": for_each.item_binding.as_str(),
             "approval": for_each.approval,
-            "approval_gate": inferred_node_approval(n),
             "effect_template": for_each.effect_template,
             "simulation": {
                 "kind": "template_stage",
@@ -831,7 +822,6 @@ pub(crate) fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_jso
             "result_shape": n.result_shape(),
             "depends_on": node_ids_json(n.depends_on()),
             "uses_result": n.uses_result(),
-            "approval_gate": inferred_node_approval(n),
             "data": data.data,
             "simulation": {
                 "kind": "static_data",
@@ -848,7 +838,6 @@ pub(crate) fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_jso
             "result_shape": n.result_shape(),
             "depends_on": node_ids_json(n.depends_on()),
             "uses_result": n.uses_result(),
-            "approval_gate": inferred_node_approval(n),
             "source": derive.source.as_str(),
             "item_binding": derive.item_binding.as_str(),
             "inputs": validated_inputs_json(&derive.inputs),
@@ -868,7 +857,6 @@ pub(crate) fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_jso
             "result_shape": n.result_shape(),
             "depends_on": node_ids_json(n.depends_on()),
             "uses_result": n.uses_result(),
-            "approval_gate": inferred_node_approval(n),
             "compute": compute.compute,
             "simulation": {
                 "kind": "deterministic_compute",
@@ -885,7 +873,6 @@ pub(crate) fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_jso
             "result_shape": n.result_shape(),
             "depends_on": node_ids_json(n.depends_on()),
             "uses_result": n.uses_result(),
-            "approval_gate": inferred_node_approval(n),
             "relation": {
                 "source": relation.relation.source.as_str(),
                 "name": relation.relation.relation.as_str(),
@@ -917,7 +904,6 @@ pub(crate) fn dry_stage_result(index: usize, n: &ValidatedPlanNode) -> serde_jso
             "result_shape": n.result_shape(),
             "depends_on": node_ids_json(n.depends_on()),
             "uses_result": n.uses_result(),
-            "approval_gate": inferred_node_approval(n),
             "simulation": {
                 "kind": "staged_effect",
                 "execution": "requires phased Plan runner"

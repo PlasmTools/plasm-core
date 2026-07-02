@@ -12,6 +12,10 @@ impl NodeInputHoleIndex {
         Self(collect_node_input_hole_paths(expr))
     }
 
+    pub(crate) fn alias_paths(&self) -> &BTreeMap<String, Vec<Vec<String>>> {
+        &self.0
+    }
+
     pub(crate) fn needs_singleton_row(&self, alias: &InputAlias) -> bool {
         self.0
             .get(alias.as_str())

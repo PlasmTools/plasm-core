@@ -119,6 +119,7 @@ pub fn merge_run_explorer_fields_into_plasm(
             json!(match verdict {
                 PlanDryVerdict::Ok => "ok",
                 PlanDryVerdict::Review => "review",
+                PlanDryVerdict::Deny => "deny",
             }),
         );
     }

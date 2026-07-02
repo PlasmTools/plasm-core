@@ -7,6 +7,7 @@ use plasm_core::{PagingHandle, PlanCommitRef, PromptPipelineConfig, SymbolMapCro
 use crate::execute_session::ExecuteSession;
 use crate::plan_commit_store::{dry_for_committed_plasm_run, CommittedPlan};
 use crate::plan_dry_display::{build_plan_dry_compact_view, PlanDryVerdict};
+use crate::plan_gate::{plan_requires_review_gate, PlanGateContext};
 use crate::plasm_comp_bundle::PlasmCompBundle;
 use crate::plasm_compile::compile_plasm_expression;
 use crate::plasm_plan_run::{evaluate_plasm_comp_dry, DryPlasmPlanEvaluation, PlasmPlanRunResult};
@@ -144,15 +145,6 @@ impl ExecuteMcpLiveRun {
             code_chars: self.artifacts.program_for_trace.chars().count() as u64,
         }
     }
-
-    fn plan_commit_ref_for_evidence(&self) -> Option<&PlanCommitRef> {
-        match &self.kind {
-            McpLiveRunKind::ReviewedCommit {
-                plan_commit_ref, ..
-            } => Some(plan_commit_ref),
-            McpLiveRunKind::PageContinuation { .. } => None,
-        }
-    }
 }
 
 struct LiveDryOutcome {
@@ -167,18 +159,21 @@ fn prepare_live_dry(run: &ExecuteMcpLiveRun) -> Result<LiveDryOutcome, String> {
             committed,
             plan_commit_ref,
         } => {
-            if crate::operation::plan_requires_review_gate(
-                committed.verdict,
-                run.force_run,
-                Some(plan_commit_ref),
+            let dry =
+                dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, committed.as_ref())?;
+            let gate = dry.evaluate_gate();
+            if plan_requires_review_gate(
+                &gate,
+                PlanGateContext {
+                    force: run.force_run,
+                    plan_commit_ref: Some(plan_commit_ref),
+                },
             ) {
                 return Err(
                     "plan_requires_review: call `plasm` dry-run first, then pass the returned `run_ref` (`pcN`) to `plasm_run`"
                         .to_string(),
                 );
             }
-            let dry =
-                dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, committed.as_ref())?;
             Ok(LiveDryOutcome {
                 dry,
                 verdict: committed.verdict,
@@ -193,6 +188,7 @@ fn prepare_live_dry(run: &ExecuteMcpLiveRun) -> Result<LiveDryOutcome, String> {
                 &dry.review,
                 &dry.graph_summary,
                 Some(run.es.as_ref()),
+                None,
             );
             Ok(LiveDryOutcome {
                 dry,
@@ -204,20 +200,6 @@ fn prepare_live_dry(run: &ExecuteMcpLiveRun) -> Result<LiveDryOutcome, String> {
 }
 
 pub async fn execute_mcp_live_run(run: ExecuteMcpLiveRun) -> Result<PlasmPlanRunResult, String> {
-    crate::mcp_plasm_run_phases::mcp_plasm_run_phase("evidence_begin", || async {
-        crate::evidence_chain::begin_plan_evidence_with_anchors(
-            run.es.as_ref(),
-            run.wire.session_id.as_str(),
-            crate::evidence_chain::evidence_anchors(
-                run.plan_commit_ref_for_evidence(),
-                Some(run.mcp_trace.trace_id),
-                Some(run.artifacts.plan_call_index),
-            ),
-        )
-        .map_err(|e| format!("evidence begin: {e}"))
-    })
-    .await?;
-
     if !run.wait_live {
         return Err("plasm_run requires live execute".to_string());
     }

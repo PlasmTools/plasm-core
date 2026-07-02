@@ -20,6 +20,7 @@ pub fn build_dry_compact_view_from_comp(
         &dry.review,
         &dry.graph_summary,
         es,
+        None,
     )
 }
 

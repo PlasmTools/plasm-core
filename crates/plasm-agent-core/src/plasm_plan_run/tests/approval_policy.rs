@@ -117,6 +117,11 @@ fn mutating_for_each_infers_approval_without_agent_label() {
 
 #[test]
 fn mutating_surface_gate_declares_default_auto_approval() {
+    use crate::flow_catalog::FlowCatalogView;
+    use crate::plan_flow::verify_plan_flow;
+    use crate::FlowPolicySnapshot;
+    use crate::plasm_plan::parse_and_validate_plan_json;
+
     let plan = serde_json::json!({
         "version": 1,
         "kind": "program",
@@ -131,9 +136,17 @@ fn mutating_surface_gate_declares_default_auto_approval() {
         }],
         "return": { "kind": "node", "node": "c1" }
     });
-    let typed = parse_plan_value(&plan).expect("parse plan");
-    let validated = validate_plan_artifact(&typed).expect("validate");
-    let gate = inferred_node_approval(&validated.nodes()[0]).expect("approval gate");
+    let validated = parse_and_validate_plan_json(&plan).expect("validate");
+    let checked = verify_plan_flow(
+        validated.artifact(),
+        &["c1".to_string()],
+        &FlowCatalogView::default(),
+        &FlowPolicySnapshot::Inactive,
+    );
+    let gate = checked
+        .analysis
+        .approval_gate_for_node("c1")
+        .expect("approval gate");
 
     assert_eq!(gate["policy_key"], "acme.Product.create");
     assert_eq!(gate["host_policy"], "host.auto_approve");

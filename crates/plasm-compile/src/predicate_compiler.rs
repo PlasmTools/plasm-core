@@ -211,6 +211,7 @@ mod tests {
             attachment_media: None,
             wire_path: None,
             derive: None,
+            data_class: None,
         }
     }
 

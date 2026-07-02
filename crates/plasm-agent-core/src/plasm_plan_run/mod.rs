@@ -69,6 +69,7 @@ mod step_materialize;
 mod alloc_bench_test;
 
 pub(crate) use compute_eval::*;
+pub(crate) use compute_eval::NodeInputHoleIndex;
 pub(crate) use materialize::*;
 pub(crate) use relation_hydrate::finalize_typed_relation_materialized_node;
 pub(crate) use render_columns::RenderColumns;
@@ -86,10 +87,10 @@ pub use parse::{
     symbol_map_for_plasm_surface_parse, typecheck_parsed_for_session,
 };
 
-pub(crate) use dry::inferred_node_approval;
+#[allow(unused_imports)]
 pub(crate) use dry::{
-    enrich_graph_summary_auth_scoped_reads, for_each_body_mutates_remote, graph_summary,
-    unused_seed_hints,
+    attach_flow_approval_gates, enrich_graph_summary_auth_scoped_reads, enrich_graph_summary_flow,
+    for_each_body_mutates_remote, graph_summary, unused_seed_hints,
 };
 pub(crate) use orchestrator::{
     inline_row_source, inline_row_source_owned, MaterializedInputRow, MaterializedNode,
@@ -145,11 +146,31 @@ pub struct DryPlasmPlanEvaluation {
     pub execution_unsupported: Vec<String>,
     pub graph_summary: serde_json::Value,
     pub review: PlanDryReview,
+    pub flow: crate::plan_flow::PlanFlowAnalysis,
 }
 
 impl DryPlasmPlanEvaluation {
     pub fn validated_plan(&self) -> &Plan<ValidatedPlanState> {
         self.validated().artifact()
+    }
+
+    /// Merged flow + boundedness gate (single verdict source for MCP/HTTP).
+    pub fn evaluate_gate(&self) -> crate::EvaluatedPlanGate {
+        crate::plan_gate::evaluate_plan_gate(
+            &self.flow,
+            &self.review,
+            crate::plan_dry_display::return_roots_include_unbounded_list_surface(
+                self.validated_plan(),
+            ),
+        )
+    }
+
+    /// Mint sealed admission for plan commit registration.
+    pub fn admit_for_commit(&self) -> Result<crate::FlowAdmission, crate::FlowDenial> {
+        crate::plan_flow::FlowCheckedPlan {
+            analysis: self.flow.clone(),
+        }
+        .admit()
     }
 
     pub fn validated(&self) -> &ValidatedPlan {
@@ -181,6 +202,7 @@ impl DryPlasmPlanEvaluation {
 
     /// Rehydrate dry evaluation from a reviewed plan commit (skips simulation when cache is populated).
     pub fn from_plan_commit_cache(
+        es: &ExecuteSession,
         bundle: &crate::plasm_comp_bundle::PlasmCompBundle,
         cache: &crate::operation::PlanCommitDryCache,
         review: PlanDryReview,
@@ -189,6 +211,27 @@ impl DryPlasmPlanEvaluation {
         let artifact = bundle.artifact().clone();
         let prepared =
             crate::plan_prepare::build_prepared_validated_plan(&artifact.comp, executable)?;
+        let topological_order = if cache.topological_order.is_empty() {
+            executable
+                .steps_topo
+                .iter()
+                .map(|(id, _)| id.as_str().to_string())
+                .collect()
+        } else {
+            cache.topological_order.clone()
+        };
+        let catalog = es.build_flow_catalog_view();
+        let flow_checked = crate::plan_flow::verify_plan_flow(
+            prepared.artifact(),
+            &topological_order,
+            &catalog,
+            &es.flow_policy,
+        );
+        let flow_analysis = flow_checked.analysis;
+        let mut node_results = cache.node_results.clone();
+        attach_flow_approval_gates(&mut node_results, &flow_analysis);
+        let mut graph_summary = cache.graph_summary.clone();
+        enrich_graph_summary_flow(&mut graph_summary, &flow_analysis);
         Ok(Self {
             version: if cache.version.is_null() {
                 serde_json::json!(artifact.comp.version)
@@ -199,21 +242,14 @@ impl DryPlasmPlanEvaluation {
             artifact,
             executable: executable.clone(),
             cached_validated: std::cell::OnceCell::from(prepared),
-            topological_order: if cache.topological_order.is_empty() {
-                executable
-                    .steps_topo
-                    .iter()
-                    .map(|(id, _)| id.as_str().to_string())
-                    .collect()
-            } else {
-                cache.topological_order.clone()
-            },
-            node_results: cache.node_results.clone(),
+            topological_order,
+            node_results,
             parallel_root_surfaces_only: cache.parallel_root_surfaces_only,
             staged_nodes: cache.staged_nodes.clone(),
             execution_unsupported: cache.execution_unsupported.clone(),
-            graph_summary: cache.graph_summary.clone(),
+            graph_summary,
             review,
+            flow: flow_analysis,
         })
     }
 }

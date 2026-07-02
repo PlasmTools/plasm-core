@@ -3996,6 +3996,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
@@ -4032,6 +4033,7 @@ mod tests {
                             role: None,
                             wire_json_path: None,
                             wire_array_element_key: None,
+                            sink_class: None,
                         }],
                         wire: WireVariantDiscriminator {
                             field: "kind".into(),
@@ -4054,6 +4056,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         })
         .unwrap();
         cgs
@@ -4892,6 +4895,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         })
         .unwrap();
         cgs.validate().unwrap();
@@ -4998,6 +5002,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
@@ -5022,6 +5027,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         })
         .unwrap();
         cgs.validate().unwrap();
@@ -5188,6 +5194,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         })
         .unwrap();
         cgs.validate().unwrap();
@@ -5321,6 +5328,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         })
         .unwrap();
         cgs.validate().unwrap();
@@ -5411,6 +5419,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
@@ -5430,6 +5439,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         })
         .unwrap();
         cgs.validate().unwrap();
@@ -5836,6 +5846,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         })
         .unwrap();
         cgs.validate().unwrap();

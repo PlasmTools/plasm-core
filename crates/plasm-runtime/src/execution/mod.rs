@@ -3216,6 +3216,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    data_class: None,
                 },
                 FieldSchema {
                     name: "name".into(),
@@ -3229,6 +3230,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    data_class: None,
                 },
             ],
             relations: vec![],
@@ -3268,6 +3270,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         };
 
         cgs.add_capability(query_capability).unwrap();
@@ -3295,6 +3298,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         };
 
         cgs.add_capability(get_capability).unwrap();
@@ -3344,6 +3348,7 @@ mod tests {
                 attachment_media: None,
                 wire_path: None,
                 derive: None,
+                data_class: None,
             }],
             relations: vec![],
             expression_aliases: vec![],
@@ -3384,6 +3389,7 @@ mod tests {
                         role: Some(ParameterRole::Scope),
                         wire_json_path: None,
                         wire_array_element_key: None,
+                        sink_class: None,
                     }],
                     additional_fields: false,
                 },
@@ -3396,6 +3402,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         };
         (cgs, cap)
     }

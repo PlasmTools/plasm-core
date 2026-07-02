@@ -1,5 +1,5 @@
 ---
-source: crates/plasm/tests/plasm_cli_server_insta.rs
+source: plasm-oss/crates/plasm/tests/plasm_cli_server_insta.rs
 expression: h.norm(&combined_output(&new_ctx))
 ---
 status: exit status: 0
@@ -18,6 +18,7 @@ p5	v5 · query
 p6	v5 · app_name
 p7	v7 · content_type
 p8	v14 · end_time
+p9	v2 · limit
 p10	v2 · max_length
 p11	v2 · min_length
 p12	v2 · offset
@@ -25,10 +26,10 @@ p14	v14 · start_time
 p15	v5 · window_name
 p1	v5 · id
 e1{p4=Profile($), p5=$, p2=$, p3=$}[p1]	→ [e1] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
-e1{p4=Profile($), p5=$, p2=$, p3=$}[p1]	→ [e1] · inputs: p4,p5,p2,p3 · rows: p1 · opt: query, limit, mode
-e1~"text"[p1]	→ [e1] · rows: p1 · opt: content_type, limit, offset, start_time, end_time, app_name, window_name, mi…
-e1~"text"{p7=$, p2=$, p12=$, p14=$, p8=$, p6=$, p15=$, p11=$, p10=$}[p1]	→ [e1] · inputs: p7,p2,p12,p14,p8,p6,p15,p11,p10 · rows: p1 · opt: content_type, limit, offset, start_time, end_time, app_name, window_name, mi…
+e1{p4=Profile($), p5=$, p2=$, p3=$}[p1]	→ [e1] · inputs: p4,p5,p2,p3 · rows: p1 · optional
+e1~"text"[p1]	→ [e1] · rows: p1 · optional
+e1~"text"{p7=$, p9=$, p12=$, p14=$, p8=$, p6=$, p15=$, p11=$, p10=$}[p1]	→ [e1] · inputs: p7,p9,p12,p14,p8,p6,p15,p11,p10 · rows: p1 · optional
 
 stderr:
 Active context: overshow:RecordedContent
-mirror: .plasm/s/SESSION8/out/NNNN-context/wave.tsv (+23 rows)
+mirror: .plasm/s/SESSION8/out/NNNN-context/wave.tsv (+24 rows)

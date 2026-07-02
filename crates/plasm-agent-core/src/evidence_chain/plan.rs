@@ -2,6 +2,7 @@ use super::config::evidence_chain_enabled;
 use super::error::EvidenceEmitError;
 use super::session::EvidenceChainSession;
 use crate::execute_session::ExecuteSession;
+use crate::operation::ExecutionScope;
 use plasm_evidence::{EvidenceAnchors, EvidenceBundle, EvidenceScope};
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -56,7 +57,43 @@ pub fn evidence_anchors(
     }
 }
 
-/// Reset chain and record intent anchor at the start of a plan dry/live cycle.
+/// Fresh per-run chain for one async live execute (does not reset the session dry chain).
+pub fn start_run_evidence_chain(
+    sess: &ExecuteSession,
+    execute_session_id: &str,
+    anchors: EvidenceAnchors,
+) -> Result<Option<Arc<EvidenceChainSession>>, EvidenceEmitError> {
+    if !evidence_chain_enabled() {
+        return Ok(None);
+    }
+    let run_chain = Arc::new(EvidenceChainSession::new());
+    let scope = evidence_scope_from_session(sess, execute_session_id);
+    run_chain.reset_scope(scope)?;
+    if let Some(intent) = sess.context_intent.as_deref() {
+        run_chain.record_intent_bound(
+            intent,
+            sess.catalog_cgs_hash.as_str(),
+            sess.entry_id.as_str(),
+        )?;
+    }
+    run_chain.set_anchors(anchors)?;
+    Ok(Some(run_chain))
+}
+
+/// Active chain for the current operation: per-run scope chain first, else session dry chain.
+pub fn active_chain(
+    sess: &ExecuteSession,
+    execution_scope: Option<&ExecutionScope>,
+) -> Option<Arc<EvidenceChainSession>> {
+    if let Some(scope) = execution_scope {
+        if let Some(run_chain) = scope.evidence.as_ref() {
+            return Some(Arc::clone(run_chain));
+        }
+    }
+    chain(sess)
+}
+
+/// Reset session chain and record intent anchor at the start of a dry-only cycle.
 pub fn begin_plan_evidence(
     sess: &ExecuteSession,
     execute_session_id: &str,

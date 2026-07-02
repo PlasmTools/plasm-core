@@ -1,0 +1,23 @@
+message_query:
+  method: GET
+  path:
+    - type: literal
+      value: messages
+
+sanitize_body:
+  method: POST
+  path:
+    - type: literal
+      value: sanitize
+  body:
+    type: var
+    name: input
+
+send:
+  method: POST
+  path:
+    - type: literal
+      value: send
+  body:
+    type: var
+    name: input

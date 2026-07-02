@@ -4,6 +4,8 @@ use crate::execute_session::ExecuteSession;
 use crate::operation_progress::{
     op_plasm_meta_short, render_op_wire_line, render_op_wire_markdown, OpWireSig,
 };
+use crate::plan_flow::{FlowAdmission, FlowDenial};
+use crate::plan_flow_policy::PolicyRevision;
 use crate::plan_dry_display::{PlanDryReview, PlanDryVerdict};
 use crate::plasm_plan_run::{DryPlasmPlanEvaluation, PlanRunTraceHooks, PlasmPlanRunResult};
 use crate::server_state::PlasmHostState;
@@ -40,14 +42,19 @@ pub(crate) fn plan_execute_cancel_signal() -> Option<CancelSignal> {
     PLAN_EXECUTE_CANCEL.try_with(|c| c.clone()).ok().flatten()
 }
 
-/// Returns true when live execute must be blocked pending dry-run review acceptance.
-#[must_use]
-pub fn plan_requires_review_gate(
-    verdict: PlanDryVerdict,
-    force: bool,
-    plan_commit_ref: Option<&PlanCommitRef>,
-) -> bool {
-    verdict == PlanDryVerdict::Review && !force && plan_commit_ref.is_none()
+/// Persisted plan commit payload before flow re-verify on rehydrate.
+#[derive(Debug, Clone)]
+pub struct RehydratedPlanCommit {
+    pub commit_ref: PlanCommitRef,
+    pub commit_id: PlanCommitId,
+    pub domain_revision: u32,
+    pub policy_revision: PolicyRevision,
+    pub artifact: crate::plasm_comp_wire::PlasmCompArtifact,
+    pub program: String,
+    pub dry_review: PlanDryReview,
+    pub verdict: PlanDryVerdict,
+    pub expires_at: Instant,
+    pub dry_cache: PlanCommitDryCache,
 }
 
 pub fn verify_plan_commit_for_run(
@@ -94,6 +101,8 @@ pub struct ExecutionScope {
     token: CancellationToken,
     progress: Option<Arc<StdMutex<OperationProgress>>>,
     operation_sink: Option<(Arc<ExecuteSession>, OperationHandle)>,
+    /// Isolated evidence chain for this async live run (CEP-13 concurrent `plasm_run`).
+    pub evidence: Option<Arc<crate::evidence_chain::EvidenceChainSession>>,
 }
 
 impl ExecutionScope {
@@ -104,6 +113,7 @@ impl ExecutionScope {
             token: CancellationToken::new(),
             progress: None,
             operation_sink: None,
+            evidence: None,
         }
     }
 
@@ -118,6 +128,7 @@ impl ExecutionScope {
             token: CancellationToken::new(),
             progress: Some(Arc::new(StdMutex::new(OperationProgress::default()))),
             operation_sink: Some((es, handle)),
+            evidence: None,
         }
     }
 
@@ -278,6 +289,7 @@ pub struct OpAcceptContext {
     pub step_order: Vec<String>,
     pub plan_trace: Option<crate::trace_hub::PlanRunTraceHooks>,
     pub mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
+    pub evidence_anchors: plasm_evidence::EvidenceAnchors,
 }
 
 /// Narrow poll snapshot for `wait(...)` — avoids cloning cancel signals and full operation state.
@@ -342,17 +354,23 @@ pub struct PlanCommitRecord {
     pub commit_id: PlanCommitId,
     /// Pinned [`ExecuteSession::domain_revision`] at dry-run registration (CEP-13 stale `pcN` guard).
     pub domain_revision: u32,
+    pub policy_revision: PolicyRevision,
     pub artifact: crate::plasm_comp_wire::PlasmCompArtifact,
     pub program: String,
     pub dry_review: PlanDryReview,
     pub verdict: PlanDryVerdict,
     pub expires_at: Instant,
     pub dry_cache: PlanCommitDryCache,
+    flow: FlowAdmission,
 }
 
 impl PlanCommitRecord {
     pub fn is_expired(&self) -> bool {
         Instant::now() >= self.expires_at
+    }
+
+    pub(crate) fn flow_admission(&self) -> &FlowAdmission {
+        &self.flow
     }
 
     /// Register a reviewed dry-run as a durable plan commit (single construction site).
@@ -364,17 +382,112 @@ impl PlanCommitRecord {
         program: String,
         verdict: PlanDryVerdict,
         expires_at: Instant,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, FlowDenial> {
+        let flow = dry.admit_for_commit()?;
+        let policy_revision = flow.policy_revision.unwrap_or_default();
+        Ok(Self {
             commit_ref,
             commit_id,
             domain_revision,
+            policy_revision,
             artifact: dry.artifact().clone(),
             program,
             dry_review: dry.review.clone(),
             verdict,
             expires_at,
             dry_cache: PlanCommitDryCache::from_dry(dry),
+            flow,
+        })
+    }
+
+    pub fn rehydrated_from_persisted(
+        es: &ExecuteSession,
+        input: RehydratedPlanCommit,
+    ) -> Result<Self, String> {
+        let RehydratedPlanCommit {
+            commit_ref,
+            commit_id,
+            domain_revision,
+            policy_revision,
+            artifact,
+            program,
+            dry_review,
+            verdict,
+            expires_at,
+            dry_cache,
+        } = input;
+        let bundle = crate::plasm_comp_bundle::PlasmCompBundle::new(artifact.clone())
+            .map_err(|e| format!("invalid rehydrated comp: {e}"))?;
+        let executable = bundle.executable();
+        let prepared = crate::plan_prepare::build_prepared_validated_plan(
+            &artifact.comp,
+            executable,
+        )
+        .map_err(|e| format!("rehydrated plan validation failed: {e}"))?;
+        let topological_order = if dry_cache.topological_order.is_empty() {
+            executable
+                .steps_topo
+                .iter()
+                .map(|(id, _)| id.as_str().to_string())
+                .collect()
+        } else {
+            dry_cache.topological_order.clone()
+        };
+        let catalog = es.build_flow_catalog_view();
+        let checked = crate::plan_flow::verify_plan_flow(
+            prepared.artifact(),
+            &topological_order,
+            &catalog,
+            &es.flow_policy,
+        );
+        let flow = checked.admit().map_err(|denial| {
+            format!(
+                "rehydrated plan flow denied ({:?}, {} violation(s))",
+                denial.verdict,
+                denial.violations.len()
+            )
+        })?;
+        if flow.policy_revision.unwrap_or_default() != policy_revision {
+            return Err(format!(
+                "rehydrated plan policy revision mismatch (stored {}, current {:?})",
+                policy_revision.0,
+                flow.policy_revision.map(|r| r.0)
+            ));
+        }
+        Ok(Self {
+            commit_ref,
+            commit_id,
+            domain_revision,
+            policy_revision,
+            artifact,
+            program,
+            dry_review,
+            verdict,
+            expires_at,
+            dry_cache,
+            flow,
+        })
+    }
+
+    #[cfg(test)]
+    pub fn for_tests(
+        commit_ref: PlanCommitRef,
+        commit_id: PlanCommitId,
+        artifact: crate::plasm_comp_wire::PlasmCompArtifact,
+        verdict: PlanDryVerdict,
+    ) -> Self {
+        Self {
+            commit_ref,
+            commit_id,
+            domain_revision: 0,
+            policy_revision: PolicyRevision::default(),
+            artifact,
+            program: String::new(),
+            dry_review: PlanDryReview::default(),
+            verdict,
+            expires_at: Instant::now() + PLAN_COMMIT_TTL,
+            dry_cache: PlanCommitDryCache::default(),
+            flow: FlowAdmission::for_tests(),
         }
     }
 }
@@ -444,6 +557,7 @@ pub(crate) fn op_accept_context_from_executable(
         step_order: Vec::new(),
         plan_trace: None,
         mcp_result_policy: None,
+        evidence_anchors: plasm_evidence::EvidenceAnchors::default(),
     }
 }
 
@@ -458,6 +572,11 @@ impl OpAcceptContext {
 
     pub fn with_plan_trace(mut self, hooks: crate::trace_hub::PlanRunTraceHooks) -> Self {
         self.plan_trace = Some(hooks);
+        self
+    }
+
+    pub fn with_evidence_anchors(mut self, anchors: plasm_evidence::EvidenceAnchors) -> Self {
+        self.evidence_anchors = anchors;
         self
     }
 
@@ -570,6 +689,7 @@ pub fn async_live_run_accept_parts(
         json!(match verdict {
             PlanDryVerdict::Ok => "ok",
             PlanDryVerdict::Review => "review",
+            PlanDryVerdict::Deny => "deny",
         }),
     );
     meta.insert("plasm".into(), serde_json::Value::Object(plasm));
@@ -616,6 +736,7 @@ pub fn plan_commit_meta(
         json!(match verdict {
             PlanDryVerdict::Ok => "ok",
             PlanDryVerdict::Review => "review",
+            PlanDryVerdict::Deny => "deny",
         }),
     );
     plasm.insert("dry_review".into(), serde_json::Value::Object(dry_review));
@@ -751,8 +872,17 @@ pub fn spawn_async_plan_run(
     let plan_hooks = accept.plan_trace.clone();
     let mcp_result_policy = accept.mcp_result_policy;
     es.bind_operation_wire(session_id.as_str());
-    es.try_begin_async_operation(handle.clone(), cancel.clone(), accept)?;
-    let scope = ExecutionScope::for_async_operation(Arc::clone(&es), handle.clone(), cancel);
+    es.try_begin_async_operation(handle.clone(), cancel.clone(), accept.clone())?;
+    let mut scope = ExecutionScope::for_async_operation(Arc::clone(&es), handle.clone(), cancel);
+    if let Some(run_chain) = crate::evidence_chain::start_run_evidence_chain(
+        es.as_ref(),
+        session_id.as_str(),
+        accept.evidence_anchors.clone(),
+    )
+    .map_err(|e| format!("evidence begin: {e}"))?
+    {
+        scope.evidence = Some(run_chain);
+    }
     es.emit_op_accept(&handle, &st)?;
     let telemetry = Arc::new(plasm_runtime::LiveRunTelemetry::new());
     es.install_live_run_telemetry(Arc::clone(&telemetry));
@@ -837,6 +967,7 @@ pub fn spawn_op_progress_ticker(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plan_gate::{plan_requires_review_gate, EvaluatedPlanGate, PlanGateContext};
     use plasm_core::PlanCommitRef;
 
     #[test]
@@ -879,6 +1010,7 @@ mod tests {
             token: CancellationToken::new(),
             progress: Some(Arc::clone(&progress)),
             operation_sink: None,
+            evidence: None,
         };
         scope.add_rows_materialized(50);
         scope.add_rows_materialized(50);
@@ -889,22 +1021,42 @@ mod tests {
 
     #[test]
     fn plan_requires_review_gate_blocks_without_force_or_commit() {
+        let gate = EvaluatedPlanGate {
+            verdict: PlanDryVerdict::Review,
+            admission: Ok(FlowAdmission::for_tests()),
+        };
         assert!(plan_requires_review_gate(
-            PlanDryVerdict::Review,
-            false,
-            None
+            &gate,
+            PlanGateContext {
+                force: false,
+                plan_commit_ref: None,
+            }
         ));
         assert!(!plan_requires_review_gate(
-            PlanDryVerdict::Review,
-            true,
-            None
+            &gate,
+            PlanGateContext {
+                force: true,
+                plan_commit_ref: None,
+            }
         ));
         assert!(!plan_requires_review_gate(
-            PlanDryVerdict::Review,
-            false,
-            Some(&PlanCommitRef::mint(0))
+            &gate,
+            PlanGateContext {
+                force: false,
+                plan_commit_ref: Some(&PlanCommitRef::mint(0)),
+            }
         ));
-        assert!(!plan_requires_review_gate(PlanDryVerdict::Ok, false, None));
+        let ok_gate = EvaluatedPlanGate {
+            verdict: PlanDryVerdict::Ok,
+            admission: Ok(FlowAdmission::for_tests()),
+        };
+        assert!(!plan_requires_review_gate(
+            &ok_gate,
+            PlanGateContext {
+                force: false,
+                plan_commit_ref: None,
+            }
+        ));
     }
 
     #[test]

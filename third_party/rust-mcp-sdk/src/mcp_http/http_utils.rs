@@ -346,10 +346,11 @@ pub(crate) async fn create_standalone_stream(
     runtime.update_auth_info(auth_info).await;
 
     if runtime.default_stream_exists().await {
-        let error =
-            SdkError::bad_request().with_message("Only one SSE stream is allowed per session");
-        return error_response(StatusCode::CONFLICT, error)
-            .map_err(|err| TransportServerError::HttpError(err.to_string()));
+        tracing::debug!(
+            session_id = %session_id,
+            "superseding prior standalone SSE stream on reconnect"
+        );
+        runtime.shutdown().await;
     }
 
     if let Some(last_event_id) = last_event_id.as_ref() {

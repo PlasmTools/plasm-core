@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn resolve_defaults_wildcard_in_k8s() {
-        let _g = EnvGuard::new(&[ENV_LISTEN_HOST]);
+        let _g = EnvGuard::new(&[ENV_LISTEN_HOST, "KUBERNETES_SERVICE_HOST"]);
         std::env::set_var("KUBERNETES_SERVICE_HOST", "10.0.0.1");
         assert_eq!(resolve_listen_host(None).unwrap(), WILDCARD_V4);
     }

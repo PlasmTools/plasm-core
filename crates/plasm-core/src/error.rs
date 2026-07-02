@@ -226,6 +226,9 @@ pub enum SchemaError {
     #[error("Unknown `value_ref` / value domain key '{key}' ({context})")]
     UnknownValueDomain { key: String, context: String },
 
+    #[error("Unknown data class '{key}' ({context})")]
+    UnknownDataClass { key: String, context: String },
+
     #[error(
         "Input field `{name}` uses inline structural `input_type` — no single `values:` row applies here"
     )]

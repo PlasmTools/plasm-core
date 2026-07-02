@@ -1,11 +1,11 @@
 //! Live plan orchestration.
 
 use super::*;
-use crate::evidence_chain::{attach_evidence_meta, chain, persist_evidence_sidecars};
+use crate::evidence_chain::{active_chain, attach_evidence_meta, persist_evidence_sidecars};
 use crate::http_execute::run_seal_record_for_handle;
 use crate::plasm_comp_lift::ExecutablePlasmComp;
 use crate::plasm_plan_run::step_materialize::{
-    apply_step_materialize_outcomes, materialize_executable_plan_step,
+    apply_step_materialize_outcomes, materialize_executable_plan_step, PlanStepMaterializeCtx,
 };
 use futures::future::try_join_all;
 use plasm_core::plasm_monad::{PlasmStepPayload, StepId};
@@ -157,7 +157,13 @@ pub(crate) async fn run_executable_plan_phased(
     execution_scope: Option<&crate::operation::ExecutionScope>,
     mcp_result_policy: Option<crate::mcp_run_markdown::McpResultTransportPolicy>,
 ) -> Result<PlasmPlanRunResult, String> {
+    if let Some(evidence) = active_chain(es, execution_scope) {
+        evidence
+            .record_comp_committed(&dry.artifact().comp)
+            .map_err(|e| format!("evidence comp_committed: {e}"))?;
+    }
     let node_results = dry.take_node_results_for_live();
+    let flow = dry.flow.clone();
     let plan_shared = Arc::new(
         crate::plan_execute_shared::PlanLineExecuteShared::prepare(es, st, session_id).await,
     );
@@ -192,6 +198,20 @@ pub(crate) async fn run_executable_plan_phased(
         .collect();
     let layers = super::plan_schedule::bind_topo_execution_layers(&executable.bind)?;
     let rows_progress = execution_scope.and_then(|s| s.rows_progress_fn());
+    let mat_ctx = PlanStepMaterializeCtx {
+        es,
+        st,
+        session_id,
+        plan_shared: &plan_shared,
+        prepared_budgets: &prepared_budgets,
+        prepared_relation_budgets: &prepared_relation_budgets,
+        approval_policy: &approval_policy,
+        flow: &flow,
+        trace: trace.as_ref(),
+        sink: sink.as_ref(),
+        rows_progress: rows_progress.clone(),
+        execution_scope,
+    };
     for layer in layers {
         if let Some(scope) = execution_scope {
             scope.check()?;
@@ -237,29 +257,34 @@ pub(crate) async fn run_executable_plan_phased(
                 let prepared_budgets = prepared_budgets.clone();
                 let prepared_relation_budgets = prepared_relation_budgets.clone();
                 let approval_policy = approval_policy.clone();
+                let flow = flow.clone();
                 let trace_ctx = trace_ctx.clone();
                 let sink = sink.clone();
                 let bind = Arc::clone(&bind);
                 let rows_progress_step = rows_progress_parallel.clone();
                 let execution_scope_step = execution_scope_parallel.clone();
                 joins.push(async move {
+                    let mat_ctx = PlanStepMaterializeCtx {
+                        es: &es,
+                        st: &st,
+                        session_id: session_id.as_str(),
+                        plan_shared: &plan_shared,
+                        prepared_budgets: &prepared_budgets,
+                        prepared_relation_budgets: &prepared_relation_budgets,
+                        approval_policy: &approval_policy,
+                        flow: &flow,
+                        trace: trace_ctx.as_ref(),
+                        sink: sink.as_ref(),
+                        rows_progress: rows_progress_step,
+                        execution_scope: execution_scope_step.as_ref(),
+                    };
                     Box::pin(materialize_executable_plan_step(
-                        &es,
-                        &st,
-                        session_id.as_str(),
+                        &mat_ctx,
                         step_idx,
                         &step_id,
                         &payload,
                         bind.as_ref(),
                         &materialized_snap,
-                        &plan_shared,
-                        &prepared_budgets,
-                        &prepared_relation_budgets,
-                        &approval_policy,
-                        trace_ctx.as_ref(),
-                        sink.as_ref(),
-                        rows_progress_step,
-                        execution_scope_step.as_ref(),
                     ))
                     .await
                 });
@@ -274,7 +299,6 @@ pub(crate) async fn run_executable_plan_phased(
                 execution_scope,
             );
         } else {
-            let rows_progress = rows_progress.clone();
             for step_id in &layer {
                 let step_idx = step_topo_index[step_id];
                 if let Some(scope) = execution_scope {
@@ -288,22 +312,12 @@ pub(crate) async fn run_executable_plan_phased(
                     .get(step_id)
                     .ok_or_else(|| format!("missing payload for step {step_id}"))?;
                 let outcome = Box::pin(materialize_executable_plan_step(
-                    es,
-                    st,
-                    session_id,
+                    &mat_ctx,
                     step_idx,
                     step_id,
                     payload,
                     &executable.bind,
                     &materialized,
-                    &plan_shared,
-                    &prepared_budgets,
-                    &prepared_relation_budgets,
-                    &approval_policy,
-                    trace.as_ref(),
-                    sink.as_ref(),
-                    rows_progress.clone(),
-                    execution_scope,
                 ))
                 .await?;
                 apply_step_materialize_outcomes(
@@ -316,7 +330,7 @@ pub(crate) async fn run_executable_plan_phased(
             }
         }
     }
-    if let Some(evidence) = chain(es) {
+    if let Some(evidence) = active_chain(es, execution_scope) {
         evidence
             .record_steps_executed(&evidence_steps)
             .map_err(|e| format!("evidence step_executed: {e}"))?;
@@ -342,7 +356,7 @@ pub(crate) async fn run_executable_plan_phased(
                 Some(node_ref.as_str().to_string()),
             )
             .await?;
-            if let Some(evidence) = chain(es) {
+            if let Some(evidence) = active_chain(es, execution_scope) {
                 evidence
                     .record_run_sealed(&seal)
                     .map_err(|e| format!("evidence run_sealed: {e}"))?;
@@ -391,7 +405,7 @@ pub(crate) async fn run_executable_plan_phased(
         });
     }
     let mut evidence_head_hex = None;
-    if let Some(evidence) = chain(es) {
+    if let Some(evidence) = active_chain(es, execution_scope) {
         if let Some(bundle) = evidence
             .finish_bundle()
             .map_err(|e| format!("evidence finish: {e}"))?
@@ -409,7 +423,7 @@ pub(crate) async fn run_executable_plan_phased(
         }
     }
     let mut run_plasm_meta = out.tool_meta;
-    if let Some(evidence) = chain(es) {
+    if let Some(evidence) = active_chain(es, execution_scope) {
         run_plasm_meta = attach_evidence_meta(
             run_plasm_meta,
             prompt_hash,

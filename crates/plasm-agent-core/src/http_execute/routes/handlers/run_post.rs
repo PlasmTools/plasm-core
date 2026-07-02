@@ -146,22 +146,62 @@ pub(crate) async fn post_run_execute_session(
             &dry.review,
             &dry.graph_summary,
             Some(&sess),
+            None,
         );
+        let flow_gate = dry.evaluate_gate();
+        if let crate::PlanGateDecision::Denied(denial) = crate::plan_gate::plan_gate(
+            &flow_gate,
+            crate::PlanGateContext {
+                force: false,
+                plan_commit_ref: None,
+            },
+        )
+        {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::BAD_REQUEST,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                )
+                .with_title("Bad Request")
+                .with_detail(format!(
+                    "plan denied by flow policy ({:?}): {} violation(s)",
+                    denial.verdict,
+                    denial.violations.len()
+                )),
+            );
+        }
         let commit_ref = sess.mint_plan_commit_ref();
+        let commit_record = match crate::operation::PlanCommitRecord::from_dry_review(
+            commit_ref.clone(),
+            crate::operation::compute_plan_commit_id_from_dry(&dry),
+            sess.domain_revision,
+            &dry,
+            program.clone(),
+            compact.verdict,
+            std::time::Instant::now() + crate::operation::PLAN_COMMIT_TTL,
+        ) {
+            Ok(record) => record,
+            Err(denial) => {
+                return problem_response(
+                    Problem::custom(
+                        ProblemStatus::BAD_REQUEST,
+                        Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                    )
+                    .with_title("Bad Request")
+                    .with_detail(format!(
+                        "plan commit blocked by flow policy ({:?}): {} violation(s)",
+                        denial.verdict,
+                        denial.violations.len()
+                    )),
+                );
+            }
+        };
         if let Err(e) = crate::plan_commit_store::register_plan_commit_and_persist(
             &st,
             Arc::clone(&sess),
             prompt_hash.as_str(),
             session_id.as_str(),
-            crate::operation::PlanCommitRecord::from_dry_review(
-                commit_ref.clone(),
-                crate::operation::compute_plan_commit_id_from_dry(&dry),
-                sess.domain_revision,
-                &dry,
-                program.clone(),
-                compact.verdict,
-                std::time::Instant::now() + crate::operation::PLAN_COMMIT_TTL,
-            ),
+            commit_record,
         )
         .await
         {
@@ -221,20 +261,6 @@ pub(crate) async fn post_run_execute_session(
     let ph_str = prompt_hash.to_string();
     let sid_str = session_id.to_string();
 
-    if let Err(e) = crate::evidence_chain::begin_plan_evidence_with_anchors(
-        &sess,
-        session_id.as_str(),
-        crate::evidence_chain::evidence_anchors(plan_commit_ref.as_ref(), None, None),
-    ) {
-        return problem_response(
-            Problem::custom(
-                ProblemStatus::INTERNAL_SERVER_ERROR,
-                Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-            )
-            .with_title("Evidence error")
-            .with_detail(e.to_string()),
-        );
-    }
     let dry_gate = match crate::plasm_plan_run::evaluate_plasm_comp_dry(&sess, &bundle) {
         Ok(d) => d,
         Err(e) => {
@@ -254,7 +280,9 @@ pub(crate) async fn post_run_execute_session(
         &dry_gate.review,
         &dry_gate.graph_summary,
         Some(&sess),
+        None,
     );
+    let flow_gate = dry_gate.evaluate_gate();
     let accepted = match crate::plan_commit_store::accept_plan_commit_for_bundle(
         &sess,
         plan_commit_ref.as_ref(),
@@ -274,21 +302,40 @@ pub(crate) async fn post_run_execute_session(
             );
         }
     };
-    if crate::operation::plan_requires_review_gate(
-        accepted.verdict_for_gate,
-        force_run,
-        plan_commit_ref.as_ref(),
+    match crate::plan_gate::plan_gate(
+        &flow_gate,
+        crate::PlanGateContext {
+            force: force_run,
+            plan_commit_ref: plan_commit_ref.as_ref(),
+        },
     ) {
-        return problem_response(
-            Problem::custom(
-                ProblemStatus::BAD_REQUEST,
-                Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
-            )
-            .with_title("Bad Request")
-            .with_detail(
-                "plan_requires_review: call plan dry-run first, then pass plan_commit_ref or force=true",
-            ),
-        );
+        crate::PlanGateDecision::Proceed(_) => {}
+        crate::PlanGateDecision::NeedsReview => {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::BAD_REQUEST,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                )
+                .with_title("Bad Request")
+                .with_detail(
+                    "plan_requires_review: call plan dry-run first, then pass plan_commit_ref or force=true",
+                ),
+            );
+        }
+        crate::PlanGateDecision::Denied(denial) => {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::BAD_REQUEST,
+                    Uri::from_static(problem_types::EXECUTE_INVALID_EXPRESSION),
+                )
+                .with_title("Bad Request")
+                .with_detail(format!(
+                    "plan denied by flow policy ({:?}): {} violation(s)",
+                    denial.verdict,
+                    denial.violations.len()
+                )),
+            );
+        }
     }
     match crate::run_delivery::deliver_http_live_run(crate::run_delivery::HttpLiveRunRequest {
         es: Arc::clone(&sess),

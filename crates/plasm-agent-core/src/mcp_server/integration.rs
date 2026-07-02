@@ -203,6 +203,7 @@ impl MatrixPcNFixture {
             &dry.review,
             &dry.graph_summary,
             Some(&es),
+            None,
         );
         let pc = es.mint_plan_commit_ref();
         Self {
@@ -236,7 +237,8 @@ impl MatrixPcNFixture {
                 self.program.clone(),
                 self.compact.verdict,
                 std::time::Instant::now() + PLAN_COMMIT_TTL,
-            ),
+            )
+            .expect("flow admission"),
         )
         .await
         .expect("persist pcN");
@@ -521,6 +523,7 @@ async fn mcp_query_limit_uses_async_await_path() {
         &dry.review,
         &dry.graph_summary,
         Some(&es),
+        None,
     );
     let handle_before = es.open_live_operation_handles().len();
     let delivered = tokio::time::timeout(
@@ -604,6 +607,7 @@ async fn matrix_query_limit_on_injected_live_plan_pool() {
         &dry.review,
         &dry.graph_summary,
         Some(&es),
+        None,
     );
     let delivered = tokio::time::timeout(
         std::time::Duration::from_secs(30),
@@ -682,6 +686,7 @@ async fn matrix_query_limit_on_release_stack_budget() {
         &dry.review,
         &dry.graph_summary,
         Some(&es),
+        None,
     );
     let delivered = tokio::time::timeout(
         std::time::Duration::from_secs(30),

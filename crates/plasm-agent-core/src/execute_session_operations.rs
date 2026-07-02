@@ -104,6 +104,7 @@ impl super::ExecuteSession {
             let dry_verdict = desc.dry_verdict.as_deref().and_then(|v| match v {
                 "ok" => Some(PlanDryVerdict::Ok),
                 "review" => Some(PlanDryVerdict::Review),
+                "deny" => Some(PlanDryVerdict::Deny),
                 _ => None,
             });
             let plan_commit_ref = desc

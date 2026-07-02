@@ -445,12 +445,11 @@ impl ServerRuntime {
         if stream_id != DEFAULT_STREAM_ID {
             return Ok(());
         }
-        let transport_map = self.transport_map.read().await;
+        let mut transport_map = self.transport_map.write().await;
         tracing::trace!("removing transport for stream id : {}", stream_id);
-        if let Some(transport) = transport_map.as_ref() {
+        if let Some(transport) = transport_map.take() {
             transport.shut_down().await?;
         }
-        // transport_map.remove(stream_id);
         Ok(())
     }
 

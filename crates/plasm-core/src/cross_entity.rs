@@ -348,6 +348,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         }).unwrap();
 
         cgs.add_capability(CapabilitySchema {
@@ -377,6 +378,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         }).unwrap();
 
         cgs.validate()

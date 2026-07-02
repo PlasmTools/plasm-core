@@ -8,12 +8,14 @@ use crate::execute_session::ExecuteSession;
 use crate::plan_dry_display::{
     build_plan_dry_compact_view, human_ux_headline_for_op, human_ux_summary_for_op, PlanDryVerdict,
 };
+use crate::plan_flow_reflection::{plan_ux_flow_reflection, PlanUxFlowReflection};
 use crate::plasm_plan::{
     EffectClass, PlanNodeKind, ValidatedPlanNode, ValidatedPlanReturn, ValidatedPlanState,
 };
 use crate::plasm_plan_run::DryPlasmPlanEvaluation;
 
-pub const PLAN_UX_REFLECTION_SCHEMA_VERSION: u32 = 2;
+/// Bumped to 3 for the mandatory `flow` field (Flow tab — data-flow reflection).
+pub const PLAN_UX_REFLECTION_SCHEMA_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -121,6 +123,8 @@ pub struct PlanUxReflection {
     pub live: Option<PlanUxLiveOverlay>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session: Option<PlanUxSession>,
+    /// Data-flow trace for the plan MCP UI's Flow tab — independent of execution.
+    pub flow: PlanUxFlowReflection,
 }
 
 pub struct PlanUxBuildContext<'a> {
@@ -148,6 +152,7 @@ pub fn plan_ux_reflection(
         &dry.review,
         &dry.graph_summary,
         ctx.session,
+        None,
     );
     let comp_wire = crate::plasm_comp_wire::trace_comp_wire_from_dry(dry);
     let edges = comp_edges(&comp_wire);
@@ -157,6 +162,7 @@ pub fn plan_ux_reflection(
     let writes = write_step_ids(plan, &dry.topological_order);
     let returns = render_returns(&plan.return_value);
     let session = session_advisory_from_dry(dry);
+    let flow = plan_ux_flow_reflection(plan, &dry.flow, &steps);
 
     PlanUxReflection {
         schema_version: PLAN_UX_REFLECTION_SCHEMA_VERSION,
@@ -170,6 +176,7 @@ pub fn plan_ux_reflection(
             verdict: match compact.verdict {
                 PlanDryVerdict::Ok => "ok".into(),
                 PlanDryVerdict::Review => "review".into(),
+                PlanDryVerdict::Deny => "deny".into(),
             },
             warnings: compact.warnings.clone(),
             write_count: compact.write_count,
@@ -178,6 +185,7 @@ pub fn plan_ux_reflection(
         param_bindings: ctx.param_bindings.to_vec(),
         live: None,
         session,
+        flow,
     }
 }
 
@@ -454,6 +462,14 @@ mod tests {
             param_bindings: vec![],
             live: None,
             session: None,
+            flow: crate::plan_flow_reflection::PlanUxFlowReflection {
+                schema_version: crate::plan_flow_reflection::PLAN_UX_FLOW_REFLECTION_SCHEMA_VERSION,
+                verdict: crate::plan_flow_reflection::PlanUxFlowVerdict::Clean,
+                policy_revision: None,
+                counts: Default::default(),
+                violations: vec![],
+                trace: vec![],
+            },
         };
         let json = serde_json::to_value(&ux).expect("serialize");
         assert_eq!(

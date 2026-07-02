@@ -1,0 +1,68 @@
+version: 1
+auth:
+  scheme: none
+http_backend: http://localhost:1080
+data_classes:
+  untrusted:
+    description: Untrusted user-provided text.
+  outbound_body:
+    description: Outbound sink for remote message bodies.
+entities:
+  Message:
+    id_field: id
+    description: Message row for flow-policy fixture.
+    fields:
+      id:
+        required: true
+        value_ref: nv_message_id
+      body:
+        required: true
+        value_ref: nv_message_body
+        data_class: untrusted
+capabilities:
+  message_query:
+    description: Query messages.
+    kind: query
+    entity: Message
+  sanitize_body:
+    description: Sanitizes untrusted content.
+    kind: action
+    entity: Message
+    sanitizes:
+      - untrusted
+    input_schema:
+      description: Sanitizer input.
+      input_type:
+        type: object
+        additional_fields: false
+        fields:
+          - name: body
+            value_ref: nv_message_body
+            required: true
+    output:
+      type: side_effect
+      description: Sanitized body text.
+  send:
+    description: Sends message body to an outbound sink.
+    kind: action
+    entity: Message
+    input_schema:
+      description: Send payload.
+      input_type:
+        type: object
+        additional_fields: false
+        fields:
+          - name: body
+            value_ref: nv_message_body
+            required: true
+            sink_class: outbound_body
+    output:
+      type: side_effect
+      description: Sends message body to remote transport.
+values:
+  nv_message_id:
+    type: string
+    string_semantics: short
+  nv_message_body:
+    type: string
+    string_semantics: short

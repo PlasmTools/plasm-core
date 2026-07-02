@@ -1838,6 +1838,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         };
         cgs.add_capability(get_pet).unwrap();
 
@@ -1859,6 +1860,7 @@ mod tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         };
         cgs.add_capability(get_order).unwrap();
 
@@ -2092,6 +2094,7 @@ mod tests {
                 attachment_media: None,
                 wire_path: None,
                 derive: None,
+                data_class: None,
             },
         );
         let entity = EntityDef {
@@ -2121,6 +2124,7 @@ mod tests {
             role: Some(ParameterRole::Scope),
             wire_json_path: None,
             wire_array_element_key: None,
+            sink_class: None,
         }];
         let pred = Predicate::eq("owner", "$");
         type_check_predicate(&pred, &entity, &cap_params, &cgs).unwrap();
@@ -2174,6 +2178,7 @@ mod tests {
                 attachment_media: None,
                 wire_path: None,
                 derive: None,
+                data_class: None,
             },
         );
         let entity = EntityDef {
@@ -2203,6 +2208,7 @@ mod tests {
             role: None,
             wire_json_path: None,
             wire_array_element_key: None,
+            sink_class: None,
         }];
         let pred = Predicate::eq("state", "all");
         type_check_predicate(&pred, &entity, &cap_params, &cgs).unwrap();
@@ -2240,6 +2246,7 @@ mod tests {
             role: None,
             wire_json_path: None,
             wire_array_element_key: None,
+            sink_class: None,
         }];
         let pred = Predicate::eq("includeSpamTrash", "INBOX");
         let mut cgs = CGS::new();
@@ -2295,6 +2302,7 @@ mod tests {
             role: None,
             wire_json_path: None,
             wire_array_element_key: None,
+            sink_class: None,
         }];
         let pred = Predicate::eq("q", true);
         let mut cgs = CGS::new();
@@ -2348,6 +2356,7 @@ mod tests {
             role: None,
             wire_json_path: None,
             wire_array_element_key: None,
+            sink_class: None,
         }];
         let pred = Predicate::eq("limit", "10");
         let mut cgs = CGS::new();

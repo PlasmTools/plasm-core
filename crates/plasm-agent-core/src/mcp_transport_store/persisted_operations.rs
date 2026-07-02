@@ -140,6 +140,7 @@ pub fn descriptor_from_operation_state(
         dry_verdict: op.dry_verdict.map(|v| match v {
             PlanDryVerdict::Ok => "ok".to_string(),
             PlanDryVerdict::Review => "review".to_string(),
+            PlanDryVerdict::Deny => "deny".to_string(),
         }),
         display_map: op.display_map.clone(),
         agent_seq: op.agent_emit.seq,

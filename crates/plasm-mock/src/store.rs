@@ -422,6 +422,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    data_class: None,
                 },
                 FieldSchema {
                     name: "name".into(),
@@ -435,6 +436,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    data_class: None,
                 },
                 FieldSchema {
                     name: "revenue".into(),
@@ -448,6 +450,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    data_class: None,
                 },
             ],
             relations: vec![RelationSchema {
@@ -486,6 +489,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    data_class: None,
                 },
                 FieldSchema {
                     name: "name".into(),
@@ -499,6 +503,7 @@ mod tests {
                     attachment_media: None,
                     wire_path: None,
                     derive: None,
+                    data_class: None,
                 },
             ],
             relations: vec![],

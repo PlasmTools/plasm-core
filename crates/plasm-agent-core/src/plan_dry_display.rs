@@ -13,11 +13,12 @@ use crate::plasm_plan::{
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanDryVerdict {
     Ok,
     Review,
+    Deny,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,6 +98,7 @@ pub struct PlanDryCompactView {
     pub read_count: usize,
     pub write_count: usize,
     pub return_label: String,
+    pub deny_line: Option<String>,
     pub warnings: Option<String>,
     pub steps: Vec<PlanDryStep>,
 }
@@ -168,13 +170,36 @@ pub fn build_plan_dry_compact_view(
     review: &PlanDryReview,
     graph_summary: &serde_json::Value,
     es: Option<&ExecuteSession>,
+    flow_verdict_override: Option<PlanDryVerdict>,
 ) -> PlanDryCompactView {
     let display_map = build_plan_node_display_map(plan, topological_order);
     let return_unbounded = return_roots_include_unbounded_list_surface(plan);
-    let verdict = if review.needs_review(return_unbounded) {
+    let flow_verdict = flow_verdict_override.or_else(|| {
+        graph_summary
+            .get("security_verdict")
+            .and_then(|v| v.as_str())
+            .and_then(|v| match v {
+                "denied" | "deny" => Some(PlanDryVerdict::Deny),
+                "needs_review" | "review" => Some(PlanDryVerdict::Review),
+                "clean" | "ok" => Some(PlanDryVerdict::Ok),
+                _ => None,
+            })
+    });
+    let inferred_review = if review.needs_review(return_unbounded) {
         PlanDryVerdict::Review
     } else {
         PlanDryVerdict::Ok
+    };
+    let verdict = std::cmp::max(flow_verdict.unwrap_or(PlanDryVerdict::Ok), inferred_review);
+    let deny_line = if verdict == PlanDryVerdict::Deny {
+        let violations = graph_summary
+            .get("flow_summary")
+            .and_then(|v| v.get("violation_count"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        Some(format!("flow denied: {violations} policy violation(s)"))
+    } else {
+        None
     };
     let read_count = json_string_array(graph_summary.get("read_nodes")).len();
     let write_count = json_string_array(graph_summary.get("write_or_side_effect_nodes")).len();
@@ -203,6 +228,7 @@ pub fn build_plan_dry_compact_view(
         read_count,
         write_count,
         return_label: primary_return_label(plan, &display_map),
+        deny_line,
         warnings: review.warning_line(return_unbounded),
         steps,
     }
@@ -216,6 +242,7 @@ pub fn render_plan_dry_compact_text(
     let verdict = match view.verdict {
         PlanDryVerdict::Ok => "ok",
         PlanDryVerdict::Review => "review",
+        PlanDryVerdict::Deny => "deny",
     };
     let mut header = format!("plan {verdict} · {}n {}r", view.node_count, view.read_count,);
     if view.write_count > 0 {
@@ -226,6 +253,9 @@ pub fn render_plan_dry_compact_text(
         let _ = write!(header, " · {handle}");
     }
     let _ = writeln!(out, "{header}");
+    if let Some(deny) = view.deny_line.as_ref() {
+        let _ = writeln!(out, "deny: {deny}");
+    }
     if let Some(warn) = view.warnings.as_ref() {
         let _ = writeln!(out, "warn: {warn}");
     }
@@ -725,7 +755,7 @@ fn surface_read_list_root_unbounded(s: &ValidatedSurfaceNode) -> bool {
         && crate::plan_read_bounds::effective_host_page_size(s).is_none()
 }
 
-fn return_roots_include_unbounded_list_surface(plan: &Plan<ValidatedPlanState>) -> bool {
+pub(crate) fn return_roots_include_unbounded_list_surface(plan: &Plan<ValidatedPlanState>) -> bool {
     for id in plan.return_value.refs() {
         let Some(node) = plan.nodes.iter().find(|n| n.id() == id) else {
             continue;

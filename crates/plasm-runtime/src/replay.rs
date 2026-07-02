@@ -642,6 +642,7 @@ mod tests {
                 role: None,
                 wire_json_path: None,
                 wire_array_element_key: None,
+                sink_class: None,
             }],
             additional_fields: false,
         };

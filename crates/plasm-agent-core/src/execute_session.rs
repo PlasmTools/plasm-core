@@ -25,6 +25,8 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 use tokio::time::{sleep, Duration as TokioDuration};
 
 use crate::execute_path_ids::{ExecuteSessionId, PromptHashHex};
+use crate::FlowCatalogView;
+use crate::plan_flow_policy::FlowPolicySnapshot;
 use crate::run_artifacts::{ArtifactPayload, RunArtifactId, RunArtifactStore};
 use crate::session_graph_persistence::SessionGraphPersistence;
 use serde::Serialize;
@@ -440,6 +442,8 @@ pub struct ExecuteSession {
     pub teaching_exposure: Option<TeachingExposureSession>,
     /// Increments on each successful [`expand_execute_teaching_session`] wave.
     pub domain_revision: u32,
+    /// Session-pinned flow policy snapshot (inactive by default).
+    pub flow_policy: FlowPolicySnapshot,
     /// End-user / tenant id when using delegated credential resolution (`PLASM_AUTH_RESOLUTION=delegated`).
     pub principal: Option<String>,
     /// Canonical digest of the pinned primary CGS at session open (effective, post-overlay).
@@ -549,6 +553,7 @@ impl ExecuteSession {
             entities,
             teaching_exposure,
             domain_revision: 0,
+            flow_policy: FlowPolicySnapshot::inactive_default(),
             principal,
             catalog_cgs_hash,
             registry_catalog_hashes_by_entry: HashMap::new(),
@@ -573,6 +578,16 @@ impl ExecuteSession {
             live_run_telemetry: Arc::new(StdMutex::new(None)),
             bindings_by_entry,
         }
+    }
+
+    /// Build a flow-catalog projection from all loaded session contexts.
+    pub fn build_flow_catalog_view(&self) -> FlowCatalogView {
+        FlowCatalogView::from_pins(self.contexts_by_entry.iter().map(|(entry_id, ctx)| {
+            crate::flow_catalog::CatalogPin {
+                entry_id: entry_id.as_str(),
+                cgs: ctx.cgs.as_ref(),
+            }
+        }))
     }
 
     /// Session binding wire values for a catalog `entry_id`.
@@ -1364,6 +1379,11 @@ impl ExecuteSession {
                 commit_ref: record.commit_ref.as_str().to_string(),
                 commit_id_hex: record.commit_id.to_string(),
                 domain_revision: record.domain_revision,
+                policy_revision: record
+                    .flow_admission()
+                    .policy_revision
+                    .unwrap_or_default()
+                    .0,
                 comp: Some(comp),
                 program: record.program.clone(),
                 dry_review: record.dry_review.clone(),
@@ -1429,16 +1449,32 @@ impl ExecuteSession {
             };
             map.insert(
                 commit_ref.clone(),
-                crate::operation::PlanCommitRecord {
-                    commit_ref,
-                    commit_id: PlanCommitId::from_canonical_bytes(arr),
-                    domain_revision: persisted.domain_revision,
-                    artifact,
-                    program: persisted.program.clone(),
-                    dry_review: persisted.dry_review.clone(),
-                    verdict: persisted.verdict,
-                    expires_at: std::time::Instant::now() + Duration::from_secs(ttl_secs),
-                    dry_cache: persisted.dry_cache.clone(),
+                match crate::operation::PlanCommitRecord::rehydrated_from_persisted(
+                    self,
+                    crate::operation::RehydratedPlanCommit {
+                        commit_ref,
+                        commit_id: PlanCommitId::from_canonical_bytes(arr),
+                        domain_revision: persisted.domain_revision,
+                        policy_revision: crate::plan_flow_policy::PolicyRevision(
+                            persisted.policy_revision,
+                        ),
+                        artifact,
+                        program: persisted.program.clone(),
+                        dry_review: persisted.dry_review.clone(),
+                        verdict: persisted.verdict,
+                        expires_at: std::time::Instant::now() + Duration::from_secs(ttl_secs),
+                        dry_cache: persisted.dry_cache.clone(),
+                    },
+                ) {
+                    Ok(record) => record,
+                    Err(err) => {
+                        tracing::warn!(
+                            plan_commit_ref = %persisted.commit_ref,
+                            error = %err,
+                            "skipping persisted plan_commit: flow re-verify failed"
+                        );
+                        continue;
+                    }
                 },
             );
         }

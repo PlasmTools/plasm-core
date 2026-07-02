@@ -102,6 +102,8 @@ pub struct PersistedPlanCommitRecord {
     #[serde(default)]
     pub domain_revision: u32,
     #[serde(default)]
+    pub policy_revision: u64,
+    #[serde(default)]
     pub comp: Option<serde_json::Value>,
     #[serde(default)]
     pub program: String,

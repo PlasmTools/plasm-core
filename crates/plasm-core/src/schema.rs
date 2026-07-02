@@ -174,6 +174,128 @@ impl From<ValueDomainKey> for String {
     }
 }
 
+fn validate_snake_case_ident(raw: impl AsRef<str>, what: &str) -> Result<String, String> {
+    let s = raw.as_ref().trim();
+    if s.is_empty() {
+        return Err(format!("{what} cannot be empty"));
+    }
+    let mut chars = s.chars();
+    let Some(first) = chars.next() else {
+        return Err(format!("{what} cannot be empty"));
+    };
+    if !first.is_ascii_lowercase() {
+        return Err(format!(
+            "{what} must be snake_case (start with lowercase ascii letter): '{s}'"
+        ));
+    }
+    if !chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+        return Err(format!(
+            "{what} must be snake_case (lowercase ascii, digits, underscore): '{s}'"
+        ));
+    }
+    Ok(s.to_string())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct DataClassName(String);
+
+impl DataClassName {
+    pub fn new(raw: impl Into<String>) -> Result<Self, String> {
+        validate_snake_case_ident(raw.into(), "data class name").map(Self)
+    }
+
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Deref for DataClassName {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl From<DataClassName> for String {
+    fn from(v: DataClassName) -> Self {
+        v.0
+    }
+}
+
+impl<'de> Deserialize<'de> for DataClassName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        DataClassName::new(raw).map_err(SerdeDeError::custom)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct SinkClassName(String);
+
+impl SinkClassName {
+    pub fn new(raw: impl Into<String>) -> Result<Self, String> {
+        validate_snake_case_ident(raw.into(), "sink class name").map(Self)
+    }
+
+    #[inline]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Deref for SinkClassName {
+    type Target = str;
+
+    fn deref(&self) -> &Self::Target {
+        self.as_str()
+    }
+}
+
+impl From<SinkClassName> for String {
+    fn from(v: SinkClassName) -> Self {
+        v.0
+    }
+}
+
+impl<'de> Deserialize<'de> for SinkClassName {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        SinkClassName::new(raw).map_err(SerdeDeError::custom)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DataClassSeverity {
+    #[default]
+    Info,
+    Sensitive,
+    Untrusted,
+    Critical,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DataClassSchema {
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub severity: DataClassSeverity,
+}
+
+fn index_map_is_empty_data_classes(m: &IndexMap<DataClassName, DataClassSchema>) -> bool {
+    m.is_empty()
+}
+
 /// How a field / parameter / array element obtains its **wire shape** (see [`CGS::values`]).
 ///
 /// Authoring and interchange require every typed slot to name a registry entry; there is no
@@ -354,6 +476,9 @@ pub struct FieldSchema {
     /// decoded value (reserved `__plasm_attachment` object).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mime_type_hint: Option<String>,
+    /// Optional flow typing label attached to this field's data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_class: Option<DataClassName>,
     /// When the registry row's wire type is [`FieldType::Blob`], optional hint for images/audio/video vs generic binary.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachment_media: Option<AttachmentMediaKind>,
@@ -619,6 +744,9 @@ pub struct CapabilitySchema {
     /// non-overlapping field subsets (same ID, different fields).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub provides: Vec<String>,
+    /// Data classes this capability is declared to sanitize before producing output.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sanitizes: Vec<DataClassName>,
     /// Policy for the aggregate scope param after compound `entity_ref` scope splat runs.
     #[serde(default)]
     pub scope_aggregate_key_policy: ScopeAggregateKeyPolicy,
@@ -968,6 +1096,8 @@ pub struct InputFieldSchema {
     /// Semantic role of this parameter. Defaults to `filter`.
     /// Agents and LLM tooling use this to understand how the param affects results.
     pub role: Option<ParameterRole>,
+    /// Optional sink class for information-flow validation on this parameter.
+    pub sink_class: Option<SinkClassName>,
     /// When set on a union variant body field: nest this field's JSON under these segments when
     /// lowering [`crate::typed_invoke::TypedInvokeInput::Union`] (logical flat surface → nested wire).
     pub wire_json_path: Option<Vec<String>>,
@@ -991,6 +1121,8 @@ struct InputFieldSchemaDeHelper {
     default: Option<crate::Value>,
     #[serde(default)]
     role: Option<ParameterRole>,
+    #[serde(default)]
+    sink_class: Option<SinkClassName>,
     #[serde(default)]
     wire_json_path: Option<Vec<String>>,
     #[serde(default)]
@@ -1023,6 +1155,7 @@ impl TryFrom<InputFieldSchemaDeHelper> for InputFieldSchema {
             description: h.description,
             default: h.default,
             role: h.role,
+            sink_class: h.sink_class,
             wire_json_path: h.wire_json_path,
             wire_array_element_key: h.wire_array_element_key,
         })
@@ -1031,7 +1164,7 @@ impl TryFrom<InputFieldSchemaDeHelper> for InputFieldSchema {
 
 impl Serialize for InputFieldSchema {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("InputFieldSchema", 9)?;
+        let mut state = serializer.serialize_struct("InputFieldSchema", 10)?;
         state.serialize_field("name", &self.name)?;
         match &self.wire {
             InputFieldWire::Registry(k) => state.serialize_field("value_ref", k)?,
@@ -1046,6 +1179,9 @@ impl Serialize for InputFieldSchema {
         }
         if !is_default_role(&self.role) {
             state.serialize_field("role", &self.role)?;
+        }
+        if self.sink_class.is_some() {
+            state.serialize_field("sink_class", &self.sink_class)?;
         }
         if self.wire_json_path.is_some() {
             state.serialize_field("wire_json_path", &self.wire_json_path)?;
@@ -1945,6 +2081,9 @@ pub struct CGS {
     /// Reusable value domains (`values:`), catalog-local (not merged across federation).
     #[serde(default, skip_serializing_if = "index_map_is_empty_named_values")]
     pub values: IndexMap<String, NamedValueSchema>,
+    /// Typed information-flow classes used by field and capability annotations.
+    #[serde(default, skip_serializing_if = "index_map_is_empty_data_classes")]
+    pub data_classes: IndexMap<DataClassName, DataClassSchema>,
     /// Default HTTP(S) origin for CML execution against this catalog (required in interchange).
     pub http_backend: String,
     /// Optional authentication scheme for all requests made against this schema.
@@ -2022,6 +2161,7 @@ impl Clone for CGS {
             entities: self.entities.clone(),
             capabilities: self.capabilities.clone(),
             values: self.values.clone(),
+            data_classes: self.data_classes.clone(),
             http_backend: self.http_backend.clone(),
             auth: self.auth.clone(),
             oauth: self.oauth.clone(),
@@ -2046,6 +2186,7 @@ impl PartialEq for CGS {
         self.entities == other.entities
             && self.capabilities == other.capabilities
             && self.values == other.values
+            && self.data_classes == other.data_classes
             && self.http_backend == other.http_backend
             && self.auth == other.auth
             && self.oauth == other.oauth
@@ -2182,6 +2323,7 @@ impl CGS {
             entities: IndexMap::new(),
             capabilities: IndexMap::new(),
             values: IndexMap::new(),
+            data_classes: IndexMap::new(),
             http_backend: DEFAULT_HTTP_BACKEND.to_string(),
             auth: None,
             oauth: None,
@@ -2961,6 +3103,7 @@ impl CGS {
         self.validate_expression_aliases()?;
         self.validate_temporal_value_formats()?;
         self.validate_closed_value_domain_refs()?;
+        self.validate_closed_data_class_refs()?;
         self.validate_registry_denormalization()?;
         self.validate_pipeline_segment_disjointness()?;
 
@@ -3786,6 +3929,123 @@ impl CGS {
         }
 
         Ok(())
+    }
+
+    fn data_class_known(&self, name: &str) -> bool {
+        self.data_classes.keys().any(|k| k.as_str() == name)
+    }
+
+    fn validate_closed_data_class_refs(&self) -> Result<(), SchemaError> {
+        for (entity_name, entity) in &self.entities {
+            for (field_name, field) in &entity.fields {
+                let Some(dc) = field.data_class.as_ref() else {
+                    continue;
+                };
+                if !self.data_class_known(dc.as_str()) {
+                    return Err(SchemaError::UnknownDataClass {
+                        key: dc.as_str().to_string(),
+                        context: format!("entity '{entity_name}' field '{field_name}'"),
+                    });
+                }
+            }
+        }
+
+        for (cap_name, cap) in &self.capabilities {
+            for dc in &cap.sanitizes {
+                if !self.data_class_known(dc.as_str()) {
+                    return Err(SchemaError::UnknownDataClass {
+                        key: dc.as_str().to_string(),
+                        context: format!("capability '{cap_name}' sanitizes"),
+                    });
+                }
+            }
+
+            for param in self.capability_sink_params(cap) {
+                let Some(sink) = param.sink_class.as_ref() else {
+                    continue;
+                };
+                if !self.data_class_known(sink.as_str()) {
+                    return Err(SchemaError::UnknownDataClass {
+                        key: sink.as_str().to_string(),
+                        context: format!("capability '{cap_name}' parameter '{}'", param.name),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn capability_output_data_classes<'a>(
+        &'a self,
+        cap: &'a CapabilitySchema,
+    ) -> Vec<&'a DataClassName> {
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::<&str>::new();
+        let Some(entity) = self.entities.get(&cap.domain) else {
+            return out;
+        };
+        for field_name in self.effective_provides(cap) {
+            let Some(field) = entity.fields.get(field_name.as_str()) else {
+                continue;
+            };
+            let Some(dc) = field.data_class.as_ref() else {
+                continue;
+            };
+            if seen.insert(dc.as_str()) {
+                out.push(dc);
+            }
+        }
+        out
+    }
+
+    pub fn field_data_class<'a>(&'a self, entity: &str, field: &str) -> Option<&'a DataClassName> {
+        self.entities
+            .get(entity)
+            .and_then(|e| e.fields.get(field))
+            .and_then(|f| f.data_class.as_ref())
+    }
+
+    pub fn capability_sink_params<'a>(
+        &'a self,
+        cap: &'a CapabilitySchema,
+    ) -> Vec<&'a InputFieldSchema> {
+        fn collect_sink_params<'a>(ty: &'a InputType, out: &mut Vec<&'a InputFieldSchema>) {
+            match ty {
+                InputType::Object { fields, .. } => {
+                    for field in fields {
+                        if field.sink_class.is_some() {
+                            out.push(field);
+                        }
+                        if let InputFieldWire::Inline(ty) = &field.wire {
+                            collect_sink_params(ty.as_ref(), out);
+                        }
+                    }
+                }
+                InputType::Array { element_type, .. } => {
+                    collect_sink_params(element_type.as_ref(), out);
+                }
+                InputType::Union { variants } => {
+                    for v in variants {
+                        for field in &v.fields {
+                            if field.sink_class.is_some() {
+                                out.push(field);
+                            }
+                            if let InputFieldWire::Inline(ty) = &field.wire {
+                                collect_sink_params(ty.as_ref(), out);
+                            }
+                        }
+                    }
+                }
+                InputType::None | InputType::Value { .. } => {}
+            }
+        }
+
+        let mut out = Vec::new();
+        if let Some(input_schema) = cap.input_schema.as_ref() {
+            collect_sink_params(&input_schema.input_type, &mut out);
+        }
+        out
     }
 
     /// Ensures nested [`ArrayItemsSchema`] mirrors agree with their [`NamedValueSchema`] rows.
@@ -4841,6 +5101,7 @@ pub mod registry_test_util {
             required,
             agent_presentation: None,
             mime_type_hint: None,
+            data_class: None,
             attachment_media: None,
             wire_path: None,
             derive: None,
@@ -4861,6 +5122,7 @@ pub mod registry_test_util {
             description: None,
             default: None,
             role: None,
+            sink_class: None,
             wire_json_path: None,
             wire_array_element_key: None,
         }

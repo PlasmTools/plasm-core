@@ -21,6 +21,7 @@ pub enum PlanCommitVerifyError {
     Expired { commit_ref: String },
     Mismatch { commit_ref: String },
     StaleDomain { commit_ref: String },
+    StalePolicy { commit_ref: String },
     Evidence { commit_ref: String, detail: String },
 }
 
@@ -38,6 +39,9 @@ impl PlanCommitVerifyError {
             ),
             Self::StaleDomain { commit_ref } => format!(
                 "plan_commit_ref `{commit_ref}` is stale after `plasm_context` extended the session — call `plasm` dry-run again (check `_meta.plasm.domain_revision`)"
+            ),
+            Self::StalePolicy { commit_ref } => format!(
+                "plan_commit_ref `{commit_ref}` is stale after flow policy changed — call `plasm` dry-run again"
             ),
             Self::Evidence { commit_ref, detail } => format!(
                 "plan_commit_ref `{commit_ref}` evidence mismatch: {detail}"
@@ -88,6 +92,11 @@ pub fn verify_plan_commit_id(
     }
     if record.domain_revision != es.domain_revision {
         return Err(PlanCommitVerifyError::StaleDomain {
+            commit_ref: commit_ref.as_str().to_string(),
+        });
+    }
+    if record.policy_revision != es.flow_policy.revision_or_default() {
+        return Err(PlanCommitVerifyError::StalePolicy {
             commit_ref: commit_ref.as_str().to_string(),
         });
     }
@@ -175,6 +184,7 @@ pub fn dry_for_committed_plasm_run(
     verify_committed_plan_bundle(bundle, committed).map_err(|e| e.detail())?;
     if committed.dry_cache.is_populated() {
         DryPlasmPlanEvaluation::from_plan_commit_cache(
+            es,
             bundle,
             &committed.dry_cache,
             committed.dry_review.clone(),
@@ -251,10 +261,51 @@ mod tests {
 
     use plasm_core::{CgsContext, CGS};
 
-    use super::*;
+    use super::{
+        accept_plan_commit_for_bundle, dry_for_committed_plasm_run, register_plan_commit_and_persist,
+        verify_committed_plan_bundle, verify_plan_commit_id, CommittedPlan, PlanCommitVerifyError,
+    };
     use crate::execute_session::ExecuteSession;
-    use crate::operation::PLAN_COMMIT_TTL;
-    use crate::plan_dry_display::PlanDryVerdict;
+    use crate::operation::{
+        plan_commit_canonical_comp, PlanCommitDryCache, PlanCommitRecord, RehydratedPlanCommit,
+        PLAN_COMMIT_TTL,
+    };
+    use crate::plan_dry_display::{PlanDryReview, PlanDryVerdict};
+    use crate::plan_flow_policy::PolicyRevision;
+    use crate::plasm_comp_bundle::PlasmCompBundle;
+    use plasm_core::{PlanCommitId, PlanCommitRef};
+
+    #[allow(clippy::too_many_arguments)]
+    fn rehydrate_record(
+        es: &ExecuteSession,
+        commit_ref: PlanCommitRef,
+        commit_id: PlanCommitId,
+        domain_revision: u32,
+        policy_revision: PolicyRevision,
+        artifact: crate::plasm_comp_wire::PlasmCompArtifact,
+        program: String,
+        dry_review: crate::plan_dry_display::PlanDryReview,
+        verdict: PlanDryVerdict,
+        expires_at: std::time::Instant,
+        dry_cache: crate::operation::PlanCommitDryCache,
+    ) -> PlanCommitRecord {
+        PlanCommitRecord::rehydrated_from_persisted(
+            es,
+            RehydratedPlanCommit {
+                commit_ref,
+                commit_id,
+                domain_revision,
+                policy_revision,
+                artifact,
+                program,
+                dry_review,
+                verdict,
+                expires_at,
+                dry_cache,
+            },
+        )
+        .expect("rehydrate")
+    }
 
     fn minimal_session() -> ExecuteSession {
         let cgs = Arc::new(CGS::new());
@@ -324,7 +375,8 @@ mod tests {
             .expect_err("unknown");
         assert!(matches!(err, PlanCommitVerifyError::Unknown { .. }));
 
-        let record = PlanCommitRecord::rehydrated_from_persisted(
+        let record = rehydrate_record(
+            &es,
             pc.clone(),
             PlanCommitId::from_canonical_bytes([1u8; 32]),
             0,
@@ -341,8 +393,9 @@ mod tests {
             .expect_err("expired");
         assert!(matches!(err, PlanCommitVerifyError::Expired { .. }));
 
-        es.register_plan_commit(PlanCommitRecord::rehydrated_from_persisted(
-            pc.clone(),
+        es.register_plan_commit(rehydrate_record(
+                &es,
+                pc.clone(),
             PlanCommitId::from_canonical_bytes([2u8; 32]),
             0,
             es.flow_policy.revision_or_default(),
@@ -363,8 +416,9 @@ mod tests {
         let mut es = minimal_session();
         let pc = es.mint_plan_commit_ref();
         let commit_id = PlanCommitId::from_canonical_bytes([4u8; 32]);
-        es.register_plan_commit(PlanCommitRecord::rehydrated_from_persisted(
-            pc.clone(),
+        es.register_plan_commit(rehydrate_record(
+                &es,
+                pc.clone(),
             commit_id.clone(),
             0,
             es.flow_policy.revision_or_default(),
@@ -381,12 +435,39 @@ mod tests {
     }
 
     #[test]
+    fn policy_revision_mismatch_rejects_stale_pc() {
+        let mut es = minimal_session();
+        let pc = es.mint_plan_commit_ref();
+        let commit_id = PlanCommitId::from_canonical_bytes([6u8; 32]);
+        es.register_plan_commit(rehydrate_record(
+                &es,
+                pc.clone(),
+            commit_id.clone(),
+            0,
+            es.flow_policy.revision_or_default(),
+            minimal_artifact(),
+            "test".into(),
+            Default::default(),
+            PlanDryVerdict::Ok,
+            std::time::Instant::now() + PLAN_COMMIT_TTL,
+            PlanCommitDryCache::default(),
+        ));
+        es.flow_policy = crate::FlowPolicySnapshot::Active {
+            revision: crate::PolicyRevision(2),
+            policy: crate::FlowPolicy::default(),
+        };
+        let err = verify_plan_commit_id(&es, &pc, commit_id).expect_err("stale policy");
+        assert!(matches!(err, PlanCommitVerifyError::StalePolicy { .. }));
+    }
+
+    #[test]
     fn register_roundtrip_on_session() {
         let es = minimal_session();
         let pc = es.mint_plan_commit_ref();
         let commit_id = PlanCommitId::from_canonical_bytes([7u8; 32]);
-        es.register_plan_commit(PlanCommitRecord::rehydrated_from_persisted(
-            pc.clone(),
+        es.register_plan_commit(rehydrate_record(
+                &es,
+                pc.clone(),
             commit_id.clone(),
             0,
             es.flow_policy.revision_or_default(),
@@ -413,8 +494,9 @@ mod tests {
             has_unbounded_read_root: true,
             ..Default::default()
         };
-        es.register_plan_commit(PlanCommitRecord::rehydrated_from_persisted(
-            pc.clone(),
+        es.register_plan_commit(rehydrate_record(
+                &es,
+                pc.clone(),
             commit_id,
             es.domain_revision,
             es.flow_policy.revision_or_default(),
@@ -509,7 +591,8 @@ mod tests {
             es.clone(),
             created.prompt_hash.as_str(),
             created.session.as_str(),
-            PlanCommitRecord::rehydrated_from_persisted(
+            rehydrate_record(
+                &es,
                 pc.clone(),
                 commit_id.clone(),
                 es.domain_revision,

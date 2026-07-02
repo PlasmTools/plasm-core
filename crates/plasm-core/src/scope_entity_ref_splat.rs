@@ -256,6 +256,7 @@ mod tests {
             scope_aggregate_key_policy: policy,
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         }
     }
 

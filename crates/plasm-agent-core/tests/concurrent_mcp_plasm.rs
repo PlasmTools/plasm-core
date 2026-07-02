@@ -187,7 +187,8 @@ async fn concurrent_mcp_plasm_dry_two_commits() {
                 sym.into(),
                 PlanDryVerdict::Ok,
                 std::time::Instant::now() + PLAN_COMMIT_TTL,
-            ),
+            )
+            .expect("flow admission"),
         )
         .await
         .expect("persist plan commit");

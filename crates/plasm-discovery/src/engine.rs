@@ -894,6 +894,7 @@ mod relation_intent_rank_tests {
             attachment_media: None,
             wire_path: None,
             derive: None,
+            data_class: None,
         };
         cgs.add_resource(ResourceSchema {
             name: EntityName::from("Parent"),
@@ -955,6 +956,7 @@ mod relation_intent_rank_tests {
             scope_aggregate_key_policy: Default::default(),
             preflight: None,
             discovery: None,
+            sanitizes: vec![],
         })
         .unwrap();
         cgs.add_capability(CapabilitySchema {
@@ -972,6 +974,7 @@ mod relation_intent_rank_tests {
                 operation_terms: vec![],
                 target_terms: vec!["comment".into()],
             }),
+            sanitizes: vec![],
         })
         .unwrap();
         cgs

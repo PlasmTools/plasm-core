@@ -80,6 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 attachment_media: None,
                 wire_path: None,
                 derive: None,
+                data_class: None,
             },
             FieldSchema {
                 name: "name".into(),
@@ -91,6 +92,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 attachment_media: None,
                 wire_path: None,
                 derive: None,
+                data_class: None,
             },
             FieldSchema {
                 name: "revenue".into(),
@@ -102,6 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 attachment_media: None,
                 wire_path: None,
                 derive: None,
+                data_class: None,
             },
             FieldSchema {
                 name: "region".into(),
@@ -113,6 +116,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 attachment_media: None,
                 wire_path: None,
                 derive: None,
+                data_class: None,
             },
         ],
         relations: vec![],
