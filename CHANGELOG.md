@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.106] - 2026-07-02
+
+### Fixed
+
+- **Homographed invoke `p#` on union-variant cap params:** `InvokeParam` reverse lookup prefers the session representative (or stable declared path) when multiple occurrence paths share one opaque symbol — restores `proof` `document_edit_v2` teaching-line synthesis and catalog pack validation.
+
 ## [0.3.105] - 2026-07-02
 
 ### Added
