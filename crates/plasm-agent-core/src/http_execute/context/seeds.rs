@@ -163,7 +163,9 @@ pub(super) fn relation_endpoint_keys_for_wave(
     exp.relation_endpoint_keys_for_wave(batch_entry_id, batch_names)
 }
 
-pub(crate) fn format_exposure_entity_cheat_sheet(exp: &plasm_core::TeachingExposureSession) -> String {
+pub(crate) fn format_exposure_entity_cheat_sheet(
+    exp: &plasm_core::TeachingExposureSession,
+) -> String {
     if exp.entities.is_empty() {
         return String::new();
     }
@@ -199,10 +201,7 @@ pub(crate) async fn format_session_churn_advisory(
         else {
             continue;
         };
-        let Some(sess) = st
-            .get_execute_session(&pair.0, &pair.1)
-            .await
-        else {
+        let Some(sess) = st.get_execute_session(&pair.0, &pair.1).await else {
             continue;
         };
         let exposed: BTreeSet<(String, String)> = capability_seeds_from_session(sess.as_ref())
@@ -545,27 +544,38 @@ pub(crate) fn build_plasm_context_agent_markdown(
     }
 }
 
+/// Inputs for [`build_plasm_context_tool_meta`] beyond the apply outcome.
+pub(crate) struct PlasmContextToolMetaParams<'a> {
+    pub logical_session_ref: &'a str,
+    pub session_mode: &'a str,
+    pub intent_turns: usize,
+    pub accumulated_intent_preview: &'a str,
+    pub domain_revision: Option<u32>,
+    pub relations: Option<serde_json::Value>,
+    pub relations_delta: Option<serde_json::Value>,
+}
+
 /// Slim `_meta.plasm` for `plasm_context`: continuity + teaching revision only.
 pub(crate) fn build_plasm_context_tool_meta(
-    logical_session_ref: &str,
     out: &ApplyCapabilitySeedsOutcome,
-    session_mode: &str,
-    intent_turns: usize,
-    accumulated_intent_preview: &str,
-    domain_revision: Option<u32>,
-    relations: Option<serde_json::Value>,
-    relations_delta: Option<serde_json::Value>,
+    params: PlasmContextToolMetaParams<'_>,
 ) -> serde_json::Map<String, serde_json::Value> {
+    let PlasmContextToolMetaParams {
+        logical_session_ref,
+        session_mode,
+        intent_turns,
+        accumulated_intent_preview,
+        domain_revision,
+        relations,
+        relations_delta,
+    } = params;
     let mut plasm = serde_json::Map::new();
     plasm.insert(
         "logical_session_ref".to_string(),
         serde_json::json!(logical_session_ref),
     );
     plasm.insert("session_mode".to_string(), serde_json::json!(session_mode));
-    plasm.insert(
-        "intent_turns".to_string(),
-        serde_json::json!(intent_turns),
-    );
+    plasm.insert("intent_turns".to_string(), serde_json::json!(intent_turns));
     if !accumulated_intent_preview.is_empty() {
         plasm.insert(
             "accumulated_intent".to_string(),
@@ -902,14 +912,16 @@ mod ranked_replay_tests {
             symbol_space_reset: false,
         };
         let meta = build_plasm_context_tool_meta(
-            "lsref",
             &out,
-            "extend",
-            2,
-            "turn-one\nturn-two",
-            Some(1),
-            None,
-            None,
+            PlasmContextToolMetaParams {
+                logical_session_ref: "lsref",
+                session_mode: "extend",
+                intent_turns: 2,
+                accumulated_intent_preview: "turn-one\nturn-two",
+                domain_revision: Some(1),
+                relations: None,
+                relations_delta: None,
+            },
         );
         let continuity = meta
             .get("continuity")

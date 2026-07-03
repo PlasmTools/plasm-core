@@ -87,10 +87,7 @@ impl SymbolResolveError {
     /// Primary error line plus optional `help:` suffix for agent program surfaces.
     pub fn to_agent_program_error(&self) -> String {
         match self.agent_program_hint() {
-            Some(hint) => format!(
-                "{self}\nhelp: {hint} {}",
-                Self::SESSION_RECOVERY_SUFFIX
-            ),
+            Some(hint) => format!("{self}\nhelp: {hint} {}", Self::SESSION_RECOVERY_SUFFIX),
             None => format!("{self}\nhelp: {}", Self::SESSION_RECOVERY_SUFFIX),
         }
     }

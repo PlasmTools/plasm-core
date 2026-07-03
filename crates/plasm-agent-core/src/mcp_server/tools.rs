@@ -106,11 +106,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
             title: Some("Open or extend Plasm context".into()),
             description: Some(PLASM_CONTEXT_TOOL_DESCRIPTION.into()),
             input_schema: ToolInputSchema::new(
-                vec![
-                    "session_mode".into(),
-                    "intent".into(),
-                    "seeds".into(),
-                ],
+                vec!["session_mode".into(), "intent".into(), "seeds".into()],
                 Some(context_props),
                 None,
             ),

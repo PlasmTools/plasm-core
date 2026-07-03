@@ -259,14 +259,16 @@ fn tool_meta_keeps_slim_agent_keys() {
         symbol_space_reset: false,
     };
     let meta = build_plasm_context_tool_meta(
-        "l_AAAAAAAAQACAAAAAAAAAAQ",
         &out,
-        "new",
-        1,
-        "workflow goal",
-        Some(2),
-        None,
-        None,
+        PlasmContextToolMetaParams {
+            logical_session_ref: "l_AAAAAAAAQACAAAAAAAAAAQ",
+            session_mode: "new",
+            intent_turns: 1,
+            accumulated_intent_preview: "workflow goal",
+            domain_revision: Some(2),
+            relations: None,
+            relations_delta: None,
+        },
     );
     assert!(meta.contains_key("session_mode"));
     assert!(meta.contains_key("intent_turns"));

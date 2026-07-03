@@ -185,12 +185,9 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     assert!(
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
     );
-    assert!(
-        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("session_mode")
-    );
-    assert!(
-        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("does NOT select the session")
-    );
+    assert!(plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("session_mode"));
+    assert!(plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION
+        .contains("does NOT select the session"));
     assert!(
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
     );
@@ -674,7 +671,10 @@ fn parse_plasm_context_session_mode_new_and_extend() {
         }),
     )
     .expect("extend");
-    assert_eq!(mode, crate::session_identity::PlasmContextSessionMode::Extend);
+    assert_eq!(
+        mode,
+        crate::session_identity::PlasmContextSessionMode::Extend
+    );
     assert_eq!(r.as_deref(), Some("l_AAAAAAAAQACAAAAAAAAAAQ"));
 }
 

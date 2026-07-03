@@ -2,7 +2,9 @@
 
 use super::super::super::*;
 
-use super::super::seeds::{format_exposure_entity_cheat_sheet, wrap_teaching_markdown_literal_block};
+use super::super::seeds::{
+    format_exposure_entity_cheat_sheet, wrap_teaching_markdown_literal_block,
+};
 use super::symbol_ledger::persist_after_wave_commit;
 
 /// Snapshot captured before an exposure wave mutates [`plasm_core::TeachingExposureSession`].

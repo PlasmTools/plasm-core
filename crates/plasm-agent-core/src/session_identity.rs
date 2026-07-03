@@ -254,7 +254,11 @@ impl LogicalSessionRegistry {
     }
 
     /// Mint a **new** logical session (always fresh UUID). Seeds the first intent turn.
-    pub async fn mint_session(&self, tenant_scope: &str, first_intent_turn: &str) -> LogicalSessionRecord {
+    pub async fn mint_session(
+        &self,
+        tenant_scope: &str,
+        first_intent_turn: &str,
+    ) -> LogicalSessionRecord {
         let turn = normalize_intent_turn(first_intent_turn).unwrap_or_else(|| " ".to_string());
         let intent_turns = vec![turn];
         let accumulated_intent = normalize_accumulated_intent(&intent_turns);
@@ -353,10 +357,7 @@ mod tests {
     #[test]
     fn normalize_accumulated_intent_joins_turns() {
         let turns = vec!["first".into(), "second".into()];
-        assert_eq!(
-            normalize_accumulated_intent(&turns),
-            "first\nsecond"
-        );
+        assert_eq!(normalize_accumulated_intent(&turns), "first\nsecond");
     }
 
     #[tokio::test]

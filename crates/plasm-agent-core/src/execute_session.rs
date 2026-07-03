@@ -1942,12 +1942,18 @@ mod tests {
         };
         let mut key_b = key_a.clone();
         key_b.context_intent = Some("accumulated later turn".into());
-        assert_eq!(key_a, key_b, "MCP logical session scopes reuse, not intent wording");
+        assert_eq!(
+            key_a, key_b,
+            "MCP logical session scopes reuse, not intent wording"
+        );
 
         let mut key_http = key_a.clone();
         key_http.logical_session_id = None;
         key_http.context_intent = Some("different".into());
-        assert_ne!(key_a, key_http, "HTTP-only reuse still keys on context_intent");
+        assert_ne!(
+            key_a, key_http,
+            "HTTP-only reuse still keys on context_intent"
+        );
     }
 
     #[tokio::test]

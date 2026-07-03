@@ -1144,9 +1144,9 @@ mod tests {
             return;
         }
         let cgs = load_schema_dir(dir).expect("flow_matrix");
-        assert!(cgs.data_classes.contains_key(
-            &crate::DataClassName::new("untrusted").expect("untrusted")
-        ));
+        assert!(cgs
+            .data_classes
+            .contains_key(&crate::DataClassName::new("untrusted").expect("untrusted")));
         let body = cgs
             .field_data_class("Message", "body")
             .expect("body data_class");

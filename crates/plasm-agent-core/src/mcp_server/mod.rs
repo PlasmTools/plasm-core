@@ -74,6 +74,7 @@ use crate::mcp_transport_store::{
 use crate::execute_session::ExecuteSession;
 use crate::http_execute::{
     apply_capability_seeds, build_plasm_context_agent_markdown, build_plasm_context_tool_meta,
+    PlasmContextToolMetaParams,
     normalize_capability_seeds, try_dispatch_operation_program, ApplyCapabilitySeedsOutcome,
     CapabilitySeed, RankedCapabilitiesArg,
 };
@@ -979,7 +980,9 @@ impl PlasmMcpHandler {
                     .await
             }
             PlasmContextSessionMode::Extend => {
-                let wire = extend_ref.as_deref().expect("extend ref validated in parse");
+                let wire = extend_ref
+                    .as_deref()
+                    .expect("extend ref validated in parse");
                 let logical_uuid = self.resolve_logical_session_ref_to_uuid(tname, wire)?;
                 if !self
                     .plasm
@@ -1056,12 +1059,7 @@ impl PlasmMcpHandler {
                         return true;
                     }
                 }
-                if let Some(pair) = self
-                    .plasm
-                    .logical_execute_bindings
-                    .get(&logical_uuid)
-                    .await
-                {
+                if let Some(pair) = self.plasm.logical_execute_bindings.get(&logical_uuid).await {
                     return self
                         .plasm
                         .get_execute_session(&pair.0, &pair.1)
@@ -1248,14 +1246,17 @@ impl PlasmMcpHandler {
             }
         };
         let plasm = build_plasm_context_tool_meta(
-            logical_session_ref.as_str(),
             &out,
-            session_mode.as_str(),
-            rec.intent_turns.len(),
-            accumulated_intent_meta_preview(accumulated_intent, 240).as_str(),
-            domain_revision,
-            relations,
-            relations_delta,
+            PlasmContextToolMetaParams {
+                logical_session_ref: logical_session_ref.as_str(),
+                session_mode: session_mode.as_str(),
+                intent_turns: rec.intent_turns.len(),
+                accumulated_intent_preview: accumulated_intent_meta_preview(accumulated_intent, 240)
+                    .as_str(),
+                domain_revision,
+                relations,
+                relations_delta,
+            },
         );
         let mut res = CallToolResult::text_content(vec![TextContent::new(text, None, None)]);
         if !plasm.is_empty() {

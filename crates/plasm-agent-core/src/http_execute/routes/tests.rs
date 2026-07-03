@@ -3,7 +3,7 @@ use crate::http;
 use crate::http_execute::context::{
     build_capability_exposure_plan, build_plasm_context_agent_markdown,
     build_plasm_context_tool_meta, format_session_unchanged_reuse_markdown,
-    group_seed_entities_by_entry, primary_entry_id_for_grouped,
+    group_seed_entities_by_entry, primary_entry_id_for_grouped, PlasmContextToolMetaParams,
 };
 use crate::http_execute::mcp_publish::build_mcp_run_tool_meta;
 use crate::incoming_auth::IncomingPrincipal;

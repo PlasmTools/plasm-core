@@ -2529,9 +2529,11 @@ impl<'a> Parser<'a> {
         };
         self.skip_ws();
         self.expect_char(')')?;
-        Ok(Some(
-            self.build_search_query_expr(entity, preds, Some(cap_name))?,
-        ))
+        Ok(Some(self.build_search_query_expr(
+            entity,
+            preds,
+            Some(cap_name),
+        )?))
     }
 
     fn resolve_entity_dot_search_cap(
