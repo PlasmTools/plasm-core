@@ -811,7 +811,10 @@ mod tests {
             "labels = hits.p5".to_string(),
         ]);
         assert_eq!(expanded.coerced_default_return.as_deref(), Some("labels"));
-        assert_eq!(expanded.statements.last().map(String::as_str), Some("labels"));
+        assert_eq!(
+            expanded.statements.last().map(String::as_str),
+            Some("labels")
+        );
     }
 
     #[test]
