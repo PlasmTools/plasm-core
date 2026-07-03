@@ -2,7 +2,7 @@
 
 use super::super::super::*;
 
-use super::super::seeds::wrap_teaching_markdown_literal_block;
+use super::super::seeds::{format_exposure_entity_cheat_sheet, wrap_teaching_markdown_literal_block};
 use super::symbol_ledger::persist_after_wave_commit;
 
 /// Snapshot captured before an exposure wave mutates [`plasm_core::TeachingExposureSession`].
@@ -192,6 +192,13 @@ pub(crate) async fn commit_exposure_wave_delta(
     let mut wave = render_exposure_wave_markdown(st, &sess, &exp, &changes);
     if ranked_slice.is_some_and(|n| !n.is_empty()) && changes.new_capabilities.is_empty() {
         append_ranked_replay_diagnostics(&mut wave, &exp, ranked_slice, &snapshot.caps_before);
+    }
+    let cheat = format_exposure_entity_cheat_sheet(&exp);
+    if !cheat.is_empty() {
+        if !wave.trim().is_empty() {
+            wave.push_str("\n\n");
+        }
+        wave.push_str(&cheat);
     }
 
     if !wave.trim().is_empty() {

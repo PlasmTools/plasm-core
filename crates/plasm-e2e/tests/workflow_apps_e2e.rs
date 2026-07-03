@@ -290,6 +290,7 @@ async fn workflow_apps_e2e_async() {
         &mcp_session,
         "plasm_context",
         json!({
+            "session_mode": "new",
             "intent": "workflow matrix reads",
             "seeds": [
                 { "api": "catalog_a", "entity": "WorkItem" },

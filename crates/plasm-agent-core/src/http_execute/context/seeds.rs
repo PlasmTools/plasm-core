@@ -163,6 +163,68 @@ pub(super) fn relation_endpoint_keys_for_wave(
     exp.relation_endpoint_keys_for_wave(batch_entry_id, batch_names)
 }
 
+pub(crate) fn format_exposure_entity_cheat_sheet(exp: &plasm_core::TeachingExposureSession) -> String {
+    if exp.entities.is_empty() {
+        return String::new();
+    }
+    let map = plasm_core::prompt_render::render_compact_exposure_symbol_map(exp);
+    format!("Active symbols — {map}.")
+}
+
+/// Advisory when `session_mode: new` overlaps seeds with a recent live logical session.
+pub(crate) async fn format_session_churn_advisory(
+    st: &PlasmHostState,
+    tenant_scope: &str,
+    except: Option<crate::session_identity::LogicalSessionId>,
+    requested_seeds: &[CapabilitySeed],
+) -> String {
+    use crate::mcp_logical_ref::format_logical_session_wire_ref;
+
+    let requested: BTreeSet<(String, String)> = requested_seeds
+        .iter()
+        .map(|s| (s.entry_id.clone(), s.entity.clone()))
+        .collect();
+    if requested.is_empty() {
+        return String::new();
+    }
+    let recent = st
+        .logical_sessions
+        .recent_sessions_for_tenant(tenant_scope, except)
+        .await;
+    for rec in recent.into_iter().rev() {
+        let Some(pair) = st
+            .logical_execute_bindings
+            .get(&rec.logical_session_id.as_uuid())
+            .await
+        else {
+            continue;
+        };
+        let Some(sess) = st
+            .get_execute_session(&pair.0, &pair.1)
+            .await
+        else {
+            continue;
+        };
+        let exposed: BTreeSet<(String, String)> = capability_seeds_from_session(sess.as_ref())
+            .into_iter()
+            .map(|s| (s.entry_id, s.entity))
+            .collect();
+        let overlap: Vec<String> = requested
+            .intersection(&exposed)
+            .map(|(eid, ent)| format!("{eid}:{ent}"))
+            .collect();
+        if overlap.is_empty() {
+            continue;
+        }
+        let wire_ref = format_logical_session_wire_ref(rec.logical_session_id);
+        return format!(
+            "**Note:** session `{wire_ref}` already exposes {}. Use `session_mode: \"extend\"` with that `logical_session_ref` unless this is a separate goal.\n\n",
+            overlap.join(", ")
+        );
+    }
+    String::new()
+}
+
 pub(crate) fn format_session_unchanged_reuse_markdown(
     exp: Option<&plasm_core::TeachingExposureSession>,
 ) -> String {
@@ -387,6 +449,35 @@ pub(crate) fn normalize_ranked_capabilities_for_gate(
     Some(v)
 }
 
+pub(super) async fn apply_context_intent_session_update(
+    st: &PlasmHostState,
+    prompt_hash: &str,
+    session_id: &str,
+    accumulated_intent: &str,
+) -> Result<bool, String> {
+    let normalized = normalize_context_intent_for_domain_filter(Some(accumulated_intent));
+    let prompt_hash_p: PromptHashHex = prompt_hash
+        .parse()
+        .map_err(|e: &'static str| e.to_string())?;
+    let session_id_p: ExecuteSessionId = session_id
+        .parse()
+        .map_err(|e: &'static str| e.to_string())?;
+    let Some(sess_arc) = st
+        .get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
+        .await
+    else {
+        return Err("unknown or expired execute session".into());
+    };
+    let mut sess = (*sess_arc).clone();
+    let changed = sess.context_intent != normalized;
+    if changed {
+        sess.context_intent = normalized;
+        st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
+            .await;
+    }
+    Ok(changed)
+}
+
 pub(super) async fn apply_ranked_capabilities_session_update(
     st: &PlasmHostState,
     prompt_hash: &str,
@@ -425,9 +516,16 @@ pub(crate) fn build_plasm_context_agent_markdown(
     logical_session_ref: &str,
     waves: &[CapabilityWaveOutcome],
     symbol_space_reset: bool,
+    churn_advisory: &str,
 ) -> String {
     let mut body = String::new();
+    if !churn_advisory.is_empty() {
+        body.push_str(churn_advisory.trim_end());
+    }
     if symbol_space_reset {
+        if !body.is_empty() {
+            body.push_str("\n\n");
+        }
         body.push_str(SYMBOL_SPACE_RESET_NOTICE);
     }
     for wave in waves {
@@ -451,6 +549,9 @@ pub(crate) fn build_plasm_context_agent_markdown(
 pub(crate) fn build_plasm_context_tool_meta(
     logical_session_ref: &str,
     out: &ApplyCapabilitySeedsOutcome,
+    session_mode: &str,
+    intent_turns: usize,
+    accumulated_intent_preview: &str,
     domain_revision: Option<u32>,
     relations: Option<serde_json::Value>,
     relations_delta: Option<serde_json::Value>,
@@ -460,6 +561,17 @@ pub(crate) fn build_plasm_context_tool_meta(
         "logical_session_ref".to_string(),
         serde_json::json!(logical_session_ref),
     );
+    plasm.insert("session_mode".to_string(), serde_json::json!(session_mode));
+    plasm.insert(
+        "intent_turns".to_string(),
+        serde_json::json!(intent_turns),
+    );
+    if !accumulated_intent_preview.is_empty() {
+        plasm.insert(
+            "accumulated_intent".to_string(),
+            serde_json::json!(accumulated_intent_preview),
+        );
+    }
     let mut continuity = serde_json::Map::new();
     continuity.insert(
         "stale_binding_recovered".to_string(),
@@ -789,7 +901,16 @@ mod ranked_replay_tests {
             stale_binding_previous: Some(("ph_old".into(), "sid_old".into())),
             symbol_space_reset: false,
         };
-        let meta = build_plasm_context_tool_meta("lsref", &out, Some(1), None, None);
+        let meta = build_plasm_context_tool_meta(
+            "lsref",
+            &out,
+            "extend",
+            2,
+            "turn-one\nturn-two",
+            Some(1),
+            None,
+            None,
+        );
         let continuity = meta
             .get("continuity")
             .expect("continuity")

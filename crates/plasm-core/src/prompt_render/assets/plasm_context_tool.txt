@@ -1,13 +1,21 @@
-**Call before `plasm` / `plasm_run`.** **One goal → one stable `intent` → one `logical_session_ref`** — same `intent` string every turn (not per message/API). Bad: `intent: "msg 3: sort moves"` each turn. Multi-API: one **`seeds`** array on that intent.
+**Call before `plasm` / `plasm_run`.** Session identity is **`logical_session_ref`** only — not `intent`.
+
+**Session lifecycle (explicit):**
+- **`session_mode: "new"`** — mint `logical_session_ref` + fresh symbol table. Use **once** per workflow.
+- **`session_mode: "extend"`** — same `logical_session_ref`; append this turn's `intent`; add `seeds` / fix `ranked_capabilities`. Symbols **never** reset.
+- **`intent` does NOT select the session.** Rewording `intent` on `extend` is normal. Only **`session_mode: "new"`** discards symbols.
+
+**One workflow:** one `logical_session_ref`, many **`extend`** calls, evolving `intent` each turn.
+**Never** call **`session_mode: "new"`** to recover from a plan/parse error — use **`extend`** with corrected `seeds` / `ranked_capabilities`.
 
 **Programs = this table's symbols:** copy **`e#`/`m#`/`r#`/`p#`** from the left column into `plasm.program`. Catalog type names and API ids are not program syntax.
 
-**Open or extend:** **`intent`** + **`seeds`** (`{api, entity}`). Returns **`logical_session_ref`** + fenced teaching TSV (active symbol table). Logical-session ledger: symbols append in **arrival order** — existing **`e#`/`p#`** never shift. **SYMBOL SPACE RESET** banner = pinned catalog digest changed; discard cached symbols.
+**Open or extend:** **`session_mode`** + **`intent`** + **`seeds`** (`{api, entity}`). Returns **`logical_session_ref`** + fenced teaching TSV (active symbol table). Logical-session ledger: symbols append in **arrival order** — existing **`e#`/`p#`** never shift. **SYMBOL SPACE RESET** banner = pinned catalog digest changed; discard cached symbols.
 
-**Extend picks:** same **`intent`**, expanded **`seeds`** — delta TSV or reuse cheat sheet when already exposed.
+**Extend picks:** **`session_mode: "extend"`** + same **`logical_session_ref`**, expanded **`seeds`** — delta TSV or reuse cheat sheet when already exposed.
 
 **Discover before id (writes):** resolve human ids from live list/search, not catalog/eval samples.
 
 **Relation seeds:** seed program roots only; `.r#` targets need not be seeded — `unused_seeds` is advisory.
 
-**`_meta.plasm`:** `logical_session_ref`, `continuity`, `domain_revision`, optional **`relations`**.
+**`_meta.plasm`:** `logical_session_ref`, `session_mode`, `intent_turns`, `accumulated_intent`, `continuity`, `domain_revision`, optional **`relations`**.

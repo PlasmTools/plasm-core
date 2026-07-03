@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP `plasm_context` (breaking):** session identity is **`logical_session_ref`** only — not `intent`. Required **`session_mode`**: `"new"` (mint once per workflow) or `"extend"` (continue; requires ref). **`intent`** appends per turn into **`accumulated_intent`** for capability scoring. Removed intent-keyed `(tenant, intent) → session` idempotency. Churn advisory on overlapping **`new`** opens; expand deltas include active-symbol cheat sheet; ranked-replay unknown-capability hints suggest nearest wire names; parse errors steer agents to **`extend`**, not **`new`**.
+
 ## [0.3.112] - 2026-07-03
 
 ### Fixed

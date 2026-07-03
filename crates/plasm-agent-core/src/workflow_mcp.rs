@@ -20,7 +20,6 @@ use crate::mcp_logical_ref::format_logical_session_wire_ref;
 use crate::mcp_server::{
     parse_logical_session_ref_arg, parse_optional_principal, PlasmExecBinding, PlasmMcpHandler,
 };
-use crate::session_identity::ClientSessionKey;
 use crate::workflow_manifest::WorkflowManifest;
 use crate::workflow_readiness::assess_workflow_readiness;
 use crate::workflow_view_model::{
@@ -224,7 +223,7 @@ impl PlasmMcpHandler {
         let rec = self
             .plasm
             .logical_sessions
-            .init_session(&scope, &ClientSessionKey::new(intent))
+            .mint_session(&scope, intent)
             .await;
         let logical_session_ref = format_logical_session_wire_ref(rec.logical_session_id);
         let logical_uuid = rec.logical_session_id.as_uuid();

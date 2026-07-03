@@ -2,6 +2,8 @@
 
 use plasm_trace::TraceCompWire;
 
+use crate::session_identity::PlasmContextSessionMode;
+
 use super::*;
 
 pub(crate) fn parse_tool_seeds(
@@ -38,6 +40,63 @@ pub(crate) fn parse_tool_seeds(
         ));
     }
     Ok(seeds)
+}
+
+pub(crate) fn parse_plasm_context_session_mode(
+    tool: &str,
+    v: &serde_json::Value,
+) -> Result<(PlasmContextSessionMode, Option<String>), CallToolError> {
+    let mode_raw = v.get("session_mode").and_then(|x| x.as_str()).ok_or_else(|| {
+        CallToolError::invalid_arguments(
+            tool,
+            Some(
+                "missing `session_mode`: pass `\"new\"` to mint a session or `\"extend\"` to continue one"
+                    .into(),
+            ),
+        )
+    })?;
+    let mode = PlasmContextSessionMode::parse(mode_raw).ok_or_else(|| {
+        CallToolError::invalid_arguments(
+            tool,
+            Some(format!(
+                "invalid `session_mode` `{mode_raw}`: expected \"new\" or \"extend\""
+            )),
+        )
+    })?;
+    let ref_present = v
+        .get("logical_session_ref")
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
+    match mode {
+        PlasmContextSessionMode::New => {
+            if ref_present.is_some() {
+                return Err(CallToolError::invalid_arguments(
+                    tool,
+                    Some(
+                        "`logical_session_ref` must not be set when `session_mode` is \"new\""
+                            .into(),
+                    ),
+                ));
+            }
+            Ok((mode, None))
+        }
+        PlasmContextSessionMode::Extend => {
+            let wire = ref_present.ok_or_else(|| {
+                CallToolError::invalid_arguments(
+                    tool,
+                    Some(
+                        "`session_mode: \"extend\"` requires `logical_session_ref` from a prior `plasm_context` call"
+                            .into(),
+                    ),
+                )
+            })?;
+            let canonical = parse_logical_session_wire_ref(wire)
+                .map(format_logical_session_wire_ref)
+                .map_err(|e| CallToolError::invalid_arguments(tool, Some(e.to_string())))?;
+            Ok((mode, Some(canonical)))
+        }
+    }
 }
 
 pub(crate) fn parse_plasm_context_ranked_capabilities(

@@ -434,6 +434,7 @@ pub async fn mcp_plasm_context(
         4,
         "plasm_context",
         json!({
+            "session_mode": "new",
             "intent": "long-operation e2e LangItem reads",
             "seeds": [{ "api": MATRIX_ENTRY_ID, "entity": "LangItem" }],
         }),

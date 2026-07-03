@@ -1155,7 +1155,7 @@ fn correction_unknown_entity_symbolic_llm(
     let summary = format_session_entity_symbol_summary(map);
     if looks_like_opaque_entity_symbol_token(bad) {
         format!(
-            "`{bad}` is not in this session — copy an `e#` from your latest `plasm_context` tsv ({summary})."
+            "`{bad}` is not in this session — copy an `e#` from your latest `plasm_context` tsv ({summary}). Use session_mode: \"extend\" with your logical_session_ref — do not call session_mode: \"new\" to recover."
         )
     } else {
         let mut msg = format!(

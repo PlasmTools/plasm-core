@@ -139,20 +139,18 @@ fn mcp_server_initialize_instructions_snapshot() {
 }
 
 #[test]
-fn mcp_server_initialize_workflow_uses_intent_not_query() {
+fn mcp_server_initialize_workflow_uses_session_mode_not_intent_key() {
     let text = plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW;
-    assert!(text.contains("one stable `intent`"));
-    assert!(text.contains("one **`intent`** per goal"));
+    assert!(text.contains("session_mode"));
+    assert!(text.contains("logical_session_ref"));
     assert!(!text.contains(plasm_core::prompt_render::TEACHING_VALID_EXPR_MARKER));
     assert!(!text.contains("Row text:"));
     assert!(!text.contains("Heredoc:"));
     assert!(text.contains("`intent`"));
-    assert!(text.contains("One goal"));
-    assert!(text.contains("one **`intent`** per goal"));
+    assert!(!text.contains("one stable `intent`"));
     assert!(!text.contains("several discovery calls"));
     assert!(!text.contains("pass **`query`**"));
     assert!(!text.contains("syntax guide in MCP initialize"));
-    assert!(text.contains("Multi-API"));
     assert!(text.contains("Reuse ref"));
     let discover = default_plasm_tools()
         .into_iter()
@@ -188,8 +186,10 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
     );
     assert!(
-        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("msg 3: sort moves"),
-        "expected stable-intent anti-pattern in plasm_context description"
+        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("session_mode")
+    );
+    assert!(
+        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("does NOT select the session")
     );
     assert!(
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("Call before `plasm`")
@@ -250,7 +250,7 @@ fn mcp_prompt_static_tool_descriptions() {
         plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.len()
     );
     assert!(
-        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.len() < 1400,
+        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.len() < 2200,
         "plasm_context tool description too long: {} chars",
         plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.len()
     );
@@ -339,8 +339,12 @@ fn plasm_context_tool_description_contract_append_vs_refresh() {
         "expected append guidance in plasm_context description"
     );
     assert!(
-        workflow.contains("one stable `intent`"),
-        "expected session discipline in initialize workflow"
+        workflow.contains("session_mode"),
+        "expected session_mode discipline in initialize workflow"
+    );
+    assert!(
+        !workflow.contains("one stable `intent`"),
+        "initialize workflow must not treat intent as session key"
     );
     assert!(
         workflow.contains("Reuse ref"),
@@ -387,6 +391,7 @@ fn plasm_context_input_schema_requires_intent_and_seeds() {
         .get("required")
         .and_then(|x| x.as_array())
         .expect("required array");
+    assert!(required.iter().any(|x| x.as_str() == Some("session_mode")));
     assert!(required.iter().any(|x| x.as_str() == Some("intent")));
     assert!(required.iter().any(|x| x.as_str() == Some("seeds")));
     assert!(!required
@@ -397,9 +402,12 @@ fn plasm_context_input_schema_requires_intent_and_seeds() {
         .and_then(|x| x.as_object())
         .expect("properties object");
     assert!(
-        props.contains_key("intent"),
-        "expected `intent` property, got keys: {:?}",
-        props.keys().collect::<Vec<_>>()
+        props.contains_key("session_mode"),
+        "expected `session_mode` property"
+    );
+    assert!(
+        props.contains_key("logical_session_ref"),
+        "expected optional `logical_session_ref` property"
     );
     assert!(!props.contains_key("client_session_key"));
     assert_eq!(
@@ -627,6 +635,47 @@ fn discover_markdown_emits_tsv_snapshot() {
             crate::discovery_human_format::format_discovery_markdown(&r)
         );
     });
+}
+
+#[test]
+fn parse_plasm_context_session_mode_new_and_extend() {
+    use super::tool_parse::parse_plasm_context_session_mode;
+
+    let (mode, r) = parse_plasm_context_session_mode(
+        "plasm_context",
+        &serde_json::json!({
+            "session_mode": "new",
+            "intent": "goal",
+            "seeds": [{"api": "x", "entity": "Y"}]
+        }),
+    )
+    .expect("new");
+    assert_eq!(mode, crate::session_identity::PlasmContextSessionMode::New);
+    assert!(r.is_none());
+
+    parse_plasm_context_session_mode(
+        "plasm_context",
+        &serde_json::json!({
+            "session_mode": "new",
+            "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
+            "intent": "goal",
+            "seeds": [{"api": "x", "entity": "Y"}]
+        }),
+    )
+    .expect_err("new rejects ref");
+
+    let (mode, r) = parse_plasm_context_session_mode(
+        "plasm_context",
+        &serde_json::json!({
+            "session_mode": "extend",
+            "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
+            "intent": "goal",
+            "seeds": [{"api": "x", "entity": "Y"}]
+        }),
+    )
+    .expect("extend");
+    assert_eq!(mode, crate::session_identity::PlasmContextSessionMode::Extend);
+    assert_eq!(r.as_deref(), Some("l_AAAAAAAAQACAAAAAAAAAAQ"));
 }
 
 #[test]

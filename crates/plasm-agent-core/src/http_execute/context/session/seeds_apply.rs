@@ -4,12 +4,12 @@ use super::super::super::*;
 
 use super::super::backend::tenant_outbound_hosted_kv_for_entries;
 use super::super::seeds::{
-    apply_ranked_capabilities_session_update, build_capability_exposure_plan,
-    format_session_unchanged_reuse_markdown, group_seed_entities_by_entry,
-    normalize_ranked_capabilities_for_gate, primary_entry_id_for_grouped,
-    ranked_capabilities_need_exposure_replay, seeds_exposure_ready_for_reuse, teaching_exposure_at,
-    unchanged_expand_wave, wrap_teaching_markdown_literal_block, RankedCapabilitiesArg,
-    STALE_EXECUTE_BINDING_NOTICE,
+    apply_context_intent_session_update, apply_ranked_capabilities_session_update,
+    build_capability_exposure_plan, format_session_unchanged_reuse_markdown,
+    group_seed_entities_by_entry, normalize_ranked_capabilities_for_gate,
+    primary_entry_id_for_grouped, ranked_capabilities_need_exposure_replay,
+    seeds_exposure_ready_for_reuse, teaching_exposure_at, unchanged_expand_wave,
+    wrap_teaching_markdown_literal_block, RankedCapabilitiesArg, STALE_EXECUTE_BINDING_NOTICE,
 };
 use super::expand::expand_execute_teaching_session;
 use super::federate::{commit_federate_wave, prepare_federate_wave, PreparedFederateWave};
@@ -425,6 +425,13 @@ pub async fn apply_capability_seeds(
                     &ranked_capabilities,
                 )
                 .await?;
+                let intent_changed = apply_context_intent_session_update(
+                    st,
+                    prompt_hash.as_str(),
+                    session_id.as_str(),
+                    plasm_context_intent,
+                )
+                .await?;
                 if let Some(sess_arc) = st.get_execute_session(&prompt_hash, &session_id).await {
                     if let Some(ref exp) = sess_arc.teaching_exposure {
                         let catalogs_ready = plan
@@ -434,6 +441,7 @@ pub async fn apply_capability_seeds(
                         if catalogs_ready
                             && seeds_exposure_ready_for_reuse(exp, &seeds)
                             && !ranked_capabilities_need_exposure_replay(exp, &ranked_capabilities)
+                            && !intent_changed
                         {
                             return Ok::<Option<plasm_core::TeachingExposureSession>, String>(
                                 Some(exp.clone()),

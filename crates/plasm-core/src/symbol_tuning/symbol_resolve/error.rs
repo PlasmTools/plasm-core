@@ -54,6 +54,9 @@ pub enum SymbolResolveError {
 }
 
 impl SymbolResolveError {
+    const SESSION_RECOVERY_SUFFIX: &'static str =
+        "Use session_mode: \"extend\" with your logical_session_ref — do not call session_mode: \"new\" to recover.";
+
     /// Optional agent-facing hint appended after the primary error line.
     pub fn agent_program_hint(&self) -> Option<&'static str> {
         match self {
@@ -84,8 +87,11 @@ impl SymbolResolveError {
     /// Primary error line plus optional `help:` suffix for agent program surfaces.
     pub fn to_agent_program_error(&self) -> String {
         match self.agent_program_hint() {
-            Some(hint) => format!("{self}\nhelp: {hint}"),
-            None => self.to_string(),
+            Some(hint) => format!(
+                "{self}\nhelp: {hint} {}",
+                Self::SESSION_RECOVERY_SUFFIX
+            ),
+            None => format!("{self}\nhelp: {}", Self::SESSION_RECOVERY_SUFFIX),
         }
     }
 

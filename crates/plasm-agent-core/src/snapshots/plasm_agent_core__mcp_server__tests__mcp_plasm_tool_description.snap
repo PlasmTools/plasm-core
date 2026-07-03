@@ -52,6 +52,7 @@ report = sorted[p_a,p_field] <<PLASM_RPT_TAG
 PLASM_RPT_TAG
 
 Common pitfalls:
+- Parse/symbol errors mean your program is wrong for **this** session's table — use **`session_mode: "extend"`** with the same **`logical_session_ref`**, not **`session_mode: "new"`**.
 - Many rows of one entity type: one relation read (e.g. `moves = e4(electric).r3`) beats N separate gets plus parallel roots.
 - Prefer `label = e#` then `label.filter{…}`; bare `e#.filter{…}` list-alls first. Row `.filter{…}` needs a materialized list.
 - `=>` only for derive `{ k: _.field }` or write effects (`source => e#.m#(…)`) — not relation reads (use `child = source.r#`).

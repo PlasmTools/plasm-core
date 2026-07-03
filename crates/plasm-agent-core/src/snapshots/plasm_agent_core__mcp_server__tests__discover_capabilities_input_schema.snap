@@ -1,12 +1,11 @@
 ---
 source: crates/plasm-agent-core/src/mcp_server/tests.rs
-assertion_line: 374
 expression: v
 ---
 {
   "properties": {
     "intent": {
-      "description": "One plain-language task description for the whole user goal. Returns catalog `api`/`entity` picks — not program symbols. Reuse the same intent for the resulting `plasm_context` session.",
+      "description": "One plain-language task description for the whole user goal. Returns catalog `api`/`entity` picks — not program symbols. Pass picks to plasm_context with session_mode new or extend.",
       "minLength": 1,
       "type": "string"
     }

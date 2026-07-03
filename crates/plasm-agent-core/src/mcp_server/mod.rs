@@ -98,7 +98,9 @@ use crate::run_artifacts::{
     plasm_session_short_plan_uri, ArtifactPayload, CodePlanArchiveDocument,
 };
 use crate::server_state::PlasmHostState;
-use crate::session_identity::{ClientSessionKey, LogicalSessionId};
+use crate::session_identity::{
+    accumulated_intent_meta_preview, LogicalSessionId, PlasmContextSessionMode,
+};
 use crate::trace_sink_emit::PlasmTraceContext;
 use chrono::Utc;
 use serde_json::json;
@@ -133,8 +135,8 @@ use plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW;
 pub(crate) use schema::{args_value, json_schema_non_empty_string_type, json_schema_string_type};
 pub(crate) use tool_parse::{
     comp_content_sha256_hex, parse_logical_session_ref_arg, parse_optional_principal,
-    parse_plasm_context_ranked_capabilities, parse_tool_seeds, plan_display_name_from_comp,
-    plan_node_count_from_comp,
+    parse_plasm_context_ranked_capabilities, parse_plasm_context_session_mode, parse_tool_seeds,
+    plan_display_name_from_comp, plan_node_count_from_comp,
 };
 pub(crate) use trace::CodePlanTraceInput;
 pub(crate) use transport::{
@@ -967,15 +969,46 @@ impl PlasmMcpHandler {
         let intent = v.get("intent").and_then(|x| x.as_str()).ok_or_else(|| {
             CallToolError::invalid_arguments(tname, Some("missing `intent`".into()))
         })?;
+        let (session_mode, extend_ref) = parse_plasm_context_session_mode(tname, v)?;
         let scope = tenant_scope(principal_incoming.as_ref());
-        let rec = self
-            .plasm
-            .logical_sessions
-            .init_session(&scope, &ClientSessionKey::new(intent))
-            .await;
+        let rec = match session_mode {
+            PlasmContextSessionMode::New => {
+                self.plasm
+                    .logical_sessions
+                    .mint_session(&scope, intent)
+                    .await
+            }
+            PlasmContextSessionMode::Extend => {
+                let wire = extend_ref.as_deref().expect("extend ref validated in parse");
+                let logical_uuid = self.resolve_logical_session_ref_to_uuid(tname, wire)?;
+                if !self
+                    .plasm
+                    .logical_sessions
+                    .verify_tenant(LogicalSessionId(logical_uuid), &scope)
+                    .await
+                {
+                    return Err(CallToolError::from_message(
+                        "logical_session_ref is unknown or does not belong to this tenant scope",
+                    ));
+                }
+                let id = LogicalSessionId(logical_uuid);
+                let Some(rec) = self
+                    .plasm
+                    .logical_sessions
+                    .append_intent_turn(id, intent)
+                    .await
+                else {
+                    return Err(CallToolError::from_message(
+                        "logical_session_ref is unknown or expired: use session_mode \"new\" to start a fresh session",
+                    ));
+                };
+                rec
+            }
+        };
         let logical_session_ref = format_logical_session_wire_ref(rec.logical_session_id);
         let logical_uuid = rec.logical_session_id.as_uuid();
         let ls_key = logical_uuid.to_string();
+        let accumulated_intent = rec.accumulated_intent.as_str();
         let seeds = parse_tool_seeds(tname, v)?;
         let ranked_capabilities = parse_plasm_context_ranked_capabilities(tname, v)?;
         let principal = parse_optional_principal(v);
@@ -1011,6 +1044,39 @@ impl PlasmMcpHandler {
             }
         }
         let binding = self.resolve_binding_for_logical(key, logical_uuid).await;
+        if session_mode == PlasmContextSessionMode::Extend {
+            let live = async {
+                if let Some(b) = &binding {
+                    if self
+                        .plasm
+                        .get_execute_session(&b.prompt_hash, &b.session_id)
+                        .await
+                        .is_some()
+                    {
+                        return true;
+                    }
+                }
+                if let Some(pair) = self
+                    .plasm
+                    .logical_execute_bindings
+                    .get(&logical_uuid)
+                    .await
+                {
+                    return self
+                        .plasm
+                        .get_execute_session(&pair.0, &pair.1)
+                        .await
+                        .is_some();
+                }
+                false
+            }
+            .await;
+            if !live {
+                return Err(CallToolError::from_message(
+                    "session_mode \"extend\" requires a live execute session for this logical_session_ref — use session_mode \"new\" or reopen after expiry",
+                ));
+            }
+        }
         tracing::debug!(
             target: "plasm_agent::mcp",
             tool = tname,
@@ -1020,6 +1086,16 @@ impl PlasmMcpHandler {
             "MCP plasm_context: Plasm execute binding before apply_capability_seeds (false means open path; true means expand/federate against existing prompt_hash/session)"
         );
         let context_span = crate::spans::mcp_tool_plasm_context(logical_session_ref.as_str());
+        let mut churn_advisory = String::new();
+        if session_mode == PlasmContextSessionMode::New {
+            churn_advisory = crate::http_execute::format_session_churn_advisory(
+                self.plasm.as_ref(),
+                &scope,
+                Some(rec.logical_session_id),
+                &seeds,
+            )
+            .await;
+        }
         let out: ApplyCapabilitySeedsOutcome = apply_capability_seeds(
             self.plasm.as_ref(),
             principal_incoming.as_ref(),
@@ -1030,7 +1106,7 @@ impl PlasmMcpHandler {
             principal,
             tcfg.clone(),
             Some(logical_uuid),
-            intent,
+            accumulated_intent,
             ranked_capabilities,
         )
         .instrument(context_span)
@@ -1113,6 +1189,7 @@ impl PlasmMcpHandler {
             logical_session_ref.as_str(),
             &out.waves,
             out.symbol_space_reset,
+            churn_advisory.as_str(),
         );
         for wave in &out.waves {
             if wave.teaching_prompt_chars_added > 0 {
@@ -1173,6 +1250,9 @@ impl PlasmMcpHandler {
         let plasm = build_plasm_context_tool_meta(
             logical_session_ref.as_str(),
             &out,
+            session_mode.as_str(),
+            rec.intent_turns.len(),
+            accumulated_intent_meta_preview(accumulated_intent, 240).as_str(),
             domain_revision,
             relations,
             relations_delta,
@@ -1691,7 +1771,7 @@ fn mcp_initialize_result() -> InitializeResult {
             version: env!("CARGO_PKG_VERSION").into(),
             title: Some("Plasm agent".into()),
             description: Some(
-                "Stable **`intent`**; **`plasm_context`** with **`seeds`**, then **`plasm`** (dry-run) and **`plasm_run`** (execute) with the same **`logical_session_ref`**. Call **`plasm_context`** again to **append** new picks or when continuity requires it—not every turn."
+                "**`session_mode: \"new\"`** once per workflow, then **`\"extend\"`** + **`logical_session_ref`**. **`plasm`** (plan) and **`plasm_run`** (execute) reuse the same ref. **`intent`** accumulates per turn — it does not select the session."
                     .into(),
             ),
             icons: vec![],

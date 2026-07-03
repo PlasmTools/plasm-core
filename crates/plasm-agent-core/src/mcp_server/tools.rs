@@ -32,21 +32,27 @@ fn workflow_mcp_tools_enabled() -> bool {
 }
 
 pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
-    let mut init_props = BTreeMap::new();
-    init_props.insert(
-            "intent".into(),
-            json_schema_string_type(
-                "Stable string for one user goal or agent context (e.g. one id for the whole chat). Same intent + tenant reuses the same logical session—do not rotate a new value every user message.",
-            ),
-        );
-    let mut discover_props = BTreeMap::new();
-    discover_props.insert(
-            "intent".into(),
-            json_schema_non_empty_string_type(
-                "One plain-language task description for the whole user goal. Returns catalog `api`/`entity` picks — not program symbols. Reuse the same intent for the resulting `plasm_context` session.",
-            ),
-        );
-    let mut context_props = init_props;
+    let mut context_props = BTreeMap::new();
+    context_props.insert(
+        "session_mode".into(),
+        json_schema_non_empty_string_type(
+            "\"new\" mints a logical session and fresh symbol table (once per workflow). \"extend\" continues an existing session (requires logical_session_ref).",
+        ),
+    );
+    context_props.insert(
+        "intent".into(),
+        json_schema_non_empty_string_type(
+            "This turn's task description. Appended to the session on extend; used for capability scoring — not session identity.",
+        ),
+    );
+    context_props.insert(
+        "logical_session_ref".into(),
+        serde_json::from_value(serde_json::json!({
+            "type": ["string", "null"],
+            "description": "Required when session_mode is \"extend\". Same ref returned by plasm_context and reused on plasm / plasm_run. Must be omitted when session_mode is \"new\"."
+        }))
+        .expect("logical_session_ref schema"),
+    );
     context_props.insert(
             "seeds".into(),
             json_schema_non_empty_object_array(
@@ -62,6 +68,13 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
                 "description": "Optional capability **wire names** (e.g. from `discover_capabilities`). When non-empty, **non-seeded** mutators must appear in this list and score against **`intent`**. Seeded entities always teach **query/search/get** (and `primary_read`); **create/update/delete/action** need intent overlap (read-first open defers weak matches). Omit on expand to keep the session list; send **`null`** or **`[]`** to clear."
             }))
             .expect("ranked_capabilities schema"),
+        );
+    let mut discover_props = BTreeMap::new();
+    discover_props.insert(
+            "intent".into(),
+            json_schema_non_empty_string_type(
+                "One plain-language task description for the whole user goal. Returns catalog `api`/`entity` picks — not program symbols. Pass picks to plasm_context with session_mode new or extend.",
+            ),
         );
     let mut plasm_program_props = BTreeMap::new();
     plasm_program_props.insert(
@@ -93,7 +106,11 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
             title: Some("Open or extend Plasm context".into()),
             description: Some(PLASM_CONTEXT_TOOL_DESCRIPTION.into()),
             input_schema: ToolInputSchema::new(
-                vec!["intent".into(), "seeds".into()],
+                vec![
+                    "session_mode".into(),
+                    "intent".into(),
+                    "seeds".into(),
+                ],
                 Some(context_props),
                 None,
             ),

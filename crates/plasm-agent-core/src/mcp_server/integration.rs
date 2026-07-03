@@ -1143,6 +1143,7 @@ async fn plasm_run_page_handle_through_handler() {
             mcp_key,
             &runtime,
             &json!({
+                "session_mode": "new",
                 "intent": "page handler e2e",
                 "seeds": [{"api": "github", "entity": "LangItem"}]
             }),
@@ -1243,6 +1244,7 @@ async fn plasm_read_run_artifact_matches_resources_read() {
                 mcp_key,
                 &runtime,
                 &json!({
+                    "session_mode": "new",
                     "intent": "artifact read parity",
                     "seeds": [{"api": "github", "entity": "LangItem"}]
                 }),

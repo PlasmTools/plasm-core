@@ -69,6 +69,49 @@ fn format_qualified_cap(key: &ExposureCapabilityKey) -> String {
     format!("{}:{}.{}", key.entry_id, key.domain, key.capability)
 }
 
+fn levenshtein(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.is_empty() {
+        return b.len();
+    }
+    if b.is_empty() {
+        return a.len();
+    }
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let cost = usize::from(ca != cb);
+            cur.push((prev[j] + 1).min(cur[j] + 1).min(prev[j + 1] + cost));
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+fn suggest_nearest_capability_wire(exp: &TeachingExposureSession, unknown: &str) -> Option<String> {
+    let unk = unknown.trim().to_ascii_lowercase();
+    if unk.is_empty() {
+        return None;
+    }
+    let mut best: Option<(usize, String)> = None;
+    for key in &exp.surface.capabilities {
+        let w = key.capability.as_str().to_ascii_lowercase();
+        let score = if w == unk {
+            continue;
+        } else if w.contains(&unk) || unk.contains(&w) {
+            1
+        } else {
+            levenshtein(&unk, &w)
+        };
+        if score <= 6 && best.as_ref().map(|(s, _)| score < *s).unwrap_or(true) {
+            best = Some((score, key.capability.to_string()));
+        }
+    }
+    best.map(|(_, w)| w)
+}
+
 /// Agent-facing diagnostic when ranked replay did not expand the teaching surface.
 pub fn format_ranked_replay_diagnostics(
     exp: &TeachingExposureSession,
@@ -128,7 +171,18 @@ pub fn format_ranked_replay_diagnostics(
         parts.push(format!("already exposed: {}", already_exposed.join(", ")));
     }
     if !unknown.is_empty() {
-        parts.push(format!("unknown capability: {}", unknown.join(", ")));
+        let parts_with_hints: Vec<String> = unknown
+            .iter()
+            .map(|name| {
+                suggest_nearest_capability_wire(exp, name)
+                    .map(|hint| format!("{name} (did you mean {hint}?)"))
+                    .unwrap_or_else(|| (*name).to_string())
+            })
+            .collect();
+        parts.push(format!(
+            "unknown capability: {} — extend with same logical_session_ref and corrected ranked_capabilities",
+            parts_with_hints.join(", ")
+        ));
     }
     if !non_seeded.is_empty() {
         parts.push(format!(

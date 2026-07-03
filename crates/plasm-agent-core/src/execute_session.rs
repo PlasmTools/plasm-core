@@ -256,12 +256,13 @@ impl RunArtifactHotCache {
 /// [`Self::entities`] is a **sorted set** for stable equality (order-insensitive). Exposure waves
 /// use arrival order via [`dedup_preserve_arrival_order`](crate::http_execute::context::seeds::dedup_preserve_arrival_order).
 ///
-/// [`Self::context_intent`] participates in reuse when set (MCP `plasm_context`): distinct intents
-/// must not share an execute row whose teaching surface was filtered for a different wording.
+/// [`Self::context_intent`] participates in reuse for **HTTP-only** opens (no [`Self::logical_session_id`]).
+/// MCP logical sessions scope reuse by [`Self::logical_session_id`] only — accumulated intent evolves
+/// in place on that row.
 ///
 /// When [`Self::context_intent`] is set, [`Self::ranked_capabilities`] participates in reuse: distinct
 /// ranked gate lists must not share a session row filtered for different mutation picks.
-#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+#[derive(Clone, Debug)]
 pub struct SessionReuseKey {
     /// Tenant scope from incoming auth (empty string when anonymous / auth off).
     pub tenant_scope: String,
@@ -278,6 +279,36 @@ pub struct SessionReuseKey {
     pub principal: Option<String>,
     /// MCP logical session UUID string (canonical); `None` for HTTP-only execute without a logical id.
     pub logical_session_id: Option<String>,
+}
+
+impl PartialEq for SessionReuseKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.tenant_scope == other.tenant_scope
+            && self.entry_id == other.entry_id
+            && self.catalog_cgs_hash == other.catalog_cgs_hash
+            && self.entities == other.entities
+            && self.ranked_capabilities == other.ranked_capabilities
+            && self.principal == other.principal
+            && self.logical_session_id == other.logical_session_id
+            && (self.logical_session_id.is_some() || self.context_intent == other.context_intent)
+    }
+}
+
+impl Eq for SessionReuseKey {}
+
+impl std::hash::Hash for SessionReuseKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.tenant_scope.hash(state);
+        self.entry_id.hash(state);
+        self.catalog_cgs_hash.hash(state);
+        self.entities.hash(state);
+        self.ranked_capabilities.hash(state);
+        self.principal.hash(state);
+        self.logical_session_id.hash(state);
+        if self.logical_session_id.is_none() {
+            self.context_intent.hash(state);
+        }
+    }
 }
 
 /// Monotonic sequence for per-session append-only run deltas.
@@ -1896,6 +1927,28 @@ mod tests {
     use crate::run_artifacts::{ArtifactPayload, ArtifactPayloadMetadata};
     use plasm_core::CgsContext;
     use plasm_core::CGS;
+
+    #[tokio::test]
+    async fn reuse_key_ignores_context_intent_when_logical_session_id_set() {
+        let key_a = SessionReuseKey {
+            tenant_scope: String::new(),
+            entry_id: "default".into(),
+            catalog_cgs_hash: "abc".into(),
+            entities: vec!["Pet".into()],
+            context_intent: Some("first turn".into()),
+            ranked_capabilities: None,
+            principal: None,
+            logical_session_id: Some("00000000-0000-4000-8000-000000000001".into()),
+        };
+        let mut key_b = key_a.clone();
+        key_b.context_intent = Some("accumulated later turn".into());
+        assert_eq!(key_a, key_b, "MCP logical session scopes reuse, not intent wording");
+
+        let mut key_http = key_a.clone();
+        key_http.logical_session_id = None;
+        key_http.context_intent = Some("different".into());
+        assert_ne!(key_a, key_http, "HTTP-only reuse still keys on context_intent");
+    }
 
     #[tokio::test]
     async fn reuse_returns_same_session_id_for_same_entry_and_entities() {

@@ -1,2 +1,2 @@
 Plasm is a source language. Pick catalogs/entities for one user goal — this tool does **not** produce program symbols.
-     **Next:** copy TSV `api`/`entity` rows into one **`plasm_context`** **`seeds`** array on the same **`intent`**, then write **`plasm.program`** from teaching TSV (get `e#(p#)` vs search `e#~"…"` when exposed). Skip when you already know every `api`/`entity`. No alternate JSON discovery mode.
+**Next:** copy TSV `api`/`entity` rows into one **`plasm_context`** **`seeds`** array with **`session_mode: "new"`** or **`"extend"`**, then write **`plasm.program`** from teaching TSV (get `e#(p#)` vs search `e#~"…"` when exposed). Skip when you already know every `api`/`entity`. No alternate JSON discovery mode.
