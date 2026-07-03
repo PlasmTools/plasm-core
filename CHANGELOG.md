@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.113] - 2026-07-03
+
 ### Changed
 
 - **MCP `plasm_context` (breaking):** session identity is **`logical_session_ref`** only — not `intent`. Required **`session_mode`**: `"new"` (mint once per workflow) or `"extend"` (continue; requires ref). **`intent`** appends per turn into **`accumulated_intent`** for capability scoring. Removed intent-keyed `(tenant, intent) → session` idempotency. Churn advisory on overlapping **`new`** opens; expand deltas include active-symbol cheat sheet; ranked-replay unknown-capability hints suggest nearest wire names; parse errors steer agents to **`extend`**, not **`new`**.
+
+### Added
+
+- **Guardians-style flow annotations** on GitHub, Gmail, Jira, Linear, Outlook, and Slack catalogs (`data_classes`, field `data_class`, parameter `sink_class`, capability `sanitizes`) for plan-time information-flow typing.
+- **mcp-radar agent template:** federated Plasm loop with Proof catalog integration; JS transport query-param fix.
 
 ## [0.3.112] - 2026-07-03
 
