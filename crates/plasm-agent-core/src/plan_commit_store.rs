@@ -17,16 +17,27 @@ use crate::server_state::PlasmHostState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanCommitVerifyError {
-    Unknown { commit_ref: String },
-    Expired { commit_ref: String },
-    Mismatch { commit_ref: String },
+    Unknown {
+        commit_ref: String,
+    },
+    Expired {
+        commit_ref: String,
+    },
+    Mismatch {
+        commit_ref: String,
+    },
     StaleDomain {
         commit_ref: String,
         plan_domain_revision: u32,
         session_domain_revision: u32,
     },
-    StalePolicy { commit_ref: String },
-    Evidence { commit_ref: String, detail: String },
+    StalePolicy {
+        commit_ref: String,
+    },
+    Evidence {
+        commit_ref: String,
+        detail: String,
+    },
 }
 
 impl PlanCommitVerifyError {

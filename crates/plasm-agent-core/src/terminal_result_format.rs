@@ -107,10 +107,7 @@ pub fn hydrate_plan_run_from_artifact_formatted(
     // Never invent `r/1` when the document has no resource_index (agents confuse that with
     // `meta_generation`). Prefer the canonical run URI for addressing.
     let (resource_index, plasm_uri) = match doc.resource_index {
-        Some(idx) if idx > 0 => (
-            idx,
-            crate::run_artifacts::plasm_short_resource_uri(idx),
-        ),
+        Some(idx) if idx > 0 => (idx, crate::run_artifacts::plasm_short_resource_uri(idx)),
         _ => (0, canonical_plasm_uri.clone()),
     };
     let artifact = RunArtifactHandle {

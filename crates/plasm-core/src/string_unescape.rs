@@ -33,9 +33,7 @@ pub fn unicode_escape_from_hex(hex: &str) -> Option<char> {
     if hex.len() != 4 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
         return None;
     }
-    u32::from_str_radix(hex, 16)
-        .ok()
-        .and_then(char::from_u32)
+    u32::from_str_radix(hex, 16).ok().and_then(char::from_u32)
 }
 
 /// Unescape common JSON-style backslash sequences (`\n`, `\t`, `\uXXXX`, etc.).

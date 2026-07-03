@@ -147,9 +147,7 @@ mod tests {
         let key = QualifiedCapabilityKey::from_parts("github", "Repository", "repo_get");
         let labels = view.output_labels_for(&key);
         assert!(
-            labels
-                .iter()
-                .any(|l| l.as_str() == "untrusted"),
+            labels.iter().any(|l| l.as_str() == "untrusted"),
             "repo_get must carry untrusted from Repository.description; got {labels:?}"
         );
     }

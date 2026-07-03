@@ -211,10 +211,7 @@ pub fn format_ranked_replay_diagnostics(
         let available_note = if available.is_empty() {
             String::new()
         } else {
-            format!(
-                "; mutators on seeded entities: {}",
-                available.join(", ")
-            )
+            format!("; mutators on seeded entities: {}", available.join(", "))
         };
         let parts_with_hints: Vec<String> = unknown
             .iter()
@@ -323,11 +320,8 @@ mod tests {
         );
         let exp = TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &entities, delta);
         let caps_before = exp.surface.capabilities.clone();
-        let diag = format_ranked_replay_diagnostics(
-            &exp,
-            &["branch_delete".to_string()],
-            &caps_before,
-        );
+        let diag =
+            format_ranked_replay_diagnostics(&exp, &["branch_delete".to_string()], &caps_before);
         assert!(
             diag.contains("unsupported in this catalog"),
             "expected not-in-catalog framing: {diag}"

@@ -606,7 +606,10 @@ mod tests {
                     block.field_gloss_rows
                 )
             });
-        let meaning = format!("{} {} {}", gloss.field_type, gloss.allowed_values, gloss.description);
+        let meaning = format!(
+            "{} {} {}",
+            gloss.field_type, gloss.allowed_values, gloss.description
+        );
         assert!(
             meaning.to_ascii_lowercase().contains("title")
                 || gloss.field_type.to_ascii_lowercase().contains("title"),
