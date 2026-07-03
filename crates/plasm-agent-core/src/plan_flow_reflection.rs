@@ -227,6 +227,20 @@ pub fn plan_ux_flow_reflection(
     }
 }
 
+/// Reject stale or partial `plan_ux_reflection.flow` wire (exact schema cutover).
+pub fn validate_plan_ux_flow_reflection_wire(v: &serde_json::Value) -> Result<(), String> {
+    let flow: PlanUxFlowReflection = serde_json::from_value(v.clone())
+        .map_err(|e| format!("plan_ux_reflection.flow invalid: {e}"))?;
+    if flow.schema_version != PLAN_UX_FLOW_REFLECTION_SCHEMA_VERSION {
+        return Err(format!(
+            "plan_ux_reflection.flow.schema_version must be {} (got {})",
+            PLAN_UX_FLOW_REFLECTION_SCHEMA_VERSION,
+            flow.schema_version
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

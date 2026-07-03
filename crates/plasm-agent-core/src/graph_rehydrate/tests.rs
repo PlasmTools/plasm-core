@@ -135,6 +135,42 @@ async fn stream_entity_rows_dedupes_hot_and_overlapping_spill_pages() {
 }
 
 #[tokio::test]
+async fn stream_stops_reading_spill_after_early_exit() {
+    use std::ops::ControlFlow;
+
+    let fx = GraphRehydrateFixture::new();
+    let pages: Vec<Vec<plasm_runtime::CachedEntity>> = (0..20)
+        .map(|i| vec![berry_entity(&format!("berry{i}"))])
+        .collect();
+    fx.spill(&pages).await;
+
+    let mut streamed = Vec::new();
+    super::GraphSurfaceRehydrator::new(&fx.es, fx.host.st.as_ref(), SID, fx.cgs.as_ref())
+        .stream_entity_rows_locked("Berry", |row| {
+            streamed.push(row.clone());
+            true
+        })
+        .await
+        .expect("stream");
+    assert_eq!(streamed.len(), 1);
+
+    let mut visited = 0usize;
+    let pages_read = fx
+        .host
+        .persistence
+        .visit_graph_pages_in_seq_order(fx.prompt_hash.as_str(), SID, |_page| {
+            visited += 1;
+            if visited >= 2 {
+                return Ok(ControlFlow::Break(()));
+            }
+            Ok(ControlFlow::Continue(()))
+        })
+        .await
+        .expect("visit");
+    assert_eq!(pages_read, 2, "must not read all 20 spill pages");
+}
+
+#[tokio::test]
 async fn rehydrate_and_stream_yield_same_deduped_count() {
     let fx = GraphRehydrateFixture::new();
     fx.insert_hot(&[berry_entity("cheri")]).await;

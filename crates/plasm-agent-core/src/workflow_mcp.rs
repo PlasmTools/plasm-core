@@ -25,7 +25,7 @@ use crate::workflow_manifest::WorkflowManifest;
 use crate::workflow_readiness::assess_workflow_readiness;
 use crate::workflow_view_model::{
     build_workflow_view_model_with_readiness, instantiate_workflow_program,
-    sym_exposure_from_entity_symbols, sym_exposure_refs,
+    sym_exposure_from_entity_symbols, sym_exposure_refs, validate_workflow_view_model,
 };
 
 pub const WORKFLOW_UI_URI: &str = "ui://plasm/workflow";
@@ -219,6 +219,7 @@ impl PlasmMcpHandler {
             &manifest,
             Some((catalog.as_ref(), tcfg.as_deref())),
         );
+        validate_workflow_view_model(&vm).map_err(CallToolError::from_message)?;
         let scope = tenant_scope(principal_incoming.as_ref());
         let rec = self
             .plasm

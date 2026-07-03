@@ -227,7 +227,19 @@ mod tests {
         assert_eq!(v["comp"]["bind"]["topo"][0], "n1");
         assert!(v.get("plan_ux_reflection").is_none());
 
-        let ux = serde_json::json!({"schema_version": 2, "layout": "sequential", "steps": []});
+        let ux = serde_json::json!({
+            "schema_version": 3,
+            "layout": "sequential",
+            "steps": [],
+            "review": { "verdict": "ok", "write_count": 0, "read_count": 0 },
+            "flow": {
+                "schema_version": 1,
+                "verdict": "clean",
+                "counts": { "allow": 0, "approve": 0, "review": 0, "deny": 0 },
+                "violations": [],
+                "trace": []
+            }
+        });
         let eval_with_ux = TraceSegment::CodePlanEvaluate {
             plan_handle: "p1".into(),
             plan_id: "00000000-0000-0000-0000-000000000000".into(),

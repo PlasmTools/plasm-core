@@ -67,6 +67,29 @@ impl WorkflowManifest {
     ) -> Result<WorkflowProgramTemplate, crate::workflow_program_template::TemplateParseError> {
         parse_program_template(&self.program_template)
     }
+
+    /// Reject stale or partial manifest wire (exact schema cutover).
+    pub fn validate(&self) -> Result<(), String> {
+        if self.schema_version != WORKFLOW_MANIFEST_SCHEMA_VERSION {
+            return Err(format!(
+                "workflow manifest schema_version must be {WORKFLOW_MANIFEST_SCHEMA_VERSION} (got {})",
+                self.schema_version
+            ));
+        }
+        if self.id.trim().is_empty() {
+            return Err("workflow manifest id missing".into());
+        }
+        if self.title.trim().is_empty() {
+            return Err("workflow manifest title missing".into());
+        }
+        if self.program_template.trim().is_empty() {
+            return Err("workflow manifest program_template missing".into());
+        }
+        if self.seeds.is_empty() {
+            return Err("workflow manifest seeds must be non-empty".into());
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

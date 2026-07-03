@@ -219,7 +219,7 @@ pub use plasm_monad::{
     PlasmBindGraph, PlasmComp, PlasmCompArtifact, PlasmDataValue, PlasmHoleUse, PlasmReturn,
     PlasmStep, PlasmStepKind, PlasmStepPayload, PurePayload, RelationCardinality,
     RelationSourceCardinality, ResultShape, RewritePolicy, StepId, SurfaceKind,
-    SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
+    SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind, PLASM_COMP_WIRE_VERSION,
 };
 pub use predicate::Predicate;
 pub use preflight::{

@@ -207,6 +207,20 @@ pub fn plan_ux_reflection_value(
     serde_json::to_value(plan_ux_reflection(dry, ctx)).expect("plan ux reflection serializes")
 }
 
+/// Reject stale or partial `plan_ux_reflection` wire (exact schema cutover).
+pub fn validate_plan_ux_reflection_wire(v: &serde_json::Value) -> Result<(), String> {
+    let reflection: PlanUxReflection = serde_json::from_value(v.clone())
+        .map_err(|e| format!("plan_ux_reflection invalid: {e}"))?;
+    if reflection.schema_version != PLAN_UX_REFLECTION_SCHEMA_VERSION {
+        return Err(format!(
+            "plan_ux_reflection.schema_version must be {} (got {})",
+            PLAN_UX_REFLECTION_SCHEMA_VERSION,
+            reflection.schema_version
+        ));
+    }
+    Ok(())
+}
+
 fn infer_layout(parallel_root_surfaces_only: bool, steps: &[PlanUxStep]) -> PlanUxLayout {
     if parallel_root_surfaces_only {
         let root_entry_ids: BTreeSet<_> = steps
@@ -518,5 +532,24 @@ mod tests {
             serde_json::json!({"schema_version": 1, "layout": "sequential"}),
         );
         assert_eq!(id_a, compute_plan_commit_id_from_semantic(&semantic));
+    }
+
+    #[test]
+    fn validate_plan_ux_reflection_wire_rejects_stale_schema() {
+        let stale = serde_json::json!({
+            "schema_version": 2,
+            "layout": "sequential",
+            "steps": [],
+            "review": { "verdict": "ok", "write_count": 0, "read_count": 0 },
+            "flow": {
+                "schema_version": 1,
+                "verdict": "clean",
+                "counts": { "allow": 0, "approve": 0, "review": 0, "deny": 0 },
+                "violations": [],
+                "trace": []
+            }
+        });
+        let err = validate_plan_ux_reflection_wire(&stale).unwrap_err();
+        assert!(err.contains("schema_version must be 3"), "{err}");
     }
 }

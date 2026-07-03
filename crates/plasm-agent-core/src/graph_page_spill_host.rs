@@ -110,7 +110,7 @@ impl SessionGraphPersistence {
             .collect();
         let body = serde_json::json!({
             "kind": "graph_page",
-            "schema_version": 2,
+            "schema_version": crate::session_graph_persistence::GRAPH_PAGE_DELTA_SCHEMA_VERSION,
             "entity_type": entity_type,
             "page_index": page_index,
             "entities": rows,
@@ -119,7 +119,7 @@ impl SessionGraphPersistence {
             metadata: crate::run_artifacts::ArtifactPayloadMetadata {
                 content_type: "application/json".into(),
                 content_encoding: None,
-                schema_version: 2,
+                schema_version: crate::run_artifacts::RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION,
                 producer: "plasm.graph_page_spill".into(),
             },
             bytes: axum::body::Bytes::from(serde_json::to_vec(&body).map_err(|e| e.to_string())?),

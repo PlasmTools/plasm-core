@@ -1,4 +1,7 @@
-use super::types::{ArtifactPayload, ArtifactPayloadMetadata, RunArtifactError, RunArtifactId};
+use super::types::{
+    validate_artifact_payload_metadata, ArtifactPayload, ArtifactPayloadMetadata, RunArtifactError,
+    RunArtifactId,
+};
 use axum::body::Bytes;
 use object_store::path::Path as StorePath;
 use uuid::Uuid;
@@ -94,6 +97,7 @@ pub(crate) fn decode_payload(encoded: &[u8]) -> Result<ArtifactPayload, RunArtif
     }
     let metadata: ArtifactPayloadMetadata =
         serde_json::from_slice(&encoded[header..header + meta_len])?;
+    validate_artifact_payload_metadata(&metadata).map_err(RunArtifactError::Decode)?;
     let bytes = Bytes::copy_from_slice(&encoded[header + meta_len..]);
     Ok(ArtifactPayload { metadata, bytes })
 }

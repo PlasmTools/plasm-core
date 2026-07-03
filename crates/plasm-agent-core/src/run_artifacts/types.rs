@@ -15,6 +15,9 @@ use uuid::Uuid;
 /// ASCII prefix for deterministic run artifact wire ids (`pr` + 64 lowercase hex = full SHA256 digest).
 pub const RUN_ARTIFACT_WIRE_PREFIX: &str = "pr";
 
+/// Metadata + JSON body schema for framed execute run snapshots (`PLAR1` envelope).
+pub const RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION: u32 = 2;
+
 /// Canonical 32-byte identity for a stored execute run snapshot (content-addressed).
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct RunArtifactId([u8; 32]);
@@ -43,15 +46,16 @@ impl RunArtifactId {
         if rest.len() != 64 {
             return None;
         }
-        if !rest.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return None;
-        }
-        let decoded = hex::decode(rest).ok()?;
-        if decoded.len() != 32 {
+        let bytes = rest.as_bytes();
+        if !bytes.iter().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
         let mut out = [0u8; 32];
-        out.copy_from_slice(&decoded);
+        for (i, pair) in bytes.chunks_exact(2).enumerate() {
+            let hi = hex_nibble(pair[0])?;
+            let lo = hex_nibble(pair[1])?;
+            out[i] = (hi << 4) | lo;
+        }
         Some(Self(out))
     }
 
@@ -155,10 +159,73 @@ impl ArtifactPayloadMetadata {
         Self {
             content_type: "application/json".into(),
             content_encoding: None,
-            schema_version: 2,
+            schema_version: RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION,
             producer: "plasm".into(),
         }
     }
+}
+
+/// Reject stale framed artifact metadata (exact schema cutover).
+pub fn validate_artifact_payload_metadata(m: &ArtifactPayloadMetadata) -> Result<(), String> {
+    if m.schema_version != RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION {
+        return Err(format!(
+            "artifact metadata schema_version must be {RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION} (got {})",
+            m.schema_version
+        ));
+    }
+    if m.content_type.trim().is_empty() {
+        return Err("artifact metadata content_type missing".into());
+    }
+    if m.producer.trim().is_empty() {
+        return Err("artifact metadata producer missing".into());
+    }
+    Ok(())
+}
+
+/// Reject partial or legacy run snapshot JSON bodies (in-process / post-decode).
+pub fn validate_run_artifact_document(doc: &RunArtifactDocument) -> Result<(), String> {
+    if doc.run_id.trim().is_empty() {
+        return Err("run artifact run_id missing".into());
+    }
+    if RunArtifactId::from_wire(doc.run_id.trim()).is_none() {
+        return Err(format!(
+            "run artifact run_id must be `{RUN_ARTIFACT_WIRE_PREFIX}` + 64 hex digits"
+        ));
+    }
+    if doc.prompt_hash.trim().is_empty() {
+        return Err("run artifact prompt_hash missing".into());
+    }
+    if doc.session_id.trim().is_empty() {
+        return Err("run artifact session_id missing".into());
+    }
+    if doc.entry_id.trim().is_empty() {
+        return Err("run artifact entry_id missing".into());
+    }
+    Ok(())
+}
+
+/// Wire JSON ingress gate — requires `parsed_preimage` (schema v2 cutover) before decode.
+pub fn validate_run_artifact_document_json(v: &serde_json::Value) -> Result<(), String> {
+    parse_run_artifact_document_value(v.clone()).map(|_| ())
+}
+
+/// Parse JSON run snapshot bytes after wire validation (single ingress path).
+pub fn parse_run_artifact_document_bytes(bytes: &[u8]) -> Result<RunArtifactDocument, RunArtifactError> {
+    let v: serde_json::Value = serde_json::from_slice(bytes)?;
+    parse_run_artifact_document_value(v).map_err(RunArtifactError::Decode)
+}
+
+fn parse_run_artifact_document_value(v: serde_json::Value) -> Result<RunArtifactDocument, String> {
+    if !v.is_object() {
+        return Err("run artifact must be object".into());
+    }
+    if v.get("parsed_preimage").is_none() {
+        return Err("run artifact parsed_preimage missing (schema v2 cutover)".into());
+    }
+    let doc: RunArtifactDocument = serde_json::from_value(v)
+        .map_err(|e| format!("run artifact JSON: {e}"))?;
+    validate_run_artifact_document(&doc)?;
+    Ok(doc)
 }
 
 /// Opaque artifact bytes plus explicit metadata.
@@ -225,4 +292,57 @@ pub enum RunArtifactError {
     ObjectStore(String),
     #[error("run artifact filesystem: {0}")]
     Filesystem(String),
+}
+
+#[inline]
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+
+    #[test]
+    fn run_artifact_id_from_wire_roundtrip_without_alloc_decode() {
+        let id = RunArtifactId::from_bytes([0xab; 32]);
+        let wire = id.to_wire();
+        assert_eq!(RunArtifactId::from_wire(&wire), Some(id));
+        assert!(RunArtifactId::from_wire("pr").is_none());
+        assert!(RunArtifactId::from_wire("przz").is_none());
+    }
+
+    #[test]
+    fn validate_run_artifact_document_json_requires_parsed_preimage() {
+        let body = serde_json::json!({
+            "run_id": "praaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "prompt_hash": "ph",
+            "session_id": "sid",
+            "entry_id": "linear",
+            "entities": [],
+            "display_lines": [],
+            "request_fingerprints": [],
+            "source": "live",
+            "stats": { "duration_ms": 0, "cache_hits": 0 }
+        });
+        let err = validate_run_artifact_document_json(&body).unwrap_err();
+        assert!(err.contains("parsed_preimage missing"), "{err}");
+    }
+
+    #[test]
+    fn validate_artifact_payload_metadata_rejects_stale_version() {
+        let meta = ArtifactPayloadMetadata {
+            content_type: "application/json".into(),
+            content_encoding: None,
+            schema_version: 1,
+            producer: "plasm".into(),
+        };
+        let err = validate_artifact_payload_metadata(&meta).unwrap_err();
+        assert!(err.contains("schema_version must be 2"), "{err}");
+    }
 }

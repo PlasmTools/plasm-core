@@ -36,6 +36,9 @@ pub enum PlasmReturn {
     Parallel { steps: Vec<StepId> },
 }
 
+/// Canonical PlasmComp wire version (`_meta.plasm.comp.version`).
+pub const PLASM_COMP_WIRE_VERSION: u32 = 1;
+
 /// Canonical executable Plasm program (wire + in-memory).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PlasmComp {
@@ -52,7 +55,7 @@ pub struct PlasmComp {
 }
 
 fn default_comp_version() -> u32 {
-    1
+    PLASM_COMP_WIRE_VERSION
 }
 
 /// Validated comp ready for dry-run / live execution.
@@ -64,6 +67,12 @@ pub struct PlasmCompArtifact {
 
 impl PlasmComp {
     pub fn validate(&self) -> Result<(), String> {
+        if self.version != PLASM_COMP_WIRE_VERSION {
+            return Err(format!(
+                "PlasmComp: version must be {PLASM_COMP_WIRE_VERSION} (got {})",
+                self.version
+            ));
+        }
         if self.steps.is_empty() {
             return Err("PlasmComp: steps must be non-empty".into());
         }

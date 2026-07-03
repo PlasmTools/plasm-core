@@ -1,6 +1,7 @@
 //! Hot-cache + spill-page walker with dedup and early exit.
 
 use std::collections::HashSet;
+use std::ops::ControlFlow;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -100,28 +101,23 @@ where
         });
     };
 
-    let pages = persistence
-        .read_graph_pages(ctx.es.prompt_hash.as_str(), ctx.session_id)
+    let pages_read = persistence
+        .visit_graph_pages_in_seq_order(ctx.es.prompt_hash.as_str(), ctx.session_id, |page| {
+            if !page.entity_type.is_empty() && page.entity_type != entity_type {
+                return Ok(ControlFlow::Continue(()));
+            }
+            for row in &page.entities {
+                if !seen.insert_row(entity_type, cgs, row) {
+                    continue;
+                }
+                rows_yielded += 1;
+                if on_row(row) {
+                    return Ok(ControlFlow::Break(()));
+                }
+            }
+            Ok(ControlFlow::Continue(()))
+        })
         .await?;
-    let pages_read = pages.len();
-
-    for page in pages {
-        if !page.entity_type.is_empty() && page.entity_type != entity_type {
-            continue;
-        }
-        for row in &page.entities {
-            if !seen.insert_row(entity_type, cgs, row) {
-                continue;
-            }
-            rows_yielded += 1;
-            if on_row(row) {
-                return Ok(GraphSurfaceWalkStats {
-                    rows_yielded,
-                    pages_read,
-                });
-            }
-        }
-    }
 
     Ok(GraphSurfaceWalkStats {
         rows_yielded,

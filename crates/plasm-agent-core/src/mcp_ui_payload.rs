@@ -87,6 +87,22 @@ mod tests {
     use rust_mcp_sdk::schema::{CallToolResult, TextContent};
     use serde_json::json;
 
+    fn minimal_plan_ux_reflection_v3() -> serde_json::Value {
+        json!({
+            "schema_version": 3,
+            "layout": "sequential",
+            "steps": [],
+            "review": { "verdict": "ok", "write_count": 0, "read_count": 0 },
+            "flow": {
+                "schema_version": 1,
+                "verdict": "clean",
+                "counts": { "allow": 0, "approve": 0, "review": 0, "deny": 0 },
+                "violations": [],
+                "trace": []
+            }
+        })
+    }
+
     fn sample_dry_tool_meta() -> Map<String, Value> {
         let mut agent = Map::new();
         agent.insert("dry_run".into(), json!(true));
@@ -108,7 +124,7 @@ mod tests {
         );
         ui_plasm.insert(
             "plan_ux_reflection".into(),
-            json!({ "schema_version": 2, "layout": "sequential", "steps": [] }),
+            minimal_plan_ux_reflection_v3(),
         );
         let mut meta = Map::new();
         meta.insert("plasm".into(), Value::Object(agent));
@@ -222,7 +238,7 @@ mod tests {
                         "bind": { "topo": ["n1"] },
                         "return": { "kind": "step", "step": "n1" }
                     },
-                    "plan_ux_reflection": { "schema_version": 2, "steps": [] }
+                    "plan_ux_reflection": minimal_plan_ux_reflection_v3()
                 }
             }),
         );

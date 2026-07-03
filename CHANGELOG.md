@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.110] - 2026-07-03
+
+### Fixed
+
+- **Graph spill rehydrate hang:** plan compute with `limit` / streaming interleaves LIST+GET and stops both on early exit; spill deltas are reordered from partial LIST via a seq buffer when object-store iteration order is undefined. Full snapshot merges use bounded parallel delta reads (`PLASM_GRAPH_DELTA_READ_CONCURRENCY`, default 16). Delta framing uses zero-copy `Bytes::slice` for bodies.
+
+### Changed
+
+- **Wire protocol cutover:** exact-match validators for plan UX reflection (v3), flow reflection, workflow view/manifest, PlasmComp, run artifacts (v2), graph page deltas (v2), and persisted symbol ledger (v2). Shared TS hub in `@plasm/mcp-ui-shared`.
+- **Wire protocol hub:** `wire_protocol.rs` exports version pins + validators only; graph spill ordering invariant documented (`seq` for streaming, `page_index` for full merge).
+- **Run artifact ingress:** single JSON deserialize path; `parsed_preimage` required on schema v2 wire (aligned with TS).
+- **Plan UX wire validation:** Rust validators deserialize typed structs instead of hand-rolled field walks.
+
 ## [0.3.109] - 2026-07-02
 
 ### Changed

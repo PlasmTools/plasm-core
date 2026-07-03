@@ -67,15 +67,8 @@ fn plan_ux_reflection_from_body(body: &Value) -> &Value {
 
 fn assert_plan_ux_reflection(body: &Value) {
     let reflection = plan_ux_reflection_from_body(body);
-    assert!(
-        reflection
-            .get("schema_version")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0)
-            >= 1,
-        "plan_ux_reflection.schema_version must be >= 1, got {reflection:?}"
-    );
-    assert!(reflection.get("steps").and_then(|v| v.as_array()).is_some());
+    plasm_agent::plan_ux_reflection::validate_plan_ux_reflection_wire(reflection)
+        .unwrap_or_else(|e| panic!("invalid plan_ux_reflection wire: {e}; got {reflection:?}"));
     for step in reflection["steps"].as_array().into_iter().flatten() {
         let op = step["operation"].as_str().unwrap_or("");
         assert!(

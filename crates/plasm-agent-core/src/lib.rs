@@ -198,6 +198,7 @@ pub mod workflow_program_template;
 pub mod workflow_readiness;
 pub mod workflow_registry;
 pub mod workflow_view_model;
+pub mod wire_protocol;
 
 pub use crate::cli_builder::AgentCliSurface;
 

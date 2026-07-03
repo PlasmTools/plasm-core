@@ -80,6 +80,26 @@ pub fn build_workflow_view_model_with_readiness(
     }
 }
 
+/// Reject stale or partial workflow view-model wire (exact schema cutover).
+pub fn validate_workflow_view_model(vm: &WorkflowViewModel) -> Result<(), String> {
+    if vm.schema_version != WORKFLOW_VIEW_MODEL_SCHEMA_VERSION {
+        return Err(format!(
+            "workflow view_model schema_version must be {WORKFLOW_VIEW_MODEL_SCHEMA_VERSION} (got {})",
+            vm.schema_version
+        ));
+    }
+    if vm.id.trim().is_empty() {
+        return Err("workflow view_model id missing".into());
+    }
+    if vm.title.trim().is_empty() {
+        return Err("workflow view_model title missing".into());
+    }
+    if vm.seeds.is_empty() {
+        return Err("workflow view_model seeds must be non-empty".into());
+    }
+    Ok(())
+}
+
 fn parameter_to_field_view(p: &WorkflowParameter) -> WorkflowFieldView {
     WorkflowFieldView {
         name: p.name.clone(),
@@ -187,8 +207,17 @@ mod tests {
     fn view_model_from_manifest() {
         let m = workflow_matrix_manifest();
         let vm = build_workflow_view_model(&m);
+        validate_workflow_view_model(&vm).expect("view model wire");
         assert_eq!(vm.fields.len(), 1);
         assert_eq!(vm.seeds.len(), 2);
+    }
+
+    #[test]
+    fn workflow_manifest_validate_rejects_stale_schema() {
+        let mut m = workflow_matrix_manifest();
+        m.schema_version = 0;
+        let err = m.validate().unwrap_err();
+        assert!(err.contains("schema_version must be 1"), "{err}");
     }
 
     #[test]

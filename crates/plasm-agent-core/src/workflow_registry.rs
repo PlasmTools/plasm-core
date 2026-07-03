@@ -16,6 +16,9 @@ impl WorkflowRegistry {
     }
 
     pub fn register(&self, manifest: WorkflowManifest) {
+        manifest
+            .validate()
+            .unwrap_or_else(|e| panic!("invalid workflow manifest `{}`: {e}", manifest.id));
         let id = manifest.id.clone();
         self.inner
             .write()
