@@ -228,10 +228,12 @@ async fn hydrate_plan_run_from_artifact(
             handle: handle.as_str().to_string(),
             run_artifact_id: wire_id.to_string(),
         })?;
-    let doc = crate::run_artifacts::parse_run_artifact_document_bytes(&payload.bytes)
-        .map_err(|_| OperationError::ResultArtifactMissing {
-            handle: handle.as_str().to_string(),
-            run_artifact_id: wire_id.to_string(),
+    let doc =
+        crate::run_artifacts::parse_run_artifact_document_bytes(&payload.bytes).map_err(|_| {
+            OperationError::ResultArtifactMissing {
+                handle: handle.as_str().to_string(),
+                run_artifact_id: wire_id.to_string(),
+            }
         })?;
     let (out, node_results) =
         crate::terminal_result_format::hydrate_plan_run_from_artifact_formatted(

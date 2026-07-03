@@ -34,7 +34,9 @@ use std::sync::Arc;
 
 use axum::body::Bytes;
 
-use crate::run_artifacts::{validate_artifact_payload_metadata, ArtifactPayload, ArtifactPayloadMetadata};
+use crate::run_artifacts::{
+    validate_artifact_payload_metadata, ArtifactPayload, ArtifactPayloadMetadata,
+};
 
 pub const GRAPH_PAGE_DELTA_SCHEMA_VERSION: u32 = 2;
 
@@ -120,10 +122,10 @@ fn parse_graph_page_body(body: &serde_json::Value) -> Result<GraphPageDelta, Str
             "graph page delta schema_version must be {GRAPH_PAGE_DELTA_SCHEMA_VERSION} (got {schema_version})"
         ));
     }
-    let page_index = body
-        .get("page_index")
-        .and_then(|v| v.as_u64())
-        .ok_or_else(|| "graph page delta page_index missing".to_string())? as usize;
+    let page_index =
+        body.get("page_index")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| "graph page delta page_index missing".to_string())? as usize;
     let entity_type = body
         .get("entity_type")
         .and_then(|v| v.as_str())
@@ -477,8 +479,8 @@ mod tests {
         use futures_util::stream::{self, BoxStream, StreamExt, TryStreamExt};
         use object_store::path::Path as StorePath;
         use object_store::{
-            CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta, ObjectStore,
-            PutMultipartOptions, PutOptions, PutPayload, PutResult, RenameOptions,
+            CopyOptions, GetOptions, GetResult, ListResult, MultipartUpload, ObjectMeta,
+            ObjectStore, PutMultipartOptions, PutOptions, PutPayload, PutResult, RenameOptions,
         };
 
         #[derive(Debug)]
@@ -526,15 +528,15 @@ mod tests {
                 self.inner.delete_stream(locations)
             }
 
-            fn list(&self, prefix: Option<&StorePath>) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
+            fn list(
+                &self,
+                prefix: Option<&StorePath>,
+            ) -> BoxStream<'static, object_store::Result<ObjectMeta>> {
                 let inner = Arc::clone(&self.inner);
                 let prefix = prefix.cloned();
-                stream::once(async move {
-                    inner
-                        .list(prefix.as_ref())
-                        .try_collect::<Vec<_>>()
-                        .await
-                })
+                stream::once(
+                    async move { inner.list(prefix.as_ref()).try_collect::<Vec<_>>().await },
+                )
                 .flat_map(|result| match result {
                     Ok(mut entries) => {
                         if entries.len() >= 2 {
@@ -612,5 +614,4 @@ mod tests {
             .expect("visit");
         assert_eq!(visited, vec![0, 1, 2]);
     }
-
 }

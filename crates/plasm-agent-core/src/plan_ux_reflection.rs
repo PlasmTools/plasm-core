@@ -214,8 +214,7 @@ pub fn validate_plan_ux_reflection_wire(v: &serde_json::Value) -> Result<(), Str
     if reflection.schema_version != PLAN_UX_REFLECTION_SCHEMA_VERSION {
         return Err(format!(
             "plan_ux_reflection.schema_version must be {} (got {})",
-            PLAN_UX_REFLECTION_SCHEMA_VERSION,
-            reflection.schema_version
+            PLAN_UX_REFLECTION_SCHEMA_VERSION, reflection.schema_version
         ));
     }
     Ok(())

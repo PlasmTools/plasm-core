@@ -87,8 +87,9 @@ pub struct PlanUxFlowReflection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub policy_revision: Option<u64>,
     pub counts: PlanUxFlowCounts,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
     pub violations: Vec<PlanUxFlowViolation>,
+    #[serde(default)]
     pub trace: Vec<PlanUxFlowStep>,
 }
 
@@ -234,8 +235,7 @@ pub fn validate_plan_ux_flow_reflection_wire(v: &serde_json::Value) -> Result<()
     if flow.schema_version != PLAN_UX_FLOW_REFLECTION_SCHEMA_VERSION {
         return Err(format!(
             "plan_ux_reflection.flow.schema_version must be {} (got {})",
-            PLAN_UX_FLOW_REFLECTION_SCHEMA_VERSION,
-            flow.schema_version
+            PLAN_UX_FLOW_REFLECTION_SCHEMA_VERSION, flow.schema_version
         ));
     }
     Ok(())
@@ -372,5 +372,19 @@ mod tests {
         assert_eq!(messages_step.disposition, PlanUxFlowDisposition::Allow);
         assert!(messages_step.labels_out.contains(&"untrusted".to_string()));
         assert!(messages_step.labels_in.is_empty());
+    }
+
+    #[test]
+    fn validate_flow_wire_accepts_missing_violations_and_trace() {
+        let partial = serde_json::json!({
+            "schema_version": PLAN_UX_FLOW_REFLECTION_SCHEMA_VERSION,
+            "verdict": "clean",
+            "counts": { "allow": 0, "approve": 0, "review": 0, "deny": 0 }
+        });
+        validate_plan_ux_flow_reflection_wire(&partial).expect("partial flow wire");
+        let flow: PlanUxFlowReflection =
+            serde_json::from_value(partial).expect("deserialize partial flow");
+        assert!(flow.violations.is_empty());
+        assert!(flow.trace.is_empty());
     }
 }

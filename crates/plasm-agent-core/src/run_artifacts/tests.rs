@@ -169,8 +169,11 @@ async fn memory_insert_get_payload_round_trip_binary() {
         .get_payload(&"p".repeat(64), "s1", run_id)
         .await
         .expect("payload");
-        assert_eq!(got, payload);
-        assert_eq!(got.metadata.schema_version, RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION);
+    assert_eq!(got, payload);
+    assert_eq!(
+        got.metadata.schema_version,
+        RUN_ARTIFACT_PAYLOAD_SCHEMA_VERSION
+    );
     let by_idx = store
         .get_payload_result_by_resource_index(&"p".repeat(64), "s1", 7)
         .await

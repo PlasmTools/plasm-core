@@ -210,7 +210,9 @@ pub fn validate_run_artifact_document_json(v: &serde_json::Value) -> Result<(), 
 }
 
 /// Parse JSON run snapshot bytes after wire validation (single ingress path).
-pub fn parse_run_artifact_document_bytes(bytes: &[u8]) -> Result<RunArtifactDocument, RunArtifactError> {
+pub fn parse_run_artifact_document_bytes(
+    bytes: &[u8],
+) -> Result<RunArtifactDocument, RunArtifactError> {
     let v: serde_json::Value = serde_json::from_slice(bytes)?;
     parse_run_artifact_document_value(v).map_err(RunArtifactError::Decode)
 }
@@ -222,8 +224,8 @@ fn parse_run_artifact_document_value(v: serde_json::Value) -> Result<RunArtifact
     if v.get("parsed_preimage").is_none() {
         return Err("run artifact parsed_preimage missing (schema v2 cutover)".into());
     }
-    let doc: RunArtifactDocument = serde_json::from_value(v)
-        .map_err(|e| format!("run artifact JSON: {e}"))?;
+    let doc: RunArtifactDocument =
+        serde_json::from_value(v).map_err(|e| format!("run artifact JSON: {e}"))?;
     validate_run_artifact_document(&doc)?;
     Ok(doc)
 }

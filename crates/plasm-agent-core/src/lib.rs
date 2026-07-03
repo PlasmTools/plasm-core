@@ -192,13 +192,13 @@ pub(crate) mod trace_hub_metrics;
 pub mod trace_sink_emit;
 pub mod typed_discovery_host;
 mod web_connected_account_notify;
+pub mod wire_protocol;
 pub mod workflow_manifest;
 mod workflow_mcp;
 pub mod workflow_program_template;
 pub mod workflow_readiness;
 pub mod workflow_registry;
 pub mod workflow_view_model;
-pub mod wire_protocol;
 
 pub use crate::cli_builder::AgentCliSurface;
 

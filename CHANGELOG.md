@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.111] - 2026-07-03
+
+### Fixed
+
+- **Plan UX flow wire:** accept partial `plan_ux_reflection.flow` payloads missing `violations` / `trace` (default empty arrays); aligns Rust serde with TS `validatePlanUxFlowReflection`.
+
 ## [0.3.110] - 2026-07-03
 
 ### Fixed

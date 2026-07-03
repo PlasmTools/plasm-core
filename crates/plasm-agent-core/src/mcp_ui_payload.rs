@@ -122,10 +122,7 @@ mod tests {
                 "return": { "kind": "step", "step": "n1" }
             }),
         );
-        ui_plasm.insert(
-            "plan_ux_reflection".into(),
-            minimal_plan_ux_reflection_v3(),
-        );
+        ui_plasm.insert("plan_ux_reflection".into(), minimal_plan_ux_reflection_v3());
         let mut meta = Map::new();
         meta.insert("plasm".into(), Value::Object(agent));
         meta.insert("ui".into(), json!({ "plasm": ui_plasm }));
