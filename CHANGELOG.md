@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **MCP read-first exposure:** seeding an entity on `plasm_context` now teaches **all** mutators on that entity on the first wave (not deferred by intent score). Relation-target mutators on non-seeded entities remain intent/ranked gated.
+- **Shared scope `p#` invoke resolution:** a taught scope/param symbol resolves on any capability that declares the same wire when occurrences share one `p#` (e.g. `repository` on `issue_create` after `issue_query` taught the symbol).
+- **Teaching TSV gloss dedupe:** suppress standalone per-capability `p#` gloss rows when the symbol is already demonstrated on a teaching-row LHS (projection bracket or witness).
+- **GitHub catalog (`apis/github`, v30):** unified create/update `value_ref` for Issue `labels`, `assignees`, and `milestone` so create and update share one `p#` per wire.
+
+### Added
+
+- **`scripts/dedupe_primitive_domain_values.py --merge-create-update-pairs`:** report/merge structurally identical create/update param `value_ref` pairs across catalogs.
+
 ## [0.3.113] - 2026-07-03
 
 ### Changed

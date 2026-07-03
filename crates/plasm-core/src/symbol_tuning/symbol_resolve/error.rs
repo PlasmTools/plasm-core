@@ -73,7 +73,7 @@ impl SymbolResolveError {
                 "Supply every compound identity key using wire names or the taught `p#` symbols.",
             ),
             Self::UnknownMethodSym { .. } | Self::MethodAnchorMismatch { .. } => Some(
-                "Use `m#` symbols from the teaching table for this session.",
+                "Use `m#` symbols from the teaching table for this session. If the capability exists but was not taught, pass its wire name in `ranked_capabilities` and call plasm_context with session_mode: \"extend\".",
             ),
             Self::UnknownEntitySym { .. } => Some(
                 "Use `e#` symbols from the teaching table for this session.",

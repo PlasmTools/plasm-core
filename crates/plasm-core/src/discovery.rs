@@ -1038,13 +1038,16 @@ fn ranked_gate_allows_mutation(ranked_capability_names: Option<&[String]>, cap_n
 }
 
 /// Minimum intent lexicon score for seeded-entity mutators on MCP read-first exposure waves.
+/// **Note:** Seeded-entity mutators are always admitted when [`ExposureSurfaceOptions::read_first_seeded`]
+/// is set; this constant remains for documentation and non-seeded relation-target mutators.
 pub const READ_FIRST_SEEDED_MUTATOR_MIN_SCORE: u32 = 2;
 
 /// Options for [`derive_intent_exposure_surface_batch`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExposureSurfaceOptions {
     /// When true (MCP `plasm_context` waves), seeded-entity `create` / `update` / `delete` / `action`
-    /// require a stronger intent score or an explicit `ranked_capability_names` listing.
+    /// are always admitted on the first wave. Non-seeded relation-target mutators still require
+    /// intent lexicon overlap (or an explicit `ranked_capability_names` listing when enabled).
     pub read_first_seeded: bool,
 }
 
@@ -1056,21 +1059,9 @@ fn mutating_capability_admitted(
     cap_name: &str,
 ) -> bool {
     if read_first_seeded && entity_is_seeded {
-        #[cfg(feature = "ranked_capability_gate")]
-        {
-            if ranked_capability_names.is_some_and(|n| !n.is_empty())
-                && ranked_gate_allows_mutation(ranked_capability_names, cap_name)
-            {
-                // Exact ranked wire names force-teach seeded mutators even at lexicon score zero.
-                return true;
-            }
-        }
-        #[cfg(not(feature = "ranked_capability_gate"))]
-        let _ = (ranked_capability_names, cap_name);
-        if score == 0 {
-            return false;
-        }
-        return score >= READ_FIRST_SEEDED_MUTATOR_MIN_SCORE;
+        // Seeded entities teach all mutators up front so agents get stable m# tokens without
+        // a ranked round-trip (read/query/get still use seed_entity_surface_always_includes).
+        return true;
     }
     if score == 0 {
         return false;
@@ -1133,10 +1124,9 @@ pub fn outgoing_relation_hints_for_entity(cgs: &CGS, entity: &str, max: usize) -
 /// Minimal intent-filtered teaching surface for MCP `plasm_context` / incremental expand waves.
 ///
 /// - **Seeded entities** (`entity_batch`): always admit `query` / `search` / `get` on that
-///   entity’s domain, plus [`EntityDef::primary_read`] when set. Seeded `create` / `update` /
-///   `delete` / `action` require intent lexicon overlap (or ranked-capability gate when enabled).
-///   With [`ExposureSurfaceOptions::read_first_seeded`], seeded mutators also require score ≥
-///   [`READ_FIRST_SEEDED_MUTATOR_MIN_SCORE`] unless listed in `ranked_capability_names`.
+///   entity’s domain, plus [`EntityDef::primary_read`] when set. With
+///   [`ExposureSurfaceOptions::read_first_seeded`], seeded `create` / `update` / `delete` /
+///   `action` are also always admitted on the first wave.
 /// - **Non-seeded** read capabilities require a non-zero lexicon overlap score against `intent`.
 /// - **Non-seeded** mutating capabilities require a non-zero score; with `ranked_capability_gate`,
 ///   when `ranked_capability_names` is non-empty they must also appear in that list.
@@ -1496,7 +1486,7 @@ mod tests {
 
     #[test]
     fn mutating_capability_admitted_read_first_seeded_gate() {
-        assert!(!mutating_capability_admitted(
+        assert!(mutating_capability_admitted(
             true,
             true,
             0,
@@ -1510,7 +1500,7 @@ mod tests {
             Some(&["langitem_create".to_string()]),
             "langitem_create"
         ));
-        assert!(!mutating_capability_admitted(
+        assert!(mutating_capability_admitted(
             true,
             true,
             1,
@@ -1575,7 +1565,7 @@ mod tests {
     }
 
     #[test]
-    fn intent_surface_read_first_defers_weak_scored_seeded_mutator() {
+    fn intent_surface_read_first_admits_seeded_mutators_on_first_wave() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = load_schema_dir(&dir).expect("plasm_language_matrix");
@@ -1616,12 +1606,12 @@ mod tests {
             },
         );
         assert!(
-            !delta_weak
+            delta_weak
                 .required
                 .capabilities
                 .iter()
                 .any(|c| { c.capability.as_str() == "langitem_create" }),
-            "read-first should defer weak-scored seeded mutator"
+            "read-first should admit seeded mutators even at weak intent score"
         );
         let delta_strong = derive_intent_exposure_surface_batch(
             &cgs,

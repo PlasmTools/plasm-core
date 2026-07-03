@@ -124,7 +124,29 @@ fn gloss_rows_for_filtered_block(
     new_caps: &BTreeSet<ExposureCapabilityKey>,
 ) -> Vec<TeachingFieldGloss> {
     let mut needed: HashSet<String> = HashSet::new();
+    let mut demonstrated_lhs: HashSet<String> = HashSet::new();
     for row in kept_rows {
+        for sym in
+            field_syms_for_teaching_row(row.teaching_expr.expression.as_str(), None, None, &[])
+                .into_iter()
+                .filter(|s| {
+                    SymbolMap::is_opaque_p_sym(s.as_str()) || SymbolMap::is_opaque_r_sym(s.as_str())
+                })
+        {
+            demonstrated_lhs.insert(sym);
+        }
+        for sym in field_syms_for_teaching_row(
+            row.teaching_expr.expression.as_str(),
+            Some(row.teaching_expr.result_type.as_str()),
+            None,
+            &[],
+        )
+        .into_iter()
+        .filter(|s| {
+            SymbolMap::is_opaque_p_sym(s.as_str()) || SymbolMap::is_opaque_r_sym(s.as_str())
+        }) {
+            demonstrated_lhs.insert(sym);
+        }
         for sym in
             field_syms_for_teaching_row(row.teaching_expr.expression.as_str(), None, None, &[])
         {
@@ -197,7 +219,7 @@ fn gloss_rows_for_filtered_block(
             cap,
             CapabilityParamSurfaceFilter::AllOnSurface,
         ) {
-            if !needed.contains(&sym) || covered.contains(&sym) {
+            if !needed.contains(&sym) || covered.contains(&sym) || demonstrated_lhs.contains(&sym) {
                 continue;
             }
             out.push(synthesize_param_gloss_row(
@@ -497,6 +519,68 @@ mod tests {
         assert!(
             !recap.contains("langitem_query"),
             "query caps must not appear in mutator recap: {recap}"
+        );
+    }
+
+    #[test]
+    fn teaching_gloss_skips_p_sym_demonstrated_on_create_witness() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+            .expect("matrix");
+        let entities = vec!["LangItem".to_string()];
+        let endpoints = entities
+            .iter()
+            .map(|e| ExposureEntityKey {
+                entry_id: "langmatrix".into(),
+                entity: crate::EntityName::from(e.as_str()),
+            })
+            .collect::<Vec<_>>();
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "langmatrix",
+            "create langitem with title",
+            &endpoints,
+            &entities,
+            Some(&["langitem_create".to_string()]),
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        let exp = TeachingExposureSession::new_with_intent_delta(
+            &cgs,
+            "langmatrix",
+            &["LangItem"],
+            delta,
+        );
+        let map = exp.symbol_map_arc();
+        let title_sym =
+            map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "title");
+        let bundle = render_teaching_prompt_bundle_for_exposure(
+            &cgs,
+            RenderConfig::for_eval(None),
+            &exp,
+            Some(&["LangItem"]),
+        );
+        let block = bundle
+            .teaching_blocks
+            .iter()
+            .find(|b| {
+                b.teaching_rows
+                    .iter()
+                    .any(|row| row.meta.source_capability.as_deref() == Some("langitem_create"))
+            })
+            .expect("LangItem create teaching block");
+        assert!(
+            block.teaching_rows.iter().any(|row| {
+                row.meta.source_capability.as_deref() == Some("langitem_create")
+                    && row.teaching_expr.expression.contains(title_sym.as_str())
+            }),
+            "create witness must demonstrate title p# on LHS"
+        );
+        assert!(
+            !block.field_gloss_rows.iter().any(|g| g.symbol == title_sym),
+            "duplicate standalone gloss row must be suppressed for title p# on witness: {:?}",
+            block.field_gloss_rows
         );
     }
 

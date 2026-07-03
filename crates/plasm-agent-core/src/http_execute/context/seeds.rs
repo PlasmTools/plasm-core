@@ -67,7 +67,7 @@ pub(crate) fn read_first_deferred_mutator_hint(
             cap.domain.to_string(),
             cap.capability.to_string(),
         );
-        if on_surface.contains(&trip) || !seeded.contains(cap.domain.as_str()) {
+        if on_surface.contains(&trip) || seeded.contains(cap.domain.as_str()) {
             continue;
         }
         let Some(schema) = cgs.get_capability(cap.capability.as_str()) else {
@@ -90,7 +90,7 @@ pub(crate) fn read_first_deferred_mutator_hint(
         return None;
     }
     Some(format!(
-        "\n\n**Deferred write capabilities** (read-first exposure): `{}`. Restate intent toward mutation or pass `ranked_capabilities` with the needed mutator wire name(s).\n",
+        "\n\n**Deferred write capabilities** (relation-target mutators not yet on the teaching surface): `{}`. Restate intent toward mutation or pass `ranked_capabilities` with the needed mutator wire name(s).\n",
         deferred.into_iter().collect::<Vec<_>>().join("`, `")
     ))
 }

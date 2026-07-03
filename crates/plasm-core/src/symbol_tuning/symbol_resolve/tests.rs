@@ -206,6 +206,56 @@ fn resolve_query_filter_field_accepts_cap_scope_param_p_sym() {
 }
 
 #[test]
+fn resolve_cap_param_shared_scope_p_on_issue_create_when_only_issue_query_committed() {
+    use crate::discovery;
+    use crate::EntityName;
+    use crate::ExposureEntityKey;
+
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
+    if !dir.is_dir() {
+        return;
+    }
+    let Ok(cgs) = load_schema_dir(&dir) else {
+        return;
+    };
+    let exp = TeachingExposureSession::new_with_intent_delta(
+        &cgs,
+        "github",
+        &["Issue"],
+        discovery::derive_intent_exposure_surface_batch(
+            &cgs,
+            "github",
+            "query issues in repository",
+            &[ExposureEntityKey {
+                entry_id: "github".into(),
+                entity: EntityName::from("Issue"),
+            }],
+            &["Issue".to_string()],
+            Some(&["issue_query".to_string()]),
+            discovery::ExposureSurfaceOptions {
+                read_first_seeded: false,
+            },
+        ),
+    );
+    let map = exp.symbol_map_arc();
+    let create_cap = cgs.get_capability("issue_create").expect("issue_create");
+    let p_repository = map.ident_sym_cap_param_for("github", "Issue", "issue_query", "repository");
+    if !SymbolMap::is_opaque_p_sym(p_repository.as_str()) {
+        return;
+    }
+    let wire = map
+        .resolve_cap_param(
+            CatalogScope::qualified("github"),
+            "Issue",
+            "issue_create",
+            p_repository.as_str(),
+            create_cap,
+        )
+        .expect("shared repository p# must resolve on issue_create invoke");
+    assert_eq!(wire, "repository");
+}
+
+#[test]
 fn agent_program_error_includes_query_filter_hint() {
     let err = SymbolResolveError::UnknownQueryFilterPSym {
         entity: "Label".into(),

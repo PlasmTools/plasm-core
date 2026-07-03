@@ -192,6 +192,28 @@ impl SymbolMap {
                 if invoke_keys.len() == 1 {
                     return Ok(invoke_keys[0].param.to_string());
                 }
+                if invoke_keys.is_empty() {
+                    // Shared scope/param symbols: accept when the invoke capability declares a wire
+                    // committed on another occurrence (e.g. repository on issue_create when p# was
+                    // first assigned on issue_query).
+                    let shared_keys: Vec<_> = self
+                        .cap_param_keys_for_psym(psym)
+                        .filter(|key| catalog.matches_entry(key.entry_id.as_str()))
+                        .filter(|key| key.domain.as_str() == domain)
+                        .filter(|key| Self::cap_declares_param_wire(cap, key.param.as_str()))
+                        .collect();
+                    if !shared_keys.is_empty() {
+                        let mut wires: Vec<String> = shared_keys
+                            .iter()
+                            .map(|key| key.param.to_string())
+                            .collect();
+                        wires.sort();
+                        wires.dedup();
+                        if wires.len() == 1 {
+                            return Ok(wires[0].clone());
+                        }
+                    }
+                }
                 if let Ok(binding) = self.resolve_session_slot(t) {
                     if let SlotKind::CapParam {
                         domain: bound_domain,

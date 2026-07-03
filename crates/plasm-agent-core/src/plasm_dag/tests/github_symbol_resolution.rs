@@ -6,7 +6,10 @@ use super::test_support::{
     github_symbol_map,
 };
 use crate::plasm_dag::compile_plasm_dag_to_plan;
+use crate::plasm_dag::ExecuteSession;
 use crate::plasm_plan_run::evaluate_plasm_plan_dry;
+use plasm_core::TeachingExposureSession;
+use std::sync::Arc;
 
 /// Unknown `p#` on Label projection surfaces an honest error (no Issue `body` phantom).
 #[test]
@@ -395,6 +398,100 @@ written"#,
         .expect("written node");
     assert_eq!(written["kind"], "action");
     evaluate_plasm_plan_dry(&session, &plan).expect("repo_content_create dry-run");
+}
+
+/// Read-first Repository seed admits all mutators (including repo_content_create) without ranked_capabilities.
+#[test]
+fn read_first_seeded_repository_exposes_repo_content_create_m_sym() {
+    use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+    use plasm_core::{ExposureEntityKey, SymbolMap, TeachingExposureSession};
+
+    let cgs = github_cgs();
+    let delta = derive_intent_exposure_surface_batch(
+        cgs.as_ref(),
+        "github",
+        "label documentation",
+        &[ExposureEntityKey {
+            entry_id: "github".into(),
+            entity: plasm_core::EntityName::from("Repository"),
+        }],
+        &["Repository".to_string()],
+        None,
+        ExposureSurfaceOptions {
+            read_first_seeded: true,
+        },
+    );
+    assert!(
+        delta
+            .required
+            .capabilities
+            .iter()
+            .any(|c| c.capability.as_str() == "repo_content_create"),
+        "read-first Repository seed must expose repo_content_create without ranked_capabilities"
+    );
+    let exp = TeachingExposureSession::new_with_intent_delta(
+        cgs.as_ref(),
+        "github",
+        &["Repository"],
+        delta,
+    );
+    let map = exp.symbol_map_arc();
+    let method_sym = map.method_sym_for("github", "Repository", "repo_content_create");
+    assert!(
+        SymbolMap::is_opaque_m_sym(method_sym.as_str()),
+        "repo_content_create must receive an m# token, got {method_sym}"
+    );
+    let repo_e = map.entity_sym_for("github", "Repository");
+    let p_repo =
+        map.ident_sym_cap_param_for("github", "Repository", "repo_content_create", "repository");
+    let p_path = map.ident_sym_cap_param_for("github", "Repository", "repo_content_create", "path");
+    let p_content =
+        map.ident_sym_cap_param_for("github", "Repository", "repo_content_create", "content");
+    let p_message =
+        map.ident_sym_cap_param_for("github", "Repository", "repo_content_create", "message");
+    let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
+    let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
+    let source = format!(
+        r#"written = {repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test").{method_sym}({p_repo}={repo_e}({repo_owner}="ryan-s-roberts", {repo_name}="tool-test"), {p_path}="docs/LABEL_COLORS.md", {p_content}="ZHVtbXk=", {p_message}="Add label color guide")
+written"#,
+        repo_e = repo_e,
+        repo_owner = repo_owner,
+        repo_name = repo_name,
+        method_sym = method_sym,
+        p_repo = p_repo,
+        p_path = p_path,
+        p_content = p_content,
+        p_message = p_message,
+    );
+    let session = session_from_exp(&cgs, exp);
+    let plan = compile_github_program(&session, "github-read-first-repo-file", &source);
+    evaluate_plasm_plan_dry(&session, &plan)
+        .expect("repo_content_create dry-run on read-first Repository seed");
+}
+
+fn session_from_exp(cgs: &Arc<plasm_core::CGS>, exp: TeachingExposureSession) -> ExecuteSession {
+    use plasm_core::CgsContext;
+    let mut ctxs = indexmap::IndexMap::new();
+    ctxs.insert(
+        "github".into(),
+        Arc::new(CgsContext::entry("github", cgs.clone())),
+    );
+    ExecuteSession::new(
+        "ph".into(),
+        "p".into(),
+        cgs.clone(),
+        ctxs,
+        "github".into(),
+        String::new(),
+        String::new(),
+        None,
+        vec!["Repository".into()],
+        Some(exp),
+        None,
+        cgs.catalog_cgs_hash_hex(),
+        None,
+        None,
+    )
 }
 
 #[test]

@@ -1,4 +1,4 @@
-version: 29
+version: 30
 http_backend: https://api.github.com
 data_classes:
   untrusted:
@@ -2988,13 +2988,13 @@ capabilities:
       required: false
       sink_class: external_publish
     - name: labels
-      value_ref: nv_issue_create_labels
+      value_ref: nv_issue_label_names
       required: false
     - name: assignees
-      value_ref: nv_issue_create_assignees
+      value_ref: nv_issue_assignee_logins
       required: false
     - name: milestone
-      value_ref: nv_issue_create_milestone
+      value_ref: nv_issue_milestone_number
       required: false
   issue_update:
     kind: update
@@ -3037,13 +3037,13 @@ capabilities:
       value_ref: nv_issue_update_state_reason
       required: false
     - name: labels
-      value_ref: nv_issue_update_labels
+      value_ref: nv_issue_label_names
       required: false
     - name: assignees
-      value_ref: nv_issue_update_assignees
+      value_ref: nv_issue_assignee_logins
       required: false
     - name: milestone
-      value_ref: nv_issue_update_milestone
+      value_ref: nv_issue_milestone_number
       required: false
     - name: locked
       value_ref: nv_issue_update_locked
@@ -4392,12 +4392,12 @@ values:
     type: date
     value_format: rfc3339
     description: Only comments updated at or after this time.
-  nv_issue_create_assignees_item:
+  nv_issue_assignee_item:
     type: entity_ref
     target: User
-  nv_issue_create_milestone:
+  nv_issue_milestone_number:
     type: integer
-    description: Milestone number.
+    description: Milestone number in the repository.
   nv_issue_number:
     type: integer
     description: Repository-local issue number.
@@ -4442,15 +4442,9 @@ values:
     description: Numeric database id of the sub-issue to reposition.
   nv_issue_sub_issues_percent_completed:
     type: number
-  nv_issue_update_assignees_item:
-    type: entity_ref
-    target: User
   nv_issue_update_locked:
     type: boolean
     description: Lock or unlock conversation on the issue.
-  nv_issue_update_milestone:
-    type: integer
-    description: Milestone number in the repo, or omit to leave unchanged.
   nv_issue_update_state_reason:
     type: select
     allowed_values:
@@ -4878,26 +4872,16 @@ values:
     items:
       value_ref: nv_issue_assignees_remove_assignees_item
     description: Assignee logins to remove.
-  nv_issue_create_assignees:
+  nv_issue_assignee_logins:
     type: array
     items:
-      value_ref: nv_issue_create_assignees_item
-    description: Assignee logins.
-  nv_issue_update_assignees:
-    type: array
-    items:
-      value_ref: nv_issue_update_assignees_item
-    description: Full replacement list of assignee logins.
-  nv_issue_create_labels:
+      value_ref: nv_issue_assignee_item
+    description: Assignee logins (User entity refs).
+  nv_issue_label_names:
     type: array
     items:
       value_ref: nv_wire_str_short
-    description: Label names to apply when creating the issue (repository must already define them).
-  nv_issue_update_labels:
-    type: array
-    items:
-      value_ref: nv_wire_str_short
-    description: Full replacement list of label names; omit to leave labels unchanged.
+    description: Label names defined on the repository.
   nv_workflow_job_labels:
     type: array
     items:

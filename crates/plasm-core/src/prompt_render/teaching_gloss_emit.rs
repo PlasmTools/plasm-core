@@ -64,6 +64,8 @@ pub(crate) struct FieldGlossEmitState {
     pub(crate) registry_v_sym_alias: HashMap<String, String>,
     pub(crate) non_registry_slots: HashMap<String, IdentMetadata>,
     pub(crate) defined_value_domains: HashSet<String>,
+    /// `p#` / `r#` already shown on a prior teaching-row LHS (witness or projection bracket).
+    pub(crate) demonstrated_lhs_syms: HashSet<String>,
 }
 
 /// Shared per-render caches for teaching table table synthesis (line validation, gloss dedup, metadata).
@@ -98,6 +100,7 @@ impl<'a> TeachingSynthesisSession<'a> {
                 registry_v_sym_alias: HashMap::new(),
                 non_registry_slots: HashMap::new(),
                 defined_value_domains: HashSet::new(),
+                demonstrated_lhs_syms: HashSet::new(),
             },
             map_arc,
             ident_meta,
@@ -222,12 +225,21 @@ pub(crate) fn emit_field_def_lines_before_example(
 ) {
     let en = EntityName::from(entity.to_string());
     let cid = catalog_entry_id.to_string();
+    let current_lhs_syms: HashSet<String> =
+        crate::symbol_tuning::field_syms_for_teaching_row(expr, result_gloss, None, &[])
+            .into_iter()
+            .filter(|s| {
+                SymbolMap::is_opaque_p_sym(s.as_str()) || SymbolMap::is_opaque_r_sym(s.as_str())
+            })
+            .collect();
     for sym in crate::symbol_tuning::field_syms_for_teaching_row(
         expr,
         result_gloss,
         cap_legend,
         optional_param_syms,
     ) {
+        let skip_p_gloss =
+            state.demonstrated_lhs_syms.contains(&sym) || current_lhs_syms.contains(&sym);
         let wire_owned = map.wire_for_opaque_p_sym(sym.as_str());
         let field_name = if sym.starts_with('r') {
             map.resolve_relation_ident(sym.as_str())
@@ -331,17 +343,19 @@ pub(crate) fn emit_field_def_lines_before_example(
                     state
                         .registry_p_slot_compact_gloss
                         .insert(sym.clone(), compact.clone());
-                    push_teaching_field_gloss_row(
-                        out,
-                        sym.clone(),
-                        &compact,
-                        entity,
-                        catalog_entry_id,
-                        Some(map),
-                        Some(ident_meta),
-                        Some(cgs),
-                        false,
-                    );
+                    if !skip_p_gloss {
+                        push_teaching_field_gloss_row(
+                            out,
+                            sym.clone(),
+                            &compact,
+                            entity,
+                            catalog_entry_id,
+                            Some(map),
+                            Some(ident_meta),
+                            Some(cgs),
+                            false,
+                        );
+                    }
                     continue;
                 }
             }
@@ -388,19 +402,22 @@ pub(crate) fn emit_field_def_lines_before_example(
                     .registry_p_slot_compact_gloss
                     .insert(sym.clone(), gloss.clone());
             }
-            push_teaching_field_gloss_row(
-                out,
-                sym.clone(),
-                &gloss,
-                entity,
-                catalog_entry_id,
-                Some(map),
-                Some(ident_meta),
-                Some(cgs),
-                false,
-            );
+            if !skip_p_gloss {
+                push_teaching_field_gloss_row(
+                    out,
+                    sym.clone(),
+                    &gloss,
+                    entity,
+                    catalog_entry_id,
+                    Some(map),
+                    Some(ident_meta),
+                    Some(cgs),
+                    false,
+                );
+            }
         }
     }
+    state.demonstrated_lhs_syms.extend(current_lhs_syms);
 }
 
 /// Per-entity many-shot examples — `focus` still subsets *which* entities appear.

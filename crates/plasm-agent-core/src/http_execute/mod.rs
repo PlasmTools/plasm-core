@@ -249,8 +249,7 @@ pub(crate) use context::{
 pub(crate) use context::{
     build_capability_exposure_plan, build_plasm_context_agent_markdown,
     build_plasm_context_tool_meta, cgs_entity_names_sample, format_session_churn_advisory,
-    PlasmContextToolMetaParams,
-    normalize_context_intent_for_domain_filter,
+    normalize_context_intent_for_domain_filter, PlasmContextToolMetaParams,
 };
 pub(crate) use ingress::parse_execute_program_body;
 pub(crate) use mcp_publish::{
