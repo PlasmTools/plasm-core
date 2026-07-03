@@ -37,6 +37,62 @@ pub fn join_base_url_path(base_url: &str, path: &str) -> String {
     format!("{}/{}", base, path)
 }
 
+/// Absolute outbound URL for a compiled HTTP request (path + query), for host transports that
+/// receive a single URL string (NAPI JS callback, tests).
+pub fn compiled_http_url(base_url: &str, request: &CompiledRequest) -> String {
+    let mut url = join_base_url_path(base_url, request.url_path());
+    append_compiled_query_pairs(&mut url, request.query.as_ref());
+    url
+}
+
+fn append_compiled_query_pairs(url: &mut String, query: Option<&Value>) {
+    let Some(query) = query else {
+        return;
+    };
+    let json_val = plasm_value_to_json(query);
+    let Some(obj) = json_val.as_object() else {
+        return;
+    };
+    let mut pairs: Vec<(String, String)> = Vec::new();
+    for (key, value) in obj {
+        match value {
+            serde_json::Value::Null => {}
+            serde_json::Value::Array(arr) => {
+                for elem in arr {
+                    let s = elem
+                        .as_str()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| elem.to_string());
+                    pairs.push((key.clone(), s));
+                }
+            }
+            serde_json::Value::String(s) => {
+                pairs.push((key.clone(), s.clone()));
+            }
+            serde_json::Value::Number(n) => {
+                let s = n
+                    .as_i64()
+                    .map(|i| i.to_string())
+                    .or_else(|| n.as_f64().map(|f| f.to_string()))
+                    .unwrap_or_else(|| n.to_string());
+                pairs.push((key.clone(), s));
+            }
+            other => {
+                pairs.push((key.clone(), other.to_string()));
+            }
+        }
+    }
+    if pairs.is_empty() {
+        return;
+    }
+    let qs = serde_urlencoded::to_string(pairs).unwrap_or_default();
+    if qs.is_empty() {
+        return;
+    }
+    url.push(if url.contains('?') { '&' } else { '?' });
+    url.push_str(&qs);
+}
+
 /// Outbound HTTP: compile CML to request, then send and return JSON + optional `Link: rel=next` URL.
 #[async_trait]
 pub trait HttpTransport: Send + Sync {
@@ -980,6 +1036,39 @@ fn plasm_value_to_json(value: &Value) -> serde_json::Value {
             serde_json::Value::Object(map)
         }
         Value::UnionCtor { .. } => serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
+    }
+}
+
+#[cfg(test)]
+mod compiled_http_url_tests {
+    use super::*;
+    use plasm_compile::{CompiledRequest, HttpMethod};
+    use plasm_core::Value;
+
+    #[test]
+    fn compiled_http_url_includes_query_params() {
+        let mut query = plasm_core::Value::Object(indexmap::IndexMap::new());
+        if let plasm_core::Value::Object(ref mut map) = query {
+            map.insert(
+                "query".to_string(),
+                Value::String("MCP OR Model Context Protocol".to_string()),
+            );
+            map.insert("tags".to_string(), Value::String("story".to_string()));
+            map.insert("per_page".to_string(), Value::Integer(5));
+        }
+        let request = CompiledRequest {
+            method: HttpMethod::Get,
+            path: "https://hn.algolia.com/api/v1/search_by_date".to_string(),
+            query: Some(query),
+            body: None,
+            body_format: plasm_compile::HttpBodyFormat::Json,
+            multipart: None,
+            headers: None,
+        };
+        let url = compiled_http_url("https://example.com", &request);
+        assert!(url.contains("query="));
+        assert!(url.contains("tags=story"));
+        assert!(url.contains("per_page=5"));
     }
 }
 

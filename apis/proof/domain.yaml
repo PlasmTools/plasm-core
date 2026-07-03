@@ -1,4 +1,4 @@
-version: 26
+version: 27
 http_backend: https://www.proofeditor.ai
 auth:
   scheme: bearer_token
@@ -6,6 +6,17 @@ auth:
   hosted_kv: plasm:outbound:v1:catalog:proof
   # Omit PROOF_API_TOKEN when the session already bound the doc via document_share_bind (share flows).
   optional_env: true
+
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text (document/block/event content from any collaborator).
+    severity: untrusted
+  credentials:
+    description: Access token or secret used to authenticate document access.
+    severity: critical
+  external_publish:
+    description: Document content change visible to all collaborators on the shared document.
+    severity: critical
 
 entities:
   Document:
@@ -19,6 +30,7 @@ entities:
       markdown:
         value_ref: nv_proof_markdown
         required: false
+        data_class: untrusted
       title:
         value_ref: nv_proof_str
         required: false
@@ -110,6 +122,7 @@ entities:
       markdown:
         value_ref: nv_proof_markdown
         required: false
+        data_class: untrusted
       block_kind:
         value_ref: nv_proof_str
         required: false
@@ -137,6 +150,7 @@ entities:
         required: false
         path: data
         description: Parsed event body—comment/mark/thread details live here (wire `data`).
+        data_class: untrusted
       actor:
         value_ref: nv_proof_str
         required: false
@@ -171,16 +185,19 @@ entities:
         required: false
         path: tokenUrl
         description: Full share URL including `?token=`—use for document_share_bind or API calls.
+        data_class: credentials
       token_path:
         value_ref: nv_proof_str
         required: false
         path: tokenPath
         description: Path-style URL with token query for CLI-style copy/paste.
+        data_class: credentials
       token:
         value_ref: nv_proof_str
         required: false
         path: accessToken
         description: Link access token (`accessToken` on wire)—send as Bearer or `token` query.
+        data_class: credentials
       raw:
         value_ref: nv_proof_json
         required: false
@@ -361,6 +378,7 @@ capabilities:
                         wire_json_path:
                           - block
                           - markdown
+                        sink_class: external_publish
                   - name: insert_before
                     constructor_symbol: v102
                     description: Insert blocks before the anchor block.
@@ -375,6 +393,7 @@ capabilities:
                         value_ref: nv_proof_insert_blocks_markdown
                         required: true
                         wire_array_element_key: markdown
+                        sink_class: external_publish
                   - name: insert_after
                     constructor_symbol: v103
                     description: Insert blocks after the anchor block.
@@ -389,6 +408,7 @@ capabilities:
                         value_ref: nv_proof_insert_blocks_markdown
                         required: true
                         wire_array_element_key: markdown
+                        sink_class: external_publish
                   - name: delete_block
                     constructor_symbol: v104
                     description: Delete one block.
@@ -416,6 +436,7 @@ capabilities:
                         value_ref: nv_proof_insert_blocks_markdown
                         required: true
                         wire_array_element_key: markdown
+                        sink_class: external_publish
                   - name: find_replace_in_block
                     constructor_symbol: v106
                     description: Find and replace text inside one block.
@@ -432,6 +453,7 @@ capabilities:
                       - name: replace
                         value_ref: nv_proof_markdown
                         required: true
+                        sink_class: external_publish
                       - name: occurrence
                         value_ref: nv_proof_occurrence
                         required: false
@@ -448,6 +470,7 @@ capabilities:
                       - name: replace
                         value_ref: nv_proof_markdown
                         required: true
+                        sink_class: external_publish
                       - name: occurrence
                         value_ref: nv_proof_occurrence
                         required: false
@@ -483,6 +506,7 @@ capabilities:
       - name: text
         value_ref: nv_proof_markdown
         required: true
+        sink_class: external_publish
       - name: base_token
         value_ref: nv_proof_base_token
         required: false
@@ -510,6 +534,7 @@ capabilities:
       - name: text
         value_ref: nv_proof_markdown
         required: true
+        sink_class: external_publish
       - name: resolve
         value_ref: nv_proof_bool
         required: false
@@ -588,6 +613,7 @@ capabilities:
       - name: content
         value_ref: nv_proof_markdown
         required: true
+        sink_class: external_publish
       - name: base_token
         value_ref: nv_proof_base_token
         required: false
@@ -651,6 +677,7 @@ capabilities:
       - name: content
         value_ref: nv_proof_markdown
         required: true
+        sink_class: external_publish
       - name: base_token
         value_ref: nv_proof_base_token
         required: false
@@ -759,6 +786,7 @@ capabilities:
                       - name: text
                         value_ref: nv_proof_markdown
                         required: true
+                        sink_class: external_publish
                       - name: resolve
                         value_ref: nv_proof_bool
                         required: false
@@ -838,6 +866,7 @@ capabilities:
       - name: markdown
         value_ref: nv_proof_markdown
         required: true
+        sink_class: external_publish
 
   bug_report_submit:
     description: Report a bug in Proof itself—not about editing this document.

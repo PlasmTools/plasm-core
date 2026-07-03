@@ -1,7 +1,11 @@
-version: 2
+version: 3
 auth:
   scheme: none
 http_backend: https://hacker-news.firebaseio.com
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
 entities:
   Item:
     id_field: id
@@ -25,9 +29,11 @@ entities:
       title:
         required: false
         value_ref: nv_item_title
+        data_class: untrusted
       text:
         required: false
         value_ref: nv_item_text
+        data_class: untrusted
       url:
         required: false
         value_ref: nv_item_url
@@ -88,6 +94,7 @@ entities:
       about:
         required: false
         value_ref: nv_user_about
+        data_class: untrusted
       delay:
         required: false
         value_ref: nv_user_delay

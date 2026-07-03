@@ -39,6 +39,7 @@ export default async (event: NitroNodeEvent) => {
   const body = await readJson(req);
   const job = String(body.job ?? "");
   const force = body.force === true;
+  const reset = body.reset === true;
 
   if (job !== "mcp-radar-scan") {
     res.statusCode = 404;
@@ -54,7 +55,7 @@ export default async (event: NitroNodeEvent) => {
     sessions: false,
   });
   const { runRadar } = await import("../../../../../lib/run-radar.js");
-  const result = await runRadar(app.getAuthoringContext(), { force });
+  const result = await runRadar(app.getAuthoringContext(), { force, reset });
 
   res.statusCode = 200;
   res.setHeader("content-type", "application/json; charset=utf-8");

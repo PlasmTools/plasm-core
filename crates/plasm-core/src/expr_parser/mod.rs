@@ -2501,6 +2501,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `Issue.search(team_key=ENG, q=auth)` — same capability as `Issue~"auth"{team_key=ENG}`.
+    /// Also accepts named search capabilities: `Item.search-by-date(query=…, tags=…)`.
     fn try_parse_entity_dot_search(&mut self, entity: &str) -> Result<Option<Expr>, ParseError> {
         let mark = self.pos;
         if self.peek_char() != Some('.') {
@@ -2509,10 +2510,11 @@ impl<'a> Parser<'a> {
         self.pos += 1;
         self.skip_ws();
         let method = self.parse_ident()?;
-        if method != "search" {
+        let cap_name = self.resolve_entity_dot_search_cap(entity, &method)?;
+        let Some(cap_name) = cap_name else {
             self.pos = mark;
             return Ok(None);
-        }
+        };
         self.skip_ws();
         if self.peek_char() != Some('(') {
             self.pos = mark;
@@ -2527,7 +2529,30 @@ impl<'a> Parser<'a> {
         };
         self.skip_ws();
         self.expect_char(')')?;
-        Ok(Some(self.build_search_query_expr(entity, preds)?))
+        Ok(Some(
+            self.build_search_query_expr(entity, preds, Some(cap_name))?,
+        ))
+    }
+
+    fn resolve_entity_dot_search_cap(
+        &self,
+        entity: &str,
+        method: &str,
+    ) -> Result<Option<CapabilityName>, ParseError> {
+        let c = self.cgs_for_entity_required(entity)?;
+        let caps = c.find_capabilities(entity, CapabilityKind::Search);
+        if caps.is_empty() {
+            return Ok(None);
+        }
+        if method == "search" {
+            return Ok(c
+                .primary_search_capability(entity)
+                .map(|cap| cap.name.clone()));
+        }
+        Ok(caps
+            .iter()
+            .find(|cap| capability_path_method_segment(cap).as_str() == method)
+            .map(|cap| cap.name.clone()))
     }
 
     fn parse_paren_preds(&mut self, entity_name: &str) -> Result<Vec<Predicate>, ParseError> {
@@ -2552,6 +2577,7 @@ impl<'a> Parser<'a> {
         &mut self,
         entity: &str,
         preds: Vec<Predicate>,
+        capability_name: Option<CapabilityName>,
     ) -> Result<Expr, ParseError> {
         let c = self.cgs_for_entity_required(entity)?;
         if c.find_capabilities(entity, CapabilityKind::Search)
@@ -2561,10 +2587,11 @@ impl<'a> Parser<'a> {
                 entity: entity.to_string(),
             }));
         }
-        let cap_name = c
-            .find_capabilities(entity, CapabilityKind::Search)
-            .first()
-            .map(|cap| cap.name.clone());
+        let cap_name = capability_name.or_else(|| {
+            c.find_capabilities(entity, CapabilityKind::Search)
+                .first()
+                .map(|cap| cap.name.clone())
+        });
         let mut query = Self::preds_to_query(entity, preds);
         query.capability_name = cap_name;
         Ok(Expr::Query(query))

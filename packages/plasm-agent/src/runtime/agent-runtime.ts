@@ -311,6 +311,8 @@ export class AgentRuntime {
         });
 
         await this.emitHook("plan:commit", {
+          intent: session.intent,
+          planCommitRef: dry.planCommitRef,
           runRef: dry.planCommitRef,
           program: input.program,
           logicalSessionRef: session.logicalSessionRef,
@@ -395,6 +397,8 @@ export class AgentRuntime {
         });
 
         await this.emitHook("run:complete", {
+          intent: session.intent,
+          planCommitRef: input.runRef,
           runRef: input.runRef,
           runId,
           ok: result.ok,

@@ -27,6 +27,8 @@ export interface LastRunMeta {
   status: "ok" | "skipped" | "error";
   newItems: number;
   message?: string;
+  runIds?: string[];
+  logicalSessionRef?: string;
 }
 
 export type ProofStoreBackend = "fs" | "vercel";
@@ -35,6 +37,7 @@ export interface ProofStore {
   backend(): ProofStoreBackend;
   readProofMarkdown(): Promise<string>;
   appendProofRun(section: { runAt: string; body: string }): Promise<void>;
+  resetProofState(): Promise<void>;
   loadSeenState(): Promise<SeenState>;
   saveSeenState(state: SeenState): Promise<void>;
   addSeenIds(ids: string[]): Promise<SeenState>;
@@ -127,6 +130,26 @@ class FsProofStore implements ProofStore {
     await appendFile(proofPath(this.agentRoot), `${header}${block}\n`, "utf8");
   }
 
+  async resetProofState(): Promise<void> {
+    await mkdir(researchDir(this.agentRoot), { recursive: true });
+    await writeFile(proofPath(this.agentRoot), PROOF_HEADER, "utf8");
+    await writeFile(seenPath(this.agentRoot), `${JSON.stringify({ itemIds: [] }, null, 2)}\n`, "utf8");
+    await writeFile(
+      lastRunPath(this.agentRoot),
+      `${JSON.stringify(
+        {
+          at: new Date().toISOString(),
+          status: "skipped",
+          newItems: 0,
+          message: "reset",
+        } satisfies LastRunMeta,
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+  }
+
   async loadSeenState(): Promise<SeenState> {
     try {
       const raw = await readFile(seenPath(this.agentRoot), "utf8");
@@ -184,6 +207,17 @@ class VercelProofStore implements ProofStore {
     await blobPutText(PROOF_BLOB_KEY, `${existing}${header}${block}\n`);
   }
 
+  async resetProofState(): Promise<void> {
+    await blobPutText(PROOF_BLOB_KEY, PROOF_HEADER);
+    await blobPutJson(SEEN_BLOB_KEY, { itemIds: [] });
+    await blobPutJson(LAST_RUN_BLOB_KEY, {
+      at: new Date().toISOString(),
+      status: "skipped",
+      newItems: 0,
+      message: "reset",
+    });
+  }
+
   async loadSeenState(): Promise<SeenState> {
     return parseSeenState(await blobGetJson<SeenState>(SEEN_BLOB_KEY));
   }
@@ -233,6 +267,10 @@ export async function appendProofRun(
   section: { runAt: string; body: string },
 ): Promise<void> {
   return resolveProofStore(agentRoot).appendProofRun(section);
+}
+
+export async function resetProofState(agentRoot: string): Promise<void> {
+  return resolveProofStore(agentRoot).resetProofState();
 }
 
 export async function loadSeenState(agentRoot: string): Promise<SeenState> {

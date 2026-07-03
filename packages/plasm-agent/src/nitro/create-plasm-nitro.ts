@@ -17,7 +17,10 @@ import {
 import { createPlasmVercelOptions } from "./vercel-build-output-config.js";
 
 const SERVER_TRACE_DEPS = [
+  "@ai-sdk/gateway",
   "@ai-sdk/otel",
+  "@ai-sdk/provider",
+  "@ai-sdk/provider-utils",
   "@opentelemetry/api",
   "@plasm_lang/engine",
   "@plasm_lang/engine-linux-x64-gnu",
@@ -27,10 +30,12 @@ const SERVER_TRACE_DEPS = [
   "@plasm_lang/vercel-agent",
   "@vercel/functions",
   "@vercel/blob",
+  "@vercel/oidc",
   "@vercel/otel",
   "ai",
   "workflow",
   "workflow/api",
+  "zod",
 ];
 
 function resolveNitroPreset(dev: boolean): NitroConfig["preset"] {

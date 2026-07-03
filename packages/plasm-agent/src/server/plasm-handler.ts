@@ -32,6 +32,7 @@ import { sendJson } from "../dev/http.js";
 import { tryHandleSessionRoutes } from "../dev/session-routes.js";
 import { nitroOperatorHandler } from "../operator/routes.js";
 import { renderOperatorShell } from "../operator/ui-shell.js";
+import { resolvePlasmAppOptions } from "./resolve-app-options.js";
 
 export type PlasmAppMode = "dev" | "prod";
 
@@ -51,6 +52,7 @@ export interface PlasmApp {
   projectRoot: string;
   definition: AgentDefinition;
   mode: PlasmAppMode;
+  tenantScope: string;
   sessionsEnabled: boolean;
   reload(): Promise<void>;
   getAgent(): Promise<PlasmAgent>;
@@ -191,6 +193,7 @@ export async function handlePlasmOperatorRequest(
 
   const operatorHandler = nitroOperatorHandler({
     agentRoot: app.agentRoot,
+    tenantScope: app.tenantScope,
     runtime: undefined,
   });
 
@@ -213,6 +216,7 @@ export async function createPlasmApp(options: PlasmAppOptions): Promise<PlasmApp
   const projectRoot = path.dirname(agentRoot);
   const mode = options.mode ?? "prod";
   const sessionsEnabled = options.sessions ?? mode === "dev";
+  const resolved = resolvePlasmAppOptions(agentRoot, options);
   const definition = resolveAgentDefinition(options.definition, agentRoot);
   const sessionStore = sessionsEnabled ? new DevSessionStore() : undefined;
 
@@ -235,9 +239,10 @@ export async function createPlasmApp(options: PlasmAppOptions): Promise<PlasmApp
   const bootstrap = async (): Promise<PlasmAgent> => {
     agent = await createAgentFromDefinition(definition, {
       agentRoot,
-      tenantScope: options.tenantScope,
-      maxSteps: options.maxSteps,
-      telemetry: options.telemetry,
+      tenantScope: resolved.tenantScope,
+      maxSteps: resolved.maxSteps,
+      telemetry: resolved.telemetry,
+      hostTransport: resolved.hostTransport,
       loadedSlots,
       subagentRegistry,
       getAuthoringContext,
@@ -268,9 +273,9 @@ export async function createPlasmApp(options: PlasmAppOptions): Promise<PlasmApp
     const loaded = await loadSubagents({
       discovery: currentDiscovery,
       parentSlots: loadedSlots,
-      tenantScope: options.tenantScope,
-      maxSteps: options.maxSteps,
-      telemetry: options.telemetry,
+      tenantScope: resolved.tenantScope,
+      maxSteps: resolved.maxSteps,
+      telemetry: resolved.telemetry,
       importCacheBust,
     });
     if (loadedSlots) {
@@ -317,6 +322,7 @@ export async function createPlasmApp(options: PlasmAppOptions): Promise<PlasmApp
     projectRoot,
     definition,
     mode,
+    tenantScope: resolved.tenantScope,
     sessionsEnabled,
     reload,
     getAgent,

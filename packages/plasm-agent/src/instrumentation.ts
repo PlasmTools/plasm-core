@@ -1,9 +1,8 @@
 import { LegacyOpenTelemetry } from "@ai-sdk/otel";
-import type { AttributeValue } from "@opentelemetry/api";
 import {
-  registerTelemetryIntegration,
-  type TelemetryIntegration,
-  type TelemetrySettings,
+  registerTelemetry,
+  type Telemetry,
+  type TelemetryOptions,
 } from "ai";
 
 /** OpenTelemetry attribute keys for Plasm agent spans (Section 9). */
@@ -22,13 +21,12 @@ export const PlasmSpanAttributes = {
 
 export interface AgentInstrumentationOptions {
   serviceName?: string;
-  tracer?: TelemetrySettings["tracer"];
 }
 
 let registered = false;
 
-function otelIntegration(options: AgentInstrumentationOptions): TelemetryIntegration {
-  return new LegacyOpenTelemetry({ tracer: options.tracer }) as unknown as TelemetryIntegration;
+function otelIntegration(_options: AgentInstrumentationOptions): Telemetry {
+  return new LegacyOpenTelemetry();
 }
 
 /** Register global AI SDK OTEL integration (eve-style auto-discovered instrumentation). */
@@ -36,7 +34,7 @@ export function registerAgentInstrumentation(
   options: AgentInstrumentationOptions = {},
 ): void {
   if (registered) return;
-  registerTelemetryIntegration(otelIntegration(options));
+  registerTelemetry(otelIntegration(options));
   registered = true;
   void options.serviceName;
 }
@@ -44,13 +42,10 @@ export function registerAgentInstrumentation(
 /** Per-call AI SDK telemetry settings with OpenTelemetry integration. */
 export function createAgentTelemetry(
   options: AgentInstrumentationOptions = {},
-): TelemetrySettings {
+): TelemetryOptions {
   registerAgentInstrumentation(options);
   return {
     isEnabled: true,
-    metadata: {
-      "service.name": options.serviceName ?? "plasm-agent",
-    } satisfies Record<string, AttributeValue>,
-    integrations: otelIntegration(options),
+    functionId: options.serviceName ?? "plasm-agent",
   };
 }

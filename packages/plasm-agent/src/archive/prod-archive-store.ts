@@ -118,8 +118,9 @@ export class ProdArchiveStore {
     return this.local.listRuns(limit);
   }
 
-  async listArchives(limit?: number) {
-    return this.local.listArchives(limit);
+  async listArchives(limit = 50) {
+    const [plans, runs] = await Promise.all([this.listPlans(limit), this.listRuns(limit)]);
+    return { plans, runs, paths: this.local.paths };
   }
 }
 

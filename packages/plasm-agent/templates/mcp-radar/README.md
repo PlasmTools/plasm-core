@@ -26,23 +26,27 @@ The canonical template source is this directory (`examples/mcp-radar-agent/`).
 
 ## Deploy to Vercel
 
-Eve-aligned production path: link Blob once, deploy — **no manual env vars on Vercel** for Gateway, Blob, or cron auth.
+Canonical stack: **AI SDK v7** (`ai@7.0.14`, `@ai-sdk/otel@1.0.14`) + **Workflow 4.5** + pinned `zod@4.3.6`. Use **pnpm** (lockfile committed).
 
 ```bash
 cd examples/mcp-radar-agent
 plasm-agent link
-node scripts/provision-vercel-storage.mjs   # vercel blob create-store → project OIDC
-plasm-agent build
-vercel deploy --prod
+node scripts/provision-vercel.mjs   # sync monorepo .env secrets + Blob store
+pnpm install
+pnpm run build                      # local Nitro output
+# Remote build on Vercel requires @plasm_lang/vercel-agent@0.3.114+ on npm
+VERCEL=1 pnpm run build && vercel deploy --prebuilt --prod   # monorepo prebuilt path
 curl -s "$DEPLOY_URL/channel/mcp-radar/status" | jq .
 ```
 
 | Concern | On Vercel |
 |---------|-----------|
 | AI Gateway | OIDC via linked project — no API key |
+| Tavily | `TAVILY_API_TOKEN` synced from monorepo `.env` via provision script |
+| Tenant scope | `PLASM_TENANT_SCOPE` (default `mcp-radar`) synced from `.env` |
 | Proof log + dedupe state | `@vercel/blob` only (markdown + JSON objects) |
 | Cron | Platform `x-vercel-cron` — no `CRON_SECRET` required |
-| Local dev | `vercel env pull .env.local` + optional `AI_GATEWAY_API_KEY` |
+| Local dev | monorepo `.env` loaded automatically; optional `AI_GATEWAY_API_KEY` off-Vercel |
 
 `vercel blob create-store` wires Blob to the project; runtime auth is OIDC (same model as [eve content agent](https://github.com/vercel-labs/eve-content-agent-template)).
 
@@ -61,7 +65,8 @@ cp .env.example .env.local
 | Variable | Required | Role |
 |----------|----------|------|
 | `AI_GATEWAY_API_KEY` | Local only | Agent model turns off-Vercel |
-| `TAVILY_API_TOKEN` | Optional | Tavily corroboration; HN-only when unset |
+| `TAVILY_API_TOKEN` | Recommended | Tavily corroboration; set in monorepo `.env`, synced to Vercel via `provision-vercel.mjs` |
+| `PLASM_TENANT_SCOPE` | Optional | Session/operator partition (default `mcp-radar`) |
 
 Build CGS stubs (symlinked catalogs):
 

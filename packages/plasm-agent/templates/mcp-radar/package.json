@@ -4,11 +4,29 @@
   "type": "module",
   "description": "Event-driven MCP innovation radar — Hacker News + Tavily proof log",
   "scripts": {
+    "build": "plasm-agent build",
+    "dev": "plasm-agent dev",
+    "dev:interactive": "plasm-agent dev --interactive",
+    "info": "plasm-agent info",
+    "deploy": "vercel deploy",
+    "eval": "tsx scripts/run-evals.ts",
     "smoke:channel": "tsx scripts/smoke-channel.ts",
-    "eval": "tsx scripts/run-evals.ts"
+    "test:proof-extract": "tsx scripts/test-proof-extract.mjs",
+    "test:hn-preflight": "tsx scripts/test-hn-algolia-preflight.mjs"
   },
-  "dependencies": {},
+  "dependencies": {
+    "@ai-sdk/otel": "1.0.14",
+    "@plasm_lang/engine": "0.3.112",
+    "@plasm_lang/vercel-agent": "file:../../plasm-oss/packages/plasm-agent",
+    "@vercel/blob": "0.27.3",
+    "@vercel/functions": "3.7.4",
+    "@vercel/otel": "1.14.2",
+    "ai": "7.0.14",
+    "esbuild": "0.25.12",
+    "workflow": "4.5.0",
+    "zod": "4.3.6"
+  },
   "devDependencies": {
-    "tsx": "^4.19.4"
+    "tsx": "4.19.4"
   }
 }

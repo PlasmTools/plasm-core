@@ -6,7 +6,7 @@ use napi::threadsafe_function::ThreadsafeFunction;
 use plasm_compile::{CompiledRequest, HttpBodyFormat, HttpMethod};
 use plasm_runtime::auth::ResolvedAuth;
 use plasm_runtime::error::RuntimeError;
-use plasm_runtime::http_transport::{join_base_url_path, HttpTransport};
+use plasm_runtime::http_transport::{compiled_http_url, HttpTransport};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -186,7 +186,7 @@ impl HttpTransport for JsCallbackHttpTransport {
         request: &CompiledRequest,
         auth: Option<ResolvedAuth>,
     ) -> std::result::Result<(serde_json::Value, Option<String>), RuntimeError> {
-        let url = join_base_url_path(base_url, request.url_path());
+        let url = compiled_http_url(base_url, request);
         let method = compiled_method_label(&request.method);
         let body = body_json_string(request)?;
         let req = self.build_request(method, url, auth, body);

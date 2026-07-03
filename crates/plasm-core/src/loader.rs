@@ -92,6 +92,9 @@ pub struct DomainFile {
     /// Reusable value domains (`value_ref` targets); catalog-local.
     #[serde(default)]
     pub values: IndexMap<String, DomainNamedValue>,
+    /// Information-flow class registry (`data_class` / `sink_class` / `sanitizes` must reference these keys).
+    #[serde(default)]
+    pub data_classes: IndexMap<crate::DataClassName, crate::DataClassSchema>,
     pub entities: IndexMap<String, DomainEntity>,
     pub capabilities: IndexMap<String, DomainCapability>,
     /// Monotonic distribution version for this catalog entry (`0` when omitted).
@@ -242,6 +245,9 @@ pub struct DomainField {
     /// Post-extraction derivation (see [`FieldSchema::derive`]).
     #[serde(default)]
     pub derive: Option<FieldDeriveRule>,
+    /// Optional information-flow label for this field (must exist in top-level `data_classes:`).
+    #[serde(default)]
+    pub data_class: Option<crate::DataClassName>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -275,6 +281,9 @@ pub struct DomainCapability {
     /// teaching table exemplars when `provides` is empty: `id_field` first, then lexicographic rest).
     #[serde(default)]
     pub provides: Vec<String>,
+    /// Data classes this capability declares to sanitize before producing output.
+    #[serde(default)]
+    pub sanitizes: Vec<crate::DataClassName>,
     /// Declared response shape for validation (required for `action` unless `provides` is set).
     #[serde(default)]
     pub output: Option<crate::OutputSchema>,
@@ -318,6 +327,9 @@ pub struct DomainParameter {
     /// Human-readable hint for prompts; teaching gloss uses `type · description`, else `type · name`.
     #[serde(default)]
     pub description: String,
+    /// Optional sink class for information-flow validation (must exist in top-level `data_classes:`).
+    #[serde(default)]
+    pub sink_class: Option<crate::SinkClassName>,
 }
 
 /// YAML `items:` block for `array` fields and parameters.
@@ -626,7 +638,7 @@ fn field_schema_from_domain_field(
         required: f.required,
         agent_presentation: f.agent_presentation,
         mime_type_hint: f.mime_type_hint.clone(),
-        data_class: None,
+        data_class: f.data_class.clone(),
         attachment_media: f.attachment_media,
         wire_path: f.path.clone(),
         derive: f.derive.clone(),
@@ -664,7 +676,7 @@ fn input_field_schema_from_domain_parameter(
                 description,
                 default: None,
                 role,
-                sink_class: None,
+                sink_class: p.sink_class.clone(),
                 wire_json_path: None,
                 wire_array_element_key: None,
             })
@@ -680,7 +692,7 @@ fn input_field_schema_from_domain_parameter(
             },
             default: None,
             role,
-            sink_class: None,
+            sink_class: p.sink_class.clone(),
             wire_json_path: None,
             wire_array_element_key: None,
         }),
@@ -779,6 +791,7 @@ fn assemble_cgs_core(
     cgs.version = domain.version;
     cgs.schema_overlay = domain.schema_overlay;
     cgs.registry_aliases = domain.registry_aliases;
+    cgs.data_classes = domain.data_classes;
     cgs.values = compile_domain_named_values(&domain.values)?;
 
     for (name, entity) in &domain.entities {
@@ -872,7 +885,7 @@ fn assemble_cgs_core(
             input_schema,
             output_schema: cap.output.clone(),
             provides: cap.provides.clone(),
-            sanitizes: Vec::new(),
+            sanitizes: cap.sanitizes.clone(),
             scope_aggregate_key_policy: cap.scope_aggregate_key_policy.unwrap_or_default(),
             preflight: cap.preflight.clone(),
             discovery: cap.discovery.clone(),
@@ -1121,6 +1134,40 @@ mod tests {
         assert!(!cgs.entities.is_empty());
         assert!(!cgs.capabilities.is_empty());
         assert!(cgs.get_entity("Pet").is_some());
+    }
+
+    #[test]
+    fn test_load_flow_matrix_split_schema_preserves_flow_annotations() {
+        init_loader_tracing_test();
+        let dir = Path::new("../../fixtures/schemas/flow_matrix");
+        if !dir.join("domain.yaml").is_file() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).expect("flow_matrix");
+        assert!(cgs.data_classes.contains_key(
+            &crate::DataClassName::new("untrusted").expect("untrusted")
+        ));
+        let body = cgs
+            .field_data_class("Message", "body")
+            .expect("body data_class");
+        assert_eq!(body.as_str(), "untrusted");
+        let sanitize = cgs
+            .capabilities
+            .get(&crate::CapabilityName::from("sanitize_body"))
+            .expect("sanitize_body");
+        assert_eq!(sanitize.sanitizes.len(), 1);
+        assert_eq!(sanitize.sanitizes[0].as_str(), "untrusted");
+        let send = cgs
+            .capabilities
+            .get(&crate::CapabilityName::from("send"))
+            .expect("send");
+        let sinks = cgs.capability_sink_params(send);
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].name, "body");
+        assert_eq!(
+            sinks[0].sink_class.as_ref().map(|s| s.as_str()),
+            Some("outbound_body")
+        );
     }
 
     #[test]

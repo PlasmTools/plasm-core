@@ -14,5 +14,6 @@ export async function startMcpRadarRun(
   return start({ workflowId: MCP_RADAR_SCAN_WORKFLOW_ID }, [
     ctx.agentRoot,
     options.force === true,
+    options.reset === true,
   ]);
 }

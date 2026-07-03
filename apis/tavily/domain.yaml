@@ -1,5 +1,9 @@
-version: 2
+version: 3
 http_backend: https://api.tavily.com
+data_classes:
+  untrusted:
+    description: Externally sourced, arbitrary web content (prompt-injection surface).
+    severity: untrusted
 entities:
   SearchResult:
     id_field: url
@@ -11,15 +15,18 @@ entities:
       title:
         required: false
         value_ref: nv_search_result_title
+        data_class: untrusted
       content:
         required: false
         value_ref: nv_search_result_content
+        data_class: untrusted
       score:
         required: false
         value_ref: nv_search_result_score
       raw_content:
         required: false
         value_ref: nv_search_result_raw_content
+        data_class: untrusted
       favicon:
         required: false
         value_ref: nv_search_result_favicon
@@ -33,6 +40,7 @@ entities:
       raw_content:
         required: false
         value_ref: nv_extract_result_raw_content
+        data_class: untrusted
       favicon:
         required: false
         value_ref: nv_extract_result_favicon
@@ -58,6 +66,7 @@ entities:
       content:
         required: false
         value_ref: nv_research_task_content
+        data_class: untrusted
       response_time:
         required: false
         value_ref: nv_research_task_response_time

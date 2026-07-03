@@ -109,6 +109,27 @@ export function renderProgramStatements(
     }
     case "SearchFiltered": {
       const q = searchFieldName(cap) ?? "q";
+      if (binding.searchSurface === "named-dot" && binding.searchMethodSegment) {
+        const body = invokeBodyFields(cap, shape, entityIdField);
+        const allArgs = body.map((f) => ({
+          key: f.name,
+          valueExpr: `${inputVar}.${f.name}`,
+          kind: emissionKindForField(f, catalogValues),
+          optional: !f.required,
+        }));
+        const qField = body.find((f) => f.name === q);
+        if (!qField) {
+          allArgs.unshift({
+            key: q,
+            valueExpr: `${inputVar}.${q}`,
+            kind: "literal" as const,
+            optional: false,
+          });
+        }
+        const dottedCall = renderBuildDottedArgsCall(allArgs);
+        return `const args = ${dottedCall};
+  const program = \`${sym}.${binding.searchMethodSegment}(\${args})\`;`;
+      }
       const args = dottedArgsCodegen(cap, catalogValues, shape, entityIdField, inputVar);
       const dottedCall = renderBuildDottedArgsCall(args);
       return `const filterArgs = ${dottedCall};

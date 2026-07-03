@@ -4,6 +4,23 @@ import {
   type CapabilityInvokeShape,
 } from "./capability-invoke-shape.js";
 
+function capabilitySearchMethodSegment(cap: CapabilityIntrospectionJson): string {
+  const ent = cap.entity.toLowerCase();
+  const prefix = `${ent}_`;
+  const stripped = cap.name.startsWith(prefix) ? cap.name.slice(prefix.length) : cap.name;
+  return stripped.replaceAll("_", "-");
+}
+
+function primarySearchCapabilityName(
+  catalog: CatalogIntrospectionJson,
+  entity: string,
+): string | undefined {
+  const caps = catalog.capabilities
+    .filter((c) => c.entity === entity && c.kind.toLowerCase() === "search")
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return caps[0]?.name;
+}
+
 export interface EntitySymbolBinding {
   entity: string;
   symbol: string;
@@ -15,6 +32,9 @@ export interface CapabilityBinding {
   methodSymbol?: string;
   methodWire: string;
   invokeShape: CapabilityInvokeShape;
+  /** Primary search uses `e#~text`; non-primary uses `e#.search-by-date(...)`. */
+  searchSurface?: "tilde" | "named-dot";
+  searchMethodSegment?: string;
 }
 
 /** Entities with capabilities, stable lexicographic order → `e1`…`eN`. */
@@ -73,12 +93,26 @@ export function assignCapabilityBindings(
     if (!entityBinding) continue;
     const entityCaps = capsByEntity.get(cap.entity) ?? [];
     const invokeShape = classifyInvokeShape(cap);
+    const primarySearch =
+      invokeShape === "SearchText" || invokeShape === "SearchFiltered"
+        ? primarySearchCapabilityName(catalog, cap.entity)
+        : undefined;
     out.set(cap.name, {
       capability: cap.name,
       entitySymbol: entityBinding.symbol,
       methodSymbol: methodSymbolForCapability(cap, entityCaps),
       methodWire: cap.invoke_wire_name,
       invokeShape,
+      searchSurface:
+        primarySearch != null
+          ? cap.name === primarySearch
+            ? "tilde"
+            : "named-dot"
+          : undefined,
+      searchMethodSegment:
+        primarySearch != null && cap.name !== primarySearch
+          ? capabilitySearchMethodSegment(cap)
+          : undefined,
     });
   }
   return out;
