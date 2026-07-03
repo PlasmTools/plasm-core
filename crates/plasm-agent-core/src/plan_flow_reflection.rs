@@ -427,8 +427,7 @@ mod tests {
         assert!(!flow.catalog_has_labels);
         assert!(flow.data_classes.contains_key("untrusted"));
         assert_eq!(
-            flow.data_classes["untrusted"].severity,
-            "info",
+            flow.data_classes["untrusted"].severity, "info",
             "without session, severity defaults to info"
         );
         assert_eq!(flow.counts.deny, 1);

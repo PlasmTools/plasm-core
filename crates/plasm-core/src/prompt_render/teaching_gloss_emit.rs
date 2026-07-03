@@ -241,14 +241,13 @@ pub(crate) fn emit_field_def_lines_before_example(
         // Skip standalone gloss when the symbol was already on a prior row's LHS in this entity
         // block, or (for ordinary `p#` rows) on this row's LHS. Projection witnesses, union ctors,
         // and `r#` always emit on first use in the block (alias→wire / field typing).
-        let skip_p_gloss = if SymbolMap::is_opaque_r_sym(sym.as_str())
-            || projection_witness_row
-            || union_ctor_row
-        {
-            state.demonstrated_lhs_syms.contains(&sym)
-        } else {
-            state.demonstrated_lhs_syms.contains(&sym) || current_lhs_syms.contains(&sym)
-        };
+        let skip_p_gloss =
+            if SymbolMap::is_opaque_r_sym(sym.as_str()) || projection_witness_row || union_ctor_row
+            {
+                state.demonstrated_lhs_syms.contains(&sym)
+            } else {
+                state.demonstrated_lhs_syms.contains(&sym) || current_lhs_syms.contains(&sym)
+            };
         let wire_owned = map.wire_for_opaque_p_sym(sym.as_str());
         let field_name = if sym.starts_with('r') {
             map.resolve_relation_ident(sym.as_str())
