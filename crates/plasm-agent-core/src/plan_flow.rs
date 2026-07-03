@@ -366,6 +366,13 @@ impl<'a, C: FlowCatalog + ?Sized, P: FlowPolicyEvaluator + ?Sized> FlowPass<'a, 
             return;
         };
         let mut labels = self.catalog.output_labels(&key);
+        // Capability-key miss (e.g. legacy PascalCase `{Entity}_query` fallback) — recover
+        // labels from any capability on the same entity so flow analysis stays sound.
+        if labels.is_empty() {
+            labels = self
+                .catalog
+                .output_labels_for_entity(key.entry_id.as_str(), key.entity.as_str());
+        }
         for cleared in self.catalog.sanitizers(&key) {
             labels.remove(&cleared);
         }
@@ -616,14 +623,42 @@ fn surface_capability_key(surface: &ValidatedSurfaceNode) -> Option<QualifiedCap
     ))
 }
 
+/// PascalCase / camelCase entity wire names → snake_case capability prefixes
+/// (`Issue` → `issue`, `PullRequest` → `pull_request`).
+fn pascal_to_snake(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    for (i, c) in name.chars().enumerate() {
+        if c.is_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            for lower in c.to_lowercase() {
+                out.push(lower);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn capability_from_plasm_expr(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Query(q) => q
             .capability_name
             .as_ref()
             .map(|c| c.as_str().to_string())
-            .or_else(|| Some(format!("{}_query", q.entity.as_str()))),
-        Expr::Get(g) => g.capability_name.as_ref().map(|c| c.as_str().to_string()),
+            .or_else(|| Some(format!("{}_query", pascal_to_snake(q.entity.as_str())))),
+        Expr::Get(g) => g
+            .capability_name
+            .as_ref()
+            .map(|c| c.as_str().to_string())
+            .or_else(|| {
+                Some(format!(
+                    "{}_get",
+                    pascal_to_snake(g.reference.entity_type.as_str())
+                ))
+            }),
         Expr::Invoke(i) => Some(i.capability.as_str().to_string()),
         Expr::Create(c) => Some(c.capability.as_str().to_string()),
         Expr::Delete(d) => Some(d.capability.as_str().to_string()),
@@ -778,6 +813,107 @@ mod tests {
         );
         assert!(matches!(checked.analysis.verdict, FlowVerdict::Clean));
         assert!(checked.admit().is_ok());
+    }
+
+    #[test]
+    fn pascal_to_snake_matches_catalog_capability_prefixes() {
+        assert_eq!(pascal_to_snake("Issue"), "issue");
+        assert_eq!(pascal_to_snake("PullRequest"), "pull_request");
+        assert_eq!(pascal_to_snake("IssueComment"), "issue_comment");
+    }
+
+    #[test]
+    fn bare_query_without_capability_name_uses_snake_case_fallback() {
+        let mut catalog = FlowCatalogView::default();
+        let read_key = QualifiedCapabilityKey::from_parts("github", "Issue", "issue_query");
+        catalog.capability_output_labels.insert(
+            read_key,
+            BTreeSet::from([DataClassName::new("untrusted").expect("untrusted")]),
+        );
+
+        // IR omits capability_name — legacy plans hit the name fallback.
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [{
+                "id": "issues",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "github", "entity": "Issue" },
+                "expr": "Issue",
+                "ir": { "expr": { "op": "query", "entity": "Issue" } },
+                "effect_class": "read",
+                "result_shape": "list"
+            }],
+            "return": { "kind": "node", "node": "issues" }
+        });
+        let validated = parse_and_validate_plan_json(&plan).expect("validate");
+        let topo = vec!["issues".to_string()];
+        let checked = verify_plan_flow(
+            validated.artifact(),
+            &topo,
+            &catalog,
+            &FlowPolicySnapshot::Inactive,
+        );
+        let facts = checked
+            .analysis
+            .node_facts
+            .get("issues")
+            .expect("issues facts");
+        assert!(
+            facts
+                .row_join()
+                .labels
+                .contains(&DataClassName::new("untrusted").expect("untrusted")),
+            "snake_case fallback must resolve issue_query labels, got {:?}",
+            facts.row_join().labels
+        );
+    }
+
+    #[test]
+    fn entity_label_fallback_recovers_when_capability_key_misses() {
+        let mut catalog = FlowCatalogView::default();
+        // Catalog keyed under the real capability; plan uses a wrong capability name.
+        let read_key = QualifiedCapabilityKey::from_parts("github", "Issue", "issue_query");
+        catalog.capability_output_labels.insert(
+            read_key,
+            BTreeSet::from([DataClassName::new("untrusted").expect("untrusted")]),
+        );
+
+        let plan = serde_json::json!({
+            "version": 1,
+            "kind": "program",
+            "nodes": [{
+                "id": "issues",
+                "kind": "query",
+                "qualified_entity": { "entry_id": "github", "entity": "Issue" },
+                "expr": "Issue",
+                "ir": { "expr": { "op": "query", "entity": "Issue", "capability_name": "not_a_real_cap" } },
+                "effect_class": "read",
+                "result_shape": "list"
+            }],
+            "return": { "kind": "node", "node": "issues" }
+        });
+        let validated = parse_and_validate_plan_json(&plan).expect("validate");
+        let topo = vec!["issues".to_string()];
+        let checked = verify_plan_flow(
+            validated.artifact(),
+            &topo,
+            &catalog,
+            &FlowPolicySnapshot::Inactive,
+        );
+        let facts = checked
+            .analysis
+            .node_facts
+            .get("issues")
+            .expect("issues facts");
+        assert!(
+            facts
+                .row_join()
+                .labels
+                .contains(&DataClassName::new("untrusted").expect("untrusted")),
+            "entity-level fallback must recover labels, got {:?}",
+            facts.row_join().labels
+        );
     }
 
     #[test]

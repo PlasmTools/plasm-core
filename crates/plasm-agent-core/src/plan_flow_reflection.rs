@@ -2,16 +2,19 @@
 //! [`crate::plan_ux_reflection`]. Renders [`crate::plan_flow::PlanFlowAnalysis`] as a UI-ready
 //! trace: per-step labels, dispositions, and policy violations, independent of execution.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
+use crate::execute_session::ExecuteSession;
 use crate::plan_flow::{FlowVerdict, NodeDisposition, PlanFlowAnalysis};
+use crate::plan_flow_ports::FlowCatalog;
 use crate::plan_ux_reflection::PlanUxStep;
 use crate::plasm_plan::{Plan, ValidatedPlanState};
 use crate::plasm_plan_run::node_dependencies;
+use plasm_core::DataClassSeverity;
 
-pub const PLAN_UX_FLOW_REFLECTION_SCHEMA_VERSION: u32 = 1;
+pub const PLAN_UX_FLOW_REFLECTION_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -80,6 +83,14 @@ pub struct PlanUxFlowStep {
     pub approval: Option<PlanUxFlowApproval>,
 }
 
+/// Severity + description for a data-class label referenced by the flow trace.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PlanUxDataClassInfo {
+    pub severity: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PlanUxFlowReflection {
     pub schema_version: u32,
@@ -87,6 +98,12 @@ pub struct PlanUxFlowReflection {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub policy_revision: Option<u64>,
     pub counts: PlanUxFlowCounts,
+    /// True when any pinned catalog capability produces labeled output.
+    /// Distinguishes "catalog has no labels" from "this plan touched no labeled data".
+    pub catalog_has_labels: bool,
+    /// Severity/description for every label name referenced in `trace` / `violations`.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub data_classes: BTreeMap<String, PlanUxDataClassInfo>,
     #[serde(default)]
     pub violations: Vec<PlanUxFlowViolation>,
     #[serde(default)]
@@ -157,6 +174,56 @@ fn node_labels_in(
     labels.into_iter().collect()
 }
 
+fn severity_wire(severity: DataClassSeverity) -> &'static str {
+    match severity {
+        DataClassSeverity::Info => "info",
+        DataClassSeverity::Sensitive => "sensitive",
+        DataClassSeverity::Untrusted => "untrusted",
+        DataClassSeverity::Critical => "critical",
+    }
+}
+
+/// Catalog-wide label presence + severity metadata for labels referenced by this plan.
+fn catalog_label_meta(
+    session: Option<&ExecuteSession>,
+    referenced: &BTreeSet<String>,
+) -> (bool, BTreeMap<String, PlanUxDataClassInfo>) {
+    // Index every pinned catalog's data-class schemas once, then project only
+    // the labels this plan actually references (defaults when session is absent).
+    let mut by_name: BTreeMap<&str, (&'static str, &str)> = BTreeMap::new();
+    let catalog_has_labels = session
+        .map(|session| {
+            for ctx in session.contexts_by_entry.values() {
+                for (name, schema) in &ctx.cgs.data_classes {
+                    by_name
+                        .entry(name.as_str())
+                        .or_insert((severity_wire(schema.severity), schema.description.as_str()));
+                }
+            }
+            session.build_flow_catalog_view().has_any_output_labels() || !by_name.is_empty()
+        })
+        .unwrap_or(false);
+
+    let data_classes = referenced
+        .iter()
+        .map(|name| {
+            let info = by_name
+                .get(name.as_str())
+                .map(|(sev, desc)| PlanUxDataClassInfo {
+                    severity: (*sev).to_string(),
+                    description: (*desc).to_string(),
+                })
+                .unwrap_or_else(|| PlanUxDataClassInfo {
+                    severity: "info".into(),
+                    description: String::new(),
+                });
+            (name.clone(), info)
+        })
+        .collect();
+
+    (catalog_has_labels, data_classes)
+}
+
 /// Project [`PlanFlowAnalysis`] into the Flow tab's wire shape. `steps` is the already-built
 /// [`PlanUxStep`] list (shared ordinals/headlines with the Plan tab); this adds no execution
 /// data — static analysis only, independent of the run explorer.
@@ -164,6 +231,7 @@ pub fn plan_ux_flow_reflection(
     plan: &Plan<ValidatedPlanState>,
     analysis: &PlanFlowAnalysis,
     steps: &[PlanUxStep],
+    session: Option<&ExecuteSession>,
 ) -> PlanUxFlowReflection {
     let mut counts = PlanUxFlowCounts::default();
     for disposition in analysis.node_dispositions.values() {
@@ -175,7 +243,7 @@ pub fn plan_ux_flow_reflection(
         }
     }
 
-    let headline_by_id: std::collections::BTreeMap<&str, Option<&str>> = steps
+    let headline_by_id: BTreeMap<&str, Option<&str>> = steps
         .iter()
         .map(|s| (s.id.as_str(), s.headline.as_deref()))
         .collect();
@@ -196,12 +264,12 @@ pub fn plan_ux_flow_reflection(
         })
         .collect();
 
-    let sink_by_node: std::collections::BTreeMap<&str, Option<PlanUxFlowSink>> = violations
+    let sink_by_node: BTreeMap<&str, Option<PlanUxFlowSink>> = violations
         .iter()
         .map(|v| (v.node_id.as_str(), v.sink.clone()))
         .collect();
 
-    let trace = steps
+    let trace: Vec<PlanUxFlowStep> = steps
         .iter()
         .map(|step| {
             let (disposition, approval) =
@@ -218,11 +286,23 @@ pub fn plan_ux_flow_reflection(
         })
         .collect();
 
+    let mut referenced = BTreeSet::new();
+    for step in &trace {
+        referenced.extend(step.labels_in.iter().cloned());
+        referenced.extend(step.labels_out.iter().cloned());
+    }
+    for v in &violations {
+        referenced.extend(v.labels.iter().cloned());
+    }
+    let (catalog_has_labels, data_classes) = catalog_label_meta(session, &referenced);
+
     PlanUxFlowReflection {
         schema_version: PLAN_UX_FLOW_REFLECTION_SCHEMA_VERSION,
         verdict: flow_verdict_wire(&analysis.verdict),
         policy_revision: analysis.policy_revision.map(|r| r.0),
         counts,
+        catalog_has_labels,
+        data_classes,
         violations,
         trace,
     }
@@ -341,9 +421,16 @@ mod tests {
     fn flow_reflection_surfaces_denied_sink_violation() {
         let (plan, analysis) = deny_plan_analysis();
         let steps = vec![step("messages", 1), step("send", 2)];
-        let flow = plan_ux_flow_reflection(&plan, &analysis, &steps);
+        let flow = plan_ux_flow_reflection(&plan, &analysis, &steps, None);
 
         assert_eq!(flow.verdict, PlanUxFlowVerdict::Denied);
+        assert!(!flow.catalog_has_labels);
+        assert!(flow.data_classes.contains_key("untrusted"));
+        assert_eq!(
+            flow.data_classes["untrusted"].severity,
+            "info",
+            "without session, severity defaults to info"
+        );
         assert_eq!(flow.counts.deny, 1);
         assert_eq!(flow.policy_revision, Some(7));
         assert_eq!(flow.violations.len(), 1);
@@ -379,12 +466,26 @@ mod tests {
         let partial = serde_json::json!({
             "schema_version": PLAN_UX_FLOW_REFLECTION_SCHEMA_VERSION,
             "verdict": "clean",
-            "counts": { "allow": 0, "approve": 0, "review": 0, "deny": 0 }
+            "counts": { "allow": 0, "approve": 0, "review": 0, "deny": 0 },
+            "catalog_has_labels": false
         });
         validate_plan_ux_flow_reflection_wire(&partial).expect("partial flow wire");
         let flow: PlanUxFlowReflection =
             serde_json::from_value(partial).expect("deserialize partial flow");
         assert!(flow.violations.is_empty());
         assert!(flow.trace.is_empty());
+        assert!(!flow.catalog_has_labels);
+    }
+
+    #[test]
+    fn validate_flow_wire_rejects_stale_schema_v1() {
+        let stale = serde_json::json!({
+            "schema_version": 1,
+            "verdict": "clean",
+            "counts": { "allow": 0, "approve": 0, "review": 0, "deny": 0 },
+            "catalog_has_labels": false
+        });
+        let err = validate_plan_ux_flow_reflection_wire(&stale).unwrap_err();
+        assert!(err.contains("schema_version must be 2"), "{err}");
     }
 }

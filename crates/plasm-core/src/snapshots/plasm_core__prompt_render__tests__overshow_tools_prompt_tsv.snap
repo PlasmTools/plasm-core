@@ -16,7 +16,7 @@ p1	v1 · content_type
 p7	v7 · text_preview
 e1[p2,p1,p7]	→ e1 · projection · One capture pipeline item
 e1(p2=$, p1=$)	→ e1
-e1{p5=$, p3=$, p6=$, p4=$}[p2,p1,p7]	→ [e1] · inputs: p5,p3,p6,p4 · rows: p2,p1,p7 · optional
+e1{p5=$, p3=$, p6=$, p4=$}	→ [e1] · inputs: p5,p3,p6,p4 · optional
 v9	bool
 p8	v7 · id
 p9	v9 · screen_capture_running
@@ -35,7 +35,7 @@ p10	v7 · id
 p18	v18 · question_text
 p19	v9 · resolved
 e3[p10,p18,p19]	→ e3 · projection · A detected question with optional answers
-e3{p17=$, p11=$, p16=$, p12=$, p14=$, p13=$, p15=$}[p10,p18,p19]	→ [e3] · inputs: p17,p11,p16,p12,p14,p13,p15 · rows: p10,p18,p19 · optional
+e3{p17=$, p11=$, p16=$, p12=$, p14=$, p13=$, p15=$}	→ [e3] · inputs: p17,p11,p16,p12,p14,p13,p15 · optional
 v26	select · active, ended, cancelled
 p22	v4 · end_date
 p23	v2 · limit
@@ -46,7 +46,7 @@ p20	v2 · meeting_id
 p26	v26 · status
 p27	v18 · summary
 e4[p21,p20,p26,p27]	→ e4 · projection · A detected meeting
-e4{p25=$, p24=$, p22=$, p23=$}[p21,p20,p26,p27]	→ [e4] · inputs: p25,p24,p22,p23 · rows: p21,p20,p26,p27 · optional
+e4{p25=$, p24=$, p22=$, p23=$}	→ [e4] · inputs: p25,p24,p22,p23 · optional
 e4(p21)	→ e4
 v34	select · debug, info, warning, error, critical
 p30	v2 · limit
@@ -57,7 +57,7 @@ p28	v7 · id
 p29	v7 · name
 p34	v34 · severity
 e5[p28,p29,p34]	→ e5 · projection · One pipeline bus event
-e5{p32=$, p33=$, p31=$, p30=$}[p28,p29,p34]	→ [e5] · inputs: p32,p33,p31,p30 · rows: p28,p29,p34 · optional
+e5{p32=$, p33=$, p31=$, p30=$}	→ [e5] · inputs: p32,p33,p31,p30 · optional
 p35	v7 · id
 p36	v7 · workers
 e6(p35)[p35,p36]	→ e6 · projection · Pipeline health snapshot
@@ -70,10 +70,9 @@ p37	v7 · display_name
 p39	v39 · profile_type
 r1	recorded_matches · Content scoped to this profile
 e7[p38,p37,p39]	→ e7 · projection · A person, organisation, or project profile
-e7{p41=$, p40=$}[p38,p37,p39]	→ [e7] · inputs: p41,p40 · rows: p38,p37,p39 · optional
+e7{p41=$, p40=$}	→ [e7] · inputs: p41,p40 · optional
 e7(p38)	→ e7
 e7{p41=$, p40=$}.r1	relation e7 → [e9]
-p46	v7 · slug
 e8.m11(p46=$,..)	→ () · Action prompt execution result · optional · prompt-run-create
 v58	ref:Profile · int
 v57	select · auto, keyword, natural
@@ -99,6 +98,6 @@ p55	v58 · profile_id
 p70	v18 · text
 p71	v7 · window_name
 e9{p58=e7(p38), p59=$, p56=$, p57=$}[p54,p51,p52,p53,p55,p70,p71]	→ [e9] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
-e9{p58=e7(p38), p59=$, p56=$, p57=$}[p54,p51,p52,p53,p55,p70,p71]	→ [e9] · inputs: p58,p59,p56,p57 · rows: p54,p51,p52,p53,p55,p70,p71 · optional
-e9~"text"[p54,p51,p52,p53,p55,p70,p71]	→ [e9] · rows: p54,p51,p52,p53,p55,p70,p71 · optional
-e9~"text"{p61=$, p63=$, p66=$, p68=$, p62=$, p60=$, p69=$, p65=$, p64=$}[p54,p51,p52,p53,p55,p70,p71]	→ [e9] · inputs: p61,p63,p66,p68,p62,p60,p69,p65,p64 · rows: p54,p51,p52,p53,p55,p70,p71 · optional
+e9{p58=e7(p38), p59=$, p56=$, p57=$}	→ [e9] · inputs: p58,p59,p56,p57 · optional
+e9~"text"	→ [e9] · optional
+e9~"text"{p61=$, p63=$, p66=$, p68=$, p62=$, p60=$, p69=$, p65=$, p64=$}	→ [e9] · inputs: p61,p63,p66,p68,p62,p60,p69,p65,p64 · optional

@@ -264,7 +264,8 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
             }
         }
 
-        // Phase E: remaining teaching expr rows (projection witnesses last).
+        // Phase E: remaining teaching expr rows (projection witnesses first so the canonical
+        // `[p#,…]` is taught before bare query/search lines that omit the same bracket).
         let mut emit_order: Vec<usize> = (0..teaching_expr_rows.len()).collect();
         emit_order.sort_by_key(|&i| {
             let is_proj = teaching_expr_rows[i].is_projection_teaching;

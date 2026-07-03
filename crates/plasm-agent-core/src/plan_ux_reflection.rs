@@ -162,7 +162,7 @@ pub fn plan_ux_reflection(
     let writes = write_step_ids(plan, &dry.topological_order);
     let returns = render_returns(&plan.return_value);
     let session = session_advisory_from_dry(dry);
-    let flow = plan_ux_flow_reflection(plan, &dry.flow, &steps);
+    let flow = plan_ux_flow_reflection(plan, &dry.flow, &steps, ctx.session);
 
     PlanUxReflection {
         schema_version: PLAN_UX_REFLECTION_SCHEMA_VERSION,
@@ -480,6 +480,8 @@ mod tests {
                 verdict: crate::plan_flow_reflection::PlanUxFlowVerdict::Clean,
                 policy_revision: None,
                 counts: Default::default(),
+                catalog_has_labels: false,
+                data_classes: Default::default(),
                 violations: vec![],
                 trace: vec![],
             },
@@ -541,9 +543,10 @@ mod tests {
             "steps": [],
             "review": { "verdict": "ok", "write_count": 0, "read_count": 0 },
             "flow": {
-                "schema_version": 1,
+                "schema_version": 2,
                 "verdict": "clean",
                 "counts": { "allow": 0, "approve": 0, "review": 0, "deny": 0 },
+                "catalog_has_labels": false,
                 "violations": [],
                 "trace": []
             }

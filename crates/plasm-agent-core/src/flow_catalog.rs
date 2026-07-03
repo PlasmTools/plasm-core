@@ -26,6 +26,21 @@ impl FlowCatalogView {
             .unwrap_or_default()
     }
 
+    /// Union of output labels across every capability for `(entry_id, entity)`.
+    pub fn output_labels_for_entity(
+        &self,
+        entry_id: &str,
+        entity: &str,
+    ) -> BTreeSet<DataClassName> {
+        let mut out = BTreeSet::new();
+        for (key, labels) in &self.capability_output_labels {
+            if key.entry_id.as_str() == entry_id && key.entity.as_str() == entity {
+                out.extend(labels.iter().cloned());
+            }
+        }
+        out
+    }
+
     pub fn sink_params_for(&self, key: &QualifiedCapabilityKey) -> &[SinkParamRef] {
         self.capability_sink_params
             .get(key)

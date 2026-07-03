@@ -227,14 +227,28 @@ pub(crate) fn emit_field_def_lines_before_example(
     let cid = catalog_entry_id.to_string();
     let current_lhs_syms =
         super::gloss_dedup::lhs_demonstrated_syms_for_teaching_expr(expr, result_gloss);
+    // Projection witness / union ctors are the first teachers of their `p#` slots: emit glosses even
+    // though those symbols sit on the same-row LHS. Other rows still skip LHS-demonstrated syms
+    // (create/update params, repeated query brackets).
+    let projection_witness_row = result_gloss.is_some_and(|g| g.contains("· projection"));
+    let union_ctor_row = is_union_ctor_teaching_surface_line(expr);
     for sym in crate::symbol_tuning::field_syms_for_teaching_row(
         expr,
         result_gloss,
         cap_legend,
         optional_param_syms,
     ) {
-        let skip_p_gloss =
-            state.demonstrated_lhs_syms.contains(&sym) || current_lhs_syms.contains(&sym);
+        // Skip standalone gloss when the symbol was already on a prior row's LHS in this entity
+        // block, or (for ordinary `p#` rows) on this row's LHS. Projection witnesses, union ctors,
+        // and `r#` always emit on first use in the block (alias→wire / field typing).
+        let skip_p_gloss = if SymbolMap::is_opaque_r_sym(sym.as_str())
+            || projection_witness_row
+            || union_ctor_row
+        {
+            state.demonstrated_lhs_syms.contains(&sym)
+        } else {
+            state.demonstrated_lhs_syms.contains(&sym) || current_lhs_syms.contains(&sym)
+        };
         let wire_owned = map.wire_for_opaque_p_sym(sym.as_str());
         let field_name = if sym.starts_with('r') {
             map.resolve_relation_ident(sym.as_str())
@@ -478,6 +492,9 @@ pub(crate) fn render_teaching_table_resolved<'b, F>(
         // Validation memo is per-entity: a failed receiver probe for one domain must not
         // stick in the shared session cache and block capability witnesses on another.
         session.line_valid_cache.clear();
+        // LHS gloss suppression is per-entity block (projection witness / create params).
+        // Cross-entity `p#` sharing still dedupes via registry compact-meaning maps + TSV emit.
+        session.gloss_emit_state.demonstrated_lhs_syms.clear();
         let mut field_gloss_accum = Vec::new();
         let session_map = session.map_arc.as_ref().map(|a| a.as_ref());
         let mut gloss_emit: Option<GlossScratch<'_>> =

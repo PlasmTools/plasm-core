@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.115] - 2026-07-03
+
+### Fixed
+
+- **Plan flow capability keys:** bare query/get IR without `capability_name` now falls back to snake_case prefixes (`Issue` → `issue_query`), and read surfaces recover labels via entity-level catalog lookup when a specific capability key misses — so catalogs with `data_class` annotations no longer render as unlabeled.
+
+### Changed
+
+- **Plan UX flow reflection (schema v2):** mandatory `catalog_has_labels` plus `data_classes` severity/description map for labels referenced by the trace. Distinguishes "catalog has no labels" from "this plan touched no labeled data".
+- **Teaching TSV projection once per entity:** the canonical `[p#,…]` field set is taught only on the projection witness row; query/search row-producer lines omit the same bracket and Meaning `rows:` contract (keep `inputs:`). Divergent capability `provides` still attach an explicit bracket/`rows:`. Capability-delta waves retain the witness when bare list-producer rows are kept.
+
+### Added
+
+- **Plan Review Flow tab (taint DAG):** replaces the flat ordinal list with a severity-colored node-link diagram (reuses `@plasm/plan-dag`), data-class legend, federated trust-boundary swimlanes, and a click-to-inspect panel for `labels_in` / `labels_out` / sinks.
+
 ## [0.3.114] - 2026-07-03
 
 ### Changed

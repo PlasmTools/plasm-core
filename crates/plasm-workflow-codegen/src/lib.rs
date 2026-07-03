@@ -98,11 +98,18 @@ pub fn emit_contracts_ts() -> String {
             approval?: PlanUxFlowApproval;
         }
 
+        export interface PlanUxDataClassInfo {
+            severity: string;
+            description?: string;
+        }
+
         export interface PlanUxFlowReflection {
             schema_version: number;
             verdict: PlanUxFlowVerdict;
             policy_revision?: number;
             counts: PlanUxFlowCounts;
+            catalog_has_labels: boolean;
+            data_classes?: Record<string, PlanUxDataClassInfo>;
             violations: PlanUxFlowViolation[];
             trace: PlanUxFlowStep[];
         }
@@ -182,5 +189,7 @@ mod tests {
         assert!(out.contains("PlanUxFlowVerdict"));
         assert!(out.contains("PlanUxFlowDisposition"));
         assert!(out.contains("flow: PlanUxFlowReflection;"));
+        assert!(out.contains("catalog_has_labels: boolean"));
+        assert!(out.contains("PlanUxDataClassInfo"));
     }
 }

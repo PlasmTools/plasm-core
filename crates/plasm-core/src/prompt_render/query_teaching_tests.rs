@@ -176,21 +176,40 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
         let cols: Vec<&str> = l.split('\t').collect();
         cols.len() == 2
             && cols[0].starts_with(&format!("{zone_es}{{"))
-            && (cols[1].contains("inputs:") || cols[1].contains("rows:"))
+            && cols[1].contains("inputs:")
+            && !cols[1].contains("rows:")
     });
     assert!(
         zone_query.is_some(),
-        "Zone query exemplar should carry inputs/rows contract in Meaning"
+        "Zone query exemplar should carry inputs: (rows: only on divergent provides / witness)"
     );
     let ruleset_query = tsv.lines().find(|l| {
         let cols: Vec<&str> = l.split('\t').collect();
         cols.len() == 2
             && cols[0].starts_with(&format!("{ruleset_es}{{"))
-            && parse_trailing_projection_bracket(cols[0].trim()).is_some()
+            && !cols[1].contains("· projection")
+            && cols[1].contains("inputs:")
     });
+    let ruleset_query = ruleset_query.expect("Ruleset scoped query teaching row");
+    let rq_expr = ruleset_query.split('\t').next().unwrap_or("");
+    match parse_trailing_projection_bracket(rq_expr.trim()) {
+        None => assert!(
+            !ruleset_query.contains("rows:"),
+            "set-equal Ruleset query omits rows: : {ruleset_query}"
+        ),
+        Some(_) => assert!(
+            ruleset_query.contains("rows:"),
+            "divergent Ruleset provides keeps rows: : {ruleset_query}"
+        ),
+    }
     assert!(
-        ruleset_query.is_some(),
-        "Ruleset scoped query should carry canonical projection suffix"
+        tsv.lines().any(|l| {
+            let cols: Vec<&str> = l.split('\t').collect();
+            cols.len() == 2
+                && cols[1].contains("· projection")
+                && parse_trailing_projection_bracket(cols[0].trim()).is_some()
+        }),
+        "expected a projection witness row with trailing [p#,…]"
     );
     assert!(
         tsv.lines().any(|l| {

@@ -12,13 +12,22 @@ use std::collections::BTreeSet;
 /// Catalog projection consumed by the flow pass (mockable in tests).
 pub trait FlowCatalog {
     fn output_labels(&self, key: &QualifiedCapabilityKey) -> BTreeSet<DataClassName>;
+    /// Union of output labels across all capabilities for `(entry_id, entity)`.
+    /// Used when a surface's capability key misses (e.g. stale PascalCase fallback).
+    fn output_labels_for_entity(&self, entry_id: &str, entity: &str) -> BTreeSet<DataClassName>;
     fn sink_params(&self, key: &QualifiedCapabilityKey) -> &[SinkParamRef];
     fn sanitizers(&self, key: &QualifiedCapabilityKey) -> BTreeSet<DataClassName>;
+    /// True when any capability in the pinned catalogs produces labeled output.
+    fn has_any_output_labels(&self) -> bool;
 }
 
 impl FlowCatalog for FlowCatalogView {
     fn output_labels(&self, key: &QualifiedCapabilityKey) -> BTreeSet<DataClassName> {
         self.output_labels_for(key)
+    }
+
+    fn output_labels_for_entity(&self, entry_id: &str, entity: &str) -> BTreeSet<DataClassName> {
+        FlowCatalogView::output_labels_for_entity(self, entry_id, entity)
     }
 
     fn sink_params(&self, key: &QualifiedCapabilityKey) -> &[SinkParamRef] {
@@ -27,6 +36,10 @@ impl FlowCatalog for FlowCatalogView {
 
     fn sanitizers(&self, key: &QualifiedCapabilityKey) -> BTreeSet<DataClassName> {
         self.sanitizers_for(key)
+    }
+
+    fn has_any_output_labels(&self) -> bool {
+        !self.capability_output_labels.is_empty()
     }
 }
 

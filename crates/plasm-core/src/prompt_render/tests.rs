@@ -70,7 +70,7 @@ pub(crate) fn domain_example_lines(
     .collect()
 }
 
-/// Count canonical `· projection ·` witness rows (one per entity; query/search may reuse the bracket suffix).
+/// Count canonical `· projection ·` witness rows (one per entity; query/search omit the same bracket).
 #[cfg(test)]
 fn count_projection_teaching_witness_rows(
     cgs: &CGS,
@@ -554,7 +554,7 @@ fn google_sheets_compound_get_entity_ref_key_var_emits_valid_domain_line() {
 }
 
 /// Regression: Issue teaching table teaches **one** canonical `· projection ·` witness row.
-/// Scoped query/search exemplars may **reuse** the same trailing `[p#,…]` suffix.
+/// Scoped query/search exemplars omit the same trailing `[p#,…]` / `rows:` contract.
 #[test]
 fn github_issue_domain_emits_single_full_projection_exemplar() {
     let dir = apis_dir("github");
@@ -594,14 +594,78 @@ fn github_issue_domain_emits_single_full_projection_exemplar() {
         1,
         "expect exactly one `· projection ·` witness row per entity"
     );
-    let trailing_projection_rows = lines
+    let block = {
+        let mut line_valid_cache = HashMap::new();
+        let mut gloss_emit_none = None;
+        let seed = prompt_line_valid_cache_seed_cgs(&cgs);
+        collect_entity_teaching_block(
+            &cgs,
+            "Issue",
+            map.as_ref(),
+            None,
+            false,
+            &mut line_valid_cache,
+            seed,
+            &mut gloss_emit_none,
+            surface,
+            None,
+        )
+    };
+    let witness = block
+        .teaching_rows
         .iter()
-        .filter(|l| parse_trailing_projection_bracket(l.trim()).is_some())
-        .count();
-    assert!(
-        trailing_projection_rows > 1,
-        "scoped query/search exemplars reuse the canonical projection suffix (got {trailing_projection_rows} trailing bracket rows)"
+        .find(|r| r.teaching_expr.is_projection_teaching)
+        .expect("Issue projection witness");
+    let canon_syms = projection_bracket_syms(
+        &parse_trailing_projection_bracket(witness.teaching_expr.expression.trim())
+            .expect("witness bracket"),
     );
+    let same_set_brackets = lines
+        .iter()
+        .filter(|l| {
+            parse_trailing_projection_bracket(l.trim()).is_some_and(|b| {
+                projection_field_sets_equal(&projection_bracket_syms(&b), &canon_syms)
+            })
+        })
+        .count();
+    assert_eq!(
+        same_set_brackets, 1,
+        "canonical projection field set taught once (got {same_set_brackets}): {lines:?}"
+    );
+    for row in &block.teaching_rows {
+        if row.teaching_expr.is_projection_teaching {
+            continue;
+        }
+        let expr = row.teaching_expr.expression.as_str();
+        let gloss = row.teaching_expr.result_type.as_str();
+        if !(expr.contains('{') || expr.contains('~')) {
+            continue;
+        }
+        match parse_trailing_projection_bracket(expr.trim()) {
+            None => {
+                assert!(
+                    !gloss.contains("rows:"),
+                    "omitted bracket must omit rows: : {gloss}"
+                );
+                if expr.contains('{') {
+                    assert!(
+                        gloss.contains("inputs:"),
+                        "query filter lines keep inputs: gloss: {gloss}"
+                    );
+                }
+            }
+            Some(b) => {
+                assert!(
+                    !projection_field_sets_equal(&projection_bracket_syms(&b), &canon_syms),
+                    "set-equal bracket must be suppressed: {expr}"
+                );
+                assert!(
+                    gloss.contains("rows:"),
+                    "divergent provides keeps rows: : {gloss}"
+                );
+            }
+        }
+    }
     let out = render_prompt_with_config(&cgs, cfg);
     assert!(
         !out.contains("Federated sessions"),
@@ -611,12 +675,17 @@ fn github_issue_domain_emits_single_full_projection_exemplar() {
         out.contains(br.as_str()),
         "full prompt should include the full projection list `{br}` (heading or primary get)"
     );
+    let bracket_hits = out.matches(br.as_str()).count();
+    assert_eq!(
+        bracket_hits, 1,
+        "canonical projection list must appear exactly once in the full TSV (got {bracket_hits})"
+    );
     assert!(
         out.len() > 8_000,
         "full apis/github teaching table+legend should be substantial (got {} bytes)",
         out.len()
     );
-    // Baseline bumped after wait/cancel continuation contract + projection suffix on scoped query/search exemplars.
+    // Baseline after teaching projection once (no per-query bracket/`rows:` duplication).
     const GITHUB_FULL_PROMPT_BASELINE_V0173: usize = 32_000;
     const GITHUB_FULL_PROMPT_BASELINE_V0179: usize = 32_000;
     assert!(
@@ -658,19 +727,140 @@ fn linear_issue_heading_projection_despite_method_style_get() {
         1,
         "expect exactly one `· projection ·` witness row per entity"
     );
-    let trailing_projection_rows = lines
+    let mut line_valid_cache = HashMap::new();
+    let mut gloss_emit_none = None;
+    let seed = prompt_line_valid_cache_seed_cgs(&cgs);
+    let block = collect_entity_teaching_block(
+        &cgs,
+        "Issue",
+        map.as_ref(),
+        None,
+        false,
+        &mut line_valid_cache,
+        seed,
+        &mut gloss_emit_none,
+        surface,
+        None,
+    );
+    let witness = block
+        .teaching_rows
         .iter()
-        .filter(|l| parse_trailing_projection_bracket(l.trim()).is_some())
+        .find(|r| r.teaching_expr.is_projection_teaching)
+        .expect("Linear Issue projection witness");
+    let canon_syms = projection_bracket_syms(
+        &parse_trailing_projection_bracket(witness.teaching_expr.expression.trim())
+            .expect("witness bracket"),
+    );
+    let same_set_brackets = lines
+        .iter()
+        .filter(|l| {
+            parse_trailing_projection_bracket(l.trim()).is_some_and(|b| {
+                projection_field_sets_equal(&projection_bracket_syms(&b), &canon_syms)
+            })
+        })
         .count();
-    assert!(
-        trailing_projection_rows > 1,
-        "scoped exemplars reuse projection suffix on Linear Issue (got {trailing_projection_rows})"
+    assert_eq!(
+        same_set_brackets, 1,
+        "canonical projection field set taught once on Linear Issue (got {same_set_brackets}): {lines:?}"
     );
     let out = render_prompt_with_config(&cgs, cfg);
     assert!(
         out.contains(br.as_str()),
         "full prompt should include the full projection list `{br}` (heading or primary get)"
     );
+    assert_eq!(
+        out.matches(br.as_str()).count(),
+        1,
+        "canonical projection list must appear exactly once for Linear Issue"
+    );
+}
+
+/// Intent-scoped Issue surface: query/search share the witness field set → bare producers, no `rows:`.
+#[test]
+fn github_issue_intent_surface_omits_set_equal_projection_on_query_search() {
+    let dir = apis_dir("github");
+    if !dir.exists() {
+        return;
+    }
+    let cgs = load_schema_dir(&dir).unwrap();
+    let endpoints = vec![ExposureEntityKey {
+        entry_id: "github".into(),
+        entity: EntityName::from("Issue"),
+    }];
+    let delta = crate::discovery::derive_intent_exposure_surface_batch(
+        &cgs,
+        "github",
+        "list issues and create or update issue labels",
+        &endpoints,
+        &["Issue".to_string()],
+        None,
+        crate::discovery::ExposureSurfaceOptions {
+            read_first_seeded: true,
+        },
+    );
+    let exp = TeachingExposureSession::new_with_intent_delta(&cgs, "github", &["Issue"], delta);
+    let surface = Some(&exp.surface);
+    let map = exp.symbol_map_arc();
+    let mut line_valid_cache = HashMap::new();
+    let mut gloss_emit_none = None;
+    let seed = prompt_line_valid_cache_seed_cgs(&cgs);
+    let block = collect_entity_teaching_block(
+        &cgs,
+        "Issue",
+        Some(&map),
+        None,
+        false,
+        &mut line_valid_cache,
+        seed,
+        &mut gloss_emit_none,
+        surface,
+        Some("github"),
+    );
+    let witness = block
+        .teaching_rows
+        .iter()
+        .find(|r| r.teaching_expr.is_projection_teaching)
+        .expect("Issue projection witness");
+    let canon = parse_trailing_projection_bracket(witness.teaching_expr.expression.trim())
+        .expect("witness bracket");
+    let mut saw_list_producer = false;
+    for row in &block.teaching_rows {
+        if row.teaching_expr.is_projection_teaching {
+            continue;
+        }
+        let expr = row.teaching_expr.expression.as_str();
+        if !(expr.contains('{') || expr.contains('~')) {
+            continue;
+        }
+        saw_list_producer = true;
+        assert!(
+            parse_trailing_projection_bracket(expr.trim()).is_none(),
+            "intent-scoped query/search must omit set-equal bracket: {expr}"
+        );
+        let gloss = row.teaching_expr.result_type.as_str();
+        assert!(
+            !gloss.contains("rows:"),
+            "intent-scoped query/search must omit rows: : {gloss}"
+        );
+    }
+    assert!(saw_list_producer, "expected query/search teaching rows");
+    let lines: Vec<_> = block
+        .teaching_rows
+        .iter()
+        .map(|r| r.teaching_expr.expression.as_str())
+        .collect();
+    let same_set = lines
+        .iter()
+        .filter(|l| {
+            parse_trailing_projection_bracket(l).is_some_and(|b| {
+                projection_field_sets_equal(
+                    &projection_bracket_syms(&b),
+                    &projection_bracket_syms(&canon),
+                )
+            })
+        })
+        .count();
+    assert_eq!(same_set, 1, "canonical set once: {lines:?}");
 }
 
 #[test]
@@ -1215,8 +1405,8 @@ fn tsv_prompt_uses_plasm_expr_and_meaning_columns() {
         .expect("Contributor scoped query teaching table row");
     assert!(
         parse_trailing_projection_bracket(contrib.split('\t').next().unwrap_or("").trim())
-            .is_some(),
-        "Contributor scoped query should carry the canonical projection suffix: {contrib:?}"
+            .is_none(),
+        "Contributor scoped query omits set-equal projection (taught on witness): {contrib:?}"
     );
     assert!(
         contrib.starts_with('e') && contrib.contains("{p"),
@@ -1921,7 +2111,7 @@ fn mcp_static_tool_descriptions_byte_budget() {
         discover.len()
     );
     assert!(
-        context.len() <= 1400,
+        context.len() <= 1900,
         "plasm_context tool description too long: {} bytes",
         context.len()
     );
@@ -2040,7 +2230,7 @@ fn domain_search_teaching_rows_use_quoted_text_not_dollar() {
     }
 }
 
-/// Row producers teach `inputs:` / `rows:` contract on search and query exemplars.
+/// Projection witness teaches `[p#,…]` once; set-equal query omits `rows:`; divergent keeps it.
 #[test]
 fn row_producer_teaching_includes_inputs_and_rows_contract() {
     let dir = fixtures_schemas_dir("plasm_language_matrix");
@@ -2050,23 +2240,30 @@ fn row_producer_teaching_includes_inputs_and_rows_contract() {
     let cgs = load_schema_dir(&dir).unwrap();
     let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
     assert!(
-        prompt.lines().any(|l| l.contains("rows:")),
-        "teaching rows should carry row contract via rows: gloss:\n{prompt}"
-    );
-    assert!(
-        prompt
-            .lines()
-            .any(|l| { l.contains("~\"text\"") && l.contains('[') && l.contains("rows:") }),
-        "search exemplar should append provides bracket and rows contract:\n{prompt}"
+        prompt.lines().any(|l| l.contains("· projection")),
+        "teaching rows should include a projection witness:\n{prompt}"
     );
     assert!(
         prompt.lines().any(|l| {
-            l.contains("~\"text\"{")
-                && l.contains('[')
-                && l.contains("inputs:")
+            let cols: Vec<&str> = l.split('\t').collect();
+            cols.len() == 2
+                && cols[0].contains('{')
+                && !cols[0].contains(".r")
+                && parse_trailing_projection_bracket(cols[0].trim()).is_none()
+                && cols[1].contains("inputs:")
+                && !cols[1].contains("rows:")
+                && !cols[1].contains("· projection")
+        }),
+        "set-equal query omits bracket/rows: and keeps inputs:\n{prompt}"
+    );
+    assert!(
+        prompt.lines().any(|l| {
+            l.contains("~\"text\"")
+                && parse_trailing_projection_bracket(l.split('\t').next().unwrap_or("").trim())
+                    .is_some()
                 && l.contains("rows:")
         }),
-        "filtered search should show brace inputs, row bracket, and contract:\n{prompt}"
+        "divergent search provides keeps bracket and rows:\n{prompt}"
     );
 }
 

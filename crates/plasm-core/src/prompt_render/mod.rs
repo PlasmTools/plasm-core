@@ -23,7 +23,10 @@
 //! (except the deferred synthetic union summary), **`p#` gloss**, **`r#` gloss** (relation alias → wire name),
 //! **union constructor exemplars**
 //! (`vN{p#=…}`), **union summary** (`union · v101 | …` on an allocator-chosen `v#`), then remaining
-//! teaching expressions (projection witnesses last). Value domain once per `v#`, then each distinct
+//! teaching expressions (**projection witnesses first** among them). The canonical `[p#,…]` field set is
+//! taught **once** on the witness row; query/search row-producer lines omit the same bracket and Meaning
+//! `rows:` contract (parser treats projection as optional — full rows when omitted). Divergent capability
+//! `provides` still attach an explicit bracket/`rows:`. Value domain once per `v#`, then each distinct
 //! `v# · wire` teaching once per shared `p#`; point-of-use prose is omitted when it duplicates the shared
 //! `values:` row description.
 //! Model output must be those expression shapes—not prose.
@@ -183,16 +186,13 @@ pub use stats::{
 pub(crate) use contract::validate_teaching_tsv_teaching_table;
 pub(crate) use gloss_dedup::*;
 pub(crate) use teaching_gloss_emit::*;
+pub(crate) use tsv_emit::{
+    is_union_ctor_teaching_surface_line, parse_trailing_projection_bracket,
+    relation_sym_shown_in_query_teaching_rows, render_prompt_tsv_from_bundle,
+    teaching_relation_field_gloss, write_teaching_tsv_row, DomainTsvRow,
+};
 #[cfg(test)]
-pub(crate) use tsv_emit::{
-    is_union_ctor_teaching_surface_line, projection_bracket_from_teaching_rows,
-    teaching_row_meaning_text,
-};
-pub(crate) use tsv_emit::{
-    parse_trailing_projection_bracket, relation_sym_shown_in_query_teaching_rows,
-    render_prompt_tsv_from_bundle, teaching_relation_field_gloss, write_teaching_tsv_row,
-    DomainTsvRow,
-};
+pub(crate) use tsv_emit::{projection_bracket_from_teaching_rows, teaching_row_meaning_text};
 
 #[derive(Clone, Copy, Debug)]
 pub struct RenderConfig<'a> {
@@ -1946,6 +1946,33 @@ fn field_is_filter_like(f: &crate::InputFieldSchema) -> bool {
     )
 }
 
+/// Parse `[p#,…]` into ordered symbols (empty when not a bracket).
+fn projection_bracket_syms(bracket: &str) -> Vec<String> {
+    bracket
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Order-independent equality of projection field sets (Get vs Query may differ only in order).
+fn projection_field_sets_equal(a: &[String], b: &[String]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut aa = a.to_vec();
+    let mut bb = b.to_vec();
+    aa.sort();
+    bb.sort();
+    aa == bb
+}
+
+/// When the entity projection witness already taught `canonical_bracket`, omit the same
+/// `[p#,…]` / `rows:` contract on row-producer lines (parser treats projection as optional).
 #[allow(clippy::too_many_arguments)]
 fn enrich_row_producer_teaching_line(
     cgs: &CGS,
@@ -1957,17 +1984,36 @@ fn enrich_row_producer_teaching_line(
     base_expr: &str,
     base_gloss: Option<String>,
     projection: RowProducerProjection,
+    canonical_bracket: Option<&str>,
+    witness_taught: bool,
 ) -> (String, Option<String>) {
     let bracket = match projection {
         RowProducerProjection::BareQueryListAll => None,
-        RowProducerProjection::CapabilityProvides => capability_row_projection_bracket(
-            cgs,
-            cap,
-            map,
-            catalog_entry_id,
-            ename,
-            surface_filter,
-        ),
+        RowProducerProjection::CapabilityProvides => {
+            let b = capability_row_projection_bracket(
+                cgs,
+                cap,
+                map,
+                catalog_entry_id,
+                ename,
+                surface_filter,
+            );
+            if witness_taught {
+                if let (Some(br), Some(canon)) = (b.as_deref(), canonical_bracket) {
+                    let br_syms = projection_bracket_syms(br);
+                    let canon_syms = projection_bracket_syms(canon);
+                    if projection_field_sets_equal(&br_syms, &canon_syms) {
+                        None
+                    } else {
+                        b
+                    }
+                } else {
+                    b
+                }
+            } else {
+                b
+            }
+        }
     };
     let row_syms = bracket
         .as_ref()
@@ -2133,6 +2179,8 @@ fn try_push_row_producer_teaching_example(
     line_valid_cache_seed: u64,
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
     projection: RowProducerProjection,
+    canonical_bracket: Option<&str>,
+    witness_taught: bool,
 ) -> bool {
     let (expr, gloss) = enrich_row_producer_teaching_line(
         cgs,
@@ -2144,6 +2192,8 @@ fn try_push_row_producer_teaching_example(
         base_expr,
         base_gloss,
         projection,
+        canonical_bracket,
+        witness_taught,
     );
     try_push_teaching_example(
         gloss_emit,
@@ -3716,12 +3766,12 @@ fn collect_entity_teaching_block(
     let query_cap_refs: Vec<&crate::CapabilitySchema> = query_caps.to_vec();
 
     // Projection witness before other `e#…` lines for this entity (query/get/relation) so the field
-    // narrow `[p#,…]` appears first in teaching table.
-    if let Some(bracket) = primary_get_projection_bracket
+    // narrow `[p#,…]` is taught once; row-producer lines omit the same bracket/`rows:` contract.
+    let canonical_bracket = primary_get_projection_bracket
         .as_deref()
-        .filter(|b| !b.trim().is_empty())
-    {
-        let _ = try_push_projection_witness_row(
+        .filter(|b| !b.trim().is_empty());
+    let witness_taught = canonical_bracket.is_some_and(|bracket| {
+        try_push_projection_witness_row(
             gloss_emit,
             &mut teaching_rows,
             collect_meta,
@@ -3738,8 +3788,8 @@ fn collect_entity_teaching_block(
             map_arc,
             surface_filter,
             catalog_entry_id,
-        );
-    }
+        )
+    });
 
     let mut seen_singleton_cap: HashSet<String> = HashSet::new();
     for cap in &singleton_get_caps {
@@ -3981,6 +4031,8 @@ fn collect_entity_teaching_block(
                         line_valid_cache_seed,
                         map_arc,
                         projection,
+                        canonical_bracket,
+                        witness_taught,
                     )
                 {
                     added = true;
@@ -4009,6 +4061,8 @@ fn collect_entity_teaching_block(
                             line_valid_cache_seed,
                             map_arc,
                             RowProducerProjection::CapabilityProvides,
+                            canonical_bracket,
+                            witness_taught,
                         )
                     {
                         added = true;
@@ -4038,6 +4092,8 @@ fn collect_entity_teaching_block(
                             line_valid_cache_seed,
                             map_arc,
                             RowProducerProjection::CapabilityProvides,
+                            canonical_bracket,
+                            witness_taught,
                         )
                     {
                         query_line_count += 1;
@@ -4102,6 +4158,8 @@ fn collect_entity_teaching_block(
                     &line,
                     sg.clone(),
                     RowProducerProjection::CapabilityProvides,
+                    canonical_bracket,
+                    witness_taught,
                 )
             },
         );
@@ -4143,6 +4201,8 @@ fn collect_entity_teaching_block(
                 line_valid_cache_seed,
                 map_arc,
                 RowProducerProjection::CapabilityProvides,
+                canonical_bracket,
+                witness_taught,
             );
         }
     }
