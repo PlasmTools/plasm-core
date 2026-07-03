@@ -15,8 +15,8 @@
 //!   (single-line surface) vs multi-line DAG programs.
 //! - Relations: `from_parent_get`, `query_scoped`, opaque `r#` nav (not `p#`), one-cardinality `r#`,
 //!   homograph `p#` forgiven when LHS binding label matches relation wire.
-//! - Programs: flattened single-liner coercion (space-separated bindings; first binding default return);
-//!   same path via `compile_plasm_expression` when DAG-shaped.
+//! - Programs: flattened single-liner coercion (space-separated bindings; first binding default return within that line);
+//!   binding-only omission across newlines returns the **last** binding; same path via `compile_plasm_expression` when DAG-shaped.
 //! - Render: bracket render `<<TAG`, and passing **`.content`** into a typed string slot (`create`).
 //! - Effects: create / update / delete / zero-arity action (domain-stripped method label), `for_each`.
 //! - teaching table: `e#` symbols where applicable.
@@ -117,6 +117,8 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "homograph_lhs_coercion",
     "flattened_single_liner_coercion",
     "flattened_surface_line_compile",
+    "program_return_binding_only_last",
+    "program_return_pipeline_filter_sort",
     "postfix_group_by_sort",
     "search_then_group_by",
     "postfix_dedupe",
@@ -972,6 +974,42 @@ fn assert_planning_ir(
                 ));
             }
         }
+        "lang_program_return_binding_only_last" => {
+            if comp.pointer("/return/step").and_then(|v| v.as_str()) != Some("limited") {
+                return Err(format!(
+                    "binding-only omission should return last binding `limited`, got {:?}",
+                    comp.get("return")
+                ));
+            }
+            if comp
+                .pointer("/metadata/coerced_default_return")
+                .and_then(|v| v.as_str())
+                != Some("limited")
+            {
+                return Err(format!(
+                    "expected coerced_default_return `limited`, got {:?}",
+                    comp.get("metadata")
+                ));
+            }
+        }
+        "lang_program_return_pipeline_filter_sort" => {
+            if comp.pointer("/return/step").and_then(|v| v.as_str()) != Some("sorted") {
+                return Err(format!(
+                    "pipeline binding-only omission should return `sorted`, got {:?}",
+                    comp.get("return")
+                ));
+            }
+            if comp
+                .pointer("/metadata/coerced_default_return")
+                .and_then(|v| v.as_str())
+                != Some("sorted")
+            {
+                return Err(format!(
+                    "expected coerced_default_return `sorted`, got {:?}",
+                    comp.get("metadata")
+                ));
+            }
+        }
         "lang_relation_one_opaque_r" => {
             let rel = comp_relation_named(comp, "summary")
                 .ok_or_else(|| "expected `.summary` relation on singleton item".to_string())?;
@@ -1600,6 +1638,40 @@ const MATRIX_ROWS: &[MatrixRow] = &[
         surface_line: false,
         federated: false,
         features: &["postfix_row_filter", "bindings_assignment"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "alice"],
+    },
+    MatrixRow {
+        id: "lang_program_return_binding_only_last",
+        program: "items = LangItem\nlimited = items.limit(3)[id,title]",
+        surface_line: false,
+        federated: false,
+        features: &[
+            "program_return_binding_only_last",
+            "bindings_assignment",
+            "postfix_limit",
+            "postfix_projection",
+            "dry_live_parity",
+        ],
+        min_node_results: 1,
+        expect_markdown_substrings: &["```tsv", "title"],
+    },
+    MatrixRow {
+        id: "lang_program_return_pipeline_filter_sort",
+        program: r#"items = LangItem
+filtered = items.filter{owner="alice"}
+sorted = filtered.sort(title).limit(10)[title,owner]"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "program_return_pipeline_filter_sort",
+            "postfix_row_filter",
+            "postfix_sort",
+            "postfix_limit",
+            "postfix_projection",
+            "bindings_assignment",
+            "dry_live_parity",
+        ],
         min_node_results: 1,
         expect_markdown_substrings: &["```tsv", "alice"],
     },
@@ -2415,6 +2487,39 @@ fn matrix_coverage_contract_all_rows_require_live_execution() {
         MATRIX_ROWS.len() >= 40,
         "matrix fixture unexpectedly shrunk — audit coverage manifest"
     );
+}
+
+/// Host-only `wait` / `cancel` continuations (parse smoke; no Hermit live execute).
+#[test]
+fn program_return_semantics_dry_comp_witness() {
+    let cgs = language_matrix::load_language_matrix_cgs();
+    let es = language_matrix::matrix_execute_session(cgs);
+    for row_id in [
+        "lang_program_return_binding_only_last",
+        "lang_program_return_pipeline_filter_sort",
+    ] {
+        let row = MATRIX_ROWS
+            .iter()
+            .find(|r| r.id == row_id)
+            .unwrap_or_else(|| panic!("missing matrix row {row_id}"));
+        let program = matrix_program_for_row(row, &es);
+        let bundle = compile_plasm_program(
+            &PromptPipelineConfig::default(),
+            None,
+            &es,
+            row.id,
+            &program,
+        )
+        .unwrap_or_else(|e| panic!("row {} compile: {e}", row.id));
+        let comp_json = serde_json::to_value(&bundle.artifact().comp)
+            .unwrap_or_else(|e| panic!("row {} comp json: {e}", row.id));
+        let dry = evaluate_plasm_comp_dry(&es, &bundle)
+            .unwrap_or_else(|e| panic!("row {} evaluate_plasm_comp_dry: {e}", row.id));
+        assert_planning_ir(row, &dry, &comp_json)
+            .unwrap_or_else(|e| panic!("row {} planning IR: {e}", row.id));
+        assert_comp_witness(&dry)
+            .unwrap_or_else(|e| panic!("row {} monadic comp witness: {e}", row.id));
+    }
 }
 
 /// Host-only `wait` / `cancel` continuations (parse smoke; no Hermit live execute).

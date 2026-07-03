@@ -540,7 +540,7 @@ fn finalize_flattened_line_roots(parts: &mut Vec<String>) -> Option<String> {
     Some(first_label)
 }
 
-/// Binding-only omission: append first binding when no return line exists (Rule A only).
+/// Binding-only omission: append last binding when no return line exists (Tier 3).
 fn coerce_binding_only_program_roots(statements: &mut Vec<String>) -> Option<String> {
     if statements.is_empty() {
         return None;
@@ -551,10 +551,11 @@ fn coerce_binding_only_program_roots(statements: &mut Vec<String>) -> Option<Str
     {
         return None;
     }
-    let first_label =
-        split_assignment_at_top_level(&statements[0]).map(|(label, _)| label.to_string())?;
-    statements.push(first_label.clone());
-    Some(first_label)
+    let last_idx = statements.len() - 1;
+    let last_label =
+        split_assignment_at_top_level(&statements[last_idx]).map(|(label, _)| label.to_string())?;
+    statements.push(last_label.clone());
+    Some(last_label)
 }
 
 /// Expand physical statement lines, coercing space-separated single-liners when detected.
@@ -583,7 +584,7 @@ pub fn expand_flattened_program_statements(lines: &[String]) -> FlattenedProgram
 
 /// Agent-facing hint when a program has bindings but no executable return roots.
 pub fn missing_program_roots_error() -> String {
-    "Add a final return line (e.g. `limited[p2,p14]`), or omit only when every line is `label = …` (first binding is returned)."
+    "Add a final return line (e.g. `limited[p2,p14]`), or omit only when every line is `label = …` (last binding is returned)."
         .to_string()
 }
 
@@ -804,13 +805,13 @@ mod tests {
     }
 
     #[test]
-    fn expand_binding_only_newline_separated_coerces_first_binding_return() {
+    fn expand_binding_only_newline_separated_coerces_last_binding_return() {
         let expanded = expand_flattened_program_statements(&[
             "hits = e4(p1=\"sha\")".to_string(),
             "labels = hits.p5".to_string(),
         ]);
-        assert_eq!(expanded.coerced_default_return.as_deref(), Some("hits"));
-        assert_eq!(expanded.statements.last().map(String::as_str), Some("hits"));
+        assert_eq!(expanded.coerced_default_return.as_deref(), Some("labels"));
+        assert_eq!(expanded.statements.last().map(String::as_str), Some("labels"));
     }
 
     #[test]

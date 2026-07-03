@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.112] - 2026-07-03
+
+### Fixed
+
+- **Program return semantics (Tier 3):** binding-only multi-line programs now return the **last** binding label (ML nested-`let` value), not the first — fixes pipeline programs like `filtered = …` / `sorted = filtered.sort(…)…` returning the wrong `comp.return` root and empty live results.
+- **Plan Review UI:** normalize omitted `labels_in` / `labels_out` / `labels` on nested flow trace steps and violations at MCP wire ingress (`validatePlanUxFlowReflection`).
+
+### Changed
+
+- **Language spec:** semi-formal **Program return semantics** section in `docs/plasm-language-definition.md` (laws R1–R4, three-tier staging, `comp.return` witness). Matrix tags `program_return_binding_only_last` and `program_return_pipeline_filter_sort` plus `program_return_semantics_dry_comp_witness` test.
+
 ## [0.3.111] - 2026-07-03
 
 ### Fixed
