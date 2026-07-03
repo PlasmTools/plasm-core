@@ -7,16 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.114] - 2026-07-03
+
 ### Changed
 
 - **MCP read-first exposure:** seeding an entity on `plasm_context` now teaches **all** mutators on that entity on the first wave (not deferred by intent score). Relation-target mutators on non-seeded entities remain intent/ranked gated.
 - **Shared scope `p#` invoke resolution:** a taught scope/param symbol resolves on any capability that declares the same wire when occurrences share one `p#` (e.g. `repository` on `issue_create` after `issue_query` taught the symbol).
-- **Teaching TSV gloss dedupe:** suppress standalone per-capability `p#` gloss rows when the symbol is already demonstrated on a teaching-row LHS (projection bracket or witness).
+- **Teaching TSV gloss dedupe:** suppress standalone per-capability `p#` gloss rows when the symbol is already demonstrated on a teaching-row LHS (projection bracket or witness); shared helper `lhs_demonstrated_syms_for_teaching_expr`.
 - **GitHub catalog (`apis/github`, v30):** unified create/update `value_ref` for Issue `labels`, `assignees`, and `milestone` so create and update share one `p#` per wire.
+- **Discovery exposure:** unified `seeded_entity_cap_always_includes` admission path; removed dead `READ_FIRST_SEEDED_MUTATOR_MIN_SCORE`; `relation_target_deferred_mutator_wires` + MCP hint for relation-target mutators only.
+- **Symbol resolve:** `invoke_cap_param_wires_for_psym` deduplicates exact-cap vs shared-scope invoke param reverse lookup.
 
 ### Added
 
-- **`scripts/dedupe_primitive_domain_values.py --merge-create-update-pairs`:** report/merge structurally identical create/update param `value_ref` pairs across catalogs.
+- **`scripts/dedupe_primitive_domain_values.py --merge-create-update-pairs`:** report-only audit of structurally identical create/update param `value_ref` pairs (no `--write`; GitHub merges applied manually).
 
 ## [0.3.113] - 2026-07-03
 
@@ -211,7 +215,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Symbol resolution module:** role-scoped `SymbolMap` reverse lookup (`resolve_entity_field`, `resolve_compound_key`, `resolve_cap_param`, `resolve_query_filter_field`) with typed `SymbolResolveError` and centralized agent hints.
 - **CML `base64` transform:** encode string payloads at mapping time (GitHub `repo_content_put` content field).
 - **GitHub `RepositoryTag`:** compound `key_vars`, `repo_tag_get` capability + mapping for teaching-block synthesis.
-- **Discovery defer hint:** `read_first_deferred_mutator_hint` surfaces withheld mutators in open-wave markdown; `ranked_capabilities` reuses live execute seeds when omitted.
+- **Discovery defer hint:** `relation_target_deferred_mutator_hint` surfaces withheld relation-target mutators in open-wave markdown; `ranked_capabilities` reuses live execute seeds when omitted.
 
 ### Changed
 

@@ -1,8 +1,8 @@
 //! Capability seeds, exposure planning, plasm_context MCP surface.
 
 use super::super::*;
-use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
-use plasm_core::{CapabilityKind, ExposureEntityKey, TeachingExposureSession};
+use plasm_core::discovery::relation_target_deferred_mutator_wires;
+use plasm_core::{ExposureEntityKey, TeachingExposureSession};
 use std::collections::{BTreeSet, HashSet};
 
 pub(crate) fn capability_seeds_from_session(sess: &ExecuteSession) -> Vec<CapabilitySeed> {
@@ -26,27 +26,17 @@ pub(crate) fn capability_seeds_from_session(sess: &ExecuteSession) -> Vec<Capabi
         .collect()
 }
 
-/// Mutating capabilities that match intent but read-first exposure withheld from the teaching surface.
-pub(crate) fn read_first_deferred_mutator_hint(
+/// Mutating capabilities on **non-seeded** relation targets that match intent but are absent from
+/// the current teaching surface (e.g. before ranked replay expands exposure).
+pub(crate) fn relation_target_deferred_mutator_hint(
     cgs: &CGS,
     entry_id: &str,
     intent: &str,
-    relation_keys: &[ExposureEntityKey],
+    _relation_keys: &[ExposureEntityKey],
     seeded_entities: &[String],
     exp: &TeachingExposureSession,
     ranked: Option<&[String]>,
 ) -> Option<String> {
-    let relaxed = derive_intent_exposure_surface_batch(
-        cgs,
-        entry_id,
-        intent,
-        relation_keys,
-        seeded_entities,
-        ranked,
-        ExposureSurfaceOptions {
-            read_first_seeded: false,
-        },
-    );
     let on_surface: HashSet<(String, String, String)> = exp
         .surface
         .capabilities
@@ -59,39 +49,20 @@ pub(crate) fn read_first_deferred_mutator_hint(
             )
         })
         .collect();
-    let seeded: HashSet<String> = seeded_entities.iter().cloned().collect();
-    let mut deferred = BTreeSet::new();
-    for cap in relaxed.required.capabilities {
-        let trip = (
-            cap.entry_id.clone(),
-            cap.domain.to_string(),
-            cap.capability.to_string(),
-        );
-        if on_surface.contains(&trip) || seeded.contains(cap.domain.as_str()) {
-            continue;
-        }
-        let Some(schema) = cgs.get_capability(cap.capability.as_str()) else {
-            continue;
-        };
-        if schema.domain.as_str() != cap.domain.as_str() {
-            continue;
-        }
-        if matches!(
-            schema.kind,
-            CapabilityKind::Create
-                | CapabilityKind::Update
-                | CapabilityKind::Delete
-                | CapabilityKind::Action
-        ) {
-            deferred.insert(cap.capability.to_string());
-        }
-    }
+    let deferred = relation_target_deferred_mutator_wires(
+        cgs,
+        entry_id,
+        intent,
+        seeded_entities,
+        &on_surface,
+        ranked,
+    );
     if deferred.is_empty() {
         return None;
     }
     Some(format!(
         "\n\n**Deferred write capabilities** (relation-target mutators not yet on the teaching surface): `{}`. Restate intent toward mutation or pass `ranked_capabilities` with the needed mutator wire name(s).\n",
-        deferred.into_iter().collect::<Vec<_>>().join("`, `")
+        deferred.join("`, `")
     ))
 }
 
@@ -639,8 +610,8 @@ mod ranked_replay_tests {
     use plasm_core::TeachingExposureSession;
 
     use crate::http_execute::context::ranked_replay_fixtures::{
-        github_issue_repo_endpoints, load_github_cgs, load_matrix_cgs, matrix_cgs_arc,
-        matrix_exp_with_intent, matrix_langitem_endpoints,
+        github_cgs_arc, github_exp_with_intent, github_issue_repo_endpoints, load_github_cgs,
+        load_matrix_cgs, matrix_cgs_arc, matrix_exp_with_intent, matrix_langitem_endpoints,
     };
 
     #[test]
@@ -675,8 +646,7 @@ mod ranked_replay_tests {
     }
 
     #[test]
-    fn ranked_replay_surfaces_deferred_mutator_after_read_first_open() {
-        use plasm_core::capability_method_label_kebab;
+    fn read_first_open_admits_seeded_mutator_at_weak_intent() {
         use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
 
         let cgs = matrix_cgs_arc();
@@ -698,37 +668,140 @@ mod ranked_replay_tests {
                 read_first_seeded: true,
             },
         );
-        let mut exp = TeachingExposureSession::new_with_intent_delta(
+        let exp = TeachingExposureSession::new_with_intent_delta(
             cgs.as_ref(),
             "matrix",
             &entities,
             delta,
         );
         assert!(
-            !exp.surface
+            exp.surface
                 .capabilities
                 .iter()
                 .any(|c| c.capability.as_str() == mutator),
-            "read-first weak intent must defer seeded mutator"
+            "read-first should autosurface seeded mutators at weak intent"
         );
+        assert!(
+            !ranked_capabilities_need_exposure_replay(
+                &exp,
+                &RankedCapabilitiesArg::Set(Some(vec![mutator.into()])),
+            ),
+            "seeded mutator already on surface must not trigger ranked replay"
+        );
+    }
+
+    #[test]
+    fn relation_target_deferred_mutator_hint_surfaces_missing_relation_mutator() {
+        use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+
+        let cgs = load_github_cgs();
+        let seeded = vec!["Issue".to_string()];
+        let endpoints = vec![
+            ExposureEntityKey {
+                entry_id: "github".into(),
+                entity: plasm_core::EntityName::from("Issue"),
+            },
+            ExposureEntityKey {
+                entry_id: "github".into(),
+                entity: plasm_core::EntityName::from("IssueComment"),
+            },
+        ];
+        let intent = "add comment body text issue thread";
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "github",
+            intent,
+            &endpoints,
+            &seeded,
+            None,
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        let mut exp =
+            TeachingExposureSession::new_with_intent_delta(&cgs, "github", &["Issue"], delta);
+        exp.surface
+            .capabilities
+            .retain(|c| c.capability.as_str() != "issue_comment_create");
+        let hint = relation_target_deferred_mutator_hint(
+            &cgs, "github", intent, &endpoints, &seeded, &exp, None,
+        )
+        .expect("expected deferred relation-target mutator hint");
+        assert!(
+            hint.contains("issue_comment_create"),
+            "hint must name withheld relation-target mutator: {hint}"
+        );
+    }
+
+    #[test]
+    fn relation_target_deferred_mutator_hint_empty_when_surface_complete() {
+        let cgs = load_github_cgs();
+        let seeded = vec!["Repository".to_string(), "Issue".to_string()];
+        let endpoints = github_issue_repo_endpoints();
+        let intent = "create new issue title body repository";
+        let exp = github_exp_with_intent(intent, None, true);
+        assert!(
+            relation_target_deferred_mutator_hint(
+                &cgs, "github", intent, &endpoints, &seeded, &exp, None,
+            )
+            .is_none(),
+            "complete surface must not emit deferred mutator hint"
+        );
+    }
+
+    #[test]
+    fn ranked_replay_surfaces_deferred_mutator_after_read_first_open() {
+        use plasm_core::discovery::{derive_intent_exposure_surface_batch, ExposureSurfaceOptions};
+
+        let cgs = github_cgs_arc();
+        let seeded = vec!["Issue".to_string()];
+        let endpoints = vec![
+            ExposureEntityKey {
+                entry_id: "github".into(),
+                entity: plasm_core::EntityName::from("Issue"),
+            },
+            ExposureEntityKey {
+                entry_id: "github".into(),
+                entity: plasm_core::EntityName::from("IssueComment"),
+            },
+        ];
+        let intent = "add comment body text issue thread";
+        let mutator = "issue_comment_create";
+        let delta = derive_intent_exposure_surface_batch(
+            cgs.as_ref(),
+            "github",
+            intent,
+            &endpoints,
+            &seeded,
+            None,
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        let mut exp = TeachingExposureSession::new_with_intent_delta(
+            cgs.as_ref(),
+            "github",
+            &["Issue"],
+            delta,
+        );
+        exp.surface
+            .capabilities
+            .retain(|c| c.capability.as_str() != mutator);
         assert!(
             ranked_capabilities_need_exposure_replay(
                 &exp,
                 &RankedCapabilitiesArg::Set(Some(vec![mutator.into()])),
             ),
-            "ranked replay gate must fire for deferred mutator"
+            "ranked replay gate must fire for deferred relation-target mutator"
         );
 
         let ranked = vec![mutator.to_string()];
         let replay_delta = derive_intent_exposure_surface_batch(
             cgs.as_ref(),
-            "matrix",
-            weak_intent,
+            "github",
+            intent,
             &endpoints,
-            &entities
-                .iter()
-                .map(|e| (*e).to_string())
-                .collect::<Vec<_>>(),
+            &seeded,
             Some(&ranked),
             ExposureSurfaceOptions {
                 read_first_seeded: true,
@@ -737,8 +810,8 @@ mod ranked_replay_tests {
         exp.expose_surface(
             &[cgs.as_ref()],
             cgs.clone(),
-            "matrix",
-            &entities,
+            "github",
+            &["Issue"],
             replay_delta,
         );
         assert!(
@@ -748,9 +821,10 @@ mod ranked_replay_tests {
                 .any(|c| c.capability.as_str() == mutator),
             "ranked replay must add deferred mutator to exposure surface"
         );
-        let map = exp.symbol_map_arc();
         let cap = cgs.get_capability(mutator).expect(mutator);
-        let method_sym = map.method_sym_for("matrix", "LangItem", cap.name.as_str());
+        let method_sym =
+            exp.symbol_map_arc()
+                .method_sym_for("github", "IssueComment", cap.name.as_str());
         assert!(
             method_sym.starts_with('m'),
             "{mutator} method must appear on teaching surface after replay: {method_sym}"

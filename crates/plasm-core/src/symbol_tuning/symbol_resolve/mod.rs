@@ -180,38 +180,17 @@ impl SymbolMap {
                 capability,
                 cap,
             } => {
-                let invoke_keys: Vec<_> = self
-                    .cap_param_keys_for_psym(psym)
-                    .filter(|key| catalog.matches_entry(key.entry_id.as_str()))
-                    .filter(|key| {
-                        key.domain.as_str() == domain
-                            && key.capability.as_str() == capability
-                            && Self::cap_declares_param_wire(cap, key.param.as_str())
-                    })
-                    .collect();
-                if invoke_keys.len() == 1 {
-                    return Ok(invoke_keys[0].param.to_string());
+                let invoke_wires = self
+                    .invoke_cap_param_wires_for_psym(psym, catalog, domain, capability, cap, true);
+                if invoke_wires.len() == 1 {
+                    return Ok(invoke_wires[0].clone());
                 }
-                if invoke_keys.is_empty() {
-                    // Shared scope/param symbols: accept when the invoke capability declares a wire
-                    // committed on another occurrence (e.g. repository on issue_create when p# was
-                    // first assigned on issue_query).
-                    let shared_keys: Vec<_> = self
-                        .cap_param_keys_for_psym(psym)
-                        .filter(|key| catalog.matches_entry(key.entry_id.as_str()))
-                        .filter(|key| key.domain.as_str() == domain)
-                        .filter(|key| Self::cap_declares_param_wire(cap, key.param.as_str()))
-                        .collect();
-                    if !shared_keys.is_empty() {
-                        let mut wires: Vec<String> = shared_keys
-                            .iter()
-                            .map(|key| key.param.to_string())
-                            .collect();
-                        wires.sort();
-                        wires.dedup();
-                        if wires.len() == 1 {
-                            return Ok(wires[0].clone());
-                        }
+                if invoke_wires.is_empty() {
+                    let shared_wires = self.invoke_cap_param_wires_for_psym(
+                        psym, catalog, domain, capability, cap, false,
+                    );
+                    if shared_wires.len() == 1 {
+                        return Ok(shared_wires[0].clone());
                     }
                 }
                 if let Ok(binding) = self.resolve_session_slot(t) {
@@ -229,7 +208,7 @@ impl SymbolMap {
                             return Ok(param_wire.to_string());
                         }
                     }
-                    if invoke_keys.is_empty() {
+                    if invoke_wires.is_empty() {
                         return Err(SymbolResolveError::UnknownCapParam {
                             catalog_entry_id: binding.entry_id.to_string(),
                             domain: domain.to_string(),
@@ -237,7 +216,7 @@ impl SymbolMap {
                             token: t.to_string(),
                         });
                     }
-                } else if invoke_keys.is_empty() {
+                } else if invoke_wires.is_empty() {
                     return Err(SymbolResolveError::UnknownCapParam {
                         catalog_entry_id: catalog.entry_id().unwrap_or("").to_string(),
                         domain: domain.to_string(),
@@ -247,13 +226,10 @@ impl SymbolMap {
                 }
                 // Homographed union-variant leaves share one `p#` but retain distinct occurrence
                 // paths in `cap_param_to_sym`; pick a stable representative for invoke reverse lookup.
-                let mut wires: Vec<String> = invoke_keys
-                    .iter()
-                    .map(|key| key.param.to_string())
-                    .collect();
-                wires.sort();
-                wires.dedup();
-                Ok(wires.into_iter().next().expect("invoke_keys non-empty"))
+                Ok(invoke_wires
+                    .into_iter()
+                    .next()
+                    .expect("invoke_wires non-empty"))
             }
         }
     }
@@ -491,6 +467,29 @@ impl SymbolMap {
             || cap
                 .object_params()
                 .is_some_and(|fields| fields.iter().any(|f| f.name.as_str() == param_wire))
+    }
+
+    /// Distinct param wire names for `psym` on an invoke capability (exact-cap or shared-scope).
+    fn invoke_cap_param_wires_for_psym(
+        &self,
+        psym: OpaquePSym,
+        catalog: CatalogScope<'_>,
+        domain: &str,
+        capability: &str,
+        cap: &CapabilitySchema,
+        same_capability_only: bool,
+    ) -> Vec<String> {
+        let mut wires: Vec<String> = self
+            .cap_param_keys_for_psym(psym)
+            .filter(|key| catalog.matches_entry(key.entry_id.as_str()))
+            .filter(|key| key.domain.as_str() == domain)
+            .filter(|key| !same_capability_only || key.capability.as_str() == capability)
+            .filter(|key| Self::cap_declares_param_wire(cap, key.param.as_str()))
+            .map(|key| key.param.to_string())
+            .collect();
+        wires.sort();
+        wires.dedup();
+        wires
     }
 
     /// Lookup a session `m#` token against federated CGS layers with invoke-anchor validation.

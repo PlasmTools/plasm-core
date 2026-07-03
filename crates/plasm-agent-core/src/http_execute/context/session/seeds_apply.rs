@@ -375,7 +375,7 @@ pub async fn apply_capability_seeds(
                         .get(&primary_entry_id)
                         .cloned()
                         .unwrap_or_default();
-                    if let Some(hint) = super::super::seeds::read_first_deferred_mutator_hint(
+                    if let Some(hint) = super::super::seeds::relation_target_deferred_mutator_hint(
                         ctx.cgs.as_ref(),
                         primary_entry_id.as_str(),
                         plasm_context_intent,

@@ -101,3 +101,18 @@ pub(crate) fn merge_opaque_alias_maps(
     }
     rep
 }
+
+/// `p#` / `r#` symbols already demonstrated on a teaching-row LHS (projection brackets or witness).
+pub(crate) fn lhs_demonstrated_syms_for_teaching_expr(
+    expr: &str,
+    result_gloss: Option<&str>,
+) -> std::collections::HashSet<String> {
+    use crate::symbol_tuning::field_syms_for_teaching_row;
+
+    field_syms_for_teaching_row(expr, result_gloss, None, &[])
+        .into_iter()
+        .filter(|s| {
+            SymbolMap::is_opaque_p_sym(s.as_str()) || SymbolMap::is_opaque_r_sym(s.as_str())
+        })
+        .collect()
+}

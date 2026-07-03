@@ -225,13 +225,8 @@ pub(crate) fn emit_field_def_lines_before_example(
 ) {
     let en = EntityName::from(entity.to_string());
     let cid = catalog_entry_id.to_string();
-    let current_lhs_syms: HashSet<String> =
-        crate::symbol_tuning::field_syms_for_teaching_row(expr, result_gloss, None, &[])
-            .into_iter()
-            .filter(|s| {
-                SymbolMap::is_opaque_p_sym(s.as_str()) || SymbolMap::is_opaque_r_sym(s.as_str())
-            })
-            .collect();
+    let current_lhs_syms =
+        super::gloss_dedup::lhs_demonstrated_syms_for_teaching_expr(expr, result_gloss);
     for sym in crate::symbol_tuning::field_syms_for_teaching_row(
         expr,
         result_gloss,

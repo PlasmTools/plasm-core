@@ -174,9 +174,10 @@ pub use connect_profile::{
     catalog_connect_profile, CatalogAuthCapability, CatalogConnectProfile, CatalogOauthCapability,
 };
 pub use discovery::{
-    Ambiguity, CapabilityQuery, CatalogEntryMeta, CgsCatalog, CgsDiscovery, ClosureStats,
+    derive_intent_exposure_surface_batch, relation_target_deferred_mutator_wires, Ambiguity,
+    CapabilityQuery, CatalogEntryMeta, CgsCatalog, CgsDiscovery, ClosureStats,
     DiscoveryContextJson, DiscoveryError, DiscoveryResult, DiscoverySchemaNeighborhood,
-    EntitySummary, InMemoryCgsRegistry, RankedCandidate, RegistryEntryPair,
+    EntitySummary, ExposureSurfaceOptions, InMemoryCgsRegistry, RankedCandidate, RegistryEntryPair,
 };
 pub use discovery_adversarial_intents::{
     adversarial_case_count, iter_all_cases, DiscoveryAdversarialCase,

@@ -126,27 +126,14 @@ fn gloss_rows_for_filtered_block(
     let mut needed: HashSet<String> = HashSet::new();
     let mut demonstrated_lhs: HashSet<String> = HashSet::new();
     for row in kept_rows {
-        for sym in
-            field_syms_for_teaching_row(row.teaching_expr.expression.as_str(), None, None, &[])
-                .into_iter()
-                .filter(|s| {
-                    SymbolMap::is_opaque_p_sym(s.as_str()) || SymbolMap::is_opaque_r_sym(s.as_str())
-                })
-        {
-            demonstrated_lhs.insert(sym);
-        }
-        for sym in field_syms_for_teaching_row(
+        demonstrated_lhs.extend(super::gloss_dedup::lhs_demonstrated_syms_for_teaching_expr(
+            row.teaching_expr.expression.as_str(),
+            None,
+        ));
+        demonstrated_lhs.extend(super::gloss_dedup::lhs_demonstrated_syms_for_teaching_expr(
             row.teaching_expr.expression.as_str(),
             Some(row.teaching_expr.result_type.as_str()),
-            None,
-            &[],
-        )
-        .into_iter()
-        .filter(|s| {
-            SymbolMap::is_opaque_p_sym(s.as_str()) || SymbolMap::is_opaque_r_sym(s.as_str())
-        }) {
-            demonstrated_lhs.insert(sym);
-        }
+        ));
         for sym in
             field_syms_for_teaching_row(row.teaching_expr.expression.as_str(), None, None, &[])
         {

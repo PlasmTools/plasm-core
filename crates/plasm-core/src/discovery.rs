@@ -1037,11 +1037,6 @@ fn ranked_gate_allows_mutation(ranked_capability_names: Option<&[String]>, cap_n
     }
 }
 
-/// Minimum intent lexicon score for seeded-entity mutators on MCP read-first exposure waves.
-/// **Note:** Seeded-entity mutators are always admitted when [`ExposureSurfaceOptions::read_first_seeded`]
-/// is set; this constant remains for documentation and non-seeded relation-target mutators.
-pub const READ_FIRST_SEEDED_MUTATOR_MIN_SCORE: u32 = 2;
-
 /// Options for [`derive_intent_exposure_surface_batch`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExposureSurfaceOptions {
@@ -1051,18 +1046,11 @@ pub struct ExposureSurfaceOptions {
     pub read_first_seeded: bool,
 }
 
-fn mutating_capability_admitted(
-    read_first_seeded: bool,
-    entity_is_seeded: bool,
+pub(crate) fn mutating_capability_admitted(
     score: u32,
     ranked_capability_names: Option<&[String]>,
     cap_name: &str,
 ) -> bool {
-    if read_first_seeded && entity_is_seeded {
-        // Seeded entities teach all mutators up front so agents get stable m# tokens without
-        // a ranked round-trip (read/query/get still use seed_entity_surface_always_includes).
-        return true;
-    }
     if score == 0 {
         return false;
     }
@@ -1078,7 +1066,8 @@ fn mutating_capability_admitted(
 }
 
 /// Capabilities on an explicitly seeded entity that are always admitted (no intent lexicon score).
-fn seed_entity_surface_always_includes(
+fn seeded_entity_cap_always_includes(
+    read_first_seeded: bool,
     cap: &CapabilitySchema,
     entity_name: &str,
     ent: &EntityDef,
@@ -1093,9 +1082,21 @@ fn seed_entity_surface_always_includes(
     ) {
         return true;
     }
-    ent.primary_read
+    if ent
+        .primary_read
         .as_deref()
         .is_some_and(|pr| pr == cap.name.as_str())
+    {
+        return true;
+    }
+    read_first_seeded
+        && matches!(
+            cap.kind,
+            CapabilityKind::Create
+                | CapabilityKind::Update
+                | CapabilityKind::Delete
+                | CapabilityKind::Action
+        )
 }
 
 /// Max outgoing relation hints per entity in discover TSV (`wire→Target`).
@@ -1194,11 +1195,14 @@ pub fn derive_intent_exposure_surface_batch(
             let Some(cap) = cgs.capabilities.get(cap_name) else {
                 continue;
             };
-            let seed_surface =
-                seed_entity_surface_always_includes(cap, ename, ent, &seeded_entities);
             let (score, _) = score_capability(&query_tokens, cgs, cap);
-            let entity_is_seeded = seeded_entities.contains(ename);
-            let include = if seed_surface {
+            let include = if seeded_entity_cap_always_includes(
+                options.read_first_seeded,
+                cap,
+                ename,
+                ent,
+                &seeded_entities,
+            ) {
                 true
             } else {
                 match cap.kind {
@@ -1206,8 +1210,6 @@ pub fn derive_intent_exposure_surface_batch(
                         score > 0
                     }
                     _ => mutating_capability_admitted(
-                        options.read_first_seeded,
-                        entity_is_seeded,
                         score,
                         ranked_capability_names,
                         cap.name.as_str(),
@@ -1299,14 +1301,11 @@ pub fn derive_intent_exposure_surface_batch(
                     continue;
                 }
                 let (score, _) = score_capability(&query_tokens, cgs, cap);
-                let target_is_seeded = seeded_entities.contains(target);
-                if !mutating_capability_admitted(
-                    options.read_first_seeded,
-                    target_is_seeded,
-                    score,
-                    ranked_capability_names,
-                    cap.name.as_str(),
-                ) {
+                if seeded_entities.contains(target) && options.read_first_seeded {
+                    continue;
+                }
+                if !mutating_capability_admitted(score, ranked_capability_names, cap.name.as_str())
+                {
                     continue;
                 }
                 let ckey = ExposureCapabilityKey {
@@ -1320,6 +1319,70 @@ pub fn derive_intent_exposure_surface_batch(
     }
 
     ExposureSurfaceDelta { required: surface }
+}
+
+/// Mutating capability wire names on **non-seeded** relation targets that intent qualifies but
+/// are absent from `on_surface` (entry_id, domain entity, capability wire triples).
+pub fn relation_target_deferred_mutator_wires(
+    cgs: &CGS,
+    entry_id: &str,
+    intent: &str,
+    seeded_entities: &[String],
+    on_surface: &HashSet<(String, String, String)>,
+    ranked_capability_names: Option<&[String]>,
+) -> Vec<String> {
+    use std::collections::BTreeSet;
+
+    let cid = if entry_id.is_empty() {
+        cgs.entry_id.clone().unwrap_or_default()
+    } else {
+        entry_id.to_string()
+    };
+    let mut query_tokens = HashSet::new();
+    for tok in domain_lexicon::tokens(intent) {
+        query_tokens.insert(tok);
+    }
+    let seeded: HashSet<String> = seeded_entities.iter().cloned().collect();
+    let mut deferred = BTreeSet::new();
+    for raw_ent in seeded_entities {
+        let Some(ent) = cgs.get_entity(raw_ent.as_str()) else {
+            continue;
+        };
+        for rel in ent.relations.values() {
+            let target = rel.target_resource.as_str();
+            if seeded.contains(target) {
+                continue;
+            }
+            let Some(cap_names) = cgs.capability_names_by_domain().get(target) else {
+                continue;
+            };
+            for cap_name in cap_names {
+                let Some(cap) = cgs.capabilities.get(cap_name) else {
+                    continue;
+                };
+                if !matches!(
+                    cap.kind,
+                    CapabilityKind::Create
+                        | CapabilityKind::Update
+                        | CapabilityKind::Delete
+                        | CapabilityKind::Action
+                ) {
+                    continue;
+                }
+                let (score, _) = score_capability(&query_tokens, cgs, cap);
+                if !mutating_capability_admitted(score, ranked_capability_names, cap.name.as_str())
+                {
+                    continue;
+                }
+                let trip = (cid.clone(), target.to_string(), cap.name.to_string());
+                if on_surface.contains(&trip) {
+                    continue;
+                }
+                deferred.insert(cap.name.to_string());
+            }
+        }
+    }
+    deferred.into_iter().collect()
 }
 
 #[cfg(test)]
@@ -1485,42 +1548,9 @@ mod tests {
     }
 
     #[test]
-    fn mutating_capability_admitted_read_first_seeded_gate() {
-        assert!(mutating_capability_admitted(
-            true,
-            true,
-            0,
-            None,
-            "langitem_create"
-        ));
-        assert!(mutating_capability_admitted(
-            true,
-            true,
-            0,
-            Some(&["langitem_create".to_string()]),
-            "langitem_create"
-        ));
-        assert!(mutating_capability_admitted(
-            true,
-            true,
-            1,
-            None,
-            "langitem_create"
-        ));
-        assert!(mutating_capability_admitted(
-            true,
-            true,
-            2,
-            None,
-            "langitem_create"
-        ));
-        assert!(mutating_capability_admitted(
-            true,
-            false,
-            1,
-            None,
-            "langitem_create"
-        ));
+    fn mutating_capability_admitted_requires_nonzero_score() {
+        assert!(!mutating_capability_admitted(0, None, "langitem_create"));
+        assert!(mutating_capability_admitted(1, None, "langitem_create"));
     }
 
     #[test]
@@ -1586,12 +1616,12 @@ mod tests {
         let (weak_score, _) = score_capability(&weak_tokens, &cgs, cap);
         let (strong_score, _) = score_capability(&strong_tokens, &cgs, cap);
         assert!(
-            weak_score > 0 && weak_score < READ_FIRST_SEEDED_MUTATOR_MIN_SCORE,
+            weak_score > 0,
             "fixture intent should score weakly: {weak_score}"
         );
         assert!(
-            strong_score >= READ_FIRST_SEEDED_MUTATOR_MIN_SCORE,
-            "fixture intent should score strongly: {strong_score}"
+            strong_score >= weak_score,
+            "strong intent should score at least as high as weak: {strong_score} vs {weak_score}"
         );
         let endpoints = relation_keys("matrix", &["LangItem"]);
         let delta_weak = derive_intent_exposure_surface_batch(
