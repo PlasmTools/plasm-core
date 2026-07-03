@@ -1,5 +1,21 @@
-version: 17
+version: 18
 http_backend: https://api.vultr.com
+data_classes:
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  pii_name:
+    description: Person name treated as personally identifiable.
+    severity: sensitive
+  credentials:
+    description: Secret token, password, or key material.
+    severity: critical
+  permission_grant:
+    description: Access control, firewall, or role/ACL elevation.
+    severity: critical
+  destructive_delete:
+    description: Irreversible removal of a resource or linked resources.
+    severity: critical
 entities:
   Account:
     id_field: email
@@ -8,6 +24,7 @@ entities:
       email:
         required: true
         value_ref: nv_wire_str_short
+        data_class: pii_email
       name:
         required: false
         value_ref: nv_wire_str_short
@@ -42,6 +59,7 @@ entities:
         required: false
         path: pasword
         value_ref: nv_wire_str_short
+        data_class: credentials
     relations: {}
   AccountBandwidth:
     id_field: id
@@ -250,6 +268,7 @@ entities:
         required: false
         path: api_key
         value_ref: nv_wire_str_short
+        data_class: credentials
       expire:
         required: false
         value_ref: nv_wire_bool
@@ -270,12 +289,15 @@ entities:
       first_name:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_name
       last_name:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_name
       email:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_email
       api_enabled:
         required: false
         value_ref: nv_wire_bool
@@ -777,6 +799,7 @@ entities:
       script:
         required: false
         value_ref: nv_startup_script_script
+        data_class: credentials
     relations: {}
   Backup:
     id_field: id
@@ -882,9 +905,11 @@ entities:
       s3_access_key:
         required: false
         value_ref: nv_wire_str_short
+        data_class: credentials
       s3_secret_key:
         required: false
         value_ref: nv_wire_str_short
+        data_class: credentials
       pending_charges:
         required: false
         value_ref: nv_wire_num
@@ -950,6 +975,7 @@ entities:
       password:
         required: false
         value_ref: nv_wire_str_short
+        data_class: credentials
       port:
         required: false
         value_ref: nv_wire_int
@@ -1440,6 +1466,7 @@ entities:
         path:
         - __plasm_attachment
         value_ref: nv_vke_kubeconfig_content
+        data_class: credentials
     relations: {}
   VkeAvailableUpgrade:
     id_field: id
@@ -1530,6 +1557,7 @@ entities:
         - user_data
         - data
         value_ref: nv_bare_metal_user_data_data
+        data_class: credentials
     relations: {}
   BareMetalUpgradeCatalog:
     id_field: id
@@ -1674,6 +1702,7 @@ capabilities:
     - name: password
       value_ref: nv_wire_str_short
       required: true
+      sink_class: credentials
     - name: api_enabled
       value_ref: nv_wire_bool
       required: false
@@ -1699,11 +1728,13 @@ capabilities:
     - name: password
       value_ref: nv_wire_str_short
       required: false
+      sink_class: credentials
     - name: api_enabled
       value_ref: nv_wire_bool
       required: false
     - name: acls
       value_ref: nv_user_update_acls
+      sink_class: permission_grant
       required: false
   user_delete:
     kind: delete
@@ -2026,6 +2057,7 @@ capabilities:
     - name: subnet
       value_ref: nv_wire_str_short
       required: true
+      sink_class: permission_grant
     - name: subnet_size
       value_ref: nv_wire_int
       required: true

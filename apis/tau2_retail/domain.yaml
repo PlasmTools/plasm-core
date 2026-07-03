@@ -1,7 +1,14 @@
-version: 2
+version: 3
 auth:
   scheme: none
 http_backend: http://localhost:1080
+data_classes:
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  external_send:
+    description: Outbound message delivered to a human agent outside the automated flow.
+    severity: critical
 entities:
   Order:
     id_field: order_id
@@ -30,6 +37,7 @@ entities:
       email:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_email
     relations: {}
   Product:
     id_field: product_id
@@ -186,6 +194,7 @@ capabilities:
     - name: summary
       value_ref: nv_wire_str_short
       required: true
+      sink_class: external_send
   cancel_pending_order:
     kind: update
     entity: Order

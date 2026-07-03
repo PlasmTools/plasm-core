@@ -20,7 +20,7 @@ Hand off to these companion skills as the loop progresses:
 - [skills/plasm-catalog-reprint/SKILL.md](../skills/plasm-catalog-reprint/SKILL.md) — full-cutover regeneration.
 - [skills/plasm-catalog-retro/SKILL.md](../skills/plasm-catalog-retro/SKILL.md) — post-authoring retrospective.
 
-Treat those skills as **single source of truth** for entities, capabilities, CML pagination, `entity_ref`, `provides:` / action `output`, eval harness rules, transport testing, and validation commands.
+Treat those skills as **single source of truth** for entities, capabilities, CML pagination, `entity_ref`, `provides:` / action `output`, **information-flow annotations** (`data_classes`, `data_class`, `sink_class`, `sanitizes`), eval harness rules, transport testing, and validation commands.
 
 **Terminology:** In this repository the prompt-facing semantic graph is **CGS** in `domain.yaml`; transport is **CML** in `mappings.yaml`. If a user says "CGL", interpret it as this **CGS** layer unless they define another term.
 
@@ -54,6 +54,7 @@ Follow the skill loop: **read spec → author `domain.yaml` → author `mappings
 - Relational model first: correct `entity_ref`, relations, scoped queries, `materialize` where sub-resources demand it.
 - Obey mandatory `version:` and increment rules from the skill.
 - Keep HTTP out of CGS prose (no methods, paths, status codes, or bare `https://` in descriptions except `auth.token_url`).
+- For APIs with send/publish/delete/share/pay capabilities: run the **flow annotation pass** from [reference.md — Information-flow annotations](../skills/plasm-authoring/reference.md#information-flow-annotations-guardians--plan-flow-typing) (`data_classes:`, field `data_class:`, `sink_class:` on mutating inputs, `sanitizes:` where applicable). Conformance context: monorepo [guardians-alignment.md](../../../docs/guardians-alignment.md).
 
 **`mappings.yaml`**
 
@@ -95,6 +96,20 @@ Audit entity, capability, and `output.description` for side-effect actions:
 - No low-level API leakage in CGS strings.
 
 Wire-specific clarification belongs in `mappings.yaml` comments or external docs.
+
+---
+
+## Phase 5b — Information-flow annotation audit
+
+For catalogs with **mutating** capabilities (create/update/delete/action that export or destroy data):
+
+- Confirm top-level **`data_classes:`** registers every label and sink role referenced.
+- Confirm **entity fields** carrying user text, PII, or secrets have **`data_class:`**.
+- Confirm outbound/destructive **`input_schema`** params have **`sink_class:`** (register sink names in `data_classes:`).
+- Confirm scrub/redact capabilities declare **`sanitizes:`** when they neutralize a class.
+- Re-run `schema validate` after annotation changes; bump `version:` when labels change.
+
+Read-only-only catalogs may omit flow annotations; document that choice in the plan. Witness: `fixtures/schemas/flow_matrix/`.
 
 ---
 

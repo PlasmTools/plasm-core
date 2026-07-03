@@ -1,5 +1,9 @@
-version: 2
+version: 3
 http_backend: https://api.musixmatch.com
+data_classes:
+  untrusted:
+    description: Externally sourced, arbitrary text (prompt-injection surface).
+    severity: untrusted
 entities:
   Artist:
     id_field: artist_id
@@ -54,6 +58,7 @@ entities:
       lyrics_body:
         required: false
         value_ref: nv_lyrics_lyrics_body
+        data_class: untrusted
       lyrics_copyright:
         required: false
         value_ref: nv_lyrics_lyrics_copyright

@@ -1,7 +1,20 @@
-version: 2
+version: 3
 auth:
   scheme: none
 http_backend: https://graphqlzero.almansi.network
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  pii_name:
+    description: Person name treated as personally identifiable.
+    severity: sensitive
+  external_publish:
+    description: Shared demo dataset content change visible to all clients.
+    severity: critical
 entities:
   User:
     id_field: id
@@ -13,12 +26,14 @@ entities:
       name:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_name
       username:
         required: false
         value_ref: nv_wire_str_short
       email:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_email
       phone:
         required: false
         value_ref: nv_wire_str_short
@@ -51,6 +66,7 @@ entities:
       body:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
     relations:
       user:
         target: User
@@ -70,12 +86,15 @@ entities:
       name:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_name
       email:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_email
       body:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
     relations:
       post:
         target: Post
@@ -248,9 +267,11 @@ capabilities:
     - name: title
       value_ref: nv_wire_str_short
       required: true
+      sink_class: external_publish
     - name: body
       value_ref: nv_wire_str_markdown
       required: true
+      sink_class: external_publish
   post_update:
     kind: update
     entity: Post
@@ -263,9 +284,11 @@ capabilities:
     - name: title
       value_ref: nv_wire_str_short
       required: false
+      sink_class: external_publish
     - name: body
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
   post_delete:
     kind: delete
     entity: Post

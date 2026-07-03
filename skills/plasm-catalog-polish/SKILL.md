@@ -137,6 +137,17 @@ If `eval/cases.yaml` does not exist, create it with `--write` and edit until cov
 
 The skill updates the README when these are missing or stale.
 
+### 11. Information-flow annotations (fix when mutating caps exist)
+
+When the catalog exposes send/publish/post/reply/share/delete/pay capabilities, audit Guardians-style labels per [reference.md — Information-flow annotations](../plasm-authoring/reference.md#information-flow-annotations-guardians--plan-flow-typing):
+
+- Top-level **`data_classes:`** registry present and closed (every `data_class`, `sink_class`, and `sanitizes` reference resolves).
+- Sensitive **entity fields** (`body`, `description`, PII, secrets) carry **`data_class:`**.
+- Exfiltration/destructive **`input_schema`** params carry **`sink_class:`** (sink names registered in `data_classes:`).
+- Scrub/redact capabilities declare **`sanitizes:`** when applicable.
+
+Read-only catalogs: record "flow annotations deferred (read-only surface)" in the polish summary. Revalidate after fixes; bump `version:` when annotations change.
+
 ## Loop
 
 ```mermaid

@@ -9,7 +9,7 @@ Iteratively author, validate, and test a **typed agent surface** (path expressio
 
 The two authored files are:
 
-- **`domain.yaml`** — CGS, the semantic model. Entities, fields, relations, capability declarations (`query`, `get`, `search`, `create`, `update`, `delete`, `action`), top-level **`values:`** registry (semantic slots), and optional top-level **`views:`** composed read DAGs.
+- **`domain.yaml`** — CGS, the semantic model. Entities, fields, relations, capability declarations (`query`, `get`, `search`, `create`, `update`, `delete`, `action`), top-level **`values:`** registry (semantic slots), optional top-level **`data_classes:`** (Guardians-style information-flow labels and sink roles), and optional top-level **`views:`** composed read DAGs.
 - **`mappings.yaml`** — CML, the transport wiring. HTTP / GraphQL templates per capability, plus **`transport: view`** stubs that point at a **`views:`** key (no `method` / `path` for those rows).
 - **Runtime query semantics** (no extra YAML file). **Pagination** lives on CML query mappings (`pagination:` block). **Hydration** (default concurrent GET per query row) applies when CGS declares **both** `query` and `get` for the same entity unless execution opts out. Continuations and page sizing are expressed in **Plasm** (teaching table / `page(pg#)` / postfix limits where taught) — not by authoring synthetic CLI flags.
 
@@ -123,7 +123,7 @@ Write the domain model. No HTTP details here — only what exists and what you c
 
 - Every `apis/<api>/domain.yaml` **must** declare top-level `version: <n>` with `n > 0`.
 - **Never rely on defaults.** Omitted/zero versions are invalid for authoring and packaging.
-- When you change domain semantics (entities, fields, relations, capability signatures, parameter types/roles, auth contract, output/provides behavior), you **must increment** `version`.
+- When you change domain semantics (entities, fields, relations, capability signatures, parameter types/roles, auth contract, output/provides behavior, **information-flow annotations**), you **must increment** `version`.
 - Treat any change that can affect prompt shape, compile/decode behavior, or runtime dispatch as a version bump event.
 - If you only change prose / comments with no semantic / runtime impact, keep `version` unchanged.
 
@@ -247,6 +247,22 @@ Authoring details, spec table, checklists, and reference catalogs: [reference.md
 
 **`kind: action` output:** Every action must declare either non-empty **`provides:`** or **`output:`** with **`type: side_effect`** and a non-empty `description:` that states **what** the operation changes. There is no `output.type: none`. See [reference.md — Action output](reference.md#action-output-provides-vs-outputside_effect).
 
+### Information-flow annotations (Guardians / plan flow typing)
+
+After the relational model is stable, annotate **data classes**, **sinks**, and **sanitizers** so the host can verify agent plans before execute (`plasm` dry-run → `verify_plan_flow`). Conformance map: monorepo [docs/guardians-alignment.md](../../../docs/guardians-alignment.md). Full vocabulary: [reference.md — Information-flow annotations](reference.md#information-flow-annotations-guardians--plan-flow-typing).
+
+**Catalog declares facts; tenant policy enforces rules.** Register classes in **`data_classes:`**, label sensitive **entity fields** with **`data_class:`**, mark exfiltration/destructive **input_schema** params with **`sink_class:`**, and list taint breakers on **`sanitizes:`** capabilities. Output labels are **derived** from `effective_provides` × field `data_class` — do not duplicate on capabilities.
+
+**Annotation pass (minimum for mutating APIs):**
+
+1. Add `data_classes:` entries for every label and sink role you reference (`untrusted`, `pii_*`, `external_send`, `destructive_delete`, …).
+2. Label user-generated text and PII on entity fields agents read (`body`, `description`, `comment`, email fields, …).
+3. On send/publish/post/reply/share/delete capabilities, set `sink_class:` on the payload field in `input_schema`.
+4. On redact/scrub/sanitize capabilities, declare `sanitizes:` for the classes they clear.
+5. Increment `version:` when flow annotations change.
+
+Witness catalog: `plasm-oss/fixtures/schemas/flow_matrix/`. Unlabeled catalogs remain flow-permissive until tenant policy is pinned active.
+
 ### Authentication — top-level `auth:` block
 
 Place a single `auth:` block at the end of `domain.yaml`. The runtime reads secrets at execution time from the named environment variables — no secrets go in schema files. Use `scheme: none` for genuinely public APIs.
@@ -331,6 +347,7 @@ See [reference.md](reference.md) for the full pattern catalogue (index-only, fil
 - [ ] Every list/filter agent intent has `kind: search` where the vendor supports filter DSL (not a fleet of scoped `query` caps for the same entity)
 - [ ] Human-visible keys are `id_field` where the vendor accepts them on get/create
 - [ ] Write surface uses domain verbs, not per-input-field mutation explosion
+- [ ] Mutating APIs: `data_classes:` registry + field `data_class:` on sensitive reads + `sink_class:` on outbound/destructive inputs (see [Information-flow annotations](reference.md#information-flow-annotations-guardians--plan-flow-typing))
 
 ### Scoped relation traversal (`materialize`)
 

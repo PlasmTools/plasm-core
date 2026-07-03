@@ -1,5 +1,15 @@
-version: 2
+version: 3
 http_backend: https://api.spotify.com
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_name:
+    description: Person name treated as personally identifiable.
+    severity: sensitive
+  external_publish:
+    description: Public-visible playlist metadata change.
+    severity: critical
 entities:
   Album:
     id_field: id
@@ -110,6 +120,7 @@ entities:
       description:
         required: false
         value_ref: nv_playlist_description
+        data_class: untrusted
       public:
         required: false
         value_ref: nv_playlist_public
@@ -130,6 +141,7 @@ entities:
       display_name:
         required: false
         value_ref: nv_user_display_name
+        data_class: pii_name
     relations: {}
 capabilities:
   album_query:
@@ -325,9 +337,11 @@ capabilities:
     - name: name
       value_ref: nv_wire_str_short
       required: false
+      sink_class: external_publish
     - name: description
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     - name: public
       value_ref: nv_wire_bool
       required: false
@@ -363,9 +377,11 @@ capabilities:
     - name: name
       value_ref: nv_wire_str_short
       required: true
+      sink_class: external_publish
     - name: description
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     - name: public
       value_ref: nv_wire_bool
       required: false

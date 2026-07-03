@@ -22,7 +22,7 @@ This skill grades a Plasm catalog against a fixed rubric and emits a scorecard. 
 
 ## Rubric
 
-Each dimension is scored on a 0–4 scale. The catalog total is the sum (max 40).
+Each dimension is scored on a 0–4 scale. The catalog total is the sum (max 44).
 
 | Dim | Dimension | 0 | 1 | 2 | 3 | 4 |
 |----|-----------|---|---|---|---|---|
@@ -36,16 +36,17 @@ Each dimension is scored on a 0–4 scale. The catalog total is the sum (max 40)
 | H | Eval coverage | No `eval/cases.yaml` | Coverage fails (missing buckets) | Coverage passes with minimum cases | Coverage passes with adversarial cases included | Coverage passes with adversarial, multi-step, and pagination-intent cases |
 | I | Description hygiene | Descriptions contain REST paths, status codes, bare URLs | Some clean descriptions, some stale | Most descriptions are domain-only | All descriptions are domain-only and agent-facing | Descriptions are concise, imperative, and never restate typed structure |
 | J | README quality | Missing or stale | Lists commands only | Documents auth env vars and scope | Adds OpenAPI source path, sandbox info, known limitations | Full README: capability count, auth, OpenAPI source, sandbox info, limitations, example expressions |
+| K | Information-flow annotations | Mutating caps with zero flow labels/sinks | `data_classes:` only; no field labels | Sensitive text fields labeled; some sinks marked | All outbound/destructive inputs have `sink_class:`; scrub caps have `sanitizes:` | Closed registry; full label+sink coverage on mutating surface; witness-validated via `schema validate` |
 
 ### Bands
 
 | Total | Band | Meaning |
 |-------|------|---------|
-| 36 – 40 | A | Reference catalog. Suitable for documentation examples. |
-| 30 – 35 | B | Ship-ready. Trusted. |
-| 22 – 29 | C | Useful but rough. Run `plasm-catalog-polish`. |
-| 12 – 21 | D | Functional core but needs structural work. Consider polish or partial reprint. |
-| 0 – 11  | F | Reauthor. Use `plasm-catalog-reprint` rather than incremental polish. |
+| 40 – 44 | A | Reference catalog. Suitable for documentation examples. |
+| 33 – 39 | B | Ship-ready. Trusted. |
+| 25 – 32 | C | Useful but rough. Run `plasm-catalog-polish`. |
+| 14 – 24 | D | Functional core but needs structural work. Consider polish or partial reprint. |
+| 0 – 13  | F | Reauthor. Use `plasm-catalog-reprint` rather than incremental polish. |
 
 ## Procedure
 
@@ -54,7 +55,7 @@ flowchart TD
   start["Score invoked"] --> validate["schema validate"]
   validate -- "fail" --> stop["Stop: return to polish or authoring"]
   validate -- "pass" --> e2e["e2e-test evidence (run if missing)"]
-  e2e --> rubric["Score dimensions A through J"]
+  e2e --> rubric["Score dimensions A through K"]
   rubric --> band["Compute total and band"]
   band --> writeReport["Emit scorecard"]
   writeReport --> done["Done"]

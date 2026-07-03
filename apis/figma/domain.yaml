@@ -1,5 +1,15 @@
-version: 2
+version: 3
 http_backend: https://api.figma.com
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  external_publish:
+    description: Public-visible comment content change within the file.
+    severity: critical
 entities:
   User:
     id_field: id
@@ -17,6 +27,7 @@ entities:
       email:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_email
   Team:
     id_field: id
     implicit_request_identity: true
@@ -200,6 +211,7 @@ entities:
       message:
         required: true
         value_ref: nv_comment_message
+        data_class: untrusted
       order_id:
         required: false
         value_ref: nv_wire_str_short
@@ -335,7 +347,11 @@ capabilities:
       input_type:
         type: object
         additional_fields: true
-        fields: []
+        fields:
+        - name: message
+          value_ref: nv_comment_message
+          required: true
+          sink_class: external_publish
     provides:
     - id
     - file_key

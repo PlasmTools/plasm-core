@@ -1,5 +1,18 @@
-version: 2
+version: 3
 http_backend: https://api.linkedin.com
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  pii_name:
+    description: Person name treated as personally identifiable.
+    severity: sensitive
+  external_publish:
+    description: Public-visible feed post content change.
+    severity: critical
 entities:
   OpenIdProfile:
     id_field: sub
@@ -11,12 +24,15 @@ entities:
       name:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_name
       given_name:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_name
       family_name:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_name
       picture:
         required: false
         value_ref: nv_wire_str_short
@@ -26,6 +42,7 @@ entities:
       email:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_email
       email_verified:
         required: false
         value_ref: nv_open_id_profile_email_verified
@@ -40,9 +57,11 @@ entities:
       localizedFirstName:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_name
       localizedLastName:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_name
       localizedHeadline:
         required: false
         value_ref: nv_wire_str_short
@@ -92,6 +111,7 @@ entities:
       shareCommentaryText:
         required: false
         value_ref: nv_wire_str_short
+        data_class: untrusted
       shareMediaCategory:
         required: false
         value_ref: nv_wire_str_short
@@ -216,6 +236,7 @@ capabilities:
     - name: shareCommentary
       value_ref: nv_wire_str_short
       required: true
+      sink_class: external_publish
     - name: visibility
       value_ref: nv_ugc_post_create_visibility
       required: true

@@ -1,5 +1,21 @@
-version: 3
+version: 4
 http_backend: https://www.googleapis.com/drive/v3
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  pii_name:
+    description: Person name treated as personally identifiable.
+    severity: sensitive
+  external_publish:
+    description: Collaborator-visible comment content change.
+    severity: critical
+  permission_grant:
+    description: Share, collaborator invite, or role elevation.
+    severity: critical
 entities:
   File:
     id_field: id
@@ -78,9 +94,11 @@ entities:
       owners:
         required: false
         value_ref: nv_file_owners
+        data_class: pii_email
       lastModifyingUser:
         required: false
         value_ref: nv_file_last_modifying_user
+        data_class: pii_email
       labelInfo:
         required: false
         value_ref: nv_file_label_info
@@ -253,12 +271,14 @@ entities:
       emailAddress:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_email
       domain:
         required: false
         value_ref: nv_wire_str_short
       displayName:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_name
       photoLink:
         required: false
         value_ref: nv_wire_str_short
@@ -282,6 +302,7 @@ entities:
       content:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       htmlContent:
         required: false
         value_ref: nv_wire_str_short
@@ -345,6 +366,7 @@ entities:
       content:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       htmlContent:
         required: false
         value_ref: nv_wire_str_short
@@ -605,6 +627,7 @@ capabilities:
     - name: input
       value_ref: nv_permissions_create_input
       required: false
+      sink_class: permission_grant
   permissions_update:
     kind: update
     entity: DrivePermission
@@ -668,6 +691,7 @@ capabilities:
     - name: input
       value_ref: nv_comments_create_input
       required: false
+      sink_class: external_publish
   comments_update:
     kind: update
     entity: DriveComment
@@ -681,6 +705,7 @@ capabilities:
     - name: content
       value_ref: nv_comments_update_content
       required: false
+      sink_class: external_publish
     - name: anchor
       value_ref: nv_comments_update_anchor
       required: false
@@ -728,6 +753,7 @@ capabilities:
     - name: input
       value_ref: nv_replies_create_input
       required: false
+      sink_class: external_publish
   replies_update:
     kind: update
     entity: DriveReply
@@ -741,6 +767,7 @@ capabilities:
     - name: content
       value_ref: nv_replies_update_content
       required: false
+      sink_class: external_publish
     - name: action
       value_ref: nv_replies_update_action
       required: false

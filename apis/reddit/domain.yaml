@@ -1,5 +1,12 @@
-version: 3
+version: 4
 http_backend: https://oauth.reddit.com
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  external_publish:
+    description: Public-visible post or comment content change.
+    severity: critical
 entities:
   Account:
     id_field: name
@@ -47,9 +54,11 @@ entities:
       public_description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       subscribers:
         required: false
         value_ref: nv_wire_int
@@ -88,6 +97,7 @@ entities:
       title:
         required: false
         value_ref: nv_wire_str_short
+        data_class: untrusted
       author:
         required: false
         value_ref: nv_post_author
@@ -115,6 +125,7 @@ entities:
       selftext:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       is_self:
         required: false
         value_ref: nv_wire_bool
@@ -167,6 +178,7 @@ entities:
       body:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       author:
         required: false
         value_ref: nv_comment_author
@@ -331,6 +343,7 @@ capabilities:
     - name: text
       value_ref: nv_wire_str_markdown
       required: true
+      sink_class: external_publish
     output:
       type: side_effect
       description: Inserts a new public comment under the post identified by this fullname.

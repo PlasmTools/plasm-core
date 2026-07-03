@@ -1,5 +1,24 @@
-version: 3
+version: 4
 http_backend: https://discord.com/api/v10
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_name:
+    description: Person name treated as personally identifiable.
+    severity: sensitive
+  credentials:
+    description: Secret token or credential material.
+    severity: critical
+  external_send:
+    description: Outbound message body delivered outside the tenant boundary.
+    severity: critical
+  permission_grant:
+    description: Share, collaborator invite, or role elevation.
+    severity: critical
+  destructive_delete:
+    description: Irreversible removal of a record or bulk data.
+    severity: critical
 entities:
   Guild:
     id_field: id
@@ -14,6 +33,7 @@ entities:
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       owner_id:
         required: false
         value_ref: nv_guild_owner_id
@@ -156,6 +176,7 @@ entities:
       topic:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       parent_id:
         required: false
         value_ref: nv_channel_parent_id
@@ -203,6 +224,7 @@ entities:
       content:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       timestamp:
         required: false
         value_ref: nv_wire_date_rfc3339
@@ -225,12 +247,14 @@ entities:
       username:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_name
       discriminator:
         required: false
         value_ref: nv_wire_str_short
       global_name:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_name
       avatar:
         required: false
         value_ref: nv_wire_str_short
@@ -254,6 +278,7 @@ entities:
       nick:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_name
       joined_at:
         required: false
         value_ref: nv_wire_date_rfc3339
@@ -315,6 +340,7 @@ entities:
       reason:
         required: false
         value_ref: nv_wire_str_short
+        data_class: untrusted
     relations: {}
   ChannelPermissionOverwrite:
     id_field: id
@@ -346,6 +372,7 @@ entities:
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       icon:
         required: false
         value_ref: nv_wire_str_short
@@ -399,6 +426,7 @@ entities:
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       type:
         required: false
         value_ref: nv_wire_int
@@ -429,6 +457,7 @@ entities:
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       type:
         required: false
         value_ref: nv_wire_int
@@ -487,6 +516,7 @@ entities:
       token:
         required: false
         value_ref: nv_wire_str_short
+        data_class: credentials
       url:
         required: false
         value_ref: nv_wire_str_short
@@ -579,6 +609,7 @@ entities:
       description:
         required: false
         value_ref: nv_wire_str_short
+        data_class: untrusted
       tags:
         required: false
         value_ref: nv_wire_str_short
@@ -625,6 +656,7 @@ entities:
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       scheduled_start_time:
         required: false
         value_ref: nv_wire_date_rfc3339
@@ -674,6 +706,7 @@ entities:
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       usage_count:
         required: false
         value_ref: nv_wire_int
@@ -704,6 +737,7 @@ entities:
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       usage_count:
         required: false
         value_ref: nv_wire_int
@@ -771,6 +805,7 @@ entities:
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
     relations: {}
   GuildWidget:
     id_field: id
@@ -1008,7 +1043,11 @@ capabilities:
       input_type:
         type: object
         additional_fields: true
-        fields: []
+        fields:
+        - name: content
+          value_ref: nv_message_create_content
+          required: false
+          sink_class: external_send
   message_update:
     kind: update
     entity: Message
@@ -1021,7 +1060,11 @@ capabilities:
       input_type:
         type: object
         additional_fields: true
-        fields: []
+        fields:
+        - name: content
+          value_ref: nv_message_update_content
+          required: false
+          sink_class: external_send
   message_delete:
     kind: delete
     entity: Message
@@ -1042,7 +1085,11 @@ capabilities:
       input_type:
         type: object
         additional_fields: true
-        fields: []
+        fields:
+        - name: messages
+          value_ref: nv_message_bulk_delete_messages
+          required: true
+          sink_class: destructive_delete
     output:
       type: side_effect
       description: Deletes up to many messages in bulk for the channel.
@@ -1076,6 +1123,7 @@ capabilities:
     - name: content
       value_ref: nv_message_reply_content
       required: true
+      sink_class: external_send
     - name: tts
       value_ref: nv_message_reply_tts
       required: false
@@ -1203,6 +1251,7 @@ capabilities:
     - name: role_id
       value_ref: nv_guild_member_role_add_role_id
       required: true
+      sink_class: permission_grant
     output:
       type: side_effect
       description: Assigns a role to a guild member.
@@ -2531,6 +2580,10 @@ values:
   nv_message_create_channel_id:
     type: entity_ref
     target: Channel
+  nv_message_create_content:
+    type: string
+    string_semantics: markdown
+    description: Message body text.
   nv_message_crosspost_channel_id:
     type: entity_ref
     target: Channel
@@ -2562,6 +2615,10 @@ values:
   nv_message_update_channel_id:
     type: entity_ref
     target: Channel
+  nv_message_update_content:
+    type: string
+    string_semantics: markdown
+    description: Edited message body text.
   nv_public_guild_template_creator_id:
     type: entity_ref
     target: User
@@ -2656,3 +2713,8 @@ values:
   nv_wire_str_short:
     type: string
     string_semantics: short
+  nv_message_bulk_delete_messages:
+    type: array
+    items:
+      value_ref: nv_wire_str_short
+    description: Message ids to delete in bulk (2-100).

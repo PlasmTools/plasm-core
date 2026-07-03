@@ -70,7 +70,7 @@ The CGS is the semantic domain model. It declares what entities exist, how they 
 
 - Every `apis/<api>/domain.yaml` must declare top-level `version: <n>` where `n > 0`.
 - Version defaulting is forbidden; omitted/zero versions are invalid for authoring and plugin packaging.
-- Increment `version` whenever domain semantics change (entities, fields, relations, capability signatures, parameter typing/roles, auth contract, output/provides behavior).
+- Increment `version` whenever domain semantics change (entities, fields, relations, capability signatures, parameter typing/roles, auth contract, output/provides behavior, **information-flow annotations**).
 - Keep version unchanged only for non-semantic text edits (comments/prose) that do not affect runtime behavior, prompts, compile/decode, or dispatch.
 
 ### Value domains (`values:`) and `value_ref`
@@ -635,6 +635,142 @@ capabilities:
 ```
 
 **Validation:** CGS `validate` rejects (a) `action` with neither `provides` nor `output`, and (b) `side_effect` with missing or whitespace-only `description`.
+
+### Information-flow annotations (Guardians / plan flow typing)
+
+Plasm catalogs carry **static information-flow facts** that the host uses at **plan dry-run** (`plasm` → `verify_plan_flow`) before minting a `pcN` commit. This is the catalog side of [Guardians-style](https://cacm.acm.org/research/guardians-of-the-agents-formal-verification-of-ai-workflows/) **generate → verify → execute** — see monorepo [guardians-alignment.md](../../../docs/guardians-alignment.md) and [plan-flow-typing.md](../../../docs/plan-flow-typing.md).
+
+**Catalog vs policy:** `domain.yaml` declares **what data exists** and **which inputs are sinks**; tenant **`FlowPolicy`** (pinned on `ExecuteSession` at session open) declares **which label→sink flows are forbidden** and default dispositions for remote mutations. Do **not** embed tenant policy in catalogs.
+
+| Guardians `ToolSpec` | CGS authoring surface | Where |
+|----------------------|----------------------|-------|
+| `source_labels` | Field `data_class:` | `entities.*.fields` |
+| Derived read outputs | *(computed)* | Union of `data_class` over `effective_provides(cap)` fields |
+| `sink_params` | Param `sink_class:` | `input_schema` object fields **or** capability `parameters:` rows (mutating caps) |
+| `sanitizers` | `sanitizes:` | Capability declaration |
+
+**Closed registry:** every `data_class`, every `sanitizes` entry, and every `sink_class` value must be declared under top-level **`data_classes:`**. `CGS::validate` rejects unknown keys (`UnknownDataClass`). **Sink class names use the same registry** as data labels — register sink roles (e.g. `external_send`) as `data_classes` entries with a clear `description`.
+
+```yaml
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  external_send:
+    description: Outbound message body delivered outside the tenant boundary.
+    severity: critical
+  destructive_delete:
+    description: Irreversible resource removal.
+    severity: critical
+
+entities:
+  Comment:
+    fields:
+      body:
+        value_ref: nv_comment_body
+        data_class: untrusted
+      author_email:
+        value_ref: nv_email
+        data_class: pii_email
+
+capabilities:
+  comment_reply:
+    kind: action
+    entity: Comment
+    input_schema:
+      input_type:
+        type: object
+        fields:
+          - name: body
+            value_ref: nv_comment_body
+            required: true
+            sink_class: external_send
+    output:
+      type: side_effect
+      description: Posts a reply visible outside the workspace.
+
+  redact_pii:
+    kind: action
+    entity: Comment
+    sanitizes:
+      - pii_email
+    output:
+      type: side_effect
+      description: Strips PII from comment text before downstream use.
+```
+
+#### `data_classes:` registry
+
+Each key is a stable `snake_case` **`DataClassName`**. Optional fields:
+
+| Key | Purpose |
+|-----|---------|
+| `description` | Human gloss for authors / Flow tab (not teaching-table copy). |
+| `severity` | `info` (default), `sensitive`, `untrusted`, `critical` — UI ordering and future policy defaults. |
+
+Prefer a **small shared vocabulary** per catalog (and across federation entries when semantics align). Reuse canonical names where meaning matches: `untrusted`, `pii`, `credentials`, `internal_only`, `external_send`, `external_publish`, `destructive_delete`, `permission_grant`, `payment_transfer`.
+
+#### Field `data_class:` (source labels)
+
+Attach on **entity fields** that can carry taint into plans:
+
+- User-generated text: `body`, `description`, `comment`, `message`, `content`, `notes`, `summary` (when sourced from external users).
+- PII: email, phone, legal name, address, government ids.
+- Secrets: tokens, API keys, passwords — usually `severity: critical`.
+- Attachments / blobs that may embed sensitive content: label the field; use `blob` typing separately.
+
+**Do not** label stable identifiers (`id`, `url`, `created_at`) unless they embed sensitive payloads. **Do not** label filter/query parameters on read capabilities — flow analysis derives read outputs from **entity field** labels on `effective_provides`, not from `parameters:`.
+
+When a Get/Query capability returns a **disjoint projection**, ensure `provides:` lists the labeled fields you intend to expose (defaults may include unlabeled fields and dilute precision).
+
+#### Input `sink_class:` (exfiltration / destructive sinks)
+
+Declare on **`input_schema`** object fields **or** top-level capability **`parameters:`** rows for **mutating** capabilities (`create`, `update`, `delete`, `action`) where the parameter can **export** or **destroy** data. Many catalogs model send/post bodies as `parameters:` (e.g. Slack `text`, Gmail `plainBody`) rather than a separate `input_schema` block — use whichever shape the capability already uses.
+
+| Sink class (register in `data_classes:`) | Typical capabilities |
+|------------------------------------------|----------------------|
+| `external_send` | Email, chat, SMS, webhook POST with user-visible body |
+| `external_publish` | Public issue/PR comment, blog, social post |
+| `destructive_delete` | Hard delete, purge, revoke-all |
+| `permission_grant` | Share link, add collaborator, elevate role |
+| `payment_transfer` | Charge, payout, subscription change |
+
+`sink_class` is **orthogonal** to `ParameterRole` — it does not replace `role: filter` / `scope` on queries.
+
+Nested `input_schema` objects and union variant fields may each carry `sink_class`; capability `parameters:` rows may carry `sink_class` directly. `CGS::capability_sink_params` collects them recursively.
+
+#### Capability `sanitizes:` (taint breakers)
+
+List `data_classes` keys this capability **declares** it clears before its output is observed. The flow pass removes listed labels from **read-surface output facts** for that capability. Policy may also recognize sanitizers via `FlowPolicy.sanitizers` (tenant); catalog `sanitizes:` is the portable declaration.
+
+Use for redact/scrub/sanitize/draft-to-approved capabilities where the domain semantics genuinely remove or neutralize a class.
+
+#### Derived output labels (no extra YAML)
+
+`CGS::capability_output_data_classes(cap)` = union of field `data_class` over **`effective_provides(cap)`**. Authors do not duplicate output labels on capabilities.
+
+**Conservative compute:** `Render` (Minijinja row templates) **row-joins all upstream column labels** — treat any labeled field reachable in the template as flowing into `content`. Prefer explicit `provides:` on preceding reads when teaching projection.
+
+#### Federation
+
+Each registry `entry_id` loads its own `data_classes` map (not merged across catalogs). Provenance in violations uses **`QualifiedCapabilityKey { entry_id, entity, capability }`**. When federating GitHub + Slack in one session, label both catalogs consistently but declare classes per `apis/<name>/domain.yaml`.
+
+#### Authoring checklist
+
+After semantic modeling, run a **flow annotation pass**:
+
+1. Register `data_classes:` for every label and sink role you will reference.
+2. Label **untrusted** and **PII** fields on entities agents read.
+3. Mark **send/publish/delete/grant/pay** body params with `sink_class`.
+4. Declare **`sanitizes:`** on scrub/redact capabilities.
+5. Bump `version:` when adding or changing flow annotations (prompt/validation surface).
+6. Validate: `cargo run -p plasm-cli --bin plasm-cgs -- schema validate apis/<api>` (split dir).
+7. Witness fixture: `plasm-oss/fixtures/schemas/flow_matrix/` (matrix-only, not production `apis/`).
+
+**Inactive policy default:** catalogs with **no** `data_classes` anywhere behave permissively at flow verify time (legacy compat). Once you start labeling, assume hosted tenants may pin **`FlowPolicy.forbidden`** rules that deny labeled flows to declared sinks.
 
 **`query` vs `search`**: Use `query` when the API filters by field equality/range predicates. Use `search` when the primary input is a free-text relevance query and results are ranked, not field-filtered. Search capabilities are excluded from reverse-traversal FK lookups.
 

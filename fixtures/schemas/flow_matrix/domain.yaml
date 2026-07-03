@@ -5,8 +5,10 @@ http_backend: http://localhost:1080
 data_classes:
   untrusted:
     description: Untrusted user-provided text.
+    severity: untrusted
   outbound_body:
     description: Outbound sink for remote message bodies.
+    severity: critical
 entities:
   Message:
     id_field: id

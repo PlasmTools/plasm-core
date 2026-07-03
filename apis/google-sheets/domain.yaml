@@ -1,5 +1,12 @@
-version: 2
+version: 3
 http_backend: https://sheets.googleapis.com
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  external_publish:
+    description: Collaborator-visible spreadsheet content change.
+    severity: critical
 entities:
   Spreadsheet:
     id_field: spreadsheetId
@@ -91,6 +98,7 @@ entities:
       values:
         required: false
         value_ref: nv_value_range_values
+        data_class: untrusted
     relations: {}
   DeveloperMetadata:
     id_field: metadataId
@@ -162,6 +170,7 @@ capabilities:
     - name: input
       value_ref: nv_spreadsheet_batch_update_input
       required: false
+      sink_class: external_publish
     output:
       type: side_effect
       description: Applies the batch update requests to the spreadsheet when the API call succeeds.

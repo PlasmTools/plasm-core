@@ -1,5 +1,12 @@
-version: 2
+version: 3
 http_backend: https://gitlab.com
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  external_publish:
+    description: Public-visible issue, merge request, or note content change.
+    severity: critical
 entities:
   Project:
     id_field: id
@@ -78,9 +85,11 @@ entities:
       title:
         required: true
         value_ref: nv_wire_str_short
+        data_class: untrusted
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       state:
         required: false
         value_ref: nv_issue_state
@@ -136,9 +145,11 @@ entities:
       title:
         required: true
         value_ref: nv_wire_str_short
+        data_class: untrusted
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       state:
         required: false
         value_ref: nv_wire_str_short
@@ -201,6 +212,7 @@ entities:
       body:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       created_at:
         required: false
         value_ref: nv_wire_date_rfc3339
@@ -230,6 +242,7 @@ entities:
       body:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       created_at:
         required: false
         value_ref: nv_wire_date_rfc3339
@@ -494,6 +507,7 @@ capabilities:
     - name: description
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     - name: visibility
       value_ref: nv_wire_sel_8807b75f968505fb
       required: false
@@ -523,6 +537,7 @@ capabilities:
     - name: description
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     - name: default_branch
       value_ref: nv_wire_str_short
       required: false
@@ -553,9 +568,11 @@ capabilities:
     - name: title
       value_ref: nv_wire_str_short
       required: true
+      sink_class: external_publish
     - name: description
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     - name: confidential
       value_ref: nv_wire_bool
       required: false
@@ -579,9 +596,11 @@ capabilities:
     - name: title
       value_ref: nv_wire_str_short
       required: false
+      sink_class: external_publish
     - name: description
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     - name: state_event
       value_ref: nv_wire_sel_a821a0002dfcca16
       required: false
@@ -618,6 +637,7 @@ capabilities:
     - name: title
       value_ref: nv_wire_str_short
       required: true
+      sink_class: external_publish
     - name: source_branch
       value_ref: nv_wire_str_short
       required: true
@@ -627,6 +647,7 @@ capabilities:
     - name: description
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     - name: draft
       value_ref: nv_wire_bool
       required: false
@@ -647,9 +668,11 @@ capabilities:
     - name: title
       value_ref: nv_wire_str_short
       required: false
+      sink_class: external_publish
     - name: description
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     - name: target_branch
       value_ref: nv_wire_str_short
       required: false
@@ -777,6 +800,7 @@ capabilities:
     - name: body
       value_ref: nv_wire_str_markdown
       required: true
+      sink_class: external_publish
     - name: confidential
       value_ref: nv_wire_bool
       required: false
@@ -788,6 +812,7 @@ capabilities:
     - name: body
       value_ref: nv_wire_str_markdown
       required: true
+      sink_class: external_publish
   issue_note_delete:
     kind: delete
     entity: IssueNote
@@ -826,6 +851,7 @@ capabilities:
     - name: body
       value_ref: nv_wire_str_markdown
       required: true
+      sink_class: external_publish
   merge_request_note_update:
     kind: update
     entity: MergeRequestNote
@@ -834,6 +860,7 @@ capabilities:
     - name: body
       value_ref: nv_wire_str_markdown
       required: true
+      sink_class: external_publish
   merge_request_note_delete:
     kind: delete
     entity: MergeRequestNote

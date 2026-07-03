@@ -1,4 +1,14 @@
 http_backend: https://api.notion.com
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  pii_name:
+    description: Person name treated as personally identifiable.
+    severity: sensitive
 
 schema_overlay:
   source:
@@ -89,6 +99,7 @@ entities:
         agent_presentation: reference_only
         required: false
         value_ref: nv_page_markdown
+        data_class: untrusted
       truncated:
         required: false
         value_ref: nv_page_truncated
@@ -157,6 +168,7 @@ entities:
       name:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_name
       type:
         required: false
         value_ref: nv_user_type
@@ -166,6 +178,7 @@ entities:
       email:
         required: false
         value_ref: nv_user_email
+        data_class: pii_email
   Comment:
     id_field: id
     description: A comment on a Notion page or block, belonging to a discussion thread.
@@ -343,7 +356,7 @@ capabilities:
       value_ref: nv_wire_int
       required: false
       role: response_control
-version: 2
+version: 3
 auth:
   scheme: bearer_token
   env: NOTION_API_TOKEN

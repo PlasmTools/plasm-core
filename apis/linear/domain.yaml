@@ -1,5 +1,12 @@
-version: 10
+version: 11
 http_backend: https://api.linear.app
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  external_publish:
+    description: Public-visible issue or comment content within the workspace.
+    severity: critical
 entities:
   Team:
     id_field: key
@@ -104,6 +111,7 @@ entities:
       body:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
     relations:
       issue:
         target: Issue
@@ -122,9 +130,11 @@ entities:
       title:
         required: false
         value_ref: nv_wire_str_short
+        data_class: untrusted
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       priority:
         required: false
         value_ref: nv_issue_priority
@@ -670,9 +680,11 @@ capabilities:
     - name: title
       value_ref: nv_wire_str_short
       required: true
+      sink_class: external_publish
     - name: description
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     - name: state_name
       value_ref: nv_state_name
       required: false
@@ -740,9 +752,11 @@ capabilities:
     - name: title
       value_ref: nv_wire_str_short
       required: false
+      sink_class: external_publish
     - name: description
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     - name: state_name
       value_ref: nv_state_name
       required: false
@@ -829,6 +843,7 @@ capabilities:
     - name: body
       value_ref: nv_wire_str_markdown
       required: true
+      sink_class: external_publish
   project_create:
     kind: create
     entity: Project

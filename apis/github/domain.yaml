@@ -1,5 +1,18 @@
-version: 28
+version: 29
 http_backend: https://api.github.com
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  pii_name:
+    description: Person name treated as personally identifiable.
+    severity: sensitive
+  external_publish:
+    description: Public-visible post, comment, or repository content change.
+    severity: critical
 entities:
   Repository:
     id_field: id
@@ -150,9 +163,11 @@ entities:
       title:
         required: true
         value_ref: nv_wire_str_short
+        data_class: untrusted
       body:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       state:
         required: true
         value_ref: nv_wire_sel_668f8e38fed376e3
@@ -298,9 +313,11 @@ entities:
       title:
         required: true
         value_ref: nv_wire_str_short
+        data_class: untrusted
       body:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       state:
         required: true
         value_ref: nv_wire_sel_668f8e38fed376e3
@@ -567,6 +584,7 @@ entities:
       body:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       commit_id:
         required: false
         value_ref: nv_wire_str_short
@@ -618,6 +636,7 @@ entities:
       name:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_name
       company:
         required: false
         value_ref: nv_wire_str_short
@@ -630,9 +649,11 @@ entities:
       email:
         required: false
         value_ref: nv_wire_str_short
+        data_class: pii_email
       bio:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       public_repos:
         required: false
         value_ref: nv_wire_int
@@ -788,6 +809,7 @@ entities:
       body:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       created_at:
         required: false
         value_ref: nv_github_created_at
@@ -930,6 +952,7 @@ entities:
       body:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       path:
         required: false
         value_ref: nv_wire_str_short
@@ -2041,6 +2064,7 @@ capabilities:
     - name: body
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     - name: commit_id
       value_ref: nv_pr_review_create_commit_id
       required: false
@@ -2058,6 +2082,7 @@ capabilities:
     - name: body
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     output:
       type: side_effect
       description: Submit pending PR review with chosen decision.
@@ -2100,6 +2125,7 @@ capabilities:
     - name: body
       value_ref: nv_wire_str_markdown
       required: true
+      sink_class: external_publish
     - name: commit_id
       value_ref: nv_pr_review_comment_create_commit_id
       required: false
@@ -2956,9 +2982,11 @@ capabilities:
     - name: title
       value_ref: nv_wire_str_short
       required: true
+      sink_class: external_publish
     - name: body
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     - name: labels
       value_ref: nv_issue_create_labels
       required: false
@@ -2997,9 +3025,11 @@ capabilities:
     - name: title
       value_ref: nv_wire_str_short
       required: false
+      sink_class: external_publish
     - name: body
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     - name: state
       value_ref: nv_wire_sel_668f8e38fed376e3
       required: false
@@ -3132,6 +3162,7 @@ capabilities:
     - name: body
       value_ref: nv_wire_str_markdown
       required: true
+      sink_class: external_publish
   issue_comment_update:
     kind: update
     entity: IssueComment
@@ -3151,6 +3182,7 @@ capabilities:
     - name: body
       value_ref: nv_wire_str_markdown
       required: true
+      sink_class: external_publish
   issue_comment_delete:
     kind: delete
     entity: IssueComment
@@ -3183,9 +3215,11 @@ capabilities:
     - name: title
       value_ref: nv_wire_str_short
       required: false
+      sink_class: external_publish
     - name: body
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     - name: state
       value_ref: nv_wire_sel_668f8e38fed376e3
       required: false
@@ -3248,6 +3282,7 @@ capabilities:
     - name: title
       value_ref: nv_wire_str_short
       required: true
+      sink_class: external_publish
     - name: head
       value_ref: nv_pr_create_head
       required: true
@@ -3257,6 +3292,7 @@ capabilities:
     - name: body
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
     - name: draft
       value_ref: nv_wire_bool
       required: false
@@ -3339,6 +3375,7 @@ capabilities:
     - name: content
       value_ref: nv_repo_content_put_content
       required: true
+      sink_class: external_publish
     - name: branch
       value_ref: nv_github_branch_name
       required: false
@@ -3364,6 +3401,7 @@ capabilities:
     - name: content
       value_ref: nv_repo_content_put_content
       required: true
+      sink_class: external_publish
     - name: branch
       value_ref: nv_github_branch_name
       required: false

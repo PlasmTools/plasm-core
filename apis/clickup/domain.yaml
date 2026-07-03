@@ -1,5 +1,18 @@
-version: 4
+version: 5
 http_backend: https://api.clickup.com/api
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  pii_name:
+    description: Person name treated as personally identifiable.
+    severity: sensitive
+  external_publish:
+    description: Public-visible task or comment content change within the workspace.
+    severity: critical
 
 schema_overlay:
   source:
@@ -225,6 +238,7 @@ entities:
       description:
         required: false
         value_ref: nv_task_description
+        data_class: untrusted
       status:
         required: false
         value_ref: nv_task_status
@@ -258,6 +272,7 @@ entities:
       markdown_description:
         required: false
         value_ref: nv_task_markdown_description
+        data_class: untrusted
     relations:
       comments:
         description: Comments on this task.
@@ -296,9 +311,11 @@ entities:
       username:
         required: false
         value_ref: nv_user_username
+        data_class: pii_name
       email:
         required: false
         value_ref: nv_user_email
+        data_class: pii_email
       color:
         required: false
         value_ref: nv_user_color
@@ -397,6 +414,7 @@ entities:
       comment_text:
         required: false
         value_ref: nv_comment_comment_text
+        data_class: untrusted
       date:
         required: false
         value_ref: nv_comment_date
@@ -437,9 +455,11 @@ entities:
       username:
         required: false
         value_ref: nv_member_username
+        data_class: pii_name
       email:
         required: false
         value_ref: nv_member_email
+        data_class: pii_email
       color:
         required: false
         value_ref: nv_wire_str_short
@@ -966,6 +986,7 @@ capabilities:
     - name: description
       value_ref: nv_task_update_description
       required: false
+      sink_class: external_publish
     - name: status
       value_ref: nv_task_update_status
       required: false
@@ -998,6 +1019,7 @@ capabilities:
     - name: description
       value_ref: nv_list_create_task_description
       required: false
+      sink_class: external_publish
     - name: status
       value_ref: nv_list_create_task_status
       required: false
@@ -1019,6 +1041,7 @@ capabilities:
     - name: comment_text
       value_ref: nv_wire_str_short
       required: true
+      sink_class: external_publish
   task_create_attachment:
     description: Upload an attachment to a task.
     kind: action
@@ -1166,6 +1189,7 @@ capabilities:
     - name: comment_text
       value_ref: nv_wire_str_short
       required: true
+      sink_class: external_publish
   goal_query:
     description: List goals in a workspace.
     kind: query
@@ -1198,6 +1222,7 @@ capabilities:
     - name: description
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_publish
   goal_delete:
     description: Delete a goal.
     kind: delete
@@ -1260,6 +1285,7 @@ capabilities:
     - name: comment_text
       value_ref: nv_wire_str_short
       required: false
+      sink_class: external_publish
   comment_delete:
     description: Delete a comment.
     kind: delete

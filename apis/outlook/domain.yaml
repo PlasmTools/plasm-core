@@ -1,5 +1,18 @@
-version: 7
+version: 8
 http_backend: https://graph.microsoft.com
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  pii_name:
+    description: Person name treated as personally identifiable.
+    severity: sensitive
+  external_send:
+    description: Outbound email body delivered outside the mailbox boundary.
+    severity: critical
 entities:
   MailFolder:
     id_field: id
@@ -56,9 +69,11 @@ entities:
       subject:
         required: false
         value_ref: nv_message_subject
+        data_class: untrusted
       bodyPreview:
         required: false
         value_ref: nv_message_body_preview
+        data_class: untrusted
       bodyContentType:
         required: false
         path: body.contentType
@@ -67,6 +82,7 @@ entities:
         required: false
         path: body.content
         value_ref: nv_message_body_content
+        data_class: untrusted
       internetMessageId:
         required: false
         value_ref: nv_message_internet_message_id
@@ -80,10 +96,12 @@ entities:
         required: false
         path: from.emailAddress.address
         value_ref: nv_message_from_address
+        data_class: pii_email
       fromName:
         required: false
         path: from.emailAddress.name
         value_ref: nv_message_from_name
+        data_class: pii_name
       receivedDateTime:
         required: false
         value_ref: nv_wire_date_rfc3339
@@ -383,6 +401,7 @@ capabilities:
     - name: bodyContent
       value_ref: nv_message_create_body_content
       required: true
+      sink_class: external_send
     - name: bodyContentType
       value_ref: nv_message_create_body_content_type
       required: false

@@ -1,5 +1,12 @@
-version: 2
+version: 3
 http_backend: https://docs.googleapis.com
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  external_publish:
+    description: Collaborator-visible document content change.
+    severity: critical
 entities:
   Document:
     id_field: documentId
@@ -18,6 +25,7 @@ entities:
       body:
         required: false
         value_ref: nv_document_body
+        data_class: untrusted
       headers:
         required: false
         value_ref: nv_document_headers
@@ -78,6 +86,7 @@ capabilities:
     - name: input
       value_ref: nv_documents_create_input
       required: false
+      sink_class: external_publish
   documents_batchUpdate:
     kind: action
     entity: Document
@@ -86,6 +95,7 @@ capabilities:
     - name: input
       value_ref: nv_documents_batch_update_input
       required: false
+      sink_class: external_publish
     provides:
     - documentId
     - replies

@@ -1,5 +1,15 @@
-version: 5
+version: 6
 http_backend: https://www.googleapis.com/calendar/v3
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  pii_name:
+    description: Person name treated as personally identifiable.
+    severity: sensitive
 entities:
   Calendar:
     id_field: id
@@ -14,6 +24,7 @@ entities:
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       timeZone:
         required: false
         value_ref: nv_wire_str_short
@@ -70,6 +81,7 @@ entities:
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       location:
         required: false
         value_ref: nv_wire_str_short
@@ -102,14 +114,17 @@ entities:
         required: false
         path: organizer.email
         value_ref: nv_wire_str_short
+        data_class: pii_email
       organizer_name:
         required: false
         path: organizer.displayName
         value_ref: nv_wire_str_short
+        data_class: pii_name
       creator_email:
         required: false
         path: creator.email
         value_ref: nv_wire_str_short
+        data_class: pii_email
       recurringEventId:
         required: false
         value_ref: nv_wire_str_short
@@ -137,6 +152,7 @@ entities:
       attendees:
         required: false
         value_ref: nv_event_attendees
+        data_class: pii_email
       recurrence:
         required: false
         value_ref: nv_event_recurrence

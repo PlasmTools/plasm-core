@@ -1,5 +1,24 @@
-version: 5
+version: 6
 http_backend: http://localhost:3000/api
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  pii_name:
+    description: Person name treated as personally identifiable.
+    severity: sensitive
+  credentials:
+    description: Secret token, webhook URL, or key material embedded in integration settings.
+    severity: critical
+  external_publish:
+    description: Dashboard-visible annotation or incident content change.
+    severity: critical
+  permission_grant:
+    description: RBAC role assignment or team/org permission elevation.
+    severity: critical
 
 values:
   nv_wire_str_short:
@@ -282,6 +301,7 @@ entities:
       text:
         required: false
         value_ref: nv_grafana_annotation_text
+        data_class: untrusted
       tags:
         required: false
         value_ref: nv_grafana_tags
@@ -341,6 +361,7 @@ entities:
         required: false
         value_ref: nv_grafana_json_text
         path: settings
+        data_class: credentials
       disable_resolve_message:
         required: false
         value_ref: nv_wire_bool
@@ -455,12 +476,15 @@ entities:
       login:
         required: false
         value_ref: nv_grafana_login
+        data_class: pii_name
       email:
         required: false
         value_ref: nv_grafana_email
+        data_class: pii_email
       name:
         required: false
         value_ref: nv_grafana_title
+        data_class: pii_name
       role:
         required: false
         value_ref: nv_grafana_org_role
@@ -803,6 +827,7 @@ entities:
       body:
         required: false
         value_ref: nv_grafana_annotation_text
+        data_class: untrusted
       activity_kind:
         required: false
         value_ref: nv_wire_str_short
@@ -1169,6 +1194,7 @@ capabilities:
       - name: text
         value_ref: nv_grafana_annotation_text
         required: true
+        sink_class: external_publish
       - name: dashboard_uid
         value_ref: nv_grafana_dashboard_uid
       - name: panel_id
@@ -1187,6 +1213,7 @@ capabilities:
     parameters:
       - name: text
         value_ref: nv_grafana_annotation_text
+        sink_class: external_publish
       - name: time
         value_ref: nv_wire_int
       - name: time_end
@@ -1321,6 +1348,7 @@ capabilities:
       - name: settings
         value_ref: nv_grafana_json_value
         required: true
+        sink_class: credentials
       - name: disableResolveMessage
         value_ref: nv_wire_bool
       - name: uid
@@ -1340,6 +1368,7 @@ capabilities:
       - name: settings
         value_ref: nv_grafana_json_value
         required: true
+        sink_class: credentials
       - name: disableResolveMessage
         value_ref: nv_wire_bool
 
@@ -1724,6 +1753,7 @@ capabilities:
       - name: role_uid
         value_ref: nv_grafana_role_ref
         required: true
+        sink_class: permission_grant
       - name: global
         value_ref: nv_wire_bool
     output:
@@ -1738,6 +1768,7 @@ capabilities:
       - name: role_uids
         value_ref: nv_grafana_tags
         required: true
+        sink_class: permission_grant
       - name: global
         value_ref: nv_wire_bool
     output:
@@ -1776,6 +1807,7 @@ capabilities:
       - name: role_uid
         value_ref: nv_grafana_role_ref
         required: true
+        sink_class: permission_grant
       - name: global
         value_ref: nv_wire_bool
     output:
@@ -1790,6 +1822,7 @@ capabilities:
       - name: role_uids
         value_ref: nv_grafana_tags
         required: true
+        sink_class: permission_grant
       - name: global
         value_ref: nv_wire_bool
     output:
@@ -2267,6 +2300,7 @@ capabilities:
       - name: body
         value_ref: nv_grafana_annotation_text
         required: true
+        sink_class: external_publish
       - name: event_time
         value_ref: nv_wire_str_short
     output:

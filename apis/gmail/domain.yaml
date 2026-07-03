@@ -1,5 +1,15 @@
-version: 12
+version: 13
 http_backend: https://gmail.googleapis.com
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  external_send:
+    description: Outbound email body delivered outside the mailbox boundary.
+    severity: critical
 entities:
   Message:
     id_field: id
@@ -19,6 +29,7 @@ entities:
       snippet:
         required: false
         value_ref: nv_message_snippet
+        data_class: untrusted
       historyId:
         required: false
         value_ref: nv_message_history_id
@@ -38,6 +49,7 @@ entities:
         - payload
         - headers
         value_ref: nv_message_header_from
+        data_class: pii_email
       headerTo:
         derive:
           type: name_value_array_lookup
@@ -48,6 +60,7 @@ entities:
         - payload
         - headers
         value_ref: nv_message_header_to
+        data_class: pii_email
       headerSubject:
         derive:
           type: name_value_array_lookup
@@ -58,6 +71,7 @@ entities:
         - payload
         - headers
         value_ref: nv_message_header_subject
+        data_class: untrusted
       headerDate:
         derive:
           type: name_value_array_lookup
@@ -373,6 +387,7 @@ capabilities:
     - name: raw
       value_ref: nv_message_send_raw
       required: true
+      sink_class: external_send
     - name: threadId
       value_ref: nv_message_send_thread_id
       required: false
@@ -393,6 +408,7 @@ capabilities:
     - name: plainBody
       value_ref: nv_message_send_simple_plain_body
       required: true
+      sink_class: external_send
     - name: threadId
       value_ref: nv_message_send_simple_thread_id
       required: false
@@ -422,6 +438,7 @@ capabilities:
     - name: plainBody
       value_ref: nv_message_reply_plain_body
       required: true
+      sink_class: external_send
     - name: to
       value_ref: nv_message_reply_to
       required: false

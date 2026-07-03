@@ -1,5 +1,12 @@
-version: 4
+version: 5
 http_backend: https://your-domain.atlassian.net
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  external_publish:
+    description: Public-visible issue or comment content within the project.
+    severity: critical
 
 schema_overlay:
   source:
@@ -109,10 +116,12 @@ entities:
         required: false
         path: fields.summary
         value_ref: nv_wire_str_short
+        data_class: untrusted
       description:
         required: false
         path: fields.description
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       status:
         required: false
         path: fields.status.name
@@ -300,6 +309,7 @@ entities:
       body:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       author_id:
         required: false
         path: author.accountId
@@ -860,9 +870,11 @@ capabilities:
     - name: summary
       value_ref: nv_issue_create_summary
       required: true
+      sink_class: external_publish
     - name: description
       value_ref: nv_issue_create_description
       required: false
+      sink_class: external_publish
   issue_update:
     kind: update
     entity: Issue
@@ -881,9 +893,11 @@ capabilities:
     - name: summary
       value_ref: nv_issue_update_summary
       required: false
+      sink_class: external_publish
     - name: description
       value_ref: nv_issue_update_description
       required: false
+      sink_class: external_publish
     - name: assignee_id
       value_ref: nv_issue_update_assignee_id
       required: false
@@ -1014,6 +1028,7 @@ capabilities:
     - name: text
       value_ref: nv_comment_create_text
       required: true
+      sink_class: external_publish
   comment_query:
     kind: query
     entity: Comment

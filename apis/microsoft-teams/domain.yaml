@@ -1,5 +1,15 @@
-version: 4
+version: 5
 http_backend: https://graph.microsoft.com
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_name:
+    description: Person name treated as personally identifiable.
+    severity: sensitive
+  external_send:
+    description: Outbound message body delivered outside the tenant boundary.
+    severity: critical
 entities:
   Team:
     id_field: id
@@ -112,6 +122,7 @@ entities:
         required: false
         path: body.content
         value_ref: nv_chat_message_body_content
+        data_class: untrusted
       bodyContentType:
         required: false
         path: body.contentType
@@ -126,6 +137,7 @@ entities:
         required: false
         path: from.user.displayName
         value_ref: nv_chat_message_from_display_name
+        data_class: pii_name
       fromUserId:
         required: false
         path: from.user.id
@@ -151,6 +163,7 @@ entities:
         required: false
         path: body.content
         value_ref: nv_channel_message_body_content
+        data_class: untrusted
       bodyContentType:
         required: false
         path: body.contentType
@@ -165,6 +178,7 @@ entities:
         required: false
         path: from.user.displayName
         value_ref: nv_channel_message_from_display_name
+        data_class: pii_name
       fromUserId:
         required: false
         path: from.user.id
@@ -364,6 +378,7 @@ capabilities:
     - name: bodyContent
       value_ref: nv_channel_message_send_body_content
       required: true
+      sink_class: external_send
     - name: bodyContentType
       value_ref: nv_channel_message_send_body_content_type
       required: false
@@ -382,6 +397,7 @@ capabilities:
     - name: bodyContent
       value_ref: nv_chat_message_send_body_content
       required: true
+      sink_class: external_send
     - name: bodyContentType
       value_ref: nv_chat_message_send_body_content_type
       required: false

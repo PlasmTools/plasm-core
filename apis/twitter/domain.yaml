@@ -1,5 +1,15 @@
-version: 2
+version: 3
 http_backend: https://api.x.com
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_name:
+    description: Person name treated as personally identifiable.
+    severity: sensitive
+  external_publish:
+    description: Public-visible post content change.
+    severity: critical
 entities:
   User:
     id_field: id
@@ -11,6 +21,7 @@ entities:
       name:
         required: true
         value_ref: nv_wire_str_short
+        data_class: pii_name
       username:
         required: true
         value_ref: nv_wire_str_short
@@ -20,6 +31,7 @@ entities:
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       location:
         required: false
         value_ref: nv_wire_str_short
@@ -76,6 +88,7 @@ entities:
       text:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       author_id:
         required: false
         value_ref: nv_tweet_author_id
@@ -279,6 +292,7 @@ capabilities:
     - name: text
       value_ref: nv_wire_str_markdown
       required: true
+      sink_class: external_publish
     - name: quote_tweet_id
       value_ref: nv_tweet_create_quote_tweet_id
       required: false

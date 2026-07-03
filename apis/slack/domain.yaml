@@ -1,5 +1,21 @@
-version: 2
+version: 3
 http_backend: https://slack.com/api
+data_classes:
+  untrusted:
+    description: User-authored or externally sourced text.
+    severity: untrusted
+  pii_email:
+    description: Email address treated as personally identifiable.
+    severity: sensitive
+  pii_name:
+    description: Person name treated as personally identifiable.
+    severity: sensitive
+  external_send:
+    description: Outbound message body delivered outside the tenant boundary.
+    severity: critical
+  permission_grant:
+    description: Share, collaborator invite, or role elevation.
+    severity: critical
 entities:
   Channel:
     id_field: id
@@ -104,6 +120,7 @@ entities:
       text:
         required: false
         value_ref: nv_message_text
+        data_class: untrusted
       subtype:
         required: false
         value_ref: nv_message_subtype
@@ -139,12 +156,14 @@ entities:
       real_name:
         required: false
         value_ref: nv_user_real_name
+        data_class: pii_name
       display_name:
         required: false
         value_ref: nv_user_display_name
       email:
         required: false
         value_ref: nv_user_email
+        data_class: pii_email
       is_bot:
         required: false
         value_ref: nv_user_is_bot
@@ -539,6 +558,7 @@ capabilities:
     - name: users
       value_ref: nv_channel_invite_users
       required: true
+      sink_class: permission_grant
     output:
       type: side_effect
       description: Invite a user to a channel.
@@ -596,6 +616,7 @@ capabilities:
     - name: text
       value_ref: nv_message_post_text
       required: false
+      sink_class: external_send
     - name: thread_ts
       value_ref: nv_message_post_thread_ts
       required: false
@@ -625,6 +646,7 @@ capabilities:
     - name: text
       value_ref: nv_wire_str_markdown
       required: false
+      sink_class: external_send
     - name: blocks
       value_ref: nv_message_update_blocks
       required: false
@@ -1081,6 +1103,7 @@ capabilities:
     - name: text
       value_ref: nv_scheduledmessage_create_text
       required: false
+      sink_class: external_send
     - name: thread_ts
       value_ref: nv_scheduledmessage_create_thread_ts
       required: false
