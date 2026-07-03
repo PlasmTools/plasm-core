@@ -202,7 +202,11 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     assert!(!plasm_core::prompt_render::PLASM_RUN_TOOL_DESCRIPTION.contains("echo the program"));
     assert!(plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION.contains("not JSON data"));
     assert!(plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION
-        .contains("e3(p15=\"value\").r2[p4]"));
+        .contains("`plasm` tool description"));
+    assert!(
+        !plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION.contains("labels, branches"),
+        "program param must not duplicate composition teaching"
+    );
     assert!(!plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("MCP initialize"));
     assert!(!plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("MCP initialize"));
     for tool in default_plasm_tools() {

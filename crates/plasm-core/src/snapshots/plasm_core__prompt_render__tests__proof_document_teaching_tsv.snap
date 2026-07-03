@@ -7,14 +7,28 @@ v5	ref:Document · Document slug or id this API uses
 v10	markdown
 v12	str · Short text
 v9	json · JSON object
+v1	str · Stable name for this agent on edits (shows in attribution)
+v6	str · Event id from the pending collaboration stream—use for after= and ack up_to_id only
 v3	str · Block id from your current snapshot. Refresh the snapshot after others edit before you reuse ids
 v7	array[str] · New blocks in order from top to bottom
+v8	int · Integer
+p1	union · v210 | v211 | v212 · operations
+p2	union · v101 | v102 | v103 | v104 | v105 | v106 | v107 · operations
+p3	v1 · agent_id
 p5	v3 · fromRef
 p6	v3 · ref
 p7	v3 · toRef
+p11	v6 · up_to_id
 p12	v7 · blocks
+p13	v8 · base_revision
 p18	v10 · markdown
+p20	v10 · content
+p22	v10 · quote
+p23	v10 · report · Full bug report
+p24	v10 · text
 p26	v12 · mark_id
+p28	v12 · by
+p29	v12 · mark_id
 p10	v5 · slug
 p21	v10 · markdown
 p34	v12 · title

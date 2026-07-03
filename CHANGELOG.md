@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.116] - 2026-07-04
+
+### Fixed
+
+- **Quoted Plasm strings:** JSON-style escapes (`\n`, `\t`, `\\`, `\"`, `\uXXXX`); unknown `\x` is a hard error with a heredoc hint (no more silent `\n` → `n` corruption).
+- **Teaching TSV create/update params:** capability-param `p#` gloss rows emit on invoke witnesses (`p9=$` no longer hides wire/type).
+- **Plan-commit durable persist:** `register_plan_commit_and_persist` patches only `plan_commits` so a pre-extend session Arc cannot overwrite a newer teaching wave / `domain_revision`.
+- **Artifact addressing:** agent-facing `_meta.plasm.meta_generation` replaces `index_id`; steps emit `resource_index`; never invent `r/1` when index is missing.
+- **Ranked replay:** invented wires report `unsupported in this catalog` (with mutators on seeded entities), not “correct ranked_capabilities”.
+- **GitHub catalog:** `Repository.description` carries `data_class: untrusted` so plan-flow labels surface on repository reads.
+
+### Changed
+
+- **MCP `plasm` tool description:** front-loads batch multi-root composition, approval-gate policy, and string/heredoc rules (sole grammar owner); `program` param is a thin pointer only.
+- **Agent dry-run `_meta.plasm`:** slim (`run_ref`, `dry_verdict`, `domain_revision`); full `dry_review` / `comp` / `plan_ux_reflection` under `ui.plasm`.
+- **Stale `pcN` errors:** include plan vs session `domain_revision` and recovery guidance.
+
+### Added
+
+- **CGS load warnings:** catalogs with `data_classes:` warn on read-provided structured/multiline string fields missing `data_class` (`CGS::unlabeled_output_data_warnings`).
+
 ## [0.3.115] - 2026-07-03
 
 ### Fixed

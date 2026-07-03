@@ -120,6 +120,10 @@ pub enum ParseErrorKind {
     ExpectedValue,
     UnterminatedString,
     UnterminatedEscape,
+    /// Unknown `\` escape in a quoted string (e.g. `\q`); not a JSON-style escape.
+    UnknownEscape {
+        escape: char,
+    },
     InvalidFloat {
         raw: String,
     },
@@ -246,6 +250,10 @@ impl fmt::Display for ParseErrorKind {
             ParseErrorKind::ExpectedValue => write!(f, "expected value"),
             ParseErrorKind::UnterminatedString => write!(f, "unterminated string"),
             ParseErrorKind::UnterminatedEscape => write!(f, "unterminated escape"),
+            ParseErrorKind::UnknownEscape { escape } => write!(
+                f,
+                "unknown escape `\\{escape}` in quoted string; use JSON-style `\\n`/`\\t`/`\\\\`/`\\\"`/`\\uXXXX`, or a tagged heredoc (`<<TAG` … `TAG`) for multiline bodies"
+            ),
             ParseErrorKind::InvalidFloat { raw } => write!(f, "invalid float: {raw}"),
             ParseErrorKind::InvalidInteger { raw } => write!(f, "invalid integer: {raw}"),
             ParseErrorKind::UnknownEntity { name, .. } => write!(f, "unknown entity '{name}'"),
@@ -4841,6 +4849,43 @@ mod tests {
             panic!("expected get (id-field brace sugar), got {:?}", r.expr);
         };
         assert_eq!(g.reference.primary_slot_str(), u);
+    }
+
+    #[test]
+    fn parse_quoted_string_json_style_escapes() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let r = parse(r#"LangItem(id="line1\n\nline2\t\"x\"\\")"#, &cgs).unwrap();
+        let Expr::Get(g) = &r.expr else {
+            panic!("expected Get, got {:?}", r.expr);
+        };
+        assert_eq!(
+            g.reference.simple_id().map(|s| s.as_str()),
+            Some("line1\n\nline2\t\"x\"\\")
+        );
+    }
+
+    #[test]
+    fn parse_quoted_string_unknown_escape_errors_with_heredoc_hint() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let err = parse(r#"LangItem(id="bad\q")"#, &cgs).unwrap_err();
+        let msg = err.message();
+        assert!(
+            matches!(err.kind, ParseErrorKind::UnknownEscape { escape: 'q' }),
+            "kind={:?} msg={msg}",
+            err.kind
+        );
+        assert!(
+            msg.contains("tagged heredoc") || msg.contains("<<TAG"),
+            "expected heredoc hint, got: {msg}"
+        );
     }
 
     #[test]

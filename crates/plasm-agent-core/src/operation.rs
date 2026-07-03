@@ -694,6 +694,26 @@ pub fn async_live_run_accept_parts(
     (markdown, meta)
 }
 
+fn dry_verdict_wire(verdict: PlanDryVerdict) -> &'static str {
+    match verdict {
+        PlanDryVerdict::Ok => "ok",
+        PlanDryVerdict::Review => "review",
+        PlanDryVerdict::Deny => "deny",
+    }
+}
+
+/// Slim agent-facing plan commit fields (`run_ref` + `dry_verdict` only).
+pub fn plan_commit_agent_meta(
+    commit_ref: &PlanCommitRef,
+    verdict: PlanDryVerdict,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut plasm = serde_json::Map::new();
+    plasm.insert("run_ref".into(), json!(commit_ref.as_str()));
+    plasm.insert("dry_verdict".into(), json!(dry_verdict_wire(verdict)));
+    plasm
+}
+
+/// Full plan commit meta for UI / hosts that need `dry_review` flags.
 pub fn plan_commit_meta(
     commit_ref: &PlanCommitRef,
     review: &PlanDryReview,
@@ -727,16 +747,7 @@ pub fn plan_commit_meta(
     if !review.unused_seeds.is_empty() {
         dry_review.insert("unused_seeds".into(), json!(review.unused_seeds));
     }
-    let mut plasm = serde_json::Map::new();
-    plasm.insert("run_ref".into(), json!(commit_ref.as_str()));
-    plasm.insert(
-        "dry_verdict".into(),
-        json!(match verdict {
-            PlanDryVerdict::Ok => "ok",
-            PlanDryVerdict::Review => "review",
-            PlanDryVerdict::Deny => "deny",
-        }),
-    );
+    let mut plasm = plan_commit_agent_meta(commit_ref, verdict);
     plasm.insert("dry_review".into(), serde_json::Value::Object(dry_review));
     plasm
 }

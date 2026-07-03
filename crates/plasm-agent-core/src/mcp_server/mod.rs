@@ -84,7 +84,8 @@ use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_identity::McpTransportIdentity;
 use crate::operation::{
-    compute_plan_commit_id_from_dry, plan_commit_meta, PlanCommitRecord, PLAN_COMMIT_TTL,
+    compute_plan_commit_id_from_dry, plan_commit_agent_meta, plan_commit_meta, PlanCommitRecord,
+    PLAN_COMMIT_TTL,
 };
 use crate::plan_dry_display::build_plan_dry_compact_view;
 use crate::plan_gate::{plan_gate, PlanGateContext};
@@ -818,17 +819,14 @@ impl PlasmMcpHandler {
                         }
                         .emit_evaluate(Some(plan_ux_reflection.clone()))
                         .await;
-                        let mut agent_plasm = serde_json::Map::new();
+                        // Agent-facing meta stays slim; full dry_review / comp / plan_ux under `ui.plasm`.
+                        let mut agent_plasm =
+                            plan_commit_agent_meta(&commit_ref, compact.verdict);
                         agent_plasm.insert("dry_run".into(), serde_json::json!(true));
                         agent_plasm.insert(
                             "logical_session_ref".into(),
                             serde_json::json!(session_ref.as_str()),
                         );
-                        agent_plasm.extend(plan_commit_meta(
-                            &commit_ref,
-                            &dry.review,
-                            compact.verdict,
-                        ));
                         agent_plasm.insert(
                             "domain_revision".into(),
                             serde_json::json!(es.domain_revision),
@@ -842,19 +840,8 @@ impl PlasmMcpHandler {
                         {
                             agent_plasm.insert("projection_warning".into(), serde_json::json!(true));
                         }
-                        if let Some(unused) = dry
-                            .graph_summary
-                            .get("unused_seeds")
-                            .and_then(|v| v.as_array())
-                        {
-                            if !unused.is_empty() {
-                                agent_plasm.insert(
-                                    "session_notes".into(),
-                                    serde_json::json!({ "unused_seeds": unused }),
-                                );
-                            }
-                        }
-                        let mut ui_plasm = serde_json::Map::new();
+                        let mut ui_plasm =
+                            plan_commit_meta(&commit_ref, &dry.review, compact.verdict);
                         ui_plasm.insert("comp".into(), comp_wire.to_json_value());
                         ui_plasm.insert("plan_ux_reflection".into(), plan_ux_reflection);
                         let mut meta = serde_json::Map::new();

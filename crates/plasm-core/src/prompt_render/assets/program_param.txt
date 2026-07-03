@@ -1,1 +1,1 @@
-Plasm source, not JSON data. Ex: `e3(p15="value").r2[p4]`; symbols from `plasm_context` TSV. Row-to-text: `label = source <<TAG`. Minijinja in row-to-text; `${binding.content}` in later strings.
+Plasm source, not JSON data. Program shape and examples are in the `plasm` tool description; symbols from `plasm_context` TSV.

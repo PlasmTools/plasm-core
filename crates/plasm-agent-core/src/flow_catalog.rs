@@ -140,6 +140,21 @@ mod tests {
     }
 
     #[test]
+    fn github_repo_get_exposes_untrusted_from_description() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
+        let cgs = load_schema_dir_unvalidated(&dir).expect("load github");
+        let view = FlowCatalogView::from_cgs("github", &cgs);
+        let key = QualifiedCapabilityKey::from_parts("github", "Repository", "repo_get");
+        let labels = view.output_labels_for(&key);
+        assert!(
+            labels
+                .iter()
+                .any(|l| l.as_str() == "untrusted"),
+            "repo_get must carry untrusted from Repository.description; got {labels:?}"
+        );
+    }
+
+    #[test]
     fn from_pins_federates_multiple_entries() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/flow_matrix");

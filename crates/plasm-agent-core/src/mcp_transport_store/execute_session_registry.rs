@@ -303,16 +303,57 @@ impl ExecuteSessionRegistry {
         let desc = PersistedExecuteSessionDescriptor::from_session_and_reuse(
             session, session_id, &reuse_key,
         );
+        self.write_descriptor(&key, &desc).await
+    }
+
+    /// Patch only `plan_commits` / `plan_commit_next` on the durable row.
+    ///
+    /// Callers may hold a pre-extend [`ExecuteSession`] clone (owned exposure / `domain_revision`,
+    /// shared `plan_commits`). Full-session persist from that Arc would overwrite a newer extend
+    /// wave in durable storage — never write teaching/exposure fields from plan-commit registration.
+    pub async fn patch_plan_commits_only(
+        &self,
+        session: &ExecuteSession,
+        session_id: &str,
+        reuse_key_fallback: Option<&SessionReuseKey>,
+    ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
+        let durable = self.durable_backend_configured().await;
+        let key = session_key(&session.prompt_hash, session_id);
+        let snapshot = session.snapshot_plan_commits_for_persist();
+        if let Some(mut existing) = self.load_json(&key).await {
+            existing.plan_commits = snapshot.records;
+            existing.plan_commit_next = snapshot.next_sequence;
+            existing.expires_at_unix = expires_at_from_now();
+            return self.write_descriptor(&key, &existing).await;
+        }
+        if !durable {
+            return Ok(ExecuteSessionPersistOutcome::InMemoryOnly);
+        }
+        // No durable row yet: first upsert still needs a full descriptor (open path).
+        let Some(fallback) = reuse_key_fallback else {
+            return Err(ExecuteSessionPersistError::MissingReuseKey);
+        };
+        let desc = PersistedExecuteSessionDescriptor::from_session_and_reuse(
+            session, session_id, fallback,
+        );
+        self.write_descriptor(&key, &desc).await
+    }
+
+    async fn write_descriptor(
+        &self,
+        key: &str,
+        desc: &PersistedExecuteSessionDescriptor,
+    ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
         if let Some(map) = self.test_json().await {
-            if let Ok(payload) = serde_json::to_string(&desc) {
-                map.write().await.insert(key, payload);
+            if let Ok(payload) = serde_json::to_string(desc) {
+                map.write().await.insert(key.to_string(), payload);
             }
             return Ok(ExecuteSessionPersistOutcome::Durable);
         }
         let Some(redis) = self.redis().await else {
             return Ok(ExecuteSessionPersistOutcome::InMemoryOnly);
         };
-        redis.set_json(&key, &desc).await;
+        redis.set_json(key, desc).await;
         Ok(ExecuteSessionPersistOutcome::Durable)
     }
 

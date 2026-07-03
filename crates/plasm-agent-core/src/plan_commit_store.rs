@@ -20,7 +20,11 @@ pub enum PlanCommitVerifyError {
     Unknown { commit_ref: String },
     Expired { commit_ref: String },
     Mismatch { commit_ref: String },
-    StaleDomain { commit_ref: String },
+    StaleDomain {
+        commit_ref: String,
+        plan_domain_revision: u32,
+        session_domain_revision: u32,
+    },
     StalePolicy { commit_ref: String },
     Evidence { commit_ref: String, detail: String },
 }
@@ -37,8 +41,12 @@ impl PlanCommitVerifyError {
             Self::Mismatch { commit_ref } => format!(
                 "plan_commit_ref `{commit_ref}` does not match the current program — call `plasm` dry-run again"
             ),
-            Self::StaleDomain { commit_ref } => format!(
-                "plan_commit_ref `{commit_ref}` is stale after `plasm_context` extended the session — call `plasm` dry-run again (check `_meta.plasm.domain_revision`)"
+            Self::StaleDomain {
+                commit_ref,
+                plan_domain_revision,
+                session_domain_revision,
+            } => format!(
+                "plan_commit_ref `{commit_ref}` is stale (plan domain_revision={plan_domain_revision}, session domain_revision={session_domain_revision}) — call `plasm` dry-run again; if symbols are missing, re-`plasm_context` extend first"
             ),
             Self::StalePolicy { commit_ref } => format!(
                 "plan_commit_ref `{commit_ref}` is stale after flow policy changed — call `plasm` dry-run again"
@@ -57,19 +65,26 @@ pub async fn register_plan_commit_and_persist(
     session_id: &str,
     record: PlanCommitRecord,
 ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
-    session.register_plan_commit(record.clone());
+    // Prefer the live execute row (exposure / domain_revision). Plan commits use a shared map on
+    // clones of that row; durable patch writes **only** plan_commits so a pre-extend Arc cannot
+    // overwrite a newer teaching wave.
+    let live = st
+        .get_execute_session(prompt_hash, session_id)
+        .await
+        .unwrap_or_else(|| std::sync::Arc::clone(&session));
+    live.register_plan_commit(record.clone());
     let reuse_key = st
         .sessions
         .reuse_key_for_execute_pair(prompt_hash, session_id)
         .await;
     match st
         .execute_session_registry
-        .persist_or_update(session.as_ref(), session_id, reuse_key.as_ref())
+        .patch_plan_commits_only(live.as_ref(), session_id, reuse_key.as_ref())
         .await
     {
         Ok(outcome) => Ok(outcome),
         Err(err) => {
-            session.remove_plan_commit(&record.commit_ref);
+            live.remove_plan_commit(&record.commit_ref);
             Err(err)
         }
     }
@@ -93,6 +108,8 @@ pub fn verify_plan_commit_id(
     if record.domain_revision != es.domain_revision {
         return Err(PlanCommitVerifyError::StaleDomain {
             commit_ref: commit_ref.as_str().to_string(),
+            plan_domain_revision: record.domain_revision,
+            session_domain_revision: es.domain_revision,
         });
     }
     if record.policy_revision != es.flow_policy.revision_or_default() {
@@ -432,7 +449,20 @@ mod tests {
         ));
         es.domain_revision = 1;
         let err = verify_plan_commit_id(&es, &pc, commit_id).expect_err("stale domain");
-        assert!(matches!(err, PlanCommitVerifyError::StaleDomain { .. }));
+        assert!(matches!(
+            err,
+            PlanCommitVerifyError::StaleDomain {
+                plan_domain_revision: 0,
+                session_domain_revision: 1,
+                ..
+            }
+        ));
+        let detail = err.detail();
+        assert!(
+            detail.contains("plan domain_revision=0")
+                && detail.contains("session domain_revision=1"),
+            "detail={detail}"
+        );
     }
 
     #[test]
@@ -526,8 +556,11 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn register_persist_survives_rehydrate() {
+    async fn open_overshow_profile_host() -> (
+        crate::server_state::PlasmHostState,
+        crate::http_execute::CreateExecuteSessionResponse,
+        Arc<ExecuteSession>,
+    ) {
         use std::path::Path;
 
         use plasm_core::discovery::InMemoryCgsRegistry;
@@ -582,6 +615,12 @@ mod tests {
             .get_execute_session(&created.prompt_hash, &created.session)
             .await
             .expect("session row");
+        (host, created, es)
+    }
+
+    #[tokio::test]
+    async fn register_persist_survives_rehydrate() {
+        let (host, created, es) = open_overshow_profile_host().await;
         let pc = es.mint_plan_commit_ref();
         let artifact = minimal_artifact();
         let commit_id = crate::operation::compute_plan_commit_id_from_semantic(
@@ -628,6 +667,82 @@ mod tests {
         assert_eq!(
             accepted.record.as_ref().map(|r| r.program.as_str()),
             Some("test")
+        );
+    }
+
+    /// Stale pre-extend Arc must not overwrite durable exposure / domain_revision when registering pcN.
+    #[tokio::test]
+    async fn register_plan_commit_does_not_overwrite_durable_exposure() {
+        let (host, created, live) = open_overshow_profile_host().await;
+        // Simulate extend: live row advances domain_revision and is fully persisted.
+        let mut extended = (*live).clone();
+        extended.domain_revision = 7;
+        extended.entities = vec!["Profile".into(), "Extra".into()];
+        extended.prompt_text.push_str("\n# e2 Extra\n");
+        host.replace_execute_session(
+            created.prompt_hash.as_str(),
+            created.session.as_str(),
+            extended.clone(),
+        )
+        .await;
+        let reuse_key = host
+            .sessions
+            .reuse_key_for_execute_pair(created.prompt_hash.as_str(), created.session.as_str())
+            .await;
+        host.execute_session_registry
+            .persist_or_update(&extended, created.session.as_str(), reuse_key.as_ref())
+            .await
+            .expect("persist extended");
+
+        // Pre-extend Arc (stale exposure) registers a plan commit — must not clobber durable wave.
+        assert_eq!(live.domain_revision, 0);
+        let pc = live.mint_plan_commit_ref();
+        let artifact = minimal_artifact();
+        let commit_id = crate::operation::compute_plan_commit_id_from_semantic(
+            &plan_commit_canonical_comp(&artifact.comp),
+        );
+        register_plan_commit_and_persist(
+            &host,
+            live,
+            created.prompt_hash.as_str(),
+            created.session.as_str(),
+            rehydrate_record(
+                &extended,
+                pc.clone(),
+                commit_id,
+                7,
+                extended.flow_policy.revision_or_default(),
+                artifact,
+                "stale-arc".into(),
+                Default::default(),
+                PlanDryVerdict::Ok,
+                std::time::Instant::now() + PLAN_COMMIT_TTL,
+                PlanCommitDryCache::default(),
+            ),
+        )
+        .await
+        .expect("patch plan commits");
+
+        let durable = host
+            .execute_session_registry
+            .load(created.prompt_hash.as_str(), created.session.as_str())
+            .await
+            .expect("durable row");
+        assert_eq!(
+            durable.domain_revision, 7,
+            "stale Arc must not overwrite domain_revision"
+        );
+        assert_eq!(
+            durable.entities,
+            vec!["Profile".to_string(), "Extra".to_string()],
+            "stale Arc must not overwrite entities"
+        );
+        assert!(
+            durable
+                .plan_commits
+                .iter()
+                .any(|r| r.commit_ref == pc.as_str()),
+            "plan commit must still be patched"
         );
     }
 

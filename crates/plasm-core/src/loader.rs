@@ -423,6 +423,7 @@ pub fn finalize_cgs_load(cgs: &CGS) -> Result<(), String> {
         .map_err(|e| format!("CGS validation failed: {}", e))?;
 
     warn_scope_aggregate_policy_template_mismatches(cgs);
+    warn_unlabeled_output_data(cgs);
 
     let sem_violations = cgs.string_semantics_violations();
     if !sem_violations.is_empty() {
@@ -962,6 +963,14 @@ fn normalize_blob_field_type(
     }
 }
 
+/// Warn when a catalog that declares `data_classes:` leaves structured/multiline read outputs
+/// without a `data_class` (plan-flow cannot label that data).
+fn warn_unlabeled_output_data(cgs: &CGS) {
+    for msg in cgs.unlabeled_output_data_warnings() {
+        warn!(target: "plasm_core::loader", "{msg}");
+    }
+}
+
 /// Warn when `omit_when_redundant` is set but the HTTP template still references the aggregate
 /// scope variable (e.g. `repository`) instead of splatted `key_vars`.
 fn warn_scope_aggregate_policy_template_mismatches(cgs: &CGS) {
@@ -1098,6 +1107,51 @@ mod tests {
                 .with_test_writer()
                 .try_init();
         });
+    }
+
+    #[test]
+    fn unlabeled_output_data_warnings_when_catalog_opts_into_data_classes() {
+        let dir = Path::new("../../apis/github");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).expect("github");
+        let warnings = cgs.unlabeled_output_data_warnings();
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("Commit") && w.contains("message")),
+            "structured provided fields without data_class must warn: {warnings:?}"
+        );
+        assert!(
+            !warnings
+                .iter()
+                .any(|w| w.contains("Repository") && w.contains("description")),
+            "labeled Repository.description must not warn: {warnings:?}"
+        );
+        assert!(
+            warnings
+                .iter()
+                .all(|w| w.contains("data_class") && w.contains("unlabeled")),
+            "warning copy must mention data_class / unlabeled: {warnings:?}"
+        );
+    }
+
+    #[test]
+    fn unlabeled_output_data_warnings_skipped_without_data_classes_registry() {
+        let dir = Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).expect("matrix");
+        assert!(
+            cgs.data_classes.is_empty(),
+            "matrix fixture must not declare data_classes"
+        );
+        assert!(
+            cgs.unlabeled_output_data_warnings().is_empty(),
+            "catalogs without data_classes: must not warn about unlabeled outputs"
+        );
     }
 
     #[test]

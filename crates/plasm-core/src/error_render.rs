@@ -434,11 +434,16 @@ pub fn render_parse_error_with_feedback(
                         .to_string()
                 })
             } else if structured_slot {
-                "Close the string: the teaching-table gloss marks this parameter as structured text (not plain `str`). For multiline or quote-containing values you MUST use a tagged `<<TAG` … `TAG` heredoc; if you used normal `\"…\"` instead, add the closing quote and use only `\\\"` / `\\\\` escapes—`\\n` inside quotes is two characters, not a newline."
+                "Close the string: the teaching-table gloss marks this parameter as structured text (not plain `str`). Prefer a tagged `<<TAG` … `TAG` heredoc for multiline bodies; in normal `\"…\"` quotes JSON-style `\\n` / `\\t` / `\\\\` / `\\\"` / `\\uXXXX` are supported."
                     .into()
             } else {
-                "Close string quotes and fix `\\` escapes.".into()
+                "Close string quotes and fix `\\` escapes (JSON-style `\\n` / `\\t` / `\\\\` / `\\\"`).".into()
             }
+        }
+        ParseErrorKind::UnknownEscape { escape } => {
+            format!(
+                "Unknown escape `\\{escape}` in a quoted string. Use JSON-style `\\n` / `\\t` / `\\\\` / `\\\"` / `\\uXXXX`, or a tagged `<<TAG` … `TAG` heredoc for multiline bodies."
+            )
         }
         ParseErrorKind::IdMustBeStringOrNumber => example_id_in_parens(cgs, &style),
         ParseErrorKind::EmptyGetParens { entity } => {

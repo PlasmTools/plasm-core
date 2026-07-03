@@ -99,15 +99,25 @@ pub fn hydrate_plan_run_from_artifact_formatted(
             handle: String::new(),
             run_artifact_id: wire_id.to_string(),
         })?;
+    let canonical_plasm_uri = crate::run_artifacts::plasm_run_resource_uri(
+        doc.prompt_hash.as_str(),
+        doc.session_id.as_str(),
+        &run_id,
+    );
+    // Never invent `r/1` when the document has no resource_index (agents confuse that with
+    // `meta_generation`). Prefer the canonical run URI for addressing.
+    let (resource_index, plasm_uri) = match doc.resource_index {
+        Some(idx) if idx > 0 => (
+            idx,
+            crate::run_artifacts::plasm_short_resource_uri(idx),
+        ),
+        _ => (0, canonical_plasm_uri.clone()),
+    };
     let artifact = RunArtifactHandle {
         run_id,
-        resource_index: doc.resource_index.unwrap_or(1),
-        plasm_uri: crate::run_artifacts::plasm_short_resource_uri(doc.resource_index.unwrap_or(1)),
-        canonical_plasm_uri: crate::run_artifacts::plasm_run_resource_uri(
-            doc.prompt_hash.as_str(),
-            doc.session_id.as_str(),
-            &run_id,
-        ),
+        resource_index,
+        plasm_uri,
+        canonical_plasm_uri,
         http_path: crate::run_artifacts::artifact_http_path(
             doc.prompt_hash.as_str(),
             doc.session_id.as_str(),

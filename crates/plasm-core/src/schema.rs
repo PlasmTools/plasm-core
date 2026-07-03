@@ -3360,6 +3360,59 @@ impl CGS {
         }
     }
 
+    /// Warnings for read-provided structured/multiline string fields that omit `data_class`.
+    ///
+    /// Only runs when the catalog declares a non-empty `data_classes:` registry (opt-in to
+    /// information-flow labeling). Fields that never appear in a get/query/search `provides`
+    /// list are skipped — they cannot taint plan-flow output labels.
+    pub fn unlabeled_output_data_warnings(&self) -> Vec<String> {
+        if self.data_classes.is_empty() {
+            return Vec::new();
+        }
+        let mut provided: std::collections::BTreeSet<(String, String)> =
+            std::collections::BTreeSet::new();
+        for cap in self.capabilities.values() {
+            if !matches!(
+                cap.kind,
+                CapabilityKind::Get | CapabilityKind::Query | CapabilityKind::Search
+            ) {
+                continue;
+            }
+            let entity = cap.domain.as_str();
+            for field_name in self.effective_provides(cap) {
+                provided.insert((entity.to_string(), field_name));
+            }
+        }
+        let mut out = Vec::new();
+        for (entity_name, field_name) in provided {
+            let Some(entity) = self.entities.get(entity_name.as_str()) else {
+                continue;
+            };
+            let Some(field) = entity.fields.get(field_name.as_str()) else {
+                continue;
+            };
+            if field.data_class.is_some() {
+                continue;
+            }
+            let key = field.kind.registry_key().as_str();
+            let Some(nv) = self.values.get(key) else {
+                continue;
+            };
+            if !matches!(nv.field_type, FieldType::String) {
+                continue;
+            }
+            let sem = field.effective_string_semantics(self);
+            if !sem.is_structured_or_multiline() {
+                continue;
+            }
+            let sem_label = sem.gloss_type_keyword().unwrap_or("structured");
+            out.push(format!(
+                "entity '{entity_name}', field '{field_name}': read-provided {sem_label} string has no data_class — plan-flow treats this output as unlabeled (set data_class: to a key under data_classes:)"
+            ));
+        }
+        out
+    }
+
     /// Violations when a `string` entity field or capability parameter omits `string_semantics` (required at load).
     pub fn string_semantics_violations(&self) -> Vec<String> {
         let mut out = Vec::new();

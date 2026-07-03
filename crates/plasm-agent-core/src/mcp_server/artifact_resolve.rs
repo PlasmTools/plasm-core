@@ -17,7 +17,9 @@ use super::transport::PlasmExecBinding;
 pub(crate) enum RunArtifactResolveError {
     #[error("invalid logical session in URI: use `plasm://session/l_<token>/r/...` from `plasm_context`")]
     InvalidSessionRef,
-    #[error("unknown run artifact index {0} for this session")]
+    #[error(
+        "unknown resource_index {0} for this session (not meta_generation / dict_ref; use steps[].resource_index, run_id, or canonical_artifact_uri)"
+    )]
     UnknownIndex(u64),
     #[error("unknown run artifact (wrong run_id or not yet stored for this session)")]
     UnknownRunId,

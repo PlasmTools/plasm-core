@@ -73,6 +73,7 @@ e7[p38,p37,p39]	→ e7 · projection · A person, organisation, or project profi
 e7{p41=$, p40=$}	→ [e7] · inputs: p41,p40 · optional
 e7(p38)	→ e7
 e7{p41=$, p40=$}.r1	relation e7 → [e9]
+p46	v7 · slug
 e8.m11(p46=$,..)	→ () · Action prompt execution result · optional · prompt-run-create
 v58	ref:Profile · int
 v57	select · auto, keyword, natural

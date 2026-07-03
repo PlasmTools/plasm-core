@@ -1,14 +1,45 @@
 //! JSON-style unescaping for capability inputs whose schema marks structured string semantics.
 //!
-//! Quoted Plasm string literals only treat `\\` as an escape; sequences like `\n` in the source
-//! become a backslash plus `n` in the parsed [`crate::Value::String`]. Agents often paste
-//! JSON-escaped markdown into those quotes. Before compiling HTTP templates, we normalize those
-//! payloads for structured string fields (see [`crate::schema::StringSemantics::is_structured_or_multiline`]).
+//! Quoted Plasm string literals already apply JSON-style escapes at parse time (`\n`, `\t`, …) in
+//! [`crate::expr_parser`]. This module remains for **post-parse** normalization of structured /
+//! multiline string fields when a host may have double-encoded backslash sequences (literal `\` +
+//! `n` still present in a [`crate::Value::String`]). See
+//! [`crate::schema::StringSemantics::is_structured_or_multiline`].
 
 use crate::schema::{InputType, CGS};
 use crate::value::{parse_json_subtree_str, FieldType, Value};
 
+/// Single-character JSON-style escapes after `\` (not `\uXXXX`).
+/// Shared by the quoted-string lexer (strict) and post-parse normalization (lenient).
+#[must_use]
+pub fn json_escape_simple(c: char) -> Option<char> {
+    match c {
+        'n' => Some('\n'),
+        'r' => Some('\r'),
+        't' => Some('\t'),
+        '\\' => Some('\\'),
+        '"' => Some('"'),
+        '\'' => Some('\''),
+        '/' => Some('/'),
+        'b' => Some('\u{8}'),
+        'f' => Some('\u{c}'),
+        _ => None,
+    }
+}
+
+/// Decode `\uXXXX` from four hex digits already collected.
+#[must_use]
+pub fn unicode_escape_from_hex(hex: &str) -> Option<char> {
+    if hex.len() != 4 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(hex, 16)
+        .ok()
+        .and_then(char::from_u32)
+}
+
 /// Unescape common JSON-style backslash sequences (`\n`, `\t`, `\uXXXX`, etc.).
+/// Unknown escapes are preserved as `\` + char (lenient; the lexer rejects them).
 pub fn unescape_json_style_escapes(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut it = s.chars().peekable();
@@ -18,54 +49,37 @@ pub fn unescape_json_style_escapes(s: &str) -> String {
             continue;
         }
         match it.next() {
-            Some('n') => out.push('\n'),
-            Some('r') => out.push('\r'),
-            Some('t') => out.push('\t'),
-            Some('\\') => out.push('\\'),
-            Some('"') => out.push('"'),
-            Some('/') => out.push('/'),
-            Some('b') => out.push('\u{8}'),
-            Some('f') => out.push('\u{c}'),
-            Some('u') => {
-                let mut h = String::with_capacity(4);
-                let mut early = None;
-                for _ in 0..4 {
-                    match it.next() {
-                        Some(ch) if ch.is_ascii_hexdigit() => h.push(ch),
-                        Some(ch) => {
-                            early = Some(ch);
-                            break;
+            Some(esc) => match json_escape_simple(esc) {
+                Some(ch) => out.push(ch),
+                None if esc == 'u' => {
+                    let mut h = String::with_capacity(4);
+                    let mut early = None;
+                    for _ in 0..4 {
+                        match it.next() {
+                            Some(ch) if ch.is_ascii_hexdigit() => h.push(ch),
+                            Some(ch) => {
+                                early = Some(ch);
+                                break;
+                            }
+                            None => break,
                         }
-                        None => break,
                     }
-                }
-                if h.len() == 4 {
-                    if let Ok(cp) = u32::from_str_radix(&h, 16) {
-                        if let Some(ch) = char::from_u32(cp) {
-                            out.push(ch);
-                        } else {
-                            out.push('\\');
-                            out.push('u');
-                            out.push_str(&h);
-                        }
+                    if let Some(ch) = unicode_escape_from_hex(&h) {
+                        out.push(ch);
                     } else {
                         out.push('\\');
                         out.push('u');
                         out.push_str(&h);
-                    }
-                } else {
-                    out.push('\\');
-                    out.push('u');
-                    out.push_str(&h);
-                    if let Some(ch) = early {
-                        out.push(ch);
+                        if let Some(ch) = early {
+                            out.push(ch);
+                        }
                     }
                 }
-            }
-            Some(ch) => {
-                out.push('\\');
-                out.push(ch);
-            }
+                None => {
+                    out.push('\\');
+                    out.push(esc);
+                }
+            },
             None => out.push('\\'),
         }
     }

@@ -38,6 +38,7 @@ entities:
       description:
         required: false
         value_ref: nv_wire_str_markdown
+        data_class: untrusted
       private:
         required: true
         value_ref: nv_wire_bool

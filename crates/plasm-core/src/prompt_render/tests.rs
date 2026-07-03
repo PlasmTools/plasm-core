@@ -2041,7 +2041,10 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
     assert!(frontmatter.contains(".filter{"));
     assert!(frontmatter.contains(".limit(10)"));
     assert!(frontmatter.contains("Core surface:"));
-    assert!(frontmatter.contains("Worked shape"));
+    assert!(
+        frontmatter.contains("Worked transform") || frontmatter.contains("Worked shape"),
+        "expected worked transform/shape example"
+    );
     assert!(
         frontmatter.contains("Replace teaching placeholders") || frontmatter.contains("substitute")
     );
@@ -2118,8 +2121,42 @@ fn mcp_static_tool_descriptions_byte_budget() {
     assert!(plasm_tool.contains(super::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
     assert!(plasm_tool.contains("literal no-op"));
     assert!(param.contains("not JSON data"));
-    assert!(param.contains("e3(p15=\"value\").r2[p4]"));
+    assert!(
+        param.contains("`plasm` tool description"),
+        "program param must point at plasm tool (no duplicated grammar): {param}"
+    );
+    assert!(
+        !param.contains("labels, branches") && !param.contains("<<TAG"),
+        "program param must not duplicate composition teaching: {param}"
+    );
     assert!(param.len() < 200);
+}
+
+#[test]
+fn plasm_tool_description_truncation_prefix_has_composition_mandate() {
+    const PREFIX_BYTES: usize = 2048;
+    let full = super::PLASM_TOOL_DESCRIPTION;
+    let prefix = &full[..full.len().min(PREFIX_BYTES)];
+    assert!(
+        prefix.contains("Batch independent reads"),
+        "batching mandate must be in first {PREFIX_BYTES} bytes (host truncation)"
+    );
+    assert!(
+        prefix.contains("labels, branches") || prefix.contains("a, b"),
+        "multi-root return example must be in first {PREFIX_BYTES} bytes"
+    );
+    assert!(
+        prefix.contains("run_ref") && prefix.contains("approval"),
+        "mutation/gate policy must be in first {PREFIX_BYTES} bytes"
+    );
+    assert!(
+        prefix.contains("\\n") || prefix.contains("`\\n`"),
+        "JSON-style escape note must be in first {PREFIX_BYTES} bytes"
+    );
+    assert!(
+        prefix.contains("<<TAG") || prefix.contains("heredoc"),
+        "heredoc pointer must be in first {PREFIX_BYTES} bytes"
+    );
 }
 
 #[test]

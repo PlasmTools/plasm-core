@@ -6,11 +6,12 @@
 //!   When the bare token names a **CGS entity**, `Entity(...)` is parsed as an entity-reference
 //!   constructor: compound `key_vars` use `k=v,…` (strict key set) with recursive values; otherwise
 //!   the legacy single-argument unwrap applies. Non-entity tokens keep the unwrap behavior.
-//!   String literals: normal quoted `"` / `'` (with `\\` escapes), plus **structured heredocs** `<<TAG` … `TAG` (tagged,
-//!   bash-inspired) for multiline or quote-heavy payloads without escape rules inside the block. The opener must be
-//!   `<<` immediately followed by a tag (`[A-Za-z_][A-Za-z0-9_]*`) and a newline — not `<<` + newline alone.
-//!   For CGS slots with non-`short` [`crate::schema::StringSemantics`], teaching prompts require a heredoc for those cases;
-//!   `string_semantics: short` scalars use normal quotes.
+//!   String literals: normal quoted `"` / `'` with **JSON-style escapes** (`\n`, `\t`, `\r`, `\\`, `\"`, `\'`,
+//!   `\uXXXX`, …); unknown `\x` is a parse error (use a tagged heredoc for multiline bodies). Plus **structured
+//!   heredocs** `<<TAG` … `TAG` (tagged, bash-inspired) for multiline or quote-heavy payloads without escape rules
+//!   inside the block. The opener must be `<<` immediately followed by a tag (`[A-Za-z_][A-Za-z0-9_]*`) and a
+//!   newline — not `<<` + newline alone. For CGS slots with non-`short` [`crate::schema::StringSemantics`], teaching
+//!   prompts prefer a heredoc; `string_semantics: short` scalars use normal quotes.
 //! - [`Parser::parse_predicate_value_rhs`] / [`Parser::parse_dotted_call_arg_value_rhs`]: `Entity{…}` and
 //!   dotted-call `method(k=v,…)` allow unquoted phrases (spaces) until top-level `,` or `}` / `)`.
 //!   RHS may also be an **array literal** `[v1, v2]` (comma-separated; same strict [`Parser::parse_value`]
@@ -188,6 +189,39 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// JSON-style escape after a consumed `\` inside a quoted string.
+    fn parse_quoted_string_escape(&mut self) -> Result<char, ParseError> {
+        let Some(esc) = self.consume_char() else {
+            return Err(self.err(ParseErrorKind::UnterminatedEscape));
+        };
+        if let Some(ch) = crate::string_unescape::json_escape_simple(esc) {
+            return Ok(ch);
+        }
+        if esc != 'u' {
+            return Err(self.err(ParseErrorKind::UnknownEscape { escape: esc }));
+        }
+        let mut h = String::with_capacity(4);
+        for _ in 0..4 {
+            match self.consume_char() {
+                Some(ch) if ch.is_ascii_hexdigit() => h.push(ch),
+                Some(_) | None => {
+                    return Err(self.err(ParseErrorKind::Other {
+                        message: format!(
+                            "invalid unicode escape `\\u{h}…`; need four hex digits, or use a tagged heredoc (`<<TAG` … `TAG`) for multiline bodies"
+                        ),
+                    }));
+                }
+            }
+        }
+        crate::string_unescape::unicode_escape_from_hex(&h).ok_or_else(|| {
+            self.err(ParseErrorKind::Other {
+                message: format!(
+                    "invalid unicode code point `\\u{h}`; use a tagged heredoc (`<<TAG` … `TAG`) for multiline bodies"
+                ),
+            })
+        })
+    }
+
     /// Parse a value: quoted string, UUID, number, or bare word (with optional `\` escapes).
     pub(super) fn parse_value(&mut self) -> Result<Value, ParseError> {
         self.skip_ws();
@@ -205,10 +239,7 @@ impl<'a> Parser<'a> {
                     match self.consume_char() {
                         None => return Err(self.err(ParseErrorKind::UnterminatedString)),
                         Some(c) if c == quote => break,
-                        Some('\\') => match self.consume_char() {
-                            Some(c) => s.push(c),
-                            None => return Err(self.err(ParseErrorKind::UnterminatedEscape)),
-                        },
+                        Some('\\') => s.push(self.parse_quoted_string_escape()?),
                         Some(c) => s.push(c),
                     }
                 }

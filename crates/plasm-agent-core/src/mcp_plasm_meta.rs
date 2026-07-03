@@ -204,6 +204,7 @@ impl PlasmMetaIndex {
 
             let mut step = Map::new();
             step.insert("run_id".into(), json!(h.run_id.to_wire()));
+            step.insert("resource_index".into(), json!(h.resource_index));
             step.insert("artifact_uri".into(), json!(h.plasm_uri));
             step.insert(
                 "dict_ref".into(),
@@ -238,7 +239,7 @@ impl PlasmMetaIndex {
         }
 
         let mut plasm = Map::new();
-        plasm.insert("index_id".into(), json!(self.index_id));
+        plasm.insert("meta_generation".into(), json!(self.index_id));
         if !delta.is_empty() {
             plasm.insert("index_delta".into(), Value::Object(delta));
         }
@@ -292,6 +293,7 @@ impl PlasmMetaIndex {
             }
             if let Some(ref h) = spec.artifact {
                 step.insert("run_id".into(), json!(h.run_id.to_wire()));
+                step.insert("resource_index".into(), json!(h.resource_index));
                 step.insert("artifact_uri".into(), json!(h.plasm_uri));
                 step.insert(
                     "canonical_artifact_uri".into(),
@@ -335,7 +337,8 @@ impl PlasmMetaIndex {
         }
 
         let mut plasm = Map::new();
-        plasm.insert("index_id".into(), json!(self.index_id));
+        // Compaction generation only — not `resource_index` / `plasm://…/r/{n}`.
+        plasm.insert("meta_generation".into(), json!(self.index_id));
         if !delta.is_empty() {
             plasm.insert("index_delta".into(), Value::Object(delta));
         }
@@ -477,8 +480,45 @@ mod tests {
         let step = steps[0].as_object().expect("step object");
         assert!(step.contains_key("dict_ref"));
         assert_eq!(step.get("run_id"), Some(&json!(id.to_wire())));
+        assert_eq!(step.get("resource_index"), Some(&json!(1)));
         assert_eq!(step.get("run_step"), Some(&json!(1)));
+        assert_eq!(plasm.get("meta_generation"), Some(&json!(2)));
+        assert!(plasm.get("index_id").is_none());
         assert_eq!(desc_ids.len(), 1);
+    }
+
+    #[test]
+    fn first_live_meta_generation_is_not_resource_index() {
+        let id = RunArtifactId::from_bytes([1u8; 32]);
+        let ph = "cd".repeat(32);
+        let sid = "b".repeat(32);
+        let h = sample_handle(id, &ph, &sid);
+        let mut idx = PlasmMetaIndex::new();
+        let plasm = idx.build_plasm_run_ui_meta(
+            &[RunUiStepFields {
+                run_step: 1,
+                return_label: "r".into(),
+                display: "d".into(),
+                row_count: 1,
+                node_id: None,
+                preview_entities: None,
+                artifact: Some(h),
+                lossy_summary_fields: LossySummaryFieldNames::default(),
+                column_schema: None,
+            }],
+            &[],
+            None,
+        );
+        let meta_gen = plasm["meta_generation"].as_u64().expect("meta_generation");
+        let resource_index = plasm["steps"][0]["resource_index"]
+            .as_u64()
+            .expect("resource_index");
+        assert_eq!(resource_index, 1);
+        assert_eq!(meta_gen, 2);
+        assert_ne!(
+            meta_gen, resource_index,
+            "agents must not map meta_generation to r/N"
+        );
     }
 
     #[test]

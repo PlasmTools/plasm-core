@@ -90,23 +90,59 @@ fn levenshtein(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
+/// Mutator wire names on seeded entities (full catalog, not only teaching surface).
+fn mutator_wires_on_seeded_entities(exp: &TeachingExposureSession) -> Vec<String> {
+    use crate::schema::CapabilityKind;
+    let mut wires = Vec::new();
+    for (entity, entry_id) in exp.entities.iter().zip(exp.entity_catalog_entry_ids.iter()) {
+        let Some(cgs) = exp.catalog_cgs_for_entry(entry_id.as_str()) else {
+            continue;
+        };
+        for cap in cgs.capabilities.values() {
+            if cap.domain.as_str() != entity.as_str() {
+                continue;
+            }
+            if matches!(
+                cap.kind,
+                CapabilityKind::Create
+                    | CapabilityKind::Update
+                    | CapabilityKind::Delete
+                    | CapabilityKind::Action
+            ) {
+                wires.push(cap.name.as_str().to_string());
+            }
+        }
+    }
+    wires.sort();
+    wires.dedup();
+    wires
+}
+
 fn suggest_nearest_capability_wire(exp: &TeachingExposureSession, unknown: &str) -> Option<String> {
     let unk = unknown.trim().to_ascii_lowercase();
     if unk.is_empty() {
         return None;
     }
-    let mut best: Option<(usize, String)> = None;
+    let mut candidates = mutator_wires_on_seeded_entities(exp);
     for key in &exp.surface.capabilities {
-        let w = key.capability.as_str().to_ascii_lowercase();
-        let score = if w == unk {
+        candidates.push(key.capability.to_string());
+    }
+    candidates.sort();
+    candidates.dedup();
+
+    let mut best: Option<(usize, String)> = None;
+    for wire in candidates {
+        let w = wire.to_ascii_lowercase();
+        if w == unk {
             continue;
-        } else if w.contains(&unk) || unk.contains(&w) {
+        }
+        let score = if w.contains(&unk) || unk.contains(&w) {
             1
         } else {
             levenshtein(&unk, &w)
         };
         if score <= 6 && best.as_ref().map(|(s, _)| score < *s).unwrap_or(true) {
-            best = Some((score, key.capability.to_string()));
+            best = Some((score, wire));
         }
     }
     best.map(|(_, w)| w)
@@ -171,6 +207,15 @@ pub fn format_ranked_replay_diagnostics(
         parts.push(format!("already exposed: {}", already_exposed.join(", ")));
     }
     if !unknown.is_empty() {
+        let available = mutator_wires_on_seeded_entities(exp);
+        let available_note = if available.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "; mutators on seeded entities: {}",
+                available.join(", ")
+            )
+        };
         let parts_with_hints: Vec<String> = unknown
             .iter()
             .map(|name| {
@@ -180,7 +225,7 @@ pub fn format_ranked_replay_diagnostics(
             })
             .collect();
         parts.push(format!(
-            "unknown capability: {} — extend with same logical_session_ref and corrected ranked_capabilities",
+            "unsupported in this catalog: {} — no capability with this wire name exists in loaded catalogs; do not invent names; use only wires from the teaching table{available_note}",
             parts_with_hints.join(", ")
         ));
     }
@@ -246,6 +291,54 @@ mod tests {
         assert!(
             diag.contains("matrix:LangItem.langitem_create"),
             "expected qualified key in diagnostic: {diag}"
+        );
+    }
+
+    #[test]
+    fn diagnostics_mark_invented_wires_unsupported_in_catalog() {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
+            .expect("matrix");
+        let entities = ["LangItem"];
+        let endpoints = entities
+            .iter()
+            .map(|e| ExposureEntityKey {
+                entry_id: "matrix".into(),
+                entity: crate::EntityName::from(*e),
+            })
+            .collect::<Vec<_>>();
+        let delta = derive_intent_exposure_surface_batch(
+            &cgs,
+            "matrix",
+            "create langitem",
+            &endpoints,
+            &entities
+                .iter()
+                .map(|e| (*e).to_string())
+                .collect::<Vec<_>>(),
+            None,
+            ExposureSurfaceOptions {
+                read_first_seeded: true,
+            },
+        );
+        let exp = TeachingExposureSession::new_with_intent_delta(&cgs, "matrix", &entities, delta);
+        let caps_before = exp.surface.capabilities.clone();
+        let diag = format_ranked_replay_diagnostics(
+            &exp,
+            &["branch_delete".to_string()],
+            &caps_before,
+        );
+        assert!(
+            diag.contains("unsupported in this catalog"),
+            "expected not-in-catalog framing: {diag}"
+        );
+        assert!(
+            !diag.contains("corrected ranked_capabilities"),
+            "must not tell agents to invent better names: {diag}"
+        );
+        assert!(
+            diag.contains("langitem_create") || diag.contains("mutators on seeded"),
+            "should list real mutators on seeded entities: {diag}"
         );
     }
 }

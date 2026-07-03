@@ -146,16 +146,7 @@ fn gloss_rows_for_filtered_block(
     new_caps: &BTreeSet<ExposureCapabilityKey>,
 ) -> Vec<TeachingFieldGloss> {
     let mut needed: HashSet<String> = HashSet::new();
-    let mut demonstrated_lhs: HashSet<String> = HashSet::new();
     for row in kept_rows {
-        demonstrated_lhs.extend(super::gloss_dedup::lhs_demonstrated_syms_for_teaching_expr(
-            row.teaching_expr.expression.as_str(),
-            None,
-        ));
-        demonstrated_lhs.extend(super::gloss_dedup::lhs_demonstrated_syms_for_teaching_expr(
-            row.teaching_expr.expression.as_str(),
-            Some(row.teaching_expr.result_type.as_str()),
-        ));
         for sym in
             field_syms_for_teaching_row(row.teaching_expr.expression.as_str(), None, None, &[])
         {
@@ -228,7 +219,9 @@ fn gloss_rows_for_filtered_block(
             cap,
             CapabilityParamSurfaceFilter::AllOnSurface,
         ) {
-            if !needed.contains(&sym) || covered.contains(&sym) || demonstrated_lhs.contains(&sym) {
+            // Capability-param slots on create/update witnesses must still get gloss rows (`p9=$`
+            // does not teach wire name/type).
+            if !needed.contains(&sym) || covered.contains(&sym) {
                 continue;
             }
             out.push(synthesize_param_gloss_row(
@@ -549,7 +542,7 @@ mod tests {
     }
 
     #[test]
-    fn teaching_gloss_skips_p_sym_demonstrated_on_create_witness() {
+    fn teaching_gloss_emits_p_sym_for_create_witness_params() {
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let cgs = load_schema_dir(&root.join("../../fixtures/schemas/plasm_language_matrix"))
             .expect("matrix");
@@ -603,10 +596,21 @@ mod tests {
             }),
             "create witness must demonstrate title p# on LHS"
         );
+        let gloss = block
+            .field_gloss_rows
+            .iter()
+            .find(|g| g.symbol == title_sym)
+            .unwrap_or_else(|| {
+                panic!(
+                    "create-param {title_sym} must have standalone gloss (wire/type), got {:?}",
+                    block.field_gloss_rows
+                )
+            });
+        let meaning = format!("{} {} {}", gloss.field_type, gloss.allowed_values, gloss.description);
         assert!(
-            !block.field_gloss_rows.iter().any(|g| g.symbol == title_sym),
-            "duplicate standalone gloss row must be suppressed for title p# on witness: {:?}",
-            block.field_gloss_rows
+            meaning.to_ascii_lowercase().contains("title")
+                || gloss.field_type.to_ascii_lowercase().contains("title"),
+            "gloss must teach wire/type for title: {gloss:?}"
         );
     }
 
