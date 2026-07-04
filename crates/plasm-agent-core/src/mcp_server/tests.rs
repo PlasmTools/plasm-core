@@ -200,12 +200,12 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
         plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("do **not** echo the program")
     );
     assert!(!plasm_core::prompt_render::PLASM_RUN_TOOL_DESCRIPTION.contains("echo the program"));
-    assert!(plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION.contains("not JSON data"));
-    assert!(plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION
-        .contains("`plasm` tool description"));
+    let program_param_violations = plasm_core::prompt_render::program_param_contract_violations(
+        plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION,
+    );
     assert!(
-        !plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION.contains("labels, branches"),
-        "program param must not duplicate composition teaching"
+        program_param_violations.is_empty(),
+        "program param contract violations: {program_param_violations:?}"
     );
     assert!(!plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.contains("MCP initialize"));
     assert!(!plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.contains("MCP initialize"));
@@ -236,46 +236,23 @@ fn mcp_tool_descriptions_are_self_contained_without_initialize() {
     assert!(!tools_json.contains("MCP initialize"));
 }
 
-/// Static MCP tool descriptions carry canonical grammar; initialize workflow stays supplementary.
+/// MCP `tools/list` must serve the full grammar and program contracts byte-for-byte.
+/// Host-side clipping (e.g. Cursor) is a client concern; the server must never be the source.
 #[test]
-fn mcp_prompt_static_tool_descriptions() {
-    let init = plasm_core::prompt_render::MCP_INITIALIZE_WORKFLOW;
-    assert!(
-        init.len() < 2500,
-        "initialize instructions too long: {} chars",
-        init.len()
-    );
-    assert!(
-        plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.len() < 8000,
-        "plasm tool description too long: {} chars",
-        plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION.len()
-    );
-    assert!(
-        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.len() < 2200,
-        "plasm_context tool description too long: {} chars",
-        plasm_core::prompt_render::PLASM_CONTEXT_TOOL_DESCRIPTION.len()
-    );
-    assert!(
-        plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.len() < 550,
-        "discover tool description too long: {} chars",
-        plasm_core::prompt_render::DISCOVER_TOOL_DESCRIPTION.len()
-    );
-    assert!(
-        plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION.len() < 200,
-        "program param description too long: {} chars",
-        plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION.len()
-    );
+fn mcp_tool_list_wire_carries_full_untruncated_descriptions() {
     let tools = default_plasm_tools();
-    let v = serde_json::to_value(
-        tools
-            .iter()
-            .find(|t| t.name == "plasm")
-            .expect("plasm tool")
-            .input_schema
-            .clone(),
-    )
-    .expect("input_schema json");
-    let program_desc = v
+    let plasm = tools
+        .iter()
+        .find(|t| t.name == "plasm")
+        .expect("plasm tool");
+    assert_eq!(
+        plasm.description.as_deref(),
+        Some(plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION),
+        "served plasm tool description must equal the full asset byte-for-byte"
+    );
+
+    let schema = serde_json::to_value(plasm.input_schema.clone()).expect("plasm input_schema json");
+    let program_desc = schema
         .get("properties")
         .and_then(|p| p.get("program"))
         .and_then(|s| s.get("description"))
@@ -283,8 +260,32 @@ fn mcp_prompt_static_tool_descriptions() {
         .expect("plasm program param description");
     assert_eq!(
         program_desc,
-        plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION
+        plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION,
+        "served program param description must equal the full asset byte-for-byte"
     );
+
+    // Wire JSON must embed the full strings (guards serializers that clip long fields).
+    let tools_json = serde_json::to_string(&tools).expect("serialize tools");
+    for (label, asset) in [
+        (
+            "plasm tool description",
+            plasm_core::prompt_render::PLASM_TOOL_DESCRIPTION,
+        ),
+        (
+            "program param description",
+            plasm_core::prompt_render::PLASM_PROGRAM_PARAM_DESCRIPTION,
+        ),
+    ] {
+        let escaped = serde_json::to_string(asset).expect("escape asset");
+        let body = escaped
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .expect("serde_json::to_string wraps strings in quotes");
+        assert!(
+            tools_json.contains(body),
+            "serialized tools/list must contain the full {label}"
+        );
+    }
 }
 
 #[test]

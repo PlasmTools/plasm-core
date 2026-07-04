@@ -1247,182 +1247,6 @@ fn overshow_tsv_includes_compound_capture_item_get_witness() {
 }
 
 #[test]
-fn tsv_prompt_uses_plasm_expr_and_meaning_columns() {
-    let dir = apis_dir("github");
-    if !dir.exists() {
-        return;
-    }
-    let cgs = load_schema_dir(&dir).unwrap();
-    let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
-    let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
-    let mut lines = tsv.lines();
-    let first = lines.next().expect("tsv header");
-    assert_eq!(
-        first,
-        TSV_TEACHING_TABLE_HEADER.trim_end(),
-        "TSV output should begin with plasm_expr/Meaning header (grammar is static in PLASM_TOOL_DESCRIPTION)"
-    );
-    assert!(
-        !tsv.contains(TEACHING_VALID_EXPR_MARKER),
-        "teaching TSV must not embed grammar contract"
-    );
-    assert!(
-        super::PLASM_TOOL_DESCRIPTION.contains(TEACHING_VALID_EXPR_MARKER),
-        "canonical grammar const must include contract marker"
-    );
-    let issue_identity = tsv
-        .lines()
-        .find(|l| {
-            let cols: Vec<&str> = l.split('\t').collect();
-            cols.len() == 2
-                && cols[0].starts_with("e5(")
-                && !cols[0].contains('[')
-                && cols[1].starts_with("→ e5")
-        })
-        .expect("Issue compound identity get row");
-    let cols: Vec<&str> = issue_identity.split('\t').collect();
-    assert_eq!(cols.len(), 2, "identity row should have 2 columns");
-    assert!(cols[0].starts_with("e5("));
-    assert!(
-        !cols[0].contains('['),
-        "Issue identity get should not fuse a projection bracket; row={issue_identity:?}"
-    );
-    let issue_projection_row = tsv.lines().find(|l| {
-        let c: Vec<&str> = l.split('\t').collect();
-        if c.len() != 2 {
-            return false;
-        }
-        let expr = c[0].trim();
-        expr.starts_with("e5")
-            && c[1].contains("· projection")
-            && parse_trailing_projection_bracket(expr).is_some()
-    });
-    let issue_projection_row =
-        issue_projection_row.expect("expected Issue projection witness TSV row");
-    let issue_banner = cgs
-        .get_entity("Issue")
-        .and_then(|e| {
-            let d = e.description.trim();
-            (!d.is_empty()).then(|| truncate_inline_desc(d, 200))
-        })
-        .expect("Issue banner");
-    assert!(
-        issue_projection_row.contains(&issue_banner),
-        "projection witness Meaning should carry Issue entity prose once: {issue_projection_row:?}"
-    );
-    assert!(
-        !cols[1].contains(issue_banner.as_str()),
-        "identity get Meaning should not repeat entity banner prose; row={issue_identity:?}"
-    );
-    let state_slot = tsv
-        .lines()
-        .find(|l| {
-            let cols: Vec<&str> = l.split('\t').collect();
-            cols.len() == 2
-                && cols[0].starts_with('p')
-                && cols[1].contains("state")
-                && cols[1].contains('v')
-        })
-        .expect("Issue state field TSV row (compact `v# · state` when select shares values:)");
-    let state_cols: Vec<&str> = state_slot.split('\t').collect();
-    assert_eq!(state_cols.len(), 2);
-    assert!(
-        state_cols[1].starts_with('v') && state_cols[1].contains(" · state"),
-        "expected `v# · wire` Meaning for enum-backed state slot; got {:?}",
-        state_cols[1]
-    );
-    assert!(
-        tsv.lines().any(|l| {
-            let c: Vec<&str> = l.split('\t').collect();
-            c.len() == 2
-                && c[0].starts_with('v')
-                && c[1].contains("open")
-                && c[1].contains("closed")
-        }),
-        "expected a v# row carrying Issue state allowed values; excerpt missing open/closed"
-    );
-    let body = tsv
-        .lines()
-        .skip_while(|line| *line != TSV_TEACHING_TABLE_HEADER.trim_end())
-        .skip(1)
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        !body.contains(";;"),
-        "2-column TSV surface should remove compact `;;` gloss separators"
-    );
-    let p_owner = map.ident_sym_cap_param_for("", "Issue", "issue_sub_issue_query", "owner");
-    let owner_row = tsv
-        .lines()
-        .find(|l| l.starts_with(&format!("{p_owner}\t")))
-        .unwrap_or_else(|| {
-            panic!("expected TSV gloss row for {p_owner} (Issue.issue_sub_issue_query.owner)")
-        });
-    let oc: Vec<&str> = owner_row.split('\t').collect();
-    assert_eq!(oc.len(), 2, "owner slot row should be 2-column TSV");
-    assert!(
-        oc[1].starts_with('v') && oc[1].contains(" · "),
-        "capability-param registry gloss should use `v# · wire` (and optional prose); got {:?}",
-        oc[1]
-    );
-    let issue_comment_create_row = tsv
-        .lines()
-        .find(|l| {
-            let cols: Vec<&str> = l.split('\t').collect();
-            cols.len() == 2
-                && cols[0].contains(".m")
-                && cols[0].starts_with('e')
-                && cols[1].to_lowercase().contains("comment")
-        })
-        .expect("IssueComment invoke teaching table row");
-    assert!(
-        issue_comment_create_row.contains("[scope") || issue_comment_create_row.contains("scope"),
-        "invoke row should reference scoping, got {issue_comment_create_row:?}"
-    );
-    let contrib_ent = map.entity_sym_for("", "Contributor");
-    let p_repo = map.ident_sym_cap_param_for("", "Contributor", "contributor_query", "repository");
-    let p_anon = map.ident_sym_cap_param_for("", "Contributor", "contributor_query", "anon");
-    let contrib = tsv
-        .lines()
-        .find(|l| {
-            let cols: Vec<&str> = l.split('\t').collect();
-            cols.len() == 2
-                && cols[0].starts_with(&format!("{contrib_ent}{{"))
-                && cols[0].contains(&format!("{p_repo}="))
-                && cols[0].contains(&format!("{p_anon}="))
-                && cols[1].contains("inputs:")
-        })
-        .or_else(|| {
-            tsv.lines().find(|l| {
-                let cols: Vec<&str> = l.split('\t').collect();
-                cols.len() == 2
-                    && cols[0].starts_with(&format!("{contrib_ent}{{"))
-                    && cols[0].contains(&format!("{p_repo}="))
-                    && cols[0].contains(&format!("{p_anon}="))
-                    && (cols[1].contains("opt:") || cols[1].contains("[scope"))
-            })
-        })
-        .expect("Contributor scoped query teaching table row");
-    assert!(
-        parse_trailing_projection_bracket(contrib.split('\t').next().unwrap_or("").trim())
-            .is_none(),
-        "Contributor scoped query omits set-equal projection (taught on witness): {contrib:?}"
-    );
-    assert!(
-        contrib.starts_with('e') && contrib.contains("{p"),
-        "contributor query row should be a brace-query exemplar: {contrib:?}"
-    );
-    assert!(
-        !contrib.contains("args:"),
-        "capability legends omit inline `args:`; contributor row was: {contrib:?}"
-    );
-    assert!(
-        contrib.contains("opt:") || contrib.contains("[scope") || contrib.contains("inputs:"),
-        "contributor query Meaning should carry optionality, scope, or inputs legend: {contrib:?}"
-    );
-}
-
-#[test]
 fn tsv_teaching_emitted_directly_has_no_compact_domain_separator_in_table() {
     let dir = apis_dir("dnd5e");
     if !dir.is_dir() {
@@ -2090,7 +1914,6 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
 #[test]
 fn mcp_static_tool_descriptions_byte_budget() {
     const MAX_WORKFLOW_BYTES: usize = 2500;
-    const MAX_PLASM_TOOL_DESCRIPTION_BYTES: usize = 8000;
 
     let workflow = super::MCP_INITIALIZE_WORKFLOW;
     let plasm_tool = super::PLASM_TOOL_DESCRIPTION;
@@ -2104,7 +1927,7 @@ fn mcp_static_tool_descriptions_byte_budget() {
         workflow.len()
     );
     assert!(
-        plasm_tool.len() <= MAX_PLASM_TOOL_DESCRIPTION_BYTES,
+        plasm_tool.len() <= super::PLASM_TOOL_DESCRIPTION_MAX_BYTES,
         "plasm tool description too long: {} bytes",
         plasm_tool.len()
     );
@@ -2120,52 +1943,61 @@ fn mcp_static_tool_descriptions_byte_budget() {
     );
     assert!(plasm_tool.contains(super::MCP_TOOL_SYNTAX_CONTRACT_MARKER));
     assert!(plasm_tool.contains("literal no-op"));
-    assert!(param.contains("not JSON data"));
+
+    let violations = super::program_param_contract_violations(param);
     assert!(
-        param.contains("`plasm` tool description"),
-        "program param must point at plasm tool (no duplicated grammar): {param}"
+        violations.is_empty(),
+        "program param contract violations: {violations:?}\n{param}"
     );
-    assert!(
-        !param.contains("labels, branches") && !param.contains("<<TAG"),
-        "program param must not duplicate composition teaching: {param}"
-    );
-    assert!(param.len() < 200);
 }
 
 #[test]
 fn plasm_tool_description_truncation_prefix_has_composition_mandate() {
-    const PREFIX_BYTES: usize = 2048;
     let full = super::PLASM_TOOL_DESCRIPTION;
-    let prefix = &full[..full.len().min(PREFIX_BYTES)];
+    let prefix_n = super::PLASM_TOOL_DESCRIPTION_PREFIX_BYTES;
+    let prefix = &full[..full.len().min(prefix_n)];
     assert!(
         prefix.contains("Batch independent reads"),
-        "batching mandate must be in first {PREFIX_BYTES} bytes (host truncation)"
+        "batching mandate must be in first {prefix_n} bytes (host truncation)"
     );
     assert!(
         prefix.contains("labels, branches") || prefix.contains("a, b"),
-        "multi-root return example must be in first {PREFIX_BYTES} bytes"
+        "multi-root return example must be in first {prefix_n} bytes"
     );
     assert!(
         prefix.contains("run_ref") && prefix.contains("approval"),
-        "mutation/gate policy must be in first {PREFIX_BYTES} bytes"
+        "mutation/gate policy must be in first {prefix_n} bytes"
     );
     assert!(
         prefix.contains("\\n") || prefix.contains("`\\n`"),
-        "JSON-style escape note must be in first {PREFIX_BYTES} bytes"
+        "JSON-style escape note must be in first {prefix_n} bytes"
     );
     assert!(
         prefix.contains("<<TAG") || prefix.contains("heredoc"),
-        "heredoc pointer must be in first {PREFIX_BYTES} bytes"
+        "heredoc pointer must be in first {prefix_n} bytes"
+    );
+    assert!(
+        prefix.contains("Program shape:"),
+        "program-shape contract must be in first {prefix_n} bytes (host truncation)"
+    );
+
+    let wide_n = super::PLASM_TOOL_DESCRIPTION_WIDE_PREFIX_BYTES;
+    let wide = &full[..full.len().min(wide_n)];
+    assert!(
+        wide.contains("Composition rules:"),
+        "composition rules must be in first {wide_n} bytes (host truncation)"
+    );
+    assert!(
+        wide.contains("Worked transform") || wide.contains("Worked shape"),
+        "a worked composition example must be in first {wide_n} bytes"
     );
 }
 
 #[test]
 fn plasm_tool_description_stats() {
-    const MAX_PLASM_TOOL_DESCRIPTION_BYTES: usize = 8000;
-
     let full = super::PLASM_TOOL_DESCRIPTION;
     assert!(
-        full.len() <= MAX_PLASM_TOOL_DESCRIPTION_BYTES,
+        full.len() <= super::PLASM_TOOL_DESCRIPTION_MAX_BYTES,
         "grammar contract grew past max budget: {} bytes",
         full.len()
     );

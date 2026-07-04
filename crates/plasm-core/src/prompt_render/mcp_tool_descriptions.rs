@@ -34,7 +34,21 @@ pub const PLASM_CONTEXT_TOOL_DESCRIPTION: &str = include_str!("assets/plasm_cont
 pub const DISCOVER_TOOL_DESCRIPTION: &str = include_str!("assets/discover_tool.txt");
 
 /// JSON-schema description for the MCP `plasm` tool `program` parameter.
+///
+/// Field-attached surface: hosts often clip the long [`PLASM_TOOL_DESCRIPTION`] but keep
+/// per-parameter schema text, so this must be a self-sufficient minimum program-authoring
+/// contract (not a pointer-only stub). Budget: [`PLASM_PROGRAM_PARAM_MAX_BYTES`].
 pub const PLASM_PROGRAM_PARAM_DESCRIPTION: &str = include_str!("assets/program_param.txt");
+
+/// Max bytes for [`PLASM_PROGRAM_PARAM_DESCRIPTION`] (truncation-resistant field surface).
+pub const PLASM_PROGRAM_PARAM_MAX_BYTES: usize = 2048;
+
+/// Max bytes for [`PLASM_TOOL_DESCRIPTION`].
+pub const PLASM_TOOL_DESCRIPTION_MAX_BYTES: usize = 8000;
+
+/// Host-truncation prefixes that must still carry program-authoring mandates.
+pub const PLASM_TOOL_DESCRIPTION_PREFIX_BYTES: usize = 2048;
+pub const PLASM_TOOL_DESCRIPTION_WIDE_PREFIX_BYTES: usize = 4096;
 
 /// Supplementary MCP initialize workflow rollup (untrusted; grammar lives in [`PLASM_TOOL_DESCRIPTION`]).
 pub const MCP_INITIALIZE_WORKFLOW: &str = include_str!("assets/initialize_workflow.txt");
@@ -49,3 +63,38 @@ pub const MCP_TOOL_SEQUENCING_MARKER: &str =
 /// Marker for tests; grammar contract opener in [`PLASM_TOOL_DESCRIPTION`].
 pub const TEACHING_VALID_EXPR_MARKER: &str =
     "Grammar below; symbols from `plasm_context` TSV. Reply with one valid plasm_program:";
+
+/// Substrings that must appear in [`PLASM_PROGRAM_PARAM_DESCRIPTION`].
+const PROGRAM_PARAM_CONTRACT_MARKERS: &[&str] = &[
+    "not JSON data",
+    "plasm_context",
+    "teaching TSV",
+    "final return line",
+    "<<TAG",
+    "session_mode: \"extend\"",
+    "`plasm` tool description",
+];
+
+/// Returns human-readable contract violations for the `program` param description, or empty if ok.
+pub fn program_param_contract_violations(param: &str) -> Vec<String> {
+    let mut violations = Vec::new();
+    if param.len() > PLASM_PROGRAM_PARAM_MAX_BYTES {
+        violations.push(format!(
+            "program param description too long: {} bytes (max {PLASM_PROGRAM_PARAM_MAX_BYTES})",
+            param.len()
+        ));
+    }
+    for marker in PROGRAM_PARAM_CONTRACT_MARKERS {
+        if !param.contains(marker) {
+            violations.push(format!("missing required marker {marker:?}"));
+        }
+    }
+    if !(param.contains("e#")
+        && param.contains("m#")
+        && param.contains("p#")
+        && param.contains("r#"))
+    {
+        violations.push("must carry the symbol legend e#/m#/p#/r#".into());
+    }
+    violations
+}

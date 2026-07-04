@@ -1,5 +1,5 @@
 ---
-source: crates/plasm-core/src/prompt_render/tests.rs
+source: plasm-oss/crates/plasm-core/src/prompt_render/tests.rs
 expression: tsv
 ---
 plasm_expr	Meaning
@@ -8,27 +8,43 @@ v10	markdown
 v12	str · Short text
 v9	json · JSON object
 v1	str · Stable name for this agent on edits (shows in attribution)
+v2	str · mt1 precondition string exposed on EditorState (wire baseToken or derived from block refs); host …
+v4	bool · true/false flag (for example resolve thread)
+v13	uuid · Optional idempotency key so you can retry the same edit batch safely
 v6	str · Event id from the pending collaboration stream—use for after= and ack up_to_id only
 v3	str · Block id from your current snapshot. Refresh the snapshot after others edit before you reuse ids
 v7	array[str] · New blocks in order from top to bottom
+v11	select · first, all
 v8	int · Integer
 p1	union · v210 | v211 | v212 · operations
 p2	union · v101 | v102 | v103 | v104 | v105 | v106 | v107 · operations
 p3	v1 · agent_id
+p4	v2 · base_token
 p5	v3 · fromRef
 p6	v3 · ref
 p7	v3 · toRef
+p8	v4 · resolve
+p9	v4 · resolve
 p11	v6 · up_to_id
 p12	v7 · blocks
 p13	v8 · base_revision
+p16	v10 · text
+p17	v10 · find
 p18	v10 · markdown
+p19	v10 · replace
 p20	v10 · content
 p22	v10 · quote
 p23	v10 · report · Full bug report
 p24	v10 · text
+p25	v11 · occurrence
 p26	v12 · mark_id
+p27	v12 · blockFilter
 p28	v12 · by
 p29	v12 · mark_id
+p30	v12 · presence_status
+p31	v12 · share_token
+p33	v12 · status
+p35	v13 · idempotency_key
 p10	v5 · slug
 p21	v10 · markdown
 p34	v12 · title
@@ -36,6 +52,7 @@ p15	v9 · links · SDK link bundle (state, ops, docs). Wire key _links
 p14	v9 · agent_auth · Auth hints from share JSON agent.auth (token source, header names)
 r1	blocks · Blocks from the latest snapshot—use for edits that need stable block ids
 r2	collaboration_events · Recent collaboration updates you have not acknowledged yet
+v210{p26=$,p16=$,p8=$}	→ comment_reply — Reply in a thread; optionally resolve in the same step
 v211{p26=$}	→ comment_resolve — Resolve a thread; keep history
 v212{p26=$}	→ comment_unresolve — Unresolve a thread for more replies
 v101{p6=$,p18=$}	→ replace_block — Replace one block’s markdown
@@ -43,24 +60,26 @@ v102{p6=$,p12=$}	→ insert_before — Insert blocks before the anchor block
 v103{p6=$,p12=$}	→ insert_after — Insert blocks after the anchor block
 v104{p6=$}	→ delete_block — Delete one block
 v105{p5=$,p7=$,p12=$}	→ replace_range — Replace a range of blocks with new blocks
+v106{p6=$,p17=$,p19=$,p25=$}	→ find_replace_in_block — Find and replace text inside one block
+v107{p17=$,p19=$,p25=$,p5=$,p7=$,p27=$}	→ find_replace_in_doc — Find and replace text across the document (optional block range or kind filter)
 v14	union · v210 | v211 | v212
 v15	union · v101 | v102 | v103 | v104 | v105 | v106 | v107
 e1(p10)[p10,p21,p34,p15,p14]	→ e1 · projection · Read or edit a shared Proof document
 e1(p10)	→ e1
 e1(p10).m16()	→ e1 · optional · Bind this session to a share URL or token for this slug. Later calls reuse st…
-e1(p10).m1(p3=$, p28=$, p22=$, p24=$,..)	→ e1 · optional · Start a comment thread on quoted text from the document
-e1(p10).m2(p3=$, p28=$, p1=[$],..)	→ e1 · optional · Apply several comment updates in one request
-e1(p10).m3(p3=$, p28=$, p29=$, p24=$,..)	→ e1 · optional · Reply in a thread; optionally mark it resolved in the same step
-e1(p10).m4(p3=$, p28=$, p29=$,..)	→ e1 · optional · Mark a thread resolved; history stays visible
-e1(p10).m5(p3=$, p28=$, p29=$,..)	→ e1 · optional · Open a resolved thread for more discussion
-e1(p10).m6(p3=$, p28=$, p29=$,..)	→ e1 · optional · Accept a pending suggestion and apply it to the document
-e1(p10).m7(p3=$, p28=$, p22=$,..)	→ e1 · optional · Propose deleting a quoted passage for a human to accept or reject
-e1(p10).m8(p3=$, p28=$, p22=$, p20=$,..)	→ e1 · optional · Propose inserting text after a quoted passage for a human to accept or reject
-e1(p10).m9(p3=$, p28=$, p29=$,..)	→ e1 · optional · Reject a pending suggestion without changing the document body
-e1(p10).m10(p3=$, p28=$, p22=$, p20=$,..)	→ e1 · optional · Propose replacing a quoted passage with new content for a human to accept or …
-e1(p10).m11(p3=$, p11=$, p28=$,..)	→ e1 · optional · Tell the server how far you read the collaboration event stream
+e1(p10).m1(p3=$, p28=$, p22=$, p24=$, p4=$, p31=$)	→ e1 · optional · Start a comment thread on quoted text from the document
+e1(p10).m2(p3=$, p28=$, p31=$, p4=$, p1=[$])	→ e1 · optional · Apply several comment updates in one request
+e1(p10).m3(p3=$, p28=$, p29=$, p24=$, p9=$, p4=$, p31=$)	→ e1 · optional · Reply in a thread; optionally mark it resolved in the same step
+e1(p10).m4(p3=$, p28=$, p29=$, p4=$, p31=$)	→ e1 · optional · Mark a thread resolved; history stays visible
+e1(p10).m5(p3=$, p28=$, p29=$, p4=$, p31=$)	→ e1 · optional · Open a resolved thread for more discussion
+e1(p10).m6(p3=$, p28=$, p29=$, p4=$, p31=$)	→ e1 · optional · Accept a pending suggestion and apply it to the document
+e1(p10).m7(p3=$, p28=$, p22=$, p4=$, p35=$, p31=$, p33=$)	→ e1 · optional · Propose deleting a quoted passage for a human to accept or reject
+e1(p10).m8(p3=$, p28=$, p22=$, p20=$, p4=$, p35=$, p31=$, p33=$)	→ e1 · optional · Propose inserting text after a quoted passage for a human to accept or reject
+e1(p10).m9(p3=$, p28=$, p29=$, p4=$, p31=$)	→ e1 · optional · Reject a pending suggestion without changing the document body
+e1(p10).m10(p3=$, p28=$, p22=$, p20=$, p4=$, p35=$, p31=$, p33=$)	→ e1 · optional · Propose replacing a quoted passage with new content for a human to accept or …
+e1(p10).m11(p3=$, p11=$, p28=$, p31=$)	→ e1 · optional · Tell the server how far you read the collaboration event stream
 e1(p10).m12(p23=$)	→ e1 · Report a bug and include this document as context
-e1(p10).m13(p3=$, p28=$, p13=$, p2=[v101{p6=$,p18=$},v103{p6=$,p12=$}],..)	→ e1 · optional · Apply one batch of block edits. Use base_revision from your latest snapshot (…
-e1(p10).m17(p3=$,..)	→ e1 · optional · You MUST announce presence before you edit or comment—call this once per do…
+e1(p10).m13(p3=$, p35=$, p31=$, p28=$, p13=$, p2=[v101{p6=$,p18=$},v103{p6=$,p12=$}])	→ e1 · optional · Apply one batch of block edits. Use base_revision from your latest snapshot (…
+e1(p10).m17(p3=$, p30=$)	→ e1 · optional · You MUST announce presence before you edit or comment—call this once per do…
 e1(p10).r1	relation e1 → [Block]
 e1(p10).r2	relation e1 → [CollaborationEvent]

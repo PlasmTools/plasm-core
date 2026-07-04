@@ -1,5 +1,5 @@
 ---
-source: crates/plasm-core/src/prompt_render/tests.rs
+source: plasm-oss/crates/plasm-core/src/prompt_render/tests.rs
 expression: tsv
 ---
 plasm_expr	Meaning
@@ -73,8 +73,14 @@ e7[p38,p37,p39]	→ e7 · projection · A person, organisation, or project profi
 e7{p41=$, p40=$}	→ [e7] · inputs: p41,p40 · optional
 e7(p38)	→ e7
 e7{p41=$, p40=$}.r1	relation e7 → [e9]
+v44	array[int]
+p42	v4 · end_time
+p43	v44 · meeting_ids
+p44	v2 · meeting_id
+p45	v7 · meeting_uuid
 p46	v7 · slug
-e8.m11(p46=$,..)	→ () · Action prompt execution result · optional · prompt-run-create
+p47	v4 · start_time
+e8.m11(p46=$, p44=$, p45=$, p43=[$], p47=$, p42=$)	→ () · Action prompt execution result · optional · prompt-run-create
 v58	ref:Profile · int
 v57	select · auto, keyword, natural
 v53	select · all, ocr, audio, ui

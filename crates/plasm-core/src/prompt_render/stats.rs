@@ -69,6 +69,9 @@ pub fn strip_tsv_comment_contract_prefix(comment_block: &str) -> String {
 }
 
 /// Section byte map for raw (uncommented) grammar contract text.
+///
+/// Section bodies run from each present marker to the next marker in *document* order (marker
+/// list order need not match asset layout).
 pub fn grammar_frontmatter_section_bytes(contract: &str) -> BTreeMap<&'static str, usize> {
     let mut map = BTreeMap::new();
     if let Some(output_idx) = contract.find("Output:") {
@@ -77,16 +80,17 @@ pub fn grammar_frontmatter_section_bytes(contract: &str) -> BTreeMap<&'static st
             map.insert("opener", opener.len());
         }
     }
-    for (i, (name, marker)) in GRAMMAR_SECTION_MARKERS.iter().enumerate() {
-        let Some(start) = contract.find(marker) else {
-            continue;
-        };
-        let end = GRAMMAR_SECTION_MARKERS
+    let mut present: Vec<(&str, usize)> = GRAMMAR_SECTION_MARKERS
+        .iter()
+        .filter_map(|(name, marker)| contract.find(marker).map(|start| (*name, start)))
+        .collect();
+    present.sort_by_key(|(_, start)| *start);
+    for (i, (name, start)) in present.iter().enumerate() {
+        let end = present
             .get(i + 1)
-            .and_then(|(_, next_marker)| contract.find(next_marker))
+            .map(|(_, next)| *next)
             .unwrap_or(contract.len());
-        let body = contract[start..end].trim_end();
-        map.insert(*name, body.len());
+        map.insert(*name, contract[*start..end].trim_end().len());
     }
     map
 }

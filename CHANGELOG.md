@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.119] - 2026-07-04
+
+### Fixed
+
+- **MCP host truncation:** `program` JSON-schema description is a self-sufficient minimum program-authoring contract (≤2048 B) so agents still get shape/symbols/heredoc/extend guidance when hosts clip the long `plasm` tool description.
+- **Tool description layout:** `plasm_tool.txt` orders Program shape within the first 2048 B and Composition rules within 4096 B; `tools/list` wire regression asserts full assets byte-for-byte (no server-side clipping).
+- **Teaching TSV tests:** projection/banner/select-gloss/scope invariants live on `plasm_prompt_matrix` (`prompt_matrix_tsv_teaching_surface_invariants`); no `apis/github` coupling for that surface.
+
+### Changed
+
+- **Program-param contract:** shared `program_param_contract_violations` + byte budgets (`PLASM_PROGRAM_PARAM_MAX_BYTES`, prefix sizes) as the single guard for the field-attached surface.
+- **Grammar section stats:** section byte map is document-order independent (marker list need not match asset layout).
+
 ## [0.3.118] - 2026-07-04
 
 ### Fixed

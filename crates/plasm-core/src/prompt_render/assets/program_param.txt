@@ -1,1 +1,14 @@
-Plasm source, not JSON data. Program shape and examples are in the `plasm` tool description; symbols from `plasm_context` TSV.
+Plasm source text, not JSON data — one expression, or `label = …` bindings then ONE final return line (comma-separated roots on that line only). No prose, no `return` keyword, no code fences. Echoing a bare object/array/string literal is a no-op; write Plasm source.
+
+Symbols come from the `plasm_context` teaching TSV: `e#` entity, `m#` method, `p#` field/param/filter, `r#` relation. Substitute real values for teaching placeholders (`$`, `<id>`); never emit `$`.
+
+Shape:
+- Get by identity: `e#(id)` (parens, ids unquoted). Query/filter: `e#{p#="val"}` (braces, quote scalars only inside `{…}`). Relation nav: `producer.r#` (not a bare `p#` after `.`).
+- Search when taught: `e#~"text"` or `e#~$` (bare `e#~` is a parse error).
+- Postfix from the TSV left column: `.filter{…}` `.sort(p#,desc)` `.limit(n)` `.group_by` `.aggregate`; `[p#,…]` projects.
+- Write effect: `source => e#.m#(p#=…)`; return the action/created row or a follow-up `e#(id)` get, not `created.p#`.
+- Batch independent reads into ONE program: bind shared scope once, then return several roots on the final line.
+
+Strings use JSON escapes inside quotes; long/multiline bodies use `<<TAG` … `TAG` heredocs (real newlines). Row-to-text: `label = source[p#,…] <<TAG` with Minijinja `{{ }}`/`{% %}` over `rows`; pass `binding.content` to string params and `${binding.content}` inside later strings.
+
+Full grammar and worked examples are in the `plasm` tool description. On any parse/symbol error, extend the same session (`session_mode: "extend"`, same `logical_session_ref`) — do not open a new one.

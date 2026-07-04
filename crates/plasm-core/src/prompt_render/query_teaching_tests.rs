@@ -7,9 +7,18 @@ use crate::symbol_tuning::{symbol_map_for_prompt, FocusSpec};
 
 use super::{
     collect_entity_teaching_block, parse_trailing_projection_bracket,
-    prompt_line_valid_cache_seed_cgs, RenderConfig, TEACHING_VALID_EXPR_MARKER,
-    TSV_TEACHING_TABLE_HEADER,
+    prompt_line_valid_cache_seed_cgs, truncate_inline_desc, RenderConfig, PLASM_TOOL_DESCRIPTION,
+    TEACHING_VALID_EXPR_MARKER, TSV_TEACHING_TABLE_HEADER,
 };
+
+/// True when `expr` is rooted on `entity_sym` (`e3`, `e3(…)`, `e3[…]`, …) but not a longer
+/// symbol that shares the same digit prefix (`e3` must not match `e30`).
+fn expr_starts_with_entity_sym(expr: &str, entity_sym: &str) -> bool {
+    let Some(rest) = expr.strip_prefix(entity_sym) else {
+        return false;
+    };
+    rest.is_empty() || !rest.as_bytes()[0].is_ascii_digit()
+}
 
 fn matrix_fixture_dir() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -115,10 +124,9 @@ fn proof_document_teaching_optional_legend_is_compact() {
     );
 }
 
+/// Two-column teaching TSV surface invariants on `plasm_prompt_matrix` (no `apis/` coupling).
 #[test]
 fn prompt_matrix_tsv_teaching_surface_invariants() {
-    use super::truncate_inline_desc;
-
     let dir = matrix_fixture_dir();
     let cgs = load_schema_dir(&dir).unwrap();
     let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
@@ -136,29 +144,83 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
     assert_eq!(
         first,
         TSV_TEACHING_TABLE_HEADER.trim_end(),
-        "TSV output should begin with plasm_expr/Meaning header"
+        "TSV output should begin with plasm_expr/Meaning header (grammar is static in PLASM_TOOL_DESCRIPTION)"
     );
     assert!(
         !tsv.contains(TEACHING_VALID_EXPR_MARKER),
         "teaching TSV must not embed grammar contract"
     );
+    assert!(
+        PLASM_TOOL_DESCRIPTION.contains(TEACHING_VALID_EXPR_MARKER),
+        "canonical grammar const must include contract marker"
+    );
     assert_meaning_cells_no_legacy_opt_prefix(&tsv);
-    let ruleset_projection_row = tsv.lines().find(|l| {
-        let c: Vec<&str> = l.split('\t').collect();
-        if c.len() != 2 {
-            return false;
-        }
-        let expr = c[0].trim();
-        expr.starts_with(&ruleset_es)
-            && c[1].contains("· projection")
-            && parse_trailing_projection_bracket(expr).is_some()
-    });
-    let ruleset_projection_row =
-        ruleset_projection_row.expect("expected Ruleset projection witness TSV row");
+
+    // Identity get: no fused projection bracket; entity banner lives on the projection witness only.
+    let ruleset_identity_prefix = format!("{ruleset_es}(");
+    let ruleset_meaning_prefix = format!("→ {ruleset_es}");
+    let ruleset_identity = tsv
+        .lines()
+        .find(|l| {
+            let cols: Vec<&str> = l.split('\t').collect();
+            cols.len() == 2
+                && cols[0].starts_with(&ruleset_identity_prefix)
+                && !cols[0].contains('[')
+                && cols[1].starts_with(&ruleset_meaning_prefix)
+        })
+        .expect("Ruleset compound identity get row");
+    let identity_cols: Vec<&str> = ruleset_identity.split('\t').collect();
+    assert_eq!(identity_cols.len(), 2, "identity row should have 2 columns");
+    assert!(
+        !identity_cols[0].contains('['),
+        "Ruleset identity get should not fuse a projection bracket; row={ruleset_identity:?}"
+    );
+    let ruleset_projection_row = tsv
+        .lines()
+        .find(|l| {
+            let c: Vec<&str> = l.split('\t').collect();
+            if c.len() != 2 {
+                return false;
+            }
+            let expr = c[0].trim();
+            expr_starts_with_entity_sym(expr, &ruleset_es)
+                && c[1].contains("· projection")
+                && parse_trailing_projection_bracket(expr).is_some()
+        })
+        .expect("expected Ruleset projection witness TSV row");
     assert!(
         ruleset_projection_row.contains(&ruleset_banner),
         "projection witness Meaning should carry Ruleset entity prose once: {ruleset_projection_row:?}"
     );
+    assert!(
+        !identity_cols[1].contains(ruleset_banner.as_str()),
+        "identity get Meaning should not repeat entity banner prose; row={ruleset_identity:?}"
+    );
+
+    // Select-backed field: compact `v# · wire` gloss + a v# row of allowed values.
+    let kind_sym = map.ident_sym_entity_field_for("", "Ruleset", "kind");
+    let kind_slot = tsv
+        .lines()
+        .find(|l| l.starts_with(&format!("{kind_sym}\t")))
+        .expect("Ruleset kind field TSV row (compact `v# · kind` when select shares values:)");
+    let kind_cols: Vec<&str> = kind_slot.split('\t').collect();
+    assert_eq!(kind_cols.len(), 2);
+    assert!(
+        kind_cols[1].starts_with('v') && kind_cols[1].contains(" · kind"),
+        "expected `v# · wire` Meaning for select-backed kind slot; got {:?}",
+        kind_cols[1]
+    );
+    assert!(
+        tsv.lines().any(|l| {
+            let c: Vec<&str> = l.split('\t').collect();
+            c.len() == 2
+                && c[0].starts_with('v')
+                && c[1].contains("custom")
+                && c[1].contains("managed")
+        }),
+        "expected a v# row carrying Ruleset kind allowed values; excerpt missing custom/managed"
+    );
+
     let body = tsv
         .lines()
         .skip_while(|line| *line != TSV_TEACHING_TABLE_HEADER.trim_end())
@@ -169,6 +231,40 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
         !body.contains(";;"),
         "2-column TSV surface should remove compact `;;` gloss separators"
     );
+
+    // Capability-param registry gloss uses `v# · wire` (entity_ref / select scopes).
+    let p_zone = map.ident_sym_cap_param_for("", "Ruleset", "ruleset_query", "zone_id");
+    let zone_param_row = tsv
+        .lines()
+        .find(|l| l.starts_with(&format!("{p_zone}\t")))
+        .unwrap_or_else(|| {
+            panic!("expected TSV gloss row for {p_zone} (Ruleset.ruleset_query.zone_id)")
+        });
+    let zp: Vec<&str> = zone_param_row.split('\t').collect();
+    assert_eq!(zp.len(), 2, "zone_id slot row should be 2-column TSV");
+    assert!(
+        zp[1].starts_with('v') && zp[1].contains(" · "),
+        "capability-param registry gloss should use `v# · wire` (and optional prose); got {:?}",
+        zp[1]
+    );
+
+    // Action/mutator invoke references scope.
+    let entrypoint_es = map.entity_sym_for("", "RulesetEntrypoint");
+    let entrypoint_update = tsv
+        .lines()
+        .find(|l| {
+            let cols: Vec<&str> = l.split('\t').collect();
+            cols.len() == 2
+                && expr_starts_with_entity_sym(cols[0], &entrypoint_es)
+                && cols[0].contains(".m")
+                && cols[1].to_lowercase().contains("entrypoint")
+        })
+        .expect("RulesetEntrypoint action invoke teaching table row");
+    assert!(
+        entrypoint_update.contains("[scope") || entrypoint_update.contains("scope"),
+        "invoke row should reference scoping, got {entrypoint_update:?}"
+    );
+
     let zone_es = map.entity_sym_for("", "Zone");
     let zone_query = tsv.lines().find(|l| {
         let cols: Vec<&str> = l.split('\t').collect();
@@ -200,6 +296,17 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
             "divergent Ruleset provides keeps rows: : {ruleset_query}"
         ),
     }
+    assert!(
+        !ruleset_query.contains("args:"),
+        "capability legends omit inline `args:`; ruleset row was: {ruleset_query:?}"
+    );
+    assert!(
+        ruleset_query.contains("opt:")
+            || ruleset_query.contains("[scope")
+            || ruleset_query.contains("inputs:")
+            || ruleset_query.contains("optional"),
+        "ruleset query Meaning should carry optionality, scope, or inputs legend: {ruleset_query:?}"
+    );
     assert!(
         tsv.lines().any(|l| {
             let cols: Vec<&str> = l.split('\t').collect();
