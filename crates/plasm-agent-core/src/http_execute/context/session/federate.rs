@@ -54,7 +54,7 @@ pub async fn prepare_federate_wave(
 
     for e in &names {
         if ctx_arc.get_entity(e).is_none() {
-            return Err(format!("unknown entity `{e}` in this schema").into());
+            return Err(format!("unknown entity `{e}` in this schema"));
         }
     }
 
@@ -119,9 +119,7 @@ async fn commit_federate_wave_inner(
     let ranked_slice = ranked_names.as_deref();
 
     if sess.contexts_by_entry.contains_key(&new_entry_id) {
-        return Err(format!(
-            "session already includes catalog entry `{new_entry_id}`"
-        ).into());
+        return Err(format!("session already includes catalog entry `{new_entry_id}`").into());
     }
 
     sess.contexts_by_entry
