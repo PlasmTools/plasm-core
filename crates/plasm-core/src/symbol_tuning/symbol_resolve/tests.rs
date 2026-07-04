@@ -332,12 +332,14 @@ fn opaque_query_m_sym_rejected_on_mutator_payload_dotted_call() {
     assert!(SymbolMap::is_opaque_m_sym(m_sym.as_str()));
     // Payload invoke (non-empty args) — not zero-arity `e#.m#()` pathless gets.
     let line = format!("{e_sym}($).{m_sym}({tags_sym}=$)");
-    let err = crate::expr_parser::parse_session_line(
-        &line,
-        &cgs,
-        Some(std::sync::Arc::clone(&map) as std::sync::Arc<dyn crate::symbol_tuning::SymbolSession>),
-    )
-    .expect_err("query m# must not bind as mutator payload");
+    let err =
+        crate::expr_parser::parse_session_line(
+            &line,
+            &cgs,
+            Some(std::sync::Arc::clone(&map)
+                as std::sync::Arc<dyn crate::symbol_tuning::SymbolSession>),
+        )
+        .expect_err("query m# must not bind as mutator payload");
     let msg = err.message();
     assert!(
         msg.contains("not a mutator") && msg.contains("query"),
@@ -378,15 +380,15 @@ fn compound_key_p_sym_falls_back_to_session_slot_when_catalog_misses() {
     }
     // Same fragment as get: opaque compound ctor type-checks end-to-end.
     let e_sym = map.entity_sym_for(entry, "CompoundBranch");
-    let get_line = format!(
-        "{e_sym}({owner_sym}=acme, {item_sym}=i1, {name_sym}=main)"
-    );
-    let mut parsed = crate::expr_parser::parse_session_line(
-        &get_line,
-        &cgs,
-        Some(std::sync::Arc::clone(&map) as std::sync::Arc<dyn crate::symbol_tuning::SymbolSession>),
-    )
-    .expect("compound get with p# keys");
+    let get_line = format!("{e_sym}({owner_sym}=acme, {item_sym}=i1, {name_sym}=main)");
+    let mut parsed =
+        crate::expr_parser::parse_session_line(
+            &get_line,
+            &cgs,
+            Some(std::sync::Arc::clone(&map)
+                as std::sync::Arc<dyn crate::symbol_tuning::SymbolSession>),
+        )
+        .expect("compound get with p# keys");
     crate::normalize_expr_query_capabilities(&mut parsed.expr, &cgs).expect("normalize");
     crate::type_check_expr(&parsed.expr, &cgs).expect("typecheck get");
     let crate::Expr::Get(g) = &parsed.expr else {

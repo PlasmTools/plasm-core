@@ -384,9 +384,9 @@ async fn merge_restores_plans_from_prior_exposure_revisions() {
     let open_rev = es.domain_revision;
     let pc0 = es.mint_plan_commit_ref();
     let artifact0 = minimal_artifact();
-    let id0 = crate::operation::compute_plan_commit_id_from_semantic(
-        &plan_commit_canonical_comp(&artifact0.comp),
-    );
+    let id0 = crate::operation::compute_plan_commit_id_from_semantic(&plan_commit_canonical_comp(
+        &artifact0.comp,
+    ));
     register_plan_commit_and_persist(
         &host,
         created.prompt_hash.as_str(),

@@ -10,12 +10,12 @@ mod seeds_apply;
 mod symbol_ledger;
 
 pub use expand::{expand_execute_teaching_session, ExpandTeachingWaveResult};
-pub use mutate_error::SessionMutateError;
 pub(crate) use exposure_replay::{
     apply_federate_exposure_wave, build_initial_exposure_wave, catalog_waves_from_pairing,
     replay_teaching_exposure_waves, ExposureCatalogWave,
 };
 pub use federate::federate_execute_session;
+pub use mutate_error::SessionMutateError;
 pub use open::execute_session_create_response;
 pub(crate) use open::execute_session_create_response_inner;
 pub use seeds_apply::apply_capability_seeds;

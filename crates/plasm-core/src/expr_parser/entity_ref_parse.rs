@@ -152,11 +152,7 @@ impl<'a> Parser<'a> {
         ent: &EntityDef,
         raw_key: &str,
     ) -> Result<String, ParseError> {
-        let catalog = if let Some(entry_id) = head
-            .entry_id
-            .as_deref()
-            .filter(|id| !id.is_empty())
-        {
+        let catalog = if let Some(entry_id) = head.entry_id.as_deref().filter(|id| !id.is_empty()) {
             crate::symbol_tuning::CatalogScope::qualified(entry_id)
         } else {
             match self.catalog_entry_id_for_entity(head.canonical.as_str())? {

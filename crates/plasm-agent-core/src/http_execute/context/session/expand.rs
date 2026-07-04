@@ -58,13 +58,15 @@ async fn commit_expand_wave(
             return Err(format!(
                 "unknown catalog entry `{}` in loaded session schemas",
                 seed.entry_id
-            ).into());
+            )
+            .into());
         };
         if ctx.get_entity(&seed.entity).is_none() {
             return Err(format!(
                 "unknown entity `{}` in catalog `{}`",
                 seed.entity, seed.entry_id
-            ).into());
+            )
+            .into());
         }
         groups
             .entry(seed.entry_id.clone())
@@ -91,9 +93,7 @@ async fn commit_expand_wave(
     let eid_order = process_order_for_expand_group(&groups);
     for eid in eid_order {
         let Some(ctx) = sess.contexts_by_entry.get(&eid) else {
-            return Err(format!(
-                "unknown catalog entry `{eid}` in loaded session schemas"
-            ).into());
+            return Err(format!("unknown catalog entry `{eid}` in loaded session schemas").into());
         };
         let group = groups
             .get(&eid)
