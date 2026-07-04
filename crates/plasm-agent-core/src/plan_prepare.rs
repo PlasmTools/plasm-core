@@ -12,8 +12,8 @@ use crate::plan_node_graph::{unused_binding_hints, unused_seed_hints};
 use crate::plan_read_bounds::{apply_read_budgets, read_execution_is_expensive, PushedReadBudget};
 use crate::plasm_comp_lift::ExecutablePlasmComp;
 use crate::plasm_plan::{
-    ComputeOp, Plan, PlanNodeKind, PlanValue, ValidatedPlan, ValidatedPlanNode,
-    ValidatedPlanState, ValidatedSurfaceNode,
+    ComputeOp, Plan, PlanNodeKind, PlanValue, ValidatedPlan, ValidatedPlanNode, ValidatedPlanState,
+    ValidatedSurfaceNode,
 };
 use crate::plasm_plan_run::graph_summary;
 use crate::plasm_step_convert::build_validated_plan_from_executable;
