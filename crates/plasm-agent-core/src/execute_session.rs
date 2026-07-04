@@ -451,6 +451,13 @@ impl SessionCore {
     }
 }
 
+/// Instance bind credentials mirrored to durable execute-session descriptors (cross-pod rehydrate).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionBindCredentialsSnapshot {
+    pub session_share_token: Option<String>,
+    pub session_proof_base_token: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct ExecuteSession {
     pub prompt_hash: String,
@@ -609,6 +616,18 @@ impl ExecuteSession {
             live_run_telemetry: Arc::new(StdMutex::new(None)),
             bindings_by_entry,
         }
+    }
+
+    pub async fn snapshot_bind_credentials(&self) -> SessionBindCredentialsSnapshot {
+        SessionBindCredentialsSnapshot {
+            session_share_token: self.session_share_token.read().await.clone(),
+            session_proof_base_token: self.session_proof_base_token.read().await.clone(),
+        }
+    }
+
+    pub async fn restore_bind_credentials(&self, creds: &SessionBindCredentialsSnapshot) {
+        *self.session_share_token.write().await = creds.session_share_token.clone();
+        *self.session_proof_base_token.write().await = creds.session_proof_base_token.clone();
     }
 
     /// Build a flow-catalog projection from all loaded session contexts.

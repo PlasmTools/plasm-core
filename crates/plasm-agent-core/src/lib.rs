@@ -123,6 +123,7 @@ pub use plan_gate::{
     plan_requires_review_gate, EvaluatedPlanGate, PlanGateContext, PlanGateDecision,
 };
 pub mod plan_flow_reflection;
+pub mod plan_node_graph;
 pub mod plan_prepare;
 pub mod plan_read_bounds;
 pub mod plan_ux_reflection;

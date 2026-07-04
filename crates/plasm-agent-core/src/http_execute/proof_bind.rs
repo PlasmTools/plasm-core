@@ -81,21 +81,22 @@ pub(crate) async fn maybe_proof_refresh_session_base_token(
     exec_cgs: &CGS,
     parsed: &ParsedExpr,
     result: &ExecutionResult,
-) {
+) -> bool {
     if !proof_catalog_exec_session(sess, exec_cgs) {
-        return;
+        return false;
     }
     let plasm_core::Expr::Get(get) = &parsed.expr else {
-        return;
+        return false;
     };
     if get.reference.entity_type.as_str() != "EditorState" {
-        return;
+        return false;
     }
     let Some(tok) = proof_base_token_from_execution_result(result) else {
-        return;
+        return false;
     };
     let mut slot = sess.session_proof_base_token.write().await;
     *slot = Some(tok);
+    true
 }
 
 /// Proof-only session bind: stores share token on [`ExecuteSession`] (no HTTP).
@@ -183,4 +184,112 @@ pub(crate) async fn try_proof_document_share_bind(
         },
         request_fingerprints: Vec::new(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::try_proof_document_share_bind;
+    use crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistOutcome;
+    use crate::test_support::proof_bind_fixtures::{
+        credential_snapshot, merge_durable_credentials_into_hot, rehydrate_proof_session,
+        ProofBindFixture,
+    };
+
+    #[tokio::test]
+    async fn restore_bind_credentials_assigns_and_clears_both_slots() {
+        let fx = ProofBindFixture::open("restore_clear");
+        *fx.session.session_share_token.write().await = Some("stale-share".into());
+        *fx.session.session_proof_base_token.write().await = Some("stale-base".into());
+        fx.session
+            .restore_bind_credentials(&credential_snapshot(None, None))
+            .await;
+        assert!(fx.session.session_share_token.read().await.is_none());
+        assert!(fx.session.session_proof_base_token.read().await.is_none());
+
+        fx.session
+            .restore_bind_credentials(&credential_snapshot(Some("share"), Some("base")))
+            .await;
+        assert_eq!(
+            fx.session.session_share_token.read().await.as_deref(),
+            Some("share")
+        );
+        assert_eq!(
+            fx.session.session_proof_base_token.read().await.as_deref(),
+            Some("base")
+        );
+    }
+
+    #[tokio::test]
+    async fn token_only_document_share_bind_survives_rehydrate() {
+        let fx = ProofBindFixture::open("bind_rehydrate");
+        let session_id = "sid1";
+        try_proof_document_share_bind(&fx.session, fx.cgs.as_ref(), &fx.token_only_bind_expr())
+            .await
+            .expect("bind")
+            .expect("bind intercept");
+
+        fx.registry
+            .patch_bind_credentials(&fx.session, session_id, Some(&fx.reuse_key))
+            .await
+            .expect("patch bind credentials");
+
+        let host = fx.host_with_registry();
+        let rehydrated = rehydrate_proof_session(&host, &fx, session_id).await;
+        assert_eq!(
+            rehydrated.session_share_token.read().await.as_deref(),
+            Some("secret-tok")
+        );
+    }
+
+    #[tokio::test]
+    async fn merge_into_live_session_clears_stale_hot_credentials_from_durable() {
+        let fx = ProofBindFixture::open("merge_clear");
+        let session_id = "sid_merge";
+        try_proof_document_share_bind(&fx.session, fx.cgs.as_ref(), &fx.token_only_bind_expr())
+            .await
+            .expect("bind")
+            .expect("bind intercept");
+        fx.registry
+            .patch_bind_credentials(&fx.session, session_id, Some(&fx.reuse_key))
+            .await
+            .expect("patch bind");
+
+        *fx.session.session_share_token.write().await = None;
+        *fx.session.session_proof_base_token.write().await = None;
+        fx.registry
+            .patch_bind_credentials(&fx.session, session_id, Some(&fx.reuse_key))
+            .await
+            .expect("patch cleared credentials");
+
+        *fx.session.session_share_token.write().await = Some("stale-hot".into());
+        *fx.session.session_proof_base_token.write().await = Some("stale-base".into());
+        merge_durable_credentials_into_hot(
+            &fx.registry,
+            &fx.session,
+            fx.session.prompt_hash.as_str(),
+            session_id,
+        )
+        .await;
+        assert!(fx.session.session_share_token.read().await.is_none());
+        assert!(fx.session.session_proof_base_token.read().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn patch_bind_credentials_upserts_when_no_durable_row_yet() {
+        let fx = ProofBindFixture::open("bind_upsert");
+        *fx.session.session_share_token.write().await = Some("early-tok".into());
+        let session_id = "sid_new";
+        let outcome = fx
+            .registry
+            .patch_bind_credentials(&fx.session, session_id, Some(&fx.reuse_key))
+            .await
+            .expect("upsert bind credentials");
+        assert_eq!(outcome, ExecuteSessionPersistOutcome::Durable);
+        let desc = fx
+            .registry
+            .load(fx.session.prompt_hash.as_str(), session_id)
+            .await
+            .expect("descriptor after upsert");
+        assert_eq!(desc.session_share_token.as_deref(), Some("early-tok"));
+    }
 }

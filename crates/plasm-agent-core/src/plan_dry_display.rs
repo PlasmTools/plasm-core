@@ -36,6 +36,8 @@ pub struct PlanDryReview {
     /// Embed-style relation with downstream `.limit` but no pushed relation read budget.
     pub has_unbounded_relation_embed_hydrate: bool,
     pub unused_seeds: Vec<String>,
+    /// Binding labels that execute but are neither consumed downstream nor returned.
+    pub unused_bindings: Vec<String>,
 }
 
 impl PlanDryReview {

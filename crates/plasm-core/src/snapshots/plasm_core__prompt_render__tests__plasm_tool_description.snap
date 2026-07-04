@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm-core/src/prompt_render/tests.rs
+source: crates/plasm-core/src/prompt_render/tests.rs
 expression: "super::PLASM_TOOL_DESCRIPTION"
 ---
 **Plan Plasm** (dry-run): **`logical_session_ref`** + **`program`**. Returns reviewable plan topology and executable **`run_ref`** (`pcN`). Pass that token to **`plasm_run`**; do **not** echo the program.
@@ -28,7 +28,7 @@ TSV table semantics:
 Core surface:
 - Program shape: one `plasm_expr`, or `label = …` bindings then **one** final return line — comma-separated roots on that line only (e.g. `a, b`), never one bare label per line (no `return` keyword).
 - Postfix/`[p#]`/`[fields]`: copy exact forms from the TSV left column (`.limit` `.sort` `.filter{…}` `.group_by` `.aggregate` …).
-- Large list reads return inline TSV only when ≤25 rows and no run snapshot is stored. When a snapshot URI is present, fetch JSON via **`resources/read`** or **`plasm_read_run_artifact`** — no inline TSV is sent. Use **`next_run_ref`** on **`plasm_run`** only when no snapshot was stored for that step (no second **`plasm`** call). Prefer **`run_id`** / **`canonical_artifact_uri`** (`plasm://execute/…/run/pr…`) over short `r/N` indexes; never use `_meta.plasm.meta_generation` or `dict_ref` integers as artifact addresses.
+- Large list reads return inline TSV only when ≤25 rows and no run snapshot is stored. When a snapshot URI is present, fetch JSON via **`resources/read`** or **`plasm_read_run_artifact`** — no inline TSV is sent. Use **`next_run_ref`** on **`plasm_run`** only when no snapshot was stored. Prefer **`run_id`** / **`canonical_artifact_uri`** (`plasm://execute/…/run/pr…`) over short `r/N` indexes; never use `_meta.plasm.meta_generation` or `dict_ref` integers as artifact addresses.
 - `page(...)` is HTTP-execute program syntax only — not an MCP tool argument or `plasm` program.
 - Search when exposed: `e#~$` or `e#~"text"` (bare `e#~` is a parse error); optional scoped filters `e#~"text"[{p#=…}]`.
 
@@ -37,6 +37,7 @@ Composition rules:
 - Row text: `label = source <<TAG` … `TAG` (equals required); optional `label = source[p#,…] <<TAG`. Minijinja `{{ }}` / `{% %}` over the projected list inside the heredoc body — not `${}`. `rows` is the whole list (one render, not per-row); the source binding name also works (`{% for r in sorted %}`). In the body, `p#` from the bracket list and wire names both resolve (`{{ r.p23 }}` and `{{ r.name }}`); nullable fields: `{{ r.p_field or "—" }}`.
 - Pass `binding.content` to string params; compose with `${report.content}` in later heredocs/strings (`$$` escapes `$`). Do not use `report.content` as a final root or relation receiver.
 - Action/create roots: return the action row or follow with `e#(p#=…)` get — not `created.p#` as a program root.
+- Bare create: `e#.m#(p#=…)` without `source =>` unless scoping a binding.
 - Heredoc: `<<TAG` + newline; first trimmed `TAG` line closes; pick a tag absent from the body. `markdown`/`html`/`document`/`json_text`/`blob` values use `<<TAG` … `TAG` only.
 - Worked transform (substitute symbols from your TSV):
 items = e_source

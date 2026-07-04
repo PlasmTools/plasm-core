@@ -223,6 +223,8 @@ mod tests {
             plan_commit_next: 0,
             operations: vec![],
             operation_handle_next: 1,
+            session_share_token: None,
+            session_proof_base_token: None,
         };
         store.write().await.insert(
             format!("mcp:execute:session:{ph}:{sid}"),

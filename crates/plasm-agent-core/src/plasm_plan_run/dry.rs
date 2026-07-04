@@ -164,23 +164,6 @@ pub fn evaluate_executable_comp_dry(
     })
 }
 
-pub(crate) fn unused_seed_hints(
-    es: &ExecuteSession,
-    plan: &Plan<ValidatedPlanState>,
-) -> Vec<String> {
-    let used = crate::plan_prepare::collect_plan_entity_names(plan);
-    es.entities
-        .iter()
-        .filter(|e| !used.contains(e.as_str()))
-        .map(|e| {
-            format!(
-                "{}:{}",
-                crate::catalog_ownership::entry_id_for_entity_trace(es, e.as_str()),
-                e
-            )
-        })
-        .collect()
-}
 
 pub(crate) fn enrich_graph_summary_auth_scoped_reads(
     es: &ExecuteSession,
@@ -319,43 +302,11 @@ pub fn plan_dry_compact_view(
 }
 
 pub fn node_dependencies(node: &ValidatedPlanNode) -> Vec<String> {
-    let mut out = Vec::new();
-    push_unique(
-        &mut out,
-        node.depends_on().iter().map(|id| id.as_str().to_string()),
-    );
-    push_unique(&mut out, node.uses_result().iter().map(|u| u.node.clone()));
-    match node {
-        ValidatedPlanNode::Derive(n) => {
-            push_unique(&mut out, std::iter::once(n.source.as_str().to_string()));
-            push_unique(
-                &mut out,
-                n.inputs.iter().map(|input| input.node.as_str().to_string()),
-            );
-        }
-        ValidatedPlanNode::Compute(n) => {
-            push_unique(&mut out, std::iter::once(n.compute.source.clone()));
-        }
-        ValidatedPlanNode::ForEach(n) => {
-            push_unique(&mut out, std::iter::once(n.source.as_str().to_string()));
-        }
-        ValidatedPlanNode::RelationTraversal(n) => {
-            push_unique(
-                &mut out,
-                std::iter::once(n.relation.source.as_str().to_string()),
-            );
-        }
-        _ => {}
-    }
-    out
+    crate::plan_node_graph::node_dependencies(node)
 }
 
 pub(crate) fn push_unique(out: &mut Vec<String>, values: impl IntoIterator<Item = String>) {
-    for value in values {
-        if !out.iter().any(|seen| seen == &value) {
-            out.push(value);
-        }
-    }
+    crate::plan_node_graph::push_unique(out, values);
 }
 
 pub(crate) fn plan_has_query_limit_row_filter_chain(plan: &Plan<ValidatedPlanState>) -> bool {
@@ -560,6 +511,7 @@ pub(crate) fn graph_summary(
         has_paginated_list_fetch_all_default,
         has_unbounded_relation_embed_hydrate,
         unused_seeds: Vec::new(),
+        unused_bindings: Vec::new(),
     };
 
     (

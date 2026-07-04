@@ -747,6 +747,9 @@ pub fn plan_commit_meta(
     if !review.unused_seeds.is_empty() {
         dry_review.insert("unused_seeds".into(), json!(review.unused_seeds));
     }
+    if !review.unused_bindings.is_empty() {
+        dry_review.insert("unused_bindings".into(), json!(review.unused_bindings));
+    }
     let mut plasm = plan_commit_agent_meta(commit_ref, verdict);
     plasm.insert("dry_review".into(), serde_json::Value::Object(dry_review));
     plasm

@@ -290,6 +290,12 @@ pub async fn rehydrate_execute_session(
         operations: desc.operations.clone(),
         operation_handle_next: desc.operation_handle_next,
     });
+    session
+        .restore_bind_credentials(&crate::execute_session::SessionBindCredentialsSnapshot {
+            session_share_token: desc.session_share_token.clone(),
+            session_proof_base_token: desc.session_proof_base_token.clone(),
+        })
+        .await;
 
     Ok(session)
 }
@@ -362,6 +368,8 @@ mod tests {
             plan_commit_next: 0,
             operations: Vec::new(),
             operation_handle_next: 0,
+            session_share_token: None,
+            session_proof_base_token: None,
         };
         assert!(descriptor_expired(&desc));
     }
@@ -457,6 +465,8 @@ mod tests {
             plan_commit_next: 0,
             operations: Vec::new(),
             operation_handle_next: 0,
+            session_share_token: None,
+            session_proof_base_token: None,
         };
         let err = match rehydrate_execute_session(&host, &desc).await {
             Err(e) => e,
@@ -505,6 +515,8 @@ mod tests {
             plan_commit_next: 0,
             operations: Vec::new(),
             operation_handle_next: 0,
+            session_share_token: None,
+            session_proof_base_token: None,
         };
         let pins = PinnedCatalogHashes::from_descriptor(&desc);
         assert_eq!(pins.entry_ids, vec!["overshow".to_string()]);
@@ -591,6 +603,8 @@ mod tests {
             plan_commit_next: 0,
             operations: Vec::new(),
             operation_handle_next: 0,
+            session_share_token: None,
+            session_proof_base_token: None,
         };
         let exp = replay_teaching_exposure_waves(
             &contexts,
@@ -642,8 +656,12 @@ mod tests {
             logical_session_id: None,
         };
 
-        let desc =
-            PersistedExecuteSessionDescriptor::from_session_and_reuse(&session, "sid", &reuse_key);
+        let desc = PersistedExecuteSessionDescriptor::from_session_and_reuse(
+            &session,
+            "sid",
+            &reuse_key,
+            crate::execute_session::SessionBindCredentialsSnapshot::default(),
+        );
         let mut desc = desc;
         desc.expires_at_unix = u64::MAX;
         desc.registry_catalog_hashes_by_entry = HashMap::from([

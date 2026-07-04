@@ -183,6 +183,12 @@ pub struct PersistedExecuteSessionDescriptor {
     pub operations: Vec<super::persisted_operations::PersistedOperationDescriptor>,
     #[serde(default)]
     pub operation_handle_next: u64,
+    /// Share-link token bound via session-effect capabilities (e.g. Proof `document_share_bind`).
+    #[serde(default)]
+    pub session_share_token: Option<String>,
+    /// Proof `baseToken` from the latest successful `editor_state_get`.
+    #[serde(default)]
+    pub session_proof_base_token: Option<String>,
 }
 
 fn default_expires_at_unix() -> u64 {
@@ -199,6 +205,7 @@ impl PersistedExecuteSessionDescriptor {
         session: &ExecuteSession,
         session_id: &str,
         reuse_key: &SessionReuseKey,
+        bind_credentials: crate::execute_session::SessionBindCredentialsSnapshot,
     ) -> Self {
         let mut catalog_cgs_hashes_by_entry = std::collections::HashMap::new();
         let mut outbound_hosted_kv_by_entry = std::collections::HashMap::new();
@@ -244,6 +251,8 @@ impl PersistedExecuteSessionDescriptor {
             plan_commit_next: plan_snapshot.next_sequence,
             operations: op_snapshot.operations,
             operation_handle_next: op_snapshot.operation_handle_next,
+            session_share_token: bind_credentials.session_share_token,
+            session_proof_base_token: bind_credentials.session_proof_base_token,
         }
     }
 }
@@ -293,8 +302,12 @@ impl ExecuteSessionRegistry {
         session_id: &str,
         reuse_key: &SessionReuseKey,
     ) {
+        let bind_credentials = session.snapshot_bind_credentials().await;
         let desc = PersistedExecuteSessionDescriptor::from_session_and_reuse(
-            session, session_id, reuse_key,
+            session,
+            session_id,
+            reuse_key,
+            bind_credentials,
         );
         let key = session_key(&desc.prompt_hash, &desc.session_id);
         if let Some(map) = self.test_json().await {
@@ -343,9 +356,38 @@ impl ExecuteSessionRegistry {
             return Ok(ExecuteSessionPersistOutcome::InMemoryOnly);
         };
         let desc = PersistedExecuteSessionDescriptor::from_session_and_reuse(
-            session, session_id, &reuse_key,
+            session,
+            session_id,
+            &reuse_key,
+            session.snapshot_bind_credentials().await,
         );
         self.write_descriptor(&key, &desc).await
+    }
+
+    /// Patch durable bind credentials after session-effect bind or proof base-token refresh.
+    pub async fn patch_bind_credentials(
+        &self,
+        session: &ExecuteSession,
+        session_id: &str,
+        reuse_key_fallback: Option<&SessionReuseKey>,
+    ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
+        let durable = self.durable_backend_configured().await;
+        if !durable {
+            return Ok(ExecuteSessionPersistOutcome::InMemoryOnly);
+        }
+        let key = session_key(&session.prompt_hash, session_id);
+        let creds = session.snapshot_bind_credentials().await;
+        if let Some(mut existing) = self.load_json(&key).await {
+            existing.session_share_token = creds.session_share_token;
+            existing.session_proof_base_token = creds.session_proof_base_token;
+            existing.expires_at_unix = expires_at_from_now();
+            return self.write_descriptor(&key, &existing).await;
+        }
+        let Some(reuse_key) = reuse_key_fallback else {
+            return Err(ExecuteSessionPersistError::MissingReuseKey);
+        };
+        self.persist_or_update(session, session_id, Some(reuse_key))
+            .await
     }
 
     /// Patch only `plan_commits` / `plan_commit_next` on the durable row when exposure revisions
@@ -394,7 +436,10 @@ impl ExecuteSessionRegistry {
             return Err(ExecuteSessionPersistError::MissingReuseKey);
         };
         let desc = PersistedExecuteSessionDescriptor::from_session_and_reuse(
-            session, session_id, fallback,
+            session,
+            session_id,
+            fallback,
+            session.snapshot_bind_credentials().await,
         );
         self.write_descriptor(&key, &desc).await
     }
@@ -482,6 +527,12 @@ impl ExecuteSessionRegistry {
             .collect();
         session.restore_persisted_plan_commits(&plans, plan_commit_next);
         session.restore_persisted_operations(&ops);
+        session
+            .restore_bind_credentials(&crate::execute_session::SessionBindCredentialsSnapshot {
+                session_share_token: desc.session_share_token.clone(),
+                session_proof_base_token: desc.session_proof_base_token.clone(),
+            })
+            .await;
         MergeLiveOutcome::Merged
     }
 

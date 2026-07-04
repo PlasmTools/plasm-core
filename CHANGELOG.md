@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.120] - 2026-07-04
+
+### Fixed
+
+- **Proof federated write (durable sessions):** share-bind credentials (`session_share_token`, `session_proof_base_token`) persist on bind and editor refresh, restore on rehydrate, and patch when no durable row exists yet; merge clears stale hot credentials from durable snapshot.
+- **Dry-run review:** unused binding hints when a binding is neither consumed nor returned; side-effect classification no longer special-cases `document_share_bind` by name.
+
+### Changed
+
+- **Program authoring (PROMPT-2/3):** `plasm` / `program` param teach bare create (`e#.m#(p#=…)`) without `source =>` unless scoping off a binding; proof catalog prefers `share_url` with `?token=`.
+- **Plan analysis:** return-reachability and unused-binding/seed hints consolidated in `plan_node_graph.rs`; proof bind tests share `test_support` fixtures.
+
 ## [0.3.119] - 2026-07-04
 
 ### Fixed

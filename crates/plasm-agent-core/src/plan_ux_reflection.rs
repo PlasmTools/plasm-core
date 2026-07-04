@@ -101,6 +101,8 @@ pub struct PlanUxLiveOverlay {
 pub struct PlanUxSession {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unused_seeds: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub unused_bindings: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -190,12 +192,14 @@ pub fn plan_ux_reflection(
 }
 
 fn session_advisory_from_dry(dry: &DryPlasmPlanEvaluation) -> Option<PlanUxSession> {
-    let unused = dry.review.unused_seeds.clone();
-    if unused.is_empty() {
+    let unused_seeds = dry.review.unused_seeds.clone();
+    let unused_bindings = dry.review.unused_bindings.clone();
+    if unused_seeds.is_empty() && unused_bindings.is_empty() {
         return None;
     }
     Some(PlanUxSession {
-        unused_seeds: unused,
+        unused_seeds,
+        unused_bindings,
     })
 }
 

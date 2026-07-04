@@ -401,6 +401,24 @@ impl PlasmHostState {
         self.sessions.replace_session(&ph, &sid, session).await;
         Ok(())
     }
+
+    /// Persist share-link / proof precondition tokens after session credential mutation.
+    pub async fn persist_session_bind_credentials(
+        &self,
+        session: &ExecuteSession,
+        session_id: &str,
+    ) -> Result<
+        crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistOutcome,
+        crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError,
+    > {
+        let reuse_key = self
+            .sessions
+            .reuse_key_for_execute_pair(session.prompt_hash.as_str(), session_id)
+            .await;
+        self.execute_session_registry
+            .patch_bind_credentials(session, session_id, reuse_key.as_ref())
+            .await
+    }
 }
 
 fn rehydrate_error_kind(err: &crate::execute_session_rehydrate::RehydrateError) -> &'static str {

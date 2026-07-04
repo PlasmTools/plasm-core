@@ -90,7 +90,7 @@ pub use parse::{
 #[allow(unused_imports)]
 pub(crate) use dry::{
     attach_flow_approval_gates, enrich_graph_summary_auth_scoped_reads, enrich_graph_summary_flow,
-    for_each_body_mutates_remote, graph_summary, unused_seed_hints,
+    for_each_body_mutates_remote, graph_summary,
 };
 pub(crate) use orchestrator::{
     inline_row_source, inline_row_source_owned, MaterializedInputRow, MaterializedNode,

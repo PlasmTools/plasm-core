@@ -1357,3 +1357,45 @@ fn dry_run_text_renders_empty_literals_explicitly() {
     assert_eq!(operation, "data {0 fields}");
     assert!(!operation.contains("{}"), "{operation}");
 }
+
+#[test]
+fn dry_run_flags_unused_binding_not_consumed_or_returned() {
+    let s = test_session();
+    let plan = serde_json::json!({
+        "version": 1,
+        "kind": "program",
+        "name": "dead-repo-read",
+        "nodes": [
+            {
+                "id": "mon",
+                "kind": "get",
+                "qualified_entity": { "entry_id": "acme", "entity": "Product" },
+                "expr": "Product(\"p1\")",
+                "ir": { "expr": { "op": "get", "ref": { "entity_type": "Product", "key": "p1" } } },
+                "effect_class": "read",
+                "result_shape": "single"
+            },
+            {
+                "id": "repo",
+                "kind": "get",
+                "qualified_entity": { "entry_id": "acme", "entity": "Category" },
+                "expr": "Category(\"c1\")",
+                "ir": { "expr": { "op": "get", "ref": { "entity_type": "Category", "key": "c1" } } },
+                "effect_class": "read",
+                "result_shape": "single"
+            }
+        ],
+        "return": { "kind": "node", "node": "mon" }
+    });
+    let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
+    assert!(
+        dry.review.unused_bindings.iter().any(|b| b == "repo"),
+        "repo executes but is not consumed or returned: {:?}",
+        dry.review.unused_bindings
+    );
+    assert!(
+        !dry.review.unused_bindings.iter().any(|b| b == "mon"),
+        "mon is the return root: {:?}",
+        dry.review.unused_bindings
+    );
+}

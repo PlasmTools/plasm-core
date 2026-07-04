@@ -250,9 +250,10 @@ capabilities:
 
   document_share_bind:
     description: >
-      Bind this session to a share URL or token for this slug. Later calls reuse stored credentials.
+      Bind this session to a share URL (preferred: full URL with embedded `?token=`) for this slug.
+      Later calls reuse stored credentials. Success returns 0 rows — session side effect only, not a readable row.
       Clears any stored mutation precondition token—call editor_state_get again before /ops writes.
-      Pass share_token again only when you need to override the stored value.
+      Pass share_token alone only when you cannot supply share_url; token-only bind is less reliable across session rehydrate.
     kind: action
     entity: Document
     parameters:

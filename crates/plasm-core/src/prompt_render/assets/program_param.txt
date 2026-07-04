@@ -6,7 +6,7 @@ Shape:
 - Get by identity: `e#(id)` (parens, ids unquoted). Query/filter: `e#{p#="val"}` (braces, quote scalars only inside `{…}`). Relation nav: `producer.r#` (not a bare `p#` after `.`).
 - Search when taught: `e#~"text"` or `e#~$` (bare `e#~` is a parse error).
 - Postfix from the TSV left column: `.filter{…}` `.sort(p#,desc)` `.limit(n)` `.group_by` `.aggregate`; `[p#,…]` projects.
-- Write effect: `source => e#.m#(p#=…)`; return the action/created row or a follow-up `e#(id)` get, not `created.p#`.
+- Write effect: `source => e#.m#(p#=…)` when scoping a write off an existing binding; create-from-nothing: `e#.m#(p#=…)` when there is no upstream row (no `source =>`).
 - Batch independent reads into ONE program: bind shared scope once, then return several roots on the final line.
 
 Strings use JSON escapes inside quotes; long/multiline bodies use `<<TAG` … `TAG` heredocs (real newlines). Row-to-text: `label = source[p#,…] <<TAG` with Minijinja `{{ }}`/`{% %}` over `rows`; pass `binding.content` to string params and `${binding.content}` inside later strings.

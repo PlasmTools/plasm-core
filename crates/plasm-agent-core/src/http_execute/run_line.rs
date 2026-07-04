@@ -60,6 +60,24 @@ fn record_run_line_error_metrics(
     crate::metrics::record_execute_expression_line(entry_id, operation, status, phase, ms, 0, 0);
 }
 
+async fn persist_session_credentials_after_mutation(
+    st: &PlasmHostState,
+    sess: &ExecuteSession,
+    session_id: &str,
+) {
+    use crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistOutcome;
+
+    match st.persist_session_bind_credentials(sess, session_id).await {
+        Ok(ExecuteSessionPersistOutcome::Durable) => {}
+        Ok(ExecuteSessionPersistOutcome::InMemoryOnly) => {}
+        Err(e) => tracing::warn!(
+            target: "plasm_agent::session_credentials",
+            error = %e,
+            "failed to persist session bind credentials to durable execute session"
+        ),
+    }
+}
+
 /// Parse one Plasm line for the active session (HTTP/MCP ingress).
 pub(crate) fn parse_plasm_line_for_session(
     line: &str,
@@ -346,8 +364,12 @@ pub(crate) async fn run_parsed_plasm_line(
     let graph_spill_active = exec_opts.graph_page_spill.is_some();
     let page_resume_backup = page_resume_owned.clone();
 
+    let mut credential_mutation = false;
     let mut result = match try_proof_document_share_bind(sess, exec_cgs, &parsed.expr).await? {
-        Some(r) => r,
+        Some(r) => {
+            credential_mutation = true;
+            r
+        }
         None => {
             let input = crate::graph_execute::LiveBranchExecuteInput {
                 line,
@@ -400,7 +422,11 @@ pub(crate) async fn run_parsed_plasm_line(
         }
     }
 
-    maybe_proof_refresh_session_base_token(sess, exec_cgs, &parsed, &result).await;
+    let base_token_refreshed =
+        maybe_proof_refresh_session_base_token(sess, exec_cgs, &parsed, &result).await;
+    if credential_mutation || base_token_refreshed {
+        persist_session_credentials_after_mutation(st, sess, session_id).await;
+    }
 
     result.request_fingerprints = fp_sink.lock().unwrap_or_else(|e| e.into_inner()).clone();
 

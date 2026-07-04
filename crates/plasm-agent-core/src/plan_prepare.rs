@@ -8,13 +8,14 @@ use plasm_core::{ChainStep, Expr, PlasmComp, Predicate, TypedComparisonValue};
 
 use crate::execute_session::ExecuteSession;
 use crate::plan_dry_display::PlanDryReview;
+use crate::plan_node_graph::{unused_binding_hints, unused_seed_hints};
 use crate::plan_read_bounds::{apply_read_budgets, read_execution_is_expensive, PushedReadBudget};
 use crate::plasm_comp_lift::ExecutablePlasmComp;
 use crate::plasm_plan::{
     ComputeOp, Plan, PlanNodeKind, PlanValue, ValidatedPlan, ValidatedPlanNode,
-    ValidatedPlanReturn, ValidatedPlanState, ValidatedSurfaceNode,
+    ValidatedPlanState, ValidatedSurfaceNode,
 };
-use crate::plasm_plan_run::{graph_summary, unused_seed_hints};
+use crate::plasm_plan_run::graph_summary;
 use crate::plasm_step_convert::build_validated_plan_from_executable;
 
 /// Unified read-boundedness analysis on a **prepared** plan (after `apply_read_budgets`).
@@ -130,8 +131,12 @@ pub(crate) fn prepare_executable_plan_for_session(
     let boundedness = analyze_read_boundedness(plan);
     let (mut graph_summary, mut review) = graph_summary(plan, &boundedness);
     review.unused_seeds = unused_seed_hints(es, plan);
+    review.unused_bindings = unused_binding_hints(plan);
     if !review.unused_seeds.is_empty() {
         graph_summary["unused_seeds"] = serde_json::json!(review.unused_seeds.clone());
+    }
+    if !review.unused_bindings.is_empty() {
+        graph_summary["unused_bindings"] = serde_json::json!(review.unused_bindings.clone());
     }
     crate::plasm_plan_run::enrich_graph_summary_auth_scoped_reads(es, plan, &mut graph_summary);
     Ok(PreparedExecutablePlan {
@@ -156,7 +161,7 @@ pub(crate) fn build_prepared_validated_plan(
 #[must_use]
 pub fn analyze_read_boundedness(plan: &Plan<ValidatedPlanState>) -> ReadBoundedness {
     let mut out = ReadBoundedness::default();
-    let reachable = return_reachable_node_ids(plan);
+    let reachable = crate::plan_node_graph::nodes_reachable_from_return(plan);
     for n in &plan.nodes {
         if !reachable.contains(n.id().as_str()) {
             continue;
@@ -198,7 +203,7 @@ pub fn analyze_read_boundedness(plan: &Plan<ValidatedPlanState>) -> ReadBoundedn
         if surface_is_read_bounded(surface) {
             continue;
         }
-        if crate::plasm_plan_run::node_dependencies(n).is_empty() {
+        if crate::plan_node_graph::node_dependencies(n).is_empty() {
             out.has_unbounded_read_root = true;
         }
         out.has_paginated_list_fetch_all_default = true;
@@ -275,7 +280,7 @@ pub(crate) fn return_path_node_is_unprojected_multi_row_read(n: &ValidatedPlanNo
 /// List/page read on the return path without projection or pushed read budget.
 #[must_use]
 pub(crate) fn return_path_has_unprojected_multi_row_read(plan: &Plan<ValidatedPlanState>) -> bool {
-    let reachable = return_reachable_node_ids(plan);
+    let reachable = crate::plan_node_graph::nodes_reachable_from_return(plan);
     plan.nodes.iter().any(|n| {
         reachable.contains(n.id().as_str()) && return_path_node_is_unprojected_multi_row_read(n)
     })
@@ -330,7 +335,7 @@ pub(crate) fn limit_compute_downstream_of_node(
 pub(crate) fn return_path_has_unbounded_relation_embed_hydrate(
     plan: &Plan<ValidatedPlanState>,
 ) -> bool {
-    let reachable = return_reachable_node_ids(plan);
+    let reachable = crate::plan_node_graph::nodes_reachable_from_return(plan);
     plan.nodes.iter().any(|n| {
         let ValidatedPlanNode::RelationTraversal(rel) = n else {
             return false;
@@ -346,55 +351,6 @@ pub(crate) fn return_path_has_unbounded_relation_embed_hydrate(
         }
         limit_compute_downstream_of_node(plan, rel.id.as_str())
     })
-}
-
-fn return_reachable_node_ids(plan: &Plan<ValidatedPlanState>) -> HashSet<String> {
-    let by_id: std::collections::HashMap<String, usize> = plan
-        .nodes
-        .iter()
-        .enumerate()
-        .map(|(i, n)| (n.id().as_str().to_string(), i))
-        .collect();
-    let mut seeds = match &plan.return_value {
-        ValidatedPlanReturn::Node(id) => vec![id.as_str().to_string()],
-        ValidatedPlanReturn::Parallel { parallel } => {
-            parallel.iter().map(|id| id.as_str().to_string()).collect()
-        }
-    };
-    let mut reachable = HashSet::new();
-    while let Some(id) = seeds.pop() {
-        if !reachable.insert(id.clone()) {
-            continue;
-        }
-        let Some(idx) = by_id.get(id.as_str()) else {
-            continue;
-        };
-        for upstream in upstream_node_ids(&plan.nodes[*idx]) {
-            if !reachable.contains(upstream.as_str()) {
-                seeds.push(upstream);
-            }
-        }
-    }
-    reachable
-}
-
-fn upstream_node_ids(node: &ValidatedPlanNode) -> Vec<String> {
-    match node {
-        ValidatedPlanNode::Compute(c) => vec![c.compute.source.clone()],
-        ValidatedPlanNode::Derive(d) => vec![d.source.as_str().to_string()],
-        ValidatedPlanNode::ForEach(f) => vec![f.source.as_str().to_string()],
-        ValidatedPlanNode::RelationTraversal(r) => vec![r.relation.source.as_str().to_string()],
-        ValidatedPlanNode::Surface(s) => s
-            .depends_on
-            .iter()
-            .map(|d| d.as_str().to_string())
-            .collect(),
-        ValidatedPlanNode::Data(d) => d
-            .depends_on
-            .iter()
-            .map(|dep| dep.as_str().to_string())
-            .collect(),
-    }
 }
 
 /// Entity wire names referenced anywhere in the plan (surfaces, IR, plan predicates).
