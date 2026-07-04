@@ -25,6 +25,7 @@ pub enum SymbolResolveError {
         catalog_entry_id: String,
         domain: String,
         capability: String,
+        capability_kind: crate::CapabilityKind,
         token: String,
     },
     UnknownCompoundKey {
@@ -129,16 +130,18 @@ impl std::fmt::Display for SymbolResolveError {
                 candidates,
             } => write!(
                 f,
-                "`{token}` is ambiguous for `{entity}` query filters — matches params {candidates:?}"
+                "`{token}` is ambiguous for `{entity}` query filters — matches params {}",
+                candidates.join(", ")
             ),
             Self::UnknownCapParam {
                 domain,
                 capability,
+                capability_kind,
                 token,
                 ..
             } => write!(
                 f,
-                "`{token}` is not an input parameter on `{domain}.{capability}` in this session"
+                "`{token}` is not an input parameter on {capability_kind} `{domain}.{capability}` in this session"
             ),
             Self::UnknownCompoundKey {
                 entity,
@@ -146,7 +149,8 @@ impl std::fmt::Display for SymbolResolveError {
                 expected,
             } => write!(
                 f,
-                "compound constructor key `{token}` is not valid for `{entity}` — expected one of {expected:?}"
+                "compound constructor key `{token}` is not valid for `{entity}` — expected one of {}",
+                expected.join(", ")
             ),
             Self::UnknownMethodSym { token } => {
                 write!(f, "`{token}` is not a method symbol in this session")

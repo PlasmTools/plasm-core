@@ -159,8 +159,8 @@ fn prepare_live_dry(run: &ExecuteMcpLiveRun) -> Result<LiveDryOutcome, String> {
             committed,
             plan_commit_ref,
         } => {
-            let dry =
-                dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, committed.as_ref())?;
+            let dry = dry_for_committed_plasm_run(run.es.as_ref(), &run.bundle, committed.as_ref())
+                .map_err(|e| e.detail())?;
             let gate = dry.evaluate_gate();
             if plan_requires_review_gate(
                 &gate,

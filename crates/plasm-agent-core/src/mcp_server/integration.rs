@@ -226,7 +226,6 @@ impl MatrixPcNFixture {
 
         register_plan_commit_and_persist(
             self.st.as_ref(),
-            Arc::clone(&self.es),
             self.out.prompt_hash.as_str(),
             self.out.session_id.as_str(),
             PlanCommitRecord::from_dry_review(

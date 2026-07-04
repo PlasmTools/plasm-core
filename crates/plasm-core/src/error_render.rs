@@ -1129,6 +1129,7 @@ fn format_session_entity_symbol_summary(map: &impl SymbolSession) -> String {
             .then_with(|| a.entry_id.cmp(&b.entry_id))
             .then_with(|| a.entity.cmp(&b.entity))
     });
+    let total = rows.len();
     let shown: Vec<String> = rows
         .iter()
         .take(SESSION_ENTITY_SYMBOL_SUMMARY_CAP)
@@ -1140,15 +1141,16 @@ fn format_session_entity_symbol_summary(map: &impl SymbolSession) -> String {
             }
         })
         .collect();
-    if rows.len() > SESSION_ENTITY_SYMBOL_SUMMARY_CAP {
+    let list = if total > SESSION_ENTITY_SYMBOL_SUMMARY_CAP {
         format!(
             "{}, … and {} more",
             shown.join(", "),
-            rows.len() - SESSION_ENTITY_SYMBOL_SUMMARY_CAP
+            total - SESSION_ENTITY_SYMBOL_SUMMARY_CAP
         )
     } else {
         shown.join(", ")
-    }
+    };
+    format!("{total} entities: {list}")
 }
 
 /// Agent-facing correction when an entity root token is not in the **session** symbol table.
@@ -2842,6 +2844,46 @@ mod tests {
         assert!(
             !se.correction.contains("list_id"),
             "correction should use p# tokens, not canonical scope param names; correction={}",
+            se.correction
+        );
+    }
+
+    #[test]
+    fn unknown_entity_summary_prefixes_total_entity_count() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.is_dir() {
+            return;
+        }
+        let Ok(cgs) = loader::load_schema_dir(dir) else {
+            return;
+        };
+        let names: Vec<&str> = cgs.entities.keys().map(|k| k.as_str()).collect();
+        assert!(names.len() > SESSION_ENTITY_SYMBOL_SUMMARY_CAP);
+        let exp = crate::symbol_tuning::TeachingExposureSession::new(&cgs, "langmatrix", &names);
+        let map = exp.to_symbol_map();
+        let err = expr_parser::ParseError {
+            kind: expr_parser::ParseErrorKind::UnknownEntity {
+                name: "e99".into(),
+                span_opt: Some((0, 3)),
+            },
+            offset: 0,
+        };
+        let se = render_parse_error_with_feedback(
+            &err,
+            "e99",
+            "e99",
+            &cgs,
+            FeedbackStyle::SymbolicLlm { map: map.as_ref() },
+        );
+        assert!(
+            se.correction
+                .contains(&format!("{} entities:", names.len())),
+            "correction must state total entity count: {}",
+            se.correction
+        );
+        assert!(
+            se.correction.contains("and") && se.correction.contains("more"),
+            "correction should still elide long lists: {}",
             se.correction
         );
     }

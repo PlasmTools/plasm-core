@@ -157,7 +157,7 @@ pub(crate) async fn commit_exposure_wave_delta(
     mut sess: crate::execute_session::ExecuteSession,
     mut exp: plasm_core::TeachingExposureSession,
     snapshot: ExposureWaveSnapshot,
-) -> CommittedWaveDelta {
+) -> Result<CommittedWaveDelta, super::SessionMutateError> {
     {
         let layers: Vec<&CGS> = sess
             .contexts_by_entry
@@ -183,12 +183,12 @@ pub(crate) async fn commit_exposure_wave_delta(
         sess.entities = exp.entities.clone();
         sess.teaching_exposure = Some(exp);
         st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
-            .await;
-        return CommittedWaveDelta {
+            .await?;
+        return Ok(CommittedWaveDelta {
             markdown,
             relations_delta: Vec::new(),
             surface_unchanged: true,
-        };
+        });
     }
 
     let mut wave = render_exposure_wave_markdown(st, &sess, &exp, &changes);
@@ -211,14 +211,14 @@ pub(crate) async fn commit_exposure_wave_delta(
     sess.entities = exp.entities.clone();
     sess.teaching_exposure = Some(exp);
     st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
-        .await;
+        .await?;
     persist_after_wave_commit(st, prompt_hash_p.as_str(), session_id_p.as_str()).await;
 
-    CommittedWaveDelta {
+    Ok(CommittedWaveDelta {
         markdown: wave,
         relations_delta,
         surface_unchanged: false,
-    }
+    })
 }
 
 #[cfg(test)]
@@ -385,7 +385,8 @@ mod tests {
             exp,
             snapshot,
         )
-        .await;
+        .await
+        .expect("commit wave");
 
         assert!(
             !committed.surface_unchanged,

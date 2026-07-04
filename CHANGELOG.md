@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.117] - 2026-07-04
+
+### Fixed
+
+- **Session coherence:** plan commits and durable execute rows no longer diverge on `domain_revision` (hot-behind rehydrate, hot-ahead full persist, fail-closed `replace_execute_session`, live-only plan register).
+- **Append-only plans:** `pcN` remains valid after `plasm_context` extend (`plan.rev <= session.rev`); only plans pinned *ahead* of the session row are rejected (`PlanAheadOfSession`).
+- **Compound ctor `p#`:** head-scoped catalog `entry_id` plus session-slot fallback when the wire is in `key_vars` (read and write paths agree).
+- **Teaching method rows:** list all required and optional params as `p#=$` (no `,..` elision); temporal `$` placeholders pass wire coercion.
+- **Mutator `m#` UX:** payload dotted-calls reject Query/Search/Get with a clear “not a mutator” error; zero-arity Gets still teach as `e#.m#()`.
+- **Entity symbol errors:** summary prefixes total entity count (`N entities: …`) so “and M more” is not misread as deletion.
+- **GitHub catalog:** `CommitFile` is concrete with `commit_file_get` (contents API) for path/sha materialization.
+
+### Changed
+
+- **Exposure policy:** `DomainRevision` newtype + `compare_exposure` / `plan_compatible_with_session` as the single revision kernel.
+- **Session mutate errors:** `SessionMutateError` carries typed persist failures through expand/federate/seeds (mapped at MCP/HTTP edges).
+
 ## [0.3.116] - 2026-07-04
 
 ### Fixed

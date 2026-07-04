@@ -20,7 +20,7 @@ async fn commit_expand_wave(
     prompt_hash_p: PromptHashHex,
     session_id_p: ExecuteSessionId,
     seeds: Vec<CapabilitySeed>,
-) -> Result<ExpandTeachingWaveResult, String> {
+) -> Result<ExpandTeachingWaveResult, super::SessionMutateError> {
     let seeds = normalize_capability_seeds(seeds);
     if seeds.is_empty() {
         return Err("`seeds` must be non-empty".into());
@@ -58,13 +58,13 @@ async fn commit_expand_wave(
             return Err(format!(
                 "unknown catalog entry `{}` in loaded session schemas",
                 seed.entry_id
-            ));
+            ).into());
         };
         if ctx.get_entity(&seed.entity).is_none() {
             return Err(format!(
                 "unknown entity `{}` in catalog `{}`",
                 seed.entity, seed.entry_id
-            ));
+            ).into());
         }
         groups
             .entry(seed.entry_id.clone())
@@ -93,7 +93,7 @@ async fn commit_expand_wave(
         let Some(ctx) = sess.contexts_by_entry.get(&eid) else {
             return Err(format!(
                 "unknown catalog entry `{eid}` in loaded session schemas"
-            ));
+            ).into());
         };
         let group = groups
             .get(&eid)
@@ -132,7 +132,7 @@ async fn commit_expand_wave(
             ranked_capability_names: ranked_names,
         },
     )
-    .await;
+    .await?;
     Ok(ExpandTeachingWaveResult {
         markdown: committed.markdown,
         relations_delta: committed.relations_delta,
@@ -146,13 +146,13 @@ pub async fn expand_execute_teaching_session(
     prompt_hash: &str,
     session_id: &str,
     seeds: Vec<CapabilitySeed>,
-) -> Result<ExpandTeachingWaveResult, String> {
+) -> Result<ExpandTeachingWaveResult, super::SessionMutateError> {
     let prompt_hash_p: PromptHashHex = prompt_hash
         .parse()
-        .map_err(|e: &'static str| e.to_string())?;
+        .map_err(|e: &'static str| super::SessionMutateError::from(e))?;
     let session_id_p: ExecuteSessionId = session_id
         .parse()
-        .map_err(|e: &'static str| e.to_string())?;
+        .map_err(|e: &'static str| super::SessionMutateError::from(e))?;
     let key = ExecuteCoordKey {
         prompt_hash: prompt_hash.to_string(),
         session_id: session_id.to_string(),

@@ -21,6 +21,13 @@ pub enum ExecuteSessionPersistOutcome {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExecuteSessionPersistError {
     MissingReuseKey,
+    /// Hot session `domain_revision` is behind durable; caller must rehydrate before writing.
+    HotBehindDurable {
+        hot_revision: u32,
+        durable_revision: u32,
+    },
+    /// Live execute row missing (catalog rotation / rehydrate failure) — do not use a caller Arc.
+    SessionUnavailable,
 }
 
 impl std::fmt::Display for ExecuteSessionPersistError {
@@ -30,8 +37,29 @@ impl std::fmt::Display for ExecuteSessionPersistError {
                 f,
                 "plan_commit_ref persistence failed: execute session reuse key unavailable — reopen `plasm_context` and dry-run again"
             ),
+            Self::HotBehindDurable {
+                hot_revision,
+                durable_revision,
+            } => write!(
+                f,
+                "execute session hot domain_revision={hot_revision} is behind durable={durable_revision} — retry after rehydrate"
+            ),
+            Self::SessionUnavailable => write!(
+                f,
+                "execute session unavailable — reopen `plasm_context` and dry-run again"
+            ),
         }
     }
+}
+
+/// Outcome of merging durable plan commits into a hot execute row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeLiveOutcome {
+    /// Plans/ops restored onto hot. Hot may be in-sync with or ahead of durable; only plans with
+    /// `domain_revision <=` hot are attached (append-only).
+    Merged,
+    /// Durable exposure is ahead of hot — discard hot and full-rehydrate from durable.
+    NeedsRehydrate,
 }
 
 impl std::error::Error for ExecuteSessionPersistError {}
@@ -289,9 +317,23 @@ impl ExecuteSessionRegistry {
         session_id: &str,
         reuse_key_fallback: Option<&SessionReuseKey>,
     ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
+        use crate::domain_revision::{compare_exposure, DomainRevision, ExposureSync};
+
         let durable = self.durable_backend_configured().await;
         let key = session_key(&session.prompt_hash, session_id);
         let reuse_key = if let Some(existing) = self.load_json(&key).await {
+            match compare_exposure(
+                DomainRevision::new(session.domain_revision),
+                DomainRevision::new(existing.domain_revision),
+            ) {
+                ExposureSync::HotBehind => {
+                    return Err(ExecuteSessionPersistError::HotBehindDurable {
+                        hot_revision: session.domain_revision,
+                        durable_revision: existing.domain_revision,
+                    });
+                }
+                ExposureSync::InSync | ExposureSync::HotAhead => {}
+            }
             existing.reuse_key.into()
         } else if let Some(fallback) = reuse_key_fallback {
             fallback.clone()
@@ -306,11 +348,9 @@ impl ExecuteSessionRegistry {
         self.write_descriptor(&key, &desc).await
     }
 
-    /// Patch only `plan_commits` / `plan_commit_next` on the durable row.
-    ///
-    /// Callers may hold a pre-extend [`ExecuteSession`] clone (owned exposure / `domain_revision`,
-    /// shared `plan_commits`). Full-session persist from that Arc would overwrite a newer extend
-    /// wave in durable storage — never write teaching/exposure fields from plan-commit registration.
+    /// Patch only `plan_commits` / `plan_commit_next` on the durable row when exposure revisions
+    /// match. If hot is ahead of durable, full-persist hot (authoritative). If hot is behind,
+    /// refuse so callers rehydrate first.
     pub async fn patch_plan_commits_only(
         &self,
         session: &ExecuteSession,
@@ -321,10 +361,30 @@ impl ExecuteSessionRegistry {
         let key = session_key(&session.prompt_hash, session_id);
         let snapshot = session.snapshot_plan_commits_for_persist();
         if let Some(mut existing) = self.load_json(&key).await {
-            existing.plan_commits = snapshot.records;
-            existing.plan_commit_next = snapshot.next_sequence;
-            existing.expires_at_unix = expires_at_from_now();
-            return self.write_descriptor(&key, &existing).await;
+            use crate::domain_revision::{compare_exposure, DomainRevision, ExposureSync};
+            match compare_exposure(
+                DomainRevision::new(session.domain_revision),
+                DomainRevision::new(existing.domain_revision),
+            ) {
+                ExposureSync::HotBehind => {
+                    return Err(ExecuteSessionPersistError::HotBehindDurable {
+                        hot_revision: session.domain_revision,
+                        durable_revision: existing.domain_revision,
+                    });
+                }
+                ExposureSync::HotAhead => {
+                    // Hot exposure advanced (e.g. prior durable write failed) — reconcile fully.
+                    return self
+                        .persist_or_update(session, session_id, reuse_key_fallback)
+                        .await;
+                }
+                ExposureSync::InSync => {
+                    existing.plan_commits = snapshot.records;
+                    existing.plan_commit_next = snapshot.next_sequence;
+                    existing.expires_at_unix = expires_at_from_now();
+                    return self.write_descriptor(&key, &existing).await;
+                }
+            }
         }
         if !durable {
             return Ok(ExecuteSessionPersistOutcome::InMemoryOnly);
@@ -381,24 +441,48 @@ impl ExecuteSessionRegistry {
         Some(desc)
     }
 
-    /// Merge cross-pod durable fields into a hot in-memory execute row (plan commits, async ops).
+    /// Merge cross-pod durable plan commits / ops into a hot row.
+    ///
+    /// When durable exposure is **ahead** of hot, returns [`MergeLiveOutcome::NeedsRehydrate`].
+    /// Restores plan commits pinned at `domain_revision <=` hot (append-only: older plans stay
+    /// valid after extend). Never attaches plans pinned *ahead* of the hot row.
     pub async fn merge_into_live_session(
         &self,
         session: &ExecuteSession,
         prompt_hash: &str,
         session_id: &str,
-    ) {
+    ) -> MergeLiveOutcome {
+        use crate::domain_revision::{
+            compare_exposure, plan_compatible_with_session, DomainRevision, ExposureSync,
+        };
+
         if !self.durable_backend_configured().await {
-            return;
+            return MergeLiveOutcome::Merged;
         }
         let Some(desc) = self.load(prompt_hash, session_id).await else {
-            return;
+            return MergeLiveOutcome::Merged;
         };
-        session.restore_persisted_plan_commits(&desc.plan_commits, desc.plan_commit_next);
-        session.restore_persisted_operations(&super::OperationPersistSnapshot {
-            operations: desc.operations.clone(),
+        let session_rev = DomainRevision::new(session.domain_revision);
+        if compare_exposure(session_rev, DomainRevision::new(desc.domain_revision))
+            == ExposureSync::HotBehind
+        {
+            return MergeLiveOutcome::NeedsRehydrate;
+        }
+        let plan_commit_next = desc.plan_commit_next;
+        let ops = super::OperationPersistSnapshot {
+            operations: desc.operations,
             operation_handle_next: desc.operation_handle_next,
-        });
+        };
+        let plans: Vec<_> = desc
+            .plan_commits
+            .into_iter()
+            .filter(|p| {
+                plan_compatible_with_session(DomainRevision::new(p.domain_revision), session_rev)
+            })
+            .collect();
+        session.restore_persisted_plan_commits(&plans, plan_commit_next);
+        session.restore_persisted_operations(&ops);
+        MergeLiveOutcome::Merged
     }
 
     pub(crate) async fn delete(&self, prompt_hash: &str, session_id: &str) {

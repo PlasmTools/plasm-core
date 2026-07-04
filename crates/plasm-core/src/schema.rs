@@ -775,6 +775,28 @@ pub enum CapabilityKind {
     Action, // Any other entity-scoped operation
 }
 
+impl CapabilityKind {
+    /// Stable agent-facing label (`query`, `get`, …) — not `Debug`.
+    #[inline]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Query => "query",
+            Self::Search => "search",
+            Self::Get => "get",
+            Self::Create => "create",
+            Self::Update => "update",
+            Self::Delete => "delete",
+            Self::Action => "action",
+        }
+    }
+}
+
+impl std::fmt::Display for CapabilityKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Semantic role of a capability parameter.
 ///
 /// All roles produce the same HTTP transport (a query param or path segment),

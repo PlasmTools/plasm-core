@@ -24,6 +24,7 @@ pub mod discovery_embedding_reconcile;
 pub mod discovery_embedding_repository;
 pub mod discovery_human_format;
 pub mod dispatch;
+pub mod domain_revision;
 pub mod dotenv_safe;
 pub mod error;
 pub mod evidence_chain;

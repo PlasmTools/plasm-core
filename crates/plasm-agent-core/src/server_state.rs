@@ -256,21 +256,46 @@ impl PlasmHostState {
             if crate::execute_session_rehydrate::registry_pins_match_live(reg.as_ref(), &pins)
                 .is_ok()
             {
-                self.execute_session_registry
+                use crate::mcp_transport_store::execute_session_registry::MergeLiveOutcome;
+                match self
+                    .execute_session_registry
                     .merge_into_live_session(&sess, prompt_hash, session_id)
+                    .await
+                {
+                    MergeLiveOutcome::Merged => return Some(sess),
+                    MergeLiveOutcome::NeedsRehydrate => {
+                        tracing::info!(
+                            target: "plasm_agent::execute_session",
+                            prompt_hash = %prompt_hash,
+                            session_id = %session_id,
+                            hot_revision = sess.domain_revision,
+                            "hot execute session behind durable exposure; rehydrating"
+                        );
+                        // Drop hot only — durable descriptor is the source of truth.
+                        self.sessions.remove_by_strs(prompt_hash, session_id).await;
+                    }
+                }
+            } else {
+                tracing::info!(
+                    target: "plasm_agent::execute_session",
+                    prompt_hash = %prompt_hash,
+                    session_id = %session_id,
+                    "in-memory execute session stale (catalog rotation); discarding"
+                );
+                self.discard_persisted_execute_row(prompt_hash, session_id)
                     .await;
-                return Some(sess);
+                return None;
             }
-            tracing::info!(
-                target: "plasm_agent::execute_session",
-                prompt_hash = %prompt_hash,
-                session_id = %session_id,
-                "in-memory execute session stale (catalog rotation); discarding"
-            );
-            self.discard_persisted_execute_row(prompt_hash, session_id)
-                .await;
-            return None;
         }
+        self.rehydrate_execute_session_from_durable(prompt_hash, session_id)
+            .await
+    }
+
+    async fn rehydrate_execute_session_from_durable(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+    ) -> Option<Arc<ExecuteSession>> {
         let desc = self
             .execute_session_registry
             .load(prompt_hash, session_id)
@@ -348,29 +373,33 @@ impl PlasmHostState {
     }
 
     /// Replace in-memory session payload and refresh Redis descriptor (reuse key preserved when present).
+    ///
+    /// Durable persist is required when a backend is configured — never advance hot alone (split-brain).
     pub async fn replace_execute_session(
         &self,
         prompt_hash: &str,
         session_id: &str,
         session: ExecuteSession,
-    ) {
+    ) -> Result<(), crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError>
+    {
+        use crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError;
+
+        // Parse path ids before durable write — never advance durable without hot.
+        let ph: PromptHashHex = prompt_hash
+            .parse()
+            .map_err(|_| ExecuteSessionPersistError::SessionUnavailable)?;
+        let sid: ExecuteSessionId = session_id
+            .parse()
+            .map_err(|_| ExecuteSessionPersistError::SessionUnavailable)?;
         let reuse_key = self
             .sessions
             .reuse_key_for_execute_pair(prompt_hash, session_id)
             .await;
-        if let Err(err) = self
-            .execute_session_registry
+        self.execute_session_registry
             .persist_or_update(&session, session_id, reuse_key.as_ref())
-            .await
-        {
-            tracing::warn!(error = %err, "execute session durable persist failed on replace");
-        }
-        if let (Ok(ph), Ok(sid)) = (
-            prompt_hash.parse::<PromptHashHex>(),
-            session_id.parse::<ExecuteSessionId>(),
-        ) {
-            self.sessions.replace_session(&ph, &sid, session).await;
-        }
+            .await?;
+        self.sessions.replace_session(&ph, &sid, session).await;
+        Ok(())
     }
 }
 

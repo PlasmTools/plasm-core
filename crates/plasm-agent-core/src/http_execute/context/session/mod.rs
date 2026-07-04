@@ -4,11 +4,13 @@ mod commit;
 mod expand;
 mod exposure_replay;
 mod federate;
+mod mutate_error;
 mod open;
 mod seeds_apply;
 mod symbol_ledger;
 
 pub use expand::{expand_execute_teaching_session, ExpandTeachingWaveResult};
+pub use mutate_error::SessionMutateError;
 pub(crate) use exposure_replay::{
     apply_federate_exposure_wave, build_initial_exposure_wave, catalog_waves_from_pairing,
     replay_teaching_exposure_waves, ExposureCatalogWave,

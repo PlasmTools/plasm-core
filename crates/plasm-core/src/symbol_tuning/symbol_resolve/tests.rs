@@ -316,6 +316,90 @@ fn resolve_cap_param_homographed_union_variant_ref_paths() {
     );
 }
 
+#[test]
+fn opaque_query_m_sym_rejected_on_mutator_payload_dotted_call() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let Ok(cgs) = load_schema_dir(&dir) else {
+        return;
+    };
+    let entry = "langmatrix";
+    let exp = TeachingExposureSession::new(&cgs, entry, &["LangItem"]);
+    let map = exp.symbol_map_arc();
+    let e_sym = map.entity_sym_for(entry, "LangItem");
+    let m_sym = map.method_sym_for(entry, "LangItem", "langitem_query");
+    let tags_sym = map.ident_sym_cap_param_for(entry, "LangItem", "langitem_query", "tags");
+    assert!(SymbolMap::is_opaque_m_sym(m_sym.as_str()));
+    // Payload invoke (non-empty args) — not zero-arity `e#.m#()` pathless gets.
+    let line = format!("{e_sym}($).{m_sym}({tags_sym}=$)");
+    let err = crate::expr_parser::parse_session_line(
+        &line,
+        &cgs,
+        Some(std::sync::Arc::clone(&map) as std::sync::Arc<dyn crate::symbol_tuning::SymbolSession>),
+    )
+    .expect_err("query m# must not bind as mutator payload");
+    let msg = err.message();
+    assert!(
+        msg.contains("not a mutator") && msg.contains("query"),
+        "unexpected message: {msg}"
+    );
+}
+
+#[test]
+fn compound_key_p_sym_falls_back_to_session_slot_when_catalog_misses() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let Ok(cgs) = load_schema_dir(&dir) else {
+        return;
+    };
+    let entry = "langmatrix";
+    let exp = TeachingExposureSession::new(&cgs, entry, &["CompoundBranch", "LangItem"]);
+    let map = exp.symbol_map_arc();
+    let ent = cgs.get_entity("CompoundBranch").expect("CompoundBranch");
+    let owner_sym = map.ident_sym_entity_field_for(entry, "CompoundBranch", "owner");
+    let item_sym = map.ident_sym_entity_field_for(entry, "CompoundBranch", "item_id");
+    let name_sym = map.ident_sym_entity_field_for(entry, "CompoundBranch", "name");
+    assert!(SymbolMap::is_opaque_p_sym(owner_sym.as_str()));
+    // Wrong catalog scope must still resolve via session-wide field / slot fallback.
+    for (sym, wire) in [
+        (owner_sym.as_str(), "owner"),
+        (item_sym.as_str(), "item_id"),
+        (name_sym.as_str(), "name"),
+    ] {
+        let got = map
+            .resolve_compound_key(
+                CatalogScope::Qualified("other_catalog"),
+                "CompoundBranch",
+                &ent.key_vars,
+                sym,
+            )
+            .unwrap_or_else(|e| panic!("compound key {sym}: {e:?}"));
+        assert_eq!(got, wire);
+    }
+    // Same fragment as get: opaque compound ctor type-checks end-to-end.
+    let e_sym = map.entity_sym_for(entry, "CompoundBranch");
+    let get_line = format!(
+        "{e_sym}({owner_sym}=acme, {item_sym}=i1, {name_sym}=main)"
+    );
+    let mut parsed = crate::expr_parser::parse_session_line(
+        &get_line,
+        &cgs,
+        Some(std::sync::Arc::clone(&map) as std::sync::Arc<dyn crate::symbol_tuning::SymbolSession>),
+    )
+    .expect("compound get with p# keys");
+    crate::normalize_expr_query_capabilities(&mut parsed.expr, &cgs).expect("normalize");
+    crate::type_check_expr(&parsed.expr, &cgs).expect("typecheck get");
+    let crate::Expr::Get(g) = &parsed.expr else {
+        panic!("expected Get");
+    };
+    let crate::EntityKey::Compound(m) = &g.reference.key else {
+        panic!("expected compound key");
+    };
+    assert_eq!(m.get("owner").map(String::as_str), Some("acme"));
+    assert_eq!(m.get("item_id").map(String::as_str), Some("i1"));
+    assert_eq!(m.get("name").map(String::as_str), Some("main"));
+}
+
 /// Regression: deleted qualified reverse-map fields must not reappear on opaque resolution paths.
 #[test]
 fn opaque_resolution_source_has_no_qualified_reverse_maps() {

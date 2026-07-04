@@ -363,6 +363,22 @@ commit_get:
     - { type: var, name: sha }
   response: single
 
+commit_file_get:
+  method: GET
+  path:
+    - { type: literal, value: repos }
+    - { type: var, name: owner }
+    - { type: var, name: repo }
+    - { type: literal, value: contents }
+    - { type: var, name: filename }
+  query:
+    type: object
+    fields:
+      - [ref, { type: if, condition: { type: exists, var: ref },
+                then_expr: { type: var, name: ref },
+                else_expr: { type: const, value: null } }]
+  response: single
+
 pr_review_query:
   method: GET
   path:

@@ -791,7 +791,6 @@ impl PlasmMcpHandler {
                         })?;
                         crate::plan_commit_store::register_plan_commit_and_persist(
                             self.plasm.as_ref(),
-                            Arc::clone(&es),
                             b.prompt_hash.as_str(),
                             b.session_id.as_str(),
                             commit_record,
@@ -1095,7 +1094,7 @@ impl PlasmMcpHandler {
         )
         .instrument(context_span)
         .await
-        .map_err(|msg| CallToolError::new(std::io::Error::other(msg)))?;
+        .map_err(|err| CallToolError::new(std::io::Error::other(err.to_string())))?;
 
         if out.stale_execute_binding_recovered {
             self.plasm.trace_hub.finalize_mcp_session(&ls_key).await;

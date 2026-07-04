@@ -52,13 +52,13 @@ pub(crate) async fn post_execute_session_context(
     .await
     {
         Ok(out) => Json(out).into_response(),
-        Err(msg) => problem_response(
+        Err(err) => problem_response(
             Problem::custom(
                 ProblemStatus::BAD_REQUEST,
                 Uri::from_static(problem_types::EXECUTE_REGISTRY_ERROR),
             )
             .with_title("Bad Request")
-            .with_detail(msg),
+            .with_detail(err.to_string()),
         ),
     }
 }

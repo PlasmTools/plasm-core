@@ -78,7 +78,7 @@ fn teaching_tsv_exemplars_round_trip_parser() {
     );
 }
 
-/// Teaching TSV uses the compact `optional` legend (not `opt: wire=p#` lists).
+/// Teaching TSV marks optionality in Meaning; method rows list all params (no `,..` elision).
 #[test]
 fn prompt_matrix_tsv_optional_legend_is_compact() {
     let dir = matrix_fixture_dir();
@@ -90,15 +90,13 @@ fn prompt_matrix_tsv_optional_legend_is_compact() {
         "matrix teaching TSV should mark optional invoke/query slots with `optional`"
     );
     for line in tsv.lines().skip(1) {
-        let Some((expr, meaning)) = line.split_once('\t') else {
+        let Some((expr, _meaning)) = line.split_once('\t') else {
             continue;
         };
-        if expr.contains(",..") || expr.ends_with("..)") {
-            assert!(
-                meaning.contains("optional"),
-                "optional-tail exemplar should carry compact optional legend: expr={expr:?} meaning={meaning:?}"
-            );
-        }
+        assert!(
+            !expr.contains(",..") && !expr.ends_with("..)"),
+            "teaching method rows must list all params (no `,..` elision): {expr:?}"
+        );
     }
 }
 

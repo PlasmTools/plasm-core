@@ -176,7 +176,6 @@ async fn concurrent_mcp_plasm_dry_two_commits() {
         let pc = es.mint_plan_commit_ref();
         register_plan_commit_and_persist(
             st.as_ref(),
-            Arc::clone(&es),
             out.prompt_hash.as_str(),
             out.session_id.as_str(),
             PlanCommitRecord::from_dry_review(

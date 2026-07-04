@@ -24,6 +24,16 @@ use super::keys::{
 use super::{EntityBinding, MethodBinding, RelationBinding, SlotBinding, SlotKind, SymbolMap};
 
 impl SymbolMap {
+    /// Session-slot fallback shared by compound-key and query-filter `p#` resolution.
+    fn session_slot_wire(
+        &self,
+        token: &str,
+        accept: impl FnOnce(&SlotKind) -> Option<String>,
+    ) -> Option<String> {
+        let binding = self.resolve_session_slot(token).ok()?;
+        accept(&binding.kind)
+    }
+
     fn cap_param_keys_for_psym<'b>(
         &'b self,
         psym: OpaquePSym,
@@ -109,12 +119,30 @@ impl SymbolMap {
                             return Ok(kv.to_string());
                         }
                     }
-                } else if let Some(field_wire) =
-                    self.lookup_entity_field_by_opaque_psym(entity, psym)
-                {
+                }
+                // Session-wide field slot or any p# whose wire is a key_var (cap-param homograph).
+                if let Some(field_wire) = self.lookup_entity_field_by_opaque_psym(entity, psym) {
                     if key_vars.iter().any(|k| k.as_str() == field_wire.as_str()) {
                         return Ok(field_wire);
                     }
+                }
+                if let Some(wire) = self.session_slot_wire(t, |kind| match kind {
+                    SlotKind::EntityField {
+                        entity: bound_entity,
+                        field_wire,
+                    } if bound_entity.as_str() == entity
+                        && key_vars.iter().any(|k| k.as_str() == field_wire.as_str()) =>
+                    {
+                        Some(field_wire.to_string())
+                    }
+                    SlotKind::CapParam { param_wire, .. }
+                        if key_vars.iter().any(|k| k.as_str() == param_wire.as_str()) =>
+                    {
+                        Some(param_wire.to_string())
+                    }
+                    _ => None,
+                }) {
+                    return Ok(wire);
                 }
                 Err(SymbolResolveError::UnknownCompoundKey {
                     entity: entity.to_string(),
@@ -133,31 +161,31 @@ impl SymbolMap {
                         .map(|key| key.param.to_string()),
                 );
                 if candidates.is_empty() {
-                    if let Ok(binding) = self.resolve_session_slot(t) {
-                        match &binding.kind {
-                            SlotKind::EntityField {
-                                entity: bound_entity,
-                                field_wire,
-                            } if bound_entity.as_str() == entity
-                                && ent.fields.contains_key(field_wire.as_str()) =>
-                            {
-                                return Ok(field_wire.to_string());
-                            }
-                            SlotKind::CapParam {
-                                domain,
-                                capability_kind,
-                                param_wire,
-                                ..
-                            } if domain.as_str() == entity
-                                && matches!(
-                                    capability_kind,
-                                    CapabilityKind::Query | CapabilityKind::Search
-                                ) =>
-                            {
-                                return Ok(param_wire.to_string());
-                            }
-                            _ => {}
+                    if let Some(wire) = self.session_slot_wire(t, |kind| match kind {
+                        SlotKind::EntityField {
+                            entity: bound_entity,
+                            field_wire,
+                        } if bound_entity.as_str() == entity
+                            && ent.fields.contains_key(field_wire.as_str()) =>
+                        {
+                            Some(field_wire.to_string())
                         }
+                        SlotKind::CapParam {
+                            domain,
+                            capability_kind,
+                            param_wire,
+                            ..
+                        } if domain.as_str() == entity
+                            && matches!(
+                                capability_kind,
+                                CapabilityKind::Query | CapabilityKind::Search
+                            ) =>
+                        {
+                            Some(param_wire.to_string())
+                        }
+                        _ => None,
+                    }) {
+                        return Ok(wire);
                     }
                     return Err(SymbolResolveError::UnknownQueryFilterPSym {
                         entity: entity.to_string(),
@@ -213,6 +241,7 @@ impl SymbolMap {
                             catalog_entry_id: binding.entry_id.to_string(),
                             domain: domain.to_string(),
                             capability: capability.to_string(),
+                            capability_kind: cap.kind,
                             token: t.to_string(),
                         });
                     }
@@ -221,6 +250,7 @@ impl SymbolMap {
                         catalog_entry_id: catalog.entry_id().unwrap_or("").to_string(),
                         domain: domain.to_string(),
                         capability: capability.to_string(),
+                        capability_kind: cap.kind,
                         token: t.to_string(),
                     });
                 }

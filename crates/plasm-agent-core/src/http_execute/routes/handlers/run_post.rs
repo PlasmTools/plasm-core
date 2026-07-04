@@ -197,7 +197,6 @@ pub(crate) async fn post_run_execute_session(
         };
         if let Err(e) = crate::plan_commit_store::register_plan_commit_and_persist(
             &st,
-            Arc::clone(&sess),
             prompt_hash.as_str(),
             session_id.as_str(),
             commit_record,

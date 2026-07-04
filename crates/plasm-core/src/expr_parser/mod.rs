@@ -1421,9 +1421,10 @@ impl<'a> Parser<'a> {
     /// entity constructors are accepted. Keys must match `ent.key_vars` exactly (no extras, no omissions).
     fn parse_strict_compound_key_value_map(
         &mut self,
-        display_entity: &str,
+        head: &crate::expr_parser::entity_ref_parse::EntityCtorHead,
         ent: &EntityDef,
     ) -> Result<IndexMap<String, Value>, ParseError> {
+        let display_entity = head.canonical.as_str();
         let mut parts: IndexMap<String, Value> = IndexMap::new();
         loop {
             self.skip_ws();
@@ -1431,7 +1432,7 @@ impl<'a> Parser<'a> {
                 break;
             }
             let (raw_key, _, _) = self.parse_ident_with_span()?;
-            let key = self.normalize_compound_ctor_key(display_entity, ent, &raw_key)?;
+            let key = self.normalize_compound_ctor_key(head, ent, &raw_key)?;
             if parts.contains_key(&key) {
                 return Err(self.err(ParseErrorKind::Other {
                     message: format!(
@@ -1681,8 +1682,16 @@ impl<'a> Parser<'a> {
         &mut self,
         entity_canon: &str,
     ) -> Result<Value, ParseError> {
-        use entity_ref_parse::EntityRefRhsMode;
-        self.parse_entity_ref_value_after_open_paren(entity_canon, EntityRefRhsMode::Strict)
+        use entity_ref_parse::{EntityCtorHead, EntityRefRhsMode};
+        let head = EntityCtorHead::new(
+            entity_canon,
+            self.catalog_entry_id_for_entity(entity_canon)
+                .ok()
+                .flatten()
+                .filter(|id| !id.is_empty())
+                .map(|s| s.to_string()),
+        );
+        self.parse_entity_ref_value_after_open_paren(&head, EntityRefRhsMode::Strict)
     }
 
     /// Parse method / nav segment after `.` — ASCII alnum + `_` + `-` (hyphens allowed for `get-me` style).
@@ -2030,6 +2039,10 @@ impl<'a> Parser<'a> {
 
     /// Resolve Create / Update / Action / Delete with object input.
     /// Opaque session `m#` resolves only via the forward method binding table — no CGS scan fallback.
+    ///
+    /// Read kinds (Query / Search / Get) are rejected here so a wrong `m#` yields a clear
+    /// "not a mutator" diagnostic instead of a param error naming the bound query. Zero-arity
+    /// `e#.m#()` Gets still resolve via [`Self::parse_zero_arity_invoke`] (teaching pathless gets).
     fn resolve_dotted_call_capability(
         &self,
         label: &str,
@@ -2038,9 +2051,24 @@ impl<'a> Parser<'a> {
     ) -> Result<&crate::CapabilitySchema, ParseError> {
         if let Some(raw) = raw_label {
             if crate::symbol_tuning::SymbolMap::is_opaque_m_sym(raw) {
-                return self
+                let cap = self
                     .try_resolve_opaque_invoke_capability(source, raw)
-                    .expect("opaque m# always attempts session binding");
+                    .expect("opaque m# always attempts session binding")?;
+                if matches!(
+                    cap.kind,
+                    CapabilityKind::Query | CapabilityKind::Search | CapabilityKind::Get
+                ) {
+                    return Err(self.err(ParseErrorKind::Other {
+                        message: format!(
+                            "`{raw}` is {} `{}.{}`, not a mutator — use the teaching row for a create/update/action/delete method on `{}`",
+                            cap.kind.as_str(),
+                            cap.domain,
+                            cap.name,
+                            source.primary_entity(),
+                        ),
+                    }));
+                }
+                return Ok(cap);
             }
             if let Some(res) = self.try_resolve_opaque_invoke_capability(source, raw) {
                 return res;
@@ -2983,7 +3011,11 @@ impl<'a> Parser<'a> {
                             ),
                         }));
                     }
-                    let map_values = self.parse_strict_compound_key_value_map(&entity, &ent)?;
+                    let head = entity_ref_parse::EntityCtorHead::new(
+                        entity.clone(),
+                        self.pending_session_catalog_entry_id.clone(),
+                    );
+                    let map_values = self.parse_strict_compound_key_value_map(&head, &ent)?;
                     let mut ordered: BTreeMap<String, String> = BTreeMap::new();
                     let mut ctor_path_vars: IndexMap<String, Value> = IndexMap::new();
                     for k in &ent.key_vars {

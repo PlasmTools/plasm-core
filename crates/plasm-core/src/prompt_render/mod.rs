@@ -2732,18 +2732,8 @@ fn format_inline_structural_example_symbolic(
             TEACHING_PARAM_VALUE_PLACEHOLDER.to_string()
         }
         crate::InputType::Object { fields, .. } => {
-            let mut has_optional = false;
-            for sf in fields {
-                if !sf.required {
-                    has_optional = true;
-                    break;
-                }
-            }
             let mut parts = Vec::new();
             for sf in fields {
-                if !sf.required {
-                    continue;
-                }
                 let seg = if path_prefix.is_empty() {
                     sf.name.clone()
                 } else {
@@ -2787,17 +2777,7 @@ fn format_inline_structural_example_symbolic(
                     }
                 }
             }
-            let inner = parts.join(",");
-            let body = if has_optional {
-                if inner.is_empty() {
-                    "..".to_string()
-                } else {
-                    format!("{inner},..")
-                }
-            } else {
-                inner
-            };
-            format!("{{{body}}}")
+            format!("{{{}}}", parts.join(","))
         }
         crate::InputType::Array { element_type, .. } => {
             format!(
@@ -3291,21 +3271,6 @@ fn build_dotted_call_paren_args(
     let InputType::Object { fields, .. } = &is.input_type else {
         return None;
     };
-    let mut has_optional = false;
-    for f in fields {
-        if matches!(f.role, Some(ParameterRole::Scope)) {
-            continue;
-        }
-        if !field_is_filter_like(f) {
-            continue;
-        }
-        if field_omitted_from_path_inject(ent, cap, f.name.as_str()) {
-            continue;
-        }
-        if !f.required {
-            has_optional = true;
-        }
-    }
     let mut parts: Vec<String> = Vec::new();
     let mut required_example_failed = false;
     for f in fields {
@@ -3327,30 +3292,21 @@ fn build_dotted_call_paren_args(
         if field_omitted_from_path_inject(ent, cap, f.name.as_str()) {
             continue;
         }
-        if !f.required {
-            continue;
-        }
         match invoke_dotted_call_arg_example(f, cap, cgs, map, catalog_entry_id) {
             Some(a) => parts.push(a),
-            None => required_example_failed = true,
+            None if f.required => required_example_failed = true,
+            None => {}
         }
     }
     if required_example_failed {
         return None;
-    }
-    if parts.is_empty() && has_optional {
-        return Some("..".to_string());
     }
     // Path-bound scope slots may be fully injected from a compound receiver (`Entity(k1=$,k2=$)`),
     // leaving only `method()` for zero-body deletes / similar invokes.
     if parts.is_empty() {
         return Some(String::new());
     }
-    if has_optional {
-        Some(format!("{},..", parts.join(", ")))
-    } else {
-        Some(parts.join(", "))
-    }
+    Some(parts.join(", "))
 }
 
 /// Parentheses for **standalone** `Entity.create(…)` when the capability has required `role: scope`
@@ -3378,30 +3334,13 @@ fn build_standalone_create_paren_args(
     }
 
     let ent = cgs.get_entity(ename)?;
-    let mut has_optional = false;
-    for f in fields {
-        if matches!(f.role, Some(ParameterRole::Scope)) {
-            continue;
-        }
-        if !field_is_filter_like(f) {
-            continue;
-        }
-        if field_omitted_from_path_inject(ent, cap, f.name.as_str()) {
-            continue;
-        }
-        if !f.required {
-            has_optional = true;
-        }
-    }
-
     let mut parts: Vec<String> = Vec::new();
     let mut required_failed = false;
     for f in fields {
-        if !f.required {
-            continue;
-        }
         if matches!(f.role, Some(ParameterRole::Scope)) {
-            parts.push(scope_param_slot(f, cap, cgs, map, catalog_entry_id));
+            if f.required {
+                parts.push(scope_param_slot(f, cap, cgs, map, catalog_entry_id));
+            }
             continue;
         }
         if !field_is_filter_like(f) {
@@ -3412,23 +3351,17 @@ fn build_standalone_create_paren_args(
         }
         match invoke_dotted_call_arg_example(f, cap, cgs, map, catalog_entry_id) {
             Some(a) => parts.push(a),
-            None => required_failed = true,
+            None if f.required => required_failed = true,
+            None => {}
         }
     }
     if required_failed {
         return None;
     }
-    if parts.is_empty() && has_optional {
-        return Some("..".to_string());
-    }
     if parts.is_empty() {
         return None;
     }
-    if has_optional {
-        Some(format!("{},..", parts.join(", ")))
-    } else {
-        Some(parts.join(", "))
-    }
+    Some(parts.join(", "))
 }
 
 #[allow(clippy::too_many_arguments)]

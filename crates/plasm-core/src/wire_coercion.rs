@@ -242,6 +242,11 @@ pub fn coerce_value_for_field_type_with_policy(
     val: Value,
     array_policy: ArrayFieldCoercionPolicy,
 ) -> Result<Value, String> {
+    // Teaching-table bare `$` is a fill-in slot, not a wire token — pass through for every field
+    // type (including temporal `Date`) so optional params can appear as `p#=$` in method rows.
+    if val.is_domain_example_placeholder() {
+        return Ok(val);
+    }
     match ft {
         FieldType::Array => {
             let coerce_elem = |v: Value| -> Result<Value, String> {
@@ -547,6 +552,20 @@ mod tests {
             serde_json::json!("42"),
         );
         assert_eq!(out, serde_json::json!(42));
+    }
+
+    #[test]
+    fn teaching_placeholder_passes_through_temporal_date() {
+        use crate::TemporalWireFormat;
+        let out = coerce_value_for_field_type_with_policy(
+            &FieldType::Date,
+            Some(ValueWireFormat::Temporal(TemporalWireFormat::Rfc3339)),
+            None,
+            Value::String("$".into()),
+            ArrayFieldCoercionPolicy::InvokeArg,
+        )
+        .expect("teaching $ must not fail temporal coerce");
+        assert!(out.is_domain_example_placeholder());
     }
 
     #[test]

@@ -98,7 +98,7 @@ async fn commit_federate_and_expand_waves(
     principal: Option<String>,
     outbound_ref: Option<&HashMap<String, String>>,
     bindings_ref: Option<&HashMap<String, crate::binding_slots::SessionBindingMap>>,
-) -> Result<Vec<CapabilityWaveOutcome>, String> {
+) -> Result<Vec<CapabilityWaveOutcome>, super::SessionMutateError> {
     let mut prepared_federates: HashMap<String, PreparedFederateWave> = HashMap::new();
     for eid in &plan.process_order {
         if skip_primary_open && *eid == plan.primary_entry_id {
@@ -122,7 +122,8 @@ async fn commit_federate_and_expand_waves(
                 outbound_ref,
                 bindings_ref,
             )
-            .await?;
+            .await
+            .map_err(super::SessionMutateError::from)?;
             prepared_federates.insert(eid.clone(), prepared);
         }
     }
@@ -178,7 +179,7 @@ pub async fn apply_capability_seeds(
     logical_session_id: Option<Uuid>,
     plasm_context_intent: &str,
     ranked_capabilities: RankedCapabilitiesArg,
-) -> Result<ApplyCapabilitySeedsOutcome, String> {
+) -> Result<ApplyCapabilitySeedsOutcome, super::SessionMutateError> {
     let mut seeds = normalize_capability_seeds(seeds);
 
     let ResolvedExecuteBinding {
@@ -286,7 +287,7 @@ pub async fn apply_capability_seeds(
                 .with_logical_open(uuid, || async {
                     if let Some(pair) = st.logical_execute_bindings.get(&uuid).await {
                         if let Some(sess_arc) = st.get_execute_session(&pair.0, &pair.1).await {
-                            return Ok::<CreateExecuteSessionResponse, String>(
+                            return Ok::<CreateExecuteSessionResponse, super::SessionMutateError>(
                                 CreateExecuteSessionResponse {
                                     prompt_hash: pair.0,
                                     session: pair.1,
@@ -443,13 +444,14 @@ pub async fn apply_capability_seeds(
                             && !ranked_capabilities_need_exposure_replay(exp, &ranked_capabilities)
                             && !intent_changed
                         {
-                            return Ok::<Option<plasm_core::TeachingExposureSession>, String>(
-                                Some(exp.clone()),
-                            );
+                            return Ok::<
+                                Option<plasm_core::TeachingExposureSession>,
+                                super::SessionMutateError,
+                            >(Some(exp.clone()));
                         }
                     }
                 }
-                Ok::<Option<plasm_core::TeachingExposureSession>, String>(None)
+                Ok::<Option<plasm_core::TeachingExposureSession>, super::SessionMutateError>(None)
             })
             .await?;
         if let Some(exp) = unchanged {

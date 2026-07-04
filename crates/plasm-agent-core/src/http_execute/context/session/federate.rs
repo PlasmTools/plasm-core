@@ -54,7 +54,7 @@ pub async fn prepare_federate_wave(
 
     for e in &names {
         if ctx_arc.get_entity(e).is_none() {
-            return Err(format!("unknown entity `{e}` in this schema"));
+            return Err(format!("unknown entity `{e}` in this schema").into());
         }
     }
 
@@ -74,7 +74,7 @@ pub async fn commit_federate_wave(
     prompt_hash: &str,
     session_id: &str,
     prepared: PreparedFederateWave,
-) -> Result<CapabilityWaveOutcome, String> {
+) -> Result<CapabilityWaveOutcome, super::SessionMutateError> {
     let key = ExecuteCoordKey {
         prompt_hash: prompt_hash.to_string(),
         session_id: session_id.to_string(),
@@ -91,7 +91,7 @@ async fn commit_federate_wave_inner(
     prompt_hash: &str,
     session_id: &str,
     prepared: PreparedFederateWave,
-) -> Result<CapabilityWaveOutcome, String> {
+) -> Result<CapabilityWaveOutcome, super::SessionMutateError> {
     let PreparedFederateWave {
         ctx_arc,
         registry_pin,
@@ -102,10 +102,10 @@ async fn commit_federate_wave_inner(
 
     let prompt_hash_p: PromptHashHex = prompt_hash
         .parse()
-        .map_err(|e: &'static str| e.to_string())?;
+        .map_err(|e: &'static str| super::SessionMutateError::from(e))?;
     let session_id_p: ExecuteSessionId = session_id
         .parse()
-        .map_err(|e: &'static str| e.to_string())?;
+        .map_err(|e: &'static str| super::SessionMutateError::from(e))?;
 
     let Some(sess_arc) = st
         .get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
@@ -121,7 +121,7 @@ async fn commit_federate_wave_inner(
     if sess.contexts_by_entry.contains_key(&new_entry_id) {
         return Err(format!(
             "session already includes catalog entry `{new_entry_id}`"
-        ));
+        ).into());
     }
 
     sess.contexts_by_entry
@@ -171,7 +171,7 @@ async fn commit_federate_wave_inner(
             ranked_capability_names: ranked_names,
         },
     )
-    .await;
+    .await?;
 
     let teaching_prompt_chars_added = committed.markdown.chars().count() as u64;
     let reused_session = committed.surface_unchanged && committed.markdown.trim().is_empty();
@@ -198,7 +198,7 @@ pub async fn federate_execute_session(
     principal: Option<String>,
     outbound_hosted_kv_by_entry: Option<&HashMap<String, String>>,
     bindings_by_entry: Option<&HashMap<String, crate::binding_slots::SessionBindingMap>>,
-) -> Result<CapabilityWaveOutcome, String> {
+) -> Result<CapabilityWaveOutcome, super::SessionMutateError> {
     let prepared = prepare_federate_wave(
         st,
         new_entry_id,
@@ -207,6 +207,7 @@ pub async fn federate_execute_session(
         outbound_hosted_kv_by_entry,
         bindings_by_entry,
     )
-    .await?;
+    .await
+    .map_err(super::SessionMutateError::from)?;
     commit_federate_wave(st, prompt_hash, session_id, prepared).await
 }

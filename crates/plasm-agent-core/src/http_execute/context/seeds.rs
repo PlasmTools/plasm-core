@@ -424,14 +424,14 @@ pub(super) async fn apply_context_intent_session_update(
     prompt_hash: &str,
     session_id: &str,
     accumulated_intent: &str,
-) -> Result<bool, String> {
+) -> Result<bool, super::session::SessionMutateError> {
     let normalized = normalize_context_intent_for_domain_filter(Some(accumulated_intent));
     let prompt_hash_p: PromptHashHex = prompt_hash
         .parse()
-        .map_err(|e: &'static str| e.to_string())?;
+        .map_err(|e: &'static str| super::session::SessionMutateError::from(e))?;
     let session_id_p: ExecuteSessionId = session_id
         .parse()
-        .map_err(|e: &'static str| e.to_string())?;
+        .map_err(|e: &'static str| super::session::SessionMutateError::from(e))?;
     let Some(sess_arc) = st
         .get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
         .await
@@ -443,7 +443,7 @@ pub(super) async fn apply_context_intent_session_update(
     if changed {
         sess.context_intent = normalized;
         st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
-            .await;
+            .await?;
     }
     Ok(changed)
 }
@@ -453,16 +453,16 @@ pub(super) async fn apply_ranked_capabilities_session_update(
     prompt_hash: &str,
     session_id: &str,
     ranked_arg: &RankedCapabilitiesArg,
-) -> Result<(), String> {
+) -> Result<(), super::session::SessionMutateError> {
     let RankedCapabilitiesArg::Set(opt) = ranked_arg else {
         return Ok(());
     };
     let prompt_hash_p: PromptHashHex = prompt_hash
         .parse()
-        .map_err(|e: &'static str| e.to_string())?;
+        .map_err(|e: &'static str| super::session::SessionMutateError::from(e))?;
     let session_id_p: ExecuteSessionId = session_id
         .parse()
-        .map_err(|e: &'static str| e.to_string())?;
+        .map_err(|e: &'static str| super::session::SessionMutateError::from(e))?;
     let Some(sess_arc) = st
         .get_execute_session(prompt_hash_p.as_str(), session_id_p.as_str())
         .await
@@ -475,7 +475,7 @@ pub(super) async fn apply_ranked_capabilities_session_update(
     }
     sess.ranked_capabilities = normalize_ranked_capabilities_for_gate(opt.clone());
     st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
-        .await;
+        .await?;
     Ok(())
 }
 

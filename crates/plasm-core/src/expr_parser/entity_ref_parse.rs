@@ -15,6 +15,17 @@ use crate::value::{PlasmInputRef, Value};
 /// Resolved canonical CGS entity for constructor head `surface`.
 pub(super) struct EntityCtorHead {
     pub canonical: String,
+    /// Owning registry `entry_id` when head is a session `e#` (preferred over outer pending).
+    pub entry_id: Option<String>,
+}
+
+impl EntityCtorHead {
+    pub(super) fn new(canonical: impl Into<String>, entry_id: Option<String>) -> Self {
+        Self {
+            canonical: canonical.into(),
+            entry_id,
+        }
+    }
 }
 
 /// How to parse scalar slots inside an entity constructor body.
@@ -33,14 +44,20 @@ impl<'a> Parser<'a> {
                     .cgs_layers()
                     .any(|c| c.get_entity(&canonical).is_some())
             {
-                return Some(EntityCtorHead { canonical });
+                return Some(EntityCtorHead::new(
+                    canonical,
+                    self.sym_map.entry_id_for_entity_symbol(surface),
+                ));
             }
         }
         let canon = self.canonical_entity_name_in_layers(surface);
         if self.cgs_for_entity(&canon).is_some()
             || self.cgs_layers().any(|c| c.get_entity(&canon).is_some())
         {
-            return Some(EntityCtorHead { canonical: canon });
+            return Some(EntityCtorHead::new(
+                canon,
+                self.sole_layer_catalog_entry_id().map(|s| s.to_string()),
+            ));
         }
         None
     }
@@ -60,16 +77,17 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         self.pos += 1;
-        self.parse_entity_ref_value_after_open_paren(&head.canonical, mode)
+        self.parse_entity_ref_value_after_open_paren(&head, mode)
             .map(Some)
     }
 
     /// Parse `Entity(<body>)` after `(` was consumed (head already resolved).
     pub(super) fn parse_entity_ref_value_after_open_paren(
         &mut self,
-        entity_canon: &str,
+        head: &EntityCtorHead,
         _mode: EntityRefRhsMode,
     ) -> Result<Value, ParseError> {
+        let entity_canon = head.canonical.as_str();
         let ent = self
             .cgs_for_entity_required(entity_canon)?
             .get_entity(entity_canon)
@@ -98,7 +116,7 @@ impl<'a> Parser<'a> {
                     ),
                 }));
             }
-            let parts = self.parse_strict_compound_key_value_map(entity_canon, &ent)?;
+            let parts = self.parse_strict_compound_key_value_map(head, &ent)?;
             let mut obj = indexmap::IndexMap::new();
             for k in &ent.key_vars {
                 let wire = k.as_str();
@@ -127,20 +145,29 @@ impl<'a> Parser<'a> {
     }
 
     /// Map compound-constructor key token to wire `key_vars` name (accepts `p#` without pre-expand).
+    /// Prefers the constructor head's `entry_id` over outer `pending_session_catalog_entry_id`.
     pub(super) fn normalize_compound_ctor_key(
         &self,
-        entity_canon: &str,
+        head: &EntityCtorHead,
         ent: &EntityDef,
         raw_key: &str,
     ) -> Result<String, ParseError> {
-        let catalog = match self.catalog_entry_id_for_entity(entity_canon)? {
-            Some(entry_id) if !entry_id.is_empty() => {
-                crate::symbol_tuning::CatalogScope::qualified(entry_id)
+        let catalog = if let Some(entry_id) = head
+            .entry_id
+            .as_deref()
+            .filter(|id| !id.is_empty())
+        {
+            crate::symbol_tuning::CatalogScope::qualified(entry_id)
+        } else {
+            match self.catalog_entry_id_for_entity(head.canonical.as_str())? {
+                Some(entry_id) if !entry_id.is_empty() => {
+                    crate::symbol_tuning::CatalogScope::qualified(entry_id)
+                }
+                _ => crate::symbol_tuning::CatalogScope::SessionReverse,
             }
-            _ => crate::symbol_tuning::CatalogScope::SessionReverse,
         };
         self.sym_map
-            .resolve_compound_key(catalog, entity_canon, &ent.key_vars, raw_key)
+            .resolve_compound_key(catalog, head.canonical.as_str(), &ent.key_vars, raw_key)
             .map_err(|e| {
                 self.err(ParseErrorKind::Other {
                     message: e.to_agent_program_error(),

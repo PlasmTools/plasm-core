@@ -1,4 +1,4 @@
-version: 30
+version: 31
 http_backend: https://api.github.com
 data_classes:
   untrusted:
@@ -483,12 +483,22 @@ entities:
           path:
           - key: committer
   CommitFile:
-    abstract: true
     id_field: filename
-    description: A file changed in a single repository commit.
+    key_vars:
+    - owner
+    - repo
+    - filename
+    description: A file in a repository commit or contents blob (path + sha for updates).
     fields:
+      owner:
+        required: true
+        value_ref: nv_github_account_login
+      repo:
+        required: true
+        value_ref: nv_github_repository_name
       filename:
         required: true
+        path: path
         value_ref: nv_wire_str_short
       sha:
         required: false
@@ -517,6 +527,9 @@ entities:
       raw_url:
         required: false
         value_ref: nv_wire_str_short
+      content:
+        required: false
+        value_ref: nv_repo_content_put_content
   Branch:
     id_field: name
     key_vars:
@@ -1928,6 +1941,29 @@ capabilities:
     - stats_additions
     - stats_deletions
     - total_changes
+  commit_file_get:
+    kind: get
+    entity: CommitFile
+    description: Resolve one repository file blob (path and sha) at a branch or commit ref via the contents API.
+    provides:
+    - owner
+    - repo
+    - filename
+    - sha
+    - blob_url
+    - raw_url
+    - content
+    parameters:
+    - name: repository
+      value_ref: nv_github_scope_repository
+      required: true
+      role: scope
+    - name: filename
+      value_ref: nv_wire_str_short
+      required: true
+    - name: ref
+      value_ref: nv_github_branch_name
+      required: false
   pr_review_query:
     kind: query
     entity: PullRequestReview
@@ -3871,6 +3907,10 @@ oauth:
         - repo
         - public_repo
       repo_comment_query:
+        any_of:
+        - repo
+        - public_repo
+      commit_file_get:
         any_of:
         - repo
         - public_repo
