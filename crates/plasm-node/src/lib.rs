@@ -67,6 +67,12 @@ pub struct PlasmEngine {
     inner: Arc<Mutex<InnerEngine>>,
 }
 
+impl Default for PlasmEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[napi]
 impl PlasmEngine {
     #[napi(constructor)]

@@ -43,32 +43,46 @@ pub enum PlanCommitVerifyError {
 
 impl PlanCommitVerifyError {
     pub fn detail(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl std::fmt::Display for PlanCommitVerifyError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Unknown { commit_ref } => format!(
+            Self::Unknown { commit_ref } => write!(
+                f,
                 "unknown plan_commit_ref `{commit_ref}` — call `plasm` dry-run again"
             ),
-            Self::Expired { commit_ref } => format!(
+            Self::Expired { commit_ref } => write!(
+                f,
                 "plan_commit_ref `{commit_ref}` expired — call `plasm` dry-run again"
             ),
-            Self::Mismatch { commit_ref } => format!(
+            Self::Mismatch { commit_ref } => write!(
+                f,
                 "plan_commit_ref `{commit_ref}` does not match the current program — call `plasm` dry-run again"
             ),
             Self::PlanAheadOfSession {
                 commit_ref,
                 plan_domain_revision,
                 session_domain_revision,
-            } => format!(
+            } => write!(
+                f,
                 "plan_commit_ref `{commit_ref}` is from a newer exposure (plan domain_revision={plan_domain_revision}, session domain_revision={session_domain_revision}) — session row is behind the plan; retry after rehydrate, or call `plasm` dry-run again on this session"
             ),
-            Self::StalePolicy { commit_ref } => format!(
+            Self::StalePolicy { commit_ref } => write!(
+                f,
                 "plan_commit_ref `{commit_ref}` is stale after flow policy changed — call `plasm` dry-run again"
             ),
-            Self::Evidence { commit_ref, detail } => format!(
+            Self::Evidence { commit_ref, detail } => write!(
+                f,
                 "plan_commit_ref `{commit_ref}` evidence mismatch: {detail}"
             ),
         }
     }
 }
+
+impl std::error::Error for PlanCommitVerifyError {}
 
 pub async fn register_plan_commit_and_persist(
     st: &PlasmHostState,

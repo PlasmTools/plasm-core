@@ -16,4 +16,9 @@ fi
 
 echo "rust-quality: cargo clippy --workspace --all-targets -- -D warnings"
 cargo clippy --workspace --all-targets -- -D warnings
+
+# Explicit NAPI crate (anyhow/`Display` consumers) — must stay green for npm publish.
+echo "rust-quality: cargo clippy -p plasm-node --all-targets -- -D warnings"
+cargo clippy -p plasm-node --all-targets -- -D warnings
+
 echo "rust-quality: ok"

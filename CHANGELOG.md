@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.118] - 2026-07-04
+
+### Fixed
+
+- **`PlanCommitVerifyError`:** implement `Display` + `Error` so NAPI/`anyhow` consumers (`plasm-node`) compile after typed dry-run errors.
+- **Pre-commit / CI:** monorepo workspace includes `plasm-node`; rust-quality explicitly clippy-checks `-p plasm-node`.
+
 ## [0.3.117] - 2026-07-04
 
 ### Fixed
