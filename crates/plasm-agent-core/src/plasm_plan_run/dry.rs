@@ -164,7 +164,6 @@ pub fn evaluate_executable_comp_dry(
     })
 }
 
-
 pub(crate) fn enrich_graph_summary_auth_scoped_reads(
     es: &ExecuteSession,
     plan: &Plan<ValidatedPlanState>,
@@ -303,10 +302,6 @@ pub fn plan_dry_compact_view(
 
 pub fn node_dependencies(node: &ValidatedPlanNode) -> Vec<String> {
     crate::plan_node_graph::node_dependencies(node)
-}
-
-pub(crate) fn push_unique(out: &mut Vec<String>, values: impl IntoIterator<Item = String>) {
-    crate::plan_node_graph::push_unique(out, values);
 }
 
 pub(crate) fn plan_has_query_limit_row_filter_chain(plan: &Plan<ValidatedPlanState>) -> bool {
