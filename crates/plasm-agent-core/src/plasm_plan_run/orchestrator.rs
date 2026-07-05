@@ -393,12 +393,12 @@ pub(crate) async fn run_executable_plan_phased(
             continue;
         };
         evidence_run_ids.push(h.run_id);
-        code_plan_run_artifacts.push(CodePlanRunArtifactRef {
-            run_id: h.run_id.to_wire(),
-            run_step: Some(i),
-            node_id: step.node_id.clone(),
-            ..Default::default()
-        });
+        code_plan_run_artifacts.push(code_plan_run_artifact_ref(
+            h,
+            i + 1,
+            &step.node_id,
+            step.display.as_str(),
+        ));
     }
     let mut evidence_head_hex = None;
     if let Some(evidence) = active_chain(es, execution_scope) {
@@ -439,6 +439,24 @@ pub(crate) async fn run_executable_plan_phased(
         run_plasm_meta,
         return_steps: steps,
     })
+}
+
+fn code_plan_run_artifact_ref(
+    handle: &crate::run_artifacts::RunArtifactHandle,
+    run_step: usize,
+    node_id: &Option<String>,
+    display: &str,
+) -> CodePlanRunArtifactRef {
+    CodePlanRunArtifactRef {
+        run_id: handle.run_id.to_wire(),
+        artifact_uri: Some(handle.plasm_uri.clone()),
+        canonical_artifact_uri: Some(handle.canonical_plasm_uri.clone()),
+        artifact_path: Some(handle.http_path.clone()),
+        run_step: Some(run_step),
+        node_id: node_id.clone(),
+        display: Some(display.to_string()),
+        request_fingerprints: handle.request_fingerprints.clone(),
+    }
 }
 
 fn plasm_return_node_ids(ret: &PlasmReturn) -> Result<Vec<PlanNodeId>, String> {

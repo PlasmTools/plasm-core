@@ -8,11 +8,7 @@ use rust_mcp_sdk::schema::{
 };
 use rust_mcp_sdk::McpServer;
 
-use crate::run_artifacts::{
-    logical_uuid_from_uri_segment, parse_plasm_execute_run_uri,
-    parse_plasm_session_short_resource_uri, parse_plasm_session_short_run_uri,
-    strip_plasm_resource_read_source,
-};
+use crate::run_artifacts::strip_plasm_resource_read_source;
 
 use super::artifact_resolve;
 use super::discover::read_resource_result_for_payload;
@@ -27,22 +23,8 @@ async fn resolve_session_scoped_run(
     read_source: Option<&str>,
     started: Instant,
 ) -> Result<artifact_resolve::ResolvedRunArtifact, RpcError> {
-    let logical_uuid = if let Some((segment, _run_id)) = parse_plasm_session_short_run_uri(uri) {
-        logical_uuid_from_uri_segment(&segment).ok_or_else(|| {
-            RpcError::invalid_params().with_message(
-                "invalid logical session in URI: use `plasm://session/l_<token>/run/pr…` from `plasm_run`",
-            )
-        })?
-    } else if let Some((segment, idx)) = parse_plasm_session_short_resource_uri(uri) {
-        let _ = segment;
-        return Err(map_resolve_rpc_err(
-            artifact_resolve::RunArtifactResolveError::LegacyResourceIndexUri(idx),
-        ));
-    } else {
-        return Err(RpcError::invalid_params().with_message(format!(
-            "unsupported resource URI: {uri}"
-        )));
-    };
+    let logical_uuid = artifact_resolve::logical_uuid_from_session_scoped_uri(uri)
+        .map_err(map_resolve_rpc_err)?;
     let ls_key = logical_uuid.to_string();
     let transport_key = runtime.session_id();
     let binding = if let Some(ref tk) = transport_key {
@@ -65,8 +47,8 @@ async fn resolve_session_scoped_run(
             "no execute session for this logical session: call plasm_context with capability picks (`seeds`) first",
         ));
     };
-    let lookup = artifact_resolve::lookup_from_artifact_uri(uri, &b, ls_key.as_str())
-        .map_err(map_resolve_rpc_err)?;
+    let lookup =
+        artifact_resolve::lookup_from_artifact_uri(uri, &b, ls_key.as_str()).map_err(map_resolve_rpc_err)?;
     artifact_resolve::resolve_run_artifact_for_binding(
         handler.plasm.as_ref(),
         &b,
@@ -131,7 +113,7 @@ pub(crate) async fn handle_read_resource_request(
             );
         });
         crate::metrics::record_mcp_resource_read(
-            resolved.metric_kind,
+            "canonical",
             "success",
             "none",
             started.elapsed(),
@@ -146,7 +128,9 @@ pub(crate) async fn handle_read_resource_request(
         );
     }
 
-    let Some((prompt_hash, session_id, run_id)) = parse_plasm_execute_run_uri(uri) else {
+    let Some((prompt_hash, session_id, run_id)) =
+        crate::run_artifacts::parse_plasm_execute_run_uri(uri)
+    else {
         crate::metrics::record_mcp_resource_read(
             "unsupported",
             "error",
@@ -189,7 +173,7 @@ pub(crate) async fn handle_read_resource_request(
         );
     });
     crate::metrics::record_mcp_resource_read(
-        resolved.metric_kind,
+        "canonical",
         "success",
         "none",
         started.elapsed(),

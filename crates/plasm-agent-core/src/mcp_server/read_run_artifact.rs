@@ -166,7 +166,7 @@ impl PlasmMcpHandler {
         .await
         .map_err(map_resolve_err)?;
         crate::metrics::record_mcp_resource_read(
-            resolved.metric_kind,
+            "canonical",
             "success",
             "tool",
             started.elapsed(),
@@ -187,7 +187,6 @@ impl PlasmMcpHandler {
             "plasm".into(),
             json!({
                 "artifact_uri": uri_for_trace,
-                "resource_index": resolved.resource_index,
                 "run_id": resolved.run_id.as_ref().map(|r| r.to_wire()),
                 "byte_count": payload.bytes.len(),
                 "char_count": char_count,
@@ -219,9 +218,6 @@ fn map_resolve_err(e: RunArtifactResolveError) -> CallToolError {
         }
         RunArtifactResolveError::Integrity(msg) => {
             CallToolError::from_message(format!("run artifact integrity check failed: {msg}"))
-        }
-        other => {
-            CallToolError::invalid_arguments("plasm_read_run_artifact", Some(other.to_string()))
         }
     }
 }

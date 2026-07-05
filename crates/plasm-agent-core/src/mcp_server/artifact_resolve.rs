@@ -16,12 +16,8 @@ use super::transport::PlasmExecBinding;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RunArtifactResolveError {
-    #[error("invalid logical session in URI: use `plasm://session/l_<token>/r/...` from `plasm_context`")]
+    #[error("invalid logical session in URI: use `plasm://session/l_<token>/run/pr…` from `plasm_run`")]
     InvalidSessionRef,
-    #[error(
-        "unknown resource_index {0} for this session (not meta_generation / dict_ref; use steps[].resource_index, run_id, or canonical_artifact_uri)"
-    )]
-    UnknownIndex(u64),
     #[error("unknown run artifact (wrong run_id or not yet stored for this session)")]
     UnknownRunId,
     #[error(
@@ -42,10 +38,8 @@ pub(crate) enum RunArtifactResolveError {
 pub(crate) struct ResolvedRunArtifact {
     pub payload: ArtifactPayload,
     pub run_id: Option<RunArtifactId>,
-    pub resource_index: Option<u64>,
     pub prompt_hash: String,
     pub session_id: String,
-    pub metric_kind: &'static str,
 }
 
 #[derive(Debug, Clone)]
@@ -57,6 +51,19 @@ pub(crate) enum RunArtifactLookup {
 pub(crate) enum RunArtifactLookupArg {
     ArtifactUri(String),
     RunId(RunArtifactId),
+}
+
+pub(crate) fn logical_uuid_from_session_scoped_uri(
+    uri: &str,
+) -> Result<uuid::Uuid, RunArtifactResolveError> {
+    let segment = if let Some((segment, _)) = parse_plasm_session_short_run_uri(uri) {
+        segment
+    } else if let Some((segment, _)) = parse_plasm_session_short_resource_uri(uri) {
+        segment
+    } else {
+        return Err(RunArtifactResolveError::UnsupportedUri(uri.to_string()));
+    };
+    logical_uuid_from_uri_segment(&segment).ok_or(RunArtifactResolveError::InvalidSessionRef)
 }
 
 pub(crate) fn lookup_from_artifact_uri(
@@ -97,7 +104,7 @@ pub(crate) fn lookup_from_artifact_uri(
 }
 
 pub(crate) fn resolve_lookup_arg(
-    session_ref: &str,
+    _session_ref: &str,
     binding: &PlasmExecBinding,
     logical_uuid_str: &str,
     arg: RunArtifactLookupArg,
@@ -185,11 +192,8 @@ pub(crate) async fn resolve_run_artifact_for_binding(
     uri_for_trace: &str,
 ) -> Result<ResolvedRunArtifact, RunArtifactResolveError> {
     let RunArtifactLookup::CanonicalRun { run_id } = lookup;
-    let metric_kind = "canonical";
 
-    let fetched = fetch_run_artifact_payload(plasm, binding, run_id).await;
-
-    match fetched {
+    match fetch_payload_by_run_id(plasm, binding, run_id).await {
         Ok((payload, resolved_index)) => {
             let archive = Some(RunArtifactArchiveRef {
                 prompt_hash: binding.prompt_hash.clone(),
@@ -210,10 +214,8 @@ pub(crate) async fn resolve_run_artifact_for_binding(
             Ok(ResolvedRunArtifact {
                 payload,
                 run_id: Some(run_id),
-                resource_index: resolved_index,
                 prompt_hash: binding.prompt_hash.clone(),
                 session_id: binding.session_id.clone(),
-                metric_kind,
             })
         }
         Err(e) => {
@@ -256,14 +258,6 @@ fn archive_for_run_id(
     })
 }
 
-async fn fetch_run_artifact_payload(
-    plasm: &PlasmHostState,
-    binding: &PlasmExecBinding,
-    run_id: RunArtifactId,
-) -> Result<(ArtifactPayload, Option<u64>), RunArtifactResolveError> {
-    fetch_payload_by_run_id(plasm, binding, run_id).await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +285,28 @@ mod tests {
             err,
             RunArtifactResolveError::LegacyResourceIndexUri(3)
         ));
+    }
+
+    #[test]
+    fn multi_step_legacy_index_uris_reject_even_when_session_matches() {
+        let binding = PlasmExecBinding {
+            prompt_hash: "a".repeat(64),
+            session_id: "sess".into(),
+        };
+        let wire = "l_AAAAAAAAQACAAAAAAAAAAQ";
+        let ls = parse_logical_session_wire_ref(wire)
+            .expect("wire")
+            .as_uuid()
+            .to_string();
+        for idx in [1u64, 3] {
+            let uri = format!("plasm://session/{wire}/r/{idx}");
+            let err =
+                lookup_from_artifact_uri(&uri, &binding, ls.as_str()).expect_err("legacy index");
+            assert!(matches!(
+                err,
+                RunArtifactResolveError::LegacyResourceIndexUri(i) if i == idx
+            ));
+        }
     }
 
     #[test]

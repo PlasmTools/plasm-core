@@ -100,6 +100,7 @@ pub mod oss_local_state;
 pub mod outbound_secret_provider;
 pub mod output;
 pub mod plan_commit_store;
+mod plan_dry_compact;
 mod plan_dry_display;
 pub(crate) mod tool_model_service;
 pub use plan_dry_display::PlanDryVerdict;

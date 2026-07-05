@@ -2101,6 +2101,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn run_id_resolves_correct_snapshot_when_resource_indexes_skip() {
+        let core = SessionCore::new();
+        let run_first = RunArtifactId::from_bytes([0x01; 32]);
+        let run_third = RunArtifactId::from_bytes([0x03; 32]);
+        let payload_first = ArtifactPayload {
+            metadata: ArtifactPayloadMetadata::json_default(),
+            bytes: axum::body::Bytes::from_static(b"first-step"),
+        };
+        let payload_third = ArtifactPayload {
+            metadata: ArtifactPayloadMetadata::json_default(),
+            bytes: axum::body::Bytes::from_static(b"third-step"),
+        };
+        core.append_run_artifact(run_first, GraphEpoch(0), 1, payload_first)
+            .await;
+        core.append_run_artifact(run_third, GraphEpoch(0), 3, payload_third.clone())
+            .await;
+
+        let by_run_id = core
+            .get_run_artifact(run_third)
+            .await
+            .expect("third run by run_id");
+        assert_eq!(by_run_id.payload.bytes, payload_third.bytes);
+        assert_eq!(by_run_id.resource_index, 3);
+
+        let by_index = core
+            .get_run_artifact_by_resource_index(3)
+            .await
+            .expect("third run by resource_index");
+        assert_eq!(by_index.run_id, run_third);
+        assert_ne!(by_index.run_id, run_first);
+    }
+
+    #[tokio::test]
     async fn delta_seq_monotonic_across_alloc_and_run_artifacts() {
         let core = SessionCore::new();
         assert_eq!(core.alloc_delta_seq().await, DeltaSeq(1));
