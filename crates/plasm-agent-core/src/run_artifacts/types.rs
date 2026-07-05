@@ -299,6 +299,9 @@ pub struct CodePlanArchiveDocument {
     pub plan_hash: String,
     /// Canonical typed comp wire.
     pub comp: serde_json::Value,
+    /// Plan UX reflection for MCP Plan Review (`resources/read` on `plan_uri`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_ux_reflection: Option<serde_json::Value>,
     pub catalog_cgs_hash: String,
     pub domain_revision: u32,
     pub entities: Vec<String>,

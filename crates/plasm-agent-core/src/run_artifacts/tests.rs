@@ -347,6 +347,7 @@ async fn memory_code_plan_round_trip_by_index() {
         code: "JSON.stringify({version:1,nodes:[]})".into(),
         plan_hash: "h".repeat(64),
         comp: serde_json::json!({"version": 1, "steps": {}, "bind": {"topo": []}, "return": {"kind": "step", "step": "x"}}),
+        plan_ux_reflection: None,
         catalog_cgs_hash: "c".repeat(64),
         domain_revision: 0,
         entities: vec!["Widget".into()],

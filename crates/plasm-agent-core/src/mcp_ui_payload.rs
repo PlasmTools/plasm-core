@@ -1,4 +1,4 @@
-//! MCP App view payload: attach UI meta and mirror agent-facing `_meta.plasm` into `structuredContent`.
+//! MCP App view payload: attach UI meta and mirror slim agent `_meta.plasm` into `structuredContent`.
 
 use rust_mcp_sdk::schema::CallToolResult;
 use serde_json::{Map, Value};
@@ -33,11 +33,10 @@ pub fn inject_structured_agent_plan_text(
     res
 }
 
-/// Copy slim agent `_meta.plasm` into `structuredContent.plasm`; UI DAG under `structuredContent.ui.plasm`.
+/// Copy slim agent `_meta.plasm` into `structuredContent.plasm` (no UI DAG / run snapshot steps).
 ///
-/// Cursor and other MCP App hosts often forward `structuredContent` but strip nested `_meta.ui`;
-/// mirror `_meta.ui.plasm` (`comp`, `plan_ux_reflection`) into `structuredContent.ui.plasm` so Plan
-/// Review can render without stuffing the executable DAG into the agent namespace.
+/// Run Explorer and Plan Review read full `steps` / plan DAG from `_meta.plasm` (UI channel) or
+/// `resources/read` on `plan_uri` / run artifact URIs — not from agent `structuredContent`.
 pub fn mirror_plasm_structured_content(res: CallToolResult) -> CallToolResult {
     let Some(meta) = res.meta.as_ref() else {
         return res;
@@ -48,43 +47,18 @@ pub fn mirror_plasm_structured_content(res: CallToolResult) -> CallToolResult {
     let structured_plasm = agent_structured_plasm_mirror(plasm);
     let mut structured = Map::new();
     structured.insert("plasm".to_string(), structured_plasm);
-    if let Some(ui) = structured_ui_plasm_from_meta(meta) {
-        structured.insert("ui".to_string(), ui);
-    }
     res.with_structured_content(structured)
 }
 
-fn structured_ui_plasm_from_meta(meta: &Map<String, Value>) -> Option<Value> {
-    let ui_plasm = meta
-        .get("ui")
-        .and_then(|u| u.get("plasm"))
-        .and_then(|p| p.as_object())?;
-    let mut out = Map::new();
-    for key in ["comp", "plan_ux_reflection"] {
-        if let Some(v) = ui_plasm.get(key) {
-            out.insert(key.to_string(), v.clone());
-        }
-    }
-    if out.is_empty() {
-        None
-    } else {
-        let mut ui = Map::new();
-        ui.insert("plasm".to_string(), Value::Object(out));
-        Some(Value::Object(ui))
-    }
-}
+const AGENT_STRUCTURED_DENY: &[&str] = &["comp", "plan_ux_reflection", "program", "steps", "plan"];
 
 fn agent_structured_plasm_mirror(plasm: &Value) -> Value {
     let Some(obj) = plasm.as_object() else {
         return plasm.clone();
     };
-    if obj.get("dry_run").and_then(|v| v.as_bool()) != Some(true) {
-        return plasm.clone();
-    }
-    const UI_ONLY: &[&str] = &["comp", "plan_ux_reflection", "program"];
     let mut out = Map::new();
     for (key, value) in obj {
-        if UI_ONLY.contains(&key.as_str()) {
+        if AGENT_STRUCTURED_DENY.contains(&key.as_str()) {
             continue;
         }
         out.insert(key.clone(), value.clone());
@@ -128,27 +102,19 @@ mod tests {
         );
         agent.insert("run_ref".into(), json!("pc0"));
         agent.insert("dry_verdict".into(), json!("ok"));
-        let mut ui_plasm = Map::new();
-        ui_plasm.insert(
-            "comp".into(),
-            json!({
-                "version": 1,
-                "steps": { "n1": { "kind": "invoke", "operation": "query e1" } },
-                "bind": { "topo": ["n1"] },
-                "return": { "kind": "step", "step": "n1" }
-            }),
+        agent.insert(
+            "plan_uri".into(),
+            json!("plasm://session/l_AAAAAAAAQACAAAAAAAAAAQ/p/1"),
         );
-        ui_plasm.insert("plan_ux_reflection".into(), minimal_plan_ux_reflection_v3());
         let mut meta = Map::new();
         meta.insert("plasm".into(), Value::Object(agent));
-        meta.insert("ui".into(), json!({ "plasm": ui_plasm }));
         meta
     }
 
     const SAMPLE_PLAN_TEXT: &str = "plan ok · 1n 1r → items\n\n01 items     query LangItem";
 
     #[test]
-    fn finalize_dry_run_structured_content_mirrors_ui_plan_for_cursor_hosts() {
+    fn finalize_dry_run_structured_content_is_slim_agent_tokens_only() {
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
         let out = finalize_mcp_tool_result(res, sample_dry_tool_meta(), Some(SAMPLE_PLAN_TEXT));
         let wire = serde_json::to_value(&out).expect("serialize CallToolResult");
@@ -164,32 +130,22 @@ mod tests {
             "agent structuredContent must carry compact plan_text only"
         );
         assert!(wire.pointer("/_meta/plasm/plan_text").is_none());
-        assert!(
-            wire.pointer("/structuredContent/ui/plasm/comp/bind/topo")
-                .and_then(|v| v.as_array())
-                .map(|a| !a.is_empty())
-                .unwrap_or(false),
-            "UI structuredContent must mirror comp under structuredContent.ui.plasm"
-        );
-        assert!(wire
-            .pointer("/structuredContent/ui/plasm/plan_ux_reflection/schema_version")
-            .is_some());
+        assert!(wire.pointer("/structuredContent/ui").is_none());
         assert!(wire.pointer("/structuredContent/plasm/comp").is_none());
         assert!(wire
             .pointer("/structuredContent/plasm/plan_ux_reflection")
             .is_none());
         assert!(wire.pointer("/structuredContent/plasm/program").is_none());
+        assert!(wire.pointer("/structuredContent/plasm/steps").is_none());
         assert_eq!(
-            wire.pointer("/_meta/ui/plasm/comp/bind/topo")
-                .and_then(|v| v.as_array())
-                .map(|a| a.len()),
-            Some(1)
+            wire.pointer("/structuredContent/plasm/plan_uri")
+                .and_then(|v| v.as_str()),
+            Some("plasm://session/l_AAAAAAAAQACAAAAAAAAAAQ/p/1")
         );
-        assert!(wire.pointer("/_meta/plasm/comp").is_none());
     }
 
     #[test]
-    fn finalize_attaches_plan_review_for_ui_comp() {
+    fn finalize_attaches_plan_review_for_dry_run() {
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
         let out = finalize_mcp_tool_result(res, sample_dry_tool_meta(), None);
         assert_eq!(
@@ -224,107 +180,58 @@ mod tests {
     }
 
     #[test]
-    fn finalize_legacy_plan_without_comp_attaches_no_ui() {
+    fn finalize_legacy_plan_without_dry_run_attaches_no_ui() {
         let mut tool_meta = Map::new();
-        tool_meta.insert(
-            "plasm".into(),
-            json!({ "dry_run": true, "plan": { "nodes": [] } }),
-        );
+        tool_meta.insert("plasm".into(), json!({ "plan": { "nodes": [] } }));
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
         let out = finalize_mcp_tool_result(res, tool_meta, None);
         assert!(out.meta.as_ref().and_then(|m| m.get("ui")).is_none());
     }
 
     #[test]
-    fn mirror_dry_run_structured_content_carries_ui_comp_not_agent_meta() {
+    fn mirror_live_run_strips_steps_from_structured_content() {
         let mut meta = Map::new();
         meta.insert(
             "plasm".to_string(),
             json!({
-                "dry_run": true,
-                "run_ref": "pc0",
-                "comp": {
-                    "steps": { "n1": {} },
-                    "bind": { "topo": ["n1"] },
-                    "return": { "kind": "step", "step": "n1" }
-                }
-            }),
-        );
-        meta.insert(
-            "ui".into(),
-            json!({
-                "plasm": {
-                    "comp": {
-                        "steps": { "n1": { "kind": "invoke" } },
-                        "bind": { "topo": ["n1"] },
-                        "return": { "kind": "step", "step": "n1" }
-                    },
-                    "plan_ux_reflection": minimal_plan_ux_reflection_v3()
-                }
+                "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
+                "steps": [{
+                    "run_step": 1,
+                    "return_label": "issue",
+                    "row_count": 1,
+                    "artifact_uri": "plasm://session/l_AAAAAAAAQACAAAAAAAAAAQ/r/1",
+                    "run_id": "prabc"
+                }]
             }),
         );
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)])
             .with_meta(Some(meta));
         let out = mirror_plasm_structured_content(res);
+        assert!(
+            out.structured_content
+                .as_ref()
+                .and_then(|m| m.get("plasm"))
+                .and_then(|p| p.get("steps"))
+                .is_none(),
+            "agent structuredContent must not mirror snapshot steps"
+        );
         assert_eq!(
             out.structured_content
                 .as_ref()
                 .and_then(|m| m.get("plasm"))
-                .and_then(|p| p.get("run_ref"))
+                .and_then(|p| p.get("logical_session_ref"))
                 .and_then(|v| v.as_str()),
-            Some("pc0")
+            Some("l_AAAAAAAAQACAAAAAAAAAAQ")
         );
-        assert!(
-            out.structured_content
-                .as_ref()
-                .and_then(|m| m.get("ui"))
-                .and_then(|u| u.get("plasm"))
-                .and_then(|p| p.get("comp"))
-                .and_then(|c| c.get("bind"))
-                .is_some(),
-            "dry-run structuredContent.ui mirrors UI comp for Plan Review hosts"
-        );
-        assert!(out
-            .structured_content
-            .as_ref()
-            .and_then(|m| m.get("ui"))
-            .and_then(|u| u.get("plasm"))
-            .and_then(|p| p.get("plan_ux_reflection"))
-            .is_some());
-        assert!(out
-            .structured_content
-            .as_ref()
-            .and_then(|m| m.get("plasm"))
-            .and_then(|p| p.get("comp"))
-            .is_none());
-        assert!(out
-            .structured_content
-            .as_ref()
-            .and_then(|m| m.get("plasm"))
-            .and_then(|p| p.get("plan_ux_reflection"))
-            .is_none());
-    }
-
-    #[test]
-    fn mirror_live_run_copies_full_plasm() {
-        let mut meta = Map::new();
-        meta.insert(
-            "plasm".to_string(),
-            json!({
-                "steps": [{ "run_step": 1, "return_label": "items" }]
-            }),
-        );
-        let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)])
-            .with_meta(Some(meta));
-        let out = mirror_plasm_structured_content(res);
         assert_eq!(
-            out.structured_content
+            out.meta
                 .as_ref()
                 .and_then(|m| m.get("plasm"))
                 .and_then(|p| p.get("steps"))
                 .and_then(|s| s.as_array())
                 .map(|a| a.len()),
-            Some(1)
+            Some(1),
+            "_meta.plasm.steps remain for Run Explorer"
         );
     }
 

@@ -199,7 +199,7 @@ impl PlasmMcpHandler {
 
 fn map_resolve_err(e: RunArtifactResolveError) -> CallToolError {
     match e {
-        RunArtifactResolveError::UnknownRunId => {
+        RunArtifactResolveError::UnknownRunId | RunArtifactResolveError::UnknownPlan => {
             CallToolError::invalid_arguments("plasm_read_run_artifact", Some(e.to_string()))
         }
         RunArtifactResolveError::LegacyResourceIndexUri(_)

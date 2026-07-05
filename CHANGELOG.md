@@ -7,11 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.130] - 2026-07-05
+
+### Fixed
+
+- **MCP agent channel:** stop mirroring run snapshot `steps` into `structuredContent.plasm`; live runs keep compact markdown TSV in `content` and slim tokens in structured content. Plan Review / Run Explorer load full DAG and rows via `_meta.plasm` (UI channel) and `resources/read` on `plan_uri` / run artifact URIs — not from agent structured content.
+- **MCP UI host:** consolidate `resources/read` parsing and async `plan_uri` fetch in `@plasm/mcp-ui-shared` / `resolvePlasmForViewAsync`; remove v0.3.129 `structuredContent.ui` mirror.
+
 ## [0.3.129] - 2026-07-05
 
 ### Fixed
 
-- **MCP agent dry-run payload:** stop mirroring executable `comp` / `plan_ux_reflection` into `structuredContent.plasm`; UI DAG now lives under `structuredContent.ui.plasm` while agents get compact `plan_text` (structuredContent only) plus commit tokens in `_meta.plasm`.
+- **MCP agent dry-run payload:** stop mirroring executable `comp` / `plan_ux_reflection` into `structuredContent.plasm`; superseded by slim wire + `plan_uri` archive fetch (see Unreleased).
 - **PLP-2 heredoc diagnostics:** remove stale host version hint from unrecognized close-line message.
 
 ## [0.3.128] - 2026-07-05

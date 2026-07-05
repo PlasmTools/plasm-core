@@ -66,6 +66,12 @@ pub(crate) async fn emit_code_plan_trace(
             plan_id: Some(id), ..
         } => *id,
     };
+    let archived_plan_ux = match &emit {
+        CodePlanTraceEmit::Evaluate { plan_ux_reflection }
+        | CodePlanTraceEmit::Execute {
+            plan_ux_reflection, ..
+        } => plan_ux_reflection.clone(),
+    };
     let doc = CodePlanArchiveDocument {
         kind: "code_plan".into(),
         plan_id: plan_id.to_string(),
@@ -78,6 +84,7 @@ pub(crate) async fn emit_code_plan_trace(
         code: input.program.to_string(),
         plan_hash: plan_hash_str.clone(),
         comp: comp.to_json_value(),
+        plan_ux_reflection: archived_plan_ux,
         catalog_cgs_hash: input.es.catalog_cgs_hash.clone(),
         domain_revision: input.es.domain_revision,
         entities: input.es.entities.clone(),

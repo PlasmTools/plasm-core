@@ -166,18 +166,18 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
         Some(crate::run_explorer_ui_mcp::RUN_EXPLORER_UI_URI)
     );
     assert!(res
+        .structured_content
+        .as_ref()
+        .and_then(|m| m.get("plasm"))
+        .and_then(|p| p.get("steps"))
+        .is_none());
+    assert!(res
         .meta
         .as_ref()
         .and_then(|m| m.get("plasm"))
         .and_then(|p| p.get("steps"))
         .and_then(|s| s.as_array())
         .is_some_and(|a| !a.is_empty()));
-    assert!(res
-        .meta
-        .as_ref()
-        .and_then(|m| m.get("plasm"))
-        .and_then(|p| p.get("plan"))
-        .is_none());
 }
 
 fn test_host_state_from_registry(reg: InMemoryCgsRegistry) -> PlasmHostState {

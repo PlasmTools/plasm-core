@@ -5,9 +5,10 @@ use std::time::Instant;
 use plasm_trace::RunArtifactArchiveRef;
 
 use crate::run_artifacts::{
-    logical_uuid_from_uri_segment, parse_plasm_execute_run_uri,
-    parse_plasm_session_short_resource_uri, parse_plasm_session_short_run_uri,
-    parse_plasm_short_resource_uri, verify_payload_run_id, ArtifactPayload, RunArtifactId,
+    logical_uuid_from_uri_segment, parse_plasm_execute_plan_uri, parse_plasm_execute_run_uri,
+    parse_plasm_session_short_plan_uri, parse_plasm_session_short_resource_uri,
+    parse_plasm_session_short_run_uri, parse_plasm_short_resource_uri, verify_payload_run_id,
+    ArtifactPayload, RunArtifactId,
 };
 use crate::server_state::PlasmHostState;
 
@@ -22,6 +23,8 @@ pub(crate) enum RunArtifactResolveError {
     InvalidSessionRef,
     #[error("unknown run artifact (wrong run_id or not yet stored for this session)")]
     UnknownRunId,
+    #[error("unknown code plan (wrong plan index/id or not yet stored for this session)")]
+    UnknownPlan,
     #[error(
         "legacy resource index URI `plasm://…/r/{{n}}` is ambiguous — use `run_id` or `plasm://…/run/pr…` from the same `plasm_run` step"
     )]
@@ -45,6 +48,13 @@ pub(crate) struct ResolvedRunArtifact {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct ResolvedCodePlanArtifact {
+    pub payload: ArtifactPayload,
+    pub prompt_hash: String,
+    pub session_id: String,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) enum RunArtifactLookup {
     CanonicalRun { run_id: RunArtifactId },
 }
@@ -61,6 +71,8 @@ pub(crate) fn logical_uuid_from_session_scoped_uri(
     let segment = if let Some((segment, _)) = parse_plasm_session_short_run_uri(uri) {
         segment
     } else if let Some((segment, _)) = parse_plasm_session_short_resource_uri(uri) {
+        segment
+    } else if let Some((segment, _)) = parse_plasm_session_short_plan_uri(uri) {
         segment
     } else {
         return Err(RunArtifactResolveError::UnsupportedUri(uri.to_string()));
@@ -245,6 +257,69 @@ pub(crate) async fn resolve_run_artifact_for_binding(
             Err(e)
         }
     }
+}
+
+pub(crate) async fn resolve_code_plan_for_binding(
+    plasm: &PlasmHostState,
+    binding: &PlasmExecBinding,
+    plan_index: Option<u64>,
+    plan_id: Option<uuid::Uuid>,
+    ls_key: Option<&str>,
+    read_source: Option<&str>,
+    started: Instant,
+    uri_for_trace: &str,
+) -> Result<ResolvedCodePlanArtifact, RunArtifactResolveError> {
+    let payload = if let Some(plan_index) = plan_index {
+        plasm
+            .run_artifacts
+            .get_code_plan_payload_result_by_index(
+                binding.prompt_hash.as_str(),
+                binding.session_id.as_str(),
+                plan_index,
+            )
+            .await
+            .map_err(|e| RunArtifactResolveError::DecodeFailed(e.to_string()))?
+    } else if let Some(plan_id) = plan_id {
+        plasm
+            .run_artifacts
+            .get_code_plan_payload_result(
+                binding.prompt_hash.as_str(),
+                binding.session_id.as_str(),
+                plan_id,
+            )
+            .await
+            .map_err(|e| RunArtifactResolveError::DecodeFailed(e.to_string()))?
+    } else {
+        None
+    };
+    let Some(payload) = payload else {
+        resource_read_trace::McpResourceReadTrace::error(
+            ls_key,
+            read_source,
+            started,
+            uri_for_trace,
+            None,
+            "unknown_plan",
+        )
+        .emit(plasm)
+        .await;
+        return Err(RunArtifactResolveError::UnknownPlan);
+    };
+    resource_read_trace::McpResourceReadTrace::success(
+        ls_key,
+        read_source,
+        started,
+        uri_for_trace,
+        None,
+        &payload,
+    )
+    .emit(plasm)
+    .await;
+    Ok(ResolvedCodePlanArtifact {
+        payload,
+        prompt_hash: binding.prompt_hash.clone(),
+        session_id: binding.session_id.clone(),
+    })
 }
 
 fn archive_for_run_id(

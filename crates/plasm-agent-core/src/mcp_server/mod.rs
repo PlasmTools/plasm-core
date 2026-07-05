@@ -1,9 +1,9 @@
 //! MCP Streamable HTTP server (rust-mcp-sdk) over Plasm discovery + execute ([`crate::server_state::PlasmHostState`]).
 //! Tool results use Markdown [`TextContent`]; **`plasm`** dry-runs put compact review text in Markdown and slim
-//! tokens in `_meta.plasm` + slim `structuredContent.plasm` (`run_ref`, `dry_verdict`, …); compact `plan_text`
-//! is injected into `structuredContent.plasm` only (not `_meta.plasm`).
-//! The full comp wire lives under `_meta.ui.plasm` and `structuredContent.ui.plasm` for MCP App plan review
-//! (not under agent `structuredContent.plasm`).
+//! tokens in `_meta.plasm` + slim `structuredContent.plasm` (`run_ref`, `dry_verdict`, `plan_uri`, …); compact
+//! `plan_text` is injected into `structuredContent.plasm` only (not `_meta.plasm`).
+//! Full plan DAG / run snapshot rows live under `_meta.plasm.steps` (Run Explorer UI channel) or MCP
+//! `resources/read` on `plan_uri` / run artifact URIs — never in agent `structuredContent`.
 //! artifact URIs, and optional `lossy_summary_fields` per truncated step in `_meta.plasm`.
 //! Run snapshot URIs in Markdown use logical-session short form `plasm://session/{logical_session_ref}/r/{n}`
 //! (canonical `l_<token>` wire ref; see [`crate::run_artifacts::plasm_session_short_resource_uri`]);
@@ -86,8 +86,7 @@ use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_identity::McpTransportIdentity;
 use crate::operation::{
-    compute_plan_commit_id_from_dry, plan_commit_agent_meta, plan_commit_meta, PlanCommitRecord,
-    PLAN_COMMIT_TTL,
+    compute_plan_commit_id_from_dry, plan_commit_agent_meta, PlanCommitRecord, PLAN_COMMIT_TTL,
 };
 use crate::plan_dry_display::build_plan_dry_compact_view;
 use crate::plan_gate::{plan_gate, PlanGateContext};
@@ -819,9 +818,11 @@ impl PlasmMcpHandler {
                             plan_call_index: call_index,
                             code_chars: program_for_trace.chars().count() as u64,
                         }
-                        .emit_evaluate(Some(plan_ux_reflection.clone()))
+                        .emit_evaluate(Some(plan_ux_reflection))
                         .await;
-                        // Agent-facing meta stays slim; full dry_review / comp / plan_ux under `ui.plasm`.
+                        let plan_uri =
+                            plasm_session_short_plan_uri(session_ref.as_str(), call_index);
+                        // Agent-facing meta stays slim; full comp / plan_ux archived for resources/read.
                         let mut agent_plasm =
                             plan_commit_agent_meta(&commit_ref, compact.verdict);
                         agent_plasm.insert("dry_run".into(), serde_json::json!(true));
@@ -829,6 +830,7 @@ impl PlasmMcpHandler {
                             "logical_session_ref".into(),
                             serde_json::json!(session_ref.as_str()),
                         );
+                        agent_plasm.insert("plan_uri".into(), serde_json::json!(plan_uri));
                         agent_plasm.insert(
                             "domain_revision".into(),
                             serde_json::json!(es.domain_revision),
@@ -842,16 +844,8 @@ impl PlasmMcpHandler {
                         {
                             agent_plasm.insert("projection_warning".into(), serde_json::json!(true));
                         }
-                        let mut ui_plasm =
-                            plan_commit_meta(&commit_ref, &dry.review, compact.verdict);
-                        ui_plasm.insert("comp".into(), comp_wire.to_json_value());
-                        ui_plasm.insert("plan_ux_reflection".into(), plan_ux_reflection);
                         let mut meta = serde_json::Map::new();
                         meta.insert("plasm".into(), serde_json::Value::Object(agent_plasm));
-                        meta.insert(
-                            "ui".into(),
-                            serde_json::json!({ "plasm": ui_plasm }),
-                        );
                         Ok(PlasmPlanRunResult {
                             version: dry.version,
                             node_results: dry.node_results,
