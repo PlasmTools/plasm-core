@@ -1,11 +1,11 @@
 //! Synthetic compute schemas and render column inference.
 
+use super::super::plan_serialize::{schema_from_output_fields, single_unknown_schema};
 use super::super::prelude::*;
 use super::super::types::{CompileState, DagNode, DagNodeSource};
-use super::super::plan_serialize::{schema_from_output_fields, single_unknown_schema};
-use super::catalog::{cgs_for_qualified_entity, infer_entity_row_columns, is_opaque_passthrough_compute_schema};
+use super::catalog::{infer_entity_row_columns, is_opaque_passthrough_compute_schema};
 use super::dag_lookup::{
-    lookup_dag_node, resolve_qualified_entity_for_dag_source, resolve_immediate_compute_schema,
+    lookup_dag_node, resolve_immediate_compute_schema, resolve_qualified_entity_for_dag_source,
 };
 use super::path_validate::validate_compute_paths_for_entity;
 

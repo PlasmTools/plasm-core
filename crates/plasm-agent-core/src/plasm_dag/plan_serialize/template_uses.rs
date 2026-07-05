@@ -169,7 +169,9 @@ pub(in crate::plasm_dag) fn dedupe_uses(uses: Vec<serde_json::Value>) -> Vec<ser
         .collect()
 }
 
-pub(in crate::plasm_dag) fn dedupe_inputs(inputs: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+pub(in crate::plasm_dag) fn dedupe_inputs(
+    inputs: Vec<serde_json::Value>,
+) -> Vec<serde_json::Value> {
     let mut seen = BTreeSet::new();
     inputs
         .into_iter()

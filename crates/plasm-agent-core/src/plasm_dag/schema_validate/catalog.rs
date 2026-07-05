@@ -14,7 +14,9 @@ pub(in crate::plasm_dag) fn cgs_for_qualified_entity(
 }
 
 /// Logical row keys materialized by entity decode (`FieldDecoder` stores each field under its CGS name).
-pub(in crate::plasm_dag) fn logical_row_field_paths_for_entity(ent: &EntityDef) -> BTreeSet<Vec<String>> {
+pub(in crate::plasm_dag) fn logical_row_field_paths_for_entity(
+    ent: &EntityDef,
+) -> BTreeSet<Vec<String>> {
     let mut set = BTreeSet::new();
     for name in ent.fields.keys() {
         set.insert(vec![name.as_str().to_string()]);
@@ -25,7 +27,9 @@ pub(in crate::plasm_dag) fn logical_row_field_paths_for_entity(ent: &EntityDef) 
     set
 }
 
-pub(in crate::plasm_dag) fn logical_row_field_paths_from_names(names: &[String]) -> BTreeSet<Vec<String>> {
+pub(in crate::plasm_dag) fn logical_row_field_paths_from_names(
+    names: &[String],
+) -> BTreeSet<Vec<String>> {
     names.iter().map(|n| vec![n.clone()]).collect()
 }
 pub(in crate::plasm_dag) fn capability_for_surface_expr<'a>(
@@ -103,20 +107,27 @@ pub(in crate::plasm_dag) fn single_segment_teaching_field_hint(
     }
 }
 
-pub(in crate::plasm_dag) fn is_opaque_passthrough_compute_schema(schema: &SyntheticResultSchema) -> bool {
+pub(in crate::plasm_dag) fn is_opaque_passthrough_compute_schema(
+    schema: &SyntheticResultSchema,
+) -> bool {
     schema.fields.len() == 1
         && schema.fields[0].name.as_str() == "value"
         && matches!(schema.fields[0].value_kind, SyntheticValueKind::Unknown)
 }
 
-pub(in crate::plasm_dag) fn agent_program_error(head: impl AsRef<str>, help: Option<impl AsRef<str>>) -> String {
+pub(in crate::plasm_dag) fn agent_program_error(
+    head: impl AsRef<str>,
+    help: Option<impl AsRef<str>>,
+) -> String {
     if let Some(h) = help {
         format!("{}\nhelp: {}", head.as_ref(), h.as_ref())
     } else {
         head.as_ref().to_string()
     }
 }
-pub(in crate::plasm_dag) fn capability_input_param_wires(cap: &CapabilitySchema) -> BTreeSet<String> {
+pub(in crate::plasm_dag) fn capability_input_param_wires(
+    cap: &CapabilitySchema,
+) -> BTreeSet<String> {
     let Some(is) = &cap.input_schema else {
         return BTreeSet::new();
     };

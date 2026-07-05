@@ -732,10 +732,7 @@ fn evaluate_plasm_plan_dry_typechecks_ir_not_display_text() {
         "return": { "kind": "node", "node": "n0" }
     });
     let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
-    assert_eq!(
-        dry.node_results[0]["ir"]["expr"]["entity"],
-        "Product"
-    );
+    assert_eq!(dry.node_results[0]["ir"]["expr"]["entity"], "Product");
 }
 
 #[test]

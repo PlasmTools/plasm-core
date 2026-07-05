@@ -233,10 +233,7 @@ pub fn split_assignment_at_top_level(line: &str) -> Option<(&str, &str)> {
                 Ok(HeredocSurfaceStep::NotAnOpener) | Err(_) => {}
             }
         }
-        let c = line[i..]
-            .chars()
-            .next()
-            .expect("valid UTF-8 boundary");
+        let c = line[i..].chars().next().expect("valid UTF-8 boundary");
         let cl = c.len_utf8();
         match c {
             '"' | '\'' if quote == Some(c) => quote = None,

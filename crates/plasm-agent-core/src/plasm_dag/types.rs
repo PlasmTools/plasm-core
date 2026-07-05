@@ -122,7 +122,10 @@ impl<'a> CompileState<'a> {
         }
     }
 
-    pub(in crate::plasm_dag) fn sym_map_for(&self, session: &ExecuteSession) -> Arc<dyn plasm_core::SymbolSession> {
+    pub(in crate::plasm_dag) fn sym_map_for(
+        &self,
+        session: &ExecuteSession,
+    ) -> Arc<dyn plasm_core::SymbolSession> {
         if let Some(map) = self.sym_map.borrow().as_ref() {
             return Arc::clone(map);
         }

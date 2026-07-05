@@ -3,8 +3,7 @@
 use super::super::prelude::*;
 use super::super::types::{CompileState, DagNode, DagNodeSource};
 use super::catalog::{
-    capability_for_surface_expr, cgs_for_qualified_entity, infer_entity_row_columns,
-    logical_row_field_paths_for_entity, logical_row_field_paths_from_names,
+    capability_for_surface_expr, cgs_for_qualified_entity, logical_row_field_paths_from_names,
 };
 
 pub(in crate::plasm_dag) fn resolve_surface_dag_node<'a>(

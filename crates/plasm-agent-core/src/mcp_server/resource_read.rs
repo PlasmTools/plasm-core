@@ -23,8 +23,8 @@ async fn resolve_session_scoped_run(
     read_source: Option<&str>,
     started: Instant,
 ) -> Result<artifact_resolve::ResolvedRunArtifact, RpcError> {
-    let logical_uuid = artifact_resolve::logical_uuid_from_session_scoped_uri(uri)
-        .map_err(map_resolve_rpc_err)?;
+    let logical_uuid =
+        artifact_resolve::logical_uuid_from_session_scoped_uri(uri).map_err(map_resolve_rpc_err)?;
     let ls_key = logical_uuid.to_string();
     let transport_key = runtime.session_id();
     let binding = if let Some(ref tk) = transport_key {
@@ -47,8 +47,8 @@ async fn resolve_session_scoped_run(
             "no execute session for this logical session: call plasm_context with capability picks (`seeds`) first",
         ));
     };
-    let lookup =
-        artifact_resolve::lookup_from_artifact_uri(uri, &b, ls_key.as_str()).map_err(map_resolve_rpc_err)?;
+    let lookup = artifact_resolve::lookup_from_artifact_uri(uri, &b, ls_key.as_str())
+        .map_err(map_resolve_rpc_err)?;
     artifact_resolve::resolve_run_artifact_for_binding(
         handler.plasm.as_ref(),
         &b,
@@ -64,8 +64,9 @@ async fn resolve_session_scoped_run(
 
 fn map_resolve_rpc_err(e: artifact_resolve::RunArtifactResolveError) -> RpcError {
     match e {
-        artifact_resolve::RunArtifactResolveError::DecodeFailed(msg) => RpcError::internal_error()
-            .with_message(format!("run artifact decode failed: {msg}")),
+        artifact_resolve::RunArtifactResolveError::DecodeFailed(msg) => {
+            RpcError::internal_error().with_message(format!("run artifact decode failed: {msg}"))
+        }
         artifact_resolve::RunArtifactResolveError::Integrity(msg) => RpcError::internal_error()
             .with_message(format!("run artifact integrity check failed: {msg}")),
         other => RpcError::invalid_params().with_message(other.to_string()),
@@ -101,8 +102,8 @@ pub(crate) async fn handle_read_resource_request(
     }
 
     if uri.starts_with("plasm://session/") {
-        let resolved = resolve_session_scoped_run(handler, &runtime, uri, read_source, started)
-            .await?;
+        let resolved =
+            resolve_session_scoped_run(handler, &runtime, uri, read_source, started).await?;
         crate::spans::mcp_resource_read().in_scope(|| {
             tracing::info!(
                 target: "plasm_agent::mcp",
@@ -112,12 +113,7 @@ pub(crate) async fn handle_read_resource_request(
                 "MCP resources/read"
             );
         });
-        crate::metrics::record_mcp_resource_read(
-            "canonical",
-            "success",
-            "none",
-            started.elapsed(),
-        );
+        crate::metrics::record_mcp_resource_read("canonical", "success", "none", started.elapsed());
         return read_resource_result_for_payload(
             uri,
             crate::run_artifacts::project_artifact_payload_for_mcp_read(
@@ -175,12 +171,7 @@ pub(crate) async fn handle_read_resource_request(
             "MCP resources/read"
         );
     });
-    crate::metrics::record_mcp_resource_read(
-        "canonical",
-        "success",
-        "none",
-        started.elapsed(),
-    );
+    crate::metrics::record_mcp_resource_read("canonical", "success", "none", started.elapsed());
     read_resource_result_for_payload(
         uri,
         crate::run_artifacts::project_artifact_payload_for_mcp_read(&resolved.payload, read_source)

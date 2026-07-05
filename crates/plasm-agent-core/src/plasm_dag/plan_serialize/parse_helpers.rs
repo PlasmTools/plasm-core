@@ -20,7 +20,9 @@ pub(in crate::plasm_dag) fn parse_field_list(
 ///
 /// **Shadow (repair-only, not taught):** bare `count` and `aggregate(count)` canonicalize to
 /// `count=count` with synthetic output name `count`.
-pub(in crate::plasm_dag) fn parse_one_aggregate_spec(raw: &str) -> Result<crate::plasm_plan::AggregateSpec, String> {
+pub(in crate::plasm_dag) fn parse_one_aggregate_spec(
+    raw: &str,
+) -> Result<crate::plasm_plan::AggregateSpec, String> {
     let raw = raw.trim();
     if let Some((name, rhs)) = raw.split_once('=') {
         let name = OutputName::new(name.trim().to_string())?;
@@ -95,7 +97,9 @@ pub(in crate::plasm_dag) fn parse_one_aggregate_spec(raw: &str) -> Result<crate:
     ))
 }
 
-pub(in crate::plasm_dag) fn parse_aggregates(args: &str) -> Result<Vec<crate::plasm_plan::AggregateSpec>, String> {
+pub(in crate::plasm_dag) fn parse_aggregates(
+    args: &str,
+) -> Result<Vec<crate::plasm_plan::AggregateSpec>, String> {
     split_top_level(args, ',')?
         .into_iter()
         .map(parse_one_aggregate_spec)
@@ -117,7 +121,9 @@ pub(in crate::plasm_dag) fn parse_sort_direction_token(direction: &str) -> Resul
 }
 
 /// Parse `.sort(...)` args: `field`, `field, desc`, or whitespace sugar `field desc`.
-pub(in crate::plasm_dag) fn parse_sort_field_and_direction(args: &str) -> Result<(String, bool), String> {
+pub(in crate::plasm_dag) fn parse_sort_field_and_direction(
+    args: &str,
+) -> Result<(String, bool), String> {
     let trimmed = args.trim();
     if trimmed.is_empty() {
         return Err("sort(...) requires a field".to_string());
@@ -251,7 +257,9 @@ pub(in crate::plasm_dag) fn parse_literal(raw: &str) -> Result<serde_json::Value
 }
 
 /// Split `group_by` args into key field names (no `=`) and trailing aggregate tail.
-pub(in crate::plasm_dag) fn parse_group_by_key_and_aggregate_tail(args: &str) -> Result<(Vec<String>, String), String> {
+pub(in crate::plasm_dag) fn parse_group_by_key_and_aggregate_tail(
+    args: &str,
+) -> Result<(Vec<String>, String), String> {
     let parts = split_top_level(args, ',')?;
     let mut keys = Vec::new();
     let mut agg_start = parts.len();

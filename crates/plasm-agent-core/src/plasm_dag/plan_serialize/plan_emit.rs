@@ -218,8 +218,7 @@ pub(in crate::plasm_dag) fn expr_template_json(
     obj.insert(
         "input_bindings".to_string(),
         serde_json::Value::Array(
-            uses
-                .iter()
+            uses.iter()
                 .map(|u| {
                     json!({
                         "from": u.get("as").and_then(|v| v.as_str()).unwrap_or_default(),

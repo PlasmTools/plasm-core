@@ -1,16 +1,16 @@
 //! Program compile pipeline entrypoints and per-node dispatch.
 
-use super::prelude::*;
-use super::render_dag::compile_render_from_tail;
-use super::types::{CompileState, DagNode, DagNodeSource, ExpandedProgramSurface};
 use super::binding_continuation;
 use super::binding_contract::binding_contract;
 use super::plan_serialize::{
-    collect_template_uses_from_expr, expr_template_json, infer_surface_contract, looks_like_plasm_effect_template,
-    node_to_json, parse_plan_value_expr,
+    collect_template_uses_from_expr, expr_template_json, infer_surface_contract,
+    looks_like_plasm_effect_template, node_to_json, parse_plan_value_expr,
 };
 use super::postfix::try_lower_row_suffix_expression;
+use super::prelude::*;
+use super::render_dag::compile_render_from_tail;
 use super::schema_validate::{cgs_for_qualified_entity, validate_surface_inline_projection};
+use super::types::{CompileState, DagNode, DagNodeSource, ExpandedProgramSurface};
 
 #[allow(dead_code)]
 pub(crate) fn is_plasm_dag_candidate(expressions: &[String]) -> bool {
@@ -261,7 +261,10 @@ pub(in crate::plasm_dag) fn compile_node_expr(
 }
 
 /// Longest bound label match so `repos.foo` wins over `repo.foo` when both exist.
-pub(in crate::plasm_dag) fn longest_matching_bound_prefix(expr: &str, state: &CompileState<'_>) -> Option<(String, String)> {
+pub(in crate::plasm_dag) fn longest_matching_bound_prefix(
+    expr: &str,
+    state: &CompileState<'_>,
+) -> Option<(String, String)> {
     let expr = expr.trim();
     let mut best: Option<(usize, String, String)> = None;
     for label in state.labels.keys() {
@@ -331,13 +334,7 @@ pub(in crate::plasm_dag) fn compile_surface_node(
         }
         if contract.supports_relation_dot() {
             return binding_continuation::dispatch_binding_continuation(
-                session,
-                state,
-                id,
-                expr,
-                &label,
-                tail_trim,
-                &contract,
+                session, state, id, expr, &label, tail_trim, &contract,
             );
         }
         return Err(plasm_core::plp::plp4_program(
@@ -408,7 +405,10 @@ pub(in crate::plasm_dag) fn split_return_list(
 
 /// When a final root looks like `binding(p10, p9)` and `binding` is a program label, rewrite to
 /// `binding[p10, p9]` (canonical projection postfix).
-pub(in crate::plasm_dag) fn rewrite_binding_field_projection_root(part: &str, state: &CompileState<'_>) -> Option<String> {
+pub(in crate::plasm_dag) fn rewrite_binding_field_projection_root(
+    part: &str,
+    state: &CompileState<'_>,
+) -> Option<String> {
     let open = part.find('(')?;
     if open == 0 {
         return None;
@@ -432,7 +432,10 @@ pub(in crate::plasm_dag) fn rewrite_binding_field_projection_root(part: &str, st
     }
 }
 
-pub(in crate::plasm_dag) fn require_node(state: &CompileState<'_>, node: &str) -> Result<(), String> {
+pub(in crate::plasm_dag) fn require_node(
+    state: &CompileState<'_>,
+    node: &str,
+) -> Result<(), String> {
     if state.contains(node) {
         Ok(())
     } else {

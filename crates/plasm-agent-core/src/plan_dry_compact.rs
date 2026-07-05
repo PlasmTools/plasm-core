@@ -57,7 +57,9 @@ pub(crate) fn compact_agent_surface_expr(expr: &str) -> String {
 }
 
 /// Compact large string leaves in dry-run IR snapshots (agent-facing `node_results` only).
-pub(crate) fn compact_ir_expr_json_for_agent_snapshot(value: serde_json::Value) -> serde_json::Value {
+pub(crate) fn compact_ir_expr_json_for_agent_snapshot(
+    value: serde_json::Value,
+) -> serde_json::Value {
     const INLINE_MAX: usize = 256;
     match value {
         serde_json::Value::String(s) => {

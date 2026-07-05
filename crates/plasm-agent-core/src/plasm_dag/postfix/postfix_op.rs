@@ -1,17 +1,17 @@
 //! Single postfix op → compute DAG node.
 
-use super::super::prelude::*;
-use super::super::types::{CompileState, DagNode, DagNodeSource};
 use super::super::plan_serialize::{
-    parse_aggregates, parse_dedupe_key_paths, parse_field_list, parse_group_by_key_and_aggregate_tail,
-    parse_sort_field_and_direction, schema_from_aggregates, schema_from_group_by,
-    schema_from_output_fields,
+    parse_aggregates, parse_dedupe_key_paths, parse_field_list,
+    parse_group_by_key_and_aggregate_tail, parse_sort_field_and_direction, schema_from_aggregates,
+    schema_from_group_by, schema_from_output_fields,
 };
+use super::super::prelude::*;
 use super::super::schema_validate::{
     cgs_for_qualified_entity, compute_passthrough_or_fallback_schema, resolve_compute_field_path,
     resolve_qualified_entity_for_dag_source, synthetic_schema_passthrough_rows,
     validate_compute_paths_for_dag_source,
 };
+use super::super::types::{CompileState, DagNode, DagNodeSource};
 
 pub(in crate::plasm_dag) fn postfix_op_to_compute(
     session: &ExecuteSession,

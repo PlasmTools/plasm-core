@@ -1,8 +1,7 @@
 //! CGS relation resolution and chain metadata for lowering.
 
 use super::prelude::*;
-use super::types::{CompileState, DagNode, DagNodeSource};
-use super::schema_validate::cgs_for_qualified_entity;
+use super::types::CompileState;
 
 pub(in crate::plasm_dag) fn resolve_cgs_for_qualified_entity<'a>(
     session: &'a ExecuteSession,
@@ -80,18 +79,19 @@ pub(in crate::plasm_dag) fn resolve_relation_segment_for_continuation(
     let ctx = relation_segment_context(map.as_ref(), row_qe, ent, binding_label, true);
     match plasm_core::resolve_relation_segment(&ctx, segment) {
         plasm_core::RelationSegmentOutcome::Wire(w) => Ok(w),
-        plasm_core::RelationSegmentOutcome::WrongRole { sym, wire } => Err(
-            plasm_core::plp::surface_err(
+        plasm_core::RelationSegmentOutcome::WrongRole { sym, wire } => {
+            Err(plasm_core::plp::surface_err(
                 plasm_core::plp::PlpId::Continuation,
-                plasm_core::relation_segment_wrong_role_message(&sym, &wire, row_qe.entity.as_str()),
-            ),
-        ),
+                plasm_core::relation_segment_wrong_role_message(
+                    &sym,
+                    &wire,
+                    row_qe.entity.as_str(),
+                ),
+            ))
+        }
         plasm_core::RelationSegmentOutcome::NotFound => Err(plasm_core::plp::plp4_program(
             "",
-            format!(
-                "entity `{}` has no relation `{segment}`",
-                row_qe.entity
-            ),
+            format!("entity `{}` has no relation `{segment}`", row_qe.entity),
         )),
     }
 }

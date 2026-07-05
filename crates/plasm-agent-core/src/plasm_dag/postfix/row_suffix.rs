@@ -1,14 +1,13 @@
 //! Row suffix stream decomposition and lowering.
 
-use super::super::prelude::*;
-use super::super::types::{CompileState, DagNode, DagNodeSource, ExpandedProgramSurface};
 use super::super::binding_continuation;
 use super::super::pipeline::compile_surface_node;
-use super::super::plan_serialize::parse_field_list;
+use super::super::prelude::*;
 use super::super::relation::try_split_single_hop_surface_chain;
 use super::super::schema_validate::{
     passthrough_identity_projection_fields, synthetic_schema_passthrough_rows,
 };
+use super::super::types::{CompileState, DagNode, DagNodeSource, ExpandedProgramSurface};
 use super::postfix_op::postfix_op_to_compute;
 
 pub(in crate::plasm_dag) fn lower_row_expression(
@@ -119,7 +118,9 @@ pub(in crate::plasm_dag) fn compile_state_with_nodes<'a>(
 }
 
 /// Fuse `.group_by(keys).aggregate(specs)` into one `group_by` args tail for plan lowering.
-pub(in crate::plasm_dag) fn coalesce_group_by_aggregate_suffixes(steps: Vec<RowSuffix>) -> Vec<RowSuffix> {
+pub(in crate::plasm_dag) fn coalesce_group_by_aggregate_suffixes(
+    steps: Vec<RowSuffix>,
+) -> Vec<RowSuffix> {
     let mut out = Vec::with_capacity(steps.len());
     let mut i = 0;
     while i < steps.len() {

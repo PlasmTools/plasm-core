@@ -38,10 +38,7 @@ pub fn surface_err(id: PlpId, msg: impl Display) -> String {
 /// Program-scoped PLP-4 continuation reject.
 #[inline]
 pub fn plp4_program(id: &str, msg: impl Display) -> String {
-    surface_err(
-        PlpId::Continuation,
-        format!("Plasm program `{id}`: {msg}"),
-    )
+    surface_err(PlpId::Continuation, format!("Plasm program `{id}`: {msg}"))
 }
 
 #[inline]

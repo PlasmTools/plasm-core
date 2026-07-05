@@ -2,19 +2,18 @@
 //!
 //! See `docs/plasm-language-surface-invariants.md` in the monorepo.
 
-use super::prelude::*;
-use plasm_core::plp::{self, PlpId};
-use super::types::{CompileState, DagNode, DagNodeSource};
 use super::binding_contract::binding_contract;
 use super::pipeline::compile_surface_node;
 use super::postfix::lower_row_expression;
+use super::prelude::*;
 use super::relation::{
     lookup_relation_chain_meta, relation_binding_proofs_for_lower,
     relation_continuation_expr_from_source_row_hole, relation_materialize_for_lower,
-    resolve_cgs_for_qualified_entity, resolve_relation_segment_for_continuation,
-    resolve_relation_wire_on_entity,
+    resolve_relation_segment_for_continuation, resolve_relation_wire_on_entity,
 };
 use super::schema_validate::agent_program_error;
+use super::types::{CompileState, DagNode, DagNodeSource};
+use plasm_core::plp::{self, PlpId};
 
 pub(in crate::plasm_dag) fn plp4_reject(id: &str, label: &str, tail: &str) -> String {
     plp::plp4_program(
@@ -32,8 +31,9 @@ fn is_row_producing_relation_source(state: &CompileState<'_>, label: &str) -> bo
             matches!(kind, PlanNodeKind::Get) || matches!(parsed.expr, Expr::Get(_))
         }
         Some(DagNodeSource::Compute {
-            op: crate::plasm_plan::ComputeOp::Limit { .. }
-            | crate::plasm_plan::ComputeOp::Project { .. },
+            op:
+                crate::plasm_plan::ComputeOp::Limit { .. }
+                | crate::plasm_plan::ComputeOp::Project { .. },
             source,
             ..
         }) => is_row_producing_relation_source(state, source),
@@ -45,8 +45,9 @@ fn relation_sourced_continuation_eligible(state: &CompileState<'_>, label: &str)
     match state.get(label).map(|n| &n.source) {
         Some(DagNodeSource::RelationTraversal { .. }) => true,
         Some(DagNodeSource::Compute {
-            op: crate::plasm_plan::ComputeOp::Limit { .. }
-            | crate::plasm_plan::ComputeOp::Project { .. },
+            op:
+                crate::plasm_plan::ComputeOp::Limit { .. }
+                | crate::plasm_plan::ComputeOp::Project { .. },
             source,
             ..
         }) => is_row_producing_relation_source(state, source),
@@ -220,9 +221,12 @@ fn method_invoke_expanded_surface(
             Ok(format!("{prefix}.{tail}"))
         }
         ContinuationAnchor::BindingLabel => {
-            let node = state
-                .get(label)
-                .ok_or_else(|| plp::plp4_program("", format!("unknown binding `{label}` for method continuation")))?;
+            let node = state.get(label).ok_or_else(|| {
+                plp::plp4_program(
+                    "",
+                    format!("unknown binding `{label}` for method continuation"),
+                )
+            })?;
             Ok(format!("{}.{tail}", node.expr.trim()))
         }
         ContinuationAnchor::None => Err(plp::plp4_program(
@@ -519,11 +523,8 @@ fn lower_multi_segment_relation_continuation(
             chain.selector.as_str(),
         )
         .unwrap_or_default();
-        let materialize = relation_materialize_for_lower(
-            session,
-            &contract.row_entity,
-            chain.selector.as_str(),
-        )?;
+        let materialize =
+            relation_materialize_for_lower(session, &contract.row_entity, chain.selector.as_str())?;
         let plan_relation = PlanRelationTraversal {
             source: label.to_string(),
             relation: chain.selector.clone(),

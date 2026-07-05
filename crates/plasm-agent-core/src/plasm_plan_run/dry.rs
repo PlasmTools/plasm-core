@@ -86,9 +86,10 @@ pub fn evaluate_executable_comp_dry(
                         .or(surface.display_expr.as_deref())
                         .unwrap_or("<ir>");
                     let compact_expr = crate::plan_dry_compact::compact_agent_surface_expr(expr);
-                    let compact_ir = crate::plan_dry_compact::compact_ir_expr_json_for_agent_snapshot(
-                        serde_json::to_value(&parsed.expr).unwrap_or_default(),
-                    );
+                    let compact_ir =
+                        crate::plan_dry_compact::compact_ir_expr_json_for_agent_snapshot(
+                            serde_json::to_value(&parsed.expr).unwrap_or_default(),
+                        );
                     out.push(serde_json::json!({
                         "index": step_idx,
                         "ok": true,

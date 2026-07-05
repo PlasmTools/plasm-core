@@ -15,13 +15,13 @@ use crate::plasm_render_compile::{
     validate_template_binding_labels,
 };
 
-use super::prelude::*;
-use super::types::{CompileState, DagNode, DagNodeSource};
 use super::pipeline::compile_surface_node;
 use super::postfix::{compile_state_with_nodes, decompose_row_suffix_stream, lower_suffix_stream};
+use super::prelude::*;
 use super::schema_validate::{
     infer_render_columns_for_node, lookup_dag_node, resolve_qualified_entity_for_dag_source,
 };
+use super::types::{CompileState, DagNode, DagNodeSource};
 
 pub(in crate::plasm_dag) fn plan_render_content_schema() -> Result<SyntheticResultSchema, String> {
     Ok(SyntheticResultSchema {

@@ -1,9 +1,12 @@
 //! Γ binding contracts derived from DAG nodes.
 
 use super::prelude::*;
-use super::types::{CompileState, DagNode, DagNodeSource, BindingContractSource};
+use super::types::{BindingContractSource, CompileState, DagNode, DagNodeSource};
 
-pub(in crate::plasm_dag) fn binding_contract(state: &CompileState<'_>, label: &str) -> Option<ProgramBindingContract> {
+pub(in crate::plasm_dag) fn binding_contract(
+    state: &CompileState<'_>,
+    label: &str,
+) -> Option<ProgramBindingContract> {
     let node = state.get(label)?;
     Some(binding_contract_for_node(state, label, node))
 }
@@ -225,7 +228,10 @@ pub(in crate::plasm_dag) fn program_binding_contract_for_source(
     }
 }
 
-pub(in crate::plasm_dag) fn synthetic_row_contract(label: &str, schema: &SyntheticResultSchema) -> ProgramBindingContract {
+pub(in crate::plasm_dag) fn synthetic_row_contract(
+    label: &str,
+    schema: &SyntheticResultSchema,
+) -> ProgramBindingContract {
     ProgramBindingContract {
         label: label.to_string(),
         row_entity: QualifiedEntityKey {
