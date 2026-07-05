@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.128] - 2026-07-05
+
+### Fixed
+
+- **PLP-2 program staging:** regression tests for mid-call heredoc close with same-line trailing args; enriched `finish()` diagnostics (unrecognized close suffix, tag collision, internal staging bug hint).
+
+### Added
+
+- **`GET /v1/health` version:** `version` field from `CARGO_PKG_VERSION` for deploy triage.
+- **Language matrix:** `lang_inline_heredoc_method_arg_github_shape` (markdown body + array arg after heredoc close).
+- **Smoke:** `scripts/smoke/mcp-heredoc-mid-arg.sh` (dry-run probe + optional health version floor).
+
 ## [0.3.127] - 2026-07-05
 
 ### Fixed

@@ -165,10 +165,8 @@ impl PhysicalLineStatementScanner {
     }
 
     fn finish(self) -> Result<Vec<String>, String> {
-        if self.pending_tag.is_some() {
-            return Err(crate::plp::plp2_heredoc(
-                "unterminated tagged heredoc (missing closing `TAG` line, or missing newline after `<<TAG` on the opener line)",
-            ));
+        if let Some(tag) = self.pending_tag.as_deref() {
+            return Err(plp2_unterminated_heredoc_message(tag, &self.cur));
         }
         if self.pending_delimiters {
             return Err(crate::plp::plp3_staging(
@@ -190,6 +188,32 @@ pub fn collect_program_statement_lines(src: &str) -> Result<Vec<String>, String>
         scanner.push_line(raw)?;
     }
     scanner.finish()
+}
+
+fn plp2_unterminated_heredoc_message(tag: &str, cur: &str) -> String {
+    const BASE: &str = "unterminated tagged heredoc (missing closing `TAG` line, or missing newline after `<<TAG` on the opener line)";
+    let lines: Vec<&str> = cur.lines().collect();
+    if let Some(last) = lines.last() {
+        if tagged_heredoc_close_kind(last, tag).is_some() {
+            return crate::plp::plp2_heredoc(format!(
+                "{BASE}; close line `{last}` should have ended the heredoc but program staging still has pending tag `{tag}` (file an issue)"
+            ));
+        }
+        let trimmed = last.trim();
+        if trimmed.starts_with(tag) {
+            return crate::plp::plp2_heredoc(format!(
+                "{BASE}; close line not recognized after `{tag}` — if trailing call arguments follow the close tag on the same line, ensure the host is plasm-core ≥0.3.126"
+            ));
+        }
+    }
+    for line in lines.iter().take(lines.len().saturating_sub(1)) {
+        if line.trim() == tag {
+            return crate::plp::plp2_heredoc(format!(
+                "{BASE}; body contains a line equal to close tag `{tag}` before the real close — use an opaque tag that cannot appear in the payload"
+            ));
+        }
+    }
+    crate::plp::plp2_heredoc(BASE)
 }
 
 pub fn looks_like_domain_symbol(label: &str) -> bool {
@@ -762,6 +786,56 @@ mod tests {
         let src = "x = m(v111{content=<<H\none\nH\n})\nx";
         let stmts = collect_program_statement_lines(src).expect("parse");
         assert_eq!(stmts, vec!["x = m(v111{content=<<H\none\nH\n})", "x"]);
+    }
+
+    #[test]
+    fn collect_mid_call_heredoc_same_line_trailing_args() {
+        let src = r#"created = e1.m1(p86="title", p73=<<PLASM_BODY_7f3a
+## Problem
+Testing.
+PLASM_BODY_7f3a, p28=["documentation"])
+created"#;
+        let stmts = collect_program_statement_lines(src).expect("parse");
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].contains("<<PLASM_BODY_7f3a"));
+        assert!(stmts[0].contains("## Problem"));
+        assert!(stmts[0].contains("p28=[\"documentation\"]"));
+        assert_eq!(stmts[1], "created");
+    }
+
+    #[test]
+    fn collect_mid_call_heredoc_next_line_trailing_args() {
+        let src = r#"created = LangItem.create(title=<<PLASM_INLINE_ARG
+line one
+PLASM_INLINE_ARG
+, score=0, owner="inline-heredoc")
+created"#;
+        let stmts = collect_program_statement_lines(src).expect("parse");
+        assert_eq!(stmts.len(), 2);
+        assert!(stmts[0].contains("<<PLASM_INLINE_ARG"));
+        assert!(stmts[0].contains(", score=0"));
+        assert_eq!(stmts[1], "created");
+    }
+
+    #[test]
+    fn plp2_finish_hints_unrecognized_same_line_close() {
+        let err = collect_program_statement_lines("x = m(body=<<BODY\nline\nBODYfoo, other=1)")
+            .expect_err("staging should fail when close suffix is not delimiter-only");
+        assert!(err.contains("PLP-2:"), "{err}");
+        assert!(err.contains("close line not recognized"), "{err}");
+    }
+
+    #[test]
+    fn plp2_message_tag_collision_hint() {
+        let msg = plp2_unterminated_heredoc_message(
+            "TAG",
+            "opener <<TAG\nTAG\nbody\nnot_closed",
+        );
+        assert!(msg.contains("PLP-2:"), "{msg}");
+        assert!(
+            msg.contains("body contains a line equal to close tag"),
+            "{msg}"
+        );
     }
 
     #[test]

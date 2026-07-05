@@ -51,6 +51,7 @@ pub struct RegistryEntryResponse {
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
     pub status: &'static str,
+    pub version: &'static str,
 }
 
 /// Returned by [`get_auth_status`] when [`AuthFramework`] is initialized.
@@ -64,7 +65,10 @@ pub struct AuthStatusResponse {
 
 /// Public health check (no incoming auth).
 pub async fn health_response() -> Json<HealthResponse> {
-    Json(HealthResponse { status: "ok" })
+    Json(HealthResponse {
+        status: "ok",
+        version: env!("CARGO_PKG_VERSION"),
+    })
 }
 
 pub async fn get_auth_status(

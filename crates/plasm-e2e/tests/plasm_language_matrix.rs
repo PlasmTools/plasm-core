@@ -87,6 +87,7 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "bind_method_invoke_field_ref",
     "inline_heredoc_method_arg",
     "inline_heredoc_method_arg_same_line",
+    "inline_heredoc_method_arg_github_shape",
     "heredoc_body_with_equals",
     "derive_map",
     "effect_create",
@@ -873,6 +874,17 @@ fn assert_planning_ir(
             }
             if !json_value_contains_substring(comp, "same-line body") {
                 return Err("expected same-line heredoc body preserved in comp IR".into());
+            }
+        }
+        "lang_inline_heredoc_method_arg_github_shape" => {
+            if !comp_ir_contains_selector(comp, "create") {
+                return Err("expected create invoke with github-shaped heredoc close (PLP-2)".into());
+            }
+            if !json_value_contains_substring(comp, "## Problem") {
+                return Err("expected markdown heredoc body preserved in comp IR".into());
+            }
+            if !json_value_contains_substring(comp, "documentation") {
+                return Err("expected array arg after heredoc close in comp IR".into());
             }
         }
         "lang_bind_method_invoke_field_ref" => {
@@ -1919,6 +1931,19 @@ created"#,
         features: &["inline_heredoc_method_arg_same_line", "effect_create"],
         min_node_results: 1,
         expect_markdown_substrings: &["inline-same-line"],
+    },
+    MatrixRow {
+        id: "lang_inline_heredoc_method_arg_github_shape",
+        program: r#"created = LangItem.create(title=<<PLASM_GH_BODY_7f3a
+## Problem
+Testing mid-arg heredoc close.
+PLASM_GH_BODY_7f3a, tags=["documentation"])
+created"#,
+        surface_line: false,
+        federated: false,
+        features: &["inline_heredoc_method_arg_github_shape", "effect_create"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["## Problem", "documentation"],
     },
     MatrixRow {
         id: "lang_bind_method_invoke_field_ref",

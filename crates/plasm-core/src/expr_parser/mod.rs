@@ -5211,6 +5211,27 @@ mod tests {
         let _ = crate::type_checker::type_check_expr(&r.expr, &cgs);
     }
 
+    /// Mid-call heredoc with comma-suffixed close on the same line (user repro / PLP-2 staging).
+    #[test]
+    fn parse_method_call_heredoc_mid_arg_glued_comma_trailing() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let expr = concat!(
+            "LangItem.create(title=<<PLASM_INLINE_SAME\n",
+            "same-line body\n",
+            "PLASM_INLINE_SAME, score=0, owner=\"inline-same-line\")",
+        );
+        let r = parse(expr, &cgs).expect("same-line heredoc close with trailing args should parse");
+        assert!(
+            matches!(r.expr, Expr::Create(_) | Expr::Invoke(_) | Expr::Chain(_)),
+            "expected create/invoke path, got {:?}",
+            r.expr
+        );
+    }
+
     /// Regression (eval gh-54): glued `TAG)` after heredoc body in a method call must parse.
     #[test]
     fn parse_github_issue_comment_create_glued_heredoc_close() {
