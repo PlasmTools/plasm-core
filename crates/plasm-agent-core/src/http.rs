@@ -112,6 +112,12 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
         workflows.register(manifest);
     }
     let live_plan_pool = Arc::new(crate::live_plan_run_worker::LivePlanRunPool::new());
+    let blocking_compute = Arc::new(crate::blocking_compute::BlockingComputePool::new());
+    let tool_model_service =
+        Arc::new(crate::tool_model_service::ToolModelService::new(Arc::clone(
+            &blocking_compute,
+        )));
+    let catalog_reload_lock = Arc::new(tokio::sync::Mutex::new(()));
     PlasmHostState {
         oss: PlasmOssHostState {
             engine: Arc::new(engine),
@@ -151,6 +157,9 @@ pub fn build_plasm_host_state(bootstrap: PlasmHostBootstrap) -> PlasmHostState {
             workflows,
             redis_backend: None,
             live_plan_pool,
+            blocking_compute,
+            tool_model_service,
+            catalog_reload_lock,
             session_coordination: Arc::new(crate::session_coordination::SessionCoordination::new()),
             mcp_http_user_agents: Arc::new(DashMap::new()),
         },

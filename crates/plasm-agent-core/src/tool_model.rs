@@ -48,7 +48,7 @@ mod entity_param {
 }
 
 /// Query string for `GET /v1/registry/:entry_id/tool-model`.
-#[derive(Debug, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct ToolModelQuery {
     /// `all` | `single` | `seeds`
     #[serde(default = "default_focus")]
@@ -60,6 +60,17 @@ pub struct ToolModelQuery {
 
 fn default_focus() -> String {
     "all".into()
+}
+
+/// Canonical focus + sorted entity list for tool-model cache keys.
+pub fn normalize_tool_model_query(
+    q: &ToolModelQuery,
+) -> Result<(String, Vec<String>), ToolModelBuildError> {
+    let mode = ToolModelFocusMode::parse(&q.focus)?;
+    let mut entity = q.entity.clone();
+    entity.sort();
+    entity.dedup();
+    Ok((mode.as_str().to_string(), entity))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

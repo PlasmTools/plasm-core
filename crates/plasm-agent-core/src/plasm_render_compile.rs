@@ -1,5 +1,9 @@
 //! Row-to-text template compile helpers (column token inference and field-list resolution).
 
+use std::collections::BTreeMap;
+
+use serde_json::json;
+
 use crate::execute_session::ExecuteSession;
 use crate::plasm_plan::{OutputName, QualifiedEntityKey};
 use crate::plasm_plan_run::RenderColumns;
@@ -8,51 +12,18 @@ use plasm_core::expr_parser::{
 };
 use plasm_core::SymbolMapCrossRequestCache;
 
-/// Infer raw column tokens from `{{ r.field }}` / `{{ field }}` references in a row template body.
-pub(crate) fn infer_column_tokens_from_minijinja_template(template: &str) -> Option<Vec<String>> {
-    let mut cols = Vec::new();
-    let mut rest = template;
-    while let Some(start) = rest.find("{{") {
-        let after = &rest[start + 2..];
-        let Some(end) = after.find("}}") else {
-            break;
-        };
-        let expr = after[..end].trim();
-        let field = expr
-            .strip_prefix("r.")
-            .or_else(|| expr.strip_prefix("rows[0]."))
-            .map(|f| f.split('|').next().unwrap_or(f).trim());
-        let Some(field) = field else {
-            rest = &after[end + 2..];
-            continue;
-        };
-        if field == "rows" || field.is_empty() {
-            rest = &after[end + 2..];
-            continue;
-        }
-        if field
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
-            && !cols.iter().any(|c| c == field)
-        {
-            cols.push(field.to_string());
-        }
-        rest = &after[end + 2..];
-    }
-    if cols.is_empty() {
-        None
-    } else {
-        Some(cols)
-    }
+/// Parsed Minijinja field references from a row-to-text template body.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub(crate) struct TemplateFieldRefs {
+    /// Fields accessed via `{{ r.field }}` or `{{ rows[0].field }}`.
+    pub row_fields: Vec<String>,
+    /// Fields accessed via `{{ label.field }}`, keyed by binding label.
+    pub label_fields: BTreeMap<String, Vec<String>>,
 }
 
-/// Infer wire column tokens from `{{ label.field }}` references for cross-binding templates.
-pub(crate) fn infer_label_prefixed_columns_from_template(
-    template: &str,
-    label: &str,
-) -> Option<Vec<String>> {
-    let prefix = format!("{label}.");
-    let mut cols = Vec::new();
+/// Scan `{{ … }}` expressions for row and label-prefixed field references.
+pub(crate) fn infer_template_field_refs(template: &str) -> TemplateFieldRefs {
+    let mut out = TemplateFieldRefs::default();
     let mut rest = template;
     while let Some(start) = rest.find("{{") {
         let after = &rest[start + 2..];
@@ -60,36 +31,87 @@ pub(crate) fn infer_label_prefixed_columns_from_template(
             break;
         };
         let expr = after[..end].trim();
-        let field = expr.strip_prefix(prefix.as_str()).map(|f| {
-            f.split('|')
+        if let Some(field) = expr
+            .strip_prefix("r.")
+            .or_else(|| expr.strip_prefix("rows[0]."))
+        {
+            let field = field
+                .split('|')
                 .next()
-                .unwrap_or(f)
+                .unwrap_or(field)
                 .trim()
                 .split('.')
                 .next()
-                .unwrap_or(f)
+                .unwrap_or(field)
+                .trim();
+            if !field.is_empty()
+                && field != "rows"
+                && field
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+                && !out.row_fields.iter().any(|c| c == field)
+            {
+                out.row_fields.push(field.to_string());
+            }
+        } else if let Some((label, tail)) = expr.split_once('.') {
+            let label = label.trim();
+            let field = tail
+                .split('|')
+                .next()
+                .unwrap_or(tail)
                 .trim()
-        });
-        let Some(field) = field else {
-            rest = &after[end + 2..];
-            continue;
-        };
-        if field.is_empty() || field == label {
-            rest = &after[end + 2..];
-            continue;
-        }
-        if field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            && !cols.iter().any(|c| c == field)
-        {
-            cols.push(field.to_string());
+                .split('.')
+                .next()
+                .unwrap_or(tail)
+                .trim();
+            if !label.is_empty()
+                && !field.is_empty()
+                && field != label
+                && validate_program_label(label).is_ok()
+                && field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                let cols = out.label_fields.entry(label.to_string()).or_default();
+                if !cols.iter().any(|c| c == field) {
+                    cols.push(field.to_string());
+                }
+            }
         }
         rest = &after[end + 2..];
     }
-    if cols.is_empty() {
-        None
-    } else {
-        Some(cols)
+    out
+}
+
+/// Infer wire column tokens for render projection from a template body.
+pub(crate) fn infer_render_column_tokens_from_template(
+    template: &str,
+    primary_label: &str,
+) -> Option<Vec<String>> {
+    let refs = infer_template_field_refs(template);
+    if !refs.row_fields.is_empty() {
+        return Some(refs.row_fields);
     }
+    refs.label_fields
+        .get(primary_label)
+        .cloned()
+        .filter(|cols| !cols.is_empty())
+}
+
+/// Ensure every `{{ label.field }}` reference uses an in-scope render source label.
+pub(crate) fn validate_template_binding_labels(
+    template: &str,
+    allowed_labels: &[String],
+    program_id: &str,
+) -> Result<(), String> {
+    let refs = infer_template_field_refs(template);
+    for label in refs.label_fields.keys() {
+        if !allowed_labels.iter().any(|allowed| allowed == label) {
+            return Err(format!(
+                "Plasm program `{program_id}`: template references binding `{label}` which is not among render sources {:?}",
+                allowed_labels
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn parse_field_list_with_tokens(
@@ -186,9 +208,55 @@ pub(crate) fn resolve_inferred_render_columns(
     RenderColumns::from_field_pairs(&pairs)
 }
 
+/// Plan JSON `depends_on` / `uses_result` edges for a render compute node.
+pub(crate) fn render_plan_graph_edges(
+    source: &str,
+    render_bindings: &[OutputName],
+) -> (Vec<String>, Vec<serde_json::Value>) {
+    let mut depends_on = vec![source.to_string()];
+    for label in render_bindings {
+        let id = label.as_str();
+        if id != source && !depends_on.iter().any(|d| d == id) {
+            depends_on.push(id.to_string());
+        }
+    }
+    let mut uses_result = vec![serde_json::json!({ "node": source, "as": "source" })];
+    for label in render_bindings {
+        let id = label.as_str();
+        if id != source {
+            uses_result.push(json!({ "node": id, "as": id }));
+        }
+    }
+    (depends_on, uses_result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn infer_template_field_refs_collects_row_and_label_fields() {
+        let refs = infer_template_field_refs(
+            "Row {{ r.name }} cross {{ a.title }} / {{ b.owner }}",
+        );
+        assert_eq!(refs.row_fields, vec!["name".to_string()]);
+        assert_eq!(refs.label_fields.get("a").map(|v| v.as_slice()), Some(&["title".to_string()][..]));
+        assert_eq!(
+            refs.label_fields.get("b").map(|v| v.as_slice()),
+            Some(&["owner".to_string()][..])
+        );
+    }
+
+    #[test]
+    fn validate_template_binding_labels_rejects_unknown_labels() {
+        let err = validate_template_binding_labels(
+            "{{ ghost.field }}",
+            &["a".to_string(), "b".to_string()],
+            "prog",
+        )
+        .expect_err("unknown label");
+        assert!(err.contains("ghost"), "{err}");
+    }
 
     #[test]
     fn resolve_render_collection_alias_accepts_in_scope_label() {

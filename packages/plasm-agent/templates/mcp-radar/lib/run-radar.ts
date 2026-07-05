@@ -1,12 +1,8 @@
 import { type AuthoringContext } from "@plasm_lang/vercel-agent";
 
+import { radarArchiveSummary } from "./radar-archive-status.js";
 import { drainRunAudit, resetRunAudit } from "./run-audit.js";
-import {
-  gatewayConfigured,
-  loadLastRun,
-  saveLastRun,
-  tavilyConfigured,
-} from "./radar-state.js";
+import { gatewayConfigured, tavilyConfigured } from "./radar-state.js";
 
 /** Stable intent — same string on every radar turn (`plasm_context` session reuse). */
 export const MCP_RADAR_INTENT =
@@ -52,11 +48,6 @@ export async function runRadar(
   if (!gatewayConfigured()) {
     const error =
       "AI Gateway is not configured (link project on Vercel or set AI_GATEWAY_API_KEY locally)";
-    await saveLastRun(ctx.agentRoot, {
-      at: new Date().toISOString(),
-      status: "error",
-      message: error,
-    });
     return { ok: false, skipped: true, reason: "ai_gateway_missing", error };
   }
 
@@ -64,15 +55,7 @@ export async function runRadar(
     resetRunAudit();
     const agent = await ctx.getAgent();
     const turn = await agent.generate(buildRadarGoal(options), { resetConversation: false });
-    const runAt = new Date().toISOString();
-    const audit = drainRunAudit();
-
-    await saveLastRun(ctx.agentRoot, {
-      at: runAt,
-      status: "ok",
-      runIds: audit.runIds,
-      logicalSessionRef: audit.logicalSessionRef,
-    });
+    void drainRunAudit();
 
     return {
       ok: true,
@@ -81,11 +64,6 @@ export async function runRadar(
     };
   } catch (err) {
     const message = String(err);
-    await saveLastRun(ctx.agentRoot, {
-      at: new Date().toISOString(),
-      status: "error",
-      message,
-    });
     return {
       ok: false,
       skipped: false,
@@ -95,16 +73,21 @@ export async function runRadar(
 }
 
 export async function radarStatus(agentRoot: string): Promise<Record<string, unknown>> {
-  const last = await loadLastRun(agentRoot);
+  const archive = await radarArchiveSummary(agentRoot, MCP_RADAR_INTENT);
+  const last = archive.lastRun;
+
   return {
     gateway: gatewayConfigured(),
     tavily: tavilyConfigured(),
     lastRun: last,
     intent: MCP_RADAR_INTENT,
     observability: {
+      archiveBackend: archive.archiveBackend,
       operatorRunsUrl: "/operator/runs",
       operatorSessionsUrl: "/operator/sessions",
       operatorArchivesUrl: "/operator/archives",
+      totalArchivedRuns: archive.totalRuns,
+      intentArchivedRuns: archive.intentRuns,
       runIds: last?.runIds ?? [],
       logicalSessionRef: last?.logicalSessionRef,
     },

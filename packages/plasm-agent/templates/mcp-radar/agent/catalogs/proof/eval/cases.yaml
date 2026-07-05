@@ -1,0 +1,128 @@
+# Proof — NL eval / form coverage. Run from repo root:
+#   cargo run -p plasm-eval -- coverage --schema apis/proof --cases apis/proof/eval/cases.yaml
+#
+# Goals are agent-shaped: join + read (real-backend flow), then create/update/query/chain as needed.
+- id: proof-01-join-read
+  schema: proof
+  goal: "For shared document slug acme, set presence for automation agent 'plasm-bot', then load editor state and the markdown body so I can answer the user in that doc."
+  tags: [agent, multi_step]
+  covers: [multi_step, get, invoke]
+  expect:
+    entities_any: [Document, EditorState]
+
+- id: proof-02-markdown-projection
+  schema: proof
+  goal: "Fetch only the markdown field for document beta using the fast markdown read path."
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [Document]
+    projection_contains: [markdown]
+
+- id: proof-03-block-snapshot
+  schema: proof
+  goal: "List current blocks for document gamma so I can anchor a structural edit on block refs."
+  tags: [query]
+  covers: [query_filtered]
+  expect:
+    entities_any: [Document, Block]
+
+- id: proof-04-new-doc
+  schema: proof
+  goal: "Create a new shared document whose initial body is markdown '# Kickoff notes' for the retro."
+  tags: [create]
+  covers: [create]
+  expect:
+    entities_any: [ShareLink]
+
+- id: proof-05-read-title
+  schema: proof
+  goal: "Load document delta with document_get and read its title for the sprint header."
+  tags: [get, projection]
+  covers: [get, projection]
+  expect:
+    entities_any: [Document]
+    projection_contains: [title]
+
+- id: proof-06-pending-events
+  schema: proof
+  goal: "Fetch pending collaboration events for document epsilon scoped by that document, after event id evt-9 if present."
+  tags: [query, collab]
+  covers: [query_filtered, reverse]
+  expect:
+    entities_any: [Document, CollaborationEvent]
+
+- id: proof-07-chain-blocks
+  schema: proof
+  goal: "From document zeta, follow the blocks relation to read structural chunk refs for the editor."
+  tags: [chain]
+  covers: [chain]
+  expect:
+    entities_any: [Document, Block]
+
+- id: proof-08-bug-report
+  schema: proof
+  goal: "Send a global bug report to Proof with a short summary and pasted HTTP error context."
+  tags: [meta]
+  covers: [create]
+  expect:
+    entities_any: [BugReport]
+
+- id: proof-09-suggestion-insert
+  schema: proof
+  goal: >
+    On shared document iota, as automation user plasm-bot, propose an insert suggestion: anchor on
+    the exact quoted phrase 'Status' in the body and suggest inserting the line 'Status: green'
+    for human review (do not apply yet).
+  tags: [invoke, suggestion]
+  covers: [invoke]
+  reference_expr: >
+    Document(iota).annotation-suggestion-insert(agent_id="plasm-bot",by="plasm-bot",quote="Status",content="Status: green")
+  expect:
+    entities_any: [Document]
+
+- id: proof-10-suggestion-delete
+  schema: proof
+  goal: >
+    For document kappa, propose a delete suggestion anchored on the quoted passage 'Draft watermark'
+    so collaborators can accept or reject removing that text.
+  tags: [invoke, suggestion]
+  covers: [invoke]
+  reference_expr: >
+    Document(kappa).annotation-suggestion-delete(agent_id="plasm-bot",by="plasm-bot",quote="Draft watermark")
+  expect:
+    entities_any: [Document]
+
+- id: proof-11-suggestion-accept
+  schema: proof
+  goal: >
+    Apply the pending suggestion mark sug-42 on document lambda as user plasm-bot so the proposed
+    edit becomes real document content.
+  tags: [invoke, suggestion]
+  covers: [invoke]
+  reference_expr: >
+    Document(lambda).annotation-suggestion-accept(agent_id="plasm-bot",by="plasm-bot",mark_id="sug-42")
+  expect:
+    entities_any: [Document]
+
+- id: proof-12-state-then-ops
+  schema: proof
+  goal: >
+    Bind the share link for document mu, call editor_state_get so the session picks up baseToken,
+    then add a comment on quoted text without passing base_token on the invoke line.
+  tags: [agent, session, invoke]
+  covers: [multi_step, get, invoke]
+  expect:
+    entities_any: [Document, EditorState]
+
+- id: proof-13-base-token-override
+  schema: proof
+  goal: >
+    On document nu, call annotation-suggestion-reject with an explicit base_token=\"tok-override-9\"
+    to force that precondition for one request.
+  tags: [invoke, suggestion]
+  covers: [invoke]
+  reference_expr: >
+    Document(nu).annotation-suggestion-reject(agent_id="plasm-bot",by="plasm-bot",mark_id="sug-1",base_token="tok-override-9")
+  expect:
+    entities_any: [Document]

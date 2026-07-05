@@ -204,10 +204,7 @@ mod tests {
     #[test]
     fn parse_tagged_heredoc_literal_extracts_body() {
         let raw = "<<PLASM_EOF\nhello\nworld\nPLASM_EOF";
-        assert_eq!(
-            parse_tagged_heredoc_literal(raw).unwrap(),
-            "hello\nworld\n"
-        );
+        assert_eq!(parse_tagged_heredoc_literal(raw).unwrap(), "hello\nworld\n");
     }
 
     #[test]

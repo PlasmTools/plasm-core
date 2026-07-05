@@ -24,14 +24,14 @@ fn render(
     template: &str,
     collection_alias: Option<&OutputName>,
 ) -> Result<Vec<serde_json::Value>, String> {
-    render_compute(
-        rows,
-        cols,
+    render_compute(&RenderComputeInput {
+        primary_rows: rows,
+        columns: cols,
         template,
         collection_alias,
-        &[],
-        &BTreeMap::new(),
-    )
+        render_bindings: &[],
+        binding_rows: &BTreeMap::new(),
+    })
 }
 
 #[test]
@@ -236,20 +236,23 @@ fn render_compute_feeds_node_input_for_action_content() {
 fn render_compute_cross_binding_binds_singleton_labels_for_dot_access() {
     let rows = vec![serde_json::json!({ "name": "pika" })];
     let cols = empty_cols(&["name"]);
-    let alias = OutputName::new("pika").expect("alias");
-    let other = OutputName::new("repos").expect("repos");
-    let cross_rows = BTreeMap::from([(
-        "repos".to_string(),
-        vec![serde_json::json!({ "owner": "ash" })],
-    )]);
-    let out = render_compute(
-        &rows,
-        &cols,
-        "Pokemon: {{ pika.name }}\nOwner: {{ repos.owner }}",
-        Some(&alias),
-        &[other],
-        &cross_rows,
-    )
+    let pika = OutputName::new("pika").expect("alias");
+    let repos = OutputName::new("repos").expect("repos");
+    let binding_rows = BTreeMap::from([
+        ("pika".to_string(), rows.clone()),
+        (
+            "repos".to_string(),
+            vec![serde_json::json!({ "owner": "ash" })],
+        ),
+    ]);
+    let out = render_compute(&RenderComputeInput {
+        primary_rows: &rows,
+        columns: &cols,
+        template: "Pokemon: {{ pika.name }}\nOwner: {{ repos.owner }}",
+        collection_alias: None,
+        render_bindings: &[pika, repos],
+        binding_rows: &binding_rows,
+    })
     .expect("render");
     assert_eq!(
         out,

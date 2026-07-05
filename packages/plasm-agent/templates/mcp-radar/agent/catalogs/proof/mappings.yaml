@@ -1,0 +1,1340 @@
+# Proof — HTTP mappings for hosted `www.proofeditor.ai`.
+# Slug-scoped agent routes use `/api/agent/:slug/…` (plain `/documents/:slug/…` returns 404 HTML on hosted).
+# Share negotiation stays `GET /d/:slug`; new docs use `POST /share/markdown`. See apis/proof/README.md.
+# Auth: domain `auth.env` bearer (PROOF_API_TOKEN); optional share `?token=` maps to `share_token`.
+
+annotation_comment_add:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: ops
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+  body:
+    type: object
+    fields:
+    - - type
+      - type: const
+        value: comment.add
+    - - by
+      - type: var
+        name: by
+    - - quote
+      - type: var
+        name: quote
+    - - text
+      - type: var
+        name: text
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
+  response:
+    single: true
+annotation_comment_batch_apply:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: ops
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+  body:
+    type: object
+    fields:
+    - - type
+      - type: const
+        value: comment.batch
+    - - by
+      - type: var
+        name: by
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
+    - - operations
+      - type: var
+        name: operations
+  response:
+    single: true
+annotation_comment_reply:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: ops
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+  body:
+    type: object
+    fields:
+    - - type
+      - type: const
+        value: comment.reply
+    - - markId
+      - type: var
+        name: mark_id
+    - - by
+      - type: var
+        name: by
+    - - text
+      - type: var
+        name: text
+    - - resolve
+      - type: if
+        condition:
+          type: exists
+          var: resolve
+        then_expr:
+          type: var
+          name: resolve
+        else_expr:
+          type: const
+          value: null
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
+  response:
+    single: true
+annotation_comment_resolve:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: ops
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+  body:
+    type: object
+    fields:
+    - - type
+      - type: const
+        value: comment.resolve
+    - - by
+      - type: var
+        name: by
+    - - markId
+      - type: var
+        name: mark_id
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
+  response:
+    single: true
+annotation_comment_unresolve:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: ops
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+  body:
+    type: object
+    fields:
+    - - type
+      - type: const
+        value: comment.unresolve
+    - - by
+      - type: var
+        name: by
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
+    - - markId
+      - type: var
+        name: mark_id
+  response:
+    single: true
+annotation_suggestion_accept:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: ops
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - Idempotency-Key
+      - type: if
+        condition:
+          type: exists
+          var: idempotency_key
+        then_expr:
+          type: var
+          name: idempotency_key
+        else_expr:
+          type: if
+          condition:
+            type: exists
+            var: plasm_execute_prompt_hash
+          then_expr:
+            type: format
+            template: plasm:{ph}:{sid}:{slug}:suggestion_accept:{mid}
+            vars:
+              ph:
+                type: var
+                name: plasm_execute_prompt_hash
+              sid:
+                type: var
+                name: plasm_execute_session_id
+              slug:
+                type: var
+                name: slug
+              mid:
+                type: var
+                name: mark_id
+          else_expr:
+            type: const
+            value: null
+  body:
+    type: object
+    fields:
+    - - type
+      - type: const
+        value: suggestion.accept
+    - - by
+      - type: var
+        name: by
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
+    - - markId
+      - type: var
+        name: mark_id
+  response:
+    single: true
+annotation_suggestion_insert:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: ops
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - Idempotency-Key
+      - type: if
+        condition:
+          type: exists
+          var: idempotency_key
+        then_expr:
+          type: var
+          name: idempotency_key
+        else_expr:
+          type: if
+          condition:
+            type: exists
+            var: plasm_execute_prompt_hash
+          then_expr:
+            type: format
+            template: plasm:{ph}:{sid}:{slug}:suggestion_insert:{bt}
+            vars:
+              ph:
+                type: var
+                name: plasm_execute_prompt_hash
+              sid:
+                type: var
+                name: plasm_execute_session_id
+              slug:
+                type: var
+                name: slug
+              bt:
+                type: var
+                name: base_token
+          else_expr:
+            type: const
+            value: null
+  body:
+    type: object
+    fields:
+    - - type
+      - type: const
+        value: suggestion.add
+    - - by
+      - type: var
+        name: by
+    - - kind
+      - type: const
+        value: insert
+    - - quote
+      - type: var
+        name: quote
+    - - content
+      - type: var
+        name: content
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
+    - - status
+      - type: if
+        condition:
+          type: exists
+          var: status
+        then_expr:
+          type: var
+          name: status
+        else_expr:
+          type: const
+          value: null
+  response:
+    single: true
+annotation_suggestion_delete:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: ops
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - Idempotency-Key
+      - type: if
+        condition:
+          type: exists
+          var: idempotency_key
+        then_expr:
+          type: var
+          name: idempotency_key
+        else_expr:
+          type: if
+          condition:
+            type: exists
+            var: plasm_execute_prompt_hash
+          then_expr:
+            type: format
+            template: plasm:{ph}:{sid}:{slug}:suggestion_delete:{bt}
+            vars:
+              ph:
+                type: var
+                name: plasm_execute_prompt_hash
+              sid:
+                type: var
+                name: plasm_execute_session_id
+              slug:
+                type: var
+                name: slug
+              bt:
+                type: var
+                name: base_token
+          else_expr:
+            type: const
+            value: null
+  body:
+    type: object
+    fields:
+    - - type
+      - type: const
+        value: suggestion.add
+    - - by
+      - type: var
+        name: by
+    - - kind
+      - type: const
+        value: delete
+    - - quote
+      - type: var
+        name: quote
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
+    - - status
+      - type: if
+        condition:
+          type: exists
+          var: status
+        then_expr:
+          type: var
+          name: status
+        else_expr:
+          type: const
+          value: null
+  response:
+    single: true
+annotation_suggestion_replace:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: ops
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - Idempotency-Key
+      - type: if
+        condition:
+          type: exists
+          var: idempotency_key
+        then_expr:
+          type: var
+          name: idempotency_key
+        else_expr:
+          type: if
+          condition:
+            type: exists
+            var: plasm_execute_prompt_hash
+          then_expr:
+            type: format
+            template: plasm:{ph}:{sid}:{slug}:suggestion_replace:{bt}
+            vars:
+              ph:
+                type: var
+                name: plasm_execute_prompt_hash
+              sid:
+                type: var
+                name: plasm_execute_session_id
+              slug:
+                type: var
+                name: slug
+              bt:
+                type: var
+                name: base_token
+          else_expr:
+            type: const
+            value: null
+  body:
+    type: object
+    fields:
+    - - type
+      - type: const
+        value: suggestion.add
+    - - by
+      - type: var
+        name: by
+    - - kind
+      - type: const
+        value: replace
+    - - quote
+      - type: var
+        name: quote
+    - - content
+      - type: var
+        name: content
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
+    - - status
+      - type: if
+        condition:
+          type: exists
+          var: status
+        then_expr:
+          type: var
+          name: status
+        else_expr:
+          type: const
+          value: null
+  response:
+    single: true
+annotation_suggestion_reject:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: ops
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - Idempotency-Key
+      - type: if
+        condition:
+          type: exists
+          var: idempotency_key
+        then_expr:
+          type: var
+          name: idempotency_key
+        else_expr:
+          type: if
+          condition:
+            type: exists
+            var: plasm_execute_prompt_hash
+          then_expr:
+            type: format
+            template: plasm:{ph}:{sid}:{slug}:suggestion_reject:{mid}
+            vars:
+              ph:
+                type: var
+                name: plasm_execute_prompt_hash
+              sid:
+                type: var
+                name: plasm_execute_session_id
+              slug:
+                type: var
+                name: slug
+              mid:
+                type: var
+                name: mark_id
+          else_expr:
+            type: const
+            value: null
+  body:
+    type: object
+    fields:
+    - - type
+      - type: const
+        value: suggestion.reject
+    - - by
+      - type: var
+        name: by
+    - - baseToken
+      - type: if
+        condition:
+          type: exists
+          var: base_token
+        then_expr:
+          type: var
+          name: base_token
+        else_expr:
+          type: const
+          value: null
+    - - markId
+      - type: var
+        name: mark_id
+  response:
+    single: true
+block_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: document_id
+  - type: literal
+    value: snapshot
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  response:
+    items_path:
+    - blocks
+bug_report_submit:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: bridge
+  - type: literal
+    value: report_bug
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  body:
+    type: object
+    fields:
+    - - report
+      - type: var
+        name: report
+  response:
+    single: true
+collaboration_event_ack:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: events
+  - type: literal
+    value: ack
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - Accept
+      - type: const
+        value: application/json
+  body:
+    type: object
+    fields:
+    - - upToId
+      - type: var
+        name: up_to_id
+    - - by
+      - type: var
+        name: by
+  response:
+    single: true
+collaboration_event_query:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: document_id
+  - type: literal
+    value: events
+  - type: literal
+    value: pending
+  query:
+    type: object
+    fields:
+    - - after
+      - type: if
+        condition:
+          type: exists
+          var: after
+        then_expr:
+          type: var
+          name: after
+        else_expr:
+          type: const
+          value: null
+    - - limit
+      - type: if
+        condition:
+          type: exists
+          var: limit
+        then_expr:
+          type: var
+          name: limit
+        else_expr:
+          type: const
+          value: null
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  response:
+    items_path:
+    - events
+document_bug_report_submit:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: bridge
+  - type: literal
+    value: report_bug
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  body:
+    type: object
+    fields:
+    - - slug
+      - type: var
+        name: slug
+    - - report
+      - type: var
+        name: report
+  response:
+    single: true
+document_edit_v2:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: edit
+  - type: literal
+    value: v2
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - Idempotency-Key
+      - type: if
+        condition:
+          type: exists
+          var: idempotency_key
+        then_expr:
+          type: var
+          name: idempotency_key
+        else_expr:
+          type: if
+          condition:
+            type: exists
+            var: plasm_execute_prompt_hash
+          then_expr:
+            type: format
+            template: plasm:{ph}:{sid}:{slug}:edit_v2:{bt}
+            vars:
+              ph:
+                type: var
+                name: plasm_execute_prompt_hash
+              sid:
+                type: var
+                name: plasm_execute_session_id
+              slug:
+                type: var
+                name: slug
+              bt:
+                type: var
+                name: base_revision
+          else_expr:
+            type: const
+            value: null
+  body:
+    type: object
+    fields:
+    - - by
+      - type: var
+        name: by
+    - - baseRevision
+      - type: var
+        name: base_revision
+    - - operations
+      - type: var
+        name: operations
+  response:
+    single: true
+document_get:
+  method: GET
+  path:
+  - type: literal
+    value: d
+  - type: var
+    name: slug
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  response:
+    single: true
+document_get_markdown:
+  method: GET
+  path:
+  - type: literal
+    value: d
+  - type: var
+    name: slug
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  response:
+    single: true
+document_share_bind:
+  method: GET
+  path:
+  - type: literal
+    value: d
+  - type: var
+    name: slug
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  response:
+    single: true
+document_title_update:
+  method: PUT
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: title
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  body:
+    type: object
+    fields:
+    - - title
+      - type: var
+        name: title
+  response:
+    single: true
+editor_state_get:
+  method: GET
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: state
+  query:
+    type: object
+    fields:
+    - - kinds
+      - type: if
+        condition:
+          type: exists
+          var: kinds
+        then_expr:
+          type: var
+          name: kinds
+        else_expr:
+          type: const
+          value: null
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - Accept
+      - type: const
+        value: application/json
+  response:
+    single: true
+    auxiliary_merge:
+      method: GET
+      path:
+      - type: literal
+        value: api
+      - type: literal
+        value: agent
+      - type: var
+        name: slug
+      - type: literal
+        value: snapshot
+      query:
+        type: object
+        fields:
+        - - token
+          - type: if
+            condition:
+              type: exists
+              var: share_token
+            then_expr:
+              type: var
+              name: share_token
+            else_expr:
+              type: const
+              value: null
+      headers:
+        type: object
+        fields:
+        - - Accept
+          - type: const
+            value: application/json
+      from_path:
+      - blocks
+      into_key: blocks
+presence_update:
+  method: POST
+  path:
+  - type: literal
+    value: api
+  - type: literal
+    value: agent
+  - type: var
+    name: slug
+  - type: literal
+    value: presence
+  query:
+    type: object
+    fields:
+    - - token
+      - type: if
+        condition:
+          type: exists
+          var: share_token
+        then_expr:
+          type: var
+          name: share_token
+        else_expr:
+          type: const
+          value: null
+  headers:
+    type: object
+    fields:
+    - - X-Agent-Id
+      - type: var
+        name: agent_id
+    - - Accept
+      - type: const
+        value: application/json
+  body:
+    type: object
+    fields:
+    - - status
+      - type: if
+        condition:
+          type: exists
+          var: presence_status
+        then_expr:
+          type: var
+          name: presence_status
+        else_expr:
+          type: const
+          value: online
+  response:
+    single: true
+share_link_create:
+  method: POST
+  path:
+  - type: literal
+    value: share
+  - type: literal
+    value: markdown
+  body:
+    type: object
+    fields:
+    - - markdown
+      - type: var
+        name: markdown
+  response:
+    single: true

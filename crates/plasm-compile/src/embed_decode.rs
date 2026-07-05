@@ -497,8 +497,8 @@ mod tests {
 
     #[test]
     fn github_commit_file_contents_get_decodes_path_identity() {
-        use plasm_core::loader::load_schema_dir;
         use crate::decoder::{FieldDecoder, PathSegment};
+        use plasm_core::loader::load_schema_dir;
 
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
         if !dir.exists() {
@@ -541,14 +541,18 @@ mod tests {
             "sha": "abc123sha",
             "type": "file"
         });
-        let decoded = decode_entities_with_cgs(&decoder, &body, Some(&cgs)).expect("decode contents");
+        let decoded =
+            decode_entities_with_cgs(&decoder, &body, Some(&cgs)).expect("decode contents");
         assert_eq!(decoded.len(), 1);
         let row = &decoded[0];
         let parts = row
             .reference
             .compound_parts()
             .expect("CommitFile compound ref");
-        assert_eq!(parts.get("filename"), Some(&"docs/LABEL_COLORS.md".to_string()));
+        assert_eq!(
+            parts.get("filename"),
+            Some(&"docs/LABEL_COLORS.md".to_string())
+        );
         assert_eq!(parts.get("owner"), Some(&"ryan-s-roberts".to_string()));
         assert_eq!(parts.get("repo"), Some(&"tool-test".to_string()));
         assert_eq!(
@@ -559,8 +563,8 @@ mod tests {
 
     #[test]
     fn github_commit_files_embed_inherits_owner_repo_from_commit_url() {
-        use plasm_core::loader::load_schema_dir;
         use crate::embed_target_decoder::entity_decoder_for_from_parent_get_target;
+        use plasm_core::loader::load_schema_dir;
 
         let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
         if !dir.exists() {
@@ -591,7 +595,10 @@ mod tests {
             .reference
             .compound_parts()
             .expect("compound CommitFile ref");
-        assert_eq!(parts.get("filename"), Some(&"docs/LABEL_COLORS.md".to_string()));
+        assert_eq!(
+            parts.get("filename"),
+            Some(&"docs/LABEL_COLORS.md".to_string())
+        );
         assert_eq!(parts.get("owner"), Some(&"ryan-s-roberts".to_string()));
         assert_eq!(parts.get("repo"), Some(&"tool-test".to_string()));
     }

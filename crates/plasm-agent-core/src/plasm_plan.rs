@@ -1839,14 +1839,14 @@ fn validate_compute_template(
             columns,
             template,
             column_aliases,
-            cross_bindings,
+            render_bindings,
         } => {
             validate_render_compute_template(
                 t,
                 columns,
                 template,
                 column_aliases,
-                cross_bindings,
+                render_bindings,
                 node_index,
             )?;
         }
@@ -1860,7 +1860,7 @@ fn validate_render_compute_template(
     columns: &[OutputName],
     template: &str,
     column_aliases: &BTreeMap<String, OutputName>,
-    cross_bindings: &[OutputName],
+    render_bindings: &[OutputName],
     node_index: usize,
 ) -> Result<(), String> {
     if columns.is_empty() {
@@ -1888,12 +1888,12 @@ fn validate_render_compute_template(
             ));
         }
     }
-    for label in cross_bindings {
+    for label in render_bindings {
         OutputName::new(label.as_str().to_string())
-            .map_err(|e| format!("plan.nodes[{node_index}].compute.render.cross_bindings: {e}"))?;
+            .map_err(|e| format!("plan.nodes[{node_index}].compute.render.render_bindings: {e}"))?;
         if matches!(label.as_str(), "rows" | "source") {
             return Err(format!(
-                "plan.nodes[{node_index}].compute.render.cross_bindings must not use reserved name {:?}",
+                "plan.nodes[{node_index}].compute.render.render_bindings must not use reserved name {:?}",
                 label.as_str()
             ));
         }

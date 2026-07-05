@@ -11,6 +11,23 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::blocking_compute::catalog_materialize_workers;
+
+/// One catalog entry materialized from compiled JSON IL on disk.
+#[derive(Debug, Clone)]
+pub struct LoadedCatalogEntry {
+    pub entry_id: String,
+    pub label: String,
+    pub tags: Vec<String>,
+    pub cgs: Arc<CGS>,
+}
+
+impl LoadedCatalogEntry {
+    fn into_registry_pair(self) -> (String, String, Vec<String>, Arc<CGS>) {
+        (self.entry_id, self.label, self.tags, self.cgs)
+    }
+}
+
 /// Validate capability CML templates for every entry in a loaded registry.
 pub fn validate_registry_templates_with_progress<P: FnMut(&str)>(
     reg: &InMemoryCgsRegistry,
@@ -19,14 +36,44 @@ pub fn validate_registry_templates_with_progress<P: FnMut(&str)>(
     let metas = reg.list_entries();
     let n = metas.len();
     progress(&format!("validating capability templates ({n} entries)…"));
-    for meta in metas {
-        let ctx = reg
-            .load_context(&meta.entry_id)
-            .map_err(|e| e.to_string())?;
-        plasm_compile::validate_cgs_capability_templates(ctx.cgs.as_ref())
-            .map_err(|e| format!("{}: {e}", meta.entry_id))?;
+    if n <= 1 {
+        for meta in metas {
+            validate_one_entry(reg, &meta.entry_id)?;
+        }
+        return Ok(());
+    }
+
+    let workers = catalog_materialize_workers();
+    let err: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
+
+    for chunk in metas.chunks(workers) {
+        std::thread::scope(|scope| {
+            for meta in chunk {
+                let entry_id = meta.entry_id.clone();
+                let err = Arc::clone(&err);
+                scope.spawn(move || {
+                    if err.lock().expect("err lock").is_some() {
+                        return;
+                    }
+                    if let Err(e) = validate_one_entry(reg, &entry_id) {
+                        *err.lock().expect("err lock") = Some(e);
+                    }
+                });
+            }
+        });
+        if let Some(e) = err.lock().expect("err lock").take() {
+            return Err(e);
+        }
     }
     Ok(())
+}
+
+fn validate_one_entry(reg: &InMemoryCgsRegistry, entry_id: &str) -> Result<(), String> {
+    let ctx = reg
+        .load_context(entry_id)
+        .map_err(|e| e.to_string())?;
+    plasm_compile::validate_cgs_capability_templates(ctx.cgs.as_ref())
+        .map_err(|e| format!("{entry_id}: {e}"))
 }
 
 fn ingest_manifest_candidate(
@@ -102,21 +149,98 @@ pub fn load_registry_from_catalog_dir_with_progress<P: FnMut(&str)>(
     let mut ids: Vec<String> = best_by_entry.keys().cloned().collect();
     ids.sort();
 
-    let mut pairs = Vec::with_capacity(ids.len());
-    for id in ids {
-        let (_ver, meta, _manifest_path) = best_by_entry.remove(&id).expect("key exists");
-        let cgs: CGS = load_catalog_artifact(dir, &meta)?;
-        let label = if meta.label.is_empty() {
-            meta.entry_id.clone()
-        } else {
-            meta.label.clone()
-        };
-        pairs.push((meta.entry_id, label, meta.tags, Arc::new(cgs)));
-    }
+    let entries = if ids.len() <= 1 {
+        materialize_entries_sequential(dir, &mut best_by_entry, &ids)?
+    } else {
+        materialize_entries_parallel(dir, best_by_entry, &ids)?
+    };
 
-    let reg = InMemoryCgsRegistry::from_pairs(pairs);
+    let reg = InMemoryCgsRegistry::from_pairs(
+        entries
+            .into_iter()
+            .map(LoadedCatalogEntry::into_registry_pair)
+            .collect(),
+    );
     validate_registry_templates_with_progress(&reg, progress)?;
     Ok(reg)
+}
+
+fn materialize_one_entry(
+    dir: &Path,
+    meta: CatalogManifest,
+) -> Result<LoadedCatalogEntry, String> {
+    let cgs: CGS = load_catalog_artifact(dir, &meta)?;
+    let label = if meta.label.is_empty() {
+        meta.entry_id.clone()
+    } else {
+        meta.label.clone()
+    };
+    Ok(LoadedCatalogEntry {
+        entry_id: meta.entry_id,
+        label,
+        tags: meta.tags,
+        cgs: Arc::new(cgs),
+    })
+}
+
+fn materialize_entries_sequential(
+    dir: &Path,
+    best_by_entry: &mut HashMap<String, (u64, CatalogManifest, PathBuf)>,
+    ids: &[String],
+) -> Result<Vec<LoadedCatalogEntry>, String> {
+    let mut entries = Vec::with_capacity(ids.len());
+    for id in ids {
+        let (_ver, meta, _manifest_path) = best_by_entry.remove(id).expect("key exists");
+        entries.push(materialize_one_entry(dir, meta)?);
+    }
+    Ok(entries)
+}
+
+fn materialize_entries_parallel(
+    dir: &Path,
+    mut best_by_entry: HashMap<String, (u64, CatalogManifest, PathBuf)>,
+    ids: &[String],
+) -> Result<Vec<LoadedCatalogEntry>, String> {
+    let dir = dir.to_path_buf();
+    let workers = catalog_materialize_workers();
+    let mut entries = Vec::with_capacity(ids.len());
+
+    for chunk in ids.chunks(workers) {
+        let batch: Arc<std::sync::Mutex<Vec<LoadedCatalogEntry>>> =
+            Arc::new(std::sync::Mutex::new(Vec::with_capacity(chunk.len())));
+        let err: Arc<std::sync::Mutex<Option<String>>> = Arc::new(std::sync::Mutex::new(None));
+
+        std::thread::scope(|scope| {
+            for id in chunk {
+                let (_ver, meta, _manifest_path) = best_by_entry.remove(id).expect("key exists");
+                let dir = dir.clone();
+                let batch = Arc::clone(&batch);
+                let err = Arc::clone(&err);
+                scope.spawn(move || {
+                    if err.lock().expect("err lock").is_some() {
+                        return;
+                    }
+                    match materialize_one_entry(&dir, meta) {
+                        Ok(entry) => batch.lock().expect("batch lock").push(entry),
+                        Err(e) => *err.lock().expect("err lock") = Some(e),
+                    }
+                });
+            }
+        });
+
+        if let Some(e) = err.lock().expect("err lock").take() {
+            return Err(e);
+        }
+        entries.extend(
+            Arc::try_unwrap(batch)
+                .map_err(|_| "parallel catalog materialize: batch mutex still shared".to_string())?
+                .into_inner()
+                .expect("batch lock"),
+        );
+    }
+
+    entries.sort_by(|a, b| a.entry_id.cmp(&b.entry_id));
+    Ok(entries)
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 //! Dry-run stub materialization and staged IR template preflight.
 
 use super::super::*;
-use super::compute_ops::render_compute;
+use super::compute_ops::{render_compute, RenderComputeInput};
 use super::eval::{instantiate_expr_template, EvalScope, InputEnv, PlanEvalEnv};
 use super::input_rows::materialized_result_use_inputs;
 use std::collections::BTreeMap;
@@ -27,7 +27,7 @@ pub(crate) fn dry_validate_render_nodes(
             columns,
             template,
             column_aliases,
-            cross_bindings,
+            render_bindings,
         } = &c.compute.op
         else {
             continue;
@@ -46,18 +46,23 @@ pub(crate) fn dry_validate_render_nodes(
             ent.id_field.as_str().to_string(),
             serde_json::Value::String("dry-placeholder".into()),
         );
-        let mut cross_binding_rows = BTreeMap::new();
-        for label in cross_bindings {
-            cross_binding_rows.insert(label.as_str().to_string(), vec![serde_json::Value::Null]);
+        let mut binding_rows = BTreeMap::new();
+        for label in render_bindings {
+            binding_rows.insert(label.as_str().to_string(), vec![serde_json::Value::Null]);
         }
-        render_compute(
-            &[serde_json::Value::Object(row)],
-            &RenderColumns::from_op_parts(columns.clone(), column_aliases.clone()),
+        if let Some(alias) = c.compute.collection_alias.as_ref() {
+            if !binding_rows.contains_key(alias.as_str()) {
+                binding_rows.insert(alias.as_str().to_string(), vec![serde_json::Value::Null]);
+            }
+        }
+        render_compute(&RenderComputeInput {
+            primary_rows: &[serde_json::Value::Object(row)],
+            columns: &RenderColumns::from_op_parts(columns.clone(), column_aliases.clone()),
             template,
-            c.compute.collection_alias.as_ref(),
-            cross_bindings,
-            &cross_binding_rows,
-        )?;
+            collection_alias: c.compute.collection_alias.as_ref(),
+            render_bindings,
+            binding_rows: &binding_rows,
+        })?;
     }
     Ok(())
 }

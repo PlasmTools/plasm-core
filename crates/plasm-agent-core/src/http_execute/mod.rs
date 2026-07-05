@@ -229,6 +229,8 @@ pub(crate) use context::{
 mod ingress;
 mod mcp_publish;
 mod proof_bind;
+#[cfg(test)]
+pub(crate) use proof_bind::try_proof_document_share_bind;
 mod response;
 mod routes;
 mod run_line;

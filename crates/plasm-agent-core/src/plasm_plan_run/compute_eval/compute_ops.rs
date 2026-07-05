@@ -138,15 +138,15 @@ pub(crate) fn eval_compute_from_rows(
             columns,
             template,
             column_aliases,
-            cross_bindings,
-        } => render_compute(
-            rows,
-            &RenderColumns::from_op_parts(columns.clone(), column_aliases.clone()),
+            render_bindings,
+        } => render_compute(&RenderComputeInput {
+            primary_rows: rows,
+            columns: &RenderColumns::from_op_parts(columns.clone(), column_aliases.clone()),
             template,
-            compute.collection_alias.as_ref(),
-            cross_bindings,
-            cross_binding_rows,
-        ),
+            collection_alias: compute.collection_alias.as_ref(),
+            render_bindings,
+            binding_rows: cross_binding_rows,
+        }),
     }
 }
 pub(crate) fn dedupe_rows(
@@ -289,14 +289,33 @@ pub(crate) fn aggregate_numbers(
         .collect()
 }
 
-pub(crate) fn render_compute(
-    rows: &[serde_json::Value],
-    columns: &RenderColumns,
-    template: &str,
+pub(crate) struct RenderComputeInput<'a> {
+    pub primary_rows: &'a [serde_json::Value],
+    pub columns: &'a RenderColumns,
+    pub template: &'a str,
+    pub collection_alias: Option<&'a OutputName>,
+    pub render_bindings: &'a [OutputName],
+    pub binding_rows: &'a BTreeMap<String, Vec<serde_json::Value>>,
+}
+
+fn effective_render_binding_labels(
+    render_bindings: &[OutputName],
     collection_alias: Option<&OutputName>,
-    cross_bindings: &[OutputName],
-    cross_binding_rows: &BTreeMap<String, Vec<serde_json::Value>>,
-) -> Result<Vec<serde_json::Value>, String> {
+) -> Vec<String> {
+    if !render_bindings.is_empty() {
+        render_bindings
+            .iter()
+            .map(|label| label.as_str().to_string())
+            .collect()
+    } else if let Some(alias) = collection_alias {
+        vec![alias.as_str().to_string()]
+    } else {
+        vec![]
+    }
+}
+
+pub(crate) fn render_compute(input: &RenderComputeInput<'_>) -> Result<Vec<serde_json::Value>, String> {
+    let rows = input.primary_rows;
     if rows.len() > PLAN_RENDER_MAX_ROWS {
         return Err(format!(
             "Plan.render source has {} rows; use Plan.limit(...) to stay at or below {PLAN_RENDER_MAX_ROWS}",
@@ -307,7 +326,8 @@ pub(crate) fn render_compute(
         .iter()
         .enumerate()
         .map(|(row_index, row)| {
-            columns
+            input
+                .columns
                 .project_row(row, row_index)
                 .map(serde_json::Value::Object)
         })
@@ -316,35 +336,27 @@ pub(crate) fn render_compute(
     let mut env = minijinja::Environment::new();
     env.set_auto_escape_callback(|_| minijinja::AutoEscape::None);
     env.set_undefined_behavior(minijinja::UndefinedBehavior::Strict);
-    env.add_template("plan_render", template)
+    env.add_template("plan_render", input.template)
         .map_err(|e| format!("Plan.render template compile error: {e}"))?;
     let tmpl = env
         .get_template("plan_render")
         .map_err(|e| format!("Plan.render template load error: {e}"))?;
-    let alias_name = collection_alias.map(|a| a.as_str());
+    let alias_name = input.collection_alias.map(|a| a.as_str());
     let rows_val = minijinja::Value::from_serialize(&projected);
-    let cross_mode = !cross_bindings.is_empty();
-    let mut ctx: BTreeMap<&str, minijinja::Value> = BTreeMap::from([("rows", rows_val.clone())]);
-    if let Some(alias) = alias_name {
-        let alias_val = if cross_mode {
-            template_binding_value(rows)
-        } else {
-            rows_val.clone()
-        };
-        ctx.insert(alias, alias_val);
-    }
-    for label in cross_bindings {
-        let label_str = label.as_str();
-        let binding_rows = cross_binding_rows
-            .get(label_str)
-            .ok_or_else(|| format!("Plan.render missing cross-binding rows for `{label_str}`"))?;
-        ctx.insert(label_str, template_binding_value(binding_rows));
+    let mut ctx: BTreeMap<String, minijinja::Value> = BTreeMap::from([("rows".to_string(), rows_val)]);
+    for label in effective_render_binding_labels(input.render_bindings, input.collection_alias) {
+        let binding_rows = input
+            .binding_rows
+            .get(label.as_str())
+            .map(|rows| rows.as_slice())
+            .unwrap_or(rows);
+        ctx.insert(label, template_binding_value(binding_rows));
     }
     let rendered = tmpl.render(ctx).map_err(|e| {
         if matches!(e.kind(), minijinja::ErrorKind::UndefinedError) {
             format!(
                 "Plan.render template render error: {e}. {}",
-                render_context_hint(columns, alias_name)
+                render_context_hint(input.columns, alias_name)
             )
         } else {
             format!("Plan.render template render error: {e}")
@@ -367,20 +379,23 @@ fn template_binding_value(rows: &[serde_json::Value]) -> minijinja::Value {
     }
 }
 
-pub(crate) fn cross_binding_rows_for_render(
+pub(crate) fn binding_rows_for_render(
     compute: &ComputeTemplate,
     materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
 ) -> Result<BTreeMap<String, Vec<serde_json::Value>>, String> {
-    let ComputeOp::Render { cross_bindings, .. } = &compute.op else {
+    let ComputeOp::Render {
+        render_bindings, ..
+    } = &compute.op
+    else {
         return Ok(BTreeMap::new());
     };
+    let labels = effective_render_binding_labels(render_bindings, compute.collection_alias.as_ref());
     let mut out = BTreeMap::new();
-    for label in cross_bindings {
-        let node_id = PlanNodeId::new(label.as_str().to_string())?;
+    for label in labels {
+        let node_id = PlanNodeId::new(label.clone())?;
         let mat = materialized.get(&node_id).ok_or_else(|| {
             format!(
-                "Plan.render cross-binding `{label}`: node `{}` has not been materialized",
-                label.as_str()
+                "Plan.render binding `{label}`: node `{label}` has not been materialized"
             )
         })?;
         let rows = mat
@@ -389,11 +404,10 @@ pub(crate) fn cross_binding_rows_for_render(
             .map(|r| r.to_vec())
             .ok_or_else(|| {
                 format!(
-                    "Plan.render cross-binding `{label}`: node `{}` is not inline materialized",
-                    label.as_str()
+                    "Plan.render binding `{label}`: node `{label}` is not inline materialized"
                 )
             })?;
-        out.insert(label.as_str().to_string(), rows);
+        out.insert(label, rows);
     }
     Ok(out)
 }

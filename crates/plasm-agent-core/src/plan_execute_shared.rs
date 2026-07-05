@@ -123,3 +123,97 @@ impl PlanLineExecuteShared {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use crate::http_execute::try_proof_document_share_bind;
+    use crate::test_support::proof_bind_fixtures::ProofBindFixture;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn build_exec_opts_reads_fresh_share_token_after_mid_plan_bind() {
+        let fx = ProofBindFixture::open("plan_share_refresh");
+        let st = fx.host_with_registry();
+        let shared = PlanLineExecuteShared::prepare(&fx.session, &st, "sid_plan").await;
+        let fp_sink = Arc::new(Mutex::new(Vec::<String>::new()));
+
+        let before = shared
+            .build_exec_opts(
+                &fx.session,
+                &st,
+                fx.cgs.as_ref(),
+                "Document",
+                fp_sink.clone(),
+                plasm_core::PreflightToken::VERIFIED,
+                None,
+            )
+            .await;
+        assert!(
+            before
+                .execute_session
+                .as_ref()
+                .and_then(|m| m.share_token.as_deref())
+                .is_none(),
+            "expected no share token before bind"
+        );
+
+        try_proof_document_share_bind(&fx.session, fx.cgs.as_ref(), &fx.token_only_bind_expr())
+            .await
+            .expect("bind")
+            .expect("bind intercept");
+
+        let after = shared
+            .build_exec_opts(
+                &fx.session,
+                &st,
+                fx.cgs.as_ref(),
+                "Document",
+                fp_sink,
+                plasm_core::PreflightToken::VERIFIED,
+                None,
+            )
+            .await;
+        assert_eq!(
+            after
+                .execute_session
+                .as_ref()
+                .and_then(|m| m.share_token.as_deref()),
+            Some("secret-tok"),
+            "plan line after bind must see fresh session share token"
+        );
+    }
+
+    #[tokio::test]
+    async fn build_exec_opts_after_bind_matches_session_read() {
+        let fx = ProofBindFixture::open("plan_share_read");
+        let st = fx.host_with_registry();
+        let shared = PlanLineExecuteShared::prepare(&fx.session, &st, "sid_read").await;
+
+        try_proof_document_share_bind(&fx.session, fx.cgs.as_ref(), &fx.token_only_bind_expr())
+            .await
+            .expect("bind")
+            .expect("bind intercept");
+
+        let opts = shared
+            .build_exec_opts(
+                &fx.session,
+                &st,
+                fx.cgs.as_ref(),
+                "Document",
+                Arc::new(Mutex::new(Vec::<String>::new())),
+                plasm_core::PreflightToken::VERIFIED,
+                None,
+            )
+            .await;
+        assert_eq!(
+            opts.execute_session
+                .as_ref()
+                .and_then(|m| m.share_token.as_deref()),
+            fx.session.session_share_token.read().await.as_deref(),
+            "build_exec_opts share token must match session read lock"
+        );
+    }
+}

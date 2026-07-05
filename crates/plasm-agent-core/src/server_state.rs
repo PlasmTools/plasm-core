@@ -105,6 +105,9 @@ pub struct PlasmOssHostState {
     pub redis_backend: Option<Arc<crate::mcp_transport_store::RedisBackend>>,
     /// Large-stack worker pool for live `run_plasm_comp` (injected at bootstrap; shared via `Arc`).
     pub live_plan_pool: Arc<crate::live_plan_run_worker::LivePlanRunPool>,
+    pub(crate) blocking_compute: Arc<crate::blocking_compute::BlockingComputePool>,
+    pub(crate) tool_model_service: Arc<crate::tool_model_service::ToolModelService>,
+    pub(crate) catalog_reload_lock: Arc<tokio::sync::Mutex<()>>,
     /// CEP-13: single-flight logical open + serialized teaching exposure commits per execute row.
     pub session_coordination: Arc<SessionCoordination>,
     /// HTTP `User-Agent` per MCP transport session id (`mcp-session-id` header).
@@ -204,6 +207,15 @@ impl PlasmHostState {
     /// Dedicated large-stack pool for live plan execution (see [`crate::live_plan_run_worker`]).
     pub fn live_plan_pool(&self) -> Arc<crate::live_plan_run_worker::LivePlanRunPool> {
         Arc::clone(&self.oss.live_plan_pool)
+    }
+
+    /// Blocking pool for CPU-bound / sync I/O (catalog load, tool-model synthesis).
+    pub fn blocking_compute(&self) -> Arc<crate::blocking_compute::BlockingComputePool> {
+        Arc::clone(&self.oss.blocking_compute)
+    }
+
+    pub(crate) fn tool_model_service(&self) -> Arc<crate::tool_model_service::ToolModelService> {
+        Arc::clone(&self.oss.tool_model_service)
     }
 
     /// Stash HTTP User-Agent for an MCP transport session (`mcp-session-id`).
@@ -418,6 +430,38 @@ impl PlasmHostState {
         self.execute_session_registry
             .patch_bind_credentials(session, session_id, reuse_key.as_ref())
             .await
+    }
+}
+
+/// Errors from [`PlasmHostState::build_tool_model_for_entry`].
+#[derive(Debug, thiserror::Error)]
+pub enum ToolModelHostError {
+    #[error("unknown catalog entry `{0}`")]
+    UnknownEntry(String),
+    #[error(transparent)]
+    Discovery(#[from] plasm_core::discovery::DiscoveryError),
+    #[error(transparent)]
+    Service(#[from] crate::tool_model_service::ToolModelServiceError),
+}
+
+impl PlasmHostState {
+    /// Pin one registry snapshot, resolve entry CGS, build tool-model off the async runtime.
+    pub async fn build_tool_model_for_entry(
+        &self,
+        entry_id: &str,
+        q: crate::tool_model::ToolModelQuery,
+    ) -> Result<std::sync::Arc<crate::tool_model::ToolModelResponse>, ToolModelHostError> {
+        use plasm_core::CgsCatalog;
+
+        let reg = self.catalog.snapshot();
+        let meta = reg
+            .lookup_entry_meta(entry_id)
+            .ok_or_else(|| ToolModelHostError::UnknownEntry(entry_id.to_string()))?;
+        let ctx = reg.load_context(entry_id)?;
+        self.tool_model_service()
+            .build(ctx.cgs, meta, q)
+            .await
+            .map_err(ToolModelHostError::Service)
     }
 }
 

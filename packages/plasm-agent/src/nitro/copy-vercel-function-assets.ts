@@ -23,7 +23,10 @@ export async function copyVercelFunctionAssets(options: {
     return;
   }
 
-  await cp(options.agentRoot, path.join(funcDir, "agent"), { recursive: true });
+  await cp(options.agentRoot, path.join(funcDir, "agent"), {
+    recursive: true,
+    dereference: true,
+  });
 
   await copyNativeEnginePackages(options.projectRoot, funcDir);
 

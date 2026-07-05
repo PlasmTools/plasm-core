@@ -15,7 +15,11 @@ pub mod binding_store;
 pub mod bootstrap_secrets;
 pub(crate) mod catalog_ownership;
 pub(crate) mod catalog_pin;
+pub mod blocking_compute;
+pub mod catalog_data;
+pub mod catalog_reload;
 pub mod catalog_runtime;
+pub(crate) mod tool_model_service;
 pub mod cli_builder;
 pub mod control_plane_http;
 mod discovery_embedding_chunks;
@@ -143,7 +147,6 @@ pub use plasm_comp_wire::{
 pub use plasm_compile::{
     compile_plasm_expression, compile_plasm_program, compile_plasm_surface_line_to_comp,
 };
-pub mod catalog_data;
 mod plan_surface_policy;
 pub(crate) mod plasm_dag;
 mod plasm_dag_surface_guards;

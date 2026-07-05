@@ -8,18 +8,17 @@
     "dev": "plasm-agent dev",
     "dev:interactive": "plasm-agent dev --interactive",
     "info": "plasm-agent info",
-    "deploy": "vercel deploy",
+    "deploy": "vercel deploy --prod",
     "eval": "tsx scripts/run-evals.ts",
     "smoke:channel": "tsx scripts/smoke-channel.ts",
-    "test:proof-extract": "tsx scripts/test-proof-extract.mjs",
-    "test:hn-preflight": "tsx scripts/test-hn-algolia-preflight.mjs"
+    "test:proof-extract": "tsx scripts/test-proof-extract.mjs"
   },
   "dependencies": {
     "@ai-sdk/otel": "1.0.14",
-    "@plasm_lang/engine": "0.3.112",
-    "@plasm_lang/vercel-agent": "file:../../plasm-oss/packages/plasm-agent",
-    "@vercel/blob": "0.27.3",
+    "@plasm_lang/engine": "0.3.121",
+    "@plasm_lang/vercel-agent": "0.3.120",
     "@vercel/functions": "3.7.4",
+    "@vercel/oidc": "^3.8.0",
     "@vercel/otel": "1.14.2",
     "ai": "7.0.14",
     "esbuild": "0.25.12",

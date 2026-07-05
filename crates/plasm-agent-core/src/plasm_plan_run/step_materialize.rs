@@ -263,12 +263,12 @@ pub(crate) async fn materialize_executable_plan_step(
                     source_id.as_str()
                 )
             })?;
-            let cross_binding_rows = cross_binding_rows_for_render(&compute.compute, materialized)?;
+            let binding_rows = binding_rows_for_render(&compute.compute, materialized)?;
             let scoped_cgs = ctx.es.cgs.as_ref();
             let rows = eval_compute_with_row_source(
                 &compute.compute,
                 &source_mat.row_source,
-                &cross_binding_rows,
+                &binding_rows,
                 ctx.es,
                 ctx.st,
                 ctx.session_id,

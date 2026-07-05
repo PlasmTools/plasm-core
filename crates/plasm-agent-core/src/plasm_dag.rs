@@ -14,15 +14,11 @@ use crate::plasm_plan::{
     PlanRelationTraversal, PlanValue, QualifiedEntityKey, RelationCardinality,
     RelationSourceCardinality, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
 };
-use crate::plasm_plan_run::RenderColumns;
 use crate::plasm_plan_run::{
     format_session_symbolic_parse_error, parse_plasm_surface_line_program,
     symbol_map_for_plasm_surface_parse,
 };
-use crate::plasm_render_compile::{
-    infer_column_tokens_from_minijinja_template, infer_label_prefixed_columns_from_template,
-    parse_field_list_with_tokens, resolve_inferred_render_columns, resolve_render_collection_alias,
-};
+use crate::plasm_render_compile::{parse_field_list_with_tokens, render_plan_graph_edges};
 use crate::program_binding::{
     BoundedSingletonKind, ContinuationAnchor, ContinuationCapability, ProgramBindingContract,
     RowCardinalityProof, SegmentPolicy,
@@ -32,7 +28,7 @@ use plasm_core::expr_parser::{
     missing_program_roots_error, peel_postfix_suffixes, program_duplicate_return_node_error,
     program_empty_error, program_return_keyword_error, split_assignment_at_top_level,
     split_token_top_level, split_top_level, strip_line_comment, try_parse_render_tail,
-    validate_program_label, validate_program_statement_order, PlasmPostfixOp, RenderTailParse,
+    validate_program_label, validate_program_statement_order, PlasmPostfixOp,
 };
 use plasm_core::query_resolve;
 use plasm_core::row_composition::RowSuffix;
@@ -1655,195 +1651,10 @@ fn lower_suffix_stream(
     Ok(out)
 }
 
-fn plan_render_content_schema() -> Result<SyntheticResultSchema, String> {
-    Ok(SyntheticResultSchema {
-        entity: Some("PlanRender".to_string()),
-        fields: vec![SyntheticFieldSchema {
-            name: OutputName::new("content".to_string()).map_err(|e| e.to_string())?,
-            value_kind: SyntheticValueKind::String,
-            source: None,
-        }],
-    })
-}
+#[path = "plasm_render_dag.rs"]
+mod render_dag;
 
-fn compile_render_from_tail(
-    session: &ExecuteSession,
-    state: &CompileState<'_>,
-    id: &str,
-    rhs_display: &str,
-    tail: RenderTailParse,
-) -> Result<Vec<DagNode>, String> {
-    match tail {
-        RenderTailParse::Explicit {
-            source,
-            fields,
-            template,
-        } => {
-            let scratch = compile_state_with_nodes(state, &[]);
-            let qe =
-                resolve_qualified_entity_for_dag_source(&scratch, &[], source.trim().to_string());
-            let field_pairs = parse_field_list_with_tokens(
-                session,
-                state.cross_cache,
-                qe.as_ref(),
-                fields.trim(),
-            )?;
-            let spec = RenderColumns::from_field_pairs(&field_pairs)?;
-            compile_render_chain(
-                session,
-                state,
-                id,
-                rhs_display,
-                source.trim(),
-                Some(spec),
-                template,
-                vec![],
-            )
-        }
-        RenderTailParse::Inferred { head, template } => compile_render_chain(
-            session,
-            state,
-            id,
-            rhs_display,
-            head.trim(),
-            None,
-            template,
-            vec![],
-        ),
-        RenderTailParse::CrossBinding { sources, template } => {
-            for src in &sources {
-                if !state.contains(src.trim()) {
-                    return Err(format!(
-                        "Plasm program `{id}`: cross-binding render source `{src}` is not in scope"
-                    ));
-                }
-            }
-            let primary = sources[0].trim();
-            let cross = sources[1..]
-                .iter()
-                .map(|s| s.trim().to_string())
-                .collect::<Vec<_>>();
-            compile_render_chain(
-                session,
-                state,
-                id,
-                rhs_display,
-                primary,
-                None,
-                template,
-                cross,
-            )
-        }
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn compile_render_chain(
-    session: &ExecuteSession,
-    state: &CompileState<'_>,
-    id: &str,
-    rhs_display: &str,
-    head: &str,
-    explicit_render: Option<RenderColumns>,
-    template: String,
-    cross_binding_labels: Vec<String>,
-) -> Result<Vec<DagNode>, String> {
-    let (head_core, suffixes) = decompose_row_suffix_stream(session, state, head)?;
-    let tail_singleton = suffixes.iter().any(|s| matches!(s, RowSuffix::Singleton));
-    let tail_page_size = suffixes.iter().find_map(|s| {
-        if let RowSuffix::PageSize { n } = s {
-            Some(*n as usize)
-        } else {
-            None
-        }
-    });
-
-    let tmp = format!("__plasm_render_src_{id}");
-    let prefix: Vec<DagNode> = if suffixes.is_empty() {
-        if state.contains(head_core.trim()) {
-            vec![]
-        } else {
-            vec![compile_surface_node(session, state, &tmp, head)?]
-        }
-    } else {
-        lower_suffix_stream(session, state, &tmp, head, &head_core, suffixes, None)
-            .map_err(|e| format!("Plasm program `{id}`: {e}"))?
-    };
-
-    let chain_tail_id: String = if prefix.is_empty() {
-        head_core.trim().to_string()
-    } else {
-        prefix
-            .last()
-            .map(|n| n.id.clone())
-            .ok_or_else(|| format!("Plasm program `{id}`: empty render chain"))?
-    };
-
-    let spec = if let Some(explicit) = explicit_render {
-        explicit
-    } else if let Some(raw_tokens) = infer_column_tokens_from_minijinja_template(&template)
-        .or_else(|| infer_label_prefixed_columns_from_template(&template, head_core.trim()))
-    {
-        let scratch = compile_state_with_nodes(state, &prefix);
-        let qe = resolve_qualified_entity_for_dag_source(&scratch, &prefix, chain_tail_id.clone());
-        resolve_inferred_render_columns(session, state.cross_cache, qe.as_ref(), &raw_tokens)?
-    } else {
-        let tail_node =
-            lookup_dag_node(state, &prefix, chain_tail_id.as_str()).ok_or_else(|| {
-                format!(
-                    "Plasm program `{id}`: template column inference failed for `{chain_tail_id}`"
-                )
-            })?;
-        let cols = infer_render_columns_for_node(session, state, &prefix, tail_node)
-            .map_err(|e| format!("Plasm program `{id}`: cannot infer template columns: {e}"))?;
-        RenderColumns::from_op_parts(cols, BTreeMap::new())
-    };
-
-    if spec.is_empty() {
-        return Err(format!(
-            "Plasm program `{id}`: row-to-text templates require at least one column; use `[field,...] <<TAG` after narrowing"
-        ));
-    }
-
-    let (columns, column_aliases) = spec.into_op_parts();
-    let collection_alias =
-        resolve_render_collection_alias(head_core.trim(), &columns, |label| state.contains(label));
-
-    let cross_bindings = cross_binding_labels
-        .iter()
-        .map(|label| OutputName::new(label.clone()).map_err(|e| e.to_string()))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let mut render_node = DagNode {
-        id: id.to_string(),
-        expr: rhs_display.to_string(),
-        singleton: true,
-        // When postfix lowering built a non-empty prefix, trailing `.page_size(n)` / `.singleton()`
-        // are applied to the final row-producing node there; avoid double-applying `page_size` on
-        // the row-to-text template compute.
-        page_size: if prefix.is_empty() {
-            tail_page_size
-        } else {
-            None
-        },
-        source: DagNodeSource::Compute {
-            source: chain_tail_id,
-            op: ComputeOp::Render {
-                columns,
-                template,
-                column_aliases,
-                cross_bindings,
-            },
-            schema: plan_render_content_schema()?,
-            collection_alias,
-        },
-    };
-    render_node.singleton |= tail_singleton;
-
-    let mut out = prefix;
-    out.push(render_node);
-    Ok(out)
-}
+use render_dag::compile_render_from_tail;
 
 fn compile_node_expr(
     session: &ExecuteSession,
@@ -3206,23 +3017,12 @@ fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
             if let Some(alias) = collection_alias {
                 compute["collection_alias"] = json!(alias);
             }
-            let cross_binding_ids = match op {
-                ComputeOp::Render { cross_bindings, .. } => cross_bindings
-                    .iter()
-                    .map(|label| label.as_str().to_string())
-                    .collect::<Vec<_>>(),
-                _ => Vec::new(),
-            };
-            let mut depends_on = vec![source.clone()];
-            for label in &cross_binding_ids {
-                if !depends_on.iter().any(|d| d == label) {
-                    depends_on.push(label.clone());
+            let (depends_on, uses_result) = match op {
+                ComputeOp::Render { render_bindings, .. } => {
+                    render_plan_graph_edges(source, render_bindings)
                 }
-            }
-            let mut uses_result = vec![json!({ "node": source, "as": "source" })];
-            for label in cross_binding_ids {
-                uses_result.push(json!({ "node": label, "as": label }));
-            }
+                _ => (vec![source.clone()], vec![json!({ "node": source, "as": "source" })]),
+            };
             Ok(json!({
                 "id": node.id,
                 "kind": "compute",
@@ -6814,7 +6614,7 @@ report"#;
             "expected cross-binding source in uses_result: {uses:?}"
         );
         let op = &report["compute"]["op"];
-        assert_eq!(op["cross_bindings"].as_array().map(|a| a.len()), Some(1));
+        assert_eq!(op["render_bindings"].as_array().map(|a| a.len()), Some(2));
         let plan_value = crate::plasm_plan::parse_plan_value(&plan).expect("parse plan");
         crate::plasm_plan::validate_plan_artifact(&plan_value).expect("validate plan");
     }

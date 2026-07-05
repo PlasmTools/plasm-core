@@ -762,7 +762,7 @@ fn assert_planning_ir(
         }
         "lang_cross_binding_render" => {
             let Some(ComputeTemplate {
-                op: ComputeOp::Render { cross_bindings, .. },
+                op: ComputeOp::Render { render_bindings, .. },
                 ..
             }) = computes
                 .iter()
@@ -770,13 +770,11 @@ fn assert_planning_ir(
             else {
                 return Err(format!("expected Render compute, got {:?}", computes));
             };
-            if cross_bindings.len() != 1 || cross_bindings[0].as_str() != "b" {
+            let labels: Vec<_> = render_bindings.iter().map(|l| l.as_str()).collect();
+            if labels != ["a", "b"] {
                 return Err(format!(
-                    "expected cross_bindings [b], got {:?}",
-                    cross_bindings
-                        .iter()
-                        .map(|l| l.as_str())
-                        .collect::<Vec<_>>()
+                    "expected render_bindings [a, b], got {:?}",
+                    labels
                 ));
             }
         }

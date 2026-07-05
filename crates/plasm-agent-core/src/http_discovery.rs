@@ -20,8 +20,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::http_problem_util::problem_response;
 use crate::http_problem_util::problem_types;
-use crate::server_state::PlasmHostState;
-use crate::tool_model::{build_tool_model, ToolModelBuildError, ToolModelQuery};
+use crate::server_state::{PlasmHostState, ToolModelHostError};
+use crate::tool_model::ToolModelQuery;
+use crate::tool_model_service::ToolModelServiceError;
 use crate::typed_discovery_host::run_typed_catalog_discovery;
 
 #[derive(Debug, Deserialize)]
@@ -126,13 +127,28 @@ fn discovery_problem(e: DiscoveryError) -> Problem {
     }
 }
 
-fn tool_model_problem(e: ToolModelBuildError) -> Problem {
-    Problem::custom(
-        ProblemStatus::BAD_REQUEST,
-        Uri::from_static(problem_types::TOOL_MODEL_BAD_REQUEST),
-    )
-    .with_title("Bad Request")
-    .with_detail(e.to_string())
+fn tool_model_problem(e: ToolModelHostError) -> Problem {
+    match e {
+        ToolModelHostError::UnknownEntry(id) => Problem::custom(
+            ProblemStatus::NOT_FOUND,
+            Uri::from_static(problem_types::DISCOVERY_UNKNOWN_ENTRY),
+        )
+        .with_title("Not Found")
+        .with_detail(id),
+        ToolModelHostError::Discovery(err) => discovery_problem(err),
+        ToolModelHostError::Service(ToolModelServiceError::Build(build)) => Problem::custom(
+            ProblemStatus::BAD_REQUEST,
+            Uri::from_static(problem_types::TOOL_MODEL_BAD_REQUEST),
+        )
+        .with_title("Bad Request")
+        .with_detail(build.to_string()),
+        ToolModelHostError::Service(ToolModelServiceError::Compute(_)) => Problem::custom(
+            ProblemStatus::SERVICE_UNAVAILABLE,
+            Uri::from_static(problem_types::TOOL_MODEL_BAD_REQUEST),
+        )
+        .with_title("Service Unavailable")
+        .with_detail("tool-model compute pool unavailable"),
+    }
 }
 
 async fn get_registry(Extension(st): Extension<PlasmHostState>) -> Json<RegistryListResponse> {
@@ -180,21 +196,8 @@ async fn get_tool_model(
     Path(entry_id): Path<String>,
     Query(q): Query<ToolModelQuery>,
 ) -> Response {
-    let reg = st.catalog.snapshot();
-    let meta = match reg.lookup_entry_meta(&entry_id) {
-        Some(m) => m,
-        None => {
-            return problem_response(discovery_problem(DiscoveryError::UnknownEntry(
-                entry_id.clone(),
-            )));
-        }
-    };
-    let ctx = match reg.load_context(&entry_id) {
-        Ok(ctx) => ctx,
-        Err(e) => return problem_response(discovery_problem(e)),
-    };
-    match build_tool_model(ctx.cgs.as_ref(), &meta, &q) {
-        Ok(body) => Json(body).into_response(),
+    match st.build_tool_model_for_entry(&entry_id, q).await {
+        Ok(body) => Json(body.as_ref()).into_response(),
         Err(e) => problem_response(tool_model_problem(e)),
     }
 }
