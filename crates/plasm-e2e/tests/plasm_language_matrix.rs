@@ -878,7 +878,9 @@ fn assert_planning_ir(
         }
         "lang_inline_heredoc_method_arg_github_shape" => {
             if !comp_ir_contains_selector(comp, "create") {
-                return Err("expected create invoke with github-shaped heredoc close (PLP-2)".into());
+                return Err(
+                    "expected create invoke with github-shaped heredoc close (PLP-2)".into(),
+                );
             }
             if !json_value_contains_substring(comp, "## Problem") {
                 return Err("expected markdown heredoc body preserved in comp IR".into());

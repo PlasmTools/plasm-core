@@ -436,9 +436,7 @@ async fn workflow_apps_e2e_async() {
         "plasm dry-run must attach comp under _meta.ui.plasm: {dry_mcp}"
     );
     assert!(
-        dry_structured_plasm
-            .and_then(|p| p.get("comp"))
-            .is_none(),
+        dry_structured_plasm.and_then(|p| p.get("comp")).is_none(),
         "agent structuredContent.plasm must omit comp DAG: {dry_mcp}"
     );
     assert!(
