@@ -20,8 +20,8 @@ use crate::plasm_plan_run::{
     symbol_map_for_plasm_surface_parse,
 };
 use crate::plasm_render_compile::{
-    infer_column_tokens_from_minijinja_template, parse_field_list_with_tokens,
-    resolve_inferred_render_columns, resolve_render_collection_alias,
+    infer_column_tokens_from_minijinja_template, infer_label_prefixed_columns_from_template,
+    parse_field_list_with_tokens, resolve_inferred_render_columns, resolve_render_collection_alias,
 };
 use crate::program_binding::{
     BoundedSingletonKind, ContinuationAnchor, ContinuationCapability, ProgramBindingContract,
@@ -1697,14 +1697,47 @@ fn compile_render_from_tail(
                 source.trim(),
                 Some(spec),
                 template,
+                vec![],
             )
         }
-        RenderTailParse::Inferred { head, template } => {
-            compile_render_chain(session, state, id, rhs_display, head.trim(), None, template)
+        RenderTailParse::Inferred { head, template } => compile_render_chain(
+            session,
+            state,
+            id,
+            rhs_display,
+            head.trim(),
+            None,
+            template,
+            vec![],
+        ),
+        RenderTailParse::CrossBinding { sources, template } => {
+            for src in &sources {
+                if !state.contains(src.trim()) {
+                    return Err(format!(
+                        "Plasm program `{id}`: cross-binding render source `{src}` is not in scope"
+                    ));
+                }
+            }
+            let primary = sources[0].trim();
+            let cross = sources[1..]
+                .iter()
+                .map(|s| s.trim().to_string())
+                .collect::<Vec<_>>();
+            compile_render_chain(
+                session,
+                state,
+                id,
+                rhs_display,
+                primary,
+                None,
+                template,
+                cross,
+            )
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compile_render_chain(
     session: &ExecuteSession,
     state: &CompileState<'_>,
@@ -1713,6 +1746,7 @@ fn compile_render_chain(
     head: &str,
     explicit_render: Option<RenderColumns>,
     template: String,
+    cross_binding_labels: Vec<String>,
 ) -> Result<Vec<DagNode>, String> {
     let (head_core, suffixes) = decompose_row_suffix_stream(session, state, head)?;
     let tail_singleton = suffixes.iter().any(|s| matches!(s, RowSuffix::Singleton));
@@ -1747,7 +1781,9 @@ fn compile_render_chain(
 
     let spec = if let Some(explicit) = explicit_render {
         explicit
-    } else if let Some(raw_tokens) = infer_column_tokens_from_minijinja_template(&template) {
+    } else if let Some(raw_tokens) = infer_column_tokens_from_minijinja_template(&template)
+        .or_else(|| infer_label_prefixed_columns_from_template(&template, head_core.trim()))
+    {
         let scratch = compile_state_with_nodes(state, &prefix);
         let qe = resolve_qualified_entity_for_dag_source(&scratch, &prefix, chain_tail_id.clone());
         resolve_inferred_render_columns(session, state.cross_cache, qe.as_ref(), &raw_tokens)?
@@ -1773,6 +1809,11 @@ fn compile_render_chain(
     let collection_alias =
         resolve_render_collection_alias(head_core.trim(), &columns, |label| state.contains(label));
 
+    let cross_bindings = cross_binding_labels
+        .iter()
+        .map(|label| OutputName::new(label.clone()).map_err(|e| e.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+
     let mut render_node = DagNode {
         id: id.to_string(),
         expr: rhs_display.to_string(),
@@ -1791,6 +1832,7 @@ fn compile_render_chain(
                 columns,
                 template,
                 column_aliases,
+                cross_bindings,
             },
             schema: plan_render_content_schema()?,
             collection_alias,
@@ -3164,14 +3206,31 @@ fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
             if let Some(alias) = collection_alias {
                 compute["collection_alias"] = json!(alias);
             }
+            let cross_binding_ids = match op {
+                ComputeOp::Render { cross_bindings, .. } => cross_bindings
+                    .iter()
+                    .map(|label| label.as_str().to_string())
+                    .collect::<Vec<_>>(),
+                _ => Vec::new(),
+            };
+            let mut depends_on = vec![source.clone()];
+            for label in &cross_binding_ids {
+                if !depends_on.iter().any(|d| d == label) {
+                    depends_on.push(label.clone());
+                }
+            }
+            let mut uses_result = vec![json!({ "node": source, "as": "source" })];
+            for label in cross_binding_ids {
+                uses_result.push(json!({ "node": label, "as": label }));
+            }
             Ok(json!({
                 "id": node.id,
                 "kind": "compute",
                 "effect_class": "artifact_read",
                 "result_shape": if matches!(op, ComputeOp::Render { .. }) { "single" } else { "list" },
                 "compute": compute,
-                "depends_on": [source],
-                "uses_result": [{ "node": source, "as": "source" }],
+                "depends_on": depends_on,
+                "uses_result": uses_result,
             }))
         }
         DagNodeSource::Derive {
@@ -6717,6 +6776,45 @@ created"#;
             uses.iter().any(|u| u["node"] == "report"),
             "cross-binding heredoc must record upstream node: {uses:?}"
         );
+        let plan_value = crate::plasm_plan::parse_plan_value(&plan).expect("parse plan");
+        crate::plasm_plan::validate_plan_artifact(&plan_value).expect("validate plan");
+    }
+
+    #[test]
+    fn cross_binding_render_compiles_matrix_program() {
+        let session = test_session();
+        let source = r#"a = LangItem("i1")[id,title]
+b = LangItem("i2")[id,title]
+report = a,b <<MD
+Pair: {{ a.title }} / {{ b.title }}
+MD
+report"#;
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "cross-binding-render",
+            source,
+        )
+        .expect("compile");
+        let report = plan["nodes"]
+            .as_array()
+            .expect("nodes")
+            .iter()
+            .find(|n| n["id"] == "report")
+            .expect("render node");
+        assert_eq!(report["kind"], "compute");
+        let uses = report["uses_result"].as_array().expect("uses_result");
+        assert!(
+            uses.iter().any(|u| u["node"] == "a"),
+            "expected primary source in uses_result: {uses:?}"
+        );
+        assert!(
+            uses.iter().any(|u| u["node"] == "b"),
+            "expected cross-binding source in uses_result: {uses:?}"
+        );
+        let op = &report["compute"]["op"];
+        assert_eq!(op["cross_bindings"].as_array().map(|a| a.len()), Some(1));
         let plan_value = crate::plasm_plan::parse_plan_value(&plan).expect("parse plan");
         crate::plasm_plan::validate_plan_artifact(&plan_value).expect("validate plan");
     }

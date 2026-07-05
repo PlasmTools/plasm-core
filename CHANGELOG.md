@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.122] - 2026-07-05
+
+### Fixed
+
+- **Proof token-only bind in plans:** `PlanLineExecuteShared::build_exec_opts` re-reads `session_share_token` / `session_proof_base_token` on every plan surface line so `document_share_bind` in the same `plasm_run` program applies before subsequent reads.
+- **Teaching optional legend:** zero-arity invoke teaching rows omit `optional` Meaning when the expression carries no optional `p#` tokens.
+
+### Added
+
+- **Cross-binding row-to-text templates:** `report = a,b <<TAG` binds comma-separated in-scope labels into Minijinja (`{{ a.field }}` on singleton rows; plural labels remain arrays for `{% for %}`).
+
+### Changed
+
+- **Language spec / prompts:** cross-binding render surface documented in [`docs/plasm-language-definition.md`](../docs/plasm-language-definition.md) and MCP program assets.
+
 ## [0.3.121] - 2026-07-05
 
 ### Fixed

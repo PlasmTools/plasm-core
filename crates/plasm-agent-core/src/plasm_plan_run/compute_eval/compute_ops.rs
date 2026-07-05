@@ -9,13 +9,16 @@ use super::super::*;
 pub(crate) async fn eval_compute_with_row_source(
     compute: &ComputeTemplate,
     row_source: &MaterializedRowSource,
+    cross_binding_rows: &BTreeMap<String, Vec<serde_json::Value>>,
     es: &ExecuteSession,
     st: &PlasmHostState,
     session_id: &str,
     cgs: &CGS,
 ) -> Result<Vec<serde_json::Value>, String> {
     match row_source {
-        MaterializedRowSource::Inline(rows) => eval_compute_from_rows(compute, rows),
+        MaterializedRowSource::Inline(rows) => {
+            eval_compute_from_rows(compute, rows, cross_binding_rows)
+        }
         MaterializedRowSource::GraphBacked {
             entity_type,
             logical_count,
@@ -30,7 +33,7 @@ pub(crate) async fn eval_compute_with_row_source(
                             *logical_count,
                         )
                         .await?;
-                return eval_compute_from_rows(compute, &rows);
+                return eval_compute_from_rows(compute, &rows, cross_binding_rows);
             }
             eval_compute_streaming(
                 compute,
@@ -95,6 +98,7 @@ pub(crate) async fn eval_compute_streaming(
 pub(crate) fn eval_compute_from_rows(
     compute: &ComputeTemplate,
     rows: &[serde_json::Value],
+    cross_binding_rows: &BTreeMap<String, Vec<serde_json::Value>>,
 ) -> Result<Vec<serde_json::Value>, String> {
     match &compute.op {
         ComputeOp::Project { fields } => rows
@@ -134,11 +138,14 @@ pub(crate) fn eval_compute_from_rows(
             columns,
             template,
             column_aliases,
+            cross_bindings,
         } => render_compute(
             rows,
             &RenderColumns::from_op_parts(columns.clone(), column_aliases.clone()),
             template,
             compute.collection_alias.as_ref(),
+            cross_bindings,
+            cross_binding_rows,
         ),
     }
 }
@@ -287,6 +294,8 @@ pub(crate) fn render_compute(
     columns: &RenderColumns,
     template: &str,
     collection_alias: Option<&OutputName>,
+    cross_bindings: &[OutputName],
+    cross_binding_rows: &BTreeMap<String, Vec<serde_json::Value>>,
 ) -> Result<Vec<serde_json::Value>, String> {
     if rows.len() > PLAN_RENDER_MAX_ROWS {
         return Err(format!(
@@ -314,11 +323,23 @@ pub(crate) fn render_compute(
         .map_err(|e| format!("Plan.render template load error: {e}"))?;
     let alias_name = collection_alias.map(|a| a.as_str());
     let rows_val = minijinja::Value::from_serialize(&projected);
-    let ctx: BTreeMap<&str, minijinja::Value> = if let Some(alias) = alias_name {
-        BTreeMap::from([("rows", rows_val.clone()), (alias, rows_val)])
-    } else {
-        BTreeMap::from([("rows", rows_val)])
-    };
+    let cross_mode = !cross_bindings.is_empty();
+    let mut ctx: BTreeMap<&str, minijinja::Value> = BTreeMap::from([("rows", rows_val.clone())]);
+    if let Some(alias) = alias_name {
+        let alias_val = if cross_mode {
+            template_binding_value(rows)
+        } else {
+            rows_val.clone()
+        };
+        ctx.insert(alias, alias_val);
+    }
+    for label in cross_bindings {
+        let label_str = label.as_str();
+        let binding_rows = cross_binding_rows
+            .get(label_str)
+            .ok_or_else(|| format!("Plan.render missing cross-binding rows for `{label_str}`"))?;
+        ctx.insert(label_str, template_binding_value(binding_rows));
+    }
     let rendered = tmpl.render(ctx).map_err(|e| {
         if matches!(e.kind(), minijinja::ErrorKind::UndefinedError) {
             format!(
@@ -336,6 +357,45 @@ pub(crate) fn render_compute(
     }
 
     Ok(vec![serde_json::json!({ "content": rendered })])
+}
+
+fn template_binding_value(rows: &[serde_json::Value]) -> minijinja::Value {
+    if rows.len() == 1 {
+        minijinja::Value::from_serialize(&rows[0])
+    } else {
+        minijinja::Value::from_serialize(rows)
+    }
+}
+
+pub(crate) fn cross_binding_rows_for_render(
+    compute: &ComputeTemplate,
+    materialized: &BTreeMap<PlanNodeId, MaterializedNode>,
+) -> Result<BTreeMap<String, Vec<serde_json::Value>>, String> {
+    let ComputeOp::Render { cross_bindings, .. } = &compute.op else {
+        return Ok(BTreeMap::new());
+    };
+    let mut out = BTreeMap::new();
+    for label in cross_bindings {
+        let node_id = PlanNodeId::new(label.as_str().to_string())?;
+        let mat = materialized.get(&node_id).ok_or_else(|| {
+            format!(
+                "Plan.render cross-binding `{label}`: node `{}` has not been materialized",
+                label.as_str()
+            )
+        })?;
+        let rows = mat
+            .row_source
+            .inline_rows()
+            .map(|r| r.to_vec())
+            .ok_or_else(|| {
+                format!(
+                    "Plan.render cross-binding `{label}`: node `{}` is not inline materialized",
+                    label.as_str()
+                )
+            })?;
+        out.insert(label.as_str().to_string(), rows);
+    }
+    Ok(out)
 }
 
 pub(crate) fn json_number(v: &serde_json::Value) -> Option<f64> {

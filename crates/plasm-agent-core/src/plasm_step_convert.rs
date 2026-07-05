@@ -556,6 +556,7 @@ mod tests {
                     columns: vec![OutputName::new("name").expect("name")],
                     template: "{% for r in rows %}{{ r.p23 }}{% endfor %}".into(),
                     column_aliases,
+                    cross_bindings: vec![],
                 },
                 schema: SyntheticResultSchema {
                     entity: Some("PlanRender".into()),

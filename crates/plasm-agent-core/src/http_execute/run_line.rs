@@ -301,15 +301,17 @@ pub(crate) async fn run_parsed_plasm_line(
     let (_, operation) = trace_expr_api_meta(&parsed.expr);
 
     let exec_opts = if let Some(shared) = plan_shared {
-        shared.build_exec_opts(
-            sess,
-            st,
-            exec_cgs,
-            root_entity,
-            fp_sink.clone(),
-            preflight_token,
-            rows_progress.clone(),
-        )
+        shared
+            .build_exec_opts(
+                sess,
+                st,
+                exec_cgs,
+                root_entity,
+                fp_sink.clone(),
+                preflight_token,
+                rows_progress.clone(),
+            )
+            .await
     } else {
         let auth_for_exec = exec_cgs.auth.clone();
         let secret_provider = st.effective_outbound_secret_provider();

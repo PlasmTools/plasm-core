@@ -8,7 +8,7 @@ use crate::symbol_tuning::{symbol_map_for_prompt, FocusSpec};
 use super::{
     collect_entity_teaching_block, parse_trailing_projection_bracket,
     prompt_line_valid_cache_seed_cgs, truncate_inline_desc, RenderConfig, PLASM_TOOL_DESCRIPTION,
-    TEACHING_VALID_EXPR_MARKER, TSV_TEACHING_TABLE_HEADER,
+    TEACHING_OPTIONAL_LEGEND_MARK, TEACHING_VALID_EXPR_MARKER, TSV_TEACHING_TABLE_HEADER,
 };
 
 /// True when `expr` is rooted on `entity_sym` (`e3`, `e3(…)`, `e3[…]`, …) but not a longer
@@ -121,6 +121,41 @@ fn proof_document_teaching_optional_legend_is_compact() {
     assert!(
         tsv.contains("optional"),
         "proof invoke rows with optional tails should mark optionality in Meaning"
+    );
+}
+
+#[test]
+fn github_pr_merge_zero_arity_invoke_omits_optional_meaning_when_schema_loads() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
+    if !dir.is_dir() {
+        return;
+    }
+    let cgs = load_schema_dir(&dir).expect("github");
+    let tsv =
+        super::render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(Some("PullRequest")));
+    let mut saw_merge = false;
+    for line in tsv.lines().skip(1) {
+        let Some((expr, meaning)) = line.split_once('\t') else {
+            continue;
+        };
+        if !meaning.contains("Merge a pull request") {
+            continue;
+        }
+        saw_merge = true;
+        assert!(
+            !meaning
+                .split(" · ")
+                .any(|atom| atom.trim() == TEACHING_OPTIONAL_LEGEND_MARK),
+            "zero-arity merge must not gloss optional when expr lists no optional params: {line:?}"
+        );
+        assert!(
+            expr.contains("()"),
+            "expected zero-arity merge teaching row: {expr:?}"
+        );
+    }
+    assert!(
+        saw_merge,
+        "expected pr_merge teaching row in PullRequest TSV"
     );
 }
 

@@ -30,7 +30,7 @@ Core surface:
 
 Composition rules:
 - One binding per line; **one** return line last. Multiple roots belong on that line comma-separated — not stacked as separate bare-label lines. Single-line space-separated programs coerce default return to first binding.
-- Row text (Minijinja): `label = source[p#,…] <<TAG` … `TAG`; **`binding.content`** for string params (not bare `label`).
+- Row text (Minijinja): `label = source[p#,…] <<TAG` … `TAG`; cross-bindings: `label = a,b <<TAG` (comma-separated in-scope labels); **`binding.content`** for string params (not bare `label`).
 - String binding (no template): `label = <<TAG` … `TAG` — pass **`p#=label`**, not `label.content`.
 - RT: after `repo = e#(…)`, prefer **`repo.m#(…)`** / **`repo.r#`** over repeating the get head.
 - Compose with `${report.content}` in later heredocs/strings (`$$` escapes `$`). Do not use `report.content` as a final root or relation receiver.

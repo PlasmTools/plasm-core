@@ -53,6 +53,9 @@ pub enum ComputeOp {
         /// Teaching-surface tokens (e.g. `p23`) aliased onto wire column keys in Minijinja `rows`.
         #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
         column_aliases: std::collections::BTreeMap<String, OutputName>,
+        /// Additional in-scope binding labels merged into the Minijinja context (`label1,label2 <<TAG`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        cross_bindings: Vec<OutputName>,
     },
 }
 

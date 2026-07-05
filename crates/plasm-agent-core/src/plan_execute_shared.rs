@@ -19,8 +19,6 @@ use crate::server_state::PlasmHostState;
 pub struct PlanLineExecuteShared {
     secret_provider: Arc<dyn SecretProvider>,
     federation: Option<Arc<plasm_core::cgs_federation::FederationDispatch>>,
-    bound_share: Option<String>,
-    bound_proof_base_token: Option<String>,
     graph_page_spill: Option<GraphPageSpillHandle>,
     cancel: Option<CancelSignal>,
     prompt_hash: String,
@@ -29,8 +27,6 @@ pub struct PlanLineExecuteShared {
 
 impl PlanLineExecuteShared {
     pub async fn prepare(es: &ExecuteSession, st: &PlasmHostState, session_id: &str) -> Self {
-        let bound_share = es.session_share_token.read().await.clone();
-        let bound_proof_base_token = es.session_proof_base_token.read().await.clone();
         let federation = es.federation_dispatch();
         let secret_provider = st.effective_outbound_secret_provider();
         let graph_page_spill = graph_page_spill_for_execute(
@@ -43,8 +39,6 @@ impl PlanLineExecuteShared {
         Self {
             secret_provider,
             federation,
-            bound_share,
-            bound_proof_base_token,
             graph_page_spill,
             cancel,
             prompt_hash: es.prompt_hash.clone(),
@@ -53,7 +47,7 @@ impl PlanLineExecuteShared {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn build_exec_opts(
+    pub async fn build_exec_opts(
         &self,
         sess: &ExecuteSession,
         st: &PlasmHostState,
@@ -63,6 +57,8 @@ impl PlanLineExecuteShared {
         preflight: PreflightToken,
         rows_progress: Option<RowsProgressFn>,
     ) -> ExecuteOptions {
+        let bound_share = sess.session_share_token.read().await.clone();
+        let bound_proof_base_token = sess.session_proof_base_token.read().await.clone();
         let engine_override = st
             .engine
             .config()
@@ -107,7 +103,7 @@ impl PlanLineExecuteShared {
             auth_resolver_override: auth_for_exec.map(|scheme| {
                 Arc::new(
                     AuthResolver::new(scheme, self.secret_provider.clone())
-                        .with_session_bearer_override(self.bound_share.clone()),
+                        .with_session_bearer_override(bound_share.clone()),
                 )
             }),
             federation: self.federation.clone(),
@@ -115,8 +111,8 @@ impl PlanLineExecuteShared {
             execute_session: Some(Arc::new(ExecuteSessionMaterial {
                 prompt_hash: self.prompt_hash.clone(),
                 session_id: self.session_id.clone(),
-                share_token: self.bound_share.clone(),
-                proof_base_token: self.bound_proof_base_token.clone(),
+                share_token: bound_share,
+                proof_base_token: bound_proof_base_token,
                 transport_origin: http_backend_for_root.clone(),
                 ui_origin: http_backend_for_root,
                 catalog_bind,

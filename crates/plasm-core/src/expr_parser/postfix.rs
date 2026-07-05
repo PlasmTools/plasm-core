@@ -7,6 +7,7 @@
 //! using delimiter depth so `<<` inside calls/parens is not mistaken for a render opener.
 
 use super::heredoc_surface::tagged_heredoc_close_kind;
+use super::{split_top_level, validate_program_label};
 
 /// Postfix operations peeled from the right of an expression, in **application order**
 /// (index `0` applies first to the primary, then `1`, …).
@@ -164,6 +165,11 @@ pub enum RenderTailParse {
     },
     /// `head <<TAG … TAG` where `head` has no trailing `[fields]` before `<<` — columns inferred at compile time.
     Inferred { head: String, template: String },
+    /// `label1,label2,... <<TAG … TAG` — cross-binding row-to-text template (labels must be in scope).
+    CrossBinding {
+        sources: Vec<String>,
+        template: String,
+    },
 }
 
 /// Split a program RHS into optional render tail parts at delimiter depth 0.
@@ -200,12 +206,41 @@ pub fn try_parse_render_tail(rhs: &str) -> Result<Option<RenderTailParse>, Strin
         if head.trim().is_empty() {
             continue;
         }
+        if let Some(sources) = try_parse_cross_binding_sources(head) {
+            return Ok(Some(RenderTailParse::CrossBinding { sources, template }));
+        }
         return Ok(Some(RenderTailParse::Inferred {
             head: head.to_string(),
             template,
         }));
     }
     Ok(None)
+}
+
+/// Comma-separated in-scope binding labels before `<<TAG` (each segment a plain program label).
+fn try_parse_cross_binding_sources(head: &str) -> Option<Vec<String>> {
+    if !head.contains(',') {
+        return None;
+    }
+    let parts = split_top_level(head, ',').ok()?;
+    if parts.len() < 2 {
+        return None;
+    }
+    let mut sources = Vec::with_capacity(parts.len());
+    for part in parts {
+        let label = part.trim();
+        if label.is_empty()
+            || label.contains('.')
+            || label.contains('(')
+            || label.contains('[')
+            || label.contains('~')
+        {
+            return None;
+        }
+        validate_program_label(label).ok()?;
+        sources.push(label.to_string());
+    }
+    Some(sources)
 }
 
 /// If `rhs` is `source[field,...] <<TAG` … `TAG` at **delimiter depth 0** (so `<<` inside `method(…)`
@@ -223,7 +258,9 @@ pub fn try_parse_bracket_render(rhs: &str) -> Result<Option<BracketRender>, Stri
             fields,
             template,
         }),
-        Some(RenderTailParse::Inferred { .. }) | None => None,
+        Some(RenderTailParse::Inferred { .. })
+        | Some(RenderTailParse::CrossBinding { .. })
+        | None => None,
     })
 }
 
@@ -595,7 +632,9 @@ mod tests {
                 assert_eq!(head, "commits");
                 assert!(template.contains("for r in rows"));
             }
-            RenderTailParse::Explicit { .. } => panic!("expected inferred"),
+            RenderTailParse::Explicit { .. } | RenderTailParse::CrossBinding { .. } => {
+                panic!("expected inferred")
+            }
         }
     }
 
@@ -614,7 +653,9 @@ mod tests {
                 assert_eq!(fields, "sha,message");
                 assert_eq!(template, "one\n");
             }
-            RenderTailParse::Inferred { .. } => panic!("expected explicit"),
+            RenderTailParse::Inferred { .. } | RenderTailParse::CrossBinding { .. } => {
+                panic!("expected explicit")
+            }
         }
     }
 
@@ -641,5 +682,19 @@ mod tests {
         let (p3, ops3) = peel_postfix_suffixes("rows.distinct()").unwrap();
         assert_eq!(p3, "rows");
         assert_eq!(ops3, vec![PlasmPostfixOp::Distinct { keys: None }]);
+    }
+
+    #[test]
+    fn render_tail_cross_binding_labels_before_heredoc() {
+        let r = try_parse_render_tail("pika,repos <<MD\nPokemon: {{ pika.name }}\nMD")
+            .unwrap()
+            .expect("render tail");
+        match r {
+            RenderTailParse::CrossBinding { sources, template } => {
+                assert_eq!(sources, vec!["pika".to_string(), "repos".to_string()]);
+                assert!(template.contains("pika.name"));
+            }
+            other => panic!("expected cross-binding, got {other:?}"),
+        }
     }
 }

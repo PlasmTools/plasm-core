@@ -46,6 +46,52 @@ pub(crate) fn infer_column_tokens_from_minijinja_template(template: &str) -> Opt
     }
 }
 
+/// Infer wire column tokens from `{{ label.field }}` references for cross-binding templates.
+pub(crate) fn infer_label_prefixed_columns_from_template(
+    template: &str,
+    label: &str,
+) -> Option<Vec<String>> {
+    let prefix = format!("{label}.");
+    let mut cols = Vec::new();
+    let mut rest = template;
+    while let Some(start) = rest.find("{{") {
+        let after = &rest[start + 2..];
+        let Some(end) = after.find("}}") else {
+            break;
+        };
+        let expr = after[..end].trim();
+        let field = expr.strip_prefix(prefix.as_str()).map(|f| {
+            f.split('|')
+                .next()
+                .unwrap_or(f)
+                .trim()
+                .split('.')
+                .next()
+                .unwrap_or(f)
+                .trim()
+        });
+        let Some(field) = field else {
+            rest = &after[end + 2..];
+            continue;
+        };
+        if field.is_empty() || field == label {
+            rest = &after[end + 2..];
+            continue;
+        }
+        if field.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && !cols.iter().any(|c| c == field)
+        {
+            cols.push(field.to_string());
+        }
+        rest = &after[end + 2..];
+    }
+    if cols.is_empty() {
+        None
+    } else {
+        Some(cols)
+    }
+}
+
 pub(crate) fn parse_field_list_with_tokens(
     session: &ExecuteSession,
     symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,

@@ -10,6 +10,6 @@ Shape:
 - After `repo = e#(…)`, prefer **`repo.m#(…)`** / **`repo.r#`** over repeating the get head — equivalent, shorter.
 - Batch independent reads into ONE program: bind shared scope once, then return several roots on the final line.
 
-Strings use JSON escapes inside quotes; multiline string bindings: `label = <<TAG` … `TAG` (pass `p#=label`, not `label.content`). Row-to-text templates: `label = source[p#,…] <<TAG` with Minijinja — those use `binding.content` for string params.
+Strings use JSON escapes inside quotes; multiline string bindings: `label = <<TAG` … `TAG` (pass `p#=label`, not `label.content`). Row-to-text templates: `label = source[p#,…] <<TAG` or `label = a,b <<TAG` with Minijinja — those use `binding.content` for string params.
 
 Full grammar and worked examples are in the `plasm` tool description. On any parse/symbol error, extend the same session (`session_mode: "extend"`, same `logical_session_ref`) — do not open a new one.

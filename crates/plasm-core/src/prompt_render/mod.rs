@@ -1169,6 +1169,21 @@ fn split_compact_args_from_sig_fragment(sig: &str) -> (String, String) {
     (t.to_string(), String::new())
 }
 
+/// Meaning-column `optional` is only for rows that teach optional invoke/query slots in the
+/// expression (`p#=$` placeholders or `,..` / `(..)` ellipsis). Zero-arity invokes like `.m33()`
+/// must not carry the legend when the schema's optional params are omitted from the exemplar.
+fn teaching_expr_demonstrates_optional_params(expr: &str, optional_syms: &[String]) -> bool {
+    if optional_syms.is_empty() {
+        return false;
+    }
+    if expr.contains(",..") || expr.contains("(..)") {
+        return true;
+    }
+    optional_syms
+        .iter()
+        .any(|sym| !sym.is_empty() && expr.contains(sym.as_str()))
+}
+
 fn fill_scope_optional_from_sig(
     sig: &str,
     scope: &mut String,
@@ -2557,25 +2572,30 @@ fn try_push_teaching_example(
     line_valid_cache_seed: u64,
     map_arc: Option<&std::sync::Arc<SymbolMap>>,
 ) -> bool {
+    let optional_syms: Vec<String> = match (map_arc, source_capability) {
+        (Some(map), Some(cap_name)) => {
+            cgs.get_capability(cap_name.as_str())
+                .map_or_else(Vec::new, |cap| {
+                    crate::symbol_tuning::optional_legend_param_syms(
+                        map.as_ref(),
+                        cgs.entry_id.as_deref().unwrap_or(""),
+                        cap.domain.as_str(),
+                        cap,
+                    )
+                })
+        }
+        _ => Vec::new(),
+    };
     if let Some(gs) = gloss_emit.as_mut() {
-        let optional_syms: Vec<String> = match (map_arc, source_capability) {
-            (Some(map), Some(cap_name)) => {
-                cgs.get_capability(cap_name.as_str())
-                    .map_or_else(Vec::new, |cap| {
-                        crate::symbol_tuning::optional_legend_param_syms(
-                            map.as_ref(),
-                            cgs.entry_id.as_deref().unwrap_or(""),
-                            cap.domain.as_str(),
-                            cap,
-                        )
-                    })
-            }
-            _ => Vec::new(),
-        };
         gs.emit_before_teaching_example(expr, cap_leg.as_deref(), gloss.as_deref(), &optional_syms);
     }
     let mut teaching_line =
         teaching_expr_line_from_layers(expr, gloss.as_deref(), cap_leg.as_deref());
+    if teaching_line.legend.optional.is_present()
+        && !teaching_expr_demonstrates_optional_params(expr, &optional_syms)
+    {
+        teaching_line.legend.optional = OptionalLegend::Absent;
+    }
     if omit_capability_prose {
         teaching_line.legend.description.clear();
     }

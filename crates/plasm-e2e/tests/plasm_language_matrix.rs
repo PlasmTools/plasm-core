@@ -82,6 +82,7 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "parallel_final_roots",
     "bracket_render",
     "bracket_render_content_ref",
+    "cross_binding_render",
     "static_heredoc_binding",
     "derive_map",
     "effect_create",
@@ -758,6 +759,26 @@ fn assert_planning_ir(
             else {
                 return Err(format!("expected Render compute, got {:?}", computes));
             };
+        }
+        "lang_cross_binding_render" => {
+            let Some(ComputeTemplate {
+                op: ComputeOp::Render { cross_bindings, .. },
+                ..
+            }) = computes
+                .iter()
+                .find(|c| matches!(c.op, ComputeOp::Render { .. }))
+            else {
+                return Err(format!("expected Render compute, got {:?}", computes));
+            };
+            if cross_bindings.len() != 1 || cross_bindings[0].as_str() != "b" {
+                return Err(format!(
+                    "expected cross_bindings [b], got {:?}",
+                    cross_bindings
+                        .iter()
+                        .map(|l| l.as_str())
+                        .collect::<Vec<_>>()
+                ));
+            }
         }
         "lang_render_content_into_create" => {
             let has_create_node = comp_has_invoke_plan_kind(comp, "create");
@@ -1726,6 +1747,20 @@ hdr"#,
         features: &["bindings_assignment", "bracket_render"],
         min_node_results: 2,
         expect_markdown_substrings: &["row(s)", "```"],
+    },
+    MatrixRow {
+        id: "lang_cross_binding_render",
+        program: r#"a = LangItem("i1")[id,title]
+b = LangItem("i2")[id,title]
+report = a,b <<MD
+Pair: {{ a.title }} / {{ b.title }}
+MD
+report"#,
+        surface_line: false,
+        federated: false,
+        features: &["bindings_assignment", "bracket_render", "cross_binding_render"],
+        min_node_results: 3,
+        expect_markdown_substrings: &["Pair:", "Alpha", "Beta", "```tsv"],
     },
     MatrixRow {
         id: "lang_render_content_into_create",

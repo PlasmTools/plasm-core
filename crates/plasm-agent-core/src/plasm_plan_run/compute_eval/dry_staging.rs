@@ -27,6 +27,7 @@ pub(crate) fn dry_validate_render_nodes(
             columns,
             template,
             column_aliases,
+            cross_bindings,
         } = &c.compute.op
         else {
             continue;
@@ -45,11 +46,17 @@ pub(crate) fn dry_validate_render_nodes(
             ent.id_field.as_str().to_string(),
             serde_json::Value::String("dry-placeholder".into()),
         );
+        let mut cross_binding_rows = BTreeMap::new();
+        for label in cross_bindings {
+            cross_binding_rows.insert(label.as_str().to_string(), vec![serde_json::Value::Null]);
+        }
         render_compute(
             &[serde_json::Value::Object(row)],
             &RenderColumns::from_op_parts(columns.clone(), column_aliases.clone()),
             template,
             c.compute.collection_alias.as_ref(),
+            cross_bindings,
+            &cross_binding_rows,
         )?;
     }
     Ok(())

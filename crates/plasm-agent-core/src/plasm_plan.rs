@@ -1839,8 +1839,16 @@ fn validate_compute_template(
             columns,
             template,
             column_aliases,
+            cross_bindings,
         } => {
-            validate_render_compute_template(t, columns, template, column_aliases, node_index)?;
+            validate_render_compute_template(
+                t,
+                columns,
+                template,
+                column_aliases,
+                cross_bindings,
+                node_index,
+            )?;
         }
         _ => {}
     }
@@ -1852,6 +1860,7 @@ fn validate_render_compute_template(
     columns: &[OutputName],
     template: &str,
     column_aliases: &BTreeMap<String, OutputName>,
+    cross_bindings: &[OutputName],
     node_index: usize,
 ) -> Result<(), String> {
     if columns.is_empty() {
@@ -1876,6 +1885,16 @@ fn validate_render_compute_template(
         if !columns.iter().any(|c| c.as_str() == wire.as_str()) {
             return Err(format!(
                 "plan.nodes[{node_index}].compute.render.column_aliases[{alias:?}] must map to a wire column"
+            ));
+        }
+    }
+    for label in cross_bindings {
+        OutputName::new(label.as_str().to_string())
+            .map_err(|e| format!("plan.nodes[{node_index}].compute.render.cross_bindings: {e}"))?;
+        if matches!(label.as_str(), "rows" | "source") {
+            return Err(format!(
+                "plan.nodes[{node_index}].compute.render.cross_bindings must not use reserved name {:?}",
+                label.as_str()
             ));
         }
     }
