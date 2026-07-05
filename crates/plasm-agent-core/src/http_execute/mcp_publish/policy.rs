@@ -100,6 +100,9 @@ impl ResolvedStepPublish {
         truncated: bool,
         policy: &McpResultTransportPolicy,
     ) -> bool {
+        if self.artifact.is_some() {
+            return false;
+        }
         if self.format.is_some() && !self.mode.skips_inline_format() {
             return false;
         }

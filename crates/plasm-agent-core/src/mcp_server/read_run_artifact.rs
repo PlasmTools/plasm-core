@@ -180,8 +180,13 @@ impl PlasmMcpHandler {
             "tool",
             started.elapsed(),
         );
-        let (char_count, binary) = mcp_artifact_payload_chars(&resolved.payload);
-        let text = std::str::from_utf8(&resolved.payload.bytes)
+        let payload = crate::run_artifacts::project_artifact_payload_for_agent(
+            &resolved.payload,
+            false,
+        )
+        .map_err(|e| CallToolError::from_message(format!("artifact projection failed: {e}")))?;
+        let (char_count, binary) = mcp_artifact_payload_chars(&payload);
+        let text = std::str::from_utf8(&payload.bytes)
             .map(str::to_string)
             .unwrap_or_else(|_| {
                 base64::engine::general_purpose::STANDARD.encode(&resolved.payload.bytes)
@@ -193,7 +198,7 @@ impl PlasmMcpHandler {
                 "artifact_uri": uri_for_trace,
                 "resource_index": resolved.resource_index,
                 "run_id": resolved.run_id.as_ref().map(|r| r.to_wire()),
-                "byte_count": resolved.payload.bytes.len(),
+                "byte_count": payload.bytes.len(),
                 "char_count": char_count,
                 "binary": binary,
                 "prompt_hash": resolved.prompt_hash,

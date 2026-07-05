@@ -66,7 +66,7 @@ v14	union · v210 | v211 | v212
 v15	union · v101 | v102 | v103 | v104 | v105 | v106 | v107
 e1(p10)[p10,p21,p34,p15,p14]	→ e1 · projection · Read or edit a shared Proof document
 e1(p10)	→ e1
-e1(p10).m16()	→ e1 · optional · Bind this session to a share URL (preferred: full URL with embedded `?token=`…
+e1(p10).m16()	→ e1 · Bind this session to a share URL (preferred: full URL with embedded `?token=`…
 e1(p10).m1(p3=$, p28=$, p22=$, p24=$, p4=$, p31=$)	→ e1 · optional · Start a comment thread on quoted text from the document
 e1(p10).m2(p3=$, p28=$, p31=$, p4=$, p1=[$])	→ e1 · optional · Apply several comment updates in one request
 e1(p10).m3(p3=$, p28=$, p29=$, p24=$, p9=$, p4=$, p31=$)	→ e1 · optional · Reply in a thread; optionally mark it resolved in the same step

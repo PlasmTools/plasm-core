@@ -1,11 +1,68 @@
 //! MCP trace archive helpers for code-plan evaluate/execute.
 
 use plasm_trace::{
-    TraceCompWire, CODE_PLAN_EXECUTION_COMPLETED, CODE_PLAN_EXECUTION_FAILED,
-    CODE_PLAN_EXECUTION_STARTED,
+    CodePlanRunArtifactRef, TraceCompWire, CODE_PLAN_EXECUTION_COMPLETED,
+    CODE_PLAN_EXECUTION_FAILED, CODE_PLAN_EXECUTION_STARTED,
 };
 
+use crate::plasm_plan_run::PlasmPlanRunResult;
+
 use super::*;
+
+/// Full artifact refs for trace persistence; prefer `_meta.plasm.steps` when present.
+fn run_artifact_refs_for_trace(out: &PlasmPlanRunResult) -> Vec<CodePlanRunArtifactRef> {
+    if let Some(steps) = out
+        .run_plasm_meta
+        .as_ref()
+        .and_then(|m| m.get("plasm"))
+        .and_then(|p| p.get("steps"))
+        .and_then(|s| s.as_array())
+    {
+        let mut refs = Vec::with_capacity(steps.len());
+        for step in steps {
+            let Some(run_id) = step.get("run_id").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            refs.push(CodePlanRunArtifactRef {
+                run_id: run_id.to_string(),
+                artifact_uri: step
+                    .get("artifact_uri")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                canonical_artifact_uri: step
+                    .get("canonical_artifact_uri")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                artifact_path: step
+                    .get("artifact_path")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                run_step: step.get("run_step").and_then(|v| v.as_u64()).map(|n| n as usize),
+                node_id: step
+                    .get("node_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                display: step
+                    .get("display")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string),
+                request_fingerprints: step
+                    .get("request_fingerprints")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            });
+        }
+        if !refs.is_empty() {
+            return refs;
+        }
+    }
+    out.code_plan_run_artifacts.clone()
+}
 
 /// Shared inputs for evaluate / execute trace emission.
 pub(crate) struct CodePlanTraceInput<'a> {
@@ -143,12 +200,10 @@ pub(crate) async fn emit_code_plan_trace(
             ..
         } => {
             let (run_ids, run_artifacts) = out.map_or((Vec::new(), Vec::new()), |o| {
+                let refs = run_artifact_refs_for_trace(o);
                 (
-                    o.code_plan_run_artifacts
-                        .iter()
-                        .map(|a| a.run_id.clone())
-                        .collect(),
-                    o.code_plan_run_artifacts.clone(),
+                    refs.iter().map(|a| a.run_id.clone()).collect(),
+                    refs,
                 )
             });
             input

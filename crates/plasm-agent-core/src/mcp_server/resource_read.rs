@@ -125,7 +125,14 @@ pub(crate) async fn handle_read_resource_request(
             "none",
             started.elapsed(),
         );
-        return read_resource_result_for_payload(uri, resolved.payload);
+        return read_resource_result_for_payload(
+            uri,
+            crate::run_artifacts::project_artifact_payload_for_agent(&resolved.payload, false)
+                .map_err(|e| {
+                    RpcError::internal_error()
+                        .with_message(format!("run artifact projection failed: {e}"))
+                })?,
+        );
     }
 
     let Some((prompt_hash, session_id, run_id)) = parse_plasm_execute_run_uri(uri) else {
@@ -183,5 +190,12 @@ pub(crate) async fn handle_read_resource_request(
         "none",
         started.elapsed(),
     );
-    read_resource_result_for_payload(uri, resolved.payload)
+    read_resource_result_for_payload(
+        uri,
+        crate::run_artifacts::project_artifact_payload_for_agent(&resolved.payload, false)
+            .map_err(|e| {
+                RpcError::internal_error()
+                    .with_message(format!("run artifact projection failed: {e}"))
+            })?,
+    )
 }

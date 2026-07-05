@@ -394,3 +394,20 @@ pub fn document_from_run(d: DocumentFromRun<'_>) -> RunArtifactDocument {
         stats: d.result.stats.clone(),
     }
 }
+
+/// Project stored artifact bytes to the slim agent view unless `full` is requested.
+pub fn project_artifact_payload_for_agent(
+    payload: &ArtifactPayload,
+    full: bool,
+) -> Result<ArtifactPayload, RunArtifactError> {
+    if full {
+        return Ok(payload.clone());
+    }
+    let doc: RunArtifactDocument = serde_json::from_slice(&payload.bytes)?;
+    validate_run_artifact_document(&doc).map_err(RunArtifactError::Decode)?;
+    let slim = doc.agent_view();
+    Ok(ArtifactPayload {
+        metadata: payload.metadata.clone(),
+        bytes: serde_json::to_vec(&slim)?.into(),
+    })
+}

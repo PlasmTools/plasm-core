@@ -395,13 +395,9 @@ pub(crate) async fn run_executable_plan_phased(
         evidence_run_ids.push(h.run_id);
         code_plan_run_artifacts.push(CodePlanRunArtifactRef {
             run_id: h.run_id.to_wire(),
-            artifact_uri: Some(h.plasm_uri.clone()),
-            canonical_artifact_uri: Some(h.canonical_plasm_uri.clone()),
-            artifact_path: Some(h.http_path.clone()),
             run_step: Some(i),
             node_id: step.node_id.clone(),
-            display: Some(step.display.clone()),
-            request_fingerprints: h.request_fingerprints.clone(),
+            ..Default::default()
         });
     }
     let mut evidence_head_hex = None;

@@ -3425,7 +3425,7 @@ capabilities:
       value_ref: nv_wire_str_short
       required: true
     - name: content
-      value_ref: nv_repo_content_put_content
+      value_ref: nv_repo_content_write_text
       required: true
       sink_class: external_publish
     - name: branch
@@ -3451,7 +3451,7 @@ capabilities:
       value_ref: nv_wire_str_short
       required: true
     - name: content
-      value_ref: nv_repo_content_put_content
+      value_ref: nv_repo_content_write_text
       required: true
       sink_class: external_publish
     - name: branch
@@ -4694,7 +4694,11 @@ values:
     - updated
   nv_repo_content_put_content:
     type: blob
-    description: New file content (base64).
+    description: Raw file content as returned by GitHub (base64).
+  nv_repo_content_write_text:
+    type: string
+    string_semantics: document
+    description: Plain UTF-8 file content; base64-encoded automatically before upload to GitHub. Do not pre-encode.
   nv_repo_forks_query_sort:
     type: select
     allowed_values:

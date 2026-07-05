@@ -43,6 +43,10 @@ fn mirror_ui_plasm_into_structured(meta: &Map<String, Value>, structured_plasm: 
     let Some(out) = structured_plasm.as_object_mut() else {
         return;
     };
+    // Agent dry-run responses are compact text only; full comp/DAG stays in `_meta.ui.plasm` for MCP App hosts.
+    if out.get("dry_run").and_then(|v| v.as_bool()) == Some(true) {
+        return;
+    }
     for key in ["comp", "plan_ux_reflection"] {
         if let Some(v) = ui_plasm.get(key) {
             out.insert(key.to_string(), v.clone());
@@ -139,16 +143,14 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("pc0")
         );
-        assert_eq!(
-            wire.pointer("/structuredContent/plasm/comp/bind/topo")
-                .and_then(|v| v.as_array())
-                .map(|a| a.len()),
-            Some(1),
-            "Cursor-style hosts need comp in structuredContent when _meta.ui is stripped"
+        assert!(
+            wire.pointer("/structuredContent/plasm/comp").is_none(),
+            "dry-run agent structuredContent must not mirror full comp (UI-only)"
         );
-        assert!(wire
-            .pointer("/structuredContent/plasm/plan_ux_reflection/schema_version")
-            .is_some());
+        assert!(
+            wire.pointer("/structuredContent/plasm/plan_ux_reflection")
+                .is_none()
+        );
         assert!(wire.pointer("/structuredContent/plasm/program").is_none());
         assert_eq!(
             wire.pointer("/_meta/ui/plasm/comp/bind/topo")
@@ -212,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn mirror_dry_run_strips_agent_comp_but_keeps_ui_comp_in_structured() {
+    fn mirror_dry_run_structured_content_stays_slim_even_with_ui_comp() {
         let mut meta = Map::new();
         meta.insert(
             "plasm".to_string(),
@@ -250,17 +252,20 @@ mod tests {
                 .and_then(|v| v.as_str()),
             Some("pc0")
         );
-        assert_eq!(
+        assert!(
             out.structured_content
                 .as_ref()
                 .and_then(|m| m.get("plasm"))
                 .and_then(|p| p.get("comp"))
-                .and_then(|c| c.get("steps"))
-                .and_then(|s| s.get("n1"))
-                .and_then(|n| n.get("kind"))
-                .and_then(|v| v.as_str()),
-            Some("invoke"),
-            "UI comp must mirror into structuredContent for lossy hosts"
+                .is_none(),
+            "dry-run structuredContent must not carry comp (UI reads `_meta.ui.plasm`)"
+        );
+        assert!(
+            out.structured_content
+                .as_ref()
+                .and_then(|m| m.get("plasm"))
+                .and_then(|p| p.get("plan_ux_reflection"))
+                .is_none()
         );
     }
 

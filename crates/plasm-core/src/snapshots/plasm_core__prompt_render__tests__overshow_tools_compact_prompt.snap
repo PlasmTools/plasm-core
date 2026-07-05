@@ -1,5 +1,5 @@
 ---
-source: plasm-oss/crates/plasm-core/src/prompt_render/tests.rs
+source: crates/plasm-core/src/prompt_render/tests.rs
 expression: prompt
 ---
 plasm_expr	Meaning
@@ -106,5 +106,5 @@ p70	v18 · text
 p71	v7 · window_name
 e9{p58=e7(p38), p59=$, p56=$, p57=$}[p54,p51,p52,p53,p55,p70,p71]	→ [e9] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
 e9{p58=e7(p38), p59=$, p56=$, p57=$}	→ [e9] · inputs: p58,p59,p56,p57 · optional
-e9~"text"	→ [e9] · optional
+e9~"text"	→ [e9]
 e9~"text"{p61=$, p63=$, p66=$, p68=$, p62=$, p60=$, p69=$, p65=$, p64=$}	→ [e9] · inputs: p61,p63,p66,p68,p62,p60,p69,p65,p64 · optional

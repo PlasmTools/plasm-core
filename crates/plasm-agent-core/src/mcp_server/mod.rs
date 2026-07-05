@@ -1,7 +1,7 @@
 //! MCP Streamable HTTP server (rust-mcp-sdk) over Plasm discovery + execute ([`crate::server_state::PlasmHostState`]).
-//! Tool results use Markdown [`TextContent`]; **`plasm`** dry-runs put compact review tokens in
-//! `_meta.plasm` + `structuredContent.plasm` (`run_ref`, `dry_verdict`, …) and the full comp wire under
-//! `_meta.ui.plasm` for MCP App plan review only.
+//! Tool results use Markdown [`TextContent`]; **`plasm`** dry-runs put compact review text in Markdown and slim
+//! tokens in `_meta.plasm` + `structuredContent.plasm` (`run_ref`, `dry_verdict`, …). The full comp wire lives only
+//! under `_meta.ui.plasm` for MCP App plan review (not mirrored into agent `structuredContent` on dry-run).
 //! artifact URIs, and optional `lossy_summary_fields` per truncated step in `_meta.plasm`.
 //! Run snapshot URIs in Markdown use logical-session short form `plasm://session/{logical_session_ref}/r/{n}`
 //! (canonical `l_<token>` wire ref; see [`crate::run_artifacts::plasm_session_short_resource_uri`]);

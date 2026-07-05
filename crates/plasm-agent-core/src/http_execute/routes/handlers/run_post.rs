@@ -170,6 +170,10 @@ pub(crate) async fn post_run_execute_session(
             );
         }
         let commit_ref = sess.mint_plan_commit_ref();
+        let dry_text = crate::plan_dry_display::render_plan_dry_compact_text(
+            &compact,
+            Some(commit_ref.as_str()),
+        );
         let commit_record = match crate::operation::PlanCommitRecord::from_dry_review(
             commit_ref.clone(),
             crate::operation::compute_plan_commit_id_from_dry(&dry),
@@ -226,11 +230,9 @@ pub(crate) async fn post_run_execute_session(
         );
         let preview = serde_json::json!({
             "plan": true,
-            "comp": comp_json,
             "plan_ux_reflection": plasm_meta.get("plan_ux_reflection").cloned(),
             "node_results": dry.node_results,
             "graph_summary": dry.graph_summary,
-            "source": program,
             "_meta": {
                 "plasm": plasm_meta,
             },
@@ -245,7 +247,15 @@ pub(crate) async fn post_run_execute_session(
             1,
         )
         .await;
-        return respond_plan_payload(kind, preview);
+        if kind == ExecResponseKind::Json {
+            return respond_plan_payload(kind, preview);
+        }
+        return (
+            StatusCode::OK,
+            [(CONTENT_TYPE, "text/plain; charset=utf-8")],
+            dry_text,
+        )
+            .into_response();
     }
 
     let wait_live = run_q.wait.unwrap_or(true);

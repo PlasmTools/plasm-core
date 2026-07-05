@@ -9,6 +9,7 @@ Shape:
 - Write effect: `source => e#.m#(p#=…)` when scoping a write off an existing binding; create-from-nothing: `e#.m#(p#=…)` when there is no upstream row (no `source =>`).
 - After `repo = e#(…)`, prefer **`repo.m#(…)`** / **`repo.r#`** over repeating the get head — equivalent, shorter.
 - Batch independent reads into ONE program: bind shared scope once, then return several roots on the final line.
+- Chain dependent writes when values flow: `mainbranch = repo.r4.filter{p106="main"}[p13]` then `newbranch = repo.m46(p14=mainbranch.commit_sha)` in one program — the SHA never needs a read-back.
 
 Strings use JSON escapes inside quotes; multiline string bindings: `label = <<TAG` … `TAG` (pass `p#=label`, not `label.content`). Row-to-text templates: `label = source[p#,…] <<TAG` or `label = a,b <<TAG` with Minijinja — those use `binding.content` for string params.
 

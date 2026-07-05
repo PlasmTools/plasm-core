@@ -100,6 +100,7 @@ pub(crate) async fn get_execute_run_evidence(
 pub(crate) async fn get_execute_run_artifact(
     Extension(st): Extension<PlasmHostState>,
     Path((ph, sid, rid)): Path<(String, String, String)>,
+    Query(query): Query<RunArtifactQuery>,
 ) -> Response {
     let started = Instant::now();
     let prompt_hash = match ph.parse::<PromptHashHex>() {
@@ -201,6 +202,26 @@ pub(crate) async fn get_execute_run_artifact(
             "GET execute run artifact"
         );
     });
+
+    let full = query.full.unwrap_or(false);
+    let payload = match crate::run_artifacts::project_artifact_payload_for_agent(&payload, full) {
+        Ok(p) => p,
+        Err(e) => {
+            crate::metrics::record_execute_artifact_serve(
+                "error",
+                "projection_failed",
+                started.elapsed(),
+            );
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::INTERNAL_SERVER_ERROR,
+                    Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
+                )
+                .with_title("Internal Server Error")
+                .with_detail(format!("run artifact projection failed: {e}")),
+            );
+        }
+    };
 
     let content_type = payload.metadata.content_type;
     let header = axum::http::HeaderValue::from_str(content_type.as_str())

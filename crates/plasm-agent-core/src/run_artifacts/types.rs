@@ -260,6 +260,29 @@ pub struct RunArtifactDocument {
     pub stats: ExecutionStats,
 }
 
+/// Agent-facing run snapshot projection (slim read path; canonical doc retains evidence fields).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunArtifactAgentView {
+    pub run_id: String,
+    pub entry_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_index: Option<u64>,
+    pub request_fingerprints: Vec<String>,
+    pub entities: Vec<serde_json::Value>,
+}
+
+impl RunArtifactDocument {
+    pub fn agent_view(&self) -> RunArtifactAgentView {
+        RunArtifactAgentView {
+            run_id: self.run_id.clone(),
+            entry_id: self.entry_id.clone(),
+            resource_index: self.resource_index,
+            request_fingerprints: self.request_fingerprints.clone(),
+            entities: self.entities.clone(),
+        }
+    }
+}
+
 /// Permanent archived Plasm program plan document.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodePlanArchiveDocument {

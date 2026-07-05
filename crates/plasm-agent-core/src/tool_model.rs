@@ -1707,6 +1707,43 @@ mod tests {
     }
 
     #[test]
+    fn github_repo_content_create_content_param_is_document_string() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
+        let cgs = load_schema(&dir).expect("github");
+        let meta = CatalogEntryMeta {
+            entry_id: "github".into(),
+            label: "GitHub".into(),
+            tags: vec![],
+            catalog_cgs_hash: cgs.catalog_cgs_hash_hex(),
+            aliases: vec![],
+        };
+        let q = ToolModelQuery {
+            focus: "all".into(),
+            entity: vec![],
+        };
+        let m = build_tool_model(&cgs, &meta, &q).expect("ok");
+        let repo = m
+            .entities
+            .iter()
+            .find(|e| e.name == "Repository")
+            .expect("Repository entity");
+        let create = repo
+            .capabilities
+            .iter()
+            .find(|c| c.capability_name.as_deref() == Some("repo_content_create"))
+            .expect("repo_content_create capability row");
+        let content = create
+            .parameters
+            .iter()
+            .find(|p| p.binding == "content")
+            .expect("content parameter");
+        assert_eq!(
+            content.type_label, "string · document",
+            "write path must not surface blob · binary for plain UTF-8 upload"
+        );
+    }
+
+    #[test]
     fn notion_page_relation_created_by_targets_user() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/notion");
         let cgs = load_schema(&dir).expect("notion");
