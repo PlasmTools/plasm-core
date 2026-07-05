@@ -152,6 +152,28 @@ pub fn skip_tagged_structured_heredoc(
     Err(format!("unterminated tagged heredoc <<{tag}"))
 }
 
+/// Parse a standalone tagged heredoc (`<<TAG` … `TAG`) into its body string (no tag delimiters).
+pub fn parse_tagged_heredoc_literal(s: &str) -> Result<String, String> {
+    let s = s.trim();
+    let opener = try_parse_tagged_heredoc_opener(s, 0)?;
+    let HeredocOpener::Complete { tag, body_start } = opener else {
+        return Err("incomplete tagged heredoc opener (missing newline after <<TAG)".into());
+    };
+    let mut pos = body_start;
+    while pos <= s.len() {
+        let line_end = s[pos..].find('\n').map(|r| pos + r).unwrap_or(s.len());
+        let line_slice = &s[pos..line_end];
+        if tagged_heredoc_close_kind(line_slice, tag.as_str()).is_some() {
+            return Ok(s[body_start..pos].to_string());
+        }
+        if line_end >= s.len() {
+            break;
+        }
+        pos = line_end + 1;
+    }
+    Err(format!("unterminated tagged heredoc <<{tag}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,6 +199,15 @@ mod tests {
         let s = "only body\nno sentinel";
         let err = skip_tagged_structured_heredoc(s, 0, "TAG").unwrap_err();
         assert!(err.contains("unterminated"), "{err}");
+    }
+
+    #[test]
+    fn parse_tagged_heredoc_literal_extracts_body() {
+        let raw = "<<PLASM_EOF\nhello\nworld\nPLASM_EOF";
+        assert_eq!(
+            parse_tagged_heredoc_literal(raw).unwrap(),
+            "hello\nworld\n"
+        );
     }
 
     #[test]

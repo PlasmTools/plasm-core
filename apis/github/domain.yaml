@@ -1,4 +1,4 @@
-version: 31
+version: 33
 http_backend: https://api.github.com
 data_classes:
   untrusted:
@@ -414,10 +414,24 @@ entities:
     description: A versioned code snapshot used for history, blame, release, and branch decisions.
     fields:
       owner:
+        derive:
+          type: segments_after_prefix
+          prefix: https://api.github.com/repos/
+          alternate_prefixes:
+          - http://api.github.com/repos/
+          part_index: 0
         required: true
+        path: url
         value_ref: nv_github_account_login
       repo:
+        derive:
+          type: segments_after_prefix
+          prefix: https://api.github.com/repos/
+          alternate_prefixes:
+          - http://api.github.com/repos/
+          part_index: 1
         required: true
+        path: url
         value_ref: nv_github_repository_name
       sha:
         required: true
@@ -484,6 +498,7 @@ entities:
           - key: committer
   CommitFile:
     id_field: filename
+    id_from: path
     key_vars:
     - owner
     - repo
@@ -1908,13 +1923,13 @@ capabilities:
       value_ref: nv_github_git_sha
       required: false
     - name: path
-      value_ref: nv_wire_str_short
+      value_ref: nv_github_commit_path_filter
       required: false
     - name: by_author
-      value_ref: nv_wire_str_short
+      value_ref: nv_github_commit_author_filter
       required: false
     - name: by_committer
-      value_ref: nv_wire_str_short
+      value_ref: nv_github_commit_committer_filter
       required: false
     - name: since
       value_ref: nv_wire_date_rfc3339
@@ -4807,6 +4822,18 @@ values:
   nv_wire_str_short:
     type: string
     string_semantics: short
+  nv_github_commit_path_filter:
+    type: string
+    string_semantics: short
+    description: Limit commits to those touching this repository path.
+  nv_github_commit_author_filter:
+    type: string
+    string_semantics: short
+    description: Filter commits by author login or email.
+  nv_github_commit_committer_filter:
+    type: string
+    string_semantics: short
+    description: Filter commits by committer login or email.
   nv_workflow_dispatch_ref:
     type: string
     string_semantics: short

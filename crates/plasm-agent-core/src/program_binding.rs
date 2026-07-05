@@ -69,7 +69,11 @@ pub(crate) enum SegmentPolicy {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContinuationCapability {
     /// `label.<cgs_relation>` — CGS relation chains (typed and/or anchor expansion).
-    RelationDot { segments: SegmentPolicy },
+    RelationDot {
+        segments: SegmentPolicy,
+        /// `label.m#(…)` / `label.<method>(…)` — referentially transparent method invoke.
+        method_invoke: bool,
+    },
     /// Postfix only: `.limit`, `[proj]`, `<<render`, `.page_size`, `.singleton`.
     PostfixOnly,
     /// `label.content` scalar for render rows (not a relation receiver).
@@ -148,6 +152,16 @@ impl ProgramBindingContract {
         matches!(
             self.continuation,
             ContinuationCapability::RelationDot { .. } | ContinuationCapability::PostfixOnly
+        )
+    }
+
+    pub(crate) fn supports_method_invoke(&self) -> bool {
+        matches!(
+            self.continuation,
+            ContinuationCapability::RelationDot {
+                method_invoke: true,
+                ..
+            }
         )
     }
 

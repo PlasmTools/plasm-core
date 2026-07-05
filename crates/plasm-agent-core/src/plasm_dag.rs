@@ -1997,6 +1997,7 @@ fn binding_contract_inner(
                 {
                     ContinuationCapability::RelationDot {
                         segments: SegmentPolicy::MultiSegment,
+                        method_invoke: true,
                     }
                 } else {
                     ContinuationCapability::Terminal
@@ -2037,6 +2038,7 @@ fn binding_contract_inner(
                 row_cardinality,
                 continuation: ContinuationCapability::RelationDot {
                     segments: SegmentPolicy::SingleSegment,
+                    method_invoke: true,
                 },
                 anchor: ContinuationAnchor::RelationExpand(expanded_plasm.clone()),
             }
@@ -2512,10 +2514,69 @@ fn parse_relation_continuation_expr(
     })
 }
 
-/// Output shape of a relation traversal under the cardinality lattice
-/// (`docs/plasm-language-definition.md`): the result is a single row only when the
-/// relation is one-cardinality **and** the source is a singleton; a one-cardinality hop
-/// over a plural source is a 1:1 flat-map and therefore a list.
+fn looks_like_method_invoke_continuation_tail(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    contract: &ProgramBindingContract,
+    tail: &str,
+) -> bool {
+    if !tail.contains('(') {
+        return false;
+    }
+    let head = tail.split('(').next().unwrap_or(tail).trim();
+    if head.len() > 1 && head.starts_with('m') && head[1..].chars().all(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    resolve_relation_wire_on_entity(
+        session,
+        state.cross_cache,
+        &contract.row_entity,
+        head,
+        Some(plasm_core::ProgramBindingLabel(contract.label.as_str())),
+    )
+    .is_none()
+}
+
+fn method_invoke_expanded_surface(
+    state: &CompileState<'_>,
+    label: &str,
+    contract: &ProgramBindingContract,
+    tail: &str,
+) -> Result<String, String> {
+    match &contract.anchor {
+        ContinuationAnchor::RootSurface(prefix) | ContinuationAnchor::RelationExpand(prefix) => {
+            Ok(format!("{prefix}.{tail}"))
+        }
+        ContinuationAnchor::BindingLabel => {
+            let node = state
+                .get(label)
+                .ok_or_else(|| format!("unknown binding `{label}` for method continuation"))?;
+            Ok(format!("{}.{tail}", node.expr.trim()))
+        }
+        ContinuationAnchor::None => Err(format!(
+            "binding `{label}` has no continuation anchor for method invoke `{tail}`"
+        )),
+    }
+}
+
+fn lower_method_invoke_continuation(
+    session: &ExecuteSession,
+    state: &CompileState<'_>,
+    id: &str,
+    _expr: &str,
+    label: &str,
+    contract: &ProgramBindingContract,
+    tail: &str,
+) -> Result<DagNode, String> {
+    if matches!(contract.row_cardinality, RowCardinalityProof::StaticPlural) {
+        return Err(format!(
+            "Plasm program `{id}`: side-effect invoke `{label}.{tail}` requires a singleton binding — use `rows => e#.m#(p#=_.…)` or `.limit(1)` / `.singleton()` first"
+        ));
+    }
+    let expanded = method_invoke_expanded_surface(state, label, contract, tail)?;
+    compile_surface_node(session, state, id, &expanded)
+}
+
 fn relation_result_shape(
     rel_cardinality: RelationCardinality,
     source_card: RelationSourceCardinality,
@@ -2870,6 +2931,15 @@ fn compile_surface_node(
                             return Err(unknown_row_transform_error(id, tail_trim));
                         }
                     }
+                }
+                if contract.supports_method_invoke()
+                    && looks_like_method_invoke_continuation_tail(
+                        session, state, &contract, tail_trim,
+                    )
+                {
+                    return lower_method_invoke_continuation(
+                        session, state, id, expr, &label, &contract, tail_trim,
+                    );
                 }
                 if relation_sourced_continuation_eligible(state, &label)
                     || matches!(contract.anchor, ContinuationAnchor::BindingLabel)
@@ -3526,13 +3596,9 @@ fn parse_plan_value_expr(
         ));
     }
     if raw.starts_with("<<") {
-        return Ok((
-            PlanValue::Template {
-                template: raw.to_string(),
-                input_bindings: Vec::new(),
-            },
-            Vec::new(),
-        ));
+        let body = plasm_core::expr_parser::parse_tagged_heredoc_literal(raw)
+            .map_err(|e| format!("heredoc literal: {e}"))?;
+        return Ok((PlanValue::Literal { value: json!(body) }, Vec::new()));
     }
     let value = parse_literal(raw)?;
     Ok((PlanValue::Literal { value }, Vec::new()))
@@ -5227,6 +5293,135 @@ commits"#;
         assert_eq!(
             dry.node_results[1]["simulation"]["kind"],
             "relation_traversal"
+        );
+    }
+
+    #[test]
+    fn binding_method_invoke_is_referentially_transparent() {
+        let session = test_session();
+        let explicit = r#"LangItem("i1").update(title="MatrixPatch", score=42, owner="alice")"#;
+        let bound = r#"item = LangItem("i1")
+out = item.update(title="MatrixPatch", score=42, owner="alice")
+out"#;
+        let plan_explicit = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "rt-explicit",
+            explicit,
+        )
+        .expect("explicit compile");
+        let plan_bound = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "rt-bound",
+            bound,
+        )
+        .expect("bound compile");
+        let ir_explicit = &plan_explicit["nodes"].as_array().unwrap()[0]["ir"]["expr"];
+        let ir_bound = &plan_bound["nodes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["id"] == "out")
+            .expect("out node")["ir"]["expr"];
+        assert_eq!(
+            ir_explicit, ir_bound,
+            "bound method invoke must lower to same IR as explicit anchor"
+        );
+    }
+
+    #[test]
+    fn binding_plural_side_effect_method_invoke_rejected() {
+        let session = test_session();
+        let err = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "rt-plural-side-effect",
+            r#"items = LangItem
+bad = items.update(title="x", score=1, owner="a")
+bad"#,
+        )
+        .expect_err("plural binding must not fan out side effects");
+        assert!(
+            err.contains("singleton"),
+            "expected singleton side-effect gate, got: {err}"
+        );
+    }
+
+    #[test]
+    fn github_commit_query_path_filter_symbols_distinct_and_map_to_path_wire() {
+        use plasm_core::expr_parser::parse_with_cgs_layers;
+
+        let session = github_repository_commit_session();
+        let map = symbol_map_for_plasm_surface_parse(&session, None);
+        let path_p = map.ident_sym_cap_param_for("github", "Commit", "commit_query", "path");
+        let author_p = map.ident_sym_cap_param_for("github", "Commit", "commit_query", "by_author");
+        let committer_p =
+            map.ident_sym_cap_param_for("github", "Commit", "commit_query", "by_committer");
+        assert_ne!(
+            path_p, committer_p,
+            "path and by_committer must not share p#"
+        );
+        assert_ne!(path_p, author_p, "path and by_author must not share p#");
+
+        let commit_e = map.entity_sym_for("github", "Commit");
+        let repo_e = map.entity_sym_for("github", "Repository");
+        let owner_f = map.ident_sym_entity_field_for("github", "Repository", "owner");
+        let repo_f = map.ident_sym_entity_field_for("github", "Repository", "repo");
+        let repo_param =
+            map.ident_sym_cap_param_for("github", "Commit", "commit_query", "repository");
+        let expr = format!(
+            r#"{commit_e}{{{repo_param}={repo_e}({owner_f}=octocat, {repo_f}=Hello-World), {path_p}="README.md"}}"#
+        );
+        let stack = crate::plasm_plan_run::session_cgs_layer_stack(&session);
+        let parsed =
+            parse_with_cgs_layers(&expr, &stack, map).expect("parse commit_query path filter");
+        let plasm_core::Expr::Query(q) = &parsed.expr else {
+            panic!("expected query, got {:?}", parsed.expr);
+        };
+        assert_eq!(q.entity, "Commit");
+        let Some(pred) = &q.predicate else {
+            panic!("expected predicate");
+        };
+        let path_field_ok = match pred {
+            plasm_core::Predicate::Comparison { field, .. } => field == "path",
+            plasm_core::Predicate::And { args } => args.iter().any(|p| {
+                matches!(
+                    p,
+                    plasm_core::Predicate::Comparison { field, .. } if field == "path"
+                )
+            }),
+            _ => false,
+        };
+        assert!(
+            path_field_ok,
+            "path filter must bind path param, got: {pred:?}"
+        );
+
+        let program = format!(
+            r#"rows = {commit_e}{{{repo_param}={repo_e}({owner_f}=octocat, {repo_f}=Hello-World), {path_p}="README.md"}}
+rows"#
+        );
+        let plan = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "commit-path-filter-dry",
+            &program,
+        )
+        .expect("compile commit path filter");
+        let dry = evaluate_plasm_plan_dry(&session, &plan).expect("dry");
+        let dry_str = serde_json::to_string(&dry.node_results).expect("dry json");
+        assert!(
+            dry_str.contains("path") || dry_str.contains(&path_p),
+            "dry-run should surface path filter wire, got: {dry_str}"
+        );
+        assert!(
+            !dry_str.contains("by_committer"),
+            "dry-run must not show committer param for path filter: {dry_str}"
         );
     }
 

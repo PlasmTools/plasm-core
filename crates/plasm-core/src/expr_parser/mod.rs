@@ -67,7 +67,7 @@ pub mod postfix;
 pub mod program;
 pub mod value_expr;
 
-pub use heredoc_surface::{tagged_heredoc_close_kind, HeredocCloseLineKind};
+pub use heredoc_surface::{parse_tagged_heredoc_literal, tagged_heredoc_close_kind, HeredocCloseLineKind};
 pub use postfix::{
     normalize_nested_projection_field, peel_postfix_suffixes, try_parse_bracket_render,
     try_parse_render_tail, BracketRender, PlasmPostfixOp, RenderTailParse,

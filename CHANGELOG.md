@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.121] - 2026-07-05
+
+### Fixed
+
+- **GitHub `CommitFile` decode:** `Commit.owner` / `Commit.repo` derive from commit URL; `CommitFile` uses `path` identity for Contents API vs commit-diff `filename`; embed decode inherits parent scope.
+- **`commit_query` filter homographs:** distinct `value_ref` slots for `path`, `by_author`, and `by_committer` so opaque `p#` symbols no longer alias the wrong GitHub query wire.
+
+### Added
+
+- **Binding heredoc as string:** `label = <<TAG` … `TAG` lowers to a string literal — pass `p#=label`, not `label.content` (`.content` remains row-to-text render only).
+- **Referential transparency (`label.m#`):** `repo.m#(…)` / `repo.update(…)` lower like repeating the bound anchor; plural bindings reject side-effect fanout with an explicit singleton gate.
+
+### Changed
+
+- **Language spec / prompts:** RT bindings section, heredoc forms table, and teaching assets prefer bound-label method/relation continuation.
+
 ## [0.3.120] - 2026-07-04
 
 ### Fixed

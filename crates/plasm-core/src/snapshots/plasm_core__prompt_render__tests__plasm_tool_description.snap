@@ -34,8 +34,10 @@ Core surface:
 
 Composition rules:
 - One binding per line; **one** return line last. Multiple roots belong on that line comma-separated — not stacked as separate bare-label lines. Single-line space-separated programs coerce default return to first binding.
-- Row text: `label = source <<TAG` … `TAG` (equals required); optional `label = source[p#,…] <<TAG`. Minijinja `{{ }}` / `{% %}` over the projected list inside the heredoc body — not `${}`. `rows` is the whole list (one render, not per-row); the source binding name also works (`{% for r in sorted %}`). In the body, `p#` from the bracket list and wire names both resolve (`{{ r.p23 }}` and `{{ r.name }}`); nullable fields: `{{ r.p_field or "—" }}`.
-- Pass `binding.content` to string params; compose with `${report.content}` in later heredocs/strings (`$$` escapes `$`). Do not use `report.content` as a final root or relation receiver.
+- Row text (Minijinja): `label = source[p#,…] <<TAG` … `TAG`; **`binding.content`** for string params (not bare `label`).
+- String binding (no template): `label = <<TAG` … `TAG` — pass **`p#=label`**, not `label.content`.
+- RT: after `repo = e#(…)`, prefer **`repo.m#(…)`** / **`repo.r#`** over repeating the get head.
+- Compose with `${report.content}` in later heredocs/strings (`$$` escapes `$`). Do not use `report.content` as a final root or relation receiver.
 - Action/create roots: return the action row or follow with `e#(p#=…)` get — not `created.p#` as a program root.
 - Bare create: `e#.m#(p#=…)` without `source =>` unless scoping a binding.
 - Heredoc: `<<TAG` + newline; first trimmed `TAG` line closes; pick a tag absent from the body. `markdown`/`html`/`document`/`json_text`/`blob` values use `<<TAG` … `TAG` only.
@@ -44,7 +46,7 @@ items = e_source
 filtered = items.filter{p_field>=300}
 sorted = filtered.sort(p_field, desc).limit(10)
 sorted[p_a,p_field]
-- Worked row-to-text (same `p#` in bracket and Minijinja body; wire names also work):
+- Worked row-to-text (same `p#` in bracket and Minijinja body; wire names also work; source binding name also works for `{% for %}`):
 report = sorted[p_a,p_field] <<PLASM_RPT_TAG
 {% for r in rows %}- {{ r.p_a }} ({{ r.p_field or "—" }})
 {% endfor %}

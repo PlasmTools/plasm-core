@@ -494,4 +494,105 @@ mod tests {
         let err = decode_entities(&item, &body).unwrap_err();
         assert!(err.to_string().contains("leaf"), "{err}");
     }
+
+    #[test]
+    fn github_commit_file_contents_get_decodes_path_identity() {
+        use plasm_core::loader::load_schema_dir;
+        use crate::decoder::{FieldDecoder, PathSegment};
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("github cgs");
+        let file_ent = cgs.get_entity("CommitFile").expect("CommitFile");
+        let mut cf = Vec::new();
+        for (fname, fschema) in &file_ent.fields {
+            let from_path = if let Some(wp) = &fschema.wire_path {
+                PathExpr::new(
+                    wp.iter()
+                        .map(|n| PathSegment::Key { name: n.clone() })
+                        .collect(),
+                )
+            } else {
+                PathExpr::new(vec![PathSegment::Key {
+                    name: fname.as_str().to_string(),
+                }])
+            };
+            cf.push(FieldDecoder::new(fname.as_str(), from_path));
+        }
+        let mut ambient = IndexMap::new();
+        ambient.insert("owner".into(), "ryan-s-roberts".into());
+        ambient.insert("repo".into(), "tool-test".into());
+        let decoder = EntityDecoder::new("CommitFile", PathExpr::empty())
+            .with_fields(cf)
+            .with_id_field(file_ent.id_field.clone())
+            .with_key_vars(
+                file_ent
+                    .key_vars
+                    .iter()
+                    .map(|k| k.as_str().to_string())
+                    .collect(),
+            )
+            .with_id_path(PathExpr::from_slice(&["path"]))
+            .with_identity_ambient(ambient);
+        let body = json!({
+            "path": "docs/LABEL_COLORS.md",
+            "sha": "abc123sha",
+            "type": "file"
+        });
+        let decoded = decode_entities_with_cgs(&decoder, &body, Some(&cgs)).expect("decode contents");
+        assert_eq!(decoded.len(), 1);
+        let row = &decoded[0];
+        let parts = row
+            .reference
+            .compound_parts()
+            .expect("CommitFile compound ref");
+        assert_eq!(parts.get("filename"), Some(&"docs/LABEL_COLORS.md".to_string()));
+        assert_eq!(parts.get("owner"), Some(&"ryan-s-roberts".to_string()));
+        assert_eq!(parts.get("repo"), Some(&"tool-test".to_string()));
+        assert_eq!(
+            row.fields.get("filename"),
+            Some(&Value::String("docs/LABEL_COLORS.md".into()))
+        );
+    }
+
+    #[test]
+    fn github_commit_files_embed_inherits_owner_repo_from_commit_url() {
+        use plasm_core::loader::load_schema_dir;
+        use crate::embed_target_decoder::entity_decoder_for_from_parent_get_target;
+
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(&dir).expect("github cgs");
+        let commit_ent = cgs.get_entity("Commit").expect("Commit");
+        let file_ent = cgs.get_entity("CommitFile").expect("CommitFile");
+        let rel_path = PathExpr::from_slice(&["files", "*"]);
+        let base_decoder =
+            entity_decoder_for_from_parent_get_target(file_ent, commit_ent, rel_path);
+        let parent = json!({
+            "sha": "deadbeef",
+            "url": "https://api.github.com/repos/ryan-s-roberts/tool-test/commits/deadbeef",
+            "files": [
+                {
+                    "filename": "docs/LABEL_COLORS.md",
+                    "status": "added",
+                    "sha": "abc123sha"
+                }
+            ]
+        });
+        let child_decoder = super::child_decoder_with_parent_ambient(&parent, &base_decoder);
+        let file_source = &parent["files"][0];
+        let file = super::decode_entity_fields_and_ref(&child_decoder, file_source)
+            .expect("decode embedded CommitFile");
+        let parts = file
+            .reference
+            .compound_parts()
+            .expect("compound CommitFile ref");
+        assert_eq!(parts.get("filename"), Some(&"docs/LABEL_COLORS.md".to_string()));
+        assert_eq!(parts.get("owner"), Some(&"ryan-s-roberts".to_string()));
+        assert_eq!(parts.get("repo"), Some(&"tool-test".to_string()));
+    }
 }
