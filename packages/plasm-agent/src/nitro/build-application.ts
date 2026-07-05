@@ -1,9 +1,14 @@
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { CompiledSlotMap } from "../cli/compile-authored-slots.js";
 import { loadAuthoredSlots } from "../authoring/slot-loader.js";
 import type { ProjectDiscovery } from "../discovery/project-walker.js";
-import { buildPlasmAgentSummary, emitPlasmAgentSummary } from "./agent-summary.js";
+import {
+  buildPlasmAgentSummary,
+  emitEveCompatibleAgentSummary,
+  emitPlasmAgentSummary,
+} from "./agent-summary.js";
 import { buildNitroOutput } from "./build-nitro-output.js";
 import { createPlasmNitro } from "./create-plasm-nitro.js";
 import { patchVercelOutputConfig } from "./patch-vercel-config.js";
@@ -18,6 +23,7 @@ import { writeWorkflowDispatchRoute } from "./write-workflow-dispatch-route.js";
 export interface PlasmApplicationBuildResult {
   outputDir: string;
   agentSummaryPath: string;
+  eveAgentSummaryPath: string;
   vercelOutput: boolean;
 }
 
@@ -85,12 +91,27 @@ export async function buildPlasmApplication(options: {
     });
     const agentSummaryPath = await emitPlasmAgentSummary({ projectRoot, summary });
 
+    let instructionsMarkdown: string | null = null;
+    if (discovery.instructions?.path) {
+      try {
+        instructionsMarkdown = await readFile(discovery.instructions.path, "utf8");
+      } catch {
+        instructionsMarkdown = null;
+      }
+    }
+    const eveAgentSummaryPath = await emitEveCompatibleAgentSummary({
+      projectRoot,
+      summary,
+      instructionsMarkdown,
+    });
+
     const vercelOutput = isVercelBuildEnvironment();
     const resolvedOutput = vercelOutput ? vercelOutputDir(projectRoot) : outputDir;
 
     return {
       outputDir: resolvedOutput,
       agentSummaryPath,
+      eveAgentSummaryPath,
       vercelOutput,
     };
   } finally {

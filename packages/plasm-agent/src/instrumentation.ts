@@ -39,11 +39,10 @@ export function registerAgentInstrumentation(
   void options.serviceName;
 }
 
-/** Per-call AI SDK telemetry settings with OpenTelemetry integration. */
+/** Per-call AI SDK telemetry settings (OTEL registered in agent/instrumentation.ts). */
 export function createAgentTelemetry(
   options: AgentInstrumentationOptions = {},
 ): TelemetryOptions {
-  registerAgentInstrumentation(options);
   return {
     isEnabled: true,
     functionId: options.serviceName ?? "plasm-agent",

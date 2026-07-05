@@ -19,10 +19,13 @@ import { maybeCompactMessages } from "../runtime/compaction.js";
 import { AgentRuntime, type AgentRuntimeConfig } from "../runtime/agent-runtime.js";
 import { createHarnessTools, renderSkillIndex } from "../tools/harness-tools.js";
 import { createPlasmTools } from "../tools/plasm-tools.js";
+import { createEveSessionId, withEveTurnSpan } from "../telemetry/eve-agent-runs.js";
 
 export interface PlasmAgentConfig extends AgentRuntimeConfig {
   /** AI Gateway model slug, e.g. `anthropic/claude-sonnet-4.6`. */
   model: string | LanguageModel;
+  /** Agent Runs / OTEL function id (defaults from agent root directory name). */
+  agentName?: string;
   instructionsPath?: string;
   maxSteps?: number;
   telemetry?: boolean;
@@ -67,6 +70,7 @@ export class PlasmAgent {
   private readonly hookRunner?: HookRunner;
   private readonly subagentRegistry?: SubagentRegistry;
   private readonly getAuthoringContext?: () => AuthoringContext;
+  private readonly agentName: string;
   private conversation: ModelMessage[] = [];
 
   constructor(config: PlasmAgentConfig) {
@@ -77,6 +81,10 @@ export class PlasmAgent {
       config.instructionsPath ?? path.join(config.agentRoot, "instructions.md");
     this.maxSteps = config.maxSteps ?? 20;
     this.telemetryEnabled = config.telemetry ?? true;
+    this.agentName =
+      config.agentName?.trim() ||
+      process.env.PLASM_AGENT_NAME?.trim() ||
+      path.basename(path.dirname(config.agentRoot));
     this.loadedSkills = config.loadedSkills ?? [];
     this.compaction = config.compaction;
     const skillsFlag = config.experimental?.skills;
@@ -142,7 +150,7 @@ export class PlasmAgent {
     } as ToolSet;
 
     const telemetry = this.telemetryEnabled
-      ? createAgentTelemetry({ serviceName: "plasm-agent" })
+      ? createAgentTelemetry({ serviceName: this.agentName })
       : { isEnabled: false };
     const model = resolveGatewayModel(this.model, this.modelOptions);
 
@@ -182,10 +190,15 @@ export class PlasmAgent {
       ...(this.modelOptions?.topK !== undefined ? { topK: this.modelOptions.topK } : {}),
     };
 
-    const result = await generateText({
-      ...generation,
-      messages,
-    });
+    const sessionId = createEveSessionId();
+    const result = await withEveTurnSpan(
+      { sessionId, functionId: this.agentName },
+      async () =>
+        generateText({
+          ...generation,
+          messages,
+        }),
+    );
 
     if (!externalMessages) {
       this.conversation.push({ role: "assistant", content: result.text });

@@ -7,10 +7,11 @@ import { exportScheduleTaskManifest } from "../authoring/schedule-manager.js";
 import type { AgentDefinition } from "../define-agent.js";
 import type { ProjectDiscovery } from "../discovery/project-walker.js";
 import { frameworkPackageVersion } from "../package-version.js";
-import { plasmAgentSummaryPath } from "./paths.js";
+import { plasmAgentSummaryPath, eveAgentSummaryPath } from "./paths.js";
 
 export const VERCEL_PLASM_AGENT_SUMMARY_KIND = "vercel-plasm-agent-summary";
 export const VERCEL_PLASM_AGENT_SUMMARY_VERSION = 3;
+export const VERCEL_EVE_AGENT_SUMMARY_KIND = "vercel-eve-agent-summary";
 
 export interface PlasmAgentSummaryPayload {
   kind: typeof VERCEL_PLASM_AGENT_SUMMARY_KIND;
@@ -129,5 +130,63 @@ export async function emitPlasmAgentSummary(options: {
   const outPath = plasmAgentSummaryPath(options.projectRoot);
   await mkdir(path.dirname(outPath), { recursive: true });
   await writeFile(outPath, `${JSON.stringify(options.summary, null, 2)}\n`, "utf8");
+  return outPath;
+}
+
+function mapSkillSourceKind(sourceKind: string): "markdown" | "module" | "skill-package" {
+  if (sourceKind === "markdown") return "markdown";
+  if (sourceKind === "skill-package") return "skill-package";
+  return "module";
+}
+
+/** Eve-compatible summary for Vercel Agent Runs build ingestion (`.eve/agent-summary.json`). */
+export function toEveAgentSummary(
+  summary: PlasmAgentSummaryPayload,
+  instructionsMarkdown?: string | null,
+): Record<string, unknown> {
+  return {
+    kind: VERCEL_EVE_AGENT_SUMMARY_KIND,
+    schemaVersion: VERCEL_PLASM_AGENT_SUMMARY_VERSION,
+    generatorVersion: summary.generatorVersion,
+    agent: {
+      name: summary.agent.name,
+      ...(summary.agent.description ? { description: summary.agent.description } : {}),
+      modelId: summary.agent.modelId,
+    },
+    instructions: summary.instructions
+      ? {
+          logicalPath: summary.instructions.logicalPath,
+          sourceKind: summary.instructions.sourceKind === "markdown" ? "markdown" : "module",
+          markdown: instructionsMarkdown ?? summary.instructions.markdown ?? "",
+        }
+      : null,
+    schedules: summary.schedules,
+    tools: summary.tools,
+    skills: summary.skills.map((skill) => ({
+      name: skill.name,
+      description: skill.description,
+      logicalPath: skill.logicalPath,
+      sourceKind: mapSkillSourceKind(skill.sourceKind),
+    })),
+    connections: summary.connections,
+    channels: summary.channels,
+    sandbox: summary.sandbox,
+    subagents: summary.subagents,
+    diagnostics: summary.diagnostics,
+  };
+}
+
+export async function emitEveCompatibleAgentSummary(options: {
+  projectRoot: string;
+  summary: PlasmAgentSummaryPayload;
+  instructionsMarkdown?: string | null;
+}): Promise<string> {
+  const outPath = eveAgentSummaryPath(options.projectRoot);
+  await mkdir(path.dirname(outPath), { recursive: true });
+  await writeFile(
+    outPath,
+    `${JSON.stringify(toEveAgentSummary(options.summary, options.instructionsMarkdown), null, 2)}\n`,
+    "utf8",
+  );
   return outPath;
 }

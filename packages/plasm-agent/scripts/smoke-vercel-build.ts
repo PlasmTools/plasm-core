@@ -73,6 +73,16 @@ async function main(): Promise<void> {
     throw new Error(`unexpected agent summary: ${JSON.stringify(summary)}`);
   }
 
+  const eveSummaryPath = path.join(projectRoot, ".eve", "agent-summary.json");
+  await access(eveSummaryPath);
+  const eveSummary = JSON.parse(await readFile(eveSummaryPath, "utf8")) as {
+    kind?: string;
+    schemaVersion?: number;
+  };
+  if (eveSummary.kind !== "vercel-eve-agent-summary" || eveSummary.schemaVersion !== 3) {
+    throw new Error(`unexpected eve agent summary: ${JSON.stringify(eveSummary)}`);
+  }
+
   const vercelJson = JSON.parse(
     await readFile(path.join(projectRoot, "vercel.json"), "utf8"),
   ) as { buildCommand?: string };
