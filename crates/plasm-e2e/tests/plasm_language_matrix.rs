@@ -84,6 +84,9 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "bracket_render_content_ref",
     "cross_binding_render",
     "static_heredoc_binding",
+    "bind_method_invoke_field_ref",
+    "inline_heredoc_method_arg",
+    "heredoc_body_with_equals",
     "derive_map",
     "effect_create",
     "effect_update",
@@ -840,6 +843,36 @@ fn assert_planning_ir(
                     "expected LangItem query binding, got {:?}",
                     q.entity
                 ));
+            }
+        }
+        "lang_heredoc_body_with_equals" => {
+            let mut saw_body = false;
+            for nr in &dry.node_results {
+                if json_value_contains_substring(nr, "key = value") {
+                    saw_body = true;
+                    break;
+                }
+            }
+            if !saw_body {
+                return Err("expected heredoc body with interior equals in dry payload".into());
+            }
+        }
+        "lang_inline_heredoc_method_arg" => {
+            if !comp_ir_contains_selector(comp, "create") {
+                return Err("expected create invoke with inline heredoc arg".into());
+            }
+            if !json_value_contains_substring(comp, "line one") {
+                return Err("expected inline heredoc body preserved in comp IR (PLP-2)".into());
+            }
+        }
+        "lang_bind_method_invoke_field_ref" => {
+            if !comp_ir_contains_selector(comp, "update") {
+                return Err("expected update invoke from bound method continuation".into());
+            }
+            if !json_value_contains_substring(comp, "NodeInput") {
+                return Err(
+                    "expected bound method invoke field-ref lowered to NodeInput (PLP-1)".into(),
+                );
             }
         }
         "lang_derive_map_parallel" => {
@@ -1787,6 +1820,44 @@ one, note"#,
         features: &["static_heredoc_binding", "parallel_final_roots"],
         min_node_results: 2,
         expect_markdown_substrings: &["# Results", "hello-matrix", "```tsv"],
+    },
+    MatrixRow {
+        id: "lang_heredoc_body_with_equals",
+        program: r#"body = <<PLASM_EQ_BODY
+key = value
+PLASM_EQ_BODY
+one = LangItem.limit(1)[title]
+one, body"#,
+        surface_line: false,
+        federated: false,
+        features: &["heredoc_body_with_equals", "static_heredoc_binding", "parallel_final_roots"],
+        min_node_results: 2,
+        expect_markdown_substrings: &["# Results", "key = value", "```tsv"],
+    },
+    MatrixRow {
+        id: "lang_inline_heredoc_method_arg",
+        program: r#"created = LangItem.create(title=<<PLASM_INLINE_ARG
+line one
+PLASM_INLINE_ARG
+, score=0, owner="inline-heredoc")
+created"#,
+        surface_line: false,
+        federated: false,
+        features: &["inline_heredoc_method_arg", "effect_create"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["inline-heredoc"],
+    },
+    MatrixRow {
+        id: "lang_bind_method_invoke_field_ref",
+        program: r#"item = LangItem("i1")
+peer = LangItem("i2")
+out = item.update(title=peer.title, score=42, owner="alice")
+out"#,
+        surface_line: false,
+        federated: false,
+        features: &["bind_method_invoke_field_ref", "effect_update"],
+        min_node_results: 3,
+        expect_markdown_substrings: &["MatrixPatch", "alice"],
     },
     MatrixRow {
         id: "lang_derive_map_parallel",

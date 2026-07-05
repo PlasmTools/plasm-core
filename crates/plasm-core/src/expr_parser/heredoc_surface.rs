@@ -145,11 +145,15 @@ pub fn skip_tagged_structured_heredoc(
             });
         }
         if line_end >= s.len() {
-            return Err(format!("unterminated tagged heredoc <<{tag}"));
+            return Err(crate::plp::plp2_heredoc(format!(
+                "unterminated tagged heredoc <<{tag}"
+            )));
         }
         pos = line_end + 1;
     }
-    Err(format!("unterminated tagged heredoc <<{tag}"))
+    Err(crate::plp::plp2_heredoc(format!(
+        "unterminated tagged heredoc <<{tag}"
+    )))
 }
 
 /// Parse a standalone tagged heredoc (`<<TAG` … `TAG`) into its body string (no tag delimiters).
@@ -157,7 +161,9 @@ pub fn parse_tagged_heredoc_literal(s: &str) -> Result<String, String> {
     let s = s.trim();
     let opener = try_parse_tagged_heredoc_opener(s, 0)?;
     let HeredocOpener::Complete { tag, body_start } = opener else {
-        return Err("incomplete tagged heredoc opener (missing newline after <<TAG)".into());
+        return Err(crate::plp::plp2_heredoc(
+            "incomplete tagged heredoc opener (missing newline after <<TAG)",
+        ));
     };
     let mut pos = body_start;
     while pos <= s.len() {
@@ -171,7 +177,9 @@ pub fn parse_tagged_heredoc_literal(s: &str) -> Result<String, String> {
         }
         pos = line_end + 1;
     }
-    Err(format!("unterminated tagged heredoc <<{tag}"))
+    Err(crate::plp::plp2_heredoc(format!(
+        "unterminated tagged heredoc <<{tag}"
+    )))
 }
 
 #[cfg(test)]
@@ -198,6 +206,7 @@ mod tests {
     fn skip_tagged_errors_when_close_missing() {
         let s = "only body\nno sentinel";
         let err = skip_tagged_structured_heredoc(s, 0, "TAG").unwrap_err();
+        assert!(err.contains("PLP-2:"), "{err}");
         assert!(err.contains("unterminated"), "{err}");
     }
 

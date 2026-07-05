@@ -733,7 +733,7 @@ fn evaluate_plasm_plan_dry_typechecks_ir_not_display_text() {
     });
     let dry = evaluate_plasm_plan_dry(&s, &plan).expect("dry");
     assert_eq!(
-        dry.node_results[0]["execution_contract"]["ir"]["entity"],
+        dry.node_results[0]["ir"]["expr"]["entity"],
         "Product"
     );
 }

@@ -108,6 +108,7 @@ pub mod loader;
 pub mod normalizer;
 pub mod paging_handle;
 pub mod plasm_monad;
+pub mod plp;
 pub mod predicate;
 pub mod preflight;
 pub mod prompt_pipeline;

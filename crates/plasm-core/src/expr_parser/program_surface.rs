@@ -55,10 +55,9 @@ pub fn scan_physical_line_stmt_state(line: &str) -> Result<PhysicalLineStmtState
         i += cl;
     }
     if quote.is_some() {
-        return Err(
-            "physical newline inside a quoted Plasm string parameter; use a tagged heredoc for multiline string parameters, e.g. `p58=<<MAIL_7f3a` then the body and a closing `MAIL_7f3a)` line"
-                .to_string(),
-        );
+        return Err(crate::plp::plp3_staging(
+            "physical newline inside a quoted Plasm string parameter; use a tagged heredoc for multiline string parameters, e.g. `p58=<<MAIL_7f3a` then the body and a closing `MAIL_7f3a)` line",
+        ));
     }
     if depth > 0 {
         return Ok(PhysicalLineStmtState::AwaitingDelimiterClose);
@@ -167,20 +166,19 @@ impl PhysicalLineStatementScanner {
 
     fn finish(self) -> Result<Vec<String>, String> {
         if self.pending_tag.is_some() {
-            return Err(
-                "unterminated tagged heredoc (missing closing `TAG` line, or missing newline after `<<TAG` on the opener line)".into(),
-            );
+            return Err(crate::plp::plp2_heredoc(
+                "unterminated tagged heredoc (missing closing `TAG` line, or missing newline after `<<TAG` on the opener line)",
+            ));
         }
         if self.pending_delimiters {
-            return Err(
-                "unterminated Plasm program statement (unbalanced delimiters after heredoc close)"
-                    .into(),
-            );
+            return Err(crate::plp::plp3_staging(
+                "unterminated Plasm program statement (unbalanced delimiters after heredoc close)",
+            ));
         }
         if !self.cur.is_empty() {
-            return Err(
-                "unterminated Plasm program statement (unexpected trailing fragment)".into(),
-            );
+            return Err(crate::plp::plp3_staging(
+                "unterminated Plasm program statement (unexpected trailing fragment)",
+            ));
         }
         Ok(self.out)
     }
@@ -223,7 +221,23 @@ pub fn validate_program_label(label: &str) -> Result<(), String> {
 pub fn split_assignment_at_top_level(line: &str) -> Option<(&str, &str)> {
     let mut depth = 0i32;
     let mut quote = None::<char>;
-    for (i, c) in line.char_indices() {
+    let mut i = 0usize;
+    while i < line.len() {
+        if quote.is_none() {
+            match heredoc_surface_step_at(line, i) {
+                Ok(HeredocSurfaceStep::SkipTo(next)) => {
+                    i = next;
+                    continue;
+                }
+                Ok(HeredocSurfaceStep::OpenerIncomplete { .. }) => return None,
+                Ok(HeredocSurfaceStep::NotAnOpener) | Err(_) => {}
+            }
+        }
+        let c = line[i..]
+            .chars()
+            .next()
+            .expect("valid UTF-8 boundary");
+        let cl = c.len_utf8();
         match c {
             '"' | '\'' if quote == Some(c) => quote = None,
             '"' | '\'' if quote.is_none() => quote = Some(c),
@@ -231,6 +245,7 @@ pub fn split_assignment_at_top_level(line: &str) -> Option<(&str, &str)> {
             ')' | ']' | '}' if quote.is_none() => depth -= 1,
             '=' if quote.is_none() && depth == 0 => {
                 if line[i..].starts_with("=>") {
+                    i += cl;
                     continue;
                 }
                 let left = line[..i].trim();
@@ -241,6 +256,7 @@ pub fn split_assignment_at_top_level(line: &str) -> Option<(&str, &str)> {
             }
             _ => {}
         }
+        i += cl;
     }
     None
 }
@@ -704,6 +720,15 @@ mod tests {
     }
 
     #[test]
+    fn split_assignment_respects_heredoc_bodies_with_equals() {
+        let stmt = "body = <<PLASM_EOF\nkey = value\nPLASM_EOF";
+        let (label, rhs) = split_assignment_at_top_level(stmt).expect("assignment");
+        assert_eq!(label, "body");
+        assert!(rhs.starts_with("<<PLASM_EOF"));
+        assert!(rhs.contains("key = value"));
+    }
+
+    #[test]
     fn collect_program_binding_heredoc_sugar_without_equals() {
         let src = "body <<PLASM_LABEL_ISSUE_V1\n## Problem\nline two\nPLASM_LABEL_ISSUE_V1\ncreated = x()\nbody, created";
         let stmts = collect_program_statement_lines(src).expect("parse");
@@ -717,6 +742,10 @@ mod tests {
     #[test]
     fn collect_program_statement_lines_errors_on_squashed_heredoc_opener() {
         let err = collect_program_statement_lines("body = <<B # junk").expect_err("err");
+        assert!(
+            err.contains("PLP-2:") || err.contains("PLP-3:"),
+            "unexpected err: {err}"
+        );
         assert!(
             err.contains("tagged heredoc") || err.contains("<<"),
             "unexpected err: {err}"

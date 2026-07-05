@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.125] - 2026-07-05
+
+### Added
+
+- **PLP surface invariants (`PLP-1`…`PLP-6`):** `plasm_core::plp` diagnostic IDs, monorepo spec [`plasm-language-surface-invariants.md`](../../docs/plasm-language-surface-invariants.md), and CI guard `check_plp_matrix_coverage.sh` wired into `rust-quality.sh`.
+- **Language matrix rows:** heredoc `=` body, inline heredoc method args, bound method invoke field refs (`lang_*` tags with stronger planning IR assertions).
+
+### Fixed
+
+- **PLP-2/3:** heredoc-aware `=` assignment split; staging errors cite PLP ids.
+- **PLP-4:** binding continuation dispatches method invoke before relation/postfix traps (`label.m#(p#=…)`, multi-segment relation continuations).
+- **PLP-6:** agent dry-run compacts all long string leaves in `node_results` IR (not a magic key list); removes duplicate plan text in dry-run snapshots.
+
+### Changed
+
+- **`plasm_dag` decomposition:** 6.7k-line module split into `types` (+ `PlanNodeEmitter` / `BindingContractSource` traits), `pipeline`, `binding_continuation`, `plan_serialize/*`, `postfix/*`, `schema_validate/*`, `relation`, `binding_contract`; integration tests extracted to `plasm_dag/tests/integration.rs`.
+
 ## [0.3.124] - 2026-07-05
 
 ### Fixed

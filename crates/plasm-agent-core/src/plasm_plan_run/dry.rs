@@ -85,26 +85,31 @@ pub fn evaluate_executable_comp_dry(
                         })
                         .or(surface.display_expr.as_deref())
                         .unwrap_or("<ir>");
+                    let compact_expr = crate::plan_dry_compact::compact_agent_surface_expr(expr);
+                    let compact_ir = crate::plan_dry_compact::compact_ir_expr_json_for_agent_snapshot(
+                        serde_json::to_value(&parsed.expr).unwrap_or_default(),
+                    );
                     out.push(serde_json::json!({
                         "index": step_idx,
                         "ok": true,
                         "id": n.id().as_str(),
                         "kind": n.kind(),
-                        "operation": render_node_operation(&n),
+                        "operation": crate::plan_dry_compact::compact_agent_surface_expr(
+                            &render_node_operation(&n),
+                        ),
                         "qualified_entity": surface.qualified_entity,
                         "effect_class": n.effect_class(),
                         "result_shape": n.result_shape(),
                         "projection": surface.projection,
                         "predicates": surface.predicates,
                         "ir": {
-                            "expr": parsed.expr,
+                            "expr": compact_ir,
                             "projection": parsed.projection
                         },
                         "execution_contract": {
                             "entry_id": surface.qualified_entity.as_ref().map(|q| q.entry_id.as_str()).unwrap_or(es.entry_id.as_str()),
                             "entity": surface.qualified_entity.as_ref().map(|q| q.entity.as_str()),
-                            "display_expr": expr,
-                            "ir": parsed.expr,
+                            "display_expr": compact_expr,
                             "projection": parsed.projection
                         },
                         "type_check": "ok",

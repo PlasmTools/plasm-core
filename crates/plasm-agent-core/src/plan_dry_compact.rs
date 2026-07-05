@@ -56,6 +56,35 @@ pub(crate) fn compact_agent_surface_expr(expr: &str) -> String {
     summarize_agent_surface_literal(&out, INLINE_MAX, HEAD)
 }
 
+/// Compact large string leaves in dry-run IR snapshots (agent-facing `node_results` only).
+pub(crate) fn compact_ir_expr_json_for_agent_snapshot(value: serde_json::Value) -> serde_json::Value {
+    const INLINE_MAX: usize = 256;
+    match value {
+        serde_json::Value::String(s) => {
+            if s.chars().count() > INLINE_MAX {
+                serde_json::json!(format!(
+                    "… ({} chars, full in run artifact)",
+                    s.chars().count()
+                ))
+            } else {
+                serde_json::Value::String(s)
+            }
+        }
+        serde_json::Value::Object(mut map) => {
+            for v in map.values_mut() {
+                *v = compact_ir_expr_json_for_agent_snapshot(v.take());
+            }
+            serde_json::Value::Object(map)
+        }
+        serde_json::Value::Array(arr) => serde_json::Value::Array(
+            arr.into_iter()
+                .map(compact_ir_expr_json_for_agent_snapshot)
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
 fn summarize_agent_surface_literal(s: &str, inline_max: usize, head: usize) -> String {
     let n = s.chars().count();
     if n <= inline_max {
