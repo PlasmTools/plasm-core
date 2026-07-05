@@ -155,6 +155,7 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
     let res = finalize_mcp_tool_result(
         CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]),
         tool_meta,
+        None,
     );
     assert_eq!(
         res.meta

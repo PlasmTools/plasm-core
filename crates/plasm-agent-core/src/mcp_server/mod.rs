@@ -1,7 +1,9 @@
 //! MCP Streamable HTTP server (rust-mcp-sdk) over Plasm discovery + execute ([`crate::server_state::PlasmHostState`]).
 //! Tool results use Markdown [`TextContent`]; **`plasm`** dry-runs put compact review text in Markdown and slim
-//! tokens in `_meta.plasm` + `structuredContent.plasm` (`run_ref`, `dry_verdict`, …). The full comp wire lives only
-//! under `_meta.ui.plasm` for MCP App plan review (not mirrored into agent `structuredContent` on dry-run).
+//! tokens in `_meta.plasm` + slim `structuredContent.plasm` (`run_ref`, `dry_verdict`, …); compact `plan_text`
+//! is injected into `structuredContent.plasm` only (not `_meta.plasm`).
+//! The full comp wire lives under `_meta.ui.plasm` and `structuredContent.ui.plasm` for MCP App plan review
+//! (not under agent `structuredContent.plasm`).
 //! artifact URIs, and optional `lossy_summary_fields` per truncated step in `_meta.plasm`.
 //! Run snapshot URIs in Markdown use logical-session short form `plasm://session/{logical_session_ref}/r/{n}`
 //! (canonical `l_<token>` wire ref; see [`crate::run_artifacts::plasm_session_short_resource_uri`]);
@@ -768,6 +770,7 @@ impl PlasmMcpHandler {
                             ));
                         }
                         let commit_ref = es.mint_plan_commit_ref();
+                        let agent_plan_text = dry_text.clone();
                         let mut markdown = format!("```text\n{dry_text}\n```");
                         markdown.push_str(&format!(
                             "\n\n**Run:** pass `run_ref`: `{}` to **`plasm_run`**. Do not echo the program.",
@@ -857,6 +860,7 @@ impl PlasmMcpHandler {
                             code_plan_run_artifacts: Vec::new(),
                             run_markdown: Some(markdown),
                             run_plasm_meta: Some(meta),
+                            agent_structured_plan_text: Some(agent_plan_text),
                             return_steps: Vec::new(),
                         })
             }
@@ -909,7 +913,11 @@ impl PlasmMcpHandler {
                 ))];
                 let mut res = CallToolResult::from_content(blocks);
                 if let Some(m) = out.run_plasm_meta {
-                    res = crate::mcp_ui_payload::finalize_mcp_tool_result(res, m);
+                    res = crate::mcp_ui_payload::finalize_mcp_tool_result(
+                        res,
+                        m,
+                        out.agent_structured_plan_text.as_deref(),
+                    );
                 }
                 self.persist_transport_state(key).await;
                 Ok(res)

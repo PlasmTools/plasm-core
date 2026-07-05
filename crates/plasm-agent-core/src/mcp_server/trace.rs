@@ -288,6 +288,8 @@ mod tests {
             }],
             run_markdown: None,
             run_plasm_meta: None,
+            agent_structured_plan_text: None,
+
             return_steps: Vec::new(),
         };
         let refs = run_artifact_refs_for_trace(&out);

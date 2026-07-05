@@ -40,6 +40,7 @@ pub async fn run_plasm_comp(
             code_plan_run_artifacts: Vec::new(),
             run_markdown: None,
             run_plasm_meta: None,
+            agent_structured_plan_text: None,
             return_steps: Vec::new(),
         });
     }
@@ -437,6 +438,7 @@ pub(crate) async fn run_executable_plan_phased(
         code_plan_run_artifacts,
         run_markdown: Some(out.markdown),
         run_plasm_meta,
+        agent_structured_plan_text: None,
         return_steps: steps,
     })
 }

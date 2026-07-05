@@ -818,6 +818,8 @@ mod tests {
             code_plan_run_artifacts: Vec::new(),
             run_markdown: Some("## done".into()),
             run_plasm_meta: Some(meta),
+            agent_structured_plan_text: None,
+
             return_steps: vec![step],
         }
     }

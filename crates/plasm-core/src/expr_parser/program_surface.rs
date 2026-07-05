@@ -202,7 +202,7 @@ fn plp2_unterminated_heredoc_message(tag: &str, cur: &str) -> String {
         let trimmed = last.trim();
         if trimmed.starts_with(tag) {
             return crate::plp::plp2_heredoc(format!(
-                "{BASE}; close line not recognized after `{tag}` — if trailing call arguments follow the close tag on the same line, ensure the host is plasm-core ≥0.3.126"
+                "{BASE}; close line not recognized after `{tag}` — if trailing call arguments follow the close tag on the same line, use a close delimiter such as `TAG,` or `TAG)` before the next argument"
             ));
         }
     }
@@ -827,10 +827,7 @@ created"#;
 
     #[test]
     fn plp2_message_tag_collision_hint() {
-        let msg = plp2_unterminated_heredoc_message(
-            "TAG",
-            "opener <<TAG\nTAG\nbody\nnot_closed",
-        );
+        let msg = plp2_unterminated_heredoc_message("TAG", "opener <<TAG\nTAG\nbody\nnot_closed");
         assert!(msg.contains("PLP-2:"), "{msg}");
         assert!(
             msg.contains("body contains a line equal to close tag"),

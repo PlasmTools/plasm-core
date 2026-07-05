@@ -438,15 +438,36 @@ async fn workflow_apps_e2e_async() {
     assert!(
         dry_structured_plasm
             .and_then(|p| p.get("comp"))
-            .and_then(|c| c.get("bind"))
-            .and_then(|b| b.get("topo"))
+            .is_none(),
+        "agent structuredContent.plasm must omit comp DAG: {dry_mcp}"
+    );
+    assert!(
+        dry_mcp
+            .pointer("/structuredContent/ui/plasm/comp/bind/topo")
             .and_then(|v| v.as_array())
             .is_some_and(|a| !a.is_empty()),
-        "structuredContent.plasm must mirror UI comp for Cursor-style hosts: {dry_mcp}"
+        "structuredContent.ui.plasm must mirror UI comp for Cursor-style hosts: {dry_mcp}"
+    );
+    assert!(
+        dry_mcp
+            .pointer("/structuredContent/ui/plasm/plan_ux_reflection/schema_version")
+            .is_some(),
+        "structuredContent.ui.plasm must mirror plan_ux_reflection: {dry_mcp}"
     );
     assert!(
         dry_mcp.pointer("/_meta/plasm/comp").is_none(),
         "agent _meta.plasm must omit comp: {dry_mcp}"
+    );
+    assert!(
+        dry_mcp.pointer("/_meta/plasm/plan_text").is_none(),
+        "agent _meta.plasm must omit plan_text (structuredContent only): {dry_mcp}"
+    );
+    assert!(
+        dry_structured_plasm
+            .and_then(|p| p.get("plan_text"))
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| !s.is_empty()),
+        "structuredContent.plasm must carry compact plan_text: {dry_mcp}"
     );
 
     let run_ref = dry_mcp

@@ -2505,6 +2505,8 @@ mod tests {
                 code_plan_run_artifacts: Vec::new(),
                 run_markdown: None,
                 run_plasm_meta: None,
+                agent_structured_plan_text: None,
+
                 return_steps: Vec::new(),
             },
             None,

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.129] - 2026-07-05
+
+### Fixed
+
+- **MCP agent dry-run payload:** stop mirroring executable `comp` / `plan_ux_reflection` into `structuredContent.plasm`; UI DAG now lives under `structuredContent.ui.plasm` while agents get compact `plan_text` (structuredContent only) plus commit tokens in `_meta.plasm`.
+- **PLP-2 heredoc diagnostics:** remove stale host version hint from unrecognized close-line message.
+
 ## [0.3.128] - 2026-07-05
 
 ### Fixed

@@ -347,6 +347,7 @@ pub async fn deliver_http_live_run(
                     code_plan_run_artifacts: Vec::new(),
                     run_markdown: Some(markdown),
                     run_plasm_meta: Some(meta),
+                    agent_structured_plan_text: None,
                     return_steps: Vec::new(),
                 },
             })

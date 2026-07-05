@@ -228,6 +228,8 @@ async fn coalesce_at_most_two_running_emits_per_two_second_window() {
             code_plan_run_artifacts: Vec::new(),
             run_markdown: None,
             run_plasm_meta: None,
+            agent_structured_plan_text: None,
+
             return_steps: Vec::new(),
         },
         Some(st.as_ref()),

@@ -165,6 +165,8 @@ async fn cross_pod_wait_terminal_hydrates_run_artifact() {
             code_plan_run_artifacts: vec![],
             run_markdown: None,
             run_plasm_meta: None,
+            agent_structured_plan_text: None,
+
             return_steps: Vec::new(),
         },
         None,

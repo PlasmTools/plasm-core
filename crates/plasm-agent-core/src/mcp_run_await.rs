@@ -210,6 +210,8 @@ mod tests {
             code_plan_run_artifacts: Vec::new(),
             run_markdown: Some(format!("`{}` =", handle.as_str())),
             run_plasm_meta: Some(root),
+            agent_structured_plan_text: None,
+
             return_steps: Vec::new(),
         };
         assert!(!plan_run_result_is_terminal(&poll));
@@ -255,6 +257,8 @@ mod tests {
                     code_plan_run_artifacts: Vec::new(),
                     run_markdown: Some("## done".into()),
                     run_plasm_meta: None,
+                    agent_structured_plan_text: None,
+
                     return_steps: Vec::new(),
                 },
                 None,
@@ -355,6 +359,8 @@ mod tests {
                     code_plan_run_artifacts: Vec::new(),
                     run_markdown: Some("## return_1 (1 rows)".into()),
                     run_plasm_meta: None,
+                    agent_structured_plan_text: None,
+
                     return_steps: Vec::new(),
                 },
                 None,

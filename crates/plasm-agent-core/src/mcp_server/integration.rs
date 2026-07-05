@@ -371,6 +371,8 @@ async fn mcp_federated_post_async_finalize_compiles_e2_with_cross_cache() {
             code_plan_run_artifacts: Vec::new(),
             run_markdown: Some("## done".into()),
             run_plasm_meta: None,
+            agent_structured_plan_text: None,
+
             return_steps: Vec::new(),
         },
         None,
@@ -428,6 +430,8 @@ async fn mcp_async_wait_poll_reaches_terminal_result() {
             code_plan_run_artifacts: Vec::new(),
             run_markdown: Some("## done (1 rows)".into()),
             run_plasm_meta: None,
+            agent_structured_plan_text: None,
+
             return_steps: Vec::new(),
         },
         None,
@@ -957,6 +961,8 @@ fn plan_run_result_is_terminal_rejects_operation_poll_markdown() {
         code_plan_run_artifacts: Vec::new(),
         run_markdown: Some(format!("`{}` =", handle.as_str())),
         run_plasm_meta: Some(root),
+        agent_structured_plan_text: None,
+
         return_steps: Vec::new(),
     };
     assert!(!crate::terminal_plan_run::plan_run_result_is_terminal(
