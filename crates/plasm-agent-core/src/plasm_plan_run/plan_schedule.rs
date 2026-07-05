@@ -244,10 +244,7 @@ mod tests {
         let summary = bind_execution_graph_summary(&bind).expect("summary");
         assert_eq!(
             summary.execution_layers,
-            vec![
-                vec!["newbranch".to_string()],
-                vec!["newfile".to_string()]
-            ]
+            vec![vec!["newbranch".to_string()], vec!["newfile".to_string()]]
         );
         assert_eq!(summary.parallelizable_roots, vec!["newbranch".to_string()]);
     }

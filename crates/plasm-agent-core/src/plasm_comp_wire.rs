@@ -117,8 +117,7 @@ fn build_bind_graph(validated: &ValidatedPlan) -> BuiltBindGraph {
             holes.insert(id, hole_uses);
         }
     }
-    let program_order_write_deps =
-        add_consecutive_write_program_order_deps(validated, &mut deps);
+    let program_order_write_deps = add_consecutive_write_program_order_deps(validated, &mut deps);
     BuiltBindGraph {
         graph: PlasmBindGraph {
             topo,
@@ -158,11 +157,7 @@ fn add_consecutive_write_program_order_deps(
                     continue;
                 };
                 if let Some(ref prev) = last_write {
-                    if deps
-                        .entry(id.clone())
-                        .or_default()
-                        .insert(prev.clone())
-                    {
+                    if deps.entry(id.clone()).or_default().insert(prev.clone()) {
                         added.push([prev.as_str().to_string(), id.as_str().to_string()]);
                     }
                 }

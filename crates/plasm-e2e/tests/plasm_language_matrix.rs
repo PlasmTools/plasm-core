@@ -1103,9 +1103,7 @@ fn assert_planning_ir(
                 .get("execution_layers")
                 .ok_or_else(|| "expected graph_summary.execution_layers".to_string())?;
             if layers != &serde_json::json!([["newbranch"], ["newfile"]]) {
-                return Err(format!(
-                    "expected sequential write layers, got {layers:?}"
-                ));
+                return Err(format!("expected sequential write layers, got {layers:?}"));
             }
         }
         "lang_relation_one_opaque_r" => {
