@@ -208,6 +208,17 @@ fn parse_logical_short_plasm_resource_uri_round_trip() {
 }
 
 #[test]
+fn parse_plasm_session_short_run_uri_round_trip() {
+    let id = sample_run_id();
+    let wire = "l_AAAAAAAAQACAAAAAAAAAAQ";
+    let uri = plasm_session_short_run_uri(wire, &id);
+    let (seg, rid) = parse_plasm_session_short_run_uri(&uri).expect("parse");
+    assert!(matches!(seg, LogicalSessionUriSegment::WireRef(s) if s == wire));
+    assert_eq!(rid, id);
+    assert!(parse_plasm_session_short_resource_uri(&uri).is_none());
+}
+
+#[test]
 fn parse_code_plan_handles_and_uris() {
     let wire = "l_AAAAAAAAQACAAAAAAAAAAQ";
     let id = Uuid::from_u128(1);

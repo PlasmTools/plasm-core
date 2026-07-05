@@ -23,8 +23,19 @@ pub fn plasm_short_resource_uri(resource_index: u64) -> String {
 
 /// Short URI scoped to an MCP **logical session** (agent identity), not transport.
 /// `session_segment` is the canonical wire ref (`l_<token>`).
+///
+/// **Deprecated for new emits:** index-only URIs are ambiguous across execute-session rebinding
+/// and vs plan `run_step`. Prefer [`plasm_session_short_run_uri`].
 pub fn plasm_session_short_resource_uri(session_segment: &str, resource_index: u64) -> String {
     format!("plasm://session/{session_segment}/r/{resource_index}")
+}
+
+/// Content-addressed short URI for MCP logical sessions (`plasm://session/l_<token>/run/pr…`).
+pub fn plasm_session_short_run_uri(session_segment: &str, run_id: &RunArtifactId) -> String {
+    format!(
+        "plasm://session/{session_segment}/run/{}",
+        run_id.to_wire()
+    )
 }
 
 pub fn code_plan_handle(plan_index: u64) -> String {
@@ -60,6 +71,34 @@ pub fn plasm_short_resource_uri_logical(logical_session_id: &Uuid, resource_inde
         &format_logical_session_wire_ref_from_uuid(*logical_session_id),
         resource_index,
     )
+}
+
+/// Short logical-session run URI from canonical UUID (formats `l_<token>`).
+pub fn plasm_short_run_uri_logical(logical_session_id: &Uuid, run_id: &RunArtifactId) -> String {
+    plasm_session_short_run_uri(
+        &format_logical_session_wire_ref_from_uuid(*logical_session_id),
+        run_id,
+    )
+}
+
+/// Parse `plasm://session/l_<token>/run/{run_id}` (content-addressed short URI).
+pub fn parse_plasm_session_short_run_uri(
+    uri: &str,
+) -> Option<(LogicalSessionUriSegment, RunArtifactId)> {
+    let rest = uri.strip_prefix("plasm://session/")?;
+    let mut parts = rest.split('/').filter(|s| !s.is_empty());
+    let seg = parts.next()?;
+    let segment = parse_session_segment(seg)?;
+    let run = parts.next()?;
+    let wire = parts.next()?;
+    if run != "run" {
+        return None;
+    }
+    let run_id = RunArtifactId::from_wire(wire)?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((segment, run_id))
 }
 
 /// First path segment after `plasm://session/` for short run resources: canonical `l_<token>` only.

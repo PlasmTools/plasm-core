@@ -134,6 +134,7 @@ struct RunArtifactHotCache {
     bounds: RunArtifactHotCacheBounds,
     order: VecDeque<RunArtifactId>,
     map: HashMap<RunArtifactId, Arc<SessionRunArtifact>>,
+    by_resource_index: HashMap<u64, RunArtifactId>,
     approx_bytes: usize,
 }
 
@@ -143,6 +144,7 @@ impl RunArtifactHotCache {
             bounds,
             order: VecDeque::new(),
             map: HashMap::new(),
+            by_resource_index: HashMap::new(),
             approx_bytes: 0,
         }
     }
@@ -163,6 +165,17 @@ impl RunArtifactHotCache {
             payload,
         });
         let add_bytes = item.payload.bytes.len();
+        if let Some(prev) = self.by_resource_index.insert(resource_index, run_id) {
+            if prev != run_id {
+                tracing::error!(
+                    target: "plasm_agent::execute_session",
+                    resource_index,
+                    previous = %prev.to_wire(),
+                    current = %run_id.to_wire(),
+                    "run artifact resource_index collision in hot cache"
+                );
+            }
+        }
         self.map.insert(run_id, item.clone());
         self.order.push_back(run_id);
         self.approx_bytes = self.approx_bytes.saturating_add(add_bytes);
@@ -190,6 +203,7 @@ impl RunArtifactHotCache {
         let Some(removed) = self.map.remove(&oldest) else {
             return 0;
         };
+        self.by_resource_index.retain(|_, rid| *rid != oldest);
         self.approx_bytes = self
             .approx_bytes
             .saturating_sub(removed.payload.bytes.len());
@@ -201,10 +215,8 @@ impl RunArtifactHotCache {
     }
 
     fn get_by_resource_index(&self, resource_index: u64) -> Option<Arc<SessionRunArtifact>> {
-        self.map
-            .values()
-            .find(|a| a.resource_index == resource_index)
-            .cloned()
+        let run_id = self.by_resource_index.get(&resource_index)?;
+        self.map.get(run_id).cloned()
     }
 
     fn drain(&mut self) -> Vec<Arc<SessionRunArtifact>> {
@@ -214,6 +226,7 @@ impl RunArtifactHotCache {
                 out.push(a);
             }
         }
+        self.by_resource_index.clear();
         self.approx_bytes = 0;
         out
     }
@@ -222,6 +235,7 @@ impl RunArtifactHotCache {
         for item in artifacts {
             let id = item.run_id;
             let bytes = item.payload.bytes.len();
+            self.by_resource_index.insert(item.resource_index, id);
             self.map.insert(id, item);
             self.order.push_back(id);
             self.approx_bytes = self.approx_bytes.saturating_add(bytes);

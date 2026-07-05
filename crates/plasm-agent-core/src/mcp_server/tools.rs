@@ -221,24 +221,15 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
                 "artifact_uri".into(),
                 serde_json::from_value(serde_json::json!({
                     "type": ["string", "null"],
-                    "description": "Short or canonical `plasm://…` snapshot URI from `plasm_run`. Provide exactly one of `artifact_uri`, `resource_index`, or `run_id`."
+                    "description": "Snapshot URI from the same `plasm_run` step (`plasm://session/…/run/pr…` or canonical `plasm://execute/…/run/pr…`). Provide exactly one of `artifact_uri` or `run_id`."
                 }))
                 .expect("artifact_uri schema"),
-            );
-        read_props.insert(
-                "resource_index".into(),
-                serde_json::from_value(serde_json::json!({
-                    "type": ["integer", "null"],
-                    "minimum": 1,
-                    "description": "Monotonic run index `n` from `plasm://session/{logical_session_ref}/r/{n}`."
-                }))
-                .expect("resource_index schema"),
             );
         read_props.insert(
             "run_id".into(),
             serde_json::from_value(serde_json::json!({
                 "type": ["string", "null"],
-                "description": "Canonical run id (`pr` + 64 hex) when the URI is not at hand."
+                "description": "Content-addressed run id (`pr` + 64 hex) from `_meta.plasm.steps[].run_id` when the URI is not at hand."
             }))
             .expect("run_id schema"),
         );

@@ -5,8 +5,9 @@ use std::time::Instant;
 use plasm_trace::RunArtifactArchiveRef;
 
 use crate::run_artifacts::{
-    logical_uuid_from_uri_segment, parse_plasm_execute_run_uri,
-    parse_plasm_session_short_resource_uri, ArtifactPayload, RunArtifactId,
+    logical_uuid_from_uri_segment, parse_plasm_execute_run_uri, parse_plasm_short_resource_uri,
+    parse_plasm_session_short_resource_uri, parse_plasm_session_short_run_uri,
+    verify_payload_run_id, ArtifactPayload, RunArtifactId,
 };
 use crate::server_state::PlasmHostState;
 
@@ -23,6 +24,12 @@ pub(crate) enum RunArtifactResolveError {
     UnknownIndex(u64),
     #[error("unknown run artifact (wrong run_id or not yet stored for this session)")]
     UnknownRunId,
+    #[error(
+        "legacy resource index URI `plasm://…/r/{{n}}` is ambiguous — use `run_id` or `plasm://…/run/pr…` from the same `plasm_run` step"
+    )]
+    LegacyResourceIndexUri(u64),
+    #[error("artifact integrity check failed: {0}")]
+    Integrity(String),
     #[error("unsupported resource URI: {0}")]
     UnsupportedUri(String),
     #[error("run artifact decode failed: {0}")]
@@ -43,14 +50,12 @@ pub(crate) struct ResolvedRunArtifact {
 
 #[derive(Debug, Clone)]
 pub(crate) enum RunArtifactLookup {
-    ShortIndex { resource_index: u64 },
     CanonicalRun { run_id: RunArtifactId },
 }
 
 #[derive(Debug, Clone)]
 pub(crate) enum RunArtifactLookupArg {
     ArtifactUri(String),
-    ResourceIndex(u64),
     RunId(RunArtifactId),
 }
 
@@ -59,6 +64,15 @@ pub(crate) fn lookup_from_artifact_uri(
     binding: &PlasmExecBinding,
     logical_uuid_str: &str,
 ) -> Result<RunArtifactLookup, RunArtifactResolveError> {
+    if let Some((segment, run_id)) = parse_plasm_session_short_run_uri(uri) {
+        let Some(logical_uuid) = logical_uuid_from_uri_segment(&segment) else {
+            return Err(RunArtifactResolveError::InvalidSessionRef);
+        };
+        if logical_uuid.to_string() != logical_uuid_str {
+            return Err(RunArtifactResolveError::SessionMismatch);
+        }
+        return Ok(RunArtifactLookup::CanonicalRun { run_id });
+    }
     if let Some((segment, resource_index)) = parse_plasm_session_short_resource_uri(uri) {
         let Some(logical_uuid) = logical_uuid_from_uri_segment(&segment) else {
             return Err(RunArtifactResolveError::InvalidSessionRef);
@@ -66,9 +80,14 @@ pub(crate) fn lookup_from_artifact_uri(
         if logical_uuid.to_string() != logical_uuid_str {
             return Err(RunArtifactResolveError::SessionMismatch);
         }
-        return Ok(RunArtifactLookup::ShortIndex { resource_index });
+        return Err(RunArtifactResolveError::LegacyResourceIndexUri(
+            resource_index,
+        ));
     }
     let Some((prompt_hash, session_id, run_id)) = parse_plasm_execute_run_uri(uri) else {
+        if let Some(idx) = parse_plasm_short_resource_uri(uri) {
+            return Err(RunArtifactResolveError::LegacyResourceIndexUri(idx));
+        }
         return Err(RunArtifactResolveError::UnsupportedUri(uri.to_string()));
     };
     if prompt_hash != binding.prompt_hash || session_id != binding.session_id {
@@ -89,12 +108,6 @@ pub(crate) fn resolve_lookup_arg(
             let lookup = lookup_from_artifact_uri(uri, binding, logical_uuid_str)?;
             Ok((uri.to_string(), lookup))
         }
-        RunArtifactLookupArg::ResourceIndex(idx) => Ok((
-            format!("plasm://session/{session_ref}/r/{idx}"),
-            RunArtifactLookup::ShortIndex {
-                resource_index: idx,
-            },
-        )),
         RunArtifactLookupArg::RunId(run_id) => Ok((
             format!(
                 "plasm://execute/{}/{}/run/{}",
@@ -107,6 +120,61 @@ pub(crate) fn resolve_lookup_arg(
     }
 }
 
+async fn fetch_payload_by_run_id(
+    plasm: &PlasmHostState,
+    binding: &PlasmExecBinding,
+    run_id: RunArtifactId,
+) -> Result<(ArtifactPayload, Option<u64>), RunArtifactResolveError> {
+    let live_sess = plasm
+        .get_execute_session(binding.prompt_hash.as_str(), binding.session_id.as_str())
+        .await;
+
+    let live_payload = if let Some(ref sess) = live_sess {
+        sess.core
+            .get_run_artifact(run_id)
+            .await
+            .map(|a| (a.payload.clone(), Some(a.resource_index)))
+    } else {
+        None
+    };
+
+    if live_payload.is_some() {
+        crate::metrics::record_execute_artifact_resolve_layer("hot");
+    }
+
+    let persisted = if live_payload.is_none() {
+        match plasm
+            .run_artifacts
+            .get_payload_result(&binding.prompt_hash, &binding.session_id, run_id)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => return Err(RunArtifactResolveError::DecodeFailed(e.to_string())),
+        }
+    } else {
+        None
+    };
+
+    if live_payload.is_none() && persisted.is_some() {
+        crate::metrics::record_execute_artifact_resolve_layer("archive");
+    }
+
+    let Some((payload, resource_index)) = live_payload.or_else(|| {
+        persisted.map(|p| (p, None))
+    }) else {
+        return Err(RunArtifactResolveError::UnknownRunId);
+    };
+
+    verify_payload_run_id(&payload, run_id).map_err(|e| match e {
+        crate::run_artifacts::RunArtifactError::Integrity(msg) => {
+            RunArtifactResolveError::Integrity(msg)
+        }
+        other => RunArtifactResolveError::DecodeFailed(other.to_string()),
+    })?;
+
+    Ok((payload, resource_index))
+}
+
 pub(crate) async fn resolve_run_artifact_for_binding(
     plasm: &PlasmHostState,
     binding: &PlasmExecBinding,
@@ -116,21 +184,17 @@ pub(crate) async fn resolve_run_artifact_for_binding(
     started: Instant,
     uri_for_trace: &str,
 ) -> Result<ResolvedRunArtifact, RunArtifactResolveError> {
-    let (metric_kind, resource_index, run_id_hint) = match lookup {
-        RunArtifactLookup::ShortIndex { resource_index } => {
-            ("logical_short", Some(resource_index), None)
-        }
-        RunArtifactLookup::CanonicalRun { run_id } => ("canonical", None, Some(run_id)),
-    };
+    let RunArtifactLookup::CanonicalRun { run_id } = lookup;
+    let metric_kind = "canonical";
 
-    let fetched = fetch_run_artifact_payload(plasm, binding, resource_index, run_id_hint).await;
+    let fetched = fetch_run_artifact_payload(plasm, binding, run_id).await;
 
     match fetched {
-        Ok((payload, run_id, resolved_index)) => {
-            let archive = run_id.map(|rid| RunArtifactArchiveRef {
+        Ok((payload, resolved_index)) => {
+            let archive = Some(RunArtifactArchiveRef {
                 prompt_hash: binding.prompt_hash.clone(),
                 session_id: binding.session_id.clone(),
-                run_id: rid.to_wire(),
+                run_id: run_id.to_wire(),
                 resource_index: resolved_index,
             });
             resource_read_trace::McpResourceReadTrace::success(
@@ -145,7 +209,7 @@ pub(crate) async fn resolve_run_artifact_for_binding(
             .await;
             Ok(ResolvedRunArtifact {
                 payload,
-                run_id,
+                run_id: Some(run_id),
                 resource_index: resolved_index,
                 prompt_hash: binding.prompt_hash.clone(),
                 session_id: binding.session_id.clone(),
@@ -155,11 +219,13 @@ pub(crate) async fn resolve_run_artifact_for_binding(
         Err(e) => {
             let (reason, archive) = match &e {
                 RunArtifactResolveError::DecodeFailed(_) => {
-                    ("decode_failed", archive_for_lookup(binding, &lookup))
+                    ("decode_failed", archive_for_run_id(binding, run_id))
                 }
-                RunArtifactResolveError::UnknownIndex(_) => ("unknown_artifact", None),
                 RunArtifactResolveError::UnknownRunId => {
-                    ("unknown_artifact", archive_for_lookup(binding, &lookup))
+                    ("unknown_artifact", archive_for_run_id(binding, run_id))
+                }
+                RunArtifactResolveError::Integrity(_) => {
+                    ("integrity_failed", archive_for_run_id(binding, run_id))
                 }
                 _ => ("unknown_artifact", None),
             };
@@ -178,116 +244,72 @@ pub(crate) async fn resolve_run_artifact_for_binding(
     }
 }
 
-fn archive_for_lookup(
+fn archive_for_run_id(
     binding: &PlasmExecBinding,
-    lookup: &RunArtifactLookup,
+    run_id: RunArtifactId,
 ) -> Option<RunArtifactArchiveRef> {
-    match lookup {
-        RunArtifactLookup::ShortIndex { resource_index } => Some(RunArtifactArchiveRef {
-            prompt_hash: binding.prompt_hash.clone(),
-            session_id: binding.session_id.clone(),
-            run_id: String::new(),
-            resource_index: Some(*resource_index),
-        }),
-        RunArtifactLookup::CanonicalRun { run_id } => Some(RunArtifactArchiveRef {
-            prompt_hash: binding.prompt_hash.clone(),
-            session_id: binding.session_id.clone(),
-            run_id: run_id.to_wire(),
-            resource_index: None,
-        }),
-    }
+    Some(RunArtifactArchiveRef {
+        prompt_hash: binding.prompt_hash.clone(),
+        session_id: binding.session_id.clone(),
+        run_id: run_id.to_wire(),
+        resource_index: None,
+    })
 }
 
 async fn fetch_run_artifact_payload(
     plasm: &PlasmHostState,
     binding: &PlasmExecBinding,
-    resource_index: Option<u64>,
-    run_id: Option<RunArtifactId>,
-) -> Result<(ArtifactPayload, Option<RunArtifactId>, Option<u64>), RunArtifactResolveError> {
-    let live_sess = plasm
-        .get_execute_session(binding.prompt_hash.as_str(), binding.session_id.as_str())
-        .await;
+    run_id: RunArtifactId,
+) -> Result<(ArtifactPayload, Option<u64>), RunArtifactResolveError> {
+    fetch_payload_by_run_id(plasm, binding, run_id).await
+}
 
-    let (live_payload, live_run_id, _live_index) = if let Some(ref sess) = live_sess {
-        if let Some(idx) = resource_index {
-            let art = sess.core.get_run_artifact_by_resource_index(idx).await;
-            (
-                art.as_ref().map(|a| a.payload.clone()),
-                art.as_ref().map(|a| a.run_id),
-                Some(idx),
-            )
-        } else if let Some(rid) = run_id {
-            let art = sess.core.get_run_artifact(rid).await;
-            (art.as_ref().map(|a| a.payload.clone()), Some(rid), None)
-        } else {
-            (None, None, None)
-        }
-    } else {
-        (None, run_id, resource_index)
-    };
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mcp_logical_ref::parse_logical_session_wire_ref;
+    use crate::run_artifacts::{plasm_session_short_run_uri, RunArtifactId};
 
-    if live_payload.is_some() {
-        crate::metrics::record_execute_artifact_resolve_layer("hot");
+    fn sample_run_id(byte: u8) -> RunArtifactId {
+        RunArtifactId::from_bytes([byte; 32])
     }
 
-    let persisted_payload = if live_payload.is_none() {
-        if let Some(idx) = resource_index {
-            match plasm
-                .run_artifacts
-                .get_payload_result_by_resource_index(
-                    binding.prompt_hash.as_str(),
-                    binding.session_id.as_str(),
-                    idx,
-                )
-                .await
-            {
-                Ok(v) => v,
-                Err(e) => return Err(RunArtifactResolveError::DecodeFailed(e.to_string())),
-            }
-        } else if let Some(rid) = run_id {
-            match plasm
-                .run_artifacts
-                .get_payload_result(&binding.prompt_hash, &binding.session_id, rid)
-                .await
-            {
-                Ok(v) => v,
-                Err(e) => return Err(RunArtifactResolveError::DecodeFailed(e.to_string())),
-            }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    if live_payload.is_none() && persisted_payload.is_some() {
-        crate::metrics::record_execute_artifact_resolve_layer("archive");
-    }
-
-    let payload = live_payload.or(persisted_payload);
-    let Some(payload) = payload else {
-        return if let Some(idx) = resource_index {
-            Err(RunArtifactResolveError::UnknownIndex(idx))
-        } else {
-            Err(RunArtifactResolveError::UnknownRunId)
+    #[test]
+    fn legacy_index_uri_is_rejected() {
+        let binding = PlasmExecBinding {
+            prompt_hash: "a".repeat(64),
+            session_id: "sess".into(),
         };
-    };
+        let wire = "l_AAAAAAAAQACAAAAAAAAAAQ";
+        let ls = parse_logical_session_wire_ref(wire)
+            .expect("wire")
+            .as_uuid()
+            .to_string();
+        let uri = format!("plasm://session/{wire}/r/3");
+        let err = lookup_from_artifact_uri(&uri, &binding, ls.as_str()).expect_err("legacy");
+        assert!(matches!(
+            err,
+            RunArtifactResolveError::LegacyResourceIndexUri(3)
+        ));
+    }
 
-    let resolved_run_id = match (live_run_id, run_id, resource_index) {
-        (Some(rid), _, _) => Some(rid),
-        (None, Some(rid), _) => Some(rid),
-        (None, None, Some(idx)) => {
-            plasm
-                .run_artifacts
-                .resolve_run_id_for_resource_index(
-                    binding.prompt_hash.as_str(),
-                    binding.session_id.as_str(),
-                    idx,
-                )
-                .await
-        }
-        (None, None, None) => None,
-    };
-
-    Ok((payload, resolved_run_id, resource_index))
+    #[test]
+    fn short_run_uri_lookup_returns_canonical_run_id() {
+        let run_id = sample_run_id(7);
+        let wire = "l_AAAAAAAAQACAAAAAAAAAAQ";
+        let ls = parse_logical_session_wire_ref(wire)
+            .expect("wire")
+            .as_uuid()
+            .to_string();
+        let uri = plasm_session_short_run_uri(wire, &run_id);
+        let lookup = lookup_from_artifact_uri(&uri, &PlasmExecBinding {
+            prompt_hash: "a".repeat(64),
+            session_id: "sess".into(),
+        }, ls.as_str())
+        .expect("lookup");
+        assert!(matches!(
+            lookup,
+            RunArtifactLookup::CanonicalRun { run_id: rid } if rid == run_id
+        ));
+    }
 }

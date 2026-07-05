@@ -43,16 +43,24 @@ pub(crate) fn parse_read_run_artifact_lookup(
     }
     let session_ref = parse_logical_session_ref_arg(TOOL, v)?;
     let has_uri = obj.get("artifact_uri").is_some();
-    let has_index = obj.get("resource_index").is_some();
     let has_run_id = obj.get("run_id").is_some();
-    let count = [has_uri, has_index, has_run_id]
+    let count = [has_uri, has_run_id]
         .into_iter()
         .filter(|b| *b)
         .count();
     if count != 1 {
         return Err(CallToolError::invalid_arguments(
             TOOL,
-            Some("provide exactly one of `artifact_uri`, `resource_index`, or `run_id`".into()),
+            Some("provide exactly one of `artifact_uri` or `run_id` from the same `plasm_run` step".into()),
+        ));
+    }
+    if obj.contains_key("resource_index") {
+        return Err(CallToolError::invalid_arguments(
+            TOOL,
+            Some(
+                "`resource_index` is not accepted (ambiguous with plan `run_step`) — use `run_id` or `artifact_uri` from `_meta.plasm.steps[]`"
+                    .into(),
+            ),
         ));
     }
     let lookup = if has_uri {
@@ -68,23 +76,6 @@ pub(crate) fn parse_read_run_artifact_lookup(
                 )
             })?;
         RunArtifactLookupArg::ArtifactUri(uri.to_string())
-    } else if has_index {
-        let idx = obj
-            .get("resource_index")
-            .and_then(|v| v.as_u64())
-            .ok_or_else(|| {
-                CallToolError::invalid_arguments(
-                    TOOL,
-                    Some("`resource_index` must be a positive integer".into()),
-                )
-            })?;
-        if idx == 0 {
-            return Err(CallToolError::invalid_arguments(
-                TOOL,
-                Some("`resource_index` must be >= 1".into()),
-            ));
-        }
-        RunArtifactLookupArg::ResourceIndex(idx)
     } else {
         let wire = obj
             .get("run_id")
@@ -214,11 +205,20 @@ impl PlasmMcpHandler {
 
 fn map_resolve_err(e: RunArtifactResolveError) -> CallToolError {
     match e {
-        RunArtifactResolveError::UnknownIndex(_) | RunArtifactResolveError::UnknownRunId => {
+        RunArtifactResolveError::UnknownRunId => {
+            CallToolError::invalid_arguments("plasm_read_run_artifact", Some(e.to_string()))
+        }
+        RunArtifactResolveError::LegacyResourceIndexUri(_)
+        | RunArtifactResolveError::UnsupportedUri(_)
+        | RunArtifactResolveError::SessionMismatch
+        | RunArtifactResolveError::InvalidSessionRef => {
             CallToolError::invalid_arguments("plasm_read_run_artifact", Some(e.to_string()))
         }
         RunArtifactResolveError::DecodeFailed(msg) => {
             CallToolError::from_message(format!("run artifact decode failed: {msg}"))
+        }
+        RunArtifactResolveError::Integrity(msg) => {
+            CallToolError::from_message(format!("run artifact integrity check failed: {msg}"))
         }
         other => {
             CallToolError::invalid_arguments("plasm_read_run_artifact", Some(other.to_string()))
@@ -240,11 +240,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_rejects_resource_index_lookup() {
+        let err = parse_read_run_artifact_lookup(&serde_json::json!({
+            "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
+            "resource_index": 3,
+        }))
+        .expect_err("resource_index");
+        assert!(err.to_string().contains("resource_index"));
+    }
+
+    #[test]
     fn parse_rejects_transitional_keys() {
         let err = parse_read_run_artifact_lookup(&serde_json::json!({
             "logical_session_ref": "l_AAAAAAAAQACAAAAAAAAAAQ",
             "run_ref": "pc1",
-            "resource_index": 1,
+            "run_id": "pr".to_string() + &"a".repeat(64),
         }))
         .expect_err("run_ref");
         assert!(err.to_string().contains("run_ref"));

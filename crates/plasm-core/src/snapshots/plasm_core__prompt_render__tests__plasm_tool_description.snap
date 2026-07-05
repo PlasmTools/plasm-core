@@ -38,13 +38,13 @@ TSV table semantics:
 Core surface:
 - Program shape: one `plasm_expr`, or `label = …` bindings then **one** final return line — comma-separated roots on that line only (e.g. `a, b`), never one bare label per line (no `return` keyword).
 - Postfix/`[p#]`/`[fields]`: copy exact forms from the TSV left column (`.limit` `.sort` `.filter{…}` `.group_by` `.aggregate` …).
-- Large list reads return inline TSV only when ≤25 rows and no run snapshot is stored. When a snapshot URI is present, fetch JSON via **`resources/read`** or **`plasm_read_run_artifact`** — no inline TSV is sent. Use **`next_run_ref`** on **`plasm_run`** only when no snapshot was stored. Prefer **`run_id`** / **`canonical_artifact_uri`** (`plasm://execute/…/run/pr…`) over short `r/N` indexes; never use `_meta.plasm.meta_generation` or `dict_ref` integers as artifact addresses.
+- Large list reads return inline TSV only when ≤25 rows and no run snapshot is stored. When a snapshot URI is present, fetch JSON via **`resources/read`** or **`plasm_read_run_artifact`** — no inline TSV is sent. Use **`next_run_ref`** on **`plasm_run`** only when no snapshot was stored. Copy **`run_id`** or **`artifact_uri`** from the same `_meta.plasm.steps[]` entry; never use plan **`run_step`**, session **`resource_index`**, **`meta_generation`**, or **`dict_ref`** as artifact addresses.
 - `page(...)` is HTTP-execute program syntax only — not an MCP tool argument or `plasm` program.
 - Search when exposed: `e#~$` or `e#~"text"` (bare `e#~` is a parse error); optional scoped filters `e#~"text"[{p#=…}]`.
 
 Composition rules:
 - One binding per line; **one** return line last. Multiple roots belong on that line comma-separated — not stacked as separate bare-label lines. Single-line space-separated programs coerce default return to first binding.
-- Row text (Minijinja): `label = source[p#,…] <<TAG` … `TAG`; cross-bindings: `label = a,b <<TAG` (comma-separated in-scope labels); **`binding.content`** for string params (not bare `label`).
+- Row text: `label = source[p#,…] <<TAG` … `TAG` (Minijinja); cross-bindings: `label = a,b <<TAG` (comma-separated in-scope labels); **`binding.content`** for string params (not bare `label`).
 - String binding (no template): `label = <<TAG` … `TAG` — pass **`p#=label`**, not `label.content`.
 - RT: after `repo = e#(…)`, prefer **`repo.m#(…)`** / **`repo.r#`** over repeating the get head.
 - Compose with `${report.content}` in later heredocs/strings (`$$` escapes `$`). Do not use `report.content` as a final root or relation receiver.

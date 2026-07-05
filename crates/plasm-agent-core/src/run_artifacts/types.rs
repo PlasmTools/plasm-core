@@ -313,6 +313,8 @@ pub enum RunArtifactError {
     Serialization(#[from] serde_json::Error),
     #[error("run artifact decode: {0}")]
     Decode(String),
+    #[error("run artifact integrity: {0}")]
+    Integrity(String),
     #[error("run artifact object store: {0}")]
     ObjectStore(String),
     #[error("run artifact filesystem: {0}")]

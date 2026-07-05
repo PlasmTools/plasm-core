@@ -10,8 +10,8 @@ use crate::trace_sink_emit::PlasmTraceContext;
 
 use super::{
     artifact_http_path, document_from_run, plasm_run_resource_uri,
-    plasm_session_short_resource_uri, plasm_short_resource_uri, plasm_short_resource_uri_logical,
-    ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun, RunArtifactHandle, RunArtifactId,
+    plasm_session_short_run_uri, plasm_short_run_uri_logical, ArtifactPayload, ArtifactPayloadMetadata,
+    DocumentFromRun, RunArtifactHandle, RunArtifactId,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -59,24 +59,21 @@ fn resolve_run_artifact_uris(
     prompt_hash: &str,
     session_id: &str,
     run_id: &RunArtifactId,
-    resource_index: u64,
+    _resource_index: u64,
 ) -> (String, String, String) {
     let canonical_plasm_uri = plasm_run_resource_uri(prompt_hash, session_id, run_id);
     let plasm_uri = trace
         .and_then(|c| {
             if let Some(ref seg) = c.logical_session_ref {
-                Some(plasm_session_short_resource_uri(
-                    seg.as_str(),
-                    resource_index,
-                ))
+                Some(plasm_session_short_run_uri(seg.as_str(), run_id))
             } else {
                 c.logical_session_id
                     .as_deref()
                     .and_then(|ls| Uuid::parse_str(ls).ok())
-                    .map(|u| plasm_short_resource_uri_logical(&u, resource_index))
+                    .map(|u| plasm_short_run_uri_logical(&u, run_id))
             }
         })
-        .unwrap_or_else(|| plasm_short_resource_uri(resource_index));
+        .unwrap_or_else(|| canonical_plasm_uri.clone());
     let http_path = artifact_http_path(prompt_hash, session_id, run_id);
     (plasm_uri, canonical_plasm_uri, http_path)
 }
