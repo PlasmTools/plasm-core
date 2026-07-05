@@ -1,9 +1,5 @@
-import { LegacyOpenTelemetry } from "@ai-sdk/otel";
-import {
-  registerTelemetry,
-  type Telemetry,
-  type TelemetryOptions,
-} from "ai";
+import { OpenTelemetry } from "@ai-sdk/otel";
+import { registerTelemetry, type TelemetryOptions } from "ai";
 
 /** OpenTelemetry attribute keys for Plasm agent spans (Section 9). */
 export const PlasmSpanAttributes = {
@@ -25,17 +21,18 @@ export interface AgentInstrumentationOptions {
 
 let registered = false;
 
-function otelIntegration(_options: AgentInstrumentationOptions): Telemetry {
-  return new LegacyOpenTelemetry();
+/** Register global AI SDK OTEL integration (Eve uses OpenTelemetry + runtimeContext). */
+export function ensureOtelIntegration(): void {
+  if (registered) return;
+  registerTelemetry(new OpenTelemetry({ runtimeContext: true }));
+  registered = true;
 }
 
 /** Register global AI SDK OTEL integration (eve-style auto-discovered instrumentation). */
 export function registerAgentInstrumentation(
   options: AgentInstrumentationOptions = {},
 ): void {
-  if (registered) return;
-  registerTelemetry(otelIntegration(options));
-  registered = true;
+  ensureOtelIntegration();
   void options.serviceName;
 }
 
@@ -46,5 +43,7 @@ export function createAgentTelemetry(
   return {
     isEnabled: true,
     functionId: options.serviceName ?? "plasm-agent",
+    recordInputs: true,
+    recordOutputs: true,
   };
 }

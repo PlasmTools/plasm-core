@@ -11,7 +11,7 @@ const serviceName =
 
 export function register(): void {
   registerOTel({ serviceName });
-  registerTelemetry(new OpenTelemetry());
+  registerTelemetry(new OpenTelemetry({ runtimeContext: true }));
 }
 
 register();

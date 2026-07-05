@@ -158,6 +158,7 @@ export type {
 export {
   PlasmSpanAttributes,
   createAgentTelemetry,
+  ensureOtelIntegration,
   registerAgentInstrumentation,
 } from "./instrumentation.js";
 export type { AgentInstrumentationOptions } from "./instrumentation.js";

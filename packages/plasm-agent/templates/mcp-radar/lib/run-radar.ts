@@ -11,6 +11,8 @@ export const MCP_RADAR_INTENT =
 export interface RadarRunOptions {
   force?: boolean;
   reset?: boolean;
+  /** Eve Agent Runs `eve.channel.kind` (default `schedule`). */
+  channelKind?: string;
 }
 
 export interface RadarRunResult {
@@ -54,7 +56,10 @@ export async function runRadar(
   try {
     resetRunAudit();
     const agent = await ctx.getAgent();
-    const turn = await agent.generate(buildRadarGoal(options), { resetConversation: false });
+    const turn = await agent.generate(buildRadarGoal(options), {
+      resetConversation: false,
+      channelKind: options.channelKind ?? "schedule",
+    });
     void drainRunAudit();
 
     return {

@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { generateText, stepCountIs, type LanguageModel, type ModelMessage, type ToolSet } from "ai";
+import { type LanguageModel, type ModelMessage, type ToolSet } from "ai";
 
 import type {
   AgentBuildConfig,
@@ -19,7 +19,10 @@ import { maybeCompactMessages } from "../runtime/compaction.js";
 import { AgentRuntime, type AgentRuntimeConfig } from "../runtime/agent-runtime.js";
 import { createHarnessTools, renderSkillIndex } from "../tools/harness-tools.js";
 import { createPlasmTools } from "../tools/plasm-tools.js";
-import { createEveSessionId, withEveTurnSpan } from "../telemetry/eve-agent-runs.js";
+import { runEveToolLoop, type AgentStepEvent } from "../telemetry/eve-tool-loop.js";
+import type { EveChannelKind } from "../telemetry/eve-agent-runs.js";
+
+export type { AgentStepEvent };
 
 export interface PlasmAgentConfig extends AgentRuntimeConfig {
   /** AI Gateway model slug, e.g. `anthropic/claude-sonnet-4.6`. */
@@ -39,22 +42,18 @@ export interface PlasmAgentConfig extends AgentRuntimeConfig {
   getAuthoringContext?: () => AuthoringContext;
 }
 
-export interface AgentStepEvent {
-  toolCalls?: Array<{ toolName: string }>;
-  text?: string;
-  finishReason?: string;
-}
-
 export interface AgentGenerateOptions {
   messages?: ModelMessage[];
   resetConversation?: boolean;
   onStepFinish?: (step: AgentStepEvent) => void | Promise<void>;
+  /** Eve Agent Runs channel kind (`schedule`, `http`, `channel:<name>`, …). */
+  channelKind?: EveChannelKind;
 }
 
 export interface AgentTurnResult {
   text: string;
   steps: unknown[];
-  usage: Awaited<ReturnType<typeof generateText>>["usage"];
+  usage: Awaited<ReturnType<typeof runEveToolLoop>>["usage"];
 }
 
 export class PlasmAgent {
@@ -168,37 +167,25 @@ export class PlasmAgent {
 
     messages = await maybeCompactMessages(messages, this.compaction, this.model);
 
-    const generation = {
+    const onStepFinish = async (step: AgentStepEvent) => {
+      await options.onStepFinish?.(step);
+      if (!this.hookRunner || !this.getAuthoringContext) return;
+      const toolsUsed = (step.toolCalls ?? []).map((call) => call.toolName);
+      await this.hookRunner.emit("agent:step", this.getAuthoringContext(), { toolsUsed });
+    };
+
+    const result = await runEveToolLoop({
       model,
       system,
       tools,
-      stopWhen: stepCountIs(this.maxSteps),
-      experimental_telemetry: telemetry,
-      onStepFinish: async (step: AgentStepEvent) => {
-        await options.onStepFinish?.(step);
-        if (!this.hookRunner || !this.getAuthoringContext) return;
-        const toolsUsed = (step.toolCalls ?? []).map((call) => call.toolName);
-        await this.hookRunner.emit("agent:step", this.getAuthoringContext(), { toolsUsed });
-      },
-      ...(this.modelOptions?.temperature !== undefined
-        ? { temperature: this.modelOptions.temperature }
-        : {}),
-      ...(this.modelOptions?.maxOutputTokens !== undefined
-        ? { maxOutputTokens: this.modelOptions.maxOutputTokens }
-        : {}),
-      ...(this.modelOptions?.topP !== undefined ? { topP: this.modelOptions.topP } : {}),
-      ...(this.modelOptions?.topK !== undefined ? { topK: this.modelOptions.topK } : {}),
-    };
-
-    const sessionId = createEveSessionId();
-    const result = await withEveTurnSpan(
-      { sessionId, functionId: this.agentName },
-      async () =>
-        generateText({
-          ...generation,
-          messages,
-        }),
-    );
+      messages,
+      maxSteps: this.maxSteps,
+      agentName: this.agentName,
+      channelKind: options.channelKind,
+      telemetry,
+      onStepFinish,
+      modelOptions: this.modelOptions,
+    });
 
     if (!externalMessages) {
       this.conversation.push({ role: "assistant", content: result.text });
