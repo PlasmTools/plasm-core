@@ -42,6 +42,15 @@ pub(crate) fn parse_read_run_artifact_lookup(
         }
     }
     let session_ref = parse_logical_session_ref_arg(TOOL, v)?;
+    if obj.contains_key("resource_index") {
+        return Err(CallToolError::invalid_arguments(
+            TOOL,
+            Some(
+                "`resource_index` is not accepted (ambiguous with plan `run_step`) — use `run_id` or `artifact_uri` from `_meta.plasm.steps[]`"
+                    .into(),
+            ),
+        ));
+    }
     let has_uri = obj.get("artifact_uri").is_some();
     let has_run_id = obj.get("run_id").is_some();
     let count = [has_uri, has_run_id]
@@ -52,15 +61,6 @@ pub(crate) fn parse_read_run_artifact_lookup(
         return Err(CallToolError::invalid_arguments(
             TOOL,
             Some("provide exactly one of `artifact_uri` or `run_id` from the same `plasm_run` step".into()),
-        ));
-    }
-    if obj.contains_key("resource_index") {
-        return Err(CallToolError::invalid_arguments(
-            TOOL,
-            Some(
-                "`resource_index` is not accepted (ambiguous with plan `run_step`) — use `run_id` or `artifact_uri` from `_meta.plasm.steps[]`"
-                    .into(),
-            ),
         ));
     }
     let lookup = if has_uri {
