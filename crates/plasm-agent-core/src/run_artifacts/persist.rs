@@ -9,9 +9,9 @@ use crate::server_state::PlasmHostState;
 use crate::trace_sink_emit::PlasmTraceContext;
 
 use super::{
-    artifact_http_path, document_from_run, plasm_run_resource_uri,
-    plasm_session_short_run_uri, plasm_short_run_uri_logical, ArtifactPayload, ArtifactPayloadMetadata,
-    DocumentFromRun, RunArtifactHandle, RunArtifactId,
+    artifact_http_path, document_from_run, plasm_run_resource_uri, plasm_session_short_run_uri,
+    plasm_short_run_uri_logical, ArtifactPayload, ArtifactPayloadMetadata, DocumentFromRun,
+    RunArtifactHandle, RunArtifactId,
 };
 
 #[derive(Debug, thiserror::Error)]

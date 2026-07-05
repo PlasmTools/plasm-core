@@ -120,11 +120,14 @@ pub(crate) async fn handle_read_resource_request(
         );
         return read_resource_result_for_payload(
             uri,
-            crate::run_artifacts::project_artifact_payload_for_agent(&resolved.payload, false)
-                .map_err(|e| {
-                    RpcError::internal_error()
-                        .with_message(format!("run artifact projection failed: {e}"))
-                })?,
+            crate::run_artifacts::project_artifact_payload_for_mcp_read(
+                &resolved.payload,
+                read_source,
+            )
+            .map_err(|e| {
+                RpcError::internal_error()
+                    .with_message(format!("run artifact projection failed: {e}"))
+            })?,
         );
     }
 
@@ -180,7 +183,7 @@ pub(crate) async fn handle_read_resource_request(
     );
     read_resource_result_for_payload(
         uri,
-        crate::run_artifacts::project_artifact_payload_for_agent(&resolved.payload, false)
+        crate::run_artifacts::project_artifact_payload_for_mcp_read(&resolved.payload, read_source)
             .map_err(|e| {
                 RpcError::internal_error()
                     .with_message(format!("run artifact projection failed: {e}"))

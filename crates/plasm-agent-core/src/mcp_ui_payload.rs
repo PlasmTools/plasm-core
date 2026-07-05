@@ -43,10 +43,9 @@ fn mirror_ui_plasm_into_structured(meta: &Map<String, Value>, structured_plasm: 
     let Some(out) = structured_plasm.as_object_mut() else {
         return;
     };
-    // Agent dry-run responses are compact text only; full comp/DAG stays in `_meta.ui.plasm` for MCP App hosts.
-    if out.get("dry_run").and_then(|v| v.as_bool()) == Some(true) {
-        return;
-    }
+    // Cursor and similar hosts forward `structuredContent` but often strip `_meta.ui`.
+    // Mirror UI DAG fields into structuredContent.plasm for Plan Review; agent `_meta.plasm`
+    // stays slim (no comp) — agents should not rely on structuredContent for planning.
     for key in ["comp", "plan_ux_reflection"] {
         if let Some(v) = ui_plasm.get(key) {
             out.insert(key.to_string(), v.clone());
@@ -144,24 +143,21 @@ mod tests {
             Some("pc0")
         );
         assert!(
-            wire.pointer("/structuredContent/plasm/comp").is_none(),
-            "dry-run agent structuredContent must not mirror full comp (UI-only)"
+            wire.pointer("/structuredContent/plasm/comp/bind/topo")
+                .and_then(|v| v.as_array())
+                .map(|a| !a.is_empty())
+                .unwrap_or(false),
+            "dry-run structuredContent must mirror comp for hosts that strip _meta.ui"
         );
-        assert!(
-            wire.pointer("/structuredContent/plasm/plan_ux_reflection")
-                .is_none()
-        );
+        assert!(wire
+            .pointer("/structuredContent/plasm/plan_ux_reflection/schema_version")
+            .is_some());
         assert!(wire.pointer("/structuredContent/plasm/program").is_none());
         assert_eq!(
             wire.pointer("/_meta/ui/plasm/comp/bind/topo")
                 .and_then(|v| v.as_array())
                 .map(|a| a.len()),
             Some(1)
-        );
-        assert_eq!(
-            wire.pointer("/_meta/ui/resourceUri")
-                .and_then(|v| v.as_str()),
-            Some(crate::plan_ui_mcp::PLAN_REVIEW_UI_URI)
         );
         assert!(wire.pointer("/_meta/plasm/comp").is_none());
     }
@@ -214,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn mirror_dry_run_structured_content_stays_slim_even_with_ui_comp() {
+    fn mirror_dry_run_structured_content_carries_ui_comp_not_agent_meta() {
         let mut meta = Map::new();
         meta.insert(
             "plasm".to_string(),
@@ -257,16 +253,16 @@ mod tests {
                 .as_ref()
                 .and_then(|m| m.get("plasm"))
                 .and_then(|p| p.get("comp"))
-                .is_none(),
-            "dry-run structuredContent must not carry comp (UI reads `_meta.ui.plasm`)"
+                .and_then(|c| c.get("bind"))
+                .is_some(),
+            "dry-run structuredContent mirrors UI comp for Plan Review hosts"
         );
-        assert!(
-            out.structured_content
-                .as_ref()
-                .and_then(|m| m.get("plasm"))
-                .and_then(|p| p.get("plan_ux_reflection"))
-                .is_none()
-        );
+        assert!(out
+            .structured_content
+            .as_ref()
+            .and_then(|m| m.get("plasm"))
+            .and_then(|p| p.get("plan_ux_reflection"))
+            .is_some());
     }
 
     #[test]

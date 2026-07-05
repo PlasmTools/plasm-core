@@ -151,10 +151,7 @@ pub(crate) async fn emit_code_plan_trace(
         } => {
             let (run_ids, run_artifacts) = out.map_or((Vec::new(), Vec::new()), |o| {
                 let refs = run_artifact_refs_for_trace(o);
-                (
-                    refs.iter().map(|a| a.run_id.clone()).collect(),
-                    refs,
-                )
+                (refs.iter().map(|a| a.run_id.clone()).collect(), refs)
             });
             input
                 .hub

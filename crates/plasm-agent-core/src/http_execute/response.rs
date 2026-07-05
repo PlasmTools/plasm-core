@@ -28,9 +28,12 @@ pub(crate) struct ExecuteRunQuery {
 
 #[derive(Debug, Deserialize, Default)]
 pub(crate) struct RunArtifactQuery {
-    /// When `true`, return the full evidence document (default: slim agent projection).
+    /// When `true`, return the full canonical document (default for Run Explorer / replay HTTP).
     #[serde(default)]
     pub full: Option<bool>,
+    /// When `true`, return the slim agent projection (`RunArtifactAgentView`).
+    #[serde(default)]
+    pub slim: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

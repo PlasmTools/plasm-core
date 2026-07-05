@@ -203,7 +203,9 @@ pub(crate) async fn get_execute_run_artifact(
         );
     });
 
-    let full = query.full.unwrap_or(false);
+    // Run Explorer and replay tooling fetch via HTTP; default to canonical docs.
+    // Agent slim reads use MCP `plasm_read_run_artifact` or `?slim=1` on this route.
+    let full = query.slim.unwrap_or(false) == false && query.full.unwrap_or(true);
     let payload = match crate::run_artifacts::project_artifact_payload_for_agent(&payload, full) {
         Ok(p) => p,
         Err(e) => {

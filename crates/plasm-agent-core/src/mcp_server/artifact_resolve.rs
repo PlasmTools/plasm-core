@@ -5,9 +5,9 @@ use std::time::Instant;
 use plasm_trace::RunArtifactArchiveRef;
 
 use crate::run_artifacts::{
-    logical_uuid_from_uri_segment, parse_plasm_execute_run_uri, parse_plasm_short_resource_uri,
+    logical_uuid_from_uri_segment, parse_plasm_execute_run_uri,
     parse_plasm_session_short_resource_uri, parse_plasm_session_short_run_uri,
-    verify_payload_run_id, ArtifactPayload, RunArtifactId,
+    parse_plasm_short_resource_uri, verify_payload_run_id, ArtifactPayload, RunArtifactId,
 };
 use crate::server_state::PlasmHostState;
 
@@ -16,7 +16,9 @@ use super::transport::PlasmExecBinding;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum RunArtifactResolveError {
-    #[error("invalid logical session in URI: use `plasm://session/l_<token>/run/pr…` from `plasm_run`")]
+    #[error(
+        "invalid logical session in URI: use `plasm://session/l_<token>/run/pr…` from `plasm_run`"
+    )]
     InvalidSessionRef,
     #[error("unknown run artifact (wrong run_id or not yet stored for this session)")]
     UnknownRunId,
@@ -166,9 +168,8 @@ async fn fetch_payload_by_run_id(
         crate::metrics::record_execute_artifact_resolve_layer("archive");
     }
 
-    let Some((payload, resource_index)) = live_payload.or_else(|| {
-        persisted.map(|p| (p, None))
-    }) else {
+    let Some((payload, resource_index)) = live_payload.or_else(|| persisted.map(|p| (p, None)))
+    else {
         return Err(RunArtifactResolveError::UnknownRunId);
     };
 
@@ -318,10 +319,14 @@ mod tests {
             .as_uuid()
             .to_string();
         let uri = plasm_session_short_run_uri(wire, &run_id);
-        let lookup = lookup_from_artifact_uri(&uri, &PlasmExecBinding {
-            prompt_hash: "a".repeat(64),
-            session_id: "sess".into(),
-        }, ls.as_str())
+        let lookup = lookup_from_artifact_uri(
+            &uri,
+            &PlasmExecBinding {
+                prompt_hash: "a".repeat(64),
+                session_id: "sess".into(),
+            },
+            ls.as_str(),
+        )
         .expect("lookup");
         assert!(matches!(
             lookup,

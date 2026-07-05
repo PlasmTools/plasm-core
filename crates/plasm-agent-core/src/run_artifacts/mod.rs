@@ -48,11 +48,11 @@ pub use uri::{
     artifact_http_path, code_plan_handle, code_plan_http_path, logical_uuid_from_uri_segment,
     parse_code_plan_handle, parse_plasm_execute_plan_uri, parse_plasm_execute_run_uri,
     parse_plasm_session_short_plan_uri, parse_plasm_session_short_resource_uri,
-    parse_plasm_session_short_run_uri, parse_plasm_short_resource_uri, plasm_code_plan_resource_uri,
-    plasm_run_resource_uri, plasm_session_short_plan_uri, plasm_session_short_resource_uri,
-    plasm_session_short_run_uri, plasm_short_code_plan_uri, plasm_short_resource_uri,
-    plasm_short_resource_uri_logical, plasm_short_run_uri_logical, strip_plasm_resource_read_source,
-    LogicalSessionUriSegment,
+    parse_plasm_session_short_run_uri, parse_plasm_short_resource_uri,
+    plasm_code_plan_resource_uri, plasm_run_resource_uri, plasm_session_short_plan_uri,
+    plasm_session_short_resource_uri, plasm_session_short_run_uri, plasm_short_code_plan_uri,
+    plasm_short_resource_uri, plasm_short_resource_uri_logical, plasm_short_run_uri_logical,
+    strip_plasm_resource_read_source, LogicalSessionUriSegment,
 };
 use uuid::Uuid;
 
@@ -411,6 +411,16 @@ pub fn project_artifact_payload_for_agent(
         metadata: payload.metadata.clone(),
         bytes: serde_json::to_vec(&slim)?.into(),
     })
+}
+
+/// MCP `resources/read` projection: Run Explorer receives canonical docs; agent reads stay slim.
+pub fn project_artifact_payload_for_mcp_read(
+    payload: &ArtifactPayload,
+    read_source: Option<&str>,
+) -> Result<ArtifactPayload, RunArtifactError> {
+    use plasm_trace::MCP_RESOURCE_READ_SOURCE_RUN_EXPLORER_UI;
+    let full = read_source == Some(MCP_RESOURCE_READ_SOURCE_RUN_EXPLORER_UI);
+    project_artifact_payload_for_agent(payload, full)
 }
 
 /// Verify stored JSON matches the requested content-addressed `run_id`.

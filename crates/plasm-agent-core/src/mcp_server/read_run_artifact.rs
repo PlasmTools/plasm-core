@@ -53,14 +53,14 @@ pub(crate) fn parse_read_run_artifact_lookup(
     }
     let has_uri = obj.get("artifact_uri").is_some();
     let has_run_id = obj.get("run_id").is_some();
-    let count = [has_uri, has_run_id]
-        .into_iter()
-        .filter(|b| *b)
-        .count();
+    let count = [has_uri, has_run_id].into_iter().filter(|b| *b).count();
     if count != 1 {
         return Err(CallToolError::invalid_arguments(
             TOOL,
-            Some("provide exactly one of `artifact_uri` or `run_id` from the same `plasm_run` step".into()),
+            Some(
+                "provide exactly one of `artifact_uri` or `run_id` from the same `plasm_run` step"
+                    .into(),
+            ),
         ));
     }
     let lookup = if has_uri {
@@ -165,17 +165,12 @@ impl PlasmMcpHandler {
         )
         .await
         .map_err(map_resolve_err)?;
-        crate::metrics::record_mcp_resource_read(
-            "canonical",
-            "success",
-            "tool",
-            started.elapsed(),
-        );
-        let payload = crate::run_artifacts::project_artifact_payload_for_agent(
-            &resolved.payload,
-            false,
-        )
-        .map_err(|e| CallToolError::from_message(format!("artifact projection failed: {e}")))?;
+        crate::metrics::record_mcp_resource_read("canonical", "success", "tool", started.elapsed());
+        let payload =
+            crate::run_artifacts::project_artifact_payload_for_agent(&resolved.payload, false)
+                .map_err(|e| {
+                    CallToolError::from_message(format!("artifact projection failed: {e}"))
+                })?;
         let (char_count, binary) = mcp_artifact_payload_chars(&payload);
         let text = std::str::from_utf8(&payload.bytes)
             .map(str::to_string)

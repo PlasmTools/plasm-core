@@ -510,3 +510,43 @@ fn project_artifact_payload_for_agent_slim_by_default() {
     assert_eq!(full_v.principal.as_deref(), Some("tenant:1"));
     assert_eq!(full_v.parsed_preimage.expr, doc.parsed_preimage.expr);
 }
+
+#[test]
+fn project_artifact_payload_for_mcp_read_run_explorer_ui_is_full() {
+    let run_id = sample_run_id();
+    let doc = RunArtifactDocument {
+        run_id: run_id.to_wire(),
+        prompt_hash: "ab".repeat(32),
+        session_id: "sess".into(),
+        entry_id: "github".into(),
+        resource_index: Some(1),
+        principal: Some("tenant:1".into()),
+        parsed_preimage: sample_parsed_preimage(),
+        display_lines: vec!["line".into()],
+        request_fingerprints: vec!["fp1".into()],
+        entities: vec![serde_json::json!({"id": 1})],
+        source: ExecutionSource::Live,
+        stats: ExecutionStats {
+            duration_ms: 1,
+            network_requests: 1,
+            cache_hits: 2,
+            cache_misses: 3,
+            ..Default::default()
+        },
+    };
+    let payload = ArtifactPayload {
+        metadata: ArtifactPayloadMetadata::json_default(),
+        bytes: serde_json::to_vec(&doc).expect("encode").into(),
+    };
+    let ui = project_artifact_payload_for_mcp_read(
+        &payload,
+        Some(plasm_trace::MCP_RESOURCE_READ_SOURCE_RUN_EXPLORER_UI),
+    )
+    .expect("ui read");
+    let ui_doc: RunArtifactDocument = serde_json::from_slice(&ui.bytes).expect("full doc");
+    assert_eq!(ui_doc.prompt_hash, doc.prompt_hash);
+
+    let agent = project_artifact_payload_for_mcp_read(&payload, None).expect("agent read");
+    let agent_v: serde_json::Value = serde_json::from_slice(&agent.bytes).expect("json");
+    assert!(agent_v.get("prompt_hash").is_none());
+}

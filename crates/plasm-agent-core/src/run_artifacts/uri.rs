@@ -32,10 +32,7 @@ pub fn plasm_session_short_resource_uri(session_segment: &str, resource_index: u
 
 /// Content-addressed short URI for MCP logical sessions (`plasm://session/l_<token>/run/pr…`).
 pub fn plasm_session_short_run_uri(session_segment: &str, run_id: &RunArtifactId) -> String {
-    format!(
-        "plasm://session/{session_segment}/run/{}",
-        run_id.to_wire()
-    )
+    format!("plasm://session/{session_segment}/run/{}", run_id.to_wire())
 }
 
 pub fn code_plan_handle(plan_index: u64) -> String {
