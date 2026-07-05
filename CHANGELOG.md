@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.127] - 2026-07-05
+
+### Fixed
+
+- **Dry-run bind summary:** `parallelizable_roots` and `execution_layers` derive from the executable bind graph only (via `bind_execution_graph_summary`); stale dataflow-based roots removed from `graph_summary()`.
+- **Write-order witness:** `comp.metadata.program_order_write_deps` lists synthetic program-order edges; compact dry-run footer shows only for parallel multi-root returns with multiple writes.
+
+### Added
+
+- Tests: heredoc trailing-arg skip, bind execution layers, consecutive-write metadata + graph summary; matrix row asserts full witness.
+
 ## [0.3.126] - 2026-07-05
 
 ### Fixed

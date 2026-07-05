@@ -210,6 +210,13 @@ mod tests {
     }
 
     #[test]
+    fn skip_tagged_heredoc_leaves_trailing_call_args() {
+        let s = "line one\nPLASM_INLINE_SAME, score=0, owner=\"inline-same-line\")";
+        let end = skip_tagged_structured_heredoc(s, 0, "PLASM_INLINE_SAME").expect("closed");
+        assert_eq!(&s[end..], ", score=0, owner=\"inline-same-line\")");
+    }
+
+    #[test]
     fn tagged_close_with_trailing_arg_on_same_line() {
         let line = r#"PLASM_INLINE_ARG, score=0, owner="inline-heredoc")"#;
         let (kind, close_ws) = tagged_heredoc_close_kind(line, "PLASM_INLINE_ARG").expect("close");

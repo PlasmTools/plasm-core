@@ -280,28 +280,20 @@ pub(crate) fn enrich_graph_summary_bind_execution(
     let Some(obj) = summary.as_object_mut() else {
         return;
     };
-    if let Ok(layers) = super::plan_schedule::bind_topo_execution_layers(bind) {
-        let layer_ids: Vec<Vec<String>> = layers
-            .iter()
-            .map(|layer| layer.iter().map(|s| s.as_str().to_string()).collect())
-            .collect();
-        obj.insert("execution_layers".into(), serde_json::json!(layer_ids));
-    }
-    let parallelizable_roots: Vec<String> = bind
-        .topo
-        .iter()
-        .filter(|id| bind.deps.get(id).map(|d| d.is_empty()).unwrap_or(true))
-        .map(|id| id.as_str().to_string())
-        .collect();
+    let Ok(exec) = super::plan_schedule::bind_execution_graph_summary(bind) else {
+        return;
+    };
+    obj.insert(
+        "execution_layers".into(),
+        serde_json::json!(exec.execution_layers),
+    );
     obj.insert(
         "parallelizable_roots".into(),
-        serde_json::json!(parallelizable_roots),
+        serde_json::json!(exec.parallelizable_roots),
     );
     obj.insert(
         "parallelizable_roots_note".into(),
-        serde_json::json!(
-            "Empty bind.deps only; comp.return.kind parallel is multiple return roots, not concurrent execution."
-        ),
+        serde_json::json!(super::plan_schedule::PARALLELIZABLE_ROOTS_NOTE),
     );
 }
 
@@ -383,7 +375,6 @@ pub(crate) fn graph_summary(
     let mut write_or_side_effect_nodes = Vec::new();
     let mut derive_nodes = Vec::new();
     let mut template_nodes = Vec::new();
-    let mut parallelizable_roots = Vec::new();
     let mut warnings = Vec::new();
     let mut boundedness_facts = Vec::new();
 
@@ -394,9 +385,6 @@ pub(crate) fn graph_summary(
     let mut relation_traversal_nodes = 0usize;
     let mut singleton_foreach_writes = 0usize;
     for n in &plan.nodes {
-        if node_dependencies(n).is_empty() {
-            parallelizable_roots.push(n.id().as_str().to_string());
-        }
         match n.effect_class() {
             EffectClass::Read => read_nodes.push(n.id().as_str().to_string()),
             EffectClass::Write | EffectClass::SideEffect => {
@@ -555,7 +543,6 @@ pub(crate) fn graph_summary(
             "write_or_side_effect_nodes": write_or_side_effect_nodes,
             "derive_nodes": derive_nodes,
             "template_nodes": template_nodes,
-            "parallelizable_roots": parallelizable_roots,
             "warnings": warnings,
             "boundedness_facts": boundedness_facts,
             "dry_review": {

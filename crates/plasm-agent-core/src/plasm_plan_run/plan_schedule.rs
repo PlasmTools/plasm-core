@@ -5,6 +5,36 @@ use std::collections::{HashMap, HashSet};
 use plasm_core::plasm_monad::{PlasmBindGraph, PlasmStepPayload, StepId};
 use plasm_core::EffectClass;
 
+/// Agent-facing bind schedule summary (execution layers + root list from final bind graph).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct BindExecutionGraphSummary {
+    pub execution_layers: Vec<Vec<String>>,
+    pub parallelizable_roots: Vec<String>,
+}
+
+pub(crate) const PARALLELIZABLE_ROOTS_NOTE: &str =
+    "Empty bind.deps only; comp.return.kind parallel is multiple return roots, not concurrent execution.";
+
+/// Derive dry-run bind execution fields from the executable bind graph (single source of truth).
+pub(crate) fn bind_execution_graph_summary(
+    bind: &PlasmBindGraph,
+) -> Result<BindExecutionGraphSummary, String> {
+    let execution_layers = bind_topo_execution_layers(bind)?
+        .into_iter()
+        .map(|layer| layer.iter().map(|s| s.as_str().to_string()).collect())
+        .collect();
+    let parallelizable_roots = bind
+        .topo
+        .iter()
+        .filter(|id| bind.deps.get(id).map(|d| d.is_empty()).unwrap_or(true))
+        .map(|id| id.as_str().to_string())
+        .collect();
+    Ok(BindExecutionGraphSummary {
+        execution_layers,
+        parallelizable_roots,
+    })
+}
+
 /// Group bind topo steps into layers of mutually ready steps (deps satisfied).
 pub(crate) fn bind_topo_execution_layers(
     bind: &PlasmBindGraph,
@@ -198,6 +228,28 @@ mod tests {
         assert_eq!(layers.len(), 1);
         assert_eq!(layers[0].len(), 2);
         assert!(!layer_parallel_safe(&layers[0], &payload_by_step));
+    }
+
+    #[test]
+    fn bind_execution_graph_summary_orders_consecutive_writes() {
+        let earlier = step("newbranch");
+        let later = step("newfile");
+        let bind = PlasmBindGraph {
+            topo: vec![earlier.clone(), later.clone()],
+            deps: [(later.clone(), BTreeSet::from([earlier.clone()]))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        let summary = bind_execution_graph_summary(&bind).expect("summary");
+        assert_eq!(
+            summary.execution_layers,
+            vec![
+                vec!["newbranch".to_string()],
+                vec!["newfile".to_string()]
+            ]
+        );
+        assert_eq!(summary.parallelizable_roots, vec!["newbranch".to_string()]);
     }
 
     #[test]

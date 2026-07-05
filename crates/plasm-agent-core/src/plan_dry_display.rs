@@ -100,6 +100,8 @@ pub struct PlanDryCompactView {
     pub read_count: usize,
     pub write_count: usize,
     pub return_label: String,
+    /// When true, compact dry-run text includes the bind-ordered execution footer.
+    pub show_execution_order_footer: bool,
     pub deny_line: Option<String>,
     pub warnings: Option<String>,
     pub steps: Vec<PlanDryStep>,
@@ -205,6 +207,10 @@ pub fn build_plan_dry_compact_view(
     };
     let read_count = json_string_array(graph_summary.get("read_nodes")).len();
     let write_count = json_string_array(graph_summary.get("write_or_side_effect_nodes")).len();
+    let show_execution_order_footer = matches!(
+        &plan.return_value,
+        ValidatedPlanReturn::Parallel { parallel } if parallel.len() > 1
+    ) && write_count > 1;
     let steps = topological_order
         .iter()
         .enumerate()
@@ -230,6 +236,7 @@ pub fn build_plan_dry_compact_view(
         read_count,
         write_count,
         return_label: primary_return_label(plan, &display_map),
+        show_execution_order_footer,
         deny_line,
         warnings: review.warning_line(return_unbounded),
         steps,
@@ -277,7 +284,7 @@ pub fn render_plan_dry_compact_text(
             );
         }
     }
-    if view.write_count > 1 {
+    if view.show_execution_order_footer {
         let _ = writeln!(
             out,
             "execution: bind-ordered (writes are sequential; parallel return is shape only)"

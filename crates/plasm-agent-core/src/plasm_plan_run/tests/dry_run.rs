@@ -1396,3 +1396,38 @@ fn dry_run_flags_unused_binding_not_consumed_or_returned() {
         dry.review.unused_bindings
     );
 }
+
+#[test]
+fn consecutive_writes_program_order_in_comp_metadata_and_graph_summary() {
+    use crate::compile_plasm_program;
+    use plasm_core::PromptPipelineConfig;
+
+    let es = language_matrix_session();
+    let program = r#"newbranch = LangItem.create(title="branch-a", score=1, owner="witness")
+newfile = LangItem.create(title="file-b", score=2, owner="witness")
+newbranch, newfile"#;
+    let bundle = compile_plasm_program(
+        &PromptPipelineConfig::default(),
+        None,
+        &es,
+        "consecutive-writes",
+        program,
+    )
+    .expect("compile consecutive writes");
+    let meta = bundle
+        .artifact()
+        .comp
+        .metadata
+        .get("program_order_write_deps")
+        .expect("program_order_write_deps metadata");
+    assert_eq!(meta, &serde_json::json!([["newbranch", "newfile"]]));
+    let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
+    assert_eq!(
+        dry.graph_summary.get("execution_layers"),
+        Some(&serde_json::json!([["newbranch"], ["newfile"]]))
+    );
+    assert_eq!(
+        dry.graph_summary.get("parallelizable_roots"),
+        Some(&serde_json::json!(["newbranch"]))
+    );
+}

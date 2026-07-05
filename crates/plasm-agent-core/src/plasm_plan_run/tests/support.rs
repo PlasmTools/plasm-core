@@ -172,3 +172,32 @@ pub(super) fn federated_github_linear_issue_team_session() -> Option<ExecuteSess
     exp.expose_entities(&layers, linear, "linear", &["Team"]);
     Some(session)
 }
+
+pub(super) fn language_matrix_session() -> ExecuteSession {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let dir = root.join("../../fixtures/schemas/plasm_language_matrix");
+    let cgs = Arc::new(load_schema(&dir).expect("load plasm_language_matrix"));
+    let mut ctxs = indexmap::IndexMap::new();
+    ctxs.insert(
+        "langmatrix".into(),
+        Arc::new(CgsContext::entry("langmatrix", cgs.clone())),
+    );
+    let wave: &[&str] = &["LangItem", "LangLine", "LangTag"];
+    let exp = TeachingExposureSession::new(cgs.as_ref(), "langmatrix", wave);
+    ExecuteSession::new(
+        "matrix_ph".into(),
+        "p".into(),
+        cgs.clone(),
+        ctxs,
+        "langmatrix".into(),
+        String::new(),
+        String::new(),
+        None,
+        wave.iter().map(|s| (*s).to_string()).collect(),
+        Some(exp),
+        None,
+        cgs.catalog_cgs_hash_hex(),
+        None,
+        None,
+    )
+}

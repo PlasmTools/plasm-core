@@ -42,11 +42,17 @@ pub fn plasm_comp_from_validated(validated: &ValidatedPlan) -> PlasmCompArtifact
     let return_ = plasm_return_from_validated(&plan.return_value);
     let mut metadata = plan.metadata.clone();
     metadata.insert("language".into(), serde_json::json!("plasm-comp"));
+    if !bind.program_order_write_deps.is_empty() {
+        metadata.insert(
+            "program_order_write_deps".into(),
+            serde_json::json!(&bind.program_order_write_deps),
+        );
+    }
     let comp = PlasmComp {
         version: plan.version,
         name: plan.name.clone(),
         steps,
-        bind,
+        bind: bind.graph,
         return_,
         metadata,
     };
@@ -74,7 +80,7 @@ fn plasm_return_from_validated(ret: &ValidatedPlanReturn) -> PlasmReturn {
     }
 }
 
-fn build_bind_graph(validated: &ValidatedPlan) -> PlasmBindGraph {
+fn build_bind_graph(validated: &ValidatedPlan) -> BuiltBindGraph {
     let topo: Vec<StepId> = validated
         .topological_order()
         .iter()
@@ -111,26 +117,37 @@ fn build_bind_graph(validated: &ValidatedPlan) -> PlasmBindGraph {
             holes.insert(id, hole_uses);
         }
     }
-    add_consecutive_write_program_order_deps(validated, &mut deps);
-    PlasmBindGraph {
-        topo,
-        deps,
-        primary,
-        holes,
+    let program_order_write_deps =
+        add_consecutive_write_program_order_deps(validated, &mut deps);
+    BuiltBindGraph {
+        graph: PlasmBindGraph {
+            topo,
+            deps,
+            primary,
+            holes,
+        },
+        program_order_write_deps,
     }
+}
+
+struct BuiltBindGraph {
+    graph: PlasmBindGraph,
+    /// Pairs `[earlier_write, later_write]` added for program-order scheduling (not dataflow).
+    program_order_write_deps: Vec<[String; 2]>,
 }
 
 /// Synthetic bind edges between consecutive write/side-effect steps in program order.
 fn add_consecutive_write_program_order_deps(
     validated: &ValidatedPlan,
     deps: &mut BTreeMap<StepId, BTreeSet<StepId>>,
-) {
+) -> Vec<[String; 2]> {
     let by_id: std::collections::HashMap<&str, &ValidatedPlanNode> = validated
         .nodes()
         .iter()
         .map(|n| (n.id().as_str(), n))
         .collect();
     let mut last_write: Option<StepId> = None;
+    let mut added = Vec::new();
     for id_str in validated.topological_order() {
         let Some(node) = by_id.get(id_str.as_str()) else {
             continue;
@@ -141,13 +158,20 @@ fn add_consecutive_write_program_order_deps(
                     continue;
                 };
                 if let Some(ref prev) = last_write {
-                    deps.entry(id.clone()).or_default().insert(prev.clone());
+                    if deps
+                        .entry(id.clone())
+                        .or_default()
+                        .insert(prev.clone())
+                    {
+                        added.push([prev.as_str().to_string(), id.as_str().to_string()]);
+                    }
                 }
                 last_write = Some(id);
             }
             _ => last_write = None,
         }
     }
+    added
 }
 
 fn primary_predecessor(node: &ValidatedPlanNode) -> Option<String> {

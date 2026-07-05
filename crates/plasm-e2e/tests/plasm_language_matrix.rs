@@ -1087,6 +1087,26 @@ fn assert_planning_ir(
                     "expected newbranch in bind.deps[newfile] (program-order writes), got {deps:?}"
                 ));
             }
+            let meta = comp
+                .pointer("/metadata/program_order_write_deps")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    "expected comp.metadata.program_order_write_deps witness".to_string()
+                })?;
+            if meta != &[serde_json::json!(["newbranch", "newfile"])] {
+                return Err(format!(
+                    "unexpected program_order_write_deps metadata: {meta:?}"
+                ));
+            }
+            let layers = dry
+                .graph_summary
+                .get("execution_layers")
+                .ok_or_else(|| "expected graph_summary.execution_layers".to_string())?;
+            if layers != &serde_json::json!([["newbranch"], ["newfile"]]) {
+                return Err(format!(
+                    "expected sequential write layers, got {layers:?}"
+                ));
+            }
         }
         "lang_relation_one_opaque_r" => {
             let rel = comp_relation_named(comp, "summary")
