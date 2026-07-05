@@ -69,9 +69,7 @@ pub fn validate_registry_templates_with_progress<P: FnMut(&str)>(
 }
 
 fn validate_one_entry(reg: &InMemoryCgsRegistry, entry_id: &str) -> Result<(), String> {
-    let ctx = reg
-        .load_context(entry_id)
-        .map_err(|e| e.to_string())?;
+    let ctx = reg.load_context(entry_id).map_err(|e| e.to_string())?;
     plasm_compile::validate_cgs_capability_templates(ctx.cgs.as_ref())
         .map_err(|e| format!("{entry_id}: {e}"))
 }
@@ -165,10 +163,7 @@ pub fn load_registry_from_catalog_dir_with_progress<P: FnMut(&str)>(
     Ok(reg)
 }
 
-fn materialize_one_entry(
-    dir: &Path,
-    meta: CatalogManifest,
-) -> Result<LoadedCatalogEntry, String> {
+fn materialize_one_entry(dir: &Path, meta: CatalogManifest) -> Result<LoadedCatalogEntry, String> {
     let cgs: CGS = load_catalog_artifact(dir, &meta)?;
     let label = if meta.label.is_empty() {
         meta.entry_id.clone()

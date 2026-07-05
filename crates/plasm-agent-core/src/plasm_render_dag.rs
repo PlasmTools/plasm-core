@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 use plasm_core::expr_parser::RenderTailParse;
 
 use crate::execute_session::ExecuteSession;
-use crate::plasm_plan::{ComputeOp, OutputName, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind};
+use crate::plasm_plan::{
+    ComputeOp, OutputName, SyntheticFieldSchema, SyntheticResultSchema, SyntheticValueKind,
+};
 use crate::plasm_plan_run::RenderColumns;
 use crate::plasm_render_compile::{
     infer_render_column_tokens_from_template, parse_field_list_with_tokens,

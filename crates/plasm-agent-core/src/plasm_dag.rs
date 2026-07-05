@@ -3018,10 +3018,13 @@ fn node_to_json(node: &DagNode) -> Result<serde_json::Value, String> {
                 compute["collection_alias"] = json!(alias);
             }
             let (depends_on, uses_result) = match op {
-                ComputeOp::Render { render_bindings, .. } => {
-                    render_plan_graph_edges(source, render_bindings)
-                }
-                _ => (vec![source.clone()], vec![json!({ "node": source, "as": "source" })]),
+                ComputeOp::Render {
+                    render_bindings, ..
+                } => render_plan_graph_edges(source, render_bindings),
+                _ => (
+                    vec![source.clone()],
+                    vec![json!({ "node": source, "as": "source" })],
+                ),
             };
             Ok(json!({
                 "id": node.id,

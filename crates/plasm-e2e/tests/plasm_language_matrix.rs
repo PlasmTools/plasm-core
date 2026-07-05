@@ -762,7 +762,9 @@ fn assert_planning_ir(
         }
         "lang_cross_binding_render" => {
             let Some(ComputeTemplate {
-                op: ComputeOp::Render { render_bindings, .. },
+                op: ComputeOp::Render {
+                    render_bindings, ..
+                },
                 ..
             }) = computes
                 .iter()
@@ -772,10 +774,7 @@ fn assert_planning_ir(
             };
             let labels: Vec<_> = render_bindings.iter().map(|l| l.as_str()).collect();
             if labels != ["a", "b"] {
-                return Err(format!(
-                    "expected render_bindings [a, b], got {:?}",
-                    labels
-                ));
+                return Err(format!("expected render_bindings [a, b], got {:?}", labels));
             }
         }
         "lang_render_content_into_create" => {

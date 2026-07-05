@@ -314,7 +314,9 @@ fn effective_render_binding_labels(
     }
 }
 
-pub(crate) fn render_compute(input: &RenderComputeInput<'_>) -> Result<Vec<serde_json::Value>, String> {
+pub(crate) fn render_compute(
+    input: &RenderComputeInput<'_>,
+) -> Result<Vec<serde_json::Value>, String> {
     let rows = input.primary_rows;
     if rows.len() > PLAN_RENDER_MAX_ROWS {
         return Err(format!(
@@ -343,7 +345,8 @@ pub(crate) fn render_compute(input: &RenderComputeInput<'_>) -> Result<Vec<serde
         .map_err(|e| format!("Plan.render template load error: {e}"))?;
     let alias_name = input.collection_alias.map(|a| a.as_str());
     let rows_val = minijinja::Value::from_serialize(&projected);
-    let mut ctx: BTreeMap<String, minijinja::Value> = BTreeMap::from([("rows".to_string(), rows_val)]);
+    let mut ctx: BTreeMap<String, minijinja::Value> =
+        BTreeMap::from([("rows".to_string(), rows_val)]);
     for label in effective_render_binding_labels(input.render_bindings, input.collection_alias) {
         let binding_rows = input
             .binding_rows
@@ -389,23 +392,20 @@ pub(crate) fn binding_rows_for_render(
     else {
         return Ok(BTreeMap::new());
     };
-    let labels = effective_render_binding_labels(render_bindings, compute.collection_alias.as_ref());
+    let labels =
+        effective_render_binding_labels(render_bindings, compute.collection_alias.as_ref());
     let mut out = BTreeMap::new();
     for label in labels {
         let node_id = PlanNodeId::new(label.clone())?;
         let mat = materialized.get(&node_id).ok_or_else(|| {
-            format!(
-                "Plan.render binding `{label}`: node `{label}` has not been materialized"
-            )
+            format!("Plan.render binding `{label}`: node `{label}` has not been materialized")
         })?;
         let rows = mat
             .row_source
             .inline_rows()
             .map(|r| r.to_vec())
             .ok_or_else(|| {
-                format!(
-                    "Plan.render binding `{label}`: node `{label}` is not inline materialized"
-                )
+                format!("Plan.render binding `{label}`: node `{label}` is not inline materialized")
             })?;
         out.insert(label, rows);
     }

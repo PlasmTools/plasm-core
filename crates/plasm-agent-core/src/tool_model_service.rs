@@ -4,8 +4,8 @@ use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
-use dashmap::DashMap;
 use dashmap::mapref::entry::Entry;
+use dashmap::DashMap;
 use plasm_core::discovery::CatalogEntryMeta;
 use plasm_core::schema::CGS;
 use tokio::sync::Notify;
@@ -118,7 +118,9 @@ impl ToolModelService {
 
         let build_result = self
             .pool
-            .run("build_tool_model", move || build_tool_model(cgs.as_ref(), &meta, &q))
+            .run("build_tool_model", move || {
+                build_tool_model(cgs.as_ref(), &meta, &q)
+            })
             .await
             .map_err(ToolModelServiceError::Compute)
             .and_then(|r| r.map_err(ToolModelServiceError::Build));

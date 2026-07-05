@@ -236,11 +236,13 @@ mod tests {
 
     #[test]
     fn infer_template_field_refs_collects_row_and_label_fields() {
-        let refs = infer_template_field_refs(
-            "Row {{ r.name }} cross {{ a.title }} / {{ b.owner }}",
-        );
+        let refs =
+            infer_template_field_refs("Row {{ r.name }} cross {{ a.title }} / {{ b.owner }}");
         assert_eq!(refs.row_fields, vec!["name".to_string()]);
-        assert_eq!(refs.label_fields.get("a").map(|v| v.as_slice()), Some(&["title".to_string()][..]));
+        assert_eq!(
+            refs.label_fields.get("a").map(|v| v.as_slice()),
+            Some(&["title".to_string()][..])
+        );
         assert_eq!(
             refs.label_fields.get("b").map(|v| v.as_slice()),
             Some(&["owner".to_string()][..])
