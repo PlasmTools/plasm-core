@@ -1082,10 +1082,7 @@ fn assert_planning_ir(
                 .pointer("/bind/deps/newfile")
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| "expected bind.deps[newfile] program-order edge".to_string())?;
-            if !deps
-                .iter()
-                .any(|d| d.as_str() == Some("newbranch"))
-            {
+            if !deps.iter().any(|d| d.as_str() == Some("newbranch")) {
                 return Err(format!(
                     "expected newbranch in bind.deps[newfile] (program-order writes), got {deps:?}"
                 ));

@@ -212,8 +212,7 @@ mod tests {
     #[test]
     fn tagged_close_with_trailing_arg_on_same_line() {
         let line = r#"PLASM_INLINE_ARG, score=0, owner="inline-heredoc")"#;
-        let (kind, close_ws) =
-            tagged_heredoc_close_kind(line, "PLASM_INLINE_ARG").expect("close");
+        let (kind, close_ws) = tagged_heredoc_close_kind(line, "PLASM_INLINE_ARG").expect("close");
         assert_eq!(kind, HeredocCloseLineKind::GluedSuffix);
         assert_eq!(close_ws, 0);
         let close_at = close_ws + "PLASM_INLINE_ARG".len();
