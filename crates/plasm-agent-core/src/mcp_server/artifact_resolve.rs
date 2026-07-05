@@ -5,7 +5,7 @@ use std::time::Instant;
 use plasm_trace::RunArtifactArchiveRef;
 
 use crate::run_artifacts::{
-    logical_uuid_from_uri_segment, parse_plasm_execute_plan_uri, parse_plasm_execute_run_uri,
+    logical_uuid_from_uri_segment, parse_plasm_execute_run_uri,
     parse_plasm_session_short_plan_uri, parse_plasm_session_short_resource_uri,
     parse_plasm_session_short_run_uri, parse_plasm_short_resource_uri, verify_payload_run_id,
     ArtifactPayload, RunArtifactId,
@@ -50,8 +50,6 @@ pub(crate) struct ResolvedRunArtifact {
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedCodePlanArtifact {
     pub payload: ArtifactPayload,
-    pub prompt_hash: String,
-    pub session_id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -259,18 +257,23 @@ pub(crate) async fn resolve_run_artifact_for_binding(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum CodePlanLookup {
+    Index(u64),
+    Id(uuid::Uuid),
+}
+
 pub(crate) async fn resolve_code_plan_for_binding(
     plasm: &PlasmHostState,
     binding: &PlasmExecBinding,
-    plan_index: Option<u64>,
-    plan_id: Option<uuid::Uuid>,
+    lookup: CodePlanLookup,
     ls_key: Option<&str>,
     read_source: Option<&str>,
     started: Instant,
     uri_for_trace: &str,
 ) -> Result<ResolvedCodePlanArtifact, RunArtifactResolveError> {
-    let payload = if let Some(plan_index) = plan_index {
-        plasm
+    let payload = match lookup {
+        CodePlanLookup::Index(plan_index) => plasm
             .run_artifacts
             .get_code_plan_payload_result_by_index(
                 binding.prompt_hash.as_str(),
@@ -278,9 +281,8 @@ pub(crate) async fn resolve_code_plan_for_binding(
                 plan_index,
             )
             .await
-            .map_err(|e| RunArtifactResolveError::DecodeFailed(e.to_string()))?
-    } else if let Some(plan_id) = plan_id {
-        plasm
+            .map_err(|e| RunArtifactResolveError::DecodeFailed(e.to_string()))?,
+        CodePlanLookup::Id(plan_id) => plasm
             .run_artifacts
             .get_code_plan_payload_result(
                 binding.prompt_hash.as_str(),
@@ -288,9 +290,7 @@ pub(crate) async fn resolve_code_plan_for_binding(
                 plan_id,
             )
             .await
-            .map_err(|e| RunArtifactResolveError::DecodeFailed(e.to_string()))?
-    } else {
-        None
+            .map_err(|e| RunArtifactResolveError::DecodeFailed(e.to_string()))?,
     };
     let Some(payload) = payload else {
         resource_read_trace::McpResourceReadTrace::error(
@@ -315,11 +315,7 @@ pub(crate) async fn resolve_code_plan_for_binding(
     )
     .emit(plasm)
     .await;
-    Ok(ResolvedCodePlanArtifact {
-        payload,
-        prompt_hash: binding.prompt_hash.clone(),
-        session_id: binding.session_id.clone(),
-    })
+    Ok(ResolvedCodePlanArtifact { payload })
 }
 
 fn archive_for_run_id(

@@ -77,22 +77,6 @@ mod tests {
     use rust_mcp_sdk::schema::{CallToolResult, TextContent};
     use serde_json::json;
 
-    fn minimal_plan_ux_reflection_v3() -> serde_json::Value {
-        json!({
-            "schema_version": 3,
-            "layout": "sequential",
-            "steps": [],
-            "review": { "verdict": "ok", "write_count": 0, "read_count": 0 },
-            "flow": {
-                "schema_version": 1,
-                "verdict": "clean",
-                "counts": { "allow": 0, "approve": 0, "review": 0, "deny": 0 },
-                "violations": [],
-                "trace": []
-            }
-        })
-    }
-
     fn sample_dry_tool_meta() -> Map<String, Value> {
         let mut agent = Map::new();
         agent.insert("dry_run".into(), json!(true));

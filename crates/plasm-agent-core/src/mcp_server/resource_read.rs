@@ -60,8 +60,7 @@ async fn resolve_session_scoped_run(
     read_source: Option<&str>,
     started: Instant,
 ) -> Result<artifact_resolve::ResolvedRunArtifact, RpcError> {
-    let (b, ls_key) =
-        resolve_session_binding(handler, runtime, uri, read_source, started).await?;
+    let (b, ls_key) = resolve_session_binding(handler, runtime, uri, read_source, started).await?;
     let lookup = artifact_resolve::lookup_from_artifact_uri(uri, &b, ls_key.as_str())
         .map_err(map_resolve_rpc_err)?;
     artifact_resolve::resolve_run_artifact_for_binding(
@@ -87,13 +86,11 @@ async fn resolve_session_scoped_plan(
     let (_, plan_index) = parse_plasm_session_short_plan_uri(uri).ok_or_else(|| {
         RpcError::invalid_params().with_message(format!("unsupported resource URI: {uri}"))
     })?;
-    let (b, ls_key) =
-        resolve_session_binding(handler, runtime, uri, read_source, started).await?;
+    let (b, ls_key) = resolve_session_binding(handler, runtime, uri, read_source, started).await?;
     artifact_resolve::resolve_code_plan_for_binding(
         handler.plasm.as_ref(),
         &b,
-        Some(plan_index),
-        None,
+        artifact_resolve::CodePlanLookup::Index(plan_index),
         Some(ls_key.as_str()),
         read_source,
         started,
@@ -200,8 +197,7 @@ pub(crate) async fn handle_read_resource_request(
         let resolved = artifact_resolve::resolve_code_plan_for_binding(
             handler.plasm.as_ref(),
             &binding,
-            None,
-            Some(plan_id),
+            artifact_resolve::CodePlanLookup::Id(plan_id),
             ls_key_opt.as_deref(),
             read_source,
             started,
