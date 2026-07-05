@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.124] - 2026-07-05
+
+### Fixed
+
+- **MCP App UI regression (v0.3.123):** Run Explorer and replay HTTP again receive full canonical run artifacts (`prompt_hash`, `parsed_preimage`, …); slim `RunArtifactAgentView` stays on agent MCP reads (`plasm_read_run_artifact`, `resources/read` without UI read source). HTTP artifact GET defaults to full docs; opt in to slim via `?slim=1`.
+- **Plan Review UI:** restore mirroring of `comp` and `plan_ux_reflection` into `structuredContent.plasm` when hosts strip `_meta.ui` (agent `_meta.plasm` remains slim; agents read compact dry-run text in Markdown).
+
 ## [0.3.123] - 2026-07-05
 
 ### Fixed
