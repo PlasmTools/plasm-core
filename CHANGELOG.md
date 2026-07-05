@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.123] - 2026-07-05
+
+### Fixed
+
+- **Run artifact identity (agents):** `_meta.plasm.steps[]` no longer emits session `resource_index`; reads use content-addressed `run_id` / `plasm://…/run/pr…` only. Legacy `/r/{n}` URIs hard-error; `plasm_read_run_artifact` rejects `resource_index` lookup keys.
+- **Trace persistence:** `CodePlanRunArtifactRef` is populated from orchestrator handles (typed refs), not re-scraped JSON meta.
+- **MCP resolve path:** single session-scoped URI parse; removed dead resolve helpers and stale error text.
+
+### Added
+
+- **GitHub write-text slot:** `nv_repo_content_write_text` for plain UTF-8 create/update; read blob stays base64 on `CommitFile`.
+- **Agent token optimization:** compact dry-run surface text, slim run-artifact projection on MCP/HTTP read (`?full=1` opt-in), UI-only comp/DAG in `_meta.ui.plasm`.
+
+### Changed
+
+- **Docs / teaching:** co-submitted write program-order safety and `node.field` value-flow chaining in language spec and MCP program assets.
+- **`plan_dry_compact`:** extracted heredoc/literal compaction from `plan_dry_display` (keeps display module under 1k lines).
+
 ## [0.3.122] - 2026-07-05
 
 ### Fixed
