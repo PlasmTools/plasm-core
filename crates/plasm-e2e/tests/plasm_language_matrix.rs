@@ -86,6 +86,7 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "static_heredoc_binding",
     "bind_method_invoke_field_ref",
     "inline_heredoc_method_arg",
+    "inline_heredoc_method_arg_same_line",
     "heredoc_body_with_equals",
     "derive_map",
     "effect_create",
@@ -123,6 +124,7 @@ const REQUIRED_FEATURE_TAGS: &[&str] = &[
     "flattened_surface_line_compile",
     "program_return_binding_only_last",
     "program_return_pipeline_filter_sort",
+    "program_return_consecutive_writes",
     "postfix_group_by_sort",
     "search_then_group_by",
     "postfix_dedupe",
@@ -865,6 +867,14 @@ fn assert_planning_ir(
                 return Err("expected inline heredoc body preserved in comp IR (PLP-2)".into());
             }
         }
+        "lang_inline_heredoc_method_arg_same_line" => {
+            if !comp_ir_contains_selector(comp, "create") {
+                return Err("expected create invoke with same-line heredoc close (PLP-2)".into());
+            }
+            if !json_value_contains_substring(comp, "same-line body") {
+                return Err("expected same-line heredoc body preserved in comp IR".into());
+            }
+        }
         "lang_bind_method_invoke_field_ref" => {
             if !comp_ir_contains_selector(comp, "update") {
                 return Err("expected update invoke from bound method continuation".into());
@@ -1058,6 +1068,26 @@ fn assert_planning_ir(
                 return Err(format!(
                     "expected coerced_default_return `sorted`, got {:?}",
                     comp.get("metadata")
+                ));
+            }
+        }
+        "lang_program_return_consecutive_writes" => {
+            if comp.pointer("/return/kind").and_then(|v| v.as_str()) != Some("parallel") {
+                return Err(format!(
+                    "expected parallel multi-root return, got {:?}",
+                    comp.get("return")
+                ));
+            }
+            let deps = comp
+                .pointer("/bind/deps/newfile")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| "expected bind.deps[newfile] program-order edge".to_string())?;
+            if !deps
+                .iter()
+                .any(|d| d.as_str() == Some("newbranch"))
+            {
+                return Err(format!(
+                    "expected newbranch in bind.deps[newfile] (program-order writes), got {deps:?}"
                 ));
             }
         }
@@ -1727,6 +1757,22 @@ sorted = filtered.sort(title).limit(10)[title,owner]"#,
         expect_markdown_substrings: &["```tsv", "alice"],
     },
     MatrixRow {
+        id: "lang_program_return_consecutive_writes",
+        program: r#"newbranch = LangItem.create(title="branch-a", score=1, owner="witness")
+newfile = LangItem.create(title="file-b", score=2, owner="witness")
+newbranch, newfile"#,
+        surface_line: false,
+        federated: false,
+        features: &[
+            "program_return_consecutive_writes",
+            "effect_create",
+            "parallel_final_roots",
+            "dry_live_parity",
+        ],
+        min_node_results: 2,
+        expect_markdown_substrings: &["```tsv", "witness"],
+    },
+    MatrixRow {
         id: "lang_row_filter_paren",
         program: "items = LangItem\nfiltered = items.filter(owner=\"alice\")\nfiltered",
         surface_line: false,
@@ -1846,6 +1892,18 @@ created"#,
         features: &["inline_heredoc_method_arg", "effect_create"],
         min_node_results: 1,
         expect_markdown_substrings: &["inline-heredoc"],
+    },
+    MatrixRow {
+        id: "lang_inline_heredoc_method_arg_same_line",
+        program: r#"created = LangItem.create(title=<<PLASM_INLINE_SAME
+same-line body
+PLASM_INLINE_SAME, score=0, owner="inline-same-line")
+created"#,
+        surface_line: false,
+        federated: false,
+        features: &["inline_heredoc_method_arg_same_line", "effect_create"],
+        min_node_results: 1,
+        expect_markdown_substrings: &["inline-same-line"],
     },
     MatrixRow {
         id: "lang_bind_method_invoke_field_ref",
@@ -2600,6 +2658,7 @@ fn program_return_semantics_dry_comp_witness() {
     for row_id in [
         "lang_program_return_binding_only_last",
         "lang_program_return_pipeline_filter_sort",
+        "lang_program_return_consecutive_writes",
     ] {
         let row = MATRIX_ROWS
             .iter()

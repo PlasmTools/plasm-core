@@ -151,6 +151,7 @@ pub fn evaluate_executable_comp_dry(
     attach_flow_approval_gates(&mut out, &flow_analysis);
     let mut graph_summary = prepared.graph_summary;
     enrich_graph_summary_flow(&mut graph_summary, &flow_analysis);
+    enrich_graph_summary_bind_execution(&mut graph_summary, &executable.bind);
     let parallel_root_surfaces_only =
         compute_parallel_root_surfaces_only(prepared.validated.artifact());
     Ok(DryPlasmPlanEvaluation {
@@ -269,6 +270,38 @@ pub(crate) fn enrich_graph_summary_flow(
     obj.insert(
         "approval_gates".into(),
         serde_json::Value::Array(analysis.approval_gates_json()),
+    );
+}
+
+pub(crate) fn enrich_graph_summary_bind_execution(
+    summary: &mut serde_json::Value,
+    bind: &plasm_core::PlasmBindGraph,
+) {
+    let Some(obj) = summary.as_object_mut() else {
+        return;
+    };
+    if let Ok(layers) = super::plan_schedule::bind_topo_execution_layers(bind) {
+        let layer_ids: Vec<Vec<String>> = layers
+            .iter()
+            .map(|layer| layer.iter().map(|s| s.as_str().to_string()).collect())
+            .collect();
+        obj.insert("execution_layers".into(), serde_json::json!(layer_ids));
+    }
+    let parallelizable_roots: Vec<String> = bind
+        .topo
+        .iter()
+        .filter(|id| bind.deps.get(id).map(|d| d.is_empty()).unwrap_or(true))
+        .map(|id| id.as_str().to_string())
+        .collect();
+    obj.insert(
+        "parallelizable_roots".into(),
+        serde_json::json!(parallelizable_roots),
+    );
+    obj.insert(
+        "parallelizable_roots_note".into(),
+        serde_json::json!(
+            "Empty bind.deps only; comp.return.kind parallel is multiple return roots, not concurrent execution."
+        ),
     );
 }
 

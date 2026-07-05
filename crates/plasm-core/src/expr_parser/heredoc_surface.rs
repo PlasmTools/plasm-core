@@ -8,8 +8,9 @@ pub enum HeredocCloseLineKind {
 }
 
 /// Tagged heredoc close: trim matches `TAG` alone, or `TAG` followed by optional ASCII ws and
-/// one or more parser-owned delimiters (`)`, `]`, `}`, `,`). The heredoc recognizer closes the
-/// string at `TAG` and leaves the delimiter tail for the enclosing parser to validate.
+/// either a comma (more call arguments on the same line) or one or more parser-owned delimiters
+/// (`)`, `]`, `}`, `,`). The heredoc recognizer closes the string at `TAG` and leaves the suffix
+/// for the enclosing parser to validate.
 pub fn tagged_heredoc_close_kind(
     line_slice: &str,
     tag: &str,
@@ -23,6 +24,12 @@ pub fn tagged_heredoc_close_kind(
         return None;
     }
     let after = t[tag.len()..].trim_start();
+    if after.is_empty() {
+        return None;
+    }
+    if after.starts_with(',') {
+        return Some((HeredocCloseLineKind::GluedSuffix, leading_ws));
+    }
     let mut saw_delimiter = false;
     for b in after.bytes() {
         if b.is_ascii_whitespace() {
@@ -200,6 +207,17 @@ mod tests {
         }
         assert!(tagged_heredoc_close_kind("WRONG", "TAG").is_none());
         assert!(tagged_heredoc_close_kind("TAGfoo", "TAG").is_none());
+    }
+
+    #[test]
+    fn tagged_close_with_trailing_arg_on_same_line() {
+        let line = r#"PLASM_INLINE_ARG, score=0, owner="inline-heredoc")"#;
+        let (kind, close_ws) =
+            tagged_heredoc_close_kind(line, "PLASM_INLINE_ARG").expect("close");
+        assert_eq!(kind, HeredocCloseLineKind::GluedSuffix);
+        assert_eq!(close_ws, 0);
+        let close_at = close_ws + "PLASM_INLINE_ARG".len();
+        assert_eq!(&line[close_at..], ", score=0, owner=\"inline-heredoc\")");
     }
 
     #[test]

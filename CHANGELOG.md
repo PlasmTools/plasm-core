@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.126] - 2026-07-05
+
+### Fixed
+
+- **PLP-2 heredoc mid-arg close:** `TAG, trailing=arg)` on the same line as the closing tag is accepted; close index stops at `TAG` and the arg parser resumes on the suffix.
+- **Dry-run write ordering witness:** consecutive write/side-effect steps get synthetic program-order `bind.deps` edges; `graph_summary.execution_layers` and `parallelizable_roots_note` clarify that `comp.return.kind: parallel` is multi-root return shape, not concurrent execution. Agent dry-run header uses `returns: …` instead of `parallel(N)`.
+
+### Added
+
+- **Language matrix:** `lang_inline_heredoc_method_arg_same_line`, `lang_program_return_consecutive_writes` (bind.dep + comp witness).
+
 ## [0.3.125] - 2026-07-05
 
 ### Added

@@ -277,6 +277,12 @@ pub fn render_plan_dry_compact_text(
             );
         }
     }
+    if view.write_count > 1 {
+        let _ = writeln!(
+            out,
+            "execution: bind-ordered (writes are sequential; parallel return is shape only)"
+        );
+    }
     out
 }
 
@@ -590,8 +596,14 @@ fn primary_return_label(
         ValidatedPlanReturn::Parallel { parallel } => {
             if parallel.len() == 1 {
                 map_display_id(parallel[0].as_str(), display_map)
+            } else if parallel.len() <= 3 {
+                let names: Vec<String> = parallel
+                    .iter()
+                    .map(|id| map_display_id(id.as_str(), display_map))
+                    .collect();
+                format!("returns: {}", names.join(", "))
             } else {
-                format!("parallel({})", parallel.len())
+                format!("returns({})", parallel.len())
             }
         }
     }

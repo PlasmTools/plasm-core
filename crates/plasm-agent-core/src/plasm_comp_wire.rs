@@ -1,6 +1,8 @@
 //! Build [`PlasmComp`] wire artifacts from validated plan nodes (single compile path).
 
-use crate::plasm_plan::{PlanResultUse, ValidatedPlan, ValidatedPlanNode, ValidatedPlanReturn};
+use crate::plasm_plan::{
+    EffectClass, PlanResultUse, ValidatedPlan, ValidatedPlanNode, ValidatedPlanReturn,
+};
 use crate::plasm_plan_run::{node_dependencies, DryPlasmPlanEvaluation};
 use crate::plasm_step_convert::validated_node_to_step_payload;
 pub use plasm_core::plasm_monad::PlasmCompArtifact;
@@ -109,11 +111,42 @@ fn build_bind_graph(validated: &ValidatedPlan) -> PlasmBindGraph {
             holes.insert(id, hole_uses);
         }
     }
+    add_consecutive_write_program_order_deps(validated, &mut deps);
     PlasmBindGraph {
         topo,
         deps,
         primary,
         holes,
+    }
+}
+
+/// Synthetic bind edges between consecutive write/side-effect steps in program order.
+fn add_consecutive_write_program_order_deps(
+    validated: &ValidatedPlan,
+    deps: &mut BTreeMap<StepId, BTreeSet<StepId>>,
+) {
+    let by_id: std::collections::HashMap<&str, &ValidatedPlanNode> = validated
+        .nodes()
+        .iter()
+        .map(|n| (n.id().as_str(), n))
+        .collect();
+    let mut last_write: Option<StepId> = None;
+    for id_str in validated.topological_order() {
+        let Some(node) = by_id.get(id_str.as_str()) else {
+            continue;
+        };
+        match node.effect_class() {
+            EffectClass::Write | EffectClass::SideEffect => {
+                let Ok(id) = StepId::new(id_str.as_str().to_string()) else {
+                    continue;
+                };
+                if let Some(ref prev) = last_write {
+                    deps.entry(id.clone()).or_default().insert(prev.clone());
+                }
+                last_write = Some(id);
+            }
+            _ => last_write = None,
+        }
     }
 }
 

@@ -1018,7 +1018,7 @@ fn dry_run_text_renders_dependency_dag_snapshot() {
     insta::assert_snapshot!(
         text,
         @"
-        plan ok · 3n 1r → parallel(2) · p7
+        plan ok · 3n 1r → returns: summary, cards · p7
 
         01 products     query Query(Product all)
         02 summary      project name, sku ← products
