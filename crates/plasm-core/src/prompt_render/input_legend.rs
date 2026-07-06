@@ -79,6 +79,25 @@ impl CapabilityInputLegend {
     }
 }
 
+/// Row-producer input/projection contract (typed; not parsed from expr at emit).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct RowContractLegend {
+    #[serde(default)]
+    pub inputs: Vec<String>,
+    #[serde(default)]
+    pub rows: RowProjectionContract,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum RowProjectionContract {
+    #[default]
+    Absent,
+    OmittedSameAsWitness,
+    Explicit {
+        syms: Vec<String>,
+    },
+}
+
 /// One synthesized teaching-table expression row (model → TSV).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeachingExprLine {
@@ -87,6 +106,8 @@ pub struct TeachingExprLine {
     #[serde(flatten)]
     pub legend: CapabilityInputLegend,
     pub is_projection_teaching: bool,
+    #[serde(default)]
+    pub row_contract: RowContractLegend,
 }
 
 impl TeachingExprLine {
@@ -96,6 +117,7 @@ impl TeachingExprLine {
             result_type: String::new(),
             legend: CapabilityInputLegend::default(),
             is_projection_teaching: false,
+            row_contract: RowContractLegend::default(),
         }
     }
 }

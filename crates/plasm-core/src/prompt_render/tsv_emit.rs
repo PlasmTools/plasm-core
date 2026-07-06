@@ -5,8 +5,12 @@ use std::collections::{HashMap, HashSet};
 use crate::symbol_tuning::SymbolMap;
 
 use super::contract::enforce_teaching_tsv_teaching_invariant;
+use super::gloss_dedup::{
+    gloss_emit_identity_for_row, FieldGlossMeaning, FieldGlossMeaningAtom, GlossDescription,
+    GlossTsvDedupe,
+};
 use super::{
-    DomainLineKind, EntityTeachingExprRow, TeachingExprLine, TeachingFieldGloss, TeachingHeading,
+    EntityTeachingExprRow, TeachingExprLine, TeachingFieldGloss, TeachingHeading,
     TeachingPromptBundle, TEACHING_OPTIONAL_LEGEND_MARK, TSV_TEACHING_TABLE_HEADER,
 };
 
@@ -109,6 +113,13 @@ pub(crate) fn teaching_relation_field_gloss(
         allowed_values: String::new(),
         description: description.to_string(),
         is_inline_union_summary: false,
+        meaning: FieldGlossMeaning::Relation {
+            wire: wire.to_string(),
+            description: GlossDescription::from_trimmed(description),
+        },
+        catalog_entry_id: String::new(),
+        entity: String::new(),
+        emit_identity: None,
     })
 }
 
@@ -133,12 +144,11 @@ fn write_sorted_symbol_prefix_gloss_rows(
         }
     }
 }
+
 pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> String {
     let mut out = String::new();
     out.push_str(TSV_TEACHING_TABLE_HEADER);
-    let mut global_p_gloss_emitted: HashMap<String, String> = HashMap::new();
-    let gloss_emit_fingerprint =
-        |g: &TeachingFieldGloss| format!("{}|{}|{}", g.field_type, g.allowed_values, g.description);
+    let mut tsv_dedupe = GlossTsvDedupe::default();
     for block in &bundle.teaching_blocks {
         let heading = &block.heading;
         let field_gloss_rows = &block.field_gloss_rows;
@@ -190,9 +200,9 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
                 write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
             }
         }
-        // Phase B: `p#` gloss — non-projection numeric order, then projection bracket tail.
-        // `p#` slots for optional query params / invokes appear in teaching gloss lines but are not part
-        // of the scalar projection bracket — emit them in stable numeric `p#` order before projection fields.
+        // Phase B: slot gloss — opaque `p#` in stable numeric order, then wire names (non-projection), then projection bracket tail.
+        // `p#` / wire slots for optional query params / invokes appear in teaching gloss lines but are not part
+        // of the scalar projection bracket — emit them before projection fields.
         let mut p_non_projection: Vec<&TeachingFieldGloss> = field_gloss_rows
             .iter()
             .filter(|g| g.symbol.starts_with('p') && !projection_set.contains(g.symbol.as_str()))
@@ -202,40 +212,46 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
             let kb = opaque_pv_symbol_sort_key(&b.symbol);
             ka.cmp(&kb).then_with(|| a.symbol.cmp(&b.symbol))
         });
-        let mut emitted_p_slot: HashSet<String> = HashSet::new();
+        let mut wire_non_projection: Vec<&TeachingFieldGloss> = field_gloss_rows
+            .iter()
+            .filter(|g| {
+                !g.symbol.starts_with('p')
+                    && !g.symbol.starts_with('v')
+                    && !g.symbol.starts_with('r')
+                    && !g.is_inline_union_summary
+                    && !projection_set.contains(g.symbol.as_str())
+            })
+            .collect();
+        wire_non_projection.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+        let mut emitted_slot: HashSet<String> = HashSet::new();
         for g in p_non_projection {
-            if !emitted_p_slot.insert(g.symbol.clone()) {
+            if !emitted_slot.insert(g.symbol.clone()) {
                 continue;
             }
-            if g.symbol.starts_with('p') {
-                let fp = gloss_emit_fingerprint(g);
-                if global_p_gloss_emitted
-                    .get(&g.symbol)
-                    .is_some_and(|prev| prev == &fp)
-                {
-                    continue;
-                }
-                global_p_gloss_emitted.insert(g.symbol.clone(), fp);
+            let identity = gloss_emit_identity_for_row(g);
+            if tsv_dedupe.try_emit_slot(&identity, g.symbol.as_str()) {
+                write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
             }
-            write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
+        }
+        for g in wire_non_projection {
+            if !emitted_slot.insert(g.symbol.clone()) {
+                continue;
+            }
+            let identity = gloss_emit_identity_for_row(g);
+            if tsv_dedupe.try_emit_slot(&identity, g.symbol.as_str()) {
+                write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
+            }
         }
         for sym in &projection_symbols {
-            if emitted_p_slot.contains(sym) {
+            if emitted_slot.contains(sym) {
                 continue;
             }
             if let Some(gloss) = field_gloss_by_symbol.get(sym.as_str()) {
-                if sym.starts_with('p') {
-                    let fp = gloss_emit_fingerprint(gloss);
-                    if global_p_gloss_emitted
-                        .get(sym.as_str())
-                        .is_some_and(|prev| prev == &fp)
-                    {
-                        continue;
-                    }
-                    global_p_gloss_emitted.insert(sym.clone(), fp);
+                let identity = gloss_emit_identity_for_row(gloss);
+                if tsv_dedupe.try_emit_projection_slot(&identity, gloss.symbol.as_str()) {
+                    write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(gloss));
+                    emitted_slot.insert(sym.clone());
                 }
-                write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(gloss));
-                emitted_p_slot.insert(sym.clone());
             }
         }
 
@@ -321,22 +337,12 @@ fn sanitize_tsv_cell(s: &str) -> String {
 enum TeachingMeaningAtom {
     Returns { gloss: String },
     RelationNav { line: String },
+    RowContractInputs(Vec<String>),
     EntityHeadingDescription(String),
     LegendScope(String),
     LegendOptional,
     LegendCompactArgs(String),
     LegendDescription(String),
-}
-
-/// True when the teaching bundle includes at least one **relation navigation** exemplar row.
-#[allow(dead_code)]
-pub(crate) fn teaching_bundle_has_relation_nav_exemplar(bundle: &TeachingPromptBundle) -> bool {
-    bundle.teaching_blocks.iter().any(|block| {
-        block
-            .teaching_rows
-            .iter()
-            .any(|row| row.meta.kind == DomainLineKind::RelationNav)
-    })
 }
 
 /// True when an emitted teaching row already demonstrates **relation navigation** on `rel_sym`
@@ -359,6 +365,9 @@ impl TeachingMeaningAtom {
         let raw = match self {
             TeachingMeaningAtom::Returns { gloss } => format!("→ {gloss}"),
             TeachingMeaningAtom::RelationNav { line } => line.clone(),
+            TeachingMeaningAtom::RowContractInputs(syms) => {
+                format!("inputs: {}", syms.join(","))
+            }
             TeachingMeaningAtom::EntityHeadingDescription(s) => s.clone(),
             TeachingMeaningAtom::LegendScope(s) => s.clone(),
             TeachingMeaningAtom::LegendOptional => TEACHING_OPTIONAL_LEGEND_MARK.to_string(),
@@ -367,14 +376,6 @@ impl TeachingMeaningAtom {
         };
         sanitize_tsv_cell(&raw)
     }
-}
-
-/// Typed fragment of a field-gloss `Meaning` cell.
-#[derive(Clone, Debug)]
-enum FieldGlossMeaningAtom {
-    FieldType(String),
-    AllowedValues(String),
-    Description(String),
 }
 
 impl FieldGlossMeaningAtom {
@@ -465,6 +466,11 @@ fn teaching_expr_meaning_atoms(
 ) -> Vec<TeachingMeaningAtom> {
     let mut atoms = Vec::new();
     push_teaching_meaning_result_atom(&mut atoms, row, identity_returns_row);
+    if !row.row_contract.inputs.is_empty() {
+        atoms.push(TeachingMeaningAtom::RowContractInputs(
+            row.row_contract.inputs.clone(),
+        ));
+    }
     if attach_entity_heading && !heading.description.is_empty() {
         atoms.push(TeachingMeaningAtom::EntityHeadingDescription(
             heading.description.clone(),
@@ -475,16 +481,7 @@ fn teaching_expr_meaning_atoms(
 }
 
 fn field_gloss_meaning_atoms(g: &TeachingFieldGloss) -> Vec<FieldGlossMeaningAtom> {
-    let mut atoms = vec![FieldGlossMeaningAtom::FieldType(g.field_type.clone())];
-    if !g.allowed_values.is_empty() {
-        atoms.push(FieldGlossMeaningAtom::AllowedValues(
-            g.allowed_values.clone(),
-        ));
-    }
-    if !g.description.is_empty() {
-        atoms.push(FieldGlossMeaningAtom::Description(g.description.clone()));
-    }
-    atoms
+    g.meaning.to_meaning_atoms(&g.description)
 }
 
 fn append_teaching_meaning_legend_tail_atoms(

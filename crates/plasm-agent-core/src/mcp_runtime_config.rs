@@ -9,6 +9,8 @@ use uuid::Uuid;
 pub struct McpRuntimeConfig {
     pub id: Uuid,
     pub tenant_id: String,
+    pub workspace_slug: String,
+    pub project_slug: String,
     pub space_type: String,
     pub owner_subject: Option<String>,
     pub version: u64,
@@ -123,6 +125,8 @@ impl TryFrom<McpConfigUpsertJson> for McpRuntimeConfig {
     type Error = String;
 
     fn try_from(j: McpConfigUpsertJson) -> Result<Self, Self::Error> {
+        let workspace_slug = j.workspace_slug_resolved().to_string();
+        let project_slug = j.project_slug_resolved().to_string();
         let bytes = hex::decode(j.endpoint_secret_hash_hex.trim())
             .map_err(|e| format!("endpoint_secret_hash_hex: {e}"))?;
         if bytes.len() != 32 {
@@ -159,6 +163,8 @@ impl TryFrom<McpConfigUpsertJson> for McpRuntimeConfig {
         Ok(McpRuntimeConfig {
             id: j.id,
             tenant_id: j.tenant_id,
+            workspace_slug,
+            project_slug,
             space_type: match j.space_type.trim() {
                 "personal" => "personal".to_string(),
                 _ => "organization".to_string(),

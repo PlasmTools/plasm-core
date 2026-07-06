@@ -200,7 +200,7 @@ capabilities:
     entity: Pet
 ```
 
-**teaching projection (prompt teaching, not decode):** Optional per-entity **`domain_projection_examples`** (default **true**) and **`primary_read:`** select which Get capability's ordered **`provides:`** drives the **`Entity  ;;  [f1,…,fN]`** heading in teaching table instructions. Set **`domain_projection_examples: false`** to omit that bracket line. Declare explicit ordered **`provides:`** on the primary Get so the heading matches the fields you materialize (see [reference.md — Entities](reference.md#entities)).
+**teaching projection (prompt teaching, not decode):** Optional per-entity **`domain_projection_examples`** (default **true**) and **`primary_read:`** select which Get capability's ordered **`provides:`** drives the canonical **`[p#,…]`** bracket on the **projection witness row** in teaching TSV (`plasm_expr` + `· projection` in Meaning). Set **`domain_projection_examples: false`** to omit that bracket. Declare explicit ordered **`provides:`** on the primary Get so the witness matches the fields you materialize (see [reference.md — Entities](reference.md#entities)).
 
 **String fields:** on the corresponding **`values:`** row with **`type: string`**, set **`string_semantics:`** for every non-trivial string (`short`, `markdown`, `document`, `html`, `json_text`, …); plain `short` is the default when omitted.
 

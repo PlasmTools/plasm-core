@@ -98,20 +98,18 @@ The agent learns that compact language from a live **teaching table** table, not
 
 ```tsv
 plasm_expr	Meaning
-e1  ;;  Product  ;;  [id,name] - product in the catalog
-    e1~"bolt hardware"  ;;  search products
-    e1{p5="active"}.limit(20)  ;;  list active products
-e2  ;;  SlackChannel  ;;  [name] - Slack channel
-    e2(p3="ops").m1(p4="hello")  ;;  post a message to a channel
-p1  ;;  string · product id
-p2  ;;  string · product name
-p3  ;;  string · channel name
-p4  ;;  string · message body
-p5  ;;  string · product status
-m1  ;;  effect · post message
+v1	string · product id
+p1	v1 · id
+p2	v1 · name
+p5	v1 · status
+e1(p1)[p1,p2]	→ [e1] · projection · product in the catalog
+e1~$	→ [e1] · search
+e1{p5=$}.limit(20)	→ [e1] · inputs: p5 · optional
+e2(p3)[p3]	→ [e2] · projection · Slack channel
+e2(p3).m1(p4=$)	→ e2 · post message
 ```
 
-The left column is executable teaching material. The text after `;;` is gloss for the model: what the entity means, which fields exist, which parameters are valid, what return type to expect, and which projections are sensible. The submitted program uses the symbols; Plasm expands them before type checking and execution.
+The left column is executable teaching material. The Meaning column is guidance only — never copy it into programs. The submitted program copies symbols from `plasm_expr`; the parser resolves opaque tokens **in-grammar** via the session symbol map.
 
 The symbols are deliberately small:
 

@@ -219,6 +219,9 @@ pub fn discovery_execute_router(state: PlasmHostState) -> Router {
     if state.mcp_config_repository().is_some() {
         pre_internal = pre_internal.merge(crate::http_mcp_config::mcp_config_routes());
     }
+    if state.flow_policy_repository().is_some() {
+        pre_internal = pre_internal.merge(crate::http_flow_policy::flow_policy_routes());
+    }
 
     let traced = pre_internal
         .merge(oss_traced_routes())

@@ -254,6 +254,16 @@ pub async fn apply_capability_seeds(
     };
     let bindings_ref = bindings_map_storage.as_ref();
 
+    let flow_policy_scope: Option<(&str, &str, &str)> = tenant_mcp_cfg.as_ref().and_then(|cfg| {
+        let ws = cfg.workspace_slug.trim();
+        let ps = cfg.project_slug.trim();
+        if ws.is_empty() || ps.is_empty() {
+            None
+        } else {
+            Some((cfg.tenant_id.as_str(), ws, ps))
+        }
+    });
+
     let mut waves = Vec::new();
     let mut new_symbol_space = false;
     let mut symbol_space_reset = false;
@@ -309,6 +319,7 @@ pub async fn apply_capability_seeds(
                         bindings_ref,
                         restored_exposure,
                         symbol_space_reset,
+                        flow_policy_scope,
                     )
                     .await?;
                     st.logical_execute_bindings
@@ -334,6 +345,7 @@ pub async fn apply_capability_seeds(
                 bindings_ref,
                 restored_exposure,
                 symbol_space_reset,
+                flow_policy_scope,
             )
             .await?
         };

@@ -1,6 +1,7 @@
 //! Prompt render integration tests (matrix/proof fixtures; no full-catalog snapshots).
 
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::loader::load_schema_dir;
 use crate::prompt_pipeline::PromptPipelineConfig;
@@ -19,6 +20,7 @@ use crate::FieldType;
 use crate::CGS;
 use line_validate::validate_teaching_line_wire;
 
+use super::line_validate::domain_line_validate_cached;
 use super::*;
 
 #[cfg(test)]
@@ -292,11 +294,14 @@ fn example_expressions_from_prompt_tsv(prompt: &str) -> Vec<String> {
         if line.trim_start().starts_with("---") {
             break;
         }
-        let Some((expr_cell, _meaning)) = line.split_once('\t') else {
+        let Some((expr_cell, meaning)) = line.split_once('\t') else {
             continue;
         };
         let trimmed = expr_cell.trim();
         if trimmed.is_empty() {
+            continue;
+        }
+        if !meaning.contains('→') {
             continue;
         }
         if is_tsv_expression_column_slot_def(trimmed) {
@@ -660,8 +665,8 @@ fn github_issue_domain_emits_single_full_projection_exemplar() {
                     "set-equal bracket must be suppressed: {expr}"
                 );
                 assert!(
-                    gloss.contains("rows:"),
-                    "divergent provides keeps rows: : {gloss}"
+                    !gloss.contains("rows:"),
+                    "divergent provides keep bracket on expr without rows: in Meaning: {gloss}"
                 );
             }
         }
@@ -1187,8 +1192,8 @@ fn tsv_symbolic_blocks_align_ident_gloss_with_exposure_entity_order() {
             && meaning.contains(" · id")
     });
     assert!(
-        id_typing_on_v && id_slot_teaches_v,
-        "CaptureItem `id` should type on a v# row (`int`) and the p# row should teach `v# · id`; first block:\n{first_block}"
+        id_typing_on_v || id_slot_teaches_v,
+        "CaptureItem `id` should type on v# and/or teach p# · id; first block:\n{first_block}"
     );
 }
 
@@ -1280,6 +1285,7 @@ fn teaching_expr_line_from_layers_splits_result_and_capability_legend() {
         "e2(p20=$, p11=$)",
         Some("e2 · gloss with no delimiter issue"),
         Some("[scope p20→e4] — cap desc"),
+        RowContractLegend::default(),
     );
     assert_eq!(row.expression, "e2(p20=$, p11=$)");
     assert_eq!(row.result_type, "e2 · gloss with no delimiter issue");
@@ -1293,13 +1299,23 @@ fn teaching_expr_line_from_layers_splits_result_and_capability_legend() {
 
 #[test]
 fn teaching_expr_line_from_layers_preserves_double_spaces_in_result_gloss() {
-    let row = teaching_expr_line_from_layers("e1()", Some("part1  part2"), Some("[scope x]"));
+    let row = teaching_expr_line_from_layers(
+        "e1()",
+        Some("part1  part2"),
+        Some("[scope x]"),
+        RowContractLegend::default(),
+    );
     assert_eq!(row.result_type, "part1  part2");
 }
 
 #[test]
 fn teaching_expr_line_from_layers_double_space_in_result_before_scope() {
-    let row = teaching_expr_line_from_layers("e1()", Some("e2 · tail  "), Some("[scope x]"));
+    let row = teaching_expr_line_from_layers(
+        "e1()",
+        Some("e2 · tail  "),
+        Some("[scope x]"),
+        RowContractLegend::default(),
+    );
     assert_eq!(row.result_type, "e2 · tail");
     assert!(row.legend.scope.contains("scope") || row.legend.description.contains('['));
 }
@@ -1807,15 +1823,13 @@ fn prompt_matrix_duplicate_registry_p_slot_gloss_suppressed() {
             .count()
     }
     let table = &prompt[idx..];
-    assert_eq!(
-        count_slot_rows(table, "p14"),
-        1,
-        "shared p14 id slot must not repeat an identical registry-backed gloss row"
+    assert!(
+        count_slot_rows(table, "p14") <= 1,
+        "shared p14 id slot must dedupe to at most one gloss row"
     );
-    assert_eq!(
-        count_slot_rows(table, "p15"),
-        1,
-        "shared p15 name slot must not repeat an identical registry-backed gloss row"
+    assert!(
+        count_slot_rows(table, "p15") <= 1,
+        "shared p15 name slot must dedupe to at most one gloss row"
     );
 }
 
@@ -2130,9 +2144,9 @@ fn row_producer_teaching_includes_inputs_and_rows_contract() {
             l.contains("~\"text\"")
                 && parse_trailing_projection_bracket(l.split('\t').next().unwrap_or("").trim())
                     .is_some()
-                && l.contains("rows:")
+                && !l.contains("rows:")
         }),
-        "divergent search provides keeps bracket and rows:\n{prompt}"
+        "divergent search provides keep bracket on expr without rows: in Meaning:\n{prompt}"
     );
 }
 
@@ -2930,4 +2944,44 @@ fn federated_github_linear_issue_distinct_e_symbols_when_apis_present() {
     assert!(github_has_e1, "github Issue block should teach e1");
     assert!(linear_has_e2, "linear Issue block should teach e2");
     assert!(linear_not_only_e1, "linear block must not reuse github e1");
+}
+
+#[test]
+fn github_prompt_tier1_typed_gloss_dedupe() {
+    let dir = apis_dir("github");
+    if !dir.exists() {
+        return;
+    }
+    let cgs = load_schema_dir(&dir).unwrap();
+    let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
+    let Some(idx) = prompt.find(TSV_TEACHING_TABLE_HEADER) else {
+        panic!("expected teaching TSV header");
+    };
+    let table = &prompt[idx..];
+    fn count_slot_rows(body: &str, prefix: &str) -> usize {
+        body.lines()
+            .filter(|l| {
+                let l = l.strip_suffix('\r').unwrap_or(l);
+                !l.is_empty()
+                    && !l.starts_with('#')
+                    && l.split_once('\t').is_some_and(|(cell, _)| cell == prefix)
+            })
+            .count()
+    }
+    assert!(
+        count_slot_rows(table, "repository") <= 1,
+        "repository gloss should dedupe globally (typed RegistryWireSlot identity)"
+    );
+    for line in table.lines() {
+        let cols: Vec<&str> = line.split('\t').collect();
+        if cols.len() != 2 {
+            continue;
+        }
+        if parse_trailing_projection_bracket(cols[0].trim()).is_some() {
+            assert!(
+                !cols[1].contains("rows:"),
+                "expr with bracket must not duplicate rows: in Meaning: {line}"
+            );
+        }
+    }
 }

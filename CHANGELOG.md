@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.133] - 2026-07-06
+
+### Added
+
+- **Flow policy control plane** (`/internal/flow-policy/v1/*`): get, vocabulary, validate, upsert-draft, publish, discard-draft, simulate; sqlx `project_flow_policies` migration; session vocabulary + enforcement hooks in agent-core.
+- **Teaching gloss ledger:** tier-1 typed gloss dedupe (`GlossEmitLedger`, `GlossTsvDedupe`), cap-param token unification, structural fingerprint extraction under `symbol_tuning/`.
+- **MCP tool contract:** query/filter `{…}` keys use opaque **`p#`** from gloss rows; invoke dotted-call rows may use taught wire tokens; Minijinja may use wire names or `p#`.
+
+### Changed
+
+- **`prompt_render` module split:** `types.rs`, `bundle_render.rs`, `entity_block.rs`, `gloss_collect.rs`, `invoke_teaching.rs`, `relation_teaching.rs`, and sibling modules; `mod.rs` orchestrator (~200 lines).
+- **Relation teaching:** `r#` pool separated from `p#` (symbol renumbering; teaching row count flat).
+- **Workflow UI embedded assets** refreshed (bundle gate hashes).
+
+### Fixed
+
+- **MCP integration tests:** matrix LangItem programs use simple-id get form `e1("a")` after `p#` renumbering (was hardcoded `p1`).
+
 ## [0.3.132] - 2026-07-06
 
 ### Added

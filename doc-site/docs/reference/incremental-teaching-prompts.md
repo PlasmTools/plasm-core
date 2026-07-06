@@ -9,7 +9,7 @@ This document describes how Plasm serves the **Plasm teaching table** (many-shot
 1. **Less redundant context** — Avoid sending the full teaching table on every tool turn when the session’s catalog entry and seeds have not changed.
 2. **Incremental graph exposure** — Treat the CGS as a graph: ship teaching rows **in waves** as more entity types are needed, instead of always expanding to a large 2-hop neighbourhood in the first message.
 3. **Stable symbolic indices** — Keep `e#` / `m#` / `p#` / `r#` assignments **monotonic**: once assigned in a session, a symbol does not change meaning when new entities or capabilities enter the slice. Relations use **`r#`** (not `p#`).
-4. **Aligned expand + teaching table** — Expression pre-parse expansion (`expand_*`) must use the **same** symbol map as the teaching text the model saw, so `e1.m3(...)` expands consistently after each wave.
+4. **Aligned parse + teaching table** — Programs must parse with the **same session [`SymbolMap`](https://github.com/PlasmTools/plasm-core/blob/main/crates/plasm-core/src/symbol_tuning/mod.rs)** the teaching TSV taught (`e1.m3(…)` resolves in-grammar; there is no pre-parse `expand_*` string pass).
 
 “**Prompt churn**” here means: **repeated or oversized teaching text** in agent context (duplicate full prompts on session reopen, multi-megabyte tables when only a small neighbourhood is needed, or shifting `m#` indices between waves). Those waste tokens, confuse models, and break trust in symbolic examples.
 

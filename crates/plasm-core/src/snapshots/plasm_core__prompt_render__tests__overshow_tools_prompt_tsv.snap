@@ -3,108 +3,81 @@ source: crates/plasm-core/src/prompt_render/tests.rs
 expression: tsv
 ---
 plasm_expr	Meaning
-v2	int
-v1	select · ui, ocr, audio, document
-v7	str
-v4	date
-p3	v7 · app_name
-p4	v4 · end_time
-p5	v2 · limit
-p6	v4 · start_time
-p2	v2 · id
-p1	v1 · content_type
-p7	v7 · text_preview
-e1[p2,p1,p7]	→ e1 · projection · One capture pipeline item
-e1(p2=$, p1=$)	→ e1
-e1{p5=$, p3=$, p6=$, p4=$}	→ [e1] · inputs: p5,p3,p6,p4 · optional
-v9	bool
-p8	v7 · id
-p9	v9 · screen_capture_running
-e2(p8)[p8,p9]	→ e2 · projection · Capture running or paused
+v4	int
+v8	select · ui, ocr, audio, document
+v13	str
+v3	date
+p8	v3 · end_time
+p10	v3 · start_time
+p12	v4 · limit
+p30	v13 · app_name
+p11	v4 · id
+p21	v8 · content_type
+p40	v13 · text_preview
+e1[p11,p21,p40]	→ e1 · projection · One capture pipeline item
+e1(p11=$, p21=$)	→ e1
+e1{p12=$, p30=$, p10=$, p8=$}	→ [e1] · inputs: p12,p30,p10,p8 · optional
+v2	bool
+p32	v13 · id
+p4	v2 · screen_capture_running
+e2(p32)[p32,p4]	→ e2 · projection · Capture running or paused
 e2.m3()	→ e2
-v18	markdown
-v14	float
-p11	v7 · app_name
-p12	v9 · include_answers
-p13	v2 · limit
-p14	v14 · min_answer_similarity
-p15	v2 · offset
-p16	v2 · speaker_id
-p17	v9 · unresolved_only
-p10	v7 · id
-p18	v18 · question_text
-p19	v9 · resolved
-e3[p10,p18,p19]	→ e3 · projection · A detected question with optional answers
-e3{p17=$, p11=$, p16=$, p12=$, p14=$, p13=$, p15=$}	→ [e3] · inputs: p17,p11,p16,p12,p14,p13,p15 · optional
-v26	select · active, ended, cancelled
-p22	v4 · end_date
-p23	v2 · limit
-p24	v4 · start_date
-p25	v26 · status
-p21	v7 · meeting_uuid
-p20	v2 · meeting_id
-p26	v26 · status
-p27	v18 · summary
-e4[p21,p20,p26,p27]	→ e4 · projection · A detected meeting
-e4{p25=$, p24=$, p22=$, p23=$}	→ [e4] · inputs: p25,p24,p22,p23 · optional
-e4(p21)	→ e4
-v34	select · debug, info, warning, error, critical
-p30	v2 · limit
-p31	v34 · min_severity
-p32	v7 · names
-p33	v7 · sources
-p28	v7 · id
-p29	v7 · name
-p34	v34 · severity
-e5[p28,p29,p34]	→ e5 · projection · One pipeline bus event
-e5{p32=$, p33=$, p31=$, p30=$}	→ [e5] · inputs: p32,p33,p31,p30 · optional
-p35	v7 · id
-p36	v7 · workers
-e6(p35)[p35,p36]	→ e6 · projection · Pipeline health snapshot
+v12	markdown
+v5	float
+p2	v2 · include_answers
+p5	v2 · unresolved_only
+p16	v4 · offset
+p17	v4 · speaker_id
+p18	v5 · min_answer_similarity
+p27	v12 · question_text
+p3	v2 · resolved
+e3[p32,p27,p3]	→ e3 · projection · A detected question with optional answers
+e3{p5=$, p30=$, p17=$, p2=$, p18=$, p12=$, p16=$}	→ [e3] · inputs: p5,p30,p17,p2,p18,p12,p16 · optional
+v6	select · active, ended, cancelled
+p7	v3 · end_date
+p9	v3 · start_date
+p33	v13 · meeting_uuid
+p14	v4 · meeting_id
+p19	v6 · status
+p28	v12 · summary
+e4[p33,p14,p19,p28]	→ e4 · projection · A detected meeting
+e4{p19=$, p9=$, p7=$, p12=$}	→ [e4] · inputs: p19,p9,p7,p12 · optional
+e4(p33)	→ e4
+v10	select · debug, info, warning, error, critical
+p23	v10 · min_severity
+p35	v13 · names
+p39	v13 · sources
+p34	v13 · name
+p24	v10 · severity
+e5[p32,p34,p24]	→ e5 · projection · One pipeline bus event
+e5{p35=$, p39=$, p23=$, p12=$}	→ [e5] · inputs: p35,p39,p23,p12 · optional
+p42	v13 · workers
+e6(p32)[p32,p42]	→ e6 · projection · Pipeline health snapshot
 e6.m8()	→ e6
-v39	select · person, organisation, project
-p40	v2 · limit
-p41	v39 · profile_type
-p38	v2 · id
-p37	v7 · display_name
-p39	v39 · profile_type
+v11	select · person, organisation, project
+p31	v13 · display_name
+p25	v11 · profile_type
 r1	recorded_matches · Content scoped to this profile
-e7[p38,p37,p39]	→ e7 · projection · A person, organisation, or project profile
-e7{p41=$, p40=$}	→ [e7] · inputs: p41,p40 · optional
-e7(p38)	→ e7
-e7{p41=$, p40=$}.r1	relation e7 → [e9]
-v44	array[int]
-p42	v4 · end_time
-p43	v44 · meeting_ids
-p44	v2 · meeting_id
-p45	v7 · meeting_uuid
-p46	v7 · slug
-p47	v4 · start_time
-e8.m11(p46=$, p44=$, p45=$, p43=[$], p47=$, p42=$)	→ () · Action prompt execution result · optional · prompt-run-create
-v58	ref:Profile · int
-v57	select · auto, keyword, natural
-v53	select · all, ocr, audio, ui
-p56	v2 · limit
-p57	v57 · mode
-p58	v58 · profile_id
-p59	v7 · query
-p60	v7 · app_name
-p61	v53 · content_type
-p62	v4 · end_time
-p63	v2 · limit
-p64	v2 · max_length
-p65	v2 · min_length
-p66	v2 · offset
-p68	v4 · start_time
-p69	v7 · window_name
-p54	v7 · id
-p51	v7 · app_name
-p52	v4 · captured_at
-p53	v53 · content_type
-p55	v58 · profile_id
-p70	v18 · text
-p71	v7 · window_name
-e9{p58=e7(p38), p59=$, p56=$, p57=$}[p54,p51,p52,p53,p55,p70,p71]	→ [e9] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
-e9{p58=e7(p38), p59=$, p56=$, p57=$}	→ [e9] · inputs: p58,p59,p56,p57 · optional
+e7[p11,p31,p25]	→ e7 · projection · A person, organisation, or project profile
+e7{p25=$, p12=$}	→ [e7] · inputs: p25,p12 · optional
+e7(p11)	→ e7
+e7{p25=$, p12=$}.r1	relation e7 → [e9]
+v1	array[int]
+p38	v13 · slug
+e8.m11(slug=$, meeting_id=$, meeting_uuid=$, meeting_ids=[$], start_time=$, end_time=$)	→ () · Action prompt execution result · optional · prompt-run-create
+v14	ref:Profile · int
+v9	select · auto, keyword, natural
+v7	select · all, ocr, audio, ui
+p13	v4 · max_length
+p15	v4 · min_length
+p22	v9 · mode
+p37	v13 · query
+p6	v3 · captured_at
+p20	v7 · content_type
+p43	v14 · profile_id
+p29	v12 · text
+p41	v13 · window_name
+e9{p43=e7(p11), p37=$, p12=$, p22=$}[p32,p30,p6,p20,p43,p29,p41]	→ [e9] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
+e9{p43=e7(p11), p37=$, p12=$, p22=$}	→ [e9] · inputs: p43,p37,p12,p22 · optional
 e9~"text"	→ [e9]
-e9~"text"{p61=$, p63=$, p66=$, p68=$, p62=$, p60=$, p69=$, p65=$, p64=$}	→ [e9] · inputs: p61,p63,p66,p68,p62,p60,p69,p65,p64 · optional
+e9~"text"{p20=$, p12=$, p16=$, p10=$, p8=$, p30=$, p41=$, p15=$, p13=$}	→ [e9] · inputs: p20,p12,p16,p10,p8,p30,p41,p15,p13 · optional

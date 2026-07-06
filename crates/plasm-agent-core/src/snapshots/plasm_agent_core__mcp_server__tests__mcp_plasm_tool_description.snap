@@ -69,4 +69,4 @@ Common pitfalls:
 - Prefer `label = e#` then `label.filter{…}`; bare `e#.filter{…}` list-alls first. Row `.filter{…}` needs a materialized list.
 - `=>` only for derive `{ k: _.field }` or write effects (`source => e#.m#(…)`) — not relation reads (use `child = source.r#`).
 - Federated writes: one created-row return; discover anchors live — never hardcode workspace ids.
-- **Symbols only:** use this session's `e#` / `m#` / `r#` / `p#` from the teaching TSV — not catalog type names, method verbs, or API labels. Unambiguous single-catalog wire names may parse, but always prefer taught `e#`/`m#`.
+- **Symbols only:** use this session's `e#` / `m#` / `r#` / `p#` from the teaching TSV — not catalog type names, method verbs, or API labels. Query/filter `{…}` keys copy opaque **`p#`** from gloss rows; invoke dotted-call rows may use unambiguous wire tokens when taught that way. Minijinja templates may use wire names or `p#`.

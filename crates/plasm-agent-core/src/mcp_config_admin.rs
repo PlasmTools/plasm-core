@@ -188,6 +188,8 @@ impl McpConfigAdminService {
         let runtime = McpRuntimeConfig {
             id,
             tenant_id: scope.tenant_id.trim().to_string(),
+            workspace_slug: scope.workspace_slug.trim().to_string(),
+            project_slug: scope.project_slug.trim().to_string(),
             space_type: normalize_space_type(&scope.space_type),
             owner_subject: scope
                 .owner_subject

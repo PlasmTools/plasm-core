@@ -1,6 +1,7 @@
 //! Teaching-table TSV row synthesis (per-catalog dynamic prompts).
 
-use super::gloss_dedup::*;
+use super::gloss_collect::{GlossEmitLedger, GlossScratch};
+use super::gloss_dedup::merge_opaque_alias_maps;
 use super::*;
 
 pub(crate) fn teaching_expr_line_fingerprint(row: &TeachingExprLine) -> String {
@@ -55,24 +56,11 @@ pub(crate) fn rewrite_field_gloss_opaque_tokens(
     g.description = crate::symbol_tuning::rewrite_opaque_ident_tokens(&g.description, rep);
 }
 
-/// Tracks `p#` / `v#` gloss lines emitted before teaching example rows (first-use only).
-pub(crate) struct FieldGlossEmitState {
-    pub(crate) registry_p_slot_compact_gloss: HashMap<String, String>,
-    pub(crate) registry_compact_meaning_canonical_p: HashMap<String, String>,
-    pub(crate) registry_p_sym_alias: HashMap<String, String>,
-    pub(crate) registry_value_gloss_canonical_v: HashMap<String, String>,
-    pub(crate) registry_v_sym_alias: HashMap<String, String>,
-    pub(crate) non_registry_slots: HashMap<String, IdentMetadata>,
-    pub(crate) defined_value_domains: HashSet<String>,
-    /// `p#` / `r#` already shown on a prior teaching-row LHS (witness or projection bracket).
-    pub(crate) demonstrated_lhs_syms: HashSet<String>,
-}
-
 /// Shared per-render caches for teaching table table synthesis (line validation, gloss dedup, metadata).
 pub(crate) struct TeachingSynthesisSession<'a> {
     line_valid_cache: HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
     line_valid_cache_seed: u64,
-    gloss_emit_state: FieldGlossEmitState,
+    gloss_emit_state: GlossEmitLedger,
     map_arc: Option<std::sync::Arc<SymbolMap>>,
     ident_meta: Option<HashMap<crate::symbol_tuning::IdentMetaKey, IdentMetadata>>,
     surface_filter: Option<&'a ExposureSurface>,
@@ -92,16 +80,7 @@ impl<'a> TeachingSynthesisSession<'a> {
         Self {
             line_valid_cache: HashMap::with_capacity(8192),
             line_valid_cache_seed,
-            gloss_emit_state: FieldGlossEmitState {
-                registry_p_slot_compact_gloss: HashMap::new(),
-                registry_compact_meaning_canonical_p: HashMap::new(),
-                registry_p_sym_alias: HashMap::new(),
-                registry_value_gloss_canonical_v: HashMap::new(),
-                registry_v_sym_alias: HashMap::new(),
-                non_registry_slots: HashMap::new(),
-                defined_value_domains: HashSet::new(),
-                demonstrated_lhs_syms: HashSet::new(),
-            },
+            gloss_emit_state: GlossEmitLedger::default(),
             map_arc,
             ident_meta,
             surface_filter,
@@ -172,260 +151,6 @@ impl<'a> TeachingSynthesisSession<'a> {
             }
         }
     }
-}
-
-/// Per-entity field gloss rows built directly into [`TeachingFieldGloss`] (no compact transcript).
-pub(crate) struct GlossScratch<'a> {
-    pub(crate) field_gloss: &'a mut Vec<TeachingFieldGloss>,
-    pub(crate) state: &'a mut FieldGlossEmitState,
-    pub(crate) map: &'a SymbolMap,
-    pub(crate) meta: &'a HashMap<IdentMetaKey, IdentMetadata>,
-    pub(crate) catalog_entry_id: &'a str,
-    pub(crate) entity: &'a str,
-    pub(crate) cgs: &'a CGS,
-}
-
-impl GlossScratch<'_> {
-    pub(crate) fn emit_before_teaching_example(
-        &mut self,
-        expr: &str,
-        cap_legend: Option<&str>,
-        result_gloss: Option<&str>,
-        optional_param_syms: &[String],
-    ) {
-        emit_field_def_lines_before_example(
-            self.field_gloss,
-            expr,
-            cap_legend,
-            result_gloss,
-            optional_param_syms,
-            self.map,
-            self.entity,
-            self.catalog_entry_id,
-            self.meta,
-            self.state,
-            self.cgs,
-        );
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn emit_field_def_lines_before_example(
-    out: &mut Vec<TeachingFieldGloss>,
-    expr: &str,
-    cap_legend: Option<&str>,
-    result_gloss: Option<&str>,
-    optional_param_syms: &[String],
-    map: &SymbolMap,
-    entity: &str,
-    catalog_entry_id: &str,
-    ident_meta: &HashMap<IdentMetaKey, IdentMetadata>,
-    state: &mut FieldGlossEmitState,
-    cgs: &CGS,
-) {
-    let en = EntityName::from(entity.to_string());
-    let cid = catalog_entry_id.to_string();
-    let current_lhs_syms =
-        super::gloss_dedup::lhs_demonstrated_syms_for_teaching_expr(expr, result_gloss);
-    // Projection witness / union ctors / capability-param slots are the first teachers of their
-    // `p#` slots: emit glosses even though those symbols sit on the same-row LHS (`p9=$` does not
-    // teach wire name/type). Entity-field `p#` on ordinary rows still skip when already on this
-    // row's LHS (repeated query brackets).
-    let projection_witness_row = result_gloss.is_some_and(|g| g.contains("· projection"));
-    let union_ctor_row = is_union_ctor_teaching_surface_line(expr);
-    for sym in crate::symbol_tuning::field_syms_for_teaching_row(
-        expr,
-        result_gloss,
-        cap_legend,
-        optional_param_syms,
-    ) {
-        // Skip when already taught on a prior row. Same-row LHS only suppresses ordinary
-        // entity-field `p#` (repeated query brackets) — projection witnesses, union ctors,
-        // capability params (`p9=$` does not teach wire/type), and `r#` still emit on first use.
-        let teach_on_same_row = SymbolMap::is_opaque_r_sym(sym.as_str())
-            || projection_witness_row
-            || union_ctor_row
-            || map.capability_param_quad_for_p_sym(sym.as_str()).is_some();
-        let skip_p_gloss = state.demonstrated_lhs_syms.contains(&sym)
-            || (!teach_on_same_row && current_lhs_syms.contains(&sym));
-        let wire_owned = map.wire_for_opaque_p_sym(sym.as_str());
-        let field_name = if sym.starts_with('r') {
-            map.resolve_relation_ident(sym.as_str())
-                .unwrap_or(sym.as_str())
-        } else {
-            wire_owned.as_deref().unwrap_or(sym.as_str())
-        };
-        // Capability `p#` maps to a leaf expand key (e.g. `blocks`) that may equal a relation wire
-        // name on the same entity — resolve metadata from the full param path + CGS, not relation gloss.
-        let meta = map
-            .capability_param_quad_for_p_sym(sym.as_str())
-            .and_then(|(eid, dom, cap, path)| {
-                if !eid.is_empty() && eid.as_str() != catalog_entry_id {
-                    return None;
-                }
-                crate::symbol_tuning::ident_metadata_for_capability_input_path(
-                    cgs,
-                    dom.as_str(),
-                    cap.as_str(),
-                    path.as_str(),
-                )
-            })
-            .or_else(|| {
-                map.capability_param_key_for_p_sym(sym.as_str())
-                    .and_then(|(dom, w)| {
-                        ident_meta
-                            .get(&(cid.clone(), dom.clone(), w.clone()))
-                            .cloned()
-                    })
-            })
-            .or_else(|| {
-                ident_meta
-                    .get(&(cid.clone(), en.clone(), field_name.to_string()))
-                    .cloned()
-            });
-
-        // Registry-backed `value_ref` slots: dedupe `v#` by gloss body first, then `p#` by compact Meaning.
-        // Rewrite embedded `v#` in compact strings using [`registry_v_sym_alias`] before `p#` dedupe.
-        if let (Some(m), Some(vs)) = (&meta, map.value_sym_for_p_sym(sym.as_str())) {
-            if let IdentMetadata::RegistryBacked { .. } = m {
-                if let Some(vg) = map.value_domain_gloss_for_v_sym(&vs) {
-                    if let Some(v_canon) = meaning_canonical_sym_for_emit(
-                        vg,
-                        &vs,
-                        &mut state.registry_value_gloss_canonical_v,
-                        &mut state.registry_v_sym_alias,
-                    ) {
-                        if state.defined_value_domains.insert(v_canon.clone()) {
-                            push_teaching_field_gloss_row(
-                                out,
-                                v_canon.clone(),
-                                vg,
-                                entity,
-                                catalog_entry_id,
-                                Some(map),
-                                Some(ident_meta),
-                                Some(cgs),
-                                false,
-                            );
-                        }
-                    }
-                    let compact_raw =
-                        compact_p_slot_registry_description(map, sym.as_str(), m, cgs)
-                            .unwrap_or_else(|| {
-                                let w = crate::symbol_tuning::registry_backed_compact_wire_label(m);
-                                let mut c = format!("{} · {}", vs, w);
-                                let d = m.description().trim();
-                                if !d.is_empty() {
-                                    let t = crate::symbol_tuning::gloss_description_truncated(d);
-                                    c = format!("{} · {} · {}", vs, w, t);
-                                }
-                                c
-                            });
-                    let compact = crate::symbol_tuning::rewrite_opaque_ident_tokens(
-                        &compact_raw,
-                        &state.registry_v_sym_alias,
-                    );
-                    let slot = gloss_slot_identity_for_p_sym(map, sym.as_str(), m);
-                    let p_meaning_key =
-                        gloss_p_slot_meaning_key(&compact, m.catalog_entry_id(), &slot);
-                    if meaning_canonical_sym_for_emit(
-                        &p_meaning_key,
-                        sym.as_str(),
-                        &mut state.registry_compact_meaning_canonical_p,
-                        &mut state.registry_p_sym_alias,
-                    )
-                    .is_none()
-                    {
-                        state
-                            .registry_p_slot_compact_gloss
-                            .insert(sym.clone(), compact.clone());
-                        continue;
-                    }
-                    if state
-                        .registry_p_slot_compact_gloss
-                        .get(&sym)
-                        .is_some_and(|prev| prev == &compact)
-                    {
-                        continue;
-                    }
-                    state
-                        .registry_p_slot_compact_gloss
-                        .insert(sym.clone(), compact.clone());
-                    if !skip_p_gloss {
-                        push_teaching_field_gloss_row(
-                            out,
-                            sym.clone(),
-                            &compact,
-                            entity,
-                            catalog_entry_id,
-                            Some(map),
-                            Some(ident_meta),
-                            Some(cgs),
-                            false,
-                        );
-                    }
-                    continue;
-                }
-            }
-        }
-
-        let should_emit = match (&meta, state.non_registry_slots.get(&sym)) {
-            (Some(m), None) => {
-                state.non_registry_slots.insert(sym.clone(), (*m).clone());
-                true
-            }
-            (Some(m), Some(prev)) if *prev != *m => {
-                state.non_registry_slots.insert(sym.clone(), (*m).clone());
-                true
-            }
-            (None, None) => {
-                state.non_registry_slots.insert(
-                    sym.clone(),
-                    crate::symbol_tuning::IdentMetadata::SyntheticUnknown {
-                        catalog_entry_id: cid.clone(),
-                        entity: en.clone(),
-                        wire_name: field_name.to_string(),
-                        description: field_name.to_string(),
-                    },
-                );
-                true
-            }
-            _ => false,
-        };
-        if should_emit {
-            let gloss = match meta {
-                Some(m) => m.render_gloss_with_cgs(Some(map), Some(cgs)),
-                None => field_name.to_string(),
-            };
-            if sym.starts_with('p')
-                && state
-                    .registry_p_slot_compact_gloss
-                    .get(sym.as_str())
-                    .is_some_and(|prev| prev == &gloss)
-            {
-                continue;
-            }
-            if sym.starts_with('p') {
-                state
-                    .registry_p_slot_compact_gloss
-                    .insert(sym.clone(), gloss.clone());
-            }
-            if !skip_p_gloss {
-                push_teaching_field_gloss_row(
-                    out,
-                    sym.clone(),
-                    &gloss,
-                    entity,
-                    catalog_entry_id,
-                    Some(map),
-                    Some(ident_meta),
-                    Some(cgs),
-                    false,
-                );
-            }
-        }
-    }
-    state.demonstrated_lhs_syms.extend(current_lhs_syms);
 }
 
 /// Per-entity many-shot examples — `focus` still subsets *which* entities appear.

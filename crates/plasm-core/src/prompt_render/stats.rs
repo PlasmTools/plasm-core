@@ -2,6 +2,135 @@
 
 use super::*;
 use std::collections::BTreeMap;
+use std::fmt::Write;
+
+use crate::schema::EntityDef;
+use crate::FieldType;
+
+/// Symbol pressure in the rendered TSV teaching surface.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PromptSymbolInflationStats {
+    pub distinct_p_syms: usize,
+    pub distinct_v_syms: usize,
+    pub p_rows: usize,
+    pub v_rows: usize,
+    pub p_v_bytes: usize,
+    pub total_prompt_bytes: usize,
+    pub distinct_p_glosses: usize,
+    pub duplicated_p_glosses: usize,
+}
+
+impl PromptSymbolInflationStats {
+    pub fn p_v_byte_percent(&self) -> f64 {
+        if self.total_prompt_bytes == 0 {
+            0.0
+        } else {
+            100.0 * self.p_v_bytes as f64 / self.total_prompt_bytes as f64
+        }
+    }
+
+    /// Human-readable p#/v# inflation summary for CLI stderr (`dump_prompt`, eval).
+    pub fn summary_line_body(&self) -> String {
+        format!(
+            "symbols: {} p# ({} rows) + {} v# ({} rows); p/v {} B ({:.1}%); p glosses {} distinct, {} duplicated",
+            self.distinct_p_syms,
+            self.p_rows,
+            self.distinct_v_syms,
+            self.v_rows,
+            self.p_v_bytes,
+            self.p_v_byte_percent(),
+            self.distinct_p_glosses,
+            self.duplicated_p_glosses,
+        )
+    }
+}
+
+/// Analyze p#/v# pressure from an already-rendered TSV prompt.
+pub fn prompt_symbol_inflation_stats_from_prompt(prompt: &str) -> PromptSymbolInflationStats {
+    let mut p_syms = HashSet::new();
+    let mut v_syms = HashSet::new();
+    let mut p_rows = 0usize;
+    let mut v_rows = 0usize;
+    let mut p_v_bytes = 0usize;
+    let mut p_gloss_counts: BTreeMap<String, usize> = BTreeMap::new();
+
+    for line in prompt.lines() {
+        for m in line.match_indices('p') {
+            let rest = &line[m.0 + 1..];
+            let digits_len = rest.bytes().take_while(|b| b.is_ascii_digit()).count();
+            if digits_len > 0 && symbol_boundary(line, m.0, 1 + digits_len) {
+                p_syms.insert(line[m.0..m.0 + 1 + digits_len].to_string());
+            }
+        }
+        for m in line.match_indices('v') {
+            let rest = &line[m.0 + 1..];
+            let digits_len = rest.bytes().take_while(|b| b.is_ascii_digit()).count();
+            if digits_len > 0 && symbol_boundary(line, m.0, 1 + digits_len) {
+                v_syms.insert(line[m.0..m.0 + 1 + digits_len].to_string());
+            }
+        }
+
+        let Some((expr, meaning)) = line.split_once('\t') else {
+            continue;
+        };
+        let expr = expr.trim();
+        if leading_opaque_symbol(expr, 'p') {
+            p_rows += 1;
+            p_v_bytes += line.len() + 1;
+            p_gloss_counts
+                .entry(normalize_p_gloss(meaning))
+                .and_modify(|n| *n += 1)
+                .or_insert(1);
+        } else if leading_opaque_symbol(expr, 'v') {
+            v_rows += 1;
+            p_v_bytes += line.len() + 1;
+        }
+    }
+
+    let duplicated_p_glosses = p_gloss_counts.values().filter(|n| **n > 1).count();
+    PromptSymbolInflationStats {
+        distinct_p_syms: p_syms.len(),
+        distinct_v_syms: v_syms.len(),
+        p_rows,
+        v_rows,
+        p_v_bytes,
+        total_prompt_bytes: prompt.len(),
+        distinct_p_glosses: p_gloss_counts.len(),
+        duplicated_p_glosses,
+    }
+}
+
+fn symbol_boundary(line: &str, start: usize, len: usize) -> bool {
+    let before_ok = line[..start]
+        .chars()
+        .next_back()
+        .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_');
+    let after_ok = line[start + len..]
+        .chars()
+        .next()
+        .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_');
+    before_ok && after_ok
+}
+
+fn leading_opaque_symbol(expr: &str, prefix: char) -> bool {
+    let mut chars = expr.chars();
+    chars.next() == Some(prefix)
+        && chars.next().is_some_and(|c| c.is_ascii_digit())
+        && expr
+            .chars()
+            .skip_while(|c| *c == prefix || c.is_ascii_digit())
+            .next()
+            .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_')
+}
+
+fn normalize_p_gloss(meaning: &str) -> String {
+    let meaning = meaning.trim();
+    if let Some((_, wire)) = meaning.split_once(" · ") {
+        wire.trim().to_string()
+    } else {
+        meaning.to_string()
+    }
+}
 
 /// Byte breakdown of the grammar contract preamble vs teaching table body.
 #[derive(Clone, Debug, PartialEq, Eq)]

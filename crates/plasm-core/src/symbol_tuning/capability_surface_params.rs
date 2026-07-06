@@ -6,14 +6,14 @@ use crate::schema::{CapabilitySchema, InputFieldSchema, InputFieldWire, InputTyp
 use crate::{FieldType, CGS};
 
 use super::{
-    field_is_filter_like_gloss, ExposureCapabilityKey, ExposureSlotKey, SymbolMap,
-    TeachingExposureSession,
+    field_is_filter_like_gloss, CapParamTeachingSurface, ExposureCapabilityKey, ExposureSlotKey,
+    SymbolMap, TeachingExposureSession,
 };
 
 /// Which capability input params to include when building wire→`p#` pairs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CapabilityParamSurfaceFilter {
-    /// Optional invoke params for `;;` legends (`optional params: wire=p#`) — schema-wide, no exposure gate.
+    /// Optional invoke params for Meaning `optional` legend — includes opaque `p#` and teaching wire tokens when both apply.
     OptionalLegend,
     /// Optional params admitted on the exposure surface.
     OptionalOnSurface,
@@ -60,10 +60,28 @@ pub fn optional_legend_param_syms(
     domain: &str,
     cap: &CapabilitySchema,
 ) -> Vec<String> {
-    capability_optional_legend_param_pairs(map, entry_id, domain, cap)
-        .into_iter()
-        .map(|(_, sym)| sym)
-        .collect()
+    let cap_name = cap.name.as_str();
+    let mut syms = Vec::new();
+    for f in iter_cap_input_fields(cap) {
+        if !field_matches_filter(f, CapabilityParamSurfaceFilter::OptionalLegend) {
+            continue;
+        }
+        let opaque = map.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str());
+        let token = map.cap_param_teaching_token(
+            entry_id,
+            domain,
+            cap_name,
+            f.name.as_str(),
+            CapParamTeachingSurface::InvokeArg,
+        );
+        for sym in [opaque, token] {
+            if !sym.is_empty() && !syms.iter().any(|s| s == &sym) {
+                syms.push(sym);
+            }
+        }
+    }
+    syms.sort();
+    syms
 }
 
 /// Wire→`p#` pairs for teaching-table `;;` optional legends (no exposure surface gate).
@@ -79,7 +97,7 @@ pub fn capability_optional_legend_param_pairs(
         if !field_matches_filter(f, CapabilityParamSurfaceFilter::OptionalLegend) {
             continue;
         }
-        let sym = map.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str());
+        let sym = map.teaching_slot_token_cap_param(entry_id, domain, cap_name, f.name.as_str());
         out.push((f.name.clone(), sym));
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
@@ -156,7 +174,7 @@ pub fn capability_exposure_param_triples(
             .lookup_entity_field_sym(entry_id, domain, f.name.as_str())
             .map(|psym| psym.as_wire())
             .unwrap_or_else(|| {
-                map.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str())
+                map.teaching_slot_token_cap_param(entry_id, domain, cap_name, f.name.as_str())
             });
         let marker = compact_mutator_param_marker(f, cgs);
         out.push((f.name.clone(), sym, marker));

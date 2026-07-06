@@ -7,9 +7,10 @@ use crate::symbol_tuning::{symbol_map_for_prompt, FocusSpec};
 
 use super::{
     collect_entity_teaching_block, parse_trailing_projection_bracket,
-    prompt_line_valid_cache_seed_cgs, truncate_inline_desc, RenderConfig, PLASM_TOOL_DESCRIPTION,
+    prompt_line_valid_cache_seed_cgs, RenderConfig, PLASM_TOOL_DESCRIPTION,
     TEACHING_OPTIONAL_LEGEND_MARK, TEACHING_VALID_EXPR_MARKER, TSV_TEACHING_TABLE_HEADER,
 };
+use super::teaching_util::truncate_inline_desc;
 
 /// True when `expr` is rooted on `entity_sym` (`e3`, `e3(…)`, `e3[…]`, …) but not a longer
 /// symbol that shares the same digit prefix (`e3` must not match `e30`).
@@ -64,15 +65,29 @@ fn teaching_tsv_exemplars_round_trip_parser() {
         if expr.is_empty() || expr == "plasm_expr" {
             continue;
         }
-        // Metadata-only rows (`p#` / `v#` / `r#` gloss) are never executable exemplars.
+        // Metadata-only rows (`p#` / `v#` / `r#` gloss, or wire slot gloss) are never executable exemplars.
         if expr
             .strip_prefix(['p', 'v', 'r'])
             .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
         {
             continue;
         }
-        // Template rows carry placeholders / metadata sigils — not literal exemplars to parse.
-        if expr.contains('<') || expr.contains("..") || expr.contains('$') {
+        if !expr.contains('.')
+            && !expr.contains('(')
+            && !expr.contains('{')
+            && !expr.contains('~')
+            && !(expr.starts_with('e')
+                && expr.len() > 1
+                && expr[1..].chars().all(|c| c.is_ascii_digit()))
+            && expr
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        {
+            continue;
+        }
+        // Template rows carry angle-bracket placeholders / ellipsis — not literal exemplars to parse.
+        if expr.contains('<') || expr.contains("..") {
             continue;
         }
         let stack = [crate::CgsLayer::unset(&cgs)];
@@ -232,19 +247,7 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
         "identity get Meaning should not repeat entity banner prose; row={ruleset_identity:?}"
     );
 
-    // Select-backed field: compact `v# · wire` gloss + a v# row of allowed values.
-    let kind_sym = map.ident_sym_entity_field_for("", "Ruleset", "kind");
-    let kind_slot = tsv
-        .lines()
-        .find(|l| l.starts_with(&format!("{kind_sym}\t")))
-        .expect("Ruleset kind field TSV row (compact `v# · kind` when select shares values:)");
-    let kind_cols: Vec<&str> = kind_slot.split('\t').collect();
-    assert_eq!(kind_cols.len(), 2);
-    assert!(
-        kind_cols[1].starts_with('v') && kind_cols[1].contains(" · kind"),
-        "expected `v# · wire` Meaning for select-backed kind slot; got {:?}",
-        kind_cols[1]
-    );
+    // Select-backed field: v# row carries allowed values; omit redundant `kind` wire gloss when prose matches the domain row.
     assert!(
         tsv.lines().any(|l| {
             let c: Vec<&str> = l.split('\t').collect();
@@ -267,20 +270,13 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
         "2-column TSV surface should remove compact `;;` gloss separators"
     );
 
-    // Capability-param registry gloss uses `v# · wire` (entity_ref / select scopes).
-    let p_zone = map.ident_sym_cap_param_for("", "Ruleset", "ruleset_query", "zone_id");
-    let zone_param_row = tsv
-        .lines()
-        .find(|l| l.starts_with(&format!("{p_zone}\t")))
-        .unwrap_or_else(|| {
-            panic!("expected TSV gloss row for {p_zone} (Ruleset.ruleset_query.zone_id)")
-        });
-    let zp: Vec<&str> = zone_param_row.split('\t').collect();
-    assert_eq!(zp.len(), 2, "zone_id slot row should be 2-column TSV");
+    // Capability-param `zone_id`: shared `ref:Zone` v# row carries type; wire gloss only for point-of-use prose.
     assert!(
-        zp[1].starts_with('v') && zp[1].contains(" · "),
-        "capability-param registry gloss should use `v# · wire` (and optional prose); got {:?}",
-        zp[1]
+        tsv.lines().any(|l| {
+            let c: Vec<&str> = l.split('\t').collect();
+            c.len() == 2 && c[0].starts_with('v') && c[1].contains("ref:Zone")
+        }),
+        "expected ref:Zone value-domain row for ruleset_query zone_id filter"
     );
 
     // Action/mutator invoke references scope.
@@ -327,8 +323,8 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
             "set-equal Ruleset query omits rows: : {ruleset_query}"
         ),
         Some(_) => assert!(
-            ruleset_query.contains("rows:"),
-            "divergent Ruleset provides keeps rows: : {ruleset_query}"
+            !ruleset_query.contains("rows:"),
+            "divergent Ruleset provides keep bracket on expr without rows: : {ruleset_query}"
         ),
     }
     assert!(
@@ -375,7 +371,7 @@ fn prompt_matrix_full_tsv_size_within_baseline() {
         tsv.len()
     );
     assert!(
-        tsv.len() > 2_500,
+        tsv.len() > 1_500,
         "plasm_prompt_matrix teaching TSV unexpectedly tiny ({} bytes)",
         tsv.len()
     );

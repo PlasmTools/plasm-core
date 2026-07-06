@@ -31,6 +31,35 @@ fn prefer_entity_field_representative(
     }
 }
 
+fn prefer_value_domain_representative(
+    existing: &IdentMetadata,
+    incoming: &IdentMetadata,
+) -> IdentMetadata {
+    let existing_desc = existing.description().trim();
+    let incoming_desc = incoming.description().trim();
+    match (existing_desc.is_empty(), incoming_desc.is_empty()) {
+        (true, false) => return incoming.clone(),
+        (false, true) => return existing.clone(),
+        (false, false) => {
+            let existing_len = existing_desc.chars().count();
+            let incoming_len = incoming_desc.chars().count();
+            if incoming_len < existing_len {
+                return incoming.clone();
+            }
+            if existing_len < incoming_len {
+                return existing.clone();
+            }
+        }
+        (true, true) => {}
+    }
+
+    if slot_occurrence_key(incoming) < slot_occurrence_key(existing) {
+        incoming.clone()
+    } else {
+        existing.clone()
+    }
+}
+
 impl TeachingExposureSession {
     pub(super) fn assign_new_methods_and_idents(&mut self, cgs_layers: &[&CGS]) {
         let _ = cgs_layers;
@@ -124,6 +153,9 @@ impl TeachingExposureSession {
             if let Some(vfp) = meta.value_domain_allocation_fp() {
                 value_fps_in_wave
                     .entry(vfp)
+                    .and_modify(|existing| {
+                        *existing = prefer_value_domain_representative(existing, meta);
+                    })
                     .or_insert_with(|| (*meta).clone());
             }
         }
@@ -140,6 +172,12 @@ impl TeachingExposureSession {
             self.ledger
                 .value_domain_fp_to_repr_meta
                 .entry(fp.clone())
+                .and_modify(|existing| {
+                    *existing = prefer_value_domain_representative(
+                        existing,
+                        value_fps_in_wave.get(fp).expect("vfp"),
+                    );
+                })
                 .or_insert_with(|| value_fps_in_wave.get(fp).expect("vfp").clone());
         }
 

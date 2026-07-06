@@ -3,8 +3,8 @@
 //! `value_ref` domain **once**, and registry-backed `p#` gloss lines teach **`v# · wire`** (and optional
 //! point-of-use prose when it varies); typing and enum ranges stay on the `v#` row.
 //! **teaching table** gives entity/method examples (including `e#` per block),
-//! `;;` descriptions (with a short **type** prefix like `date · …` / `bool · …` from CGS), comma-separated
-//! `optional params: …` / `[scope …]` before the prose description (` — `), when present (required args appear in the expression).
+//! typed Meaning tails (`returns`, `inputs:`, `optional`, `projection`, …) in the TSV **Meaning** column,
+//! and comma-separated `optional params: p#,…` / `[scope p#→e#]` segments when present.
 //! Programs use **`p#` only** for keyed slots; `v#` is prompt-teaching for shared value domains.
 //!
 //! [`SymbolMap`] is built from the same entity slice as [`crate::prompt_render`] uses. Parse ingress
@@ -27,10 +27,13 @@ mod opaque_symbol_hash;
 mod persisted_ident_metadata;
 mod persisted_ledger;
 mod session_bindings;
+mod structural_fingerprint;
 mod symbol_allocate;
 mod symbol_resolve;
 mod symbol_traits;
 mod tables;
+
+use structural_fingerprint::structural_value_domain_allocation_fp;
 
 pub use keys::{
     CapParamKey, CatalogScope, EntityFieldKey, MethodKey, MethodSegmentKey, OpaqueESym, OpaqueMSym,
@@ -868,15 +871,16 @@ pub(crate) fn slot_allocation_fingerprint(meta: &IdentMetadata) -> String {
 
 /// Fingerprint for **allocating** opaque `p#` symbols on registry-backed slots.
 ///
-/// Slots that share the same CGS `values:` row ([`IdentMetadata::value_domain_allocation_fp`]) and
-/// the same allocation wire key receive **one** `p#`. Occurrence lookups (`entity_field_to_sym`,
-/// `cap_param_to_sym`) still bind every `(entity, slot)` / `(cap, param)` to that shared symbol.
+/// Slots that share the same structural value class ([`IdentMetadata::value_domain_allocation_fp`])
+/// and the same allocation wire key receive **one** `p#`. Occurrence lookups
+/// (`entity_field_to_sym`, `cap_param_to_sym`) still bind every `(entity, slot)` / `(cap, param)`
+/// to that shared symbol.
 ///
 /// **Capability parameters** whose wire path is dotted (nested input / union-variant bodies) key on
 /// `(domain entity, capability, leaf)` instead of the full path so logically identical slots—same
-/// `values:` row and leaf field name after variant pruning—share one opaque symbol (e.g. every
+/// value class and leaf field name after variant pruning—share one opaque symbol (e.g. every
 /// `…​.ref` block anchor under `document_edit_v2`). Top-level capability params keep the plain wire
-/// name so they still merge with entity fields when those fields reuse the same registry row and
+/// name so they still merge with entity fields when those fields use the same structural shape and
 /// column name.
 ///
 /// Relations and synthetic unknown slots keep fully scoped fingerprints via
@@ -1250,18 +1254,28 @@ impl IdentMetadata {
         }
     }
 
-    /// Stable key for one CGS [`values:`] row: `(catalog_entry_id, value_ref)`.
+    /// Stable key for one structural value class.
+    ///
+    /// Primitive / enum / array classes intentionally omit `catalog_entry_id` and the authored
+    /// `values:` key so federated sessions share teaching symbols for the same wire name + type.
+    /// `entity_ref` classes stay catalog + target scoped because their `v#` gloss resolves against
+    /// the owning graph's `e#` space.
     #[inline]
     pub fn value_domain_allocation_fp(&self) -> Option<String> {
         match self {
             IdentMetadata::RegistryBacked {
                 catalog_entry_id,
-                value_registry_key,
+                field_type,
+                string_semantics,
+                array_items,
+                allowed_values,
                 ..
-            } => Some(format!(
-                "{}|vr:{}",
-                catalog_entry_id.as_str(),
-                value_registry_key.as_str()
+            } => Some(structural_value_domain_allocation_fp(
+                catalog_entry_id,
+                field_type,
+                *string_semantics,
+                array_items.as_ref(),
+                allowed_values.as_ref(),
             )),
             IdentMetadata::Relation { .. }
             | IdentMetadata::SyntheticUnknown { .. }
@@ -1568,6 +1582,15 @@ pub struct ExposedRelationSymbolRow {
     /// Executable hop when both endpoints have `e#` symbols (`e1.r2`).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub plasm_expr: String,
+}
+
+/// Which teaching-table surface a capability parameter symbol is rendered for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CapParamTeachingSurface {
+    /// Query `{p#=…}` scope/filter slots — always opaque ident symbols.
+    QueryBrace,
+    /// Dotted-call / invoke arg slots — wire leaf when unambiguous.
+    InvokeArg,
 }
 
 /// Bidirectional maps for one prompt/eval slice.
@@ -1949,6 +1972,169 @@ impl SymbolMap {
             .unwrap_or_else(|| param.to_string())
     }
 
+    /// True when the same wire leaf maps to more than one opaque `p#` on one entity row.
+    pub fn entity_wire_leaf_is_homonym(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        wire_leaf: &str,
+    ) -> bool {
+        let mut p_syms = BTreeSet::new();
+        for (key, sym) in &self.tables.entity_field_to_sym {
+            if key.entry_id.as_str() == catalog_entry_id
+                && key.entity.as_str() == entity
+                && key.field.as_str() == wire_leaf
+            {
+                p_syms.insert(*sym);
+            }
+        }
+        for (key, sym) in &self.tables.cap_param_to_sym {
+            if key.entry_id.as_str() == catalog_entry_id
+                && key.domain.as_str() == entity
+                && leaf_capability_param_expand_key(key.param.as_str()) == wire_leaf
+            {
+                p_syms.insert(*sym);
+            }
+        }
+        p_syms.len() > 1
+    }
+
+    /// Teaching-table slot token: wire name when unambiguous on the entity row, else opaque `p#`.
+    #[inline]
+    pub fn teaching_slot_token_entity_field(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        field: &str,
+    ) -> String {
+        if self.entity_wire_leaf_is_homonym(catalog_entry_id, entity, field) {
+            self.ident_sym_entity_field_for(catalog_entry_id, entity, field)
+        } else {
+            field.to_string()
+        }
+    }
+
+    /// Teaching-table slot token for capability params: leaf wire when unambiguous, else opaque `p#`.
+    #[inline]
+    pub fn teaching_slot_token_cap_param(
+        &self,
+        catalog_entry_id: &str,
+        domain_entity: &str,
+        capability: &str,
+        param: &str,
+    ) -> String {
+        let leaf = leaf_capability_param_expand_key(param);
+        if self.entity_wire_leaf_is_homonym(catalog_entry_id, domain_entity, leaf.as_str()) {
+            self.ident_sym_cap_param_for(catalog_entry_id, domain_entity, capability, param)
+        } else if param.contains('.') {
+            leaf.to_string()
+        } else {
+            param.to_string()
+        }
+    }
+
+    /// Teaching token for a capability param on a specific teaching-table surface.
+    #[inline]
+    pub fn cap_param_teaching_token(
+        &self,
+        catalog_entry_id: &str,
+        domain_entity: &str,
+        capability: &str,
+        param: &str,
+        surface: CapParamTeachingSurface,
+    ) -> String {
+        match surface {
+            CapParamTeachingSurface::QueryBrace => self.ident_sym_cap_param_for(
+                catalog_entry_id,
+                domain_entity,
+                capability,
+                param,
+            ),
+            CapParamTeachingSurface::InvokeArg => self.teaching_slot_token_cap_param(
+                catalog_entry_id,
+                domain_entity,
+                capability,
+                param,
+            ),
+        }
+    }
+
+    /// Opaque `p#` plus invoke/query wire token for optional-legend emission.
+    #[inline]
+    pub fn optional_legend_cap_param_tokens(
+        &self,
+        catalog_entry_id: &str,
+        domain_entity: &str,
+        capability: &str,
+        param: &str,
+    ) -> [String; 2] {
+        [
+            self.ident_sym_cap_param_for(catalog_entry_id, domain_entity, capability, param),
+            self.teaching_slot_token_cap_param(
+                catalog_entry_id,
+                domain_entity,
+                capability,
+                param,
+            ),
+        ]
+    }
+
+    /// Teaching token for a wire on one entity row (field or capability param).
+    #[inline]
+    pub fn teaching_slot_token_for_entity_row_wire(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        wire: &str,
+    ) -> String {
+        if self
+            .tables
+            .entity_field_to_sym
+            .contains_key(&EntityFieldKey::new(catalog_entry_id, entity, wire))
+        {
+            return self.teaching_slot_token_entity_field(catalog_entry_id, entity, wire);
+        }
+        for (key, _) in &self.tables.cap_param_to_sym {
+            if key.entry_id.as_str() == catalog_entry_id
+                && key.domain.as_str() == entity
+                && (key.param.as_str() == wire
+                    || leaf_capability_param_expand_key(key.param.as_str()) == wire)
+            {
+                return self.teaching_slot_token_cap_param(
+                    catalog_entry_id,
+                    entity,
+                    key.capability.as_str(),
+                    key.param.as_str(),
+                );
+            }
+        }
+        if self.entity_wire_leaf_is_homonym(catalog_entry_id, entity, wire) {
+            if let Some((_, sym)) = self.tables.entity_field_to_sym.iter().find(|(k, _)| {
+                k.entry_id.as_str() == catalog_entry_id
+                    && k.entity.as_str() == entity
+                    && k.field.as_str() == wire
+            }) {
+                return sym.as_wire();
+            }
+        }
+        wire.to_string()
+    }
+
+    /// True when `wire` names a capability input on `entity` (any capability on that row).
+    pub fn is_capability_param_wire_on_entity(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        wire: &str,
+    ) -> bool {
+        self.tables.cap_param_to_sym.keys().any(|key| {
+            key.entry_id.as_str() == catalog_entry_id
+                && key.domain.as_str() == entity
+                && (key.param.as_str() == wire
+                    || leaf_capability_param_expand_key(key.param.as_str()) == wire)
+        })
+    }
+
     /// Resolve wire label → opaque symbol only when unambiguous across entity fields, relations, and cap params.
     pub fn ident_sym_unambiguous(&self, name: &str) -> Option<String> {
         let mut resolved: Option<String> = None;
@@ -2130,6 +2316,26 @@ impl SymbolMap {
             .p_sym_to_value_sym
             .get(&psym)
             .map(|vs| vs.as_wire())
+    }
+
+    /// Registry-backed slot → shared `v#`, whether the teaching key is opaque `p#` or an entity wire name.
+    #[inline]
+    pub fn value_sym_for_teaching_gloss_key(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        sym: &str,
+    ) -> Option<String> {
+        if let Some(v) = self.value_sym_for_p_sym(sym) {
+            return Some(v);
+        }
+        if Self::is_opaque_p_sym(sym) {
+            return None;
+        }
+        // Teaching-table wire tokens stay as wire names when unambiguous; registry `v#` lookup
+        // must use the assigned opaque `p#` from the symbol ledger.
+        let p_sym = self.ident_sym_entity_field_for(catalog_entry_id, entity, sym);
+        self.value_sym_for_p_sym(p_sym.as_str())
     }
 
     /// Pre-rendered teaching gloss for a `v#` row (after `;;`), if known.
@@ -2540,6 +2746,125 @@ pub fn field_syms_for_teaching_row(
     ordered
 }
 
+fn is_opaque_teaching_slot_ident(s: &str) -> bool {
+    SymbolMap::is_opaque_p_sym(s)
+        || SymbolMap::is_opaque_r_sym(s)
+        || (s.starts_with('m') && s.len() > 1 && s[1..].chars().all(|c| c.is_ascii_digit()))
+        || (s.starts_with('e') && s.len() > 1 && s[1..].chars().all(|c| c.is_ascii_digit()))
+        || (s.starts_with('v') && s.len() > 1 && s[1..].chars().all(|c| c.is_ascii_digit()))
+}
+
+fn is_wire_slot_ident(s: &str) -> bool {
+    let Some(first) = s.chars().next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_')
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !is_opaque_teaching_slot_ident(s)
+}
+
+/// Wire slot names in teaching fragments: `[field,…]` members and `field=` assignment LHS.
+pub(crate) fn wire_slot_idents_in_teaching_fragment(expr: &str) -> Vec<String> {
+    let expr_clean = strip_prompt_expression_annotations(expr);
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    let bytes = expr_clean.as_bytes();
+    let mut i = 0usize;
+    while i < expr_clean.len() {
+        if bytes[i] == b'[' {
+            let mut depth = 1i32;
+            let start = i + 1;
+            i += 1;
+            while i < expr_clean.len() && depth > 0 {
+                match bytes[i] {
+                    b'[' => depth += 1,
+                    b']' => depth -= 1,
+                    _ => {}
+                }
+                i += 1;
+            }
+            if depth == 0 {
+                let inner = &expr_clean[start..i.saturating_sub(1)];
+                for part in inner.split(',') {
+                    let s = part.trim();
+                    if is_wire_slot_ident(s) && seen.insert(s.to_string()) {
+                        out.push(s.to_string());
+                    }
+                }
+            }
+            continue;
+        }
+        if ident_boundary_left(&expr_clean, i) {
+            let start = i;
+            i += expr_clean[start..]
+                .chars()
+                .next()
+                .map(|c| c.len_utf8())
+                .unwrap_or(1);
+            while i < expr_clean.len() {
+                let c = expr_clean[i..].chars().next().unwrap();
+                if ident_continue(c) {
+                    i += c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            let ident = &expr_clean[start..i];
+            while i < expr_clean.len() && bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if bytes.get(i) == Some(&b'=')
+                && is_wire_slot_ident(ident)
+                && seen.insert(ident.to_string())
+            {
+                out.push(ident.to_string());
+            }
+            continue;
+        }
+        i += expr_clean[i..]
+            .chars()
+            .next()
+            .map(|c| c.len_utf8())
+            .unwrap_or(1);
+    }
+    out
+}
+
+/// Teaching-table gloss keys: opaque `p#`/`r#` plus wire names (homonyms stay opaque `p#`).
+pub fn teaching_slot_keys_for_teaching_row(
+    expr: &str,
+    result_gloss: Option<&str>,
+    cap_legend: Option<&str>,
+    extra_syms: &[String],
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    entity: &str,
+) -> Vec<String> {
+    let mut ordered = field_syms_for_teaching_row(expr, result_gloss, cap_legend, extra_syms);
+    let mut seen: HashSet<String> = ordered.iter().cloned().collect();
+    for frag in [Some(expr), result_gloss, cap_legend]
+        .into_iter()
+        .flatten()
+        .filter(|s| !s.trim().is_empty())
+    {
+        for wire in wire_slot_idents_in_teaching_fragment(frag) {
+            let key = map
+                .map(|m| {
+                    m.teaching_slot_token_for_entity_row_wire(
+                        catalog_entry_id,
+                        entity,
+                        wire.as_str(),
+                    )
+                })
+                .unwrap_or(wire);
+            if seen.insert(key.clone()) {
+                ordered.push(key);
+            }
+        }
+    }
+    ordered
+}
+
 /// Byte scan: `t` ends with `)` — find the `(` that balances the **outermost** trailing `)`.
 fn matching_open_paren_for_trailing_close(t: &str) -> Option<usize> {
     if !t.ends_with(')') {
@@ -2758,7 +3083,7 @@ pub fn teaching_exposure_session_from_focus(
     }
 }
 
-/// When `symbol_tuning` is true (same as [`crate::prompt_render::RenderConfig::uses_symbols`]: **compact** or **tsv** [`crate::prompt_render::PromptRenderMode`]), build the map used for prompts and pre-parse expansion.
+/// When `symbol_tuning` is true (same as [`crate::prompt_render::RenderConfig::uses_symbols`]: **compact** or **tsv** [`crate::prompt_render::PromptRenderMode`]), build the map used for prompts and in-grammar parse resolution.
 pub fn symbol_map_for_prompt(
     cgs: &CGS,
     focus: FocusSpec<'_>,
@@ -3719,7 +4044,7 @@ mod tests {
     }
 
     #[test]
-    fn slot_symbol_allocation_fingerprint_merges_same_values_row_and_wire_across_entities() {
+    fn slot_symbol_allocation_fingerprint_merges_same_structural_value_and_wire_across_entities() {
         let shared_vr = "nv_shared_zone_id_test";
         let meta_ef = |entity: &str| IdentMetadata::RegistryBacked {
             catalog_entry_id: String::new(),
@@ -3767,10 +4092,68 @@ mod tests {
             wire_name: "zone_id".into(),
             description: String::new(),
         };
-        assert_ne!(
+        assert_eq!(
             slot_symbol_allocation_fingerprint(&meta_ef("Zone")),
             slot_symbol_allocation_fingerprint(&other_vr),
-            "distinct values: rows must not share a p# even with the same wire name"
+            "authored values: rows no longer split a p# when structure and wire match"
+        );
+        let incompatible_vr = IdentMetadata::RegistryBacked {
+            catalog_entry_id: String::new(),
+            entity: EntityName::from("Zone".to_string()),
+            role: IdentRegistryRole::EntityField,
+            value_registry_key: ValueDomainKey::new("nv_other_zone_id_test").expect("key"),
+            field_type: FieldType::Integer,
+            string_semantics: None,
+            array_items: None,
+            allowed_values: None,
+            wire_name: "zone_id".into(),
+            description: String::new(),
+        };
+        assert_ne!(
+            slot_symbol_allocation_fingerprint(&meta_ef("Zone")),
+            slot_symbol_allocation_fingerprint(&incompatible_vr),
+            "structurally distinct value classes stay split even with the same wire name"
+        );
+    }
+
+    #[test]
+    fn structural_value_identity_merges_cross_catalog_primitives_but_not_entity_refs() {
+        let primitive = |catalog_entry_id: &str| IdentMetadata::RegistryBacked {
+            catalog_entry_id: catalog_entry_id.to_string(),
+            entity: EntityName::from("Task".to_string()),
+            role: IdentRegistryRole::EntityField,
+            value_registry_key: ValueDomainKey::new("nv_catalog_local_status").expect("key"),
+            field_type: FieldType::Select,
+            string_semantics: None,
+            array_items: None,
+            allowed_values: Some(vec!["open".to_string(), "closed".to_string()]),
+            wire_name: "status".into(),
+            description: String::new(),
+        };
+        assert_eq!(
+            slot_symbol_allocation_fingerprint(&primitive("github")),
+            slot_symbol_allocation_fingerprint(&primitive("linear")),
+            "primitive/enum value classes merge across catalogs when wire + structure match"
+        );
+
+        let entity_ref = |catalog_entry_id: &str| IdentMetadata::RegistryBacked {
+            catalog_entry_id: catalog_entry_id.to_string(),
+            entity: EntityName::from("Issue".to_string()),
+            role: IdentRegistryRole::EntityField,
+            value_registry_key: ValueDomainKey::new("nv_assignee").expect("key"),
+            field_type: FieldType::EntityRef {
+                target: EntityName::from("User".to_string()),
+            },
+            string_semantics: None,
+            array_items: None,
+            allowed_values: None,
+            wire_name: "assignee".into(),
+            description: String::new(),
+        };
+        assert_ne!(
+            slot_symbol_allocation_fingerprint(&entity_ref("github")),
+            slot_symbol_allocation_fingerprint(&entity_ref("linear")),
+            "entity_ref glosses remain scoped to the owning catalog graph"
         );
     }
 
@@ -3804,7 +4187,7 @@ mod tests {
     }
 
     #[test]
-    fn overshow_entity_scoped_slot_maps_split_incompatible_id_slots() {
+    fn overshow_entity_scoped_slot_maps_merge_compatible_id_slots() {
         let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
         if !dir.exists() {
             return;
@@ -3814,13 +4197,13 @@ mod tests {
         let capture_item_id = map.ident_sym_entity_field_for("", "CaptureItem", "id");
         let profile_id = map.ident_sym_entity_field_for("", "Profile", "id");
         let pipeline_snapshot_id = map.ident_sym_entity_field_for("", "PipelineSnapshot", "id");
-        assert_ne!(
+        assert_eq!(
             capture_item_id, profile_id,
-            "same-shaped `id` fields on different entities must not share one p#"
+            "same-shaped `id` fields on different entities share one structural p#"
         );
         assert_ne!(
             capture_item_id, pipeline_snapshot_id,
-            "entity-scoped lookup must not fall back to the wrong legacy bare-name `id` symbol"
+            "structurally incompatible `id` slots stay split"
         );
     }
 
@@ -4468,10 +4851,10 @@ mod tests {
         let v_bar = map
             .value_sym_for_p_sym(&p_bar)
             .expect("registry-backed bar maps to v#");
-        assert_eq!(v_foo, v_bar, "same value_ref → one v#");
+        assert_eq!(v_foo, v_bar, "same structural value class → one v#");
         assert_eq!(
             map.value_domain_fp_for_v_sym(&v_foo).unwrap(),
-            "fixture_entry|vr:shared_sel_vtest"
+            "vc|\"select\"|sem:null|items:null|allowed:[\"alpha\",\"beta\"]"
         );
         let gloss = map.value_domain_gloss_for_v_sym(&v_foo).expect("v gloss");
         assert!(
@@ -4875,8 +5258,10 @@ mod tests {
                 cap,
             );
             assert!(
-                pairs.iter().any(|(w, s)| w == param && s.starts_with('p')),
-                "expected optional `{param}` → p# in pairs for {cap_name}: {pairs:?}"
+                pairs
+                    .iter()
+                    .any(|(w, s)| w == param && (s.as_str() == param || s.starts_with('p'))),
+                "expected optional `{param}` teaching token in pairs for {cap_name}: {pairs:?}"
             );
         }
     }

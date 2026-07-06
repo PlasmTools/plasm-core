@@ -74,6 +74,8 @@ fn runtime_cfg(config_id: Uuid, auth_config_id: Uuid, include_notion: bool) -> M
     McpRuntimeConfig {
         id: config_id,
         tenant_id: "tenant-readiness".into(),
+        workspace_slug: "default".into(),
+        project_slug: "default".into(),
         space_type: "personal".into(),
         owner_subject: Some("github:readiness-test".into()),
         version: 2,

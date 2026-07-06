@@ -148,6 +148,7 @@ async fn spawn_mcp_server() -> Option<(String, tokio::task::JoinHandle<()>, Opti
             Arc::new(McpApiKeyRegistry::new(storage.clone())) as Arc<dyn McpTransportAuth>
         ),
         tenant_binding: None,
+        flow_policy_repository: None,
     };
 
     let repo = McpConfigRepository::connect_and_migrate(&url).await.ok()?;
@@ -155,6 +156,8 @@ async fn spawn_mcp_server() -> Option<(String, tokio::task::JoinHandle<()>, Opti
     let runtime = McpRuntimeConfig {
         id: cfg_id,
         tenant_id: "tenant-a".to_string(),
+        workspace_slug: "default".to_string(),
+        project_slug: "default".to_string(),
         space_type: "personal".to_string(),
         owner_subject: Some("user-a".to_string()),
         version: 1,

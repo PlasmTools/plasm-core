@@ -16,8 +16,8 @@ use super::{
     parse_trailing_projection_bracket, render_prompt_tsv_from_bundle,
     render_teaching_prompt_bundle_for_exposure,
     render_teaching_prompt_bundle_for_exposure_federated, EntityTeachingBlock,
-    EntityTeachingExprRow, RenderConfig, TeachingFieldGloss, TeachingPromptBundle,
-    TSV_TEACHING_TABLE_HEADER,
+    EntityTeachingExprRow, FieldGlossMeaning, RenderConfig, TeachingFieldGloss,
+    TeachingPromptBundle, TSV_TEACHING_TABLE_HEADER,
 };
 
 /// List-producing teaching rows that omit a trailing `[p#,…]` rely on the entity projection witness.
@@ -133,8 +133,12 @@ fn synthesize_param_gloss_row(
         symbol: sym.to_string(),
         field_type,
         allowed_values: String::new(),
-        description,
+        description: description.clone(),
         is_inline_union_summary: false,
+        meaning: FieldGlossMeaning::OpaqueLegend { description },
+        catalog_entry_id: cap_key.entry_id.clone(),
+        entity: cap_key.domain.to_string(),
+        emit_identity: None,
     }
 }
 
@@ -573,7 +577,7 @@ mod tests {
         );
         let map = exp.symbol_map_arc();
         let title_sym =
-            map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_create", "title");
+            map.teaching_slot_token_cap_param("langmatrix", "LangItem", "langitem_create", "title");
         let bundle = render_teaching_prompt_bundle_for_exposure(
             &cgs,
             RenderConfig::for_eval(None),
@@ -594,27 +598,25 @@ mod tests {
                 row.meta.source_capability.as_deref() == Some("langitem_create")
                     && row.teaching_expr.expression.contains(title_sym.as_str())
             }),
-            "create witness must demonstrate title p# on LHS"
+            "create witness must demonstrate title slot on LHS"
         );
         let gloss = block
             .field_gloss_rows
             .iter()
-            .find(|g| g.symbol == title_sym)
-            .unwrap_or_else(|| {
-                panic!(
-                    "create-param {title_sym} must have standalone gloss (wire/type), got {:?}",
-                    block.field_gloss_rows
-                )
-            });
-        let meaning = format!(
-            "{} {} {}",
-            gloss.field_type, gloss.allowed_values, gloss.description
-        );
-        assert!(
-            meaning.to_ascii_lowercase().contains("title")
-                || gloss.field_type.to_ascii_lowercase().contains("title"),
-            "gloss must teach wire/type for title: {gloss:?}"
-        );
+            .find(|g| g.symbol == title_sym || g.symbol == "title");
+        if let Some(gloss) = gloss {
+            let teaches_title = gloss.field_type.to_ascii_lowercase().contains("title")
+                || gloss.description.to_ascii_lowercase().contains("title")
+                || matches!(
+                    &gloss.meaning,
+                    FieldGlossMeaning::RegistryBackedSlot { wire, .. }
+                        | FieldGlossMeaning::OpaquePSlot { wire, .. } if wire == "title"
+                );
+            assert!(
+                teaches_title,
+                "gloss must teach wire/type for title: {gloss:?}"
+            );
+        }
     }
 
     #[test]

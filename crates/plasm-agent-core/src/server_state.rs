@@ -125,6 +125,8 @@ pub struct PlasmSaaSHostExtension {
     pub mcp_transport_auth: Option<Arc<dyn McpTransportAuth>>,
     /// Incoming-auth subject → tenant + workspace/project slugs (Postgres).
     pub tenant_binding: Option<Arc<TenantBindingStore>>,
+    /// Project-scoped plan flow policies (same DB as MCP config).
+    pub flow_policy_repository: Option<Arc<crate::flow_policy_repository::FlowPolicyRepository>>,
 }
 
 /// Full in-process state for the `plasm-mcp` **hosted** build: data plane plus optional control-plane.
@@ -172,6 +174,12 @@ impl PlasmHostState {
 
     pub fn tenant_binding(&self) -> Option<&Arc<TenantBindingStore>> {
         self.saas.as_ref()?.tenant_binding.as_ref()
+    }
+
+    pub fn flow_policy_repository(
+        &self,
+    ) -> Option<&Arc<crate::flow_policy_repository::FlowPolicyRepository>> {
+        self.saas.as_ref()?.flow_policy_repository.as_ref()
     }
 
     pub fn incoming_auth_device(&self) -> &IncomingAuthDeviceStore {
@@ -586,6 +594,7 @@ mod tests {
             None,
             None,
             false,
+            None,
         )
         .await
         .expect("open session");
@@ -631,6 +640,7 @@ mod tests {
             None,
             None,
             false,
+            None,
         )
         .await
         .expect("open session with tenant hosted_kv patch");
@@ -699,6 +709,7 @@ mod tests {
             Some(&bindings),
             None,
             false,
+            None,
         )
         .await
         .expect("open fibery session with resolved backend");
@@ -751,6 +762,7 @@ mod tests {
             None,
             None,
             false,
+            None,
         )
         .await
         .expect("open session");
@@ -796,6 +808,7 @@ mod tests {
             None,
             None,
             false,
+            None,
         )
         .await
         .expect("open on host A");

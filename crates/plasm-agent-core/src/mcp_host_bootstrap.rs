@@ -409,16 +409,20 @@ pub async fn attach_oss_mcp_policy_store(state: &mut PlasmHostState) -> McpPolic
     match &mut state.saas {
         Some(saas) => {
             saas.mcp_config_repository = Some(Arc::new(repo));
+            attach_flow_policy_repo(saas, &db_url).await;
         }
         None => {
-            state.saas = Some(crate::server_state::PlasmSaaSHostExtension {
+            let mut saas = crate::server_state::PlasmSaaSHostExtension {
                 auth_framework: None,
                 mcp_config_repository: Some(Arc::new(repo)),
                 mcp_transport_auth: Some(
                     crate::auth_framework_host::mcp_api_key_registry_memory_only(),
                 ),
                 tenant_binding: None,
-            });
+                flow_policy_repository: None,
+            };
+            attach_flow_policy_repo(&mut saas, &db_url).await;
+            state.saas = Some(saas);
         }
     };
     tracing::info!(
@@ -444,7 +448,32 @@ pub fn attach_auth_framework_to_host(
                 mcp_config_repository: None,
                 mcp_transport_auth: Some(mcp_api_keys),
                 tenant_binding: None,
+                flow_policy_repository: None,
             });
+        }
+    }
+}
+
+async fn attach_flow_policy_repo(
+    saas: &mut crate::server_state::PlasmSaaSHostExtension,
+    db_url: &str,
+) {
+    if let Some(mcp_repo) = saas.mcp_config_repository.as_ref() {
+        saas.flow_policy_repository = Some(Arc::new(
+            crate::flow_policy_repository::FlowPolicyRepository::from_pool(mcp_repo.pool().clone()),
+        ));
+        tracing::info!("flow policy repository sharing MCP config DB pool");
+        return;
+    }
+    match crate::flow_policy_repository::FlowPolicyRepository::connect_and_migrate(db_url).await {
+        Ok(fp) => {
+            saas.flow_policy_repository = Some(Arc::new(fp));
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "flow policy repository connect/migrate failed"
+            );
         }
     }
 }

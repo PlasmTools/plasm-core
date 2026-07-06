@@ -309,7 +309,7 @@ impl McpConfigRepository {
     ) -> Result<Option<McpRuntimeConfig>, sqlx::Error> {
         let row = sqlx::query(
             r#"
-            SELECT id, tenant_id, space_type, owner_subject, config_version, endpoint_secret_hash
+            SELECT id, tenant_id, workspace_slug, project_slug, space_type, owner_subject, config_version, endpoint_secret_hash
             FROM project_mcp_configs
             WHERE id = $1 AND status IN ('active', 'disabled')
             "#,
@@ -324,6 +324,8 @@ impl McpConfigRepository {
 
         let id: Uuid = row.get("id");
         let tenant_id: String = row.get("tenant_id");
+        let workspace_slug: String = row.get("workspace_slug");
+        let project_slug: String = row.get("project_slug");
         let space_type: String = row.get("space_type");
         let owner_subject: Option<String> = row.get("owner_subject");
         let version: i64 = row.get("config_version");
@@ -432,6 +434,8 @@ impl McpConfigRepository {
         Ok(Some(McpRuntimeConfig {
             id,
             tenant_id,
+            workspace_slug,
+            project_slug,
             space_type,
             owner_subject,
             version: version as u64,
@@ -472,7 +476,7 @@ impl McpConfigRepository {
     ) -> Result<Option<McpRuntimeConfig>, sqlx::Error> {
         let row = sqlx::query(
             r#"
-            SELECT id, tenant_id, space_type, owner_subject, config_version, endpoint_secret_hash
+            SELECT id, tenant_id, workspace_slug, project_slug, space_type, owner_subject, config_version, endpoint_secret_hash
             FROM project_mcp_configs
             WHERE id = $1 AND status = 'active'
             "#,
@@ -487,6 +491,8 @@ impl McpConfigRepository {
 
         let id: Uuid = row.get("id");
         let tenant_id: String = row.get("tenant_id");
+        let workspace_slug: String = row.get("workspace_slug");
+        let project_slug: String = row.get("project_slug");
         let space_type: String = row.get("space_type");
         let owner_subject: Option<String> = row.get("owner_subject");
         let version: i64 = row.get("config_version");
@@ -595,6 +601,8 @@ impl McpConfigRepository {
         Ok(Some(McpRuntimeConfig {
             id,
             tenant_id,
+            workspace_slug,
+            project_slug,
             space_type,
             owner_subject,
             version: version as u64,
@@ -1117,7 +1125,10 @@ mod tests {
             names.iter().any(|n| n.contains("plasm_agent_schema")),
             "expected squashed plasm_agent_schema migration, got {names:?}"
         );
-        let allowlisted_incrementals = ["20260607000000_project_mcp_entry_bindings.sql"];
+        let allowlisted_incrementals = [
+            "20260607000000_project_mcp_entry_bindings.sql",
+            "20260706160000_project_flow_policies.sql",
+        ];
         for name in &names {
             if name.contains("plasm_agent_schema") {
                 continue;

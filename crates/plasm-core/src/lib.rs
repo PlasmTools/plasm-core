@@ -231,12 +231,14 @@ pub use preflight::{
 pub use prompt_pipeline::{PromptFocus, PromptPipelineConfig};
 pub use prompt_render::grammar_frontmatter_stats_from_contract;
 pub use prompt_render::grammar_frontmatter_stats_from_prompt;
+pub use prompt_render::prompt_symbol_inflation_stats_from_prompt;
 pub use prompt_render::render_teaching_bundle;
 pub use prompt_render::teaching_tsv_agent_body_from_wrapped_prompt;
 pub use prompt_render::teaching_tsv_from_wrapped_prompt;
 pub use prompt_render::teaching_tsv_table_from_wrapped_prompt;
 pub use prompt_render::GrammarFrontmatterStats;
 pub use prompt_render::PromptRenderMode;
+pub use prompt_render::PromptSymbolInflationStats;
 pub use prompt_render::TeachingFenceSlice;
 pub use prompt_render::TeachingPromptSettings;
 pub use prompt_render::TeachingPromptSource;

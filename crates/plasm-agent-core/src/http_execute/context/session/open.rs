@@ -22,6 +22,7 @@ pub(crate) async fn execute_session_create_response_inner(
     bindings_by_entry: Option<&HashMap<String, crate::binding_slots::SessionBindingMap>>,
     restored_teaching_exposure: Option<plasm_core::TeachingExposureSession>,
     symbol_space_reset: bool,
+    flow_policy_scope: Option<(&str, &str, &str)>,
 ) -> Result<CreateExecuteSessionResponse, String> {
     if body.entities.is_empty() {
         crate::metrics::record_execute_session_outcome("error", "empty_entities");
@@ -222,6 +223,18 @@ pub(crate) async fn execute_session_create_response_inner(
         ranked_for_domain,
         bindings_map,
     );
+    if let Some(principal) = principal {
+        session.flow_policy = if let Some((tenant_id, ws, ps)) = flow_policy_scope {
+            crate::flow_policy_session::resolve_project_flow_policy(st, tenant_id, ws, ps).await
+        } else {
+            crate::flow_policy_session::resolve_flow_policy_for_principal(
+                st,
+                &principal.tenant_id,
+                &principal.subject,
+            )
+            .await
+        };
+    }
     session.registry_catalog_hashes_by_entry = registry_catalog_hashes;
     st.store_execute_session(
         reuse_key,
@@ -259,5 +272,6 @@ pub async fn execute_session_create_response(
     principal: Option<&crate::incoming_auth::TenantPrincipal>,
     body: CreateExecuteSessionBody,
 ) -> Result<CreateExecuteSessionResponse, String> {
-    execute_session_create_response_inner(st, principal, body, true, None, None, None, false).await
+    execute_session_create_response_inner(st, principal, body, true, None, None, None, false, None)
+        .await
 }
