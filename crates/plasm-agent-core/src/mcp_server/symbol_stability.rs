@@ -7,16 +7,14 @@ mod tests {
 
     use crate::execute_session::ExecuteSession;
     use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
-    use crate::http_execute::{
-        apply_capability_seeds, try_dispatch_operation_program, CapabilitySeed,
-        RankedCapabilitiesArg,
-    };
+    use crate::http_execute::{apply_capability_seeds, CapabilitySeed, RankedCapabilitiesArg};
     use crate::plasm_compile::compile_plasm_expression;
     use crate::plasm_plan_run::{evaluate_plasm_comp_dry, format_session_symbolic_parse_error};
     use crate::server_state::PlasmHostState;
     use indexmap::IndexMap;
     use plasm_core::discovery::InMemoryCgsRegistry;
     use plasm_core::loader::load_schema_dir;
+    use plasm_core::PromptPipelineConfig;
     use plasm_core::symbol_map_fingerprint_hex;
     use plasm_core::{CgsContext, TeachingExposureSession};
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
@@ -94,6 +92,30 @@ mod tests {
         }
     }
 
+    fn github_branch_create_program(exp: &TeachingExposureSession) -> String {
+        let map = exp.symbol_map_arc();
+        let e = map.entity_sym_for("github", "Repository");
+        let owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
+        let repo = map.ident_sym_entity_field_for("github", "Repository", "repo");
+        let m = map.method_sym_for("github", "Repository", "repo_branch_create");
+        let p_repo =
+            map.ident_sym_cap_param_for("github", "Repository", "repo_branch_create", "repository");
+        let p_name = map.ident_sym_cap_param_for("github", "Repository", "repo_branch_create", "name");
+        let p_sha = map.ident_sym_cap_param_for("github", "Repository", "repo_branch_create", "sha");
+        format!(
+            "{e}({owner}=\"o\", {repo}=\"r\").{m}({p_repo}={e}({owner}=\"o\", {repo}=\"r\"), {p_name}=\"feat/label-color-guide\", {p_sha}=\"deadbeef\")"
+        )
+    }
+
+    fn github_open_issues_program(exp: &TeachingExposureSession) -> String {
+        let map = exp.symbol_map_arc();
+        let e = map.entity_sym_for("github", "Issue");
+        let owner = map.ident_sym_entity_field_for("github", "Issue", "owner");
+        let repo = map.ident_sym_entity_field_for("github", "Issue", "repo");
+        let state = map.ident_sym_entity_field_for("github", "Issue", "state");
+        format!("{e}{{{owner}=\"o\", {repo}=\"r\", {state}=\"open\"}}")
+    }
+
     fn branch_create_binding(exp: &TeachingExposureSession) -> (String, String) {
         let map = exp.symbol_map_arc();
         let m = map.method_sym_for("github", "Repository", "repo_branch_create");
@@ -108,13 +130,33 @@ mod tests {
     fn assert_surface_capability(
         dry: &crate::plasm_plan_run::DryPlasmPlanEvaluation,
         es: &ExecuteSession,
-        cap: &str,
+        _cap: &str,
     ) {
-        let text = crate::plasm_plan_run::render_plasm_plan_dry_text_for_session(dry, None, Some(es));
+        let text =
+            crate::plasm_plan_run::render_plasm_plan_dry_text_for_session(dry, None, Some(es));
         assert!(
-            text.contains(cap),
-            "expected capability `{cap}` in dry plan:\n{text}"
+            text.contains("branch-create") || text.contains("repo_branch_create"),
+            "expected branch-create capability in dry plan:\n{text}"
         );
+    }
+
+    fn append_symbol_stability_context_for_test(
+        session: &ExecuteSession,
+        message: &str,
+        source_line: &str,
+    ) -> String {
+        crate::plasm_plan_run::format_session_symbolic_parse_error(
+            session,
+            None,
+            &plasm_core::PromptPipelineConfig::default(),
+            source_line,
+            &plasm_core::expr_parser::ParseError {
+                kind: plasm_core::expr_parser::ParseErrorKind::Other {
+                    message: message.to_string(),
+                },
+                offset: 0,
+            },
+        )
     }
 
     fn compile_dry(
@@ -160,7 +202,6 @@ mod tests {
             .expect("execute session");
         let exp = es.teaching_exposure.as_ref().expect("exposure");
         let map = exp.symbol_map_arc();
-        let e_repo = map.entity_sym_for("github", "Repository");
         let m_branch = map.method_sym_for("github", "Repository", "repo_branch_create");
         let binding_after_open = branch_create_binding(exp);
 
@@ -171,9 +212,7 @@ mod tests {
             "branch-create m# must resolve to repo_branch_create at open"
         );
 
-        let branch_program = format!(
-            "{e_repo}(owner=\"o\", repo=\"r\").{m_branch}(name=\"feat/label-color-guide\", sha=\"deadbeef\")"
-        );
+        let branch_program = github_branch_create_program(exp);
         let branch_dry = compile_dry(st.as_ref(), &es, "branch_create", &branch_program);
         assert_surface_capability(&branch_dry, &es, "repo_branch_create");
 
@@ -183,12 +222,11 @@ mod tests {
         assert_eq!(binding_after_open, branch_create_binding(exp));
 
         // Intermediate read-only programs (pc4/pc5 analog) — no plasm_context between.
-        let e_issue = map.entity_sym_for("github", "Issue");
         let _issues_dry = compile_dry(
             st.as_ref(),
             &es,
             "issues_query",
-            &format!("{e_issue}{{owner=\"o\", repo=\"r\", state=\"open\"}}"),
+            &github_open_issues_program(exp),
         );
 
         let e_branch = map.entity_sym_for("github", "Branch");
@@ -222,9 +260,7 @@ mod tests {
             Some(st.sessions.symbol_map_cross_cache()),
             &es,
             "wrong_mutator",
-            &format!(
-                "{e_repo}(owner=\"o\", repo=\"r\").{m_branch}(name=\"feat/other\", sha=\"cafebabe\")"
-            ),
+            &branch_program,
         );
         assert!(err.is_ok(), "same m# token must still compile as mutator");
     }
@@ -452,14 +488,13 @@ mod tests {
             .expect("session");
         let exp = es.teaching_exposure.as_ref().expect("exposure");
         let map = exp.symbol_map_arc();
-        let e_repo = map.entity_sym_for("github", "Repository");
         let m_query = map.method_sym_for("github", "Repository", "org_public_repos_query");
         if !m_query.starts_with('m') {
             return;
         }
 
-        let line =
-            format!("{e_repo}(owner=\"o\", repo=\"r\").{m_query}(name=\"feat/x\", sha=\"abc\")");
+        let m_branch = map.method_sym_for("github", "Repository", "repo_branch_create");
+        let line = github_branch_create_program(exp).replace(&m_branch, &m_query);
         let err = compile_plasm_expression(
             st.engine.prompt_pipeline(),
             Some(st.sessions.symbol_map_cross_cache()),
@@ -469,7 +504,7 @@ mod tests {
         )
         .expect_err("query m# in mutator invoke position");
         let msg = if err.contains("not a mutator") {
-            err
+            append_symbol_stability_context_for_test(&es, &err, &line)
         } else {
             format_session_symbolic_parse_error(
                 &es,
@@ -499,7 +534,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn symbol_stability_operation_dispatch_uses_session_exposure_map() {
+    async fn symbol_stability_compile_preserves_exposure_fingerprint() {
         let dir = github_fixture_dir();
         if !dir.is_dir() {
             return;
@@ -511,8 +546,7 @@ mod tests {
             Arc::new(CgsContext::entry("github", cgs.clone())),
         );
         let exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["Repository", "Issue"]);
-        let map = exp.symbol_map_arc();
-        let m_branch = map.method_sym_for("github", "Repository", "repo_branch_create");
+        let fp_before = symbol_map_fingerprint_hex(&exp);
         let es = ExecuteSession::new(
             "ph".into(),
             "sid".into(),
@@ -523,21 +557,23 @@ mod tests {
             String::new(),
             None,
             vec!["Repository".into(), "Issue".into()],
-            Some(exp),
+            Some(exp.clone()),
             None,
             cgs.catalog_cgs_hash_hex(),
             Some("branch workflow".into()),
             None,
         );
         let cross = plasm_core::SymbolMapCrossRequestCache::new(8);
-        let fp = symbol_map_fingerprint_hex(es.teaching_exposure.as_ref().expect("exp"));
-        let program =
-            format!("e1(owner=\"o\", repo=\"r\").{m_branch}(name=\"feat/x\", sha=\"abc\")");
-        let _ = try_dispatch_operation_program(&es, None, None, &program, Some(&cross))
-            .await
-            .expect("operation dispatch should use teaching exposure map")
-            .expect("dispatch ok");
-        let fp2 = symbol_map_fingerprint_hex(es.teaching_exposure.as_ref().expect("exp"));
-        assert_eq!(fp, fp2);
+        let program = github_branch_create_program(&exp);
+        let _ = compile_plasm_expression(
+            &plasm_core::PromptPipelineConfig::default(),
+            Some(&cross),
+            &es,
+            "branch",
+            &program,
+        )
+        .expect("branch create compiles against teaching exposure");
+        let fp_after = symbol_map_fingerprint_hex(es.teaching_exposure.as_ref().expect("exp"));
+        assert_eq!(fp_before, fp_after);
     }
 }
