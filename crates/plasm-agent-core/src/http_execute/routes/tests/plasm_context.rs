@@ -276,6 +276,10 @@ fn tool_meta_keeps_slim_agent_keys() {
     assert!(meta.contains_key("logical_session_ref"));
     assert!(meta.contains_key("continuity"));
     assert!(meta.contains_key("domain_revision"));
+    assert_eq!(
+        meta.get("symbol_map_fingerprint"),
+        Some(&serde_json::json!("deadbeef"))
+    );
     assert!(!meta.contains_key("execute_binding"));
     assert!(!meta.contains_key("catalog_entry_ids"));
     assert!(!meta.contains_key("intent"));

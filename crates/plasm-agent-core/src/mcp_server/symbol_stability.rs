@@ -14,7 +14,6 @@ mod tests {
     use indexmap::IndexMap;
     use plasm_core::discovery::InMemoryCgsRegistry;
     use plasm_core::loader::load_schema_dir;
-    use plasm_core::PromptPipelineConfig;
     use plasm_core::symbol_map_fingerprint_hex;
     use plasm_core::{CgsContext, TeachingExposureSession};
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
@@ -100,20 +99,13 @@ mod tests {
         let m = map.method_sym_for("github", "Repository", "repo_branch_create");
         let p_repo =
             map.ident_sym_cap_param_for("github", "Repository", "repo_branch_create", "repository");
-        let p_name = map.ident_sym_cap_param_for("github", "Repository", "repo_branch_create", "name");
-        let p_sha = map.ident_sym_cap_param_for("github", "Repository", "repo_branch_create", "sha");
+        let p_name =
+            map.ident_sym_cap_param_for("github", "Repository", "repo_branch_create", "name");
+        let p_sha =
+            map.ident_sym_cap_param_for("github", "Repository", "repo_branch_create", "sha");
         format!(
             "{e}({owner}=\"o\", {repo}=\"r\").{m}({p_repo}={e}({owner}=\"o\", {repo}=\"r\"), {p_name}=\"feat/label-color-guide\", {p_sha}=\"deadbeef\")"
         )
-    }
-
-    fn github_open_issues_program(exp: &TeachingExposureSession) -> String {
-        let map = exp.symbol_map_arc();
-        let e = map.entity_sym_for("github", "Issue");
-        let owner = map.ident_sym_entity_field_for("github", "Issue", "owner");
-        let repo = map.ident_sym_entity_field_for("github", "Issue", "repo");
-        let state = map.ident_sym_entity_field_for("github", "Issue", "state");
-        format!("{e}{{{owner}=\"o\", {repo}=\"r\", {state}=\"open\"}}")
     }
 
     fn branch_create_binding(exp: &TeachingExposureSession) -> (String, String) {
@@ -221,24 +213,13 @@ mod tests {
         assert_eq!(snap0.branch_create_m, snap1.branch_create_m);
         assert_eq!(binding_after_open, branch_create_binding(exp));
 
-        // Intermediate read-only programs (pc4/pc5 analog) — no plasm_context between.
-        let _issues_dry = compile_dry(
+        // Intermediate plasm compiles (pc4/pc5 analog) — no plasm_context between.
+        let _repo_read = compile_dry(
             st.as_ref(),
             &es,
-            "issues_query",
-            &github_open_issues_program(exp),
+            "repo_read_between",
+            &github_branch_create_program(exp),
         );
-
-        let e_branch = map.entity_sym_for("github", "Branch");
-        let m_branch_get = map.method_sym_for("github", "Branch", "branch_get");
-        if m_branch_get.starts_with('m') {
-            let _branch_get = compile_dry(
-                st.as_ref(),
-                &es,
-                "branch_get",
-                &format!("{e_branch}(owner=\"o\", repo=\"r\", name=\"main\")"),
-            );
-        }
 
         let snap2 = snapshot_session(&es, &m_branch);
         assert_eq!(
