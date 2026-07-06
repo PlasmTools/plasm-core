@@ -85,14 +85,6 @@ use crate::mcp_plasm_meta::PlasmMetaIndex;
 use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_identity::McpTransportIdentity;
-use crate::operation::{compute_plan_commit_id_from_dry, PlanCommitRecord, PLAN_COMMIT_TTL};
-use crate::plan_dry_display::build_plan_dry_compact_view;
-use crate::plan_gate::{plan_gate, PlanGateContext};
-use crate::plasm_comp_wire::trace_comp_wire_from_dry;
-use crate::plasm_compile::compile_plasm_expression;
-use crate::plasm_plan_run::{
-    evaluate_plasm_comp_dry, render_plasm_plan_dry_text_for_session, PlasmPlanRunResult,
-};
 use crate::run_artifacts::{
     code_plan_handle, code_plan_http_path, plasm_code_plan_resource_uri,
     ArtifactPayload, CodePlanArchiveDocument,
@@ -114,7 +106,9 @@ mod discover;
 mod mcp_http_user_agent;
 mod mcp_plasm_invoke;
 mod plasm_tool_dry_meta;
+mod plasm_tool_dry_run;
 mod read_run_artifact;
+mod ui_read;
 mod resource_read;
 mod resource_read_trace;
 mod schema;
@@ -150,6 +144,7 @@ const MAX_MCP_EXEC_BINDINGS: usize = 512;
 const MCP_EXECUTE_SESSION_UNAVAILABLE: &str = "Execute session unavailable (expired or catalog reload): call `plasm_context` again with your capability picks (`seeds`).";
 
 /// Per MCP transport session: Plasm execute `prompt_hash` + `session` ids (same as HTTP paths).
+#[derive(Clone)]
 pub(crate) struct PlasmMcpHandler {
     pub(crate) plasm: Arc<PlasmHostState>,
     /// MCP transport session key -> per-session mutable state.
@@ -193,6 +188,19 @@ impl PlasmMcpHandler {
             }
         }
         redis.save_snapshot(transport_key, &merged).await;
+    }
+
+    /// Redis transport snapshot — off the MCP tool response critical path.
+    pub(crate) fn schedule_persist_transport_state(&self, transport_key: &str) {
+        if self.transport_redis.is_none() {
+            return;
+        }
+        crate::metrics::record_mcp_response_deferred_io("transport_state");
+        let handler = self.clone();
+        let key = transport_key.to_string();
+        tokio::spawn(async move {
+            handler.persist_transport_state(key.as_str()).await;
+        });
     }
     pub(crate) async fn session_state(&self, key: &str) -> Arc<Mutex<McpTransportState>> {
         {
@@ -681,7 +689,10 @@ impl PlasmMcpHandler {
                 )
                 .await
                 {
-                    return op_result;
+                    return op_result.map(|result| plasm_tool_dry_run::PlasmToolRunOutcome {
+                        result,
+                        inline_plan_ui: None,
+                    });
                 }
             }
             if run_live {
@@ -724,127 +735,30 @@ impl PlasmMcpHandler {
                     wait_live,
                 })
                 .await
+                .map(|result| plasm_tool_dry_run::PlasmToolRunOutcome {
+                    result,
+                    inline_plan_ui: None,
+                })
             } else {
                 let program = invocation
                     .program()
                     .ok_or_else(|| "missing `program`: call `plasm` with a program".to_string())?;
-                let plan_name = format!("plasm_dag_call_{call_index}");
-                let pipeline = self.plasm.engine.prompt_pipeline();
-                let cross = self.plasm.sessions.symbol_map_cross_cache();
-                let bundle =
-                    compile_plasm_expression(pipeline, Some(cross), &es, &plan_name, program)?;
-                let program_for_trace = program.to_string();
-                        let dry = evaluate_plasm_comp_dry(&es, &bundle)?;
-                        if !dry.probe_preflight_passed() {
-                            return Err("plan dry-run preflight failed — fix errors before run_ref".into());
-                        }
-                        let dry_text = render_plasm_plan_dry_text_for_session(
-                            &dry,
-                            None,
-                            Some(&es),
-                        );
-                        let comp_wire = Arc::new(trace_comp_wire_from_dry(&dry));
-                        let compact = build_plan_dry_compact_view(
-                            dry.validated_plan(),
-                            &dry.topological_order,
-                            &dry.review,
-                            &dry.graph_summary,
-                            Some(&es),
-                            None,
-                        );
-                        let flow_gate = dry.evaluate_gate();
-                        if let crate::PlanGateDecision::Denied(denial) = plan_gate(
-                            &flow_gate,
-                            PlanGateContext {
-                                force: false,
-                                plan_commit_ref: None,
-                            },
-                        )
-                        {
-                            return Err(format!(
-                                "plan denied by flow policy ({:?}): {} violation(s)",
-                                denial.verdict,
-                                denial.violations.len()
-                            ));
-                        }
-                        let commit_ref = es.mint_plan_commit_ref();
-                        let agent_plan_text = dry_text.clone();
-                        let mut markdown = format!("```text\n{dry_text}\n```");
-                        markdown.push_str(&format!(
-                            "\n\n**Run:** pass `run_ref`: `{}` to **`plasm_run`**. Do not echo the program.",
-                            commit_ref.as_str()
-                        ));
-                        let commit_record = PlanCommitRecord::from_dry_review(
-                            commit_ref.clone(),
-                            compute_plan_commit_id_from_dry(&dry),
-                            es.domain_revision,
-                            &dry,
-                            program_for_trace.clone(),
-                            compact.verdict,
-                            std::time::Instant::now() + PLAN_COMMIT_TTL,
-                        )
-                        .map_err(|denial| {
-                            format!(
-                                "plan commit blocked by flow policy ({:?}): {} violation(s)",
-                                denial.verdict,
-                                denial.violations.len()
-                            )
-                        })?;
-                        crate::plan_commit_store::register_plan_commit_and_persist(
-                            self.plasm.as_ref(),
-                            b.prompt_hash.as_str(),
-                            b.session_id.as_str(),
-                            commit_record,
-                        )
-                        .await
-                        .map_err(|e| e.to_string())?;
-                        let ux_ctx = crate::plan_ux_reflection::PlanUxBuildContext {
-                            session: Some(&es),
-                            param_bindings: &[],
-                        };
-                        let plan_ux_reflection =
-                            crate::plan_ux_reflection::plan_ux_reflection_value(&dry, &ux_ctx);
-                        let plan_refs = CodePlanTraceInput {
-                            hub: &self.plasm.trace_hub,
-                            store: &self.plasm.run_artifacts,
-                            mcp_key: &ls_key,
-                            es: &es,
-                            prompt_hash: b.prompt_hash.as_str(),
-                            session_id: b.session_id.as_str(),
-                            comp: Arc::clone(&comp_wire),
-                            program: &program_for_trace,
-                            plan_call_index: call_index,
-                            code_chars: program_for_trace.chars().count() as u64,
-                        }
-                        .emit_evaluate(Some(plan_ux_reflection))
-                        .await;
-                        let projection_warning = dry
-                            .graph_summary
-                            .get("dry_review")
-                            .and_then(|v| v.get("has_unprojected_multi_row_read"))
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-                        let agent_plasm = plasm_tool_dry_meta::build_dry_run_agent_plasm_meta(
-                            &commit_ref,
-                            compact.verdict,
-                            session_ref.as_str(),
-                            &plan_refs,
-                            es.domain_revision,
-                            projection_warning,
-                        );
-                        let mut meta = serde_json::Map::new();
-                        meta.insert("plasm".into(), serde_json::Value::Object(agent_plasm));
-                        Ok(PlasmPlanRunResult {
-                            version: dry.version,
-                            node_results: dry.node_results,
-                            graph_summary: dry.graph_summary,
-                            comp: Some(comp_wire.as_ref().clone()),
-                            code_plan_run_artifacts: Vec::new(),
-                            run_markdown: Some(markdown),
-                            run_plasm_meta: Some(meta),
-                            agent_structured_plan_text: Some(agent_plan_text),
-                            return_steps: Vec::new(),
-                        })
+                let dry_out = plasm_tool_dry_run::execute_plasm_tool_dry_run(
+                    plasm_tool_dry_run::PlasmDryRunContext {
+                        host: self.plasm.as_ref(),
+                        es: Arc::clone(&es),
+                        binding: &b,
+                        session_ref: session_ref.as_str(),
+                        ls_key: ls_key.as_str(),
+                        call_index,
+                    },
+                    program,
+                )
+                .await?;
+                Ok(plasm_tool_dry_run::PlasmToolRunOutcome {
+                    result: dry_out.result,
+                    inline_plan_ui: dry_out.inline_plan_ui,
+                })
             }
         }
         .instrument(plasm_tool_span)
@@ -852,6 +766,7 @@ impl PlasmMcpHandler {
         match run_result {
             Ok(out) => {
                 let markdown = out
+                    .result
                     .run_markdown
                     .unwrap_or_else(|| "# Plasm program plan\n\nNo execution output.".to_string());
                 let response_chars = markdown.chars().count() as u64;
@@ -894,14 +809,15 @@ impl PlasmMcpHandler {
                     markdown, None, None,
                 ))];
                 let mut res = CallToolResult::from_content(blocks);
-                if let Some(m) = out.run_plasm_meta {
+                if let Some(m) = out.result.run_plasm_meta {
                     res = crate::mcp_ui_payload::finalize_mcp_tool_result(
                         res,
                         m,
-                        out.agent_structured_plan_text.as_deref(),
+                        out.result.agent_structured_plan_text.as_deref(),
+                        out.inline_plan_ui,
                     );
                 }
-                self.persist_transport_state(key).await;
+                self.schedule_persist_transport_state(key);
                 Ok(res)
             }
             Err(msg) => {
@@ -1449,6 +1365,22 @@ async fn dispatch_plasm_mcp_call_tool_request(
         res: &Result<CallToolResult, CallToolError>,
         started: Instant,
     ) {
+        record_named_mcp_tool(tname, res, started);
+    }
+
+    fn record_app_ui_tool(
+        tname: &'static str,
+        res: &Result<CallToolResult, CallToolError>,
+        started: Instant,
+    ) {
+        record_named_mcp_tool(tname, res, started);
+    }
+
+    fn record_named_mcp_tool(
+        tname: &'static str,
+        res: &Result<CallToolResult, CallToolError>,
+        started: Instant,
+    ) {
         let elapsed = started.elapsed();
         match res {
             Ok(_) => crate::metrics::record_mcp_tool(tname, None, "success", "none", elapsed),
@@ -1593,6 +1525,22 @@ async fn dispatch_plasm_mcp_call_tool_request(
                     elapsed,
                 ),
             }
+            res
+        }
+        "plasm_ui_read_plan" => {
+            let started = Instant::now();
+            let res = handler
+                .handle_ui_read_plan(key.as_str(), &runtime, &v)
+                .await;
+            record_app_ui_tool("plasm_ui_read_plan", &res, started);
+            res
+        }
+        "plasm_ui_read_run" => {
+            let started = Instant::now();
+            let res = handler
+                .handle_ui_read_run(key.as_str(), &runtime, &v)
+                .await;
+            record_app_ui_tool("plasm_ui_read_run", &res, started);
             res
         }
         _ => {

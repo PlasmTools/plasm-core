@@ -70,6 +70,7 @@ pub async fn mcp_tool_meta(
     json!({ "_meta": meta, "structuredContent": structured, "mcp_result": result })
 }
 
+#[allow(dead_code)]
 pub async fn mcp_read_resource_json(
     client: &Client,
     base: &str,

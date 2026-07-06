@@ -133,7 +133,7 @@ impl ExecuteMcpLiveRun {
     fn code_plan_trace_input(&self, comp: Arc<TraceCompWire>) -> CodePlanTraceInput<'_> {
         CodePlanTraceInput {
             hub: self.artifacts.trace_hub.as_ref(),
-            store: self.artifacts.run_artifacts.as_ref(),
+            store: Arc::clone(&self.artifacts.run_artifacts),
             mcp_key: self.wire.ls_key.as_str(),
             es: self.es.as_ref(),
             prompt_hash: self.wire.prompt_hash.as_str(),

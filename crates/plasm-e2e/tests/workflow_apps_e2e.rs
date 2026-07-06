@@ -61,7 +61,8 @@ async fn base_url() -> String {
 }
 
 fn plan_ux_reflection_from_body(body: &Value) -> &Value {
-    body.pointer("/_meta/ui/plasm/plan_ux_reflection")
+    body.pointer("/structuredContent/ui/plan_ux_reflection")
+        .or_else(|| body.pointer("/_meta/ui/plasm/plan_ux_reflection"))
         .or_else(|| body.pointer("/_meta/plasm/plan_ux_reflection"))
         .or_else(|| body.get("plan_ux_reflection"))
         .or_else(|| body.pointer("/plan_ux_reflection"))
@@ -78,18 +79,21 @@ fn assert_agent_mcp_tool_compact(body: &Value) {
         "agent structuredContent.plasm must omit snapshot steps: {body}"
     );
     assert!(
-        body.pointer("/structuredContent/ui/comp").is_none(),
-        "structuredContent.ui must not carry comp DAG: {body}"
+        body.pointer("/structuredContent/plasm/plan_ux_reflection").is_none(),
+        "agent structuredContent.plasm must omit plan_ux_reflection: {body}"
     );
-    assert!(
-        body.pointer("/structuredContent/ui/plan_ux_reflection")
-            .is_none(),
-        "structuredContent.ui must not carry plan_ux_reflection: {body}"
+    assert_eq!(
+        body.pointer("/structuredContent/ui/kind")
+            .and_then(|v| v.as_str()),
+        Some("plan_review"),
+        "structuredContent.ui must declare plan_review kind: {body}"
     );
+    let ui_has_payload = body.pointer("/structuredContent/ui/comp").is_some()
+        || body.pointer("/structuredContent/ui/plan_http_path").is_some()
+        || body.pointer("/structuredContent/ui/plan_uri").is_some();
     assert!(
-        body.pointer("/structuredContent/ui/preview_entities")
-            .is_none(),
-        "structuredContent.ui must not carry preview_entities: {body}"
+        ui_has_payload,
+        "structuredContent.ui must carry inline comp or fetch refs: {body}"
     );
     assert!(
         body.pointer("/_meta/ui/plasm").is_none(),

@@ -1,5 +1,7 @@
 //! Plan commit registration with optional durable descriptor refresh.
 
+use std::sync::Arc;
+
 use plasm_core::{PlanCommitId, PlanCommitRef};
 
 use crate::execute_session::ExecuteSession;
@@ -88,7 +90,18 @@ pub async fn register_plan_commit_and_persist(
     st: &PlasmHostState,
     prompt_hash: &str,
     session_id: &str,
+    record: PlanCommitRecord,
+) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
+    register_plan_commit_with_persist(st, prompt_hash, session_id, record, true).await
+}
+
+/// Register a plan commit in the live execute session; optionally await durable descriptor patch.
+pub async fn register_plan_commit_with_persist(
+    st: &PlasmHostState,
+    prompt_hash: &str,
+    session_id: &str,
     mut record: PlanCommitRecord,
+    await_persist: bool,
 ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
     // Live row only — never fall back to a caller Arc (stale exposure / split-brain).
     let Some(live) = st.get_execute_session(prompt_hash, session_id).await else {
@@ -101,16 +114,35 @@ pub async fn register_plan_commit_and_persist(
         .sessions
         .reuse_key_for_execute_pair(prompt_hash, session_id)
         .await;
-    match st
-        .execute_session_registry
-        .patch_plan_commits_only(live.as_ref(), session_id, reuse_key.as_ref())
-        .await
-    {
-        Ok(outcome) => Ok(outcome),
-        Err(err) => {
-            live.remove_plan_commit(&commit_ref);
-            Err(err)
+    let registry = st.execute_session_registry.clone();
+    let es = Arc::clone(&live);
+    let sid = session_id.to_string();
+    if await_persist {
+        match registry
+            .patch_plan_commits_only(es.as_ref(), sid.as_str(), reuse_key.as_ref())
+            .await
+        {
+            Ok(outcome) => Ok(outcome),
+            Err(err) => {
+                live.remove_plan_commit(&commit_ref);
+                Err(err)
+            }
         }
+    } else {
+        crate::metrics::record_mcp_response_deferred_io("commit_persist");
+        tokio::spawn(async move {
+            if let Err(err) = registry
+                .patch_plan_commits_only(es.as_ref(), sid.as_str(), reuse_key.as_ref())
+                .await
+            {
+                tracing::warn!(
+                    target: "plasm_agent::mcp",
+                    error = %err,
+                    "background plan commit persist failed (non-fatal)"
+                );
+            }
+        });
+        Ok(ExecuteSessionPersistOutcome::InMemoryOnly)
     }
 }
 

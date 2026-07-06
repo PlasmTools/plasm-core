@@ -11,6 +11,7 @@ pub(crate) use meta::{build_mcp_run_tool_meta, tool_meta_from_handles};
 use meta::build_ui_steps;
 use policy::PublishPlan;
 use render::{build_inline_bodies, format_resolved_steps, render_markdown, truncated_flags};
+use serde_json::json;
 
 use super::{ExecuteRunToolOutput, PublishedResultStep, *};
 use crate::mcp_plasm_meta::PlasmMetaIndex;
@@ -50,12 +51,20 @@ pub fn publish_plasm_result_steps_with_policy(
     );
     let all_ui_steps = build_ui_steps(steps, &plan, &truncated, cgs, policy);
     let paging_for_meta = (!inline.paging.is_empty()).then_some(inline.paging.as_slice());
-    let tool_meta = build_mcp_run_tool_meta(
+    let mut tool_meta = build_mcp_run_tool_meta(
         meta_index,
         &all_ui_steps,
         &inline.omitted_union,
         paging_for_meta,
     );
+    if let Some(meta) = tool_meta.as_mut() {
+        if let Some(plasm) = meta.get_mut("plasm").and_then(|v| v.as_object_mut()) {
+            plasm.insert(
+                "result_delivery".into(),
+                json!(plan.result_delivery(preview_needed)),
+            );
+        }
+    }
     ExecuteRunToolOutput {
         markdown,
         tool_meta,
@@ -169,6 +178,13 @@ mod tests {
             "must not metadata-preview small inline results: {}",
             out.markdown
         );
+        let delivery = out
+            .tool_meta
+            .as_ref()
+            .and_then(|m| m.get("plasm"))
+            .and_then(|p| p.get("result_delivery"))
+            .and_then(|v| v.as_str());
+        assert_eq!(delivery, Some("inline"), "small inline runs: {out:?}");
     }
 
     #[test]

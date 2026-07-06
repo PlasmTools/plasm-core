@@ -4,7 +4,7 @@ use crate::approval_gate::{effect_operation_label, policy_key_for};
 use crate::plan_flow::{ApprovalRequirement, NodeDisposition};
 use crate::plasm_plan::{EffectClass, PlanNodeKind, QualifiedEntityKey};
 use plasm_core::{DataClassName, SinkClassName};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 /// Monotonic tenant-owned policy revision marker.
@@ -12,7 +12,7 @@ use std::collections::BTreeSet;
 pub struct PolicyRevision(pub u64);
 
 /// Host policy used when a node requires approval.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalHostPolicy {
     AutoApprove,
@@ -20,7 +20,7 @@ pub enum ApprovalHostPolicy {
 }
 
 /// Node-level flow enforcement selected by policy evaluation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FlowEnforcement {
     Allow,
@@ -100,7 +100,7 @@ impl EffectEvent {
 }
 
 /// Pattern matched against effect events (surface or for_each effect template).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectEventPattern {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub entry_id: Option<String>,
@@ -172,7 +172,7 @@ impl EffectEventPattern {
 }
 
 /// Explicit policy deny-list for label -> sink flow.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ForbiddenFlowRule {
     pub from_label: DataClassName,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -182,14 +182,14 @@ pub struct ForbiddenFlowRule {
 }
 
 /// Effect-matching rule that sets default disposition.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EffectRule {
     pub pattern: EffectEventPattern,
     pub enforcement: FlowEnforcement,
 }
 
 /// Capabilities recognized as sanitizers for selected labels.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SanitizerRecognition {
     pub capability: String,
     #[serde(default)]
@@ -197,7 +197,7 @@ pub struct SanitizerRecognition {
 }
 
 /// Policy payload pinned to an execute session.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FlowPolicy {
     #[serde(default)]
     pub forbidden: Vec<ForbiddenFlowRule>,

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.132] - 2026-07-06
+
+### Added
+
+- **SEP-1865 MCP UI delivery:** triple-lane wire (`structuredContent.ui`, slim agent `structuredContent.plasm`, `_meta.ui` mount pointer); app-only `plasm_ui_read_plan` / `plasm_ui_read_run` tools; inline plan UI when under byte budget; contract guard + e2e coverage.
+- **MCP dry-run perf:** defer plan archive + commit persist when inline UI fits; non-blocking transport-state Redis persist after tool response.
+- **OTEL:** `plasm.mcp.plasm_dry_run.phase_duration_ms` histogram; `plasm.mcp.response.deferred_io_total` counter (`plan_archive`, `commit_persist`, `transport_state`).
+
+### Fixed
+
+- **Plan UI:** WeakMap-scoped deferred Flow render; tab switch owns lazy DAG mount (no duplicate render calls).
+- **MCP UI host:** legacy `_meta.plasm` adapter isolated to `mergePlasmWireView`; shared run artifact resolver for UI read tools.
+
 ## [0.3.131] - 2026-07-06
 
 ### Fixed

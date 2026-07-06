@@ -161,4 +161,20 @@ impl PublishPlan {
         }
         mcp_preview_markdown_needed(false, inline_char_count, policy)
     }
+
+    /// Agent delivery hint mirrored into `structuredContent.plasm.result_delivery`.
+    pub(crate) fn result_delivery(&self, preview_needed: bool) -> &'static str {
+        if preview_needed {
+            return "snapshot_only";
+        }
+        if self
+            .resolved
+            .iter()
+            .any(|r| !r.mode.skips_inline_format())
+        {
+            "inline"
+        } else {
+            "snapshot_only"
+        }
+    }
 }

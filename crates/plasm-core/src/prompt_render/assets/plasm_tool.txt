@@ -34,7 +34,7 @@ TSV table semantics:
 Core surface:
 - Program shape: one `plasm_expr`, or `label = …` bindings then **one** final return line — comma-separated roots on that line only (e.g. `a, b`), never one bare label per line (no `return` keyword).
 - Postfix/`[p#]`/`[fields]`: copy exact forms from the TSV left column (`.limit` `.sort` `.filter{…}` `.group_by` `.aggregate` …).
-- Large list reads return inline TSV only when ≤25 rows and no run snapshot is stored. When a snapshot URI is present, fetch JSON via **`resources/read`** or **`plasm_read_run_artifact`** — no inline TSV is sent. Use **`next_run_ref`** on **`plasm_run`** only when no snapshot was stored. Copy **`run_id`** or **`artifact_uri`** from the same `_meta.plasm.steps[]` entry; never use plan **`run_step`**, session **`resource_index`**, **`meta_generation`**, or **`dict_ref`** as artifact addresses.
+- Live **`plasm_run`** returns rows in tool **`content`** TSV when ≤25 rows (`structuredContent.plasm.result_delivery`: `inline`); larger or reference-only results use `snapshot_only` and require **`resources/read`** or **`plasm_read_run_artifact`**. Use **`next_run_ref`** on **`plasm_run`** only when no snapshot was stored. Copy **`run_id`** or **`artifact_uri`** from `_meta.plasm.steps[]`; never use plan **`run_step`**, session **`resource_index`**, **`meta_generation`**, or **`dict_ref`** as artifact addresses. **`structuredContent.plasm.index_delta`** is not the row payload channel.
 - `page(...)` is HTTP-execute program syntax only — not an MCP tool argument or `plasm` program.
 - Search when exposed: `e#~$` or `e#~"text"` (bare `e#~` is a parse error); optional scoped filters `e#~"text"[{p#=…}]`.
 

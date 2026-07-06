@@ -6,6 +6,6 @@
 
 **Live execute:** server spawns one async operation and awaits terminal rows in the tool response. Progress uses standard `notifications/plasm/op` on the registered handle.
 
-**Live results:** `## {return_label} ({n} rows)` header always. **Small results (≤25 rows, no snapshot):** inline ` ```tsv ` in the tool body — use directly. **Snapshot URI present:** no inline TSV is sent; fetch JSON via the artifact read path (see suffix below). Multi-return programs use `# Results` with `### {label} ({n} rows)` per root.
+**Live results:** `## {return_label} ({n} rows)` header always. **Small results (≤25 rows):** inline ` ```tsv ` in tool **`content`** — use directly; live runs may still store a server-side snapshot for Run Explorer. Check **`structuredContent.plasm.result_delivery`**: `inline` means rows are in **`content`**; `snapshot_only` means fetch via the artifact read path (suffix below). A `plasm://…` snapshot line or `(in artifact)` cells in **`content`** also require artifact read. Multi-return programs use `# Results` with `### {label} ({n} rows)` per root. **`structuredContent.plasm.index_delta`** is not the row payload channel.
 
 **Retry:** transient `session materialization changed during concurrent execute` — re-issue the same `plasm_run` once.

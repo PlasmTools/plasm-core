@@ -391,7 +391,7 @@ pub(crate) async fn maybe_emit_http_code_plan_evaluate(
     };
     let input = CodePlanTraceInput {
         hub: &st.trace_hub,
-        store: &st.run_artifacts,
+        store: Arc::clone(&st.run_artifacts),
         mcp_key: &ctx.ls_key,
         es: sess,
         prompt_hash,
@@ -401,7 +401,7 @@ pub(crate) async fn maybe_emit_http_code_plan_evaluate(
         plan_call_index,
         code_chars: program.chars().count() as u64,
     };
-    input.emit_evaluate(ctx.plan_ux_reflection).await;
+    input.emit_evaluate(ctx.plan_ux_reflection, false).await;
 }
 
 /// Emit `code_plan_execute` when HTTP live run shares an MCP logical session binding.
@@ -434,7 +434,7 @@ pub(crate) async fn maybe_emit_http_code_plan_execute(
     };
     let input = CodePlanTraceInput {
         hub: &st.trace_hub,
-        store: &st.run_artifacts,
+        store: Arc::clone(&st.run_artifacts),
         mcp_key: &ctx.ls_key,
         es: sess,
         prompt_hash,

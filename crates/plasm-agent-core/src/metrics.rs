@@ -40,6 +40,8 @@ struct AgentMetrics {
     run_artifact_archive_puts: Counter<u64>,
     trace_timeline_events_dropped: Counter<u64>,
     mcp_plasm_run_phase_duration_ms: Histogram<f64>,
+    mcp_plasm_dry_run_phase_duration_ms: Histogram<f64>,
+    mcp_response_deferred_io: Counter<u64>,
     plan_execute_write_conflict_retry: Counter<u64>,
 }
 
@@ -177,6 +179,18 @@ fn agent_metrics() -> &'static AgentMetrics {
                 .f64_histogram("plasm.mcp.plasm_run.phase_duration_ms")
                 .with_description("Wall time between MCP plasm_run phase checkpoints.")
                 .build(),
+            mcp_plasm_dry_run_phase_duration_ms: m
+                .f64_histogram("plasm.mcp.plasm_dry_run.phase_duration_ms")
+                .with_description(
+                    "Wall time per MCP plasm dry-run phase on the tool response critical path.",
+                )
+                .build(),
+            mcp_response_deferred_io: m
+                .u64_counter("plasm.mcp.response.deferred_io_total")
+                .with_description(
+                    "Durable I/O moved off the MCP tool response critical path.",
+                )
+                .build(),
             plan_execute_write_conflict_retry: m
                 .u64_counter("plasm.plan_execute.write_conflict_retry_total")
                 .with_description(
@@ -200,6 +214,25 @@ pub fn record_mcp_plasm_run_phase(phase: &'static str, duration: Duration) {
     agent_metrics()
         .mcp_plasm_run_phase_duration_ms
         .record(ms, attrs);
+}
+
+/// Dry-run phase on the MCP `plasm` tool response critical path.
+///
+/// `phase`: `compile` | `dry_eval` | `prepare` | `commit_register` | `trace_emit` | `build_response` | `total`
+pub fn record_mcp_plasm_dry_run_phase(phase: &'static str, duration: Duration) {
+    let ms = duration.as_secs_f64() * 1000.0;
+    let attrs = &[KeyValue::new("phase", phase)];
+    agent_metrics()
+        .mcp_plasm_dry_run_phase_duration_ms
+        .record(ms, attrs);
+}
+
+/// Durable I/O deferred past MCP tool response return.
+///
+/// `work`: `plan_archive` | `commit_persist` | `transport_state`
+pub fn record_mcp_response_deferred_io(work: &'static str) {
+    let attrs = &[KeyValue::new("work", work)];
+    agent_metrics().mcp_response_deferred_io.add(1, attrs);
 }
 
 /// `multi_line`: `None` except for `plasm` (`Some(true)` / `Some(false)`).
@@ -481,5 +514,13 @@ mod tests {
         record_mcp_transport_auth("invalid_token", "oauth");
         record_audit_control_plane("tenant.resolve", "success");
         record_audit_control_plane("mcp.config.upsert", "validation_error");
+    }
+
+    #[test]
+    fn plasm_dry_run_phase_metrics_smoke() {
+        record_mcp_plasm_dry_run_phase("compile", Duration::from_millis(3));
+        record_mcp_plasm_dry_run_phase("dry_eval", Duration::from_millis(12));
+        record_mcp_response_deferred_io("plan_archive");
+        record_mcp_response_deferred_io("transport_state");
     }
 }

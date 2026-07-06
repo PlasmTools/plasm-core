@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use rust_mcp_sdk::schema::{
     Tool, ToolAnnotations, ToolExecution, ToolExecutionTaskSupport, ToolInputSchema,
 };
+use serde_json::Map;
 
 use crate::mcp_run_markdown::ArtifactAccessMode;
 use plasm_core::prompt_render::{
@@ -159,7 +160,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
         }),
         icons: vec![],
         meta: Some(crate::plan_ui_mcp::plan_review_ui_tool_meta()),
-        output_schema: None,
+        output_schema: Some(crate::mcp_ui_payload::plasm_tool_output_schema()),
     });
     tools.push(Tool {
         name: "plasm_run".into(),
@@ -180,7 +181,7 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
         }),
         icons: vec![],
         meta: Some(crate::run_explorer_ui_mcp::run_explorer_ui_tool_meta()),
-        output_schema: None,
+        output_schema: Some(crate::mcp_ui_payload::plasm_run_tool_output_schema()),
     });
     tools.push(Tool {
         name: "plasm_ui_list_catalogs".into(),
@@ -209,6 +210,8 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
         ),
         output_schema: None,
     });
+    tools.push(ui_read_plan_tool());
+    tools.push(ui_read_run_tool());
     if artifact_access.exposes_read_tool() {
         let mut read_props = BTreeMap::new();
         read_props.insert(
@@ -259,4 +262,99 @@ pub(crate) fn plasm_tools(artifact_access: ArtifactAccessMode) -> Vec<Tool> {
         tools.extend(crate::workflow_mcp::workflow_mcp_tools());
     }
     tools
+}
+
+fn app_only_tool_meta() -> Map<String, serde_json::Value> {
+    serde_json::json!({
+        "ui": { "visibility": ["app"] }
+    })
+    .as_object()
+    .cloned()
+    .expect("app-only tool meta")
+}
+
+fn ui_read_plan_tool() -> Tool {
+    let mut props = BTreeMap::new();
+    props.insert(
+        "logical_session_ref".into(),
+        json_schema_string_type(
+            "Same `logical_session_ref` returned by `plasm_context`.",
+        ),
+    );
+    props.insert(
+        "run_ref".into(),
+        json_schema_string_type("`pcN` plan commit ref from `plasm` dry-run."),
+    );
+    Tool {
+        name: "plasm_ui_read_plan".into(),
+        title: Some("Hydrate plan DAG for MCP App view".into()),
+        description: Some(
+            "App-only: returns `structuredContent.ui` with `comp` + `plan_ux_reflection` for Plan Review when the host forward omits the UI lane.".into(),
+        ),
+        input_schema: ToolInputSchema::new(
+            vec!["logical_session_ref".into(), "run_ref".into()],
+            Some(props),
+            None,
+        ),
+        annotations: Some(ToolAnnotations {
+            read_only_hint: Some(true),
+            open_world_hint: Some(false),
+            ..Default::default()
+        }),
+        execution: Some(ToolExecution {
+            task_support: Some(ToolExecutionTaskSupport::Forbidden),
+        }),
+        icons: vec![],
+        meta: Some(app_only_tool_meta()),
+        output_schema: Some(crate::mcp_ui_payload::plasm_tool_output_schema()),
+    }
+}
+
+fn ui_read_run_tool() -> Tool {
+    let mut props = BTreeMap::new();
+    props.insert(
+        "logical_session_ref".into(),
+        json_schema_string_type(
+            "Same `logical_session_ref` returned by `plasm_context`.",
+        ),
+    );
+    props.insert(
+        "artifact_uri".into(),
+        serde_json::from_value(serde_json::json!({
+            "type": ["string", "null"],
+            "description": "Run snapshot URI from `plasm_run`. Provide exactly one of `artifact_uri` or `run_id`."
+        }))
+        .expect("artifact_uri schema"),
+    );
+    props.insert(
+        "run_id".into(),
+        serde_json::from_value(serde_json::json!({
+            "type": ["string", "null"],
+            "description": "Content-addressed run id (`pr` + 64 hex) from the tool result step."
+        }))
+        .expect("run_id schema"),
+    );
+    Tool {
+        name: "plasm_ui_read_run".into(),
+        title: Some("Hydrate run snapshot for MCP App view".into()),
+        description: Some(
+            "App-only: returns `structuredContent.ui.steps[].preview_entities` when the host forward omits run rows.".into(),
+        ),
+        input_schema: ToolInputSchema::new(
+            vec!["logical_session_ref".into()],
+            Some(props),
+            None,
+        ),
+        annotations: Some(ToolAnnotations {
+            read_only_hint: Some(true),
+            open_world_hint: Some(false),
+            ..Default::default()
+        }),
+        execution: Some(ToolExecution {
+            task_support: Some(ToolExecutionTaskSupport::Forbidden),
+        }),
+        icons: vec![],
+        meta: Some(app_only_tool_meta()),
+        output_schema: Some(crate::mcp_ui_payload::plasm_run_tool_output_schema()),
+    }
 }

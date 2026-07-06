@@ -1301,6 +1301,12 @@ async fn plasm_read_run_artifact_matches_resources_read() {
             .await
             .expect("plasm_run");
 
+        let run_markdown = call_tool_result_markdown(&run_res);
+        assert!(
+            run_markdown.contains("```tsv"),
+            "small live run must inline TSV in tool content: {run_markdown}"
+        );
+
         let logical_uuid =
             crate::mcp_logical_ref::parse_logical_session_wire_ref(logical_session_ref)
                 .expect("parse logical_session_ref")

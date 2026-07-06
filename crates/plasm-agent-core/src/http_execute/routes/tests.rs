@@ -156,6 +156,7 @@ fn live_run_tool_meta_finalizes_run_explorer_ui() {
         CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]),
         tool_meta,
         None,
+        None,
     );
     assert_eq!(
         res.meta

@@ -17,7 +17,7 @@ fn run_artifact_refs_for_trace(out: &PlasmPlanRunResult) -> Vec<CodePlanRunArtif
 /// Shared inputs for evaluate / execute trace emission.
 pub(crate) struct CodePlanTraceInput<'a> {
     pub hub: &'a crate::trace_hub::TraceHub,
-    pub store: &'a crate::run_artifacts::RunArtifactStore,
+    pub store: Arc<crate::run_artifacts::RunArtifactStore>,
     pub mcp_key: &'a str,
     pub es: &'a ExecuteSession,
     pub prompt_hash: &'a str,
@@ -31,6 +31,8 @@ pub(crate) struct CodePlanTraceInput<'a> {
 pub(crate) enum CodePlanTraceEmit<'a> {
     Evaluate {
         plan_ux_reflection: Option<serde_json::Value>,
+        /// When true, skip durable plan archive write on the response critical path.
+        defer_archive: bool,
     },
     Execute {
         phase: &'static str,
@@ -66,6 +68,13 @@ pub(crate) async fn emit_code_plan_trace(
             ..
         }
     );
+    let defer_archive = matches!(
+        &emit,
+        CodePlanTraceEmit::Evaluate {
+            defer_archive: true,
+            ..
+        }
+    );
     let plan_hash_str = comp_content_sha256_hex(comp);
     let plan_index = input.plan_call_index;
     let handle_str = code_plan_handle(plan_index);
@@ -78,7 +87,7 @@ pub(crate) async fn emit_code_plan_trace(
         } => *id,
     };
     let archived_plan_ux = match &emit {
-        CodePlanTraceEmit::Evaluate { plan_ux_reflection }
+        CodePlanTraceEmit::Evaluate { plan_ux_reflection, .. }
         | CodePlanTraceEmit::Execute {
             plan_ux_reflection, ..
         } => plan_ux_reflection.clone(),
@@ -105,7 +114,7 @@ pub(crate) async fn emit_code_plan_trace(
     let canonical_plan_uri =
         plasm_code_plan_resource_uri(input.prompt_hash, input.session_id, &plan_id);
     let plan_http_path = code_plan_http_path(input.prompt_hash, input.session_id, &plan_id);
-    if !skip_archive {
+    if !skip_archive && !defer_archive {
         if let Err(e) = input
             .store
             .insert_code_plan(
@@ -123,6 +132,29 @@ pub(crate) async fn emit_code_plan_trace(
                 "failed to archive Plasm program plan for trace (non-fatal)"
             );
         }
+    } else if defer_archive {
+        crate::metrics::record_mcp_response_deferred_io("plan_archive");
+        let store = Arc::clone(&input.store);
+        let prompt_hash = input.prompt_hash.to_string();
+        let session_id = input.session_id.to_string();
+        tokio::spawn(async move {
+            if let Err(e) = store
+                .insert_code_plan(
+                    prompt_hash.as_str(),
+                    session_id.as_str(),
+                    plan_id,
+                    plan_index,
+                    &doc,
+                )
+                .await
+            {
+                tracing::warn!(
+                    target: "plasm_agent::mcp",
+                    error = %e,
+                    "background plan archive write failed (non-fatal)"
+                );
+            }
+        });
     }
     let refs = CodePlanEmitRefs {
         plan_uri: canonical_plan_uri.clone(),
@@ -131,7 +163,10 @@ pub(crate) async fn emit_code_plan_trace(
     };
     let node_count = plan_node_count_from_comp(comp);
     match emit {
-        CodePlanTraceEmit::Evaluate { plan_ux_reflection } => {
+        CodePlanTraceEmit::Evaluate {
+            plan_ux_reflection,
+            defer_archive: _,
+        } => {
             input
                 .hub
                 .trace_record_code_plan_evaluate(
@@ -205,10 +240,17 @@ impl<'a> CodePlanTraceInput<'a> {
     pub(crate) async fn emit_evaluate(
         self,
         plan_ux_reflection: Option<serde_json::Value>,
+        defer_archive: bool,
     ) -> CodePlanEmitRefs {
-        emit_code_plan_trace(self, CodePlanTraceEmit::Evaluate { plan_ux_reflection })
-            .await
-            .refs
+        emit_code_plan_trace(
+            self,
+            CodePlanTraceEmit::Evaluate {
+                plan_ux_reflection,
+                defer_archive,
+            },
+        )
+        .await
+        .refs
     }
 
     pub(crate) async fn emit_execute_started(self) -> Uuid {
