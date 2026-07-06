@@ -6,15 +6,22 @@ use crate::schema::{capability_method_label_kebab, EntityDef};
 use crate::symbol_tuning::{CapParamTeachingSurface, IdentMetaKey, IdentMetadata, SymbolMap};
 use crate::{CapabilityKind, FieldType, InputType, ParameterRole, ValueWireFormat, CGS};
 
-use super::gloss_collect::{commit_teaching_field_gloss_row, push_teaching_field_gloss_row, GlossScratch};
+use super::gloss_collect::{
+    commit_teaching_field_gloss_row, push_teaching_field_gloss_row, GlossScratch,
+};
 use super::gloss_dedup::{meaning_canonical_sym_for_emit, FieldGlossMeaning};
 use super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
-use super::query_teaching::{entity_ref_id_example, field_is_filter_like, scope_param_slot, unseeded_entity_ref_invocation_gloss};
+use super::query_teaching::{
+    entity_ref_id_example, field_is_filter_like, scope_param_slot,
+    unseeded_entity_ref_invocation_gloss,
+};
 use super::relation_teaching::receiver_for_dotted_suffix;
 use super::symbol_tokens::{id_sym_cap, met_sym};
 use super::teaching_legend::LEGEND_EM_DESC_SEP;
 use super::teaching_push::try_push_teaching_example;
-use super::teaching_util::{strip_union_constructor_authoring_noise, truncate_inline_desc, TEACHING_PARAM_VALUE_PLACEHOLDER};
+use super::teaching_util::{
+    strip_union_constructor_authoring_noise, truncate_inline_desc, TEACHING_PARAM_VALUE_PLACEHOLDER,
+};
 use super::EntityTeachingExprRow;
 
 #[inline]
@@ -327,7 +334,9 @@ pub(crate) fn format_root_union_constructor_invoke_example(
 }
 
 /// `v101`-row **Meaning** column: variant discriminator name + prose (not the symbolic ctor shape).
-pub(crate) fn format_union_constructor_gloss_legend(v: &crate::schema::InputVariantSchema) -> String {
+pub(crate) fn format_union_constructor_gloss_legend(
+    v: &crate::schema::InputVariantSchema,
+) -> String {
     const MAX_DESC: usize = 120;
     let disc = v.name.as_str();
     let raw =
@@ -382,7 +391,7 @@ pub(crate) fn emit_union_array_constructor_teaching_gloss(
                         Some(gs.meta),
                         Some(gs.cgs),
                         false,
-                        &mut gs.state,
+                        gs.state,
                     );
                 }
             }
@@ -410,7 +419,7 @@ pub(crate) fn emit_union_array_constructor_teaching_gloss(
         Some(gs.map),
         Some(gs.cgs),
         true,
-        &mut gs.state,
+        gs.state,
     );
 }
 

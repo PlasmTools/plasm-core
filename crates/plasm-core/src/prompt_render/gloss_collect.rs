@@ -10,6 +10,7 @@ use super::gloss_dedup::*;
 use super::{is_union_ctor_teaching_surface_line, TeachingFieldGloss};
 
 /// Tracks gloss lines emitted before teaching example rows (first-use only).
+#[derive(Default)]
 pub(crate) struct GlossEmitLedger {
     pub(crate) registry_compact_meaning_canonical_p: HashMap<PSlotSemanticKey, String>,
     pub(crate) registry_p_sym_alias: HashMap<String, String>,
@@ -21,22 +22,6 @@ pub(crate) struct GlossEmitLedger {
     pub(crate) canonical_rows: HashMap<GlossEmitIdentity, TeachingFieldGloss>,
     /// `p#` / `r#` already shown on a prior teaching-row LHS (witness or projection bracket).
     pub(crate) demonstrated_lhs_syms: HashSet<String>,
-}
-
-impl Default for GlossEmitLedger {
-    fn default() -> Self {
-        Self {
-            registry_compact_meaning_canonical_p: HashMap::new(),
-            registry_p_sym_alias: HashMap::new(),
-            registry_value_gloss_canonical_v: HashMap::new(),
-            registry_v_sym_alias: HashMap::new(),
-            defined_value_domains: HashSet::new(),
-            structural_value_domains: HashSet::new(),
-            global_gloss_identities: HashSet::new(),
-            canonical_rows: HashMap::new(),
-            demonstrated_lhs_syms: HashSet::new(),
-        }
-    }
 }
 
 impl GlossEmitLedger {
@@ -649,10 +634,8 @@ pub(crate) fn push_teaching_field_gloss_row(
             entity: canonical_entity,
             skip_p_gloss: false,
         };
-        if is_opaque_p || is_opaque_r {
-            if try_emit_teaching_gloss(&mut ctx, symbol.as_str()) {
-                return;
-            }
+        if (is_opaque_p || is_opaque_r) && try_emit_teaching_gloss(&mut ctx, symbol.as_str()) {
+            return;
         }
     }
 

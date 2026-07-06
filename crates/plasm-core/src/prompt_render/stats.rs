@@ -118,8 +118,7 @@ fn leading_opaque_symbol(expr: &str, prefix: char) -> bool {
         && chars.next().is_some_and(|c| c.is_ascii_digit())
         && expr
             .chars()
-            .skip_while(|c| *c == prefix || c.is_ascii_digit())
-            .next()
+            .find(|c| !(*c == prefix || c.is_ascii_digit()))
             .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_')
 }
 

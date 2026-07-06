@@ -2,12 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::schema::{
-    capability_is_zero_arity_invoke, Cardinality,
-};
-use crate::symbol_tuning::{
-    ExposureSurface, IdentMetaKey, IdentMetadata, SymbolMap,
-};
+use crate::schema::{capability_is_zero_arity_invoke, Cardinality};
+use crate::symbol_tuning::{ExposureSurface, IdentMetaKey, IdentMetadata, SymbolMap};
 use crate::{CapabilityKind, CapabilityName, FieldType, CGS};
 
 use super::gloss_collect::GlossScratch;
@@ -38,11 +34,9 @@ use super::surface_filter::{
 };
 use super::symbol_tokens::{ent_sym, id_sym_entity, id_sym_rel, met_sym};
 use super::teaching_push::try_push_teaching_example;
-use super::tsv_emit::relation_sym_shown_in_query_teaching_rows;
 use super::teaching_util::truncate_inline_desc;
-use super::{
-    EntityTeachingBlock, EntityTeachingExprRow, TeachingHeading,
-};
+use super::tsv_emit::relation_sym_shown_in_query_teaching_rows;
+use super::{EntityTeachingBlock, EntityTeachingExprRow, TeachingHeading};
 
 const MAX_MULTI_ARITY_METHOD_LINES: usize = 16;
 

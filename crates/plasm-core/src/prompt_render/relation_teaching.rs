@@ -16,9 +16,7 @@ use super::query_teaching::{
     compound_get_expr_line, query_expr_filters_only, query_expr_maximal, query_expr_scope_only,
     unary_entity_id_teaching_expr_line,
 };
-use super::surface_filter::{
-    surface_allows_relation_nav, surface_includes_exposed_entity,
-};
+use super::surface_filter::{surface_allows_relation_nav, surface_includes_exposed_entity};
 use super::symbol_tokens::{ent_sym, id_sym_entity, id_sym_rel};
 use super::teaching_push::try_push_teaching_example;
 use super::teaching_util::truncate_inline_desc;
@@ -352,7 +350,10 @@ pub(crate) fn try_push_projection_witness_row(
 }
 
 /// Receiver token for relation-nav teaching: symbolic leading `e#`, else canonical entity name before `(` / `{`.
-pub(crate) fn relation_receiver_teaching_hint(expr: &str, map: Option<&SymbolMap>) -> Option<String> {
+pub(crate) fn relation_receiver_teaching_hint(
+    expr: &str,
+    map: Option<&SymbolMap>,
+) -> Option<String> {
     let t = expr.trim_start();
     if map.is_some() {
         if !t.starts_with('e') {

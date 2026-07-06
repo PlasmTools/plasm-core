@@ -14,8 +14,8 @@ use crate::CGS;
 use super::teaching_gloss_emit::{render_teaching_table, render_teaching_table_resolved};
 use super::tsv_emit::render_prompt_tsv_from_bundle;
 use super::types::{
-    PromptRenderMode, RenderConfig, TeachingPromptBundle, TeachingPromptModel, TeachingPromptSettings,
-    TeachingPromptSource,
+    PromptRenderMode, RenderConfig, TeachingPromptBundle, TeachingPromptModel,
+    TeachingPromptSettings, TeachingPromptSource,
 };
 
 /// Render teaching table [`TeachingPromptBundle`] (structured teaching blocks + execution metadata).

@@ -36,7 +36,10 @@ pub(crate) fn structural_field_type_fp(catalog_entry_id: &str, field_type: &Fiel
     }
 }
 
-pub(crate) fn structural_array_items_fp(catalog_entry_id: &str, items: &ArrayItemsSchema) -> String {
+pub(crate) fn structural_array_items_fp(
+    catalog_entry_id: &str,
+    items: &ArrayItemsSchema,
+) -> String {
     let field_type = structural_field_type_fp(catalog_entry_id, &items.field_type);
     let value_format =
         serde_json::to_string(&items.value_format).unwrap_or_else(|_| "null".to_string());

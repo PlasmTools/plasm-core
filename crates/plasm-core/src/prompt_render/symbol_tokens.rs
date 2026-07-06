@@ -67,7 +67,12 @@ pub(crate) fn id_sym_cap(
 }
 
 #[inline]
-pub(crate) fn id_sym_rel(m: Option<&SymbolMap>, catalog_entry_id: &str, entity: &str, rel: &str) -> String {
+pub(crate) fn id_sym_rel(
+    m: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    entity: &str,
+    rel: &str,
+) -> String {
     m.map(|x| x.ident_sym_relation_for(catalog_entry_id, entity, rel))
         .unwrap_or_else(|| rel.to_string())
 }

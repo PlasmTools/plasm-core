@@ -1,8 +1,8 @@
 //! Capability legend parsing for teaching TSV rows.
 
 use super::input_legend::{CapabilityInputLegend, OptionalLegend, RowContractLegend};
-use super::TeachingExprLine;
 use super::tsv_emit::parse_trailing_projection_bracket;
+use super::TeachingExprLine;
 
 pub(crate) const LEGEND_EM_DESC_SEP: &str = " — ";
 pub(crate) const PROJECTION_WITNESS_LEGEND_MARK: &str = "· projection";
@@ -69,7 +69,6 @@ pub(crate) fn teaching_expr_line_from_layers(
 /// **Wire-first keys** (`owner`, `id`, …): omit when the shared `v#` row already carries type;
 /// emit **point-of-use prose only** when it adds information beyond the value domain.
 /// **Opaque `p#` keys** keep `v# · wire` (and optional prose).
-
 /// Returns `(scope_line, rest)` when `sig` begins with a `[scope …]` block; otherwise `("", sig)`.
 pub(crate) fn split_leading_scope_legend(sig: &str) -> (&str, &str) {
     let t = sig.trim_start();
@@ -111,7 +110,10 @@ pub(crate) fn split_compact_args_from_sig_fragment(sig: &str) -> (String, String
 /// Meaning-column `optional` is only for rows that teach optional invoke/query slots in the
 /// expression (`p#=$` placeholders or `,..` / `(..)` ellipsis). Zero-arity invokes like `.m33()`
 /// must not carry the legend when the schema's optional params are omitted from the exemplar.
-pub(crate) fn teaching_expr_demonstrates_optional_params(expr: &str, optional_syms: &[String]) -> bool {
+pub(crate) fn teaching_expr_demonstrates_optional_params(
+    expr: &str,
+    optional_syms: &[String],
+) -> bool {
     if optional_syms.is_empty() {
         return false;
     }

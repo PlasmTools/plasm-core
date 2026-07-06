@@ -62,36 +62,41 @@ use std::collections::HashMap;
 use crate::symbol_tuning::SymbolMap;
 use crate::CGS;
 
-mod types;
 mod bundle_render;
-mod internal;
-mod input_legend;
 mod capability_delta;
 mod contract;
+mod entity_block;
 mod gloss_collect;
 mod gloss_dedup;
 mod gloss_filter;
+mod input_legend;
+mod internal;
+mod invoke_teaching;
 mod line_validate;
 mod mcp_prompt_fragments;
 mod mcp_tool_descriptions;
 mod query_teaching;
+mod relation_teaching;
 mod row_producer;
+mod row_producer_teaching;
 mod stats;
+mod surface_filter;
 mod symbol_tokens;
 mod teaching_gloss_emit;
 mod teaching_legend;
 mod teaching_push;
 mod teaching_util;
-mod surface_filter;
-mod relation_teaching;
-mod row_producer_teaching;
-mod invoke_teaching;
-mod entity_block;
 mod tsv_emit;
+mod types;
 
 #[cfg(test)]
 mod query_teaching_tests;
 
+pub use bundle_render::{
+    render_prompt_tsv_with_config, render_prompt_with_config, render_teaching_bundle,
+    render_teaching_prompt_bundle, render_teaching_prompt_bundle_for_exposure,
+    render_teaching_prompt_bundle_for_exposure_federated, render_teaching_tsv,
+};
 pub use input_legend::{
     CapabilityInputLegend, OptionalLegend, RowContractLegend, RowProjectionContract,
     TeachingExprLine,
@@ -102,11 +107,6 @@ pub use types::{
     RelationMaterializationSummary, RenderConfig, TeachingFieldGloss, TeachingHeading,
     TeachingLineMeta, TeachingPromptBundle, TeachingPromptModel, TeachingPromptSettings,
     TeachingPromptSource, TSV_TEACHING_TABLE_HEADER,
-};
-pub use bundle_render::{
-    render_prompt_tsv_with_config, render_prompt_with_config, render_teaching_bundle,
-    render_teaching_prompt_bundle, render_teaching_prompt_bundle_for_exposure,
-    render_teaching_prompt_bundle_for_exposure_federated, render_teaching_tsv,
 };
 
 pub use capability_delta::{
@@ -144,27 +144,27 @@ pub(crate) use internal::*;
 pub(crate) use bundle_render::{
     render_prompt_tsv_for_single_catalog_exposure, render_teaching_prompt_bundle_for_validation,
 };
-pub(crate) use types::{TeachingRowDedupeKey, TEACHING_OPTIONAL_LEGEND_MARK};
 pub(crate) use relation_teaching::render_relation_edge_delta_rows;
 pub(crate) use tsv_emit::{
     is_union_ctor_teaching_surface_line, parse_trailing_projection_bracket,
     render_prompt_tsv_from_bundle,
 };
+pub(crate) use types::{TeachingRowDedupeKey, TEACHING_OPTIONAL_LEGEND_MARK};
 
+#[cfg(test)]
+pub(crate) use gloss_filter::collect_opaque_domain_symbols;
 #[cfg(test)]
 pub(crate) use relation_teaching::incoming_relation_nav_bases_to_entity;
 #[cfg(test)]
 pub(crate) use row_producer_teaching::{projection_bracket_syms, projection_field_sets_equal};
 #[cfg(test)]
-pub(crate) use gloss_filter::collect_opaque_domain_symbols;
-#[cfg(test)]
 pub(crate) use tsv_emit::{projection_bracket_from_teaching_rows, teaching_row_meaning_text};
 
 #[cfg(test)]
-pub(crate) use stats::domain_expression_tool_count_resolved;
-#[cfg(test)]
 pub(crate) use contract::validate_teaching_tsv_teaching_table;
 pub(crate) use gloss_dedup::*;
+#[cfg(test)]
+pub(crate) use stats::domain_expression_tool_count_resolved;
 
 /// Count of synthesized teaching example lines for an entity (same pipeline as emission).
 #[cfg(test)]
@@ -192,9 +192,9 @@ pub(crate) fn domain_example_line_count(cgs: &CGS, ename: &str, map: Option<&Sym
 }
 
 #[cfg(test)]
-pub(crate) use teaching_legend::teaching_expr_line_from_layers;
-#[cfg(test)]
 pub(crate) use crate::symbol_tuning::ExposureSlotKey;
+#[cfg(test)]
+pub(crate) use teaching_legend::teaching_expr_line_from_layers;
 
 #[cfg(test)]
 #[path = "tests.rs"]

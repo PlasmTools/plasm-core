@@ -1,8 +1,10 @@
 //! Exposure-surface gates for incremental teaching waves.
 
 use crate::identity::{EntityFieldName, EntityName, RelationName};
-use crate::symbol_tuning::{ExposureCapabilityKey, ExposureEntityKey, ExposureSlotKey, ExposureSurface};
 use crate::schema::CGS;
+use crate::symbol_tuning::{
+    ExposureCapabilityKey, ExposureEntityKey, ExposureSlotKey, ExposureSurface,
+};
 
 #[inline]
 pub(crate) fn surface_allows_capability(

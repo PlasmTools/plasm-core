@@ -2044,12 +2044,9 @@ impl SymbolMap {
         surface: CapParamTeachingSurface,
     ) -> String {
         match surface {
-            CapParamTeachingSurface::QueryBrace => self.ident_sym_cap_param_for(
-                catalog_entry_id,
-                domain_entity,
-                capability,
-                param,
-            ),
+            CapParamTeachingSurface::QueryBrace => {
+                self.ident_sym_cap_param_for(catalog_entry_id, domain_entity, capability, param)
+            }
             CapParamTeachingSurface::InvokeArg => self.teaching_slot_token_cap_param(
                 catalog_entry_id,
                 domain_entity,
@@ -2070,12 +2067,7 @@ impl SymbolMap {
     ) -> [String; 2] {
         [
             self.ident_sym_cap_param_for(catalog_entry_id, domain_entity, capability, param),
-            self.teaching_slot_token_cap_param(
-                catalog_entry_id,
-                domain_entity,
-                capability,
-                param,
-            ),
+            self.teaching_slot_token_cap_param(catalog_entry_id, domain_entity, capability, param),
         ]
     }
 
@@ -2094,7 +2086,7 @@ impl SymbolMap {
         {
             return self.teaching_slot_token_entity_field(catalog_entry_id, entity, wire);
         }
-        for (key, _) in &self.tables.cap_param_to_sym {
+        for key in self.tables.cap_param_to_sym.keys() {
             if key.entry_id.as_str() == catalog_entry_id
                 && key.domain.as_str() == entity
                 && (key.param.as_str() == wire

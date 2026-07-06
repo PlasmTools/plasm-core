@@ -308,7 +308,7 @@ pub struct TeachingFieldGloss {
     pub is_inline_union_summary: bool,
     /// Canonical typed gloss semantics — source of truth for TSV Meaning projection.
     #[serde(skip, default = "TeachingFieldGloss::default_meaning")]
-    pub meaning: FieldGlossMeaning,
+    pub(crate) meaning: FieldGlossMeaning,
     #[serde(skip, default)]
     pub(crate) catalog_entry_id: String,
     #[serde(skip, default)]
@@ -367,7 +367,6 @@ impl TeachingRowDedupeKey {
         }
     }
 }
-
 
 /// Character and rough token counts plus prompt surface metrics for a rendered prompt.
 ///

@@ -4,15 +4,15 @@ use crate::schema::CGS;
 use crate::symbol_tuning::{CapParamTeachingSurface, ExposureSurface, SymbolMap};
 use crate::InputType;
 
+use super::gloss_collect::GlossScratch;
 use super::input_legend::{RowContractLegend, RowProjectionContract};
+use super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
 use super::row_producer::RowProducerProjection;
 use super::surface_filter::surface_allows_entity_field;
 use super::symbol_tokens::{id_sym_cap, id_sym_entity};
 use super::teaching_push::try_push_teaching_example;
-use super::gloss_collect::GlossScratch;
 use super::EntityTeachingExprRow;
 use crate::schema::RelationSchema;
-use super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
 use std::collections::HashMap;
 
 /// Parse `[p#,…]` into ordered symbols (empty when not a bracket).

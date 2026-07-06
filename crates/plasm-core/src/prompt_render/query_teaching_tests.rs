@@ -5,12 +5,12 @@ use std::collections::HashMap;
 use crate::loader::load_schema_dir;
 use crate::symbol_tuning::{symbol_map_for_prompt, FocusSpec};
 
+use super::teaching_util::truncate_inline_desc;
 use super::{
     collect_entity_teaching_block, parse_trailing_projection_bracket,
     prompt_line_valid_cache_seed_cgs, RenderConfig, PLASM_TOOL_DESCRIPTION,
     TEACHING_OPTIONAL_LEGEND_MARK, TEACHING_VALID_EXPR_MARKER, TSV_TEACHING_TABLE_HEADER,
 };
-use super::teaching_util::truncate_inline_desc;
 
 /// True when `expr` is rooted on `entity_sym` (`e3`, `e3(…)`, `e3[…]`, …) but not a longer
 /// symbol that shares the same digit prefix (`e3` must not match `e30`).

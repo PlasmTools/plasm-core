@@ -472,9 +472,8 @@ async fn mcp_policy_always_spawns_async_when_wait_live() {
         .expect("execute session");
     let pipeline = st.engine.prompt_pipeline();
     let cross = st.sessions.symbol_map_cross_cache();
-    let bundle =
-        compile_plasm_expression(pipeline, Some(cross), &es, "e1(\"a\")", "e1(\"a\")")
-            .expect("compile");
+    let bundle = compile_plasm_expression(pipeline, Some(cross), &es, "e1(\"a\")", "e1(\"a\")")
+        .expect("compile");
     let dry = evaluate_plasm_comp_dry(&es, &bundle).expect("dry");
     assert!(
         !dry.review.execution_is_expensive(),
