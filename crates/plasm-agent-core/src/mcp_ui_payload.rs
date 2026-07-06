@@ -80,9 +80,7 @@ const UI_PLAN_REF_KEYS: &[&str] = &["plan_uri", "plan_http_path", "canonical_pla
 
 /// Tiny fetch refs for MCP App iframes (Cursor forwards `structuredContent`, strips `_meta.ui`).
 fn structured_ui_refs_from_meta(plasm: &Value) -> Option<Value> {
-    let Some(obj) = plasm.as_object() else {
-        return None;
-    };
+    let obj = plasm.as_object()?;
     let mut out = Map::new();
     for key in UI_PLAN_REF_KEYS {
         if let Some(v) = obj.get(*key) {
@@ -186,15 +184,23 @@ mod tests {
         );
         assert!(wire.pointer("/_meta/plasm/plan_text").is_none());
         assert!(wire.pointer("/structuredContent/plasm/comp").is_none());
-        assert!(wire.pointer("/structuredContent/plasm/plan_http_path").is_none());
-        assert!(wire.pointer("/structuredContent/plasm/canonical_plan_uri").is_none());
+        assert!(wire
+            .pointer("/structuredContent/plasm/plan_http_path")
+            .is_none());
+        assert!(wire
+            .pointer("/structuredContent/plasm/canonical_plan_uri")
+            .is_none());
         assert!(wire
             .pointer("/structuredContent/plasm/plan_ux_reflection")
             .is_none());
         assert!(wire.pointer("/structuredContent/plasm/program").is_none());
         assert!(wire.pointer("/structuredContent/plasm/steps").is_none());
-        assert!(wire.pointer("/structuredContent/plasm/plan_http_path").is_none());
-        assert!(wire.pointer("/structuredContent/plasm/canonical_plan_uri").is_none());
+        assert!(wire
+            .pointer("/structuredContent/plasm/plan_http_path")
+            .is_none());
+        assert!(wire
+            .pointer("/structuredContent/plasm/canonical_plan_uri")
+            .is_none());
         assert_eq!(
             wire.pointer("/structuredContent/ui/plan_uri")
                 .and_then(|v| v.as_str()),
@@ -207,7 +213,9 @@ mod tests {
             "UI channel must carry plan_http_path ref"
         );
         assert!(wire.pointer("/structuredContent/ui/comp").is_none());
-        assert!(wire.pointer("/structuredContent/ui/plan_ux_reflection").is_none());
+        assert!(wire
+            .pointer("/structuredContent/ui/plan_ux_reflection")
+            .is_none());
         assert_eq!(
             wire.pointer("/structuredContent/plasm/plan_uri")
                 .and_then(|v| v.as_str()),

@@ -138,7 +138,6 @@ impl ExecuteMcpLiveRun {
             es: self.es.as_ref(),
             prompt_hash: self.wire.prompt_hash.as_str(),
             session_id: self.wire.session_id.as_str(),
-            session_ref: self.wire.session_ref.as_str(),
             comp,
             program: self.artifacts.program_for_trace.as_str(),
             plan_call_index: self.artifacts.plan_call_index,

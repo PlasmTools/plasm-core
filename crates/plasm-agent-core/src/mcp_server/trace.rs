@@ -22,7 +22,6 @@ pub(crate) struct CodePlanTraceInput<'a> {
     pub es: &'a ExecuteSession,
     pub prompt_hash: &'a str,
     pub session_id: &'a str,
-    pub session_ref: &'a str,
     pub comp: Arc<TraceCompWire>,
     pub program: &'a str,
     pub plan_call_index: u64,

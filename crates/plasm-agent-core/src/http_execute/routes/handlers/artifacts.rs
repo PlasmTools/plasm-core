@@ -59,9 +59,7 @@ pub(crate) async fn get_execute_code_plan(
                 Uri::from_static(problem_types::EXECUTE_UNKNOWN_ARTIFACT),
             )
             .with_title("Not Found")
-            .with_detail(
-                "unknown code plan for this session (wrong id, expired, or never stored)",
-            ),
+            .with_detail("unknown code plan for this session (wrong id, expired, or never stored)"),
         );
     };
 

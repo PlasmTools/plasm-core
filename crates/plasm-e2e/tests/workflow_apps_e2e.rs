@@ -82,11 +82,13 @@ fn assert_agent_mcp_tool_compact(body: &Value) {
         "structuredContent.ui must not carry comp DAG: {body}"
     );
     assert!(
-        body.pointer("/structuredContent/ui/plan_ux_reflection").is_none(),
+        body.pointer("/structuredContent/ui/plan_ux_reflection")
+            .is_none(),
         "structuredContent.ui must not carry plan_ux_reflection: {body}"
     );
     assert!(
-        body.pointer("/structuredContent/ui/preview_entities").is_none(),
+        body.pointer("/structuredContent/ui/preview_entities")
+            .is_none(),
         "structuredContent.ui must not carry preview_entities: {body}"
     );
     assert!(
@@ -521,7 +523,9 @@ async fn workflow_apps_e2e_async() {
         "structuredContent.plasm must carry canonical plan_uri: {dry_mcp}"
     );
     assert!(
-        dry_mcp.pointer("/structuredContent/plasm/plan_http_path").is_none(),
+        dry_mcp
+            .pointer("/structuredContent/plasm/plan_http_path")
+            .is_none(),
         "structuredContent.plasm must omit plan_http_path (UI channel only): {dry_mcp}"
     );
     assert!(

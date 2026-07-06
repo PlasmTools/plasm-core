@@ -336,7 +336,6 @@ pub async fn run_seal_record_for_handle(
 /// Shared dry-run + logical-session context for HTTP code-plan trace emission.
 struct HttpCodePlanTraceContext {
     ls_key: String,
-    session_ref: String,
     comp_wire: Arc<TraceCompWire>,
     plan_ux_reflection: Option<serde_json::Value>,
 }
@@ -365,9 +364,6 @@ async fn http_code_plan_trace_context(
     };
     Some(HttpCodePlanTraceContext {
         ls_key: logical_uuid.to_string(),
-        session_ref: crate::mcp_logical_ref::format_logical_session_wire_ref(
-            crate::session_identity::LogicalSessionId(logical_uuid),
-        ),
         comp_wire: Arc::new(trace_comp_wire_from_dry(&dry)),
         plan_ux_reflection: Some(crate::plan_ux_reflection::plan_ux_reflection_value(
             &dry,
@@ -400,7 +396,6 @@ pub(crate) async fn maybe_emit_http_code_plan_evaluate(
         es: sess,
         prompt_hash,
         session_id,
-        session_ref: &ctx.session_ref,
         comp: ctx.comp_wire,
         program,
         plan_call_index,
@@ -444,7 +439,6 @@ pub(crate) async fn maybe_emit_http_code_plan_execute(
         es: sess,
         prompt_hash,
         session_id,
-        session_ref: &ctx.session_ref,
         comp,
         program,
         plan_call_index,
