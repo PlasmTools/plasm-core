@@ -54,7 +54,7 @@ pub(crate) enum PointOfUseProse {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum FieldGlossMeaning {
+pub enum FieldGlossMeaning {
     ValueDomain(ValueDomainStructuralKey),
     RegistryBackedSlot {
         value: ValueDomainStructuralKey,
