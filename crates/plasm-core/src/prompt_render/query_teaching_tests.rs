@@ -72,13 +72,13 @@ fn teaching_tsv_exemplars_round_trip_parser() {
         {
             continue;
         }
-        if !expr.contains('.')
-            && !expr.contains('(')
-            && !expr.contains('{')
-            && !expr.contains('~')
-            && !(expr.starts_with('e')
+        if !(expr.contains('.')
+            || expr.contains('(')
+            || expr.contains('{')
+            || expr.contains('~')
+            || (expr.starts_with('e')
                 && expr.len() > 1
-                && expr[1..].chars().all(|c| c.is_ascii_digit()))
+                && expr[1..].chars().all(|c| c.is_ascii_digit())))
             && expr
                 .chars()
                 .next()
