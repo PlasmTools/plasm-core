@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import type { LoadedCatalog } from "../catalog/loader.js";
 import { toNapiHostTransport } from "./host-transport-bridge.js";
 
-const require = createRequire(import.meta.url);
+const nodeRequire = createRequire(import.meta.url);
 
 export interface TeachingExposureResult {
   tsv: string;
@@ -102,7 +102,7 @@ type NativeConstructor = new () => NativePlasmEngine;
 
 function loadNativeConstructor(): NativeConstructor | null {
   try {
-    const mod = require("@plasm_lang/engine") as { PlasmEngine: NativeConstructor };
+    const mod = nodeRequire("@plasm_lang/engine") as { PlasmEngine: NativeConstructor };
     return mod.PlasmEngine ?? null;
   } catch {
     return null;

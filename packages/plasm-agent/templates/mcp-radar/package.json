@@ -16,13 +16,15 @@
   "dependencies": {
     "@ai-sdk/otel": "1.0.14",
     "@plasm_lang/engine": "0.3.121",
-    "@plasm_lang/vercel-agent": "0.3.120",
+    "@plasm_lang/vercel-agent": "0.3.133",
     "@vercel/functions": "3.7.4",
     "@vercel/oidc": "^3.8.0",
     "@vercel/otel": "1.14.2",
+    "@workflow/errors": "5.0.0-beta.8",
+    "@workflow/utils": "5.0.0-beta.4",
     "ai": "7.0.14",
     "esbuild": "0.25.12",
-    "workflow": "4.5.0",
+    "workflow": "5.0.0-beta.26",
     "zod": "4.3.6"
   },
   "devDependencies": {

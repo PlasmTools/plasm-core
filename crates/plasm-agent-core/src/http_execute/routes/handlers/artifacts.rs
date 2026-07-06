@@ -1,6 +1,102 @@
 //! Run artifacts and evidence.
 
 use super::super::super::*;
+use crate::run_artifacts::CodePlanArchiveDocument;
+
+pub(crate) async fn get_execute_code_plan(
+    Extension(st): Extension<PlasmHostState>,
+    Path((ph, sid, plan_id_str)): Path<(String, String, String)>,
+) -> Response {
+    let prompt_hash = match ph.parse::<PromptHashHex>() {
+        Ok(v) => v,
+        Err(msg) => {
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                format!("invalid `prompt_hash` path segment: {msg}"),
+            );
+        }
+    };
+    let session_id = match sid.parse::<ExecuteSessionId>() {
+        Ok(v) => v,
+        Err(msg) => {
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                format!("invalid `session_id` path segment: {msg}"),
+            );
+        }
+    };
+    let plan_id = match plan_id_str.trim().parse::<Uuid>() {
+        Ok(id) => id,
+        Err(e) => {
+            return problem_response_invalid_execute_path(
+                StatusCode::BAD_REQUEST,
+                format!("invalid `plan_id` path segment: {e}"),
+            );
+        }
+    };
+
+    let payload = match st
+        .run_artifacts
+        .get_code_plan_payload_result(prompt_hash.as_str(), session_id.as_str(), plan_id)
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::INTERNAL_SERVER_ERROR,
+                    Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
+                )
+                .with_title("Internal Server Error")
+                .with_detail(format!("code plan decode failed: {e}")),
+            );
+        }
+    };
+    let Some(payload) = payload else {
+        return problem_response(
+            Problem::custom(
+                ProblemStatus::NOT_FOUND,
+                Uri::from_static(problem_types::EXECUTE_UNKNOWN_ARTIFACT),
+            )
+            .with_title("Not Found")
+            .with_detail(
+                "unknown code plan for this session (wrong id, expired, or never stored)",
+            ),
+        );
+    };
+
+    let doc: CodePlanArchiveDocument = match serde_json::from_slice(payload.bytes.as_ref()) {
+        Ok(d) => d,
+        Err(e) => {
+            return problem_response(
+                Problem::custom(
+                    ProblemStatus::INTERNAL_SERVER_ERROR,
+                    Uri::from_static(problem_types::EXECUTE_SERIALIZATION_FAILED),
+                )
+                .with_title("Internal Server Error")
+                .with_detail(format!("code plan JSON invalid: {e}")),
+            );
+        }
+    };
+
+    tracing::info!(
+        target: "plasm_agent::http_execute",
+        prompt_hash = %prompt_hash.as_str(),
+        session_id = %session_id.as_str(),
+        plan_id = %plan_id,
+        bytes = payload.bytes.len(),
+        "GET execute code plan"
+    );
+
+    Json(serde_json::json!({
+        "comp": doc.comp,
+        "plan_ux_reflection": doc.plan_ux_reflection,
+        "plan_id": doc.plan_id,
+        "plan_handle": doc.plan_handle,
+        "name": doc.name,
+    }))
+    .into_response()
+}
 
 pub(crate) async fn get_execute_run_evidence(
     Extension(st): Extension<PlasmHostState>,

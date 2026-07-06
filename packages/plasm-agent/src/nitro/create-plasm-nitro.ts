@@ -33,6 +33,7 @@ const SERVER_TRACE_DEPS = [
   "@vercel/oidc",
   "@vercel/otel",
   "ai",
+  "semver",
   "workflow",
   "workflow/api",
   "zod",

@@ -2,6 +2,7 @@ import { access, cp } from "node:fs/promises";
 import path from "node:path";
 
 import { copyNativeEnginePackages } from "./copy-native-engine-packages.js";
+import { materializeWorkflowFunctionDeps } from "./materialize-workflow-function-deps.js";
 import { vercelOutputDir } from "./paths.js";
 
 async function pathExists(p: string): Promise<boolean> {
@@ -34,4 +35,6 @@ export async function copyVercelFunctionAssets(options: {
   if (await pathExists(libDir)) {
     await cp(libDir, path.join(funcDir, "lib"), { recursive: true });
   }
+
+  await materializeWorkflowFunctionDeps(options.projectRoot);
 }

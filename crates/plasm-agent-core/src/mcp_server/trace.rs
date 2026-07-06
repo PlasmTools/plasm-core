@@ -42,11 +42,23 @@ pub(crate) enum CodePlanTraceEmit<'a> {
     },
 }
 
+/// HTTP/MCP refs emitted when archiving a code plan (evaluate or execute trace).
+pub(crate) struct CodePlanEmitRefs {
+    pub plan_uri: String,
+    pub canonical_plan_uri: String,
+    pub plan_http_path: String,
+}
+
+pub(crate) struct CodePlanTraceOutcome {
+    pub refs: CodePlanEmitRefs,
+    pub execute_plan_id: Option<Uuid>,
+}
+
 /// Emit evaluate or execute code-plan trace segments (+ optional plan archive).
 pub(crate) async fn emit_code_plan_trace(
     input: CodePlanTraceInput<'_>,
     emit: CodePlanTraceEmit<'_>,
-) -> Option<Uuid> {
+) -> CodePlanTraceOutcome {
     let comp = input.comp.as_ref();
     let skip_archive = matches!(
         &emit,
@@ -91,14 +103,11 @@ pub(crate) async fn emit_code_plan_trace(
         principal: input.es.principal.clone(),
         created_at: Utc::now().to_rfc3339(),
     };
-    let (plan_uri, canonical_plan_uri, plan_http_path) = if skip_archive {
-        (
-            plasm_session_short_plan_uri(input.session_ref, plan_index),
-            plasm_code_plan_resource_uri(input.prompt_hash, input.session_id, &plan_id),
-            code_plan_http_path(input.prompt_hash, input.session_id, &plan_id),
-        )
-    } else {
-        match input
+    let canonical_plan_uri =
+        plasm_code_plan_resource_uri(input.prompt_hash, input.session_id, &plan_id);
+    let plan_http_path = code_plan_http_path(input.prompt_hash, input.session_id, &plan_id);
+    if !skip_archive {
+        if let Err(e) = input
             .store
             .insert_code_plan(
                 input.prompt_hash,
@@ -109,20 +118,17 @@ pub(crate) async fn emit_code_plan_trace(
             )
             .await
         {
-            Ok(h) => (h.plasm_uri, h.canonical_plasm_uri, h.http_path),
-            Err(e) => {
-                tracing::warn!(
-                    target: "plasm_agent::mcp",
-                    error = %e,
-                    "failed to archive Plasm program plan for trace (non-fatal)"
-                );
-                (
-                    plasm_session_short_plan_uri(input.session_ref, plan_index),
-                    plasm_code_plan_resource_uri(input.prompt_hash, input.session_id, &plan_id),
-                    code_plan_http_path(input.prompt_hash, input.session_id, &plan_id),
-                )
-            }
+            tracing::warn!(
+                target: "plasm_agent::mcp",
+                error = %e,
+                "failed to archive Plasm program plan for trace (non-fatal)"
+            );
         }
+    }
+    let refs = CodePlanEmitRefs {
+        plan_uri: canonical_plan_uri.clone(),
+        canonical_plan_uri,
+        plan_http_path,
     };
     let node_count = plan_node_count_from_comp(comp);
     match emit {
@@ -136,9 +142,9 @@ pub(crate) async fn emit_code_plan_trace(
                         plan_id: plan_id.to_string(),
                         plan_name: plan_display_name_from_comp(comp),
                         plan_hash: plan_hash_str,
-                        plan_uri,
-                        canonical_plan_uri,
-                        plan_http_path,
+                        plan_uri: refs.plan_uri.clone(),
+                        canonical_plan_uri: refs.canonical_plan_uri.clone(),
+                        plan_http_path: refs.plan_http_path.clone(),
                         prompt_hash: input.prompt_hash.to_string(),
                         session_id: input.session_id.to_string(),
                         node_count,
@@ -148,7 +154,10 @@ pub(crate) async fn emit_code_plan_trace(
                     },
                 )
                 .await;
-            None
+            CodePlanTraceOutcome {
+                refs,
+                execute_plan_id: None,
+            }
         }
         CodePlanTraceEmit::Execute {
             phase,
@@ -169,9 +178,9 @@ pub(crate) async fn emit_code_plan_trace(
                         plan_id: plan_id.to_string(),
                         plan_name: plan_display_name_from_comp(comp),
                         plan_hash: plan_hash_str,
-                        plan_uri,
-                        canonical_plan_uri,
-                        plan_http_path,
+                        plan_uri: refs.plan_uri.clone(),
+                        canonical_plan_uri: refs.canonical_plan_uri.clone(),
+                        plan_http_path: refs.plan_http_path.clone(),
                         prompt_hash: input.prompt_hash.to_string(),
                         session_id: input.session_id.to_string(),
                         node_count,
@@ -185,14 +194,22 @@ pub(crate) async fn emit_code_plan_trace(
                     },
                 )
                 .await;
-            Some(plan_id)
+            CodePlanTraceOutcome {
+                refs,
+                execute_plan_id: matches!(phase, CODE_PLAN_EXECUTION_STARTED).then_some(plan_id),
+            }
         }
     }
 }
 
 impl<'a> CodePlanTraceInput<'a> {
-    pub(crate) async fn emit_evaluate(self, plan_ux_reflection: Option<serde_json::Value>) {
-        emit_code_plan_trace(self, CodePlanTraceEmit::Evaluate { plan_ux_reflection }).await;
+    pub(crate) async fn emit_evaluate(
+        self,
+        plan_ux_reflection: Option<serde_json::Value>,
+    ) -> CodePlanEmitRefs {
+        emit_code_plan_trace(self, CodePlanTraceEmit::Evaluate { plan_ux_reflection })
+            .await
+            .refs
     }
 
     pub(crate) async fn emit_execute_started(self) -> Uuid {
@@ -206,6 +223,7 @@ impl<'a> CodePlanTraceInput<'a> {
             },
         )
         .await
+        .execute_plan_id
         .expect("execute started trace always returns plan_id")
     }
 

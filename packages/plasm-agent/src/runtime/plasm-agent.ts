@@ -45,7 +45,12 @@ export interface PlasmAgentConfig extends AgentRuntimeConfig {
 export interface AgentGenerateOptions {
   messages?: ModelMessage[];
   resetConversation?: boolean;
+  onStepStart?: () => void | Promise<void>;
   onStepFinish?: (step: AgentStepEvent) => void | Promise<void>;
+  /** Workflow session run id (`wrun_*`) — links OTEL spans to Agent Runs. */
+  sessionId?: string;
+  turnId?: string;
+  turnSequence?: number;
   /** Eve Agent Runs channel kind (`schedule`, `http`, `channel:<name>`, …). */
   channelKind?: EveChannelKind;
 }
@@ -54,6 +59,7 @@ export interface AgentTurnResult {
   text: string;
   steps: unknown[];
   usage: Awaited<ReturnType<typeof runEveToolLoop>>["usage"];
+  toolCount: number;
 }
 
 export class PlasmAgent {
@@ -182,8 +188,15 @@ export class PlasmAgent {
       maxSteps: this.maxSteps,
       agentName: this.agentName,
       channelKind: options.channelKind,
+      sessionId: options.sessionId,
+      turnId: options.turnId,
+      turnSequence: options.turnSequence,
       telemetry,
-      onStepFinish,
+      onStepStart: options.onStepStart,
+      onStepFinish: async (step) => {
+        await options.onStepFinish?.(step);
+        await onStepFinish(step);
+      },
       modelOptions: this.modelOptions,
     });
 
@@ -194,6 +207,7 @@ export class PlasmAgent {
       text: result.text,
       steps: result.steps,
       usage: result.usage,
+      toolCount: Object.keys(tools).length,
     };
   }
 }

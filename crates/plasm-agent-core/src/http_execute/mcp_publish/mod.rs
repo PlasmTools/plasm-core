@@ -146,6 +146,32 @@ mod tests {
     }
 
     #[test]
+    fn publish_small_with_snapshot_inlines_tsv() {
+        let run_id = RunArtifactId::from_wire(&format!("pr{}", "b".repeat(64))).expect("wire");
+        let handle = RunArtifactHandle {
+            run_id,
+            resource_index: 1,
+            plasm_uri: crate::run_artifacts::plasm_short_resource_uri(1),
+            canonical_plasm_uri: crate::run_artifacts::plasm_run_resource_uri("ph", "sid", &run_id),
+            http_path: crate::run_artifacts::artifact_http_path("ph", "sid", &run_id),
+            payload_len: 0,
+            request_fingerprints: vec!["fp".into()],
+        };
+        let step = synthetic_published_result_step(3, Some(handle));
+        let out = publish_plasm_result_steps(None, None, std::slice::from_ref(&step));
+        assert!(
+            out.markdown.contains("```tsv"),
+            "small results must inline TSV even when snapshot stored: {}",
+            out.markdown
+        );
+        assert!(
+            !out.markdown.contains("(preview)"),
+            "must not metadata-preview small inline results: {}",
+            out.markdown
+        );
+    }
+
+    #[test]
     fn publish_over_cap_with_snapshot_uses_artifact_only_without_paging() {
         let run_id = RunArtifactId::from_wire(&format!("pr{}", "a".repeat(64))).expect("wire");
         let handle = RunArtifactHandle {

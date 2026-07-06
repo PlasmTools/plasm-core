@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.131] - 2026-07-06
+
+### Fixed
+
+- **MCP Plan UI:** restore iframe fetch via HTTP content negotiation — `structuredContent.ui` carries tiny refs (`plan_http_path`, canonical `plan_uri`, step artifact paths); Plan/Run iframes GET JSON with `Accept: application/json`; MCP `resources/read` remains fallback.
+- **MCP agent run wire:** inline TSV for small live results (≤ in-band row cap) even when run snapshot artifacts exist; snapshot line appended as supplement, not replacement.
+- **Plan identity:** agent `plan_uri` is always canonical `plasm://execute/.../plan/{uuid}`; removed ambiguous `plasm://p/` transport scan.
+- **Compound entity ctor:** `p#` keys in capability-input compound constructors resolve via qualified catalog scope fallback (`normalize_compound_ctor_key`).
+
+### Added
+
+- **`GET /execute/{ph}/{session}/plans/{plan_id}`** — content-negotiated plan archive JSON (`comp`, `plan_ux_reflection`).
+- **`@plasm/mcp-ui-shared`:** `fetchPlasmExecuteJson`, `ui-fetch-refs`, shared origin resolver for cross-origin Cursor iframes.
+- **`mcp_server/plasm_tool_dry_meta.rs`** — extracted dry-run agent meta builder from `mod.rs`.
+
 ## [0.3.130] - 2026-07-05
 
 ### Fixed

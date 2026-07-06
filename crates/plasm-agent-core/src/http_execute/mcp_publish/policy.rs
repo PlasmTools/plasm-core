@@ -76,7 +76,7 @@ impl ResolvedStepPublish {
         }
     }
 
-    pub(crate) fn requires_snapshot_read(&self, fmt: &StepFormatOutcome) -> bool {
+    pub(crate) fn append_snapshot_supplement(&self, fmt: &StepFormatOutcome) -> bool {
         self.artifact.is_some()
             && (self.mode.skips_inline_format()
                 || !fmt.omitted.is_empty()
@@ -86,7 +86,7 @@ impl ResolvedStepPublish {
 
     pub(crate) fn is_truncated_for_transport(&self, preview_needed: bool) -> bool {
         match &self.format {
-            Some(fmt) => self.requires_snapshot_read(fmt) || preview_needed,
+            Some(_) => preview_needed || self.mode.skips_inline_format(),
             None => preview_needed || self.mode.skips_inline_format(),
         }
     }
@@ -100,13 +100,16 @@ impl ResolvedStepPublish {
         truncated: bool,
         policy: &McpResultTransportPolicy,
     ) -> bool {
-        if self.artifact.is_some() {
-            return false;
-        }
         if self.format.is_some() && !self.mode.skips_inline_format() {
             return false;
         }
-        !truncated || self.row_count <= policy.in_band_entity_rows
+        if self.row_count <= policy.in_band_entity_rows {
+            return true;
+        }
+        if self.artifact.is_some() {
+            return false;
+        }
+        !truncated
     }
 }
 
@@ -146,6 +149,16 @@ impl PublishPlan {
         inline_char_count: usize,
         policy: &McpResultTransportPolicy,
     ) -> bool {
-        mcp_preview_markdown_needed(self.artifact_snapshot_preview, inline_char_count, policy)
+        if self.artifact_snapshot_preview {
+            return true;
+        }
+        let all_within_cap = self
+            .resolved
+            .iter()
+            .all(|r| r.row_count <= policy.in_band_entity_rows);
+        if all_within_cap {
+            return false;
+        }
+        mcp_preview_markdown_needed(false, inline_char_count, policy)
     }
 }

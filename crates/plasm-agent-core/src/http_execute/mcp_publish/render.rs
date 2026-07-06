@@ -101,7 +101,7 @@ fn build_step_section(
             ));
         }
         if let Some(handle) = &resolved.artifact {
-            if resolved.requires_snapshot_read(fmt) {
+            if resolved.append_snapshot_supplement(fmt) {
                 sections.push_str(&mcp_inline_run_snapshot_line(handle, plan.artifact_access));
             }
         }

@@ -23,6 +23,7 @@ export interface AgentStepEvent {
   toolCalls?: Array<{ toolName: string }>;
   text?: string;
   finishReason?: string;
+  usage?: LanguageModelUsage;
 }
 
 export interface EveToolLoopModelOptions {
@@ -40,7 +41,12 @@ export interface EveToolLoopOptions {
   maxSteps: number;
   agentName: string;
   channelKind?: EveChannelKind;
+  /** Workflow session run id (`wrun_*`) for Agent Runs OTEL linkage. */
+  sessionId?: string;
+  turnId?: string;
+  turnSequence?: number;
   telemetry?: TelemetryOptions;
+  onStepStart?: () => void | Promise<void>;
   onStepFinish?: (step: AgentStepEvent) => void | Promise<void>;
   modelOptions?: EveToolLoopModelOptions;
 }
@@ -58,8 +64,9 @@ export interface EveToolLoopResult {
 export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveToolLoopResult> {
   ensureOtelIntegration();
 
-  const sessionId = createEveSessionId();
-  const turnId = createEveTurnId(0);
+  const sessionId = options.sessionId ?? createEveSessionId();
+  const turnSequence = options.turnSequence ?? 0;
+  const turnId = options.turnId ?? createEveTurnId(turnSequence);
   const channelKind = options.channelKind ?? "unknown";
 
   let messages = options.messages;
@@ -69,10 +76,12 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
   const aggregatedSteps: unknown[] = [];
 
   while (stepIndex < options.maxSteps) {
+    await options.onStepStart?.();
+
     const runtimeContext = buildEveRuntimeContext({
       sessionId,
       turnId,
-      sequence: 0,
+      sequence: turnSequence,
       stepIndex,
       channelKind,
     });
@@ -85,7 +94,7 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
       {
         sessionId,
         turnId,
-        sequence: 0,
+        sequence: turnSequence,
         stepIndex,
         channelKind,
         functionId: options.agentName,
@@ -99,7 +108,6 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
           stopWhen: stepCountIs(1),
           runtimeContext: runtimeContext as Context,
           experimental_telemetry: telemetry,
-          onStepFinish: options.onStepFinish,
           ...(options.modelOptions?.temperature !== undefined
             ? { temperature: options.modelOptions.temperature }
             : {}),
@@ -121,6 +129,19 @@ export async function runEveToolLoop(options: EveToolLoopOptions): Promise<EveTo
         return { text, finishReason, steps, usage, response };
       },
     );
+
+    const stepCalls =
+      stepResult.steps.length > 0
+        ? ((stepResult.steps.at(-1) as { toolCalls?: Array<{ toolName: string }> } | undefined)
+            ?.toolCalls ?? [])
+        : [];
+
+    await options.onStepFinish?.({
+      toolCalls: stepCalls.length > 0 ? stepCalls : undefined,
+      text: stepResult.text,
+      finishReason: stepResult.finishReason,
+      usage: stepResult.usage,
+    });
 
     finalText = stepResult.text;
     lastUsage = stepResult.usage;

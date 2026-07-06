@@ -44,6 +44,7 @@ export default defineChannel({
         const options = {
           force: body.force === true,
           reset: body.reset === true,
+          channelKind: "channel:mcp-radar" as const,
         };
 
         if (process.env.VERCEL === "1") {

@@ -70,16 +70,24 @@ fn plan_ux_reflection_from_body(body: &Value) -> &Value {
 
 fn assert_agent_mcp_tool_compact(body: &Value) {
     assert!(
-        body.pointer("/structuredContent/ui").is_none(),
-        "agent structuredContent must not include ui mirror: {body}"
-    );
-    assert!(
         body.pointer("/structuredContent/plasm/comp").is_none(),
         "agent structuredContent.plasm must omit comp: {body}"
     );
     assert!(
         body.pointer("/structuredContent/plasm/steps").is_none(),
         "agent structuredContent.plasm must omit snapshot steps: {body}"
+    );
+    assert!(
+        body.pointer("/structuredContent/ui/comp").is_none(),
+        "structuredContent.ui must not carry comp DAG: {body}"
+    );
+    assert!(
+        body.pointer("/structuredContent/ui/plan_ux_reflection").is_none(),
+        "structuredContent.ui must not carry plan_ux_reflection: {body}"
+    );
+    assert!(
+        body.pointer("/structuredContent/ui/preview_entities").is_none(),
+        "structuredContent.ui must not carry preview_entities: {body}"
     );
     assert!(
         body.pointer("/_meta/ui/plasm").is_none(),
@@ -96,6 +104,51 @@ fn assert_agent_mcp_tool_compact(body: &Value) {
     );
 }
 
+async fn http_read_plan_json(client: &reqwest::Client, base: &str, body: &Value) -> Value {
+    let path = body
+        .pointer("/structuredContent/ui/plan_http_path")
+        .or_else(|| body.pointer("/structuredContent/plasm/plan_http_path"))
+        .or_else(|| body.pointer("/_meta/plasm/plan_http_path"))
+        .and_then(|v| v.as_str())
+        .expect("plan_http_path on dry-run MCP tool");
+    let resp = client
+        .get(format!("{base}{path}"))
+        .header("accept", "application/json")
+        .send()
+        .await
+        .expect("plan http get");
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "plan http GET must succeed: {}",
+        resp.status()
+    );
+    resp.json().await.expect("plan http json")
+}
+
+async fn assert_plan_archive_via_mcp_read(
+    client: &reqwest::Client,
+    base: &str,
+    mcp_session: &str,
+    body: &Value,
+    read_id: u64,
+) {
+    let plan_uri = body
+        .pointer("/structuredContent/plasm/plan_uri")
+        .or_else(|| body.pointer("/structuredContent/ui/plan_uri"))
+        .or_else(|| body.pointer("/structuredContent/ui/canonical_plan_uri"))
+        .or_else(|| body.pointer("/_meta/plasm/plan_uri"))
+        .and_then(|v| v.as_str())
+        .expect("canonical plan_uri on dry-run MCP tool");
+    assert!(
+        plan_uri.starts_with("plasm://execute/"),
+        "plan_uri must be canonical execute URI for MCP read: {plan_uri}"
+    );
+    let archive =
+        mcp_sse::mcp_read_resource_json(client, base, mcp_session, plan_uri, read_id).await;
+    assert_plan_ux_reflection(&archive);
+}
+
 async fn assert_plan_ux_from_mcp_tool(
     client: &reqwest::Client,
     base: &str,
@@ -104,13 +157,9 @@ async fn assert_plan_ux_from_mcp_tool(
     read_id: u64,
 ) {
     assert_agent_mcp_tool_compact(body);
-    let plan_uri = body
-        .pointer("/structuredContent/plasm/plan_uri")
-        .or_else(|| body.pointer("/_meta/plasm/plan_uri"))
-        .and_then(|v| v.as_str())
-        .expect("plan_uri on dry-run MCP tool");
-    let archive = mcp_sse::mcp_read_resource_json(client, base, mcp_session, plan_uri, read_id).await;
+    let archive = http_read_plan_json(client, base, body).await;
     assert_plan_ux_reflection(&archive);
+    assert_plan_archive_via_mcp_read(client, base, mcp_session, body, read_id + 1000).await;
 }
 
 fn assert_comp_human_ops_from_value(comp: &Value, reflection: &Value) {
@@ -159,16 +208,11 @@ fn assert_comp_human_ops(body: &Value) {
 async fn assert_comp_human_ops_from_mcp_plan_archive(
     client: &reqwest::Client,
     base: &str,
-    mcp_session: &str,
+    _mcp_session: &str,
     body: &Value,
-    read_id: u64,
+    _read_id: u64,
 ) {
-    let plan_uri = body
-        .pointer("/structuredContent/plasm/plan_uri")
-        .or_else(|| body.pointer("/_meta/plasm/plan_uri"))
-        .and_then(|v| v.as_str())
-        .expect("plan_uri on dry-run MCP tool");
-    let archive = mcp_sse::mcp_read_resource_json(client, base, mcp_session, plan_uri, read_id).await;
+    let archive = http_read_plan_json(client, base, body).await;
     let comp = archive.get("comp").expect("plan archive comp");
     let reflection = archive
         .get("plan_ux_reflection")
@@ -473,12 +517,23 @@ async fn workflow_apps_e2e_async() {
         dry_structured_plasm
             .and_then(|p| p.get("plan_uri"))
             .and_then(|v| v.as_str())
-            .is_some_and(|s| s.starts_with("plasm://session/")),
-        "structuredContent.plasm must carry plan_uri for resources/read: {dry_mcp}"
+            .is_some_and(|s| s.starts_with("plasm://execute/")),
+        "structuredContent.plasm must carry canonical plan_uri: {dry_mcp}"
     );
     assert!(
-        dry_mcp.pointer("/structuredContent/ui").is_none(),
-        "agent structuredContent must not include ui mirror: {dry_mcp}"
+        dry_mcp.pointer("/structuredContent/plasm/plan_http_path").is_none(),
+        "structuredContent.plasm must omit plan_http_path (UI channel only): {dry_mcp}"
+    );
+    assert!(
+        dry_mcp
+            .pointer("/structuredContent/ui/plan_http_path")
+            .and_then(|v| v.as_str())
+            .is_some_and(|s| s.starts_with("/execute/")),
+        "structuredContent.ui must carry plan_http_path ref: {dry_mcp}"
+    );
+    assert!(
+        dry_mcp.pointer("/structuredContent/ui/comp").is_none(),
+        "structuredContent.ui must not include comp DAG: {dry_mcp}"
     );
     assert!(
         dry_mcp.pointer("/_meta/plasm/comp").is_none(),

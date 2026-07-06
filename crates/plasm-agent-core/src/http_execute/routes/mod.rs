@@ -10,8 +10,9 @@ use axum::routing::{get, post};
 use axum::Router;
 
 use handlers::{
-    get_execute_run_artifact, get_execute_run_evidence, get_operation_progress_stream,
-    handle_execute_session_get, post_create_execute_session, post_run_execute_session,
+    get_execute_code_plan, get_execute_run_artifact, get_execute_run_evidence,
+    get_operation_progress_stream, handle_execute_session_get, post_create_execute_session,
+    post_run_execute_session,
 };
 use session::{
     get_execute_session_runs, get_execute_session_status, get_execute_session_symbols,
@@ -32,6 +33,10 @@ pub fn execute_routes() -> Router {
         .route(
             "/execute/{prompt_hash}/{session_id}/artifacts/{run_id}",
             get(get_execute_run_artifact),
+        )
+        .route(
+            "/execute/{prompt_hash}/{session_id}/plans/{plan_id}",
+            get(get_execute_code_plan),
         )
         .route(
             "/execute/{prompt_hash}/{session_id}/runs",

@@ -23,7 +23,7 @@ export interface RadarRunResult {
   error?: string;
 }
 
-function buildRadarGoal(options: RadarRunOptions): string {
+export function buildRadarGoal(options: RadarRunOptions): string {
   const lines = [
     "Run one MCP radar scan cycle.",
     "",

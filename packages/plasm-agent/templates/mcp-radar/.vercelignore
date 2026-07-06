@@ -1,3 +1,5 @@
 node_modules
 .env*
+.plasm
+.vercel/output
 agent/.plasm/research

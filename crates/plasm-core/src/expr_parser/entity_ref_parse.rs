@@ -152,23 +152,34 @@ impl<'a> Parser<'a> {
         ent: &EntityDef,
         raw_key: &str,
     ) -> Result<String, ParseError> {
-        let catalog = if let Some(entry_id) = head.entry_id.as_deref().filter(|id| !id.is_empty()) {
-            crate::symbol_tuning::CatalogScope::qualified(entry_id)
-        } else {
-            match self.catalog_entry_id_for_entity(head.canonical.as_str())? {
-                Some(entry_id) if !entry_id.is_empty() => {
-                    crate::symbol_tuning::CatalogScope::qualified(entry_id)
-                }
-                _ => crate::symbol_tuning::CatalogScope::SessionReverse,
+        let mut catalogs: Vec<crate::symbol_tuning::CatalogScope<'_>> = Vec::new();
+        if let Some(entry_id) = head.entry_id.as_deref().filter(|id| !id.is_empty()) {
+            catalogs.push(crate::symbol_tuning::CatalogScope::qualified(entry_id));
+        }
+        if let Ok(Some(entry_id)) = self.catalog_entry_id_for_entity(head.canonical.as_str()) {
+            if !entry_id.is_empty() && head.entry_id.as_deref() != Some(entry_id) {
+                catalogs.push(crate::symbol_tuning::CatalogScope::qualified(entry_id));
             }
-        };
-        self.sym_map
-            .resolve_compound_key(catalog, head.canonical.as_str(), &ent.key_vars, raw_key)
-            .map_err(|e| {
-                self.err(ParseErrorKind::Other {
-                    message: e.to_agent_program_error(),
-                })
-            })
+        }
+        catalogs.push(crate::symbol_tuning::CatalogScope::SessionReverse);
+
+        let mut last_err: Option<crate::SymbolResolveError> = None;
+        for catalog in catalogs {
+            match self.sym_map.resolve_compound_key(
+                catalog,
+                head.canonical.as_str(),
+                &ent.key_vars,
+                raw_key,
+            ) {
+                Ok(w) => return Ok(w),
+                Err(e) => last_err = Some(e),
+            }
+        }
+        Err(self.err(ParseErrorKind::Other {
+            message: last_err
+                .map(|e| e.to_agent_program_error())
+                .unwrap_or_else(|| format!("invalid compound key `{raw_key}`")),
+        }))
     }
 
     /// Normalize binding field-path segments: opaque `p#` → wire when unambiguous in session map.

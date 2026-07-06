@@ -86,7 +86,7 @@ use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_identity::McpTransportIdentity;
 use crate::operation::{
-    compute_plan_commit_id_from_dry, plan_commit_agent_meta, PlanCommitRecord, PLAN_COMMIT_TTL,
+    compute_plan_commit_id_from_dry, PlanCommitRecord, PLAN_COMMIT_TTL,
 };
 use crate::plan_dry_display::build_plan_dry_compact_view;
 use crate::plan_gate::{plan_gate, PlanGateContext};
@@ -115,6 +115,7 @@ mod committed_plasm_run;
 mod discover;
 mod mcp_http_user_agent;
 mod mcp_plasm_invoke;
+mod plasm_tool_dry_meta;
 mod read_run_artifact;
 mod resource_read;
 mod resource_read_trace;
@@ -805,7 +806,7 @@ impl PlasmMcpHandler {
                         };
                         let plan_ux_reflection =
                             crate::plan_ux_reflection::plan_ux_reflection_value(&dry, &ux_ctx);
-                        CodePlanTraceInput {
+                        let plan_refs = CodePlanTraceInput {
                             hub: &self.plasm.trace_hub,
                             store: &self.plasm.run_artifacts,
                             mcp_key: &ls_key,
@@ -820,30 +821,20 @@ impl PlasmMcpHandler {
                         }
                         .emit_evaluate(Some(plan_ux_reflection))
                         .await;
-                        let plan_uri =
-                            plasm_session_short_plan_uri(session_ref.as_str(), call_index);
-                        // Agent-facing meta stays slim; full comp / plan_ux archived for resources/read.
-                        let mut agent_plasm =
-                            plan_commit_agent_meta(&commit_ref, compact.verdict);
-                        agent_plasm.insert("dry_run".into(), serde_json::json!(true));
-                        agent_plasm.insert(
-                            "logical_session_ref".into(),
-                            serde_json::json!(session_ref.as_str()),
-                        );
-                        agent_plasm.insert("plan_uri".into(), serde_json::json!(plan_uri));
-                        agent_plasm.insert(
-                            "domain_revision".into(),
-                            serde_json::json!(es.domain_revision),
-                        );
-                        if dry
+                        let projection_warning = dry
                             .graph_summary
                             .get("dry_review")
                             .and_then(|v| v.get("has_unprojected_multi_row_read"))
                             .and_then(|v| v.as_bool())
-                            .unwrap_or(false)
-                        {
-                            agent_plasm.insert("projection_warning".into(), serde_json::json!(true));
-                        }
+                            .unwrap_or(false);
+                        let agent_plasm = plasm_tool_dry_meta::build_dry_run_agent_plasm_meta(
+                            &commit_ref,
+                            compact.verdict,
+                            session_ref.as_str(),
+                            &plan_refs,
+                            es.domain_revision,
+                            projection_warning,
+                        );
                         let mut meta = serde_json::Map::new();
                         meta.insert("plasm".into(), serde_json::Value::Object(agent_plasm));
                         Ok(PlasmPlanRunResult {

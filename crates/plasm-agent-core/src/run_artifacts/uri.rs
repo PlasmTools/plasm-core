@@ -52,6 +52,18 @@ pub fn plasm_short_code_plan_uri(plan_index: u64) -> String {
     format!("plasm://p/{plan_index}")
 }
 
+/// Parse `plasm://p/{decimal}` (no extra path segments).
+pub fn parse_plasm_short_code_plan_uri(uri: &str) -> Option<u64> {
+    let rest = uri.strip_prefix("plasm://p/")?;
+    if rest.is_empty() || rest.contains('/') {
+        return None;
+    }
+    if !rest.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    rest.parse().ok()
+}
+
 /// Short program-plan URI scoped to an MCP logical session wire ref.
 pub fn plasm_session_short_plan_uri(session_segment: &str, plan_index: u64) -> String {
     format!("plasm://session/{session_segment}/p/{plan_index}")

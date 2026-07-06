@@ -35,8 +35,9 @@ pub fn inject_structured_agent_plan_text(
 
 /// Copy slim agent `_meta.plasm` into `structuredContent.plasm` (no UI DAG / run snapshot steps).
 ///
-/// Run Explorer and Plan Review read full `steps` / plan DAG from `_meta.plasm` (UI channel) or
-/// `resources/read` on `plan_uri` / run artifact URIs — not from agent `structuredContent`.
+/// UI iframes read fetch refs from `structuredContent.ui` and GET full JSON over HTTP
+/// (`Accept: application/json` on `plan_http_path` / `artifact_path`), with MCP `resources/read`
+/// as fallback — not from agent `structuredContent.plasm`.
 pub fn mirror_plasm_structured_content(res: CallToolResult) -> CallToolResult {
     let Some(meta) = res.meta.as_ref() else {
         return res;
@@ -47,10 +48,76 @@ pub fn mirror_plasm_structured_content(res: CallToolResult) -> CallToolResult {
     let structured_plasm = agent_structured_plasm_mirror(plasm);
     let mut structured = Map::new();
     structured.insert("plasm".to_string(), structured_plasm);
+    if let Some(ui) = structured_ui_refs_from_meta(plasm) {
+        structured.insert("ui".to_string(), ui);
+    }
     res.with_structured_content(structured)
 }
 
-const AGENT_STRUCTURED_DENY: &[&str] = &["comp", "plan_ux_reflection", "program", "steps", "plan"];
+const AGENT_STRUCTURED_DENY: &[&str] = &[
+    "comp",
+    "plan_ux_reflection",
+    "program",
+    "steps",
+    "plan",
+    "plan_http_path",
+    "canonical_plan_uri",
+];
+
+const UI_STEP_REF_KEYS: &[&str] = &[
+    "run_step",
+    "return_label",
+    "display",
+    "row_count",
+    "node_id",
+    "artifact_uri",
+    "canonical_artifact_uri",
+    "artifact_path",
+    "run_id",
+];
+
+const UI_PLAN_REF_KEYS: &[&str] = &["plan_uri", "plan_http_path", "canonical_plan_uri"];
+
+/// Tiny fetch refs for MCP App iframes (Cursor forwards `structuredContent`, strips `_meta.ui`).
+fn structured_ui_refs_from_meta(plasm: &Value) -> Option<Value> {
+    let Some(obj) = plasm.as_object() else {
+        return None;
+    };
+    let mut out = Map::new();
+    for key in UI_PLAN_REF_KEYS {
+        if let Some(v) = obj.get(*key) {
+            out.insert(key.to_string(), v.clone());
+        }
+    }
+    if let Some(steps) = obj.get("steps").and_then(|v| v.as_array()) {
+        let refs: Vec<Value> = steps
+            .iter()
+            .filter_map(|step| step_ref_from_step(step.as_object()?))
+            .collect();
+        if !refs.is_empty() {
+            out.insert("steps".to_string(), Value::Array(refs));
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(Value::Object(out))
+    }
+}
+
+fn step_ref_from_step(step: &Map<String, Value>) -> Option<Value> {
+    let mut out = Map::new();
+    for key in UI_STEP_REF_KEYS {
+        if let Some(v) = step.get(*key) {
+            out.insert(key.to_string(), v.clone());
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(Value::Object(out))
+    }
+}
 
 fn agent_structured_plasm_mirror(plasm: &Value) -> Value {
     let Some(obj) = plasm.as_object() else {
@@ -88,7 +155,11 @@ mod tests {
         agent.insert("dry_verdict".into(), json!("ok"));
         agent.insert(
             "plan_uri".into(),
-            json!("plasm://session/l_AAAAAAAAQACAAAAAAAAAAQ/p/1"),
+            json!("plasm://execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/s1/plan/00000000-0000-4000-8000-000000000001"),
+        );
+        agent.insert(
+            "plan_http_path".into(),
+            json!("/execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/s1/plans/00000000-0000-4000-8000-000000000001"),
         );
         let mut meta = Map::new();
         meta.insert("plasm".into(), Value::Object(agent));
@@ -114,17 +185,33 @@ mod tests {
             "agent structuredContent must carry compact plan_text only"
         );
         assert!(wire.pointer("/_meta/plasm/plan_text").is_none());
-        assert!(wire.pointer("/structuredContent/ui").is_none());
         assert!(wire.pointer("/structuredContent/plasm/comp").is_none());
+        assert!(wire.pointer("/structuredContent/plasm/plan_http_path").is_none());
+        assert!(wire.pointer("/structuredContent/plasm/canonical_plan_uri").is_none());
         assert!(wire
             .pointer("/structuredContent/plasm/plan_ux_reflection")
             .is_none());
         assert!(wire.pointer("/structuredContent/plasm/program").is_none());
         assert!(wire.pointer("/structuredContent/plasm/steps").is_none());
+        assert!(wire.pointer("/structuredContent/plasm/plan_http_path").is_none());
+        assert!(wire.pointer("/structuredContent/plasm/canonical_plan_uri").is_none());
+        assert_eq!(
+            wire.pointer("/structuredContent/ui/plan_uri")
+                .and_then(|v| v.as_str()),
+            Some("plasm://execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/s1/plan/00000000-0000-4000-8000-000000000001")
+        );
+        assert!(
+            wire.pointer("/structuredContent/ui/plan_http_path")
+                .and_then(|v| v.as_str())
+                .is_some(),
+            "UI channel must carry plan_http_path ref"
+        );
+        assert!(wire.pointer("/structuredContent/ui/comp").is_none());
+        assert!(wire.pointer("/structuredContent/ui/plan_ux_reflection").is_none());
         assert_eq!(
             wire.pointer("/structuredContent/plasm/plan_uri")
                 .and_then(|v| v.as_str()),
-            Some("plasm://session/l_AAAAAAAAQACAAAAAAAAAAQ/p/1")
+            Some("plasm://execute/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/s1/plan/00000000-0000-4000-8000-000000000001")
         );
     }
 
@@ -217,6 +304,20 @@ mod tests {
             Some(1),
             "_meta.plasm.steps remain for Run Explorer"
         );
+        let ui_steps = out
+            .structured_content
+            .as_ref()
+            .and_then(|m| m.get("ui"))
+            .and_then(|u| u.get("steps"))
+            .and_then(|s| s.as_array())
+            .expect("structuredContent.ui.steps refs");
+        assert_eq!(ui_steps.len(), 1);
+        assert_eq!(
+            ui_steps[0].get("artifact_uri").and_then(|v| v.as_str()),
+            Some("plasm://session/l_AAAAAAAAQACAAAAAAAAAAQ/r/1")
+        );
+        assert!(ui_steps[0].get("preview_entities").is_none());
+        assert!(ui_steps[0].get("comp").is_none());
     }
 
     #[test]
