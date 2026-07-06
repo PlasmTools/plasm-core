@@ -167,11 +167,7 @@ impl PublishPlan {
         if preview_needed {
             return "snapshot_only";
         }
-        if self
-            .resolved
-            .iter()
-            .any(|r| !r.mode.skips_inline_format())
-        {
+        if self.resolved.iter().any(|r| !r.mode.skips_inline_format()) {
             "inline"
         } else {
             "snapshot_only"

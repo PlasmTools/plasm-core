@@ -14,7 +14,8 @@ use uuid::Uuid;
 use crate::binding_slots::{
     bindings_complete_for_entry, entry_requires_bindings, BindingScope, SessionBindingMap,
 };
-use crate::mcp_config_repository::McpConfigRepository;
+use crate::mcp_config_repository::{effective_owner_subject_for_hosted_kv, McpConfigRepository};
+use crate::mcp_runtime_config::McpRuntimeConfig;
 
 #[derive(Debug, thiserror::Error)]
 pub enum BindingLoadError {
@@ -174,6 +175,15 @@ pub async fn entry_bindings_complete_scoped(
     }
 }
 
+async fn hosted_kv_bytes_present(storage: &Arc<dyn AuthStorage>, kv_key: &str) -> bool {
+    storage
+        .get_kv(kv_key.trim())
+        .await
+        .ok()
+        .flatten()
+        .is_some_and(|b| !b.is_empty())
+}
+
 pub async fn entry_secret_present(
     repo: &McpConfigRepository,
     storage: Option<&Arc<dyn AuthStorage>>,
@@ -189,12 +199,43 @@ pub async fn entry_secret_present(
     else {
         return false;
     };
-    storage
-        .get_kv(kv_key.trim())
+    hosted_kv_bytes_present(storage, &kv_key).await
+}
+
+/// Secret readiness for an **active** MCP config upsert payload.
+///
+/// Steady state: resolve via persisted `project_mcp_auth_bindings` → connected account.
+/// First connect: when that join misses, fall back to the pending `auth_config_by_entry`
+/// in the upsert body (credentials already stored; binding row not written yet).
+pub async fn entry_secret_present_for_upsert(
+    repo: &McpConfigRepository,
+    storage: Option<&Arc<dyn AuthStorage>>,
+    cfg: &McpRuntimeConfig,
+    entry_id: &str,
+) -> bool {
+    let Some(storage) = storage else {
+        return false;
+    };
+    let owner_subject =
+        effective_owner_subject_for_hosted_kv(cfg.id, cfg.owner_subject.as_deref(), None);
+    if let Ok(Some(kv_key)) = repo
+        .fetch_hosted_kv_for_graph_binding(cfg.id, entry_id, owner_subject)
         .await
-        .ok()
-        .flatten()
-        .is_some_and(|b| !b.is_empty())
+    {
+        if hosted_kv_bytes_present(storage, &kv_key).await {
+            return true;
+        }
+    }
+    let Some(auth_config_id) = cfg.auth_config_by_entry.get(entry_id) else {
+        return false;
+    };
+    let Ok(Some(kv_key)) = repo
+        .fetch_hosted_kv_for_auth_config(*auth_config_id, owner_subject)
+        .await
+    else {
+        return false;
+    };
+    hosted_kv_bytes_present(storage, &kv_key).await
 }
 
 #[cfg(test)]

@@ -220,6 +220,39 @@ impl McpConfigRepository {
         Ok(row)
     }
 
+    /// Resolve the active Plasm-hosted outbound secret key for an outbound auth config row
+    /// (`project_outbound_connected_accounts`), without requiring a persisted
+    /// `project_mcp_auth_bindings` row.
+    ///
+    /// Used during **active** MCP config upsert readiness when Phoenix sends a pending
+    /// `auth_config_by_entry` before the binding row is written.
+    pub async fn fetch_hosted_kv_for_auth_config(
+        &self,
+        auth_config_id: Uuid,
+        owner_subject: Option<&str>,
+    ) -> Result<Option<String>, sqlx::Error> {
+        let row: Option<String> = sqlx::query_scalar(
+            r#"
+            SELECT hosted_kv_key
+            FROM project_outbound_connected_accounts
+            WHERE auth_config_id = $1
+              AND status = 'active'
+              AND (
+                $2::text IS NULL
+                OR TRIM($2::text) = ''
+                OR owner_subject = $2
+              )
+            ORDER BY last_connected_at DESC NULLS LAST
+            LIMIT 1
+            "#,
+        )
+        .bind(auth_config_id)
+        .bind(owner_subject)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
     /// Binding KV pointer for `(config_id, entry_id)` scoped triple.
     pub async fn fetch_binding_kv_key_for_scope(
         &self,

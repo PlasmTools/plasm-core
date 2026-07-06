@@ -1,4 +1,4 @@
-version: 18
+version: 19
 http_backend: https://api.vultr.com
 data_classes:
   pii_email:
@@ -1615,6 +1615,12 @@ capabilities:
   account_get:
     kind: get
     entity: Account
+    provides:
+    - email
+    - name
+    - balance
+    - pending_charges
+    - acls
   account_bgp_get:
     kind: get
     entity: AccountBgp
@@ -1712,6 +1718,7 @@ capabilities:
     - name: acls
       value_ref: nv_user_create_acls
       required: false
+      sink_class: permission_grant
   user_update:
     kind: update
     entity: User
@@ -2064,9 +2071,11 @@ capabilities:
     - name: port
       value_ref: nv_wire_str_short
       required: false
+      sink_class: permission_grant
     - name: source
       value_ref: nv_wire_str_short
       required: false
+      sink_class: permission_grant
     - name: notes
       value_ref: nv_wire_str_short
       required: false

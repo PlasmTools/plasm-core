@@ -121,9 +121,9 @@ pub(crate) async fn execute_plasm_tool_dry_run(
     };
     let plan_ux_reflection = crate::plan_ux_reflection::plan_ux_reflection_value(&dry, &ux_ctx);
     let comp_val = serde_json::to_value(comp_wire.as_ref()).ok();
-    let inline_fits = comp_val.as_ref().is_some_and(|comp| {
-        inline_ui_payload_fits(comp, &plan_ux_reflection)
-    });
+    let inline_fits = comp_val
+        .as_ref()
+        .is_some_and(|comp| inline_ui_payload_fits(comp, &plan_ux_reflection));
     record_mcp_plasm_dry_run_phase("prepare", phase.elapsed());
 
     phase = Instant::now();
@@ -168,6 +168,8 @@ pub(crate) async fn execute_plasm_tool_dry_run(
         ctx.session_ref,
         &plan_refs,
         ctx.es.domain_revision,
+        crate::symbol_map_resolve::symbol_map_fingerprint_for_session(ctx.es.as_ref())
+            .as_deref(),
         projection_warning,
     );
     let inline_plan_ui = inline_fits.then(|| UiInlinePlanPayload {

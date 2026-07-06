@@ -86,8 +86,8 @@ use crate::mcp_policy;
 use crate::mcp_runtime_config::McpRuntimeConfig;
 use crate::mcp_stream_identity::McpTransportIdentity;
 use crate::run_artifacts::{
-    code_plan_handle, code_plan_http_path, plasm_code_plan_resource_uri,
-    ArtifactPayload, CodePlanArchiveDocument,
+    code_plan_handle, code_plan_http_path, plasm_code_plan_resource_uri, ArtifactPayload,
+    CodePlanArchiveDocument,
 };
 use crate::server_state::PlasmHostState;
 use crate::session_identity::{
@@ -108,7 +108,6 @@ mod mcp_plasm_invoke;
 mod plasm_tool_dry_meta;
 mod plasm_tool_dry_run;
 mod read_run_artifact;
-mod ui_read;
 mod resource_read;
 mod resource_read_trace;
 mod schema;
@@ -116,9 +115,11 @@ mod tool_parse;
 mod tools;
 mod trace;
 mod transport;
+mod ui_read;
 
 #[cfg(test)]
 mod integration;
+mod symbol_stability;
 #[cfg(test)]
 mod tests;
 
@@ -1108,7 +1109,7 @@ impl PlasmMcpHandler {
                 )
                 .await;
         }
-        let (domain_revision, relations) = if let Some(sess_arc) = self
+        let (domain_revision, relations, symbol_map_fingerprint) = if let Some(sess_arc) = self
             .plasm
             .sessions
             .get_by_strs(&out.prompt_hash, &out.session_id)
@@ -1120,9 +1121,13 @@ impl PlasmMcpHandler {
                 .map(|exposure| exposure.exposed_relation_symbol_rows())
                 .filter(|rows| !rows.is_empty())
                 .map(|rows| json!(rows));
-            (Some(sess_arc.domain_revision), rel)
+            (
+                Some(sess_arc.domain_revision),
+                rel,
+                crate::symbol_map_resolve::symbol_map_fingerprint_for_session(sess_arc.as_ref()),
+            )
         } else {
-            (None, None)
+            (None, None, None)
         };
         let relations_delta = {
             let deltas: Vec<_> = out
@@ -1148,6 +1153,7 @@ impl PlasmMcpHandler {
                 )
                 .as_str(),
                 domain_revision,
+                symbol_map_fingerprint,
                 relations,
                 relations_delta,
             },
@@ -1537,9 +1543,7 @@ async fn dispatch_plasm_mcp_call_tool_request(
         }
         "plasm_ui_read_run" => {
             let started = Instant::now();
-            let res = handler
-                .handle_ui_read_run(key.as_str(), &runtime, &v)
-                .await;
+            let res = handler.handle_ui_read_run(key.as_str(), &runtime, &v).await;
             record_app_ui_tool("plasm_ui_read_run", &res, started);
             res
         }

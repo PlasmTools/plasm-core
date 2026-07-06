@@ -522,6 +522,7 @@ pub(crate) struct PlasmContextToolMetaParams<'a> {
     pub intent_turns: usize,
     pub accumulated_intent_preview: &'a str,
     pub domain_revision: Option<u32>,
+    pub symbol_map_fingerprint: Option<String>,
     pub relations: Option<serde_json::Value>,
     pub relations_delta: Option<serde_json::Value>,
 }
@@ -537,6 +538,7 @@ pub(crate) fn build_plasm_context_tool_meta(
         intent_turns,
         accumulated_intent_preview,
         domain_revision,
+        symbol_map_fingerprint,
         relations,
         relations_delta,
     } = params;
@@ -582,6 +584,9 @@ pub(crate) fn build_plasm_context_tool_meta(
     );
     if let Some(rev) = domain_revision {
         plasm.insert("domain_revision".to_string(), serde_json::json!(rev));
+    }
+    if let Some(fp) = symbol_map_fingerprint {
+        plasm.insert("symbol_map_fingerprint".to_string(), serde_json::json!(fp));
     }
     if let Some(rel) = relations {
         plasm.insert("relations".to_string(), rel);
@@ -993,6 +998,7 @@ mod ranked_replay_tests {
                 intent_turns: 2,
                 accumulated_intent_preview: "turn-one\nturn-two",
                 domain_revision: Some(1),
+                symbol_map_fingerprint: Some("abc".into()),
                 relations: None,
                 relations_delta: None,
             },

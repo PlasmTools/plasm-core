@@ -36,6 +36,7 @@ pub use keys::{
     CapParamKey, CatalogScope, EntityFieldKey, MethodKey, MethodSegmentKey, OpaqueESym, OpaqueMSym,
     OpaquePSym, OpaqueRSym, OpaqueVSym, QualifiedEntityKey, RelationKey,
 };
+pub use opaque_symbol_hash::symbol_map_fingerprint_hex;
 pub use tables::{SymbolLedger, SymbolTables, SymbolValueLayer};
 
 pub use session_bindings::{EntityBinding, MethodBinding, RelationBinding, SlotBinding, SlotKind};
@@ -2435,7 +2436,46 @@ pub fn build_ident_gloss_map(cgs: &CGS) -> HashMap<String, String> {
     ident_gloss
 }
 
-/// Left-to-right `p#` tokens in an expression fragment (after stripping prompt annotations).
+/// Left-to-right `m#` tokens in an expression fragment.
+pub fn method_syms_in_expr(expr: &str) -> Vec<String> {
+    opaque_index_syms_in_expr(expr, OpaqueMSym::PREFIX)
+}
+
+/// First opaque `m#` in source order (for parse-error stability hints).
+pub fn first_opaque_m_sym_in_expr(expr: &str) -> Option<String> {
+    method_syms_in_expr(expr).into_iter().next()
+}
+
+fn opaque_index_syms_in_expr(expr: &str, prefix: char) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < expr.len() {
+        let b = *expr.as_bytes().get(i).unwrap_or(&0);
+        if b == prefix as u8 && ident_boundary_left(expr, i) {
+            let mut end = i + 1;
+            while end < expr.len() {
+                let c = expr[end..].chars().next().unwrap();
+                if c.is_ascii_digit() {
+                    end += c.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            if end > i + 1 {
+                let next = expr[end..].chars().next();
+                if next.is_none() || !ident_continue(next.unwrap()) {
+                    out.push(expr[i..end].to_string());
+                    i = end;
+                    continue;
+                }
+            }
+        }
+        i += expr[i..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+    }
+    out
+}
+
+/// Left-to-right `p#` / `r#` tokens in an expression fragment (after stripping prompt annotations).
 pub fn field_syms_in_expr(expr: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut i = 0;

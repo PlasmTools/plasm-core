@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use plasm_core::{
     entity_slices_for_render, symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog,
-    CgsLayer, FocusSpec, SymbolMap, SymbolMapCrossRequestCache, SymbolSession,
+    symbol_map_fingerprint_hex, CgsLayer, FocusSpec, SymbolMap, SymbolMapCrossRequestCache,
+    SymbolSession,
 };
 
 use crate::execute_session::ExecuteSession;
@@ -19,6 +20,43 @@ use crate::plasm_plan_run::session_cgs_layer_stack;
 pub struct SessionSymbolMapContext<'a> {
     pub session: &'a ExecuteSession,
     pub cross_cache: Option<&'a SymbolMapCrossRequestCache>,
+}
+
+/// Hex fingerprint of the session teaching exposure (`hash_exposure_session_rows`).
+#[must_use]
+pub fn symbol_map_fingerprint_for_session(session: &ExecuteSession) -> Option<String> {
+    session
+        .teaching_exposure
+        .as_ref()
+        .map(symbol_map_fingerprint_hex)
+}
+
+/// Attach continuity fields agents use to detect symbol-table drift.
+pub fn insert_symbol_map_stability_meta(
+    meta: &mut serde_json::Map<String, serde_json::Value>,
+    session: &ExecuteSession,
+) {
+    if let Some(fp) = symbol_map_fingerprint_for_session(session) {
+        meta.insert("symbol_map_fingerprint".into(), serde_json::json!(fp));
+    }
+    meta.insert(
+        "domain_revision".into(),
+        serde_json::json!(session.domain_revision),
+    );
+}
+
+/// Merge symbol stability fields into MCP/HTTP run `_meta.plasm` (nested or top-level).
+pub fn attach_symbol_map_stability_to_run_meta(
+    meta: &mut serde_json::Map<String, serde_json::Value>,
+    session: &ExecuteSession,
+) {
+    if let Some(plasm) = meta.get_mut("plasm").and_then(|v| v.as_object_mut()) {
+        insert_symbol_map_stability_meta(plasm, session);
+        return;
+    }
+    let mut plasm = serde_json::Map::new();
+    insert_symbol_map_stability_meta(&mut plasm, session);
+    meta.insert("plasm".into(), serde_json::Value::Object(plasm));
 }
 
 #[must_use]

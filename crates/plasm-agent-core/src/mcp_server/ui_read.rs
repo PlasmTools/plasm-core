@@ -36,17 +36,20 @@ impl PlasmMcpHandler {
             .ok_or_else(|| {
                 CallToolError::invalid_arguments(
                     TOOL,
-                    Some("missing or invalid `run_ref`: non-empty string (pcN from `plasm`)".into()),
+                    Some(
+                        "missing or invalid `run_ref`: non-empty string (pcN from `plasm`)".into(),
+                    ),
                 )
             })?;
         let commit_ref = PlanCommitRef::parse(run_ref_str).ok_or_else(|| {
             CallToolError::invalid_arguments(
                 TOOL,
-                Some(format!("invalid `run_ref`: expected pcN token, got {run_ref_str:?}")),
+                Some(format!(
+                    "invalid `run_ref`: expected pcN token, got {run_ref_str:?}"
+                )),
             )
         })?;
-        let logical_uuid =
-            self.resolve_logical_session_ref_to_uuid(TOOL, &session_ref)?;
+        let logical_uuid = self.resolve_logical_session_ref_to_uuid(TOOL, &session_ref)?;
         let scope = tenant_scope(principal_incoming.as_ref());
         if !self
             .plasm
@@ -77,12 +80,10 @@ impl PlasmMcpHandler {
             .ok_or_else(|| {
                 CallToolError::from_message("execute session expired — reopen plasm_context")
             })?;
-        let committed = resolve_committed_plan(es.as_ref(), &commit_ref).map_err(|e| {
-            CallToolError::invalid_arguments(TOOL, Some(e.detail()))
-        })?;
-        let bundle = PlasmCompBundle::new(committed.artifact.clone()).map_err(|e| {
-            CallToolError::from_message(format!("invalid committed comp: {e}"))
-        })?;
+        let committed = resolve_committed_plan(es.as_ref(), &commit_ref)
+            .map_err(|e| CallToolError::invalid_arguments(TOOL, Some(e.detail())))?;
+        let bundle = PlasmCompBundle::new(committed.artifact.clone())
+            .map_err(|e| CallToolError::from_message(format!("invalid committed comp: {e}")))?;
         let dry = dry_for_committed_plasm_run(es.as_ref(), &bundle, &committed).map_err(|e| {
             CallToolError::from_message(format!("plan rehydrate failed: {}", e.detail()))
         })?;
@@ -91,10 +92,11 @@ impl PlasmMcpHandler {
             param_bindings: &[],
         };
         let plan_ux = plan_ux_reflection_value(&dry, &ux_ctx);
-        let comp = serde_json::to_value(&committed.artifact.comp).map_err(|e| {
-            CallToolError::from_message(format!("comp serialize failed: {e}"))
-        })?;
-        Ok(crate::mcp_ui_payload::ui_read_plan_tool_result(comp, plan_ux))
+        let comp = serde_json::to_value(&committed.artifact.comp)
+            .map_err(|e| CallToolError::from_message(format!("comp serialize failed: {e}")))?;
+        Ok(crate::mcp_ui_payload::ui_read_plan_tool_result(
+            comp, plan_ux,
+        ))
     }
 
     pub(crate) async fn handle_ui_read_run(
@@ -105,8 +107,7 @@ impl PlasmMcpHandler {
     ) -> Result<CallToolResult, CallToolError> {
         const TOOL: &str = "plasm_ui_read_run";
         let session_ref = parse_logical_session_ref_arg(TOOL, v)?;
-        let logical_uuid =
-            self.resolve_logical_session_ref_to_uuid(TOOL, &session_ref)?;
+        let logical_uuid = self.resolve_logical_session_ref_to_uuid(TOOL, &session_ref)?;
         let (_, lookup_arg) = parse_read_run_artifact_lookup(TOOL, v)?;
         let resolved = self
             .resolve_run_snapshot_for_tool(
@@ -123,9 +124,8 @@ impl PlasmMcpHandler {
                 .map_err(|e| {
                     CallToolError::from_message(format!("artifact projection failed: {e}"))
                 })?;
-        let doc: Value = serde_json::from_slice(&payload.bytes).map_err(|e| {
-            CallToolError::from_message(format!("run snapshot JSON invalid: {e}"))
-        })?;
+        let doc: Value = serde_json::from_slice(&payload.bytes)
+            .map_err(|e| CallToolError::from_message(format!("run snapshot JSON invalid: {e}")))?;
         let entities = doc
             .get("entities")
             .or_else(|| doc.get("results"))

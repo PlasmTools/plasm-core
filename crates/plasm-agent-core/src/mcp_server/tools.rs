@@ -277,9 +277,7 @@ fn ui_read_plan_tool() -> Tool {
     let mut props = BTreeMap::new();
     props.insert(
         "logical_session_ref".into(),
-        json_schema_string_type(
-            "Same `logical_session_ref` returned by `plasm_context`.",
-        ),
+        json_schema_string_type("Same `logical_session_ref` returned by `plasm_context`."),
     );
     props.insert(
         "run_ref".into(),
@@ -314,9 +312,7 @@ fn ui_read_run_tool() -> Tool {
     let mut props = BTreeMap::new();
     props.insert(
         "logical_session_ref".into(),
-        json_schema_string_type(
-            "Same `logical_session_ref` returned by `plasm_context`.",
-        ),
+        json_schema_string_type("Same `logical_session_ref` returned by `plasm_context`."),
     );
     props.insert(
         "artifact_uri".into(),

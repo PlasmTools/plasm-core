@@ -422,9 +422,42 @@ pub fn format_session_symbolic_parse_error(
             map: sym_map.as_ref(),
         },
     );
-    if step.correction.is_empty() {
+    let base = if step.correction.is_empty() {
         err.to_string()
     } else {
         step.correction
+    };
+    append_symbol_map_stability_context(session, &base, surface)
+}
+
+fn append_symbol_map_stability_context(
+    session: &ExecuteSession,
+    message: &str,
+    source_line: &str,
+) -> String {
+    let needs_context = message.contains("not a mutator")
+        || message.contains("compound constructor key")
+        || message.contains("is not a row symbol")
+        || message.contains("is not valid for");
+    if !needs_context {
+        return message.to_string();
     }
+    let Some(exp) = session.teaching_exposure.as_ref() else {
+        return message.to_string();
+    };
+    let fingerprint = plasm_core::symbol_map_fingerprint_hex(exp);
+    let mut out = message.to_string();
+    out.push_str(&format!(
+        "\nsymbol_map_fingerprint={fingerprint}, domain_revision={}",
+        session.domain_revision
+    ));
+    if let Some(m_token) = plasm_core::first_opaque_m_sym_in_expr(source_line) {
+        if let Some((entry, domain, cap)) = exp
+            .symbol_map_arc()
+            .resolve_method_symbol_triple(m_token.as_str())
+        {
+            out.push_str(&format!("\n{m_token} → {entry}.{domain}.{cap}"));
+        }
+    }
+    out
 }

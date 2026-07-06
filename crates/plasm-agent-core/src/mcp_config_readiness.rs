@@ -34,7 +34,7 @@ pub async fn catalog_entry_readiness_gaps(
     let scope = BindingScope::new(cfg.tenant_id.clone(), cfg.id, entry_id.to_string());
     let (secret_ok, binding_ok) = if let Some(storage) = storage {
         tokio::join!(
-            binding_store::entry_secret_present(repo, Some(storage), cfg.id, entry_id),
+            binding_store::entry_secret_present_for_upsert(repo, Some(storage), cfg, entry_id),
             binding_store::entry_bindings_complete_scoped(storage, repo, &scope),
         )
     } else {

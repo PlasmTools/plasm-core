@@ -420,6 +420,7 @@ pub(crate) async fn run_executable_plan_phased(
         }
     }
     let mut run_plasm_meta = out.tool_meta;
+    crate::symbol_map_resolve::attach_symbol_map_stability_to_run_meta(&mut run_plasm_meta, es);
     if let Some(evidence) = active_chain(es, execution_scope) {
         run_plasm_meta = attach_evidence_meta(
             run_plasm_meta,

@@ -77,7 +77,9 @@ fn assert_triple_lane_plan(body: &Value) {
         "ui lane kind: {body}"
     );
     let ui_ok = body.pointer("/structuredContent/ui/comp").is_some()
-        || body.pointer("/structuredContent/ui/plan_http_path").is_some();
+        || body
+            .pointer("/structuredContent/ui/plan_http_path")
+            .is_some();
     assert!(ui_ok, "ui lane must carry comp or fetch refs: {body}");
     let text = body
         .pointer("/mcp_result/content/0/text")
@@ -180,11 +182,16 @@ async fn mcp_ui_delivery_e2e_async() {
             .and_then(|v| v.as_str()),
         Some("plan_review")
     );
-    let ui_survives = cursor_forward.pointer("/structuredContent/ui/comp").is_some()
+    let ui_survives = cursor_forward
+        .pointer("/structuredContent/ui/comp")
+        .is_some()
         || cursor_forward
             .pointer("/structuredContent/ui/plan_http_path")
             .is_some();
-    assert!(ui_survives, "structuredContent.ui must survive meta strip: {cursor_forward}");
+    assert!(
+        ui_survives,
+        "structuredContent.ui must survive meta strip: {cursor_forward}"
+    );
 
     if let Some(path) = plan
         .pointer("/structuredContent/ui/plan_http_path")

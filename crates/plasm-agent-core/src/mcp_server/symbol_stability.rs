@@ -1,0 +1,561 @@
+//! Symbol stability regression tests (GitHub catalog, append-only `m#` invariants).
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use crate::execute_session::ExecuteSession;
+    use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
+    use crate::http_execute::{
+        apply_capability_seeds, try_dispatch_operation_program, CapabilitySeed, RankedCapabilitiesArg,
+    };
+    use crate::plasm_compile::compile_plasm_expression;
+    use crate::plasm_plan_run::{format_session_symbolic_parse_error, evaluate_plasm_comp_dry};
+    use crate::server_state::PlasmHostState;
+    use indexmap::IndexMap;
+    use plasm_core::discovery::InMemoryCgsRegistry;
+    use plasm_core::loader::load_schema_dir;
+    use plasm_core::symbol_map_fingerprint_hex;
+    use plasm_core::{CgsContext, SymbolSession, TeachingExposureSession, CGS};
+    use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
+    use uuid::Uuid;
+
+    fn github_fixture_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../apis/github")
+    }
+
+    fn github_host() -> Option<PlasmHostState> {
+        let dir = github_fixture_dir();
+        if !dir.is_dir() {
+            return None;
+        }
+        let cgs = Arc::new(load_schema_dir(&dir).ok()?);
+        let reg = InMemoryCgsRegistry::from_pairs(vec![(
+            "github".into(),
+            "GitHub".into(),
+            vec!["github".into()],
+            cgs.clone(),
+        )]);
+        let engine = ExecutionEngine::new(ExecutionConfig::default()).ok()?;
+        Some(build_plasm_host_state(PlasmHostBootstrap {
+            engine,
+            mode: ExecutionMode::Live,
+            registry: Arc::new(reg),
+            catalog_bootstrap: crate::server_state::CatalogBootstrap::Fixed,
+            incoming_auth: None,
+            run_artifacts: Arc::new(crate::run_artifacts::RunArtifactStore::memory()),
+            session_graph_persistence: None,
+            oss_local_filesystem_defaults: false,
+        }))
+    }
+
+    fn label_branch_workflow_seeds() -> Vec<CapabilitySeed> {
+        vec![
+            CapabilitySeed {
+                entry_id: "github".into(),
+                entity: "Repository".into(),
+            },
+            CapabilitySeed {
+                entry_id: "github".into(),
+                entity: "Issue".into(),
+            },
+            CapabilitySeed {
+                entry_id: "github".into(),
+                entity: "Branch".into(),
+            },
+        ]
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    struct SymbolSnapshot {
+        fingerprint: String,
+        domain_revision: u32,
+        branch_create_m: String,
+        m_token_capability: Option<(String, String)>,
+    }
+
+    fn snapshot_session(es: &ExecuteSession, m_token: &str) -> SymbolSnapshot {
+        let exp = es
+            .teaching_exposure
+            .as_ref()
+            .expect("teaching_exposure required for symbol stability tests");
+        let map = exp.symbol_map_arc();
+        let branch_create_m = map.method_sym_for("github", "Repository", "repo_branch_create");
+        let m_token_capability = map
+            .resolve_method_symbol_triple(m_token)
+            .map(|(entry, domain, cap)| {
+                (
+                    format!("{entry}.{domain}.{cap}"),
+                    cap.to_string(),
+                )
+            });
+        SymbolSnapshot {
+            fingerprint: symbol_map_fingerprint_hex(exp),
+            domain_revision: es.domain_revision,
+            branch_create_m,
+            m_token_capability,
+        }
+    }
+
+    fn method_tables_clone(exp: &TeachingExposureSession) -> IndexMap<String, String> {
+        exp.tables
+            .method_to_sym
+            .iter()
+            .map(|(k, sym)| {
+                (
+                    format!("{}:{}:{}", k.entry_id, k.domain, k.capability),
+                    sym.as_wire(),
+                )
+            })
+            .collect()
+    }
+
+    fn assert_surface_capability(
+        dry: &crate::plasm_plan_run::DryPlasmPlanEvaluation,
+        es: &ExecuteSession,
+        cap: &str,
+    ) {
+        let text =
+            crate::plan_dry_display::render_plasm_plan_dry_text_for_session(dry, None, Some(es));
+        assert!(
+            text.contains(cap),
+            "expected capability `{cap}` in dry plan:\n{text}"
+        );
+    }
+
+    fn compile_dry(
+        st: &PlasmHostState,
+        es: &ExecuteSession,
+        tag: &str,
+        program: &str,
+    ) -> crate::plasm_plan_run::DryPlasmPlanEvaluation {
+        let pipeline = st.engine.prompt_pipeline();
+        let cross = st.sessions.symbol_map_cross_cache();
+        let bundle = compile_plasm_expression(pipeline, Some(cross), es, tag, program)
+            .unwrap_or_else(|e| panic!("compile `{tag}`: {e}"));
+        evaluate_plasm_comp_dry(es, &bundle).expect("dry-run")
+    }
+
+    /// Mirrors reported workflow: open → branch-create dry-run → read-only plasm calls → reuse mutator `m#`.
+    #[tokio::test]
+    async fn symbol_stability_github_branch_create_survives_intermediate_plasm_reads() {
+        let Some(st) = github_host() else {
+            return;
+        };
+        let st = Arc::new(st);
+        let logical_id = Uuid::new_v4();
+        let intent = "create branch feat/label-color-guide from commit sha and list issues";
+
+        let out = apply_capability_seeds(
+            st.as_ref(),
+            None,
+            None,
+            label_branch_workflow_seeds(),
+            None,
+            None,
+            Some(logical_id),
+            intent,
+            RankedCapabilitiesArg::Unspecified,
+        )
+        .await
+        .expect("plasm_context open");
+
+        let es = st
+            .get_execute_session(&out.prompt_hash, &out.session_id)
+            .await
+            .expect("execute session");
+        let exp = es.teaching_exposure.as_ref().expect("exposure");
+        let map = exp.symbol_map_arc();
+        let e_repo = map.entity_sym_for("github", "Repository");
+        let m_branch = map.method_sym_for("github", "Repository", "repo_branch_create");
+        let tables_after_open = method_tables_clone(exp);
+
+        let snap0 = snapshot_session(&es, &m_branch);
+        assert_eq!(
+            snap0.m_token_capability.as_ref().map(|(_, c)| c.as_str()),
+            Some("repo_branch_create"),
+            "branch-create m# must resolve to repo_branch_create at open"
+        );
+
+        let branch_program = format!(
+            "{e_repo}(owner=\"o\", repo=\"r\").{m_branch}(name=\"feat/label-color-guide\", sha=\"deadbeef\")"
+        );
+        let branch_dry = compile_dry(st.as_ref(), &es, "branch_create", &branch_program);
+        assert_surface_capability(&branch_dry, &es, "repo_branch_create");
+
+        let snap1 = snapshot_session(&es, &m_branch);
+        assert_eq!(snap0.fingerprint, snap1.fingerprint);
+        assert_eq!(snap0.branch_create_m, snap1.branch_create_m);
+        assert_eq!(tables_after_open, method_tables_clone(exp));
+
+        // Intermediate read-only programs (pc4/pc5 analog) — no plasm_context between.
+        let e_issue = map.entity_sym_for("github", "Issue");
+        let _issues_dry = compile_dry(
+            st.as_ref(),
+            &es,
+            "issues_query",
+            &format!("{e_issue}{{owner=\"o\", repo=\"r\", state=\"open\"}}"),
+        );
+
+        let e_branch = map.entity_sym_for("github", "Branch");
+        let m_branch_get = map.method_sym_for("github", "Branch", "branch_get");
+        if m_branch_get.starts_with('m') {
+            let _branch_get = compile_dry(
+                st.as_ref(),
+                &es,
+                "branch_get",
+                &format!("{e_branch}(owner=\"o\", repo=\"r\", name=\"main\")"),
+            );
+        }
+
+        let snap2 = snapshot_session(&es, &m_branch);
+        assert_eq!(
+            snap0.fingerprint, snap2.fingerprint,
+            "symbol_map_fingerprint must not change across intermediate plasm reads"
+        );
+        assert_eq!(
+            snap0.m_token_capability, snap2.m_token_capability,
+            "m# binding for branch-create must remain stable"
+        );
+        assert_eq!(tables_after_open, method_tables_clone(exp));
+
+        let branch_dry_again = compile_dry(st.as_ref(), &es, "branch_create_retry", &branch_program);
+        assert_surface_capability(&branch_dry_again, &es, "repo_branch_create");
+
+        let err = compile_plasm_expression(
+            st.engine.prompt_pipeline(),
+            Some(st.sessions.symbol_map_cross_cache()),
+            &es,
+            "wrong_mutator",
+            &format!(
+                "{e_repo}(owner=\"o\", repo=\"r\").{m_branch}(name=\"feat/other\", sha=\"cafebabe\")"
+            ),
+        );
+        assert!(err.is_ok(), "same m# token must still compile as mutator");
+    }
+
+    /// Intent-scored expand adds org_public_repos_query append-only; existing branch-create m# must not move.
+    #[tokio::test]
+    async fn symbol_stability_extend_intent_adds_query_without_reassigning_branch_create_m() {
+        let Some(st) = github_host() else {
+            return;
+        };
+        let st = Arc::new(st);
+        let logical_id = Uuid::new_v4();
+        let seeds = label_branch_workflow_seeds();
+
+        let out = apply_capability_seeds(
+            st.as_ref(),
+            None,
+            None,
+            seeds.clone(),
+            None,
+            None,
+            Some(logical_id),
+            "create branch for label guide",
+            RankedCapabilitiesArg::Unspecified,
+        )
+        .await
+        .expect("open");
+
+        let es = st
+            .get_execute_session(&out.prompt_hash, &out.session_id)
+            .await
+            .expect("session");
+        let snap_before = snapshot_session(
+            &es,
+            &es.teaching_exposure
+                .as_ref()
+                .expect("exposure")
+                .symbol_map_arc()
+                .method_sym_for("github", "Repository", "repo_branch_create"),
+        );
+        let tables_before = method_tables_clone(es.teaching_exposure.as_ref().expect("exposure"));
+
+        let out_extend = apply_capability_seeds(
+            st.as_ref(),
+            None,
+            Some((out.prompt_hash.as_str(), out.session_id.as_str())),
+            seeds,
+            None,
+            None,
+            Some(logical_id),
+            "list public organization repositories and org repos query",
+            RankedCapabilitiesArg::Unspecified,
+        )
+        .await
+        .expect("extend");
+
+        let es2 = st
+            .get_execute_session(&out_extend.prompt_hash, &out_extend.session_id)
+            .await
+            .expect("session after extend");
+        let m_branch = es2
+            .teaching_exposure
+            .as_ref()
+            .expect("exposure")
+            .symbol_map_arc()
+            .method_sym_for("github", "Repository", "repo_branch_create");
+        let snap_after = snapshot_session(&es2, &m_branch);
+
+        assert_eq!(
+            snap_before.branch_create_m, snap_after.branch_create_m,
+            "branch-create m# must not shift on intent-scored extend"
+        );
+        assert_eq!(
+            snap_before.m_token_capability, snap_after.m_token_capability,
+            "branch-create capability binding must be unchanged"
+        );
+        for (key, sym) in &tables_before {
+            assert_eq!(
+                es2.teaching_exposure
+                    .as_ref()
+                    .and_then(|e| e.tables.method_to_sym.iter().find(|(k, _)| {
+                        format!("{}:{}:{}", k.entry_id, k.domain, k.capability) == *key
+                    }))
+                    .map(|(_, s)| s.as_wire()),
+                Some(sym.as_str()),
+                "existing method_to_sym entry `{key}` reassigned"
+            );
+        }
+
+        let exp = es2.teaching_exposure.as_ref().expect("exposure");
+        let org_query_m = exp
+            .symbol_map_arc()
+            .method_sym_for("github", "Repository", "org_public_repos_query");
+        if org_query_m.starts_with('m') {
+            let triple = exp
+                .symbol_map_arc()
+                .resolve_method_symbol_triple(org_query_m.as_str())
+                .expect("org query m resolves");
+            assert_eq!(triple.2, "org_public_repos_query");
+            assert_ne!(
+                org_query_m, snap_after.branch_create_m,
+                "new query cap must not steal branch-create slot"
+            );
+        }
+    }
+
+    /// Fresh logical session may assign different m# (wave-structure); document cross-session hazard.
+    #[tokio::test]
+    async fn symbol_stability_new_session_may_differ_but_ledger_restores_numbering() {
+        let Some(st) = github_host() else {
+            return;
+        };
+        let st = Arc::new(st);
+        let seeds = label_branch_workflow_seeds();
+        let intent = "label documentation branch workflow";
+
+        let out_a = apply_capability_seeds(
+            st.as_ref(),
+            None,
+            None,
+            seeds.clone(),
+            None,
+            None,
+            Some(Uuid::new_v4()),
+            intent,
+            RankedCapabilitiesArg::Unspecified,
+        )
+        .await
+        .expect("session a");
+
+        let es_a = st
+            .get_execute_session(&out_a.prompt_hash, &out_a.session_id)
+            .await
+            .expect("session a row");
+        let m_a = es_a
+            .teaching_exposure
+            .as_ref()
+            .expect("exposure")
+            .symbol_map_arc()
+            .method_sym_for("github", "Repository", "repo_branch_create");
+
+        let logical_b = Uuid::new_v4();
+        let out_b = apply_capability_seeds(
+            st.as_ref(),
+            None,
+            None,
+            seeds.clone(),
+            None,
+            None,
+            Some(logical_b),
+            intent,
+            RankedCapabilitiesArg::Unspecified,
+        )
+        .await
+        .expect("session b");
+
+        let es_b = st
+            .get_execute_session(&out_b.prompt_hash, &out_b.session_id)
+            .await
+            .expect("session b row");
+        let m_b = es_b
+            .teaching_exposure
+            .as_ref()
+            .expect("exposure")
+            .symbol_map_arc()
+            .method_sym_for("github", "Repository", "repo_branch_create");
+
+        // Cross-session numbering may diverge (wave-structure); both must still resolve correctly.
+        for (label, m_sym, es) in [("a", m_a.as_str(), &es_a), ("b", m_b.as_str(), &es_b)] {
+            let triple = es
+                .teaching_exposure
+                .as_ref()
+                .expect("exposure")
+                .symbol_map_arc()
+                .resolve_method_symbol_triple(m_sym)
+                .unwrap_or_else(|| panic!("session {label} {m_sym} must resolve"));
+            assert_eq!(triple.2, "repo_branch_create");
+        }
+
+        // Extend on session b with same logical id restores append-only ledger from first open.
+        let out_b_extend = apply_capability_seeds(
+            st.as_ref(),
+            None,
+            Some((out_b.prompt_hash.as_str(), out_b.session_id.as_str())),
+            seeds,
+            None,
+            None,
+            Some(logical_b),
+            "continue label branch workflow",
+            RankedCapabilitiesArg::Unspecified,
+        )
+        .await
+        .expect("extend b");
+
+        let es_b2 = st
+            .get_execute_session(&out_b_extend.prompt_hash, &out_b_extend.session_id)
+            .await
+            .expect("session b after extend");
+        let m_b2 = es_b2
+            .teaching_exposure
+            .as_ref()
+            .expect("exposure")
+            .symbol_map_arc()
+            .method_sym_for("github", "Repository", "repo_branch_create");
+        assert_eq!(
+            m_b, m_b2,
+            "extend on same logical session must preserve branch-create m#"
+        );
+    }
+
+    #[tokio::test]
+    async fn symbol_stability_mutator_query_mismatch_includes_fingerprint_in_parse_error() {
+        let Some(st) = github_host() else {
+            return;
+        };
+        let st = Arc::new(st);
+        let out = apply_capability_seeds(
+            st.as_ref(),
+            None,
+            None,
+            vec![CapabilitySeed {
+                entry_id: "github".into(),
+                entity: "Repository".into(),
+            }],
+            None,
+            None,
+            Some(Uuid::new_v4()),
+            "list public organization repositories",
+            RankedCapabilitiesArg::Unspecified,
+        )
+        .await
+        .expect("open");
+
+        let es = st
+            .get_execute_session(&out.prompt_hash, &out.session_id)
+            .await
+            .expect("session");
+        let exp = es.teaching_exposure.as_ref().expect("exposure");
+        let map = exp.symbol_map_arc();
+        let e_repo = map.entity_sym_for("github", "Repository");
+        let m_query = map.method_sym_for("github", "Repository", "org_public_repos_query");
+        if !m_query.starts_with('m') {
+            return;
+        }
+
+        let line = format!(
+            "{e_repo}(owner=\"o\", repo=\"r\").{m_query}(name=\"feat/x\", sha=\"abc\")"
+        );
+        let err = compile_plasm_expression(
+            st.engine.prompt_pipeline(),
+            Some(st.sessions.symbol_map_cross_cache()),
+            &es,
+            "query_as_mutator",
+            &line,
+        )
+        .expect_err("query m# in mutator invoke position");
+        let msg = if err.contains("not a mutator") {
+            err
+        } else {
+            format_session_symbolic_parse_error(
+                &es,
+                Some(st.sessions.symbol_map_cross_cache()),
+                st.engine.prompt_pipeline(),
+                &line,
+                &plasm_core::expr_parser::ParseError {
+                    kind: plasm_core::expr_parser::ParseErrorKind::Other {
+                        message: err.clone(),
+                    },
+                    offset: 0,
+                },
+            )
+        };
+        assert!(
+            msg.contains("symbol_map_fingerprint="),
+            "parse error must include fingerprint: {msg}"
+        );
+        assert!(
+            msg.contains("domain_revision="),
+            "parse error must include domain_revision: {msg}"
+        );
+        assert!(
+            msg.contains(&m_query) && msg.contains("org_public_repos_query"),
+            "parse error must name resolved binding: {msg}"
+        );
+    }
+
+    #[test]
+    fn symbol_stability_operation_dispatch_uses_session_exposure_map() {
+        let dir = github_fixture_dir();
+        if !dir.is_dir() {
+            return;
+        }
+        let cgs = Arc::new(load_schema_dir(&dir).expect("github"));
+        let mut ctxs = IndexMap::new();
+        ctxs.insert(
+            "github".into(),
+            Arc::new(CgsContext::entry("github", cgs.clone())),
+        );
+        let exp = TeachingExposureSession::new(cgs.as_ref(), "github", &["Repository", "Issue"]);
+        let map = exp.symbol_map_arc();
+        let m_branch = map.method_sym_for("github", "Repository", "repo_branch_create");
+        let es = ExecuteSession::new(
+            "ph".into(),
+            "sid".into(),
+            cgs.clone(),
+            ctxs,
+            "github".into(),
+            String::new(),
+            String::new(),
+            None,
+            vec!["Repository".into(), "Issue".into()],
+            Some(exp),
+            None,
+            cgs.catalog_cgs_hash_hex(),
+            Some("branch workflow".into()),
+            None,
+        );
+        let cross = plasm_core::SymbolMapCrossRequestCache::new(8);
+        let fp = symbol_map_fingerprint_hex(es.teaching_exposure.as_ref().expect("exp"));
+        let program = format!(
+            "e1(owner=\"o\", repo=\"r\").{m_branch}(name=\"feat/x\", sha=\"abc\")"
+        );
+        let _ = try_dispatch_operation_program(&es, None, None, &program, Some(&cross))
+            .expect("operation dispatch should use teaching exposure map");
+        let fp2 = symbol_map_fingerprint_hex(es.teaching_exposure.as_ref().expect("exp"));
+        assert_eq!(fp, fp2);
+    }
+}

@@ -14,6 +14,7 @@ pub(crate) fn build_dry_run_agent_plasm_meta(
     session_ref: &str,
     plan_refs: &CodePlanEmitRefs,
     domain_revision: u32,
+    symbol_map_fingerprint: Option<&str>,
     projection_warning: bool,
 ) -> Map<String, Value> {
     let mut agent_plasm = plan_commit_agent_meta(commit_ref, verdict);
@@ -36,6 +37,9 @@ pub(crate) fn build_dry_run_agent_plasm_meta(
         Value::String(plan_refs.canonical_plan_uri.clone()),
     );
     agent_plasm.insert("domain_revision".into(), json!(domain_revision));
+    if let Some(fp) = symbol_map_fingerprint {
+        agent_plasm.insert("symbol_map_fingerprint".into(), json!(fp));
+    }
     if projection_warning {
         agent_plasm.insert("projection_warning".into(), Value::Bool(true));
     }

@@ -87,7 +87,9 @@ pub(crate) async fn emit_code_plan_trace(
         } => *id,
     };
     let archived_plan_ux = match &emit {
-        CodePlanTraceEmit::Evaluate { plan_ux_reflection, .. }
+        CodePlanTraceEmit::Evaluate {
+            plan_ux_reflection, ..
+        }
         | CodePlanTraceEmit::Execute {
             plan_ux_reflection, ..
         } => plan_ux_reflection.clone(),

@@ -5,6 +5,12 @@ use std::hash::{Hash, Hasher};
 
 use super::TeachingExposureSession;
 
+/// Hex fingerprint of wave-order-dependent opaque assignment (for MCP `_meta.plasm` continuity).
+#[must_use]
+pub fn symbol_map_fingerprint_hex(exposure: &TeachingExposureSession) -> String {
+    format!("{:016x}", hash_exposure_session_rows(exposure))
+}
+
 /// Hash wave-order-dependent opaque assignment (must not collide across different wave histories).
 pub(crate) fn hash_exposure_session_rows(exposure: &TeachingExposureSession) -> u64 {
     let mut h = DefaultHasher::new();

@@ -124,8 +124,12 @@ const UI_PLAN_INLINE_KEYS: &[&str] = &["comp", "plan_ux_reflection"];
 
 /// Whether inline plan DAG + UX reflection fit the UI byte budget.
 pub fn inline_ui_payload_fits(comp: &Value, plan_ux: &Value) -> bool {
-    let comp_len = serde_json::to_string(comp).map(|s| s.len()).unwrap_or(usize::MAX);
-    let ux_len = serde_json::to_string(plan_ux).map(|s| s.len()).unwrap_or(usize::MAX);
+    let comp_len = serde_json::to_string(comp)
+        .map(|s| s.len())
+        .unwrap_or(usize::MAX);
+    let ux_len = serde_json::to_string(plan_ux)
+        .map(|s| s.len())
+        .unwrap_or(usize::MAX);
     comp_len.saturating_add(ux_len) <= INLINE_UI_BYTE_BUDGET
 }
 
@@ -198,10 +202,7 @@ fn structured_ui_payload_from_meta(
 
 fn step_payload_from_step(step: &Map<String, Value>) -> Option<Value> {
     let mut out = Map::new();
-    for key in UI_STEP_REF_KEYS
-        .iter()
-        .chain(UI_STEP_INLINE_KEYS.iter())
-    {
+    for key in UI_STEP_REF_KEYS.iter().chain(UI_STEP_INLINE_KEYS.iter()) {
         if let Some(v) = step.get(*key) {
             out.insert(key.to_string(), v.clone());
         }
@@ -335,8 +336,7 @@ pub fn ui_read_plan_tool_result(comp: Value, plan_ux_reflection: Value) -> CallT
     ui.insert("plan_ux_reflection".into(), plan_ux_reflection);
     let mut structured = Map::new();
     structured.insert("ui".into(), Value::Object(ui));
-    CallToolResult::text_content(vec![])
-        .with_structured_content(structured)
+    CallToolResult::text_content(vec![]).with_structured_content(structured)
 }
 
 /// Build app-only hydration tool result with run snapshot rows in `structuredContent.ui`.
@@ -394,7 +394,8 @@ mod tests {
     #[test]
     fn finalize_dry_run_structured_content_is_slim_agent_tokens_only() {
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)]);
-        let out = finalize_mcp_tool_result(res, sample_dry_tool_meta(), Some(SAMPLE_PLAN_TEXT), None);
+        let out =
+            finalize_mcp_tool_result(res, sample_dry_tool_meta(), Some(SAMPLE_PLAN_TEXT), None);
         let wire = serde_json::to_value(&out).expect("serialize CallToolResult");
         assert_eq!(
             wire.pointer("/structuredContent/plasm/run_ref")
@@ -409,8 +410,12 @@ mod tests {
         );
         assert!(wire.pointer("/_meta/plasm/plan_text").is_none());
         assert!(wire.pointer("/structuredContent/plasm/comp").is_none());
-        assert!(wire.pointer("/structuredContent/plasm/plan_http_path").is_none());
-        assert!(wire.pointer("/structuredContent/plasm/plan_ux_reflection").is_none());
+        assert!(wire
+            .pointer("/structuredContent/plasm/plan_http_path")
+            .is_none());
+        assert!(wire
+            .pointer("/structuredContent/plasm/plan_ux_reflection")
+            .is_none());
         assert_eq!(
             wire.pointer("/structuredContent/ui/kind")
                 .and_then(|v| v.as_str()),
@@ -513,13 +518,12 @@ mod tests {
         let res = CallToolResult::text_content(vec![TextContent::new("ok".into(), None, None)])
             .with_meta(Some(meta));
         let out = mirror_plasm_structured_content(res, None);
-        assert!(
-            out.structured_content
-                .as_ref()
-                .and_then(|m| m.get("plasm"))
-                .and_then(|p| p.get("steps"))
-                .is_none()
-        );
+        assert!(out
+            .structured_content
+            .as_ref()
+            .and_then(|m| m.get("plasm"))
+            .and_then(|p| p.get("steps"))
+            .is_none());
         let ui_steps = out
             .structured_content
             .as_ref()
@@ -529,7 +533,8 @@ mod tests {
             .expect("structuredContent.ui.steps");
         assert_eq!(ui_steps.len(), 1);
         assert_eq!(
-            ui_steps[0].get("preview_entities")
+            ui_steps[0]
+                .get("preview_entities")
                 .and_then(|v| v.as_array())
                 .map(|a| a.len()),
             Some(1)

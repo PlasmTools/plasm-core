@@ -79,7 +79,8 @@ fn assert_agent_mcp_tool_compact(body: &Value) {
         "agent structuredContent.plasm must omit snapshot steps: {body}"
     );
     assert!(
-        body.pointer("/structuredContent/plasm/plan_ux_reflection").is_none(),
+        body.pointer("/structuredContent/plasm/plan_ux_reflection")
+            .is_none(),
         "agent structuredContent.plasm must omit plan_ux_reflection: {body}"
     );
     assert_eq!(
@@ -89,7 +90,9 @@ fn assert_agent_mcp_tool_compact(body: &Value) {
         "structuredContent.ui must declare plan_review kind: {body}"
     );
     let ui_has_payload = body.pointer("/structuredContent/ui/comp").is_some()
-        || body.pointer("/structuredContent/ui/plan_http_path").is_some()
+        || body
+            .pointer("/structuredContent/ui/plan_http_path")
+            .is_some()
         || body.pointer("/structuredContent/ui/plan_uri").is_some();
     assert!(
         ui_has_payload,

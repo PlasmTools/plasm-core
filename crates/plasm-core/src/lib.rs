@@ -317,7 +317,8 @@ pub use summary_render::{
 pub use symbol_tuning::{
     catalog_cgs_hashes_from_session, catalog_pins_match, entity_slices_for_render,
     relation_endpoint_keys, resolve_prompt_surface_entities, strip_prompt_expression_annotations,
-    symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog, symbol_map_for_prompt,
+    symbol_map_cache_key_federated, symbol_map_cache_key_single_catalog, symbol_map_fingerprint_hex,
+    first_opaque_m_sym_in_expr, method_syms_in_expr, symbol_map_for_prompt,
     wire_surface_for_parse, wire_surface_for_teaching_session, CatalogScope,
     ExposedEntitySymbolRow, ExposedRelationSymbolRow, ExposureEntityKey, FocusSpec,
     PersistedSymbolLedger, PersistedSymbolLedgerDecodeError, PersistedSymbolLedgerEncodeError,
