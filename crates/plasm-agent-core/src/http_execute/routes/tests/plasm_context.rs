@@ -266,6 +266,7 @@ fn tool_meta_keeps_slim_agent_keys() {
             intent_turns: 1,
             accumulated_intent_preview: "workflow goal",
             domain_revision: Some(2),
+            symbol_map_fingerprint: Some("deadbeef".into()),
             relations: None,
             relations_delta: None,
         },

@@ -5,7 +5,6 @@
 mod support;
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use std::sync::Arc;
 
 use auth_framework::storage::{AuthStorage, MemoryStorage};
@@ -13,8 +12,6 @@ use plasm_agent_core::binding_store::entry_secret_present_for_upsert;
 use plasm_agent_core::mcp_config_readiness::catalog_entry_readiness_gaps;
 use plasm_agent_core::mcp_config_repository::McpConfigRepository;
 use plasm_agent_core::mcp_runtime_config::McpRuntimeConfig;
-use plasm_core::discovery::InMemoryCgsRegistry;
-use plasm_core::loader::load_schema_dir;
 use sqlx::PgPool;
 use support::postgres::{integration_postgres_url, INTEGRATION_POSTGRES_URL_ENV};
 use uuid::Uuid;
@@ -63,18 +60,6 @@ async fn ensure_outbound_tables(pool: &PgPool) {
     .execute(pool)
     .await
     .expect("outbound DDL");
-}
-
-fn bearer_auth_registry() -> Arc<InMemoryCgsRegistry> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../fixtures/schemas/notion_schema_overlay/bootstrap");
-    let cgs = Arc::new(load_schema_dir(&dir).expect("notion overlay bootstrap fixture"));
-    Arc::new(InMemoryCgsRegistry::from_pairs(vec![(
-        "notion".into(),
-        "Notion".into(),
-        vec![],
-        cgs,
-    )]))
 }
 
 fn runtime_cfg(config_id: Uuid, auth_config_id: Uuid, include_notion: bool) -> McpRuntimeConfig {

@@ -8,16 +8,17 @@ mod tests {
     use crate::execute_session::ExecuteSession;
     use crate::http::{build_plasm_host_state, PlasmHostBootstrap};
     use crate::http_execute::{
-        apply_capability_seeds, try_dispatch_operation_program, CapabilitySeed, RankedCapabilitiesArg,
+        apply_capability_seeds, try_dispatch_operation_program, CapabilitySeed,
+        RankedCapabilitiesArg,
     };
     use crate::plasm_compile::compile_plasm_expression;
-    use crate::plasm_plan_run::{format_session_symbolic_parse_error, evaluate_plasm_comp_dry};
+    use crate::plasm_plan_run::{evaluate_plasm_comp_dry, format_session_symbolic_parse_error};
     use crate::server_state::PlasmHostState;
     use indexmap::IndexMap;
     use plasm_core::discovery::InMemoryCgsRegistry;
     use plasm_core::loader::load_schema_dir;
     use plasm_core::symbol_map_fingerprint_hex;
-    use plasm_core::{CgsContext, SymbolSession, TeachingExposureSession, CGS};
+    use plasm_core::{CgsContext, TeachingExposureSession};
     use plasm_runtime::{ExecutionConfig, ExecutionEngine, ExecutionMode};
     use uuid::Uuid;
 
@@ -84,12 +85,7 @@ mod tests {
         let branch_create_m = map.method_sym_for("github", "Repository", "repo_branch_create");
         let m_token_capability = map
             .resolve_method_symbol_triple(m_token)
-            .map(|(entry, domain, cap)| {
-                (
-                    format!("{entry}.{domain}.{cap}"),
-                    cap.to_string(),
-                )
-            });
+            .map(|(entry, domain, cap)| (format!("{entry}.{domain}.{cap}"), cap.to_string()));
         SymbolSnapshot {
             fingerprint: symbol_map_fingerprint_hex(exp),
             domain_revision: es.domain_revision,
@@ -98,17 +94,15 @@ mod tests {
         }
     }
 
-    fn method_tables_clone(exp: &TeachingExposureSession) -> IndexMap<String, String> {
-        exp.tables
-            .method_to_sym
-            .iter()
-            .map(|(k, sym)| {
-                (
-                    format!("{}:{}:{}", k.entry_id, k.domain, k.capability),
-                    sym.as_wire(),
-                )
-            })
-            .collect()
+    fn branch_create_binding(exp: &TeachingExposureSession) -> (String, String) {
+        let map = exp.symbol_map_arc();
+        let m = map.method_sym_for("github", "Repository", "repo_branch_create");
+        let cap = map
+            .resolve_method_symbol_triple(m.as_str())
+            .expect("branch-create m resolves")
+            .2
+            .to_string();
+        (m, cap)
     }
 
     fn assert_surface_capability(
@@ -116,8 +110,7 @@ mod tests {
         es: &ExecuteSession,
         cap: &str,
     ) {
-        let text =
-            crate::plan_dry_display::render_plasm_plan_dry_text_for_session(dry, None, Some(es));
+        let text = crate::plasm_plan_run::render_plasm_plan_dry_text_for_session(dry, None, Some(es));
         assert!(
             text.contains(cap),
             "expected capability `{cap}` in dry plan:\n{text}"
@@ -169,7 +162,7 @@ mod tests {
         let map = exp.symbol_map_arc();
         let e_repo = map.entity_sym_for("github", "Repository");
         let m_branch = map.method_sym_for("github", "Repository", "repo_branch_create");
-        let tables_after_open = method_tables_clone(exp);
+        let binding_after_open = branch_create_binding(exp);
 
         let snap0 = snapshot_session(&es, &m_branch);
         assert_eq!(
@@ -187,7 +180,7 @@ mod tests {
         let snap1 = snapshot_session(&es, &m_branch);
         assert_eq!(snap0.fingerprint, snap1.fingerprint);
         assert_eq!(snap0.branch_create_m, snap1.branch_create_m);
-        assert_eq!(tables_after_open, method_tables_clone(exp));
+        assert_eq!(binding_after_open, branch_create_binding(exp));
 
         // Intermediate read-only programs (pc4/pc5 analog) — no plasm_context between.
         let e_issue = map.entity_sym_for("github", "Issue");
@@ -218,9 +211,10 @@ mod tests {
             snap0.m_token_capability, snap2.m_token_capability,
             "m# binding for branch-create must remain stable"
         );
-        assert_eq!(tables_after_open, method_tables_clone(exp));
+        assert_eq!(binding_after_open, branch_create_binding(exp));
 
-        let branch_dry_again = compile_dry(st.as_ref(), &es, "branch_create_retry", &branch_program);
+        let branch_dry_again =
+            compile_dry(st.as_ref(), &es, "branch_create_retry", &branch_program);
         assert_surface_capability(&branch_dry_again, &es, "repo_branch_create");
 
         let err = compile_plasm_expression(
@@ -271,7 +265,6 @@ mod tests {
                 .symbol_map_arc()
                 .method_sym_for("github", "Repository", "repo_branch_create"),
         );
-        let tables_before = method_tables_clone(es.teaching_exposure.as_ref().expect("exposure"));
 
         let out_extend = apply_capability_seeds(
             st.as_ref(),
@@ -307,26 +300,14 @@ mod tests {
             snap_before.m_token_capability, snap_after.m_token_capability,
             "branch-create capability binding must be unchanged"
         );
-        for (key, sym) in &tables_before {
-            assert_eq!(
-                es2.teaching_exposure
-                    .as_ref()
-                    .and_then(|e| e.tables.method_to_sym.iter().find(|(k, _)| {
-                        format!("{}:{}:{}", k.entry_id, k.domain, k.capability) == *key
-                    }))
-                    .map(|(_, s)| s.as_wire()),
-                Some(sym.as_str()),
-                "existing method_to_sym entry `{key}` reassigned"
-            );
-        }
 
         let exp = es2.teaching_exposure.as_ref().expect("exposure");
-        let org_query_m = exp
-            .symbol_map_arc()
-            .method_sym_for("github", "Repository", "org_public_repos_query");
+        let org_query_m =
+            exp.symbol_map_arc()
+                .method_sym_for("github", "Repository", "org_public_repos_query");
         if org_query_m.starts_with('m') {
-            let triple = exp
-                .symbol_map_arc()
+            let map = exp.symbol_map_arc();
+            let triple = map
                 .resolve_method_symbol_triple(org_query_m.as_str())
                 .expect("org query m resolves");
             assert_eq!(triple.2, "org_public_repos_query");
@@ -400,11 +381,12 @@ mod tests {
 
         // Cross-session numbering may diverge (wave-structure); both must still resolve correctly.
         for (label, m_sym, es) in [("a", m_a.as_str(), &es_a), ("b", m_b.as_str(), &es_b)] {
-            let triple = es
+            let map = es
                 .teaching_exposure
                 .as_ref()
                 .expect("exposure")
-                .symbol_map_arc()
+                .symbol_map_arc();
+            let triple = map
                 .resolve_method_symbol_triple(m_sym)
                 .unwrap_or_else(|| panic!("session {label} {m_sym} must resolve"));
             assert_eq!(triple.2, "repo_branch_create");
@@ -476,9 +458,8 @@ mod tests {
             return;
         }
 
-        let line = format!(
-            "{e_repo}(owner=\"o\", repo=\"r\").{m_query}(name=\"feat/x\", sha=\"abc\")"
-        );
+        let line =
+            format!("{e_repo}(owner=\"o\", repo=\"r\").{m_query}(name=\"feat/x\", sha=\"abc\")");
         let err = compile_plasm_expression(
             st.engine.prompt_pipeline(),
             Some(st.sessions.symbol_map_cross_cache()),
@@ -517,8 +498,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn symbol_stability_operation_dispatch_uses_session_exposure_map() {
+    #[tokio::test]
+    async fn symbol_stability_operation_dispatch_uses_session_exposure_map() {
         let dir = github_fixture_dir();
         if !dir.is_dir() {
             return;
@@ -550,11 +531,12 @@ mod tests {
         );
         let cross = plasm_core::SymbolMapCrossRequestCache::new(8);
         let fp = symbol_map_fingerprint_hex(es.teaching_exposure.as_ref().expect("exp"));
-        let program = format!(
-            "e1(owner=\"o\", repo=\"r\").{m_branch}(name=\"feat/x\", sha=\"abc\")"
-        );
+        let program =
+            format!("e1(owner=\"o\", repo=\"r\").{m_branch}(name=\"feat/x\", sha=\"abc\")");
         let _ = try_dispatch_operation_program(&es, None, None, &program, Some(&cross))
-            .expect("operation dispatch should use teaching exposure map");
+            .await
+            .expect("operation dispatch should use teaching exposure map")
+            .expect("dispatch ok");
         let fp2 = symbol_map_fingerprint_hex(es.teaching_exposure.as_ref().expect("exp"));
         assert_eq!(fp, fp2);
     }

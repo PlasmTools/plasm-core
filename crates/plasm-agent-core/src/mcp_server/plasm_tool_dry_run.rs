@@ -168,8 +168,7 @@ pub(crate) async fn execute_plasm_tool_dry_run(
         ctx.session_ref,
         &plan_refs,
         ctx.es.domain_revision,
-        crate::symbol_map_resolve::symbol_map_fingerprint_for_session(ctx.es.as_ref())
-            .as_deref(),
+        crate::symbol_map_resolve::symbol_map_fingerprint_for_session(ctx.es.as_ref()).as_deref(),
         projection_warning,
     );
     let inline_plan_ui = inline_fits.then(|| UiInlinePlanPayload {
