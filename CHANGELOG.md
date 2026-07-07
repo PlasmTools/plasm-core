@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-07-07
+
+### Fixed
+
+- **Relation chain nav teaching:** align many-relation `from_parent_get` type-check, teaching emit, and extend-wave edge deltas through `relation_nav`; never teach unrunnable `r#` hops without validated exemplars.
+- **Matrix fixture:** `from_parent_get_nav` for CI-stable relation fanout without `apis/linear` coupling.
+
+### Changed
+
+- **`relation_nav` module:** shared `relation_chain_nav_admissible` / `relation_nav_admissible`; unified `try_build_relation_nav_exemplar` teaching gate.
+- **Linear eval:** `lin-24` covers `Issue.labels` relation fanout.
+
 ## [0.4.2] - 2026-07-07
 
 ### Added
