@@ -69,9 +69,7 @@ use crate::schema::{
     union_variant_constructor_symbol, ArrayItemsSchema, CapabilitySchema, InputFieldSchema,
     InputFieldWire, InputType, ParameterRole, StringSemantics, ValueDomainKey, CGS,
 };
-use crate::teaching_term::{
-    method_ref_for_capability, EntityRef, ParameterSlot, TeachingTerm,
-};
+use crate::teaching_term::{method_ref_for_capability, EntityRef, ParameterSlot, TeachingTerm};
 use crate::CapabilityKind;
 use crate::FieldType;
 use indexmap::IndexMap;

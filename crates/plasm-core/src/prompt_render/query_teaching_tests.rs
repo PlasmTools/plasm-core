@@ -496,7 +496,7 @@ fn linear_workflow_state_scoped_query_validates_with_homograph_p() {
     use crate::prompt_render::line_validate::{
         domain_line_validate_cached, prompt_line_valid_cache_seed_cgs,
     };
-    use crate::symbol_tuning::{symbol_map_for_prompt, FocusSpec, SymbolMap};
+    use crate::symbol_tuning::{symbol_map_for_prompt, FocusSpec};
 
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apis/linear");
     if !dir.is_dir() {

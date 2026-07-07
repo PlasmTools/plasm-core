@@ -1422,7 +1422,6 @@ fn prompt_matrix_zone_entity_ref_value_domain_gloss_includes_id_primitive() {
     let dir = fixtures_schemas_dir("plasm_prompt_matrix");
     let cgs = load_schema_dir(&dir).unwrap();
     let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
-    let p = map.ident_sym_entity_field_for("", "Ruleset", "zone_id");
     let v = map
         .value_sym_for_wire("", "Ruleset", "zone_id")
         .expect("Ruleset.zone_id should map to a value-domain symbol");
