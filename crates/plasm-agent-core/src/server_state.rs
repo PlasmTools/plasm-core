@@ -462,7 +462,10 @@ impl PlasmHostState {
             &exposure,
         )
         .await?;
-        let durable_configured = self.execute_session_registry.durable_backend_configured().await;
+        let durable_configured = self
+            .execute_session_registry
+            .durable_backend_configured()
+            .await;
         let outcome = match kind {
             DurableSessionWriteKind::Insert => {
                 let rk = reuse_key.ok_or(ExecuteSessionPersistError::MissingReuseKey)?;
@@ -494,19 +497,15 @@ impl PlasmHostState {
         let logical_id = reuse_key
             .and_then(|k| k.logical_session_id.as_ref())
             .and_then(|s| Uuid::parse_str(s).ok())
-            .or(
-                self.logical_execute_bindings
-                    .find_by_execute(prompt_hash, session_id)
-                    .await,
-            );
+            .or(self
+                .logical_execute_bindings
+                .find_by_execute(prompt_hash, session_id)
+                .await);
         let Some(logical_id) = logical_id else {
             return Ok(());
         };
         crate::http_execute::upsert_logical_ledger_from_snapshot(
-            self,
-            logical_id,
-            session,
-            exposure,
+            self, logical_id, session, exposure,
         )
         .await?;
         Ok(())

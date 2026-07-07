@@ -33,7 +33,8 @@ mod tests {
             vec!["github".into()],
             cgs.clone(),
         )]);
-        let engine = plasm_runtime::ExecutionEngine::new(plasm_runtime::ExecutionConfig::default()).ok()?;
+        let engine =
+            plasm_runtime::ExecutionEngine::new(plasm_runtime::ExecutionConfig::default()).ok()?;
         Some(build_plasm_host_state(PlasmHostBootstrap {
             engine,
             mode: plasm_runtime::ExecutionMode::Live,
@@ -128,12 +129,10 @@ mod tests {
             principal: es.principal.clone(),
             logical_session_id: Some(logical_id.hyphenated().to_string()),
         };
-        let exposure = crate::execute_session_materialize::build_durable_exposure_snapshot(
-            st.as_ref(),
-            &es,
-        )
-        .await
-        .expect("durable exposure snapshot");
+        let exposure =
+            crate::execute_session_materialize::build_durable_exposure_snapshot(st.as_ref(), &es)
+                .await
+                .expect("durable exposure snapshot");
         let mut desc = PersistedExecuteSessionDescriptor::from_session_and_durable_snapshot(
             &es,
             out_extend.session_id.as_str(),

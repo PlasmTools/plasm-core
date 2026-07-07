@@ -247,8 +247,9 @@ impl PersistedExecuteSessionDescriptor {
         bind_credentials: crate::execute_session::SessionBindCredentialsSnapshot,
         durable: &crate::execute_session_materialize::DurableExposureSnapshot,
     ) -> Self {
-        let catalog_cgs_hashes_by_entry =
-            crate::catalog_hash::effective_hash_map_to_strings(&durable.catalog_cgs_hashes_by_entry);
+        let catalog_cgs_hashes_by_entry = crate::catalog_hash::effective_hash_map_to_strings(
+            &durable.catalog_cgs_hashes_by_entry,
+        );
         let outbound_hosted_kv_by_entry = session.materialized_outbound_hosted_kv_by_entry.clone();
         let plan_snapshot = session.snapshot_plan_commits_for_persist();
         let op_snapshot = session.snapshot_operations_for_persist();
@@ -357,7 +358,8 @@ impl ExecuteSessionRegistry {
         reuse_key: &SessionReuseKey,
     ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
         let exposure =
-            crate::execute_session_materialize::build_durable_exposure_snapshot(st, session).await?;
+            crate::execute_session_materialize::build_durable_exposure_snapshot(st, session)
+                .await?;
         self.write_descriptor_from_session(session, session_id, reuse_key, &exposure)
             .await
     }
@@ -496,13 +498,8 @@ impl ExecuteSessionRegistry {
                         )
                         .await?;
                     let reuse_key = existing.reuse_key.into();
-                    self.write_descriptor_from_session(
-                        session,
-                        session_id,
-                        &reuse_key,
-                        &exposure,
-                    )
-                    .await
+                    self.write_descriptor_from_session(session, session_id, &reuse_key, &exposure)
+                        .await
                 }
                 ExposurePersistPolicy::FullPersistMaterialize => {
                     let exposure =

@@ -103,8 +103,7 @@ pub fn plan_commit_persist_policy(
         },
         ExposureSync::InSync => ExposurePersistPolicy::PatchMetadataOnly,
         ExposureSync::HotAhead => {
-            let same_entries =
-                inputs.session_context_entry_ids == inputs.durable_context_entry_ids;
+            let same_entries = inputs.session_context_entry_ids == inputs.durable_context_entry_ids;
             let same_outbound = inputs.session_outbound == inputs.durable_outbound;
             let same_bindings = inputs.session_bindings_len == inputs.durable_bindings_len;
             if same_entries && same_outbound && same_bindings {

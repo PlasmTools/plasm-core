@@ -97,14 +97,12 @@ mod tests {
         let owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
         let repo = map.ident_sym_entity_field_for("github", "Repository", "repo");
         let m = map.method_sym_for("github", "Repository", "repo_branch_create");
-        let p_repo =
-            map.ident_sym_cap_param_for("github", "Repository", "repo_branch_create", "repository");
         let p_name =
             map.ident_sym_cap_param_for("github", "Repository", "repo_branch_create", "name");
         let p_sha =
             map.ident_sym_cap_param_for("github", "Repository", "repo_branch_create", "sha");
         format!(
-            "{e}({owner}=\"o\", {repo}=\"r\").{m}({p_repo}={e}({owner}=\"o\", {repo}=\"r\"), {p_name}=\"feat/label-color-guide\", {p_sha}=\"deadbeef\")"
+            "{e}({owner}=\"o\", {repo}=\"r\").{m}({p_name}=\"feat/label-color-guide\", {p_sha}=\"deadbeef\")"
         )
     }
 

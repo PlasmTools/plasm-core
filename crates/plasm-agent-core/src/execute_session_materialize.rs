@@ -96,12 +96,13 @@ pub(crate) async fn materialize_entry_context(
     if catalog_backend.needs_origin_resolution(entry_id) {
         ctx = patch_cgs_context_resolved_http_backend(ctx, &http_backend);
     }
-    let effective_cgs = resolve_schema_overlay(st, ctx.cgs.clone(), http_backend.as_str(), entry_id)
-        .await
-        .map_err(|detail| MaterializeError::SchemaOverlay {
-            entry_id: entry_id.to_string(),
-            detail,
-        })?;
+    let effective_cgs =
+        resolve_schema_overlay(st, ctx.cgs.clone(), http_backend.as_str(), entry_id)
+            .await
+            .map_err(|detail| MaterializeError::SchemaOverlay {
+                entry_id: entry_id.to_string(),
+                detail,
+            })?;
     let ctx = Arc::new(CgsContext::entry(
         entry_id.to_string(),
         effective_cgs.clone(),
@@ -166,14 +167,13 @@ pub(crate) async fn verify_effective_catalog_pins_maps(
 ) -> Result<CatalogPinVerifyOutcome, MaterializeError> {
     let mut catalog_cgs = IndexMap::with_capacity(pinned_hashes.len());
     for (entry_id, pinned) in pinned_hashes {
-        let hosted_kv = outbound
-            .and_then(|m| m.get(entry_id))
-            .map(String::as_str);
+        let hosted_kv = outbound.and_then(|m| m.get(entry_id)).map(String::as_str);
         let entry_bindings = bindings.and_then(|m| m.get(entry_id));
         let materialized =
             materialize_entry_context(st, entry_id.as_str(), hosted_kv, entry_bindings).await?;
         let pinned_hash = EffectiveCatalogHash::from_hex(pinned.clone());
-        let live_hash = EffectiveCatalogHash::from_effective_cgs(materialized.effective_cgs.as_ref());
+        let live_hash =
+            EffectiveCatalogHash::from_effective_cgs(materialized.effective_cgs.as_ref());
         if live_hash != pinned_hash {
             return Ok(CatalogPinVerifyOutcome::Mismatch);
         }

@@ -188,9 +188,7 @@ impl LogicalSymbolLedgerRegistry {
         exposure: TeachingExposureSession,
     ) -> Result<(), SymbolLedgerUpsertError> {
         if symbol_ledger_bytes.is_empty() {
-            return self
-                .upsert(logical_id, catalog_cgs_hashes, exposure)
-                .await;
+            return self.upsert(logical_id, catalog_cgs_hashes, exposure).await;
         }
         let entry = LogicalSymbolLedgerEntry {
             catalog_cgs_hashes,
@@ -343,8 +341,10 @@ mod tests {
             .expect("preencoded local");
         assert_eq!(a.catalog_cgs_hashes, b.catalog_cgs_hashes);
         assert_eq!(
-            a.exposure.qualified_entity_symbol("langmatrix", "HomographRowA"),
-            b.exposure.qualified_entity_symbol("langmatrix", "HomographRowA"),
+            a.exposure
+                .qualified_entity_symbol("langmatrix", "HomographRowA"),
+            b.exposure
+                .qualified_entity_symbol("langmatrix", "HomographRowA"),
         );
     }
 

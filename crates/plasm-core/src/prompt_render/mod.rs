@@ -3,7 +3,7 @@
 //! [`EntityTeachingBlock`] rows and emits TSV directly ([`render_prompt_tsv_from_bundle`]); synthesis stays structured
 //! (model → [`TeachingExprLine`] / [`TeachingFieldGloss`]) without re-parsing a compact teaching transcript in production.
 //! Symbolic prompts use `p#` / `v#` glosses emitted before first use (`v#` = shared `values:` domain;
-//! each distinct taught `p#` meaning teaches **`v# · wire`** (and optional point-of-use prose) when the slot uses a `value_ref`, with typing on the `v#` row only).
+//! each distinct registry-backed wire slot teaches **`wire` tab `v#`** in Meaning (optional param doc after `v#` when distinct from the `values:` row); full typing on the `v#` row only).
 //!
 //! This is the prompt string for `plasm-eval` / BAML, REPL startup / `:schema`, HTTP execute session `prompt`, and MCP teaching table after `plasm_context`.
 //! Build via [`render_prompt_with_config`] or [`render_prompt_tsv_with_config`]. Both now emit the
@@ -27,8 +27,7 @@
 //! taught **once** on the witness row; query/search row-producer lines omit the same bracket; Meaning
 //! carries typed `inputs:` only (no redundant `rows:` when expr already has `[...]`). Divergent capability
 //! `provides` attach bracket on expr only. Value domain once per `v#`, then each distinct
-//! `v# · wire` teaching once per shared `p#`; point-of-use prose is omitted when it duplicates the shared
-//! `values:` row description.
+//! wire→`v#` link row; param-specific prose only when it differs from the shared `values:` description.
 //! Model output must be those expression shapes—not prose.
 //! Use [`RenderConfig::focus`] to subset entities.
 //!

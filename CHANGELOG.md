@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-07
+
+### Added
+
+- **Same-entity scope EntityRef inference:** type-level `prepare_invoke_capability_input` / `prepare_create_capability_input` inject receiver identity for dotted-call scope slots; teaching exemplars omit redundant params (e.g. GitHub `repo_branch_create` no longer repeats `repository=`).
+- **Typed wire gloss pipeline:** `RegistryWireSlot`, `GlossMeaningCell`, and `RegistryWireLink` atoms — wire-row Meaning projects as `v#` without string parsing; global dedupe via typed `GlossEmitIdentity`.
+- **`capability_input.rs`:** extracted capability input validation from `type_checker.rs`; **`invoke_teaching/`** module tree replaces monolithic invoke teaching file.
+
+### Changed
+
+- **Runtime / preflight parity:** scope inference wired through `mutators` and `compile_preflight` (same path as type-check).
+- **Teaching TSV:** insta snapshots updated for scope-omitted invoke exemplars and typed registry-wire gloss rows.
+
 ## [0.4.1] - 2026-07-07
 
 ### Fixed

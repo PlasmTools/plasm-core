@@ -6,8 +6,8 @@ use crate::symbol_tuning::SymbolMap;
 
 use super::contract::enforce_teaching_tsv_teaching_invariant;
 use super::gloss_dedup::{
-    gloss_emit_identity_for_row, FieldGlossMeaning, FieldGlossMeaningAtom, GlossDescription,
-    GlossTsvDedupe,
+    gloss_emit_identity_for_row, join_field_gloss_meaning_atoms, FieldGlossMeaning,
+    FieldGlossMeaningAtom, GlossDescription, GlossTsvDedupe,
 };
 use super::{
     EntityTeachingExprRow, TeachingExprLine, TeachingFieldGloss, TeachingHeading,
@@ -123,6 +123,19 @@ pub(crate) fn teaching_relation_field_gloss(
     })
 }
 
+fn is_opaque_v_teaching_sym(sym: &str) -> bool {
+    sym.starts_with('v') && sym.len() > 1 && sym[1..].chars().all(|c| c.is_ascii_digit())
+}
+
+fn symbol_matches_sorted_gloss_prefix(sym: &str, prefix: char) -> bool {
+    match prefix {
+        'r' => SymbolMap::is_opaque_r_sym(sym),
+        'p' => SymbolMap::is_opaque_p_sym(sym),
+        'v' => is_opaque_v_teaching_sym(sym),
+        _ => sym.starts_with(prefix),
+    }
+}
+
 fn write_sorted_symbol_prefix_gloss_rows(
     out: &mut String,
     field_gloss_rows: &[TeachingFieldGloss],
@@ -130,7 +143,7 @@ fn write_sorted_symbol_prefix_gloss_rows(
 ) {
     let mut gloss: Vec<&TeachingFieldGloss> = field_gloss_rows
         .iter()
-        .filter(|g| g.symbol.starts_with(prefix))
+        .filter(|g| symbol_matches_sorted_gloss_prefix(g.symbol.as_str(), prefix))
         .collect();
     gloss.sort_by(|a, b| {
         let ka = opaque_pv_symbol_sort_key(&a.symbol);
@@ -204,8 +217,9 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
         let mut wire_non_projection: Vec<&TeachingFieldGloss> = field_gloss_rows
             .iter()
             .filter(|g| {
-                !g.symbol.starts_with('v')
-                    && !g.symbol.starts_with('r')
+                !is_opaque_v_teaching_sym(g.symbol.as_str())
+                    && !SymbolMap::is_opaque_r_sym(g.symbol.as_str())
+                    && !SymbolMap::is_opaque_p_sym(g.symbol.as_str())
                     && !g.is_inline_union_summary
                     && !projection_set.contains(g.symbol.as_str())
             })
@@ -288,7 +302,7 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
     out
 }
 
-const TSV_MEANING_JOIN: &str = " · ";
+const TSV_MEANING_JOIN: &str = super::gloss_dedup::FIELD_GLOSS_MEANING_JOIN;
 
 /// One logical TSV row before wire encoding ([`write_teaching_tsv_row`]).
 pub(crate) enum DomainTsvRow<'a> {
@@ -355,17 +369,6 @@ impl TeachingMeaningAtom {
     }
 }
 
-impl FieldGlossMeaningAtom {
-    fn encoded_fragment(&self) -> String {
-        let raw = match self {
-            FieldGlossMeaningAtom::FieldType(s) => s.clone(),
-            FieldGlossMeaningAtom::AllowedValues(s) => format!("allowed: {s}"),
-            FieldGlossMeaningAtom::Description(s) => s.clone(),
-        };
-        sanitize_tsv_cell(&raw)
-    }
-}
-
 /// Sanitized `plasm_expr` column for teaching table teaching TSV (no literal tabs; trimmed).
 #[derive(Clone, Debug)]
 struct DomainTsvExprCell(String);
@@ -392,8 +395,8 @@ impl DomainTsvMeaningCell {
     }
 
     fn from_field_gloss_atoms(atoms: Vec<FieldGlossMeaningAtom>) -> Self {
-        Self(Self::join_encoded_fragments(
-            atoms.into_iter().map(|a| a.encoded_fragment()),
+        Self(sanitize_tsv_cell(
+            join_field_gloss_meaning_atoms(atoms.as_slice()).as_str(),
         ))
     }
 

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use crate::symbol_tuning::SymbolMap;
 
-use super::gloss_dedup::FieldGlossMeaningAtom;
+use super::gloss_dedup::GlossMeaningCell;
 use super::tsv_emit::parse_trailing_projection_bracket;
 use super::{EntityTeachingExprRow, TeachingFieldGloss};
 
@@ -78,9 +78,10 @@ fn gloss_row_referenced_symbols(g: &TeachingFieldGloss) -> HashSet<String> {
     let mut out = collect_teaching_slot_symbols(&g.symbol);
     for atom in g.meaning.to_meaning_atoms(&g.description) {
         let frag = match atom {
-            FieldGlossMeaningAtom::FieldType(s)
-            | FieldGlossMeaningAtom::AllowedValues(s)
-            | FieldGlossMeaningAtom::Description(s) => s,
+            GlossMeaningCell::FieldType(s)
+            | GlossMeaningCell::AllowedValues(s)
+            | GlossMeaningCell::Description(s) => s,
+            GlossMeaningCell::RegistryWireLink { v_sym } => v_sym.clone(),
         };
         out.extend(collect_teaching_slot_symbols(&frag));
     }

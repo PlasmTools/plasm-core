@@ -12,10 +12,30 @@ v8	uuid · Optional idempotency key so you can retry the same edit batch safely
 v3	int · Integer
 Block	Block
 CollaborationEvent	CollaborationEvent
+agent_id	v7
+base_revision	v3
+base_token	v7
+by	v7
+content	v6
+find	markdown · markdown
+fromRef	str · str
+idempotency_key	v8
+mark_id	v7
 operations	json · json · operations
-links	SDK link bundle (state, ops, docs). Wire key _links
-agent_auth	Auth hints from share JSON agent.auth (token source, header names)
-report	Full bug report
+presence_status	v7
+quote	v6
+ref	str · str
+report	v6 · Full bug report
+resolve	v2
+share_token	v7
+status	v7
+text	v6
+up_to_id	v7
+slug	v9
+markdown	v6
+title	v7
+links	v4 · SDK link bundle (state, ops, docs). Wire key _links
+agent_auth	v4 · Auth hints from share JSON agent.auth (token source, header names)
 r1	blocks · Blocks from the latest snapshot—use for edits that need stable block ids
 r2	collaboration_events · Recent collaboration updates you have not acknowledged yet
 v210{mark_id=$,text=$,resolve=$}	→ comment_reply — Reply in a thread; optionally resolve in the same step

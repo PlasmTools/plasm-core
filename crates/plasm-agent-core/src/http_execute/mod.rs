@@ -220,9 +220,9 @@ pub(crate) fn resolve_paging_storage_handle(
 }
 
 mod context;
-pub(crate) use context::upsert_logical_ledger_from_snapshot;
 #[cfg(test)]
 pub(crate) use context::execute_session_create_response_inner;
+pub(crate) use context::upsert_logical_ledger_from_snapshot;
 pub(crate) use context::{
     patch_cgs_context_outbound_hosted, patch_cgs_context_resolved_http_backend,
     resolve_http_backend_for_entry,

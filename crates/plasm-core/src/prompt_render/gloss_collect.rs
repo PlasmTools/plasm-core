@@ -106,19 +106,6 @@ pub(crate) fn commit_teaching_field_gloss_row(
     is_inline_union_summary: bool,
     emit_state: &mut GlossEmitLedger,
 ) -> bool {
-    if matches!(
-        &meaning,
-        FieldGlossMeaning::RegistryBackedSlot {
-            point_of_use: PointOfUseProse::None,
-            ..
-        }
-    ) {
-        if let FieldGlossMeaning::RegistryBackedSlot { value, .. } = &meaning {
-            if emit_state.structural_value_domains.contains(value) {
-                return false;
-            }
-        }
-    }
     let identity = gloss_emit_identity_from_parts(
         &meaning,
         symbol.as_str(),
@@ -126,6 +113,31 @@ pub(crate) fn commit_teaching_field_gloss_row(
         canonical_entity,
     );
     if !emit_state.global_gloss_identities.insert(identity.clone()) {
+        if out.iter().any(|r| r.symbol == symbol) {
+            return false;
+        }
+        if let FieldGlossMeaning::RegistryWire(slot) = &meaning {
+            if let Some(existing) = emit_state.canonical_rows.get_mut(&identity) {
+                if matches!(
+                    (&existing.meaning, &slot.point_of_use),
+                    (
+                        FieldGlossMeaning::RegistryWire(RegistryWireSlot {
+                            point_of_use: PointOfUseProse::None,
+                            ..
+                        }),
+                        PointOfUseProse::Distinct(_)
+                    )
+                ) {
+                    let upgraded = meaning.clone();
+                    upgraded.apply_to_teaching_field_gloss(existing, symbol_map, cgs);
+                    existing.meaning = upgraded;
+                }
+                let mut reuse = existing.clone();
+                reuse.symbol = symbol.clone();
+                out.push(reuse);
+                return true;
+            }
+        }
         if let Some(row) = emit_state.canonical_rows.get(&identity) {
             let mut reuse = row.clone();
             reuse.symbol = symbol.clone();
@@ -229,10 +241,17 @@ fn try_emit_value_domain_gloss(
 }
 
 fn attach_wire_projection_gloss_alias(ctx: &mut GlossEmitCtx<'_>, wire_sym: &str, slot_sym: &str) {
-    if SymbolMap::is_opaque_p_sym(wire_sym) {
+    if SymbolMap::is_opaque_p_sym(wire_sym) || wire_sym == slot_sym {
         return;
     }
     if let Some(alias) = ctx.state.alias_row(slot_sym, wire_sym, ctx.out) {
+        if ctx
+            .out
+            .iter()
+            .any(|g| g.symbol == wire_sym && g.meaning == alias.meaning)
+        {
+            return;
+        }
         ctx.out.push(alias);
     }
 }
@@ -248,13 +267,11 @@ enum RegistryPSlotPlan {
 
 fn plan_registry_p_slot_emit(
     ctx: &GlossEmitCtx<'_>,
-    sym: &str,
+    _sym: &str,
     meta: &IdentMetadata,
     _vs: &str,
 ) -> RegistryPSlotPlan {
-    let nv_desc = values_row_description_for_meta(meta, ctx.cgs);
-    match classify_registry_wire_gloss_role(sym, meta, ctx.cgs, nv_desc.as_str()) {
-        WireGlossRole::RedundantWithValueDomain => RegistryPSlotPlan::Skip,
+    match classify_registry_wire_gloss_role(meta, ctx.cgs) {
         WireGlossRole::EmitRegistrySlot {
             value,
             wire,
@@ -288,11 +305,12 @@ fn try_emit_registry_p_slot(
     commit_teaching_field_gloss_row(
         ctx.out,
         sym.to_string(),
-        FieldGlossMeaning::RegistryBackedSlot {
+        FieldGlossMeaning::RegistryWire(RegistryWireSlot {
             value,
             wire,
+            v_sym: vs.to_string(),
             point_of_use,
-        },
+        }),
         None,
         ctx.entity,
         ctx.catalog_entry_id,
@@ -310,12 +328,7 @@ fn resolve_standard_gloss_meaning(
 ) -> Option<FieldGlossMeaning> {
     let m = meta?;
     if let IdentMetadata::RegistryBacked { .. } = m {
-        if let Some(key) = ValueDomainStructuralKey::from_registry_meta(m) {
-            let _ = key;
-        }
-        let nv_desc = values_row_description_for_meta(m, ctx.cgs);
-        match classify_registry_wire_gloss_role(sym, m, ctx.cgs, nv_desc.as_str()) {
-            WireGlossRole::RedundantWithValueDomain => None,
+        match classify_registry_wire_gloss_role(m, ctx.cgs) {
             WireGlossRole::EmitRegistrySlot {
                 value,
                 wire,
@@ -325,11 +338,16 @@ fn resolve_standard_gloss_meaning(
                 .value_sym_for_teaching_gloss_key(ctx.catalog_entry_id, ctx.entity, sym)
                 .is_some() =>
             {
-                Some(FieldGlossMeaning::RegistryBackedSlot {
+                let v_sym = ctx
+                    .map
+                    .value_sym_for_teaching_gloss_key(ctx.catalog_entry_id, ctx.entity, sym)
+                    .expect("checked");
+                Some(FieldGlossMeaning::RegistryWire(RegistryWireSlot {
                     value,
                     wire,
+                    v_sym,
                     point_of_use,
-                })
+                }))
             }
             WireGlossRole::EmitTyped(meaning) => Some(meaning),
             WireGlossRole::EmitRegistrySlot { .. } => Some(build_typed_field_meaning(m)),
@@ -391,8 +409,8 @@ fn try_emit_teaching_gloss(ctx: &mut GlossEmitCtx<'_>, sym: &str) -> bool {
             .value_domain_gloss_for_v_sym(&vs)
             .map(str::to_string)
             .or_else(|| {
-                let d = values_row_description_for_meta(m, ctx.cgs);
-                m.render_value_domain_row_gloss(d.as_str(), Some(ctx.map), Some(ctx.cgs))
+                let nv_desc = values_row_description_for_meta(m, ctx.cgs);
+                m.render_value_domain_row_gloss(nv_desc.as_str(), Some(ctx.map), Some(ctx.cgs))
             });
         if let Some(vg) = vg.as_deref() {
             try_emit_value_domain_gloss(ctx, &vs, vg, m);
@@ -420,15 +438,6 @@ fn try_emit_teaching_gloss(ctx: &mut GlossEmitCtx<'_>, sym: &str) -> bool {
     let Some(meaning) = meaning else {
         return false;
     };
-    if matches!(
-        &meaning,
-        FieldGlossMeaning::RegistryBackedSlot {
-            point_of_use: PointOfUseProse::None,
-            ..
-        }
-    ) {
-        return false;
-    }
     commit_teaching_field_gloss_row(
         ctx.out,
         sym.to_string(),

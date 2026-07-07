@@ -121,6 +121,7 @@ pub mod row_composition;
 pub mod row_predicate;
 pub mod schema;
 pub mod schema_overlay;
+pub mod scope_entity_ref_infer;
 pub mod scope_entity_ref_splat;
 pub mod step_semantics;
 pub mod string_unescape;
@@ -139,6 +140,7 @@ pub mod typed_row;
 pub mod value;
 
 pub mod comp_canonical;
+mod capability_input;
 mod o200k_token_count;
 mod operation_handle;
 mod plan_commit;
@@ -308,6 +310,10 @@ pub use schema_overlay::{
     build_decode_scope_key, build_schema_overlay, overlay_bind_cache_suffix, overlay_collect_rows,
     overlay_entity_for_scope, overlay_merge_step_response, overlay_pipeline_cache_suffix,
     resolve_overlay_row_bind, walk_json_path, SchemaOverlay, SchemaOverlaySpec,
+};
+pub use scope_entity_ref_infer::{
+    effective_capability_input, prepare_create_capability_input, prepare_invoke_capability_input,
+    should_omit_invoke_teaching_arg,
 };
 pub use scope_entity_ref_splat::apply_entity_ref_scope_splat;
 pub use step_semantics::*;

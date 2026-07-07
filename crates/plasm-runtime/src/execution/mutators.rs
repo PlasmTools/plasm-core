@@ -35,6 +35,8 @@ impl ExecutionEngine {
             None => payload.to_value(),
         };
 
+        let input = plasm_core::prepare_create_capability_input(capability, create, input, cgs);
+
         let mut env = CmlEnv::new();
         merge_plasm_execute_session_share_token_env(&mut env);
         merge_plasm_execute_session_proof_base_token_env(&mut env);
@@ -216,29 +218,39 @@ impl ExecutionEngine {
 
         let capability_template = parse_capability_template(&capability.mapping.template)?;
 
-        let input_for_env = match &invoke.input {
-            None => None,
-            Some(input) => {
-                let payload = if let Some(schema) = &capability.input_schema {
-                    InvokeInputPayload::lift(&input.to_value(), &schema.input_type, cgs)
-                } else {
-                    input.clone()
-                };
-                Some(match capability.input_schema.as_ref() {
-                    Some(schema) => plasm_core::normalize_structured_string_inputs(
-                        payload.to_value(),
-                        &schema.input_type,
-                        cgs,
-                    ),
-                    None => payload.to_value(),
-                })
+        let target_ent = cgs.get_entity(invoke.target.entity_type.as_str());
+
+        let input_for_env = {
+            let raw = match &invoke.input {
+                None => Value::Object(indexmap::IndexMap::new()),
+                Some(input) => {
+                    let payload = if let Some(schema) = &capability.input_schema {
+                        InvokeInputPayload::lift(&input.to_value(), &schema.input_type, cgs)
+                    } else {
+                        input.clone()
+                    };
+                    match capability.input_schema.as_ref() {
+                        Some(schema) => plasm_core::normalize_structured_string_inputs(
+                            payload.to_value(),
+                            &schema.input_type,
+                            cgs,
+                        ),
+                        None => payload.to_value(),
+                    }
+                }
+            };
+            let effective =
+                plasm_core::prepare_invoke_capability_input(capability, invoke, raw.clone(), cgs);
+            if invoke.input.is_none() && effective.as_object().is_some_and(|m| m.is_empty()) {
+                None
+            } else {
+                Some(effective)
             }
         };
 
         let mut env = CmlEnv::new();
         merge_plasm_execute_session_share_token_env(&mut env);
         merge_plasm_execute_session_proof_base_token_env(&mut env);
-        let target_ent = cgs.get_entity(invoke.target.entity_type.as_str());
         populate_template_path_env(
             &mut env,
             &capability_template,

@@ -14,9 +14,7 @@ pub(crate) use exposure_replay::{
     apply_federate_exposure_wave, build_initial_exposure_wave, ExposureCatalogWave,
 };
 #[cfg(test)]
-pub(crate) use exposure_replay::{
-    catalog_waves_from_pairing, replay_teaching_exposure_waves,
-};
+pub(crate) use exposure_replay::{catalog_waves_from_pairing, replay_teaching_exposure_waves};
 pub use federate::federate_execute_session;
 pub use mutate_error::SessionMutateError;
 pub use open::execute_session_create_response;

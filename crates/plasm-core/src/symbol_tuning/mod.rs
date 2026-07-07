@@ -1,7 +1,7 @@
 //! Symbol tuning for LLM prompts: opaque `e#` / `m#` / `r#` / `v#` session symbols plus **catalog wire names**
 //! for fields, capability params, query filters, and projection/postfix keys. Each distinct **`v#`** value domain
 //! is glossed **once** (the line before its first use in **teaching table**); wire-keyed gloss rows teach
-//! **`v# · wire`** (and optional point-of-use prose when it varies); typing and enum ranges stay on the `v#` row.
+//! **`wire` tab `v#`** link rows (optional param doc after `v#` when it varies); typing and enum ranges stay on the `v#` row.
 //! **teaching table** gives entity/method examples (including `e#` per block),
 //! typed Meaning tails (`returns`, `optional`, `projection`, …) in the TSV **Meaning** column,
 //! and comma-separated `optional: wire1,wire2` / `[scope wire→e#]` segments when present.

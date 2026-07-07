@@ -24,13 +24,13 @@ pub(crate) use seeds::{
 };
 pub use seeds::{normalize_capability_seeds, resolve_capability_seeds, RankedCapabilitiesArg};
 pub use session::apply_capability_seeds;
-pub(crate) use session::upsert_logical_ledger_from_snapshot;
 pub(crate) use session::execute_session_create_response_inner;
+#[cfg(test)]
+pub(crate) use session::replay_teaching_exposure_waves;
+pub(crate) use session::upsert_logical_ledger_from_snapshot;
 pub(crate) use session::{
     apply_federate_exposure_wave, build_initial_exposure_wave, ExposureCatalogWave,
 };
-#[cfg(test)]
-pub(crate) use session::replay_teaching_exposure_waves;
 pub use session::{
     execute_session_create_response, expand_execute_teaching_session, federate_execute_session,
     ExpandTeachingWaveResult,

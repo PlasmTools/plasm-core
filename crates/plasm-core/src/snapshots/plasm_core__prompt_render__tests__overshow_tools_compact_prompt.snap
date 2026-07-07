@@ -7,36 +7,77 @@ v13	str
 v3	date
 v4	int
 v8	select · ui, ocr, audio, document
+app_name	v13
+end_time	v3
+limit	v4
+start_time	v3
+id	v4
+content_type	v8
+text_preview	v13
 e1[id,content_type,text_preview]	→ e1 · projection · One capture pipeline item
 e1(id=$, content_type=$)	→ e1
 e1{limit=$, app_name=$, start_time=$, end_time=$}	→ [e1] · optional: app_name,end_time,limit,start_time
 v2	bool
+id	v13
+screen_capture_running	v2
 e2(id)[id,screen_capture_running]	→ e2 · projection · Capture running or paused
 e2.m3()	→ e2
 v5	float
 v12	markdown
+include_answers	v2
+min_answer_similarity	v5
+offset	v4
+speaker_id	v4
+unresolved_only	v2
+question_text	v12
+resolved	v2
 e3[id,question_text,resolved]	→ e3 · projection · A detected question with optional answers
 e3{unresolved_only=$, app_name=$, speaker_id=$, include_answers=$, min_answer_similarity=$, limit=$, offset=$}	→ [e3] · optional: app_name,include_answers,limit,min_answer_similarity,offset,speaker_id,unres…
 v6	select · active, ended, cancelled
+end_date	v3
+start_date	v3
+meeting_uuid	v13
+meeting_id	v4
+status	v6
+summary	v12
 e4[meeting_uuid,meeting_id,status,summary]	→ e4 · projection · A detected meeting
 e4{status=$, start_date=$, end_date=$, limit=$}	→ [e4] · optional: end_date,limit,start_date,status
 e4(meeting_uuid)	→ e4
 v10	select · debug, info, warning, error, critical
+min_severity	v10
+names	v13
+sources	v13
+name	v13
+severity	v10
 e5[id,name,severity]	→ e5 · projection · One pipeline bus event
 e5{names=$, sources=$, min_severity=$, limit=$}	→ [e5] · optional: limit,min_severity,names,sources
+workers	v13
 e6(id)[id,workers]	→ e6 · projection · Pipeline health snapshot
 e6.m8()	→ e6
 v11	select · person, organisation, project
+display_name	v13
+profile_type	v11
 r1	recorded_matches · Content scoped to this profile
 e7[id,display_name,profile_type]	→ e7 · projection · A person, organisation, or project profile
 e7{profile_type=$, limit=$}	→ [e7] · optional: limit,profile_type
 e7(id)	→ e7
 e7{profile_type=$, limit=$}.r1	relation e7 → [e9]
 v1	array[int]
+meeting_ids	v1
+slug	v13
 e8.m11(slug=$, meeting_id=$, meeting_uuid=$, meeting_ids=[$], start_time=$, end_time=$)	→ () · Action prompt execution result · optional: end_time,meeting_id,meeting_ids,meeting_uuid,start_time · prompt-run-create
 v9	select · auto, keyword, natural
 v14	ref:Profile · int
 v7	select · all, ocr, audio, ui
+max_length	v4
+min_length	v4
+mode	v9
+query	v13
+captured_at	v3
+content_type	v7
+profile_id	v14
+text	v12
+window_name	v13
 e9{profile_id=e7(id), query=$, limit=$, mode=$}[id,app_name,captured_at,content_type,profile_id,text,window_name]	→ [e9] · projection · A hit from full-text or profile-scoped search over captured OCR, transcripts, and UI text
 e9{profile_id=e7(id), query=$, limit=$, mode=$}	→ [e9] · optional: limit,mode,query
 e9~"text"	→ [e9]

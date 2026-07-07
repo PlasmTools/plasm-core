@@ -9,11 +9,9 @@ use plasm_core::discovery::DiscoveryError;
 use plasm_core::InMemoryCgsRegistry;
 use std::sync::Arc;
 
-use crate::execute_session::ExecuteSession;
 use crate::catalog_hash::RegistryCatalogHash;
-use crate::execute_session_materialize::{
-    materialize_entries_for_descriptor, MaterializeError,
-};
+use crate::execute_session::ExecuteSession;
+use crate::execute_session_materialize::{materialize_entries_for_descriptor, MaterializeError};
 use crate::mcp_transport_store::execute_session_registry::PersistedExecuteSessionDescriptor;
 use crate::server_state::PlasmHostState;
 
@@ -184,7 +182,9 @@ pub(crate) fn registry_pins_match_live(
             .unwrap_or_default()
             .to_string();
         let live = match reg.load_context(eid) {
-            Ok(ctx) => RegistryCatalogHash::from_registry_cgs(ctx.cgs.as_ref()).as_str().to_string(),
+            Ok(ctx) => RegistryCatalogHash::from_registry_cgs(ctx.cgs.as_ref())
+                .as_str()
+                .to_string(),
             Err(DiscoveryError::UnknownEntry(id)) => return Err(RehydrateError::UnknownEntry(id)),
             Err(e) => {
                 return Err(RehydrateError::Discovery(format!(
@@ -286,14 +286,14 @@ pub async fn rehydrate_execute_session(
     let reg = st.catalog.snapshot();
     registry_pins_match_live(reg.as_ref(), &RegistryCatalogPins::from_descriptor(desc))?;
 
-    let materialized =
-        materialize_entries_for_descriptor(st, desc).await?;
-    let primary_materialized = materialized
-        .get(&desc.entry_id)
-        .ok_or_else(|| MaterializeError::LoadContext {
-            entry_id: desc.entry_id.clone(),
-            detail: "primary entry missing after materialize".into(),
-        })?;
+    let materialized = materialize_entries_for_descriptor(st, desc).await?;
+    let primary_materialized =
+        materialized
+            .get(&desc.entry_id)
+            .ok_or_else(|| MaterializeError::LoadContext {
+                entry_id: desc.entry_id.clone(),
+                detail: "primary entry missing after materialize".into(),
+            })?;
     let cgs = primary_materialized.effective_cgs.clone();
     let http_backend = Some(primary_materialized.http_backend.as_str().to_string());
 
@@ -310,8 +310,7 @@ pub async fn rehydrate_execute_session(
             catalog_ids: desc.entity_catalog_entry_ids.len(),
         });
     }
-    let teaching_exposure =
-        hydrate_teaching_exposure_from_descriptor(desc, &contexts_by_entry)?;
+    let teaching_exposure = hydrate_teaching_exposure_from_descriptor(desc, &contexts_by_entry)?;
 
     let mut session = ExecuteSession::new_with_bindings(
         desc.prompt_hash.clone(),
@@ -331,8 +330,7 @@ pub async fn rehydrate_execute_session(
         desc.bindings_by_entry.clone(),
     );
     session.registry_catalog_hashes_by_entry = desc.registry_catalog_hashes_by_entry.clone();
-    session.materialized_outbound_hosted_kv_by_entry =
-        desc.outbound_hosted_kv_by_entry.clone();
+    session.materialized_outbound_hosted_kv_by_entry = desc.outbound_hosted_kv_by_entry.clone();
     session.domain_revision = desc.domain_revision;
     session.restore_persisted_plan_commits(&desc.plan_commits, desc.plan_commit_next);
     session.restore_persisted_operations(&crate::mcp_transport_store::OperationPersistSnapshot {
@@ -758,9 +756,9 @@ mod tests {
         desc.symbol_ledger_bytes.clear();
         match rehydrate_execute_session(&host, &desc).await {
             Err(RehydrateError::SymbolLedgerNotFound) => {}
-            Err(e) => panic!(
-                "missing ledger must fail rehydrate with SymbolLedgerNotFound, got {e:?}"
-            ),
+            Err(e) => {
+                panic!("missing ledger must fail rehydrate with SymbolLedgerNotFound, got {e:?}")
+            }
             Ok(_) => panic!("missing ledger must fail rehydrate"),
         }
     }

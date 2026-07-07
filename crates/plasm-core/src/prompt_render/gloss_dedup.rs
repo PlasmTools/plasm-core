@@ -12,10 +12,70 @@ use crate::symbol_tuning::{IdentMetadata, SymbolMap};
 
 /// Typed fragment of a field-gloss `Meaning` cell (TSV projection only).
 #[derive(Clone, Debug)]
-pub(crate) enum FieldGlossMeaningAtom {
+pub(crate) enum GlossMeaningCell {
     FieldType(String),
     AllowedValues(String),
+    /// Wire-row link to a value-domain gloss row (`v#`); never repeats the wire name.
+    RegistryWireLink {
+        v_sym: String,
+    },
     Description(String),
+}
+
+pub(crate) type FieldGlossMeaningAtom = GlossMeaningCell;
+
+pub(crate) const FIELD_GLOSS_MEANING_JOIN: &str = " · ";
+
+impl GlossMeaningCell {
+    pub(crate) fn encoded_fragment(&self) -> String {
+        match self {
+            Self::FieldType(s) => s.clone(),
+            Self::AllowedValues(s) => format!("allowed: {s}"),
+            Self::RegistryWireLink { v_sym } => v_sym.clone(),
+            Self::Description(s) => s.clone(),
+        }
+    }
+}
+
+pub(crate) fn join_field_gloss_meaning_atoms(atoms: &[GlossMeaningCell]) -> String {
+    atoms
+        .iter()
+        .map(GlossMeaningCell::encoded_fragment)
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(FIELD_GLOSS_MEANING_JOIN)
+}
+
+/// Registry-backed wire slot: structural value domain + wire label + opaque `v#` link.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(crate) struct RegistryWireSlot {
+    pub value: ValueDomainStructuralKey,
+    pub wire: String,
+    pub v_sym: String,
+    pub point_of_use: PointOfUseProse,
+}
+
+impl RegistryWireSlot {
+    pub(crate) fn meaning_atoms(&self) -> Vec<GlossMeaningCell> {
+        registry_wire_slot_meaning_atoms(self.v_sym.as_str(), &self.point_of_use)
+    }
+
+    pub(crate) fn emit_identity(&self) -> GlossEmitIdentity {
+        GlossEmitIdentity::RegistryWire(self.clone())
+    }
+}
+
+pub(crate) fn registry_wire_slot_meaning_atoms(
+    v_sym: &str,
+    point_of_use: &PointOfUseProse,
+) -> Vec<GlossMeaningCell> {
+    let mut atoms = vec![GlossMeaningCell::RegistryWireLink {
+        v_sym: v_sym.to_string(),
+    }];
+    if let PointOfUseProse::Distinct(d) = point_of_use {
+        atoms.push(GlossMeaningCell::Description(d.as_str().to_string()));
+    }
+    atoms
 }
 
 /// Trimmed agent-facing prose (construction-time only).
@@ -56,11 +116,7 @@ pub(crate) enum PointOfUseProse {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum FieldGlossMeaning {
     ValueDomain(ValueDomainStructuralKey),
-    RegistryBackedSlot {
-        value: ValueDomainStructuralKey,
-        wire: String,
-        point_of_use: PointOfUseProse,
-    },
+    RegistryWire(RegistryWireSlot),
     TypedField {
         type_label: String,
         allowed_values: String,
@@ -80,61 +136,56 @@ pub(crate) enum FieldGlossMeaning {
 
 impl FieldGlossMeaning {
     /// TSV Meaning atoms — sole projection path for field gloss rows.
-    pub(crate) fn to_meaning_atoms(&self, display_override: &str) -> Vec<FieldGlossMeaningAtom> {
+    pub(crate) fn to_meaning_atoms(&self, display_override: &str) -> Vec<GlossMeaningCell> {
         match self {
             Self::ValueDomain(_) => {
                 if display_override.is_empty() {
                     Vec::new()
                 } else {
-                    vec![FieldGlossMeaningAtom::Description(
+                    vec![GlossMeaningCell::Description(
                         display_override.to_string(),
                     )]
                 }
             }
-            Self::RegistryBackedSlot { point_of_use, .. } => match point_of_use {
-                PointOfUseProse::None => Vec::new(),
-                PointOfUseProse::Distinct(d) => {
-                    vec![FieldGlossMeaningAtom::Description(d.as_str().to_string())]
-                }
-            },
+            Self::RegistryWire(slot) => slot.meaning_atoms(),
             Self::TypedField {
                 type_label,
                 allowed_values,
                 description,
             } => {
-                let mut atoms = vec![FieldGlossMeaningAtom::FieldType(type_label.clone())];
+                let mut atoms = vec![GlossMeaningCell::FieldType(type_label.clone())];
                 if !allowed_values.is_empty() {
-                    atoms.push(FieldGlossMeaningAtom::AllowedValues(allowed_values.clone()));
+                    atoms.push(GlossMeaningCell::AllowedValues(allowed_values.clone()));
                 }
                 if !description.is_empty() {
                     if allowed_values.is_empty() {
-                        atoms.push(FieldGlossMeaningAtom::Description(format!(
+                        atoms.push(GlossMeaningCell::Description(format!(
                             "{type_label} · {}",
                             description.as_str()
                         )));
                     }
                 } else if allowed_values.is_empty() && !type_label.is_empty() {
-                    atoms.push(FieldGlossMeaningAtom::Description(type_label.clone()));
+                    atoms.push(GlossMeaningCell::Description(type_label.clone()));
                 }
                 atoms
             }
             Self::Relation { wire, description } => {
-                let mut atoms = vec![FieldGlossMeaningAtom::FieldType(wire.clone())];
+                let mut atoms = vec![GlossMeaningCell::FieldType(wire.clone())];
                 if !description.is_empty() {
-                    atoms.push(FieldGlossMeaningAtom::Description(
+                    atoms.push(GlossMeaningCell::Description(
                         description.as_str().to_string(),
                     ));
                 }
                 atoms
             }
             Self::InlineUnionSummary { summary } => {
-                vec![FieldGlossMeaningAtom::Description(summary.clone())]
+                vec![GlossMeaningCell::Description(summary.clone())]
             }
             Self::OpaqueLegend { description } => {
                 if description.is_empty() {
                     Vec::new()
                 } else {
-                    vec![FieldGlossMeaningAtom::Description(description.clone())]
+                    vec![GlossMeaningCell::Description(description.clone())]
                 }
             }
         }
@@ -150,17 +201,15 @@ impl FieldGlossMeaning {
             Self::ValueDomain(_key) => {
                 // Display text supplied by caller (`legend_rhs` / pre-rendered v# gloss).
             }
-            Self::RegistryBackedSlot { point_of_use, .. } => match point_of_use {
-                PointOfUseProse::None => {
-                    g.field_type.clear();
-                    g.allowed_values.clear();
-                }
-                PointOfUseProse::Distinct(desc) => {
-                    g.field_type.clear();
-                    g.allowed_values.clear();
-                    g.description = desc.as_str().to_string();
-                }
-            },
+            Self::RegistryWire(slot) => {
+                g.field_type.clear();
+                g.allowed_values.clear();
+                g.description =
+                    join_field_gloss_meaning_atoms(&registry_wire_slot_meaning_atoms(
+                        slot.v_sym.as_str(),
+                        &slot.point_of_use,
+                    ));
+            }
             Self::TypedField {
                 type_label,
                 allowed_values,
@@ -227,11 +276,7 @@ impl GlossTsvDedupe {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum GlossEmitIdentity {
     ValueDomain(ValueDomainStructuralKey),
-    RegistryWireSlot {
-        value: ValueDomainStructuralKey,
-        wire: String,
-        point_of_use: PointOfUseProse,
-    },
+    RegistryWire(RegistryWireSlot),
     Relation {
         catalog_entry_id: String,
         entity: EntityName,
@@ -257,7 +302,6 @@ pub(crate) fn gloss_emit_identity_for_row(g: &super::TeachingFieldGloss) -> Glos
 }
 
 pub(crate) enum WireGlossRole {
-    RedundantWithValueDomain,
     EmitRegistrySlot {
         value: ValueDomainStructuralKey,
         wire: String,
@@ -266,34 +310,20 @@ pub(crate) enum WireGlossRole {
     EmitTyped(FieldGlossMeaning),
 }
 
-pub(crate) fn classify_registry_wire_gloss_role(
-    teaching_key: &str,
-    meta: &IdentMetadata,
-    _cgs: &CGS,
-    values_row_description: &str,
-) -> WireGlossRole {
+pub(crate) fn classify_registry_wire_gloss_role(meta: &IdentMetadata, cgs: &CGS) -> WireGlossRole {
     let wire = crate::symbol_tuning::registry_backed_compact_wire_label(meta);
     let Some(value) = ValueDomainStructuralKey::from_registry_meta(meta) else {
         return WireGlossRole::EmitTyped(FieldGlossMeaning::OpaqueLegend {
             description: String::new(),
         });
     };
-    let slot_norm = crate::symbol_tuning::trim_description_for_agent_gloss(meta.description());
-    let point_of_use = if slot_norm.is_empty() || slot_norm == values_row_description {
+    let values_desc = values_row_description_for_meta(meta, cgs);
+    let slot_desc = GlossDescription::from_trimmed(meta.description());
+    let point_of_use = if slot_desc.is_empty() || slot_desc == values_desc {
         PointOfUseProse::None
     } else {
-        PointOfUseProse::Distinct(GlossDescription::from_trimmed(meta.description()))
+        PointOfUseProse::Distinct(slot_desc)
     };
-    if teaching_key == wire {
-        return match &point_of_use {
-            PointOfUseProse::None => WireGlossRole::RedundantWithValueDomain,
-            PointOfUseProse::Distinct(_) => WireGlossRole::EmitRegistrySlot {
-                value,
-                wire,
-                point_of_use,
-            },
-        };
-    }
     WireGlossRole::EmitRegistrySlot {
         value,
         wire,
@@ -301,7 +331,7 @@ pub(crate) fn classify_registry_wire_gloss_role(
     }
 }
 
-pub(crate) fn values_row_description_for_meta(meta: &IdentMetadata, cgs: &CGS) -> String {
+pub(crate) fn values_row_description_for_meta(meta: &IdentMetadata, cgs: &CGS) -> GlossDescription {
     match meta {
         IdentMetadata::RegistryBacked {
             value_registry_key, ..
@@ -309,11 +339,12 @@ pub(crate) fn values_row_description_for_meta(meta: &IdentMetadata, cgs: &CGS) -
             .values
             .get(value_registry_key.as_str())
             .map(|nv| {
-                crate::symbol_tuning::trim_description_for_agent_gloss(nv.description.as_str())
-                    .to_string()
+                GlossDescription::from_trimmed(
+                    crate::symbol_tuning::trim_description_for_agent_gloss(nv.description.as_str()),
+                )
             })
-            .unwrap_or_default(),
-        _ => String::new(),
+            .unwrap_or_else(|| GlossDescription::from_trimmed("")),
+        _ => GlossDescription::from_trimmed(""),
     }
 }
 
@@ -374,15 +405,7 @@ pub(crate) fn gloss_emit_identity_from_parts(
 ) -> GlossEmitIdentity {
     match meaning {
         FieldGlossMeaning::ValueDomain(key) => GlossEmitIdentity::ValueDomain(key.clone()),
-        FieldGlossMeaning::RegistryBackedSlot {
-            value,
-            wire,
-            point_of_use,
-        } => GlossEmitIdentity::RegistryWireSlot {
-            value: value.clone(),
-            wire: wire.clone(),
-            point_of_use: point_of_use.clone(),
-        },
+        FieldGlossMeaning::RegistryWire(slot) => slot.emit_identity(),
         FieldGlossMeaning::Relation { wire, .. } => GlossEmitIdentity::Relation {
             catalog_entry_id: catalog_entry_id.to_string(),
             entity: EntityName::from(entity.to_string()),

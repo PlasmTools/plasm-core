@@ -1,6 +1,6 @@
 //! Prompt render integration tests (matrix/proof fixtures; no full-catalog snapshots).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use crate::loader::load_schema_dir;
@@ -1180,10 +1180,7 @@ fn tsv_symbolic_blocks_align_ident_gloss_with_exposure_entity_order() {
         let Some(meaning) = cols.next() else {
             return false;
         };
-        sym == "id"
-            && meaning.starts_with('v')
-            && meaning.contains("id")
-            && meaning.contains(" · id")
+        sym == "id" && meaning.starts_with('v') && !meaning.contains(" · id")
     });
     assert!(
         id_typing_on_v || id_slot_teaches_v,
@@ -1599,6 +1596,10 @@ fn prompt_matrix_zone_id_p_slot_gloss_omits_duplicate_values_row_prose() {
             assert!(
                 !meaning.contains("Zone identifier"),
                 "compact wire gloss must not repeat values: row description; got {meaning:?}"
+            );
+            assert!(
+                meaning.starts_with('v') && !meaning.contains(" · zone_id"),
+                "wire gloss must link to v# only, not echo wire name; got {meaning:?}"
             );
         }
     }

@@ -609,7 +609,7 @@ mod tests {
                 || gloss.description.to_ascii_lowercase().contains("title")
                 || matches!(
                     &gloss.meaning,
-                    FieldGlossMeaning::RegistryBackedSlot { wire, .. } if wire == "title"
+                    FieldGlossMeaning::RegistryWire(slot) if slot.wire == "title"
                 );
             assert!(
                 teaches_title,
