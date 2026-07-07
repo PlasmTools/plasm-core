@@ -34,8 +34,7 @@ impl SymbolMap {
         entry_id: &str,
         field_wire: &str,
     ) -> bool {
-        catalog.matches_entry(entry_id)
-            && Self::entity_has_field_or_relation_wire(ent, field_wire)
+        catalog.matches_entry(entry_id) && Self::entity_has_field_or_relation_wire(ent, field_wire)
     }
 
     fn slot_representative_entity_field_wire(
@@ -151,8 +150,7 @@ impl SymbolMap {
         psym: OpaquePSym,
         token: &str,
     ) -> Result<String, SymbolResolveError> {
-        if let Some(wire) =
-            self.slot_representative_entity_field_wire(token, catalog, entity, ent)
+        if let Some(wire) = self.slot_representative_entity_field_wire(token, catalog, entity, ent)
         {
             return Ok(wire);
         }

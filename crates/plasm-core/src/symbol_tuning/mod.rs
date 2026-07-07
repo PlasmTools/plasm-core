@@ -4281,7 +4281,10 @@ mod tests {
             let got = map1
                 .resolve_entity_field(CatalogScope::SessionReverse, "Profile", ent, sym.as_str())
                 .unwrap_or_else(|e| panic!("wave-2 projection resolve for {sym}: {e:?}"));
-            assert_eq!(got, expected_wire, "p# projection wire must not drift on extend");
+            assert_eq!(
+                got, expected_wire,
+                "p# projection wire must not drift on extend"
+            );
         }
     }
 
