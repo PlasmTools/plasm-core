@@ -200,23 +200,11 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
                 write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
             }
         }
-        // Phase B: slot gloss — opaque `p#` in stable numeric order, then wire names (non-projection), then projection bracket tail.
-        // `p#` / wire slots for optional query params / invokes appear in teaching gloss lines but are not part
-        // of the scalar projection bracket — emit them before projection fields.
-        let mut p_non_projection: Vec<&TeachingFieldGloss> = field_gloss_rows
-            .iter()
-            .filter(|g| g.symbol.starts_with('p') && !projection_set.contains(g.symbol.as_str()))
-            .collect();
-        p_non_projection.sort_by(|a, b| {
-            let ka = opaque_pv_symbol_sort_key(&a.symbol);
-            let kb = opaque_pv_symbol_sort_key(&b.symbol);
-            ka.cmp(&kb).then_with(|| a.symbol.cmp(&b.symbol))
-        });
+        // Phase B: wire slot gloss (non-projection), then projection bracket tail.
         let mut wire_non_projection: Vec<&TeachingFieldGloss> = field_gloss_rows
             .iter()
             .filter(|g| {
-                !g.symbol.starts_with('p')
-                    && !g.symbol.starts_with('v')
+                !g.symbol.starts_with('v')
                     && !g.symbol.starts_with('r')
                     && !g.is_inline_union_summary
                     && !projection_set.contains(g.symbol.as_str())
@@ -224,15 +212,6 @@ pub(crate) fn render_prompt_tsv_from_bundle(bundle: &TeachingPromptBundle) -> St
             .collect();
         wire_non_projection.sort_by(|a, b| a.symbol.cmp(&b.symbol));
         let mut emitted_slot: HashSet<String> = HashSet::new();
-        for g in p_non_projection {
-            if !emitted_slot.insert(g.symbol.clone()) {
-                continue;
-            }
-            let identity = gloss_emit_identity_for_row(g);
-            if tsv_dedupe.try_emit_slot(&identity, g.symbol.as_str()) {
-                write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(g));
-            }
-        }
         for g in wire_non_projection {
             if !emitted_slot.insert(g.symbol.clone()) {
                 continue;
@@ -337,10 +316,9 @@ fn sanitize_tsv_cell(s: &str) -> String {
 enum TeachingMeaningAtom {
     Returns { gloss: String },
     RelationNav { line: String },
-    RowContractInputs(Vec<String>),
     EntityHeadingDescription(String),
     LegendScope(String),
-    LegendOptional,
+    LegendOptionalParams(Vec<String>),
     LegendCompactArgs(String),
     LegendDescription(String),
 }
@@ -365,12 +343,11 @@ impl TeachingMeaningAtom {
         let raw = match self {
             TeachingMeaningAtom::Returns { gloss } => format!("→ {gloss}"),
             TeachingMeaningAtom::RelationNav { line } => line.clone(),
-            TeachingMeaningAtom::RowContractInputs(syms) => {
-                format!("inputs: {}", syms.join(","))
-            }
             TeachingMeaningAtom::EntityHeadingDescription(s) => s.clone(),
             TeachingMeaningAtom::LegendScope(s) => s.clone(),
-            TeachingMeaningAtom::LegendOptional => TEACHING_OPTIONAL_LEGEND_MARK.to_string(),
+            TeachingMeaningAtom::LegendOptionalParams(wires) => {
+                format!("{TEACHING_OPTIONAL_LEGEND_MARK}: {}", wires.join(","))
+            }
             TeachingMeaningAtom::LegendCompactArgs(s) => format!("args: {s}"),
             TeachingMeaningAtom::LegendDescription(s) => s.clone(),
         };
@@ -466,11 +443,6 @@ fn teaching_expr_meaning_atoms(
 ) -> Vec<TeachingMeaningAtom> {
     let mut atoms = Vec::new();
     push_teaching_meaning_result_atom(&mut atoms, row, identity_returns_row);
-    if !row.row_contract.inputs.is_empty() {
-        atoms.push(TeachingMeaningAtom::RowContractInputs(
-            row.row_contract.inputs.clone(),
-        ));
-    }
     if attach_entity_heading && !heading.description.is_empty() {
         atoms.push(TeachingMeaningAtom::EntityHeadingDescription(
             heading.description.clone(),
@@ -491,8 +463,10 @@ fn append_teaching_meaning_legend_tail_atoms(
     if !row.legend.scope.is_empty() {
         atoms.push(TeachingMeaningAtom::LegendScope(row.legend.scope.clone()));
     }
-    if row.legend.optional.is_present() {
-        atoms.push(TeachingMeaningAtom::LegendOptional);
+    if !row.legend.optional_params.is_empty() {
+        atoms.push(TeachingMeaningAtom::LegendOptionalParams(
+            row.legend.optional_params.clone(),
+        ));
     }
     if !row.legend.compact_args.is_empty() {
         atoms.push(TeachingMeaningAtom::LegendCompactArgs(

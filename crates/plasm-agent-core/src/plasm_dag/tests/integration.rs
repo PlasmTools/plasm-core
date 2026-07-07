@@ -393,8 +393,8 @@ bad"#,
 
     /// Regression: a projection after `relation-hop + .limit(...)` must resolve field tokens against
     /// the relation **target**, not the **receiver**. Covers `from_parent_get` and `query_scoped`
-    /// materialize, wire names and opaque `e#`/`r#`/`p#`. Before the fix the limit-compute qe traced
-    /// back to the receiver (`LangItem`) and could resolve a homograph to a receiver field
+    /// materialize with wire names and session `e#` entity roots. Before the fix the limit-compute qe
+    /// traced back to the receiver (`LangItem`) and could resolve a homograph to a receiver field
     /// (`team_key`). The projected `note`/`label` fields exist only on the relation targets
     /// (`LangLine`/`LangTag`), never on the `LangItem` receiver.
     #[test]
@@ -408,9 +408,8 @@ bad"#,
         let e_item = map.entity_sym_for("langmatrix", "LangItem");
         let r_lines = map.ident_sym_relation_for("langmatrix", "LangItem", "lines");
         let p_note = map.ident_sym_entity_field_for("langmatrix", "LangLine", "note");
-        assert_ne!(r_lines, "lines", "relation symbol not opaque: {r_lines}");
-        assert_ne!(p_note, "note", "field symbol not opaque: {p_note}");
-        let opaque =
+        assert_eq!(p_note, "note", "field teaches as wire name");
+        let session_tokens =
             format!("item = {e_item}(\"i1\")\nlines = item.{r_lines}.limit(2)\nlines[{p_note}]");
         for (what, program) in [
             (
@@ -421,7 +420,10 @@ bad"#,
                 "query_scoped (wire)",
                 "item = LangItem(\"i1\")\ntags = item.tags.limit(2)\ntags[label]",
             ),
-            ("from_parent_get (opaque e#/r#/p#)", opaque.as_str()),
+            (
+                "from_parent_get (session e#/r# + wire field)",
+                session_tokens.as_str(),
+            ),
         ] {
             assert_relation_limit_projection_targets(&session, what, program);
         }
@@ -1628,30 +1630,26 @@ labels"#;
         assert_eq!(wire, "labels");
     }
 
-    /// Opaque `p#` homograph to `labels` is rejected in relation nav; DAG LHS binding forgives it.
+    /// Shared filter/relation wire resolves as relation in nav; legacy `p#` rejected; DAG LHS binding forgives wrong token.
     #[test]
     fn homograph_p_rejected_in_parse_forgiven_with_lhs_binding_label() {
-        use plasm_core::expr_parser::{parse_with_cgs_layers_program, ParseErrorKind};
+        use plasm_core::expr_parser::parse_with_cgs_layers_program;
         use plasm_core::relation_segment::{
             resolve_relation_segment, RelationSegmentContext, RelationSegmentOutcome,
         };
 
         let session = github_issue_label_session();
         let map = symbol_map_for_plasm_surface_parse(&session, None);
-        let p_sym = map.ident_sym_cap_param_for("github", "Issue", "issue_query", "labels");
-        assert!(
-            p_sym.starts_with('p'),
-            "expected opaque p# for labels filter, got {p_sym}"
+        let labels_wire = map.ident_sym_cap_param_for("github", "Issue", "issue_query", "labels");
+        assert_eq!(
+            labels_wire, "labels",
+            "labels filter param teaches as catalog wire name"
         );
         let issue_e = map.entity_sym_for("github", "Issue");
-        let line = format!("{issue_e}.{p_sym}");
         let stack = crate::plasm_plan_run::session_cgs_layer_stack(&session);
-        let err = parse_with_cgs_layers_program(&line, &stack, map.clone(), None, false)
-            .expect_err("homograph p# in relation nav");
-        assert!(matches!(
-            err.kind,
-            ParseErrorKind::RelationSegmentWrongRole { .. }
-        ));
+        let line = format!("{issue_e}.{labels_wire}");
+        parse_with_cgs_layers_program(&line, &stack, map.clone(), None, false)
+            .expect("shared labels wire resolves as relation in nav");
 
         let issue_ent = session.cgs.get_entity("Issue").expect("Issue");
         let ctx = RelationSegmentContext {
@@ -1662,9 +1660,13 @@ labels"#;
             allow_lhs_coercion: false,
         };
         assert!(matches!(
-            resolve_relation_segment(&ctx, p_sym.as_str()),
-            RelationSegmentOutcome::WrongRole { .. }
+            resolve_relation_segment(&ctx, labels_wire.as_str()),
+            RelationSegmentOutcome::Wire(w) if w == "labels"
         ));
+
+        let legacy = format!("{issue_e}.p1");
+        parse_with_cgs_layers_program(&legacy, &stack, map.clone(), None, false)
+            .expect_err("legacy opaque p# must not resolve in relation nav");
 
         let qe = QualifiedEntityKey {
             entry_id: "github".into(),
@@ -1674,7 +1676,7 @@ labels"#;
             &session,
             None,
             &qe,
-            p_sym.as_str(),
+            "p99",
             Some(plasm_core::ProgramBindingLabel("labels")),
         )
         .expect("LHS binding label selects relation wire");
@@ -2937,7 +2939,7 @@ created"#;
         let source = r#"a = LangItem("i1")[id,title]
 b = LangItem("i2")[id,title]
 report = a,b <<MD
-Pair: {{ a.title }} / {{ b.title }}
+Pair: {{ a.id }} / {{ b.id }}
 MD
 report"#;
         let plan = compile_plasm_dag_to_plan(

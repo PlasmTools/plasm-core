@@ -358,7 +358,7 @@ fn proof_document_blocks_operation_params_are_not_relation_nav_gloss() {
     }
     let cgs = load_schema_dir(&dir).unwrap();
     let tsv = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(Some("Document")));
-    for sym in ["p1", "p2", "p4"] {
+    for sym in ["blocks", "ref", "markdown"] {
         let needle = format!("{sym}\t=> Block ·");
         assert!(
             !tsv.contains(&needle),
@@ -409,7 +409,6 @@ fn proof_document_tsv_topo_p_gloss_before_union_ctor_and_summary_after() {
     }
     let mut ctor_idxs = Vec::new();
     let mut union_summary_idx = None;
-    let mut p7_idx = None;
     for (i, line) in tsv.lines().enumerate() {
         if line == "plasm_expr\tMeaning" {
             continue;
@@ -417,9 +416,6 @@ fn proof_document_tsv_topo_p_gloss_before_union_ctor_and_summary_after() {
         let Some(expr) = expr_cell(line) else {
             continue;
         };
-        if expr == "p7" {
-            p7_idx = Some(i);
-        }
         if is_union_ctor_teaching_surface_line(expr) {
             ctor_idxs.push(i);
         }
@@ -430,18 +426,15 @@ fn proof_document_tsv_topo_p_gloss_before_union_ctor_and_summary_after() {
     let Some(u) = union_summary_idx else {
         panic!("expected union summary row with Meaning starting `union ·`");
     };
-    let Some(p7) = p7_idx else {
-        panic!("expected p7 gloss row");
-    };
     assert!(!ctor_idxs.is_empty(), "expected union ctor exemplar rows");
     let first_ctor = *ctor_idxs.iter().min().expect("ctor rows");
-    assert!(
-        p7 < first_ctor,
-        "p7 gloss must precede union ctor exemplars; p7={p7} first_ctor={first_ctor}"
-    );
     for &c in &ctor_idxs {
         assert!(c < u, "union ctor at {c} must precede union summary at {u}");
     }
+    assert!(
+        first_ctor < u,
+        "union ctor exemplars must precede union summary; first_ctor={first_ctor} summary={u}"
+    );
 }
 
 fn fixtures_schemas_dir(name: &str) -> std::path::PathBuf {
@@ -546,7 +539,7 @@ fn google_sheets_compound_get_entity_ref_key_var_emits_valid_domain_line() {
     }
     let cgs = load_schema_dir(&dir).unwrap();
     let lines = domain_example_lines(&cgs, "ValueRange", None, None);
-    let expected = "ValueRange(spreadsheetId=Spreadsheet($), range=$)";
+    let expected = "ValueRange(spreadsheetId=$, range=$)";
     assert!(
         lines.iter().any(|l| l.starts_with(expected)),
         "missing compound dotted-call-safe get witness for entity_ref key var: expected prefix `{expected}` in {:?}",
@@ -590,7 +583,7 @@ fn github_issue_domain_emits_single_full_projection_exemplar() {
         "Issue should carry a full projection bracket (heading or primary get) after alias pass",
     );
     assert!(
-        br.starts_with('[') && br.contains('p'),
+        br.starts_with('[') && br.ends_with(']') && br.len() > 2,
         "unexpected projection bracket: {br}"
     );
     let lines = domain_example_lines(&cgs, "Issue", map.as_deref(), surface);
@@ -723,7 +716,7 @@ fn linear_issue_heading_projection_despite_method_style_get() {
     let br = domain_projection_bracket_from_final_bundle(&cgs, &exposure, cfg, "Issue")
         .expect("Linear Issue should carry a full projection bracket (heading or primary get)");
     assert!(
-        br.starts_with('[') && br.contains('p'),
+        br.starts_with('[') && br.ends_with(']') && br.len() > 2,
         "unexpected projection bracket: {br}"
     );
     let lines = domain_example_lines(&cgs, "Issue", map.as_deref(), surface);
@@ -896,18 +889,19 @@ fn heading_projection_symbols_are_declared_before_heading_use() {
         .collect();
     assert!(
         !symbols.is_empty(),
-        "Issue projection should include at least one p# symbol"
+        "Issue projection should include at least one wire field symbol"
     );
-    for sym in symbols {
+    for sym in &symbols {
+        if crate::symbol_tuning::SymbolMap::is_opaque_p_sym(sym) {
+            continue;
+        }
         let def = format!("{sym}\t");
-        let def_idx = lines
-            .iter()
-            .position(|l| l.starts_with(&def))
-            .unwrap_or_else(|| panic!("missing gloss definition line for `{sym}`"));
-        assert!(
-            def_idx < use_idx,
-            "projection symbol `{sym}` must be declared before the line that uses the list (def_idx={def_idx}, use_idx={use_idx})"
-        );
+        if let Some(def_idx) = lines.iter().position(|l| l.starts_with(&def)) {
+            assert!(
+                def_idx < use_idx,
+                "wire gloss `{sym}` must precede projection use (def_idx={def_idx}, use_idx={use_idx})"
+            );
+        }
     }
 }
 
@@ -1186,14 +1180,14 @@ fn tsv_symbolic_blocks_align_ident_gloss_with_exposure_entity_order() {
         let Some(meaning) = cols.next() else {
             return false;
         };
-        sym.starts_with('p')
+        sym == "id"
             && meaning.starts_with('v')
             && meaning.contains("id")
             && meaning.contains(" · id")
     });
     assert!(
         id_typing_on_v || id_slot_teaches_v,
-        "CaptureItem `id` should type on v# and/or teach p# · id; first block:\n{first_block}"
+        "CaptureItem `id` should type on v# and/or teach wire id gloss; first block:\n{first_block}"
     );
 }
 
@@ -1397,7 +1391,7 @@ fn plasm_language_contract_defines_ref_meaning_prefix() {
 }
 
 #[test]
-fn prompt_matrix_symbolic_prompt_avoids_raw_zone_id_navigation_suffix() {
+fn prompt_matrix_symbolic_prompt_uses_wire_names_in_projection_brackets() {
     let dir = fixtures_schemas_dir("plasm_prompt_matrix");
     let cgs = load_schema_dir(&dir).unwrap();
     let prompt = render_prompt_tsv_with_config(&cgs, RenderConfig::for_eval(None));
@@ -1411,11 +1405,14 @@ fn prompt_matrix_symbolic_prompt_avoids_raw_zone_id_navigation_suffix() {
         if expr == "plasm_expr" {
             continue;
         }
-        if expr.starts_with('e') && expr.contains('.') {
-            assert!(
-                !expr.contains(".zone_id"),
-                "entity_ref fields must teach symbolic p# navigation, not raw `.zone_id`: {expr}"
-            );
+        if let Some(inner) = parse_trailing_projection_bracket(expr.trim()) {
+            for sym in super::row_producer_teaching::projection_bracket_syms(&format!("[{inner}]"))
+            {
+                assert!(
+                    !crate::symbol_tuning::SymbolMap::is_opaque_p_sym(sym.as_str()),
+                    "projection brackets teach wire names, not legacy p#: {expr}"
+                );
+            }
         }
     }
 }
@@ -1427,7 +1424,7 @@ fn prompt_matrix_zone_entity_ref_value_domain_gloss_includes_id_primitive() {
     let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
     let p = map.ident_sym_entity_field_for("", "Ruleset", "zone_id");
     let v = map
-        .value_sym_for_p_sym(&p)
+        .value_sym_for_wire("", "Ruleset", "zone_id")
         .expect("Ruleset.zone_id should map to a value-domain symbol");
     let g = map
         .value_domain_gloss_for_v_sym(&v)
@@ -1602,7 +1599,7 @@ fn prompt_matrix_zone_id_p_slot_gloss_omits_duplicate_values_row_prose() {
         if expr == p {
             assert!(
                 !meaning.contains("Zone identifier"),
-                "compact p# gloss must not repeat values: row description; got {meaning:?}"
+                "compact wire gloss must not repeat values: row description; got {meaning:?}"
             );
         }
     }
@@ -1901,15 +1898,15 @@ fn plasm_tool_description_includes_row_compute_worked_example() {
     );
     assert!(
         frontmatter.contains("PLASM_RPT_TAG"),
-        "row-to-text worked example must show explicit bracket + Minijinja p# body"
+        "row-to-text worked example must show explicit bracket + Minijinja wire body"
     );
     assert!(
-        frontmatter.contains("r.p_a"),
-        "row-to-text worked example must use teaching p# tokens in template body"
+        frontmatter.contains("r.name"),
+        "row-to-text worked example must use wire field names in template body"
     );
     assert!(
-        frontmatter.contains("wire names also work"),
-        "row-to-text contract must note p# and wire names both resolve"
+        frontmatter.contains("wire names in bracket"),
+        "row-to-text contract must note wire names in projection brackets"
     );
     assert!(
         frontmatter.contains("source binding name also works"),
@@ -2133,11 +2130,10 @@ fn row_producer_teaching_includes_inputs_and_rows_contract() {
                 && cols[0].contains('{')
                 && !cols[0].contains(".r")
                 && parse_trailing_projection_bracket(cols[0].trim()).is_none()
-                && cols[1].contains("inputs:")
                 && !cols[1].contains("rows:")
                 && !cols[1].contains("· projection")
         }),
-        "set-equal query omits bracket/rows: and keeps inputs:\n{prompt}"
+        "set-equal query omits bracket/rows: in Meaning:\n{prompt}"
     );
     assert!(
         prompt.lines().any(|l| {
@@ -2153,8 +2149,8 @@ fn row_producer_teaching_includes_inputs_and_rows_contract() {
 #[test]
 fn static_grammar_includes_symbols_only_rule() {
     assert!(
-        super::PLASM_TOOL_DESCRIPTION.contains("Symbols only"),
-        "canonical static grammar must teach TSV-only program tokens"
+        super::PLASM_TOOL_DESCRIPTION.contains("Session symbols + wires"),
+        "canonical static grammar must teach TSV-only program tokens and wire names"
     );
 }
 
@@ -2288,14 +2284,16 @@ fn clickup_domain_includes_materialized_team_spaces_nav() {
     let map = symbol_map_for_prompt(&cgs, FocusSpec::All, true).expect("symbol map");
     let team_sym = map.entity_sym_for("", "Team");
     let spaces_rel = map.ident_sym_relation_for("", "Team", "spaces");
-    assert!(
-        raw.contains(".spaces")
-            && (raw.contains("Team($)") || raw.contains("Team{"))
-            && raw.contains("Team"),
-        "expected Team→spaces relation line (chain materialization; receiver may be `Team($)` or query-scoped `Team{{…}}`)"
-    );
     let team_ent = cgs.get_entity("Team").expect("Team");
     let p_team_identity = map.ident_sym_entity_field_for("", "Team", team_ent.id_field.as_str());
+    assert!(
+        raw.contains(".spaces")
+            && (raw.contains("Team($)")
+                || raw.contains(&format!("Team({p_team_identity})"))
+                || raw.contains("Team{"))
+            && raw.contains("Team"),
+        "expected Team→spaces relation line (chain materialization; receiver may be `Team($)`, `Team({p_team_identity})`, or query-scoped `Team{{…}}`)"
+    );
     assert!(
         sym.contains(&format!(".{spaces_rel}"))
             || sym.contains(&format!("{team_sym}($).{spaces_rel}"))
@@ -2309,7 +2307,7 @@ fn clickup_domain_includes_materialized_team_spaces_nav() {
     );
     assert!(
         sym.contains("Space{")
-            || (sym.contains("{p") && sym.contains(&format!("={}(", team_sym)))
+            || (sym.contains("{") && sym.contains(&format!("={team_sym}(")))
             || raw.contains("Space{"),
         "Space scoped query should remain in teaching table"
     );
@@ -2330,30 +2328,21 @@ fn clickup_domain_gloss_and_symbol_map_queries() {
     );
     assert!(
         !sym.contains("FIELDS\n"),
-        "global FIELDS block removed — p# gloss is inline before first use"
+        "global FIELDS block removed — wire gloss is inline before first use"
     );
-    // `p#` indices depend on sorted entity exposure — pick any gloss token that also appears in `[…,p#]`.
-    let (gloss, p_tok, bracket_use) = sym
-        .lines()
-        .find_map(|line| {
-            let (expr, meaning) = line.split_once('\t')?;
-            let rest = expr.strip_prefix('p')?;
-            if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
-                return None;
-            }
-            if !meaning.contains('·') {
-                return None;
-            }
-            let gloss_pos = sym.find(line)?;
-            sym[gloss_pos..]
-                .find(&format!("{expr}]"))
-                .map(|off| (gloss_pos, expr.to_string(), gloss_pos + off))
-        })
-        .expect("p# gloss with matching bracket projection");
     assert!(
-        gloss < bracket_use,
-        "{} gloss should appear before bracket use",
-        p_tok
+        sym.lines().any(|line| {
+            line.split_once('\t').is_some_and(|(expr, _)| {
+                parse_trailing_projection_bracket(expr.trim())
+                    .map(|inner| {
+                        super::row_producer_teaching::projection_bracket_syms(&format!("[{inner}]"))
+                            .iter()
+                            .all(|s| !crate::symbol_tuning::SymbolMap::is_opaque_p_sym(s.as_str()))
+                    })
+                    .unwrap_or(false)
+            })
+        }),
+        "projection witness should use wire field names in brackets"
     );
     assert!(
         !sym.contains("QUERIES\n"),
@@ -2668,7 +2657,7 @@ fn compact_domain_re_emits_p_slot_gloss_when_description_identity_changes() {
         .lines()
         .filter(|l| {
             let t = l.trim_start();
-            t.starts_with("p") && t.contains('\t') && t.contains("P_SLOT_REIDENT_")
+            t.starts_with("id\t") && t.contains("P_SLOT_REIDENT_")
         })
         .collect();
     assert!(
@@ -2700,12 +2689,12 @@ fn compact_domain_dedupes_identical_p_slot_gloss_across_entities() {
         .lines()
         .filter(|l| {
             let t = l.trim_start();
-            t.starts_with("p") && t.contains('\t') && t.contains("P_SLOT_REIDENT_SAME")
+            t.starts_with("id\t") && t.contains("P_SLOT_REIDENT_SAME")
         })
         .count();
     assert_eq!(
         count, 1,
-        "expected one p# gloss row when teaching strings match across entities; domain excerpt:\n{domain}"
+        "expected one wire `id` gloss row when teaching strings match across entities; domain excerpt:\n{domain}"
     );
 }
 

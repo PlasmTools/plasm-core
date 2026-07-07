@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-07
+
+### Changed
+
+- **Wire-first teaching surface:** abolish opaque `p#` allocation; fields, capability params, query filters, and projection/postfix keys use **catalog wire names** in programs and teaching TSV. Symbolic tokens remain `e#` / `m#` / `r#` / `v#` only.
+- **Within-site homographs** (same wire as filter vs relation vs param) resolve by **syntax position** under scoped `e#` / `m#`.
+- **MCP tool descriptions** (`plasm_tool.txt`, `program_param.txt`, sibling assets) and **language spec** docs updated for the wire cutover; legacy `p#` rejected at parse.
+
+### Removed
+
+- Dead `p#` machinery: `SymbolLedger` slot bindings, `CapParamTeachingSurface`, `site.rs` homograph allocator, `extend_wave_homograph` agent tests, and related prompt/symbol-tuning skeleton (~2.3k lines net).
+
+### Added
+
+- Federation wire-collision fixture (`extend_wave_homograph`) and matrix-backed regression coverage for receiver-scoped wire resolution.
+
 ## [0.3.134] - 2026-07-07
 
 ### Fixed

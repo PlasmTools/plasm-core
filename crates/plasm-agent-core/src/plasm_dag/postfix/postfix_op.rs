@@ -8,7 +8,8 @@ use super::super::plan_serialize::{
 use super::super::prelude::*;
 use super::super::schema_validate::{
     cgs_for_qualified_entity, compute_passthrough_or_fallback_schema, resolve_compute_field_path,
-    resolve_qualified_entity_for_dag_source, synthetic_schema_passthrough_rows,
+    resolve_immediate_compute_schema, resolve_qualified_entity_for_dag_source,
+    resolve_sort_field_path, synthetic_schema_passthrough_rows,
     validate_compute_paths_for_dag_source,
 };
 use super::super::types::{CompileState, DagNode, DagNodeSource};
@@ -99,10 +100,12 @@ pub(in crate::plasm_dag) fn postfix_op_to_compute(
                 return Err("sort(...) requires a non-empty field".into());
             }
             let qe = resolve_qualified_entity_for_dag_source(state, staged, source.to_string());
-            let key_fp = resolve_compute_field_path(
+            let source_schema = resolve_immediate_compute_schema(state, staged, source);
+            let key_fp = resolve_sort_field_path(
                 session,
                 state.cross_cache,
                 qe.as_ref(),
+                source_schema.as_ref(),
                 &FieldPath::from_dotted(&key)?,
             )?;
             validate_compute_paths_for_dag_source(

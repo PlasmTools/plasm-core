@@ -11,7 +11,7 @@ use crate::plasm_plan_run::evaluate_plasm_plan_dry;
 use plasm_core::TeachingExposureSession;
 use std::sync::Arc;
 
-/// Unknown `p#` on Label projection surfaces an honest error (no Issue `body` phantom).
+/// Unknown field wire on Label projection surfaces an honest error (no Issue `body` phantom).
 #[test]
 fn label_projection_unknown_p_sym_is_typed_error_not_phantom_body() {
     let session = github_issue_label_session();
@@ -20,26 +20,24 @@ fn label_projection_unknown_p_sym_is_typed_error_not_phantom_body() {
     let repo_e = map.entity_sym_for("github", "Repository");
     let repo_owner = map.ident_sym_entity_field_for("github", "Repository", "owner");
     let repo_name = map.ident_sym_entity_field_for("github", "Repository", "repo");
-    let issue_p_body = map.ident_sym_entity_field_for("github", "Issue", "body");
     let source = format!(
         r#"repo = {repo_e}({repo_owner}="o", {repo_name}="r")
 labels = {label_e}{{{p_repository}=repo.full_name}}
-labels[{issue_p_body}]"#,
+labels[body]"#,
         repo_e = repo_e,
         repo_owner = repo_owner,
         repo_name = repo_name,
         label_e = label_e,
         p_repository = map.ident_sym_cap_param_for("github", "Label", "label_query", "repository"),
-        issue_p_body = issue_p_body,
     );
     let err = compile_plasm_dag_to_plan(
         &plasm_core::PromptPipelineConfig::default(),
         None,
         &session,
-        "label-bad-p",
+        "label-bad-body-wire",
         &source,
     )
-    .expect_err("Issue body p# must not project Label rows");
+    .expect_err("Issue body wire must not project Label rows");
     let msg = err.to_string();
     assert!(
         msg.contains("not a row symbol")
@@ -48,9 +46,8 @@ labels[{issue_p_body}]"#,
         "expected typed symbol error, got {msg}"
     );
     assert!(
-        (msg.contains("Issue") && msg.contains("expected entity field"))
-            || (msg.contains("Label") && msg.contains("not a row symbol")),
-        "must reject Issue cap-param homograph on Label projection: {msg}"
+        msg.contains("Label") && msg.contains("body") && msg.contains("not a row field"),
+        "must reject Issue body homograph on Label projection: {msg}"
     );
 }
 

@@ -10,7 +10,7 @@ pub(crate) fn teaching_expr_line_fingerprint(row: &TeachingExprLine) -> String {
         row.expression,
         row.result_type,
         row.legend.scope,
-        row.legend.optional.is_present() as u8,
+        row.legend.optional_params.join(","),
         row.legend.compact_args,
         row.legend.description,
         row.is_projection_teaching as u8,
@@ -37,9 +37,12 @@ pub(crate) fn rewrite_teaching_expr_line_opaque_tokens(
     row.expression = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.expression, rep);
     row.result_type = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.result_type, rep);
     row.legend.scope = crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.legend.scope, rep);
-    if row.legend.optional.is_present() {
-        row.legend.optional = OptionalLegend::Present;
-    }
+    row.legend.optional_params = row
+        .legend
+        .optional_params
+        .iter()
+        .map(|w| crate::symbol_tuning::rewrite_opaque_ident_tokens(w, rep))
+        .collect();
     row.legend.compact_args =
         crate::symbol_tuning::rewrite_opaque_ident_tokens(&row.legend.compact_args, rep);
     row.legend.description =

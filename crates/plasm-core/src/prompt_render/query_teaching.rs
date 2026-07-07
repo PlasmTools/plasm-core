@@ -1,13 +1,13 @@
 //! Query-cap teaching exemplars (`Entity{p#=…}`, search filters, entity-ref placeholders).
 
 use crate::schema::{EntityDef, InputFieldSchema};
-use crate::symbol_tuning::{CapParamTeachingSurface, SymbolMap};
+use crate::symbol_tuning::SymbolMap;
 use crate::{FieldType, InputType, ParameterRole, CGS};
 
 use super::symbol_tokens::{ent_sym, id_sym_cap, id_sym_entity};
 use super::teaching_util::TEACHING_PARAM_VALUE_PLACEHOLDER;
 
-/// Compound `Entity(p#=$,…)` when the target has multiple `key_vars` (per-key placeholders are still the string `$`).
+/// Compound `Entity(p#=$,…)` when the target has multiple `key_vars`.
 ///
 /// Unary entity refs use [`unary_entity_id_teaching_expr_line`] / `$` fallback like scalar identity GET teaching.
 pub(crate) fn entity_ref_id_example(
@@ -16,6 +16,9 @@ pub(crate) fn entity_ref_id_example(
     target: &str,
     map: Option<&SymbolMap>,
 ) -> String {
+    if !entity_ref_target_in_session(map, catalog_entry_id, target) {
+        return TEACHING_PARAM_VALUE_PLACEHOLDER.to_string();
+    }
     let target_sym = ent_sym(map, catalog_entry_id, target);
     let p = TEACHING_PARAM_VALUE_PLACEHOLDER;
     let Some(ent) = cgs.get_entity(target) else {
@@ -67,13 +70,7 @@ pub(crate) fn unseeded_entity_ref_invocation_gloss(
         if entity_ref_target_in_session(map, catalog_entry_id, target.as_str()) {
             continue;
         }
-        let param = id_sym_cap(
-            map,
-            catalog_entry_id,
-            cap,
-            f.name.as_str(),
-            CapParamTeachingSurface::InvokeArg,
-        );
+        let param = id_sym_cap(map, catalog_entry_id, cap, f.name.as_str());
         hints.push(format!(
             "{param} takes {} — discover/seed it first",
             target.as_str()
@@ -94,13 +91,7 @@ fn query_param_slot_example(
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,
 ) -> String {
-    let n = id_sym_cap(
-        map,
-        catalog_entry_id,
-        cap,
-        f.name.as_str(),
-        CapParamTeachingSurface::QueryBrace,
-    );
+    let n = id_sym_cap(map, catalog_entry_id, cap, f.name.as_str());
     let p = TEACHING_PARAM_VALUE_PLACEHOLDER;
     let Ok(nv) = f.named_value(cgs) else {
         return format!("{n}={p}");
@@ -205,11 +196,7 @@ pub(crate) fn unary_entity_id_teaching_expr_line(
         ent.name.as_str(),
         ent.id_field.as_str(),
     );
-    if map.is_some_and(|m| m.resolve_session_slot(sym.as_str()).is_ok()) {
-        format!("{es}({sym})")
-    } else {
-        format!("{es}({})", TEACHING_PARAM_VALUE_PLACEHOLDER)
-    }
+    format!("{es}({sym})")
 }
 
 /// Literal positional identity for teaching rows (B2): simple string `id_field`, no compound keys.

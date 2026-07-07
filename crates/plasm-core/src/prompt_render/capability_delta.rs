@@ -156,7 +156,7 @@ fn gloss_rows_for_filtered_block(
         {
             needed.insert(sym);
         }
-        if row.teaching_expr.legend.optional.is_present() {
+        if row.teaching_expr.legend.optional_params_present() {
             if let Some(cap_wire) = row.meta.source_capability.as_deref() {
                 for cap_key in new_caps {
                     if cap_key.capability.as_str() != cap_wire {
@@ -532,11 +532,11 @@ mod tests {
         let recap =
             render_mutator_recap_lines_for_caps(&exp, &exposed_mutator_capability_keys(&exp));
         assert!(
-            recap.contains("tags=p") && recap.contains("[]"),
+            recap.contains("tags=") && recap.contains("[]"),
             "create tags array param must show [] in recap: {recap}"
         );
         assert!(
-            recap.contains("title=p") && recap.contains('!'),
+            recap.contains("title=") && recap.contains('!'),
             "required title param must show ! in recap: {recap}"
         );
         assert!(
@@ -609,8 +609,7 @@ mod tests {
                 || gloss.description.to_ascii_lowercase().contains("title")
                 || matches!(
                     &gloss.meaning,
-                    FieldGlossMeaning::RegistryBackedSlot { wire, .. }
-                        | FieldGlossMeaning::OpaquePSlot { wire, .. } if wire == "title"
+                    FieldGlossMeaning::RegistryBackedSlot { wire, .. } if wire == "title"
                 );
             assert!(
                 teaches_title,
@@ -633,10 +632,8 @@ mod tests {
             cap,
         );
         assert!(
-            pairs
-                .iter()
-                .any(|(w, s)| w == "labels" && s.starts_with('p')),
-            "labels optional legend must map to p#: {pairs:?}"
+            pairs.iter().any(|(w, s)| w == "labels" && s == "labels"),
+            "labels optional legend must use wire name: {pairs:?}"
         );
     }
 }

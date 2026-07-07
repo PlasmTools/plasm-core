@@ -301,19 +301,17 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
         let cols: Vec<&str> = l.split('\t').collect();
         cols.len() == 2
             && cols[0].starts_with(&format!("{zone_es}{{"))
-            && cols[1].contains("inputs:")
             && !cols[1].contains("rows:")
     });
     assert!(
         zone_query.is_some(),
-        "Zone query exemplar should carry inputs: (rows: only on divergent provides / witness)"
+        "Zone query exemplar should omit rows: (set-equal provides / witness)"
     );
     let ruleset_query = tsv.lines().find(|l| {
         let cols: Vec<&str> = l.split('\t').collect();
         cols.len() == 2
             && cols[0].starts_with(&format!("{ruleset_es}{{"))
             && !cols[1].contains("· projection")
-            && cols[1].contains("inputs:")
     });
     let ruleset_query = ruleset_query.expect("Ruleset scoped query teaching row");
     let rq_expr = ruleset_query.split('\t').next().unwrap_or("");
@@ -332,11 +330,8 @@ fn prompt_matrix_tsv_teaching_surface_invariants() {
         "capability legends omit inline `args:`; ruleset row was: {ruleset_query:?}"
     );
     assert!(
-        ruleset_query.contains("opt:")
-            || ruleset_query.contains("[scope")
-            || ruleset_query.contains("inputs:")
-            || ruleset_query.contains("optional"),
-        "ruleset query Meaning should carry optionality, scope, or inputs legend: {ruleset_query:?}"
+        ruleset_query.contains('→'),
+        "ruleset query Meaning should carry returns legend: {ruleset_query:?}"
     );
     assert!(
         tsv.lines().any(|l| {
@@ -512,9 +507,9 @@ fn linear_workflow_state_scoped_query_validates_with_homograph_p() {
     let es = map.entity_sym_for("", "WorkflowState");
     let p_team =
         map.ident_sym_cap_param_for("", "WorkflowState", "workflow_state_query", "team_key");
-    assert!(
-        SymbolMap::is_opaque_p_sym(p_team.as_str()),
-        "team_key scope param must be opaque in full linear exposure"
+    assert_eq!(
+        p_team, "team_key",
+        "team_key scope param teaches as catalog wire name"
     );
     let expr = format!("{es}{{{p_team}=$}}");
     let mut cache = std::collections::HashMap::new();

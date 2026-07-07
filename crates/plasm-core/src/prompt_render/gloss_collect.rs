@@ -12,7 +12,6 @@ use super::{is_union_ctor_teaching_surface_line, TeachingFieldGloss};
 /// Tracks gloss lines emitted before teaching example rows (first-use only).
 #[derive(Default)]
 pub(crate) struct GlossEmitLedger {
-    pub(crate) registry_compact_meaning_canonical_p: HashMap<PSlotSemanticKey, String>,
     pub(crate) registry_p_sym_alias: HashMap<String, String>,
     pub(crate) registry_value_gloss_canonical_v: HashMap<String, String>,
     pub(crate) registry_v_sym_alias: HashMap<String, String>,
@@ -102,7 +101,6 @@ pub(crate) fn commit_teaching_field_gloss_row(
     legend_display: Option<&str>,
     canonical_entity: &str,
     catalog_entry_id: &str,
-    slot: Option<&GlossSlotIdentity>,
     symbol_map: Option<&SymbolMap>,
     cgs: Option<&CGS>,
     is_inline_union_summary: bool,
@@ -126,7 +124,6 @@ pub(crate) fn commit_teaching_field_gloss_row(
         symbol.as_str(),
         catalog_entry_id,
         canonical_entity,
-        slot,
     );
     if !emit_state.global_gloss_identities.insert(identity.clone()) {
         if let Some(row) = emit_state.canonical_rows.get(&identity) {
@@ -240,12 +237,6 @@ fn attach_wire_projection_gloss_alias(ctx: &mut GlossEmitCtx<'_>, wire_sym: &str
     }
 }
 
-fn attach_p_sym_alias_gloss(ctx: &mut GlossEmitCtx<'_>, alias_sym: &str, canonical_sym: &str) {
-    if let Some(alias) = ctx.state.alias_row(canonical_sym, alias_sym, ctx.out) {
-        ctx.out.push(alias);
-    }
-}
-
 enum RegistryPSlotPlan {
     Skip,
     EmitWireSlot {
@@ -253,72 +244,27 @@ enum RegistryPSlotPlan {
         wire: String,
         point_of_use: PointOfUseProse,
     },
-    EmitOpaque {
-        meaning: FieldGlossMeaning,
-        slot: GlossSlotIdentity,
-        compact: String,
-    },
 }
 
 fn plan_registry_p_slot_emit(
     ctx: &GlossEmitCtx<'_>,
     sym: &str,
     meta: &IdentMetadata,
-    vs: &str,
+    _vs: &str,
 ) -> RegistryPSlotPlan {
-    let lookup_p = ctx
-        .map
-        .ident_sym_entity_field_for(ctx.catalog_entry_id, ctx.entity, sym);
     let nv_desc = values_row_description_for_meta(meta, ctx.cgs);
     match classify_registry_wire_gloss_role(sym, meta, ctx.cgs, nv_desc.as_str()) {
-        WireGlossRole::RedundantWithValueDomain if !SymbolMap::is_opaque_p_sym(sym) => {
-            return RegistryPSlotPlan::Skip;
-        }
+        WireGlossRole::RedundantWithValueDomain => RegistryPSlotPlan::Skip,
         WireGlossRole::EmitRegistrySlot {
             value,
             wire,
             point_of_use,
-        } if !SymbolMap::is_opaque_p_sym(sym) => {
-            return RegistryPSlotPlan::EmitWireSlot {
-                value,
-                wire,
-                point_of_use,
-            };
-        }
-        WireGlossRole::RedundantWithValueDomain => {}
-        WireGlossRole::EmitTyped(_) if !SymbolMap::is_opaque_p_sym(sym) => {
-            return RegistryPSlotPlan::Skip;
-        }
-        _ => {}
-    }
-    if !SymbolMap::is_opaque_p_sym(sym) {
-        return RegistryPSlotPlan::Skip;
-    }
-    let vsym = ctx
-        .map
-        .value_sym_for_p_sym(lookup_p.as_str())
-        .unwrap_or_else(|| vs.to_string());
-    let wire = crate::symbol_tuning::registry_backed_compact_wire_label(meta);
-    let compact_raw = build_opaque_p_slot_meaning(&vsym, wire.as_str(), meta, ctx.cgs);
-    let FieldGlossMeaning::OpaquePSlot {
-        value_sym,
-        wire,
-        point_of_use,
-    } = &compact_raw
-    else {
-        return RegistryPSlotPlan::Skip;
-    };
-    let body = match point_of_use {
-        PointOfUseProse::None => format!("{value_sym} · {wire}"),
-        PointOfUseProse::Distinct(d) => format!("{value_sym} · {wire} · {}", d.as_str()),
-    };
-    let compact =
-        crate::symbol_tuning::rewrite_opaque_ident_tokens(&body, &ctx.state.registry_v_sym_alias);
-    let slot = gloss_slot_identity_for_p_sym(ctx.map, sym, meta);
-    RegistryPSlotPlan::EmitOpaque {
-        meaning: compact_raw,
-        slot,
-        compact,
+        } => RegistryPSlotPlan::EmitWireSlot {
+            value,
+            wire,
+            point_of_use,
+        },
+        WireGlossRole::EmitTyped(_) => RegistryPSlotPlan::Skip,
     }
 }
 
@@ -328,71 +274,33 @@ fn try_emit_registry_p_slot(
     meta: &IdentMetadata,
     vs: &str,
 ) -> bool {
-    match plan_registry_p_slot_emit(ctx, sym, meta, vs) {
-        RegistryPSlotPlan::Skip => false,
-        RegistryPSlotPlan::EmitWireSlot {
+    let RegistryPSlotPlan::EmitWireSlot {
+        value,
+        wire,
+        point_of_use,
+    } = plan_registry_p_slot_emit(ctx, sym, meta, vs)
+    else {
+        return false;
+    };
+    if ctx.skip_p_gloss {
+        return false;
+    }
+    commit_teaching_field_gloss_row(
+        ctx.out,
+        sym.to_string(),
+        FieldGlossMeaning::RegistryBackedSlot {
             value,
             wire,
             point_of_use,
-        } => {
-            if !ctx.skip_p_gloss {
-                commit_teaching_field_gloss_row(
-                    ctx.out,
-                    sym.to_string(),
-                    FieldGlossMeaning::RegistryBackedSlot {
-                        value,
-                        wire,
-                        point_of_use,
-                    },
-                    None,
-                    ctx.entity,
-                    ctx.catalog_entry_id,
-                    None,
-                    Some(ctx.map),
-                    Some(ctx.cgs),
-                    false,
-                    ctx.state,
-                );
-            }
-            true
-        }
-        RegistryPSlotPlan::EmitOpaque {
-            meaning,
-            slot,
-            compact,
-        } => {
-            let p_meaning_key = gloss_p_slot_semantic_key(&compact, ctx.catalog_entry_id);
-            if meaning_canonical_sym_for_emit_key(
-                p_meaning_key,
-                sym,
-                &mut ctx.state.registry_compact_meaning_canonical_p,
-                &mut ctx.state.registry_p_sym_alias,
-            )
-            .is_none()
-            {
-                if let Some(canonical) = ctx.state.registry_p_sym_alias.get(sym).cloned() {
-                    attach_p_sym_alias_gloss(ctx, sym, canonical.as_str());
-                }
-                return false;
-            }
-            if ctx.skip_p_gloss {
-                return false;
-            }
-            commit_teaching_field_gloss_row(
-                ctx.out,
-                sym.to_string(),
-                meaning,
-                None,
-                ctx.entity,
-                ctx.catalog_entry_id,
-                Some(&slot),
-                Some(ctx.map),
-                Some(ctx.cgs),
-                false,
-                ctx.state,
-            )
-        }
-    }
+        },
+        None,
+        ctx.entity,
+        ctx.catalog_entry_id,
+        Some(ctx.map),
+        Some(ctx.cgs),
+        false,
+        ctx.state,
+    )
 }
 
 fn resolve_standard_gloss_meaning(
@@ -459,7 +367,6 @@ fn try_emit_teaching_gloss(ctx: &mut GlossEmitCtx<'_>, sym: &str) -> bool {
             None,
             ctx.entity,
             ctx.catalog_entry_id,
-            None,
             Some(ctx.map),
             Some(ctx.cgs),
             false,
@@ -467,11 +374,10 @@ fn try_emit_teaching_gloss(ctx: &mut GlossEmitCtx<'_>, sym: &str) -> bool {
         );
     }
 
-    let wire_owned = ctx.map.wire_for_opaque_p_sym(sym);
     let field_name = if sym.starts_with('r') {
         ctx.map.resolve_relation_ident(sym).unwrap_or(sym)
     } else {
-        wire_owned.as_deref().unwrap_or(sym)
+        sym
     };
     let meta = resolve_slot_metadata(ctx, sym, field_name);
 
@@ -493,19 +399,10 @@ fn try_emit_teaching_gloss(ctx: &mut GlossEmitCtx<'_>, sym: &str) -> bool {
         } else if let Some(key) = ValueDomainStructuralKey::from_registry_meta(m) {
             ctx.state.structural_value_domains.insert(key);
         }
-        let slot_sym = if SymbolMap::is_opaque_p_sym(sym) {
-            sym.to_string()
-        } else {
-            ctx.map
-                .ident_sym_entity_field_for(ctx.catalog_entry_id, ctx.entity, sym)
-        };
-        let p_emitted = try_emit_registry_p_slot(ctx, slot_sym.as_str(), m, &vs);
-        attach_wire_projection_gloss_alias(ctx, sym, slot_sym.as_str());
+        let p_emitted = try_emit_registry_p_slot(ctx, sym, m, &vs);
+        attach_wire_projection_gloss_alias(ctx, sym, sym);
         if p_emitted {
             return true;
-        }
-        if SymbolMap::is_opaque_p_sym(sym) {
-            return false;
         }
         // Wire-named registry slots fall through to typed wire gloss (projection brackets use wire tokens).
     }
@@ -539,7 +436,6 @@ fn try_emit_teaching_gloss(ctx: &mut GlossEmitCtx<'_>, sym: &str) -> bool {
         None,
         ctx.entity,
         ctx.catalog_entry_id,
-        None,
         Some(ctx.map),
         Some(ctx.cgs),
         false,
@@ -663,7 +559,6 @@ pub(crate) fn push_teaching_field_gloss_row(
             Some(legend),
             canonical_entity,
             catalog_entry_id,
-            None,
             symbol_map,
             cgs,
             is_inline_union_summary,

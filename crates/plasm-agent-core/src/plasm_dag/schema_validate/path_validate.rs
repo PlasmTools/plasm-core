@@ -26,12 +26,19 @@ pub(in crate::plasm_dag) fn validate_compute_paths_for_schema(
         .map(|f| f.name.as_str().to_string())
         .collect();
     for path in paths {
-        let wire = if path.segments().len() == 1 {
+        let segs = path.segments();
+        if segs.len() == 1 {
+            let raw = segs[0].as_str();
+            if allowed.contains(raw) {
+                continue;
+            }
+        }
+        let wire = if segs.len() == 1 {
             crate::plasm_plan_run::resolve_wire_field_token(
                 session,
                 symbol_map_cross_cache,
                 qe,
-                path.segments()[0].as_str(),
+                segs[0].as_str(),
             )?
         } else {
             path.dotted()

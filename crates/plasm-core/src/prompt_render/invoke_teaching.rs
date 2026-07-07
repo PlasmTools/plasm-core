@@ -3,7 +3,7 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::schema::{capability_method_label_kebab, EntityDef};
-use crate::symbol_tuning::{CapParamTeachingSurface, IdentMetaKey, IdentMetadata, SymbolMap};
+use crate::symbol_tuning::{IdentMetaKey, IdentMetadata, SymbolMap};
 use crate::{CapabilityKind, FieldType, InputType, ParameterRole, ValueWireFormat, CGS};
 
 use super::gloss_collect::{
@@ -135,7 +135,22 @@ pub(crate) fn capability_legend_with_session_gloss(
     Some(leg)
 }
 
-/// Structural invoke RHS inside union constructors (`v101{…}`): keyed by opaque `p#` when a
+/// LHS teaching token for a capability param path inside union-constructor `{…}` bodies.
+/// Nested expand paths use the wire **leaf** (`ref`, `markdown`, …), not the full dotted path.
+#[inline]
+fn cap_param_structural_lhs(
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    domain: &str,
+    cap_name: &str,
+    full_path: &str,
+    field_name: &str,
+) -> String {
+    map.map(|m| m.teaching_slot_token_cap_param(catalog_entry_id, domain, cap_name, full_path))
+        .unwrap_or_else(|| field_name.to_string())
+}
+
+/// Structural invoke RHS inside union constructors (`v101{…}`): wire leaf names when a
 /// [`SymbolMap`] is present (teaching TSV); canonical [`RenderMode`] uses wire names.
 pub(crate) fn format_inline_structural_example_symbolic(
     map: Option<&SymbolMap>,
@@ -169,29 +184,25 @@ pub(crate) fn format_inline_structural_example_symbolic(
                             inner.as_ref(),
                             _cgs,
                         );
-                        let lhs = map
-                            .map(|m| {
-                                m.ident_sym_cap_param_for(
-                                    catalog_entry_id,
-                                    domain,
-                                    cap_name,
-                                    seg.as_str(),
-                                )
-                            })
-                            .unwrap_or_else(|| sf.name.clone());
+                        let lhs = cap_param_structural_lhs(
+                            map,
+                            catalog_entry_id,
+                            domain,
+                            cap_name,
+                            seg.as_str(),
+                            sf.name.as_str(),
+                        );
                         parts.push(format!("{lhs}={rhs}"));
                     }
                     crate::InputFieldWire::Registry(_) => {
-                        let lhs = map
-                            .map(|m| {
-                                m.ident_sym_cap_param_for(
-                                    catalog_entry_id,
-                                    domain,
-                                    cap_name,
-                                    seg.as_str(),
-                                )
-                            })
-                            .unwrap_or_else(|| sf.name.clone());
+                        let lhs = cap_param_structural_lhs(
+                            map,
+                            catalog_entry_id,
+                            domain,
+                            cap_name,
+                            seg.as_str(),
+                            sf.name.as_str(),
+                        );
                         parts.push(format!("{lhs}={}", TEACHING_PARAM_VALUE_PLACEHOLDER));
                     }
                 }
@@ -259,19 +270,25 @@ pub(crate) fn format_inline_structural_example_symbolic_required_only(
                     inner.as_ref(),
                     cgs,
                 );
-                let lhs = map
-                    .map(|m| {
-                        m.ident_sym_cap_param_for(catalog_entry_id, domain, cap_name, seg.as_str())
-                    })
-                    .unwrap_or_else(|| sf.name.clone());
+                let lhs = cap_param_structural_lhs(
+                    map,
+                    catalog_entry_id,
+                    domain,
+                    cap_name,
+                    seg.as_str(),
+                    sf.name.as_str(),
+                );
                 parts.push(format!("{lhs}={rhs}"));
             }
             crate::InputFieldWire::Registry(_) => {
-                let lhs = map
-                    .map(|m| {
-                        m.ident_sym_cap_param_for(catalog_entry_id, domain, cap_name, seg.as_str())
-                    })
-                    .unwrap_or_else(|| sf.name.clone());
+                let lhs = cap_param_structural_lhs(
+                    map,
+                    catalog_entry_id,
+                    domain,
+                    cap_name,
+                    seg.as_str(),
+                    sf.name.as_str(),
+                );
                 parts.push(format!("{lhs}={}", TEACHING_PARAM_VALUE_PLACEHOLDER));
             }
         }
@@ -415,7 +432,6 @@ pub(crate) fn emit_union_array_constructor_teaching_gloss(
         None,
         gs.entity,
         cid,
-        None,
         Some(gs.map),
         Some(gs.cgs),
         true,
@@ -586,13 +602,7 @@ pub(crate) fn invoke_dotted_call_arg_example(
     map: Option<&SymbolMap>,
     catalog_entry_id: &str,
 ) -> Option<String> {
-    let n = id_sym_cap(
-        map,
-        catalog_entry_id,
-        cap,
-        f.name.as_str(),
-        CapParamTeachingSurface::InvokeArg,
-    );
+    let n = id_sym_cap(map, catalog_entry_id, cap, f.name.as_str());
     let p = TEACHING_PARAM_VALUE_PLACEHOLDER;
     if let crate::InputFieldWire::Inline(ty) = &f.wire {
         return Some(match ty.as_ref() {

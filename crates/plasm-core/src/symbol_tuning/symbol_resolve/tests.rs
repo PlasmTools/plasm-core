@@ -35,11 +35,7 @@ fn resolve_entity_field_unknown_opaque_p_sym() {
     let err = map
         .resolve_entity_field(CatalogScope::SessionReverse, "Account", ent, "p999")
         .expect_err("unknown p#");
-    assert!(matches!(
-        err,
-        SymbolResolveError::UnknownEntityPSym { .. }
-            | SymbolResolveError::UnknownSessionPSym { .. }
-    ));
+    assert!(matches!(err, SymbolResolveError::UnknownSessionPSym { .. }));
 }
 
 #[test]
@@ -64,7 +60,7 @@ fn resolve_cap_param_accepts_session_reverse_opaque_p_on_unset_fixture() {
             slug.as_str(),
             cap,
         )
-        .expect("slug p# on unset single-graph fixture");
+        .expect("slug wire on unset single-graph fixture");
     assert_eq!(wire, "slug");
 }
 
@@ -77,16 +73,16 @@ fn resolve_entity_field_rejects_cross_entity_homograph() {
     };
     let exp = TeachingExposureSession::new(&cgs, "langmatrix", &["HomographRowA", "HomographRowB"]);
     let map = exp.symbol_map_arc();
-    let row_a = map.ident_sym_entity_field_for("", "HomographRowA", "headline");
+    let row_a_wire = "headline";
     let ent_b = cgs.get_entity("HomographRowB").expect("HomographRowB");
     let err = map
         .resolve_entity_field(
             CatalogScope::qualified("langmatrix"),
             "HomographRowB",
             ent_b,
-            row_a.as_str(),
+            row_a_wire,
         )
-        .expect_err("HomographRowA p# must not resolve on HomographRowB");
+        .expect_err("HomographRowA wire must not resolve on HomographRowB");
     assert!(matches!(
         err,
         SymbolResolveError::UnknownEntityPSym { .. } | SymbolResolveError::NotARowField { .. }
@@ -127,52 +123,25 @@ fn resolve_cap_param_rejects_query_scope_p_on_mutator_invoke() {
     let update_cap = cgs
         .get_capability("langitem_update")
         .expect("langitem_update");
-    let p_query_team =
-        map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_query", "team_key");
-    if !SymbolMap::is_opaque_p_sym(p_query_team.as_str()) {
-        return;
-    }
     let err = map
-        .resolve_opaque_p(
+        .resolve_cap_param(
             CatalogScope::qualified("langmatrix"),
-            PSymResolution::InvokeParam {
-                domain: "LangItem",
-                capability: "langitem_update",
-                cap: update_cap,
-            },
-            p_query_team.as_str(),
+            "LangItem",
+            "langitem_update",
+            "team_key",
+            update_cap,
         )
-        .expect_err("query team_key p# must not resolve on update invoke");
+        .expect_err("query team_key wire must not resolve on update invoke");
     assert!(err.is_unknown_cap_param());
-    let p_update_tags =
-        map.ident_sym_cap_param_for("langmatrix", "LangItem", "langitem_update", "tags");
-    if !SymbolMap::is_opaque_p_sym(p_update_tags.as_str()) {
-        return;
-    }
-    let ent = cgs.get_entity("LangItem").expect("LangItem");
-    let err = map
-        .resolve_opaque_p(
-            CatalogScope::qualified("langmatrix"),
-            PSymResolution::QueryFilter {
-                entity: "LangItem",
-                ent,
-                cgs: &cgs,
-            },
-            p_update_tags.as_str(),
-        )
-        .expect_err("update tags p# must not resolve as query filter");
-    assert!(err.is_unknown_query_filter());
     let wire = map
-        .resolve_opaque_p(
+        .resolve_cap_param(
             CatalogScope::qualified("langmatrix"),
-            PSymResolution::InvokeParam {
-                domain: "LangItem",
-                capability: "langitem_update",
-                cap: update_cap,
-            },
-            p_update_tags.as_str(),
+            "LangItem",
+            "langitem_update",
+            "tags",
+            update_cap,
         )
-        .expect("update tags p# on update invoke");
+        .expect("update tags wire on update invoke");
     assert_eq!(wire, "tags");
 }
 
@@ -189,17 +158,13 @@ fn resolve_query_filter_field_accepts_cap_scope_param_p_sym() {
     let exp = TeachingExposureSession::new(&cgs, "github", &["Repository", "Issue", "Label"]);
     let map = exp.symbol_map_arc();
     let ent = cgs.get_entity("Label").expect("Label");
-    let p_repository = map.ident_sym_cap_param_for("github", "Label", "label_query", "repository");
-    if !SymbolMap::is_opaque_p_sym(p_repository.as_str()) {
-        return;
-    }
     let wire = map
         .resolve_query_filter_field(
             CatalogScope::qualified("github"),
             "Label",
             ent,
             &cgs,
-            p_repository.as_str(),
+            "repository",
         )
         .expect("label_query repository scope param");
     assert_eq!(wire, "repository");
@@ -216,14 +181,8 @@ fn resolve_entity_field_projection_stable_after_exposure_extend() {
     let mut exp = TeachingExposureSession::new(&cgs, entry, &["LangItem"]);
     let map0 = exp.symbol_map_arc();
     let ent = cgs.get_entity("LangItem").expect("LangItem");
-    let title_sym = map0.ident_sym_entity_field_for(entry, "LangItem", "title");
     let title_wire = map0
-        .resolve_entity_field(
-            CatalogScope::qualified(entry),
-            "LangItem",
-            ent,
-            title_sym.as_str(),
-        )
+        .resolve_entity_field(CatalogScope::qualified(entry), "LangItem", ent, "title")
         .expect("wave-1 title projection");
     assert_eq!(title_wire, "title");
 
@@ -235,16 +194,59 @@ fn resolve_entity_field_projection_stable_after_exposure_extend() {
     );
     let map1 = exp.symbol_map_arc();
     let title_wire_after = map1
-        .resolve_entity_field(
-            CatalogScope::qualified(entry),
-            "LangItem",
-            ent,
-            title_sym.as_str(),
-        )
+        .resolve_entity_field(CatalogScope::qualified(entry), "LangItem", ent, "title")
         .expect("wave-2 title projection");
     assert_eq!(
         title_wire_after, title_wire,
-        "extend wave must not remap wave-1 opaque row projection"
+        "extend wave must not remap wave-1 wire projection"
+    );
+}
+
+/// Federated extend: colliding `name` wire on WaveLang vs WaveMon resolves by receiver entity.
+#[test]
+fn resolve_entity_field_federated_wire_name_by_receiver_after_extend() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/extend_wave_homograph");
+    let Ok(cgs) = load_schema_dir(&dir) else {
+        return;
+    };
+    let entry = "wavehom";
+    let mut exp = TeachingExposureSession::new(&cgs, entry, &["WaveLang"]);
+    let map0 = exp.symbol_map_arc();
+    let lang_ent = cgs.get_entity("WaveLang").expect("WaveLang");
+    assert_eq!(
+        map0.resolve_entity_field(CatalogScope::qualified(entry), "WaveLang", lang_ent, "name",)
+            .expect("wave-1"),
+        "name"
+    );
+
+    exp.expose_entities(
+        &[&cgs],
+        std::sync::Arc::new(cgs.clone()),
+        entry,
+        &["WaveMon"],
+    );
+    let map1 = exp.symbol_map_arc();
+    let mon_ent = cgs.get_entity("WaveMon").expect("WaveMon");
+    assert_eq!(
+        map1.resolve_entity_field(CatalogScope::qualified(entry), "WaveLang", lang_ent, "name",)
+            .expect("lang name after extend"),
+        "name"
+    );
+    assert_eq!(
+        map1.resolve_entity_field(CatalogScope::qualified(entry), "WaveMon", mon_ent, "name",)
+            .expect("mon name after extend"),
+        "name"
+    );
+    assert_eq!(
+        map1.resolve_entity_field(
+            CatalogScope::qualified(entry),
+            "WaveLang",
+            lang_ent,
+            "official",
+        )
+        .expect("lang official"),
+        "official"
     );
 }
 
@@ -282,19 +284,15 @@ fn resolve_cap_param_shared_scope_p_on_issue_create_when_only_issue_query_commit
     );
     let map = exp.symbol_map_arc();
     let create_cap = cgs.get_capability("issue_create").expect("issue_create");
-    let p_repository = map.ident_sym_cap_param_for("github", "Issue", "issue_query", "repository");
-    if !SymbolMap::is_opaque_p_sym(p_repository.as_str()) {
-        return;
-    }
     let wire = map
         .resolve_cap_param(
             CatalogScope::qualified("github"),
             "Issue",
             "issue_create",
-            p_repository.as_str(),
+            "repository",
             create_cap,
         )
-        .expect("shared repository p# must resolve on issue_create invoke");
+        .expect("shared repository wire must resolve on issue_create invoke");
     assert_eq!(wire, "repository");
 }
 
@@ -325,38 +323,28 @@ fn resolve_cap_param_homographed_union_variant_ref_paths() {
         .capabilities
         .get("document_edit_v2")
         .expect("document_edit_v2");
-    let replace_ref = map.ident_sym_cap_param_for(
-        "proof",
-        "Document",
-        "document_edit_v2",
-        "operations.replace_block.ref",
-    );
-    let insert_ref = map.ident_sym_cap_param_for(
-        "proof",
-        "Document",
-        "document_edit_v2",
-        "operations.insert_before.ref",
-    );
-    assert_eq!(
-        replace_ref, insert_ref,
-        "union-variant ref anchors share one homographed p#"
-    );
-    if !SymbolMap::is_opaque_p_sym(replace_ref.as_str()) {
-        return;
-    }
+    let replace_wire = "operations.replace_block.ref";
+    let insert_wire = "operations.insert_before.ref";
     let wire = map
         .resolve_cap_param(
             CatalogScope::qualified("proof"),
             "Document",
             "document_edit_v2",
-            replace_ref.as_str(),
+            replace_wire,
             cap,
         )
-        .expect("homographed ref p# must resolve on document_edit_v2 invoke");
-    assert!(
-        wire.ends_with(".ref"),
-        "expected a declared ref param path, got {wire}"
-    );
+        .expect("union-variant ref wire must resolve on document_edit_v2 invoke");
+    assert_eq!(wire, replace_wire);
+    let wire2 = map
+        .resolve_cap_param(
+            CatalogScope::qualified("proof"),
+            "Document",
+            "document_edit_v2",
+            insert_wire,
+            cap,
+        )
+        .expect("second ref wire");
+    assert_eq!(wire2, insert_wire);
 }
 
 #[test]
@@ -371,10 +359,8 @@ fn opaque_query_m_sym_rejected_on_mutator_payload_dotted_call() {
     let map = exp.symbol_map_arc();
     let e_sym = map.entity_sym_for(entry, "LangItem");
     let m_sym = map.method_sym_for(entry, "LangItem", "langitem_query");
-    let tags_sym = map.ident_sym_cap_param_for(entry, "LangItem", "langitem_query", "tags");
-    assert!(SymbolMap::is_opaque_m_sym(m_sym.as_str()));
-    // Payload invoke (non-empty args) — not zero-arity `e#.m#()` pathless gets.
-    let line = format!("{e_sym}($).{m_sym}({tags_sym}=$)");
+    let tags_wire = "tags";
+    let line = format!("{e_sym}($).{m_sym}({tags_wire}=$)");
     let err =
         crate::expr_parser::parse_session_line(
             &line,
@@ -391,7 +377,7 @@ fn opaque_query_m_sym_rejected_on_mutator_payload_dotted_call() {
 }
 
 #[test]
-fn compound_key_p_sym_falls_back_to_session_slot_when_catalog_misses() {
+fn compound_key_accepts_wire_names() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../fixtures/schemas/plasm_language_matrix");
     let Ok(cgs) = load_schema_dir(&dir) else {
@@ -401,29 +387,19 @@ fn compound_key_p_sym_falls_back_to_session_slot_when_catalog_misses() {
     let exp = TeachingExposureSession::new(&cgs, entry, &["CompoundBranch", "LangItem"]);
     let map = exp.symbol_map_arc();
     let ent = cgs.get_entity("CompoundBranch").expect("CompoundBranch");
-    let owner_sym = map.ident_sym_entity_field_for(entry, "CompoundBranch", "owner");
-    let item_sym = map.ident_sym_entity_field_for(entry, "CompoundBranch", "item_id");
-    let name_sym = map.ident_sym_entity_field_for(entry, "CompoundBranch", "name");
-    assert!(SymbolMap::is_opaque_p_sym(owner_sym.as_str()));
-    // Wrong catalog scope must still resolve via session-wide field / slot fallback.
-    for (sym, wire) in [
-        (owner_sym.as_str(), "owner"),
-        (item_sym.as_str(), "item_id"),
-        (name_sym.as_str(), "name"),
-    ] {
-        let got = map
+    for sym in ["owner", "item_id", "name"] {
+        let wire = map
             .resolve_compound_key(
-                CatalogScope::Qualified("other_catalog"),
+                CatalogScope::qualified(entry),
                 "CompoundBranch",
                 &ent.key_vars,
                 sym,
             )
             .unwrap_or_else(|e| panic!("compound key {sym}: {e:?}"));
-        assert_eq!(got, wire);
+        assert_eq!(wire, sym);
     }
-    // Same fragment as get: opaque compound ctor type-checks end-to-end.
     let e_sym = map.entity_sym_for(entry, "CompoundBranch");
-    let get_line = format!("{e_sym}({owner_sym}=acme, {item_sym}=i1, {name_sym}=main)");
+    let get_line = format!("{e_sym}(owner=acme, item_id=i1, name=main)");
     let mut parsed =
         crate::expr_parser::parse_session_line(
             &get_line,
@@ -431,7 +407,7 @@ fn compound_key_p_sym_falls_back_to_session_slot_when_catalog_misses() {
             Some(std::sync::Arc::clone(&map)
                 as std::sync::Arc<dyn crate::symbol_tuning::SymbolSession>),
         )
-        .expect("compound get with p# keys");
+        .expect("compound get with wire keys");
     crate::normalize_expr_query_capabilities(&mut parsed.expr, &cgs).expect("normalize");
     crate::type_check_expr(&parsed.expr, &cgs).expect("typecheck get");
     let crate::Expr::Get(g) = &parsed.expr else {

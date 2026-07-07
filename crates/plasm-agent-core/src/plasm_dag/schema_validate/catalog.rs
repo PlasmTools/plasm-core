@@ -181,3 +181,23 @@ pub(in crate::plasm_dag) fn resolve_compute_field_path(
     )?;
     FieldPath::from_dotted(&wire)
 }
+
+/// Sort keys may name synthetic compute outputs (e.g. `group_by` aggregate `n`) without wire resolution.
+pub(in crate::plasm_dag) fn resolve_sort_field_path(
+    session: &ExecuteSession,
+    symbol_map_cross_cache: Option<&SymbolMapCrossRequestCache>,
+    qe: Option<&QualifiedEntityKey>,
+    source_schema: Option<&SyntheticResultSchema>,
+    path: &FieldPath,
+) -> Result<FieldPath, String> {
+    let segs = path.segments();
+    if segs.len() == 1 {
+        let raw = segs[0].as_str();
+        if let Some(schema) = source_schema {
+            if schema.fields.iter().any(|f| f.name.as_str() == raw) {
+                return FieldPath::from_dotted(raw);
+            }
+        }
+    }
+    resolve_compute_field_path(session, symbol_map_cross_cache, qe, path)
+}

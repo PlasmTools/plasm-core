@@ -73,11 +73,6 @@ pub(crate) enum FieldGlossMeaning {
     InlineUnionSummary {
         summary: String,
     },
-    OpaquePSlot {
-        value_sym: String,
-        wire: String,
-        point_of_use: PointOfUseProse,
-    },
     OpaqueLegend {
         description: String,
     },
@@ -135,19 +130,6 @@ impl FieldGlossMeaning {
             Self::InlineUnionSummary { summary } => {
                 vec![FieldGlossMeaningAtom::Description(summary.clone())]
             }
-            Self::OpaquePSlot {
-                value_sym,
-                wire,
-                point_of_use,
-            } => {
-                let body = match point_of_use {
-                    PointOfUseProse::None => format!("{value_sym} · {wire}"),
-                    PointOfUseProse::Distinct(d) => {
-                        format!("{value_sym} · {wire} · {}", d.as_str())
-                    }
-                };
-                vec![FieldGlossMeaningAtom::Description(body)]
-            }
             Self::OpaqueLegend { description } => {
                 if description.is_empty() {
                     Vec::new()
@@ -204,70 +186,12 @@ impl FieldGlossMeaning {
                 g.allowed_values.clear();
                 g.description = summary.clone();
             }
-            Self::OpaquePSlot {
-                value_sym,
-                wire,
-                point_of_use,
-            } => {
-                g.field_type.clear();
-                g.allowed_values.clear();
-                g.description = match point_of_use {
-                    PointOfUseProse::None => format!("{value_sym} · {wire}"),
-                    PointOfUseProse::Distinct(d) => {
-                        format!("{value_sym} · {wire} · {}", d.as_str())
-                    }
-                };
-            }
             Self::OpaqueLegend { description } => {
                 g.field_type.clear();
                 g.allowed_values.clear();
                 g.description = description.clone();
             }
         }
-    }
-}
-
-/// Stable gloss dedupe identity — cap params must not alias entity fields with the same compact meaning.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(crate) enum GlossSlotIdentity {
-    CapabilityParam {
-        domain: String,
-        cap: String,
-        param: String,
-    },
-    EntityField {
-        entity: String,
-        wire: String,
-    },
-}
-
-pub(crate) fn gloss_slot_identity_for_p_sym(
-    map: &SymbolMap,
-    sym: &str,
-    meta: &IdentMetadata,
-) -> GlossSlotIdentity {
-    map.capability_param_quad_for_p_sym(sym)
-        .map(|(_, dom, cap, path)| GlossSlotIdentity::CapabilityParam {
-            domain: dom.to_string(),
-            cap: cap.to_string(),
-            param: path,
-        })
-        .unwrap_or_else(|| GlossSlotIdentity::EntityField {
-            entity: meta.entity().to_string(),
-            wire: meta.wire_name().to_string(),
-        })
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct PSlotSemanticKey {
-    pub compact_body: String,
-    pub catalog_entry_id: String,
-}
-
-pub(crate) fn gloss_p_slot_semantic_key(compact: &str, catalog_entry_id: &str) -> PSlotSemanticKey {
-    PSlotSemanticKey {
-        compact_body: compact.to_string(),
-        catalog_entry_id: catalog_entry_id.to_string(),
     }
 }
 
@@ -308,7 +232,6 @@ pub(crate) enum GlossEmitIdentity {
         wire: String,
         point_of_use: PointOfUseProse,
     },
-    OpaquePSlot(PSlotSemanticKey),
     Relation {
         catalog_entry_id: String,
         entity: EntityName,
@@ -329,7 +252,6 @@ pub(crate) fn gloss_emit_identity_for_row(g: &super::TeachingFieldGloss) -> Glos
             g.symbol.as_str(),
             g.catalog_entry_id.as_str(),
             g.entity.as_str(),
-            None,
         )
     })
 }
@@ -362,7 +284,7 @@ pub(crate) fn classify_registry_wire_gloss_role(
     } else {
         PointOfUseProse::Distinct(GlossDescription::from_trimmed(meta.description()))
     };
-    if !SymbolMap::is_opaque_p_sym(teaching_key) && teaching_key == wire {
+    if teaching_key == wire {
         return match &point_of_use {
             PointOfUseProse::None => WireGlossRole::RedundantWithValueDomain,
             PointOfUseProse::Distinct(_) => WireGlossRole::EmitRegistrySlot {
@@ -375,26 +297,6 @@ pub(crate) fn classify_registry_wire_gloss_role(
     WireGlossRole::EmitRegistrySlot {
         value,
         wire,
-        point_of_use,
-    }
-}
-
-pub(crate) fn build_opaque_p_slot_meaning(
-    vsym: &str,
-    wire: &str,
-    meta: &IdentMetadata,
-    cgs: &CGS,
-) -> FieldGlossMeaning {
-    let nv_desc = values_row_description_for_meta(meta, cgs);
-    let slot_norm = crate::symbol_tuning::trim_description_for_agent_gloss(meta.description());
-    let point_of_use = if slot_norm.is_empty() || slot_norm == nv_desc.as_str() {
-        PointOfUseProse::None
-    } else {
-        PointOfUseProse::Distinct(GlossDescription::from_trimmed(meta.description()))
-    };
-    FieldGlossMeaning::OpaquePSlot {
-        value_sym: vsym.to_string(),
-        wire: wire.to_string(),
         point_of_use,
     }
 }
@@ -456,8 +358,6 @@ fn typed_wire_emit_entity(symbol: &str, entity: &str) -> EntityName {
         .chars()
         .next()
         .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        && !SymbolMap::is_opaque_p_sym(symbol)
-        && !symbol.starts_with('v')
         && !SymbolMap::is_opaque_r_sym(symbol)
     {
         EntityName::from("")
@@ -471,7 +371,6 @@ pub(crate) fn gloss_emit_identity_from_parts(
     symbol: &str,
     catalog_entry_id: &str,
     entity: &str,
-    slot: Option<&GlossSlotIdentity>,
 ) -> GlossEmitIdentity {
     match meaning {
         FieldGlossMeaning::ValueDomain(key) => GlossEmitIdentity::ValueDomain(key.clone()),
@@ -484,22 +383,6 @@ pub(crate) fn gloss_emit_identity_from_parts(
             wire: wire.clone(),
             point_of_use: point_of_use.clone(),
         },
-        FieldGlossMeaning::OpaquePSlot {
-            value_sym,
-            wire,
-            point_of_use,
-        } => {
-            let compact = match point_of_use {
-                PointOfUseProse::None => format!("{value_sym} · {wire}"),
-                PointOfUseProse::Distinct(d) => {
-                    format!("{value_sym} · {wire} · {}", d.as_str())
-                }
-            };
-            if let Some(slot) = slot {
-                let _ = slot;
-            }
-            GlossEmitIdentity::OpaquePSlot(gloss_p_slot_semantic_key(&compact, catalog_entry_id))
-        }
         FieldGlossMeaning::Relation { wire, .. } => GlossEmitIdentity::Relation {
             catalog_entry_id: catalog_entry_id.to_string(),
             entity: EntityName::from(entity.to_string()),
@@ -523,29 +406,6 @@ pub(crate) fn meaning_canonical_sym_for_emit(
     sym_alias: &mut HashMap<String, String>,
 ) -> Option<String> {
     match meaning_to_canonical.entry(meaning.to_string()) {
-        Entry::Occupied(e) => {
-            let canonical = e.get().clone();
-            if canonical == sym {
-                Some(canonical)
-            } else {
-                sym_alias.insert(sym.to_string(), canonical);
-                None
-            }
-        }
-        Entry::Vacant(v) => {
-            v.insert(sym.to_string());
-            Some(sym.to_string())
-        }
-    }
-}
-
-pub(crate) fn meaning_canonical_sym_for_emit_key<K: Eq + std::hash::Hash>(
-    key: K,
-    sym: &str,
-    meaning_to_canonical: &mut HashMap<K, String>,
-    sym_alias: &mut HashMap<String, String>,
-) -> Option<String> {
-    match meaning_to_canonical.entry(key) {
         Entry::Occupied(e) => {
             let canonical = e.get().clone();
             if canonical == sym {

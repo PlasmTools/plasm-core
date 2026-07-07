@@ -9,7 +9,7 @@ use crate::schema::CGS;
 
 use super::capability_surface_params::loaded_catalog_entry_ids;
 use super::persisted_ident_metadata::PersistedIdentMetadata;
-use super::session_bindings::{EntityBinding, MethodBinding, RelationBinding, SlotBinding};
+use super::session_bindings::{EntityBinding, MethodBinding, RelationBinding};
 use super::tables::{SymbolLedger, SymbolTables};
 use super::{
     CapParamKey, EntityFieldKey, ExposureSurface, IdentMetadata, MethodKey, MethodSegmentKey,
@@ -17,8 +17,9 @@ use super::{
     TeachingExposureSession,
 };
 
-pub const PERSISTED_SYMBOL_LEDGER_VERSION: u8 = 2;
+pub const PERSISTED_SYMBOL_LEDGER_VERSION: u8 = 3;
 
+const PERSISTED_SYMBOL_LEDGER_VERSION_V2: u8 = 2;
 const MAGIC: &[u8; 4] = b"PLSL";
 
 /// Postcard-safe mirror of [`ExposureSurface`] (`BTreeSet` → sorted `Vec`).
@@ -57,9 +58,6 @@ pub struct PersistedSymbolTables {
     pub sym_to_method: IndexMap<OpaqueMSym, MethodBinding>,
     pub method_to_sym: IndexMap<MethodKey, OpaqueMSym>,
     pub method_segment_to_sym: IndexMap<MethodSegmentKey, OpaqueMSym>,
-    pub sym_to_slot: IndexMap<OpaquePSym, SlotBinding>,
-    pub entity_field_to_sym: IndexMap<EntityFieldKey, OpaquePSym>,
-    pub cap_param_to_sym: IndexMap<CapParamKey, OpaquePSym>,
     pub relation_to_sym: IndexMap<RelationKey, OpaqueRSym>,
     pub sym_to_relation_binding: IndexMap<OpaqueRSym, RelationBinding>,
 }
@@ -72,9 +70,6 @@ impl From<&SymbolTables> for PersistedSymbolTables {
             sym_to_method: tables.sym_to_method.clone(),
             method_to_sym: tables.method_to_sym.clone(),
             method_segment_to_sym: tables.method_segment_to_sym.clone().into_iter().collect(),
-            sym_to_slot: tables.sym_to_slot.clone(),
-            entity_field_to_sym: tables.entity_field_to_sym.clone().into_iter().collect(),
-            cap_param_to_sym: tables.cap_param_to_sym.clone().into_iter().collect(),
             relation_to_sym: tables.relation_to_sym.clone().into_iter().collect(),
             sym_to_relation_binding: tables.sym_to_relation_binding.clone(),
         }
@@ -89,9 +84,6 @@ impl From<PersistedSymbolTables> for SymbolTables {
             sym_to_method: tables.sym_to_method,
             method_to_sym: tables.method_to_sym,
             method_segment_to_sym: tables.method_segment_to_sym.into_iter().collect(),
-            sym_to_slot: tables.sym_to_slot,
-            entity_field_to_sym: tables.entity_field_to_sym.into_iter().collect(),
-            cap_param_to_sym: tables.cap_param_to_sym.into_iter().collect(),
             relation_to_sym: tables.relation_to_sym.into_iter().collect(),
             sym_to_relation_binding: tables.sym_to_relation_binding,
         }
@@ -101,8 +93,18 @@ impl From<PersistedSymbolTables> for SymbolTables {
 /// Serializable [`SymbolLedger`] assignment maps (excludes ephemeral `symbol_map_cache`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PersistedSymbolLedgerState {
+    pub relation_fingerprint_to_sym: IndexMap<String, OpaqueRSym>,
+    pub slot_occurrence_meta: IndexMap<String, PersistedIdentMetadata>,
+    pub value_domain_fp_to_sym: IndexMap<String, super::OpaqueVSym>,
+    pub value_domain_fp_to_repr_meta: IndexMap<String, PersistedIdentMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct PersistedSymbolLedgerStateV2 {
+    #[serde(default)]
     pub slot_fingerprint_to_sym: IndexMap<String, OpaquePSym>,
     pub relation_fingerprint_to_sym: IndexMap<String, OpaqueRSym>,
+    #[serde(default)]
     pub fingerprint_meta: IndexMap<String, PersistedIdentMetadata>,
     pub slot_occurrence_meta: IndexMap<String, PersistedIdentMetadata>,
     pub value_domain_fp_to_sym: IndexMap<String, super::OpaqueVSym>,
@@ -136,9 +138,7 @@ fn meta_map_from_wire(
 impl PersistedSymbolLedgerState {
     pub fn from_ledger(ledger: &SymbolLedger) -> Result<Self, PersistedSymbolLedgerEncodeError> {
         Ok(Self {
-            slot_fingerprint_to_sym: ledger.slot_fingerprint_to_sym.clone(),
             relation_fingerprint_to_sym: ledger.relation_fingerprint_to_sym.clone(),
-            fingerprint_meta: meta_map_to_wire(&ledger.fingerprint_meta)?,
             slot_occurrence_meta: meta_map_to_wire(&ledger.slot_occurrence_meta)?,
             value_domain_fp_to_sym: ledger.value_domain_fp_to_sym.clone(),
             value_domain_fp_to_repr_meta: meta_map_to_wire(&ledger.value_domain_fp_to_repr_meta)?,
@@ -147,9 +147,7 @@ impl PersistedSymbolLedgerState {
 
     pub fn into_symbol_ledger(self) -> Result<SymbolLedger, PersistedSymbolLedgerDecodeError> {
         Ok(SymbolLedger {
-            slot_fingerprint_to_sym: self.slot_fingerprint_to_sym,
             relation_fingerprint_to_sym: self.relation_fingerprint_to_sym,
-            fingerprint_meta: meta_map_from_wire(self.fingerprint_meta)?,
             slot_occurrence_meta: meta_map_from_wire(self.slot_occurrence_meta)?,
             value_domain_fp_to_sym: self.value_domain_fp_to_sym,
             value_domain_fp_to_repr_meta: meta_map_from_wire(self.value_domain_fp_to_repr_meta)?,
@@ -168,6 +166,85 @@ pub struct PersistedSymbolLedger {
     pub surface: PersistedExposureSurface,
     pub tables: PersistedSymbolTables,
     pub ledger: PersistedSymbolLedgerState,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct PersistedSymbolLedgerV2 {
+    pub catalog_cgs_hashes: IndexMap<String, String>,
+    pub entities: Vec<String>,
+    pub entity_catalog_entry_ids: Vec<String>,
+    pub surface: PersistedExposureSurface,
+    pub tables: PersistedSymbolTablesV2,
+    pub ledger: PersistedSymbolLedgerStateV2,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct PersistedSlotBindingV2 {
+    entry_id: RegistryEntryId,
+    kind: PersistedSlotKindV2,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+enum PersistedSlotKindV2 {
+    EntityField {
+        entity: EntityName,
+        field_wire: EntityFieldName,
+    },
+    CapParam {
+        domain: EntityName,
+        capability: CapabilityName,
+        param_wire: CapabilityParamName,
+        param_role: Option<crate::schema::ParameterRole>,
+        capability_kind: crate::CapabilityKind,
+        scope_target_entity: Option<EntityName>,
+    },
+}
+
+use crate::identity::{
+    CapabilityName, CapabilityParamName, EntityFieldName, EntityName, RegistryEntryId,
+};
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+struct PersistedSymbolTablesV2 {
+    pub sym_to_entity_binding: IndexMap<OpaqueESym, EntityBinding>,
+    pub qualified_entity_to_sym: IndexMap<QualifiedEntityKey, OpaqueESym>,
+    pub sym_to_method: IndexMap<OpaqueMSym, MethodBinding>,
+    pub method_to_sym: IndexMap<MethodKey, OpaqueMSym>,
+    pub method_segment_to_sym: IndexMap<MethodSegmentKey, OpaqueMSym>,
+    #[serde(default)]
+    pub sym_to_slot: IndexMap<OpaquePSym, PersistedSlotBindingV2>,
+    #[serde(default)]
+    pub entity_field_to_sym: IndexMap<EntityFieldKey, OpaquePSym>,
+    #[serde(default)]
+    pub cap_param_to_sym: IndexMap<CapParamKey, OpaquePSym>,
+    pub relation_to_sym: IndexMap<RelationKey, OpaqueRSym>,
+    pub sym_to_relation_binding: IndexMap<OpaqueRSym, RelationBinding>,
+}
+
+impl PersistedSymbolLedgerV2 {
+    fn into_v3(self) -> PersistedSymbolLedger {
+        PersistedSymbolLedger {
+            catalog_cgs_hashes: self.catalog_cgs_hashes,
+            entities: self.entities,
+            entity_catalog_entry_ids: self.entity_catalog_entry_ids,
+            surface: self.surface,
+            tables: PersistedSymbolTables {
+                sym_to_entity_binding: self.tables.sym_to_entity_binding,
+                qualified_entity_to_sym: self.tables.qualified_entity_to_sym,
+                sym_to_method: self.tables.sym_to_method,
+                method_to_sym: self.tables.method_to_sym,
+                method_segment_to_sym: self.tables.method_segment_to_sym,
+                relation_to_sym: self.tables.relation_to_sym,
+                sym_to_relation_binding: self.tables.sym_to_relation_binding,
+            },
+            ledger: PersistedSymbolLedgerState {
+                relation_fingerprint_to_sym: self.ledger.relation_fingerprint_to_sym,
+                slot_occurrence_meta: self.ledger.slot_occurrence_meta,
+                value_domain_fp_to_sym: self.ledger.value_domain_fp_to_sym,
+                value_domain_fp_to_repr_meta: self.ledger.value_domain_fp_to_repr_meta,
+            },
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -247,13 +324,17 @@ impl PersistedSymbolLedger {
             return Err(PersistedSymbolLedgerDecodeError::BadMagic);
         }
         let wire_version = bytes[MAGIC.len()];
-        if wire_version != PERSISTED_SYMBOL_LEDGER_VERSION {
-            return Err(PersistedSymbolLedgerDecodeError::UnsupportedVersion(
-                wire_version,
-            ));
+        let body = &bytes[MAGIC.len() + 1..];
+        match wire_version {
+            PERSISTED_SYMBOL_LEDGER_VERSION => postcard::from_bytes(body)
+                .map_err(|e| PersistedSymbolLedgerDecodeError::Postcard(e.to_string())),
+            PERSISTED_SYMBOL_LEDGER_VERSION_V2 => {
+                let v2: PersistedSymbolLedgerV2 = postcard::from_bytes(body)
+                    .map_err(|e| PersistedSymbolLedgerDecodeError::Postcard(e.to_string()))?;
+                Ok(v2.into_v3())
+            }
+            other => Err(PersistedSymbolLedgerDecodeError::UnsupportedVersion(other)),
         }
-        postcard::from_bytes(&bytes[MAGIC.len() + 1..])
-            .map_err(|e| PersistedSymbolLedgerDecodeError::Postcard(e.to_string()))
     }
 }
 

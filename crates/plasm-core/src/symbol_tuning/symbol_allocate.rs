@@ -2,34 +2,16 @@
 
 use indexmap::IndexMap;
 
-use crate::identity::{CapabilityParamName, EntityFieldName, RegistryEntryId, RelationName};
+use crate::identity::{RegistryEntryId, RelationName};
 use crate::schema::{capability_path_method_segment, CGS};
 use crate::CapabilityKind;
 
-use super::keys::{
-    CapParamKey, EntityFieldKey, MethodKey, MethodSegmentKey, OpaqueMSym, OpaquePSym, OpaqueRSym,
-    OpaqueVSym, RelationKey,
-};
+use super::keys::{MethodKey, MethodSegmentKey, OpaqueMSym, OpaqueRSym, OpaqueVSym, RelationKey};
 use super::slot_meta_is_relation;
 use super::{
     collect_slot_metas_for_surface, slot_occurrence_key, slot_symbol_allocation_fingerprint,
-    IdentMetadata, IdentRole, TeachingExposureSession,
+    IdentMetadata, TeachingExposureSession,
 };
-
-fn prefer_entity_field_representative(
-    existing: &IdentMetadata,
-    incoming: &IdentMetadata,
-) -> IdentMetadata {
-    if matches!(
-        existing.allocation_ident_role(),
-        IdentRole::CapabilityParam { .. }
-    ) && matches!(incoming.allocation_ident_role(), IdentRole::EntityField)
-    {
-        incoming.clone()
-    } else {
-        existing.clone()
-    }
-}
 
 fn prefer_value_domain_representative(
     existing: &IdentMetadata,
@@ -120,12 +102,8 @@ impl TeachingExposureSession {
             slot_symbol_allocation_fingerprint(a).cmp(&slot_symbol_allocation_fingerprint(b))
         });
         let mut by_fp: IndexMap<String, IdentMetadata> = IndexMap::new();
-        let mut new_occurrence_keys: Vec<String> = Vec::new();
         for m in &collected {
             let occ_key = slot_occurrence_key(m);
-            if !self.ledger.slot_occurrence_meta.contains_key(&occ_key) {
-                new_occurrence_keys.push(occ_key.clone());
-            }
             self.ledger
                 .slot_occurrence_meta
                 .entry(occ_key)
@@ -134,22 +112,11 @@ impl TeachingExposureSession {
             by_fp
                 .entry(fp.clone())
                 .and_modify(|existing| {
-                    if !self.ledger.slot_fingerprint_to_sym.contains_key(&fp) {
-                        *existing = prefer_entity_field_representative(existing, m);
+                    if !self.ledger.relation_fingerprint_to_sym.contains_key(&fp) {
+                        *existing = m.clone();
                     }
                 })
                 .or_insert_with(|| m.clone());
-        }
-        for (fp, meta) in &by_fp {
-            self.ledger
-                .fingerprint_meta
-                .entry(fp.clone())
-                .and_modify(|existing| {
-                    if !self.ledger.slot_fingerprint_to_sym.contains_key(fp) {
-                        *existing = prefer_entity_field_representative(existing, meta);
-                    }
-                })
-                .or_insert_with(|| meta.clone());
         }
 
         let mut value_fps_in_wave: IndexMap<String, IdentMetadata> = IndexMap::new();
@@ -185,35 +152,13 @@ impl TeachingExposureSession {
                 .or_insert_with(|| value_fps_in_wave.get(fp).expect("vfp").clone());
         }
 
-        let mut new_p_fps: Vec<String> = by_fp
-            .keys()
-            .filter(|fp| {
-                self.ledger
-                    .fingerprint_meta
-                    .get(*fp)
-                    .is_some_and(|m| !slot_meta_is_relation(m))
-                    && !self.ledger.slot_fingerprint_to_sym.contains_key(*fp)
-            })
-            .cloned()
-            .collect();
-        new_p_fps.sort();
-        for (next_p, fp) in (self.ledger.slot_fingerprint_to_sym.len() + 1..).zip(new_p_fps.iter())
-        {
-            let sym = OpaquePSym::from_zero_based((next_p - 1) as u32);
-            self.ledger.slot_fingerprint_to_sym.insert(fp.clone(), sym);
-            self.commit_slot_binding_for_fp(fp);
-        }
-
         let mut new_r_fps: Vec<String> = by_fp
-            .keys()
-            .filter(|fp| {
-                self.ledger
-                    .fingerprint_meta
-                    .get(*fp)
-                    .is_some_and(slot_meta_is_relation)
+            .iter()
+            .filter(|(fp, meta)| {
+                slot_meta_is_relation(meta)
                     && !self.ledger.relation_fingerprint_to_sym.contains_key(*fp)
             })
-            .cloned()
+            .map(|(fp, _)| fp.clone())
             .collect();
         new_r_fps.sort();
         for (next_r, fp) in
@@ -223,13 +168,15 @@ impl TeachingExposureSession {
             self.ledger
                 .relation_fingerprint_to_sym
                 .insert(fp.clone(), sym);
-            self.record_relation_binding_for_fp(fp);
+            if let Some(meta) = by_fp.get(fp) {
+                self.record_relation_binding(sym, meta);
+            }
         }
-        self.commit_slot_maps_for_wave(&new_p_fps, &new_r_fps, &new_occurrence_keys);
-        self.append_ident_meta_for_wave(&by_fp);
+        self.commit_relation_maps_for_wave(&new_r_fps, &by_fp);
+        self.append_ident_meta_for_wave();
     }
 
-    fn append_ident_meta_for_wave(&mut self, _by_fp: &IndexMap<String, IdentMetadata>) {
+    fn append_ident_meta_for_wave(&mut self) {
         for meta in self.ledger.slot_occurrence_meta.values() {
             let key = (meta.catalog_entry_id().to_string(), meta.entity().clone());
             self.ident_meta_by_entity
@@ -240,26 +187,13 @@ impl TeachingExposureSession {
         }
     }
 
-    fn commit_slot_maps_for_wave(
+    fn commit_relation_maps_for_wave(
         &mut self,
-        new_p_fps: &[String],
         new_r_fps: &[String],
-        new_occurrence_keys: &[String],
+        by_fp: &IndexMap<String, IdentMetadata>,
     ) {
-        for fp in new_p_fps {
-            let Some(meta) = self.ledger.fingerprint_meta.get(fp).cloned() else {
-                continue;
-            };
-            if slot_meta_is_relation(&meta) {
-                continue;
-            }
-            let Some(sym) = self.ledger.slot_fingerprint_to_sym.get(fp).copied() else {
-                continue;
-            };
-            self.commit_slot_forward_maps(&meta, sym);
-        }
         for fp in new_r_fps {
-            let Some(meta) = self.ledger.fingerprint_meta.get(fp).cloned() else {
+            let Some(meta) = by_fp.get(fp) else {
                 continue;
             };
             let Some(sym) = self.ledger.relation_fingerprint_to_sym.get(fp).copied() else {
@@ -273,59 +207,6 @@ impl TeachingExposureSession {
                 ),
                 sym,
             );
-        }
-        for occ_key in new_occurrence_keys {
-            let Some(meta) = self.ledger.slot_occurrence_meta.get(occ_key).cloned() else {
-                continue;
-            };
-            self.commit_occurrence_forward_maps(&meta);
-        }
-    }
-
-    fn commit_occurrence_forward_maps(&mut self, meta: &IdentMetadata) {
-        let fp = slot_symbol_allocation_fingerprint(meta);
-        if slot_meta_is_relation(meta) {
-            let Some(sym) = self.ledger.relation_fingerprint_to_sym.get(&fp).copied() else {
-                return;
-            };
-            self.tables.relation_to_sym.insert(
-                RelationKey::new(
-                    RegistryEntryId::from(meta.catalog_entry_id()),
-                    meta.entity().clone(),
-                    RelationName::from(meta.wire_name()),
-                ),
-                sym,
-            );
-            return;
-        }
-        let Some(sym) = self.ledger.slot_fingerprint_to_sym.get(&fp).copied() else {
-            return;
-        };
-        self.commit_slot_forward_maps(meta, sym);
-    }
-
-    fn commit_slot_forward_maps(&mut self, meta: &IdentMetadata, sym: OpaquePSym) {
-        match meta.allocation_ident_role() {
-            IdentRole::EntityField => {
-                self.tables.entity_field_to_sym.insert(
-                    EntityFieldKey::new(
-                        RegistryEntryId::from(meta.catalog_entry_id()),
-                        meta.entity().clone(),
-                        EntityFieldName::from(meta.wire_name()),
-                    ),
-                    sym,
-                );
-            }
-            IdentRole::Relation { .. } => {}
-            IdentRole::CapabilityParam { capability } => {
-                let key = CapParamKey::new(
-                    RegistryEntryId::from(meta.catalog_entry_id()),
-                    meta.entity().clone(),
-                    capability.clone(),
-                    CapabilityParamName::from(meta.wire_name()),
-                );
-                self.tables.cap_param_to_sym.insert(key, sym);
-            }
         }
     }
 }

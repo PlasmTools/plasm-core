@@ -1,7 +1,7 @@
 //! Opaque teaching symbol resolution for prompt render.
 
 use crate::schema::CapabilitySchema;
-use crate::symbol_tuning::{CapParamTeachingSurface, SymbolMap, TeachingExposureSession};
+use crate::symbol_tuning::{SymbolMap, TeachingExposureSession};
 use indexmap::IndexMap;
 
 /// Owning `entry_id` for an exposed entity wire name when it appears under exactly one catalog row.
@@ -52,7 +52,6 @@ pub(crate) fn id_sym_cap(
     catalog_entry_id: &str,
     cap: &CapabilitySchema,
     param: &str,
-    surface: CapParamTeachingSurface,
 ) -> String {
     m.map(|x| {
         x.cap_param_teaching_token(
@@ -60,7 +59,6 @@ pub(crate) fn id_sym_cap(
             cap.domain.as_str(),
             cap.name.as_str(),
             param,
-            surface,
         )
     })
     .unwrap_or_else(|| param.to_string())

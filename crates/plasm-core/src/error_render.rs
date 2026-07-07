@@ -27,9 +27,8 @@ pub enum FeedbackStyle<'a> {
 }
 
 #[inline]
-fn feedback_ident_symbol(map: &impl SymbolSession, ident: &str) -> String {
-    map.ident_sym_unambiguous(ident)
-        .unwrap_or_else(|| ident.to_string())
+fn feedback_ident_symbol(_map: &impl SymbolSession, ident: &str) -> String {
+    ident.to_string()
 }
 
 fn feedback_predicate_ident_symbol(
@@ -2842,8 +2841,8 @@ mod tests {
             se.error
         );
         assert!(
-            !se.correction.contains("list_id"),
-            "correction should use p# tokens, not canonical scope param names; correction={}",
+            se.correction.contains("team_id") || se.correction.contains("list_id"),
+            "correction should cite wire filter names for scoped query examples; correction={}",
             se.correction
         );
     }

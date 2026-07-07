@@ -2,63 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::TEACHING_OPTIONAL_LEGEND_MARK;
-
-/// Compact optional-invoke legend in the Meaning column.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum OptionalLegend {
-    #[default]
-    Absent,
-    Present,
-}
-
-impl OptionalLegend {
-    pub fn is_present(self) -> bool {
-        matches!(self, Self::Present)
-    }
-
-    fn is_absent(v: &Self) -> bool {
-        !v.is_present()
-    }
-}
-
-impl<'de> Deserialize<'de> for OptionalLegend {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Ok(if s.is_empty() {
-            Self::Absent
-        } else {
-            Self::Present
-        })
-    }
-}
-
-impl Serialize for OptionalLegend {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        match self {
-            Self::Absent => serializer.serialize_str(""),
-            Self::Present => serializer.serialize_str(TEACHING_OPTIONAL_LEGEND_MARK),
-        }
-    }
-}
-
 /// Scope / optional / compact-args tail for capability teaching rows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct CapabilityInputLegend {
     #[serde(default)]
     pub scope: String,
-    #[serde(
-        default,
-        rename = "optional_params",
-        skip_serializing_if = "OptionalLegend::is_absent"
-    )]
-    pub optional: OptionalLegend,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub optional_params: Vec<String>,
     #[serde(default)]
     pub compact_args: String,
     #[serde(default)]
@@ -66,16 +16,8 @@ pub struct CapabilityInputLegend {
 }
 
 impl CapabilityInputLegend {
-    pub fn set_optional_present(&mut self) {
-        self.optional = OptionalLegend::Present;
-    }
-
-    pub fn optional_tsv_mark(&self) -> &'static str {
-        if self.optional.is_present() {
-            TEACHING_OPTIONAL_LEGEND_MARK
-        } else {
-            ""
-        }
+    pub fn optional_params_present(&self) -> bool {
+        !self.optional_params.is_empty()
     }
 }
 

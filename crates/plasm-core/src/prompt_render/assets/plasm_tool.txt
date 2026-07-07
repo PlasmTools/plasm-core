@@ -4,9 +4,9 @@
 
 **Batch independent reads** (required): when several reads share only scope bindings and do not need each other's rows, write **one** `program` with bindings + a multi-root return — not N `plasm`/`plasm_run` cycles.
 ```
-repo = e1(p_owner="org", p_name="repo")
-labels = e2{p_repo=repo}
-branches = e3{p_repo=repo}
+repo = e1(owner="org", name="repo")
+labels = e2{repo=repo}
+branches = e3{repo=repo}
 labels, branches
 ```
 One `program` → one dry-run → one `run_ref` (`pcN`). Dry-run lists **all** approval gates for every mutating node. Batch reads aggressively; batch writes only when co-committed gates are acceptable as a single commit. Co-submitted writes run in program order (branch then file is safe); chain values with `node.field` without read-back.
@@ -18,46 +18,47 @@ Output:
 - Prefer bind → narrow/project/transform → one return line (comma-separated if several roots).
 - Worked transform (substitute symbols from your TSV):
 items = e_source
-filtered = items.filter{p_field>=300}
-sorted = filtered.sort(p_field, desc).limit(10)
-sorted[p_a,p_field]
-- Worked row-to-text (same `p#` in bracket and Minijinja body; wire names also work; source binding name also works for `{% for %}`):
-report = sorted[p_a,p_field] <<PLASM_RPT_TAG
-{% for r in rows %}- {{ r.p_a }} ({{ r.p_field or "—" }})
+filtered = items.filter{amount>=300}
+sorted = filtered.sort(amount, desc).limit(10)
+sorted[name,amount]
+- Worked row-to-text (wire names in bracket and Minijinja body; source binding name also works for `{% for %}`):
+report = sorted[name,amount] <<PLASM_RPT_TAG
+{% for r in rows %}- {{ r.name }} ({{ r.amount or "—" }})
 {% endfor %}
 PLASM_RPT_TAG
 
 TSV table semantics:
 - Header: `plasm_expr<TAB>Meaning`; one tab per row. Left = syntax/metadata; right = guidance only (never copy `Meaning`).
-- Executable rows start with `e#`; metadata-only `p#`/`r#`/`v#` rows are never roots.
+- Executable rows start with `e#`; metadata-only `r#`/`v#` rows are never roots.
 
 Core surface:
 - Program shape: one `plasm_expr`, or `label = …` bindings then **one** final return line — comma-separated roots on that line only (e.g. `a, b`), never one bare label per line (no `return` keyword).
-- Postfix/`[p#]`/`[fields]`: copy exact forms from the TSV left column (`.limit` `.sort` `.filter{…}` `.group_by` `.aggregate` …).
+- Postfix/`[field,…]`: copy exact forms from the TSV left column (`.limit` `.sort` `.filter{…}` `.group_by` `.aggregate` …).
 - Live **`plasm_run`** returns rows in tool **`content`** TSV when ≤25 rows (`structuredContent.plasm.result_delivery`: `inline`); larger or reference-only results use `snapshot_only` and require **`resources/read`** or **`plasm_read_run_artifact`**. Use **`next_run_ref`** on **`plasm_run`** only when no snapshot was stored. Copy **`run_id`** or **`artifact_uri`** from `_meta.plasm.steps[]`; never use plan **`run_step`**, session **`resource_index`**, **`meta_generation`**, or **`dict_ref`** as artifact addresses. **`structuredContent.plasm.index_delta`** is not the row payload channel.
 - `page(...)` is HTTP-execute program syntax only — not an MCP tool argument or `plasm` program.
-- Search when exposed: `e#~$` or `e#~"text"` (bare `e#~` is a parse error); optional scoped filters `e#~"text"[{p#=…}]`.
+- Search when exposed: `e#~$` or `e#~"text"` (bare `e#~` is a parse error); optional scoped filters `e#~"text"[{field=…}]`.
 
 Composition rules:
 - One binding per line; **one** return line last. Multiple roots belong on that line comma-separated — not stacked as separate bare-label lines. Single-line space-separated programs coerce default return to first binding.
-- Row text: `label = source[p#,…] <<TAG` … `TAG` (Minijinja); cross-bindings: `label = a,b <<TAG` (comma-separated in-scope labels); **`binding.content`** for string params (not bare `label`).
-- String binding (no template): `label = <<TAG` … `TAG` — pass **`p#=label`**, not `label.content`.
+- Row text: `label = source[field,…] <<TAG` … `TAG` (Minijinja); cross-bindings: `label = a,b <<TAG` (comma-separated in-scope labels); **`binding.content`** for string params (not bare `label`).
+- String binding (no template): `label = <<TAG` … `TAG` — pass **`param=label`**, not `label.content`.
 - RT: after `repo = e#(…)`, prefer **`repo.m#(…)`** / **`repo.r#`** over repeating the get head.
 - Compose with `${report.content}` in later heredocs/strings (`$$` escapes `$`). Do not use `report.content` as a final root or relation receiver.
-- Action/create roots: return the action row or follow with `e#(p#=…)` get — not `created.p#` as a program root.
-- Bare create: `e#.m#(p#=…)` without `source =>` unless scoping a binding.
+- Action/create roots: return the action row or follow with `e#(id=…)` get — not `created.field` as a program root.
+- Bare create: `e#.m#(param=…)` without `source =>` unless scoping a binding.
 - Heredoc: `<<TAG` + newline; first trimmed `TAG` line closes; pick a tag absent from the body. `markdown`/`html`/`document`/`json_text`/`blob` values use `<<TAG` … `TAG` only.
 
 Symbol and fill rules:
-- `e#` entity; `m#` method; `p#` field/param/filter; `r#` relation nav; `v#` value-domain metadata only.
-- Relation hops: `.r#` (or the relation wire) on row producers — never a bare filter `p#` after `.` (`p#` in `e#{…}` is filter/param).
-- Never write `v#` in code; use `p#` keys and read `v#` rows for allowed values.
+- **Symbolic only:** `e#` entity; `m#` method; `r#` relation nav; `v#` value-domain metadata (never in code).
+- **Wire names** for fields, capability params, query/search filters, projection/postfix keys — copy from the TSV left column under the scoped `e#`/`m#`.
+- Within-site homographs (same wire as filter vs relation vs param): resolved by **syntax position** — `{wire=…}` filter, `.r#`/`.wire` nav, `m#(wire=…)` invoke args.
+- Never write `v#` in code; use wire keys and read `v#` rows for allowed values. Legacy `p#` tokens are rejected at parse.
 - **Session handles** (`logical_session_ref`, `run_ref` / `pcN`): MCP tokens only — copy verbatim; not program syntax.
 - Replace teaching placeholders (`$`, `<id>`, `<val>`) and exemplar ids (`pikachu`, `example-name`, …) with real values before output. Never emit `$` from a teaching row.
-- Get-head: **parens = identity** (`e_type(electric)`; bare word = string identity when the slot is a name/string field), **braces = query/filter** (`e#{p#=…}`). Keyed `e#(p#=<id>)` only when that `p#` is the identity field.
-- **Quote scalars only in `{…}` predicates** (`e#{p#="EVA"}`); identity ids in `e#(…)` need no quotes. EntityRef slots use `e#(id)`, not bare scalars.
-- Remove `..` ellipses; when Meaning includes `optional` (a legend token, not program syntax), add optional slots as keyed assignments with real values (see taught `p#` rows). Exemplars with `,..` in the expr column imply optional slots.
-- Projection `[p#,…]` suffixes: reuse only on expressions returning the same entity/list type.
+- Get-head: **parens = identity** (`e_type(electric)`; bare word = string identity when the slot is a name/string field), **braces = query/filter** (`e#{field=…}`). Keyed `e#(id=<id>)` only when `id` is the identity field.
+- **Quote scalars only in `{…}` predicates** (`e#{state="EVA"}`); identity ids in `e#(…)` need no quotes. EntityRef slots use `e#(id)`, not bare scalars.
+- Remove `..` ellipses; when Meaning includes `optional` (a legend token, not program syntax), add optional slots as keyed wire assignments with real values. Exemplars with `,..` in the expr column imply optional slots.
+- Projection `[field,…]` suffixes: reuse only on expressions returning the same entity/list type.
 
 Common pitfalls:
 - Parse/symbol errors mean your program is wrong for **this** session's table — use **`session_mode: "extend"`** with the same **`logical_session_ref`**, not **`session_mode: "new"`**.
@@ -65,4 +66,4 @@ Common pitfalls:
 - Prefer `label = e#` then `label.filter{…}`; bare `e#.filter{…}` list-alls first. Row `.filter{…}` needs a materialized list.
 - `=>` only for derive `{ k: _.field }` or write effects (`source => e#.m#(…)`) — not relation reads (use `child = source.r#`).
 - Federated writes: one created-row return; discover anchors live — never hardcode workspace ids.
-- **Symbols only:** use this session's `e#` / `m#` / `r#` / `p#` from the teaching TSV — not catalog type names, method verbs, or API labels. Query/filter `{…}` keys copy opaque **`p#`** from gloss rows; invoke dotted-call rows may use unambiguous wire tokens when taught that way. Minijinja templates may use wire names or `p#`.
+- **Session symbols + wires:** use this session's `e#` / `m#` / `r#` from the teaching TSV plus catalog **wire names** for fields/params/filters — not catalog type names, method verbs, or API labels. Minijinja templates use wire field names from the projection list.

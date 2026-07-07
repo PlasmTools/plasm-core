@@ -47,8 +47,9 @@ pub(crate) fn dry_validate_render_nodes(
             serde_json::Value::String("dry-placeholder".into()),
         );
         let mut binding_rows = BTreeMap::new();
+        let stub = serde_json::Value::Object(row.clone());
         for label in render_bindings {
-            binding_rows.insert(label.as_str().to_string(), vec![serde_json::Value::Null]);
+            binding_rows.insert(label.as_str().to_string(), vec![stub.clone()]);
         }
         if let Some(alias) = c.compute.collection_alias.as_ref() {
             if !binding_rows.contains_key(alias.as_str()) {

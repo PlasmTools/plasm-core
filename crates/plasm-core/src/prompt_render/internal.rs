@@ -13,7 +13,6 @@ pub(crate) use crate::symbol_tuning::{
 };
 
 pub(crate) use super::entity_block::collect_entity_teaching_block;
-pub(crate) use super::input_legend::OptionalLegend;
 pub(crate) use super::line_validate::{
     domain_line_validate_cached, domain_line_work_valid_cached, prompt_line_valid_cache_seed_cgs,
     prompt_line_valid_cache_seed_exposure, DomainLineValidCacheKey, DomainLineValidEntry,

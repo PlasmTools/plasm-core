@@ -1,0 +1,19 @@
+wavelang_get:
+  method: GET
+  path:
+    - { type: literal, value: wave-lang }
+    - { type: var, name: id }
+  response:
+    id: id
+    name: name
+    official: official
+
+wavemon_get:
+  method: GET
+  path:
+    - { type: literal, value: wave-mon }
+    - { type: var, name: id }
+  response:
+    id: id
+    name: name
+    order: order

@@ -1,0 +1,64 @@
+version: 1
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:1080
+entities:
+  WaveLang:
+    id_field: id
+    description: Language-like row for extend-wave homographed p# regression (wave 1).
+    fields:
+      id:
+        required: true
+        value_ref: nv_wave_lang_id
+      name:
+        required: true
+        value_ref: nv_wave_shared_name
+      official:
+        required: true
+        value_ref: nv_wave_lang_official
+    relations: {}
+  WaveMon:
+    id_field: id
+    description: Pokemon-like row sharing name fingerprint with WaveLang (wave 2 extend).
+    fields:
+      id:
+        required: true
+        value_ref: nv_wave_lang_id
+      name:
+        required: true
+        value_ref: nv_wave_shared_name
+      order:
+        required: true
+        value_ref: nv_wave_mon_order
+    relations: {}
+capabilities:
+  wavelang_get:
+    description: Get WaveLang by id
+    kind: get
+    entity: WaveLang
+    provides:
+      - id
+      - name
+      - official
+  wavemon_get:
+    description: Get WaveMon by id
+    kind: get
+    entity: WaveMon
+    provides:
+      - id
+      - name
+      - order
+values:
+  nv_wave_lang_id:
+    type: integer
+    description: Integer id shared structural slot across wave entities
+  nv_wave_shared_name:
+    type: string
+    string_semantics: short
+    description: Shared name slot fingerprint (Language.name / Pokemon.name homograph)
+  nv_wave_lang_official:
+    type: boolean
+    description: Language-only bool field (must not steal homographed p# on extend)
+  nv_wave_mon_order:
+    type: integer
+    description: Mon-only int field

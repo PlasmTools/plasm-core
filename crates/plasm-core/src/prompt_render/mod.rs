@@ -98,8 +98,7 @@ pub use bundle_render::{
     render_teaching_prompt_bundle_for_exposure_federated, render_teaching_tsv,
 };
 pub use input_legend::{
-    CapabilityInputLegend, OptionalLegend, RowContractLegend, RowProjectionContract,
-    TeachingExprLine,
+    CapabilityInputLegend, RowContractLegend, RowProjectionContract, TeachingExprLine,
 };
 pub use types::{
     CrossEntityPlanMeta, CrossEntityStrategyKind, DomainLineKind, EntityTeachingBlock,

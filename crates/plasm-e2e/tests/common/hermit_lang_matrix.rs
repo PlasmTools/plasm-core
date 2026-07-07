@@ -33,8 +33,17 @@ async fn spawn_hermit_host_root(spec_path: &std::path::Path) -> String {
     let addr = listener.local_addr().unwrap();
     let base_url = format!("http://127.0.0.1:{}", addr.port());
 
-    tokio::spawn(async move {
-        axum::serve(listener, router).await.unwrap();
+    // Dedicated thread + runtime so Hermit keeps accepting while matrix rows run on other
+    // current-thread runtimes (parent `block_on` would otherwise starve `tokio::spawn` here).
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .worker_threads(1)
+            .build()
+            .expect("hermit server runtime");
+        rt.block_on(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
     });
 
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;

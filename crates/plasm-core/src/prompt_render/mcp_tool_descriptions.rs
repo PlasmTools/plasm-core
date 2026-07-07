@@ -91,10 +91,12 @@ pub fn program_param_contract_violations(param: &str) -> Vec<String> {
     }
     if !(param.contains("e#")
         && param.contains("m#")
-        && param.contains("p#")
-        && param.contains("r#"))
+        && param.contains("r#")
+        && param.contains("wire"))
     {
-        violations.push("must carry the symbol legend e#/m#/p#/r#".into());
+        violations.push(
+            "must carry the symbol legend e#/m#/r# and wire-name field/param guidance".into(),
+        );
     }
     violations
 }

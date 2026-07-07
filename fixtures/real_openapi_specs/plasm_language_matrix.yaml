@@ -138,6 +138,15 @@ paths:
                   - id: "t2"
                     item_id: "i1"
                     label: "review"
+                children:
+                  - id: "i1-child-a"
+                    title: "Child A"
+                    score: 1
+                    owner: "alice"
+                  - id: "i1-child-b"
+                    title: "Child B"
+                    score: 2
+                    owner: "alice"
     patch:
       summary: Patch item
       parameters:
@@ -357,7 +366,10 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/LangTag"
-    LangSummary:
+            children:
+              type: array
+              items:
+                $ref: "#/components/schemas/LangItem"
       type: object
       required: [id, headline]
       properties:

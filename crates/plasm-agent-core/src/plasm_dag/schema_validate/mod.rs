@@ -10,7 +10,8 @@ pub(in crate::plasm_dag) use catalog::{
     agent_program_error, capability_for_surface_expr, capability_input_param_wires,
     cgs_for_qualified_entity, infer_entity_row_columns, is_opaque_passthrough_compute_schema,
     logical_row_field_paths_for_entity, logical_row_field_paths_from_names,
-    resolve_compute_field_path, row_contract_field_error, single_segment_teaching_field_hint,
+    resolve_compute_field_path, resolve_sort_field_path, row_contract_field_error,
+    single_segment_teaching_field_hint,
 };
 #[allow(unused_imports)]
 pub(in crate::plasm_dag) use compute_schema::{

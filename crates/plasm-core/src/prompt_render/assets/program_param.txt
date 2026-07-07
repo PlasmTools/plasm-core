@@ -1,16 +1,16 @@
 Plasm source text, not JSON data — one expression, or `label = …` bindings then ONE final return line (comma-separated roots on that line only). No prose, no `return` keyword, no code fences. Echoing a bare object/array/string literal is a no-op; write Plasm source.
 
-Symbols come from the `plasm_context` teaching TSV: `e#` entity, `m#` method, `p#` field/param/filter, `r#` relation. Substitute real values for teaching placeholders (`$`, `<id>`); never emit `$`.
+Symbols from the `plasm_context` teaching TSV: `e#` entity, `m#` method, `r#` relation; **wire names** for fields, params, and filters. Substitute real values for teaching placeholders (`$`, `<id>`); never emit `$`.
 
 Shape:
-- Get by identity: `e#(id)` (parens, ids unquoted). Query/filter: `e#{p#="val"}` (braces, quote scalars only inside `{…}`). Relation nav: `producer.r#` (not a bare `p#` after `.`).
+- Get by identity: `e#(id)` (parens, ids unquoted). Query/filter: `e#{field="val"}` (braces, quote scalars only inside `{…}`). Relation nav: `producer.r#` (not a filter wire after `.`).
 - Search when taught: `e#~"text"` or `e#~$` (bare `e#~` is a parse error).
-- Postfix from the TSV left column: `.filter{…}` `.sort(p#,desc)` `.limit(n)` `.group_by` `.aggregate`; `[p#,…]` projects.
-- Write effect: `source => e#.m#(p#=…)` when scoping a write off an existing binding; create-from-nothing: `e#.m#(p#=…)` when there is no upstream row (no `source =>`).
+- Postfix from the TSV left column: `.filter{…}` `.sort(field,desc)` `.limit(n)` `.group_by` `.aggregate`; `[field,…]` projects.
+- Write effect: `source => e#.m#(param=…)` when scoping a write off an existing binding; create-from-nothing: `e#.m#(param=…)` when there is no upstream row (no `source =>`).
 - After `repo = e#(…)`, prefer **`repo.m#(…)`** / **`repo.r#`** over repeating the get head — equivalent, shorter.
 - Batch independent reads into ONE program: bind shared scope once, then return several roots on the final line.
-- Chain dependent writes when values flow: `mainbranch = repo.r4.filter{p106="main"}[p13]` then `newbranch = repo.m46(p14=mainbranch.commit_sha)` in one program — the SHA never needs a read-back.
+- Chain dependent writes when values flow: `mainbranch = repo.r4.filter{name="main"}[sha]` then `newbranch = repo.m46(name=mainbranch.sha)` in one program — the SHA never needs a read-back.
 
-Strings use JSON escapes inside quotes; multiline string bindings: `label = <<TAG` … `TAG` (pass `p#=label`, not `label.content`). Row-to-text templates: `label = source[p#,…] <<TAG` or `label = a,b <<TAG` with Minijinja — those use `binding.content` for string params.
+Strings use JSON escapes inside quotes; multiline string bindings: `label = <<TAG` … `TAG` (pass `param=label`, not `label.content`). Row-to-text templates: `label = source[field,…] <<TAG` or `label = a,b <<TAG` with Minijinja — those use `binding.content` for string params.
 
 Full grammar and worked examples are in the `plasm` tool description. On any parse/symbol error, extend the same session (`session_mode: "extend"`, same `logical_session_ref`) — do not open a new one.

@@ -1,15 +1,14 @@
 //! Row-producer teaching line enrichment (projection brackets).
 
 use crate::schema::CGS;
-use crate::symbol_tuning::{CapParamTeachingSurface, ExposureSurface, SymbolMap};
-use crate::InputType;
+use crate::symbol_tuning::{ExposureSurface, SymbolMap};
 
 use super::gloss_collect::GlossScratch;
 use super::input_legend::{RowContractLegend, RowProjectionContract};
 use super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
 use super::row_producer::RowProducerProjection;
 use super::surface_filter::surface_allows_entity_field;
-use super::symbol_tokens::{id_sym_cap, id_sym_entity};
+use super::symbol_tokens::id_sym_entity;
 use super::teaching_push::try_push_teaching_example;
 use super::EntityTeachingExprRow;
 use crate::schema::RelationSchema;
@@ -159,9 +158,9 @@ pub(crate) fn capability_row_projection_bracket(
 /// Opaque `p#` symbols for params appearing in `{…}` / `~"…"{…}` teaching exemplars.
 pub(crate) fn input_param_syms_from_teaching_expr(
     expr: &str,
-    cap: &crate::CapabilitySchema,
-    map: Option<&SymbolMap>,
-    catalog_entry_id: &str,
+    _cap: &crate::CapabilitySchema,
+    _map: Option<&SymbolMap>,
+    _catalog_entry_id: &str,
 ) -> Vec<String> {
     let Some(open) = expr.find('{') else {
         return Vec::new();
@@ -180,26 +179,10 @@ pub(crate) fn input_param_syms_from_teaching_expr(
         };
         let lhs = lhs.trim();
         if lhs.starts_with('p') && lhs.chars().skip(1).all(|c| c.is_ascii_digit()) {
-            if !out.iter().any(|s: &String| s == lhs) {
-                out.push(lhs.to_string());
-            }
             continue;
         }
-        if let Some(is) = &cap.input_schema {
-            if let InputType::Object { fields, .. } = &is.input_type {
-                for f in fields {
-                    let sym = id_sym_cap(
-                        map,
-                        catalog_entry_id,
-                        cap,
-                        f.name.as_str(),
-                        CapParamTeachingSurface::InvokeArg,
-                    );
-                    if sym == lhs && !out.iter().any(|s| s == &sym) {
-                        out.push(sym);
-                    }
-                }
-            }
+        if !out.iter().any(|s: &String| s == lhs) {
+            out.push(lhs.to_string());
         }
     }
     out

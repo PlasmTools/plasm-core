@@ -135,8 +135,14 @@ pub(crate) async fn materialize_validated_relation_traversal(
         )
     })?;
     let read_cap = crate::plan_read_bounds::effective_relation_read_cap(relation);
+    let source_cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
+        es,
+        source_mat.entry_id.as_str(),
+        source_mat.entity.as_str(),
+    )
+    .map_err(|e| format!("relation source catalog: {e}"))?;
     let source_rows =
-        crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, es.cgs.as_ref())
+        crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, source_cgs)
             .resolve_row_source_rows(&source_mat.row_source, read_cap)
             .await?;
     match &relation.relation.materialize {
@@ -388,12 +394,7 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
     let target = relation.relation.target.entity.as_str();
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
     let rel_name = relation.relation.relation.as_str();
-    let rehydrator = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
-        es,
-        st,
-        session_id,
-        scoped_es.cgs.as_ref(),
-    );
+    let rehydrator = crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, cgs);
     let parents = source_mat
         .resolve_materialized_source_parents(&rehydrator)
         .await;
@@ -401,7 +402,7 @@ pub(crate) async fn try_materialize_from_parent_get_relation(
         source_rows,
         relation,
         source_mat.entity.as_str(),
-        scoped_es.cgs.as_ref(),
+        cgs,
         target,
     )
     .ok()

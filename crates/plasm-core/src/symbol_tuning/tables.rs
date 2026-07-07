@@ -4,14 +4,15 @@ use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
+use crate::identity::{CapabilityName, EntityName};
 use crate::schema::CGS;
 
 use super::keys::{
-    CapParamKey, EntityFieldKey, MethodKey, MethodSegmentKey, OpaqueESym, OpaqueMSym, OpaquePSym,
-    OpaqueRSym, OpaqueVSym, QualifiedEntityKey, RelationKey,
+    MethodKey, MethodSegmentKey, OpaqueESym, OpaqueMSym, OpaqueRSym, OpaqueVSym,
+    QualifiedEntityKey, RelationKey,
 };
-use super::session_bindings::{EntityBinding, MethodBinding, RelationBinding, SlotBinding};
-use super::{IdentMetadata, SymbolMap};
+use super::session_bindings::{EntityBinding, MethodBinding, RelationBinding};
+use super::{IdentMetadata, IdentRole, SymbolMap};
 
 /// Parse-time reverse tables + teaching forward tables (cloned into [`SymbolMap`] snapshots).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -21,9 +22,6 @@ pub struct SymbolTables {
     pub sym_to_method: IndexMap<OpaqueMSym, MethodBinding>,
     pub method_to_sym: IndexMap<MethodKey, OpaqueMSym>,
     pub method_segment_to_sym: HashMap<MethodSegmentKey, OpaqueMSym>,
-    pub sym_to_slot: IndexMap<OpaquePSym, SlotBinding>,
-    pub entity_field_to_sym: HashMap<EntityFieldKey, OpaquePSym>,
-    pub cap_param_to_sym: HashMap<CapParamKey, OpaquePSym>,
     pub relation_to_sym: HashMap<RelationKey, OpaqueRSym>,
     pub sym_to_relation_binding: IndexMap<OpaqueRSym, RelationBinding>,
 }
@@ -51,9 +49,7 @@ impl SymbolTables {
 /// Append-only assignment state (not copied wholesale into cross-request cache keys beyond fingerprints).
 #[derive(Debug, Default)]
 pub struct SymbolLedger {
-    pub slot_fingerprint_to_sym: IndexMap<String, OpaquePSym>,
     pub relation_fingerprint_to_sym: IndexMap<String, OpaqueRSym>,
-    pub fingerprint_meta: IndexMap<String, IdentMetadata>,
     pub slot_occurrence_meta: IndexMap<String, IdentMetadata>,
     pub value_domain_fp_to_sym: IndexMap<String, OpaqueVSym>,
     pub value_domain_fp_to_repr_meta: IndexMap<String, IdentMetadata>,
@@ -63,9 +59,7 @@ pub struct SymbolLedger {
 impl Clone for SymbolLedger {
     fn clone(&self) -> Self {
         Self {
-            slot_fingerprint_to_sym: self.slot_fingerprint_to_sym.clone(),
             relation_fingerprint_to_sym: self.relation_fingerprint_to_sym.clone(),
-            fingerprint_meta: self.fingerprint_meta.clone(),
             slot_occurrence_meta: self.slot_occurrence_meta.clone(),
             value_domain_fp_to_sym: self.value_domain_fp_to_sym.clone(),
             value_domain_fp_to_repr_meta: self.value_domain_fp_to_repr_meta.clone(),
@@ -83,12 +77,20 @@ impl SymbolLedger {
     }
 }
 
+/// Wire occurrence key `(entry_id|entity|wire)` → shared `v#` for teaching gloss rows.
+pub fn wire_occurrence_value_key(catalog_entry_id: &str, entity: &str, wire: &str) -> String {
+    format!("{catalog_entry_id}|{entity}|{wire}")
+}
+
 /// Value-domain gloss + reverse indexes layered on [`SymbolTables`] in read-only [`SymbolMap`].
 #[derive(Debug, Clone, Default)]
 pub struct SymbolValueLayer {
     pub value_domain_fp_to_sym: IndexMap<String, OpaqueVSym>,
     pub value_sym_to_fp: IndexMap<OpaqueVSym, String>,
-    pub p_sym_to_value_sym: HashMap<OpaquePSym, OpaqueVSym>,
+    /// `(entry_id|entity|wire)` → `v#` for wire-name teaching slots.
+    pub wire_to_value_sym: HashMap<String, OpaqueVSym>,
+    /// `(entry_id|entity|wire_leaf)` → cap-param quad for gloss context.
+    pub wire_cap_param_quads: HashMap<String, (String, EntityName, CapabilityName, String)>,
     pub value_sym_gloss: IndexMap<OpaqueVSym, String>,
 }
 
@@ -99,16 +101,29 @@ impl SymbolValueLayer {
         render_value_gloss: impl Fn(&IdentMetadata, &str, Option<&CGS>) -> Option<String>,
         catalog_cgs: &IndexMap<String, Arc<CGS>>,
     ) -> Self {
-        let mut p_sym_to_value_sym = HashMap::new();
-        for (fp, p_sym) in &ledger.slot_fingerprint_to_sym {
-            let Some(meta) = ledger.fingerprint_meta.get(fp) else {
-                continue;
-            };
-            let Some(vfp) = meta.value_domain_allocation_fp() else {
-                continue;
-            };
-            if let Some(v_sym) = ledger.value_domain_fp_to_sym.get(&vfp) {
-                p_sym_to_value_sym.insert(*p_sym, *v_sym);
+        let mut wire_to_value_sym = HashMap::new();
+        let mut wire_cap_param_quads = HashMap::new();
+        for meta in ledger.slot_occurrence_meta.values() {
+            let key = wire_occurrence_value_key(
+                meta.catalog_entry_id(),
+                meta.entity().as_str(),
+                meta.wire_name(),
+            );
+            if let Some(vfp) = meta.value_domain_allocation_fp() {
+                if let Some(v_sym) = ledger.value_domain_fp_to_sym.get(&vfp) {
+                    wire_to_value_sym.entry(key.clone()).or_insert(*v_sym);
+                }
+            }
+            if let IdentRole::CapabilityParam { capability } = meta.allocation_ident_role() {
+                wire_cap_param_quads.insert(
+                    key,
+                    (
+                        meta.catalog_entry_id().to_string(),
+                        meta.entity().clone(),
+                        capability.clone(),
+                        meta.wire_name().to_string(),
+                    ),
+                );
             }
         }
 
@@ -135,7 +150,8 @@ impl SymbolValueLayer {
         Self {
             value_domain_fp_to_sym,
             value_sym_to_fp,
-            p_sym_to_value_sym,
+            wire_to_value_sym,
+            wire_cap_param_quads,
             value_sym_gloss,
         }
     }

@@ -8,7 +8,7 @@ use crate::symbol_tuning::SymbolMap;
 use crate::{CapabilityName, Expr, CGS};
 
 use super::gloss_collect::GlossScratch;
-use super::input_legend::{OptionalLegend, RowContractLegend};
+use super::input_legend::RowContractLegend;
 use super::line_validate::{
     domain_line_validate_cached, DomainLineValidCacheKey, DomainLineValidEntry,
 };
@@ -138,10 +138,10 @@ pub(crate) fn try_push_teaching_example(
         cap_leg.as_deref(),
         row_contract.unwrap_or_default(),
     );
-    if teaching_line.legend.optional.is_present()
+    if teaching_line.legend.optional_params_present()
         && !teaching_expr_demonstrates_optional_params(expr, &optional_syms)
     {
-        teaching_line.legend.optional = OptionalLegend::Absent;
+        teaching_line.legend.optional_params.clear();
     }
     if omit_capability_prose {
         teaching_line.legend.description.clear();

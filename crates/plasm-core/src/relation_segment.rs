@@ -71,24 +71,7 @@ pub fn resolve_relation_segment(
         }
     }
     if SymbolMap::is_opaque_p_sym(segment) {
-        if let Ok(binding) = ctx.map.resolve_session_slot(segment) {
-            if let Some((entity, field_wire)) = binding.entity_field() {
-                if entity == ctx.entity && ctx.relations.contains_key(field_wire) {
-                    return RelationSegmentOutcome::WrongRole {
-                        sym: segment.to_string(),
-                        wire: field_wire.to_string(),
-                    };
-                }
-            }
-            if let Some((domain, _cap, param_wire)) = binding.cap_param() {
-                if domain == ctx.entity && ctx.relations.contains_key(param_wire) {
-                    return RelationSegmentOutcome::WrongRole {
-                        sym: segment.to_string(),
-                        wire: param_wire.to_string(),
-                    };
-                }
-            }
-        }
+        return RelationSegmentOutcome::NotFound;
     }
     RelationSegmentOutcome::NotFound
 }
@@ -168,10 +151,10 @@ mod tests {
     fn bare_homograph_p_without_lhs_is_wrong_role() {
         let (cgs, map) = github_issue_label_map();
         let rels = issue_relations(&cgs);
-        let p_sym = map.ident_sym_cap_param_for("github", "Issue", "issue_query", "labels");
-        assert!(
-            p_sym.starts_with('p'),
-            "expected opaque p# for labels filter, got {p_sym}"
+        let labels_wire = map.ident_sym_cap_param_for("github", "Issue", "issue_query", "labels");
+        assert_eq!(
+            labels_wire, "labels",
+            "labels filter param teaches as catalog wire name"
         );
         let ctx = RelationSegmentContext {
             map: &map,
@@ -180,12 +163,11 @@ mod tests {
             binding_label: None,
             allow_lhs_coercion: false,
         };
-        match resolve_relation_segment(&ctx, p_sym.as_str()) {
-            RelationSegmentOutcome::WrongRole { sym, wire } => {
-                assert_eq!(wire, "labels");
-                assert_eq!(sym, p_sym);
+        match resolve_relation_segment(&ctx, labels_wire.as_str()) {
+            RelationSegmentOutcome::Wire(w) => {
+                assert_eq!(w, "labels");
             }
-            other => panic!("expected WrongRole, got {other:?}"),
+            other => panic!("expected Wire(labels) for homograph filter wire, got {other:?}"),
         }
     }
 }

@@ -8,14 +8,13 @@ use crate::schema::{CapabilitySchema, EntityDef, CGS};
 
 use super::keys::CatalogScope;
 use super::{
-    EntityBinding, ExposedEntitySymbolRow, MethodBinding, RelationBinding, SlotBinding, SymbolMap,
+    EntityBinding, ExposedEntitySymbolRow, MethodBinding, RelationBinding, SymbolMap,
     SymbolResolveError, TeachingExposureSession,
 };
 
 /// Typed resolution for parser, DAG, and compile-time symbol dispatch.
 pub trait SymbolResolve: Send + Sync {
     fn resolve_session_entity(&self, token: &str) -> Result<EntityBinding, SymbolResolveError>;
-    fn resolve_session_slot(&self, token: &str) -> Result<SlotBinding, SymbolResolveError>;
     fn resolve_session_method(&self, token: &str) -> Result<MethodBinding, SymbolResolveError>;
     fn resolve_session_method_for_invoke(
         &self,
@@ -112,13 +111,7 @@ pub trait SymbolRender: Send + Sync {
         false
     }
 
-    /// Wire label → opaque symbol when unambiguous across session slots.
-    fn ident_sym_unambiguous(&self, name: &str) -> Option<String> {
-        let _ = name;
-        None
-    }
-
-    /// Rewrite canonical entity/field tokens for LLM recovery hints.
+    /// Rewrite canonical entity tokens for LLM recovery hints.
     fn collapse_tokens_for_feedback(&self, input: &str) -> String {
         input.to_string()
     }
@@ -132,9 +125,6 @@ impl<T: SymbolResolve + SymbolRender + ?Sized> SymbolSession for T {}
 impl SymbolResolve for SymbolMap {
     fn resolve_session_entity(&self, token: &str) -> Result<EntityBinding, SymbolResolveError> {
         SymbolMap::resolve_session_entity(self, token)
-    }
-    fn resolve_session_slot(&self, token: &str) -> Result<SlotBinding, SymbolResolveError> {
-        SymbolMap::resolve_session_slot(self, token)
     }
     fn resolve_session_method(&self, token: &str) -> Result<MethodBinding, SymbolResolveError> {
         SymbolMap::resolve_session_method(self, token)
@@ -264,9 +254,6 @@ impl SymbolRender for SymbolMap {
     fn is_unset_single_graph_session(&self) -> bool {
         SymbolMap::is_unset_single_graph_session(self)
     }
-    fn ident_sym_unambiguous(&self, name: &str) -> Option<String> {
-        SymbolMap::ident_sym_unambiguous(self, name)
-    }
     fn collapse_tokens_for_feedback(&self, input: &str) -> String {
         SymbolMap::collapse_tokens_for_feedback(self, input)
     }
@@ -280,9 +267,6 @@ macro_rules! delegate_symbol_resolve_deref {
                 token: &str,
             ) -> Result<EntityBinding, SymbolResolveError> {
                 SymbolResolve::resolve_session_entity(*self, token)
-            }
-            fn resolve_session_slot(&self, token: &str) -> Result<SlotBinding, SymbolResolveError> {
-                SymbolResolve::resolve_session_slot(*self, token)
             }
             fn resolve_session_method(
                 &self,
@@ -363,9 +347,6 @@ macro_rules! delegate_symbol_resolve_deref {
                 token: &str,
             ) -> Result<EntityBinding, SymbolResolveError> {
                 SymbolResolve::resolve_session_entity(self.as_ref(), token)
-            }
-            fn resolve_session_slot(&self, token: &str) -> Result<SlotBinding, SymbolResolveError> {
-                SymbolResolve::resolve_session_slot(self.as_ref(), token)
             }
             fn resolve_session_method(
                 &self,

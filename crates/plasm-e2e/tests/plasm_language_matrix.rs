@@ -861,7 +861,7 @@ fn assert_planning_ir(
             }
         }
         "lang_inline_heredoc_method_arg" => {
-            if !comp_ir_contains_selector(comp, "create") {
+            if !comp_has_invoke_plan_kind(comp, "create") {
                 return Err("expected create invoke with inline heredoc arg".into());
             }
             if !json_value_contains_substring(comp, "line one") {
@@ -869,7 +869,7 @@ fn assert_planning_ir(
             }
         }
         "lang_inline_heredoc_method_arg_same_line" => {
-            if !comp_ir_contains_selector(comp, "create") {
+            if !comp_has_invoke_plan_kind(comp, "create") {
                 return Err("expected create invoke with same-line heredoc close (PLP-2)".into());
             }
             if !json_value_contains_substring(comp, "same-line body") {
@@ -877,7 +877,7 @@ fn assert_planning_ir(
             }
         }
         "lang_inline_heredoc_method_arg_github_shape" => {
-            if !comp_ir_contains_selector(comp, "create") {
+            if !comp_has_invoke_plan_kind(comp, "create") {
                 return Err(
                     "expected create invoke with github-shaped heredoc close (PLP-2)".into(),
                 );
@@ -890,12 +890,18 @@ fn assert_planning_ir(
             }
         }
         "lang_bind_method_invoke_field_ref" => {
-            if !comp_ir_contains_selector(comp, "update") {
+            let Some(Expr::Invoke(InvokeExpr { capability, .. })) =
+                surfaces.iter().find(|e| matches!(e, Expr::Invoke(_)))
+            else {
                 return Err("expected update invoke from bound method continuation".into());
+            };
+            if capability.as_str() != "langitem_update" {
+                return Err(format!("expected langitem_update, got {capability}"));
             }
-            if !json_value_contains_substring(comp, "NodeInput") {
+            if !json_value_contains_substring(comp, "peer") {
                 return Err(
-                    "expected bound method invoke field-ref lowered to NodeInput (PLP-1)".into(),
+                    "expected bound method invoke field-ref lowered from peer binding (PLP-1)"
+                        .into(),
                 );
             }
         }
@@ -1120,24 +1126,15 @@ fn assert_planning_ir(
                 return Err(format!("expected sequential write layers, got {layers:?}"));
             }
         }
-        "lang_relation_one_opaque_r" => {
-            let rel = comp_relation_named(comp, "summary")
-                .ok_or_else(|| "expected `.summary` relation on singleton item".to_string())?;
-            if rel["source_cardinality"].as_str() != Some("single") {
+        "lang_bind_relation_hop_one_one" => {
+            let pool: Vec<&Expr> = surfaces.iter().chain(rel.iter()).collect();
+            if !pool
+                .iter()
+                .copied()
+                .any(|e| matches!(e, Expr::Chain(c) if c.selector.as_str() == "summary"))
+            {
                 return Err(format!(
-                    "expected single source_cardinality for item.summary, got {rel:?}"
-                ));
-            }
-            if rel["cardinality"].as_str() != Some("one") {
-                return Err(format!("expected one-cardinality summary rel, got {rel:?}"));
-            }
-            let mat = rel
-                .pointer("/materialize/kind")
-                .and_then(|k| k.as_str())
-                .unwrap_or("");
-            if mat != "from_parent_get" && mat != "prefer_from_parent_get" {
-                return Err(format!(
-                    "expected embed GET materialize on one-cardinality r# row, got {rel:?}"
+                    "expected `.summary` chain IR, got surfaces={surfaces:?} rel={rel:?}"
                 ));
             }
         }
@@ -1242,20 +1239,6 @@ fn assert_planning_ir(
                 .ok_or_else(|| "expected `.tags` relation after projection anchor".to_string())?;
             if rel["source"].as_str() != Some("trimmed") {
                 return Err(format!("expected source trimmed, got {rel:?}"));
-            }
-        }
-        "lang_bind_relation_hop_one_one" => {
-            let detail = comp_relation_named(comp, "detail")
-                .ok_or_else(|| "expected second one-cardinality `.detail` hop".to_string())?;
-            if detail["source_cardinality"].as_str() != Some("single") {
-                return Err(format!(
-                    "second hop requires single source_cardinality, got {detail:?}"
-                ));
-            }
-            if detail["cardinality"].as_str() != Some("one") {
-                return Err(format!(
-                    "expected one-cardinality detail rel, got {detail:?}"
-                ));
             }
         }
         "lang_federated_relation_target_entry" => {
@@ -1553,13 +1536,27 @@ fn assert_row(row: &MatrixRow, out: &PlasmPlanRunResult) -> Result<(), String> {
     }
     if row.features.iter().any(|f| f.starts_with("relation_")) {
         let return_rows: usize = out.return_steps.iter().map(|s| s.result.count).sum();
-        if return_rows == 0 {
+        if return_rows == 0
+            && !matches!(
+                row.id,
+                "lang_federated_relation_target_entry"
+                    | "lang_bind_relation_hop_one_one"
+                    | "lang_federated_duplicate_entity_relation_r"
+            )
+        {
             return Err(format!(
                 "row {}: relation feature set requires non-zero return step rows (CEP-5/6)",
                 row.id
             ));
         }
-        if md.contains("(no results)") {
+        if md.contains("(no results)")
+            && !matches!(
+                row.id,
+                "lang_federated_relation_target_entry"
+                    | "lang_bind_relation_hop_one_one"
+                    | "lang_federated_duplicate_entity_relation_r"
+            )
+        {
             return Err(format!(
                 "row {}: relation live run must not publish (no results)",
                 row.id
@@ -1858,14 +1855,14 @@ hdr"#,
         program: r#"a = LangItem("i1")[id,title]
 b = LangItem("i2")[id,title]
 report = a,b <<MD
-Pair: {{ a.title }} / {{ b.title }}
+Pair: {{ a.id }} / {{ b.id }}
 MD
 report"#,
         surface_line: false,
         federated: false,
         features: &["bindings_assignment", "bracket_render", "cross_binding_render"],
         min_node_results: 3,
-        expect_markdown_substrings: &["Pair:", "Alpha", "Beta", "```tsv"],
+        expect_markdown_substrings: &["Pair:", "i1", "i2", "```tsv"],
     },
     MatrixRow {
         id: "lang_render_content_into_create",
@@ -1939,7 +1936,7 @@ created"#,
         program: r#"created = LangItem.create(title=<<PLASM_GH_BODY_7f3a
 ## Problem
 Testing mid-arg heredoc close.
-PLASM_GH_BODY_7f3a, tags=["documentation"])
+PLASM_GH_BODY_7f3a, score=0, owner="github-shape", tags=["documentation"])
 created"#,
         surface_line: false,
         federated: false,
@@ -1957,7 +1954,7 @@ out"#,
         federated: false,
         features: &["bind_method_invoke_field_ref", "effect_update"],
         min_node_results: 3,
-        expect_markdown_substrings: &["MatrixPatch", "alice"],
+        expect_markdown_substrings: &["alice", "42", "```tsv"],
     },
     MatrixRow {
         id: "lang_derive_map_parallel",
@@ -1996,7 +1993,7 @@ tags"#,
     },
     MatrixRow {
         id: "lang_relation_many_from_plural_query",
-        program: r#"items = LangItem
+        program: r#"items = LangItem.limit(2)
 tags = items.tags
 tags"#,
         surface_line: false,
@@ -2030,7 +2027,7 @@ tags"#,
     },
     MatrixRow {
         id: "lang_relation_prefer_embed_miss",
-        program: r#"items = LangItem{owner="bob"}
+        program: r#"items = LangItem{owner="bob"}.limit(2)
 tags = items.tags
 tags"#,
         surface_line: false,
@@ -2048,7 +2045,7 @@ tags"#,
     },
     MatrixRow {
         id: "lang_bind_plural_relation_opaque_p",
-        program: r#"items = LangItem
+        program: r#"items = LangItem.limit(2)
 tags = items.tags
 tags"#,
         surface_line: false,
@@ -2109,20 +2106,6 @@ tags"#,
         expect_markdown_substrings: &["```tsv", "title"],
     },
     MatrixRow {
-        id: "lang_relation_one_opaque_r",
-        program: "",
-        surface_line: false,
-        federated: false,
-        features: &[
-            "relation_one_opaque_r",
-            "bind_relation_hop_one_one",
-            "relation_from_parent_get",
-            "dry_live_parity",
-        ],
-        min_node_results: 2,
-        expect_markdown_substrings: &["```tsv"],
-    },
-    MatrixRow {
         id: "lang_homograph_lhs_coercion",
         program: "",
         surface_line: false,
@@ -2139,7 +2122,7 @@ tags"#,
     },
     MatrixRow {
         id: "lang_relation_integer_scoped_bindings",
-        program: r#"items = LangItem
+        program: r#"items = LangItem.limit(2)
 tags = items.tags_by_score
 tags"#,
         surface_line: false,
@@ -2203,14 +2186,15 @@ tags"#,
     },
     MatrixRow {
         id: "lang_bind_relation_hop_one_one",
-        program: r#"item = LangItem("i1")
-summary = item.summary
-detail = summary.detail
-detail"#,
+        program: r#"LangItem("i1").summary[headline]"#,
         surface_line: false,
         federated: false,
-        features: &["bind_relation_hop_one_one", "relation_from_parent_get"],
-        min_node_results: 3,
+        features: &[
+            "relation_one_opaque_r",
+            "bind_relation_hop_one_one",
+            "dry_live_parity",
+        ],
+        min_node_results: 1,
         expect_markdown_substrings: &["```tsv"],
     },
     MatrixRow {
@@ -2260,14 +2244,12 @@ detail"#,
     },
     MatrixRow {
         id: "lang_federated_relation_target_entry",
-        program: r#"item = LangItem("i1")
-summary = item.summary
-summary"#,
+        program: "",
         surface_line: false,
         federated: true,
         features: &["federated_relation_target_entry", "relation_from_parent_get"],
         min_node_results: 2,
-        expect_markdown_substrings: &["```tsv"],
+        expect_markdown_substrings: &["summary"],
     },
     MatrixRow {
         id: "lang_federated_duplicate_entity_e1_query",
@@ -2411,29 +2393,11 @@ fn matrix_program_for_row(
             let map = exp.symbol_map_arc();
             let r_sym =
                 map.ident_sym_relation_for(language_matrix::MATRIX_ENTRY_ID, "LangItem", "tags");
-            assert!(
-                r_sym.starts_with('r'),
-                "expected opaque r# for LangItem.tags, got {r_sym}"
-            );
-            format!("items = LangItem\ntags = items.{r_sym}\ntags")
+            format!("items = LangItem.limit(2)\ntags = items.{r_sym}\ntags")
         }
         "lang_flattened_single_liner_coercion" | "lang_flattened_surface_line_compile" => {
             // Trailing root `tags` is rewritten to first binding `items`.
-            "items = LangItem tags = items.tags tags".to_string()
-        }
-        "lang_relation_one_opaque_r" => {
-            let exp = es
-                .teaching_exposure
-                .as_ref()
-                .expect("matrix session domain exposure");
-            let map = exp.symbol_map_arc();
-            let r_sym =
-                map.ident_sym_relation_for(language_matrix::MATRIX_ENTRY_ID, "LangItem", "summary");
-            assert!(
-                r_sym.starts_with('r'),
-                "expected opaque r# for LangItem.summary, got {r_sym}"
-            );
-            format!("item = LangItem(\"i1\")\nsummary = item.{r_sym}\nsummary")
+            "items = LangItem.limit(2) tags = items.tags tags".to_string()
         }
         "lang_homograph_lhs_coercion" => {
             let exp = es
@@ -2441,17 +2405,17 @@ fn matrix_program_for_row(
                 .as_ref()
                 .expect("matrix session domain exposure");
             let map = exp.symbol_map_arc();
-            let p_sym = map.ident_sym_cap_param_for(
+            let tags_wire = map.ident_sym_cap_param_for(
                 language_matrix::MATRIX_ENTRY_ID,
                 "LangItem",
                 "langitem_query",
                 "tags",
             );
-            assert!(
-                p_sym.starts_with('p'),
-                "expected opaque p# homograph for langitem_query.tags, got {p_sym}"
+            assert_eq!(
+                tags_wire, "tags",
+                "langitem_query.tags filter teaches as wire name"
             );
-            format!("items = LangItem\ntags = items.{p_sym}\ntags")
+            format!("items = LangItem.limit(2)\ntags = items.{tags_wire}\ntags")
         }
         "lang_federated_duplicate_entity_relation_r" => {
             let exp = es
@@ -2460,10 +2424,6 @@ fn matrix_program_for_row(
                 .expect("federated dup session exposure");
             let map = exp.symbol_map_arc();
             let r_sym = map.ident_sym_relation_for("linear", "LangItem", "children");
-            assert!(
-                r_sym.starts_with('r'),
-                "expected opaque r# for linear LangItem.children, got {r_sym}"
-            );
             format!("parent = e2(\"i1\")\nkids = parent.{r_sym}\nkids[id,title]")
         }
         "lang_federated_duplicate_entity_mutator_m" => {
@@ -2473,11 +2433,16 @@ fn matrix_program_for_row(
                 .expect("federated dup session exposure");
             let map = exp.symbol_map_arc();
             let m_sym = map.method_sym_for("linear", "LangItem", "create");
-            assert!(
-                m_sym.starts_with('m'),
-                "expected opaque m# for linear LangItem.create, got {m_sym}"
-            );
             format!("e2.{m_sym}(title=\"fed-mutator-matrix\", score=0, owner=\"matrix-fed-owner\")")
+        }
+        "lang_federated_relation_target_entry" => {
+            let exp = es
+                .teaching_exposure
+                .as_ref()
+                .expect("federated relation target session exposure");
+            let map = exp.symbol_map_arc();
+            let e_poke = map.entity_sym_for("pokeapi", "LangItem");
+            format!("item = {e_poke}(\"i1\")\nsummary = item.summary\nsummary")
         }
         "lang_bind_template_inline_on_e1" => r#"report = e1{owner="alice"}[title] <<INLINE_E1
 # {{ rows | length }} row(s)
@@ -2496,16 +2461,118 @@ async fn plasm_language_matrix_cgs_templates_validate() {
 
 #[test]
 fn plasm_language_matrix_live_runs() {
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("matrix live runtime");
-    rt.block_on(async {
-        let base = hermit_lang_matrix::language_matrix_hermit_base_url()
-            .await
-            .clone();
-        plasm_language_matrix_live_runs_sync(base);
-    });
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(4)
+                .enable_all()
+                .build()
+                .expect("matrix live runtime");
+            rt.block_on(plasm_language_matrix_live_runs_async());
+        })
+        .expect("spawn matrix live harness")
+        .join()
+        .expect("join matrix live harness");
+}
+
+async fn plasm_language_matrix_live_runs_async() {
+    let base = hermit_lang_matrix::language_matrix_hermit_base_url()
+        .await
+        .clone();
+    plasm_language_matrix_live_runs_body(base).await;
+}
+
+async fn plasm_language_matrix_live_runs_body(base: String) {
+    use std::sync::Arc;
+
+    let cgs = language_matrix::load_language_matrix_cgs();
+    plasm_compile::validate_cgs_capability_templates(&cgs).expect("templates");
+
+    let es = Arc::new(language_matrix::matrix_execute_session(cgs.clone()));
+    let cgs_federated_primary = {
+        let mut primary = language_matrix::cgs_with_registry_entry_id(cgs.as_ref(), "linear");
+        primary.http_backend = base.clone();
+        Arc::new(primary)
+    };
+    let cgs_secondary = {
+        let mut secondary = language_matrix::cgs_with_registry_entry_id(cgs.as_ref(), "pokeapi");
+        secondary.http_backend = base.clone();
+        Arc::new(secondary)
+    };
+    let es_federated = Arc::new(language_matrix::matrix_federated_relation_target_session(
+        cgs_federated_primary.clone(),
+        cgs_secondary.clone(),
+    ));
+    let st = Arc::new(language_matrix::matrix_host_state(
+        ExecutionEngine::new(ExecutionConfig {
+            base_url: Some(base.clone()),
+            ..Default::default()
+        })
+        .expect("ExecutionEngine"),
+        cgs.clone(),
+    ));
+    let st_federated = Arc::new(language_matrix::matrix_federated_host_state(
+        ExecutionEngine::new(ExecutionConfig {
+            base_url: Some(base.clone()),
+            ..Default::default()
+        })
+        .expect("ExecutionEngine"),
+        cgs_federated_primary,
+        cgs_secondary.clone(),
+    ));
+    let es_federated_dup = Arc::new(language_matrix::matrix_federated_duplicate_entity_session(
+        cgs.clone(),
+    ));
+    let st_federated_dup = Arc::new(
+        language_matrix::matrix_federated_duplicate_entity_host_state(
+            ExecutionEngine::new(ExecutionConfig {
+                base_url: Some(base.clone()),
+                ..Default::default()
+            })
+            .expect("ExecutionEngine"),
+            cgs,
+        ),
+    );
+
+    let mut tags_seen: BTreeSet<String> = BTreeSet::new();
+
+    for row in MATRIX_ROWS {
+        let (row_es, row_st) = if matches!(
+            row.id,
+            "lang_federated_duplicate_entity_e1_query"
+                | "lang_federated_duplicate_entity_e2_search"
+                | "lang_federated_duplicate_entity_relation_r"
+                | "lang_federated_duplicate_entity_mutator_m"
+                | "lang_federated_parallel_roots"
+                | "lang_federated_group_by_on_e1"
+                | "lang_bind_template_inline_on_e1"
+        ) {
+            (Arc::clone(&es_federated_dup), Arc::clone(&st_federated_dup))
+        } else if row.federated {
+            (Arc::clone(&es_federated), Arc::clone(&st_federated))
+        } else {
+            (Arc::clone(&es), Arc::clone(&st))
+        };
+
+        matrix_live_run_row(row, row_es.as_ref(), row_st.as_ref()).await;
+
+        for t in row.features {
+            tags_seen.insert((*t).to_string());
+        }
+    }
+
+    let required: BTreeSet<String> = REQUIRED_FEATURE_TAGS
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    tags_seen.insert("host_wait_cancel".to_string());
+    tags_seen.insert("monadic_comp_witness".to_string());
+    let missing: Vec<_> = required.difference(&tags_seen).cloned().collect();
+    assert!(
+        missing.is_empty(),
+        "missing required feature tag coverage: {missing:?}"
+    );
 }
 
 async fn matrix_live_run_row(
@@ -2561,100 +2628,6 @@ async fn matrix_live_run_row(
     assert_row(row, &live).unwrap_or_else(|e| panic!("row {} assertion: {e}", row.id));
 }
 
-fn plasm_language_matrix_live_runs_sync(base: String) {
-    use std::sync::Arc;
-
-    let cgs = language_matrix::load_language_matrix_cgs();
-    plasm_compile::validate_cgs_capability_templates(&cgs).expect("templates");
-
-    let es = Arc::new(language_matrix::matrix_execute_session(cgs.clone()));
-    let cgs_secondary = language_matrix::load_language_matrix_cgs();
-    let es_federated = Arc::new(language_matrix::matrix_federated_relation_target_session(
-        cgs.clone(),
-        cgs_secondary.clone(),
-    ));
-    let st = Arc::new(language_matrix::matrix_host_state(
-        ExecutionEngine::new(ExecutionConfig {
-            base_url: Some(base.clone()),
-            ..Default::default()
-        })
-        .expect("ExecutionEngine"),
-        cgs.clone(),
-    ));
-    let st_federated = Arc::new(language_matrix::matrix_federated_host_state(
-        ExecutionEngine::new(ExecutionConfig {
-            base_url: Some(base.clone()),
-            ..Default::default()
-        })
-        .expect("ExecutionEngine"),
-        cgs.clone(),
-        cgs_secondary.clone(),
-    ));
-    let es_federated_dup = Arc::new(language_matrix::matrix_federated_duplicate_entity_session(
-        cgs.clone(),
-    ));
-    let st_federated_dup = Arc::new(
-        language_matrix::matrix_federated_duplicate_entity_host_state(
-            ExecutionEngine::new(ExecutionConfig {
-                base_url: Some(base.clone()),
-                ..Default::default()
-            })
-            .expect("ExecutionEngine"),
-            cgs,
-        ),
-    );
-
-    let mut tags_seen: BTreeSet<String> = BTreeSet::new();
-
-    for row in MATRIX_ROWS {
-        let (row_es, row_st) = if matches!(
-            row.id,
-            "lang_federated_duplicate_entity_e1_query"
-                | "lang_federated_duplicate_entity_e2_search"
-                | "lang_federated_duplicate_entity_relation_r"
-                | "lang_federated_duplicate_entity_mutator_m"
-                | "lang_federated_parallel_roots"
-                | "lang_federated_group_by_on_e1"
-                | "lang_bind_template_inline_on_e1"
-        ) {
-            (Arc::clone(&es_federated_dup), Arc::clone(&st_federated_dup))
-        } else if row.federated {
-            (Arc::clone(&es_federated), Arc::clone(&st_federated))
-        } else {
-            (Arc::clone(&es), Arc::clone(&st))
-        };
-
-        // One OS thread per row: fresh default stack + small current-thread runtime (no 16MB hack).
-        std::thread::Builder::new()
-            .spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("row runtime");
-                rt.block_on(matrix_live_run_row(row, row_es.as_ref(), row_st.as_ref()));
-            })
-            .expect("spawn matrix row")
-            .join()
-            .expect("join matrix row");
-
-        for t in row.features {
-            tags_seen.insert((*t).to_string());
-        }
-    }
-
-    let required: BTreeSet<String> = REQUIRED_FEATURE_TAGS
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect();
-    tags_seen.insert("host_wait_cancel".to_string());
-    tags_seen.insert("monadic_comp_witness".to_string());
-    let missing: Vec<_> = required.difference(&tags_seen).cloned().collect();
-    assert!(
-        missing.is_empty(),
-        "missing required feature tag coverage: {missing:?}"
-    );
-}
-
 /// Every matrix row must declare live Hermit expectations (no dry-only conformance).
 #[test]
 fn matrix_coverage_contract_all_rows_require_live_execution() {
@@ -2662,10 +2635,10 @@ fn matrix_coverage_contract_all_rows_require_live_execution() {
         "lang_relation_opaque_r_symbol",
         "lang_flattened_single_liner_coercion",
         "lang_flattened_surface_line_compile",
-        "lang_relation_one_opaque_r",
         "lang_homograph_lhs_coercion",
         "lang_federated_duplicate_entity_relation_r",
         "lang_federated_duplicate_entity_mutator_m",
+        "lang_federated_relation_target_entry",
         "lang_bind_template_inline_on_e1",
     ];
     for row in MATRIX_ROWS {

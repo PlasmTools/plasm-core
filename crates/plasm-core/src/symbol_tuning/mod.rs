@@ -1,21 +1,22 @@
-//! Symbol tuning for LLM prompts: opaque `e#` / `m#` / `p#` / `v#` tokens — each **distinct taught `p#` meaning**
-//! is glossed **once** (the line before its first use in **teaching table**); **`v#`** rows teach each CGS `values:` /
-//! `value_ref` domain **once**, and registry-backed `p#` gloss lines teach **`v# · wire`** (and optional
-//! point-of-use prose when it varies); typing and enum ranges stay on the `v#` row.
+//! Symbol tuning for LLM prompts: opaque `e#` / `m#` / `r#` / `v#` session symbols plus **catalog wire names**
+//! for fields, capability params, query filters, and projection/postfix keys. Each distinct **`v#`** value domain
+//! is glossed **once** (the line before its first use in **teaching table**); wire-keyed gloss rows teach
+//! **`v# · wire`** (and optional point-of-use prose when it varies); typing and enum ranges stay on the `v#` row.
 //! **teaching table** gives entity/method examples (including `e#` per block),
-//! typed Meaning tails (`returns`, `inputs:`, `optional`, `projection`, …) in the TSV **Meaning** column,
-//! and comma-separated `optional params: p#,…` / `[scope p#→e#]` segments when present.
-//! Programs use **`p#` only** for keyed slots; `v#` is prompt-teaching for shared value domains.
+//! typed Meaning tails (`returns`, `optional`, `projection`, …) in the TSV **Meaning** column,
+//! and comma-separated `optional: wire1,wire2` / `[scope wire→e#]` segments when present.
+//! Programs use **`e#`/`m#`/`r#`** for symbolic heads and **wire names** for keyed slots; `v#` is prompt-teaching only.
 //!
 //! [`SymbolMap`] is built from the same entity slice as [`crate::prompt_render`] uses. Parse ingress
-//! resolves opaque `e#` / `m#` / `p#` / `r#` in-grammar via [`SymbolMap`]; display uses
-//! [`crate::expr_surface_render`] to render wire surface from parsed IR (`v#` is not expanded on ingress).
+//! resolves opaque `e#` / `m#` / `r#` in-grammar via [`SymbolMap`]; wire names resolve by syntax position
+//! under the scoped receiver; display uses [`crate::expr_surface_render`] to render wire surface from parsed IR
+//! (`v#` is not expanded on ingress). Legacy `p#` tokens are rejected at parse.
 //!
 //! **Caching (execute / MCP):** for a fixed loaded [`CGS`] (`catalog_cgs_hash_hex`), almost all teaching table
 //! symbol structure is stable. [`TeachingExposureSession`] memoizes [`SymbolMap`] behind
 //! [`TeachingExposureSession::symbol_map_arc`] and clears that cache whenever [`TeachingExposureSession::expose_entities`]
 //! runs so wave indices stay consistent. Per-request variance is mostly the append-only entity list and
-//! the derived `e#` / `m#` / `p#` / `v#` table.
+//! the derived `e#` / `m#` / `r#` / `v#` table.
 //!
 //! **Cross-session reuse (one process):** [`SymbolMapCrossRequestCache`] (bounded LRU; capacity from
 //! `PLASM_SYMBOL_MAP_LRU_CAP`, default `64`, set `0` to disable) deduplicates identical [`SymbolMap`]
@@ -40,9 +41,9 @@ pub use keys::{
     OpaquePSym, OpaqueRSym, OpaqueVSym, QualifiedEntityKey, RelationKey,
 };
 pub use opaque_symbol_hash::symbol_map_fingerprint_hex;
-pub use tables::{SymbolLedger, SymbolTables, SymbolValueLayer};
+pub use tables::{wire_occurrence_value_key, SymbolLedger, SymbolTables, SymbolValueLayer};
 
-pub use session_bindings::{EntityBinding, MethodBinding, RelationBinding, SlotBinding, SlotKind};
+pub use session_bindings::{EntityBinding, MethodBinding, RelationBinding};
 pub use symbol_traits::{SymbolAllocate, SymbolRender, SymbolResolve, SymbolSession};
 
 pub use capability_surface_params::{
@@ -57,7 +58,7 @@ pub use persisted_ledger::{
     PersistedSymbolLedgerDecodeError, PersistedSymbolLedgerEncodeError, PersistedSymbolLedgerState,
     PersistedSymbolTables, PERSISTED_SYMBOL_LEDGER_VERSION,
 };
-pub use symbol_resolve::{PSymResolution, SymbolResolveError};
+pub use symbol_resolve::SymbolResolveError;
 
 use crate::identity::{
     CapabilityName, CapabilityParamName, EntityFieldName, EntityName, PathMethodSegment,
@@ -69,7 +70,7 @@ use crate::schema::{
     InputFieldWire, InputType, ParameterRole, StringSemantics, ValueDomainKey, CGS,
 };
 use crate::teaching_term::{
-    method_ref_for_capability, resolve_parameter_slot, EntityRef, ParameterSlot, TeachingTerm,
+    method_ref_for_capability, EntityRef, ParameterSlot, TeachingTerm,
 };
 use crate::CapabilityKind;
 use crate::FieldType;
@@ -869,19 +870,14 @@ pub(crate) fn slot_allocation_fingerprint(meta: &IdentMetadata) -> String {
     format!("{catalog_entry_id}|{entity}|{role_tag}|{wire_name}|{ft}|{sem}|{ai}|{av}|{vr}|{desc}",)
 }
 
-/// Fingerprint for **allocating** opaque `p#` symbols on registry-backed slots.
+/// Fingerprint for **allocating** shared `v#` value-domain symbols on registry-backed slots.
 ///
 /// Slots that share the same structural value class ([`IdentMetadata::value_domain_allocation_fp`])
-/// and the same allocation wire key receive **one** `p#`. Occurrence lookups
-/// (`entity_field_to_sym`, `cap_param_to_sym`) still bind every `(entity, slot)` / `(cap, param)`
-/// to that shared symbol.
+/// and the same allocation wire key receive **one** `v#`. Teaching programs use catalog wire
+/// names directly; resolution is scoped by receiver `e#` / invoke `m#`.
 ///
-/// **Capability parameters** whose wire path is dotted (nested input / union-variant bodies) key on
-/// `(domain entity, capability, leaf)` instead of the full path so logically identical slots—same
-/// value class and leaf field name after variant pruning—share one opaque symbol (e.g. every
-/// `…​.ref` block anchor under `document_edit_v2`). Top-level capability params keep the plain wire
-/// name so they still merge with entity fields when those fields use the same structural shape and
-/// column name.
+/// **Capability parameters** whose wire path is dotted key on `(domain, capability, leaf)` so
+/// union-variant block anchors with the same leaf share one value-domain row.
 ///
 /// Relations and synthetic unknown slots keep fully scoped fingerprints via
 /// [`slot_allocation_fingerprint`].
@@ -1584,15 +1580,6 @@ pub struct ExposedRelationSymbolRow {
     pub plasm_expr: String,
 }
 
-/// Which teaching-table surface a capability parameter symbol is rendered for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CapParamTeachingSurface {
-    /// Query `{p#=…}` scope/filter slots — always opaque ident symbols.
-    QueryBrace,
-    /// Dotted-call / invoke arg slots — wire leaf when unambiguous.
-    InvokeArg,
-}
-
 /// Bidirectional maps for one prompt/eval slice.
 #[derive(Debug, Clone)]
 pub struct SymbolMap {
@@ -1828,49 +1815,6 @@ impl SymbolMap {
         Some(TeachingTerm::Method(mref, sym.index()))
     }
 
-    /// Parameter token + [`ParameterSlot`]; `full_entities` must match the slice used to build this map.
-    #[inline]
-    pub fn try_ident_teaching_term(
-        &self,
-        cgs: &CGS,
-        full_entities: &[&str],
-        name: &str,
-    ) -> Option<TeachingTerm> {
-        let slot = resolve_parameter_slot(cgs, full_entities, name)?;
-        let entry_key = cgs.entry_id.as_deref().unwrap_or("");
-        match &slot {
-            ParameterSlot::EntityField { entity, field } => {
-                let sym = self.tables.entity_field_to_sym.get(&EntityFieldKey::new(
-                    entry_key,
-                    entity.as_str(),
-                    field.as_str(),
-                ))?;
-                Some(TeachingTerm::Parameter(slot, sym.index()))
-            }
-            ParameterSlot::Relation { entity, name: rel } => {
-                let sym = self.tables.relation_to_sym.get(&RelationKey::new(
-                    entry_key,
-                    entity.as_str(),
-                    rel.as_str(),
-                ))?;
-                Some(TeachingTerm::Parameter(slot, sym.index()))
-            }
-            ParameterSlot::CapabilityInput {
-                domain,
-                capability,
-                param,
-            } => {
-                let sym = self.tables.cap_param_to_sym.get(&CapParamKey::new(
-                    entry_key,
-                    domain.as_str(),
-                    capability.as_str(),
-                    param.as_str(),
-                ))?;
-                Some(TeachingTerm::Parameter(slot, sym.index()))
-            }
-        }
-    }
-
     pub fn entity_sym_for_scope(&self, catalog: CatalogScope<'_>, canonical: &str) -> String {
         match catalog.entry_id() {
             None => self
@@ -1907,7 +1851,7 @@ impl SymbolMap {
         out
     }
 
-    /// Opaque `p#` for an **entity field** on a qualified entity row.
+    /// Teaching wire token for an **entity field** on a qualified entity row.
     #[inline]
     pub fn ident_sym_entity_field_for(
         &self,
@@ -1915,25 +1859,7 @@ impl SymbolMap {
         entity: &str,
         field: &str,
     ) -> String {
-        self.tables
-            .entity_field_to_sym
-            .get(&EntityFieldKey::new(catalog_entry_id, entity, field))
-            .map(|sym| sym.as_wire())
-            .unwrap_or_else(|| field.to_string())
-    }
-
-    /// Assigned entity-field `p#`, if exposed on the ledger.
-    #[inline]
-    pub fn lookup_entity_field_sym(
-        &self,
-        catalog_entry_id: &str,
-        entity: &str,
-        field: &str,
-    ) -> Option<OpaquePSym> {
-        self.tables
-            .entity_field_to_sym
-            .get(&EntityFieldKey::new(catalog_entry_id, entity, field))
-            .copied()
+        self.teaching_slot_token_entity_field(catalog_entry_id, entity, field)
     }
 
     /// Opaque `r#` for a **relation** on a qualified entity row.
@@ -1951,7 +1877,7 @@ impl SymbolMap {
             .unwrap_or_else(|| relation.to_string())
     }
 
-    /// Opaque `p#` for a **capability input** on a qualified catalog row.
+    /// Teaching wire token for a **capability input** on a qualified catalog row.
     #[inline]
     pub fn ident_sym_cap_param_for(
         &self,
@@ -1960,80 +1886,38 @@ impl SymbolMap {
         capability: &str,
         param: &str,
     ) -> String {
-        self.tables
-            .cap_param_to_sym
-            .get(&CapParamKey::new(
-                catalog_entry_id,
-                domain_entity,
-                capability,
-                param,
-            ))
-            .map(|sym| sym.as_wire())
-            .unwrap_or_else(|| param.to_string())
+        self.teaching_slot_token_cap_param(catalog_entry_id, domain_entity, capability, param)
     }
 
-    /// True when the same wire leaf maps to more than one opaque `p#` on one entity row.
-    pub fn entity_wire_leaf_is_homonym(
-        &self,
-        catalog_entry_id: &str,
-        entity: &str,
-        wire_leaf: &str,
-    ) -> bool {
-        let mut p_syms = BTreeSet::new();
-        for (key, sym) in &self.tables.entity_field_to_sym {
-            if key.entry_id.as_str() == catalog_entry_id
-                && key.entity.as_str() == entity
-                && key.field.as_str() == wire_leaf
-            {
-                p_syms.insert(*sym);
-            }
-        }
-        for (key, sym) in &self.tables.cap_param_to_sym {
-            if key.entry_id.as_str() == catalog_entry_id
-                && key.domain.as_str() == entity
-                && leaf_capability_param_expand_key(key.param.as_str()) == wire_leaf
-            {
-                p_syms.insert(*sym);
-            }
-        }
-        p_syms.len() > 1
-    }
-
-    /// Teaching-table slot token: wire name when unambiguous on the entity row, else opaque `p#`.
+    /// Teaching-table slot token: catalog wire name (always).
     #[inline]
     pub fn teaching_slot_token_entity_field(
         &self,
-        catalog_entry_id: &str,
-        entity: &str,
+        _catalog_entry_id: &str,
+        _entity: &str,
         field: &str,
     ) -> String {
-        if self.entity_wire_leaf_is_homonym(catalog_entry_id, entity, field) {
-            self.ident_sym_entity_field_for(catalog_entry_id, entity, field)
-        } else {
-            field.to_string()
-        }
+        field.to_string()
     }
 
-    /// Teaching-table slot token for capability params: leaf wire when unambiguous, else opaque `p#`.
+    /// Teaching-table slot token for capability params: wire leaf (always).
     #[inline]
     pub fn teaching_slot_token_cap_param(
         &self,
-        catalog_entry_id: &str,
-        domain_entity: &str,
-        capability: &str,
+        _catalog_entry_id: &str,
+        _domain_entity: &str,
+        _capability: &str,
         param: &str,
     ) -> String {
         let leaf = leaf_capability_param_expand_key(param);
-        if self.entity_wire_leaf_is_homonym(catalog_entry_id, domain_entity, leaf.as_str()) {
-            self.ident_sym_cap_param_for(catalog_entry_id, domain_entity, capability, param)
-        } else if param.contains('.') {
+        if param.contains('.') {
             leaf.to_string()
         } else {
             param.to_string()
         }
     }
 
-    /// Teaching token for a capability param on a specific teaching-table surface.
+    /// Teaching token for a capability param on the teaching table.
     #[inline]
     pub fn cap_param_teaching_token(
         &self,
@@ -2041,22 +1925,11 @@ impl SymbolMap {
         domain_entity: &str,
         capability: &str,
         param: &str,
-        surface: CapParamTeachingSurface,
     ) -> String {
-        match surface {
-            CapParamTeachingSurface::QueryBrace => {
-                self.ident_sym_cap_param_for(catalog_entry_id, domain_entity, capability, param)
-            }
-            CapParamTeachingSurface::InvokeArg => self.teaching_slot_token_cap_param(
-                catalog_entry_id,
-                domain_entity,
-                capability,
-                param,
-            ),
-        }
+        self.teaching_slot_token_cap_param(catalog_entry_id, domain_entity, capability, param)
     }
 
-    /// Opaque `p#` plus invoke/query wire token for optional-legend emission.
+    /// Wire token for optional-legend emission (single wire per param).
     #[inline]
     pub fn optional_legend_cap_param_tokens(
         &self,
@@ -2065,10 +1938,9 @@ impl SymbolMap {
         capability: &str,
         param: &str,
     ) -> [String; 2] {
-        [
-            self.ident_sym_cap_param_for(catalog_entry_id, domain_entity, capability, param),
-            self.teaching_slot_token_cap_param(catalog_entry_id, domain_entity, capability, param),
-        ]
+        let wire =
+            self.teaching_slot_token_cap_param(catalog_entry_id, domain_entity, capability, param);
+        [wire.clone(), wire]
     }
 
     /// Teaching token for a wire on one entity row (field or capability param).
@@ -2079,37 +1951,19 @@ impl SymbolMap {
         entity: &str,
         wire: &str,
     ) -> String {
-        if self
-            .tables
-            .entity_field_to_sym
-            .contains_key(&EntityFieldKey::new(catalog_entry_id, entity, wire))
-        {
-            return self.teaching_slot_token_entity_field(catalog_entry_id, entity, wire);
-        }
-        for key in self.tables.cap_param_to_sym.keys() {
-            if key.entry_id.as_str() == catalog_entry_id
-                && key.domain.as_str() == entity
-                && (key.param.as_str() == wire
-                    || leaf_capability_param_expand_key(key.param.as_str()) == wire)
+        if self.is_capability_param_wire_on_entity(catalog_entry_id, entity, wire) {
+            if let Some((_, dom, cap, param)) =
+                self.capability_param_quad_for_wire(catalog_entry_id, entity, wire)
             {
                 return self.teaching_slot_token_cap_param(
                     catalog_entry_id,
-                    entity,
-                    key.capability.as_str(),
-                    key.param.as_str(),
+                    dom.as_str(),
+                    cap.as_str(),
+                    param.as_str(),
                 );
             }
         }
-        if self.entity_wire_leaf_is_homonym(catalog_entry_id, entity, wire) {
-            if let Some((_, sym)) = self.tables.entity_field_to_sym.iter().find(|(k, _)| {
-                k.entry_id.as_str() == catalog_entry_id
-                    && k.entity.as_str() == entity
-                    && k.field.as_str() == wire
-            }) {
-                return sym.as_wire();
-            }
-        }
-        wire.to_string()
+        self.teaching_slot_token_entity_field(catalog_entry_id, entity, wire)
     }
 
     /// True when `wire` names a capability input on `entity` (any capability on that row).
@@ -2119,43 +1973,16 @@ impl SymbolMap {
         entity: &str,
         wire: &str,
     ) -> bool {
-        self.tables.cap_param_to_sym.keys().any(|key| {
-            key.entry_id.as_str() == catalog_entry_id
-                && key.domain.as_str() == entity
-                && (key.param.as_str() == wire
-                    || leaf_capability_param_expand_key(key.param.as_str()) == wire)
-        })
-    }
-
-    /// Resolve wire label → opaque symbol only when unambiguous across entity fields, relations, and cap params.
-    pub fn ident_sym_unambiguous(&self, name: &str) -> Option<String> {
-        let mut resolved: Option<String> = None;
-        let mut note = |wire: String| -> Option<()> {
-            match &resolved {
-                None => {
-                    resolved = Some(wire);
-                    Some(())
-                }
-                Some(prev) if prev == &wire => Some(()),
-                Some(_) => None,
-            }
-        };
-        for (key, sym) in &self.tables.entity_field_to_sym {
-            if key.field.as_str() == name && note(sym.as_wire()).is_none() {
-                return None;
-            }
+        let key = wire_occurrence_value_key(catalog_entry_id, entity, wire);
+        if self.values.wire_cap_param_quads.contains_key(&key) {
+            return true;
         }
-        for (key, sym) in &self.tables.relation_to_sym {
-            if key.relation.as_str() == name && note(sym.as_wire()).is_none() {
-                return None;
-            }
+        let leaf = leaf_capability_param_expand_key(wire);
+        if leaf != wire {
+            let leaf_key = wire_occurrence_value_key(catalog_entry_id, entity, leaf.as_str());
+            return self.values.wire_cap_param_quads.contains_key(&leaf_key);
         }
-        for (key, sym) in &self.tables.cap_param_to_sym {
-            if key.param.as_str() == name && note(sym.as_wire()).is_none() {
-                return None;
-            }
-        }
-        resolved
+        false
     }
 
     /// True when `sym` is an opaque session `p#` token (digits only after `p`).
@@ -2182,16 +2009,7 @@ impl SymbolMap {
         OpaqueRSym::is_token(sym)
     }
 
-    /// Wire name for an opaque session `p#` when bound in reverse maps.
-    pub fn wire_for_opaque_p_sym(&self, sym: &str) -> Option<String> {
-        let binding = self.resolve_session_slot(sym).ok()?;
-        match &binding.kind {
-            SlotKind::EntityField { field_wire, .. } => Some(field_wire.to_string()),
-            SlotKind::CapParam { param_wire, .. } => Some(param_wire.to_string()),
-        }
-    }
-
-    /// Rewrite canonical names into opaque tokens for LLM-facing recovery (entity names only).
+    /// Rewrite canonical entity names into opaque `e#` tokens for LLM-facing recovery.
     pub fn collapse_tokens_for_feedback(&self, input: &str) -> String {
         let mut keys: Vec<String> = self
             .tables
@@ -2201,36 +2019,11 @@ impl SymbolMap {
             .collect();
         keys.sort_by_key(|k| std::cmp::Reverse(k.len()));
         keys.dedup();
-        let mut s = scan_replace(input, &keys, |k| {
+        scan_replace(input, &keys, |k| {
             self.try_entity_teaching_term(k)
                 .map(|t| t.to_string())
                 .unwrap_or_else(|| k.to_string())
-        });
-        let mut idents: Vec<String> = self
-            .tables
-            .entity_field_to_sym
-            .keys()
-            .map(|k| k.field.to_string())
-            .chain(
-                self.tables
-                    .relation_to_sym
-                    .keys()
-                    .map(|k| k.relation.to_string()),
-            )
-            .chain(
-                self.tables
-                    .cap_param_to_sym
-                    .keys()
-                    .map(|k| k.param.to_string()),
-            )
-            .collect();
-        idents.sort_by_key(|k| std::cmp::Reverse(k.len()));
-        idents.dedup();
-        s = scan_replace(&s, &idents, |id| {
-            self.ident_sym_unambiguous(id)
-                .unwrap_or_else(|| id.to_string())
-        });
-        s
+        })
     }
 
     /// Value-domain forward table (`v#` gloss layer).
@@ -2239,14 +2032,27 @@ impl SymbolMap {
         &self.values.value_domain_fp_to_sym
     }
 
-    /// Opaque `p#` tokens taught for a capability's input parameters (deterministic error hints).
+    /// Wire tokens taught for a capability's input parameters (deterministic error hints).
     pub fn cap_param_syms_for(
         &self,
         catalog_entry_id: &str,
         domain: &str,
         capability: &str,
     ) -> Vec<String> {
-        self.cap_param_syms_from_forward_table(catalog_entry_id, domain, capability)
+        let mut out: Vec<String> = self
+            .values
+            .wire_cap_param_quads
+            .iter()
+            .filter(|(_, (eid, dom, cap, _))| {
+                eid == catalog_entry_id && dom.as_str() == domain && cap.as_str() == capability
+            })
+            .map(|(_, (_, _, _, param))| {
+                self.teaching_slot_token_cap_param(catalog_entry_id, domain, capability, param)
+            })
+            .collect();
+        out.sort();
+        out.dedup();
+        out
     }
 
     /// `(taught: p1, p2, …)` suffix for capability invoke arg errors; empty when none taught.
@@ -2300,17 +2106,25 @@ impl SymbolMap {
         ))
     }
 
-    /// Registry-backed `p#` → shared `v#` value-domain symbol, when one exists.
+    /// Registry-backed wire slot → shared `v#` value-domain symbol, when one exists.
     #[inline]
-    pub fn value_sym_for_p_sym(&self, p_sym: &str) -> Option<String> {
-        let psym = OpaquePSym::parse(p_sym)?;
+    pub fn value_sym_for_wire(
+        &self,
+        catalog_entry_id: &str,
+        entity: &str,
+        wire: &str,
+    ) -> Option<String> {
+        if Self::is_opaque_p_sym(wire) {
+            return None;
+        }
+        let key = wire_occurrence_value_key(catalog_entry_id, entity, wire);
         self.values
-            .p_sym_to_value_sym
-            .get(&psym)
+            .wire_to_value_sym
+            .get(&key)
             .map(|vs| vs.as_wire())
     }
 
-    /// Registry-backed slot → shared `v#`, whether the teaching key is opaque `p#` or an entity wire name.
+    /// Registry-backed slot → shared `v#`, whether the teaching key is a wire name.
     #[inline]
     pub fn value_sym_for_teaching_gloss_key(
         &self,
@@ -2318,16 +2132,7 @@ impl SymbolMap {
         entity: &str,
         sym: &str,
     ) -> Option<String> {
-        if let Some(v) = self.value_sym_for_p_sym(sym) {
-            return Some(v);
-        }
-        if Self::is_opaque_p_sym(sym) {
-            return None;
-        }
-        // Teaching-table wire tokens stay as wire names when unambiguous; registry `v#` lookup
-        // must use the assigned opaque `p#` from the symbol ledger.
-        let p_sym = self.ident_sym_entity_field_for(catalog_entry_id, entity, sym);
-        self.value_sym_for_p_sym(p_sym.as_str())
+        self.value_sym_for_wire(catalog_entry_id, entity, sym)
     }
 
     /// Pre-rendered teaching gloss for a `v#` row (after `;;`), if known.
@@ -2344,58 +2149,54 @@ impl SymbolMap {
         self.values.value_sym_to_fp.get(&vsym).map(|s| s.as_str())
     }
 
-    /// All capability input bindings for one taught `p#` (homographs may yield multiple).
-    pub fn capability_param_quads_for_p_sym(
+    /// If `wire` maps a capability input parameter on `(entry_id, domain)`, return
+    /// `(catalog entry id, domain entity, capability name, full param path)`.
+    pub fn capability_param_quad_for_wire(
         &self,
-        sym: &str,
-    ) -> Vec<(String, EntityName, CapabilityName, String)> {
-        let Some(psym) = OpaquePSym::parse(sym) else {
-            return Vec::new();
-        };
-        self.tables
-            .cap_param_to_sym
-            .iter()
-            .filter(|(_, s)| **s == psym)
-            .map(|(key, _)| {
-                (
-                    key.entry_id.to_string(),
-                    key.domain.clone(),
-                    key.capability.clone(),
-                    key.param.to_string(),
-                )
-            })
-            .collect()
+        catalog_entry_id: &str,
+        domain_entity: &str,
+        wire: &str,
+    ) -> Option<(String, EntityName, CapabilityName, String)> {
+        let key = wire_occurrence_value_key(catalog_entry_id, domain_entity, wire);
+        if let Some(quad) = self.values.wire_cap_param_quads.get(&key) {
+            return Some(quad.clone());
+        }
+        let leaf = leaf_capability_param_expand_key(wire);
+        if leaf != wire {
+            let leaf_key =
+                wire_occurrence_value_key(catalog_entry_id, domain_entity, leaf.as_str());
+            return self.values.wire_cap_param_quads.get(&leaf_key).cloned();
+        }
+        None
     }
 
-    /// Scoped cap-param quad when gloss context knows catalog + domain entity.
-    ///
-    /// Required for homographed `p#` symbols shared across capabilities on the same entity.
+    /// Legacy name: resolves wire-name cap params (opaque `p#` no longer assigned).
+    pub fn capability_param_quad_for_p_sym(
+        &self,
+        sym: &str,
+    ) -> Option<(String, EntityName, CapabilityName, String)> {
+        if Self::is_opaque_p_sym(sym) {
+            return None;
+        }
+        self.values
+            .wire_cap_param_quads
+            .values()
+            .find(|(_, _, _, param)| {
+                param.as_str() == sym || leaf_capability_param_expand_key(param.as_str()) == sym
+            })
+            .cloned()
+    }
+
     pub fn capability_param_quad_for_p_sym_on_entity(
         &self,
         sym: &str,
         catalog_entry_id: &str,
         domain_entity: &str,
     ) -> Option<(String, EntityName, CapabilityName, String)> {
-        self.capability_param_quads_for_p_sym(sym)
-            .into_iter()
-            .find(|(entry_id, domain, _, _)| {
-                entry_id.as_str() == catalog_entry_id && domain.as_str() == domain_entity
-            })
-    }
-
-    /// If `sym` maps a capability input parameter, return
-    /// `(catalog entry id, domain entity, capability name, full param path)`.
-    ///
-    /// **Homograph note:** value-domain fingerprinting may bind one `p#` to multiple capabilities.
-    /// This returns the first match only — use [`Self::capability_param_quad_for_p_sym_on_entity`]
-    /// or [`Self::capability_param_quads_for_p_sym`] when gloss context is entity- or cap-scoped.
-    pub fn capability_param_quad_for_p_sym(
-        &self,
-        sym: &str,
-    ) -> Option<(String, EntityName, CapabilityName, String)> {
-        self.capability_param_quads_for_p_sym(sym)
-            .into_iter()
-            .next()
+        if Self::is_opaque_p_sym(sym) {
+            return None;
+        }
+        self.capability_param_quad_for_wire(catalog_entry_id, domain_entity, sym)
     }
 
     /// If `sym` maps a capability input parameter, return the `(capability domain entity, param path)`.
@@ -2542,10 +2343,19 @@ impl SymbolMap {
         let has_optional =
             !capability_optional_legend_param_pairs(self, entry_id, domain, cap).is_empty();
         if has_optional {
-            if !scope_s.is_empty() {
-                scope_s.push(' ');
+            let mut wires: Vec<String> =
+                capability_optional_legend_param_pairs(self, entry_id, domain, cap)
+                    .into_iter()
+                    .map(|(wire, _)| wire)
+                    .collect();
+            wires.sort();
+            wires.dedup();
+            if !wires.is_empty() {
+                if !scope_s.is_empty() {
+                    scope_s.push(' ');
+                }
+                let _ = write!(&mut scope_s, "optional params: {}", wires.join(","));
             }
-            let _ = write!(&mut scope_s, "optional params: optional");
         }
         if scope_s.is_empty() {
             return scope_s;
@@ -2570,10 +2380,7 @@ impl SymbolMap {
         ident_types: Option<&HashMap<String, String>>,
     ) -> String {
         const MAX_DESC: usize = 100;
-        let name = OpaquePSym::parse(sym)
-            .and_then(|ps| self.tables.sym_to_slot.get(&ps))
-            .and_then(|b| b.entity_field().map(|(_, w)| w.to_string()))
-            .unwrap_or_else(|| sym.to_string());
+        let name = sym.to_string();
         let desc = ident_gloss
             .get(name.as_str())
             .map(|d| d.as_str().trim())
@@ -3946,24 +3753,13 @@ mod tests {
             .find(|(_, b)| b.capability.as_str() == "annotation_suggestion_insert")
             .map(|(k, _)| k.as_wire())
             .expect("annotation insert m#");
-        let slug_sym = session
-            .tables
-            .entity_field_to_sym
-            .iter()
-            .find(|(key, _)| key.entity.as_str() == "Document" && key.field.as_str() == "slug")
-            .map(|(_, v)| v.as_wire())
-            .expect("slug p#");
-        let agent_sym = session
-            .tables
-            .cap_param_to_sym
-            .iter()
-            .find(|(key, _)| {
-                key.domain.as_str() == "Document"
-                    && key.capability.as_str() == "annotation_suggestion_insert"
-                    && key.param.as_str() == "agent_id"
-            })
-            .map(|(_, v)| v.as_wire())
-            .expect("agent_id p#");
+        let slug_sym = map.ident_sym_entity_field_for("proof", "Document", "slug");
+        let agent_sym = map.ident_sym_cap_param_for(
+            "proof",
+            "Document",
+            "annotation_suggestion_insert",
+            "agent_id",
+        );
         let opaque = format!(
             "{e}({slug}=\"acme\").{m}({agent}=\"bot\")",
             e = e_sym,
@@ -4191,11 +3987,11 @@ mod tests {
         let pipeline_snapshot_id = map.ident_sym_entity_field_for("", "PipelineSnapshot", "id");
         assert_eq!(
             capture_item_id, profile_id,
-            "same-shaped `id` fields on different entities share one structural p#"
+            "same-shaped `id` fields on different entities share wire token `id`"
         );
-        assert_ne!(
-            capture_item_id, pipeline_snapshot_id,
-            "structurally incompatible `id` slots stay split"
+        assert_eq!(
+            pipeline_snapshot_id, "id",
+            "structurally distinct id slots still teach as wire name `id` (entity-scoped resolve disambiguates)"
         );
     }
 
@@ -4210,11 +4006,6 @@ mod tests {
         assert_eq!(
             map.ident_sym_entity_field_for("", "PipelineSnapshot", "workers"),
             map.ident_sym_entity_field_for("", "PipelineSnapshot", "workers")
-        );
-        assert_eq!(
-            map.wire_for_opaque_p_sym("id"),
-            None,
-            "bare `id` should not collapse to a single p# when both int and str id slots exist"
         );
     }
 
@@ -4254,9 +4045,53 @@ mod tests {
         assert_eq!(map1.method_sym_for("", "Profile", "profile_get"), get_m);
     }
 
-    /// Opaque `[p#,…]` reverse resolution must stay stable when a second entity wave is exposed.
+    /// Wave-1 `[name,…]` projection must stay `name` after wave-2 exposes colliding wire on another entity.
     #[test]
-    fn teaching_exposure_session_keeps_opaque_projection_resolution_stable_across_waves() {
+    fn teaching_exposure_extend_federated_wire_name_resolves_by_receiver() {
+        use super::keys::CatalogScope;
+
+        let dir = std::path::Path::new("../../fixtures/schemas/extend_wave_homograph");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let entry = "wavehom";
+        let mut s = TeachingExposureSession::new(&cgs, entry, &["WaveLang"]);
+        let map0 = s.to_symbol_map();
+        let lang_ent = cgs.get_entity("WaveLang").expect("WaveLang");
+        assert_eq!(
+            map0.resolve_entity_field(CatalogScope::qualified(entry), "WaveLang", lang_ent, "name")
+                .expect("wave-1"),
+            "name"
+        );
+        s.expose_entities(&[&cgs], Arc::new(cgs.clone()), entry, &["WaveMon"]);
+        let map1 = s.to_symbol_map();
+        assert_eq!(
+            map1.resolve_entity_field(CatalogScope::qualified(entry), "WaveLang", lang_ent, "name")
+                .expect("wave-2 lang name"),
+            "name"
+        );
+        let mon_ent = cgs.get_entity("WaveMon").expect("WaveMon");
+        assert_eq!(
+            map1.resolve_entity_field(CatalogScope::qualified(entry), "WaveMon", mon_ent, "name")
+                .expect("wave-2 mon name"),
+            "name"
+        );
+        assert_eq!(
+            map1.resolve_entity_field(
+                CatalogScope::qualified(entry),
+                "WaveLang",
+                lang_ent,
+                "official"
+            )
+            .expect("lang official"),
+            "official"
+        );
+    }
+
+    /// Wire `[display_name,…]` projection resolution must stay stable when a second entity wave is exposed.
+    #[test]
+    fn teaching_exposure_session_keeps_wire_projection_resolution_stable_across_waves() {
         use super::keys::CatalogScope;
 
         let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
@@ -4269,21 +4104,20 @@ mod tests {
         let ent = cgs.get_entity("Profile").expect("Profile");
         let mut resolved: Vec<(String, String)> = Vec::new();
         for wire in ["display_name", "id"] {
-            let sym = map0.ident_sym_entity_field_for("", "Profile", wire);
             let got = map0
-                .resolve_entity_field(CatalogScope::SessionReverse, "Profile", ent, sym.as_str())
+                .resolve_entity_field(CatalogScope::SessionReverse, "Profile", ent, wire)
                 .expect("wave-1 projection resolve");
-            resolved.push((sym, got));
+            resolved.push((wire.to_string(), got));
         }
         s.expose_entities(&[&cgs], Arc::new(cgs.clone()), "", &["RecordedContent"]);
         let map1 = s.to_symbol_map();
-        for (sym, expected_wire) in resolved {
+        for (wire, expected_wire) in resolved {
             let got = map1
-                .resolve_entity_field(CatalogScope::SessionReverse, "Profile", ent, sym.as_str())
-                .unwrap_or_else(|e| panic!("wave-2 projection resolve for {sym}: {e:?}"));
+                .resolve_entity_field(CatalogScope::SessionReverse, "Profile", ent, wire.as_str())
+                .unwrap_or_else(|e| panic!("wave-2 projection resolve for {wire}: {e:?}"));
             assert_eq!(
                 got, expected_wire,
-                "p# projection wire must not drift on extend"
+                "wire projection must not drift on extend"
             );
         }
     }
@@ -4869,13 +4703,11 @@ mod tests {
         .unwrap();
         cgs.validate().expect("fixture CGS");
         let map = TeachingExposureSession::new(&cgs, "fixture_entry", &["Widget"]).to_symbol_map();
-        let p_foo = map.ident_sym_entity_field_for("fixture_entry", "Widget", "foo");
-        let p_bar = map.ident_sym_entity_field_for("fixture_entry", "Widget", "bar");
         let v_foo = map
-            .value_sym_for_p_sym(&p_foo)
+            .value_sym_for_wire("fixture_entry", "Widget", "foo")
             .expect("registry-backed foo maps to v#");
         let v_bar = map
-            .value_sym_for_p_sym(&p_bar)
+            .value_sym_for_wire("fixture_entry", "Widget", "bar")
             .expect("registry-backed bar maps to v#");
         assert_eq!(v_foo, v_bar, "same structural value class → one v#");
         assert_eq!(
@@ -5274,8 +5106,8 @@ mod tests {
             let cap = cgs.get_capability(cap_name).expect(cap_name);
             let sig = map.capability_input_signature_gloss(&cgs, cap);
             assert!(
-                sig.contains("optional params: optional"),
-                "expected compact optional marker in `{sig}` for {cap_name}"
+                sig.contains("optional params:") && sig.contains(param),
+                "expected optional wire list in `{sig}` for {cap_name}"
             );
             let pairs = capability_optional_legend_param_pairs(
                 map.as_ref(),
@@ -5284,9 +5116,7 @@ mod tests {
                 cap,
             );
             assert!(
-                pairs
-                    .iter()
-                    .any(|(w, s)| w == param && (s.as_str() == param || s.starts_with('p'))),
+                pairs.iter().any(|(w, s)| w == param && s.as_str() == param),
                 "expected optional `{param}` teaching token in pairs for {cap_name}: {pairs:?}"
             );
         }

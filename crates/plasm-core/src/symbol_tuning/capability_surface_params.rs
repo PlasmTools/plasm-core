@@ -6,8 +6,8 @@ use crate::schema::{CapabilitySchema, InputFieldSchema, InputFieldWire, InputTyp
 use crate::{FieldType, CGS};
 
 use super::{
-    field_is_filter_like_gloss, CapParamTeachingSurface, ExposureCapabilityKey, ExposureSlotKey,
-    SymbolMap, TeachingExposureSession,
+    field_is_filter_like_gloss, ExposureCapabilityKey, ExposureSlotKey, SymbolMap,
+    TeachingExposureSession,
 };
 
 /// Which capability input params to include when building wire→`p#` pairs.
@@ -66,18 +66,9 @@ pub fn optional_legend_param_syms(
         if !field_matches_filter(f, CapabilityParamSurfaceFilter::OptionalLegend) {
             continue;
         }
-        let opaque = map.ident_sym_cap_param_for(entry_id, domain, cap_name, f.name.as_str());
-        let token = map.cap_param_teaching_token(
-            entry_id,
-            domain,
-            cap_name,
-            f.name.as_str(),
-            CapParamTeachingSurface::InvokeArg,
-        );
-        for sym in [opaque, token] {
-            if !sym.is_empty() && !syms.iter().any(|s| s == &sym) {
-                syms.push(sym);
-            }
+        let sym = map.teaching_slot_token_cap_param(entry_id, domain, cap_name, f.name.as_str());
+        if !sym.is_empty() && !syms.iter().any(|s| s == &sym) {
+            syms.push(sym);
         }
     }
     syms.sort();
@@ -170,12 +161,7 @@ pub fn capability_exposure_param_triples(
                 continue;
             }
         }
-        let sym = map
-            .lookup_entity_field_sym(entry_id, domain, f.name.as_str())
-            .map(|psym| psym.as_wire())
-            .unwrap_or_else(|| {
-                map.teaching_slot_token_cap_param(entry_id, domain, cap_name, f.name.as_str())
-            });
+        let sym = map.teaching_slot_token_cap_param(entry_id, domain, cap_name, f.name.as_str());
         let marker = compact_mutator_param_marker(f, cgs);
         out.push((f.name.clone(), sym, marker));
     }

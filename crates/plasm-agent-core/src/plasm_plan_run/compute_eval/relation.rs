@@ -162,12 +162,14 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
     let rel_name = relation.relation.relation.as_str();
     let target_entity = relation.relation.target.entity.as_str();
     let scoped_es = entry_scoped_execute_session(es, Some(&relation.relation.target))?;
-    let rehydrator = crate::graph_rehydrate::GraphSurfaceRehydrator::new(
+    let source_cgs = crate::catalog_ownership::resolve_cgs_for_entry_entity(
         es,
-        st,
-        session_id,
-        scoped_es.cgs.as_ref(),
-    );
+        source_mat.entry_id.as_str(),
+        source_mat.entity.as_str(),
+    )
+    .map_err(|e| format!("relation cached embed source catalog: {e}"))?;
+    let rehydrator =
+        crate::graph_rehydrate::GraphSurfaceRehydrator::new(es, st, session_id, source_cgs);
     let parents = source_mat
         .resolve_materialized_source_parents(&rehydrator)
         .await;
@@ -182,7 +184,7 @@ pub(crate) async fn try_materialize_from_cached_relation_refs(
         &source_rows,
         relation,
         source_mat.entity.as_str(),
-        scoped_es.cgs.as_ref(),
+        source_cgs,
         target_entity,
     )
     .ok()

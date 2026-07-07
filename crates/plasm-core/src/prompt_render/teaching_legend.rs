@@ -1,6 +1,6 @@
 //! Capability legend parsing for teaching TSV rows.
 
-use super::input_legend::{CapabilityInputLegend, OptionalLegend, RowContractLegend};
+use super::input_legend::{CapabilityInputLegend, RowContractLegend};
 use super::tsv_emit::parse_trailing_projection_bracket;
 use super::TeachingExprLine;
 
@@ -16,7 +16,7 @@ pub(crate) fn apply_compact_legend_remainder(row: &mut TeachingExprLine, remaind
     fill_scope_optional_from_sig(
         &sig_wo,
         &mut row.legend.scope,
-        &mut row.legend.optional,
+        &mut row.legend.optional_params,
         &mut orphan,
     );
     if !desc_tail.is_empty() {
@@ -128,11 +128,11 @@ pub(crate) fn teaching_expr_demonstrates_optional_params(
 pub(crate) fn fill_scope_optional_from_sig(
     sig: &str,
     scope: &mut String,
-    optional: &mut OptionalLegend,
+    optional_params: &mut Vec<String>,
     orphan: &mut String,
 ) {
     scope.clear();
-    *optional = OptionalLegend::Absent;
+    optional_params.clear();
     orphan.clear();
     let (sc, after_sc) = split_leading_scope_legend(sig);
     *scope = sc.to_string();
@@ -140,9 +140,16 @@ pub(crate) fn fill_scope_optional_from_sig(
     if let Some(p) = tail
         .strip_prefix("optional params:")
         .or_else(|| tail.strip_prefix("opt:"))
+        .or_else(|| tail.strip_prefix("optional:"))
     {
-        if !p.trim().is_empty() {
-            *optional = OptionalLegend::Present;
+        let list = p.trim();
+        if !list.is_empty() {
+            *optional_params = list
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect();
         }
     } else if !tail.is_empty() {
         *orphan = tail.to_string();

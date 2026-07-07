@@ -1,15 +1,13 @@
-//! Role-scoped opaque-symbol resolution policy for [`SymbolMap`].
+//! Role-scoped wire-name resolution policy for [`SymbolMap`].
 //!
-//! All reverse lookup (`p#` → wire) for parse, DAG validation, and compound keys lives here
-//! so teaching-table assignment and runtime resolution cannot diverge via ad hoc fallbacks.
+//! Field, filter, and invoke parameters use catalog wire names resolved under the
+//! scope anchor (`e#` / `m#` / relation position). Opaque `p#` tokens are not accepted.
 
 mod error;
-mod site;
 #[cfg(test)]
 mod tests;
 
 pub use error::SymbolResolveError;
-pub use site::PSymResolution;
 
 use crate::cgs_federation::{lookup_capability_in_layer_stack, CgsLayer};
 use crate::schema::resolve_capability_input_param_field;
@@ -18,325 +16,10 @@ use crate::CapabilitySchema;
 use crate::EntityDef;
 use crate::EntityFieldName;
 
-use super::keys::{
-    CapParamKey, CatalogScope, EntityFieldKey, OpaqueESym, OpaqueMSym, OpaquePSym, OpaqueRSym,
-};
-use super::{EntityBinding, MethodBinding, RelationBinding, SlotBinding, SlotKind, SymbolMap};
+use super::keys::{CatalogScope, OpaqueESym, OpaqueMSym, OpaqueRSym};
+use super::{EntityBinding, MethodBinding, RelationBinding, SymbolMap};
 
 impl SymbolMap {
-    fn entity_has_field_or_relation_wire(ent: &EntityDef, field_wire: &str) -> bool {
-        ent.fields.contains_key(field_wire) || ent.relations.contains_key(field_wire)
-    }
-
-    fn accept_entity_field_wire(
-        catalog: CatalogScope<'_>,
-        ent: &EntityDef,
-        entry_id: &str,
-        field_wire: &str,
-    ) -> bool {
-        catalog.matches_entry(entry_id) && Self::entity_has_field_or_relation_wire(ent, field_wire)
-    }
-
-    fn slot_representative_entity_field_wire(
-        &self,
-        token: &str,
-        catalog: CatalogScope<'_>,
-        entity: &str,
-        ent: &EntityDef,
-    ) -> Option<String> {
-        let binding = self.resolve_session_slot(token).ok()?;
-        let SlotKind::EntityField {
-            entity: bound_entity,
-            field_wire,
-        } = &binding.kind
-        else {
-            return None;
-        };
-        if bound_entity.as_str() != entity {
-            return None;
-        }
-        let wire = field_wire.as_str();
-        if !Self::accept_entity_field_wire(catalog, ent, binding.entry_id_str(), wire) {
-            return None;
-        }
-        Some(wire.to_string())
-    }
-
-    fn finish_unique_wire(
-        &self,
-        mut candidates: Vec<String>,
-        mk_ambiguous: impl FnOnce(Vec<String>) -> SymbolResolveError,
-    ) -> Result<String, SymbolResolveError> {
-        candidates.sort();
-        candidates.dedup();
-        match candidates.as_slice() {
-            [wire] => Ok(wire.clone()),
-            _ => Err(mk_ambiguous(candidates)),
-        }
-    }
-
-    /// Session-slot fallback shared by compound-key and query-filter `p#` resolution.
-    fn session_slot_wire(
-        &self,
-        token: &str,
-        accept: impl FnOnce(&SlotKind) -> Option<String>,
-    ) -> Option<String> {
-        let binding = self.resolve_session_slot(token).ok()?;
-        accept(&binding.kind)
-    }
-
-    fn cap_param_keys_for_psym<'b>(
-        &'b self,
-        psym: OpaquePSym,
-    ) -> impl Iterator<Item = &'b CapParamKey> + 'b {
-        self.tables
-            .cap_param_to_sym
-            .iter()
-            .filter_map(move |(key, sym)| (*sym == psym).then_some(key))
-    }
-
-    fn capability_accepts_query_filter(&self, cgs: &crate::CGS, key: &CapParamKey) -> bool {
-        cgs.get_capability(key.capability.as_str())
-            .is_some_and(|cap| {
-                key.domain.as_str() == cap.domain.as_str()
-                    && matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search)
-            })
-    }
-
-    fn entity_row_field_wires_for_psym(
-        &self,
-        catalog: CatalogScope<'_>,
-        entity: &str,
-        ent: &EntityDef,
-        psym: OpaquePSym,
-    ) -> Vec<String> {
-        let mut out = Vec::new();
-        if let CatalogScope::Qualified(entry_id) = catalog {
-            for field_wire in ent
-                .fields
-                .keys()
-                .map(|k| k.as_str())
-                .chain(ent.relations.keys().map(|k| k.as_str()))
-            {
-                let key = EntityFieldKey::new(entry_id, entity, field_wire);
-                if self.tables.entity_field_to_sym.get(&key) == Some(&psym) {
-                    out.push(field_wire.to_string());
-                }
-            }
-        } else if let Some(field_wire) = self.lookup_entity_field_by_opaque_psym(entity, psym) {
-            if ent.fields.contains_key(field_wire.as_str())
-                || ent.relations.contains_key(field_wire.as_str())
-            {
-                out.push(field_wire);
-            }
-        }
-        out
-    }
-
-    fn lookup_entity_field_by_opaque_psym(&self, entity: &str, psym: OpaquePSym) -> Option<String> {
-        self.tables
-            .entity_field_to_sym
-            .iter()
-            .find(|(key, sym)| key.entity.as_str() == entity && **sym == psym)
-            .map(|(key, _)| key.field.as_str().to_string())
-    }
-
-    /// Row projection `[p#,…]` resolution: canonical `sym_to_slot` first, then qualified forward map.
-    fn resolve_entity_row_field_psym(
-        &self,
-        catalog: CatalogScope<'_>,
-        entity: &str,
-        ent: &EntityDef,
-        psym: OpaquePSym,
-        token: &str,
-    ) -> Result<String, SymbolResolveError> {
-        if let Some(wire) = self.slot_representative_entity_field_wire(token, catalog, entity, ent)
-        {
-            return Ok(wire);
-        }
-
-        let candidates = self.entity_row_field_wires_for_psym(catalog, entity, ent, psym);
-        if candidates.is_empty() {
-            return Err(SymbolResolveError::UnknownEntityPSym {
-                catalog_entry_id: catalog.entry_id().unwrap_or("").to_string(),
-                entity: entity.to_string(),
-                token: token.to_string(),
-            });
-        }
-        self.finish_unique_wire(candidates, |candidates| {
-            SymbolResolveError::AmbiguousEntityRowFieldPSym {
-                entity: entity.to_string(),
-                token: token.to_string(),
-                candidates,
-            }
-        })
-    }
-
-    /// Role-scoped opaque `p#` → wire resolution.
-    pub fn resolve_opaque_p(
-        &self,
-        catalog: CatalogScope<'_>,
-        resolution: PSymResolution<'_>,
-        token: &str,
-    ) -> Result<String, SymbolResolveError> {
-        let t = token.trim();
-        let psym = OpaquePSym::parse(t).ok_or_else(|| SymbolResolveError::UnknownSessionPSym {
-            token: t.to_string(),
-        })?;
-        match resolution {
-            PSymResolution::EntityRowField { entity, ent } => {
-                self.resolve_entity_row_field_psym(catalog, entity, ent, psym, t)
-            }
-            PSymResolution::CompoundKey { entity, key_vars } => {
-                if let CatalogScope::Qualified(entry_id) = catalog {
-                    for kv in key_vars {
-                        let key = EntityFieldKey::new(entry_id, entity, kv.as_str());
-                        if self.tables.entity_field_to_sym.get(&key) == Some(&psym) {
-                            return Ok(kv.to_string());
-                        }
-                    }
-                }
-                // Session-wide field slot or any p# whose wire is a key_var (cap-param homograph).
-                if let Some(field_wire) = self.lookup_entity_field_by_opaque_psym(entity, psym) {
-                    if key_vars.iter().any(|k| k.as_str() == field_wire.as_str()) {
-                        return Ok(field_wire);
-                    }
-                }
-                if let Some(wire) = self.session_slot_wire(t, |kind| match kind {
-                    SlotKind::EntityField {
-                        entity: bound_entity,
-                        field_wire,
-                    } if bound_entity.as_str() == entity
-                        && key_vars.iter().any(|k| k.as_str() == field_wire.as_str()) =>
-                    {
-                        Some(field_wire.to_string())
-                    }
-                    SlotKind::CapParam { param_wire, .. }
-                        if key_vars.iter().any(|k| k.as_str() == param_wire.as_str()) =>
-                    {
-                        Some(param_wire.to_string())
-                    }
-                    _ => None,
-                }) {
-                    return Ok(wire);
-                }
-                Err(SymbolResolveError::UnknownCompoundKey {
-                    entity: entity.to_string(),
-                    token: t.to_string(),
-                    expected: key_vars.iter().map(|k| k.as_str().to_string()).collect(),
-                })
-            }
-            PSymResolution::QueryFilter { entity, ent, cgs } => {
-                let mut candidates =
-                    self.entity_row_field_wires_for_psym(catalog, entity, ent, psym);
-                candidates.extend(
-                    self.cap_param_keys_for_psym(psym)
-                        .filter(|key| catalog.matches_entry(key.entry_id.as_str()))
-                        .filter(|key| key.domain.as_str() == entity)
-                        .filter(|key| self.capability_accepts_query_filter(cgs, key))
-                        .map(|key| key.param.to_string()),
-                );
-                if candidates.is_empty() {
-                    if let Some(wire) = self.session_slot_wire(t, |kind| match kind {
-                        SlotKind::EntityField {
-                            entity: bound_entity,
-                            field_wire,
-                        } if bound_entity.as_str() == entity => {
-                            let wire = field_wire.as_str();
-                            Self::entity_has_field_or_relation_wire(ent, wire)
-                                .then(|| wire.to_string())
-                        }
-                        SlotKind::CapParam {
-                            domain,
-                            capability_kind,
-                            param_wire,
-                            ..
-                        } if domain.as_str() == entity
-                            && matches!(
-                                capability_kind,
-                                CapabilityKind::Query | CapabilityKind::Search
-                            ) =>
-                        {
-                            Some(param_wire.to_string())
-                        }
-                        _ => None,
-                    }) {
-                        return Ok(wire);
-                    }
-                    return Err(SymbolResolveError::UnknownQueryFilterPSym {
-                        entity: entity.to_string(),
-                        token: t.to_string(),
-                    });
-                }
-                self.finish_unique_wire(candidates, |candidates| {
-                    SymbolResolveError::AmbiguousQueryFilterPSym {
-                        entity: entity.to_string(),
-                        token: t.to_string(),
-                        candidates,
-                    }
-                })
-            }
-            PSymResolution::InvokeParam {
-                domain,
-                capability,
-                cap,
-            } => {
-                let invoke_wires = self
-                    .invoke_cap_param_wires_for_psym(psym, catalog, domain, capability, cap, true);
-                if invoke_wires.len() == 1 {
-                    return Ok(invoke_wires[0].clone());
-                }
-                if invoke_wires.is_empty() {
-                    let shared_wires = self.invoke_cap_param_wires_for_psym(
-                        psym, catalog, domain, capability, cap, false,
-                    );
-                    if shared_wires.len() == 1 {
-                        return Ok(shared_wires[0].clone());
-                    }
-                }
-                if let Ok(binding) = self.resolve_session_slot(t) {
-                    if let SlotKind::CapParam {
-                        domain: bound_domain,
-                        capability: bound_cap,
-                        param_wire,
-                        ..
-                    } = &binding.kind
-                    {
-                        if bound_domain.as_str() == domain
-                            && bound_cap.as_str() == capability
-                            && Self::cap_declares_param_wire(cap, param_wire.as_str())
-                        {
-                            return Ok(param_wire.to_string());
-                        }
-                    }
-                    if invoke_wires.is_empty() {
-                        return Err(SymbolResolveError::UnknownCapParam {
-                            catalog_entry_id: binding.entry_id.to_string(),
-                            domain: domain.to_string(),
-                            capability: capability.to_string(),
-                            capability_kind: cap.kind,
-                            token: t.to_string(),
-                        });
-                    }
-                } else if invoke_wires.is_empty() {
-                    return Err(SymbolResolveError::UnknownCapParam {
-                        catalog_entry_id: catalog.entry_id().unwrap_or("").to_string(),
-                        domain: domain.to_string(),
-                        capability: capability.to_string(),
-                        capability_kind: cap.kind,
-                        token: t.to_string(),
-                    });
-                }
-                // Homographed union-variant leaves share one `p#` but retain distinct occurrence
-                // paths in `cap_param_to_sym`; pick a stable representative for invoke reverse lookup.
-                Ok(invoke_wires
-                    .into_iter()
-                    .next()
-                    .expect("invoke_wires non-empty"))
-            }
-        }
-    }
-
     /// Opaque session `e#` → catalog-qualified entity binding.
     pub fn resolve_session_entity(&self, token: &str) -> Result<EntityBinding, SymbolResolveError> {
         let t = token.trim();
@@ -354,23 +37,6 @@ impl SymbolMap {
             )
             .cloned()
             .ok_or(SymbolResolveError::UnknownEntitySym {
-                token: t.to_string(),
-            })
-    }
-
-    /// Opaque session `p#` → fully qualified slot binding.
-    pub fn resolve_session_slot(&self, token: &str) -> Result<SlotBinding, SymbolResolveError> {
-        let t = token.trim();
-        if !Self::is_opaque_p_sym(t) {
-            return Err(SymbolResolveError::UnknownSessionPSym {
-                token: t.to_string(),
-            });
-        }
-        self.tables
-            .sym_to_slot
-            .get(&OpaquePSym::parse(t).expect("p#"))
-            .cloned()
-            .ok_or(SymbolResolveError::UnknownSessionPSym {
                 token: t.to_string(),
             })
     }
@@ -395,10 +61,19 @@ impl SymbolMap {
             })
     }
 
+    fn reject_legacy_p_sym(token: &str) -> Result<(), SymbolResolveError> {
+        if Self::is_opaque_p_sym(token) {
+            return Err(SymbolResolveError::UnknownSessionPSym {
+                token: token.to_string(),
+            });
+        }
+        Ok(())
+    }
+
     /// Resolve a row projection / postfix field token for a known binding entity.
     pub fn resolve_entity_field(
         &self,
-        catalog: CatalogScope<'_>,
+        _catalog: CatalogScope<'_>,
         entity: &str,
         ent: &EntityDef,
         token: &str,
@@ -407,13 +82,7 @@ impl SymbolMap {
         if t.is_empty() {
             return Ok(String::new());
         }
-        if Self::is_opaque_p_sym(t) {
-            return self.resolve_opaque_p(
-                catalog,
-                PSymResolution::EntityRowField { entity, ent },
-                t,
-            );
-        }
+        Self::reject_legacy_p_sym(t)?;
         if ent.fields.contains_key(t) || ent.relations.contains_key(t) {
             return Ok(t.to_string());
         }
@@ -423,36 +92,17 @@ impl SymbolMap {
         })
     }
 
-    /// Map compound constructor keys (`owner`, `repo`, `name`, …) accepting wire names and taught `p#`.
+    /// Map compound constructor keys (`owner`, `repo`, `name`, …) accepting wire names only.
     pub fn resolve_compound_key(
         &self,
-        catalog: CatalogScope<'_>,
+        _catalog: CatalogScope<'_>,
         entity: &str,
         key_vars: &[EntityFieldName],
         raw_key: &str,
     ) -> Result<String, SymbolResolveError> {
+        Self::reject_legacy_p_sym(raw_key)?;
         if key_vars.iter().any(|k| k.as_str() == raw_key) {
             return Ok(raw_key.to_string());
-        }
-        if Self::is_opaque_p_sym(raw_key) {
-            return self.resolve_opaque_p(
-                catalog,
-                PSymResolution::CompoundKey { entity, key_vars },
-                raw_key,
-            );
-        }
-        if let CatalogScope::Qualified(entry_id) = catalog {
-            for kv in key_vars {
-                if self.ident_sym_entity_field_for(entry_id, entity, kv.as_str()) == raw_key {
-                    return Ok(kv.to_string());
-                }
-            }
-        } else {
-            for kv in key_vars {
-                if self.ident_sym_entity_field_for("", entity, kv.as_str()) == raw_key {
-                    return Ok(kv.to_string());
-                }
-            }
         }
         Err(SymbolResolveError::UnknownCompoundKey {
             entity: entity.to_string(),
@@ -461,11 +111,10 @@ impl SymbolMap {
         })
     }
 
-    /// Resolve opaque `p#` or wire name for query/search `{…}` filter LHS — entity row fields
-    /// or query/search capability input params (e.g. `label_query` scope `repository`).
+    /// Resolve wire name for query/search `{…}` filter LHS — entity row fields or query/search cap inputs.
     pub fn resolve_query_filter_field(
         &self,
-        catalog: CatalogScope<'_>,
+        _catalog: CatalogScope<'_>,
         entity: &str,
         ent: &EntityDef,
         cgs: &crate::CGS,
@@ -475,15 +124,24 @@ impl SymbolMap {
         if t.is_empty() {
             return Ok(String::new());
         }
-        if Self::is_opaque_p_sym(t) {
-            return self.resolve_opaque_p(
-                catalog,
-                PSymResolution::QueryFilter { entity, ent, cgs },
-                t,
-            );
-        }
-        if ent.fields.contains_key(t) || ent.relations.contains_key(t) {
+        Self::reject_legacy_p_sym(t)?;
+        if ent.fields.contains_key(t) {
             return Ok(t.to_string());
+        }
+        let entry_id = cgs.entry_id.as_deref().unwrap_or("");
+        if self.is_capability_param_wire_on_entity(entry_id, entity, t) {
+            return Ok(t.to_string());
+        }
+        for cap in cgs.capabilities.values() {
+            if cap.domain.as_str() != entity {
+                continue;
+            }
+            if !matches!(cap.kind, CapabilityKind::Query | CapabilityKind::Search) {
+                continue;
+            }
+            if Self::cap_declares_param_wire(cap, t) {
+                return Ok(t.to_string());
+            }
         }
         Err(SymbolResolveError::UnknownQueryFilterPSym {
             entity: entity.to_string(),
@@ -525,10 +183,10 @@ impl SymbolMap {
         Ok(binding)
     }
 
-    /// Resolve opaque `p#` invoke parameters for a specific mutator.
+    /// Resolve invoke parameters for a specific mutator (wire names only).
     pub fn resolve_cap_param(
         &self,
-        catalog: CatalogScope<'_>,
+        _catalog: CatalogScope<'_>,
         domain: &str,
         capability: &str,
         token: &str,
@@ -538,31 +196,26 @@ impl SymbolMap {
         if t.is_empty() {
             return Ok(String::new());
         }
-        if Self::is_opaque_p_sym(t) {
-            return self.resolve_opaque_p(
-                catalog,
-                PSymResolution::InvokeParam {
-                    domain,
-                    capability,
-                    cap: invoke_cap,
-                },
-                t,
-            );
+        Self::reject_legacy_p_sym(t)?;
+        if Self::cap_declares_param_wire(invoke_cap, t) {
+            return Ok(t.to_string());
         }
-        Ok(t.to_string())
+        Err(SymbolResolveError::UnknownCapParam {
+            catalog_entry_id: _catalog.entry_id().unwrap_or("").to_string(),
+            domain: domain.to_string(),
+            capability: capability.to_string(),
+            capability_kind: invoke_cap.kind,
+            token: t.to_string(),
+        })
     }
 
-    /// Best-effort segment resolution for binding field paths when row entity is unknown.
-    /// Opaque `p#` tokens resolve to wire when the session slot is an entity field.
+    /// Binding field path segment: wire names pass through; legacy `p#` rejected.
     pub fn resolve_binding_field_segment(&self, token: &str) -> String {
         let t = token.trim();
         if t.is_empty() || !Self::is_opaque_p_sym(t) {
             return t.to_string();
         }
-        self.resolve_session_slot(t)
-            .ok()
-            .and_then(|b| b.entity_field().map(|(_, w)| w.to_string()))
-            .unwrap_or_else(|| t.to_string())
+        t.to_string()
     }
 
     fn cap_declares_param_wire(cap: &CapabilitySchema, param_wire: &str) -> bool {
@@ -570,29 +223,6 @@ impl SymbolMap {
             || cap
                 .object_params()
                 .is_some_and(|fields| fields.iter().any(|f| f.name.as_str() == param_wire))
-    }
-
-    /// Distinct param wire names for `psym` on an invoke capability (exact-cap or shared-scope).
-    fn invoke_cap_param_wires_for_psym(
-        &self,
-        psym: OpaquePSym,
-        catalog: CatalogScope<'_>,
-        domain: &str,
-        capability: &str,
-        cap: &CapabilitySchema,
-        same_capability_only: bool,
-    ) -> Vec<String> {
-        let mut wires: Vec<String> = self
-            .cap_param_keys_for_psym(psym)
-            .filter(|key| catalog.matches_entry(key.entry_id.as_str()))
-            .filter(|key| key.domain.as_str() == domain)
-            .filter(|key| !same_capability_only || key.capability.as_str() == capability)
-            .filter(|key| Self::cap_declares_param_wire(cap, key.param.as_str()))
-            .map(|key| key.param.to_string())
-            .collect();
-        wires.sort();
-        wires.dedup();
-        wires
     }
 
     /// Lookup a session `m#` token against federated CGS layers with invoke-anchor validation.

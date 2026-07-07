@@ -34,10 +34,6 @@ pub(crate) fn hash_exposure_session_rows(exposure: &TeachingExposureSession) -> 
         key.capability.as_str().hash(&mut h);
         sym.as_wire().hash(&mut h);
     }
-    for (fp, sym) in &exposure.ledger.slot_fingerprint_to_sym {
-        fp.hash(&mut h);
-        sym.as_wire().hash(&mut h);
-    }
     for (fp, sym) in &exposure.ledger.relation_fingerprint_to_sym {
         fp.hash(&mut h);
         sym.as_wire().hash(&mut h);
