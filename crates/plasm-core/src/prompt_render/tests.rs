@@ -1,6 +1,6 @@
 //! Prompt render integration tests (matrix/proof fixtures; no full-catalog snapshots).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Instant;
 
 use crate::loader::load_schema_dir;
