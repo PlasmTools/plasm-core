@@ -24,6 +24,58 @@ use super::keys::{
 use super::{EntityBinding, MethodBinding, RelationBinding, SlotBinding, SlotKind, SymbolMap};
 
 impl SymbolMap {
+    fn entity_has_field_or_relation_wire(ent: &EntityDef, field_wire: &str) -> bool {
+        ent.fields.contains_key(field_wire) || ent.relations.contains_key(field_wire)
+    }
+
+    fn accept_entity_field_wire(
+        catalog: CatalogScope<'_>,
+        ent: &EntityDef,
+        entry_id: &str,
+        field_wire: &str,
+    ) -> bool {
+        catalog.matches_entry(entry_id)
+            && Self::entity_has_field_or_relation_wire(ent, field_wire)
+    }
+
+    fn slot_representative_entity_field_wire(
+        &self,
+        token: &str,
+        catalog: CatalogScope<'_>,
+        entity: &str,
+        ent: &EntityDef,
+    ) -> Option<String> {
+        let binding = self.resolve_session_slot(token).ok()?;
+        let SlotKind::EntityField {
+            entity: bound_entity,
+            field_wire,
+        } = &binding.kind
+        else {
+            return None;
+        };
+        if bound_entity.as_str() != entity {
+            return None;
+        }
+        let wire = field_wire.as_str();
+        if !Self::accept_entity_field_wire(catalog, ent, binding.entry_id_str(), wire) {
+            return None;
+        }
+        Some(wire.to_string())
+    }
+
+    fn finish_unique_wire(
+        &self,
+        mut candidates: Vec<String>,
+        mk_ambiguous: impl FnOnce(Vec<String>) -> SymbolResolveError,
+    ) -> Result<String, SymbolResolveError> {
+        candidates.sort();
+        candidates.dedup();
+        match candidates.as_slice() {
+            [wire] => Ok(wire.clone()),
+            _ => Err(mk_ambiguous(candidates)),
+        }
+    }
+
     /// Session-slot fallback shared by compound-key and query-filter `p#` resolution.
     fn session_slot_wire(
         &self,
@@ -90,6 +142,38 @@ impl SymbolMap {
             .map(|(key, _)| key.field.as_str().to_string())
     }
 
+    /// Row projection `[p#,…]` resolution: canonical `sym_to_slot` first, then qualified forward map.
+    fn resolve_entity_row_field_psym(
+        &self,
+        catalog: CatalogScope<'_>,
+        entity: &str,
+        ent: &EntityDef,
+        psym: OpaquePSym,
+        token: &str,
+    ) -> Result<String, SymbolResolveError> {
+        if let Some(wire) =
+            self.slot_representative_entity_field_wire(token, catalog, entity, ent)
+        {
+            return Ok(wire);
+        }
+
+        let candidates = self.entity_row_field_wires_for_psym(catalog, entity, ent, psym);
+        if candidates.is_empty() {
+            return Err(SymbolResolveError::UnknownEntityPSym {
+                catalog_entry_id: catalog.entry_id().unwrap_or("").to_string(),
+                entity: entity.to_string(),
+                token: token.to_string(),
+            });
+        }
+        self.finish_unique_wire(candidates, |candidates| {
+            SymbolResolveError::AmbiguousEntityRowFieldPSym {
+                entity: entity.to_string(),
+                token: token.to_string(),
+                candidates,
+            }
+        })
+    }
+
     /// Role-scoped opaque `p#` → wire resolution.
     pub fn resolve_opaque_p(
         &self,
@@ -102,15 +186,9 @@ impl SymbolMap {
             token: t.to_string(),
         })?;
         match resolution {
-            PSymResolution::EntityRowField { entity, ent } => self
-                .entity_row_field_wires_for_psym(catalog, entity, ent, psym)
-                .into_iter()
-                .next()
-                .ok_or(SymbolResolveError::UnknownEntityPSym {
-                    catalog_entry_id: catalog.entry_id().unwrap_or("").to_string(),
-                    entity: entity.to_string(),
-                    token: t.to_string(),
-                }),
+            PSymResolution::EntityRowField { entity, ent } => {
+                self.resolve_entity_row_field_psym(catalog, entity, ent, psym, t)
+            }
             PSymResolution::CompoundKey { entity, key_vars } => {
                 if let CatalogScope::Qualified(entry_id) = catalog {
                     for kv in key_vars {
@@ -165,10 +243,10 @@ impl SymbolMap {
                         SlotKind::EntityField {
                             entity: bound_entity,
                             field_wire,
-                        } if bound_entity.as_str() == entity
-                            && ent.fields.contains_key(field_wire.as_str()) =>
-                        {
-                            Some(field_wire.to_string())
+                        } if bound_entity.as_str() == entity => {
+                            let wire = field_wire.as_str();
+                            Self::entity_has_field_or_relation_wire(ent, wire)
+                                .then(|| wire.to_string())
                         }
                         SlotKind::CapParam {
                             domain,
@@ -192,16 +270,13 @@ impl SymbolMap {
                         token: t.to_string(),
                     });
                 }
-                candidates.sort();
-                candidates.dedup();
-                match candidates.as_slice() {
-                    [wire] => Ok(wire.clone()),
-                    _ => Err(SymbolResolveError::AmbiguousQueryFilterPSym {
+                self.finish_unique_wire(candidates, |candidates| {
+                    SymbolResolveError::AmbiguousQueryFilterPSym {
                         entity: entity.to_string(),
                         token: t.to_string(),
                         candidates,
-                    }),
-                }
+                    }
+                })
             }
             PSymResolution::InvokeParam {
                 domain,

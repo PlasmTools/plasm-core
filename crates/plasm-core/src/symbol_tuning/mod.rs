@@ -4254,6 +4254,37 @@ mod tests {
         assert_eq!(map1.method_sym_for("", "Profile", "profile_get"), get_m);
     }
 
+    /// Opaque `[p#,…]` reverse resolution must stay stable when a second entity wave is exposed.
+    #[test]
+    fn teaching_exposure_session_keeps_opaque_projection_resolution_stable_across_waves() {
+        use super::keys::CatalogScope;
+
+        let dir = std::path::Path::new("../../fixtures/schemas/overshow_tools");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let mut s = TeachingExposureSession::new(&cgs, "", &["Profile"]);
+        let map0 = s.to_symbol_map();
+        let ent = cgs.get_entity("Profile").expect("Profile");
+        let mut resolved: Vec<(String, String)> = Vec::new();
+        for wire in ["display_name", "id"] {
+            let sym = map0.ident_sym_entity_field_for("", "Profile", wire);
+            let got = map0
+                .resolve_entity_field(CatalogScope::SessionReverse, "Profile", ent, sym.as_str())
+                .expect("wave-1 projection resolve");
+            resolved.push((sym, got));
+        }
+        s.expose_entities(&[&cgs], Arc::new(cgs.clone()), "", &["RecordedContent"]);
+        let map1 = s.to_symbol_map();
+        for (sym, expected_wire) in resolved {
+            let got = map1
+                .resolve_entity_field(CatalogScope::SessionReverse, "Profile", ent, sym.as_str())
+                .unwrap_or_else(|e| panic!("wave-2 projection resolve for {sym}: {e:?}"));
+            assert_eq!(got, expected_wire, "p# projection wire must not drift on extend");
+        }
+    }
+
     #[test]
     fn ident_metadata_from_exposure_matches_build_ident_metadata() {
         let dir = std::path::Path::new("../../fixtures/schemas/petstore");

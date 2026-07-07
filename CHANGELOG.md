@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.134] - 2026-07-07
+
+### Fixed
+
+- **Unified opaque `p#` resolution:** row projection `[p#,…]` now uses the same canonical `sym_to_slot` binding as invoke/query paths — fixes semantic drift and row-symbol eviction after `plasm_context` extend waves.
+- **Symbol allocation:** freeze fingerprint representative after first `p#` assign; wave-scoped occurrence forward-map commits.
+- **Relation fanout projection:** entity witness `p#` accepted on relation-derived row bindings (union with capability `provides`).
+
+### Added
+
+- Regression tests: extend-wave opaque projection stability, multi-return projection order, relation fanout `p#` parity.
+- MCP language conformance smoke: `session_mode: extend` + wave-1 projection probe.
+
 ## [0.3.133] - 2026-07-06
 
 ### Added

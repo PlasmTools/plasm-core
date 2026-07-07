@@ -1704,6 +1704,81 @@ lines"#,
         );
     }
 
+    /// Multi-root return with opaque `[p#,…]` must compile regardless of comma-root order.
+    #[test]
+    fn multi_return_opaque_projection_order_independent() {
+        let session = test_session();
+        let exp = session.teaching_exposure.as_ref().expect("exposure");
+        let map = exp.symbol_map_arc();
+        let e_item = map.entity_sym_for("langmatrix", "LangItem");
+        let p_id = map.ident_sym_entity_field_for("langmatrix", "LangItem", "id");
+        let p_line_id = map.ident_sym_entity_field_for("langmatrix", "LangLine", "id");
+        let p_note = map.ident_sym_entity_field_for("langmatrix", "LangLine", "note");
+        let bindings = format!(
+            "item = {e_item}({p_id}=\"i1\")\nlines = item.lines\n",
+            e_item = e_item,
+            p_id = p_id,
+        );
+        let program_a = format!(
+            "{bindings}item, lines[{p_line_id},{p_note}]",
+            bindings = bindings,
+            p_line_id = p_line_id,
+            p_note = p_note,
+        );
+        let program_b = format!(
+            "{bindings}lines[{p_line_id},{p_note}], item",
+            bindings = bindings,
+            p_line_id = p_line_id,
+            p_note = p_note,
+        );
+        compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "multi-return-a",
+            &program_a,
+        )
+        .unwrap_or_else(|e| panic!("lang-before-projected-relation must compile: {e}"));
+        compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "multi-return-b",
+            &program_b,
+        )
+        .expect("projected-relation-before-lang must compile");
+    }
+
+    /// Relation fanout row projection accepts entity witness `p#` taught on the target entity.
+    #[test]
+    fn relation_fanout_projection_accepts_entity_witness_p_symbols() {
+        let session = test_session();
+        let exp = session.teaching_exposure.as_ref().expect("exposure");
+        let map = exp.symbol_map_arc();
+        let e_item = map.entity_sym_for("langmatrix", "LangItem");
+        let p_id = map.ident_sym_entity_field_for("langmatrix", "LangItem", "id");
+        let p_note = map.ident_sym_entity_field_for("langmatrix", "LangLine", "note");
+        let source = format!(
+            "item = {e_item}({p_id}=\"i1\")\nlines = item.lines\nlines[{p_note}]",
+            e_item = e_item,
+            p_id = p_id,
+            p_note = p_note,
+        );
+        let err_msg = compile_plasm_dag_to_plan(
+            &PromptPipelineConfig::default(),
+            None,
+            &session,
+            "relation-fanout-p",
+            &source,
+        )
+        .map(|_| String::new())
+        .unwrap_or_else(|e| e);
+        assert!(
+            !err_msg.contains("not a row symbol"),
+            "entity witness p# must not surface as unknown row symbol: {err_msg}"
+        );
+    }
+
     #[test]
     fn flattened_single_liner_lhs_gated_relation_primary_return() {
         let session = github_issue_label_session();

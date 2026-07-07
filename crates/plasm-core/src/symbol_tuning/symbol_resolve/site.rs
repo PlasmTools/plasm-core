@@ -9,6 +9,14 @@ use crate::CGS;
 ///
 /// Each variant carries the catalog objects required for that role — invalid combinations
 /// are unrepresentable (no optional context bag).
+///
+/// Resolution order (intentionally asymmetric):
+/// - `EntityRowField`: `sym_to_slot` representative first (frozen EntityField at allocation),
+///   then qualified forward map.
+/// - `QueryFilter`: forward map (entity fields + query/search cap params), then slot fallback
+///   — must not prefer `sym_to_slot` alone when cap-param occurrences share the fingerprint.
+/// - `InvokeParam`: cap-param forward map, then `sym_to_slot`.
+/// - `CompoundKey`: qualified key index, homograph scan, then slot fallback.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PSymResolution<'a> {
     EntityRowField {

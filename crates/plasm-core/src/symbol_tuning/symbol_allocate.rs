@@ -132,9 +132,11 @@ impl TeachingExposureSession {
                 .or_insert_with(|| m.clone());
             let fp = slot_symbol_allocation_fingerprint(m);
             by_fp
-                .entry(fp)
+                .entry(fp.clone())
                 .and_modify(|existing| {
-                    *existing = prefer_entity_field_representative(existing, m);
+                    if !self.ledger.slot_fingerprint_to_sym.contains_key(&fp) {
+                        *existing = prefer_entity_field_representative(existing, m);
+                    }
                 })
                 .or_insert_with(|| m.clone());
         }
@@ -143,7 +145,9 @@ impl TeachingExposureSession {
                 .fingerprint_meta
                 .entry(fp.clone())
                 .and_modify(|existing| {
-                    *existing = prefer_entity_field_representative(existing, meta);
+                    if !self.ledger.slot_fingerprint_to_sym.contains_key(fp) {
+                        *existing = prefer_entity_field_representative(existing, meta);
+                    }
                 })
                 .or_insert_with(|| meta.clone());
         }
@@ -274,26 +278,30 @@ impl TeachingExposureSession {
             let Some(meta) = self.ledger.slot_occurrence_meta.get(occ_key).cloned() else {
                 continue;
             };
-            let fp = slot_symbol_allocation_fingerprint(&meta);
-            if slot_meta_is_relation(&meta) {
-                let Some(sym) = self.ledger.relation_fingerprint_to_sym.get(&fp).copied() else {
-                    continue;
-                };
-                self.tables.relation_to_sym.insert(
-                    RelationKey::new(
-                        RegistryEntryId::from(meta.catalog_entry_id()),
-                        meta.entity().clone(),
-                        RelationName::from(meta.wire_name()),
-                    ),
-                    sym,
-                );
-                continue;
-            }
-            let Some(sym) = self.ledger.slot_fingerprint_to_sym.get(&fp).copied() else {
-                continue;
-            };
-            self.commit_slot_forward_maps(&meta, sym);
+            self.commit_occurrence_forward_maps(&meta);
         }
+    }
+
+    fn commit_occurrence_forward_maps(&mut self, meta: &IdentMetadata) {
+        let fp = slot_symbol_allocation_fingerprint(meta);
+        if slot_meta_is_relation(meta) {
+            let Some(sym) = self.ledger.relation_fingerprint_to_sym.get(&fp).copied() else {
+                return;
+            };
+            self.tables.relation_to_sym.insert(
+                RelationKey::new(
+                    RegistryEntryId::from(meta.catalog_entry_id()),
+                    meta.entity().clone(),
+                    RelationName::from(meta.wire_name()),
+                ),
+                sym,
+            );
+            return;
+        }
+        let Some(sym) = self.ledger.slot_fingerprint_to_sym.get(&fp).copied() else {
+            return;
+        };
+        self.commit_slot_forward_maps(meta, sym);
     }
 
     fn commit_slot_forward_maps(&mut self, meta: &IdentMetadata, sym: OpaquePSym) {

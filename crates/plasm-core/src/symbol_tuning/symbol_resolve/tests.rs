@@ -206,6 +206,49 @@ fn resolve_query_filter_field_accepts_cap_scope_param_p_sym() {
 }
 
 #[test]
+fn resolve_entity_field_projection_stable_after_exposure_extend() {
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/schemas/plasm_language_matrix");
+    let Ok(cgs) = load_schema_dir(&dir) else {
+        return;
+    };
+    let entry = "langmatrix";
+    let mut exp = TeachingExposureSession::new(&cgs, entry, &["LangItem"]);
+    let map0 = exp.symbol_map_arc();
+    let ent = cgs.get_entity("LangItem").expect("LangItem");
+    let title_sym = map0.ident_sym_entity_field_for(entry, "LangItem", "title");
+    let title_wire = map0
+        .resolve_entity_field(
+            CatalogScope::qualified(entry),
+            "LangItem",
+            ent,
+            title_sym.as_str(),
+        )
+        .expect("wave-1 title projection");
+    assert_eq!(title_wire, "title");
+
+    exp.expose_entities(
+        &[&cgs],
+        std::sync::Arc::new(cgs.clone()),
+        entry,
+        &["LangTag"],
+    );
+    let map1 = exp.symbol_map_arc();
+    let title_wire_after = map1
+        .resolve_entity_field(
+            CatalogScope::qualified(entry),
+            "LangItem",
+            ent,
+            title_sym.as_str(),
+        )
+        .expect("wave-2 title projection");
+    assert_eq!(
+        title_wire_after, title_wire,
+        "extend wave must not remap wave-1 opaque row projection"
+    );
+}
+
+#[test]
 fn resolve_cap_param_shared_scope_p_on_issue_create_when_only_issue_query_committed() {
     use crate::discovery;
     use crate::EntityName;

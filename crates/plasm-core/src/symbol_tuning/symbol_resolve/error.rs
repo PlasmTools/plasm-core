@@ -21,6 +21,11 @@ pub enum SymbolResolveError {
         token: String,
         candidates: Vec<String>,
     },
+    AmbiguousEntityRowFieldPSym {
+        entity: String,
+        token: String,
+        candidates: Vec<String>,
+    },
     UnknownCapParam {
         catalog_entry_id: String,
         domain: String,
@@ -61,7 +66,9 @@ impl SymbolResolveError {
     /// Optional agent-facing hint appended after the primary error line.
     pub fn agent_program_hint(&self) -> Option<&'static str> {
         match self {
-            Self::UnknownEntityPSym { .. } | Self::NotARowField { .. } => Some(
+            Self::UnknownEntityPSym { .. }
+            | Self::NotARowField { .. }
+            | Self::AmbiguousEntityRowFieldPSym { .. } => Some(
                 "Use `p#` symbols from the teaching `rows:` column for this binding.",
             ),
             Self::UnknownQueryFilterPSym { .. } | Self::AmbiguousQueryFilterPSym { .. } => Some(
@@ -131,6 +138,15 @@ impl std::fmt::Display for SymbolResolveError {
             } => write!(
                 f,
                 "`{token}` is ambiguous for `{entity}` query filters — matches params {}",
+                candidates.join(", ")
+            ),
+            Self::AmbiguousEntityRowFieldPSym {
+                entity,
+                token,
+                candidates,
+            } => write!(
+                f,
+                "`{token}` is ambiguous for `{entity}` row projection — matches fields {}",
                 candidates.join(", ")
             ),
             Self::UnknownCapParam {
