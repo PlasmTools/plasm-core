@@ -7,10 +7,13 @@ use indexmap::IndexMap;
 use plasm_core::discovery::CgsCatalog;
 use plasm_core::discovery::DiscoveryError;
 use plasm_core::InMemoryCgsRegistry;
+use std::sync::Arc;
 
 use crate::execute_session::ExecuteSession;
-use crate::execute_session_materialize::materialize_entry_context;
-use crate::http_execute::replay_teaching_exposure_waves;
+use crate::catalog_hash::RegistryCatalogHash;
+use crate::execute_session_materialize::{
+    materialize_entries_for_descriptor, MaterializeError,
+};
 use crate::mcp_transport_store::execute_session_registry::PersistedExecuteSessionDescriptor;
 use crate::server_state::PlasmHostState;
 
@@ -28,6 +31,11 @@ pub enum RehydrateError {
         entities: usize,
         catalog_ids: usize,
     },
+    /// Embedded symbol ledger missing from durable descriptor (replay is not used).
+    SymbolLedgerNotFound,
+    /// Pinned catalog digests in the ledger no longer match live materialized CGS.
+    SymbolSpaceResetRequired,
+    SymbolLedgerDecode(String),
     Discovery(String),
 }
 
@@ -51,12 +59,30 @@ impl std::fmt::Display for RehydrateError {
                 f,
                 "entity/catalog pairing mismatch ({entities} entities, {catalog_ids} catalog ids)"
             ),
+            Self::SymbolLedgerNotFound => write!(
+                f,
+                "persisted execute session has no symbol ledger — call plasm_context with session_mode: \"new\""
+            ),
+            Self::SymbolSpaceResetRequired => write!(
+                f,
+                "symbol ledger catalog pins no longer match live catalogs — call plasm_context with session_mode: \"new\""
+            ),
+            Self::SymbolLedgerDecode(e) => write!(f, "symbol ledger decode failed: {e}"),
             Self::Discovery(e) => write!(f, "{e}"),
         }
     }
 }
 
 impl std::error::Error for RehydrateError {}
+
+impl From<MaterializeError> for RehydrateError {
+    fn from(e: MaterializeError) -> Self {
+        match e {
+            MaterializeError::UnknownEntry(id) => Self::UnknownEntry(id),
+            other => Self::Discovery(other.to_string()),
+        }
+    }
+}
 
 pub fn descriptor_expired(desc: &PersistedExecuteSessionDescriptor) -> bool {
     let now = SystemTime::now()
@@ -70,14 +96,18 @@ pub fn descriptor_expired(desc: &PersistedExecuteSessionDescriptor) -> bool {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RegistryCatalogPins {
     pub(crate) entry_ids: Vec<String>,
-    pub(crate) registry_hash_by_entry: HashMap<String, String>,
+    pub(crate) registry_hash_by_entry: HashMap<String, RegistryCatalogHash>,
 }
 
 impl RegistryCatalogPins {
     pub(crate) fn from_execute_session(session: &ExecuteSession) -> Self {
         Self {
             entry_ids: session.contexts_by_entry.keys().cloned().collect(),
-            registry_hash_by_entry: session.registry_catalog_hashes_by_entry.clone(),
+            registry_hash_by_entry: session
+                .registry_catalog_hashes_by_entry
+                .iter()
+                .map(|(k, v)| (k.clone(), RegistryCatalogHash::from_hex(v.clone())))
+                .collect(),
         }
     }
 
@@ -93,7 +123,11 @@ impl RegistryCatalogPins {
         };
         Self {
             entry_ids,
-            registry_hash_by_entry: desc.registry_catalog_hashes_by_entry.clone(),
+            registry_hash_by_entry: desc
+                .registry_catalog_hashes_by_entry
+                .iter()
+                .map(|(k, v)| (k.clone(), RegistryCatalogHash::from_hex(v.clone())))
+                .collect(),
         }
     }
 }
@@ -101,11 +135,21 @@ impl RegistryCatalogPins {
 pub(crate) fn registry_catalog_pins_from_registry(
     reg: &InMemoryCgsRegistry,
     entry_ids: &[String],
+) -> Result<HashMap<String, String>, RehydrateError> {
+    let pins = registry_catalog_pins_typed(reg, entry_ids)?;
+    Ok(crate::catalog_hash::registry_hashes_to_strings(
+        &pins.registry_hash_by_entry,
+    ))
+}
+
+pub(crate) fn registry_catalog_pins_typed(
+    reg: &InMemoryCgsRegistry,
+    entry_ids: &[String],
 ) -> Result<RegistryCatalogPins, RehydrateError> {
     let mut registry_hash_by_entry = HashMap::new();
     for eid in entry_ids {
         let hash = match reg.load_context(eid) {
-            Ok(ctx) => ctx.cgs.catalog_cgs_hash_hex(),
+            Ok(ctx) => RegistryCatalogHash::from_registry_cgs(ctx.cgs.as_ref()),
             Err(DiscoveryError::UnknownEntry(id)) => return Err(RehydrateError::UnknownEntry(id)),
             Err(e) => {
                 return Err(RehydrateError::Discovery(format!(
@@ -136,10 +180,11 @@ pub(crate) fn registry_pins_match_live(
         let expected = pins
             .registry_hash_by_entry
             .get(eid)
-            .cloned()
-            .unwrap_or_default();
+            .map(RegistryCatalogHash::as_str)
+            .unwrap_or_default()
+            .to_string();
         let live = match reg.load_context(eid) {
-            Ok(ctx) => ctx.cgs.catalog_cgs_hash_hex(),
+            Ok(ctx) => RegistryCatalogHash::from_registry_cgs(ctx.cgs.as_ref()).as_str().to_string(),
             Err(DiscoveryError::UnknownEntry(id)) => return Err(RehydrateError::UnknownEntry(id)),
             Err(e) => {
                 return Err(RehydrateError::Discovery(format!(
@@ -159,36 +204,39 @@ pub(crate) fn registry_pins_match_live(
 }
 
 /// Pinned **effective** catalog digests (post-overlay) — legacy descriptor field only.
-#[derive(Clone, Debug, PartialEq, Eq)]
-#[allow(dead_code)]
-pub(crate) struct PinnedCatalogHashes {
-    pub(crate) entry_ids: Vec<String>,
-    pub(crate) expected_by_entry: HashMap<String, String>,
-}
+#[cfg(test)]
+mod legacy_descriptor_pins {
+    use super::*;
 
-impl PinnedCatalogHashes {
-    #[allow(dead_code)]
-    pub(crate) fn from_descriptor(desc: &PersistedExecuteSessionDescriptor) -> Self {
-        let entry_ids = if desc.catalog_cgs_hashes_by_entry.is_empty() {
-            vec![desc.entry_id.clone()]
-        } else {
-            desc.context_entry_ids.clone()
-        };
-        let mut expected_by_entry = HashMap::new();
-        for eid in &entry_ids {
-            let expected = if desc.catalog_cgs_hashes_by_entry.is_empty() {
-                desc.catalog_cgs_hash.clone()
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub(super) struct PinnedCatalogHashes {
+        pub entry_ids: Vec<String>,
+        pub expected_by_entry: HashMap<String, String>,
+    }
+
+    impl PinnedCatalogHashes {
+        pub(super) fn from_descriptor(desc: &PersistedExecuteSessionDescriptor) -> Self {
+            let entry_ids = if desc.catalog_cgs_hashes_by_entry.is_empty() {
+                vec![desc.entry_id.clone()]
             } else {
-                desc.catalog_cgs_hashes_by_entry
-                    .get(eid)
-                    .cloned()
-                    .unwrap_or_else(|| desc.catalog_cgs_hash.clone())
+                desc.context_entry_ids.clone()
             };
-            expected_by_entry.insert(eid.clone(), expected);
-        }
-        Self {
-            entry_ids,
-            expected_by_entry,
+            let mut expected_by_entry = HashMap::new();
+            for eid in &entry_ids {
+                let expected = if desc.catalog_cgs_hashes_by_entry.is_empty() {
+                    desc.catalog_cgs_hash.clone()
+                } else {
+                    desc.catalog_cgs_hashes_by_entry
+                        .get(eid)
+                        .cloned()
+                        .unwrap_or_else(|| desc.catalog_cgs_hash.clone())
+                };
+                expected_by_entry.insert(eid.clone(), expected);
+            }
+            Self {
+                entry_ids,
+                expected_by_entry,
+            }
         }
     }
 }
@@ -201,7 +249,30 @@ pub fn should_discard_persisted_execute_on_rehydrate_error(err: &RehydrateError)
             | RehydrateError::CatalogHashMismatch { .. }
             | RehydrateError::DescriptorExpired
             | RehydrateError::EntityCatalogPairingMismatch { .. }
+            | RehydrateError::SymbolLedgerNotFound
+            | RehydrateError::SymbolSpaceResetRequired
+            | RehydrateError::SymbolLedgerDecode(_)
     )
+}
+
+fn hydrate_teaching_exposure_from_descriptor(
+    desc: &PersistedExecuteSessionDescriptor,
+    contexts_by_entry: &IndexMap<String, Arc<plasm_core::CgsContext>>,
+) -> Result<plasm_core::TeachingExposureSession, RehydrateError> {
+    if desc.symbol_ledger_bytes.is_empty() {
+        return Err(RehydrateError::SymbolLedgerNotFound);
+    }
+    let snap = plasm_core::PersistedSymbolLedger::decode(desc.symbol_ledger_bytes.as_slice())
+        .map_err(|e| RehydrateError::SymbolLedgerDecode(e.to_string()))?;
+    let catalog_cgs: IndexMap<String, Arc<plasm_core::CGS>> = contexts_by_entry
+        .iter()
+        .map(|(eid, ctx)| (eid.clone(), ctx.cgs.clone()))
+        .collect();
+    if !plasm_core::catalog_pins_match(&snap.catalog_cgs_hashes, &catalog_cgs) {
+        return Err(RehydrateError::SymbolSpaceResetRequired);
+    }
+    snap.hydrate(&catalog_cgs)
+        .map_err(|e| RehydrateError::SymbolLedgerDecode(e.to_string()))
 }
 
 pub async fn rehydrate_execute_session(
@@ -215,56 +286,32 @@ pub async fn rehydrate_execute_session(
     let reg = st.catalog.snapshot();
     registry_pins_match_live(reg.as_ref(), &RegistryCatalogPins::from_descriptor(desc))?;
 
-    let primary_materialized = materialize_entry_context(
-        st,
-        desc.entry_id.as_str(),
-        desc.outbound_hosted_kv_by_entry
-            .get(&desc.entry_id)
-            .map(String::as_str),
-        desc.bindings_by_entry.get(&desc.entry_id),
-    )
-    .await
-    .map_err(RehydrateError::Discovery)?;
-
-    let cgs = primary_materialized.effective_cgs;
+    let materialized =
+        materialize_entries_for_descriptor(st, desc).await?;
+    let primary_materialized = materialized
+        .get(&desc.entry_id)
+        .ok_or_else(|| MaterializeError::LoadContext {
+            entry_id: desc.entry_id.clone(),
+            detail: "primary entry missing after materialize".into(),
+        })?;
+    let cgs = primary_materialized.effective_cgs.clone();
     let http_backend = Some(primary_materialized.http_backend.as_str().to_string());
 
     let mut contexts_by_entry = IndexMap::new();
-    contexts_by_entry.insert(desc.entry_id.clone(), primary_materialized.ctx);
-    for eid in &desc.context_entry_ids {
-        if eid == &desc.entry_id {
-            continue;
-        }
-        let materialized = materialize_entry_context(
-            st,
-            eid.as_str(),
-            desc.outbound_hosted_kv_by_entry
-                .get(eid)
-                .map(String::as_str),
-            desc.bindings_by_entry.get(eid),
-        )
-        .await
-        .map_err(RehydrateError::Discovery)?;
-        contexts_by_entry.insert(eid.clone(), materialized.ctx);
+    for (eid, m) in &materialized {
+        contexts_by_entry.insert(eid.clone(), m.ctx.clone());
     }
 
-    let entity_catalog_entry_ids = if desc.entity_catalog_entry_ids.len() == desc.entities.len() {
-        desc.entity_catalog_entry_ids.clone()
-    } else if desc.entity_catalog_entry_ids.is_empty() {
-        vec![desc.entry_id.clone(); desc.entities.len()]
-    } else {
+    if !desc.entity_catalog_entry_ids.is_empty()
+        && desc.entity_catalog_entry_ids.len() != desc.entities.len()
+    {
         return Err(RehydrateError::EntityCatalogPairingMismatch {
             entities: desc.entities.len(),
             catalog_ids: desc.entity_catalog_entry_ids.len(),
         });
-    };
-    let teaching_exposure = replay_teaching_exposure_waves(
-        &contexts_by_entry,
-        &desc.entities,
-        &entity_catalog_entry_ids,
-        desc.context_intent.as_deref(),
-        desc.ranked_capabilities.as_deref(),
-    );
+    }
+    let teaching_exposure =
+        hydrate_teaching_exposure_from_descriptor(desc, &contexts_by_entry)?;
 
     let mut session = ExecuteSession::new_with_bindings(
         desc.prompt_hash.clone(),
@@ -284,6 +331,8 @@ pub async fn rehydrate_execute_session(
         desc.bindings_by_entry.clone(),
     );
     session.registry_catalog_hashes_by_entry = desc.registry_catalog_hashes_by_entry.clone();
+    session.materialized_outbound_hosted_kv_by_entry =
+        desc.outbound_hosted_kv_by_entry.clone();
     session.domain_revision = desc.domain_revision;
     session.restore_persisted_plan_commits(&desc.plan_commits, desc.plan_commit_next);
     session.restore_persisted_operations(&crate::mcp_transport_store::OperationPersistSnapshot {
@@ -318,6 +367,25 @@ mod tests {
         matrix_federated_host,
     };
     use indexmap::IndexMap;
+
+    async fn descriptor_from_live_session(
+        st: &PlasmHostState,
+        session: &ExecuteSession,
+        session_id: &str,
+        reuse_key: &SessionReuseKey,
+    ) -> PersistedExecuteSessionDescriptor {
+        let exposure =
+            crate::execute_session_materialize::build_durable_exposure_snapshot(st, session)
+                .await
+                .expect("durable exposure snapshot");
+        PersistedExecuteSessionDescriptor::from_session_and_durable_snapshot(
+            session,
+            session_id,
+            reuse_key,
+            session.snapshot_bind_credentials().await,
+            &exposure,
+        )
+    }
 
     fn overshow_registry() -> InMemoryCgsRegistry {
         let dir =
@@ -370,6 +438,7 @@ mod tests {
             operation_handle_next: 0,
             session_share_token: None,
             session_proof_base_token: None,
+            symbol_ledger_bytes: Vec::new(),
         };
         assert!(descriptor_expired(&desc));
     }
@@ -467,6 +536,7 @@ mod tests {
             operation_handle_next: 0,
             session_share_token: None,
             session_proof_base_token: None,
+            symbol_ledger_bytes: Vec::new(),
         };
         let err = match rehydrate_execute_session(&host, &desc).await {
             Err(e) => e,
@@ -517,8 +587,9 @@ mod tests {
             operation_handle_next: 0,
             session_share_token: None,
             session_proof_base_token: None,
+            symbol_ledger_bytes: Vec::new(),
         };
-        let pins = PinnedCatalogHashes::from_descriptor(&desc);
+        let pins = legacy_descriptor_pins::PinnedCatalogHashes::from_descriptor(&desc);
         assert_eq!(pins.entry_ids, vec!["overshow".to_string()]);
         assert_eq!(
             pins.expected_by_entry.get("overshow"),
@@ -536,13 +607,19 @@ mod tests {
             .catalog_cgs_hash_hex();
         let ok_pins = RegistryCatalogPins {
             entry_ids: vec!["overshow".into()],
-            registry_hash_by_entry: HashMap::from([("overshow".into(), live_hash.clone())]),
+            registry_hash_by_entry: HashMap::from([(
+                "overshow".into(),
+                RegistryCatalogHash::from_hex(live_hash.clone()),
+            )]),
         };
         assert!(registry_pins_match_live(&reg, &ok_pins).is_ok());
 
         let bad_pins = RegistryCatalogPins {
             entry_ids: vec!["overshow".into()],
-            registry_hash_by_entry: HashMap::from([("overshow".into(), "stale".into())]),
+            registry_hash_by_entry: HashMap::from([(
+                "overshow".into(),
+                RegistryCatalogHash::from_hex("stale"),
+            )]),
         };
         assert_eq!(
             registry_pins_match_live(&reg, &bad_pins),
@@ -555,7 +632,9 @@ mod tests {
     }
 
     #[test]
-    fn federated_descriptor_rebuild_preserves_entity_catalog_pairing() {
+    fn replay_wave_structure_differs_from_incremental_live_path() {
+        use crate::http_execute::replay_teaching_exposure_waves;
+
         let matrix_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../fixtures/schemas/plasm_language_matrix");
         let cgs = Arc::new(load_schema_dir(&matrix_dir).expect("matrix"));
@@ -605,6 +684,7 @@ mod tests {
             operation_handle_next: 0,
             session_share_token: None,
             session_proof_base_token: None,
+            symbol_ledger_bytes: Vec::new(),
         };
         let exp = replay_teaching_exposure_waves(
             &contexts,
@@ -623,7 +703,70 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rehydrate_replay_matches_live_numbering_end_to_end() {
+    async fn rehydrate_fails_without_embedded_symbol_ledger() {
+        let fixture = interleaved_federated_matrix_fixture();
+        let (host, reg) = matrix_federated_host(fixture.cgs.clone());
+        let mut desc = descriptor_from_live_session(
+            &host,
+            &ExecuteSession::new_with_bindings(
+                "ph".into(),
+                String::new(),
+                fixture.cgs.clone(),
+                fixture.contexts.clone(),
+                "linear".into(),
+                String::new(),
+                String::new(),
+                None,
+                fixture.live.entities.clone(),
+                Some(fixture.live.clone()),
+                None,
+                fixture.cgs.catalog_cgs_hash_hex(),
+                None,
+                None,
+                IndexMap::new(),
+            ),
+            "sid",
+            &SessionReuseKey {
+                tenant_scope: String::new(),
+                entry_id: "linear".into(),
+                catalog_cgs_hash: fixture.cgs.catalog_cgs_hash_hex(),
+                entities: fixture.live.entities.clone(),
+                context_intent: None,
+                ranked_capabilities: None,
+                principal: None,
+                logical_session_id: None,
+            },
+        )
+        .await;
+        desc.expires_at_unix = u64::MAX;
+        desc.registry_catalog_hashes_by_entry = HashMap::from([
+            (
+                "linear".into(),
+                reg.load_context("linear")
+                    .expect("linear")
+                    .cgs
+                    .catalog_cgs_hash_hex(),
+            ),
+            (
+                "github".into(),
+                reg.load_context("github")
+                    .expect("github")
+                    .cgs
+                    .catalog_cgs_hash_hex(),
+            ),
+        ]);
+        desc.symbol_ledger_bytes.clear();
+        match rehydrate_execute_session(&host, &desc).await {
+            Err(RehydrateError::SymbolLedgerNotFound) => {}
+            Err(e) => panic!(
+                "missing ledger must fail rehydrate with SymbolLedgerNotFound, got {e:?}"
+            ),
+            Ok(_) => panic!("missing ledger must fail rehydrate"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rehydrate_ledger_hydrate_matches_live_numbering_end_to_end() {
         let fixture = interleaved_federated_matrix_fixture();
         let (host, reg) = matrix_federated_host(fixture.cgs.clone());
 
@@ -656,12 +799,7 @@ mod tests {
             logical_session_id: None,
         };
 
-        let desc = PersistedExecuteSessionDescriptor::from_session_and_reuse(
-            &session,
-            "sid",
-            &reuse_key,
-            crate::execute_session::SessionBindCredentialsSnapshot::default(),
-        );
+        let desc = descriptor_from_live_session(&host, &session, "sid", &reuse_key).await;
         let mut desc = desc;
         desc.expires_at_unix = u64::MAX;
         desc.registry_catalog_hashes_by_entry = HashMap::from([

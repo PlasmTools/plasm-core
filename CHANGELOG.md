@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-07
+
+### Fixed
+
+- **Multi-replica symbol stability:** durable rehydrate hydrates embedded `symbol_ledger_bytes` only (no exposure replay fallback); persist is fail-closed when a durable backend is configured.
+- **Plan-commit hot-ahead persist:** when hot exposure is ahead of durable but federation/materialization inputs are unchanged, sync hot fields reusing durable effective catalog pins instead of rematerializing every catalog row.
+
+### Added
+
+- **`ExposurePersistPolicy`** and **`PlanCommitMaterializationInputs`** for durable write strategy during plan commits.
+- **`RegistryCatalogHash`** / **`EffectiveCatalogHash`** newtypes separating registry vs effective catalog pins.
+- Regression coverage for symbol stability across rehydrate and plan-commit coherence paths.
+
 ## [0.4.0] - 2026-07-07
 
 ### Changed

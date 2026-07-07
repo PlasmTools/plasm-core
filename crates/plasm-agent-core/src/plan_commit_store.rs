@@ -119,7 +119,7 @@ pub async fn register_plan_commit_with_persist(
     let sid = session_id.to_string();
     if await_persist {
         match registry
-            .patch_plan_commits_only(es.as_ref(), sid.as_str(), reuse_key.as_ref())
+            .patch_plan_commits_only(st, es.as_ref(), sid.as_str(), reuse_key.as_ref())
             .await
         {
             Ok(outcome) => Ok(outcome),
@@ -130,9 +130,10 @@ pub async fn register_plan_commit_with_persist(
         }
     } else {
         crate::metrics::record_mcp_response_deferred_io("commit_persist");
+        let st_bg = st.clone();
         tokio::spawn(async move {
             if let Err(err) = registry
-                .patch_plan_commits_only(es.as_ref(), sid.as_str(), reuse_key.as_ref())
+                .patch_plan_commits_only(&st_bg, es.as_ref(), sid.as_str(), reuse_key.as_ref())
                 .await
             {
                 tracing::warn!(

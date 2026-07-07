@@ -180,6 +180,38 @@ impl LogicalSymbolLedgerRegistry {
         }
     }
 
+    pub async fn upsert_preencoded(
+        &self,
+        logical_id: Uuid,
+        catalog_cgs_hashes: IndexMap<String, String>,
+        symbol_ledger_bytes: Vec<u8>,
+        exposure: TeachingExposureSession,
+    ) -> Result<(), SymbolLedgerUpsertError> {
+        if symbol_ledger_bytes.is_empty() {
+            return self
+                .upsert(logical_id, catalog_cgs_hashes, exposure)
+                .await;
+        }
+        let entry = LogicalSymbolLedgerEntry {
+            catalog_cgs_hashes,
+            exposure: Arc::new(exposure),
+        };
+        self.cache_local(logical_id, entry).await;
+        if let Some(redis) = self.redis().await.as_ref() {
+            if !redis
+                .set_bytes(&ledger_key(&logical_id), &symbol_ledger_bytes)
+                .await
+            {
+                self.remove_local(&logical_id).await;
+                return Err(SymbolLedgerUpsertError::RedisWriteFailed { logical_id });
+            }
+        }
+        if let Some(archive) = self.archive().await.as_ref() {
+            archive.put(&logical_id, symbol_ledger_bytes).await;
+        }
+        Ok(())
+    }
+
     pub async fn upsert(
         &self,
         logical_id: Uuid,
@@ -284,6 +316,36 @@ mod tests {
                 .expect("url")
                 .expect("archive"),
         )
+    }
+
+    #[tokio::test]
+    async fn upsert_preencoded_matches_full_encode_path() {
+        let exp = matrix_exposure();
+        let hashes = plasm_core::catalog_cgs_hashes_from_session(&exp);
+        let snap = plasm_core::PersistedSymbolLedger::from_session(&exp, hashes.clone())
+            .expect("from_session");
+        let bytes = snap.encode().expect("encode");
+        let registry = LogicalSymbolLedgerRegistry::new_in_memory();
+        let via_encode = Uuid::new_v4();
+        let via_preencoded = Uuid::new_v4();
+        registry
+            .upsert(via_encode, hashes.clone(), exp.clone())
+            .await
+            .expect("upsert");
+        registry
+            .upsert_preencoded(via_preencoded, hashes, bytes, exp)
+            .await
+            .expect("preencoded");
+        let a = registry.get_local(&via_encode).await.expect("encode local");
+        let b = registry
+            .get_local(&via_preencoded)
+            .await
+            .expect("preencoded local");
+        assert_eq!(a.catalog_cgs_hashes, b.catalog_cgs_hashes);
+        assert_eq!(
+            a.exposure.qualified_entity_symbol("langmatrix", "HomographRowA"),
+            b.exposure.qualified_entity_symbol("langmatrix", "HomographRowA"),
+        );
     }
 
     #[tokio::test]

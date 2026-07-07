@@ -19,6 +19,7 @@ pub(crate) mod catalog_ownership;
 pub(crate) mod catalog_pin;
 pub mod catalog_reload;
 pub mod catalog_runtime;
+mod catalog_hash;
 pub mod cli_builder;
 pub mod control_plane_http;
 mod discovery_embedding_chunks;

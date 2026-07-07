@@ -121,6 +121,8 @@ mod ui_read;
 mod integration;
 mod symbol_stability;
 #[cfg(test)]
+mod symbol_stability_rehydrate;
+#[cfg(test)]
 mod tests;
 
 pub(crate) use discover::{

@@ -514,6 +514,104 @@ mod tests {
         );
     }
 
+    fn repo_issue_label_seeds() -> Vec<CapabilitySeed> {
+        vec![
+            CapabilitySeed {
+                entry_id: "github".into(),
+                entity: "Repository".into(),
+            },
+            CapabilitySeed {
+                entry_id: "github".into(),
+                entity: "Issue".into(),
+            },
+            CapabilitySeed {
+                entry_id: "github".into(),
+                entity: "Label".into(),
+            },
+        ]
+    }
+
+    /// Reported workflow: open Repository+Issue+Label, extend Branch — branch-create `m#` must not move.
+    #[tokio::test]
+    async fn symbol_stability_repo_issue_label_extend_branch_preserves_branch_create_m() {
+        let Some(st) = github_host() else {
+            return;
+        };
+        let st = Arc::new(st);
+        let logical_id = Uuid::new_v4();
+        let intent = "create branch feat/label-color-guide and manage issue labels";
+
+        let seeds_open = repo_issue_label_seeds();
+        let out = apply_capability_seeds(
+            st.as_ref(),
+            None,
+            None,
+            seeds_open.clone(),
+            None,
+            None,
+            Some(logical_id),
+            intent,
+            RankedCapabilitiesArg::Unspecified,
+        )
+        .await
+        .expect("open");
+
+        let es = st
+            .get_execute_session(&out.prompt_hash, &out.session_id)
+            .await
+            .expect("session");
+        let m_before = es
+            .teaching_exposure
+            .as_ref()
+            .expect("exposure")
+            .symbol_map_arc()
+            .method_sym_for("github", "Repository", "repo_branch_create");
+
+        let mut seeds_extend = seeds_open;
+        seeds_extend.push(CapabilitySeed {
+            entry_id: "github".into(),
+            entity: "Branch".into(),
+        });
+        let out_extend = apply_capability_seeds(
+            st.as_ref(),
+            None,
+            Some((out.prompt_hash.as_str(), out.session_id.as_str())),
+            seeds_extend,
+            None,
+            None,
+            Some(logical_id),
+            intent,
+            RankedCapabilitiesArg::Unspecified,
+        )
+        .await
+        .expect("extend branch");
+
+        let es2 = st
+            .get_execute_session(&out_extend.prompt_hash, &out_extend.session_id)
+            .await
+            .expect("session after extend");
+        let m_after = es2
+            .teaching_exposure
+            .as_ref()
+            .expect("exposure")
+            .symbol_map_arc()
+            .method_sym_for("github", "Repository", "repo_branch_create");
+
+        assert_eq!(
+            m_before, m_after,
+            "repo_branch_create m# must stay stable when Branch entity is added on extend"
+        );
+        let program = github_branch_create_program(es2.teaching_exposure.as_ref().expect("exp"));
+        let _ = compile_plasm_expression(
+            st.engine.prompt_pipeline(),
+            Some(st.sessions.symbol_map_cross_cache()),
+            &es2,
+            "branch_after_extend",
+            &program,
+        )
+        .expect("branch-create program must compile after Branch extend");
+    }
+
     #[tokio::test]
     async fn symbol_stability_compile_preserves_exposure_fingerprint() {
         let dir = github_fixture_dir();

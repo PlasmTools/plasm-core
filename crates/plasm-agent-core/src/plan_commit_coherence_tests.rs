@@ -310,8 +310,20 @@ async fn plan_register_full_persists_when_hot_ahead_of_durable() {
         .reuse_key_for_execute_pair(created.prompt_hash.as_str(), created.session.as_str())
         .await
         .expect("reuse key");
+    let exposure = crate::execute_session_materialize::build_durable_exposure_snapshot(
+        &host,
+        live.as_ref(),
+    )
+    .await
+    .expect("durable exposure snapshot");
     host.execute_session_registry
-        .persist_or_update(live.as_ref(), created.session.as_str(), Some(&reuse_key))
+        .persist_or_update(
+            &host,
+            live.as_ref(),
+            created.session.as_str(),
+            Some(&reuse_key),
+            &exposure,
+        )
         .await
         .expect("durable at open rev");
     if let (Ok(ph), Ok(sid)) = (

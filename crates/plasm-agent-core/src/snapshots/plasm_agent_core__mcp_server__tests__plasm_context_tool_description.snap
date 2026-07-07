@@ -1,5 +1,5 @@
 ---
-source: crates/plasm-agent-core/src/mcp_server/tests.rs
+source: plasm-oss/crates/plasm-agent-core/src/mcp_server/tests.rs
 expression: context
 ---
 **Call before `plasm` / `plasm_run`.** Session identity is **`logical_session_ref`** only — not `intent`.
@@ -12,9 +12,9 @@ expression: context
 **One workflow:** one `logical_session_ref`, many **`extend`** calls, evolving `intent` each turn.
 **Never** call **`session_mode: "new"`** to recover from a plan/parse error — use **`extend`** with corrected `seeds` / `ranked_capabilities`.
 
-**Programs = this table's symbols:** copy **`e#`/`m#`/`r#`/`p#`** from the left column into `plasm.program`. Catalog type names and API ids are not program syntax.
+**Programs = this table:** copy **`e#`/`m#`/`r#`** and catalog **wire names** from the left column into `plasm.program`. Catalog type names and API ids are not program syntax.
 
-**Open or extend:** **`session_mode`** + **`intent`** + **`seeds`** (`{api, entity}`). Returns **`logical_session_ref`** + fenced teaching TSV (active symbol table). Logical-session ledger: symbols append in **arrival order** — existing **`e#`/`p#`** never shift. **SYMBOL SPACE RESET** banner = pinned catalog digest changed; discard cached symbols.
+**Open or extend:** **`session_mode`** + **`intent`** + **`seeds`** (`{api, entity}`). Returns **`logical_session_ref`** + fenced teaching TSV (active symbol table). Logical-session ledger: symbols append in **arrival order** — existing **`e#`** assignments never shift. **SYMBOL SPACE RESET** banner = pinned catalog digest changed; discard cached symbols.
 
 **Extend picks:** **`session_mode: "extend"`** + same **`logical_session_ref`**, expanded **`seeds`** — delta TSV or reuse cheat sheet when already exposed.
 

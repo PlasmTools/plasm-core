@@ -13,6 +13,7 @@ pub struct PreparedFederateWave {
     pub new_entry_id: String,
     pub names: Vec<String>,
     pub entry_bindings: Option<crate::binding_slots::SessionBindingMap>,
+    pub materialized_outbound_hosted_kv: Option<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -49,7 +50,8 @@ pub async fn prepare_federate_wave(
         hosted_kv_key,
         entry_bindings.as_ref(),
     )
-    .await?;
+    .await
+    .map_err(|e| e.to_string())?;
     let ctx_arc = materialized.ctx;
 
     for e in &names {
@@ -64,6 +66,7 @@ pub async fn prepare_federate_wave(
         new_entry_id,
         names,
         entry_bindings,
+        materialized_outbound_hosted_kv: hosted_kv_key.map(str::to_string),
     })
 }
 
@@ -98,6 +101,7 @@ async fn commit_federate_wave_inner(
         new_entry_id,
         names,
         entry_bindings,
+        materialized_outbound_hosted_kv,
     } = prepared;
 
     let prompt_hash_p: PromptHashHex = prompt_hash
@@ -128,6 +132,10 @@ async fn commit_federate_wave_inner(
         .insert(new_entry_id.clone(), registry_pin);
     if let Some(b) = entry_bindings {
         sess.bindings_by_entry.insert(new_entry_id.clone(), b);
+    }
+    if let Some(kv) = materialized_outbound_hosted_kv {
+        sess.materialized_outbound_hosted_kv_by_entry
+            .insert(new_entry_id.clone(), kv);
     }
 
     let Some(mut exp) = sess.teaching_exposure.take() else {

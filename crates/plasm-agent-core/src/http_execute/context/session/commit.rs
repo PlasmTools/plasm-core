@@ -5,8 +5,6 @@ use super::super::super::*;
 use super::super::seeds::{
     format_exposure_entity_cheat_sheet, wrap_teaching_markdown_literal_block,
 };
-use super::symbol_ledger::persist_after_wave_commit;
-
 /// Snapshot captured before an exposure wave mutates [`plasm_core::TeachingExposureSession`].
 pub(crate) struct ExposureWaveSnapshot {
     pub slots_before: std::collections::BTreeSet<plasm_core::symbol_tuning::ExposureSlotKey>,
@@ -212,7 +210,6 @@ pub(crate) async fn commit_exposure_wave_delta(
     sess.teaching_exposure = Some(exp);
     st.replace_execute_session(prompt_hash_p.as_str(), session_id_p.as_str(), sess)
         .await?;
-    persist_after_wave_commit(st, prompt_hash_p.as_str(), session_id_p.as_str()).await;
 
     Ok(CommittedWaveDelta {
         markdown: wave,
@@ -369,7 +366,8 @@ mod tests {
             sid.clone(),
             sess,
         )
-        .await;
+        .await
+        .expect("store session");
 
         let committed = commit_exposure_wave_delta(
             &host,

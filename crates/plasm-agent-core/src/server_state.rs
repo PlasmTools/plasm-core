@@ -148,6 +148,11 @@ impl Deref for PlasmHostState {
     }
 }
 
+enum DurableSessionWriteKind {
+    Insert,
+    Update,
+}
+
 impl PlasmHostState {
     // --- SaaS / control-plane (None when `self.saas` is unset) ---
 
@@ -382,14 +387,21 @@ impl PlasmHostState {
         prompt_hash: String,
         session_id: String,
         session: ExecuteSession,
-    ) {
+    ) -> Result<(), crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError>
+    {
         session.bind_operation_wire(&session_id);
-        self.execute_session_registry
-            .persist(&session, &session_id, &reuse_key)
-            .await;
+        self.durable_snapshot_and_write(
+            &session,
+            session_id.as_str(),
+            prompt_hash.as_str(),
+            Some(&reuse_key),
+            DurableSessionWriteKind::Insert,
+        )
+        .await?;
         self.sessions
             .insert(reuse_key, prompt_hash, session_id, session)
             .await;
+        Ok(())
     }
 
     /// Replace in-memory session payload and refresh Redis descriptor (reuse key preserved when present).
@@ -404,7 +416,6 @@ impl PlasmHostState {
     {
         use crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError;
 
-        // Parse path ids before durable write — never advance durable without hot.
         let ph: PromptHashHex = prompt_hash
             .parse()
             .map_err(|_| ExecuteSessionPersistError::SessionUnavailable)?;
@@ -415,10 +426,89 @@ impl PlasmHostState {
             .sessions
             .reuse_key_for_execute_pair(prompt_hash, session_id)
             .await;
-        self.execute_session_registry
-            .persist_or_update(&session, session_id, reuse_key.as_ref())
-            .await?;
+        self.durable_snapshot_and_write(
+            &session,
+            session_id,
+            prompt_hash,
+            reuse_key.as_ref(),
+            DurableSessionWriteKind::Update,
+        )
+        .await?;
         self.sessions.replace_session(&ph, &sid, session).await;
+        Ok(())
+    }
+
+    async fn durable_snapshot_and_write(
+        &self,
+        session: &ExecuteSession,
+        session_id: &str,
+        prompt_hash: &str,
+        reuse_key: Option<&SessionReuseKey>,
+        kind: DurableSessionWriteKind,
+    ) -> Result<(), crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError>
+    {
+        use crate::mcp_transport_store::execute_session_registry::{
+            ExecuteSessionPersistError, ExecuteSessionPersistOutcome,
+        };
+
+        let exposure =
+            crate::execute_session_materialize::build_durable_exposure_snapshot(self, session)
+                .await?;
+        self.upsert_logical_ledger_for_execute(
+            prompt_hash,
+            session_id,
+            reuse_key,
+            session,
+            &exposure,
+        )
+        .await?;
+        let durable_configured = self.execute_session_registry.durable_backend_configured().await;
+        let outcome = match kind {
+            DurableSessionWriteKind::Insert => {
+                let rk = reuse_key.ok_or(ExecuteSessionPersistError::MissingReuseKey)?;
+                self.execute_session_registry
+                    .persist(session, session_id, rk, &exposure)
+                    .await?
+            }
+            DurableSessionWriteKind::Update => {
+                self.execute_session_registry
+                    .persist_or_update(self, session, session_id, reuse_key, &exposure)
+                    .await?
+            }
+        };
+        if durable_configured && outcome == ExecuteSessionPersistOutcome::InMemoryOnly {
+            return Err(ExecuteSessionPersistError::MissingSymbolLedger);
+        }
+        Ok(())
+    }
+
+    async fn upsert_logical_ledger_for_execute(
+        &self,
+        prompt_hash: &str,
+        session_id: &str,
+        reuse_key: Option<&SessionReuseKey>,
+        session: &ExecuteSession,
+        exposure: &crate::execute_session_materialize::DurableExposureSnapshot,
+    ) -> Result<(), crate::mcp_transport_store::execute_session_registry::ExecuteSessionPersistError>
+    {
+        let logical_id = reuse_key
+            .and_then(|k| k.logical_session_id.as_ref())
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .or(
+                self.logical_execute_bindings
+                    .find_by_execute(prompt_hash, session_id)
+                    .await,
+            );
+        let Some(logical_id) = logical_id else {
+            return Ok(());
+        };
+        crate::http_execute::upsert_logical_ledger_from_snapshot(
+            self,
+            logical_id,
+            session,
+            exposure,
+        )
+        .await?;
         Ok(())
     }
 
@@ -436,7 +526,7 @@ impl PlasmHostState {
             .reuse_key_for_execute_pair(session.prompt_hash.as_str(), session_id)
             .await;
         self.execute_session_registry
-            .patch_bind_credentials(session, session_id, reuse_key.as_ref())
+            .patch_bind_credentials(self, session, session_id, reuse_key.as_ref())
             .await
     }
 }
@@ -480,6 +570,9 @@ fn rehydrate_error_kind(err: &crate::execute_session_rehydrate::RehydrateError) 
         RehydrateError::CatalogHashMismatch { .. } => "catalog_hash_mismatch",
         RehydrateError::DescriptorExpired => "descriptor_expired",
         RehydrateError::EntityCatalogPairingMismatch { .. } => "entity_catalog_pairing_mismatch",
+        RehydrateError::SymbolLedgerNotFound => "symbol_ledger_not_found",
+        RehydrateError::SymbolSpaceResetRequired => "symbol_space_reset_required",
+        RehydrateError::SymbolLedgerDecode(_) => "symbol_ledger_decode",
         RehydrateError::Discovery(_) => "discovery",
     }
 }

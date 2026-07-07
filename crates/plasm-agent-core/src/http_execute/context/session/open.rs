@@ -10,8 +10,6 @@ use super::super::seeds::{
     sorted_entity_set_for_reuse_key, wrap_teaching_markdown_literal_block, RankedCapabilitiesArg,
     STALE_EXECUTE_BINDING_NOTICE,
 };
-use super::symbol_ledger::persist_from_execute_row;
-
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn execute_session_create_response_inner(
     st: &PlasmHostState,
@@ -47,8 +45,7 @@ pub(crate) async fn execute_session_create_response_inner(
             reg.as_ref(),
             std::slice::from_ref(&body.entry_id),
         )
-        .map_err(|e| e.to_string())?
-        .registry_hash_by_entry;
+        .map_err(|e| e.to_string())?;
 
     let hosted_kv_key = outbound_hosted_kv_by_entry
         .and_then(|map| map.get(&body.entry_id))
@@ -60,7 +57,8 @@ pub(crate) async fn execute_session_create_response_inner(
         hosted_kv_key,
         entry_bindings,
     )
-    .await?;
+    .await
+    .map_err(|e| e.to_string())?;
     let ctx_arc = materialized.ctx;
     let effective_cgs = materialized.effective_cgs;
     let http_backend = materialized.http_backend;
@@ -236,6 +234,11 @@ pub(crate) async fn execute_session_create_response_inner(
         };
     }
     session.registry_catalog_hashes_by_entry = registry_catalog_hashes;
+    if let Some(kv) = hosted_kv_key {
+        session
+            .materialized_outbound_hosted_kv_by_entry
+            .insert(body.entry_id.clone(), kv.to_string());
+    }
     st.store_execute_session(
         reuse_key,
         prompt_hash_str.clone(),
@@ -243,17 +246,8 @@ pub(crate) async fn execute_session_create_response_inner(
         session,
     )
     .instrument(create_span)
-    .await;
-
-    if let Some(uuid) = body.logical_session_id {
-        persist_from_execute_row(
-            st,
-            Some(uuid),
-            prompt_hash_str.as_str(),
-            session_id_str.as_str(),
-        )
-        .await;
-    }
+    .await
+    .map_err(|e| e.to_string())?;
 
     crate::metrics::record_execute_session_outcome("create", "");
     Ok(CreateExecuteSessionResponse {

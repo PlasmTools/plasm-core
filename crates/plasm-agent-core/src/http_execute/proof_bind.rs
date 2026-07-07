@@ -228,12 +228,12 @@ mod tests {
             .expect("bind")
             .expect("bind intercept");
 
-        fx.registry
-            .patch_bind_credentials(&fx.session, session_id, Some(&fx.reuse_key))
+        let host = fx.host_with_registry();
+        host.execute_session_registry
+            .patch_bind_credentials(&host, &fx.session, session_id, Some(&fx.reuse_key))
             .await
             .expect("patch bind credentials");
 
-        let host = fx.host_with_registry();
         let rehydrated = rehydrate_proof_session(&host, &fx, session_id).await;
         assert_eq!(
             rehydrated.session_share_token.read().await.as_deref(),
@@ -249,15 +249,16 @@ mod tests {
             .await
             .expect("bind")
             .expect("bind intercept");
-        fx.registry
-            .patch_bind_credentials(&fx.session, session_id, Some(&fx.reuse_key))
+        let host = fx.host_with_registry();
+        host.execute_session_registry
+            .patch_bind_credentials(&host, &fx.session, session_id, Some(&fx.reuse_key))
             .await
             .expect("patch bind");
 
         *fx.session.session_share_token.write().await = None;
         *fx.session.session_proof_base_token.write().await = None;
-        fx.registry
-            .patch_bind_credentials(&fx.session, session_id, Some(&fx.reuse_key))
+        host.execute_session_registry
+            .patch_bind_credentials(&host, &fx.session, session_id, Some(&fx.reuse_key))
             .await
             .expect("patch cleared credentials");
 
@@ -279,14 +280,15 @@ mod tests {
         let fx = ProofBindFixture::open("bind_upsert");
         *fx.session.session_share_token.write().await = Some("early-tok".into());
         let session_id = "sid_new";
-        let outcome = fx
-            .registry
-            .patch_bind_credentials(&fx.session, session_id, Some(&fx.reuse_key))
+        let host = fx.host_with_registry();
+        let outcome = host
+            .execute_session_registry
+            .patch_bind_credentials(&host, &fx.session, session_id, Some(&fx.reuse_key))
             .await
             .expect("upsert bind credentials");
         assert_eq!(outcome, ExecuteSessionPersistOutcome::Durable);
-        let desc = fx
-            .registry
+        let desc = host
+            .execute_session_registry
             .load(fx.session.prompt_hash.as_str(), session_id)
             .await
             .expect("descriptor after upsert");

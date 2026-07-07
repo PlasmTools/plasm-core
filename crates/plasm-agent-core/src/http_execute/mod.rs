@@ -220,6 +220,7 @@ pub(crate) fn resolve_paging_storage_handle(
 }
 
 mod context;
+pub(crate) use context::upsert_logical_ledger_from_snapshot;
 #[cfg(test)]
 pub(crate) use context::execute_session_create_response_inner;
 pub(crate) use context::{
@@ -239,6 +240,7 @@ mod trace;
 pub use crate::execute_pipeline::RunLineError;
 pub(crate) use run_line::run_parsed_plasm_line;
 
+#[cfg(test)]
 pub(crate) use context::replay_teaching_exposure_waves;
 pub use context::{
     apply_capability_seeds, execute_session_create_response, expand_execute_teaching_session,

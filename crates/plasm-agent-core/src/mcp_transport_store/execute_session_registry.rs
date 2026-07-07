@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::RwLock;
 
 use crate::execute_session::{ExecuteSession, SessionReuseKey};
+use crate::server_state::PlasmHostState;
 
 use super::persisted_operations::{merge_operation_patch, OperationPersistPatch};
 use super::redis_backend::RedisBackend;
@@ -28,6 +29,13 @@ pub enum ExecuteSessionPersistError {
     },
     /// Live execute row missing (catalog rotation / rehydrate failure) — do not use a caller Arc.
     SessionUnavailable,
+    /// Durable persist refused: execute row has no serializable symbol ledger.
+    MissingSymbolLedger,
+    /// Rematerialize catalog pins + encode ledger (see [`crate::execute_session_materialize`]).
+    ExposureSnapshot(String),
+    Materialize(String),
+    SymbolLedgerEncode(String),
+    LogicalLedgerWriteFailed,
 }
 
 impl std::fmt::Display for ExecuteSessionPersistError {
@@ -48,6 +56,16 @@ impl std::fmt::Display for ExecuteSessionPersistError {
                 f,
                 "execute session unavailable — reopen `plasm_context` and dry-run again"
             ),
+            Self::MissingSymbolLedger => write!(
+                f,
+                "execute session persist refused: missing symbol ledger — reopen `plasm_context` with session_mode: \"new\""
+            ),
+            Self::ExposureSnapshot(e) => write!(f, "execute session exposure snapshot failed: {e}"),
+            Self::Materialize(e) => write!(f, "execute session materialize failed: {e}"),
+            Self::SymbolLedgerEncode(e) => write!(f, "symbol ledger encode failed: {e}"),
+            Self::LogicalLedgerWriteFailed => {
+                write!(f, "logical symbol ledger durable write failed")
+            }
         }
     }
 }
@@ -63,6 +81,24 @@ pub enum MergeLiveOutcome {
 }
 
 impl std::error::Error for ExecuteSessionPersistError {}
+
+impl From<crate::execute_session_materialize::MaterializeError> for ExecuteSessionPersistError {
+    fn from(e: crate::execute_session_materialize::MaterializeError) -> Self {
+        Self::Materialize(e.to_string())
+    }
+}
+
+impl From<crate::mcp_transport_store::logical_symbol_ledger::SymbolLedgerUpsertError>
+    for ExecuteSessionPersistError
+{
+    fn from(e: crate::mcp_transport_store::logical_symbol_ledger::SymbolLedgerUpsertError) -> Self {
+        use crate::mcp_transport_store::logical_symbol_ledger::SymbolLedgerUpsertError;
+        match e {
+            SymbolLedgerUpsertError::Encode(err) => Self::SymbolLedgerEncode(err.to_string()),
+            SymbolLedgerUpsertError::RedisWriteFailed { .. } => Self::LogicalLedgerWriteFailed,
+        }
+    }
+}
 
 const SESSION_KEY_PREFIX: &str = "mcp:execute:session:";
 
@@ -189,6 +225,9 @@ pub struct PersistedExecuteSessionDescriptor {
     /// Proof `baseToken` from the latest successful `editor_state_get`.
     #[serde(default)]
     pub session_proof_base_token: Option<String>,
+    /// Append-only symbol ledger (`PLSL` + postcard); required for cross-pod rehydrate.
+    #[serde(default)]
+    pub symbol_ledger_bytes: Vec<u8>,
 }
 
 fn default_expires_at_unix() -> u64 {
@@ -201,23 +240,16 @@ pub struct PlanCommitPersistSnapshot {
 }
 
 impl PersistedExecuteSessionDescriptor {
-    pub fn from_session_and_reuse(
+    pub(crate) fn from_session_and_durable_snapshot(
         session: &ExecuteSession,
         session_id: &str,
         reuse_key: &SessionReuseKey,
         bind_credentials: crate::execute_session::SessionBindCredentialsSnapshot,
+        durable: &crate::execute_session_materialize::DurableExposureSnapshot,
     ) -> Self {
-        let mut catalog_cgs_hashes_by_entry = std::collections::HashMap::new();
-        let mut outbound_hosted_kv_by_entry = std::collections::HashMap::new();
-        for (eid, ctx) in &session.contexts_by_entry {
-            catalog_cgs_hashes_by_entry
-                .insert(eid.clone(), ctx.cgs.effective_catalog_cgs_hash_hex());
-            if let Some(kv) =
-                crate::execute_session_materialize::outbound_hosted_kv_from_cgs(ctx.cgs.as_ref())
-            {
-                outbound_hosted_kv_by_entry.insert(eid.clone(), kv);
-            }
-        }
+        let catalog_cgs_hashes_by_entry =
+            crate::catalog_hash::effective_hash_map_to_strings(&durable.catalog_cgs_hashes_by_entry);
+        let outbound_hosted_kv_by_entry = session.materialized_outbound_hosted_kv_by_entry.clone();
         let plan_snapshot = session.snapshot_plan_commits_for_persist();
         let op_snapshot = session.snapshot_operations_for_persist();
         let entity_catalog_entry_ids = session
@@ -253,6 +285,7 @@ impl PersistedExecuteSessionDescriptor {
             operation_handle_next: op_snapshot.operation_handle_next,
             session_share_token: bind_credentials.session_share_token,
             session_proof_base_token: bind_credentials.session_proof_base_token,
+            symbol_ledger_bytes: durable.symbol_ledger_bytes.clone(),
         }
     }
 }
@@ -296,43 +329,63 @@ impl ExecuteSessionRegistry {
         self.test_json().await.is_some() || self.redis().await.is_some()
     }
 
-    pub async fn persist(
+    pub(crate) async fn write_descriptor_from_session(
         &self,
         session: &ExecuteSession,
         session_id: &str,
         reuse_key: &SessionReuseKey,
-    ) {
+        durable: &crate::execute_session_materialize::DurableExposureSnapshot,
+    ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
         let bind_credentials = session.snapshot_bind_credentials().await;
-        let desc = PersistedExecuteSessionDescriptor::from_session_and_reuse(
+        let desc = PersistedExecuteSessionDescriptor::from_session_and_durable_snapshot(
             session,
             session_id,
             reuse_key,
             bind_credentials,
+            durable,
         );
         let key = session_key(&desc.prompt_hash, &desc.session_id);
-        if let Some(map) = self.test_json().await {
-            if let Ok(payload) = serde_json::to_string(&desc) {
-                map.write().await.insert(key, payload);
-            }
-            return;
-        }
-        let Some(redis) = self.redis().await else {
-            return;
-        };
-        redis.set_json(&key, &desc).await;
+        self.write_descriptor(&key, &desc).await
+    }
+
+    /// Build rematerialized exposure snapshot and write descriptor (bind-credentials upsert path).
+    pub(crate) async fn build_exposure_and_write_descriptor(
+        &self,
+        st: &PlasmHostState,
+        session: &ExecuteSession,
+        session_id: &str,
+        reuse_key: &SessionReuseKey,
+    ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
+        let exposure =
+            crate::execute_session_materialize::build_durable_exposure_snapshot(st, session).await?;
+        self.write_descriptor_from_session(session, session_id, reuse_key, &exposure)
+            .await
+    }
+
+    pub(crate) async fn persist(
+        &self,
+        session: &ExecuteSession,
+        session_id: &str,
+        reuse_key: &SessionReuseKey,
+        exposure: &crate::execute_session_materialize::DurableExposureSnapshot,
+    ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
+        self.write_descriptor_from_session(session, session_id, reuse_key, exposure)
+            .await
     }
 
     /// Refresh descriptor after in-session mutation (federate/expand/plan commit).
     /// When no durable row exists yet, `reuse_key_fallback` seeds the first upsert.
-    pub async fn persist_or_update(
+    pub(crate) async fn persist_or_update(
         &self,
+        _st: &PlasmHostState,
         session: &ExecuteSession,
         session_id: &str,
         reuse_key_fallback: Option<&SessionReuseKey>,
+        exposure: &crate::execute_session_materialize::DurableExposureSnapshot,
     ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
         use crate::domain_revision::{compare_exposure, DomainRevision, ExposureSync};
 
-        let durable = self.durable_backend_configured().await;
+        let durable_backend = self.durable_backend_configured().await;
         let key = session_key(&session.prompt_hash, session_id);
         let reuse_key = if let Some(existing) = self.load_json(&key).await {
             match compare_exposure(
@@ -350,29 +403,25 @@ impl ExecuteSessionRegistry {
             existing.reuse_key.into()
         } else if let Some(fallback) = reuse_key_fallback {
             fallback.clone()
-        } else if durable {
+        } else if durable_backend {
             return Err(ExecuteSessionPersistError::MissingReuseKey);
         } else {
             return Ok(ExecuteSessionPersistOutcome::InMemoryOnly);
         };
-        let desc = PersistedExecuteSessionDescriptor::from_session_and_reuse(
-            session,
-            session_id,
-            &reuse_key,
-            session.snapshot_bind_credentials().await,
-        );
-        self.write_descriptor(&key, &desc).await
+        self.write_descriptor_from_session(session, session_id, &reuse_key, exposure)
+            .await
     }
 
     /// Patch durable bind credentials after session-effect bind or proof base-token refresh.
     pub async fn patch_bind_credentials(
         &self,
+        st: &PlasmHostState,
         session: &ExecuteSession,
         session_id: &str,
         reuse_key_fallback: Option<&SessionReuseKey>,
     ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
-        let durable = self.durable_backend_configured().await;
-        if !durable {
+        let durable_backend = self.durable_backend_configured().await;
+        if !durable_backend {
             return Ok(ExecuteSessionPersistOutcome::InMemoryOnly);
         }
         let key = session_key(&session.prompt_hash, session_id);
@@ -386,62 +435,94 @@ impl ExecuteSessionRegistry {
         let Some(reuse_key) = reuse_key_fallback else {
             return Err(ExecuteSessionPersistError::MissingReuseKey);
         };
-        self.persist_or_update(session, session_id, Some(reuse_key))
+        self.build_exposure_and_write_descriptor(st, session, session_id, reuse_key)
             .await
     }
 
     /// Patch only `plan_commits` / `plan_commit_next` on the durable row when exposure revisions
-    /// match. If hot is ahead of durable, full-persist hot (authoritative). If hot is behind,
-    /// refuse so callers rehydrate first.
+    /// match. When hot is ahead, [`ExposurePersistPolicy`] chooses plan-only vs reuse-pin sync vs
+    /// full rematerialize.
     pub async fn patch_plan_commits_only(
         &self,
+        st: &PlasmHostState,
         session: &ExecuteSession,
         session_id: &str,
         reuse_key_fallback: Option<&SessionReuseKey>,
     ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
-        let durable = self.durable_backend_configured().await;
+        use crate::domain_revision::{
+            plan_commit_persist_policy, DomainRevision, ExposurePersistPolicy,
+            PlanCommitMaterializationInputs,
+        };
+
+        let durable_backend = self.durable_backend_configured().await;
         let key = session_key(&session.prompt_hash, session_id);
         let snapshot = session.snapshot_plan_commits_for_persist();
-        if let Some(mut existing) = self.load_json(&key).await {
-            use crate::domain_revision::{compare_exposure, DomainRevision, ExposureSync};
-            match compare_exposure(
+        if let Some(existing) = self.load_json(&key).await {
+            let context_ids: Vec<String> = session.contexts_by_entry.keys().cloned().collect();
+            let policy = plan_commit_persist_policy(
                 DomainRevision::new(session.domain_revision),
                 DomainRevision::new(existing.domain_revision),
-            ) {
-                ExposureSync::HotBehind => {
-                    return Err(ExecuteSessionPersistError::HotBehindDurable {
-                        hot_revision: session.domain_revision,
-                        durable_revision: existing.domain_revision,
-                    });
-                }
-                ExposureSync::HotAhead => {
-                    // Hot exposure advanced (e.g. prior durable write failed) — reconcile fully.
-                    return self
-                        .persist_or_update(session, session_id, reuse_key_fallback)
-                        .await;
-                }
-                ExposureSync::InSync => {
+                PlanCommitMaterializationInputs {
+                    session_context_entry_ids: &context_ids,
+                    durable_context_entry_ids: &existing.context_entry_ids,
+                    session_outbound: &session.materialized_outbound_hosted_kv_by_entry,
+                    durable_outbound: &existing.outbound_hosted_kv_by_entry,
+                    session_bindings_len: session.bindings_by_entry.len(),
+                    durable_bindings_len: existing.bindings_by_entry.len(),
+                },
+            );
+            return match policy {
+                ExposurePersistPolicy::RefuseHotBehind {
+                    hot_revision,
+                    durable_revision,
+                } => Err(ExecuteSessionPersistError::HotBehindDurable {
+                    hot_revision,
+                    durable_revision,
+                }),
+                ExposurePersistPolicy::PatchMetadataOnly => {
+                    let mut existing = existing;
                     existing.plan_commits = snapshot.records;
                     existing.plan_commit_next = snapshot.next_sequence;
                     existing.expires_at_unix = expires_at_from_now();
-                    return self.write_descriptor(&key, &existing).await;
+                    self.write_descriptor(&key, &existing).await
                 }
-            }
+                ExposurePersistPolicy::SyncHotExposureReusePins => {
+                    let pins = crate::catalog_hash::effective_hashes_from_string_map(
+                        &existing.catalog_cgs_hashes_by_entry,
+                    );
+                    let exposure =
+                        crate::execute_session_materialize::build_durable_exposure_snapshot_reusing_pins(
+                            session, pins,
+                        )
+                        .await?;
+                    let reuse_key = existing.reuse_key.into();
+                    self.write_descriptor_from_session(
+                        session,
+                        session_id,
+                        &reuse_key,
+                        &exposure,
+                    )
+                    .await
+                }
+                ExposurePersistPolicy::FullPersistMaterialize => {
+                    let exposure =
+                        crate::execute_session_materialize::build_durable_exposure_snapshot(
+                            st, session,
+                        )
+                        .await?;
+                    self.persist_or_update(st, session, session_id, reuse_key_fallback, &exposure)
+                        .await
+                }
+            };
         }
-        if !durable {
+        if !durable_backend {
             return Ok(ExecuteSessionPersistOutcome::InMemoryOnly);
         }
-        // No durable row yet: first upsert still needs a full descriptor (open path).
         let Some(fallback) = reuse_key_fallback else {
             return Err(ExecuteSessionPersistError::MissingReuseKey);
         };
-        let desc = PersistedExecuteSessionDescriptor::from_session_and_reuse(
-            session,
-            session_id,
-            fallback,
-            session.snapshot_bind_credentials().await,
-        );
-        self.write_descriptor(&key, &desc).await
+        self.build_exposure_and_write_descriptor(st, session, session_id, fallback)
+            .await
     }
 
     async fn write_descriptor(
@@ -449,6 +530,9 @@ impl ExecuteSessionRegistry {
         key: &str,
         desc: &PersistedExecuteSessionDescriptor,
     ) -> Result<ExecuteSessionPersistOutcome, ExecuteSessionPersistError> {
+        if desc.symbol_ledger_bytes.is_empty() {
+            return Err(ExecuteSessionPersistError::MissingSymbolLedger);
+        }
         if let Some(map) = self.test_json().await {
             if let Ok(payload) = serde_json::to_string(desc) {
                 map.write().await.insert(key.to_string(), payload);

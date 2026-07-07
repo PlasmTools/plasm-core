@@ -14,7 +14,7 @@ use super::super::seeds::{
 use super::expand::expand_execute_teaching_session;
 use super::federate::{commit_federate_wave, prepare_federate_wave, PreparedFederateWave};
 use super::open::execute_session_create_response_inner;
-use super::symbol_ledger::{persist_from_execute_row, resolve_restore_for_open};
+use super::symbol_ledger::resolve_restore_for_open;
 use crate::session_coordination::ExecuteCoordKey;
 
 /// Live execute binding resolved for a `plasm_context` / seeds application.
@@ -325,13 +325,6 @@ pub async fn apply_capability_seeds(
                     st.logical_execute_bindings
                         .insert(uuid, created.prompt_hash.clone(), created.session.clone())
                         .await;
-                    persist_from_execute_row(
-                        st,
-                        Some(uuid),
-                        created.prompt_hash.as_str(),
-                        created.session.as_str(),
-                    )
-                    .await;
                     Ok(created)
                 })
                 .await?
@@ -510,14 +503,6 @@ pub async fn apply_capability_seeds(
             exposure.as_ref(),
         )];
     }
-
-    persist_from_execute_row(
-        st,
-        logical_session_id,
-        prompt_hash.as_str(),
-        session_id.as_str(),
-    )
-    .await;
 
     Ok(ApplyCapabilitySeedsOutcome {
         prompt_hash,

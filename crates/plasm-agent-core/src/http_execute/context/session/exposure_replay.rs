@@ -16,6 +16,7 @@ pub struct ExposureCatalogWave {
     pub read_first_seeded: bool,
 }
 
+#[cfg(test)]
 pub fn catalog_waves_from_pairing(
     entities: &[String],
     entity_catalog_entry_ids: &[String],
@@ -126,6 +127,7 @@ pub fn apply_federate_exposure_wave(
     }
 }
 
+#[cfg(test)]
 pub fn replay_teaching_exposure_waves(
     contexts_by_entry: &IndexMap<String, Arc<CgsContext>>,
     entities: &[String],

@@ -535,6 +535,9 @@ pub struct ExecuteSession {
     live_run_telemetry: Arc<StdMutex<Option<Arc<plasm_runtime::LiveRunTelemetry>>>>,
     /// Per-catalog session binding maps (MCP connect / REPL `--backend`).
     pub bindings_by_entry: indexmap::IndexMap<String, crate::binding_slots::SessionBindingMap>,
+    /// Tenant outbound `hosted_kv` keys passed into [`crate::execute_session_materialize::materialize_entry_context`]
+    /// at open/federate — not catalog-default auth from CGS yaml.
+    pub(crate) materialized_outbound_hosted_kv_by_entry: HashMap<String, String>,
 }
 
 impl ExecuteSession {
@@ -629,6 +632,7 @@ impl ExecuteSession {
             evidence_chain: crate::evidence_chain::new_evidence_chain_slot(),
             live_run_telemetry: Arc::new(StdMutex::new(None)),
             bindings_by_entry,
+            materialized_outbound_hosted_kv_by_entry: HashMap::new(),
         }
     }
 
@@ -642,6 +646,15 @@ impl ExecuteSession {
     pub async fn restore_bind_credentials(&self, creds: &SessionBindCredentialsSnapshot) {
         *self.session_share_token.write().await = creds.session_share_token.clone();
         *self.session_proof_base_token.write().await = creds.session_proof_base_token.clone();
+    }
+
+    pub(crate) fn materialization_pins(
+        &self,
+    ) -> crate::execute_session_materialize::SessionMaterializationPins<'_> {
+        crate::execute_session_materialize::SessionMaterializationPins {
+            outbound_hosted_kv_by_entry: &self.materialized_outbound_hosted_kv_by_entry,
+            bindings_by_entry: &self.bindings_by_entry,
+        }
     }
 
     /// Build a flow-catalog projection from all loaded session contexts.

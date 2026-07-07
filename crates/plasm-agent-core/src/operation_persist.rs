@@ -225,6 +225,7 @@ mod tests {
             operation_handle_next: 1,
             session_share_token: None,
             session_proof_base_token: None,
+            symbol_ledger_bytes: Vec::new(),
         };
         store.write().await.insert(
             format!("mcp:execute:session:{ph}:{sid}"),
