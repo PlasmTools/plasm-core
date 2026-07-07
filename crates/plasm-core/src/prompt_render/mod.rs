@@ -190,8 +190,6 @@ pub(crate) fn domain_example_line_count(cgs: &CGS, ename: &str, map: Option<&Sym
 }
 
 #[cfg(test)]
-pub(crate) use crate::symbol_tuning::ExposureSlotKey;
-#[cfg(test)]
 pub(crate) use teaching_legend::teaching_expr_line_from_layers;
 
 #[cfg(test)]
