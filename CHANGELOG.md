@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-07-07
+
+### Added
+
+- **Plan Security (SaaS):** federated catalog-scoped forbidden-flow editor, `FlowPolicyDraft` / vocabulary modules, formal policy spec (`docs/plan-flow-policy-spec.md` in monorepo).
+
 ## [0.4.3] - 2026-07-07
 
 ### Fixed
