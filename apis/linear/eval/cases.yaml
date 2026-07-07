@@ -205,3 +205,12 @@
   reference_expr: Issue.search
   expect:
     entities_any: [Issue]
+
+- id: lin-24
+  schema: linear
+  goal: "List labels on issue ENG-42"
+  tags: [get, relation]
+  covers: [get, relation_nav]
+  reference_expr: Issue(ENG-42).labels
+  expect:
+    entities_any: [Issue, Label]

@@ -2,7 +2,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::schema::{Cardinality, EntityDef, RelationMaterialization, RelationSchema};
+use crate::relation_nav::relation_nav_admissible;
+use crate::schema::{Cardinality, EntityDef, RelationSchema};
 use crate::symbol_tuning::{ExposureSurface, SymbolMap};
 use crate::{CapabilityKind, CapabilityName, Expr, CGS};
 
@@ -153,7 +154,7 @@ pub(crate) fn incoming_relation_nav_bases_to_entity(
             let Some(rel_s) = src_ent.relations.get(edge.slot_name.as_str()) else {
                 continue;
             };
-            if rel_s.cardinality == Cardinality::Many && !many_relation_nav_emittable(rel_s) {
+            if rel_s.cardinality == Cardinality::Many && !relation_nav_admissible(rel_s, cgs) {
                 continue;
             }
         }
@@ -382,11 +383,154 @@ pub(crate) fn relation_nav_meaning_result_gloss(
     }
 }
 
+/// Build a validated relation-nav exemplar (`recv.r#` or entity-ref hop) when admissible.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn try_build_relation_nav_exemplar(
+    es: &str,
+    ent: &EntityDef,
+    rel_schema: Option<&RelationSchema>,
+    rel_sym: &str,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
+    line_valid_cache_seed: u64,
+    map_arc: Option<&std::sync::Arc<SymbolMap>>,
+) -> Option<String> {
+    if let Some(rel) = rel_schema {
+        if !relation_nav_admissible(rel, cgs) {
+            return None;
+        }
+    }
+    let suffix = format!(".{rel_sym}");
+    let recv = receiver_for_dotted_suffix(
+        es,
+        ent,
+        cgs,
+        map,
+        catalog_entry_id,
+        &suffix,
+        line_valid_cache,
+        line_valid_cache_seed,
+        map_arc,
+    )?;
+    Some(format!("{recv}{suffix}"))
+}
+
+/// Push one relation-nav teaching row after building a validated exemplar.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn try_emit_relation_nav_teaching_row(
+    gloss_emit: &mut Option<GlossScratch<'_>>,
+    teaching_rows: &mut Vec<EntityTeachingExprRow>,
+    collect_meta: bool,
+    es: &str,
+    ent: &EntityDef,
+    rel_schema: Option<&RelationSchema>,
+    rel_sym: &str,
+    target_entity: &str,
+    rel_desc: Option<String>,
+    cgs: &CGS,
+    map: Option<&SymbolMap>,
+    catalog_entry_id: &str,
+    line_valid_cache: &mut HashMap<DomainLineValidCacheKey, DomainLineValidEntry>,
+    line_valid_cache_seed: u64,
+    map_arc: Option<&std::sync::Arc<SymbolMap>>,
+) -> bool {
+    let Some(rel_expr) = try_build_relation_nav_exemplar(
+        es,
+        ent,
+        rel_schema,
+        rel_sym,
+        cgs,
+        map,
+        catalog_entry_id,
+        line_valid_cache,
+        line_valid_cache_seed,
+        map_arc,
+    ) else {
+        return false;
+    };
+    let cardinality_many = rel_schema
+        .map(|r| r.cardinality == Cardinality::Many)
+        .unwrap_or(false);
+    let target_gloss = crate::result_gloss::result_gloss_for_relation_nav(
+        target_entity,
+        map,
+        cardinality_many,
+    );
+    let result_gloss = relation_nav_meaning_result_gloss(&rel_expr, map, target_gloss);
+    try_push_teaching_example(
+        gloss_emit,
+        teaching_rows,
+        collect_meta,
+        cgs,
+        &rel_expr,
+        Some(result_gloss),
+        rel_desc,
+        rel_schema,
+        None,
+        false,
+        line_valid_cache,
+        line_valid_cache_seed,
+        map_arc,
+        None,
+    )
+}
+
+/// Append one validated relation-hop row to an expand/federate edge-delta TSV body.
+#[allow(clippy::too_many_arguments)]
+fn append_relation_nav_edge_delta_row(
+    out: &mut String,
+    plasm_expr: &str,
+    rel_schema: &RelationSchema,
+    r_sym: &str,
+    description: &str,
+    map_arc: Option<&std::sync::Arc<SymbolMap>>,
+    seen_r_gloss: &mut HashSet<String>,
+    empty_heading: &TeachingHeading,
+) {
+    if let Some(m) = map_arc {
+        if let Some(gloss) = teaching_relation_field_gloss(m, r_sym, description) {
+            if seen_r_gloss.insert(r_sym.to_string()) {
+                write_teaching_tsv_row(out, DomainTsvRow::FieldGloss(&gloss));
+            }
+        }
+    }
+    let cardinality_many = rel_schema.cardinality == Cardinality::Many;
+    let target_gloss = crate::result_gloss::result_gloss_for_relation_nav(
+        rel_schema.target_resource.as_str(),
+        map_arc.map(|m| m.as_ref()),
+        cardinality_many,
+    );
+    let result_type = relation_nav_meaning_result_gloss(
+        plasm_expr,
+        map_arc.map(|m| m.as_ref()),
+        target_gloss,
+    );
+    let line = TeachingExprLine::empty_legend(plasm_expr.to_string());
+    let line = TeachingExprLine {
+        expression: line.expression,
+        result_type,
+        legend: line.legend,
+        is_projection_teaching: false,
+        row_contract: RowContractLegend::default(),
+    };
+    write_teaching_tsv_row(
+        out,
+        DomainTsvRow::TeachingExpr {
+            line: &line,
+            identity_returns_row: false,
+            attach_entity_heading: false,
+            heading: empty_heading,
+        },
+    );
+}
+
 /// Thin relation-hop rows for expand/federate waves (parent entity already exposed; target just seeded).
 pub(crate) fn render_relation_edge_delta_rows(
     exposure: &crate::symbol_tuning::TeachingExposureSession,
     new_relation_slots: &[crate::symbol_tuning::ExposureSlotKey],
-    map: Option<&SymbolMap>,
+    map_arc: Option<&std::sync::Arc<SymbolMap>>,
 ) -> String {
     const MAX_EDGE_DELTA_ROWS: usize = 8;
     let mut out = String::new();
@@ -417,6 +561,8 @@ pub(crate) fn render_relation_edge_delta_rows(
     let empty_heading = TeachingHeading {
         description: String::new(),
     };
+    let mut line_valid_cache: HashMap<DomainLineValidCacheKey, DomainLineValidEntry> =
+        HashMap::new();
 
     for slot in slots {
         if seen_expr.len() >= MAX_EDGE_DELTA_ROWS {
@@ -434,16 +580,13 @@ pub(crate) fn render_relation_edge_delta_rows(
         let Some(rel_schema) = ent.relations.get(relation.as_str()) else {
             continue;
         };
-        if !many_relation_nav_emittable(rel_schema) {
-            continue;
-        }
         let Some(es) =
             exposure.qualified_entity_symbol(source.entry_id.as_str(), source.entity.as_str())
         else {
             continue;
         };
         let r_sym = id_sym_rel(
-            map,
+            map_arc.map(|m| m.as_ref()),
             source.entry_id.as_str(),
             source.entity.as_str(),
             relation.as_str(),
@@ -451,7 +594,20 @@ pub(crate) fn render_relation_edge_delta_rows(
         if !r_sym.starts_with('r') {
             continue;
         }
-        let plasm_expr = format!("{es}.{r_sym}");
+        let Some(plasm_expr) = try_build_relation_nav_exemplar(
+            &es,
+            ent,
+            Some(rel_schema),
+            &r_sym,
+            cgs,
+            map_arc.map(|m| m.as_ref()),
+            source.entry_id.as_str(),
+            &mut line_valid_cache,
+            0,
+            map_arc,
+        ) else {
+            continue;
+        };
         if !seen_expr.insert(plasm_expr.clone()) {
             continue;
         }
@@ -463,51 +619,16 @@ pub(crate) fn render_relation_edge_delta_rows(
                 truncate_inline_desc(d, 120)
             }
         };
-        if let Some(m) = map {
-            if let Some(gloss) = teaching_relation_field_gloss(m, r_sym.as_str(), &description) {
-                if seen_r_gloss.insert(r_sym.clone()) {
-                    write_teaching_tsv_row(&mut out, DomainTsvRow::FieldGloss(&gloss));
-                }
-            }
-        }
-        let cardinality_many = rel_schema.cardinality == Cardinality::Many;
-        let target_gloss = crate::result_gloss::result_gloss_for_relation_nav(
-            rel_schema.target_resource.as_str(),
-            map,
-            cardinality_many,
-        );
-        let result_type = relation_nav_meaning_result_gloss(&plasm_expr, map, target_gloss);
-        let line = TeachingExprLine::empty_legend(plasm_expr);
-        let line = TeachingExprLine {
-            expression: line.expression,
-            result_type,
-            legend: line.legend,
-            is_projection_teaching: false,
-            row_contract: RowContractLegend::default(),
-        };
-        write_teaching_tsv_row(
+        append_relation_nav_edge_delta_row(
             &mut out,
-            DomainTsvRow::TeachingExpr {
-                line: &line,
-                identity_returns_row: false,
-                attach_entity_heading: false,
-                heading: &empty_heading,
-            },
+            &plasm_expr,
+            rel_schema,
+            &r_sym,
+            &description,
+            map_arc,
+            &mut seen_r_gloss,
+            &empty_heading,
         );
     }
     out
-}
-
-/// Cardinality-many relation nav omits teaching lines when materialization is unavailable.
-pub(crate) fn many_relation_nav_emittable(rel_schema: &RelationSchema) -> bool {
-    if rel_schema.cardinality != Cardinality::Many {
-        return true;
-    }
-    !matches!(
-        rel_schema
-            .materialize
-            .as_ref()
-            .unwrap_or(&RelationMaterialization::Unavailable),
-        RelationMaterialization::Unavailable
-    )
 }

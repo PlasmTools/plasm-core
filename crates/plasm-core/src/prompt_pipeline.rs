@@ -213,7 +213,7 @@ impl PromptPipelineConfig {
         splice_relation_edge_rows_into_delta(
             exposure,
             new_relation_slots,
-            self.session_symbol_map(exposure).as_deref(),
+            self.session_symbol_map(exposure).as_ref(),
             entity_delta,
         )
     }
@@ -258,7 +258,7 @@ impl PromptPipelineConfig {
         splice_relation_edge_rows_into_delta(
             exposure,
             new_relation_slots,
-            self.session_symbol_map(exposure).as_deref(),
+            self.session_symbol_map(exposure).as_ref(),
             entity_delta,
         )
     }
@@ -362,13 +362,13 @@ impl PromptPipelineConfig {
 fn splice_relation_edge_rows_into_delta(
     exposure: &TeachingExposureSession,
     new_relation_slots: &[ExposureSlotKey],
-    map: Option<&SymbolMap>,
+    map_arc: Option<&std::sync::Arc<SymbolMap>>,
     entity_delta: String,
 ) -> String {
     if new_relation_slots.is_empty() {
         return entity_delta;
     }
-    let edge_body = render_relation_edge_delta_rows(exposure, new_relation_slots, map);
+    let edge_body = render_relation_edge_delta_rows(exposure, new_relation_slots, map_arc);
     if edge_body.is_empty() {
         return entity_delta;
     }

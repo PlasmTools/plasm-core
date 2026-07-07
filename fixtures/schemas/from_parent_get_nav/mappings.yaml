@@ -1,0 +1,19 @@
+parent_item_get:
+  method: GET
+  path:
+    - { type: literal, value: items }
+    - { type: var, name: id }
+  response:
+    id: id
+    title: title
+    tags: tags
+
+tag_query:
+  method: GET
+  path:
+    - { type: literal, value: tags }
+  response:
+    items:
+      id: id
+      name: name
+      color: color

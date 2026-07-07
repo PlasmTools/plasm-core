@@ -11,7 +11,7 @@ use crate::schema::{
 };
 use crate::symbol_tuning::{
     entity_slices_for_render, resolve_prompt_surface_entities, symbol_map_for_prompt,
-    ExposureEntityKey, ExposureSurface, FocusSpec, SymbolMap, TeachingExposureSession,
+    ExposureEntityKey, ExposureSlotKey, ExposureSurface, FocusSpec, SymbolMap, TeachingExposureSession,
 };
 use crate::CapabilityKind;
 use crate::Cardinality;
@@ -328,6 +328,9 @@ fn repo_path(components: &[&str]) -> std::path::PathBuf {
 }
 fn apis_dir(name: &str) -> std::path::PathBuf {
     repo_path(&["..", "..", "apis", name])
+}
+fn fixture_schema_dir(name: &str) -> std::path::PathBuf {
+    repo_path(&["..", "..", "fixtures", "schemas", name])
 }
 
 /// Locks Proof `Document`-focused symbolic teaching TSV (`apis/proof`): union ctor teaching rows,
@@ -2933,6 +2936,131 @@ fn federated_github_linear_issue_distinct_e_symbols_when_apis_present() {
     assert!(github_has_e1, "github Issue block should teach e1");
     assert!(linear_has_e2, "linear Issue block should teach e2");
     assert!(linear_not_only_e1, "linear block must not reuse github e1");
+}
+
+/// Matrix fixture: `from_parent_get` many-relation without target Get must type-check and
+/// produce validated relation edge-delta teaching when the child entity is seeded on extend.
+#[test]
+fn from_parent_get_nav_matrix_relation_fanout_type_checks_and_edge_delta_validates() {
+    use crate::{ChainExpr, Expr, GetExpr};
+    use crate::type_checker::type_check_chain;
+
+    let dir = fixture_schema_dir("from_parent_get_nav");
+    let mut cgs = load_schema_dir(&dir).expect("from_parent_get_nav fixture");
+    cgs.entry_id = Some("from_parent_get_nav".into());
+    let chain = ChainExpr::auto_get(
+        Expr::Get(GetExpr::new("ParentItem", "p-1")),
+        "tags",
+    );
+    type_check_chain(&chain, &cgs).expect("ParentItem.tags from_parent_get chain");
+
+    let mut cache = HashMap::new();
+    let pipeline = PromptPipelineConfig::default();
+    let mut exp = TeachingExposureSession::new(&cgs, "from_parent_get_nav", &["ParentItem"]);
+    let slots_before = exp.surface.slots.clone();
+    let cgs_arc = std::sync::Arc::new(cgs.clone());
+    exp.expose_entities(&[&cgs], cgs_arc, "from_parent_get_nav", &["Tag"]);
+    let map_arc = exp.symbol_map_arc();
+    let added = exp.qualified_entities_since(1);
+    let new_relation_slots = exp.relation_edge_delta_slots(&slots_before, &added);
+    exp.admit_relation_edge_slots_for_render(&[&cgs], &new_relation_slots);
+    assert!(
+        new_relation_slots.iter().any(|slot| {
+            matches!(
+                slot,
+                ExposureSlotKey::Relation {
+                    source,
+                    relation,
+                } if source.entity.as_str() == "ParentItem" && relation.as_str() == "tags"
+            )
+        }),
+        "Tag extend should unlock ParentItem.tags relation slot"
+    );
+    let delta = pipeline.render_teaching_exposure_delta_with_edges(
+        &cgs,
+        &exp,
+        &["Tag"],
+        &new_relation_slots,
+        None,
+    );
+    assert!(
+        delta.contains(".r"),
+        "edge delta should include validated relation nav exemplar: {delta}"
+    );
+    for line in delta.lines() {
+        let expr = line.split('\t').next().unwrap_or("").trim();
+        if expr.is_empty() || expr.starts_with('#') || !expr.contains(".r") {
+            continue;
+        }
+        assert!(
+            domain_line_validate_cached(&mut cache, 0, &cgs, expr, Some(&map_arc)).is_some(),
+            "edge-delta relation row must type-check: {expr}"
+        );
+    }
+}
+
+/// Linear `Issue.labels` (`from_parent_get`, target Label has no Get) must type-check and
+/// produce validated relation edge-delta teaching when Label is seeded on extend.
+#[test]
+fn linear_issue_labels_relation_fanout_type_checks_and_edge_delta_validates() {
+    use crate::{ChainExpr, Expr, GetExpr};
+    use crate::type_checker::type_check_chain;
+
+    let dir = apis_dir("linear");
+    if !dir.exists() {
+        return;
+    }
+    let mut cgs = load_schema_dir(&dir).expect("linear");
+    cgs.entry_id = Some("linear".into());
+    let chain = ChainExpr::auto_get(
+        Expr::Get(GetExpr::new("Issue", "ENG-42")),
+        "labels",
+    );
+    type_check_chain(&chain, &cgs).expect("Issue.labels from_parent_get chain");
+
+    let mut cache = HashMap::new();
+    let pipeline = PromptPipelineConfig::default();
+    let mut exp = TeachingExposureSession::new(&cgs, "linear", &["Issue"]);
+    let slots_before = exp.surface.slots.clone();
+    let cgs_arc = std::sync::Arc::new(cgs.clone());
+    exp.expose_entities(&[&cgs], cgs_arc, "linear", &["Label"]);
+    let map_arc = exp.symbol_map_arc();
+    let added = exp.qualified_entities_since(1);
+    let new_relation_slots = exp.relation_edge_delta_slots(&slots_before, &added);
+    exp.admit_relation_edge_slots_for_render(&[&cgs], &new_relation_slots);
+    assert!(
+        new_relation_slots.iter().any(|slot| {
+            matches!(
+                slot,
+                ExposureSlotKey::Relation {
+                    source,
+                    relation,
+                } if source.entity.as_str() == "Issue" && relation.as_str() == "labels"
+            )
+        }),
+        "Label extend should unlock Issue.labels relation slot"
+    );
+    let delta = pipeline.render_teaching_exposure_delta_with_edges(
+        &cgs,
+        &exp,
+        &["Label"],
+        &new_relation_slots,
+        None,
+    );
+    assert!(
+        delta.contains(".r"),
+        "edge delta should include validated relation nav exemplar: {delta}"
+    );
+    for line in delta.lines() {
+        let expr = line.split('\t').next().unwrap_or("").trim();
+        if expr.is_empty() || expr.starts_with('#') || !expr.contains(".r") {
+            continue;
+        }
+        assert!(
+            domain_line_validate_cached(&mut cache, 0, &cgs, expr, Some(&map_arc)).is_some(),
+            "edge-delta relation row must type-check: {expr}"
+        );
+    }
 }
 
 #[test]

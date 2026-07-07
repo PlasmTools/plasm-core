@@ -1,0 +1,75 @@
+version: 1
+auth:
+  scheme: none
+http_backend: http://127.0.0.1:1080
+entities:
+  ParentItem:
+    id_field: id
+    description: Parent row whose Get payload embeds tag rows.
+    fields:
+      id:
+        required: true
+        value_ref: nv_parent_id
+      title:
+        required: true
+        value_ref: nv_parent_title
+    relations:
+      tags:
+        target: Tag
+        cardinality: many
+        description: Tags attached to this item (embedded on parent Get).
+        materialize:
+          kind: from_parent_get
+          path:
+            - key: tags
+            - wildcard: true
+  Tag:
+    id_field: id
+    description: Tag row without its own Get capability (embed-only target).
+    fields:
+      id:
+        required: true
+        value_ref: nv_tag_id
+      name:
+        required: true
+        value_ref: nv_tag_name
+      color:
+        required: false
+        value_ref: nv_tag_color
+capabilities:
+  parent_item_get:
+    description: Get ParentItem by id
+    kind: get
+    entity: ParentItem
+    provides:
+      - id
+      - title
+  tag_query:
+    description: List Tag rows (no Get — chain uses from_parent_get embed)
+    kind: query
+    entity: Tag
+    provides:
+      - id
+      - name
+      - color
+values:
+  nv_parent_id:
+    type: string
+    string_semantics: short
+    description: Parent id
+  nv_parent_title:
+    type: string
+    string_semantics: short
+    description: Parent title
+  nv_tag_id:
+    type: string
+    string_semantics: short
+    description: Tag id
+  nv_tag_name:
+    type: string
+    string_semantics: short
+    description: Tag name
+  nv_tag_color:
+    type: string
+    string_semantics: short
+    description: Tag color

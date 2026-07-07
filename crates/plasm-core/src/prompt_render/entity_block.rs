@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::schema::{capability_is_zero_arity_invoke, Cardinality};
+use crate::schema::capability_is_zero_arity_invoke;
 use crate::symbol_tuning::{ExposureSurface, IdentMetaKey, IdentMetadata, SymbolMap};
 use crate::{CapabilityKind, CapabilityName, FieldType, CGS};
 
@@ -20,8 +20,7 @@ use super::query_teaching::{
     search_expr_with_filters, unary_entity_id_teaching_expr_line,
 };
 use super::relation_teaching::{
-    many_relation_nav_emittable, receiver_for_dotted_suffix, relation_nav_meaning_result_gloss,
-    try_push_projection_witness_row,
+    receiver_for_dotted_suffix, try_emit_relation_nav_teaching_row, try_push_projection_witness_row,
 };
 use super::row_producer::RowProducerProjection;
 use super::row_producer_teaching::{
@@ -699,49 +698,44 @@ pub(crate) fn collect_entity_teaching_block(
     nav_keys.sort();
     const MAX_REL_NAV_LINES: usize = 4;
     for rel in nav_keys.iter().take(MAX_REL_NAV_LINES) {
-        let (target_entity, skip_many_unresolved, rel_for_meta) =
-            if let Some(rel_schema) = ent.relations.get(rel.as_str()) {
-                if !surface_allows_relation_nav(
-                    surface_filter,
-                    catalog_entry_id,
-                    ename,
-                    rel.as_str(),
-                    true,
-                ) {
-                    continue;
-                }
-                let skip = rel_schema.cardinality == Cardinality::Many
-                    && !many_relation_nav_emittable(rel_schema);
-                (rel_schema.target_resource.clone(), skip, Some(rel_schema))
-            } else if let Some(f) = ent.fields.get(rel.as_str()) {
-                if !surface_allows_relation_nav(
-                    surface_filter,
-                    catalog_entry_id,
-                    ename,
-                    rel.as_str(),
-                    false,
-                ) {
-                    continue;
-                }
-                match f.named_value(cgs) {
-                    Ok(nv) => match &nv.field_type {
-                        FieldType::EntityRef { target } => (target.clone(), false, None),
-                        _ => continue,
-                    },
-                    Err(_) => continue,
-                }
-            } else {
+        let (target_entity, rel_for_meta) = if let Some(rel_schema) = ent.relations.get(rel.as_str())
+        {
+            if !surface_allows_relation_nav(
+                surface_filter,
+                catalog_entry_id,
+                ename,
+                rel.as_str(),
+                true,
+            ) {
                 continue;
-            };
+            }
+            (rel_schema.target_resource.clone(), Some(rel_schema))
+        } else if let Some(f) = ent.fields.get(rel.as_str()) {
+            if !surface_allows_relation_nav(
+                surface_filter,
+                catalog_entry_id,
+                ename,
+                rel.as_str(),
+                false,
+            ) {
+                continue;
+            }
+            match f.named_value(cgs) {
+                Ok(nv) => match &nv.field_type {
+                    FieldType::EntityRef { target } => (target.clone(), None),
+                    _ => continue,
+                },
+                Err(_) => continue,
+            }
+        } else {
+            continue;
+        };
         if !surface_exposes_relation_nav_target(
             surface_filter,
             cgs,
             catalog_entry_id,
             target_entity.as_str(),
         ) {
-            continue;
-        }
-        if skip_many_unresolved {
             continue;
         }
         let rel_sym = if rel_for_meta.is_some() {
@@ -752,22 +746,6 @@ pub(crate) fn collect_entity_teaching_block(
         if relation_sym_shown_in_query_teaching_rows(&teaching_rows, &rel_sym) {
             continue;
         }
-        let suffix = format!(".{rel_sym}");
-        let Some(recv) = receiver_for_dotted_suffix(
-            &es,
-            ent,
-            cgs,
-            map,
-            catalog_entry_id,
-            &suffix,
-            line_valid_cache,
-            line_valid_cache_seed,
-            map_arc,
-        ) else {
-            continue;
-        };
-        let rel_expr = format!("{recv}{suffix}");
-        // Relation prose lives on the standalone `r#` gloss row; nav exemplars carry typing only.
         let rel_desc_opt = if rel_for_meta.is_some() {
             None
         } else if let Some(f) = ent.fields.get(rel.as_str()) {
@@ -780,32 +758,22 @@ pub(crate) fn collect_entity_teaching_block(
         } else {
             None
         };
-        let cardinality_many = ent
-            .relations
-            .get(rel.as_str())
-            .map(|r| r.cardinality == Cardinality::Many)
-            .unwrap_or(false);
-        let target_gloss = crate::result_gloss::result_gloss_for_relation_nav(
-            target_entity.as_str(),
-            map,
-            cardinality_many,
-        );
-        let result_gloss = relation_nav_meaning_result_gloss(&rel_expr, map, target_gloss);
-        try_push_teaching_example(
+        try_emit_relation_nav_teaching_row(
             gloss_emit,
             &mut teaching_rows,
             collect_meta,
-            cgs,
-            &rel_expr,
-            Some(result_gloss),
-            rel_desc_opt,
+            &es,
+            ent,
             rel_for_meta,
-            None,
-            false,
+            &rel_sym,
+            target_entity.as_str(),
+            rel_desc_opt,
+            cgs,
+            map,
+            catalog_entry_id,
             line_valid_cache,
             line_valid_cache_seed,
             map_arc,
-            None,
         );
     }
 

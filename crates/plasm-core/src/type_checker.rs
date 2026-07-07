@@ -1,16 +1,15 @@
 use crate::capability_input::{
     domain_placeholder_literal_error, entity_ref_incompatible_value, validate_capability_input,
-    validate_multiselect_value, validate_typed_array_value,
-    value_fits_field_type_entity_ref_aware,
+    validate_multiselect_value, validate_typed_array_value, value_fits_field_type_entity_ref_aware,
 };
 use crate::cgs_federation::{FederationDispatch, FederationResolveError};
 use crate::scope_entity_ref_infer::{
     prepare_create_capability_input, prepare_invoke_capability_input,
 };
 use crate::{
-    CapabilityKind, ChainExpr, ChainStep, CompOp, CreateExpr, DeleteExpr,
-    EntityDef, EntityKey, Expr, FieldType, GetExpr, InputFieldSchema, InvokeExpr, PageExpr,
-    Predicate, QueryExpr, RelationMaterialization, RelationSchema, TypeError, Value, CGS,
+    CapabilityKind, ChainExpr, ChainStep, CompOp, CreateExpr, DeleteExpr, EntityDef, EntityKey,
+    Expr, FieldType, GetExpr, InputFieldSchema, InvokeExpr, PageExpr, Predicate, QueryExpr,
+    RelationSchema, TypeError, Value, CGS,
 };
 use std::collections::HashSet;
 
@@ -281,7 +280,8 @@ fn resolve_chain_target<'a>(
 }
 
 /// `AutoGet` is admissible when target has `Get`, or when this is a many relation whose
-/// materialization is a scoped query fanout (`query_scoped` / `query_scoped_bindings`).
+/// materialization is embed- or query-driven fanout (`from_parent_get`, `prefer_from_parent_get`,
+/// `query_scoped`, `query_scoped_bindings`).
 fn ensure_chain_auto_get_admissible(
     source_entity_name: &str,
     selector: &str,
@@ -289,22 +289,14 @@ fn ensure_chain_auto_get_admissible(
     relation: Option<&RelationSchema>,
     cgs_target: &CGS,
 ) -> Result<(), TypeError> {
-    if cgs_target
+    if let Some(rel) = relation {
+        if crate::relation_nav::relation_chain_nav_admissible(rel, target_entity_name, cgs_target) {
+            return Ok(());
+        }
+    } else if cgs_target
         .find_capability(target_entity_name, crate::CapabilityKind::Get)
         .is_some()
     {
-        return Ok(());
-    }
-
-    let scoped_many_materialization = relation.is_some_and(|rel| {
-        rel.cardinality == crate::Cardinality::Many
-            && matches!(
-                rel.materialize.as_ref(),
-                Some(RelationMaterialization::QueryScoped { .. })
-                    | Some(RelationMaterialization::QueryScopedBindings { .. })
-            )
-    });
-    if scoped_many_materialization {
         return Ok(());
     }
 
@@ -873,7 +865,6 @@ fn type_check_relation(
     Ok(())
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1325,6 +1316,25 @@ mod tests {
         let chain = ChainExpr::auto_get(Expr::Get(GetExpr::new("A", "1")), "b_id");
         let err = type_check_chain(&chain, &cgs).unwrap_err();
         assert!(matches!(err, TypeError::ChainTargetMissingGet { .. }));
+    }
+
+    #[test]
+    fn test_chain_allows_from_parent_get_many_relation_without_target_get() {
+        let dir = fixture_schema_dir("from_parent_get_nav");
+        let cgs = load_schema_dir(&dir).expect("load from_parent_get_nav fixture");
+        let chain = ChainExpr::auto_get(
+            Expr::Get(GetExpr::new("ParentItem", "p-1")),
+            "tags",
+        );
+        type_check_chain(&chain, &cgs).expect(
+            "from_parent_get many relation traversal should type-check without requiring target Get",
+        );
+    }
+
+    fn fixture_schema_dir(name: &str) -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/schemas")
+            .join(name)
     }
 
     #[test]

@@ -114,6 +114,7 @@ pub mod preflight;
 pub mod prompt_pipeline;
 pub mod prompt_render;
 pub mod query_resolve;
+pub mod relation_nav;
 pub mod relation_segment;
 pub mod resolved_identity;
 pub mod result_gloss;
@@ -139,8 +140,8 @@ pub mod typed_literal;
 pub mod typed_row;
 pub mod value;
 
-pub mod comp_canonical;
 mod capability_input;
+pub mod comp_canonical;
 mod o200k_token_count;
 mod operation_handle;
 mod plan_commit;
