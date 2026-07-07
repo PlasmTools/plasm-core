@@ -453,11 +453,8 @@ pub(crate) fn try_emit_relation_nav_teaching_row(
     let cardinality_many = rel_schema
         .map(|r| r.cardinality == Cardinality::Many)
         .unwrap_or(false);
-    let target_gloss = crate::result_gloss::result_gloss_for_relation_nav(
-        target_entity,
-        map,
-        cardinality_many,
-    );
+    let target_gloss =
+        crate::result_gloss::result_gloss_for_relation_nav(target_entity, map, cardinality_many);
     let result_gloss = relation_nav_meaning_result_gloss(&rel_expr, map, target_gloss);
     try_push_teaching_example(
         gloss_emit,
@@ -502,11 +499,8 @@ fn append_relation_nav_edge_delta_row(
         map_arc.map(|m| m.as_ref()),
         cardinality_many,
     );
-    let result_type = relation_nav_meaning_result_gloss(
-        plasm_expr,
-        map_arc.map(|m| m.as_ref()),
-        target_gloss,
-    );
+    let result_type =
+        relation_nav_meaning_result_gloss(plasm_expr, map_arc.map(|m| m.as_ref()), target_gloss);
     let line = TeachingExprLine::empty_legend(plasm_expr.to_string());
     let line = TeachingExprLine {
         expression: line.expression,

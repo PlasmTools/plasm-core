@@ -142,9 +142,7 @@ impl FieldGlossMeaning {
                 if display_override.is_empty() {
                     Vec::new()
                 } else {
-                    vec![GlossMeaningCell::Description(
-                        display_override.to_string(),
-                    )]
+                    vec![GlossMeaningCell::Description(display_override.to_string())]
                 }
             }
             Self::RegistryWire(slot) => slot.meaning_atoms(),
@@ -204,11 +202,10 @@ impl FieldGlossMeaning {
             Self::RegistryWire(slot) => {
                 g.field_type.clear();
                 g.allowed_values.clear();
-                g.description =
-                    join_field_gloss_meaning_atoms(&registry_wire_slot_meaning_atoms(
-                        slot.v_sym.as_str(),
-                        &slot.point_of_use,
-                    ));
+                g.description = join_field_gloss_meaning_atoms(&registry_wire_slot_meaning_atoms(
+                    slot.v_sym.as_str(),
+                    &slot.point_of_use,
+                ));
             }
             Self::TypedField {
                 type_label,

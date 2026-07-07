@@ -10,13 +10,14 @@ use super::super::gloss_collect::{
 };
 use super::super::gloss_dedup::{meaning_canonical_sym_for_emit, FieldGlossMeaning};
 use super::super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
-use super::structural::{
-    format_inline_structural_example_symbolic, format_inline_structural_example_symbolic_required_only,
-};
 use super::super::teaching_legend::LEGEND_EM_DESC_SEP;
 use super::super::teaching_push::try_push_teaching_example;
 use super::super::teaching_util::{strip_union_constructor_authoring_noise, truncate_inline_desc};
 use super::super::EntityTeachingExprRow;
+use super::structural::{
+    format_inline_structural_example_symbolic,
+    format_inline_structural_example_symbolic_required_only,
+};
 
 pub(crate) fn union_variants_teachable(variants: &[crate::schema::InputVariantSchema]) -> bool {
     !variants.is_empty()

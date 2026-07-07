@@ -14,12 +14,9 @@ use super::query_teaching::unseeded_entity_ref_invocation_gloss;
 use super::teaching_legend::LEGEND_EM_DESC_SEP;
 use super::teaching_util::truncate_inline_desc;
 
-pub(crate) use dotted_call::{
-    build_standalone_create_paren_args, format_dotted_call_line,
-};
+pub(crate) use dotted_call::{build_standalone_create_paren_args, format_dotted_call_line};
 pub(crate) use union_ctor::{
-    emit_array_of_union_constructor_teaching_gloss,
-    try_push_union_constructor_teaching_expr_rows,
+    emit_array_of_union_constructor_teaching_gloss, try_push_union_constructor_teaching_expr_rows,
 };
 
 #[inline]

@@ -10,9 +10,7 @@ use crate::symbol_tuning::SymbolMap;
 use crate::{CapabilityKind, FieldType, InputType, ParameterRole, ValueWireFormat, CGS};
 
 use super::super::line_validate::{DomainLineValidCacheKey, DomainLineValidEntry};
-use super::super::query_teaching::{
-    entity_ref_id_example, field_is_filter_like, scope_param_slot,
-};
+use super::super::query_teaching::{entity_ref_id_example, field_is_filter_like, scope_param_slot};
 use super::super::relation_teaching::receiver_for_dotted_suffix;
 use super::super::symbol_tokens::{id_sym_cap, met_sym};
 use super::super::teaching_util::TEACHING_PARAM_VALUE_PLACEHOLDER;

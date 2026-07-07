@@ -698,38 +698,38 @@ pub(crate) fn collect_entity_teaching_block(
     nav_keys.sort();
     const MAX_REL_NAV_LINES: usize = 4;
     for rel in nav_keys.iter().take(MAX_REL_NAV_LINES) {
-        let (target_entity, rel_for_meta) = if let Some(rel_schema) = ent.relations.get(rel.as_str())
-        {
-            if !surface_allows_relation_nav(
-                surface_filter,
-                catalog_entry_id,
-                ename,
-                rel.as_str(),
-                true,
-            ) {
+        let (target_entity, rel_for_meta) =
+            if let Some(rel_schema) = ent.relations.get(rel.as_str()) {
+                if !surface_allows_relation_nav(
+                    surface_filter,
+                    catalog_entry_id,
+                    ename,
+                    rel.as_str(),
+                    true,
+                ) {
+                    continue;
+                }
+                (rel_schema.target_resource.clone(), Some(rel_schema))
+            } else if let Some(f) = ent.fields.get(rel.as_str()) {
+                if !surface_allows_relation_nav(
+                    surface_filter,
+                    catalog_entry_id,
+                    ename,
+                    rel.as_str(),
+                    false,
+                ) {
+                    continue;
+                }
+                match f.named_value(cgs) {
+                    Ok(nv) => match &nv.field_type {
+                        FieldType::EntityRef { target } => (target.clone(), None),
+                        _ => continue,
+                    },
+                    Err(_) => continue,
+                }
+            } else {
                 continue;
-            }
-            (rel_schema.target_resource.clone(), Some(rel_schema))
-        } else if let Some(f) = ent.fields.get(rel.as_str()) {
-            if !surface_allows_relation_nav(
-                surface_filter,
-                catalog_entry_id,
-                ename,
-                rel.as_str(),
-                false,
-            ) {
-                continue;
-            }
-            match f.named_value(cgs) {
-                Ok(nv) => match &nv.field_type {
-                    FieldType::EntityRef { target } => (target.clone(), None),
-                    _ => continue,
-                },
-                Err(_) => continue,
-            }
-        } else {
-            continue;
-        };
+            };
         if !surface_exposes_relation_nav_target(
             surface_filter,
             cgs,

@@ -1322,10 +1322,7 @@ mod tests {
     fn test_chain_allows_from_parent_get_many_relation_without_target_get() {
         let dir = fixture_schema_dir("from_parent_get_nav");
         let cgs = load_schema_dir(&dir).expect("load from_parent_get_nav fixture");
-        let chain = ChainExpr::auto_get(
-            Expr::Get(GetExpr::new("ParentItem", "p-1")),
-            "tags",
-        );
+        let chain = ChainExpr::auto_get(Expr::Get(GetExpr::new("ParentItem", "p-1")), "tags");
         type_check_chain(&chain, &cgs).expect(
             "from_parent_get many relation traversal should type-check without requiring target Get",
         );

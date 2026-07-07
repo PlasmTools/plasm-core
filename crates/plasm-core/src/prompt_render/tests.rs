@@ -11,7 +11,8 @@ use crate::schema::{
 };
 use crate::symbol_tuning::{
     entity_slices_for_render, resolve_prompt_surface_entities, symbol_map_for_prompt,
-    ExposureEntityKey, ExposureSlotKey, ExposureSurface, FocusSpec, SymbolMap, TeachingExposureSession,
+    ExposureEntityKey, ExposureSlotKey, ExposureSurface, FocusSpec, SymbolMap,
+    TeachingExposureSession,
 };
 use crate::CapabilityKind;
 use crate::Cardinality;
@@ -2942,16 +2943,13 @@ fn federated_github_linear_issue_distinct_e_symbols_when_apis_present() {
 /// produce validated relation edge-delta teaching when the child entity is seeded on extend.
 #[test]
 fn from_parent_get_nav_matrix_relation_fanout_type_checks_and_edge_delta_validates() {
-    use crate::{ChainExpr, Expr, GetExpr};
     use crate::type_checker::type_check_chain;
+    use crate::{ChainExpr, Expr, GetExpr};
 
     let dir = fixture_schema_dir("from_parent_get_nav");
     let mut cgs = load_schema_dir(&dir).expect("from_parent_get_nav fixture");
     cgs.entry_id = Some("from_parent_get_nav".into());
-    let chain = ChainExpr::auto_get(
-        Expr::Get(GetExpr::new("ParentItem", "p-1")),
-        "tags",
-    );
+    let chain = ChainExpr::auto_get(Expr::Get(GetExpr::new("ParentItem", "p-1")), "tags");
     type_check_chain(&chain, &cgs).expect("ParentItem.tags from_parent_get chain");
 
     let mut cache = HashMap::new();
@@ -3003,8 +3001,8 @@ fn from_parent_get_nav_matrix_relation_fanout_type_checks_and_edge_delta_validat
 /// produce validated relation edge-delta teaching when Label is seeded on extend.
 #[test]
 fn linear_issue_labels_relation_fanout_type_checks_and_edge_delta_validates() {
-    use crate::{ChainExpr, Expr, GetExpr};
     use crate::type_checker::type_check_chain;
+    use crate::{ChainExpr, Expr, GetExpr};
 
     let dir = apis_dir("linear");
     if !dir.exists() {
@@ -3012,10 +3010,7 @@ fn linear_issue_labels_relation_fanout_type_checks_and_edge_delta_validates() {
     }
     let mut cgs = load_schema_dir(&dir).expect("linear");
     cgs.entry_id = Some("linear".into());
-    let chain = ChainExpr::auto_get(
-        Expr::Get(GetExpr::new("Issue", "ENG-42")),
-        "labels",
-    );
+    let chain = ChainExpr::auto_get(Expr::Get(GetExpr::new("Issue", "ENG-42")), "labels");
     type_check_chain(&chain, &cgs).expect("Issue.labels from_parent_get chain");
 
     let mut cache = HashMap::new();
