@@ -3100,6 +3100,9 @@ impl<'a> Parser<'a> {
                 }
                 self.pos += 1;
                 self.skip_ws();
+                if matches!(self.peek_char(), None | Some('[')) {
+                    return Err(self.err(ParseErrorKind::SearchTextMustBeString));
+                }
                 let text = self.parse_value()?;
                 let text_str = match &text {
                     Value::String(s) => s.clone(),
@@ -5754,6 +5757,51 @@ mod tests {
             panic!("expected query");
         };
         assert_eq!(q.capability_name.as_deref(), Some("issue_search"));
+    }
+
+    #[test]
+    fn bare_search_tilde_without_text_is_search_text_error() {
+        let dir = std::path::Path::new("../../apis/linear");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let (full, _) = entity_slices_for_render(&cgs, FocusSpec::All);
+        let sym_map: Arc<dyn SymbolSession> = Arc::new(SymbolMap::build(&cgs, &full));
+        let stack = test_layer(&cgs);
+        let err = parse_with_cgs_layers(r#"Issue~"#, &stack, sym_map).unwrap_err();
+        assert!(
+            matches!(err.kind, ParseErrorKind::SearchTextMustBeString),
+            "expected SearchTextMustBeString, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn unquoted_string_filter_wire_value_typechecks_at_compile_time() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let r = parse("LangItem{owner=matrix-dev}", &cgs)
+            .expect("parse unquoted string filter wire value");
+        crate::type_checker::type_check_expr(&r.expr, &cgs).expect("string wire value typechecks");
+    }
+
+    #[test]
+    fn unquoted_integer_field_rejects_non_numeric_at_compile_time() {
+        let dir = std::path::Path::new("../../fixtures/schemas/plasm_language_matrix");
+        if !dir.exists() {
+            return;
+        }
+        let cgs = load_schema_dir(dir).unwrap();
+        let r = parse("LangItem{score=notanint}", &cgs)
+            .expect("parse unknown integer token as phrase string");
+        let err = crate::type_checker::type_check_expr(&r.expr, &cgs).unwrap_err();
+        assert!(
+            matches!(err, crate::TypeError::IncompatibleValue { .. }),
+            "expected compile-time type rejection, got {err:?}"
+        );
     }
 
     #[test]
