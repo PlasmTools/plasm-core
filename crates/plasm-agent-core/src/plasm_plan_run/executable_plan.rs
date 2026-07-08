@@ -32,9 +32,9 @@ use std::collections::BTreeMap;
 /// materialized input rows and plan literals. Mode-invariant — evaluated identically in dry and
 /// live via [`PureStep::materialize`].
 pub(crate) enum PureStep {
-    Data(ValidatedDataNode),
-    Derive(ValidatedDeriveNode),
-    Compute(ValidatedComputeNode),
+    Data(Box<ValidatedDataNode>),
+    Derive(Box<ValidatedDeriveNode>),
+    Compute(Box<ValidatedComputeNode>),
 }
 
 /// The I/O fragment of the plan: steps that reach a backend (read or effect). Executed through the
@@ -77,9 +77,9 @@ impl ExecStep {
     /// left unclassified (and therefore silently skipped) by either execution mode.
     pub(crate) fn classify(node: ValidatedPlanNode) -> Self {
         match node {
-            ValidatedPlanNode::Data(n) => ExecStep::Pure(PureStep::Data(n)),
-            ValidatedPlanNode::Derive(n) => ExecStep::Pure(PureStep::Derive(n)),
-            ValidatedPlanNode::Compute(n) => ExecStep::Pure(PureStep::Compute(n)),
+            ValidatedPlanNode::Data(n) => ExecStep::Pure(PureStep::Data(Box::new(n))),
+            ValidatedPlanNode::Derive(n) => ExecStep::Pure(PureStep::Derive(Box::new(n))),
+            ValidatedPlanNode::Compute(n) => ExecStep::Pure(PureStep::Compute(Box::new(n))),
             ValidatedPlanNode::Surface(n) => ExecStep::Io(IoStep::Surface(Box::new(n))),
             ValidatedPlanNode::RelationTraversal(n) => ExecStep::Io(IoStep::Relation(Box::new(n))),
             ValidatedPlanNode::ForEach(n) => ExecStep::Io(IoStep::ForEach(Box::new(n))),
@@ -133,9 +133,9 @@ impl PureStep {
     /// path). Total and lossless — the inverse of the `Pure` arm of [`ExecStep::classify`].
     pub(crate) fn into_validated_node(self) -> ValidatedPlanNode {
         match self {
-            PureStep::Data(n) => ValidatedPlanNode::Data(n),
-            PureStep::Derive(n) => ValidatedPlanNode::Derive(n),
-            PureStep::Compute(n) => ValidatedPlanNode::Compute(n),
+            PureStep::Data(n) => ValidatedPlanNode::Data(*n),
+            PureStep::Derive(n) => ValidatedPlanNode::Derive(*n),
+            PureStep::Compute(n) => ValidatedPlanNode::Compute(*n),
         }
     }
 
