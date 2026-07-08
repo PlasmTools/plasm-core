@@ -749,6 +749,10 @@ impl<'a> Parser<'a> {
         if t.is_empty() {
             return Err(self.err(ParseErrorKind::ExpectedValue));
         }
-        Ok(Value::PhraseIdent(t.to_string()))
+        if self.program_nodes.is_some() {
+            Ok(Value::PhraseIdent(t.to_string()))
+        } else {
+            Ok(Value::String(t.to_string()))
+        }
     }
 }
